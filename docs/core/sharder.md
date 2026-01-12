@@ -1,0 +1,3 @@
+# Sharder
+
+::: datarax.core.sharder

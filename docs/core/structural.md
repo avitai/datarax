@@ -1,0 +1,3 @@
+# Structural
+
+::: datarax.core.structural

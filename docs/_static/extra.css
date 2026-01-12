@@ -1,0 +1,6 @@
+/* Custom CSS override */
+:root {
+    --md-primary-fg-color: #3F51B5;
+    --md-primary-fg-color--light: #7986CB;
+    --md-primary-fg-color--dark: #303F9F;
+}

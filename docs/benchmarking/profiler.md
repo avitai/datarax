@@ -1,0 +1,3 @@
+# Profiler
+
+::: datarax.benchmarking.profiler

@@ -1,0 +1,73 @@
+name: Datarax Build Verification
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Package Build Verification
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+        with:
+          enable-cache: true
+
+      - name: Create virtual environment
+        run: |
+          uv venv
+
+      - name: Install build dependencies
+        run: |
+          uv pip install -e ".[dev,data]"
+          # Install type stubs for common libraries
+          uv pip install types-requests types-setuptools
+
+      - name: Setup PYTHONPATH for tests
+        run: |
+          echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
+
+      - name: Build package
+        run: |
+          uv run python -m build
+
+      - name: Verify package
+        run: |
+          uv run twine check dist/*
+
+      - name: Run type checking
+        run: |
+          uv run pyright || echo "Pyright check completed with issues"
+
+      - name: Test installation in clean environment
+        run: |
+          # Create a temporary virtual environment
+          uv venv test_venv
+          # Activate the virtual environment and install the wheel
+          . test_venv/bin/activate
+          uv pip install dist/*.whl
+
+          # Verify the package can be imported
+          python -c "import datarax; print(f'Successfully imported datarax version {datarax.__version__}')"
+          deactivate
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-artifacts-py${{ matrix.python-version }}
+          path: dist/

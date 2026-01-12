@@ -1,0 +1,182 @@
+# Datarax Pre-commit Configuration
+# Enhanced with workshop insights for thorough code quality
+# Optimized for performance and reduced package installations
+
+repos:
+  # Workshop-inspired TOML formatting
+  - repo: local
+    hooks:
+      - id: sort_pyproject
+        name: sort_pyproject
+        entry: toml-sort
+        language: python
+        args: [-i, --sort-table-keys, --sort-inline-tables, pyproject.toml]
+        files: ^pyproject\.toml$
+        additional_dependencies: ["toml-sort==0.23.1"]
+
+  # Standard pre-commit hooks with scientific computing adaptations
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^(documents|custom_modes|notebooks|example_data)/
+      - id: end-of-file-fixer
+        exclude: ^(documents|custom_modes|notebooks|example_data)/
+      - id: check-yaml
+        exclude: ^(documents|custom_modes|example_data)/(.*)|mkdocs\.yml$
+      - id: check-added-large-files
+        args: ["--maxkb=2000"] # Increased for scientific data files
+        exclude: ^(documents|custom_modes|notebooks|example_data)/
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-json
+        exclude: ^(documents|custom_modes|notebooks|example_data)/
+      - id: debug-statements
+        exclude: ^(documents|custom_modes|notebooks|example_data)/
+      - id: mixed-line-ending
+        exclude: ^(documents|custom_modes|notebooks|example_data)/
+
+  # Workshop-inspired thorough Python linting and formatting with auto-fix
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.8
+    hooks:
+      - id: ruff # linter with automatic fixes including whitespace and unused variables
+        args: [--fix, --unsafe-fixes]
+        exclude: ^(documents|custom_modes|notebooks|example_data)/
+        types_or: [python, pyi, jupyter, toml]
+      - id: ruff-format # formatter
+        types_or: [python, pyi, jupyter, toml]
+        exclude: ^(documents|custom_modes|notebooks|example_data)/
+
+  # GitHub Actions simulation - exact mirror of CI checks
+  - repo: local
+    hooks:
+      - id: ruff-docstring-whitespace
+        name: ruff-docstring-whitespace (auto-fix whitespace)
+        entry: ruff check --select=W291,W292,W293,F841 --fix --unsafe-fixes
+        language: system
+        types: [python]
+        exclude: ^(documents|custom_modes|notebooks|example_data)/
+        pass_filenames: true
+      - id: ruff-github-actions-check
+        name: ruff-github-actions-check (mirrors CI)
+        entry: uv run ruff check --output-format=github
+        language: system
+        types: [python]
+        exclude: ^(documents|custom_modes|notebooks|example_data)/
+        pass_filenames: false
+        always_run: true
+      - id: ruff-critical-check
+        name: ruff-critical-check (fast CI-critical rules only)
+        entry: uv run ruff check --select=RUF005,B904,F821,F822,F823 --output-format=github
+        language: system
+        types: [python]
+        exclude: ^(documents|custom_modes|notebooks|example_data)/
+        pass_filenames: false
+        always_run: true
+
+  # Workshop-inspired type checking with JAX ecosystem support
+  - repo: https://github.com/RobertCraigie/pyright-python
+    rev: v1.1.403
+    hooks:
+      - id: pyright # type checker optimized for scientific computing
+        args: ["--warnings"] # Fail on warnings to match GitHub Actions
+        exclude: ^(documents|custom_modes|notebooks|example_data)/
+        additional_dependencies: [
+            # Core JAX ecosystem
+            beartype,
+            jax,
+            flax,
+            jaxtyping,
+            typing_extensions,
+            optax,
+            chex,
+            grain,
+            orbax-checkpoint,
+
+            # Standard scientific libraries
+            numpy,
+            scipy,
+            matplotlib,
+
+            # Data loading dependencies
+            tensorflow,
+            tensorflow-datasets,
+            datasets,
+            pyarrow,
+
+            # Development and validation
+            pytest,
+            typer,
+
+            # Datarax specific
+            array-record,
+            astunparse,
+            cloudpickle,
+            decorator,
+            dm-tree,
+            tomli,
+            tomli-w,
+          ]
+
+  # Workshop-inspired security scanning
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.8.6
+    hooks:
+      - id: bandit
+        args: ["-c", "pyproject.toml"]
+        exclude: ^(documents|custom_modes|notebooks|tests|example_data)/
+        additional_dependencies: ["bandit[toml]"]
+        log_file: /dev/null # Suppress stderr warnings
+
+  # Workshop-inspired documentation quality
+  - repo: https://github.com/pycqa/pydocstyle
+    rev: 6.3.0
+    hooks:
+      - id: pydocstyle
+        exclude: ^(documents|custom_modes|notebooks|tests|.deprecated|example_data)/
+        additional_dependencies: ["pydocstyle[toml]"]
+        args: ["--config=pyproject.toml"]
+
+  # Workshop-inspired notebook quality
+  - repo: https://github.com/nbQA-dev/nbQA
+    rev: 1.9.1
+    hooks:
+      - id: nbqa-ruff
+        exclude: ^(documents|custom_modes|notebooks|example_data)/
+        args: [--fix]
+
+  # Workshop-inspired shell script quality
+  # Using local hook due to shellcheck-py installation issues
+  - repo: local
+    hooks:
+      - id: shellcheck
+        name: shellcheck
+        entry: shellcheck
+        language: system
+        types: [shell]
+        exclude: ^(documents|custom_modes|notebooks|example_data)/
+        args: ["-e", "SC1091"]
+        pass_filenames: true
+        always_run: false
+
+  # Workshop-inspired Dockerfile quality (if we add Docker later)
+  # Temporarily disabled due to installation issues
+  # - repo: https://github.com/hadolint/hadolint
+  #   rev: v2.13.1-beta
+  #   hooks:
+  #     - id: hadolint-docker
+  #       exclude: ^(documents|custom_modes|notebooks)/
+
+# Workshop-inspired CI configuration with performance optimizations
+ci:
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from pre-commit.com hooks
+
+    for more information, see https://pre-commit.ci
+  autofix_prs: true
+  autoupdate_branch: ""
+  autoupdate_commit_msg: "[pre-commit.ci] pre-commit autoupdate"
+  autoupdate_schedule: weekly
+  skip: []
+  submodules: false

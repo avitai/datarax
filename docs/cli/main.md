@@ -1,0 +1,3 @@
+# Main
+
+::: datarax.cli.main

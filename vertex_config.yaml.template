@@ -1,0 +1,49 @@
+# Vertex AI Configuration Template for Datarax
+# Copy to vertex_config.yaml and fill in your values
+# Usage: python scripts/submit_vertex_job.py [test_args]
+
+# =============================================================================
+# GCP Project Settings
+# =============================================================================
+
+# Your Google Cloud Project ID
+project_id: "your-gcp-project-id"
+
+# GCP region for Vertex AI jobs
+# See: https://cloud.google.com/vertex-ai/docs/general/locations
+location: "us-central1"
+
+# GCS bucket for job staging (must exist and be accessible)
+# Format: gs://bucket-name (no trailing slash)
+staging_bucket: "gs://your-staging-bucket"
+
+# Docker image URI in Google Container Registry or Artifact Registry
+# Build with: docker build -t IMAGE_URI . && docker push IMAGE_URI
+image_uri: "gcr.io/your-gcp-project-id/datarax:latest"
+
+# Service account for running Vertex AI jobs
+# Requires: Vertex AI User, Storage Object Viewer roles
+service_account: "vertex-sa@your-gcp-project-id.iam.gserviceaccount.com"
+
+# =============================================================================
+# Machine Configuration
+# =============================================================================
+
+# Machine type determines CPU/memory
+# Common options:
+#   - g2-standard-4:  4 vCPU, 16GB RAM (for L4 GPU)
+#   - g2-standard-8:  8 vCPU, 32GB RAM (for L4 GPU)
+#   - a2-highgpu-1g:  12 vCPU, 85GB RAM (for A100 GPU)
+#   - n1-standard-8:  8 vCPU, 30GB RAM (for T4/V100 GPU)
+machine_type: "g2-standard-4"
+
+# GPU accelerator type
+# Options: NVIDIA_L4, NVIDIA_TESLA_T4, NVIDIA_TESLA_V100, NVIDIA_A100_80GB
+# See: https://cloud.google.com/vertex-ai/docs/training/configure-compute
+accelerator_type: "NVIDIA_L4"
+
+# Number of GPUs per worker (depends on machine_type)
+accelerator_count: 1
+
+# Number of worker replicas (set >1 for distributed training/testing)
+replica_count: 1

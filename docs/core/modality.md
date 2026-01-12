@@ -1,0 +1,3 @@
+# Modality
+
+::: datarax.core.modality

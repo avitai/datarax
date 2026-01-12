@@ -1,0 +1,38 @@
+{
+  "datarax_pipeline_test": [
+    {
+      "timestamp": 1755031722.7802565,
+      "timing_metrics": {
+        "mean_iteration_time": 0.05793016378302127,
+        "std_iteration_time": 0.14115786701323632,
+        "min_iteration_time": 0.006526669021695852,
+        "max_iteration_time": 0.4812957129906863,
+        "total_time": 0.5793016378302127,
+        "iterations_per_second": 17.262164211127082
+      },
+      "memory_metrics": {
+        "baseline_memory_mb": 1119.9765625,
+        "peak_memory_mb": 1119.9765625,
+        "peak_usage_mb": 0.0,
+        "retained_memory_mb": 0.0,
+        "memory_efficiency": 1.0,
+        "suggestions": []
+      },
+      "gpu_metrics": {
+        "gpu_memory_used_mb": 0.0,
+        "gpu_memory_total_mb": 8192.0,
+        "gpu_memory_utilization": 0.0,
+        "num_gpu_devices": 1
+      },
+      "metadata": {
+        "num_iterations": 10,
+        "warmup_iterations": 2,
+        "jax_backend": "gpu",
+        "num_devices": 1,
+        "device_types": [
+          "NVIDIA GeForce RTX 4090"
+        ]
+      }
+    }
+  ]
+}

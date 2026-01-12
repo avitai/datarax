@@ -1,0 +1,3 @@
+# Batcher
+
+::: datarax.core.batcher

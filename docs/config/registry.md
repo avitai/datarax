@@ -1,0 +1,3 @@
+# Registry
+
+::: datarax.config.registry

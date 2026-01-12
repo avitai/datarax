@@ -1,0 +1,311 @@
+site_name: Datarax Documentation
+repo_url: https://github.com/avitai/datarax
+site_description: JAX-native data pipeline framework with Flax NNX
+site_author: The Datarax Team
+
+theme:
+  name: material
+  language: en
+  palette:
+    # Light mode with automatic detection
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Dark mode with automatic detection
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    # Navigation features with collapsible sections
+    - navigation.path
+    - navigation.top
+    # Instant loading for better UX
+    - navigation.instant
+    - navigation.instant.prefetch
+    - navigation.instant.progress
+    # Enable navigation tracking
+    - navigation.tracking
+    # Table of contents
+    - toc.follow
+    # Search features
+    - search.highlight
+    - search.share
+    - search.suggest
+    # Content features
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.tooltips
+    # Enable Mermaid diagram support
+    - content.mermaid
+  icon:
+    repo: fontawesome/brands/github
+    logo: "material/flask-outline"
+  font:
+    text: Roboto
+    code: Roboto Mono
+  favicon: "_static/favicon.png"
+
+# Extra configuration
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/avitai/datarax
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/datarax/
+
+plugins:
+  - search
+  - ipynb
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            docstring_options:
+              ignore_init_summary: true
+            merge_init_into_class: true
+            show_submodules: true
+            show_source: false
+            show_bases: true
+            show_inheritance_diagram: false
+            group_by_category: true
+            heading_level: 2
+            members_order: source
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            show_if_no_docstring: true
+            show_overloads: false
+            show_root_heading: true
+            show_symbol_type_heading: false
+            show_symbol_type_toc: false
+            filters:
+              - "!^_"
+              - "^__init__$"
+            inherited_members: true
+          inventories:
+            - https://docs.python.org/3/objects.inv
+            - https://jax.readthedocs.io/en/latest/objects.inv
+            - https://flax.readthedocs.io/en/latest/objects.inv
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: "¤"
+      title: "On this page"
+      toc_depth: 4
+  # PyMdown Extensions for enhanced formatting
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      base_path: docs
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+# MathJax for scientific/ML equations
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+# Custom CSS
+extra_css:
+  - _static/extra.css
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting_started/installation.md
+      - Quick Start: getting_started/quick_start.md
+      - Core Concepts: getting_started/core_concepts.md
+  - User Guide:
+      - Data Sources: user_guide/data_sources.md
+      - DAG Construction: user_guide/dag_construction.md
+      - Benchmarking: user_guide/benchmarking.md
+      - Troubleshooting: user_guide/troubleshooting_guide.md
+      - NNX Best Practices: user_guide/nnx_best_practices.md
+      - Checkpointing: user_guide/checkpointing_guide.md
+  - Examples:
+      - Overview: examples/overview.md
+      - Core:
+          - Simple Pipeline: examples/core/01_simple_pipeline.ipynb
+          - Pipeline Tutorial: examples/core/02_pipeline_tutorial.ipynb
+          - Operators Tutorial: examples/core/03_operators_tutorial.ipynb
+      - Integration:
+          - HuggingFace Quick Reference: examples/integration/huggingface/01_hf_quickref.ipynb
+          - HuggingFace Tutorial: examples/integration/huggingface/02_hf_tutorial.ipynb
+          - TFDS Quick Reference: examples/integration/tfds/01_tfds_quickref.ipynb
+      - Advanced:
+          - Sharding: examples/advanced/distributed/01_sharding_quickref.ipynb
+          - Checkpointing: examples/advanced/checkpointing/01_checkpoint_quickref.ipynb
+          - Monitoring: examples/advanced/monitoring/01_monitoring_quickref.ipynb
+  - API Reference:
+      - Core Components:
+          - Overview: core/index.md
+          - batcher: core/batcher.md
+          - config: core/config.md
+          - cross_modal: core/cross_modal.md
+          - data_source: core/data_source.md
+          - element_batch: core/element_batch.md
+          - metadata: core/metadata.md
+          - modality: core/modality.md
+          - module: core/module.md
+          - operator: core/operator.md
+          - sampler: core/sampler.md
+          - sharder: core/sharder.md
+          - structural: core/structural.md
+      - Utilities:
+          - Overview: utils/index.md
+          - external: utils/external.md
+          - prng: utils/prng.md
+          - pytree_utils: utils/pytree_utils.md
+      - Command Line Interface:
+          - Overview: cli/index.md
+          - benchmark: cli/benchmark.md
+          - main: cli/main.md
+      - Batching:
+          - Overview: batching/index.md
+          - default_batcher: batching/default_batcher.md
+      - Benchmarking:
+          - Overview: benchmarking/index.md
+          - comparative: benchmarking/comparative.md
+          - monitor: benchmarking/monitor.md
+          - pipeline_throughput: benchmarking/pipeline_throughput.md
+          - profiler: benchmarking/profiler.md
+          - regression: benchmarking/regression.md
+      - Checkpoint:
+          - Overview: checkpoint/index.md
+          - handlers: checkpoint/handlers.md
+          - iterators: checkpoint/iterators.md
+      - Config:
+          - Overview: config/index.md
+          - environment: config/environment.md
+          - loaders: config/loaders.md
+          - registry: config/registry.md
+          - schema: config/schema.md
+      - Control:
+          - Overview: control/index.md
+          - prefetcher: control/prefetcher.md
+      - Dag:
+          - Overview: dag/index.md
+          - dag_config: dag/dag_config.md
+          - dag_executor: dag/dag_executor.md
+          - Nodes:
+              - base: dag/base.md
+              - caching: dag/caching.md
+              - control_flow: dag/control_flow.md
+              - data_source: dag/data_source.md
+              - field_operators: dag/field_operators.md
+              - loaders: dag/loaders.md
+              - rebatch: dag/rebatch.md
+      - Distributed:
+          - Overview: distributed/index.md
+          - data_parallel: distributed/data_parallel.md
+          - device_mesh: distributed/device_mesh.md
+          - device_placement: distributed/device_placement.md
+          - mesh: distributed/mesh.md
+          - metrics: distributed/metrics.md
+      - Memory:
+          - Overview: memory/index.md
+          - shared_memory_manager: memory/shared_memory_manager.md
+      - Monitoring:
+          - Overview: monitoring/index.md
+          - callbacks: monitoring/callbacks.md
+          - dag_monitor: monitoring/dag_monitor.md
+          - metrics: monitoring/metrics.md
+          - pipeline: monitoring/pipeline.md
+          - reporters: monitoring/reporters.md
+      - Operators:
+          - Overview: operators/index.md
+          - batch_mix_operator: operators/batch_mix_operator.md
+          - composite_operator: operators/composite_operator.md
+          - element_operator: operators/element_operator.md
+          - map_operator: operators/map_operator.md
+          - probabilistic_operator: operators/probabilistic_operator.md
+          - selector_operator: operators/selector_operator.md
+          - Image:
+              - brightness_operator: operators/brightness_operator.md
+              - contrast_operator: operators/contrast_operator.md
+              - dropout_operator: operators/dropout_operator.md
+              - functional: operators/functional.md
+              - noise_operator: operators/noise_operator.md
+              - patch_dropout_operator: operators/patch_dropout_operator.md
+              - rotation_operator: operators/rotation_operator.md
+          - Strategies:
+              - base: operators/base.md
+              - branching: operators/branching.md
+              - ensemble: operators/ensemble.md
+              - merging: operators/merging.md
+              - parallel: operators/parallel.md
+              - sequential: operators/sequential.md
+      - Performance:
+          - Overview: performance/index.md
+          - roofline: performance/roofline.md
+          - xla_optimization: performance/xla_optimization.md
+      - Root:
+          - Overview: root/index.md
+          - typing: root/typing.md
+      - Samplers:
+          - Overview: samplers/index.md
+          - epoch_aware_sampler: samplers/epoch_aware_sampler.md
+          - range_sampler: samplers/range_sampler.md
+          - sequential_sampler: samplers/sequential_sampler.md
+          - shuffle_sampler: samplers/shuffle_sampler.md
+      - Sharding:
+          - Overview: sharding/index.md
+          - array_sharder: sharding/array_sharder.md
+          - jax_process_sharder: sharding/jax_process_sharder.md
+      - Sources:
+          - Overview: sources/index.md
+          - array_record_source: sources/array_record_source.md
+          - hf_source: sources/hf_source.md
+          - memory_source: sources/memory_source.md
+          - mixed_source: sources/mixed_source.md
+          - tfds_source: sources/tfds_source.md
+  - Distributed Training: distributed_training.md
+  - Contributing:
+      - Guide: contributing/contributing_guide.md
+      - Performance: contributing/performance_optimization_guide.md
+      - Developer Guide: dev_guide.md
+      - Testing Guide: testing_guide.md
+      - GPU Testing: gpu_testing/README.md
+      - Test Structure: tests/README.md
+      - Type Issues Guide: development/pyright-type-issues-solutions.md

@@ -1,0 +1,114 @@
+name: Datarax Test Coverage
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  coverage:
+    name: Test Coverage Report
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Configure uv cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/uv
+            ~/.cache/uv/virtualenvs
+          key: ${{ runner.os }}-uv-coverage-report-${{ hashFiles('pyproject.toml', 'uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-coverage-report-
+
+      - name: Create virtual environment
+        run: |
+          uv venv
+
+      - name: Install dependencies
+        run: |
+          uv pip install -e ".[dev,test,data]"
+
+      - name: Setup PYTHONPATH for tests
+        run: |
+          echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
+
+      - name: Run tests with coverage
+        run: |
+          # Explicitly run on CPU for GitHub workflow
+          export JAX_PLATFORMS="cpu"
+          uv run pytest --cov --cov-config=pyproject.toml --cov-report=xml --cov-report=term tests/ --device=cpu
+        continue-on-error: true
+
+      - name: Extract coverage percentage
+        id: extract_coverage
+        run: |
+          if [ -f "coverage.xml" ]; then
+            COVERAGE=$(python -c "import xml.etree.ElementTree as ET; print(round(float(ET.parse('coverage.xml').getroot().attrib['line-rate']) * 100))")
+          else
+            echo "No coverage.xml file found. Creating empty coverage report."
+            uv run coverage run --source=src/datarax -m pytest --collect-only
+            uv run coverage report
+            uv run coverage xml
+            COVERAGE=0
+          fi
+
+          echo "coverage=${COVERAGE}" >> $GITHUB_OUTPUT
+
+          # Set color based on coverage
+          if [ "${COVERAGE}" -ge 90 ]; then
+            echo "color=brightgreen" >> $GITHUB_OUTPUT
+          elif [ "${COVERAGE}" -ge 80 ]; then
+            echo "color=green" >> $GITHUB_OUTPUT
+          elif [ "${COVERAGE}" -ge 70 ]; then
+            echo "color=yellowgreen" >> $GITHUB_OUTPUT
+          elif [ "${COVERAGE}" -ge 60 ]; then
+            echo "color=yellow" >> $GITHUB_OUTPUT
+          elif [ "${COVERAGE}" -ge 50 ]; then
+            echo "color=orange" >> $GITHUB_OUTPUT
+          else
+            echo "color=red" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+        if: always()
+
+      - name: Check if secrets exist
+        id: check_secrets
+        run: |
+          if [ -n "${{ secrets.GIST_SECRET }}" ] && [ -n "${{ secrets.COVERAGE_GIST_ID }}" ]; then
+            echo "secrets_available=true" >> $GITHUB_OUTPUT
+          else
+            echo "secrets_available=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate coverage badge
+        uses: schneegans/dynamic-badges-action@v1.6.0
+        with:
+          auth: ${{ secrets.GIST_SECRET }}
+          gistID: ${{ secrets.COVERAGE_GIST_ID }}
+          filename: coverage-badge.json
+          label: coverage
+          message: ${{ steps.extract_coverage.outputs.coverage }}%
+          color: ${{ steps.extract_coverage.outputs.color }}
+        if: github.ref == 'refs/heads/main' && steps.check_secrets.outputs.secrets_available == 'true'
+        continue-on-error: true

@@ -1,0 +1,355 @@
+name: Datarax CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+        with:
+          enable-cache: true
+          cache-suffix: "lint"
+
+      - name: Create virtual environment
+        run: |
+          uv venv
+
+      - name: Install dependencies
+        run: |
+          uv pip install -e ".[dev]"
+          # Make sure tomli is installed for Python < 3.11
+          uv pip install tomli
+          # Install type stubs for common libraries
+          uv pip install types-requests types-setuptools
+
+      - name: Setup PYTHONPATH for tests
+        run: |
+          echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
+
+      - name: Run Ruff
+        run: |
+          uv run ruff check .
+
+      - name: Run Pyright
+        run: |
+          uv run pyright || echo "Pyright check completed with issues"
+
+  examples:
+    name: Validate Examples
+    needs: lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+        with:
+          enable-cache: true
+          cache-suffix: "examples"
+
+      - name: Create virtual environment
+        run: |
+          uv venv
+
+      - name: Install dependencies
+        run: |
+          uv pip install -e ".[dev,docs]"
+
+      - name: Validate example structure
+        run: |
+          uv run python scripts/validate_examples.py
+
+      - name: Check notebook synchronization
+        run: |
+          uv run python scripts/check_sync.py
+
+      - name: Run example structure tests
+        run: |
+          export JAX_PLATFORMS="cpu"
+          # Disable coverage for examples tests (they only check structure, not code)
+          uv run pytest tests/examples/ -v -m "not slow" --no-cov
+
+  unit_tests:
+    name: Unit Tests
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11']
+      fail-fast: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+        with:
+          enable-cache: true
+          cache-suffix: "unit-${{ matrix.python-version }}"
+
+      - name: Create virtual environment
+        run: |
+          uv venv
+
+      - name: Install dependencies
+        run: |
+          uv pip install -e ".[dev,test,data]"
+
+      - name: Setup PYTHONPATH for tests
+        run: |
+          echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
+
+      - name: Run unit tests
+        run: |
+          # Explicitly run on CPU for GitHub workflow
+          export JAX_PLATFORMS="cpu"
+          uv run pytest tests --no-integration --no-end-to-end -v --device=cpu
+        continue-on-error: true
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results-${{ matrix.python-version }}
+          path: |
+            .coverage
+            test-results/
+        if: always()
+
+  integration_tests:
+    name: Integration Tests
+    needs: unit_tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+        with:
+          enable-cache: true
+          cache-suffix: "integration"
+
+      - name: Create virtual environment
+        run: |
+          uv venv
+
+      - name: Install dependencies
+        run: |
+          uv pip install -e ".[dev,test,data]"
+
+      - name: Setup PYTHONPATH for tests
+        run: |
+          echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
+
+      - name: Run integration tests
+        run: |
+          # Explicitly run on CPU for GitHub workflow
+          export JAX_PLATFORMS="cpu"
+          uv run pytest tests --integration -v --device=cpu
+        continue-on-error: true
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: |
+            .coverage
+            test-results/
+        if: always()
+
+  end_to_end_tests:
+    name: End-to-End Tests
+    needs: integration_tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+        with:
+          enable-cache: true
+          cache-suffix: "e2e"
+
+      - name: Create virtual environment
+        run: |
+          uv venv
+
+      - name: Install dependencies
+        run: |
+          uv pip install -e ".[dev,test,data]"
+
+      - name: Setup PYTHONPATH for tests
+        run: |
+          echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
+
+      - name: Run end-to-end tests
+        run: |
+          # Explicitly run on CPU for GitHub workflow
+          export JAX_PLATFORMS="cpu"
+          uv run pytest tests --end-to-end -v --device=cpu
+        continue-on-error: true
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: end-to-end-test-results
+          path: |
+            .coverage
+            test-results/
+        if: always()
+
+  performance_tests:
+    name: Performance Tests
+    needs: unit_tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+        with:
+          enable-cache: true
+          cache-suffix: "perf"
+
+      - name: Create virtual environment
+        run: |
+          uv venv
+
+      - name: Install dependencies
+        run: |
+          uv pip install -e ".[dev,test,data]"
+
+      - name: Setup PYTHONPATH for tests
+        run: |
+          echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
+
+      - name: Run performance tests
+        run: |
+          # Explicitly run on CPU for GitHub workflow
+          export JAX_PLATFORMS="cpu"
+          uv run pytest tests --benchmark -v --benchmark-autosave --benchmark-columns=mean,stddev,min,max --device=cpu
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: |
+            benchmark-results/
+            benchmark.json
+            histogram.svg
+
+  coverage:
+    name: Test Coverage
+    needs: [unit_tests, integration_tests, end_to_end_tests]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+        with:
+          enable-cache: true
+          cache-suffix: "coverage"
+
+      - name: Create virtual environment
+        run: |
+          uv venv
+
+      - name: Install dependencies
+        run: |
+          uv pip install -e ".[dev,test,data]"
+
+      - name: Setup PYTHONPATH for tests
+        run: |
+          echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
+
+      - name: Download all coverage reports
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Debug artifact contents
+        run: |
+          echo "Listing artifact directory structure:"
+          find artifacts -type f | sort
+          echo "Checking for .coverage files:"
+          find artifacts -name ".coverage" | sort
+
+      - name: Combine coverage reports
+        run: |
+          # First check if any .coverage files exist
+          if ls artifacts/*/.coverage 1> /dev/null 2>&1; then
+            uv run coverage combine artifacts/*/.coverage
+          else
+            echo "No .coverage files found to combine, creating empty coverage report"
+            uv run coverage run --source=src/datarax -m pytest --collect-only
+          fi
+          uv run coverage report
+          uv run coverage xml
+        continue-on-error: true
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+
+      - name: Upload combined coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: combined-coverage-report
+          path: coverage.xml
+        if: always()

@@ -1,0 +1,13 @@
+# Jupytext configuration for Datarax dual-format examples
+# This file configures conversion between .py and .ipynb files
+
+# Default formats for paired notebooks
+# Using "percent" format which supports cell markers like # %%
+default_jupytext_formats = "ipynb,py:percent"
+
+# Notebook metadata to keep (exclude dynamic metadata for deterministic output)
+# Exclude: jupytext version, notebook IDs, timestamps, cell IDs
+notebook_metadata_filter = "kernelspec,language_info,-jupytext.text_representation.jupytext_version,-jupytext.notebook_metadata_filter,-jupytext.cell_metadata_filter"
+
+# Cell metadata to preserve (exclude execution counts and IDs for determinism)
+cell_metadata_filter = "-all"

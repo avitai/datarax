@@ -1,0 +1,3 @@
+# Schema
+
+::: datarax.config.schema

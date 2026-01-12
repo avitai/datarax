@@ -1,0 +1,3 @@
+# Benchmark
+
+::: datarax.cli.benchmark
