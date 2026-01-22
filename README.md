@@ -280,13 +280,13 @@ complex_pipeline = (
 
 ## Documentation
 
-For complete documentation, please visit [datarax.readthedocs.io](https://datarax.readthedocs.io).
-
-- [Installation Guide](https://datarax.readthedocs.io/en/latest/installation/)
-- [User Guide](https://datarax.readthedocs.io/en/latest/user_guide/)
-- [API Reference](https://datarax.readthedocs.io/en/latest/api_reference/)
-- [Examples](https://datarax.readthedocs.io/en/latest/examples/)
-- [Contributing](https://datarax.readthedocs.io/en/latest/contributing/)
+- [Installation Guide](docs/getting_started/installation.md)
+- [Quick Start](docs/getting_started/quick_start.md)
+- [Core Concepts](docs/getting_started/core_concepts.md)
+- [User Guide](docs/user_guide/)
+- [API Reference](docs/index.md)
+- [Examples](docs/examples/overview.md)
+- [Contributing](docs/contributing/contributing_guide.md)
 
 
 ## Testing

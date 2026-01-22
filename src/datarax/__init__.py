@@ -43,7 +43,7 @@ from datarax.monitoring.dag_monitor import MonitoredDAGExecutor, monitored_pipel
 # Types
 from datarax.typing import Batch, Element
 
-__version__ = "0.1.0"
+__version__ = "0.1.0.post1"
 
 __all__ = [
     # Type aliases

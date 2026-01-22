@@ -56,12 +56,12 @@ dependencies = [
   "psutil>=5.9.0"
 ]
 description = "Datarax: A high-performance, NNX-based data pipeline framework for JAX"
+dynamic = ["version"]
 keywords = ["jax", "flax", "nnx", "data-loading", "machine-learning", "workshop"]
 license = {file = "LICENSE"}
 name = "datarax"
 readme = "README.md"
 requires-python = ">=3.11"
-version = "0.1.0"
 
 [project.optional-dependencies]
 # Platform-specific installation:
@@ -204,6 +204,9 @@ documentation = "docs/setup/cuda-setup.md"
 environment_file = ".env"
 fallback_to_cpu = true
 setup_scripts = ["scripts/fresh_cuda_setup.sh", "scripts/setup_env.py", "scripts/run_tests_with_cuda.sh"]
+
+[tool.hatch.version]
+path = "src/datarax/__init__.py"
 
 [tool.hatch.build.targets.sdist]
 include = ["src/datarax", "README.md", "LICENSE", "pyproject.toml"]
