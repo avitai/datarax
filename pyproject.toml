@@ -21,7 +21,10 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
-  "License :: OSI Approved :: MIT License"
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
+  "Operating System :: MacOS :: MacOS X"
 ]
 dependencies = [
   "absl-py>=1",
@@ -61,7 +64,13 @@ requires-python = ">=3.11"
 version = "0.1.0"
 
 [project.optional-dependencies]
+# Platform-specific installation:
+# - Linux with GPU: pip install datarax[all]
+# - macOS (Apple Silicon): pip install datarax[all-macos]
+# - macOS/Linux CPU-only: pip install datarax[all-cpu]
 all = ["datarax[data,dev,docs,gpu,test]"]
+all-cpu = ["datarax[data,dev,docs,test]"]
+all-macos = ["datarax[data,dev,docs,metal,test]"]
 cuda-dev = [
   # Complete CUDA development environment
   # Includes all dev tools, testing, and GPU support
@@ -114,9 +123,14 @@ docs = [
   "pymdown-extensions>=10.14.3"
 ]
 gpu = [
-  # GPU dependencies - CUDA 12 support
+  # GPU dependencies - CUDA 12 support (Linux only)
   "jax[cuda12]>=0.6.1",
   "jaxlib>=0.6.1"
+]
+metal = [
+  # Metal acceleration for Apple Silicon Macs (M1/M2/M3+)
+  # Provides GPU-like acceleration on macOS
+  "jax-metal>=0.1.0"
 ]
 test = [
   "beartype>=0.14.1",

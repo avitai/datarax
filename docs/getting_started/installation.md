@@ -7,8 +7,14 @@ This guide covers installing Datarax and its dependencies.
 Datarax requires:
 
 - Python 3.11 or higher
-- JAX 0.4.38 or higher
-- Flax 0.10 or higher
+- JAX 0.6.1 or higher
+- Flax 0.12 or higher
+
+**Supported Platforms:**
+
+- Linux (x86_64) - with optional CUDA GPU support
+- macOS (Intel x86_64) - CPU-only
+- macOS (Apple Silicon M1/M2/M3+) - with optional Metal acceleration
 
 ## Basic Installation
 
@@ -18,56 +24,131 @@ Install Datarax with pip:
 pip install datarax
 ```
 
-This will install Datarax with minimal dependencies.
+This will install Datarax with minimal dependencies (CPU-only).
 
 ## Installation with Optional Dependencies
 
 Datarax provides several optional dependency groups:
 
 ```bash
-# Install with all optional dependencies
+# Install with all optional dependencies (Linux with GPU)
 pip install datarax[all]
+
+# Install with all dependencies (CPU-only, works on all platforms)
+pip install datarax[all-cpu]
+
+# Install with all dependencies (macOS with Metal acceleration)
+pip install datarax[all-macos]
 
 # Install with specific optional dependencies
 pip install datarax[docs]     # Documentation dependencies
-pip install datarax[hf]       # HuggingFace datasets support
-pip install datarax[tfds]     # TensorFlow datasets support
-pip install datarax[viz]      # Visualization dependencies
-pip install datarax[benchmark] # Benchmarking tools
+pip install datarax[data]     # Data loading (HuggingFace, TFDS, etc.)
+pip install datarax[test]     # Testing dependencies
+pip install datarax[metal]    # Metal acceleration (Apple Silicon only)
 ```
 
-## GPU Support
+## Platform-Specific Installation
+
+### Linux with NVIDIA GPU (CUDA)
 
 To use Datarax with CUDA-enabled GPUs:
 
 1. Ensure you have compatible NVIDIA drivers installed
-2. Install JAX with CUDA support
+2. Install with GPU support:
 
 ```bash
-# For CUDA 12
-pip install "jax[cuda12_pip]~=0.4.38"
+# Install Datarax with CUDA 12 support
+pip install datarax[all]
 
-# Or for CUDA 11
-pip install "jax[cuda11_pip]~=0.4.38"
+# Or install JAX with CUDA separately
+pip install "jax[cuda12]>=0.6.1"
 ```
 
 This will install the appropriate CUDA and cuDNN dependencies.
+
+### macOS (Intel)
+
+Intel Macs run in CPU-only mode:
+
+```bash
+# Install Datarax for macOS (CPU-only)
+pip install datarax[all-cpu]
+```
+
+### macOS (Apple Silicon - M1/M2/M3+)
+
+Apple Silicon Macs can use Metal for GPU-like acceleration:
+
+```bash
+# Option 1: CPU-only (simpler, always works)
+pip install datarax[all-cpu]
+
+# Option 2: With Metal acceleration (recommended for performance)
+pip install datarax[all-macos]
+```
+
+**Note:** Metal acceleration requires:
+
+- macOS 12.0 (Monterey) or later
+- Apple Silicon chip (M1, M2, M3, or newer)
+
+To verify Metal is working:
+
+```python
+import jax
+print(jax.devices())
+# Should show: [METAL:0] or similar
+```
 
 ## Development Installation
 
 For development, install Datarax from source:
 
 ```bash
-git clone https://github.com/datarax/datarax.git
+git clone https://github.com/avitai/datarax.git
 cd datarax
-pip install -e ".[dev,docs,test]"
+
+# Use the automated setup script (recommended)
+./setup.sh
+
+# Or install manually based on your platform:
+# Linux with GPU:
+pip install -e ".[all]"
+
+# macOS (Apple Silicon with Metal):
+pip install -e ".[all-macos]"
+
+# Any platform (CPU-only):
+pip install -e ".[all-cpu]"
 ```
 
 ## Environment Setup
 
 Datarax works well with environment management tools:
 
-### Using uv (Recommended)
+### Using the Setup Script (Recommended)
+
+The included `setup.sh` script automatically detects your platform and configures the environment:
+
+```bash
+# Clone the repository
+git clone https://github.com/avitai/datarax.git
+cd datarax
+
+# Run setup with auto-detection
+./setup.sh
+
+# Or with specific options:
+./setup.sh --cpu-only    # Force CPU-only mode
+./setup.sh --metal       # Enable Metal (Apple Silicon only)
+./setup.sh --force       # Reinstall existing environment
+./setup.sh --help        # Show all options
+
+# Activate the environment
+source ./activate.sh
+```
+
+### Using uv Manually
 
 [uv](https://github.com/astral-sh/uv) is the recommended package manager for Datarax development:
 
@@ -79,8 +160,15 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv venv
 source .venv/bin/activate
 
-# Install Datarax and dependencies
+# Install based on your platform:
+# Linux with CUDA:
 uv pip install -e ".[all]"
+
+# macOS with Metal:
+uv pip install -e ".[all-macos]"
+
+# CPU-only (any platform):
+uv pip install -e ".[all-cpu]"
 ```
 
 ### Using conda/mamba
@@ -88,7 +176,11 @@ uv pip install -e ".[all]"
 ```bash
 conda create -n datarax python=3.11
 conda activate datarax
-pip install datarax
+
+# Install based on your platform
+pip install datarax[all-cpu]  # CPU-only
+# or
+pip install datarax[all-macos]  # macOS with Metal
 ```
 
 ## Verifying Installation
@@ -124,9 +216,9 @@ for i, batch in enumerate(pipeline):
 
 ### Common Issues
 
-#### JAX GPU Detection Issues
+#### JAX GPU Detection Issues (Linux/CUDA)
 
-If JAX doesn't detect your GPU:
+If JAX doesn't detect your NVIDIA GPU:
 
 1. Verify CUDA installation: `nvidia-smi`
 2. Check JAX can see GPU devices:
@@ -143,12 +235,45 @@ If JAX doesn't detect your GPU:
    export XLA_PYTHON_CLIENT_ALLOCATOR=platform
    ```
 
+#### Metal Not Working (macOS Apple Silicon)
+
+If Metal acceleration isn't working on Apple Silicon:
+
+1. Verify you have an Apple Silicon Mac:
+
+   ```bash
+   uname -m  # Should show "arm64"
+   ```
+
+2. Check that jax-metal is installed:
+
+   ```bash
+   pip list | grep jax-metal
+   ```
+
+3. Verify JAX sees the Metal device:
+
+   ```python
+   import jax
+   print(jax.devices())
+   # Should show [METAL:0] or similar
+   ```
+
+4. If using the setup script, ensure you used the `--metal` flag:
+
+   ```bash
+   ./setup.sh --metal --force
+   ```
+
+5. Ensure you're on macOS 12.0+ (Monterey or later)
+
 #### Memory Issues
 
-For GPU memory management:
+For GPU/Metal memory management:
 
 ```bash
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.75  # Use only 75% of GPU memory
+export XLA_PYTHON_CLIENT_PREALLOCATE=false  # Don't preallocate memory
 ```
 
 #### Version Conflicts
@@ -156,17 +281,34 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.75  # Use only 75% of GPU memory
 If you encounter package conflicts:
 
 ```bash
+# Linux with GPU:
 pip install --upgrade "datarax[all]" --force-reinstall
+
+# macOS:
+pip install --upgrade "datarax[all-cpu]" --force-reinstall
+
+# macOS with Metal:
+pip install --upgrade "datarax[all-macos]" --force-reinstall
+```
+
+#### TensorFlow Issues on macOS
+
+TensorFlow on macOS is CPU-only. If you encounter TensorFlow-related errors:
+
+```bash
+# Ensure you're using the CPU version
+export TF_CPP_MIN_LOG_LEVEL=1
 ```
 
 ### Getting Help
 
 If you encounter issues:
 
-1. Check the [GitHub issues](https://github.com/datarax/datarax/issues) for similar problems
+1. Check the [GitHub issues](https://github.com/avitai/datarax/issues) for similar problems
 2. Create a new issue with:
    - Datarax version
    - JAX version
    - Python version
-   - CUDA version (if using GPU)
+   - Platform (Linux, macOS Intel, macOS Apple Silicon)
+   - CUDA version (if using Linux GPU)
    - Error messages and a minimal code example

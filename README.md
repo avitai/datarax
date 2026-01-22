@@ -26,35 +26,70 @@
 
 ## Installation
 
-**IMPORTANT:** Datarax uses `uv` as its package manager for all installation, development, and deployment tasks.
+Install Datarax using pip:
 
 ```bash
-# Install uv if you don't have it already
+# Basic installation
+pip install datarax
+
+# With data loading support (HuggingFace, TFDS, Audio/Image libs)
+pip install datarax[data]
+
+# With GPU support (CUDA 12)
+pip install datarax[gpu]
+
+# Full installation with all optional dependencies
+pip install datarax[all]
+```
+
+### macOS / Apple Silicon
+
+Datarax supports macOS on both Intel and Apple Silicon (M1/M2/M3) processors.
+
+```bash
+# Install for macOS (CPU mode - recommended)
+pip install datarax[all-cpu]
+
+# Run with explicit CPU backend
+JAX_PLATFORMS=cpu python your_script.py
+```
+
+**Metal GPU Acceleration (Experimental):** JAX supports Apple's Metal backend for GPU acceleration on M1+ chips:
+
+```bash
+pip install jax-metal
+JAX_PLATFORMS=metal python your_script.py
+```
+
+> **Note:** Metal GPU acceleration is **community-tested**. CI runs on macOS with CPU only. If you can help validate Metal support, please open an issue with your results.
+
+**Known Limitations:**
+- **TensorFlow Datasets**: May hang on import on macOS ARM64. Datarax uses lazy imports to handle this.
+- **JAX Profiler**: Tracing is automatically disabled on macOS due to TensorBoard compatibility.
+
+## Development Setup
+
+For contributors and developers, Datarax uses `uv` as its package manager:
+
+```bash
+# Install uv
 pip install uv
 
-# Run the automatic setup script (creates environment & installs dependencies)
+# Clone and setup
+git clone https://github.com/avitai/datarax.git
+cd datarax
+
+# Run automatic setup (creates venv & installs dependencies)
 ./setup.sh
 
 # Activate the environment
 source activate.sh
 
-# Install via uv
-uv pip install datarax
-
-# Install with optional dependencies
-uv pip install datarax[data]     # For data loading (HF, TFDS, Audio/Image libs)
-uv pip install datarax[gpu]      # For GPU support (CUDA 12)
-
-# For development
-uv pip install datarax[dev]
-
-# For all dependencies
-uv pip install datarax[all]
+# Or install manually with uv
+uv pip install -e ".[dev]"
 ```
 
-## Development Environment
-
-Datarax development requires using `uv` for all package management operations. See the [Development Environment Guide](docs/dev_guide.md) for detailed instructions on setting up a development environment, including:
+See the [Development Environment Guide](docs/dev_guide.md) for detailed instructions on:
 
 - Creating a virtual environment with `uv venv`
 - Installing dependencies through `pyproject.toml`

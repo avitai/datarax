@@ -78,6 +78,25 @@ uv sync
 uv add package_name
 ```
 
+### Installing Multiple Extras
+
+> **Important:** `uv sync` and `uv pip install` have different syntax for extras.
+
+```bash
+# ✅ Correct: pip-style bracket syntax (commas inside brackets)
+uv pip install -e ".[dev,test,data]"
+
+# ✅ Correct: multiple --extra flags for uv sync
+uv sync --extra dev --extra test --extra data
+
+# ✅ Recommended: use compound extras defined in pyproject.toml
+uv sync --extra all      # includes dev, test, data, docs, gpu
+uv sync --extra all-cpu  # includes dev, test, data, docs (no gpu)
+
+# ❌ Wrong: comma-separated values with --extra flag
+# uv sync --extra dev,test,data  # This will ERROR!
+```
+
 ### Dependency Groups
 
 | Group | Contents |

@@ -8,6 +8,7 @@ to JAX, Flax NNX, and Grain best practices.
 import gc
 import json
 import os
+import platform
 import tempfile
 import time
 import warnings
@@ -19,6 +20,10 @@ import jax
 import jax.numpy as jnp
 import jax.profiler
 import numpy as np
+
+# Detect platform - JAX profiler tracing uses TensorFlow/TensorBoard which can
+# crash on macOS ARM64 due to known TensorFlow issues
+IS_MACOS = platform.system() == "Darwin"
 
 from datarax.monitoring.metrics import MetricsCollector
 from datarax.performance.roofline import RooflineAnalyzer
@@ -501,8 +506,19 @@ class AdvancedProfiler:
         gc.collect()
 
         # 2. Trace execution if enabled (JAX Profiler)
-        if self.config.enable_trace:
+        # Note: Skip tracing on macOS - JAX profiler uses TensorFlow/TensorBoard which
+        # crashes on macOS ARM64 due to known upstream issues (tensorflow/tensorflow#52138)
+        trace_enabled = self.config.enable_trace and not IS_MACOS
+        if trace_enabled:
             jax.profiler.start_trace(self.config.trace_dir)
+        elif self.config.enable_trace and IS_MACOS:
+            warnings.warn(
+                "JAX profiler tracing is disabled on macOS due to TensorFlow "
+                "ARM64 compatibility issues. Benchmarking will continue "
+                "without tracing.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
         # 3. Main Benchmark Loop
         iteration_times = []
@@ -528,7 +544,7 @@ class AdvancedProfiler:
             end_time = time.perf_counter()
             iteration_times.append(end_time - start_time)
 
-        if self.config.enable_trace:
+        if trace_enabled:
             jax.profiler.stop_trace()
             suggestions.append(f"Trace saved to {self.config.trace_dir}. View with TensorBoard.")
         if do_memory:

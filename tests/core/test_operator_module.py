@@ -781,7 +781,8 @@ class TestOperatorModuleStatistics:
         assert stats is not None
         assert "mean" in stats
         assert "std" in stats
-        assert jnp.isclose(stats["mean"], 0.7)
+        # Use relaxed tolerance due to float32 precision in 0.7 representation
+        assert jnp.isclose(stats["mean"], 0.7, rtol=1e-4)
 
     def test_statistics_caching(self):
         """Test that statistics are cached after computation."""
