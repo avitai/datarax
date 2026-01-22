@@ -9,12 +9,16 @@ These tests validate that example files:
 
 from __future__ import annotations
 
+import platform
 import re
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+# Detect macOS - TensorFlow crashes on macOS ARM64
+IS_MACOS = platform.system() == "Darwin"
 
 # Path to examples directory
 EXAMPLES_DIR = Path(__file__).parent.parent.parent / "docs" / "examples"
@@ -135,6 +139,11 @@ class TestExampleExecution:
     @pytest.mark.parametrize("example_path", EXAMPLE_FILES, ids=example_id)
     def test_example_executes(self, example_path: Path) -> None:
         """Each example should execute without errors."""
+        # Skip TFDS examples on macOS - TensorFlow hangs on ARM64
+        # https://github.com/tensorflow/tensorflow/issues/52138
+        if IS_MACOS and "tfds" in str(example_path).lower():
+            pytest.skip("TFDS examples skipped on macOS (TensorFlow ARM64 issue)")
+
         result = subprocess.run(
             [sys.executable, str(example_path)],
             capture_output=True,

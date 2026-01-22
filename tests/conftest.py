@@ -1,33 +1,58 @@
 """Test configuration for Datarax."""
 
 import os
+import platform
 import sys
 from typing import Any
 
-# Set TensorFlow environment variables before import to prevent segfaults
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+# Detect platform
+IS_MACOS = platform.system() == "Darwin"
+IS_LINUX = platform.system() == "Linux"
+
+# Set TensorFlow environment variables BEFORE any TF import to prevent hangs/segfaults
+# These must be set before TensorFlow is imported anywhere
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress all TF logs
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
-os.environ["TF_CUDNN_USE_AUTOTUNE"] = "0"
-os.environ["TF_CUDNN_DETERMINISTIC"] = "1"
-# Disable TensorFlow's memory preallocation
-os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"  # Disable oneDNN (can cause hangs)
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"  # Pure Python protobuf
+
+if IS_MACOS:
+    # macOS-specific settings to prevent TensorFlow import hang on ARM64
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""  # No CUDA on macOS
+    os.environ["TF_NUM_INTEROP_THREADS"] = "1"  # Limit threading
+    os.environ["TF_NUM_INTRAOP_THREADS"] = "1"  # Limit threading
+    # Disable Metal/GPU detection that can hang in CI
+    os.environ["TF_METAL_DEVICE_SELECTOR"] = ""
+    os.environ["TF_DISABLE_MLC_BRIDGE"] = "1"  # Disable Apple ML Compute bridge
+elif IS_LINUX:
+    # CUDA-specific settings (Linux only)
+    os.environ["TF_CUDNN_USE_AUTOTUNE"] = "0"
+    os.environ["TF_CUDNN_DETERMINISTIC"] = "1"
+    os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 
 import jax
 import jax.numpy as jnp
 import pytest
 
-# Configure TensorFlow GPU memory growth before any TF imports
-try:
-    import tensorflow as tf
+# Configure TensorFlow - only on Linux
+# Note: TensorFlow import on macOS ARM64 can hang during pytest collection due to
+# Metal/GPU device detection issues. This is a known upstream issue (tensorflow/tensorflow#52138).
+# Major ML projects (Keras, Flax) don't test on macOS at all for this reason.
+# We skip TensorFlow-dependent tests on macOS using module-level pytest.skip().
+if not IS_MACOS:
+    try:
+        import tensorflow as tf
 
-    # Disable all GPUs for TensorFlow to avoid conflicts with JAX
-    tf.config.set_visible_devices([], "GPU")
-    # Force TensorFlow to use CPU only (without affecting JAX)
-    tf.config.experimental.set_visible_devices([], "GPU")
-except ImportError:
-    pass  # TensorFlow not installed
-except Exception as e:
-    print(f"Warning: Could not configure TensorFlow: {e}")
+        if IS_LINUX:
+            # Disable all GPUs for TensorFlow to avoid conflicts with JAX
+            try:
+                tf.config.set_visible_devices([], "GPU")
+            except Exception:
+                pass
+    except ImportError:
+        pass  # TensorFlow not installed
+    except Exception as e:
+        print(f"Warning: Could not configure TensorFlow: {e}")
 
 
 # Configure beartype for runtime type checking

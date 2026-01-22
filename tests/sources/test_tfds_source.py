@@ -3,13 +3,24 @@
 This module contains tests for the unified TensorFlow Datasets data source implementation.
 """
 
-import jax
+import platform
 import pytest
-import tensorflow as tf
+
+# Skip entire module on macOS ARM64 - TensorFlow import hangs during pytest collection
+# due to Metal/GPU device detection issues. This is a known upstream issue:
+# https://github.com/tensorflow/tensorflow/issues/52138
+# Note: Major ML projects (Keras, Flax) don't run CI tests on macOS for this reason.
+if platform.system() == "Darwin":
+    pytest.skip(
+        "Skipping TFDS tests on macOS (TensorFlow ARM64 import hang issue)",
+        allow_module_level=True,
+    )
+
+import jax
 import flax.nnx as nnx
 
-
-# Skip tests if tensorflow_datasets is not available
+# Skip tests if tensorflow or tensorflow_datasets is not available
+tf = pytest.importorskip("tensorflow")
 pytest.importorskip("tensorflow_datasets")
 
 from datarax.sources import TFDSSource, TfdsDataSourceConfig

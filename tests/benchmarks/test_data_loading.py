@@ -4,6 +4,7 @@ This module contains comprehensive benchmark tests for data loading,
 including performance tests, error handling, and edge cases.
 """
 
+import platform
 import time
 from typing import Any
 from unittest.mock import Mock, MagicMock, patch
@@ -12,6 +13,10 @@ import jax
 import jax.numpy as jnp
 import pytest
 import numpy as np
+
+# Detect macOS - TensorFlow crashes on macOS ARM64 due to Metal/GPU detection issues
+# https://github.com/tensorflow/tensorflow/issues/52138
+IS_MACOS = platform.system() == "Darwin"
 
 # Import TFDS and HF modules
 # These dependencies are now included in the test-cpu dependencies
@@ -117,6 +122,10 @@ def test_inmemory_source_benchmark(benchmark, benchmark_image_data):
     assert result["examples_per_second"] > 1000, "InMemory source performance below threshold"
 
 
+@pytest.mark.skipif(
+    IS_MACOS,
+    reason="TensorFlow crashes on macOS ARM64 (tensorflow/tensorflow#52138)"
+)
 def test_tfds_source_benchmark(benchmark):
     """Benchmark the TFDSSource performance."""
     # Skip this test if tensorflow_datasets is not available
@@ -145,6 +154,10 @@ def test_tfds_source_benchmark(benchmark):
     assert result["examples_per_second"] > 100, "TFDS source performance below threshold"
 
 
+@pytest.mark.skipif(
+    IS_MACOS,
+    reason="HuggingFace datasets may have TensorFlow backend issues on macOS ARM64"
+)
 def test_hf_source_benchmark(benchmark):
     """Benchmark the HFSource performance."""
     # Skip this test if datasets is not available

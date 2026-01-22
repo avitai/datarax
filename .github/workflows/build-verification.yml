@@ -9,10 +9,11 @@ on:
 
 jobs:
   build:
-    name: Package Build Verification
-    runs-on: ubuntu-latest
+    name: Package Build Verification (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        os: [ubuntu-latest, macos-14]
         python-version: ['3.11', '3.12']
 
     steps:
@@ -27,15 +28,24 @@ jobs:
         uses: astral-sh/setup-uv@v1
         with:
           enable-cache: true
+          cache-suffix: "${{ matrix.os }}-${{ matrix.python-version }}"
 
       - name: Create virtual environment
         run: |
           uv venv
 
-      - name: Install build dependencies
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           uv pip install -e ".[dev,data]"
           # Install type stubs for common libraries
+          uv pip install types-requests types-setuptools
+
+      - name: Install build dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          # Install without CUDA dependencies for macOS
+          uv pip install -e ".[all-cpu]"
           uv pip install types-requests types-setuptools
 
       - name: Setup PYTHONPATH for tests
@@ -69,5 +79,5 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: package-artifacts-py${{ matrix.python-version }}
+          name: package-artifacts-${{ matrix.os }}-py${{ matrix.python-version }}
           path: dist/

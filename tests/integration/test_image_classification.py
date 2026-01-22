@@ -15,11 +15,26 @@ Features Showcased:
 - Mode switching: model.train() / model.eval() for Dropout/BatchNorm
 """
 
+import platform
+import pytest
+
+# Skip entire module on macOS ARM64 - TensorFlow import hangs during pytest collection
+# due to Metal/GPU device detection issues. This is a known upstream issue:
+# https://github.com/tensorflow/tensorflow/issues/52138
+# Note: Major ML projects (Keras, Flax) don't run CI tests on macOS for this reason.
+if platform.system() == "Darwin":
+    pytest.skip(
+        "Skipping TFDS-based tests on macOS (TensorFlow ARM64 import hang issue)",
+        allow_module_level=True,
+    )
+
+# Skip if tensorflow_datasets not installed
+pytest.importorskip("tensorflow_datasets")
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-import pytest
 from flax import nnx
 
 from datarax.core.config import ElementOperatorConfig
