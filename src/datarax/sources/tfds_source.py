@@ -84,12 +84,13 @@ class TFDSSource(DataSourceModule):
     to JAX arrays. It supports both downloaded and streaming modes of TFDS.
 
     Key Features:
-    - Dual-mode operation (stateless iteration and stateful with internal state)
-    - Automatic TensorFlow to JAX conversion
-    - Support for streaming and downloaded datasets
-    - Optional shuffling with configurable buffer size
-    - Batch retrieval with get_batch method
-    - Include/exclude key filtering
+
+        - Dual-mode operation (stateless iteration and stateful with internal state)
+        - Automatic TensorFlow to JAX conversion
+        - Support for streaming and downloaded datasets
+        - Optional shuffling with configurable buffer size
+        - Batch retrieval with get_batch method
+        - Include/exclude key filtering
 
     Examples:
         Create source for MNIST dataset:
@@ -183,7 +184,10 @@ class TFDSSource(DataSourceModule):
             self.length = None
 
         # State variables for stateful iteration
-        self.iterator = nnx.Variable(None)
+        # Note: iterator is a regular attribute (not nnx.Variable) because
+        # TensorFlow iterators cannot be serialized by Orbax checkpointing.
+        # The iterator is recreated lazily when needed.
+        self._iterator = None
         self.epoch = nnx.Variable(0)
         self.index = nnx.Variable(0)
 
@@ -256,15 +260,13 @@ class TFDSSource(DataSourceModule):
             Batch of data as dictionary with arrays of shape (batch_size, ...).
         """
         # For TFDS, we use TensorFlow's batching
-        current_iterator = self.iterator.get_value()
-        if current_iterator is None:
+        if self._iterator is None:
             # Create batched dataset
             batched_dataset = self.dataset.batch(batch_size, drop_remainder=False)
-            current_iterator = iter(batched_dataset)
-            self.iterator.set_value(current_iterator)
+            self._iterator = iter(batched_dataset)
 
         try:
-            tf_batch = next(current_iterator)
+            tf_batch = next(self._iterator)
             batch = self._convert_element(tf_batch)
             self.index.set_value(self.index.get_value() + batch_size)
             return batch
@@ -273,9 +275,8 @@ class TFDSSource(DataSourceModule):
             self.epoch.set_value(self.epoch.get_value() + 1)
             self.index.set_value(0)
             batched_dataset = self.dataset.batch(batch_size, drop_remainder=False)
-            current_iterator = iter(batched_dataset)
-            self.iterator.set_value(current_iterator)
-            tf_batch = next(current_iterator)
+            self._iterator = iter(batched_dataset)
+            tf_batch = next(self._iterator)
             batch = self._convert_element(tf_batch)
             self.index.set_value(self.index.get_value() + batch_size)
             return batch
@@ -333,7 +334,7 @@ class TFDSSource(DataSourceModule):
 
     def reset(self) -> None:
         """Reset the source to the beginning."""
-        self.iterator.set_value(None)
+        self._iterator = None
         self.epoch.set_value(0)
         self.index.set_value(0)
         if self._cache is not None:

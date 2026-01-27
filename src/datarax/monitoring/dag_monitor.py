@@ -23,12 +23,13 @@ class MonitoredDAGExecutor(DAGExecutor):
     performance monitoring, and reporting capabilities.
 
     Key Features:
-    - Automatic metrics collection for all nodes
-    - Performance tracking per node
-    - Memory usage monitoring
-    - Throughput measurement
-    - Custom metrics support
-    - Real-time reporting via callbacks
+
+        - Automatic metrics collection for all nodes
+        - Performance tracking per node
+        - Memory usage monitoring
+        - Throughput measurement
+        - Custom metrics support
+        - Real-time reporting via callbacks
 
     Examples:
         Basic monitoring:

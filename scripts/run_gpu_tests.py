@@ -27,14 +27,26 @@ def check_gpu_availability():
 
 
 def run_examples():
-    """Run examples that were previously disabled due to GPU issues."""
-    examples = [
-        "examples/rng_test_example.py",
-        "examples/advanced_optimized_transforms.py",
+    """Run GPU-relevant examples from the examples directory."""
+    # Find examples in the advanced directory that may benefit from GPU
+    example_dirs = [
+        "docs/examples/advanced/performance",
+        "docs/examples/advanced/distributed",
     ]
 
+    examples = []
+    for example_dir in example_dirs:
+        if os.path.exists(example_dir):
+            for f in os.listdir(example_dir):
+                if f.endswith(".py") and not f.startswith("_"):
+                    examples.append(os.path.join(example_dir, f))
+
+    if not examples:
+        print("\nNo GPU-relevant examples found to run.")
+        return
+
     print("\n" + "=" * 50)
-    print("Running previously disabled examples on GPU")
+    print("Running examples on GPU")
     print("=" * 50)
 
     # Set environment to ensure CUDA is used
@@ -48,6 +60,8 @@ def run_examples():
             print(f"✅ {example} completed successfully")
         except subprocess.CalledProcessError:
             print(f"❌ {example} failed")
+        except FileNotFoundError:
+            print(f"⚠️ {example} not found, skipping")
 
 
 def run_gpu_tests():
@@ -57,38 +71,48 @@ def run_gpu_tests():
     print("=" * 50)
 
     try:
-        # Try to install pytest first in case it's not available
-        subprocess.run(["pip", "install", "pytest"], check=False)  # nosec B603 B607
-
         # Set environment to ensure CUDA is used
         env = os.environ.copy()
         env["JAX_PLATFORMS"] = "cuda"
 
-        # Run all tests with device=gpu to enable GPU tests
-        # Instead of limiting to specific tests with the gpu marker
-        cmd = ["python", "-m", "pytest", "--device=gpu", "-v"]
+        # Run tests with device=gpu to enable GPU execution
+        cmd = [sys.executable, "-m", "pytest", "--device=gpu", "-v"]
 
         # Add specific test files that exist and are relevant for GPU
         test_files = []
-        if os.path.exists("tests/transforms/test_optimized_rng_module.py"):
-            # This file was previously failing on GPU
-            test_files.append("tests/transforms/test_optimized_rng_module.py")
 
+        # Hardware optimization tests
         if os.path.exists("tests/utils/test_hardware_optimizations.py"):
-            # This file contains hardware optimization tests (CPU/GPU)
             test_files.append("tests/utils/test_hardware_optimizations.py")
+
+        # Distributed tests benefit from GPU
+        if os.path.exists("tests/distributed"):
+            test_files.append("tests/distributed/")
+
+        # Sharding tests
+        if os.path.exists("tests/sharding"):
+            test_files.append("tests/sharding/")
+
+        # Benchmarks with GPU markers
+        if os.path.exists("tests/benchmarks/test_batch_alignment.py"):
+            test_files.append("tests/benchmarks/test_batch_alignment.py")
 
         if test_files:
             cmd.extend(test_files)
+        else:
+            # If no specific files, run all tests
+            cmd.append("tests/")
 
-        result = subprocess.run(cmd, check=True, env=env)  # nosec B603
+        result = subprocess.run(cmd, check=False, env=env)  # nosec B603
 
         if result.returncode == 0:
             print("✅ GPU tests completed successfully")
         else:
             print("❌ Some GPU tests failed")
-    except subprocess.CalledProcessError:
-        print("❌ Some GPU tests failed")
+            sys.exit(result.returncode)
+    except subprocess.CalledProcessError as e:
+        print(f"❌ GPU tests failed with error: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

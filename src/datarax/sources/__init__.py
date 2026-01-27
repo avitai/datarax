@@ -6,8 +6,15 @@ Note: TFDSSource is lazily imported to avoid TensorFlow import hang on macOS ARM
 Use explicit import if needed: `from datarax.sources.tfds_source import TFDSSource`
 """
 
+from typing import TYPE_CHECKING
+
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.array_record_source import ArrayRecordSourceModule
+
+# Type-checking imports for static analysis (not executed at runtime)
+if TYPE_CHECKING:
+    from datarax.sources.tfds_source import TFDSSource, TfdsDataSourceConfig
+    from datarax.sources.hf_source import HFSource, HfDataSourceConfig
 
 # Lazy imports for modules with heavy dependencies (TensorFlow, HuggingFace)
 # This prevents import hangs on macOS ARM64 and speeds up import time
@@ -23,6 +30,7 @@ def __getattr__(name: str):
     """Lazy import for TFDSSource and HFSource to avoid heavy dependency loading."""
     if name in _lazy_imports:
         import importlib
+
         module = importlib.import_module(_lazy_imports[name])
         return getattr(module, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

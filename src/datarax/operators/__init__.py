@@ -1,6 +1,7 @@
 """Operator implementations for Datarax.
 
 This module provides concrete operator implementations:
+
 - MapOperator: Unified operator for full-tree and subtree transformations
 
 MapOperator supports two modes:
@@ -11,6 +12,7 @@ MapOperator supports two modes:
 These operators implement the unified OperatorModule API.
 
 Feature Support Status:
+
 - MapOperator: Current implementation (deterministic mode only)
 - Stochastic mode: To be added in future update after use case analysis
 """

@@ -57,10 +57,12 @@ class Metadata:
     This prevents JIT recompilation when only static fields change.
 
     Dynamic fields (traced):
+
         - index, epoch, global_step, batch_idx, shard_id, rng_key: Numeric tracking fields
         - _encoded_key: Byte-encoded key for JAX compatibility
 
     Static fields (not traced):
+
         - source_info: Arbitrary metadata dictionary
     """
 

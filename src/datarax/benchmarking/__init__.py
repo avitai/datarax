@@ -1,6 +1,7 @@
 """Advanced benchmarking and profiling system for Datarax.
 
 This package provides benchmarking capabilities including:
+
 - GPU memory profiling and optimization suggestions
 - Performance regression detection
 - Memory leak detection for long-running pipelines

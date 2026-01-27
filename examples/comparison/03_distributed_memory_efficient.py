@@ -597,7 +597,8 @@ def measure_distributed_performance(
 def test_memory_efficiency():
     """Test memory efficiency with shared memory pools."""
 
-    print("\n" + "=" * 80)
+    print()
+    print("=" * 80)
     print("MEMORY EFFICIENCY COMPARISON")
     print("=" * 80)
 
@@ -645,7 +646,8 @@ def test_memory_efficiency():
 def test_jax_sharding():
     """Test JAX sharding integration (Datarax only)."""
 
-    print("\n" + "=" * 80)
+    print()
+    print("=" * 80)
     print("JAX SHARDING INTEGRATION (Datarax Exclusive)")
     print("=" * 80)
 
@@ -692,7 +694,8 @@ def test_jax_sharding():
 def run_scaling_test():
     """Test scaling with different worker counts."""
 
-    print("\n" + "=" * 80)
+    print()
+    print("=" * 80)
     print("SCALING TEST: WORKER COUNT IMPACT")
     print("=" * 80)
 
@@ -736,7 +739,8 @@ def run_scaling_test():
         workshop_results.append(workshop_perf)
 
     # Plot scaling
-    print("\n" + "=" * 80)
+    print()
+    print("=" * 80)
     print("SCALING RESULTS:")
     print("-" * 60)
     print("Workers | Grain (ms) | Workshop (ms) | Speedup")
@@ -779,7 +783,8 @@ if __name__ == "__main__":
     run_scaling_test()
 
     # Final summary
-    print("\n" + "=" * 80)
+    print()
+    print("=" * 80)
     print("FINAL SUMMARY - DISTRIBUTED ADVANTAGES")
     print("=" * 80)
 
