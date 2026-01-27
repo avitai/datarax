@@ -2,6 +2,7 @@
 
 This module provides a collection of helper functions to inspect, manipulate,
 and validate JAX PyTrees and Datarax Batch objects. It encompasses:
+
 - Type checking utilities (is_array, is_container, is_jax_array)
 - Batch-specific leaf predicates (is_batch_leaf, is_non_jax_leaf)
 - Batch manipulation helpers (split_batch, concatenate_batches)

@@ -1,3 +1,13 @@
+# ---
+# jupyter:
+#   jupytext:
+#     formats: py:percent,ipynb
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+# ---
+
 # %% [markdown]
 """
 # Title: [Descriptive Example Name]

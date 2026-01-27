@@ -5,6 +5,7 @@ configuration schemas for Datarax pipelines and components.
 
 The Datarax configuration system uses TOML for defining pipeline configurations
 and supports configuration of NNX-specific features, including:
+
 - RNG streams for stochastic operations
 - State persistence for stateful components
 - NNX module configuration options

@@ -3,7 +3,7 @@
 import threading
 import time
 import warnings
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 
 from datarax.benchmarking.monitor import (
@@ -741,15 +741,18 @@ class TestProductionMonitor:
         # Mock _collect_metrics to raise an exception
         monitor._collect_metrics = Mock(side_effect=Exception("Collection error"))
 
-        # Start monitoring
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
+        # Start monitoring and verify warnings are issued
+        # Note: warnings.catch_warnings only works in the current thread,
+        # but the monitor runs in a background thread, so we mock warnings.warn
+        with patch("datarax.benchmarking.monitor.warnings.warn") as mock_warn:
             monitor.start_monitoring(interval=0.05)
-            time.sleep(0.1)  # Let it run a bit
+            time.sleep(0.15)  # Let it run a bit longer to ensure callback fires
             monitor.stop_monitoring()
 
             # Should have warnings about monitoring errors
-            assert any("Monitoring error" in str(warning.message) for warning in w)
+            assert mock_warn.called, "Expected warnings.warn to be called"
+            warning_messages = [str(call[0][0]) for call in mock_warn.call_args_list]
+            assert any("Monitoring error" in msg for msg in warning_messages)
 
     def test_concurrent_pipeline_recording(self):
         """Test thread-safe pipeline recording."""

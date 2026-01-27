@@ -118,6 +118,7 @@ Example benchmark format:
 - **Test Environment**: NVIDIA RTX 3090, JAX 0.6.1, Flax 0.12.0
 - **Data Dimensions**: 1000 images, 224x224x3, batch size 32
 - **Metrics**:
+
   - Before: 1,200 examples/sec, 90% GPU utilization
   - After: 4,800 examples/sec, 95% GPU utilization
   - Speedup: 4.0x
@@ -135,7 +136,7 @@ from jax.profiler import start_trace, stop_trace
 start_trace("/tmp/profile_dir")
 
 # Run your Datarax pipeline
-for batch in pipeline.iterator(pipeline_seed=42):
+for batch in pipeline:
     # Process batch
     pass
 
@@ -148,13 +149,18 @@ stop_trace()
 ```python
 from datarax.benchmarking.pipeline_throughput import PipelineBenchmark
 
-# Create a benchmark for your pipeline
-benchmark = PipelineBenchmark(pipeline)
+# Create a benchmark for your pipeline (pass DAGExecutor from from_source())
+benchmark = PipelineBenchmark(
+    data_stream=pipeline,
+    num_batches=50,
+    warmup_batches=5,
+)
 
 # Run the benchmark and get results
-results = benchmark.run(num_batches=10)
-print(f"Throughput: {results.throughput:.2f} examples/sec")
-print(f"Average batch time: {results.avg_batch_time:.4f}s")
+results = benchmark.run(pipeline_seed=42)
+print(f"Throughput: {results['examples_per_second']:.2f} examples/sec")
+print(f"Batches per second: {results['batches_per_second']:.2f}")
+print(f"Duration: {results['duration_seconds']:.4f}s")
 ```
 
 ## Common Performance Pitfalls
@@ -235,4 +241,4 @@ ls benchmark-results/
 
 By following these guidelines, you can contribute meaningful performance improvements to Datarax while maintaining code quality and correctness. Remember that the best optimizations are those that target actual bottlenecks identified through profiling, and that provide significant speedups with minimal impact on code readability and maintainability.
 
-For general development setup and tools, see the [Developer Guide](../dev_guide.md).
+For general development setup and tools, see the [Developer Guide](dev_guide.md).

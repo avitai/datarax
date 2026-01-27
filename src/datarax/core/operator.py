@@ -4,6 +4,7 @@ This module provides OperatorModule, the base class for all parametric,
 differentiable data transformations in Datarax.
 
 Key Features:
+
 - Config-based initialization with OperatorConfig
 - Stochastic mode (with random parameter generation)
 - Deterministic mode (no randomness)

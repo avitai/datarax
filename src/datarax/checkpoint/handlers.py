@@ -36,6 +36,7 @@ class OrbaxCheckpointHandler:
     reimplementing serialization logic.
 
     Following Orbax patterns from:
+
     - standard_checkpoint_handler.py for PyTree checkpointing
     - random_key_checkpoint_handler.py for PRNG key handling
     """

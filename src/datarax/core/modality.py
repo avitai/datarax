@@ -5,6 +5,7 @@ This module provides base classes for operators that work on single modalities
 (e.g., image, text, audio) and can have learnable parameters via Flax NNX.
 
 Key Features:
+
 - Single-field transformations with coordinate auxiliary fields
 - Value domain constraints and clipping
 - Learnable parameters support via Flax NNX
@@ -49,10 +50,11 @@ class ModalityOperatorConfig(OperatorConfig):
     """Configuration for modality-specific operators.
 
     Captures common patterns across modalities:
-    - Field identification (primary + auxiliary)
-    - Value domain constraints
-    - Transformation coordination settings
-    - Learnable parameter support via Flax NNX
+
+        - Field identification (primary + auxiliary)
+        - Value domain constraints
+        - Transformation coordination settings
+        - Learnable parameter support via Flax NNX
 
     Each ModalityOperator handles a SINGLE modality (specific field in Element).
     Multi-modal data handled by composing multiple ModalityOperators via
@@ -72,6 +74,7 @@ class ModalityOperatorConfig(OperatorConfig):
                                     (e.g., biological validity, clinical plausibility)
 
     Validation Rules:
+
         - field_key must be non-empty string
         - clip_range must be tuple of (min, max) where min < max
         - Inherits stochastic validation from OperatorConfig
@@ -155,38 +158,42 @@ class ModalityOperator(OperatorModule):
     """Base class for modality-specific operators with learnable parameter support.
 
     Provides common functionality:
-    - Field extraction and remapping
-    - Value range validation and clipping
-    - Auxiliary field coordination
-    - Integration with MapOperator for transformations
-    - Learnable parameter support via Flax NNX
+
+        - Field extraction and remapping
+        - Value range validation and clipping
+        - Auxiliary field coordination
+        - Integration with MapOperator for transformations
+        - Learnable parameter support via Flax NNX
 
     Subclasses (ImageOperator, AudioOperator, etc.) provide:
-    - Modality-specific configurations
-    - Domain-specific transformation functions
-    - Validation logic for modality data
-    - Learnable parameters (e.g., augmentation strategies, normalization params)
+
+        - Modality-specific configurations
+        - Domain-specific transformation functions
+        - Validation logic for modality data
+        - Learnable parameters (e.g., augmentation strategies, normalization params)
 
     Key Features:
-    - Compatible with nnx.jit, jax.vmap, jax.grad
-    - Supports learnable parameters via nnx.Param
-    - End-to-end differentiable data pipelines
-    - Can be optimized jointly with model
-    - Operates on Batch[Element] (inherited from OperatorModule)
+
+        - Compatible with nnx.jit, jax.vmap, jax.grad
+        - Supports learnable parameters via nnx.Param
+        - End-to-end differentiable data pipelines
+        - Can be optimized jointly with model
+        - Operates on Batch[Element] (inherited from OperatorModule)
 
     Inherited Features from OperatorModule:
-    - **apply_batch()**: Automatically handles batched operations by calling apply()
-      on each element. Override only if you need custom batch-level logic (e.g.,
-      batch normalization, cross-element operations). Default is sufficient for
-      most element-wise transformations.
 
-    - **Statistics system**: Optionally collect and use batch statistics via stats
-      parameter in apply(). Useful for adaptive operations (e.g., batch-aware
-      normalization). Statistics are computed externally and passed in.
+        - **apply_batch()**: Automatically handles batched operations by calling apply()
+          on each element. Override only if you need custom batch-level logic (e.g.,
+          batch normalization, cross-element operations). Default is sufficient for
+          most element-wise transformations.
 
-    - **Caching system**: Results can be cached based on operator configuration
-      and input characteristics. Inherited from base OperatorModule, helps avoid
-      redundant computation for deterministic operators.
+        - **Statistics system**: Optionally collect and use batch statistics via stats
+          parameter in apply(). Useful for adaptive operations (e.g., batch-aware
+          normalization). Statistics are computed externally and passed in.
+
+        - **Caching system**: Results can be cached based on operator configuration
+          and input characteristics. Inherited from base OperatorModule, helps avoid
+          redundant computation for deterministic operators.
 
     Subclass Implementation Pattern:
         ```python
@@ -349,10 +356,9 @@ class ModalityOperator(OperatorModule):
 
         Examples:
             ```python
-            # Stochastic rotation operator
             def generate_random_params(self, rng, data_shapes):
+                # Stochastic rotation: generate per-element angles
                 batch_size = data_shapes[self.config.field_key][0]
-                # Generate per-element rotation angles
                 return jax.random.uniform(rng, (batch_size,), minval=0, maxval=2*jnp.pi)
             ```
 
@@ -443,18 +449,9 @@ class ModalityOperator(OperatorModule):
 
         Examples:
             ```python
-            # Overwrite source field (target_key=None)
-            result = self._remap_field(data, transformed_image)
-            # result["image"] now contains transformed_image
-
-            # Create new field (target_key="processed")
-            result = self._remap_field(data, transformed_image)
-            # result["processed"] contains transformed_image
-            # result["image"] preserves original
-
-            # Nested field (field_key="data.image")
-            result = self._remap_field(data, transformed_image)
-            # result["data"]["image"] now contains transformed_image
+            result = self._remap_field(data, transformed_image)  # Overwrite source
+            result = self._remap_field(data, transformed_image)  # New field
+            result = self._remap_field(data, transformed_image)  # Nested field
             ```
         """
         target_key = self.config.target_key or self.config.field_key

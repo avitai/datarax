@@ -40,19 +40,19 @@ for i, batch in enumerate(pipeline):
 
 `MemorySource` accepts any iterable of elements, such as a list of dictionaries or arrays.
 
-### TFDSSource
+### TFDSEagerSource
 
-For data from TensorFlow Datasets, use `TFDSSource`:
+For data from TensorFlow Datasets, use `TFDSEagerSource`:
 
 ```python
 from datarax import from_source
-from datarax.sources import TFDSSource, TfdsDataSourceConfig
+from datarax.sources import TFDSEagerSource, TFDSEagerConfig
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.dag.nodes import OperatorNode
 
 # Load MNIST from TensorFlow Datasets
-config = TfdsDataSourceConfig(name="mnist", split="train")
-train_source = TFDSSource(config)
+config = TFDSEagerConfig(name="mnist", split="train")
+train_source = TFDSEagerSource(config)
 
 # Define normalization as an operator
 def normalize(element, key=None):
@@ -79,26 +79,28 @@ for i, batch in enumerate(train_pipeline):
         break
 ```
 
-`TFDSSource` handles downloading, caching, and preprocessing datasets from the TensorFlow Datasets catalog.
+`TFDSEagerSource` handles downloading, caching, and preprocessing datasets from the TensorFlow Datasets catalog.
 
-### HFSource
+> **Tip:** Use `from_tfds(name, split, ...)` factory function for automatic eager/streaming mode selection.
 
-For data from Hugging Face datasets, use `HFSource`:
+### HFEagerSource
+
+For data from Hugging Face datasets, use `HFEagerSource`:
 
 ```python
 from datarax import from_source
-from datarax.sources import HFSource, HfDataSourceConfig
+from datarax.sources import HFEagerSource, HFEagerConfig
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.dag.nodes import OperatorNode
 
 # Load dataset from HuggingFace (streaming mode for large datasets)
-config = HfDataSourceConfig(
+config = HFEagerConfig(
     name="glue",
     config_name="sst2",  # Use SST-2 for simpler example
     split="train",
     streaming=True
 )
-train_source = HFSource(config)
+train_source = HFEagerSource(config)
 
 # Define field extraction as an operator
 def extract_fields(element, key=None):
@@ -126,7 +128,9 @@ for i, batch in enumerate(pipeline):
         break
 ```
 
-`HFSource` supports both downloaded and streaming modes, allowing you to work with datasets of any size.
+`HFEagerSource` supports both downloaded and streaming modes, allowing you to work with datasets of any size.
+
+> **Tip:** Use `from_hf(name, split, ...)` factory function for automatic eager/streaming mode selection.
 
 ### ArrayRecordSourceModule
 
@@ -320,10 +324,12 @@ When working with data sources:
 Datarax provides the following data sources:
 
 - **MemorySource**: For data already in memory (lists, arrays)
-- **TFDSSource**: For TensorFlow Datasets
-- **HFSource**: For Hugging Face datasets
+- **TFDSEagerSource**: For TensorFlow Datasets
+- **HFEagerSource**: For Hugging Face datasets
 - **ArrayRecordSourceModule**: For array record format files
 - **Custom sources**: Subclass `DataSourceModule` for your own sources
+
+> **Factory Functions:** Use `from_tfds()` and `from_hf()` for automatic eager/streaming mode selection based on your configuration.
 
 ## Next Steps
 

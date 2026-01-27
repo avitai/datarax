@@ -45,7 +45,7 @@ from datarax.checkpoint import (
     OrbaxCheckpointHandler,  # type: ignore
 )
 from datarax.dag import DAGExecutor  # type: ignore
-from datarax.sources.tfds_source import TfdsDataSourceConfig, TFDSSource  # type: ignore
+from datarax.sources.tfds_source import TFDSEagerConfig, TFDSEagerSource  # type: ignore
 from datarax.core.operator import OperatorModule  # type: ignore
 from datarax.core.config import OperatorConfig  # type: ignore
 
@@ -207,19 +207,19 @@ class AugmentationOperator(OperatorModule):
 def setup_data_pipeline(batch_size: int = 32):
     """Set up data pipelines for training and evaluation."""
     # Set up data sources (config-based API)
-    train_config = TfdsDataSourceConfig(
+    train_config = TFDSEagerConfig(
         name="mnist:3.*.*",
         split="train[:2000]",  # Use 2000 samples for faster testing
         shuffle=True,
     )
-    train_source = TFDSSource(train_config, rngs=nnx.Rngs(0))
+    train_source = TFDSEagerSource(train_config, rngs=nnx.Rngs(0))
 
-    test_config = TfdsDataSourceConfig(
+    test_config = TFDSEagerConfig(
         name="mnist:3.*.*",
         split="test[:500]",  # Use 500 samples for testing
         shuffle=False,
     )
-    test_source = TFDSSource(test_config, rngs=nnx.Rngs(1))
+    test_source = TFDSEagerSource(test_config, rngs=nnx.Rngs(1))
 
     # Create data streams
     train_stream = (

@@ -1,6 +1,7 @@
 """Unified composite operator module.
 
 Implements CompositeOperatorModule with 11 composition strategies:
+
 - Sequential (3 variants): Chain operators
 - Parallel (3 variants): Apply all to same input
 - Ensemble (4 reductions): Parallel with mean/sum/max/min
@@ -12,23 +13,27 @@ JAX vmap/JIT Compatibility Patterns
 This module implements several critical patterns for vmap and JIT compatibility:
 
 1. **Integer-Based Branching** (lines 730-760):
+
    - Branching uses `jax.lax.switch` with integer indices, not dict lookups
    - Router functions must return integers (0, 1, 2, ...), not strings
    - Why: Traced JAX values cannot be used as dict keys or in Python if statements
    - Pattern: `jax.lax.switch(index, [fn0, fn1, fn2], operands)`
 
 2. **Fixed-Shape Conditional Outputs** (lines 599-672):
+
    - Conditional strategies include ALL operator outputs (even False conditions)
    - False-condition operators return identity via `jax.lax.cond` noop function
    - Why: vmap requires all code paths to return the same PyTree structure
    - Pattern: No dynamic filtering, use masking in merge instead
 
 3. **PyTree Structure Preservation in Dict Merge** (lines 402-413):
+
    - Dict merge returns `{key: {op_0: val, op_1: val}}` not `{op_0: {key: val}}`
    - Why: Preserves input PyTree structure for vmap out_axes specification
    - Pattern: Use `jax.tree.map()` to transform leaves into operator dicts
 
 4. **Static Branching with jax.lax.cond** (lines 576-591):
+
    - Conditional execution uses `jax.lax.cond(condition, true_fn, false_fn, operands)`
    - Why: Python if statements break tracing, jax.lax.cond is trace-compatible
    - Pattern: Define apply_fn and noop_fn, use jax.lax.cond for selection
@@ -77,6 +82,7 @@ class CompositeOperatorConfig(OperatorConfig):
     """Configuration for composite operators.
 
     Inherits from OperatorConfig:
+
         - name: str | None
         - stochastic: bool (whether any child is stochastic)
         - stream_name: str (for RNG if stochastic)

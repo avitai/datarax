@@ -533,6 +533,7 @@ class RebatchNode(Node):
     It delegates to one of three implementation strategies based on the mode.
 
     Modes:
+
         - 'differentiable': Maintains full differentiability for training
         - 'fast': JIT-optimized for maximum performance
         - 'gradient_transparent': Preserves gradient flow through values

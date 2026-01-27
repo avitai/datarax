@@ -602,7 +602,8 @@ def compare_training_workflows():
 def compare_checkpointing():
     """Compare checkpointing mechanisms with actual measurements."""
 
-    print("\n" + "=" * 70)
+    print()
+    print("=" * 70)
     print("CHECKPOINTING COMPARISON")
     print("=" * 70)
 
@@ -714,7 +715,8 @@ def compare_checkpointing():
 def compare_code_complexity(metrics_data: dict):
     """Compare code complexity with actual measurements."""
 
-    print("\n" + "=" * 70)
+    print()
+    print("=" * 70)
     print("CODE COMPLEXITY COMPARISON (ACTUAL MEASUREMENTS)")
     print("=" * 70)
 
@@ -750,7 +752,8 @@ def compare_code_complexity(metrics_data: dict):
 def demonstrate_production_advantages(all_metrics: dict):
     """Show production advantages with actual data."""
 
-    print("\n" + "=" * 70)
+    print()
+    print("=" * 70)
     print("PRODUCTION ADVANTAGES (MEASURED)")
     print("=" * 70)
 
@@ -791,7 +794,8 @@ def demonstrate_production_advantages(all_metrics: dict):
 def run_memory_comparison():
     """Compare memory usage between approaches."""
 
-    print("\n" + "=" * 70)
+    print()
+    print("=" * 70)
     print("MEMORY USAGE COMPARISON")
     print("=" * 70)
 
@@ -853,7 +857,8 @@ if __name__ == "__main__":
     # Memory comparison
     run_memory_comparison()
 
-    print("\n" + "=" * 70)
+    print()
+    print("=" * 70)
     print("FINAL VERDICT: Datarax Advantages (MEASURED)")
     print("-" * 40)
 

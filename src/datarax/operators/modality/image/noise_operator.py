@@ -1,11 +1,13 @@
 """NoiseOperator - Operator for image noise augmentation.
 
 This operator extends ModalityOperator to provide three types of noise:
+
 - Gaussian: Additive Gaussian noise
 - Salt & Pepper: Impulse noise (random pixels to min/max)
 - Poisson: Shot noise (photon noise simulation)
 
 Key Features:
+
 - Three noise types via 'mode' parameter
 - Stochastic mode with pre-generated noise
 - Deterministic mode for reproducible noise patterns
@@ -43,10 +45,12 @@ class NoiseOperatorConfig(ModalityOperatorConfig):
 
     Attributes:
         mode: Type of noise to apply:
-             - "gaussian": Additive Gaussian noise
-             - "salt_pepper": Impulse noise (random min/max pixels)
-             - "poisson": Shot noise (photon counting noise)
-             Default: "gaussian"
+
+            - "gaussian": Additive Gaussian noise
+            - "salt_pepper": Impulse noise (random min/max pixels)
+            - "poisson": Shot noise (photon counting noise)
+
+            Default: "gaussian"
 
         # Gaussian mode parameters:
         noise_std: Standard deviation for Gaussian noise. Default: 0.05
@@ -66,7 +70,9 @@ class NoiseOperatorConfig(ModalityOperatorConfig):
                    Set to None for no clipping.
 
     Note:
+
         Different noise types use different parameters:
+
         - mode="gaussian": Uses noise_std and noise_mean
         - mode="salt_pepper": Uses salt_prob, pepper_prob, salt_value, pepper_value
         - mode="poisson": Uses lam_scale
@@ -130,14 +136,16 @@ class NoiseOperator(ModalityOperator):
     """Image noise transformation operator.
 
     Applies noise to images using one of three modes:
+
     - Gaussian: output = input + N(mean, std²)
     - Salt & Pepper: Random pixels → salt_value or pepper_value
     - Poisson: output = Poisson(input * lam_scale) / lam_scale
 
     Supports three operation modes:
-    1. **Deterministic**: Fixed noise pattern using fixed seed
-    2. **Stochastic**: Per-sample random noise from generate_random_params()
-    3. **External params**: Accept pre-generated random parameters
+
+        1. **Deterministic**: Fixed noise pattern using fixed seed
+        2. **Stochastic**: Per-sample random noise from generate_random_params()
+        3. **External params**: Accept pre-generated random parameters
 
     The operator works on single elements (H, W, C images) and is composed into
     batch processing via apply_batch() from the base class.
@@ -206,6 +214,7 @@ class NoiseOperator(ModalityOperator):
 
         Returns:
             Dictionary with mode-specific noise data:
+
                 - Gaussian: {"noise": Array of shape (batch, H, W, C)}
                 - Salt & Pepper: {"noise_mask": Array of shape (batch, H, W, C)}
                 - Poisson: {"poisson_samples": Array of shape (batch, H, W, C)}

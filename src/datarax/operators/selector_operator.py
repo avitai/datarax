@@ -4,6 +4,7 @@ This operator wraps multiple OperatorModules and randomly selects ONE to apply
 per batch element.
 
 Key Features:
+
 - Wraps multiple OperatorModules with random selection
 - Configurable weights for weighted random selection (defaults to uniform)
 - Uses jax.lax.switch for JIT-compatible dynamic selection
@@ -46,6 +47,7 @@ class SelectorOperatorConfig(OperatorConfig):
                  Will be normalized to sum to 1.0
 
     Note:
+
         - stochastic is always True (always makes random choice)
         - stream_name defaults to "augment" for random selection
     """
@@ -100,20 +102,15 @@ class SelectorOperator(OperatorModule):
 
     Examples:
         ```python
-        # Create operators that do different transformations
-        op1 = BrightnessOperator(brightness_config, rngs=nnx.Rngs(0))
+        op1 = BrightnessOperator(brightness_config, rngs=nnx.Rngs(0))  # Different transforms
         op2 = NoiseOperator(noise_config, rngs=nnx.Rngs(0))
         op3 = RotationOperator(rotation_config, rngs=nnx.Rngs(0))
-
-        # Create selector with 50% brightness, 30% noise, 20% rotation
-        selector_config = SelectorOperatorConfig(
+        selector_config = SelectorOperatorConfig(  # 50% brightness, 30% noise, 20% rotation
             operators=[op1, op2, op3],
             weights=[0.5, 0.3, 0.2]
         )
         selector = SelectorOperator(selector_config, rngs=nnx.Rngs(0))
-
-        # Apply to batch - each element gets one randomly selected operator
-        result_batch = selector(batch)
+        result_batch = selector(batch)  # Each element gets one randomly selected operator
         ```
     """
 
@@ -178,6 +175,7 @@ class SelectorOperator(OperatorModule):
 
         Returns:
             Dict with:
+
                 - "selected_indices": Array of operator indices per batch element
                 - "child_params": Dict mapping operator index to its random params
         """

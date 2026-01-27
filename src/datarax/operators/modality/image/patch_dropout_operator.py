@@ -3,6 +3,7 @@
 This operator extends ModalityOperator to provide patch-based dropout (occlusion).
 
 Key Features:
+
 - Drops random rectangular patches from images
 - Configurable number of patches and patch size
 - Deterministic mode with fixed patch positions
@@ -94,6 +95,7 @@ class PatchDropoutOperator(ModalityOperator):
     """Image patch dropout transformation operator.
 
     Applies patch dropout by randomly dropping rectangular regions from images:
+
         - Selects num_patches random positions
         - Replaces each patch with drop_value
         - Useful for occlusion robustness training
@@ -171,6 +173,7 @@ class PatchDropoutOperator(ModalityOperator):
 
         Returns:
             Dictionary with:
+
                 - "patch_positions": Array of patch top-left positions
                                    Shape: (batch_size, num_patches, 2) where last dim is (y, x)
 

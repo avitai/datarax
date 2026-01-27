@@ -3,6 +3,7 @@
 This operator wraps any OperatorModule and applies it with a configured probability.
 
 Key Features:
+
 - Wraps any OperatorModule with probabilistic application
 - Configurable probability (0.0 to 1.0)
 - Stochastic mode when 0 < p < 1
@@ -44,6 +45,7 @@ class ProbabilisticOperatorConfig(OperatorConfig):
                     - 0 < p < 1: probabilistic (stochastic)
 
     Note:
+
         - stochastic is automatically set based on probability
         - stream_name is inherited from child operator if stochastic
     """
@@ -85,6 +87,7 @@ class ProbabilisticOperator(OperatorModule):
     """Wrapper operator that applies child operator with configured probability.
 
     Wraps any OperatorModule and applies it probabilistically:
+
         - p=0.0: never apply (passthrough)
         - p=1.0: always apply (equivalent to child operator)
         - 0<p<1: apply with probability p (stochastic)

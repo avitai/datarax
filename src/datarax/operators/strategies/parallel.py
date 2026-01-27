@@ -42,6 +42,7 @@ class ParallelStrategy(CompositionStrategyImpl):
 
         Args:
             merge_strategy: String identifier for merge strategy. available:
+
                 - 'concat': Concatenate along axis.
                 - 'stack': Stack along (new) axis.
                 - 'sum': Sum outputs (element-wise).

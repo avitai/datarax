@@ -41,6 +41,7 @@ class ExternalLibraryAdapter(OperatorModule):
     NNX transformations like nnx.jit, nnx.vmap, etc.
 
     Use this when you need to:
+
     - Wrap external functions that use JAX keys in an NNX module
     - Apply NNX transformations (jit, vmap) to functions using JAX keys
     - Integrate external augmentation libraries into Datarax pipelines

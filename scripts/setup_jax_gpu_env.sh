@@ -1,12 +1,20 @@
 #!/bin/bash
 
 # Script to set up a Python 3.11 virtual environment with JAX GPU (CUDA 12) support
-# Usage: bash setup_jax_gpu_env.sh
+# Usage: bash scripts/setup_jax_gpu_env.sh
 # This script is idempotent and can be run multiple times safely.
+#
+# NOTE: This is a legacy script. For most use cases, prefer using:
+#   ./setup.sh && source activate.sh
+# which provides better CUDA configuration and cross-platform support.
 
 set -e
 
-VENV_DIR=".venv311"
+echo "⚠️  NOTE: This is a legacy setup script."
+echo "   For recommended setup, use: ./setup.sh && source activate.sh"
+echo ""
+
+VENV_DIR=".venv"
 PYTHON_BIN="python3.11"
 
 # 1. Ensure Python 3.11 is installed
@@ -45,5 +53,9 @@ python -c "import jax; print('JAX devices:', jax.devices()); print('GPU devices:
 
 printf "\nSetup complete! Activate your environment with:\n"
 echo "  source $VENV_DIR/bin/activate"
-echo "and verify GPU usage with:"
+echo ""
+echo "Or for the recommended activation (if activate.sh exists):"
+echo "  source activate.sh"
+echo ""
+echo "Verify GPU usage with:"
 echo "  python -c 'import jax; print(jax.devices())'"

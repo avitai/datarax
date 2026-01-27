@@ -483,7 +483,8 @@ def measure_transform_performance(
 def demonstrate_learnable_transforms():
     """Demonstrate learnable transformations (only possible with stateful)."""
 
-    print("\n" + "=" * 80)
+    print()
+    print("=" * 80)
     print("LEARNABLE TRANSFORMATIONS (Datarax Exclusive)")
     print("=" * 80)
 
@@ -575,7 +576,8 @@ def demonstrate_learnable_transforms():
 def compare_checkpoint_complexity():
     """Compare checkpoint complexity between approaches."""
 
-    print("\n" + "=" * 80)
+    print()
+    print("=" * 80)
     print("CHECKPOINT COMPLEXITY COMPARISON")
     print("=" * 80)
 
@@ -738,7 +740,8 @@ if __name__ == "__main__":
     compare_checkpoint_complexity()
 
     # Final summary
-    print("\n" + "=" * 80)
+    print()
+    print("=" * 80)
     print("FINAL SUMMARY - MEASURED ADVANTAGES")
     print("=" * 80)
 

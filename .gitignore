@@ -223,6 +223,7 @@ CLAUDE.md
 docs/examples/nnx_migration_guide.md
 memory-bank/
 design_docs/
+sandbox/
 
 # AI assistant traces
 CLAUDE.md
@@ -235,3 +236,7 @@ CLAUDE.md
 .claude-collective/
 .taskmaster/
 .deprecated/
+
+# JAX/XLA compilation caches (local development)
+.cache/jax/
+.cache/xla/

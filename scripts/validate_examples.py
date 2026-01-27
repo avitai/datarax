@@ -220,6 +220,9 @@ def find_example_files(base_path: Path) -> list[Path]:
             continue
         if "test" in py_file.name.lower():
             continue
+        # Skip comparison directory (benchmark scripts, not tutorials)
+        if "comparison" in py_file.parts:
+            continue
         # Only include files with numbered prefixes (01_, 02_, etc.)
         if re.match(r"^\d+_", py_file.name):
             examples.append(py_file)
@@ -261,7 +264,7 @@ def main() -> int:
     parser.add_argument(
         "--path",
         type=Path,
-        default=Path("docs/examples"),
+        default=Path("examples"),
         help="Path to validate (file or directory)",
     )
     parser.add_argument(

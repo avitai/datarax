@@ -194,7 +194,7 @@ name = "image_classifier"
 [[nodes]]
 id = "source"
 type = "DataSource"
-class = "TFDSSource"
+class = "TFDSEagerSource"
 
 [nodes.params]
 name = "mnist"

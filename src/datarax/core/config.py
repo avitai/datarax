@@ -1,6 +1,7 @@
 """Configuration dataclasses for Datarax modules.
 
 This module provides typed configuration classes for all Datarax modules:
+
 - DataraxModuleConfig: Base configuration for all modules
 - OperatorConfig: Configuration for parametric operators
 - StructuralConfig: Configuration for structural processors (runtime immutable)
@@ -58,6 +59,7 @@ class DataraxModuleConfig:
         precomputed_stats: Static precomputed statistics
 
     Validation Rules:
+
         - batch_stats_fn and precomputed_stats are mutually exclusive
     """
 
@@ -85,15 +87,18 @@ class OperatorConfig(DataraxModuleConfig):
     """Configuration for OperatorModule (mutable, learnable).
 
     Inherits from DataraxModuleConfig:
-    - cacheable: bool
-    - batch_stats_fn: Callable | nnx.Module | None
-    - precomputed_stats: dict[str, Any] | None
+
+        - cacheable: bool
+        - batch_stats_fn: Callable | nnx.Module | None
+        - precomputed_stats: dict[str, Any] | None
 
     Adds operator-specific configuration:
-    - stochastic: bool
-    - stream_name: str | None
+
+        - stochastic: bool
+        - stream_name: str | None
 
     Validation Rules:
+
         - Inherits mutual exclusivity of statistics from parent
         - Stochastic operators require stream_name for RNG management
         - Deterministic operators should not specify stream_name
@@ -127,18 +132,21 @@ class MapOperatorConfig(OperatorConfig):
     """Configuration for MapOperator - unified deterministic/stochastic operator.
 
     Inherits from OperatorConfig:
-    - cacheable: bool
-    - batch_stats_fn: Callable | nnx.Module | None
-    - precomputed_stats: dict[str, Any] | None
-    - stochastic: bool (currently must be False - stochastic mode not yet implemented)
-    - stream_name: str | None
+
+        - cacheable: bool
+        - batch_stats_fn: Callable | nnx.Module | None
+        - precomputed_stats: dict[str, Any] | None
+        - stochastic: bool (currently must be False - stochastic mode not yet implemented)
+        - stream_name: str | None
 
     Adds MapOperator-specific configuration:
-    - subtree: PyTree | None - Nested dict matching element.data structure
-      If None, user fn is applied to full element (full-tree mode)
-      If specified, only the specified subtree is affected (subtree mode)
+
+        - subtree: PyTree | None - Nested dict matching element.data structure
+          If None, user fn is applied to full element (full-tree mode)
+          If specified, only the specified subtree is affected (subtree mode)
 
     Validation Rules:
+
         - Inherits all validation from OperatorConfig
         - Currently enforces stochastic=False (NotImplementedError if True)
 
@@ -184,17 +192,19 @@ class ElementOperatorConfig(OperatorConfig):
     """Configuration for ElementOperator - element-level transformation operator.
 
     Inherits from OperatorConfig:
-    - cacheable: bool
-    - batch_stats_fn: Callable | nnx.Module | None
-    - precomputed_stats: dict[str, Any] | None
-    - stochastic: bool
-    - stream_name: str | None
+
+        - cacheable: bool
+        - batch_stats_fn: Callable | nnx.Module | None
+        - precomputed_stats: dict[str, Any] | None
+        - stochastic: bool
+        - stream_name: str | None
 
     ElementOperator applies user-provided functions to entire Element structures
     (data + state + metadata), enabling coordinated transformations across
     multiple fields and access to element state.
 
     Validation Rules:
+
         - Inherits all validation from OperatorConfig
 
     Examples:
@@ -223,11 +233,12 @@ class BatchMixOperatorConfig(OperatorConfig):
     """Configuration for BatchMixOperator - unified MixUp and CutMix batch augmentation.
 
     Inherits from OperatorConfig:
-    - cacheable: bool
-    - batch_stats_fn: Callable | nnx.Module | None
-    - precomputed_stats: dict[str, Any] | None
-    - stochastic: bool (always True for BatchMixOperator)
-    - stream_name: str | None
+
+        - cacheable: bool
+        - batch_stats_fn: Callable | nnx.Module | None
+        - precomputed_stats: dict[str, Any] | None
+        - stochastic: bool (always True for BatchMixOperator)
+        - stream_name: str | None
 
     BatchMixOperator performs batch-level sample mixing that cannot be
     decomposed into element-level operations. It mixes samples across
@@ -241,6 +252,7 @@ class BatchMixOperatorConfig(OperatorConfig):
         label_field: Field name containing labels to mix (default: "label")
 
     Validation Rules:
+
         - mode must be "mixup" or "cutmix"
         - alpha must be positive
         - Always stochastic (forced to True)
@@ -297,19 +309,22 @@ class StructuralConfig(DataraxModuleConfig):
     """Configuration for StructuralModule (runtime immutable, compile-time constants).
 
     Inherits from DataraxModuleConfig:
-    - cacheable: bool
-    - batch_stats_fn: Callable | nnx.Module | None
-    - precomputed_stats: dict[str, Any] | None
+
+        - cacheable: bool
+        - batch_stats_fn: Callable | nnx.Module | None
+        - precomputed_stats: dict[str, Any] | None
 
     Adds structural-specific configuration:
-    - stochastic: bool
-    - stream_name: str | None
+
+        - stochastic: bool
+        - stream_name: str | None
 
     Note: This config enforces runtime immutability through __setattr__ override.
     After __post_init__ completes, the instance is frozen and cannot be modified.
     All configuration must be known at module construction time for JIT compilation.
 
     Validation Rules:
+
         - Inherits mutual exclusivity of statistics from parent
         - Stochastic structural modules require stream_name for RNG management
         - Deterministic structural modules should not specify stream_name

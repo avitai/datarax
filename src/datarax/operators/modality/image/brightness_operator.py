@@ -3,6 +3,7 @@
 This operator extends ModalityOperator to provide brightness-only transformations.
 
 Key Features:
+
 - Single-purpose: Only brightness adjustment (no contrast)
 - Simplified config with brightness_range parameter
 - Cleaner for composition in pipelines
@@ -77,11 +78,13 @@ class BrightnessOperator(ModalityOperator):
         output = input + brightness_delta
 
     Supports three modes:
+
     - Deterministic: Fixed brightness_delta from config
     - Stochastic: Random delta generated per batch item
     - Learnable: Trainable brightness parameters (via subclass)
 
     The operator uses element-level apply() design:
+
     - apply(): Operates on single element (H,W,C) without batch dimension
     - apply_batch(): Handles batches via vmap
 
@@ -196,6 +199,7 @@ class BrightnessOperator(ModalityOperator):
 
         Returns:
             Dictionary containing:
+
                 - 'brightness': Array of shape (batch_size,) with per-element brightness deltas
         """
         # Get batch size from data shapes

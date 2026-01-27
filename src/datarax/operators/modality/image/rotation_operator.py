@@ -1,6 +1,7 @@
 """RotationOperator - Image rotation augmentation for modality operators.
 
 This module provides rotation augmentation with:
+
 - Configurable angle ranges (deterministic and stochastic)
 - Bilinear interpolation for smooth rotation
 - Fill value for empty areas after rotation
@@ -58,6 +59,7 @@ class RotationOperator(ModalityOperator):
     (random angle sampling) modes.
 
     Features:
+
         - Bilinear interpolation for smooth rotation
         - Configurable angle ranges
         - Fill value for empty areas
@@ -116,27 +118,28 @@ class RotationOperator(ModalityOperator):
 
     def generate_random_params(
         self,
-        key: jax.Array,
-        data: dict[str, Any],
-        state: dict[str, Any],
-        metadata: dict[str, Any],
+        rng: jax.Array,
+        data_shapes: dict[str, tuple[int, ...]],
     ) -> dict[str, Any]:
         """Generate random rotation angle for stochastic mode.
 
         Args:
-            key: JAX random key.
-            data: Input data dict.
-            state: State dict.
-            metadata: Metadata dict.
+            rng: JAX random key.
+            data_shapes: Dictionary mapping field names to their shapes.
 
         Returns:
-            Dictionary with "angle" key containing random angle in degrees.
+            Dictionary with "angle" key containing random angles (one per batch element).
         """
+        # Get batch size from data shapes
+        image_shape = data_shapes[self.config.field_key]
+        batch_size = image_shape[0]
+
         min_angle, max_angle = self.config.angle_range
 
-        # Sample random angle in degrees
+        # Sample random angles in degrees (one per batch element)
         angle = jax.random.uniform(
-            key,
+            rng,
+            shape=(batch_size,),
             minval=min_angle,
             maxval=max_angle,
         )

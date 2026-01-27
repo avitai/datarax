@@ -4,7 +4,7 @@ This test demonstrates a complete workflow using Datarax data pipeline
 for image classification with a small CNN model on MNIST dataset.
 
 Features Showcased:
-- TFDSSource: TensorFlow Datasets integration for data loading
+- TFDSEagerSource: TensorFlow Datasets integration for data loading
 - DAGExecutor: Pipeline builder with fluent API
 - BatchNode: Batch-first data processing
 - ShuffleNode: Data shuffling for training
@@ -46,7 +46,7 @@ from datarax.operators.modality.image.brightness_operator import (
     BrightnessOperator,
     BrightnessOperatorConfig,
 )
-from datarax.sources.tfds_source import TfdsDataSourceConfig, TFDSSource
+from datarax.sources.tfds_source import TFDSEagerConfig, TFDSEagerSource
 from datarax.typing import Batch
 
 
@@ -204,7 +204,7 @@ def create_augmentation_operator(rngs: nnx.Rngs) -> BrightnessOperator:
 
 
 def create_train_pipeline(
-    source: TFDSSource,
+    source: TFDSEagerSource,
     preprocess_op: ElementOperator,
     augment_op: BrightnessOperator,
     batch_size: int = 32,
@@ -240,7 +240,7 @@ def create_train_pipeline(
 
 
 def create_eval_pipeline(
-    source: TFDSSource,
+    source: TFDSEagerSource,
     preprocess_op: ElementOperator,
     batch_size: int = 32,
 ) -> DAGExecutor:
@@ -272,7 +272,7 @@ def test_image_classification_end_to_end():
     """End-to-end test of image classification pipeline with model training.
 
     This test demonstrates:
-    1. TFDSSource for loading MNIST data
+    1. TFDSEagerSource for loading MNIST data
     2. DAGExecutor pipeline with batching, shuffling, and operators
     3. ElementOperator for preprocessing
     4. BrightnessOperator for augmentation
@@ -294,19 +294,19 @@ def test_image_classification_end_to_end():
     # DATA SOURCES
     # ==========================================================================
 
-    train_config = TfdsDataSourceConfig(
+    train_config = TFDSEagerConfig(
         name="mnist:3.*.*",
         split="train[:500]",  # Small subset for testing
         shuffle=True,
     )
-    train_source = TFDSSource(train_config, rngs=nnx.Rngs(0))
+    train_source = TFDSEagerSource(train_config, rngs=nnx.Rngs(0))
 
-    test_config = TfdsDataSourceConfig(
+    test_config = TFDSEagerConfig(
         name="mnist:3.*.*",
         split="test[:100]",  # Small subset for testing
         shuffle=False,
     )
-    test_source = TFDSSource(test_config, rngs=nnx.Rngs(1))
+    test_source = TFDSEagerSource(test_config, rngs=nnx.Rngs(1))
 
     # ==========================================================================
     # OPERATORS

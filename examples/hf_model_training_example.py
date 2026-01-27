@@ -13,7 +13,7 @@ from flax import nnx
 
 from datarax.core import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.sources import HfDataSourceConfig, HFSource
+from datarax.sources import HFEagerConfig, HFEagerSource
 
 
 # Define a simple text classifier model
@@ -172,22 +172,21 @@ def main():
     print("\nLoading SST-2 dataset...")
 
     # Create data source for SST-2 dataset using config-based API
-    train_config = HfDataSourceConfig(
+    train_config = HFEagerConfig(
         name="glue",
         split="train[:sst2]",  # SST-2 subset of GLUE
         streaming=False,
         shuffle=True,
-        stochastic=True,
-        stream_name="shuffle",
+        seed=42,
     )
-    train_source = HFSource(train_config, rngs=nnx.Rngs(0, shuffle=0))
+    train_source = HFEagerSource(train_config, rngs=nnx.Rngs(0))
 
-    val_config = HfDataSourceConfig(
+    val_config = HFEagerConfig(
         name="glue",
         split="validation[:sst2]",
         streaming=False,
     )
-    val_source = HFSource(val_config, rngs=nnx.Rngs(1))
+    val_source = HFEagerSource(val_config, rngs=nnx.Rngs(1))
 
     print("Creating data streams...")
 

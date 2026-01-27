@@ -2,6 +2,7 @@
 
 This module provides DataraxModule - the base class that all Datarax modules inherit from.
 It provides common functionality like:
+
 - Statistics computation and management
 - Caching system
 - Iteration tracking
@@ -38,6 +39,7 @@ class IterationCount(nnx.Variable):
     4. This avoids TraceContextError when mutating inside nnx.jit/nnx.vmap
 
     The custom type also enables StateAxes control:
+
     - Broadcast: `nnx.StateAxes({IterationCount: None})`
     - Carry: `nnx.StateAxes({IterationCount: nnx.Carry})`
 
