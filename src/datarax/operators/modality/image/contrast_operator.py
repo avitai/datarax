@@ -3,6 +3,7 @@
 This operator extends ModalityOperator to provide contrast-only transformations.
 
 Key Features:
+
 - Single-purpose: Only contrast adjustment
 - Simplified config with contrast_range parameter
 - Uses functional API for implementation
@@ -73,6 +74,7 @@ class ContrastOperator(ModalityOperator):
         output = (input - mean) * factor + mean
 
     Supports three modes:
+
     - Deterministic: Fixed contrast_factor from config
     - Stochastic: Random factor generated per batch item
     - Learnable: Trainable contrast parameters (via subclass)

@@ -4,29 +4,30 @@ This module provides utilities for explicit device placement of JAX arrays and
 PyTrees, enabling efficient data distribution across accelerators.
 
 Key Features:
-    - Explicit device placement with jax.device_put
-    - Hardware-aware batch size recommendations
-    - PyTree-aware device placement
-    - Prefetching utilities for overlapping compute and data transfer
 
-Performance Guidelines (per JAX guide):
+- Explicit device placement with jax.device_put
+- Hardware-aware batch size recommendations
+- PyTree-aware device placement
+- Prefetching utilities for overlapping compute and data transfer
+
+Note:
+    Performance Guidelines (per JAX guide):
+
     - TPU v5e: Critical batch size >= 240 for optimal throughput
     - H100 GPU: Critical batch size >= 298 for optimal throughput
     - Always use explicit device placement for data pipeline outputs
     - Prefetch to device memory to overlap data transfer with compute
 
 Example:
-    >>> from datarax.distributed.device_placement import DevicePlacement
-    >>> placement = DevicePlacement()
-    >>>
-    >>> # Place data on specific device
-    >>> data = jnp.ones((256, 224, 224, 3))
-    >>> placed = placement.place_on_device(data, jax.devices()[0])
-    >>>
-    >>> # Distribute batch across devices
-    >>> mesh = Mesh(np.array(jax.devices()), axis_names=("data",))
-    >>> sharding = NamedSharding(mesh, PartitionSpec("data", None, None, None))
-    >>> distributed = placement.distribute_batch(data, sharding)
+    ```python
+    from datarax.distributed.device_placement import DevicePlacement
+    placement = DevicePlacement()
+    data = jnp.ones((256, 224, 224, 3))
+    placed = placement.place_on_device(data, jax.devices()[0])  # Place on device
+    mesh = Mesh(np.array(jax.devices()), axis_names=("data",))
+    sharding = NamedSharding(mesh, PartitionSpec("data", None, None, None))
+    distributed = placement.distribute_batch(data, sharding)  # Distribute batch
+    ```
 """
 
 from __future__ import annotations
@@ -138,15 +139,13 @@ class DevicePlacement:
     hardware-aware batch size recommendations.
 
     Example:
-        >>> placement = DevicePlacement()
-        >>> data = jnp.ones((4, 8))
-        >>>
-        >>> # Place on first GPU
-        >>> gpu_data = placement.place_on_device(data, jax.devices("gpu")[0])
-        >>>
-        >>> # Get batch size recommendation
-        >>> rec = placement.get_batch_size_recommendation()
-        >>> print(f"Optimal batch: {rec.optimal_batch_size}")
+        ```python
+        placement = DevicePlacement()
+        data = jnp.ones((4, 8))
+        gpu_data = placement.place_on_device(data, jax.devices("gpu")[0])  # Place on first GPU
+        rec = placement.get_batch_size_recommendation()  # Get batch size recommendation
+        print(f"Optimal batch: {rec.optimal_batch_size}")
+        ```
     """
 
     def __init__(self, default_device: jax.Device | None = None):  # type: ignore[name-defined]
@@ -214,8 +213,10 @@ class DevicePlacement:
             PyTree with arrays placed on the specified device.
 
         Example:
-            >>> data = {"images": jnp.ones((4, 28, 28, 3))}
-            >>> gpu_data = placement.place_on_device(data, jax.devices("gpu")[0])
+            ```python
+            data = {"images": jnp.ones((4, 28, 28, 3))}
+            gpu_data = placement.place_on_device(data, jax.devices("gpu")[0])
+            ```
         """
         device = device or self.default_device
         sharding = SingleDeviceSharding(device)
@@ -239,9 +240,11 @@ class DevicePlacement:
             PyTree with arrays distributed according to the sharding.
 
         Example:
-            >>> mesh = Mesh(np.array(jax.devices()), ("data",))
-            >>> sharding = NamedSharding(mesh, PartitionSpec("data", None))
-            >>> distributed = placement.distribute_batch(data, sharding)
+            ```python
+            mesh = Mesh(np.array(jax.devices()), ("data",))
+            sharding = NamedSharding(mesh, PartitionSpec("data", None))
+            distributed = placement.distribute_batch(data, sharding)
+            ```
         """
         return jax.device_put(data, sharding)
 

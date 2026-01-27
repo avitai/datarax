@@ -75,12 +75,13 @@ class HFSource(DataSourceModule):
     them to JAX arrays. It supports both downloaded and streaming modes.
 
     Key Features:
-    - Dual-mode operation (stateless iteration and stateful with internal state)
-    - Support for streaming and downloaded datasets
-    - Optional shuffling with configurable buffer size
-    - Batch retrieval with get_batch method
-    - Include/exclude key filtering
-    - Automatic conversion to JAX arrays
+
+        - Dual-mode operation (stateless iteration and stateful with internal state)
+        - Support for streaming and downloaded datasets
+        - Optional shuffling with configurable buffer size
+        - Batch retrieval with get_batch method
+        - Include/exclude key filtering
+        - Automatic conversion to JAX arrays
 
     Examples:
         Create source for IMDB dataset:
@@ -186,7 +187,10 @@ class HFSource(DataSourceModule):
             self.length = None
 
         # State variables for stateful iteration
-        self.iterator = nnx.Variable(None)
+        # Note: iterator is a regular attribute (not nnx.Variable) because
+        # HuggingFace iterators cannot be serialized by Orbax checkpointing.
+        # The iterator is recreated lazily when needed.
+        self._iterator = None
         self.epoch = nnx.Variable(0)
         self.index = nnx.Variable(0)
         self._cached_data = None
@@ -271,19 +275,17 @@ class HFSource(DataSourceModule):
             Batch of data as dictionary with arrays of shape (batch_size, ...).
         """
         # Create iterator if needed
-        current_iterator = self.iterator.get_value()
-        if current_iterator is None:
+        if self._iterator is None:
             if self._cached_data is not None:
-                current_iterator = iter(self._cached_data)
+                self._iterator = iter(self._cached_data)
             else:
-                current_iterator = iter(self.dataset)
-            self.iterator.set_value(current_iterator)
+                self._iterator = iter(self.dataset)
 
         # Collect batch
         batch_elements = []
         for _ in range(batch_size):
             try:
-                element = next(current_iterator)
+                element = next(self._iterator)
                 batch_elements.append(self._convert_element(element))
                 self.index.set_value(self.index.get_value() + 1)
             except StopIteration:
@@ -293,20 +295,19 @@ class HFSource(DataSourceModule):
                 self.index.set_value(0)
 
                 if self._cached_data is not None:
-                    current_iterator = iter(self._cached_data)
+                    self._iterator = iter(self._cached_data)
                 else:
                     # Re-create dataset iterator
                     if self.shuffle and not self.streaming:
                         # Re-shuffle for new epoch
                         seed = None if self.rngs is None else new_epoch
                         self.dataset = self.dataset.shuffle(seed=seed)
-                    current_iterator = iter(self.dataset)
-                self.iterator.set_value(current_iterator)
+                    self._iterator = iter(self.dataset)
 
                 # Try to get element again only if dataset is not empty
                 if len(batch_elements) < batch_size:
                     try:
-                        element = next(current_iterator)
+                        element = next(self._iterator)
                         batch_elements.append(self._convert_element(element))
                         self.index.set_value(self.index.get_value() + 1)
                     except StopIteration:
@@ -317,19 +318,22 @@ class HFSource(DataSourceModule):
         if not batch_elements:
             return {}
 
-        # Create batch dictionary
+        # Create batch dictionary - always produce JAX arrays for numeric types
         batch_dict = {}
         keys = batch_elements[0].keys()
 
         for key in keys:
-            # Stack values for this key
             values = [elem[key] for elem in batch_elements]
+            first_val = values[0]
 
-            # Convert to JAX array and stack
-            if isinstance(values[0], jax.Array):
+            # Always stack into JAX arrays when possible
+            if isinstance(first_val, jax.Array):
                 batch_dict[key] = jnp.stack(values)
+            elif isinstance(first_val, int | float | bool):
+                # Convert scalar numerics to JAX array
+                batch_dict[key] = jnp.array(values)
             else:
-                # Handle non-array values (e.g., strings)
+                # Non-numeric types (e.g., strings) - keep as list
                 batch_dict[key] = values
 
         return batch_dict
@@ -399,7 +403,7 @@ class HFSource(DataSourceModule):
         Args:
             seed: Optional seed for reproducibility (ignored for HFSource)
         """
-        self.iterator.set_value(None)
+        self._iterator = None
         self.epoch.set_value(0)
         self.index.set_value(0)
         if self._cache is not None:

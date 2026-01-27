@@ -58,12 +58,13 @@ class MemorySource(DataSourceModule):
     both stateless and stateful operation modes.
 
     Key Features:
-    - Dual-mode operation (stateless iteration and stateful with internal index)
-    - Random access via __getitem__
-    - Optional shuffling with RNG support
-    - Batch retrieval with get_batch method
-    - Support for dictionary and list/sequence data
-    - Batch-first design for efficient processing
+
+        - Dual-mode operation (stateless iteration and stateful with internal index)
+        - Random access via __getitem__
+        - Optional shuffling with RNG support
+        - Batch retrieval with get_batch method
+        - Support for dictionary and list/sequence data
+        - Batch-first design for efficient processing
 
     Examples:
         Create source with list data:

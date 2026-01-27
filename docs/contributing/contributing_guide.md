@@ -58,7 +58,7 @@ Thank you for your interest in contributing to Datarax! This guide covers everyt
    JAX_PLATFORMS=cpu uv run pytest tests/sources/test_memory_source_module.py -v
    ```
 
-   See the [Developer Guide](../dev_guide.md) for detailed setup instructions and configuration options.
+   See the [Developer Guide](dev_guide.md) for detailed setup instructions and configuration options.
 
 ## NNX Architecture Requirements
 
@@ -253,7 +253,7 @@ tests/
 └── conftest.py              # Pytest configuration
 ```
 
-See the [Developer Guide](../dev_guide.md#testing) for the complete test directory structure.
+See the [Developer Guide](dev_guide.md#testing) for the complete test directory structure.
 
 ### 4. Running Tests
 
@@ -278,7 +278,7 @@ JAX_PLATFORMS=cpu uv run pytest tests/integration/
 uv run pytest -m gpu
 ```
 
-See the [Developer Guide](../dev_guide.md#testing) for comprehensive testing documentation.
+See the [Developer Guide](dev_guide.md#testing) for comprehensive testing documentation.
 
 ## Code Style and Quality
 
@@ -312,7 +312,7 @@ uv run ruff format src/ tests/          # Format code
 uv run pyright src/                     # Type checking
 ```
 
-Pre-commit hooks automatically run: Ruff (linting + formatting), Pyright (type checking), Bandit (security), and more. See the [Developer Guide](../dev_guide.md#pre-commit-hooks) for the full list.
+Pre-commit hooks automatically run: Ruff (linting + formatting), Pyright (type checking), Bandit (security), and more. See the [Developer Guide](dev_guide.md#pre-commit-hooks) for the full list.
 
 ### 3. Type Annotations
 
@@ -514,7 +514,7 @@ See the [Performance Optimization Guide](performance_optimization_guide.md) for 
 
 ## Getting Help
 
-- **Developer Guide**: See the [Developer Guide](../dev_guide.md) for detailed development setup and tooling
+- **Developer Guide**: See the [Developer Guide](dev_guide.md) for detailed development setup and tooling
 - **Documentation**: Check the [API Reference](https://datarax.readthedocs.io) for usage examples
 - **Issues**: Search [GitHub Issues](https://github.com/avitai/datarax/issues) for similar problems
 - **New Issues**: Open a new issue with a clear description and minimal reproduction steps

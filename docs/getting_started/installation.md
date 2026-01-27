@@ -306,6 +306,7 @@ If you encounter issues:
 
 1. Check the [GitHub issues](https://github.com/avitai/datarax/issues) for similar problems
 2. Create a new issue with:
+
    - Datarax version
    - JAX version
    - Python version

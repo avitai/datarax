@@ -117,6 +117,7 @@ print(f"  After reset: position={loader.position.value}")
 loader.position.value = checkpoint["position"]
 print(f"  After restore: position={loader.position.value}")
 
-print("\n" + "=" * 60)
+print()
+print("=" * 60)
 print("SUMMARY: Stateful is simpler, cleaner, and less error-prone!")
 print("=" * 60)

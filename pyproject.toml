@@ -205,14 +205,14 @@ environment_file = ".env"
 fallback_to_cpu = true
 setup_scripts = ["scripts/fresh_cuda_setup.sh", "scripts/setup_env.py", "scripts/run_tests_with_cuda.sh"]
 
-[tool.hatch.version]
-path = "src/datarax/__init__.py"
-
 [tool.hatch.build.targets.sdist]
 include = ["src/datarax", "README.md", "LICENSE", "pyproject.toml"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/datarax"]
+
+[tool.hatch.version]
+path = "src/datarax/__init__.py"
 
 [tool.pydocstyle]
 add-ignore = ["D100", "D101", "D102", "D103", "D104", "D105", "D107", "D202", "D212", "D415"]

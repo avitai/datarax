@@ -4,10 +4,12 @@ This module provides ElementOperator, which applies user-provided element
 transformation functions to entire Element structures (data + state + metadata).
 
 Key Difference from MapOperator:
+
 - MapOperator: fn(array_leaf, key) -> array_leaf (per-array-leaf transformation)
 - ElementOperator: fn(element, key) -> element (per-element transformation)
 
 Key Features:
+
 - Full element access: User function sees entire Element, can modify data/state/metadata
 - Coordinated transformations: Transform multiple fields together
 - Deterministic mode: key parameter ignored
@@ -37,6 +39,7 @@ class ElementOperator(OperatorModule):
     coordinated transformations.
 
     User Function Signature:
+
         fn(element: Element, key: jax.Array) -> Element
 
         - element: Element with .data, .state, .metadata attributes
@@ -50,27 +53,19 @@ class ElementOperator(OperatorModule):
     4. **Metadata-aware processing**: Transform based on metadata values
 
     Examples:
-    Examples:
         ```python
-        # Deterministic element transformation
-        def normalize(element, key):
+        def normalize(element, key):  # Deterministic element transformation
             new_data = {"value": element.data["value"] / 255.0}
             return element.replace(data=new_data)
-
         config = ElementOperatorConfig(stochastic=False)
         op = ElementOperator(config, fn=normalize, rngs=rngs)
-
-        # Stochastic element augmentation
-        def add_noise(element, key):
+        def add_noise(element, key):  # Stochastic element augmentation
             noise = jax.random.normal(key, element.data["image"].shape) * 0.1
             new_data = {"image": element.data["image"] + noise}
             return element.replace(data=new_data)
-
         config = ElementOperatorConfig(stochastic=True, stream_name="augment")
         op = ElementOperator(config, fn=add_noise, rngs=rngs)
-
-        # Coordinated augmentation
-        def flip_both(element, key):
+        def flip_both(element, key):  # Coordinated augmentation
             flip = jax.random.uniform(key) < 0.5
             new_data = jax.lax.cond(
                 flip,

@@ -5,6 +5,7 @@ SharderModule, and other structural processors into a single base class for all
 non-parametric, structural data organization operations.
 
 Key Features:
+
 - Config-based initialization with StructuralConfig (frozen/immutable)
 - Stochastic mode (with RNG for random organization)
 - Deterministic mode (fixed organization)
@@ -32,6 +33,7 @@ class StructuralModule(DataraxModule):
     They are NOT differentiable and have no learnable parameters.
 
     The structural pattern uses a single process() method:
+
     - process() - Transforms input structure (abstract method)
 
     Args:
@@ -105,6 +107,7 @@ class StructuralModule(DataraxModule):
         Subclasses MUST implement this method.
 
         The input/output types depend on the specific structural processor:
+
         - Batcher: list[Element] -> list[Batch]
         - Sampler: int -> list[int]
         - Sharder: Batch -> Sharded[Batch]

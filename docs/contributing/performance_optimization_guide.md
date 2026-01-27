@@ -118,6 +118,7 @@ Example benchmark format:
 - **Test Environment**: NVIDIA RTX 3090, JAX 0.6.1, Flax 0.12.0
 - **Data Dimensions**: 1000 images, 224x224x3, batch size 32
 - **Metrics**:
+
   - Before: 1,200 examples/sec, 90% GPU utilization
   - After: 4,800 examples/sec, 95% GPU utilization
   - Speedup: 4.0x
@@ -235,4 +236,4 @@ ls benchmark-results/
 
 By following these guidelines, you can contribute meaningful performance improvements to Datarax while maintaining code quality and correctness. Remember that the best optimizations are those that target actual bottlenecks identified through profiling, and that provide significant speedups with minimal impact on code readability and maintainability.
 
-For general development setup and tools, see the [Developer Guide](../dev_guide.md).
+For general development setup and tools, see the [Developer Guide](dev_guide.md).

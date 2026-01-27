@@ -9,6 +9,7 @@ multiple devices and hosts, including:
 - DistributedMetrics: Metrics aggregation across devices
 
 Device Placement Guidelines (per JAX performance guide):
+
     - Always use explicit device placement for data pipeline outputs
     - Use prefetching to overlap data transfer with compute
     - TPU v5e: Critical batch size >= 240

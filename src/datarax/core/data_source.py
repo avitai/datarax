@@ -30,26 +30,15 @@ class DataSourceModule(StructuralModule):
         ```python
         @dataclass
         class MyDataSourceConfig(StructuralConfig):
-            '''Configuration for MyDataSource.'''
             required_param: int | None = None
-
             def __post_init__(self):
                 super().__post_init__()
                 if self.required_param is None:
                     raise ValueError("required_param is required")
-
         class MyDataSource(DataSourceModule):
-            # REQUIRED: Annotate data attribute with nnx.data()
-            data: list[dict] = nnx.data()  # or list[Any], Sequence[Any], etc.
-
-            def __init__(
-                self,
-                config: MyDataSourceConfig,
-                data: list[dict],
-                *,
-                rngs: nnx.Rngs | None = None,
-                name: str | None = None,
-            ):
+            data: list[dict] = nnx.data()  # REQUIRED: Annotate data attribute with nnx.data()
+            def __init__(self, config: MyDataSourceConfig, data: list[dict], *,
+                         rngs: nnx.Rngs | None = None, name: str | None = None):
                 super().__init__(config, rngs=rngs, name=name)
                 self.data = data  # Safe with nnx.Param/nnx.data() annotation
         ```

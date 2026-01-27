@@ -1,6 +1,7 @@
 """Element and Batch modules following JAX and Flax NNX best practices.
 
 Key design decisions:
+
 - Element uses flax.struct for immutability and automatic pytree registration
 - Batch uses Flax NNX Module pattern for state management
 - No object dtype arrays (JAX limitation)
@@ -24,6 +25,7 @@ class Element:
     """Immutable data element with JAX-compatible operations.
 
     Element represents a single data point with:
+
     - data: PyTree structure containing JAX arrays (supports nested dicts)
     - state: Dictionary of arbitrary Python values
     - metadata: Optional Metadata instance
@@ -85,6 +87,7 @@ class Batch(nnx.Module):
     """Batch container using Flax NNX patterns.
 
     Design rationale:
+
     - Stores data as stacked JAX PyTrees for efficiency
     - Stores states as stacked JAX PyTrees (enables vmap)
     - Stores metadata as Python list (immutable, not vmapped)

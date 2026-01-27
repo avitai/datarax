@@ -8,7 +8,21 @@
 
 [![Project Status: Active](https://www.repostatus.org/badges/latest/active.svg)](https://www.repostatus.org/#active)
 
-> **Note:** This project is in early development. API may change. Expect breaking changes.
+---
+
+> **⚠️ Early Development - API Unstable**
+>
+> Datarax is currently in early development and undergoing rapid iteration. Please be aware of the following implications:
+>
+> | Area | Status | Impact |
+> |------|--------|--------|
+> | **API** | 🔄 Unstable | Breaking changes are expected. Public interfaces may change without deprecation warnings. Pin to specific commits if stability is required. |
+> | **Tests** | 🔄 In Flux | Test suite is being expanded. Some tests may fail or be skipped. Coverage metrics are improving but not yet comprehensive. |
+> | **Documentation** | 🔄 Evolving | Docs may not reflect current implementation. Code examples might be outdated. Refer to source code and tests for accurate usage. |
+>
+> We recommend waiting for a stable release (v1.0) before using Datarax in production. For research and experimentation, proceed with the understanding that APIs will evolve.
+
+---
 
 **Datarax** (*Data + Array/JAX*) is a high-performance, extensible data pipeline framework specifically engineered for JAX-based machine learning workflows. It simplifies and accelerates the development of efficient and scalable data loading, preprocessing, and augmentation pipelines for JAX, leveraging the full potential of JAX's Just-In-Time (JIT) compilation, automatic differentiation, and hardware acceleration capabilities.
 

@@ -159,6 +159,7 @@ nav:
   - User Guide:
       - Data Sources: user_guide/data_sources.md
       - DAG Construction: user_guide/dag_construction.md
+      - Distributed Training: user_guide/distributed_training.md
       - Benchmarking: user_guide/benchmarking.md
       - Troubleshooting: user_guide/troubleshooting_guide.md
       - NNX Best Practices: user_guide/nnx_best_practices.md
@@ -166,17 +167,45 @@ nav:
   - Examples:
       - Overview: examples/overview.md
       - Core:
-          - Simple Pipeline: examples/core/01_simple_pipeline.ipynb
-          - Pipeline Tutorial: examples/core/02_pipeline_tutorial.ipynb
-          - Operators Tutorial: examples/core/03_operators_tutorial.ipynb
+          - Simple Pipeline: examples/core/simple-pipeline.md
+          - Pipeline Tutorial: examples/core/pipeline-tutorial.md
+          - Operators Tutorial: examples/core/operators-tutorial.md
+          - CIFAR-10 Quick Reference: examples/core/cifar10-quickref.md
+          - Augmentation Quick Reference: examples/core/augmentation-quickref.md
+          - MNIST Tutorial: examples/core/mnist-tutorial.md
+          - Fashion Augmentation: examples/core/fashion-augmentation-tutorial.md
+          - Composition Strategies: examples/core/composition-strategies-tutorial.md
+          - Advanced Operators: examples/core/advanced-operators-tutorial.md
       - Integration:
-          - HuggingFace Quick Reference: examples/integration/huggingface/01_hf_quickref.ipynb
-          - HuggingFace Tutorial: examples/integration/huggingface/02_hf_tutorial.ipynb
-          - TFDS Quick Reference: examples/integration/tfds/01_tfds_quickref.ipynb
+          - HuggingFace:
+              - Quick Reference: examples/integration/huggingface/hf-quickref.md
+              - Tutorial: examples/integration/huggingface/hf-tutorial.md
+              - IMDB Example: examples/integration/huggingface/imdb-quickref.md
+          - TFDS:
+              - Quick Reference: examples/integration/tfds/tfds-quickref.md
+          - ArrayRecord:
+              - Quick Reference: examples/integration/arrayrecord/arrayrecord-quickref.md
       - Advanced:
-          - Sharding: examples/advanced/distributed/01_sharding_quickref.ipynb
-          - Checkpointing: examples/advanced/checkpointing/01_checkpoint_quickref.ipynb
-          - Monitoring: examples/advanced/monitoring/01_monitoring_quickref.ipynb
+          - Augmentation:
+              - MixUp & CutMix Tutorial: examples/advanced/augmentation/mixup-cutmix-tutorial.md
+          - Checkpointing:
+              - Quick Reference: examples/advanced/checkpointing/checkpoint-quickref.md
+              - Resumable Training: examples/advanced/checkpointing/resumable-training-guide.md
+          - DAG Pipelines:
+              - Fundamentals Guide: examples/advanced/dag/dag-fundamentals-guide.md
+          - Distributed:
+              - Sharding Quick Reference: examples/advanced/distributed/sharding-quickref.md
+              - Sharding Guide: examples/advanced/distributed/sharding-guide.md
+          - Monitoring:
+              - Quick Reference: examples/advanced/monitoring/monitoring-quickref.md
+          - Multi-Source:
+              - Interleaved Tutorial: examples/advanced/multi_source/interleaved-tutorial.md
+          - Performance:
+              - Optimization Guide: examples/advanced/performance/optimization-guide.md
+          - Sampling:
+              - Sampling Tutorial: examples/advanced/sampling/sampling-tutorial.md
+          - Training:
+              - End-to-End CIFAR-10: examples/advanced/training/e2e-cifar10-guide.md
   - API Reference:
       - Core Components:
           - Overview: core/index.md
@@ -280,7 +309,7 @@ nav:
           - Overview: performance/index.md
           - roofline: performance/roofline.md
           - xla_optimization: performance/xla_optimization.md
-      - Root:
+      - Types & Protocols:
           - Overview: root/index.md
           - typing: root/typing.md
       - Samplers:
@@ -300,12 +329,12 @@ nav:
           - memory_source: sources/memory_source.md
           - mixed_source: sources/mixed_source.md
           - tfds_source: sources/tfds_source.md
-  - Distributed Training: distributed_training.md
   - Contributing:
       - Guide: contributing/contributing_guide.md
+      - Example Documentation Design: contributing/example_documentation_design.md
       - Performance: contributing/performance_optimization_guide.md
-      - Developer Guide: dev_guide.md
-      - Testing Guide: testing_guide.md
-      - GPU Testing: gpu_testing/README.md
-      - Test Structure: tests/README.md
-      - Type Issues Guide: development/pyright-type-issues-solutions.md
+      - Developer Guide: contributing/dev_guide.md
+      - Testing Guide: contributing/testing_guide.md
+      - GPU Testing: contributing/gpu_testing.md
+      - Test Structure: contributing/test_structure.md
+      - Type Issues Guide: contributing/type_issues_guide.md

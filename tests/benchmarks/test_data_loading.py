@@ -123,8 +123,7 @@ def test_inmemory_source_benchmark(benchmark, benchmark_image_data):
 
 
 @pytest.mark.skipif(
-    IS_MACOS,
-    reason="TensorFlow crashes on macOS ARM64 (tensorflow/tensorflow#52138)"
+    IS_MACOS, reason="TensorFlow crashes on macOS ARM64 (tensorflow/tensorflow#52138)"
 )
 def test_tfds_source_benchmark(benchmark):
     """Benchmark the TFDSSource performance."""
@@ -155,8 +154,7 @@ def test_tfds_source_benchmark(benchmark):
 
 
 @pytest.mark.skipif(
-    IS_MACOS,
-    reason="HuggingFace datasets may have TensorFlow backend issues on macOS ARM64"
+    IS_MACOS, reason="HuggingFace datasets may have TensorFlow backend issues on macOS ARM64"
 )
 def test_hf_source_benchmark(benchmark):
     """Benchmark the HFSource performance."""
@@ -169,7 +167,8 @@ def test_hf_source_benchmark(benchmark):
     def setup_and_run():
         # Use a small dataset for benchmarking
         # HFSource now automatically converts PIL images to JAX arrays
-        hf_config = HfDataSourceConfig(name="mnist", split="train[:1000]")
+        # Note: "mnist" was moved to "ylecun/mnist" on HuggingFace Hub
+        hf_config = HfDataSourceConfig(name="ylecun/mnist", split="train[:1000]")
         source = HFSource(hf_config)
 
         data_stream = DAGExecutor().add(source).batch(32)
