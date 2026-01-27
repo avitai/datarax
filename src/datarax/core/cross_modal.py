@@ -5,6 +5,7 @@ This module provides base classes for operators that work across multiple modali
 enables fusion, cross-attention, contrastive learning, and alignment operations.
 
 Key Features:
+
 - Multi-field input/output transformations
 - Learnable fusion and attention mechanisms
 - Compatible with JAX transformations (jit, vmap, grad)
@@ -57,14 +58,15 @@ class CrossModalOperatorConfig(OperatorConfig):
     be compatible with JAX transformations.
 
     Use Cases:
-    - **Fusion**: Combine embeddings from different modalities
-      Examples: [image_emb, text_emb] → joint_emb
-    - **Cross-attention**: Attend from one modality to another
-      Examples: [image_features, text_features] → attended_features
-    - **Contrastive**: Compute similarity across modalities
-      Examples: [image_emb, text_emb] → similarity_score
-    - **Alignment**: Enforce cross-modal consistency
-      Examples: [image_features, text_features] → alignment_loss
+
+        - **Fusion**: Combine embeddings from different modalities
+          Examples: [image_emb, text_emb] → joint_emb
+        - **Cross-attention**: Attend from one modality to another
+          Examples: [image_features, text_features] → attended_features
+        - **Contrastive**: Compute similarity across modalities
+          Examples: [image_emb, text_emb] → similarity_score
+        - **Alignment**: Enforce cross-modal consistency
+          Examples: [image_features, text_features] → alignment_loss
 
     Attributes:
         input_fields: List of input field names to read from
@@ -77,6 +79,7 @@ class CrossModalOperatorConfig(OperatorConfig):
                           (e.g., check batch dimensions match)
 
     Validation Rules:
+
         - input_fields must be non-empty list of non-empty strings
         - output_fields must be non-empty list of non-empty strings
         - Inherits stochastic validation from OperatorConfig
@@ -165,29 +168,32 @@ class CrossModalOperator(OperatorModule):
     """Base class for cross-modal operators with learnable parameters.
 
     Operates across multiple fields within an Element, enabling:
-    - Multi-modal fusion
-    - Cross-modal attention
-    - Contrastive learning
-    - Cross-modal alignment
+
+        - Multi-modal fusion
+        - Cross-modal attention
+        - Contrastive learning
+        - Cross-modal alignment
 
     Key Features:
-    - Compatible with nnx.jit, jax.vmap, jax.grad
-    - Supports learnable parameters via nnx.Param
-    - End-to-end differentiable
-    - Can be optimized jointly with model
-    - Operates on Batch[Element] (inherited from OperatorModule)
+
+        - Compatible with nnx.jit, jax.vmap, jax.grad
+        - Supports learnable parameters via nnx.Param
+        - End-to-end differentiable
+        - Can be optimized jointly with model
+        - Operates on Batch[Element] (inherited from OperatorModule)
 
     Inherited Features from OperatorModule:
-    - **apply_batch()**: Automatically handles batched operations by calling apply()
+
+        - **apply_batch()**: Automatically handles batched operations by calling apply()
       on each element. Override only if you need custom batch-level logic (e.g.,
       batch-level contrastive loss, cross-element attention). Default is sufficient
       for most element-wise cross-modal operations.
 
-    - **Statistics system**: Optionally collect and use batch statistics via stats
-      parameter in apply(). Useful for adaptive cross-modal operations (e.g.,
-      batch-aware normalization of fused embeddings).
+        - **Statistics system**: Optionally collect and use batch statistics via stats
+          parameter in apply(). Useful for adaptive cross-modal operations (e.g.,
+          batch-aware normalization of fused embeddings).
 
-    - **Caching system**: Results can be cached based on operator configuration
+        - **Caching system**: Results can be cached based on operator configuration
       and input characteristics. Inherited from base OperatorModule, helps avoid
       redundant computation for deterministic cross-modal operations.
 
@@ -219,9 +225,10 @@ class CrossModalOperator(OperatorModule):
         ```
 
     Subclasses provide specific cross-modal operations:
-    - **FusionOperator**: Learned combination of embeddings
-    - **CrossAttentionOperator**: Learnable query/key/value projections
-    - **ContrastiveOperator**: Learnable projection heads and temperature
+
+        - **FusionOperator**: Learned combination of embeddings
+        - **CrossAttentionOperator**: Learnable query/key/value projections
+        - **ContrastiveOperator**: Learnable projection heads and temperature
 
     Examples:
         Deterministic fusion:
@@ -383,9 +390,8 @@ class CrossModalOperator(OperatorModule):
         Examples:
             ```python
             inputs = self._extract_inputs(data)
-            image_emb, text_emb = inputs[0], inputs[1]
-            # or
-            image_emb, text_emb, audio_emb = self._extract_inputs(data)
+            image_emb, text_emb = inputs[0], inputs[1]  # Two inputs
+            image_emb, text_emb, audio_emb = self._extract_inputs(data)  # Three inputs
             ```
         """
         return [data[field] for field in self.config.input_fields]
@@ -405,15 +411,10 @@ class CrossModalOperator(OperatorModule):
 
         Examples:
             ```python
-            # Single output
             fused_emb = self._fuse(inputs)
-            result = self._store_outputs(data, [fused_emb])
-            # result now has original fields + "fused_emb"
-
-            # Multiple outputs
+            result = self._store_outputs(data, [fused_emb])  # Adds "fused_emb" field
             fused, similarity, alignment = self._process(inputs)
             result = self._store_outputs(data, [fused, similarity, alignment])
-            # result now has original fields + all output fields
             ```
         """
         result = dict(data)

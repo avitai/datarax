@@ -3,6 +3,7 @@
 This operator extends ModalityOperator to provide pixel-wise and channel-wise dropout.
 
 Key Features:
+
 - Two dropout modes: 'pixel' (element-wise) and 'channel' (entire channels)
 - Stochastic mode with per-sample dropout masks
 - Deterministic mode for fixed dropout pattern
@@ -71,6 +72,7 @@ class DropoutOperator(ModalityOperator):
     """Image dropout transformation operator.
 
     Applies dropout to images by randomly setting pixels or channels to zero:
+
         - Pixel mode: Each pixel independently dropped with probability dropout_rate
         - Channel mode: Entire channels dropped with probability dropout_rate
 
@@ -145,6 +147,7 @@ class DropoutOperator(ModalityOperator):
 
         Returns:
             Dictionary with:
+
                 - "keep_mask": Boolean array indicating which values to keep
                               Shape: (batch_size, H, W, C) for pixel mode
                               Shape: (batch_size, C) for channel mode (will be broadcast)

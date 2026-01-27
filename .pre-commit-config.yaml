@@ -74,6 +74,25 @@ repos:
         exclude: ^(documents|custom_modes|notebooks|example_data)/
         pass_filenames: false
         always_run: true
+      - id: check-file-length
+        name: check-file-length (warn >1500, fail >2000 lines)
+        entry: bash
+        args:
+          - -c
+          - |
+            for file in "$@"; do
+              lines=$(wc -l < "$file" 2>/dev/null || echo 0)
+              if [ "$lines" -gt 2000 ]; then
+                echo "ERROR: $file has $lines lines (limit: 2000)"
+                exit 1
+              elif [ "$lines" -gt 1500 ]; then
+                echo "WARNING: $file has $lines lines (approaching limit of 2000)"
+              fi
+            done
+          - --
+        language: system
+        types: [python]
+        exclude: ^(documents|custom_modes|notebooks|example_data|tests/)
 
   # Workshop-inspired type checking with JAX ecosystem support
   - repo: https://github.com/RobertCraigie/pyright-python
@@ -168,15 +187,15 @@ repos:
   #     - id: hadolint-docker
   #       exclude: ^(documents|custom_modes|notebooks)/
 
-# Workshop-inspired CI configuration with performance optimizations
+# CI Configuration - no autofix, manual testing before commits
 ci:
   autofix_commit_msg: |
     [pre-commit.ci] auto fixes from pre-commit.com hooks
 
     for more information, see https://pre-commit.ci
-  autofix_prs: true
+  autofix_prs: false           # No automatic commits - run tests manually first
   autoupdate_branch: ""
   autoupdate_commit_msg: "[pre-commit.ci] pre-commit autoupdate"
-  autoupdate_schedule: weekly
+  autoupdate_schedule: weekly  # Keep hooks up to date
   skip: []
   submodules: false

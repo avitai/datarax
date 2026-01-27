@@ -225,10 +225,11 @@ class Merge(Node):
     Combines outputs from parallel branches back into a single output.
 
     Strategies:
-    - 'concat': Concatenate along last axis
-    - 'sum': Element-wise sum
-    - 'mean': Element-wise mean
-    - 'stack': Stack into new dimension
+
+        - 'concat': Concatenate along last axis
+        - 'sum': Element-wise sum
+        - 'mean': Element-wise mean
+        - 'stack': Stack into new dimension
 
     Examples:
         Merge parallel outputs:

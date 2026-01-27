@@ -49,6 +49,7 @@ All Datarax components, regardless of their specific role, share this common DNA
 -   **Differentiable**: Fully compatible with JAX's automatic differentiation (`jax.grad`).
 -   **Input/Output**: Expects and returns a `Batch` of data.
 -   **Modes**:
+
     -   **Deterministic**: output = f(input) (e.g., Resize, Crop, Normalize)
     -   **Stochastic**: output = f(input, rng) (e.g., RandomFlip, ColorJitter, Mixup)
 

@@ -45,8 +45,8 @@ dependencies = [
   "pyarrow>=12",
   "ruff>=0.1.5",
   "scipy>=1.10",
-  "protobuf>=4.21.12,<5", # Pin protobuf to compatible version for tensorflow-metadata
-  "tensorflow>=2.16.0", # Required for various tests (CUDA deps handled separately)
+  "protobuf>=5.28.0", # Required by grain>=0.2 and tensorflow>=2.20
+  "tensorflow>=2.20.0", # Requires protobuf>=5.28.0
   "tensorflow-datasets>=4.9.2", # Required for TFDS source tests
   "tensorflow-metadata>=1.15.0", # Minimum version to avoid protobuf deprecation warnings
   'tomli>=2; python_version < "3.11"',
@@ -205,14 +205,14 @@ environment_file = ".env"
 fallback_to_cpu = true
 setup_scripts = ["scripts/fresh_cuda_setup.sh", "scripts/setup_env.py", "scripts/run_tests_with_cuda.sh"]
 
-[tool.hatch.version]
-path = "src/datarax/__init__.py"
-
 [tool.hatch.build.targets.sdist]
 include = ["src/datarax", "README.md", "LICENSE", "pyproject.toml"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/datarax"]
+
+[tool.hatch.version]
+path = "src/datarax/__init__.py"
 
 [tool.pydocstyle]
 add-ignore = ["D100", "D101", "D102", "D103", "D104", "D105", "D107", "D202", "D212", "D415"]
@@ -244,7 +244,7 @@ reportReturnType = false
 reportUnusedExpression = false
 
 [tool.pytest.ini_options]
-addopts = "--strict-markers --strict-config --verbose --tb=short --color=yes --durations=10 --cov=src/ --cov-report=term-missing --cov-report=html --cov-fail-under=20"
+addopts = "--strict-markers --strict-config --verbose --tb=short --color=yes --durations=10 --cov=src/ --cov-report=term-missing --cov-report=html --cov-fail-under=30 --timeout=300 --json-report --json-report-file=temp/test-results.json --json-report-indent=2"
 cache_dir = ".pytest_cache"
 # Additional settings
 console_output_style = "progress"

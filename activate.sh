@@ -1,6 +1,6 @@
 #!/bin/bash
 # Datarax Environment Activation Script
-# Created by setup script
+# Created by setup script - includes enhanced process detection
 
 # Colors for output
 RED='\033[0;31m'
@@ -13,19 +13,97 @@ NC='\033[0m'
 echo -e "${BLUE}🚀 Activating Datarax Development Environment${NC}"
 echo "============================================="
 
-# Deactivate any existing virtual environment
-if [[ -n "$VIRTUAL_ENV" ]]; then
+# Check if already activated
+if [[ "$VIRTUAL_ENV" != "" ]]; then
     echo -e "${YELLOW}⚠️  Virtual environment already active: $VIRTUAL_ENV${NC}"
-    echo -e "${CYAN}🔄 Deactivating current environment...${NC}"
+    echo "Deactivating current environment..."
 
-    # Properly call deactivate function if it exists
-    # This runs in the current shell context, not a subshell
-    if declare -f deactivate >/dev/null; then
-        deactivate 2>/dev/null || true
-        echo -e "${GREEN}✅ Previous environment deactivated${NC}"
-    else
-        echo -e "${YELLOW}⚠️  No deactivate function found, will override environment${NC}"
+    # Improved process detection and user feedback
+    # Check for processes using the virtual environment
+    VENV_PROCESSES=$(pgrep -f "$VIRTUAL_ENV" | xargs -I {} ps -p {} -o pid,etime,args --no-headers 2>/dev/null || true)
+
+    if [[ -n "$VENV_PROCESSES" ]]; then
+        echo -e "${YELLOW}🔍 Checking for processes using the virtual environment...${NC}"
+
+        # Count processes
+        PROCESS_COUNT=$(echo "$VENV_PROCESSES" | wc -l)
+        if [[ $PROCESS_COUNT -gt 0 ]]; then
+            echo -e "${YELLOW}⏳ Found $PROCESS_COUNT process(es) using the virtual environment:${NC}"
+            echo ""
+
+            # Show process details in a readable format
+            echo "$VENV_PROCESSES" | while IFS= read -r line; do
+                if [[ -n "$line" ]]; then
+                    PID=$(echo "$line" | awk '{print $1}')
+                    ETIME=$(echo "$line" | awk '{print $2}')
+                    CMD=$(echo "$line" | awk '{for(i=3;i<=NF;i++) printf "%s ", $i; print ""}' | sed 's/[[:space:]]*$//')
+                    echo -e "${CYAN}   • PID $PID (running for $ETIME): ${NC}$CMD"
+                fi
+            done
+
+            echo ""
+            echo -e "${YELLOW}💡 Options:${NC}"
+            echo -e "${CYAN}   1. Wait for processes to complete naturally${NC}"
+            echo -e "${CYAN}   2. Press Ctrl+C to cancel activation${NC}"
+            echo -e "${CYAN}   3. In another terminal, stop processes manually:${NC}"
+            echo -e "${CYAN}      pkill -f pytest  # Stop test processes${NC}"
+            echo -e "${CYAN}      pkill -f jupyter # Stop Jupyter processes${NC}"
+            echo ""
+            echo -e "${YELLOW}⏳ Waiting for processes to complete (this may take a while)...${NC}"
+            echo -e "${CYAN}   You can press Ctrl+C to cancel and handle processes manually${NC}"
+        fi
     fi
+
+    # Attempt deactivation with timeout and progress indication
+    echo -e "${YELLOW}🔄 Attempting environment deactivation...${NC}"
+
+    # Function to show waiting animation
+    show_waiting() {
+        local delay=1
+        local spinstr="|/-\\"
+        local temp
+        while true; do
+            temp=${spinstr#?}
+            printf "\r%s   [%c] Waiting for environment deactivation...%s" "${CYAN}" "$spinstr" "${NC}"
+            spinstr=$temp${spinstr%"$temp"}
+            sleep $delay
+        done
+    }
+
+    # Start background spinner
+    show_waiting &
+    SPINNER_PID=$!
+
+    # Setup cleanup function for spinner
+    cleanup_spinner() {
+        if [[ -n "$SPINNER_PID" ]]; then
+            kill $SPINNER_PID 2>/dev/null || true
+            wait $SPINNER_PID 2>/dev/null || true
+            printf "\r                                                    \r"  # Clear spinner line
+        fi
+    }
+
+    # Setup trap to ensure spinner cleanup on script exit
+    trap cleanup_spinner EXIT INT TERM
+
+    # Try to deactivate with timeout
+    if timeout 30 bash -c 'deactivate 2>/dev/null || true'; then
+        cleanup_spinner
+        printf "\r%s✅ Environment deactivation completed%s\n" "${GREEN}" "${NC}"
+    else
+        cleanup_spinner
+        printf "\r%s❌ Environment deactivation timed out after 30 seconds%s\n" "${RED}" "${NC}"
+        echo -e "${YELLOW}💡 This usually means processes are still using the environment.${NC}"
+        echo -e "${CYAN}   Run this command to force cleanup:${NC}"
+        echo -e "${CYAN}   pkill -f '$VIRTUAL_ENV'${NC}"
+        echo ""
+        echo -e "${YELLOW}⚠️  Proceeding with activation anyway...${NC}"
+        # Clear VIRTUAL_ENV to force reactivation
+        unset VIRTUAL_ENV
+    fi
+
+    # Clear the trap
+    trap - EXIT INT TERM
 fi
 
 # Activate virtual environment

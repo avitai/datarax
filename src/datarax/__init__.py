@@ -13,6 +13,9 @@ from datarax.core.operator import OperatorModule
 from datarax.core.sampler import SamplerModule
 from datarax.core.sharder import SharderModule
 
+# Distributed utilities
+from datarax.distributed import prefetch_to_device
+
 # DAG components
 from datarax.dag.dag_executor import DAGExecutor, pipeline, from_source
 from datarax.dag.nodes import (
@@ -81,4 +84,6 @@ __all__ = [
     # Monitoring
     "MonitoredDAGExecutor",
     "monitored_pipeline",
+    # Distributed utilities
+    "prefetch_to_device",
 ]

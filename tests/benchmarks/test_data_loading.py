@@ -123,21 +123,20 @@ def test_inmemory_source_benchmark(benchmark, benchmark_image_data):
 
 
 @pytest.mark.skipif(
-    IS_MACOS,
-    reason="TensorFlow crashes on macOS ARM64 (tensorflow/tensorflow#52138)"
+    IS_MACOS, reason="TensorFlow crashes on macOS ARM64 (tensorflow/tensorflow#52138)"
 )
 def test_tfds_source_benchmark(benchmark):
-    """Benchmark the TFDSSource performance."""
+    """Benchmark the TFDSEagerSource performance."""
     # Skip this test if tensorflow_datasets is not available
     pytest.importorskip("tensorflow_datasets")
 
-    from datarax.sources import TFDSSource
-    from datarax.sources.tfds_source import TfdsDataSourceConfig
+    from datarax.sources import TFDSEagerSource
+    from datarax.sources.tfds_source import TFDSEagerConfig
 
     def setup_and_run():
         # Use a small dataset for benchmarking, let Pipeline handle batching
-        config = TfdsDataSourceConfig(name="mnist", split="train[:1000]")
-        source = TFDSSource(config)
+        config = TFDSEagerConfig(name="mnist", split="train[:1000]")
+        source = TFDSEagerSource(config)
         data_stream = DAGExecutor().add(source).batch(32)
         return benchmark_stream_iteration(data_stream, num_batches=30)
 
@@ -145,7 +144,7 @@ def test_tfds_source_benchmark(benchmark):
     result = benchmark(setup_and_run)
 
     # Print results for debugging
-    print("\nTFDSSource Performance:")
+    print("\nTFDSEagerSource Performance:")
     print(f"  Duration: {result['duration_seconds']:.4f}s")
     print(f"  Examples/second: {result['examples_per_second']:.2f}")
     print(f"  Batches/second: {result['batches_per_second']:.2f}")
@@ -155,22 +154,22 @@ def test_tfds_source_benchmark(benchmark):
 
 
 @pytest.mark.skipif(
-    IS_MACOS,
-    reason="HuggingFace datasets may have TensorFlow backend issues on macOS ARM64"
+    IS_MACOS, reason="HuggingFace datasets may have TensorFlow backend issues on macOS ARM64"
 )
 def test_hf_source_benchmark(benchmark):
-    """Benchmark the HFSource performance."""
+    """Benchmark the HFEagerSource performance."""
     # Skip this test if datasets is not available
     pytest.importorskip("datasets")
 
-    from datarax.sources import HFSource
-    from datarax.sources.hf_source import HfDataSourceConfig
+    from datarax.sources import HFEagerSource
+    from datarax.sources.hf_source import HFEagerConfig
 
     def setup_and_run():
         # Use a small dataset for benchmarking
-        # HFSource now automatically converts PIL images to JAX arrays
-        hf_config = HfDataSourceConfig(name="mnist", split="train[:1000]")
-        source = HFSource(hf_config)
+        # HFEagerSource now automatically converts PIL images to JAX arrays
+        # Note: "mnist" was moved to "ylecun/mnist" on HuggingFace Hub
+        hf_config = HFEagerConfig(name="ylecun/mnist", split="train[:1000]")
+        source = HFEagerSource(hf_config)
 
         data_stream = DAGExecutor().add(source).batch(32)
 
@@ -180,7 +179,7 @@ def test_hf_source_benchmark(benchmark):
     result = benchmark(setup_and_run)
 
     # Print results for debugging
-    print("\nHFSource Performance:")
+    print("\nHFEagerSource Performance:")
     print(f"  Duration: {result['duration_seconds']:.4f}s")
     print(f"  Examples/second: {result['examples_per_second']:.2f}")
     print(f"  Batches/second: {result['batches_per_second']:.2f}")

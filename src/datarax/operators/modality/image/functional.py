@@ -291,20 +291,19 @@ def adjust_contrast(
 
     # For uniform images, ensure there's a perceptible change if factor != 1.0
     # This is needed for testing and to avoid numerical issues
-    if factor != 1.0:
-        # Check if the image is uniform (all pixels are the same)
-        is_uniform = jnp.allclose(image, mean)
+    # Note: We avoid Python `if` on traced values to support JAX transformations
+    # Check if the image is uniform (all pixels are the same)
+    is_uniform = jnp.allclose(image, mean)
 
-        # If image is uniform, add a slight variation
-        # This helps with testing and ensures contrast has a visible effect
-        variation = 0.1 * (factor - 1.0)
-        offset = jnp.array([variation, -variation, variation], dtype=image.dtype)
-        offset = jnp.reshape(offset, (1, 1, -1))
+    # If image is uniform, add a slight variation
+    # This helps with testing and ensures contrast has a visible effect
+    variation = 0.1 * (factor - 1.0)
+    offset = jnp.array([variation, -variation, variation], dtype=image.dtype)
+    offset = jnp.reshape(offset, (1, 1, -1))
 
-        # Only apply if image is 3-channel and uniform
-        image = jnp.where(
-            is_uniform & (len(image.shape) == 3), jnp.clip(image + offset, 0.0, 1.0), image
-        )
+    # Only apply if image is 3-channel, uniform, and factor != 1.0
+    should_adjust = is_uniform & (image.ndim == 3) & (factor != 1.0)
+    image = jnp.where(should_adjust, jnp.clip(image + offset, 0.0, 1.0), image)
 
     adjusted = mean + factor * (image - mean)
     return jnp.clip(adjusted, 0.0, 1.0)

@@ -1,6 +1,7 @@
-"""Tests for the TFDSSource.
+"""Tests for the TFDS Sources (TFDSEagerSource and TFDSStreamingSource).
 
-This module contains tests for the unified TensorFlow Datasets data source implementation.
+This module contains tests for the unified TensorFlow Datasets data source implementation
+with the new eager/streaming architecture.
 """
 
 import platform
@@ -23,7 +24,13 @@ import flax.nnx as nnx
 tf = pytest.importorskip("tensorflow")
 pytest.importorskip("tensorflow_datasets")
 
-from datarax.sources import TFDSSource, TfdsDataSourceConfig
+from datarax.sources import (
+    TFDSEagerSource,
+    TFDSEagerConfig,
+    TFDSStreamingSource,
+    TFDSStreamingConfig,
+    from_tfds,
+)
 
 
 # Set a fixed memory limit for TensorFlow to avoid OOM issues in CI
@@ -46,13 +53,18 @@ def mock_mnist_dataset():
     return dataset
 
 
+# =============================================================================
+# TFDSEagerSource Tests
+# =============================================================================
+
+
 @pytest.mark.tfds
-def test_tfds_source_stateless():
-    """Test TFDSSource in stateless mode with a small MNIST dataset."""
+def test_tfds_eager_source_stateless():
+    """Test TFDSEagerSource in stateless mode with a small MNIST dataset."""
     try:
         # Create source with config-based API
-        config = TfdsDataSourceConfig(name="mnist", split="test[:10]")
-        source = TFDSSource(config)
+        config = TFDSEagerConfig(name="mnist", split="test[:10]")
+        source = TFDSEagerSource(config)
 
         # Get first element
         data = next(iter(source))
@@ -75,13 +87,13 @@ def test_tfds_source_stateless():
 
 
 @pytest.mark.tfds
-def test_tfds_source_stateful():
-    """Test TFDSSource in stateful mode with internal state management."""
+def test_tfds_eager_source_stateful():
+    """Test TFDSEagerSource in stateful mode with internal state management."""
     try:
         # Create source with rngs (stateful mode)
         rngs = nnx.Rngs(default=0)
-        config = TfdsDataSourceConfig(name="mnist", split="test[:20]")
-        source = TFDSSource(config, rngs=rngs)
+        config = TFDSEagerConfig(name="mnist", split="test[:20]")
+        source = TFDSEagerSource(config, rngs=rngs)
 
         # Get batches using stateful mode
         batch1 = source.get_batch(5)
@@ -95,23 +107,18 @@ def test_tfds_source_stateful():
         assert batch1["image"].shape[0] == 5  # Batch size
         assert batch1["label"].shape[0] == 5
 
-        # Batches should be different (advancing internal state)
-        # Note: Exact comparison might fail due to data conversion
-
     except Exception as e:
         pytest.skip(f"Could not load MNIST dataset: {e}")
 
 
 @pytest.mark.tfds
-def test_tfds_source_with_shuffling():
-    """Test TFDSSource with shuffling enabled."""
+def test_tfds_eager_source_with_shuffling():
+    """Test TFDSEagerSource with shuffling enabled."""
     try:
         # Create source with shuffling
         rngs = nnx.Rngs(default=42, shuffle=42)
-        config = TfdsDataSourceConfig(
-            name="mnist", split="test[:100]", shuffle=True, shuffle_buffer_size=50
-        )
-        source = TFDSSource(config, rngs=rngs)
+        config = TFDSEagerConfig(name="mnist", split="test[:100]", shuffle=True, seed=42)
+        source = TFDSEagerSource(config, rngs=rngs)
 
         # Get some data
         items = []
@@ -127,12 +134,16 @@ def test_tfds_source_with_shuffling():
 
 
 @pytest.mark.tfds
-def test_tfds_source_with_include_keys():
-    """Test TFDSSource with include_keys filter."""
+def test_tfds_eager_source_with_include_keys():
+    """Test TFDSEagerSource with include_keys filter."""
     try:
         # Load MNIST with only the image key
-        config = TfdsDataSourceConfig(name="mnist", split="test[:10]", include_keys={"image"})
-        source = TFDSSource(config)
+        config = TFDSEagerConfig(name="mnist", split="test[:10]", include_keys={"image"})
+        source = TFDSEagerSource(config)
+
+        # Verify only the image key is present in loaded data
+        assert "image" in source.data
+        assert "label" not in source.data
 
         # Get first element
         data = next(iter(source))
@@ -146,12 +157,16 @@ def test_tfds_source_with_include_keys():
 
 
 @pytest.mark.tfds
-def test_tfds_source_with_exclude_keys():
-    """Test TFDSSource with exclude_keys filter."""
+def test_tfds_eager_source_with_exclude_keys():
+    """Test TFDSEagerSource with exclude_keys filter."""
     try:
         # Load MNIST excluding the label key
-        config = TfdsDataSourceConfig(name="mnist", split="test[:10]", exclude_keys={"label"})
-        source = TFDSSource(config)
+        config = TFDSEagerConfig(name="mnist", split="test[:10]", exclude_keys={"label"})
+        source = TFDSEagerSource(config)
+
+        # Verify label is excluded from loaded data
+        assert "image" in source.data
+        assert "label" not in source.data
 
         # Get first element
         data = next(iter(source))
@@ -165,12 +180,12 @@ def test_tfds_source_with_exclude_keys():
 
 
 @pytest.mark.tfds
-def test_tfds_source_stateless_batch():
-    """Test TFDSSource batch retrieval with explicit key."""
+def test_tfds_eager_source_stateless_batch():
+    """Test TFDSEagerSource batch retrieval with explicit key."""
     try:
         # Create source with config
-        config = TfdsDataSourceConfig(name="mnist", split="test[:50]")
-        source = TFDSSource(config)
+        config = TFDSEagerConfig(name="mnist", split="test[:50]")
+        source = TFDSEagerSource(config)
 
         # Get batch with explicit key (stateless mode)
         key = jax.random.key(42)
@@ -181,82 +196,196 @@ def test_tfds_source_stateless_batch():
         assert "label" in batch
         assert batch["image"].shape[0] == 10
 
-        # Same key should give same batch
-        source.get_batch(10, key=key)
-        # Note: Due to TFDS streaming, exact reproducibility might vary
-
     except Exception as e:
         pytest.skip(f"Could not load MNIST dataset: {e}")
 
 
 @pytest.mark.tfds
-def test_tfds_source_as_supervised():
-    """Test TFDSSource with as_supervised flag."""
+def test_tfds_eager_source_as_supervised():
+    """Test TFDSEagerSource with as_supervised flag."""
     try:
         # Load with as_supervised flag
-        config = TfdsDataSourceConfig(name="mnist", split="test[:10]", as_supervised=True)
-        source = TFDSSource(config)
+        config = TFDSEagerConfig(name="mnist", split="test[:10]", as_supervised=True)
+        source = TFDSEagerSource(config)
 
         # Get first element
         data = next(iter(source))
 
         # With as_supervised, keys should be 'image' and 'label'
-        # (even if original dataset has different names)
         assert "image" in data or "label" in data
 
     except Exception as e:
         pytest.skip(f"Could not load MNIST dataset: {e}")
 
 
+def test_tfds_eager_source_error_handling():
+    """Test TFDSEagerConfig error handling."""
+    # Test error for specifying both include and exclude keys
+    with pytest.raises(ValueError, match="Cannot specify both"):
+        TFDSEagerConfig(name="mnist", split="test", include_keys={"image"}, exclude_keys={"label"})
+
+
 @pytest.mark.tfds
-def test_tfds_source_streaming_mode():
-    """Test TFDSSource in streaming mode."""
+def test_tfds_eager_source_repr():
+    """Test string representation of TFDSEagerSource."""
     try:
-        # Create source in streaming mode
-        config = TfdsDataSourceConfig(name="mnist", split="test[:10]", streaming=True)
-        source = TFDSSource(config)
+        config = TFDSEagerConfig(name="mnist", split="test[:10]")
+        source = TFDSEagerSource(config)
+
+        # Check that repr includes useful information
+        repr_str = repr(source)
+        assert "TFDSEagerSource" in repr_str
+        assert "mnist" in repr_str
+
+    except Exception as e:
+        pytest.skip(f"Could not create TFDSEagerSource: {e}")
+
+
+def test_tfds_eager_source_config_validation():
+    """Test TFDSEagerConfig validation."""
+    # Should raise error when name is not provided
+    with pytest.raises(ValueError, match="name is required"):
+        TFDSEagerConfig(split="train")
+
+    # Should raise error when split is not provided
+    with pytest.raises(ValueError, match="split is required"):
+        TFDSEagerConfig(name="mnist")
+
+
+# =============================================================================
+# TFDSStreamingSource Tests
+# =============================================================================
+
+
+@pytest.mark.tfds
+def test_tfds_streaming_source_basic():
+    """Test TFDSStreamingSource basic iteration."""
+    try:
+        config = TFDSStreamingConfig(name="mnist", split="test[:10]")
+        source = TFDSStreamingSource(config)
 
         # Get first element
         data = next(iter(source))
 
-        # Verify data is loaded correctly
+        # Verify the structure
         assert "image" in data
+        assert "label" in data
+
+        # Verify types (should be JAX arrays)
         assert isinstance(data["image"], jax.Array)
+        assert isinstance(data["label"], jax.Array)
 
     except Exception as e:
-        pytest.skip(f"Could not load MNIST dataset in streaming mode: {e}")
+        pytest.skip(f"Could not load MNIST dataset: {e}")
 
 
-def test_tfds_source_error_handling():
-    """Test TFDSSource config error handling."""
+@pytest.mark.tfds
+def test_tfds_streaming_source_with_shuffling():
+    """Test TFDSStreamingSource with shuffling enabled."""
+    try:
+        config = TFDSStreamingConfig(
+            name="mnist", split="test[:50]", shuffle=True, shuffle_buffer_size=50
+        )
+        source = TFDSStreamingSource(config)
+
+        # Get some data
+        items = []
+        for i, item in enumerate(source):
+            if i >= 5:
+                break
+            items.append(item)
+
+        assert len(items) == 5
+
+    except Exception as e:
+        pytest.skip(f"Could not load MNIST dataset: {e}")
+
+
+@pytest.mark.tfds
+def test_tfds_streaming_source_fixed_prefetch():
+    """Test that TFDSStreamingSource uses fixed prefetch buffer."""
+    try:
+        # Create with explicit prefetch buffer (not AUTOTUNE)
+        config = TFDSStreamingConfig(name="mnist", split="test[:10]", prefetch_buffer=2)
+        source = TFDSStreamingSource(config)
+
+        # Verify source is created
+        assert source is not None
+
+        # Get first element to verify it works
+        data = next(iter(source))
+        assert "image" in data
+
+    except Exception as e:
+        pytest.skip(f"Could not load MNIST dataset: {e}")
+
+
+def test_tfds_streaming_source_config_validation():
+    """Test TFDSStreamingConfig validation."""
+    # Should raise error when name is not provided
+    with pytest.raises(ValueError, match="name is required"):
+        TFDSStreamingConfig(split="train")
+
+    # Should raise error when split is not provided
+    with pytest.raises(ValueError, match="split is required"):
+        TFDSStreamingConfig(name="mnist")
+
     # Test error for specifying both include and exclude keys
     with pytest.raises(ValueError, match="Cannot specify both"):
-        TfdsDataSourceConfig(
+        TFDSStreamingConfig(
             name="mnist", split="test", include_keys={"image"}, exclude_keys={"label"}
         )
 
 
-@pytest.mark.tfds
-def test_tfds_source_repr():
-    """Test string representation of TFDSSource."""
-    try:
-        config = TfdsDataSourceConfig(name="mnist", split="test")
-        source = TFDSSource(config)
+# =============================================================================
+# Factory Function Tests
+# =============================================================================
 
-        # Check that repr includes useful information
-        repr_str = repr(source)
-        assert "TFDSSource" in repr_str or "mnist" in repr_str
+
+@pytest.mark.tfds
+def test_from_tfds_creates_eager_for_small_datasets():
+    """Test that from_tfds creates eager source for small datasets like MNIST."""
+    try:
+        source = from_tfds("mnist", "test[:10]", rngs=nnx.Rngs(0))
+
+        # Should be TFDSEagerSource (has .data attribute)
+        assert hasattr(source, "data")
+        assert isinstance(source, TFDSEagerSource)
 
     except Exception as e:
-        pytest.skip(f"Could not create TFDSSource: {e}")
+        pytest.skip(f"Could not load MNIST dataset: {e}")
 
 
-def test_tfds_source_config_validation():
-    """Test TFDSSource config validation."""
-    # Should raise error when name is not provided
-    with pytest.raises(ValueError, match="name is required"):
-        TfdsDataSourceConfig(split="train")
+@pytest.mark.tfds
+def test_from_tfds_force_eager():
+    """Test that from_tfds with eager=True creates eager source."""
+    try:
+        source = from_tfds("mnist", "test[:10]", eager=True, rngs=nnx.Rngs(0))
+        assert isinstance(source, TFDSEagerSource)
 
-    # Should raise error when split is not provided
-    with pytest.raises(ValueError, match="split is required"):
-        TfdsDataSourceConfig(name="mnist")
+    except Exception as e:
+        pytest.skip(f"Could not load MNIST dataset: {e}")
+
+
+@pytest.mark.tfds
+def test_from_tfds_force_streaming():
+    """Test that from_tfds with eager=False creates streaming source."""
+    try:
+        source = from_tfds("mnist", "test[:10]", eager=False, rngs=nnx.Rngs(0))
+        assert isinstance(source, TFDSStreamingSource)
+
+    except Exception as e:
+        pytest.skip(f"Could not load MNIST dataset: {e}")
+
+
+@pytest.mark.tfds
+def test_from_tfds_with_shuffling():
+    """Test that from_tfds passes shuffle parameter correctly."""
+    try:
+        source = from_tfds("mnist", "test[:20]", shuffle=True, seed=42, rngs=nnx.Rngs(0))
+
+        # Should have shuffling enabled
+        assert source.shuffle is True
+
+    except Exception as e:
+        pytest.skip(f"Could not load MNIST dataset: {e}")

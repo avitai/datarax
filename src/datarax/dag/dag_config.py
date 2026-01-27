@@ -36,8 +36,8 @@ class DAGConfig:
         [[nodes]]
         id = "source"
         type = "DataSource"
-        class = "TFDSSource"
-        params = {dataset = "mnist", split = "train"}
+        class = "TFDSEagerSource"
+        params = {name = "mnist", split = "train"}
 
         [[nodes]]
         id = "batch"

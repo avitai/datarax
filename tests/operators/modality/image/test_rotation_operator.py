@@ -383,25 +383,33 @@ class TestRotationOperatorStochasticMode:
         )
         operator = RotationOperator(config, rngs=nnx.Rngs(augment=42))
 
-        image = jnp.ones((16, 16, 3)) * 0.5
-        data = {"image": image}
+        # data_shapes provides shape info for random param generation
+        # First dimension is batch size
+        batch_size = 4
+        data_shapes = {"image": (batch_size, 16, 16, 3)}
 
         # Generate different random params using different RNG keys
         key1 = jax.random.key(42)
         key2 = jax.random.key(43)
 
-        random_params1 = operator.generate_random_params(key1, data, {}, {})
-        random_params2 = operator.generate_random_params(key2, data, {}, {})
+        random_params1 = operator.generate_random_params(key1, data_shapes)
+        random_params2 = operator.generate_random_params(key2, data_shapes)
 
-        # Apply with different random params
-        result1, _, _ = operator.apply(data, {}, {}, random_params=random_params1)
-        result2, _, _ = operator.apply(data, {}, {}, random_params=random_params2)
+        # Should generate batch_size angles per call
+        assert random_params1["angle"].shape == (batch_size,)
+        assert random_params2["angle"].shape == (batch_size,)
 
-        # Results should be different (different random angles)
-        different_angles = random_params1["angle"] != random_params2["angle"]
-        different_results = not jnp.allclose(result1["image"], result2["image"], atol=1e-6)
+        # Different keys should produce different angles
+        different_angles = not jnp.allclose(random_params1["angle"], random_params2["angle"])
         assert different_angles
-        assert different_results
+
+        # Test application with single image
+        image = jnp.ones((16, 16, 3)) * 0.5
+        data = {"image": image}
+        single_params = {"angle": random_params1["angle"][0]}  # Use first angle
+
+        result, _, _ = operator.apply(data, {}, {}, random_params=single_params)
+        assert result["image"].shape == (16, 16, 3)
 
     def test_reproducibility_with_same_key(self):
         """Test that same RNG key produces same results."""

@@ -4,6 +4,7 @@ This module provides MapOperator, which applies user-provided array transformati
 functions to leaves in element data PyTree.
 
 Key Features:
+
 - Unified function signature: fn(x: Array, key: Array) -> Array
 - Deterministic mode: key parameter ignored
 - Stochastic mode: key parameter provides per-leaf randomness
@@ -215,6 +216,7 @@ class MapOperator(OperatorModule):
         """Apply array transformation to element (unified implementation).
 
         Single method handles all four modes:
+
         - Full-tree × deterministic
         - Full-tree × stochastic
         - Subtree × deterministic

@@ -4,15 +4,18 @@ This module provides BatchMixOperator, which performs batch-level sample mixing
 that cannot be decomposed into element-level operations.
 
 Key Difference from Other Operators:
+
 - Standard operators use vmap to process elements independently
 - BatchMixOperator overrides apply_batch() to access full batch
 - Mixing requires cross-element access (sample A mixed with sample B)
 
 Supported Modes:
+
 - mixup: Linear interpolation between pairs of samples
 - cutmix: Cut and paste rectangular patches between images
 
 Key Features:
+
 - Unified API for both MixUp and CutMix
 - Beta distribution for mixing ratio (alpha parameter)
 - Optional label mixing (proportional to mixed area)
@@ -38,6 +41,8 @@ class BatchMixOperator(OperatorModule):
     samples simultaneously. This operator overrides apply_batch() to
     work at the batch level instead of using vmap.
 
+    Modes:
+
     MixUp Mode:
         Creates virtual training examples by linear interpolation:
         x_mixed = λ * x_a + (1 - λ) * x_b
@@ -49,15 +54,14 @@ class BatchMixOperator(OperatorModule):
         Labels are mixed proportionally to the cut area.
 
     Examples:
-        # MixUp augmentation
-        config = BatchMixOperatorConfig(mode="mixup", alpha=0.4)
+        ```python
+        config = BatchMixOperatorConfig(mode="mixup", alpha=0.4)  # MixUp augmentation
         op = BatchMixOperator(config, rngs=rngs)
         mixed_batch = op(batch)
-
-        # CutMix augmentation
-        config = BatchMixOperatorConfig(mode="cutmix", alpha=1.0)
+        config = BatchMixOperatorConfig(mode="cutmix", alpha=1.0)  # CutMix augmentation
         op = BatchMixOperator(config, rngs=rngs)
         mixed_batch = op(batch)
+        ```
     """
 
     def __init__(

@@ -4,21 +4,36 @@
 
 Datarax tests can be run using different configurations depending on your environment and needs.
 
-### CPU-Only Testing
+### CPU-Only Testing (Recommended for Development)
 
 For stable testing without GPU/TPU dependencies:
 
 ```bash
-# Use our custom script
+# Use the project script (from project root)
 ./run_tests.sh
 
-# Or run specific tests using custom environment variables
-JAX_PLATFORMS=cpu uv run pytest tests/sources/test_memory_source.py -v
+# Or run specific tests with CPU-only JAX
+JAX_PLATFORMS=cpu uv run pytest tests/sources/test_memory_source_module.py -v
+
+# Run all tests on CPU
+JAX_PLATFORMS=cpu uv run pytest tests/ -v
+```
+
+### GPU Testing
+
+For GPU-accelerated testing (requires CUDA setup):
+
+```bash
+# Use the GPU test script
+bash scripts/run_gpu_tests.sh
+
+# Or manually with device selection
+JAX_PLATFORMS=cuda uv run pytest --device=gpu tests/ -v
 ```
 
 ### Full Test Suite
 
-To run the full test suite (requires appropriate GPU/TPU setup):
+To run the complete test suite:
 
 ```bash
 uv run pytest
@@ -32,7 +47,7 @@ The test directory structure mirrors the `src/datarax` package structure for eas
 tests/
 ├── augment/         # Tests for augmentation functionality
 ├── batching/        # Tests for batch processing
-├── benchmarking/    # Benchmarking infrastructure
+├── benchmarking/    # Benchmarking infrastructure tests
 ├── benchmarks/      # Performance benchmarks
 ├── checkpoint/      # Tests for checkpoint functionality
 ├── cli/             # Tests for CLI tools
@@ -42,6 +57,7 @@ tests/
 ├── dag/             # Tests for DAG execution
 ├── data/            # Test data and fixtures
 ├── distributed/     # Tests for distributed processing
+├── examples/        # Tests for example code validation
 ├── integration/     # End-to-end integration tests
 ├── memory/          # Tests for memory management
 ├── monitoring/      # Tests for monitoring functionality
@@ -52,22 +68,39 @@ tests/
 ├── sharding/        # Tests for sharding functionality
 ├── sources/         # Tests for data sources
 ├── test_common/     # Common testing utilities
-├── transforms/      # Tests for data transformations
+├── transforms/      # Tests for data transformations (neural network ops)
 ├── utils/           # Tests for utility functions
-├── conftest.py      # Pytest configuration
+├── conftest.py      # Pytest configuration and custom markers
 └── README.md        # This file
 ```
 
 ## Test Categories
 
-Tests are organized into the following categories:
+Tests are organized using pytest markers defined in `conftest.py`:
 
-- **Unit tests**: Basic functionality tests for individual components
-- **Integration tests**: Tests for component interactions (named `test_*_integration.py`)
-- **GPU tests**: Tests marked with `@pytest.mark.gpu` requiring GPU hardware
-- **TPU tests**: Tests marked with `@pytest.mark.tpu` requiring TPU hardware
-- **End-to-end tests**: Complete workflow tests (in `integration/` directory)
-- **Benchmarks**: Performance measurement tests (in `benchmarks/` directory)
+| Marker | Description |
+|--------|-------------|
+| `@pytest.mark.unit` | Basic unit tests (default) |
+| `@pytest.mark.integration` | Component interaction tests |
+| `@pytest.mark.end_to_end` | Complete workflow tests |
+| `@pytest.mark.benchmark` | Performance benchmarks |
+| `@pytest.mark.gpu` | Requires GPU hardware |
+| `@pytest.mark.tpu` | Requires TPU hardware (currently skipped) |
+| `@pytest.mark.tfds` | Requires TensorFlow Datasets |
+| `@pytest.mark.hf` | Requires HuggingFace Datasets |
+
+### Running Specific Test Types
+
+```bash
+# Run only GPU tests
+uv run pytest -m gpu --device=gpu
+
+# Run integration tests
+uv run pytest -m integration
+
+# Run HuggingFace tests
+uv run pytest -m hf
+```
 
 ## Adding New Tests
 
@@ -85,10 +118,17 @@ When adding new tests:
 Test dependencies can be installed using:
 
 ```bash
+# Using uv sync (recommended)
 uv sync --extra test
-# OR
-pip install -e ".[test]"
+
+# For complete development setup
+uv sync --extra all
 ```
 
+## Related Documentation
 
-For more information, refer to our [testing documentation](https://datarax.readthedocs.io/en/latest/testing/).
+For more information, see:
+
+- `docs/contributing/test_structure.md` - Detailed test structure guide
+- `docs/contributing/testing_guide.md` - Testing practices
+- `docs/contributing/gpu_testing.md` - GPU-specific testing

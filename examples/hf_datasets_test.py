@@ -13,7 +13,7 @@ from flax import nnx
 from tqdm import tqdm
 
 from datarax.core import Pipeline
-from datarax.sources import HfDataSourceConfig, HFSource
+from datarax.sources import HFEagerConfig, HFEagerSource
 
 
 # Configure logging
@@ -65,13 +65,13 @@ def dataset_compatibility_test(
 
     try:
         # Create data source config
-        config = HfDataSourceConfig(
+        config = HFEagerConfig(
             name=path,
             split=split,
             streaming=streaming,
             data_dir=data_dir,
         )
-        source = HFSource(config, rngs=nnx.Rngs(0))
+        source = HFEagerSource(config, rngs=nnx.Rngs(0))
 
         # Create data stream
         stream = Pipeline(source)

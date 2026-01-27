@@ -11,8 +11,9 @@ class Node(nnx.Module):
     a consistent interface for DAG construction and execution.
 
     Supports operator-based composition:
-    - ``>>`` for sequential composition (e.g., ``node1 >> node2``)
-    - ``|`` for parallel composition (e.g., ``node1 | node2``)
+
+        - ``>>`` for sequential composition (e.g., ``node1 >> node2``)
+        - ``|`` for parallel composition (e.g., ``node1 | node2``)
 
     Attributes:
         name: Unique identifier for the node.

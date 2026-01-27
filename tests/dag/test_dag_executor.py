@@ -2433,5 +2433,231 @@ class TestDAGExecutorModuleConversions:
             executor.add(lambda x: x * 2)  # Raw function not wrapped
 
 
+class TestCollectToArray:
+    """Tests for DAGExecutor.collect_to_array() method."""
+
+    @pytest.fixture
+    def mock_source_with_get_batch(self):
+        """Create a mock data source that supports get_batch()."""
+
+        class BatchableSource(DataSourceModule):
+            """Mock source with get_batch support for batch-first execution."""
+
+            data: list = nnx.data()
+            index: int = nnx.data()
+
+            def __init__(self, size: int = 100, feature_dim: int = 10):
+                config = StructuralConfig(stochastic=False)
+                super().__init__(config, name="batchable_source")
+                self.size = size
+                self.feature_dim = feature_dim
+                # Create data with predictable values for testing
+                self.data = [
+                    {
+                        "image": jnp.ones((feature_dim,)) * i,
+                        "label": jnp.array(i % 10),
+                    }
+                    for i in range(size)
+                ]
+                self.index = 0
+
+            def __len__(self) -> int:
+                return self.size
+
+            def __iter__(self):
+                self.index = 0
+                return self
+
+            def __next__(self):
+                if self.index >= len(self.data):
+                    raise StopIteration
+                result = self.data[self.index]
+                self.index += 1
+                return result
+
+            def get_batch(self, batch_size: int) -> list:
+                """Get a batch of elements."""
+                start = self.index
+                end = min(self.index + batch_size, len(self.data))
+                batch = self.data[start:end]
+                self.index = end
+                return batch
+
+            def reset(self):
+                """Reset the data source index."""
+                self.index = 0
+
+        return BatchableSource
+
+    def test_collect_single_key(self, mock_source_with_get_batch):
+        """Test collecting single key to array."""
+        from datarax.dag.dag_executor import from_source
+
+        source = mock_source_with_get_batch(size=50, feature_dim=8)
+        pipeline = from_source(source, batch_size=10)
+
+        result = pipeline.collect_to_array(key="image")
+
+        assert isinstance(result, jax.Array)
+        assert result.shape[0] == 50  # Total samples
+        assert result.shape[1] == 8  # Feature dimension
+
+    def test_collect_default_key(self, mock_source_with_get_batch):
+        """Test collecting with default key='image'."""
+        from datarax.dag.dag_executor import from_source
+
+        source = mock_source_with_get_batch(size=20, feature_dim=4)
+        pipeline = from_source(source, batch_size=5)
+
+        result = pipeline.collect_to_array()  # Uses default key="image"
+
+        assert isinstance(result, jax.Array)
+        assert result.shape == (20, 4)
+
+    def test_collect_to_specific_device(self, mock_source_with_get_batch):
+        """Test collecting to specific device."""
+        from datarax.dag.dag_executor import from_source
+
+        source = mock_source_with_get_batch(size=10, feature_dim=4)
+        pipeline = from_source(source, batch_size=5)
+
+        device = jax.devices()[0]
+        result = pipeline.collect_to_array(key="image", device=device)
+
+        assert isinstance(result, jax.Array)
+        # Check that result is on the specified device
+        assert device in result.devices()
+
+    def test_collect_missing_key_raises(self, mock_source_with_get_batch):
+        """Test KeyError for missing key."""
+        from datarax.dag.dag_executor import from_source
+
+        source = mock_source_with_get_batch(size=10, feature_dim=4)
+        pipeline = from_source(source, batch_size=5)
+
+        with pytest.raises(KeyError, match="Key 'nonexistent' not found"):
+            pipeline.collect_to_array(key="nonexistent")
+
+    def test_collect_empty_pipeline_raises(self):
+        """Test ValueError for empty pipeline."""
+        from datarax.dag.dag_executor import from_source
+
+        class EmptySource(DataSourceModule):
+            """A source that yields no elements."""
+
+            data: list = nnx.data()
+            index: int = nnx.data()
+
+            def __init__(self):
+                config = StructuralConfig(stochastic=False)
+                super().__init__(config, name="empty_source")
+                self.data = []
+                self.index = 0
+
+            def __len__(self) -> int:
+                return 0
+
+            def __iter__(self):
+                self.index = 0
+                return self
+
+            def __next__(self):
+                raise StopIteration
+
+            def get_batch(self, batch_size: int) -> list:
+                return []
+
+            def reset(self):
+                self.index = 0
+
+        source = EmptySource()
+        pipeline = from_source(source, batch_size=5)
+
+        with pytest.raises(ValueError, match="no batches"):
+            pipeline.collect_to_array()
+
+    def test_collect_preserves_dtype(self, mock_source_with_get_batch):
+        """Test dtype preservation during collection."""
+        from datarax.dag.dag_executor import from_source
+
+        class Float16Source(DataSourceModule):
+            """Source with float16 data."""
+
+            data: list = nnx.data()
+            index: int = nnx.data()
+
+            def __init__(self, size: int = 20):
+                config = StructuralConfig(stochastic=False)
+                super().__init__(config, name="float16_source")
+                self.size = size
+                self.data = [{"image": jnp.ones((4,), dtype=jnp.float16) * i} for i in range(size)]
+                self.index = 0
+
+            def __len__(self) -> int:
+                return self.size
+
+            def __iter__(self):
+                self.index = 0
+                return self
+
+            def __next__(self):
+                if self.index >= len(self.data):
+                    raise StopIteration
+                result = self.data[self.index]
+                self.index += 1
+                return result
+
+            def get_batch(self, batch_size: int) -> list:
+                start = self.index
+                end = min(self.index + batch_size, len(self.data))
+                batch = self.data[start:end]
+                self.index = end
+                return batch
+
+            def reset(self):
+                self.index = 0
+
+        source = Float16Source(size=10)
+        pipeline = from_source(source, batch_size=5)
+
+        result = pipeline.collect_to_array(key="image")
+
+        assert result.dtype == jnp.float16
+
+    def test_collect_with_label_key(self, mock_source_with_get_batch):
+        """Test collecting a different key (label)."""
+        from datarax.dag.dag_executor import from_source
+
+        source = mock_source_with_get_batch(size=30, feature_dim=4)
+        pipeline = from_source(source, batch_size=10)
+
+        result = pipeline.collect_to_array(key="label")
+
+        assert isinstance(result, jax.Array)
+        assert result.shape == (30,)  # Labels are scalars per element
+
+    def test_collect_values_correctness(self, mock_source_with_get_batch):
+        """Test that collected values are correct."""
+        from datarax.dag.dag_executor import from_source
+
+        source = mock_source_with_get_batch(size=5, feature_dim=3)
+        pipeline = from_source(source, batch_size=2)
+
+        result = pipeline.collect_to_array(key="image")
+
+        # Each element i has image values all equal to i
+        # So result[0] should be [0, 0, 0], result[1] should be [1, 1, 1], etc.
+        expected = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 1.0, 1.0],
+                [2.0, 2.0, 2.0],
+                [3.0, 3.0, 3.0],
+                [4.0, 4.0, 4.0],
+            ]
+        )
+        assert jnp.allclose(result, expected)
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
