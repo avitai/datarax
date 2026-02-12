@@ -14,97 +14,80 @@ from datarax.distributed.metrics import DistributedMetrics
 
 
 class TestDeviceMeshManager(unittest.TestCase):
-    """Tests for the DeviceMeshManager class."""
-
-    def test_init(self):
-        """Test initializing a DeviceMeshManager."""
-        mesh_manager = DeviceMeshManager()
-        self.assertIsInstance(mesh_manager, DeviceMeshManager)
+    """Tests for the DeviceMeshManager class (static methods)."""
 
     def test_create_device_mesh_single_device_dict(self):
         """Test creating a single-device mesh with dict specification."""
-        mesh_manager = DeviceMeshManager()
-        mesh = mesh_manager.create_device_mesh({"data": 1})
+        mesh = DeviceMeshManager.create_device_mesh({"data": 1})
         self.assertEqual(mesh.devices.shape, (1,))
         self.assertEqual(mesh.axis_names, ("data",))
         self.assertEqual(mesh.devices.size, 1)
 
     def test_create_device_mesh_single_device_list(self):
         """Test creating a single-device mesh with list specification."""
-        mesh_manager = DeviceMeshManager()
-        mesh = mesh_manager.create_device_mesh([("batch", 1)])
+        mesh = DeviceMeshManager.create_device_mesh([("batch", 1)])
         self.assertEqual(mesh.devices.shape, (1,))
         self.assertEqual(mesh.axis_names, ("batch",))
         self.assertEqual(mesh.devices.size, 1)
 
     def test_create_device_mesh_explicit_devices(self):
         """Test creating mesh with explicitly provided devices."""
-        mesh_manager = DeviceMeshManager()
         devices = jax.devices()
-        mesh = mesh_manager.create_device_mesh([("data", 1)], devices=devices)
+        mesh = DeviceMeshManager.create_device_mesh([("data", 1)], devices=devices)
         self.assertEqual(mesh.devices.shape, (1,))
         self.assertEqual(mesh.devices[0], devices[0])
 
     def test_create_device_mesh_insufficient_devices_error(self):
         """Test that creating mesh with too few devices raises ValueError."""
-        mesh_manager = DeviceMeshManager()
-        # Request more devices than available
         with self.assertRaises(ValueError) as ctx:
-            mesh_manager.create_device_mesh([("data", 100)])
+            DeviceMeshManager.create_device_mesh([("data", 100)])
         self.assertIn("Not enough devices", str(ctx.exception))
-        self.assertIn("100 devices", str(ctx.exception))
+        self.assertIn("100", str(ctx.exception))
 
     def test_create_data_parallel_mesh_default(self):
         """Test creating data-parallel mesh with all available devices."""
-        mesh_manager = DeviceMeshManager()
-        mesh = mesh_manager.create_data_parallel_mesh()
+        mesh = DeviceMeshManager.create_data_parallel_mesh()
         available_devices = len(jax.devices())
         self.assertEqual(mesh.devices.shape, (available_devices,))
         self.assertEqual(mesh.axis_names, ("data",))
 
     def test_create_data_parallel_mesh_single_device(self):
         """Test creating data-parallel mesh with single device."""
-        mesh_manager = DeviceMeshManager()
-        mesh = mesh_manager.create_data_parallel_mesh(num_devices=1)
+        mesh = DeviceMeshManager.create_data_parallel_mesh(num_devices=1)
         self.assertEqual(mesh.devices.shape, (1,))
         self.assertEqual(mesh.axis_names, ("data",))
 
     def test_create_model_parallel_mesh_single_device(self):
         """Test creating model-parallel mesh with single device."""
-        mesh_manager = DeviceMeshManager()
-        mesh = mesh_manager.create_model_parallel_mesh(num_devices=1)
+        mesh = DeviceMeshManager.create_model_parallel_mesh(num_devices=1)
         self.assertEqual(mesh.devices.shape, (1,))
         self.assertEqual(mesh.axis_names, ("model",))
 
     def test_create_model_parallel_mesh_insufficient_devices_error(self):
         """Test that model-parallel mesh with too many devices raises ValueError."""
-        mesh_manager = DeviceMeshManager()
         with self.assertRaises(ValueError) as ctx:
-            mesh_manager.create_model_parallel_mesh(num_devices=100)
+            DeviceMeshManager.create_model_parallel_mesh(num_devices=100)
         self.assertIn("Not enough devices", str(ctx.exception))
-        self.assertIn("100 devices", str(ctx.exception))
+        self.assertIn("100", str(ctx.exception))
 
     def test_create_hybrid_mesh_single_device(self):
         """Test creating hybrid mesh with 1x1 configuration."""
-        mesh_manager = DeviceMeshManager()
-        mesh = mesh_manager.create_hybrid_mesh(data_parallel_size=1, model_parallel_size=1)
+        mesh = DeviceMeshManager.create_hybrid_mesh(data_parallel_size=1, model_parallel_size=1)
         self.assertEqual(mesh.devices.shape, (1, 1))
         self.assertEqual(mesh.axis_names, ("data", "model"))
         self.assertEqual(mesh.devices.size, 1)
 
     def test_create_hybrid_mesh_insufficient_devices_error(self):
         """Test that hybrid mesh with too many devices raises ValueError."""
-        mesh_manager = DeviceMeshManager()
         with self.assertRaises(ValueError) as ctx:
-            mesh_manager.create_hybrid_mesh(data_parallel_size=10, model_parallel_size=10)
+            DeviceMeshManager.create_hybrid_mesh(data_parallel_size=10, model_parallel_size=10)
         self.assertIn("Not enough devices", str(ctx.exception))
-        self.assertIn("100 devices", str(ctx.exception))
+        self.assertIn("100", str(ctx.exception))
 
     def test_get_mesh_info_single_device(self):
         """Test getting mesh information for single-device mesh."""
-        mesh_manager = DeviceMeshManager()
-        mesh = mesh_manager.create_device_mesh([("data", 1)])
-        info = mesh_manager.get_mesh_info(mesh)
+        mesh = DeviceMeshManager.create_device_mesh([("data", 1)])
+        info = DeviceMeshManager.get_mesh_info(mesh)
 
         self.assertEqual(info["total_devices"], 1)
         axes = info["axes"]
@@ -113,9 +96,8 @@ class TestDeviceMeshManager(unittest.TestCase):
 
     def test_get_mesh_info_hybrid_mesh(self):
         """Test getting mesh information for hybrid mesh."""
-        mesh_manager = DeviceMeshManager()
-        mesh = mesh_manager.create_hybrid_mesh(data_parallel_size=1, model_parallel_size=1)
-        info = mesh_manager.get_mesh_info(mesh)
+        mesh = DeviceMeshManager.create_hybrid_mesh(data_parallel_size=1, model_parallel_size=1)
+        info = DeviceMeshManager.get_mesh_info(mesh)
 
         self.assertEqual(info["total_devices"], 1)
         axes = info["axes"]
@@ -126,25 +108,22 @@ class TestDeviceMeshManager(unittest.TestCase):
     @pytest.mark.skipif(jax.device_count() < 2, reason="Test requires at least 2 devices")
     def test_create_device_mesh(self):
         """Test creating a device mesh."""
-        mesh_module = DeviceMeshManager()
-        mesh = mesh_module.create_device_mesh([("data", 2)])
+        mesh = DeviceMeshManager.create_device_mesh([("data", 2)])
         self.assertEqual(mesh.devices.shape, (2,))
         self.assertEqual(mesh.axis_names, ("data",))
 
     @pytest.mark.skipif(jax.device_count() < 2, reason="Test requires at least 2 devices")
     def test_create_data_parallel_mesh(self):
         """Test creating a data-parallel mesh."""
-        mesh_module = DeviceMeshManager()
-        mesh = mesh_module.create_data_parallel_mesh(num_devices=2)
+        mesh = DeviceMeshManager.create_data_parallel_mesh(num_devices=2)
         self.assertEqual(mesh.devices.shape, (2,))
         self.assertEqual(mesh.axis_names, ("data",))
 
     @pytest.mark.skipif(jax.device_count() < 2, reason="Test requires at least 2 devices")
     def test_get_mesh_info(self):
         """Test getting mesh information."""
-        mesh_module = DeviceMeshManager()
-        mesh = mesh_module.create_device_mesh([("data", 2)])
-        info = mesh_module.get_mesh_info(mesh)
+        mesh = DeviceMeshManager.create_device_mesh([("data", 2)])
+        info = DeviceMeshManager.get_mesh_info(mesh)
         self.assertEqual(info["total_devices"], 2)
         axes = info["axes"]
         assert isinstance(axes, dict)
@@ -189,16 +168,14 @@ class TestDataParallel(unittest.TestCase):
     @pytest.mark.skipif(jax.device_count() < 2, reason="Test requires at least 2 devices")
     def test_create_data_parallel_sharding_static(self):
         """Test creating data-parallel sharding using static method."""
-        mesh_module = DeviceMeshManager()
-        mesh = mesh_module.create_device_mesh([("data", 2)])
+        mesh = DeviceMeshManager.create_device_mesh([("data", 2)])
         sharding = DataParallel.create_data_parallel_sharding_static(mesh)
         self.assertEqual(sharding.spec, jax.sharding.PartitionSpec("data"))
 
     @pytest.mark.skipif(jax.device_count() < 2, reason="Test requires at least 2 devices")
     def test_shard_batch_static(self):
         """Test sharding a batch using static method."""
-        mesh_module = DeviceMeshManager()
-        mesh = mesh_module.create_device_mesh([("data", 2)])
+        mesh = DeviceMeshManager.create_device_mesh([("data", 2)])
         sharding = DataParallel.create_data_parallel_sharding_static(mesh)
 
         # Create a dummy batch

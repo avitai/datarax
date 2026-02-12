@@ -1,6 +1,6 @@
 """Merging utilities for parallel and ensemble strategies."""
 
-from typing import Callable
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp

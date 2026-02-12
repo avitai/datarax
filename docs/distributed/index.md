@@ -38,7 +38,6 @@ print(f"Recommended: {recommendation}")
 
 - [device_placement](device_placement.md) - Device detection and placement strategies
 - [device_mesh](device_mesh.md) - Device mesh configuration for sharding
-- [mesh](mesh.md) - Mesh creation and management utilities
 - [data_parallel](data_parallel.md) - Data parallelism patterns
 - [metrics](metrics.md) - Distributed metrics collection and aggregation
 

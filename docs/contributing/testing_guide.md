@@ -17,6 +17,12 @@ Datarax has a flexible testing setup that:
 The simplest way to run tests is with the `run_tests.sh` script:
 
 ```bash
+# Run core tests (tests/ only)
+uv run pytest
+
+# Run ALL test suites (tests/ + benchmarks/tests/ + tools/benchkit/tests/)
+uv run pytest --all-suites
+
 # Run all tests, automatically using both CPU and GPU if available
 ./run_tests.sh
 
@@ -35,21 +41,24 @@ The simplest way to run tests is with the `run_tests.sh` script:
 
 ### Unified GPU/CPU Test Runner
 
-For more control, you can use the `scripts/run_tests_with_gpu_auto.sh` script directly:
+The main test runner at `scripts/run_tests.sh` (also available via `./run_tests.sh` at the root) handles everything:
 
 ```bash
-./scripts/run_tests_with_gpu_auto.sh [pytest_args]
+./run_tests.sh                    # Auto-detect GPU, run on CPU (and GPU if available)
+./run_tests.sh --device=cpu       # Force CPU only
+./run_tests.sh --device=gpu       # Force GPU only
 ```
 
 This script:
-1. Automatically detects if a GPU is available
-2. Runs all tests on CPU first
-3. If a GPU is available, runs all tests on GPU second
-4. Passes any additional arguments to pytest
+1. Checks if `uv` is installed
+2. Safely detects GPU availability
+3. Runs all tests on CPU first
+4. If a GPU is available, also runs on GPU
+5. Tracks exit codes properly across both runs
 
 ### GPU-Specific Testing
 
-To run only GPU-specific tests:
+To run only GPU-specific tests with CUDA configuration:
 
 ```bash
 ./scripts/run_gpu_tests.sh
@@ -58,11 +67,15 @@ To run only GPU-specific tests:
 This script:
 1. Checks if a GPU is available
 2. Sets up the proper environment variables for GPU testing
-3. Runs the GPU test suite defined in `run_gpu_tests.py`
+3. Runs the GPU test suite via pytest
 
 ## Test Configuration
 
 Tests are configured with several pytest markers and command-line options:
+
+### Test Suite Selection
+
+- `--all-suites`: Collect all test suites (`tests/`, `benchmarks/tests/`, `tools/benchkit/tests/`). Without this flag, only `tests/` is collected (configured in `pyproject.toml` via `testpaths`).
 
 ### Device Selection
 

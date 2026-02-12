@@ -1,0 +1,164 @@
+# =============================================================================
+# Docker Build Context Ignore
+# =============================================================================
+# Based on .gitignore with Docker-specific additions.
+# Without this file, docker build sends .venv (5-15GB) + .git (~500MB) into
+# the build context. With it, context should be <500MB.
+
+# --- Docker-specific (not in .gitignore) ---
+.git/
+.venv*
+tools/benchkit/.venv/
+
+# --- Byte-compiled / optimized ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# --- Distribution / packaging ---
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# --- Installer logs ---
+pip-log.txt
+pip-delete-this-directory.txt
+
+# --- Unit test / coverage reports ---
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# --- Caches ---
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+.pybuilder/
+.pytype/
+cython_debug/
+
+# --- Environments ---
+.env
+.env.*
+.env.cloud
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# --- Documentation build artifacts ---
+docs/_build/
+/site
+
+# --- Non-runtime project files ---
+design_docs/
+memory-bank/
+sandbox/
+
+# --- AI assistant / agent traces ---
+CLAUDE.md
+.claude/
+.claude-collective/
+.cursor/
+.cursorignore
+.agent/
+.taskmaster/
+.deprecated/
+
+# --- Temp / logs ---
+temp/
+tmp/
+*.tmp
+*.tmp.*
+*.log
+logs/
+
+# --- Benchmark data and results ---
+benchmark-data/
+benchmark_results/
+.benchmarks/
+.benchmarks-results/
+
+# --- W&B ---
+wandb/
+.wandb*
+
+# --- Secrets ---
+secrets.sh
+**/secrets.sh
+vertex_config.yaml
+
+# --- Orbax checkpoint artifacts ---
+example_checkpoints/
+*.orbax-checkpoint-tmp/
+*.orbax-checkpoint-tmp-*/
+<MagicMock*>.orbax-checkpoint-tmp/
+*MagicMock*.orbax-checkpoint-tmp/
+MagicMock/**
+_CHECKPOINT_METADATA
+_strings.json
+manifest.ocdbt
+ocdbt.process_*/
+array_metadatas/
+
+# --- Test artifacts ---
+test_debug*.py
+test_*.tmp
+**/test_checkpoint*/
+**/test_cache*/
+**/tests/tmp*/
+**/tests/temp*/
+tests/data/
+
+# --- JAX/XLA caches ---
+.cache/jax/
+.cache/xla/
+
+# --- IDE ---
+.ipynb_checkpoints
+.ropeproject
+.spyderproject
+.spyproject
+profile_default/
+
+# --- Cloud config ---
+.pdm.toml
+.pdm-python
+.pdm-build/
+
+# --- Misc ---
+*.manifest
+*.spec
+*.mo
+*.pot
+db.sqlite3
+db.sqlite3-journal
+.pypirc

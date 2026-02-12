@@ -1,3 +1,10 @@
+"""DAG node types for building data processing pipelines.
+
+Provides the node graph primitives — Sequential, Parallel, Branch, Cache,
+DataSource, Batch, Operator, Shuffle, Prefetch, Sampler, Sharder, DataLoader,
+field-splitting, and rebatching nodes.
+"""
+
 from datarax.dag.nodes.base import Node
 from datarax.dag.nodes.control_flow import (
     Identity,
@@ -5,6 +12,8 @@ from datarax.dag.nodes.control_flow import (
     Parallel,
     Branch,
     Merge,
+    MergeBatchNode,
+    FusedOperatorNode,
     branch,
     parallel,
 )
@@ -35,6 +44,8 @@ __all__ = [
     "Parallel",
     "Branch",
     "Merge",
+    "MergeBatchNode",
+    "FusedOperatorNode",
     "Cache",
     "CacheNode",
     "DataSourceNode",

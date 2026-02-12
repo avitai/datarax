@@ -2,7 +2,7 @@
 
 """Tests for EpochAwareSamplerModule.
 
-Comprehensive test suite for epoch-based sampling with shuffle
+Full test suite for epoch-based sampling with shuffle
 and callback functionality.
 """
 

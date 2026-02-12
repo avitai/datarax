@@ -15,7 +15,6 @@ import time
 from pathlib import Path
 
 import jax
-import jax.numpy as jnp
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -35,9 +34,7 @@ MNIST_MEAN = 0.1307
 MNIST_STD = 0.3081
 
 
-def generate_mnist_like_data(
-    num_samples: int = 10000, seed: int = 42
-) -> dict[str, np.ndarray]:
+def generate_mnist_like_data(num_samples: int = 10000, seed: int = 42) -> dict[str, np.ndarray]:
     """Generate synthetic MNIST-shaped data for benchmarking."""
     rng = np.random.RandomState(seed)
     return {
@@ -61,9 +58,7 @@ def create_pipeline(
     data: dict, batch_size: int = 32, with_augmentation: bool = False, seed: int = 0
 ):
     """Create an MNIST pipeline with optional augmentation."""
-    source = MemorySource(
-        MemorySourceConfig(), data=data, rngs=nnx.Rngs(seed)
-    )
+    source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(seed))
 
     normalizer = ElementOperator(
         ElementOperatorConfig(stochastic=False),
@@ -71,9 +66,7 @@ def create_pipeline(
         rngs=nnx.Rngs(0),
     )
 
-    pipeline = from_source(source, batch_size=batch_size).add(
-        OperatorNode(normalizer)
-    )
+    pipeline = from_source(source, batch_size=batch_size).add(OperatorNode(normalizer))
 
     if with_augmentation:
 
@@ -140,9 +133,7 @@ def benchmark_throughput(
     }
 
 
-def run_batch_size_sweep(
-    data: dict, batch_sizes: list[int], num_epochs: int = 1
-) -> list[dict]:
+def run_batch_size_sweep(data: dict, batch_sizes: list[int], num_epochs: int = 1) -> list[dict]:
     """Sweep over batch sizes and measure throughput for each."""
     results = []
     for bs in batch_sizes:
@@ -153,9 +144,7 @@ def run_batch_size_sweep(
     return results
 
 
-def run_augmentation_comparison(
-    data: dict, batch_size: int = 64, num_epochs: int = 1
-) -> dict:
+def run_augmentation_comparison(data: dict, batch_size: int = 64, num_epochs: int = 1) -> dict:
     """Compare throughput with and without augmentation."""
     print("  Without augmentation...", end=" ", flush=True)
     base = benchmark_throughput(data, batch_size, num_epochs, with_augmentation=False)
@@ -166,9 +155,7 @@ def run_augmentation_comparison(
     print(f"{aug['samples_per_second']:>10.0f} samples/s")
 
     overhead_pct = (
-        (base["samples_per_second"] - aug["samples_per_second"])
-        / base["samples_per_second"]
-        * 100
+        (base["samples_per_second"] - aug["samples_per_second"]) / base["samples_per_second"] * 100
     )
 
     return {
@@ -199,8 +186,9 @@ def plot_results(results: dict, output_dir: Path) -> None:
     axes[0].set_xscale("log", base=2)
     axes[0].grid(True, alpha=0.3)
     for x, y in zip(bs, tp):
-        axes[0].annotate(f"{y:.0f}", (x, y), textcoords="offset points",
-                         xytext=(0, 10), ha="center", fontsize=8)
+        axes[0].annotate(
+            f"{y:.0f}", (x, y), textcoords="offset points", xytext=(0, 10), ha="center", fontsize=8
+        )
 
     # 2. Batch size sweep: latency percentiles
     p50 = [r["p50_batch_ms"] for r in sweep]
@@ -229,10 +217,8 @@ def plot_results(results: dict, output_dir: Path) -> None:
     # 3. Augmentation comparison: grouped bar
     aug = results["augmentation_comparison"]
     labels = ["Baseline", "With Augmentation"]
-    throughputs = [aug["baseline"]["samples_per_second"],
-                   aug["augmented"]["samples_per_second"]]
-    latencies = [aug["baseline"]["mean_batch_ms"],
-                 aug["augmented"]["mean_batch_ms"]]
+    throughputs = [aug["baseline"]["samples_per_second"], aug["augmented"]["samples_per_second"]]
+    latencies = [aug["baseline"]["mean_batch_ms"], aug["augmented"]["mean_batch_ms"]]
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
@@ -240,20 +226,36 @@ def plot_results(results: dict, output_dir: Path) -> None:
     axes[0].set_ylabel("Throughput (samples/s)")
     axes[0].set_title("Augmentation Impact on Throughput")
     for bar, val in zip(bars, throughputs):
-        axes[0].text(bar.get_x() + bar.get_width() / 2, val + max(throughputs) * 0.02,
-                     f"{val:.0f}", ha="center", fontsize=10)
+        axes[0].text(
+            bar.get_x() + bar.get_width() / 2,
+            val + max(throughputs) * 0.02,
+            f"{val:.0f}",
+            ha="center",
+            fontsize=10,
+        )
     overhead = aug["augmentation_overhead_pct"]
-    axes[0].annotate(f"{overhead:.1f}% overhead", xy=(0.5, 0.95),
-                     xycoords="axes fraction", ha="center", fontsize=10,
-                     color="red", fontweight="bold")
+    axes[0].annotate(
+        f"{overhead:.1f}% overhead",
+        xy=(0.5, 0.95),
+        xycoords="axes fraction",
+        ha="center",
+        fontsize=10,
+        color="red",
+        fontweight="bold",
+    )
     axes[0].grid(True, alpha=0.3, axis="y")
 
     bars = axes[1].bar(labels, latencies, color=["steelblue", "#ff8a65"])
     axes[1].set_ylabel("Mean Batch Latency (ms)")
     axes[1].set_title("Augmentation Impact on Latency")
     for bar, val in zip(bars, latencies):
-        axes[1].text(bar.get_x() + bar.get_width() / 2, val + max(latencies) * 0.02,
-                     f"{val:.2f}ms", ha="center", fontsize=10)
+        axes[1].text(
+            bar.get_x() + bar.get_width() / 2,
+            val + max(latencies) * 0.02,
+            f"{val:.2f}ms",
+            ha="center",
+            fontsize=10,
+        )
     axes[1].grid(True, alpha=0.3, axis="y")
 
     plt.tight_layout()

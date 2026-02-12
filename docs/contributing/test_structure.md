@@ -33,46 +33,69 @@ JAX_PLATFORMS=cuda uv run pytest --device=gpu tests/ -v
 
 ### Full Test Suite
 
-To run the complete test suite:
+By default, `uv run pytest` runs only the core test suite in `tests/`:
 
 ```bash
-uv run pytest
+uv run pytest                    # core tests only (tests/)
+```
+
+To run **all** test suites — including benchmark application tests and benchkit library tests — use the `--all-suites` flag:
+
+```bash
+uv run pytest --all-suites       # tests/ + benchmarks/tests/ + tools/benchkit/tests/
+```
+
+You can also run individual suites directly:
+
+```bash
+uv run pytest benchmarks/tests/           # benchmark adapter & runner tests
+uv run pytest tools/benchkit/tests/       # benchkit analysis library tests
 ```
 
 ## Test Directory Structure
 
-The test directory structure mirrors the `src/datarax` package structure for easier navigation and maintenance:
+Datarax has three independent test suites. The core suite (`tests/`) mirrors the `src/datarax` package structure. The other two suites test the benchmark application layer and the benchkit analysis library respectively.
 
 ```text
-tests/
-├── augment/         # Tests for augmentation functionality
-├── batching/        # Tests for batch processing
-├── benchmarking/    # Benchmarking infrastructure tests
-├── benchmarks/      # Performance benchmarks
-├── checkpoint/      # Tests for checkpoint functionality
-├── cli/             # Tests for CLI tools
-├── config/          # Tests for configuration handling
-├── control/         # Tests for control flow
-├── core/            # Tests for core functionality
-├── dag/             # Tests for DAG execution
-├── data/            # Test data and fixtures
-├── distributed/     # Tests for distributed processing
-├── examples/        # Tests for example code validation
-├── integration/     # End-to-end integration tests
-├── memory/          # Tests for memory management
-├── monitoring/      # Tests for monitoring functionality
-├── operators/       # Tests for pipeline operators
-├── performance/     # Performance testing
-├── samplers/        # Tests for sampling functionality
-├── scripts/         # Utility scripts for test management
-├── sharding/        # Tests for sharding functionality
-├── sources/         # Tests for data sources
-├── test_common/     # Common testing utilities
-├── transforms/      # Tests for data transformations (neural network ops)
-├── utils/           # Tests for utility functions
-├── conftest.py      # Pytest configuration and custom markers
-└── README.md        # Test directory overview
+tests/                           # Core test suite (default)
+├── augment/                     #   Augmentation functionality
+├── batching/                    #   Batch processing
+├── benchmarking/                #   Benchmarking engine (src/datarax/benchmarking/)
+├── benchmarks/                  #   Performance benchmarks
+├── checkpoint/                  #   Checkpoint functionality
+├── cli/                         #   CLI tools
+├── config/                      #   Configuration handling
+├── control/                     #   Control flow
+├── core/                        #   Core functionality
+├── dag/                         #   DAG execution
+├── distributed/                 #   Distributed processing
+├── integration/                 #   End-to-end integration tests
+├── monitoring/                  #   Monitoring functionality
+├── operators/                   #   Pipeline operators
+├── samplers/                    #   Sampling functionality
+├── sources/                     #   Data sources
+├── test_common/                 #   Common testing utilities
+├── transforms/                  #   Data transformations (neural network ops)
+├── utils/                       #   Utility functions
+└── conftest.py                  #   Pytest configuration and custom markers
+
+benchmarks/tests/                # Benchmark application suite (--all-suites)
+├── test_adapters/               #   Per-framework adapter tests (15 adapters)
+├── test_integration.py          #   Runner + adapter integration
+├── test_synthetic_data.py       #   Synthetic data generation
+├── test_config_loader.py        #   TOML config loading
+├── test_baselines.py            #   Baseline store
+└── conftest.py                  #   Adapter-specific fixtures
+
+tools/benchkit/tests/            # benchkit library suite (--all-suites)
+├── test_models.py               #   Data model serde round-trip
+├── test_store.py                #   JSON store and baselines
+├── test_analysis.py             #   Regression detection, CIs, ranking
+├── test_wandb_exporter.py       #   W&B export (WANDB_MODE=offline)
+└── test_cli.py                  #   CLI commands via CliRunner
 ```
+
+The `--all-suites` flag (defined in the root `conftest.py`) collects all three suites in a single pytest run.
 
 ## Test Categories
 
@@ -151,6 +174,7 @@ The `tests/conftest.py` file provides:
 
 | Option | Values | Description |
 |--------|--------|-------------|
+| `--all-suites` | flag | Collect all test suites: `tests/`, `benchmarks/tests/`, `tools/benchkit/tests/` |
 | `--device` | `cpu`, `gpu`, `tpu`, `all` | Select device type for tests (default: `all`) |
 | `--integration` | flag | Include integration tests |
 | `--end-to-end` | flag | Include end-to-end tests |

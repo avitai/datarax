@@ -10,7 +10,8 @@ and validate JAX PyTrees and Datarax Batch objects. It encompasses:
 - Structure introspection and consistency validation
 """
 
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import jax
 import numpy as np

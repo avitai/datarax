@@ -6,22 +6,16 @@ Data source adapters for loading data from various formats and libraries. Source
 
 | Source | Backend | Best For |
 |--------|---------|----------|
-| **HFEagerSource** | HuggingFace Datasets | 100K+ Hub datasets |
-| **TFDSEagerSource** | TensorFlow Datasets | TFDS catalog |
+| **HFEagerSource** | HuggingFace Datasets | Small/medium Hub datasets |
+| **HFStreamingSource** | HuggingFace Datasets | Large datasets (streaming) |
+| **TFDSEagerSource** | TensorFlow Datasets | Small/medium TFDS catalog |
+| **TFDSStreamingSource** | TensorFlow Datasets | Large datasets (streaming) |
 | **MemorySource** | In-memory arrays | Testing, small data |
 | **ArrayRecordSource** | ArrayRecord format | Large-scale training |
 | **MixedSource** | Multiple sources | Multi-dataset training |
 
-> **Factory Functions:** Use `from_hf(name, split, ...)` and `from_tfds(name, split, ...)` for automatic eager/streaming mode selection.
-
-`★ Insight ─────────────────────────────────────`
-
-- All sources auto-convert to JAX arrays
-- Use `streaming=True` for datasets larger than disk
-- `get_batch()` provides stateful batch retrieval
-- Sources track epoch and index for training loops
-
-`─────────────────────────────────────────────────`
+!!! tip "Factory functions with auto-selection"
+    Use `from_hf(name, split, ...)` and `from_tfds(name, split, ...)` for automatic eager/streaming mode selection. These factory functions choose between eager and streaming mode based on dataset size (threshold: 1GB). You can override with `eager=True` or `eager=False`.
 
 ## Quick Start
 

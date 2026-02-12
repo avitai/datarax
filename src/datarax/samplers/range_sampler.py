@@ -5,7 +5,8 @@ Supports both static method usage and NNX module instantiation.
 """
 
 from dataclasses import dataclass
-from typing import Any, Iterator
+from typing import Any
+from collections.abc import Iterator
 
 import flax.nnx as nnx
 
@@ -198,16 +199,10 @@ class RangeSampler(SamplerModule):
         Args:
             state: A dictionary containing the internal state to restore.
         """
-        # Separate custom state from base NNX state
-        custom_keys = {"sampler_state"}
-        base_state = {k: v for k, v in state.items() if k not in custom_keys}
+        custom = self._split_state(state, {"sampler_state"})
 
-        # Restore base state first if there's any
-        if base_state:
-            super().set_state(base_state)
-
-        if "sampler_state" in state:
-            sampler_state = state["sampler_state"]
+        if "sampler_state" in custom:
+            sampler_state = custom["sampler_state"]
             self.start = sampler_state.get("start", self.start)
             self.stop = sampler_state.get("stop", self.stop)
             self.step = sampler_state.get("step", self.step)

@@ -10,7 +10,8 @@ All configs use dataclass with __post_init__ validation for fail-fast configurat
 """
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from flax import nnx
 from jaxtyping import PyTree

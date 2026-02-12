@@ -300,6 +300,39 @@ TensorFlow on macOS is CPU-only. If you encounter TensorFlow-related errors:
 export TF_CPP_MIN_LOG_LEVEL=1
 ```
 
+#### Deep Lake + TensorFlow OpenSSL Crash
+
+**Problem**: When Deep Lake and TensorFlow are both installed, importing Deep Lake *after* TensorFlow kills the process with a fatal C-level assertion:
+
+```
+Fatal error condition occurred in .../aws-c-cal/.../openssl_platform_init.c:641:
+    strncmp(openssl_prefix, runtime_version, strlen(openssl_prefix)) == 0
+```
+
+This is not a Python exception — it terminates the process immediately and cannot be caught with `try/except`.
+
+**Cause**: Deep Lake's native extension bundles [aws-c-cal](https://github.com/awslabs/aws-c-cal), which performs a strict OpenSSL version check at initialization. TensorFlow ships its own BoringSSL (an OpenSSL fork). When TensorFlow loads first, BoringSSL occupies the OpenSSL symbol space. When Deep Lake's `aws-c-cal` then checks the OpenSSL version string, it finds BoringSSL's version instead — assertion failure.
+
+**Solution**: Import `deeplake` **before** `tensorflow`. When Deep Lake loads first, `aws-c-cal` initializes against the system's real OpenSSL. TensorFlow's BoringSSL then loads into a separate symbol space without conflict.
+
+```python
+# Correct: Deep Lake first
+import deeplake
+import tensorflow as tf  # safe — BoringSSL loads into separate space
+
+# Wrong: TensorFlow first — FATAL CRASH
+import tensorflow as tf
+import deeplake  # aws-c-cal finds BoringSSL, assertion fails, process dies
+```
+
+!!! note "Handled automatically in the test suite"
+    Datarax's `tests/conftest.py` pre-imports Deep Lake before TensorFlow so that
+    `uv run pytest` and `uv run pytest --all-suites` work without issues.
+    If you write standalone scripts that use both libraries, ensure the import order
+    is correct.
+
+This is an upstream issue between Deep Lake (v4.x, `aws-c-cal` v0.8.1) and TensorFlow (BoringSSL). No environment variable or configuration can bypass the assertion — import order is the only workaround as of February 2026.
+
 ### Getting Help
 
 If you encounter issues:

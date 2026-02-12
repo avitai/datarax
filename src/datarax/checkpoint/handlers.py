@@ -9,7 +9,6 @@ References:
 - orbax/checkpoint/_src/handlers/random_key_checkpoint_handler.py
 """
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -41,115 +40,78 @@ class OrbaxCheckpointHandler:
     - random_key_checkpoint_handler.py for PRNG key handling
     """
 
-    def __init__(self, async_checkpointing: bool = False):  # noqa: ARG002
+    def __init__(self, async_checkpointing: bool = False):
         """Initialize the handler.
 
         Args:
-            async_checkpointing: Reserved for future async support.
+            async_checkpointing: If True, save() returns immediately and
+                serialization happens in the background. Call
+                wait_until_finished() before restore() or before the next
+                save() if you need ordering guarantees.
         """
-        # Use StandardCheckpointer which handles PyTrees properly
-        self.checkpointer = ocp.StandardCheckpointer()
+        self.async_checkpointing = async_checkpointing
+        if async_checkpointing:
+            self.checkpointer = ocp.AsyncCheckpointer(ocp.StandardCheckpointHandler())
+        else:
+            self.checkpointer = ocp.StandardCheckpointer()
 
-    def _preprocess_prng_keys(self, target: Any) -> Any:
-        """Preprocess target to handle PRNGKey arrays for serialization.
+    def wait_until_finished(self) -> None:
+        """Block until any outstanding async save completes."""
+        self.checkpointer.wait_until_finished()
 
-        Uses jax.random.key_data() as recommended by Orbax's
-        JaxRandomKeyCheckpointHandler pattern.
+    def _preprocess(self, target: Any) -> Any:
+        """Single-pass preprocessing for checkpoint serialization.
+
+        Converts strings to char-code marker dicts and PRNG keys to
+        key-data marker dicts, in one tree walk.
 
         Args:
-            target: The target to preprocess.
+            target: The state tree to preprocess.
 
         Returns:
-            The preprocessed target with PRNGKeys converted to serializable format.
+            Preprocessed tree ready for Orbax serialization.
         """
+        # Strings must be checked before dicts (strings are iterable)
+        if isinstance(target, str):
+            return {"__string__": True, "char_codes": [ord(c) for c in target]}
         if isinstance(target, dict):
-            return {k: self._preprocess_prng_keys(v) for k, v in target.items()}
-        elif isinstance(target, list):
-            return [self._preprocess_prng_keys(item) for item in target]
-        elif isinstance(target, tuple):
-            return tuple(self._preprocess_prng_keys(item) for item in target)
-        elif isinstance(target, jax.Array):
-            # Check if it's a typed PRNG key using Orbax's pattern
+            return {k: self._preprocess(v) for k, v in target.items()}
+        if isinstance(target, list):
+            return [self._preprocess(item) for item in target]
+        if isinstance(target, tuple):
+            return tuple(self._preprocess(item) for item in target)
+        if isinstance(target, jax.Array):
             # jax.dtypes.issubdtype exists at runtime (used by Orbax) but missing from stubs
             if jax.dtypes.issubdtype(target.dtype, jax.dtypes.prng_key):  # type: ignore[attr-defined]
                 return {
                     "__prng_key__": True,
                     "key_data": jax.random.key_data(target).tolist(),
                 }
-            return target
         return target
 
-    def _preprocess_strings(self, target: Any) -> Any:
-        """Preprocess target to handle string values for serialization.
+    def _restore(self, target: Any) -> Any:
+        """Single-pass restoration from checkpoint serialization.
 
-        Orbax's StandardCheckpointHandler only supports (int, float, np.ndarray, jax.Array).
-        Strings must be converted to a serializable format before saving.
-
-        This follows the same pattern used for PRNG keys - wrap unsupported types
-        in a marker dict with serializable values.
+        Restores strings and PRNG keys from their marker-dict format,
+        in one tree walk.
 
         Args:
-            target: The target to preprocess.
+            target: The serialized tree to restore.
 
         Returns:
-            The preprocessed target with strings converted to serializable format.
-        """
-        if isinstance(target, str):
-            # Convert string to bytes array for checkpoint serialization
-            # Using ord() to get integer values that can be stored as int array
-            return {
-                "__string__": True,
-                "char_codes": [ord(c) for c in target],
-            }
-        elif isinstance(target, dict):
-            return {k: self._preprocess_strings(v) for k, v in target.items()}
-        elif isinstance(target, list):
-            return [self._preprocess_strings(item) for item in target]
-        elif isinstance(target, tuple):
-            return tuple(self._preprocess_strings(item) for item in target)
-        return target
-
-    def _restore_strings(self, target: Any) -> Any:
-        """Restore string values from serialized format.
-
-        Args:
-            target: The target containing serialized strings.
-
-        Returns:
-            The target with strings restored.
+            Restored tree with original types.
         """
         if isinstance(target, dict):
             if target.get("__string__"):
-                char_codes = target["char_codes"]
-                return "".join(chr(c) for c in char_codes)
-            return {k: self._restore_strings(v) for k, v in target.items()}
-        elif isinstance(target, list):
-            return [self._restore_strings(item) for item in target]
-        elif isinstance(target, tuple):
-            return tuple(self._restore_strings(item) for item in target)
-        return target
-
-    def _restore_prng_keys(self, target: Any) -> Any:
-        """Restore PRNGKey arrays from serialized format.
-
-        Uses jax.random.wrap_key_data() as recommended by Orbax's
-        JaxRandomKeyCheckpointHandler pattern.
-
-        Args:
-            target: The target containing serialized PRNGKeys.
-
-        Returns:
-            The target with PRNGKeys restored.
-        """
-        if isinstance(target, dict):
+                return "".join(chr(c) for c in target["char_codes"])
             if target.get("__prng_key__"):
                 key_data = jnp.array(target["key_data"], dtype=jnp.uint32)
                 return jax.random.wrap_key_data(key_data)
-            return {k: self._restore_prng_keys(v) for k, v in target.items()}
-        elif isinstance(target, list):
-            return [self._restore_prng_keys(item) for item in target]
-        elif isinstance(target, tuple):
-            return tuple(self._restore_prng_keys(item) for item in target)
+            return {k: self._restore(v) for k, v in target.items()}
+        if isinstance(target, list):
+            return [self._restore(item) for item in target]
+        if isinstance(target, tuple):
+            return tuple(self._restore(item) for item in target)
         return target
 
     def save(
@@ -190,10 +152,8 @@ class OrbaxCheckpointHandler:
             else:
                 state = {"__state__": state, "__metadata__": metadata}
 
-        # Preprocess unsupported types for Orbax serialization
-        # Order matters: strings first (to avoid processing marker dicts), then PRNG keys
-        state = self._preprocess_strings(state)
-        state = self._preprocess_prng_keys(state)
+        # Single-pass preprocessing: strings + PRNG keys in one tree walk
+        state = self._preprocess(state)
 
         if step is not None:
             # Versioned checkpoints with CheckpointManager
@@ -201,19 +161,18 @@ class OrbaxCheckpointHandler:
             with ocp.CheckpointManager(str(directory), options=options) as manager:
                 save_args = ocp.args.StandardSave(state)  # type: ignore[call-arg]
                 manager.save(step, args=save_args)
-                # Wait for async save to complete (StandardCheckpointer is async)
                 manager.wait_until_finished()
 
             saved_path = str(directory / str(step))
-            if not os.path.exists(saved_path):
+            if not Path(saved_path).exists():
                 ckpt_path = str(directory / f"ckpt-{step}")
-                if os.path.exists(ckpt_path):
+                if Path(ckpt_path).exists():
                     saved_path = ckpt_path
         else:
             # Single checkpoint
             self.checkpointer.save(str(directory / "checkpoint"), state, force=overwrite)
-            # Wait for async save to complete (StandardCheckpointer is async)
-            self.checkpointer.wait_until_finished()
+            if not self.async_checkpointing:
+                self.checkpointer.wait_until_finished()
             saved_path = str(directory / "checkpoint")
 
         return saved_path
@@ -249,12 +208,15 @@ class OrbaxCheckpointHandler:
         default_subdir = checkpoint_path / "default"
         actual_path = default_subdir if default_subdir.exists() else checkpoint_path
 
+        # Ensure any async save is complete before restoring
+        if self.async_checkpointing:
+            self.checkpointer.wait_until_finished()
+
         # Restore state
         state = self.checkpointer.restore(str(actual_path))
 
-        # Restore preprocessed types (reverse order of preprocessing)
-        state = self._restore_prng_keys(state)
-        state = self._restore_strings(state)
+        # Single-pass restoration: strings + PRNG keys in one tree walk
+        state = self._restore(state)
 
         # Extract metadata
         metadata = None

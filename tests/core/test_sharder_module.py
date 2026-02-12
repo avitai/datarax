@@ -1,4 +1,4 @@
-"""Comprehensive tests for the SharderModule base class.
+"""Extensive tests for the SharderModule base class.
 
 This module contains tests for the SharderModule class from datarax.core.sharder,
 verifying sharding specifications, partition spec creation, named sharding,

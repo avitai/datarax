@@ -1,0 +1,16 @@
+# TPU v5e Hardware Profile
+# Design ref: Section 6.4.1 of the benchmark report.
+#
+# Full profile for TPU benchmarks: v5e pod slice, larger batches.
+
+[profile]
+name = "tpu_v5e"
+backend = "tpu"
+max_batch_size = 512
+num_batches = 50
+warmup_batches = 8
+timeout_seconds = 600
+
+[profile.scenarios]
+# Run scenarios compatible with TPU backend
+include = ["CV-1", "CV-2", "NLP-1", "NLP-2", "TAB-1", "TAB-2", "PC-1", "PC-2", "DIST-1", "PR-1"]

@@ -183,7 +183,7 @@ print(f"Train examples: {info.splits['train'].num_examples}")
 
 ## See Also
 
-- [Data Sources Guide](../user_guide/data_sources.md) - Comprehensive data loading guide
+- [Data Sources Guide](../user_guide/data_sources.md) - Complete data loading guide
 - [HF Source](hf_source.md) - HuggingFace Datasets integration
 - [TFDS Quick Reference](../examples/integration/tfds/tfds-quickref.md)
 - [TFDS Catalog](https://www.tensorflow.org/datasets/catalog/overview)

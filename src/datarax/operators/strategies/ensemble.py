@@ -26,24 +26,19 @@ class EnsembleStrategy(CompositionStrategyImpl):
         operators: list[OperatorModule],
         context: StrategyContext,
     ) -> tuple[PyTree, PyTree, dict[str, Any]]:
-        outputs = []
-        states = []
-        metadatas = []
+        """Apply operators in parallel and reduce outputs element-wise.
 
-        for i, operator in enumerate(operators):
-            op_random_params = None
-            if context.random_params and f"operator_{i}" in context.random_params:
-                op_random_params = context.random_params[f"operator_{i}"]
+        Args:
+            operators: Operators to execute on identical input.
+            context: Execution context with input data, state, and RNG params.
 
-            out_data, out_state, out_metadata = operator.apply(
-                context.data, context.state, context.metadata, op_random_params
-            )
-            outputs.append(out_data)
-            states.append(out_state)
-            metadatas.append(out_metadata)
+        Returns:
+            Tuple of (reduced_data, last_state, last_metadata).
 
-            if context.stats_callback and hasattr(operator, "statistics") and operator.statistics:
-                context.stats_callback(i, operator.statistics)
+        Raises:
+            ValueError: If ``self.mode`` is not one of mean/sum/max/min.
+        """
+        outputs, states, metadatas = self._execute_operators(operators, context)
 
         # Reduce based on strategy
         if self.mode == "mean":

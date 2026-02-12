@@ -127,8 +127,7 @@ jobs:
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          # Install without CUDA dependencies for macOS
-          uv pip install -e ".[all-cpu]"
+          uv pip install -e ".[dev,test,data]"
 
       - name: Setup PYTHONPATH for tests
         run: |

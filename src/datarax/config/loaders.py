@@ -4,7 +4,6 @@ This module provides functions for loading and saving TOML configuration files
 for Datarax pipelines and components.
 """
 
-import os
 from pathlib import Path
 from typing import Any, Union
 
@@ -35,7 +34,7 @@ def load_toml(config_path: Union[str, Path], encoding: str = "utf-8") -> dict[st
     if not config_path.exists():
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
 
-    with open(config_path, "rb") as f:
+    with config_path.open("rb") as f:
         return tomllib.load(f)
 
 
@@ -55,9 +54,9 @@ def save_toml(
     config_path = Path(config_path)
 
     # Create parent directories if they don't exist
-    os.makedirs(config_path.parent, exist_ok=True)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(config_path, "wb") as f:
+    with config_path.open("wb") as f:
         tomli_w.dump(config, f)
 
 

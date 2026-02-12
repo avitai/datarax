@@ -1,6 +1,7 @@
 """Branching composition strategy."""
 
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import jax
 from jaxtyping import PyTree
@@ -25,6 +26,18 @@ class BranchingStrategy(CompositionStrategyImpl):
         operators: list[OperatorModule],
         context: StrategyContext,
     ) -> tuple[PyTree, PyTree, dict[str, Any]]:
+        """Route input to exactly one operator via ``jax.lax.switch``.
+
+        The router function returns an integer index selecting which operator
+        to execute. Only the selected branch runs (JIT-efficient).
+
+        Args:
+            operators: Candidate operators (indexed by router output).
+            context: Execution context with input data, state, and RNG params.
+
+        Returns:
+            Tuple of (data, state, metadata) from the selected branch.
+        """
         # Router returns integer index (vmap/jit compatible)
         branch_index = self.router(context.data)
 

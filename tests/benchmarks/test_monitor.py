@@ -3,7 +3,7 @@
 import threading
 import time
 import warnings
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 
 from datarax.benchmarking.monitor import (
@@ -14,6 +14,7 @@ from datarax.benchmarking.monitor import (
     ProductionMonitor,
 )
 from datarax.benchmarking.profiler import GPUMemoryProfiler
+from datarax.benchmarking.resource_monitor import ResourceMonitor, ResourceSample
 from datarax.monitoring.metrics import MetricsCollector
 
 
@@ -564,6 +565,101 @@ class TestAdvancedMonitor:
         assert summary["current_metrics"]["metric1"]["current"] == 15.0
         assert summary["current_metrics"]["metric1"]["samples"] == 2
 
+    def test_initialization_with_resource_monitor(self):
+        """Test AdvancedMonitor accepts an optional ResourceMonitor."""
+        rm = ResourceMonitor(sample_interval_sec=0.1)
+        monitor = AdvancedMonitor(resource_monitor=rm)
+
+        assert monitor._resource_monitor is rm
+
+    def test_collect_metrics_delegates_to_resource_monitor(self):
+        """Test _collect_metrics reads from ResourceMonitor samples."""
+        rm = Mock(spec=ResourceMonitor)
+        sample = ResourceSample(
+            timestamp=100.0,
+            cpu_percent=55.0,
+            rss_mb=1024.0,
+            gpu_util=0.80,
+            gpu_mem_mb=2048.0,
+        )
+        rm.samples = [sample]
+
+        monitor = AdvancedMonitor(resource_monitor=rm)
+        monitor._collect_metrics()
+
+        # System metrics should be recorded from ResourceMonitor sample
+        assert "memory_usage_mb" in monitor.metrics_history
+        assert monitor.metrics_history["memory_usage_mb"][-1] == 1024.0
+        assert "cpu_usage_percent" in monitor.metrics_history
+        assert monitor.metrics_history["cpu_usage_percent"][-1] == 55.0
+
+        # GPU metrics should be recorded from ResourceMonitor sample
+        assert "gpu_memory_utilization" in monitor.metrics_history
+        assert monitor.metrics_history["gpu_memory_utilization"][-1] == 0.80
+        assert "gpu_memory_used_mb" in monitor.metrics_history
+        assert monitor.metrics_history["gpu_memory_used_mb"][-1] == 2048.0
+
+    def test_collect_metrics_no_gpu_from_resource_monitor(self):
+        """Test _collect_metrics handles ResourceMonitor samples without GPU."""
+        rm = Mock(spec=ResourceMonitor)
+        sample = ResourceSample(
+            timestamp=100.0,
+            cpu_percent=30.0,
+            rss_mb=512.0,
+            gpu_util=None,
+            gpu_mem_mb=None,
+        )
+        rm.samples = [sample]
+
+        monitor = AdvancedMonitor(resource_monitor=rm)
+        monitor._collect_metrics()
+
+        # System metrics recorded
+        assert "memory_usage_mb" in monitor.metrics_history
+        assert monitor.metrics_history["memory_usage_mb"][-1] == 512.0
+
+        # GPU metrics should NOT be recorded
+        assert "gpu_memory_utilization" not in monitor.metrics_history
+        assert "gpu_memory_used_mb" not in monitor.metrics_history
+
+    def test_collect_metrics_empty_resource_monitor(self):
+        """Test _collect_metrics handles empty ResourceMonitor gracefully."""
+        rm = Mock(spec=ResourceMonitor)
+        rm.samples = []
+
+        monitor = AdvancedMonitor(resource_monitor=rm)
+        monitor._collect_metrics()
+
+        # No metrics should be recorded
+        assert len(monitor.metrics_history) == 0
+
+    def test_start_stop_enters_exits_resource_monitor(self):
+        """Test start/stop monitoring manages ResourceMonitor lifecycle."""
+        rm = MagicMock(spec=ResourceMonitor)
+        rm.samples = []
+
+        monitor = AdvancedMonitor(resource_monitor=rm)
+        monitor.start_monitoring(interval=0.1)
+
+        # ResourceMonitor should have been entered
+        rm.__enter__.assert_called_once()
+
+        time.sleep(0.05)
+        monitor.stop_monitoring()
+
+        # ResourceMonitor should have been exited
+        rm.__exit__.assert_called_once_with(None, None, None)
+
+    def test_without_resource_monitor_falls_back_to_inline(self):
+        """Test that without ResourceMonitor, inline psutil/GPU collection is used."""
+        monitor = AdvancedMonitor()
+
+        # Mock GPU profiler
+        monitor.gpu_profiler.has_gpu = False
+
+        # Should not raise — uses inline psutil path
+        monitor._collect_metrics()
+
 
 class TestProductionMonitor:
     """Test ProductionMonitor class."""
@@ -675,7 +771,7 @@ class TestProductionMonitor:
         assert alert.severity == AlertSeverity.ERROR
 
     def test_get_pipeline_health_report(self):
-        """Test getting comprehensive pipeline health report."""
+        """Test getting full pipeline health report."""
         monitor = ProductionMonitor()
 
         # Record some pipeline executions

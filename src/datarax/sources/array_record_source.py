@@ -1,4 +1,4 @@
-# File: src/datarax/sources/array_record_source.py
+"""Data source for reading from ArrayRecord format files."""
 
 from dataclasses import dataclass
 from typing import Any

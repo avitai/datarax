@@ -3,28 +3,13 @@
 from unittest.mock import MagicMock
 
 import jax.numpy as jnp
-from datarax.core.operator import OperatorModule
 from datarax.operators.strategies.base import StrategyContext
 from datarax.operators.strategies.parallel import (
     ParallelStrategy,
     WeightedParallelStrategy,
     ConditionalParallelStrategy,
 )
-
-
-class MockOperator(OperatorModule):
-    def __init__(self, value, name="mock"):
-        self.value = value
-        self.name = name
-        self.statistics = {f"{name}_stat": 1.0}
-
-    def apply(self, data, state, metadata, random_params=None):
-        # Return constant value based on initialization
-        # Ignore input data for simplicity in testing merge
-        return jnp.full_like(data, self.value), state, metadata
-
-    def generate_random_params(self, rng, data_shapes):
-        return {}
+from tests.test_common.mock_operators import ConstantMockOperator as MockOperator
 
 
 class TestParallelStrategy:

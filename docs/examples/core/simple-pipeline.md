@@ -199,7 +199,7 @@ The pipeline processes data lazily - batches are only created when iterated.
 
 ## Next Steps
 
-- [Pipeline Tutorial](pipeline-tutorial.md) - Comprehensive pipeline guide with advanced features
+- [Pipeline Tutorial](pipeline-tutorial.md) - Full pipeline guide with advanced features
 - [Operators Tutorial](operators-tutorial.md) - Deep dive into operator types and composition
 - [CIFAR-10 Quick Reference](cifar10-quickref.md) - Work with real image data
 - [HuggingFace Integration](../integration/huggingface/hf-quickref.md) - Load datasets from HuggingFace Hub

@@ -5,8 +5,9 @@ Supports both static method usage and NNX module instantiation.
 """
 
 import random
-from dataclasses import dataclass
-from typing import Any, Iterator
+from dataclasses import dataclass, field
+from typing import Any
+from collections.abc import Iterator
 
 import flax.nnx as nnx
 import jax
@@ -45,6 +46,16 @@ class ShuffleSamplerConfig(StructuralConfig):
             raise ValueError("buffer_size is required")
         if self.buffer_size <= 0:
             raise ValueError(f"buffer_size must be positive, got {self.buffer_size}")
+
+
+@dataclass
+class _FallbackState:
+    """Python random fallback mode state."""
+
+    buffer: list[int] = field(default_factory=list)
+    next_index: int = 0
+    indices_yielded: int = 0
+    rng: random.Random | None = None
 
 
 class ShuffleSampler(SamplerModule):
@@ -91,10 +102,7 @@ class ShuffleSampler(SamplerModule):
         self._is_restored = nnx.Variable(False)
 
         # Internal state for fallback mode (Python random)
-        self._fallback_buffer: list[int] = []
-        self._fallback_next_index = 0
-        self._fallback_indices_yielded = 0
-        self._rng: random.Random | None = None
+        self._fallback = _FallbackState()
 
         # Initialize random state for fallback mode
         if self.seed is not None:
@@ -103,9 +111,9 @@ class ShuffleSampler(SamplerModule):
     def _init_fallback_random_state(self):
         """Initialize the random state for fallback shuffling."""
         if self.seed is not None:
-            self._rng = random.Random(self.seed)  # nosec B311
+            self._fallback.rng = random.Random(self.seed)  # nosec B311
         else:
-            self._rng = random.Random()  # nosec B311
+            self._fallback.rng = random.Random()  # nosec B311
 
     @staticmethod
     def create_static_iterator(
@@ -254,42 +262,42 @@ class ShuffleSampler(SamplerModule):
     def _iter_fallback_mode(self) -> Iterator[int]:
         """Fallback Python random-based iteration."""
         # Reset state if we're starting a new iteration
-        self._fallback_buffer = []
-        self._fallback_next_index = 0
-        self._fallback_indices_yielded = 0
+        self._fallback.buffer = []
+        self._fallback.next_index = 0
+        self._fallback.indices_yielded = 0
 
         # Ensure we have a dataset size
         if self.dataset_size is None:
             msg = "dataset_size must be provided"
             raise ValueError(msg)
 
-        while self._fallback_indices_yielded < self.dataset_size:
+        while self._fallback.indices_yielded < self.dataset_size:
             # If the buffer is empty, fill it with new indices and shuffle
-            if not self._fallback_buffer:
+            if not self._fallback.buffer:
                 # For the initial fill or if we've gone through the entire dataset
-                if self._fallback_next_index >= self.dataset_size:
-                    self._fallback_next_index = 0
+                if self._fallback.next_index >= self.dataset_size:
+                    self._fallback.next_index = 0
 
                 # Calculate how many indices to add to the buffer
-                indices_remaining = self.dataset_size - self._fallback_next_index
+                indices_remaining = self.dataset_size - self._fallback.next_index
                 num_to_add = min(self.buffer_size, indices_remaining)
 
                 # Add the next batch of indices to the buffer
-                self._fallback_buffer = list(
-                    range(self._fallback_next_index, self._fallback_next_index + num_to_add)
+                self._fallback.buffer = list(
+                    range(self._fallback.next_index, self._fallback.next_index + num_to_add)
                 )
-                self._fallback_next_index += num_to_add
+                self._fallback.next_index += num_to_add
 
                 # Shuffle the buffer
-                if self._rng is None:
+                if self._fallback.rng is None:
                     self._init_fallback_random_state()
-                assert self._rng is not None, "RNG should be initialized"
-                self._rng.shuffle(self._fallback_buffer)
+                assert self._fallback.rng is not None, "RNG should be initialized"
+                self._fallback.rng.shuffle(self._fallback.buffer)
 
             # Yield the next index from the buffer
-            if self._fallback_buffer:
-                index = self._fallback_buffer.pop(0)
-                self._fallback_indices_yielded += 1
+            if self._fallback.buffer:
+                index = self._fallback.buffer.pop(0)
+                self._fallback.indices_yielded += 1
                 yield index
 
     def get_state(self) -> dict[str, Any]:
@@ -322,10 +330,10 @@ class ShuffleSampler(SamplerModule):
             state.update(
                 {
                     "fallback_state": {
-                        "buffer": self._fallback_buffer.copy(),
-                        "next_index": self._fallback_next_index,
-                        "indices_yielded": self._fallback_indices_yielded,
-                        "rng_state": self._rng.getstate() if self._rng else None,
+                        "buffer": self._fallback.buffer.copy(),
+                        "next_index": self._fallback.next_index,
+                        "indices_yielded": self._fallback.indices_yielded,
+                        "rng_state": self._fallback.rng.getstate() if self._fallback.rng else None,
                         "buffer_size": self.buffer_size,
                         "dataset_size": self.dataset_size,
                         "seed": self.seed,
@@ -341,18 +349,12 @@ class ShuffleSampler(SamplerModule):
         Args:
             state: A dictionary containing the internal state to restore.
         """
-        # Separate the base module state from sampler-specific state
-        custom_keys = {"sampler_state", "fallback_state"}
-        base_state = {k: v for k, v in state.items() if k not in custom_keys}
-
-        # Restore the base module state
-        if base_state:
-            super().set_state(base_state)
+        custom = self._split_state(state, {"sampler_state", "fallback_state"})
 
         # Restore sampler-specific state
-        if "sampler_state" in state:
+        if "sampler_state" in custom:
             # JAX mode state
-            sampler_state = state["sampler_state"]
+            sampler_state = custom["sampler_state"]
             self._buffer = (
                 sampler_state["buffer"][:] if sampler_state["buffer"] is not None else None
             )
@@ -363,17 +365,17 @@ class ShuffleSampler(SamplerModule):
             self.buffer_size = sampler_state["buffer_size"]
             self.dataset_size = sampler_state["dataset_size"]
             self._is_restored.set_value(sampler_state.get("is_restored", True))
-        elif "fallback_state" in state:
+        elif "fallback_state" in custom:
             # Fallback mode state
-            fallback_state = state["fallback_state"]
-            self._fallback_buffer = fallback_state["buffer"].copy()
-            self._fallback_next_index = fallback_state["next_index"]
-            self._fallback_indices_yielded = fallback_state["indices_yielded"]
+            fallback_state = custom["fallback_state"]
+            self._fallback.buffer = fallback_state["buffer"].copy()
+            self._fallback.next_index = fallback_state["next_index"]
+            self._fallback.indices_yielded = fallback_state["indices_yielded"]
             self.buffer_size = fallback_state["buffer_size"]
             self.dataset_size = fallback_state["dataset_size"]
             self.seed = fallback_state.get("seed")
-            if fallback_state["rng_state"] and self._rng:
-                self._rng.setstate(fallback_state["rng_state"])
+            if fallback_state["rng_state"] and self._fallback.rng:
+                self._fallback.rng.setstate(fallback_state["rng_state"])
 
     def reset(self, seed: int | None = None) -> None:
         """Reset the sampler state, typically used to start a new epoch.
@@ -399,11 +401,11 @@ class ShuffleSampler(SamplerModule):
             # Fallback mode reset
             if seed is not None:
                 self.seed = seed
-                self._rng = random.Random(seed)  # nosec B311
+                self._fallback.rng = random.Random(seed)  # nosec B311
             else:
                 # Re-initialize with the original seed
                 self._init_fallback_random_state()
 
-            self._fallback_buffer = []
-            self._fallback_next_index = 0
-            self._fallback_indices_yielded = 0
+            self._fallback.buffer = []
+            self._fallback.next_index = 0
+            self._fallback.indices_yielded = 0

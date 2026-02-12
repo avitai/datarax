@@ -14,7 +14,8 @@ state tracking (position, epoch) for resumable training.
 """
 
 from collections.abc import Iterator
-from typing import Any, Callable, Generic, TypeVar
+from typing import Any, Generic, TypeVar
+from collections.abc import Callable
 
 import jax.numpy as jnp
 from flax import nnx

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Skipped Tests Tracker - Comprehensive Test Skip Management System
+"""Skipped Tests Tracker - Complete Test Skip Management System
 
 PURPOSE:
 --------

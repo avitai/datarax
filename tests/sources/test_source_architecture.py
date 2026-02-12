@@ -208,9 +208,7 @@ class TestTFDSEagerSource:
         from datarax.sources import TFDSEagerSource, TFDSEagerConfig
 
         try:
-            config = TFDSEagerConfig(
-                name="mnist", split="train[:100]", shuffle=True, seed=42
-            )
+            config = TFDSEagerConfig(name="mnist", split="train[:100]", shuffle=True, seed=42)
             source = TFDSEagerSource(config, rngs=nnx.Rngs(0))
 
             # Get first few items from two epochs
@@ -228,9 +226,7 @@ class TestTFDSEagerSource:
         from datarax.sources import TFDSEagerSource, TFDSEagerConfig
 
         try:
-            config = TFDSEagerConfig(
-                name="mnist", split="train[:10]", include_keys={"image"}
-            )
+            config = TFDSEagerConfig(name="mnist", split="train[:10]", include_keys={"image"})
             source = TFDSEagerSource(config, rngs=nnx.Rngs(0))
 
             assert "image" in source.data
@@ -263,9 +259,7 @@ class TestTFDSStreamingSource:
         from datarax.sources import TFDSStreamingSource, TFDSStreamingConfig
 
         try:
-            config = TFDSStreamingConfig(
-                name="mnist", split="train[:50]", prefetch_buffer=2
-            )
+            config = TFDSStreamingConfig(name="mnist", split="train[:50]", prefetch_buffer=2)
             source = TFDSStreamingSource(config, rngs=nnx.Rngs(0))
 
             # Should be iterable

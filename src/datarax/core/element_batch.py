@@ -9,7 +9,8 @@ Key design decisions:
 - Efficient vectorized operations without Python loops
 """
 
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import flax.nnx as nnx
 import flax.struct as struct

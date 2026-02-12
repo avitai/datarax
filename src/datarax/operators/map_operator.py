@@ -15,7 +15,8 @@ Key Features:
 BREAKING CHANGE: User functions MUST accept key parameter even in deterministic mode.
 """
 
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import jax
 from flax import nnx

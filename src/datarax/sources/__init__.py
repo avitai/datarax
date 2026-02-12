@@ -26,6 +26,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
+from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
 from datarax.sources.array_record_source import ArrayRecordSourceModule
 
 # Type-checking imports for static analysis (not executed at runtime)
@@ -273,6 +274,9 @@ __all__ = [
     # Memory source (always available)
     "MemorySource",
     "MemorySourceConfig",
+    # Mixed source
+    "MixDataSourcesNode",
+    "MixDataSourcesConfig",
     # Array record source
     "ArrayRecordSourceModule",
     # TFDS sources

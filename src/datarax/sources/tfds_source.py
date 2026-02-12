@@ -28,7 +28,8 @@ from __future__ import annotations
 import gc
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any
+from collections.abc import Iterator
 
 # Set protobuf implementation to avoid version conflicts
 os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
@@ -40,6 +41,15 @@ import jax.numpy as jnp
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
 from datarax.sources._conversion import tf_to_jax
+from datarax.sources._eager_source_ops import (
+    batch_elements_to_dict,
+    convert_and_filter_element,
+    eager_get_batch,
+    eager_iter,
+    eager_reset,
+    reset_streaming_state,
+    validate_eager_config,
+)
 
 if TYPE_CHECKING:
     import tensorflow_datasets as tfds
@@ -102,15 +112,10 @@ class TFDSEagerConfig(StructuralConfig):
         # Call parent validation
         super().__post_init__()
 
-        # Validate required parameters
-        if self.name is None:
-            raise ValueError("name is required for TFDSEagerConfig")
-        if self.split is None:
-            raise ValueError("split is required for TFDSEagerConfig")
-
-        # Validate key filtering
-        if self.include_keys is not None and self.exclude_keys is not None:
-            raise ValueError("Cannot specify both include_keys and exclude_keys")
+        # Shared validation
+        validate_eager_config(
+            self.name, self.split, self.include_keys, self.exclude_keys, "TFDSEagerConfig"
+        )
 
 
 @dataclass
@@ -340,12 +345,19 @@ class TFDSEagerSource(DataSourceModule):
         Uses Grain's index_shuffle for shuffling, which computes
         shuffled indices on-the-fly without storing a permutation array.
         """
-        self.index.set_value(0)
-        self.epoch.set_value(self.epoch.get_value() + 1)
 
-        for i in range(self.length):
-            idx = self._get_shuffled_index(i)
-            yield {k: v[idx] for k, v in self.data.items()}
+        def build_element(data: dict, idx: int) -> dict[str, jax.Array]:
+            return {k: v[idx] for k, v in data.items()}
+
+        return eager_iter(
+            self.data,
+            self.length,
+            self.index,
+            self.epoch,
+            self.shuffle,
+            self._seed,
+            build_element,
+        )
 
     def __getitem__(self, index: int) -> dict[str, jax.Array]:
         """Get element at specific index.
@@ -365,42 +377,6 @@ class TFDSEagerSource(DataSourceModule):
             raise IndexError(f"Index {index} out of range for {self.length} elements")
         return {k: v[index] for k, v in self.data.items()}
 
-    def _get_shuffled_index(self, index: int) -> int:
-        """Get shuffled index using Grain's O(1) memory Feistel cipher.
-
-        Uses grain.index_shuffle instead of jax.random.permutation:
-        - O(1) memory vs O(n) for permutation array
-        - Deterministic and reproducible
-        - Per-epoch seeding for different shuffles each epoch
-
-        Args:
-            index: Original sequential index
-
-        Returns:
-            Shuffled index for current epoch
-        """
-        if not self.shuffle:
-            return index
-
-        try:
-            from grain._src.python.experimental.index_shuffle.python import (
-                index_shuffle_module as index_shuffle,
-            )
-
-            # Different seed per epoch for varied shuffles
-            epoch = self.epoch.get_value()
-            per_epoch_seed = (self._seed + epoch) % (2**32)
-
-            return index_shuffle.index_shuffle(
-                index, max_index=self.length - 1, seed=per_epoch_seed, rounds=4
-            )
-        except ImportError:
-            # Fallback: use JAX random for this index
-            # This is less efficient but works without Grain
-            key = jax.random.key(self._seed + self.epoch.get_value())
-            perm = jax.random.permutation(key, self.length)
-            return int(perm[index])
-
     # === Batch retrieval (stateless and stateful) ===
 
     def get_batch(self, batch_size: int, key: jax.Array | None = None) -> dict[str, jax.Array]:
@@ -413,26 +389,21 @@ class TFDSEagerSource(DataSourceModule):
         Returns:
             Batch of data as dictionary with batched arrays
         """
-        if key is not None:
-            # Stateless mode: use JAX random for one-off random sampling
-            if self.shuffle:
-                indices = jax.random.permutation(key, self.length)[:batch_size]
-            else:
-                indices = jnp.arange(batch_size)
-            return {k: v[indices] for k, v in self.data.items()}
 
-        # Stateful mode: sequential iteration through shuffled indices
-        start = self.index.get_value()
-        end = min(start + batch_size, self.length)
+        def gather_fn(data: dict, indices: jax.Array) -> dict[str, jax.Array]:
+            return {k: v[indices] for k, v in data.items()}
 
-        # Build indices (using shuffled mapping if enabled)
-        indices = jnp.array([self._get_shuffled_index(i) for i in range(start, end)])
-
-        self.index.set_value(end % self.length)
-        if end >= self.length:
-            self.epoch.set_value(self.epoch.get_value() + 1)
-
-        return {k: v[indices] for k, v in self.data.items()}
+        return eager_get_batch(
+            self.data,
+            self.length,
+            self.index,
+            self.epoch,
+            self.shuffle,
+            self._seed,
+            batch_size,
+            key,
+            gather_fn,
+        )
 
     # === Dataset info access ===
 
@@ -449,10 +420,7 @@ class TFDSEagerSource(DataSourceModule):
             seed: Optional new seed (ignored, use config seed)
         """
         del seed  # Use config seed
-        self.index.set_value(0)
-        self.epoch.set_value(0)
-        if self._cache is not None:
-            self._cache.clear()
+        eager_reset(self.index, self.epoch, self._cache)
 
     def set_shuffle(self, shuffle: bool) -> None:
         """Enable or disable shuffling.
@@ -616,15 +584,12 @@ class TFDSStreamingSource(DataSourceModule):
         if self.as_supervised and isinstance(tf_element, tuple):
             tf_element = {"image": tf_element[0], "label": tf_element[1]}
 
-        # Convert with DLPack and apply filtering
-        result = {}
-        for k, v in tf_element.items():
-            if self.include_keys and k not in self.include_keys:
-                continue
-            if self.exclude_keys and k in self.exclude_keys:
-                continue
-            result[k] = tf_to_jax(v)
-        return result
+        return convert_and_filter_element(
+            tf_element,
+            self.include_keys,
+            self.exclude_keys,
+            tf_to_jax,
+        )
 
     def get_dataset_info(self) -> tfds.core.DatasetInfo:
         """Get TFDS dataset info."""
@@ -638,9 +603,7 @@ class TFDSStreamingSource(DataSourceModule):
         """
         del seed
         self._iterator = None
-        self.epoch.set_value(0)
-        if self._cache is not None:
-            self._cache.clear()
+        reset_streaming_state(self.epoch, self._cache)
 
     def _apply_transform(
         self, batch_size: int, key: jax.Array | None, stats: Any | None = None
@@ -650,20 +613,13 @@ class TFDSStreamingSource(DataSourceModule):
         Note: For streaming sources, use pipeline batching instead.
         """
         del stats, key
-        # Collect batch_size elements
-        batch_elements = []
+        elements = []
         for _ in range(batch_size):
             try:
-                batch_elements.append(next(self))
+                elements.append(next(self))
             except StopIteration:
                 break
-
-        if not batch_elements:
-            return {}
-
-        # Stack into batch
-        keys = batch_elements[0].keys()
-        return {k: jnp.stack([elem[k] for elem in batch_elements]) for k in keys}
+        return batch_elements_to_dict(elements)
 
     def __repr__(self) -> str:
         """String representation."""

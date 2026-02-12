@@ -5,7 +5,8 @@ sharding of JAX arrays across devices. Supports both static method usage
 and NNX module instantiation.
 """
 
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import flax.nnx as nnx
 import jax

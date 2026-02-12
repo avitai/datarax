@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 r"""Jupytext Conversion & Synchronization Utility
 
-A comprehensive tool for converting and synchronizing between Python scripts (.py)
+A utility for converting and synchronizing between Python scripts (.py)
 and Jupyter notebooks (.ipynb) using Jupytext's py:percent format.
 
 Features:
@@ -69,10 +69,9 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Tuple
 
 
-def validate_python_for_jupytext(py_file: Path) -> Tuple[bool, List[str]]:
+def validate_python_for_jupytext(py_file: Path) -> tuple[bool, list[str]]:
     r"""Validate Python file for common jupytext conversion issues.
 
     Checks for patterns that will cause problems when converting to notebooks:
@@ -83,7 +82,7 @@ def validate_python_for_jupytext(py_file: Path) -> Tuple[bool, List[str]]:
         py_file: Path to Python file to validate
 
     Returns:
-        Tuple of (is_valid: bool, issues: List[str])
+        Tuple of (is_valid: bool, issues: list[str])
     """
     issues = []
 
@@ -119,7 +118,7 @@ def validate_python_for_jupytext(py_file: Path) -> Tuple[bool, List[str]]:
         return False, issues
 
 
-def run_jupytext_command(args: List[str], verbose: bool = False) -> Tuple[bool, str]:
+def run_jupytext_command(args: list[str], verbose: bool = False) -> tuple[bool, str]:
     """Run a jupytext command.
 
     Args:
@@ -321,7 +320,7 @@ def sync_pair(file_path: Path, verbose: bool = False) -> bool:
 
 def batch_convert_directory(
     directory: Path, source_format: str, verbose: bool = False
-) -> Tuple[int, int]:
+) -> tuple[int, int]:
     """Batch convert all files in a directory.
 
     Args:
@@ -378,7 +377,7 @@ def batch_convert_directory(
     return success_count, fail_count
 
 
-def validate_sync(directory: Path, verbose: bool = False) -> Tuple[int, int, int]:
+def validate_sync(directory: Path, verbose: bool = False) -> tuple[int, int, int]:
     """Validate that .py and .ipynb pairs are synchronized.
 
     Args:

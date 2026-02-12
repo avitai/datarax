@@ -9,7 +9,7 @@
 
 ## Overview
 
-This tutorial provides a comprehensive guide to using HuggingFace Datasets with Datarax. You'll learn to work with different data modalities, configure advanced options like field filtering and shuffle buffers, and build production-ready training pipelines.
+This tutorial provides a detailed guide to using HuggingFace Datasets with Datarax. You'll learn to work with different data modalities, configure advanced options like field filtering and shuffle buffers, and build production-ready training pipelines.
 
 ## What You'll Learn
 

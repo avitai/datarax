@@ -296,7 +296,7 @@ JAX_PLATFORMS=cuda uv run pytest --device=gpu -m gpu
 ./run_tests.sh  # Runs on CPU, then GPU if available
 ```
 
-See the [Developer Guide](dev_guide.md#testing) for comprehensive testing documentation.
+See the [Developer Guide](dev_guide.md#testing) for detailed testing documentation.
 
 ## Code Style and Quality
 

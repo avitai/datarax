@@ -4,7 +4,8 @@ This module provides test fixtures and mock data sources for testing
 Datarax components, particularly for state management and pipeline testing.
 """
 
-from typing import Any, Iterator
+from typing import Any
+from collections.abc import Iterator
 
 import flax.nnx as nnx
 import jax.numpy as jnp

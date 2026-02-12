@@ -28,11 +28,6 @@ This approach:
 - Installs all dependencies including GPU support via `uv sync --extra all`
 - Creates `activate.sh` that loads environment configuration
 
-!!! warning "Legacy Script"
-    The `scripts/setup_jax_gpu_env.sh` script is a legacy alternative that uses different
-    conventions (`.venv311` directory, manual JAX CUDA installation). It is not recommended
-    for new setups. Use `./setup.sh` instead.
-
 ## Running GPU Tests
 
 We provide a dedicated script for running tests on GPU:
@@ -45,9 +40,8 @@ bash scripts/run_gpu_tests.sh
 This script will:
 
 1. Check for GPU availability
-2. Set up the required environment variables
-3. Run examples that previously had GPU issues
-4. Run selected tests with GPU support
+2. Set up the required environment variables (`JAX_PLATFORMS=cuda`)
+3. Run selected tests with GPU support
 
 ## Manual GPU Testing
 
@@ -103,12 +97,7 @@ The GPU testing infrastructure consists of:
    - Sets required environment variables (`JAX_PLATFORMS=cuda`)
    - Runs pytest with `--device=gpu` flag
 
-3. **Python Script** (`scripts/run_gpu_tests.py`):
-   - Provides more fine-grained control over GPU test execution
-   - Runs GPU-relevant test directories (distributed, sharding, benchmarks)
-   - Can also run example files on GPU
-
-4. **Test Markers**: Tests can use `@pytest.mark.gpu` or `@pytest.mark.gpu_required` to indicate GPU requirements. Currently, most tests run on any device, with only a few explicitly marked as GPU-specific.
+3. **Test Markers**: Tests can use `@pytest.mark.gpu` or `@pytest.mark.gpu_required` to indicate GPU requirements. Currently, most tests run on any device, with only a few explicitly marked as GPU-specific.
 
 ## Adding New GPU Tests
 

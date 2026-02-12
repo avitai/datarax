@@ -5,7 +5,8 @@ in JAX models, with support for multi-device and multi-host configurations.
 Supports both static method usage and NNX module instantiation.
 """
 
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import flax.nnx as nnx
 import jax

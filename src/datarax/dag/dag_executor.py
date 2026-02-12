@@ -7,7 +7,8 @@ data processing workflows as directed acyclic graphs (DAGs).
 COMPLETE IMPLEMENTATION following TDD principles.
 """
 
-from typing import Any, Callable, Literal, Iterator
+from typing import Any, Literal
+from collections.abc import Callable, Iterator
 import jax
 import flax.nnx as nnx
 from flax.nnx.transforms.compilation import JitFn
@@ -19,6 +20,7 @@ from datarax.dag.nodes import (
     Parallel,
     Branch,
     Merge,
+    FusedOperatorNode,
     DataSourceNode,
     BatchNode,
     OperatorNode,
@@ -185,6 +187,30 @@ class DAGExecutor(nnx.Module):
         # Pipeline is deterministic and user didn't provide rngs - return None
         return None
 
+    def _any_node_matches(self, predicate: Callable[[Node], bool]) -> bool:
+        """Walk the DAG and return True if any leaf node satisfies predicate.
+
+        Handles recursion into composite nodes (Sequential, Parallel, Branch)
+        so callers only need to define the leaf-node check.
+
+        Args:
+            predicate: Function that checks a single non-composite node.
+
+        Returns:
+            True if any node in the graph satisfies the predicate.
+        """
+
+        def walk(node: Node) -> bool:
+            if isinstance(node, Sequential):
+                return any(walk(n) for n in node.nodes)
+            if isinstance(node, Parallel):
+                return any(walk(n) for n in node.nodes)
+            if isinstance(node, Branch):
+                return walk(node.true_path) or walk(node.false_path)
+            return predicate(node)
+
+        return walk(self.graph)
+
     def _detect_stochastic_ops(self) -> bool:
         """Detect if pipeline contains any stochastic operations.
 
@@ -196,46 +222,18 @@ class DAGExecutor(nnx.Module):
             True if any stochastic operations exist, False otherwise.
         """
 
-        def check_node(node: Node) -> bool:
-            """Recursively check if node or children are stochastic."""
-            # Check OperatorNode for stochastic config
-            if isinstance(node, OperatorNode):
-                operator = node.operator
-                if hasattr(operator, "config"):
-                    if getattr(operator.config, "stochastic", False):
-                        return True
-
-            # Check ShuffleNode (always stochastic)
+        def is_stochastic(node: Node) -> bool:
             if isinstance(node, ShuffleNode):
                 return True
-
-            # Check SamplerNode with shuffle
-            if isinstance(node, SamplerNode):
-                sampler = node.sampler
-                if hasattr(sampler, "config"):
-                    if getattr(sampler.config, "stochastic", False):
-                        return True
-
-            # Check DataSourceNode with shuffle
-            if isinstance(node, DataSourceNode):
-                source = node.source
-                if hasattr(source, "config"):
-                    if getattr(source.config, "stochastic", False):
-                        return True
-
-            # Recursively check composite nodes
-            if isinstance(node, Sequential):
-                return any(check_node(n) for n in node.nodes)
-            if isinstance(node, Parallel):
-                return any(check_node(n) for n in node.nodes)
-            if isinstance(node, Branch):
-                return check_node(node.true_path) or check_node(node.false_path)
-            # Merge doesn't have child nodes that need checking
-
+            for attr in ("operator", "sampler", "source"):
+                inner = getattr(node, attr, None)
+                if inner is not None and getattr(
+                    getattr(inner, "config", None), "stochastic", False
+                ):
+                    return True
             return False
 
-        # Check main graph
-        return check_node(self.graph)
+        return self._any_node_matches(is_stochastic)
 
     def _detect_stateful_ops(self) -> bool:
         """Detect if pipeline contains stateful operators that affect output.
@@ -252,29 +250,115 @@ class DAGExecutor(nnx.Module):
             True if any stateful operations exist, False otherwise.
         """
 
-        def check_node(node: Node) -> bool:
-            """Recursively check if node or children are stateful."""
-            # Check OperatorNode for explicit stateful config
+        def is_stateful(node: Node) -> bool:
             if isinstance(node, OperatorNode):
                 operator = node.operator
                 if hasattr(operator, "config"):
-                    # Explicit stateful flag takes precedence
-                    if getattr(operator.config, "stateful", False):
-                        return True
-
-            # Recursively check composite nodes
-            if isinstance(node, Sequential):
-                return any(check_node(n) for n in node.nodes)
-            if isinstance(node, Parallel):
-                return any(check_node(n) for n in node.nodes)
-            if isinstance(node, Branch):
-                return check_node(node.true_path) or check_node(node.false_path)
-            # Merge doesn't have child nodes that need checking
-
+                    return getattr(operator.config, "stateful", False)
             return False
 
-        # Check main graph
-        return check_node(self.graph)
+        return self._any_node_matches(is_stateful)
+
+    def _topological_sort(self) -> list[Node]:
+        """Flatten the graph tree into a topological execution order.
+
+        Walks the tree structure (Sequential, Parallel, Branch) and returns
+        a flat list of leaf nodes in execution order.  Sequential children
+        are ordered left-to-right; Parallel children are all included
+        (independent of each other).  Composite nodes (Sequential, Parallel)
+        are traversed but NOT included in the output — only leaf nodes appear.
+
+        Returns:
+            Flat list of leaf nodes in valid topological order.
+        """
+        order: list[Node] = []
+        seen: set[int] = set()
+
+        def walk(node: Node) -> None:
+            node_id = id(node)
+            if node_id in seen:
+                return
+            seen.add(node_id)
+
+            if isinstance(node, Sequential):
+                for child in node.nodes:
+                    walk(child)
+            elif isinstance(node, Parallel):
+                for child in node.nodes:
+                    walk(child)
+            elif isinstance(node, Branch):
+                walk(node.true_path)
+                walk(node.false_path)
+            elif isinstance(node, FusedOperatorNode):
+                # Treat fused group as a single opaque node
+                order.append(node)
+            else:
+                # Leaf node (OperatorNode, BatchNode, ShuffleNode, Merge, etc.)
+                order.append(node)
+
+        walk(self.graph)
+        return order
+
+    def _compute_fusion_groups(self) -> list[list[Node]]:
+        """Identify groups of consecutive fusible nodes in the graph.
+
+        Walks the graph's nodes (if Sequential) or treats the root as a
+        single-node sequence. Accumulates consecutive is_jit_fusible nodes
+        into fusion groups. Groups of size >= 2 are returned.
+
+        Returns:
+            List of fusible groups, each a list of consecutive fusible nodes.
+        """
+        # Get flat node list from the graph
+        if isinstance(self.graph, Sequential):
+            nodes = list(self.graph.nodes)
+        else:
+            nodes = [self.graph]
+
+        groups: list[list[Node]] = []
+        current_group: list[Node] = []
+
+        for node in nodes:
+            if node.is_jit_fusible:
+                current_group.append(node)
+            else:
+                if len(current_group) >= 2:
+                    groups.append(current_group)
+                current_group = []
+
+        # Don't forget the last group
+        if len(current_group) >= 2:
+            groups.append(current_group)
+
+        return groups
+
+    def _apply_fusion(self) -> None:
+        """Replace fusible groups in the graph with FusedOperatorNode instances.
+
+        Uses _compute_fusion_groups() as the single source of truth for
+        group detection, then rebuilds the Sequential with fused wrappers.
+        """
+        if not isinstance(self.graph, Sequential):
+            return
+
+        groups = self._compute_fusion_groups()
+        if not groups:
+            return
+
+        # Map first-node-id → group for O(1) lookup during the walk
+        group_map: dict[int, list[Node]] = {id(g[0]): g for g in groups}
+        members: set[int] = {id(n) for g in groups for n in g}
+
+        new_nodes: list[Node] = []
+        for node in self.graph.nodes:
+            if id(node) in group_map:
+                new_nodes.append(FusedOperatorNode(group_map[id(node)]))
+            elif id(node) not in members:
+                # Node is not part of any fusion group — keep as-is
+                new_nodes.append(node)
+            # else: node is a non-first member of a group — skip (already fused)
+
+        self.graph = Sequential(new_nodes)
 
     def add(self, node: Node) -> "DAGExecutor":
         """Add a node to the pipeline.
@@ -616,6 +700,10 @@ class DAGExecutor(nnx.Module):
     ) -> Batch:
         """Convert raw batch data to Batch and apply operators.
 
+        When no operators are present, keeps data as-is (numpy arrays stay
+        numpy) to avoid the memory overhead of JAX's XLA allocator. JAX
+        conversion only happens when operators need it for JIT/vmap.
+
         Args:
             batch_data: Raw data from source's get_batch() (dict or list of dicts).
             operators: List of OperatorNode instances to apply.
@@ -625,14 +713,48 @@ class DAGExecutor(nnx.Module):
         """
         from datarax.core.element_batch import Batch as BatchImpl
 
-        jax_data = self._convert_to_jax_arrays(batch_data)
-        batch = BatchImpl.from_parts(data=jax_data, states={}, validate=False)
+        if operators:
+            data = self._convert_to_jax_arrays(batch_data)
+        else:
+            # No operators — keep as numpy for zero-copy memory efficiency.
+            # Normalize to dict format without JAX conversion.
+            data = self._normalize_batch_data(batch_data)
+
+        batch = BatchImpl.from_parts(data=data, states={}, validate=False)
 
         for op_node in operators:
             batch = op_node(batch)
 
         self._iteration_count += 1
         return batch
+
+    @staticmethod
+    def _normalize_batch_data(batch_data: Any) -> dict:
+        """Normalize batch data to dict format without JAX conversion.
+
+        Unlike _convert_to_jax_arrays, this keeps numpy arrays as numpy
+        to avoid XLA allocator overhead when no JAX operations are needed.
+
+        Args:
+            batch_data: Data from source's get_batch().
+
+        Returns:
+            Dictionary with array values (numpy or JAX, whatever the source provides).
+        """
+        import numpy as np
+
+        if isinstance(batch_data, dict):
+            return batch_data
+
+        if isinstance(batch_data, list):
+            if not batch_data:
+                return {}
+            if isinstance(batch_data[0], dict):
+                keys = batch_data[0].keys()
+                return {k: np.stack([elem[k] for elem in batch_data]) for k in keys}
+            return {"data": np.asarray(batch_data)}
+
+        return {"data": batch_data}
 
     def _create_batch_first_iterator(self) -> Iterator[Batch]:
         """Create batch-first iterator for optimal performance.
@@ -912,12 +1034,21 @@ class DAGExecutor(nnx.Module):
             self._reset_node(node.false_path)  # type: ignore[attr-defined]
 
     def _compile(self) -> None:
-        """JIT compile the pipeline execution."""
+        """JIT compile the pipeline execution.
+
+        Applies fusion first (replaces consecutive fusible nodes with
+        FusedOperatorNode wrappers), then creates the JIT-compiled
+        execution function with donate_argnums for memory reuse.
+        """
+        self._apply_fusion()
 
         def execute_fn(node, data, key):
             return node(data, key=key)
 
-        self._jit_execute = nnx.jit(execute_fn)
+        # donate_argnums=(1,) donates the `data` argument — XLA reuses its
+        # buffer for output since each pipeline step consumes its input.
+        # This reduces peak memory by ~1 batch_size.
+        self._jit_execute = nnx.jit(execute_fn, donate_argnums=(1,))
 
     def _compute_cache_key(self, node: Node, data: Any) -> int:
         """Compute cache key for node and data.

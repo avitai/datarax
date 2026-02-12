@@ -34,6 +34,13 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+# Pre-import Deep Lake before TensorFlow to avoid fatal OpenSSL conflict.
+# See benchmarks/adapters/_preload.py for the full explanation.
+try:
+    import benchmarks.adapters._preload  # noqa: F401
+except ImportError:
+    pass  # benchmarks package not on path (core tests only)
+
 # Configure TensorFlow - only on Linux
 # Note: TensorFlow import on macOS ARM64 can hang during pytest collection due to
 # Metal/GPU device detection issues. This is a known upstream issue (tensorflow/tensorflow#52138).

@@ -10,7 +10,6 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Set
 
 
 # Mapping of source modules to their components
@@ -41,7 +40,7 @@ class ComponentExtractor:
         shutil.copy2(file_path, backup_path)
         print(f"Backed up {file_path.name} to {backup_path}")
 
-    def _analyze_file(self, file_path: Path) -> dict[str, Set[str]]:
+    def _analyze_file(self, file_path: Path) -> dict[str, set[str]]:
         """Analyze a file to determine which components it tests."""
         content = file_path.read_text()
 

@@ -6,15 +6,16 @@ with support for both stateless and stateful operation modes.
 """
 
 from dataclasses import dataclass
-from typing import Any, Iterator, Sequence, Union
+from typing import Any, Union
+from collections.abc import Iterator, Sequence
 import jax
-import jax.numpy as jnp
 import flax.nnx as nnx
 
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
 from datarax.core.metadata import MetadataManager, RecordMetadata
 from datarax.config.registry import register_component
+from datarax.samplers.index_shuffle import index_shuffle
 
 
 @dataclass
@@ -27,6 +28,10 @@ class MemorySourceConfig(StructuralConfig):
         prefetch_size: Number of items to prefetch (0 = no prefetching)
         track_metadata: Whether to track metadata for each record
         shard_id: Optional shard identifier for distributed processing
+        num_workers: Number of parallel workers (default 1). When > 1,
+            each worker (identified by shard_id) receives a disjoint
+            partition of the globally-shuffled elements. Worker k
+            gets elements at global positions [k::num_workers].
     """
 
     # Optional parameters with defaults
@@ -35,6 +40,7 @@ class MemorySourceConfig(StructuralConfig):
     prefetch_size: int = 0
     track_metadata: bool = False
     shard_id: int | None = None
+    num_workers: int = 1
 
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -45,6 +51,15 @@ class MemorySourceConfig(StructuralConfig):
                 object.__setattr__(self, "stream_name", "shuffle")
         else:
             object.__setattr__(self, "stochastic", False)
+
+        if self.num_workers < 1:
+            raise ValueError(f"num_workers must be >= 1, got {self.num_workers}")
+        if self.num_workers > 1 and self.shard_id is None:
+            raise ValueError("shard_id is required when num_workers > 1")
+        if self.num_workers > 1 and self.shard_id is not None and self.shard_id >= self.num_workers:
+            raise ValueError(
+                f"shard_id ({self.shard_id}) must be < num_workers ({self.num_workers})"
+            )
 
         # Call parent validation
         super().__post_init__()
@@ -153,8 +168,9 @@ class MemorySource(DataSourceModule):
         self.index = nnx.Variable(0)
         self.epoch = nnx.Variable(0)
 
-        # Shuffled indices (computed lazily) - use nnx.Variable for checkpointing
-        self._shuffled_indices = nnx.Variable(None)
+        # Shuffle state (computed lazily per epoch)
+        self._shuffle_seed: int | None = None  # Feistel seed, derived from RNG
+        self._shuffled_indices = nnx.Variable(None)  # Materialized only for get_batch
         self._last_shuffle_epoch = nnx.Variable(-1)
 
         # Optional metadata tracking
@@ -180,6 +196,27 @@ class MemorySource(DataSourceModule):
 
         For stateless iteration, yields elements in order.
         For stateful iteration with shuffling, uses internal RNG.
+        When prefetch_size > 0, wraps iteration with threaded prefetching.
+
+        Returns:
+            Iterator over data elements
+        """
+        raw = self._raw_iter()
+
+        if self.prefetch_size > 0:
+            from datarax.control.prefetcher import Prefetcher
+
+            return Prefetcher(buffer_size=self.prefetch_size).prefetch(raw)
+        return raw
+
+    def _raw_iter(self) -> Iterator[Any]:
+        """Synchronous element iteration (no prefetching).
+
+        Uses lazy index computation via index_shuffle — O(1) memory per
+        element, no full permutation array materialized.
+
+        When num_workers > 1, yields only this worker's partition of the
+        global order: worker k gets global positions [k::num_workers].
 
         Returns:
             Iterator over data elements
@@ -188,12 +225,26 @@ class MemorySource(DataSourceModule):
         self.index.set_value(0)
         self.epoch.set_value(self.epoch.get_value() + 1)
 
-        # Get indices (shuffled if needed)
-        indices = self._get_indices()
+        num_workers = self.config.num_workers
+        shard_id = self.config.shard_id or 0
 
-        # Yield elements
-        for idx in indices:
-            yield self._get_element(idx)
+        if self.shuffle and self.rngs is not None:
+            # Lazy shuffle: compute each index on-the-fly via Feistel cipher
+            seed = self._derive_shuffle_seed()
+            if num_workers > 1:
+                # Partition: yield elements at global positions [shard_id::num_workers]
+                for i in range(shard_id, self.length, num_workers):
+                    yield self._get_element(index_shuffle(i, seed, self.length))
+            else:
+                for i in range(self.length):
+                    yield self._get_element(index_shuffle(i, seed, self.length))
+        else:
+            if num_workers > 1:
+                for i in range(shard_id, self.length, num_workers):
+                    yield self._get_element(i)
+            else:
+                for i in range(self.length):
+                    yield self._get_element(i)
 
     def __getitem__(self, index: int) -> Any:
         """Get element at specific index.
@@ -230,32 +281,37 @@ class MemorySource(DataSourceModule):
         """
         # Get indices for this batch
         if key is not None:
-            # Stateless mode - use provided key for shuffling
+            # Stateless mode — derive seed from the provided key
             if self.shuffle:
-                indices = jax.random.permutation(key, self.length)
+                seed = int(jax.random.bits(key))
+                batch_indices = [
+                    index_shuffle(i, seed, self.length) for i in range(min(batch_size, self.length))
+                ]
+                return self._gather_batch(batch_indices)
             else:
-                indices = jnp.arange(self.length)
-
-            # Take first batch_size elements
-            batch_indices = indices[:batch_size]
+                # Sequential: use slicing (zero-copy for arrays)
+                return self._gather_batch_slice(0, min(batch_size, self.length))
         else:
             # Stateful mode - use internal index
-            indices = self._get_indices()
-
-            # Get batch starting from current index
             start = self.index.get_value()
             end = min(start + batch_size, self.length)
-            batch_indices = indices[start:end]
 
             # Update index for next call
             new_index = end % self.length
             self.index.set_value(new_index)
             if new_index == 0:
                 self.epoch.set_value(self.epoch.get_value() + 1)
-                self._shuffled_indices.set_value(None)  # Force reshuffle on next epoch
+                # Force reshuffle on next epoch
+                self._shuffle_seed = None
+                self._shuffled_indices.set_value(None)
 
-        # Gather batch elements
-        return self._gather_batch(batch_indices)
+            if not self.shuffle:
+                # Sequential: use slicing (zero-copy for arrays)
+                return self._gather_batch_slice(start, end)
+
+            # Shuffled: gather by the shuffled indices for this range
+            indices = self._get_indices()
+            return self._gather_batch(indices[start:end])
 
     def _apply_transform(
         self, batch_size: int, key: jax.Array | None, stats: Any | None = None
@@ -272,31 +328,49 @@ class MemorySource(DataSourceModule):
         """
         return self.get_batch(batch_size, key)
 
-    def _get_indices(self) -> jax.Array:
-        """Get indices for iteration (possibly shuffled).
+    def _derive_shuffle_seed(self) -> int:
+        """Derive an integer seed from the JAX RNG stream for the current epoch.
+
+        The seed is cached per epoch so that _raw_iter() (lazy) and
+        _get_indices() (materialized) produce the same permutation.
 
         Returns:
-            Array of indices
+            Integer seed for index_shuffle.
+        """
+        current_epoch = self.epoch.get_value()
+        last_shuffle_epoch = self._last_shuffle_epoch.get_value()
+
+        if self._shuffle_seed is None or last_shuffle_epoch != current_epoch:
+            stream_name = self.config.stream_name or "shuffle"
+            rng_stream = getattr(self.rngs, stream_name, self.rngs.default)
+            key = rng_stream()
+            self._shuffle_seed = int(jax.random.bits(key))
+            self._last_shuffle_epoch.set_value(current_epoch)
+            # Invalidate cached materialized indices
+            self._shuffled_indices.set_value(None)
+
+        return self._shuffle_seed
+
+    def _get_indices(self) -> list[int]:
+        """Get indices for iteration (possibly shuffled).
+
+        Uses Feistel cipher index_shuffle for O(1)-per-element, worker-count
+        invariant permutations. The full list is materialized here for
+        get_batch() slicing; _raw_iter() uses lazy per-element computation.
+
+        Returns:
+            List of indices in iteration order.
         """
         if self.shuffle and self.rngs is not None:
-            # Check if we need to reshuffle
-            current_epoch = self.epoch.get_value()
+            self.epoch.get_value()
             shuffled_indices = self._shuffled_indices.get_value()
-            last_shuffle_epoch = self._last_shuffle_epoch.get_value()
-            if shuffled_indices is None or last_shuffle_epoch != current_epoch:
-                # Get RNG key from stream using Flax NNX pattern
-                stream_name = self.config.stream_name or "shuffle"
-                # Access the named RNG stream (getattr for dynamic name, then call)
-                rng_stream = getattr(self.rngs, stream_name, self.rngs.default)
-                key = rng_stream()
-                shuffled_indices = jax.random.permutation(key, self.length)
+            if shuffled_indices is None:
+                seed = self._derive_shuffle_seed()
+                shuffled_indices = [index_shuffle(i, seed, self.length) for i in range(self.length)]
                 self._shuffled_indices.set_value(shuffled_indices)
-                self._last_shuffle_epoch.set_value(current_epoch)
-
             return shuffled_indices
         else:
-            # No shuffling - return sequential indices
-            return jnp.arange(self.length)
+            return list(range(self.length))
 
     def _get_element(self, index: int) -> Any:
         """Get single element at index.
@@ -321,38 +395,61 @@ class MemorySource(DataSourceModule):
             # Return list/sequence element
             return data[index]
 
-    def _gather_batch(self, indices: jax.Array) -> Any:
-        """Gather batch of elements at given indices.
+    def _gather_batch_slice(self, start: int, end: int) -> Any:
+        """Gather a contiguous batch using slice-based access.
+
+        For numpy/JAX arrays, ``array[start:end]`` returns a view (no copy),
+        which is the key memory optimization for sequential (non-shuffle) paths.
 
         Args:
-            indices: Indices to gather
+            start: Start index (inclusive).
+            end: End index (exclusive).
 
         Returns:
-            Batch of elements
+            Batch of elements from data[start:end].
         """
         data = self.data
         if isinstance(data, dict):
-            # Build batch dictionary
+            return {
+                key: value[start:end] if hasattr(value, "__getitem__") else [value] * (end - start)
+                for key, value in data.items()
+            }
+        else:
+            return data[start:end]
+
+    def _gather_batch(self, indices: list[int]) -> Any:
+        """Gather batch of elements at arbitrary indices.
+
+        For non-contiguous access (shuffled), uses fancy indexing which
+        creates copies. For contiguous ranges, prefer _gather_batch_slice.
+
+        Args:
+            indices: List of indices to gather.
+
+        Returns:
+            Batch of elements.
+        """
+        import jax.numpy as jnp
+
+        idx_array = jnp.array(indices)
+        data = self.data
+        if isinstance(data, dict):
             batch = {}
             for key, value in data.items():
                 if hasattr(value, "__getitem__"):
-                    # Gather elements at indices
                     if isinstance(value, list | tuple):
                         batch[key] = [value[i] for i in indices]
                     else:
-                        # Assume array-like
-                        batch[key] = value[indices]
+                        # Array-like: fancy indexing (JAX requires jnp.array, not list)
+                        batch[key] = value[idx_array]
                 else:
-                    # Scalar value - repeat for batch
                     batch[key] = [value] * len(indices)
             return batch
         else:
-            # Gather from list/sequence
             if isinstance(data, list | tuple):
                 return [data[i] for i in indices]
             else:
-                # Assume array-like
-                return data[indices]
+                return data[idx_array]
 
     def reset(self, seed: int | None = None) -> None:
         """Reset the source to the beginning.
@@ -362,6 +459,7 @@ class MemorySource(DataSourceModule):
         """
         self.index.set_value(0)
         self.epoch.set_value(0)
+        self._shuffle_seed = None
         self._shuffled_indices.set_value(None)
         self._last_shuffle_epoch.set_value(-1)
         if self._cache is not None:
@@ -377,6 +475,7 @@ class MemorySource(DataSourceModule):
         """
         self.shuffle = shuffle
         if not shuffle:
+            self._shuffle_seed = None
             self._shuffled_indices.set_value(None)
 
     def get_with_metadata(self, index: int) -> tuple[Any, RecordMetadata]:

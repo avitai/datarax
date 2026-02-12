@@ -80,7 +80,7 @@ class Metadata:
     # Static fields - excluded from pytree
     source_info: dict[str, Any] | None = None
 
-    # Init-only field for backward compatibility
+    # Init-only param: encodes a string key into _encoded_key on construction
     key: dataclasses.InitVar[str | None] = None
 
     def __post_init__(self, key: str | None):

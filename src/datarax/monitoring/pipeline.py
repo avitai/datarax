@@ -4,7 +4,8 @@ This module provides a MonitoredPipeline class that integrates metrics collectio
 with the Datarax pipeline.
 """
 
-from typing import Any, Callable, Iterator, Self
+from typing import Any, Self
+from collections.abc import Callable, Iterator
 
 import flax.nnx as nnx
 

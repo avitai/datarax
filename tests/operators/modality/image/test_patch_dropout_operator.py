@@ -58,15 +58,14 @@ class TestPatchDropoutOperatorConfig:
         assert config.drop_value == 0.5
         assert config.clip_range == (0.0, 1.0)
 
-    def test_config_with_int_patch_size(self):
-        """Test configuration with integer patch_size (backward compat)."""
-        config = PatchDropoutOperatorConfig(
-            field_key="image",
-            num_patches=4,
-            patch_size=12,  # Int instead of tuple
-        )
-        # Should be converted to tuple
-        assert config.patch_size == (12, 12)
+    def test_config_rejects_int_patch_size(self):
+        """Test configuration rejects integer patch_size (must be tuple)."""
+        with pytest.raises(TypeError, match="patch_size must be tuple"):
+            PatchDropoutOperatorConfig(
+                field_key="image",
+                num_patches=4,
+                patch_size=12,
+            )
 
     def test_invalid_num_patches_negative(self):
         """Test validation of negative num_patches."""
@@ -86,11 +85,11 @@ class TestPatchDropoutOperatorConfig:
 
     def test_invalid_patch_size_negative(self):
         """Test validation of negative patch_size."""
-        with pytest.raises(ValueError, match="patch_size must be positive"):
+        with pytest.raises(ValueError, match="patch_size dimensions must be positive"):
             PatchDropoutOperatorConfig(
                 field_key="image",
                 num_patches=4,
-                patch_size=-8,
+                patch_size=(-8, -8),
             )
 
     def test_invalid_patch_size_tuple_negative(self):
@@ -159,7 +158,7 @@ class TestPatchDropoutOperatorInitialization:
         config = PatchDropoutOperatorConfig(
             field_key="image",
             num_patches=4,
-            patch_size=10,  # Int for square
+            patch_size=(10, 10),
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(0))
 
@@ -566,17 +565,16 @@ class TestPatchDropoutOperatorCommonPatterns:
     """Tests for common patch dropout patterns."""
 
     def test_square_patch_pattern(self):
-        """Test square patch pattern with integer patch_size."""
+        """Test square patch pattern with tuple patch_size."""
         config = PatchDropoutOperatorConfig(
             field_key="image",
             num_patches=4,
-            patch_size=8,  # Int instead of tuple
+            patch_size=(8, 8),
             drop_value=0.0,
             stochastic=False,
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(42))
 
-        # Should be converted to tuple
         assert operator.config.patch_size == (8, 8)
 
         image = jnp.ones((32, 32, 3))

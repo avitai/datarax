@@ -12,19 +12,20 @@ and supports configuration of NNX-specific features, including:
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Type, Union
+from collections.abc import Callable
+from typing import Any, Union
 
 
 # Type alias for schema type definitions
 SchemaType = Union[
-    Type[str],
-    Type[int],
-    Type[float],
-    Type[bool],
-    Type[list],
-    Type[dict],
+    type[str],
+    type[int],
+    type[float],
+    type[bool],
+    type[list],
+    type[dict],
     "ConfigSchema",
-    Type["ConfigSchema"],
+    type["ConfigSchema"],
 ]
 
 
@@ -161,11 +162,11 @@ class SchemaValidator:
             return isinstance(value, expected_type)
 
         # Handle lists
-        if expected_type == list or expected_type == Type[list]:
+        if expected_type == list or expected_type == type[list]:
             return isinstance(value, list)
 
         # Handle dictionaries
-        if expected_type == dict or expected_type == Type[dict]:
+        if expected_type == dict or expected_type == type[dict]:
             return isinstance(value, dict)
 
         # Handle ConfigSchema classes

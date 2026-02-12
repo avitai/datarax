@@ -35,6 +35,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
+from datarax.operators.modality.image._validation import validate_field_key_shape
 
 
 @dataclass
@@ -222,14 +223,8 @@ class NoiseOperator(ModalityOperator):
         Raises:
             KeyError: If field_key not in data_shapes
         """
-        if self.config.field_key not in data_shapes:
-            raise KeyError(
-                f"Field key '{self.config.field_key}' not found in data_shapes. "
-                f"Available keys: {list(data_shapes.keys())}"
-            )
-
         # Get full shape including batch dimension
-        full_shape = data_shapes[self.config.field_key]  # e.g., (batch_size, H, W, C)
+        full_shape = validate_field_key_shape(data_shapes, self.config.field_key)
 
         if self.config.mode == "gaussian":
             # Generate Gaussian noise for entire batch

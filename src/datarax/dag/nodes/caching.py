@@ -1,3 +1,5 @@
+"""Cache node for storing and reusing expensive transformation results."""
+
 from __future__ import annotations
 import jax
 import hashlib

@@ -10,9 +10,11 @@ import warnings
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from datarax.benchmarking.profiler import GPUMemoryProfiler
+from datarax.benchmarking.resource_monitor import ResourceMonitor
 from datarax.monitoring.metrics import MetricsCollector
 
 
@@ -159,17 +161,22 @@ class AdvancedMonitor:
         alert_manager: AlertManager | None = None,
         gpu_profiler: GPUMemoryProfiler | None = None,
         metrics_collector: MetricsCollector | None = None,
+        resource_monitor: ResourceMonitor | None = None,
     ):
         """Initialize advanced monitor.
 
         Args:
             alert_manager: Alert manager for notifications
-            gpu_profiler: GPU memory profiler
+            gpu_profiler: GPU memory profiler (used when no resource_monitor)
             metrics_collector: Metrics collector
+            resource_monitor: Optional ResourceMonitor for system/GPU sampling.
+                When provided, _collect_metrics() delegates to it instead of
+                doing inline psutil/GPUMemoryProfiler calls.
         """
         self.alert_manager = alert_manager or AlertManager()
         self.gpu_profiler = gpu_profiler or GPUMemoryProfiler()
         self.metrics_collector = metrics_collector or MetricsCollector()
+        self._resource_monitor = resource_monitor
 
         # Monitoring state
         self._monitoring_active = False
@@ -210,6 +217,10 @@ class AdvancedMonitor:
         self._monitoring_active = True
         self._stop_event.clear()
 
+        # Start ResourceMonitor if provided
+        if self._resource_monitor is not None:
+            self._resource_monitor.__enter__()
+
         def monitor_loop():
             """Main monitoring loop."""
             while not self._stop_event.wait(interval):
@@ -234,8 +245,60 @@ class AdvancedMonitor:
             self._monitor_thread.join(timeout=1.0)
             self._monitor_thread = None
 
+        # Stop ResourceMonitor if it was started
+        if self._resource_monitor is not None:
+            self._resource_monitor.__exit__(None, None, None)
+
     def _collect_metrics(self) -> None:
-        """Collect current metrics."""
+        """Collect current metrics.
+
+        When a ResourceMonitor is provided, reads its latest sample
+        instead of doing inline psutil/GPUMemoryProfiler calls.
+        """
+        if self._resource_monitor is not None:
+            self._collect_from_resource_monitor()
+        else:
+            self._collect_inline()
+
+    def _collect_from_resource_monitor(self) -> None:
+        """Read latest sample from the ResourceMonitor."""
+        assert self._resource_monitor is not None
+        samples = self._resource_monitor.samples
+        if not samples:
+            return
+
+        latest = samples[-1]
+
+        # System metrics
+        self.metrics_collector.record_metric(
+            "memory_usage_mb", latest.rss_mb, component="system_monitor"
+        )
+        self._update_history("memory_usage_mb", latest.rss_mb)
+
+        self.metrics_collector.record_metric(
+            "cpu_usage_percent", latest.cpu_percent, component="system_monitor"
+        )
+        self._update_history("cpu_usage_percent", latest.cpu_percent)
+
+        # GPU metrics
+        if latest.gpu_util is not None:
+            self.metrics_collector.record_metric(
+                "gpu_memory_utilization",
+                latest.gpu_util,
+                component="gpu_monitor",
+            )
+            self._update_history("gpu_memory_utilization", latest.gpu_util)
+
+        if latest.gpu_mem_mb is not None:
+            self.metrics_collector.record_metric(
+                "gpu_memory_used_mb",
+                latest.gpu_mem_mb,
+                component="gpu_monitor",
+            )
+            self._update_history("gpu_memory_used_mb", latest.gpu_mem_mb)
+
+    def _collect_inline(self) -> None:
+        """Collect metrics directly via psutil/GPUMemoryProfiler (fallback)."""
         timestamp = time.time()
 
         # Collect GPU metrics

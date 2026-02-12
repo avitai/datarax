@@ -113,3 +113,19 @@ class TestSharedMemoryManager:
 
         assert retrieved_int.dtype == np.int32
         assert retrieved_float.dtype == np.float32
+
+    def test_context_manager_cleanup(self):
+        """Test that context manager cleans up shared memory on exit."""
+        with SharedMemoryManager() as manager:
+            manager.make_shared("test", np.ones((1024, 1024)))
+            assert len(manager.shared_blocks.get_value()) == 1
+        # After exit, blocks should be cleaned
+        assert len(manager.shared_blocks.get_value()) == 0
+
+    def test_context_manager_cleanup_on_exception(self):
+        """Test that context manager cleans up even when exception occurs."""
+        with pytest.raises(RuntimeError):
+            with SharedMemoryManager() as manager:
+                manager.make_shared("test", np.ones((1024, 1024)))
+                raise RuntimeError("test error")
+        assert len(manager.shared_blocks.get_value()) == 0

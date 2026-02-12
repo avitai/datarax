@@ -29,7 +29,7 @@ empirical data, and explain why certain design choices were made.
    However, scaling is sublinear because:
      a) All devices SHARE the threadpool → context-switching overhead.
      b) Intra-op parallelism (Eigen matmul using all cores on 1 device) is
-        replaced by inter-op parallelism (N devices competing for cores).
+        replaced by inter-op parallelism (N devices contending for cores).
         Ref: JAX Issue #6790, B. Nikolic blog on JAX multithreading.
      c) XLA docs explicitly warn: "Setting this to anything other than 1 can
         increase overhead from context switching."
@@ -257,9 +257,7 @@ def benchmark_single_device(data: dict, batch_size: int = 64) -> dict:
     }
 
 
-def benchmark_sharded(
-    data: dict, num_devices: int, batch_size: int = 64
-) -> dict:
+def benchmark_sharded(data: dict, num_devices: int, batch_size: int = 64) -> dict:
     """Benchmark pipeline + sharded computation across N devices.
 
     Uses JAX Mesh and NamedSharding to distribute batches, then runs
@@ -351,9 +349,7 @@ def run_scaling_benchmark(data: dict, batch_size: int = 64) -> list[dict]:
     return results
 
 
-def run_batch_size_vs_devices(
-    data: dict, batch_sizes: list[int]
-) -> dict[str, list[dict]]:
+def run_batch_size_vs_devices(data: dict, batch_sizes: list[int]) -> dict[str, list[dict]]:
     """Benchmark batch size impact at each device count."""
     all_devices = jax.devices()
     device_counts = [1]
@@ -395,16 +391,17 @@ def plot_results(results: dict, output_dir: Path) -> None:
         throughput = [r["samples_per_second"] for r in data]
 
         axes[0].bar(
-            [str(d) for d in devices], throughput,
-            color="steelblue", edgecolor="white",
+            [str(d) for d in devices],
+            throughput,
+            color="steelblue",
+            edgecolor="white",
         )
         axes[0].set_xlabel("Number of Devices")
         axes[0].set_ylabel("Throughput (samples/s)")
         axes[0].set_title("Throughput vs Device Count")
         axes[0].grid(True, alpha=0.3, axis="y")
         for i, tp in enumerate(throughput):
-            axes[0].text(i, tp + max(throughput) * 0.02, f"{tp:.0f}",
-                         ha="center", fontsize=9)
+            axes[0].text(i, tp + max(throughput) * 0.02, f"{tp:.0f}", ha="center", fontsize=9)
 
         # Efficiency (skip baseline entry that lacks efficiency)
         eff_data = [r for r in data if "scaling_efficiency_pct" in r]
@@ -412,11 +409,12 @@ def plot_results(results: dict, output_dir: Path) -> None:
             eff_devices = [r["num_devices"] for r in eff_data]
             efficiency = [r["scaling_efficiency_pct"] for r in eff_data]
             axes[1].bar(
-                [str(d) for d in eff_devices], efficiency,
-                color="#ff8a65", edgecolor="white",
+                [str(d) for d in eff_devices],
+                efficiency,
+                color="#ff8a65",
+                edgecolor="white",
             )
-            axes[1].axhline(y=100, color="gray", linestyle="--", alpha=0.5,
-                            label="Ideal (100%)")
+            axes[1].axhline(y=100, color="gray", linestyle="--", alpha=0.5, label="Ideal (100%)")
             axes[1].set_xlabel("Number of Devices")
             axes[1].set_ylabel("Scaling Efficiency (%)")
             axes[1].set_title("Scaling Efficiency vs Device Count")
@@ -425,9 +423,16 @@ def plot_results(results: dict, output_dir: Path) -> None:
             for i, eff in enumerate(efficiency):
                 axes[1].text(i, eff + 1, f"{eff:.1f}%", ha="center", fontsize=9)
         else:
-            axes[1].text(0.5, 0.5, "Single device\n(no scaling data)",
-                         ha="center", va="center", transform=axes[1].transAxes,
-                         fontsize=12, color="gray")
+            axes[1].text(
+                0.5,
+                0.5,
+                "Single device\n(no scaling data)",
+                ha="center",
+                va="center",
+                transform=axes[1].transAxes,
+                fontsize=12,
+                color="gray",
+            )
             axes[1].set_title("Scaling Efficiency vs Device Count")
 
         plt.tight_layout()
@@ -446,10 +451,13 @@ def plot_results(results: dict, output_dir: Path) -> None:
         device_keys = sorted(matrix.keys())
 
         # Collect all batch sizes across device configs
-        all_bs = sorted({
-            r.get("effective_batch_size", r.get("batch_size"))
-            for key in device_keys for r in matrix[key]
-        })
+        all_bs = sorted(
+            {
+                r.get("effective_batch_size", r.get("batch_size"))
+                for key in device_keys
+                for r in matrix[key]
+            }
+        )
         x_pos = np.arange(len(all_bs))
         bar_width = group_width / max(len(device_keys), 1)
 
@@ -462,7 +470,9 @@ def plot_results(results: dict, output_dir: Path) -> None:
             tp_values = [bs_to_tp.get(bs, 0) for bs in all_bs]
             offset = (idx - len(device_keys) / 2 + 0.5) * bar_width
             ax.bar(
-                x_pos + offset, tp_values, bar_width,
+                x_pos + offset,
+                tp_values,
+                bar_width,
                 label=key.replace("_", " ").title(),
                 color=colors[idx % len(colors)],
             )
@@ -488,11 +498,16 @@ def plot_results(results: dict, output_dir: Path) -> None:
 def main():
     parser = argparse.ArgumentParser(description="Distributed Scaling Benchmark")
     parser.add_argument(
-        "--platform", type=str, default="cpu", choices=["cpu", "cuda", "tpu"],
+        "--platform",
+        type=str,
+        default="cpu",
+        choices=["cpu", "cuda", "tpu"],
         help="JAX platform to run on (default: cpu)",
     )
     parser.add_argument(
-        "--num-devices", type=int, default=None,
+        "--num-devices",
+        type=int,
+        default=None,
         help="Simulate N CPU devices via XLA_FLAGS (cpu platform only)",
     )
     parser.add_argument("--samples", type=int, default=5000)

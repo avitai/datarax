@@ -21,7 +21,7 @@
 
 ## Overview
 
-This tutorial provides a comprehensive guide to using HuggingFace Datasets with Datarax.
+This tutorial provides a detailed guide to using HuggingFace Datasets with Datarax.
 You'll learn to work with different data modalities, configure advanced options, and
 build production-ready training pipelines.
 

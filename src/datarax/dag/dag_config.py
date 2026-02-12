@@ -5,7 +5,9 @@ Supports both TOML/YAML configuration files and
 programmatic configuration via Python dicts.
 """
 
+from pathlib import Path
 from typing import Any
+
 import toml
 import yaml
 
@@ -69,7 +71,7 @@ class DAGConfig:
         Returns:
             Configured DAGExecutor
         """
-        with open(filepath, "r") as f:
+        with Path(filepath).open("r") as f:
             config = toml.load(f)
 
         return cls.from_dict(config)
@@ -84,7 +86,7 @@ class DAGConfig:
         Returns:
             Configured DAGExecutor
         """
-        with open(filepath, "r") as f:
+        with Path(filepath).open("r") as f:
             config = yaml.safe_load(f)
 
         return cls.from_dict(config)

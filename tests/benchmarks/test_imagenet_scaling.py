@@ -1,55 +1,48 @@
-import pytest
-import grain.python as grain
-from pathlib import Path
-from datarax.benchmarking.profiler import AdvancedProfiler, ProfilerConfig
-from datarax.sources.array_record_source import ArrayRecordSourceModule, ArrayRecordSourceConfig
+"""ImageNet ArrayRecord I/O scaling benchmark.
 
-# Path to the converted dataset directory
+Uses TimingCollector for measurement (replaces AdvancedProfiler).
+"""
+
+import pytest
+
+try:
+    import grain.python as grain
+
+    HAS_GRAIN = True
+except ImportError:
+    HAS_GRAIN = False
+
+from pathlib import Path
+
+from datarax.benchmarking.timing import TimingCollector
+
 # Path to the converted dataset directory (in gitignored tests/data)
 DATASET_DIR = Path("tests/data/imagenet64_arrayrecord")
 
 
 @pytest.mark.benchmark
+@pytest.mark.skipif(not HAS_GRAIN, reason="Grain not installed")
 @pytest.mark.skipif(
     not DATASET_DIR.exists(), reason="Real ImageNet ArrayRecord directory not found."
 )
 class TestRealIO:
-    @pytest.fixture(autouse=True)
-    def setup_profiler(self):
-        self.profiler = AdvancedProfiler(
-            config=ProfilerConfig(
-                warmup_steps=5,
-                measure_steps=50,
-                enable_trace=False,  # Enable trace manually if needed, disable for throughput tests
-            )
+    def test_array_record_throughput(self):
+        """Measures throughput of ArrayRecord reading with varying worker counts."""
+        from datarax.sources.array_record_source import (
+            ArrayRecordSourceConfig,
+            ArrayRecordSourceModule,
         )
 
-    def test_array_record_throughput(self, benchmark):
-        """Measures throughput of ArrayRecord reading with varying worker counts."""
-
-        # Get all sharded files
         shards = sorted(list(DATASET_DIR.glob("*.array_record")))
         if not shards:
             pytest.skip("No .array_record files found in dataset directory.")
 
-        # Manually calling the param logic via a loop for the 'test' body
-        # or defining properly with pytest parametrization.
-        # Let's stick to a single test that sweeps.
-
         results = {}
-        # Get all sharded files
-        shards = sorted(list(DATASET_DIR.glob("*.array_record")))
 
         for workers in [0, 4, 8, 16]:
-            # Re-instantiate profiler clean
-            config = ProfilerConfig(warmup_steps=10, measure_steps=100)
-            self.profiler = AdvancedProfiler(config)
-
-            # Setup Source
             src_config = ArrayRecordSourceConfig(shuffle_files=False)
             source = ArrayRecordSourceModule(config=src_config, paths=[str(p) for p in shards])
 
-            # Setup Loader
             loader = grain.DataLoader(
                 data_source=source.grain_source,
                 sampler=grain.SequentialSampler(
@@ -62,23 +55,27 @@ class TestRealIO:
                 operations=[grain.Batch(128, drop_remainder=True)],
             )
 
-            def payload():
-                it = iter(loader)
-                for _ in range(100):
-                    next(it)
+            # Warmup
+            warmup_it = iter(loader)
+            for _ in range(5):
+                try:
+                    next(warmup_it)
+                except StopIteration:
+                    break
 
-            res = self.profiler.profile(payload, f"workers_{workers}")
+            # Measure with TimingCollector
+            collector = TimingCollector()
+            sample = collector.measure_iteration(iter(loader), num_batches=100)
 
-            # Access metrics correctly
-            throughput = res.timing_metrics.get("iterations_per_second", 0.0)
-            latency = res.timing_metrics.get("mean_time_s", 0.0) * 1000.0  # Convert to ms
+            throughput = (
+                sample.num_batches / sample.wall_clock_sec if sample.wall_clock_sec > 0 else 0
+            )
+            latency_ms = (
+                (sample.wall_clock_sec / sample.num_batches * 1000) if sample.num_batches > 0 else 0
+            )
 
             results[workers] = throughput
-            print(f"Workers {workers}: {throughput:.1f} batches/s (Latency: {latency:.2f} ms)")
-
-        # Check scaling (roughly)
-        # 0 workers (main process) vs 4 workers should show improvement or similar if IO bound
-        # Note: 0 workers in Grain might mean synchronous main thread.
+            print(f"Workers {workers}: {throughput:.1f} batches/s (Latency: {latency_ms:.2f} ms)")
 
         best_throughput = max(results.values())
         print(f"Peak Throughput: {best_throughput:.1f} batches/s")

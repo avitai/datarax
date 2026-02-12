@@ -2,53 +2,73 @@
 
 This package provides benchmarking capabilities including:
 
-- GPU memory profiling and optimization suggestions
+- Framework-agnostic timing and resource monitoring
+- Statistical analysis with bootstrap CI and significance testing
 - Performance regression detection
-- Memory leak detection for long-running pipelines
 - Comparative benchmarking tools
-- Production monitoring integration
+- GPU memory profiling and optimization suggestions
+- Production monitoring and alerting
 
-The system builds upon the existing datarax.monitoring and datarax.utils.benchmark
-infrastructure to provide advanced performance insights.
+Engine layer modules (installable with the library):
+- timing.py: TimingCollector for framework-agnostic iteration timing
+- statistics.py: StatisticalAnalyzer for measurement analysis
+- resource_monitor.py: ResourceMonitor for background resource sampling
+- results.py: BenchmarkResult for serializable result containers
+- profiler.py: GPUMemoryProfiler, MemoryOptimizer, AdaptiveOperation
+- regression.py: RegressionDetector for baseline comparison
+- comparative.py: BenchmarkComparison for cross-config comparison
+- monitor.py: AdvancedMonitor, ProductionMonitor, AlertManager
 """
 
-from datarax.benchmarking.comparative import (
-    BenchmarkComparison,
-    ComparativeBenchmark,
-    LibraryComparison,
-)
+from datarax.benchmarking.comparative import BenchmarkComparison
 from datarax.benchmarking.monitor import (
     AdvancedMonitor,
     AlertManager,
     ProductionMonitor,
 )
 from datarax.benchmarking.profiler import (
-    AdvancedProfiler,
+    AdaptiveOperation,
     GPUMemoryProfiler,
     MemoryOptimizer,
-    ProfileResult,
 )
 from datarax.benchmarking.regression import (
     PerformanceRegression,
     RegressionDetector,
     RegressionReport,
 )
+from datarax.benchmarking.resource_monitor import (
+    ResourceMonitor,
+    ResourceSample,
+    ResourceSummary,
+)
+from datarax.benchmarking.results import BenchmarkResult
+from datarax.benchmarking.statistics import StatisticalAnalyzer, StatisticalResult
+from datarax.benchmarking.timing import TimingCollector, TimingSample
 
 
 __all__ = [
-    # Profiling
-    "AdvancedProfiler",
+    # Timing
+    "TimingCollector",
+    "TimingSample",
+    # Statistics
+    "StatisticalAnalyzer",
+    "StatisticalResult",
+    # Resource Monitoring
+    "ResourceMonitor",
+    "ResourceSample",
+    "ResourceSummary",
+    # Results
+    "BenchmarkResult",
+    # Hardware Profiling
+    "AdaptiveOperation",
     "GPUMemoryProfiler",
     "MemoryOptimizer",
-    "ProfileResult",
     # Regression Detection
     "PerformanceRegression",
     "RegressionDetector",
     "RegressionReport",
     # Comparative Benchmarking
-    "ComparativeBenchmark",
     "BenchmarkComparison",
-    "LibraryComparison",
     # Advanced Monitoring
     "AdvancedMonitor",
     "ProductionMonitor",

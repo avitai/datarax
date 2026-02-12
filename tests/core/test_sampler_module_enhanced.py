@@ -1,12 +1,12 @@
 """Tests for enhanced SamplerModule functionality.
 
-This module contains comprehensive tests for the enhanced SamplerModule that
+This module contains thorough tests for the enhanced SamplerModule that
 leverages advanced features from DataraxModule, including caching, statistics,
 RNG handling, and state management.
 """
 
 from dataclasses import dataclass
-from typing import Iterator
+from collections.abc import Iterator
 
 import pytest
 import flax.nnx as nnx
@@ -341,7 +341,7 @@ class TestSamplerModuleErrorHandling:
 
 
 class TestSamplerModuleCoverage:
-    """Test comprehensive coverage of SamplerModule functionality."""
+    """Test complete coverage of SamplerModule functionality."""
 
     def test_stochastic_modes(self):
         """Test SamplerModule in stochastic and non-stochastic modes."""

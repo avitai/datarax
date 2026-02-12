@@ -22,7 +22,7 @@
 
 ## Overview
 
-Build a comprehensive augmentation pipeline for Fashion-MNIST, demonstrating
+Build a complete augmentation pipeline for Fashion-MNIST, demonstrating
 multiple image operators chained together. Fashion-MNIST is more challenging
 than MNIST, making augmentation more important for good performance.
 
@@ -191,7 +191,7 @@ preprocessor = ElementOperator(
 """
 ## Part 2: Define Augmentation Operators
 
-We'll create a comprehensive augmentation suite including:
+We'll create a complete augmentation suite including:
 
 1. **Brightness/Contrast**: Photometric variations
 2. **Rotation**: Geometric transformation

@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 import flax.nnx as nnx
 from typing import Any
-from datarax.dag.nodes import Node, Sequential, Parallel, OperatorNode
+from datarax.dag.nodes import Node, Sequential, Parallel, OperatorNode, MergeBatchNode
 from datarax.core.operator import OperatorModule
 
 from datarax.core.config import OperatorConfig
@@ -35,10 +35,6 @@ class MatMulOperator(OperatorModule):
         return new_data, state, metadata
 
 
-# Alias for backward compatibility
-DummyComputeOperator = MatMulOperator
-
-
 class ConvOperator(OperatorModule):
     """An operator that simulates a Convolutional layer load."""
 
@@ -67,11 +63,16 @@ class ConvOperator(OperatorModule):
         def transform(x):
             # Expect x to be (Batch, H, W, C) or similar.
             # If 2D (Batch, Dim), reshape to fake image
+            # If 1D or scalar, skip convolution (can't reshape)
+            if x.ndim < 2:
+                return x
             original_shape = x.shape
             if x.ndim == 2:
                 # B, D -> B, 8, D//8, 1 (Approx)
                 h = 8
                 w = x.shape[1] // h
+                if w == 0:
+                    return x  # Too small to reshape
                 x_img = x.reshape(x.shape[0], h, w, 1)
             else:
                 x_img = x
@@ -102,13 +103,35 @@ class ActivationOperator(OperatorModule):
         super().__init__(OperatorConfig(), name=f"{func_name}_op")
         self.func = getattr(jax.nn, func_name, jax.nn.relu)
 
-    def apply(self, data, state, metadata, **kwargs):
+    def apply(
+        self,
+        data: Any,
+        state: Any,
+        metadata: Any,
+        random_params: Any = None,
+        stats: Any = None,
+    ) -> tuple[Any, Any, Any]:
         new_data = jax.tree.map(self.func, data)
         return new_data, state, metadata
 
 
 class ComplexDAGBuilder:
     """Helper to generate DAG configurations for benchmarking."""
+
+    @staticmethod
+    def build_diamond_dag(compute_intensity: int = 1) -> Node:
+        """Build a diamond DAG: A -> B, A -> C, B -> D, C -> D.
+
+        This topology tests topological sort correctness with multiple
+        paths converging on a single node.
+        """
+        a = OperatorNode(MatMulOperator(64, 64, compute_intensity), name="A")
+        b = OperatorNode(MatMulOperator(64, 64, compute_intensity), name="B")
+        c = OperatorNode(MatMulOperator(64, 64, compute_intensity), name="C")
+        merge = MergeBatchNode(strategy="mean", name="D")
+
+        # A → Parallel(B, C) → MergeBatch(D)
+        return Sequential([a, Parallel([b, c]), merge])
 
     @staticmethod
     def build_linear_chain(length: int, compute_intensity: int = 1) -> Node:
@@ -159,7 +182,10 @@ class ComplexDAGBuilder:
 
             stages.append(Parallel(branches))
 
-            # 3. Post-process (Activation)
+            # 3. Merge parallel outputs back into a single Batch
+            stages.append(MergeBatchNode(strategy="mean", name=f"stage_{d}_merge"))
+
+            # 4. Post-process (Activation)
             act_op = ActivationOperator("relu")
             stages.append(OperatorNode(act_op, name=f"stage_{d}_act"))
 

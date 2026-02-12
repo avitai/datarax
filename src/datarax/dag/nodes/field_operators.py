@@ -1,3 +1,5 @@
+"""Field-level operator nodes for multimodal data processing."""
+
 from __future__ import annotations
 import jax
 import jax.numpy as jnp

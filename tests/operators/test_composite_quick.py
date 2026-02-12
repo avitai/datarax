@@ -1,7 +1,7 @@
 """Quick integration test for CompositeOperatorModule core functionality.
 
 This test validates that the core implementation works before we implement
-all 94 comprehensive tests. Tests config, sequential, parallel, and ensemble.
+all 94 detailed tests. Tests config, sequential, parallel, and ensemble.
 """
 
 import pytest

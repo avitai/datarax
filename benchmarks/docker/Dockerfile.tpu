@@ -1,0 +1,57 @@
+# =============================================================================
+# Datarax Benchmark — TPU Image
+# =============================================================================
+# Runs all benchmark scenarios on Google Cloud TPUs.
+# Installs the `benchmark` extra first (CPU JAX), then overlays jax[tpu]
+# from Google's libtpu release index to replace the CPU wheels.
+#
+# Build:  docker build -f benchmarks/docker/Dockerfile.tpu -t datarax-bench:tpu .
+# Run:    docker run --rm --privileged datarax-bench:tpu
+# Custom: docker run --rm --privileged datarax-bench:tpu python -m benchmarks.runners.full_runner --help
+#
+# Note: TPU access requires --privileged or appropriate device mounts.
+# On GCE TPU VMs, the TPU device is automatically available.
+# =============================================================================
+
+FROM python:3.11-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# --- Layer 1: Dependencies ---
+COPY pyproject.toml uv.lock README.md LICENSE ./
+
+RUN uv venv /app/.venv
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# Install benchmark extra first (gets CPU JAX + all competing frameworks)
+RUN uv pip install -e ".[benchmark]"
+
+# Overlay TPU-enabled JAX — replaces the CPU-only JAX wheels
+# The -f flag points to Google's libtpu nightly/release index
+RUN uv pip install "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+
+# --- Layer 2: benchkit path dependency ---
+COPY tools/benchkit ./tools/benchkit
+RUN uv pip install -e tools/benchkit
+
+# --- Layer 3: Source + benchmark code ---
+COPY src ./src
+COPY benchmarks ./benchmarks
+COPY conftest.py ./conftest.py
+
+# Reinstall to link source (without overwriting TPU JAX)
+RUN uv pip install --no-deps -e .
+
+CMD ["python", "-m", "benchmarks.runners.full_runner", "--platform", "tpu"]

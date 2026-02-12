@@ -1,6 +1,6 @@
 # Examples Overview
 
-Datarax provides a comprehensive set of examples organized by complexity and topic.
+Datarax provides a full set of examples organized by complexity and topic.
 Each example follows a consistent structure with learning goals, prerequisites, and
 expected outcomes.
 
@@ -35,7 +35,7 @@ Essential examples for understanding Datarax fundamentals.
 | Example | Level | Description |
 |---------|-------|-------------|
 | [Simple Pipeline](core/simple-pipeline.md) | Beginner | Basic pipeline with memory source and operators |
-| [Pipeline Tutorial](core/pipeline-tutorial.md) | Intermediate | Comprehensive guide to operators and composition |
+| [Pipeline Tutorial](core/pipeline-tutorial.md) | Intermediate | Thorough guide to operators and composition |
 | [Operators Tutorial](core/operators-tutorial.md) | Intermediate | Deep dive into operator types and patterns |
 | [CIFAR-10 Quick Reference](core/cifar10-quickref.md) | Beginner | CIFAR-10 dataset loading and preprocessing |
 | [Augmentation Quick Reference](core/augmentation-quickref.md) | Beginner | Image augmentation techniques |
@@ -171,7 +171,7 @@ Want to add your own examples? We welcome contributions!
 
     ---
 
-    Comprehensive standards for creating educational examples and tutorials
+    Complete standards for creating educational examples and tutorials
 
     [:octicons-arrow-right-24: Read the Guide](../contributing/example_documentation_design.md)
 

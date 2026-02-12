@@ -1,5 +1,5 @@
 """
-Comprehensive test suite for DAGExecutor.
+Thorough test suite for DAGExecutor.
 
 This test suite provides extensive coverage of the DAGExecutor class and related
 functionality, including initialization, pipeline construction, execution,
@@ -10,7 +10,8 @@ import pytest
 import jax
 import jax.numpy as jnp
 import flax.nnx as nnx
-from typing import Any, Iterator
+from typing import Any
+from collections.abc import Iterator
 
 from datarax.dag.dag_executor import DAGExecutor, OperatorNode, pipeline
 from datarax.typing import Element

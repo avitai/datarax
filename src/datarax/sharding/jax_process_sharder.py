@@ -1,4 +1,4 @@
-# File: src/datarax/sharding/jax_process_sharder.py
+"""JAX process sharder for distributing data across multiple processes."""
 
 from dataclasses import dataclass
 from typing import Any
@@ -34,6 +34,13 @@ class JaxProcessSharderModule(SharderModule):
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
     ):
+        """Initialize JaxProcessSharderModule.
+
+        Args:
+            config: Sharder configuration with drop_remainder setting.
+            rngs: Optional Flax NNX random number generators.
+            name: Optional module name for identification.
+        """
         if config is None:
             config = JaxProcessSharderConfig()
         super().__init__(config, rngs=rngs, name=name)

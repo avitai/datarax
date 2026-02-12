@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import flax.nnx as nnx
 from dataclasses import dataclass
-from typing import Iterator
+from collections.abc import Iterator
 from datarax.core.batcher import BatcherModule
 from datarax.core.config import StructuralConfig
 from datarax.typing import Element, Batch

@@ -1,0 +1,47 @@
+name: datarax-benchmark-tpu
+
+resources:
+  accelerators: tpu-v5litepod-4
+  use_spot: true
+
+envs:
+  WANDB_API_KEY:  # set via: sky launch ... --env WANDB_API_KEY=$WANDB_API_KEY
+  RAY_ENABLE_UV_RUN_RUNTIME_ENV: "0"
+
+setup: |
+  pip install uv
+  cd ~/datarax && uv venv --python 3.11 .venv
+  cd ~/datarax && uv pip install --python .venv/bin/python -e ".[benchmark]" -e "tools/benchkit[wandb]"
+
+run: |
+  set -euo pipefail
+  cd ~/datarax
+
+  # Clear RAY_ADDRESS so the benchmark doesn't connect to SkyPilot's Ray cluster
+  unset RAY_ADDRESS
+
+  # The datarax-bench entry point needs benchmarks/ on sys.path.
+  export PYTHONPATH="${PWD}:${PYTHONPATH:-}"
+
+  # Exclude Ray Data — hangs on SkyPilot VMs (Ray #59639).
+  .venv/bin/datarax-bench run \
+    --platform tpu \
+    --profile tpu_v5e \
+    --repetitions 5 \
+    --output-dir ~/results/ \
+    --data ~/benchmark-data \
+    --adapters Datarax \
+    --adapters 'Google Grain' \
+    --adapters jax-dataloader \
+    --adapters tf.data \
+    --adapters 'PyTorch DataLoader' \
+    --adapters 'NVIDIA DALI' \
+    --adapters SPDL \
+    --adapters 'MosaicML Streaming' \
+    --adapters WebDataset \
+    --adapters 'HuggingFace Datasets' \
+    --adapters LitData \
+    --adapters 'Deep Lake'
+
+file_mounts:
+  ~/datarax: .

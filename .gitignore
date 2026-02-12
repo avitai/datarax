@@ -230,12 +230,23 @@ CLAUDE.md
 .cursor/
 .cursorignore
 .agent/
-.benchmarks/
-.benchmarks-results/
 .claude/
 .claude-collective/
 .taskmaster/
 .deprecated/
+
+# W&B local run cache (contains auth tokens, run data)
+wandb/
+.wandb*
+
+# Secrets (API keys, credentials — never commit)
+secrets.sh
+**/secrets.sh
+
+# Benchmark data store (local results, baselines)
+benchmark-data/
+.benchmarks/
+.benchmarks-results/
 
 # JAX/XLA compilation caches (local development)
 .cache/jax/

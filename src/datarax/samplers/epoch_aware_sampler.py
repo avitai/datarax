@@ -1,7 +1,8 @@
-# File: src/datarax/samplers/epoch_aware_sampler.py
+"""Epoch-aware sampler with per-epoch callbacks and index tracking."""
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import flax.nnx as nnx
 import numpy as np
@@ -69,6 +70,13 @@ class EpochAwareSamplerModule(SamplerModule):
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
     ):
+        """Initialize EpochAwareSamplerModule.
+
+        Args:
+            config: Configuration specifying num_records, epochs, shuffle, and seed.
+            rngs: Optional Flax NNX random number generators.
+            name: Optional module name for identification.
+        """
         super().__init__(config, rngs=rngs, name=name)
 
         # Store config values as Variables for NNX state tracking

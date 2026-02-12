@@ -6,7 +6,7 @@ optional dependencies in the Datarax test suite.
 
 import functools
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 import pytest
 

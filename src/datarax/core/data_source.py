@@ -5,7 +5,7 @@ that use flax.nnx.Module for state management and JAX transformation
 compatibility.
 """
 
-from typing import Iterator
+from collections.abc import Iterator
 
 
 from datarax.core.structural import StructuralModule
