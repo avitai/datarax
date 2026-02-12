@@ -16,7 +16,6 @@ import time
 from pathlib import Path
 
 import jax
-import jax.numpy as jnp
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -80,9 +79,7 @@ def create_pipeline(
         ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0)
     )
 
-    pipeline = from_source(source, batch_size=batch_size).add(
-        OperatorNode(normalizer)
-    )
+    pipeline = from_source(source, batch_size=batch_size).add(OperatorNode(normalizer))
 
     if num_operators >= 2:
         brightness = BrightnessOperator(
@@ -188,16 +185,14 @@ def sweep_operators(data: dict, batch_size: int = 64) -> list[dict]:
     labels = ["normalize", "+brightness", "+contrast", "+noise"]
     results = []
     for n_ops in range(1, 5):
-        print(f"  {n_ops} ops ({labels[n_ops-1]:>12s})", end="  ", flush=True)
+        print(f"  {n_ops} ops ({labels[n_ops - 1]:>12s})", end="  ", flush=True)
         r = measure(data, batch_size=batch_size, num_operators=n_ops)
         print(f"{r['samples_per_second']:>10.0f} samples/s  p95={r['p95_batch_ms']:.1f}ms")
         results.append(r)
     return results
 
 
-def sweep_data_sizes(
-    image_size: int = 32, sizes: list[int] | None = None
-) -> list[dict]:
+def sweep_data_sizes(image_size: int = 32, sizes: list[int] | None = None) -> list[dict]:
     """Sweep dataset sizes at a fixed image resolution."""
     if sizes is None:
         sizes = [1000, 5000, 10000, 25000]
@@ -249,8 +244,14 @@ def plot_results(results: dict, output_dir: Path) -> None:
         axes[0].set_xscale("log", base=2)
         axes[0].grid(True, alpha=0.3)
         for x, y in zip(bs, tp):
-            axes[0].annotate(f"{y:.0f}", (x, y), textcoords="offset points",
-                             xytext=(0, 10), ha="center", fontsize=8)
+            axes[0].annotate(
+                f"{y:.0f}",
+                (x, y),
+                textcoords="offset points",
+                xytext=(0, 10),
+                ha="center",
+                fontsize=8,
+            )
 
         p50 = [r["p50_batch_ms"] for r in sweep]
         p95 = [r["p95_batch_ms"] for r in sweep]
@@ -282,25 +283,31 @@ def plot_results(results: dict, output_dir: Path) -> None:
 
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
-        bars = axes[0].bar(labels[: len(tp)], tp, color="steelblue",
-                           edgecolor="white")
+        bars = axes[0].bar(labels[: len(tp)], tp, color="steelblue", edgecolor="white")
         axes[0].set_ylabel("Throughput (samples/s)")
         axes[0].set_title("Throughput vs Operator Count")
         axes[0].grid(True, alpha=0.3, axis="y")
         for bar, val in zip(bars, tp):
-            axes[0].text(bar.get_x() + bar.get_width() / 2,
-                         val + max(tp) * 0.02, f"{val:.0f}",
-                         ha="center", fontsize=9)
+            axes[0].text(
+                bar.get_x() + bar.get_width() / 2,
+                val + max(tp) * 0.02,
+                f"{val:.0f}",
+                ha="center",
+                fontsize=9,
+            )
 
-        bars = axes[1].bar(labels[: len(latency)], latency, color="#ff8a65",
-                           edgecolor="white")
+        bars = axes[1].bar(labels[: len(latency)], latency, color="#ff8a65", edgecolor="white")
         axes[1].set_ylabel("Mean Batch Latency (ms)")
         axes[1].set_title("Latency vs Operator Count")
         axes[1].grid(True, alpha=0.3, axis="y")
         for bar, val in zip(bars, latency):
-            axes[1].text(bar.get_x() + bar.get_width() / 2,
-                         val + max(latency) * 0.02, f"{val:.2f}ms",
-                         ha="center", fontsize=9)
+            axes[1].text(
+                bar.get_x() + bar.get_width() / 2,
+                val + max(latency) * 0.02,
+                f"{val:.2f}ms",
+                ha="center",
+                fontsize=9,
+            )
 
         plt.tight_layout()
         path = output_dir / "sweep-operator-count.png"
@@ -321,8 +328,14 @@ def plot_results(results: dict, output_dir: Path) -> None:
         ax.set_title("Throughput vs Dataset Size")
         ax.grid(True, alpha=0.3)
         for x, y in zip(sizes, tp):
-            ax.annotate(f"{y:.0f}", (x, y), textcoords="offset points",
-                        xytext=(0, 10), ha="center", fontsize=9)
+            ax.annotate(
+                f"{y:.0f}",
+                (x, y),
+                textcoords="offset points",
+                xytext=(0, 10),
+                ha="center",
+                fontsize=9,
+            )
         plt.tight_layout()
         path = output_dir / "sweep-data-size.png"
         plt.savefig(path, dpi=150, bbox_inches="tight", facecolor="white")
@@ -341,9 +354,13 @@ def plot_results(results: dict, output_dir: Path) -> None:
         ax.set_title("Throughput vs Image Resolution")
         ax.grid(True, alpha=0.3, axis="y")
         for bar, val in zip(bars, tp):
-            ax.text(bar.get_x() + bar.get_width() / 2,
-                    val + max(tp) * 0.02, f"{val:.0f}",
-                    ha="center", fontsize=9)
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                val + max(tp) * 0.02,
+                f"{val:.0f}",
+                ha="center",
+                fontsize=9,
+            )
         plt.tight_layout()
         path = output_dir / "sweep-resolution.png"
         plt.savefig(path, dpi=150, bbox_inches="tight", facecolor="white")

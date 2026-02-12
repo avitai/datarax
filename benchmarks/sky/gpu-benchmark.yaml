@@ -1,0 +1,58 @@
+name: datarax-benchmark-gpu
+
+resources:
+  accelerators: A100:1
+  use_spot: true
+  disk_size: 100
+
+envs:
+  WANDB_API_KEY:  # set via: sky launch ... --env WANDB_API_KEY=$WANDB_API_KEY
+  TF_FORCE_GPU_ALLOW_GROWTH: "true"
+  TF_CPP_MIN_LOG_LEVEL: "2"
+  XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+  XLA_PYTHON_CLIENT_MEM_FRACTION: "0.75"
+  RAY_ENABLE_UV_RUN_RUNTIME_ENV: "0"
+
+setup: |
+  pip install uv
+  cd ~/datarax && uv venv --python 3.11 .venv
+  cd ~/datarax && .venv/bin/python -m ensurepip 2>/dev/null || true
+  cd ~/datarax && uv pip install --python .venv/bin/python -e ".[benchmark,gpu]" -e "tools/benchkit[wandb]"
+
+run: |
+  set -euo pipefail
+  cd ~/datarax
+
+  # Clear RAY_ADDRESS so the benchmark doesn't connect to SkyPilot's Ray cluster.
+  # SkyPilot's Ray (port 6379) stays running for --down/logs/status.
+  unset RAY_ADDRESS
+
+  # The datarax-bench entry point needs benchmarks/ on sys.path.
+  # `python -m` adds CWD automatically, but console scripts don't.
+  export PYTHONPATH="${PWD}:${PYTHONPATH:-}"
+
+  # Quick sanity check (separate process)
+  .venv/bin/python -c "import jax; print(f'JAX {jax.__version__}, backend: {jax.default_backend()}, devices: {jax.devices()}')"
+
+  # Exclude Ray Data — hangs on SkyPilot VMs (Ray #59639).
+  .venv/bin/datarax-bench run \
+    --platform gpu \
+    --profile gpu_a100 \
+    --repetitions 5 \
+    --output-dir ~/results/ \
+    --data ~/benchmark-data \
+    --adapters Datarax \
+    --adapters 'Google Grain' \
+    --adapters jax-dataloader \
+    --adapters tf.data \
+    --adapters 'PyTorch DataLoader' \
+    --adapters 'NVIDIA DALI' \
+    --adapters SPDL \
+    --adapters 'MosaicML Streaming' \
+    --adapters WebDataset \
+    --adapters 'HuggingFace Datasets' \
+    --adapters LitData \
+    --adapters 'Deep Lake'
+
+file_mounts:
+  ~/datarax: .

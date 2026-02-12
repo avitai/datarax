@@ -1,7 +1,7 @@
 """
 Individual Node Unit Tests.
 
-This file provides comprehensive unit tests for individual nodes following TDD principles.
+This file provides detailed unit tests for individual nodes following TDD principles.
 As per requirements, ShuffleNode and BatchNode must be tested independently, even though
 they should not be used directly in data pipelines (DataLoader should be used instead).
 """

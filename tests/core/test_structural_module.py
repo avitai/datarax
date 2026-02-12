@@ -180,7 +180,6 @@ class TestStructuralModuleInitialization:
 
         # Should have all DataraxModule attributes
         assert hasattr(module, "config")
-        assert hasattr(module, "_iteration_count")
 
 
 # ========================================================================

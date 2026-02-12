@@ -2,22 +2,9 @@
 
 import jax.numpy as jnp
 import pytest
-from datarax.core.operator import OperatorModule
 from datarax.operators.strategies.base import StrategyContext
 from datarax.operators.strategies.ensemble import EnsembleStrategy
-
-
-class MockOperator(OperatorModule):
-    def __init__(self, value, name="mock"):
-        self.value = value
-        self.name = name
-        self.statistics = {}
-
-    def apply(self, data, state, metadata, random_params=None):
-        return jnp.full_like(data, self.value), state, metadata
-
-    def generate_random_params(self, rng, data_shapes):
-        return {}
+from tests.test_common.mock_operators import ConstantMockOperator as MockOperator
 
 
 class TestEnsembleStrategy:

@@ -37,7 +37,7 @@ examples/comparison/
 - 30-50% memory savings with shared memory management
 - Better JIT compilation due to cleaner boundaries
 
-#### ✅ **Superior Checkpointing**
+#### ✅ **Robust Checkpointing**
 - One-line checkpoint: `state = loader.get_state()`
 - One-line restore: `loader.set_state(state)`
 - All component states automatically included
@@ -211,7 +211,7 @@ The datarax approach with stateful NNX modules provides significant advantages o
 - **Automatic everything** - state, checkpoints, statistics
 - **Production-ready** - robust, maintainable, scalable
 
-These examples demonstrate that the stateful approach is not just different, but fundamentally **superior** for real-world machine learning pipelines.
+These examples demonstrate that the stateful approach is a **strong fit** for real-world machine learning pipelines.
 
 ---
 

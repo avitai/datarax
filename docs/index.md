@@ -29,6 +29,38 @@ batching, sharding, checkpointing, and caching.
 - **Ecosystem Integration:** Facilitates smooth integration with other JAX libraries
 like Flax, Optax, and Orbax.
 
+## Why Datarax?
+
+Datarax's differentiable pipeline architecture enables optimization paradigms that are impossible with traditional data loaders:
+
+<div class="grid cards" markdown>
+
+-   :material-auto-fix:{ .lg .middle } **Learned Augmentation (DADA)**
+
+    ---
+
+    10,000x faster augmentation policy search via gradient descent through datarax's operator library
+
+    [:octicons-arrow-right-24: Advanced Guide](examples/advanced/differentiable/dada-learned-augmentation.md)
+
+-   :material-camera:{ .lg .middle } **Learned ISP for Detection**
+
+    ---
+
+    End-to-end differentiable image processing pipeline using the DAG `>>` operator
+
+    [:octicons-arrow-right-24: Advanced Guide](examples/advanced/differentiable/learned-isp-guide.md)
+
+-   :material-music-note:{ .lg .middle } **DDSP Audio Synthesis**
+
+    ---
+
+    Custom `OperatorModule` subclasses for audio — proving extensibility beyond images
+
+    [:octicons-arrow-right-24: Advanced Guide](examples/advanced/differentiable/ddsp-audio-synthesis.md)
+
+</div>
+
 ## Quick Navigation
 
 - [Batching](batching/index.md) - Batch creation and management

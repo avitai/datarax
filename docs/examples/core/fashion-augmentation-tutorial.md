@@ -9,7 +9,7 @@
 
 ## Overview
 
-Build a comprehensive augmentation pipeline for Fashion-MNIST, demonstrating multiple image operators chained together. Fashion-MNIST is more challenging than MNIST, making augmentation more important for achieving good performance.
+Build a complete augmentation pipeline for Fashion-MNIST, demonstrating multiple image operators chained together. Fashion-MNIST is more challenging than MNIST, making augmentation more important for achieving good performance.
 
 ## What You'll Learn
 
@@ -176,7 +176,7 @@ Created preprocessing operator
 
 ## Part 3: Define Augmentation Operators
 
-We'll create a comprehensive suite of augmentation operators:
+We'll create a full suite of augmentation operators:
 
 ### 1. Photometric Augmentations
 

@@ -25,7 +25,7 @@ def validate_config(config_path: str) -> bool:
         True if valid, False otherwise.
     """
     try:
-        with open(config_path, "rb") as f:
+        with Path(config_path).open("rb") as f:
             config = tomllib.load(f)
 
         # Check required sections
@@ -62,7 +62,7 @@ def run_pipeline(config_path: str, overrides: dict[str, str] | None = None) -> i
         Exit code (0 for success).
     """
     try:
-        with open(config_path, "rb") as f:
+        with Path(config_path).open("rb") as f:
             config = tomllib.load(f)
 
         # Apply overrides
@@ -249,7 +249,7 @@ def profile_pipeline(config_path: str, num_iterations: int = 100) -> dict[str, f
     import time
 
     try:
-        with open(config_path, "rb") as f:
+        with Path(config_path).open("rb") as f:
             config = tomllib.load(f)
 
         if "dag" in config:
@@ -287,26 +287,91 @@ def profile_pipeline(config_path: str, num_iterations: int = 100) -> dict[str, f
         return {}
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Execute the Datarax CLI program.
+def _handle_run(args: argparse.Namespace) -> int:
+    """Handle the 'run' subcommand."""
+    if not Path(args.config_path).exists():
+        print(f"Error: Config file not found: {args.config_path}", file=sys.stderr)
+        return 1
 
-    Args:
-        argv: List of command-line arguments. If None, sys.argv is used.
+    overrides = {}
+    if args.override:
+        for override in args.override:
+            if "=" not in override:
+                print(
+                    f"Error: Invalid override format: {override}. Expected format: key=value",
+                    file=sys.stderr,
+                )
+                return 1
+            key, value = override.split("=", 1)
+            overrides[key] = value
 
-    Returns:
-        An exit code (0 for success, non-zero for error).
-    """
-    # Check environment variables
-    os.environ.get("DATARAX_LOG_LEVEL", "INFO")
+    return run_pipeline(args.config_path, overrides=overrides)
+
+
+def _handle_validate(args: argparse.Namespace) -> int:
+    """Handle the 'validate' subcommand."""
+    if not Path(args.config_path).exists():
+        print(f"Error: Config file not found: {args.config_path}", file=sys.stderr)
+        return 1
+
+    if validate_config(args.config_path):
+        print("Configuration is valid")
+        return 0
+    return 1
+
+
+def _handle_benchmark(args: argparse.Namespace) -> int:
+    """Handle the 'benchmark' subcommand."""
+    return run_benchmark(
+        args.dataset,
+        batch_size=args.batch_size,
+        num_iterations=args.num_iterations,
+    )
+
+
+def _handle_list(args: argparse.Namespace) -> int:
+    """Handle the 'list' subcommand."""
+    components = list_components(args.type)
+    for comp_type, comp_list in components.items():
+        print(f"\n{comp_type.capitalize()}:")
+        for comp in comp_list:
+            print(f"  - {comp}")
+    return 0
+
+
+def _handle_create(args: argparse.Namespace) -> int:
+    """Handle the 'create' subcommand."""
+    return 0 if create_pipeline_template(args.output, args.template) else 1
+
+
+def _handle_profile(args: argparse.Namespace) -> int:
+    """Handle the 'profile' subcommand."""
+    if not Path(args.config_path).exists():
+        print(f"Error: Config file not found: {args.config_path}", file=sys.stderr)
+        return 1
+
+    metrics = profile_pipeline(args.config_path, args.num_iterations)
+    return 0 if metrics else 1
+
+
+def _handle_version(args: argparse.Namespace) -> int:
+    """Handle the 'version' subcommand."""
+    del args  # unused
+    print(f"Datarax version {__version__}")
+    return 0
+
+
+def _configure_device() -> None:
+    """Configure JAX device from environment variables."""
     device = os.environ.get("DATARAX_DEVICE", "auto")
+    if device == "cpu":
+        jax.config.update("jax_platform_name", "cpu")
+    elif device.startswith("cuda"):
+        jax.config.update("jax_platform_name", "gpu")
 
-    if device != "auto":
-        # Set JAX device
-        if device == "cpu":
-            jax.config.update("jax_platform_name", "cpu")
-        elif device.startswith("cuda"):
-            jax.config.update("jax_platform_name", "gpu")
 
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the argument parser with all subcommands."""
     parser = argparse.ArgumentParser(
         prog="datarax",
         description="Datarax: A high-performance data pipeline framework for JAX.",
@@ -317,10 +382,7 @@ def main(argv: list[str] | None = None) -> int:
     # Command: run
     run_parser = subparsers.add_parser("run", help="Run a pipeline defined in a configuration file")
     run_parser.add_argument(
-        "--config-path",
-        "-c",
-        required=True,
-        help="Path to the configuration file",
+        "--config-path", "-c", required=True, help="Path to the configuration file"
     )
     run_parser.add_argument(
         "--override",
@@ -332,33 +394,19 @@ def main(argv: list[str] | None = None) -> int:
     # Command: validate
     validate_parser = subparsers.add_parser("validate", help="Validate a pipeline configuration")
     validate_parser.add_argument(
-        "--config-path",
-        "-c",
-        required=True,
-        help="Path to the configuration file",
+        "--config-path", "-c", required=True, help="Path to the configuration file"
     )
 
     # Command: benchmark
     benchmark_parser = subparsers.add_parser("benchmark", help="Run performance benchmarks")
     benchmark_parser.add_argument(
-        "--dataset",
-        "-d",
-        required=True,
-        help="Dataset to benchmark (synthetic, mnist, etc.)",
+        "--dataset", "-d", required=True, help="Dataset to benchmark (synthetic, mnist, etc.)"
     )
     benchmark_parser.add_argument(
-        "--batch-size",
-        "-b",
-        type=int,
-        default=32,
-        help="Batch size for benchmarking",
+        "--batch-size", "-b", type=int, default=32, help="Batch size for benchmarking"
     )
     benchmark_parser.add_argument(
-        "--num-iterations",
-        "-n",
-        type=int,
-        default=100,
-        help="Number of iterations",
+        "--num-iterations", "-n", type=int, default=100, help="Number of iterations"
     )
 
     # Command: list
@@ -372,12 +420,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Command: create
     create_parser = subparsers.add_parser("create", help="Create a pipeline template")
-    create_parser.add_argument(
-        "--output",
-        "-o",
-        required=True,
-        help="Output path for the template",
-    )
+    create_parser.add_argument("--output", "-o", required=True, help="Output path for the template")
     create_parser.add_argument(
         "--template",
         "-t",
@@ -389,91 +432,50 @@ def main(argv: list[str] | None = None) -> int:
     # Command: profile
     profile_parser = subparsers.add_parser("profile", help="Profile pipeline performance")
     profile_parser.add_argument(
-        "--config-path",
-        "-c",
-        required=True,
-        help="Path to the configuration file",
+        "--config-path", "-c", required=True, help="Path to the configuration file"
     )
     profile_parser.add_argument(
-        "--num-iterations",
-        "-n",
-        type=int,
-        default=100,
-        help="Number of iterations to profile",
+        "--num-iterations", "-n", type=int, default=100, help="Number of iterations to profile"
     )
 
     # Command: version
     subparsers.add_parser("version", help="Print the Datarax version")
 
+    return parser
+
+
+# Command dispatch table
+_HANDLERS: dict[str, Any] = {
+    "run": _handle_run,
+    "validate": _handle_validate,
+    "benchmark": _handle_benchmark,
+    "list": _handle_list,
+    "create": _handle_create,
+    "profile": _handle_profile,
+    "version": _handle_version,
+}
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Execute the Datarax CLI program.
+
+    Args:
+        argv: List of command-line arguments. If None, sys.argv is used.
+
+    Returns:
+        An exit code (0 for success, non-zero for error).
+    """
+    _configure_device()
+
+    parser = _build_parser()
     args = parser.parse_args(argv)
 
-    if args.command == "run":
-        if not os.path.exists(args.config_path):
-            print(f"Error: Config file not found: {args.config_path}", file=sys.stderr)
-            return 1
+    handler = _HANDLERS.get(args.command)
+    if handler:
+        return handler(args)
 
-        # Parse overrides
-        overrides = {}
-        if args.override:
-            for override in args.override:
-                if "=" not in override:
-                    print(
-                        f"Error: Invalid override format: {override}. Expected format: key=value",
-                        file=sys.stderr,
-                    )
-                    return 1
-                key, value = override.split("=", 1)
-                overrides[key] = value
-
-        return run_pipeline(args.config_path, overrides=overrides)
-
-    elif args.command == "validate":
-        if not os.path.exists(args.config_path):
-            print(f"Error: Config file not found: {args.config_path}", file=sys.stderr)
-            return 1
-
-        if validate_config(args.config_path):
-            print("Configuration is valid")
-            return 0
-        else:
-            return 1
-
-    elif args.command == "benchmark":
-        return run_benchmark(
-            args.dataset,
-            batch_size=args.batch_size,
-            num_iterations=args.num_iterations,
-        )
-
-    elif args.command == "list":
-        components = list_components(args.type)
-        for comp_type, comp_list in components.items():
-            print(f"\n{comp_type.capitalize()}:")
-            for comp in comp_list:
-                print(f"  - {comp}")
-        return 0
-
-    elif args.command == "create":
-        if create_pipeline_template(args.output, args.template):
-            return 0
-        else:
-            return 1
-
-    elif args.command == "profile":
-        if not os.path.exists(args.config_path):
-            print(f"Error: Config file not found: {args.config_path}", file=sys.stderr)
-            return 1
-
-        metrics = profile_pipeline(args.config_path, args.num_iterations)
-        return 0 if metrics else 1
-
-    elif args.command == "version":
-        print(f"Datarax version {__version__}")
-        return 0
-
-    else:
-        parser.print_help()
-        return 0
+    parser.print_help()
+    return 0
 
 
 if __name__ == "__main__":

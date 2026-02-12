@@ -9,7 +9,7 @@
 
 ## Overview
 
-This tutorial provides a comprehensive introduction to building data pipelines
+This tutorial provides a thorough introduction to building data pipelines
 with Datarax. You'll learn to create data sources, compose multiple operators,
 handle different data modalities, and build production-ready pipelines.
 

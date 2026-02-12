@@ -1,8 +1,11 @@
+"""Data source, batch, and shuffle node wrappers for the DAG."""
+
 from __future__ import annotations
 import jax
 
 import flax.nnx as nnx
-from typing import Any, Iterator, Union
+from typing import Any, Union
+from collections.abc import Iterator
 
 from datarax.dag.nodes.base import Node
 from datarax.typing import Batch, Element
@@ -247,6 +250,16 @@ class OperatorNode(Node):
         if hasattr(operator, "config") and getattr(operator.config, "stochastic", False):
             if not hasattr(operator, "rngs") or operator.rngs is None:
                 operator.rngs = nnx.Rngs(operator=0)
+
+    @property
+    def is_jit_fusible(self) -> bool:
+        """Operator node is always fusible — nnx.jit handles all NNX state.
+
+        This includes stochastic operators (Rngs extracted by nnx.jit),
+        operators with nnx.Param (included in grad), and operators with
+        IterationCount (jnp.array, JIT-mutable via slice assignment).
+        """
+        return True
 
     def __call__(self, data: Batch, *, key: jax.Array | None = None) -> Batch:
         """Apply operator to batch.

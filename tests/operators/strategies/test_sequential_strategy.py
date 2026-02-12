@@ -2,7 +2,6 @@
 
 from unittest.mock import MagicMock
 
-import jax
 import jax.numpy as jnp
 from datarax.core.operator import OperatorModule
 from datarax.operators.strategies.base import StrategyContext
@@ -10,31 +9,7 @@ from datarax.operators.strategies.sequential import (
     SequentialStrategy,
     ConditionalSequentialStrategy,
 )
-
-
-class MockOperator(OperatorModule):
-    def __init__(self, multiplier=2.0, name="mock"):
-        # Minimal init to satisfy base class if needed, or just mock apply
-        self.multiplier = multiplier
-        self.name = name
-        self.statistics = {f"{name}_stat": 1.0}
-
-    def apply(self, data, state, metadata, random_params=None):
-        # Multiply data by multiplier
-        # Update state by incrementing a counter if present
-        new_data = jax.tree.map(lambda x: x * self.multiplier, data)
-
-        new_state = state.copy() if state else {}
-        if "count" in new_state:
-            new_state["count"] += 1
-
-        new_metadata = metadata.copy()
-        new_metadata["visited"] = [*new_metadata.get("visited", []), self.name]
-
-        return new_data, new_state, new_metadata
-
-    def generate_random_params(self, rng, data_shapes):
-        return {}
+from tests.test_common.mock_operators import MultiplierMockOperator as MockOperator
 
 
 class TestSequentialStrategy:
@@ -96,7 +71,7 @@ class TestConditionalSequentialStrategy:
                 self.value = value
                 self.statistics = {}
 
-            def apply(self, data, state, meta, rp=None):
+            def apply(self, data, state, meta, rp=None, stats=None):
                 return data + self.value, state, meta
 
             def generate_random_params(self, rng, shapes):

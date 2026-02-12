@@ -172,10 +172,6 @@ class StructuralModule(DataraxModule):
         Returns:
             Processed output
         """
-        # Increment iteration count
-        # Uses [...] for in-place mutation of IterationCount Variable (new NNX API)
-        self._iteration_count[...] += 1
-
         # Delegate to process()
         # Note: Structural modules typically don't use caching or statistics,
         # but the infrastructure is available if needed

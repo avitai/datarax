@@ -22,7 +22,7 @@
 
 ## Overview
 
-This comprehensive guide covers distributed data loading patterns for
+This in-depth guide covers distributed data loading patterns for
 multi-device JAX setups. You'll learn to shard data across GPUs/TPUs,
 optimize throughput for distributed training, and handle common pitfalls.
 

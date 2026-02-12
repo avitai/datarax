@@ -155,7 +155,7 @@ print(f"Dataset length: {len(source)}")
 
 ## See Also
 
-- [Data Sources Guide](../user_guide/data_sources.md) - Comprehensive data loading guide
+- [Data Sources Guide](../user_guide/data_sources.md) - Detailed data loading guide
 - [TFDS Source](tfds_source.md) - TensorFlow Datasets integration
 - [HuggingFace Quick Reference](../examples/integration/huggingface/hf-quickref.md)
 - [HuggingFace Tutorial](../examples/integration/huggingface/hf-tutorial.md)

@@ -166,9 +166,17 @@ nav:
       - Checkpointing: user_guide/checkpointing_guide.md
   - Examples:
       - Overview: examples/overview.md
+      - Beginner: examples/basic/index.md
+      - Quick Reference:
+          - Overview: examples/quick-reference/index.md
+          - Operator Cheat Sheet: examples/quick-reference/operator-cheatsheet.md
+          - Configuration Reference: examples/quick-reference/config-reference.md
+          - Error Messages Guide: examples/quick-reference/error-guide.md
       - Core:
           - Simple Pipeline: examples/core/simple-pipeline.md
           - Pipeline Tutorial: examples/core/pipeline-tutorial.md
+          - Data Loading Quick Reference: examples/core/data-loading-quickref.md
+          - Batch Processing Quick Reference: examples/core/batch-processing-quickref.md
           - Operators Tutorial: examples/core/operators-tutorial.md
           - CIFAR-10 Quick Reference: examples/core/cifar10-quickref.md
           - Augmentation Quick Reference: examples/core/augmentation-quickref.md
@@ -206,7 +214,12 @@ nav:
               - Sampling Tutorial: examples/advanced/sampling/sampling-tutorial.md
           - Training:
               - End-to-End CIFAR-10: examples/advanced/training/e2e-cifar10-guide.md
+          - Differentiable Pipelines:
+              - DADA Learned Augmentation: examples/advanced/differentiable/dada-learned-augmentation.md
+              - Learned ISP Guide: examples/advanced/differentiable/learned-isp-guide.md
+              - DDSP Audio Synthesis: examples/advanced/differentiable/ddsp-audio-synthesis.md
   - API Reference:
+      - Overview: api_reference/index.md
       - Core Components:
           - Overview: core/index.md
           - batcher: core/batcher.md
@@ -237,9 +250,12 @@ nav:
           - Overview: benchmarking/index.md
           - comparative: benchmarking/comparative.md
           - monitor: benchmarking/monitor.md
-          - pipeline_throughput: benchmarking/pipeline_throughput.md
           - profiler: benchmarking/profiler.md
           - regression: benchmarking/regression.md
+          - timing: benchmarking/timing.md
+          - statistics: benchmarking/statistics.md
+          - resource_monitor: benchmarking/resource_monitor.md
+          - results: benchmarking/results.md
       - Checkpoint:
           - Overview: checkpoint/index.md
           - handlers: checkpoint/handlers.md
@@ -270,7 +286,6 @@ nav:
           - data_parallel: distributed/data_parallel.md
           - device_mesh: distributed/device_mesh.md
           - device_placement: distributed/device_placement.md
-          - mesh: distributed/mesh.md
           - metrics: distributed/metrics.md
       - Memory:
           - Overview: memory/index.md
@@ -329,6 +344,12 @@ nav:
           - memory_source: sources/memory_source.md
           - mixed_source: sources/mixed_source.md
           - tfds_source: sources/tfds_source.md
+  - Benchmarks:
+      - Overview: benchmarks/index.md
+      - Methodology: benchmarks/methodology.md
+      - Framework Comparison: benchmarks/comparison.md
+      - Cloud Benchmarking: benchmarks/cloud.md
+      - Dashboard & benchkit: benchmarks/dashboard.md
   - Contributing:
       - Guide: contributing/contributing_guide.md
       - Example Documentation Design: contributing/example_documentation_design.md
@@ -337,4 +358,5 @@ nav:
       - Testing Guide: contributing/testing_guide.md
       - GPU Testing: contributing/gpu_testing.md
       - Test Structure: contributing/test_structure.md
+      - Docker: contributing/docker.md
       - Type Issues Guide: contributing/type_issues_guide.md

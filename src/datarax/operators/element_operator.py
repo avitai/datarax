@@ -17,7 +17,8 @@ Key Features:
 - Uses Element.replace() pattern for immutable updates
 """
 
-from typing import Any, Callable, cast
+from typing import Any, cast
+from collections.abc import Callable
 
 import jax
 from flax import nnx

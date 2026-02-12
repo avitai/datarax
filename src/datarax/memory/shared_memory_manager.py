@@ -1,4 +1,4 @@
-# File: src/datarax/memory/shared_memory_manager.py
+"""Shared memory manager for multi-worker data pipeline scenarios."""
 
 from multiprocessing import shared_memory
 
@@ -14,6 +14,7 @@ class SharedMemoryManager(nnx.Module):
     """
 
     def __init__(self):
+        """Initialize SharedMemoryManager with empty block and metadata tracking."""
         super().__init__()
         self.shared_blocks = nnx.Variable({})
         self.array_metadata = nnx.Variable({})
@@ -109,3 +110,16 @@ class SharedMemoryManager(nnx.Module):
         # Set empty dicts to clear
         self.shared_blocks.set_value({})
         self.array_metadata.set_value({})
+
+    def __enter__(self) -> "SharedMemoryManager":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.cleanup()
+
+    def __del__(self):
+        """Safety net — prefer using as context manager."""
+        try:
+            self.cleanup()
+        except Exception:
+            pass

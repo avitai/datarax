@@ -4,7 +4,7 @@ import unittest
 
 import jax
 
-from datarax.distributed.mesh import DeviceMeshManager
+from datarax.distributed.device_mesh import DeviceMeshManager
 
 
 class TestDeviceMeshManagerStaticMethods(unittest.TestCase):

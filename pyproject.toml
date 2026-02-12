@@ -71,6 +71,35 @@ requires-python = ">=3.11"
 all = ["datarax[data,dev,docs,gpu,test]"]
 all-cpu = ["datarax[data,dev,docs,test]"]
 all-macos = ["datarax[data,dev,docs,metal,test]"]
+# benchmark extra is separate — it pulls in 12 Linux-only frameworks (DALI, PyTorch, Ray, etc.)
+# Install explicitly: pip install datarax[benchmark]
+benchmark = [
+  # Peer frameworks for comparative benchmarking (Section 14.2 of benchmark report)
+  # Tier 1: JAX ecosystem (Grain already in base deps)
+  "jax-dataloader>=0.1", # jax-dataloader — minimal JAX-native loader
+  "tensorflow-datasets>=4.9", # tf.data adapter (provides tensorflow dep)
+  # Tier 2: High-performance leaders
+  "nvidia-dali-cuda120>=1.0; sys_platform == 'linux'", # NVIDIA DALI — GPU-native data loading + augmentation (Linux/CUDA only)
+  "spdl>=0.1", # Meta SPDL — thread-based data loading
+  "torch>=2.0", # PyTorch DataLoader baseline
+  "torchvision>=0.15", # torchvision transforms + batch JPEG decode
+  # Tier 2: Cloud/streaming
+  "mosaicml-streaming>=0.7", # MosaicML StreamingDataset — MDS format
+  "webdataset>=0.2", # WebDataset — TAR-based streaming
+  # Tier 3: Specialized
+  "litdata>=0.2", # Lightning LitData — cloud streaming
+  "ray[data]>=2.9", # Ray Data — distributed actor-based
+  "datasets>=2.14", # Hugging Face Datasets (also in data extra)
+  "deeplake>=4.0", # Deep Lake — AI database
+  # Benchmark infrastructure
+  "tabulate>=0.9", # Table formatting for reports
+  "rich>=13.0", # Rich terminal output for benchmark runners
+  # Benchmark analysis and dashboard
+  "benchkit @ {root:uri}/tools/benchkit"
+]
+# Note: FFCV requires system OpenCV (libopencv-dev) — install separately via:
+# sudo apt-get install libopencv-dev && pip install ffcv>=1.0
+# Note: Energon (megatron-energon) requires Megatron-LM — install separately
 cuda-dev = [
   # Complete CUDA development environment
   # Includes all dev tools, testing, and GPU support
@@ -79,7 +108,7 @@ cuda-dev = [
 ]
 data = [
   # Data loading and processing dependencies
-  "grain-nightly", # Google's high-performance data loading library
+  "grain-nightly; sys_platform == 'linux'", # Google's high-performance data loading library (Linux only)
   "tensorflow-datasets>=4.9.2", # For TFDS integration
   "datasets>=2.14.0", # For HuggingFace datasets
   "pillow>=10.0.0", # For image processing
@@ -87,6 +116,7 @@ data = [
   "librosa>=0.10.0" # For advanced audio processing
 ]
 dev = [
+  "benchkit[wandb,stats] @ {root:uri}/tools/benchkit", # local benchmark toolkit + optional test deps
   "build>=1.0.3",
   "coverage>=7",
   "ipykernel>=6.29.5",
@@ -122,15 +152,22 @@ docs = [
   "mkdocstrings-python>=1.1.2",
   "pymdown-extensions>=10.14.3"
 ]
+examples = [
+  # Optional dependencies for running advanced examples
+  "apache-beam>=2.50,<2.65", # TFDS requires <2.65 (Beam >=2.65 causes etils pickle recursion)
+  "keras>=3.0", # Required by DADA example for CIFAR-10 loading
+  "torchcrepe", # CREPE pretrained weights for DDSP audio synthesis example (bundles .pth files)
+  "h5py>=3.0" # Alternative CREPE weight loading from Keras .h5 files
+]
 gpu = [
   # GPU dependencies - CUDA 12 support (Linux only)
-  "jax[cuda12]>=0.6.1",
-  "jaxlib>=0.6.1"
+  "jax[cuda12]>=0.6.1; sys_platform == 'linux'",
+  "jaxlib>=0.6.1; sys_platform == 'linux'"
 ]
 metal = [
   # Metal acceleration for Apple Silicon Macs (M1/M2/M3+)
   # Provides GPU-like acceleration on macOS
-  "jax-metal>=0.1.0"
+  "jax-metal>=0.1.0; sys_platform == 'darwin'"
 ]
 test = [
   "beartype>=0.14.1",
@@ -146,10 +183,7 @@ test = [
 
 [project.scripts]
 datarax = "datarax.cli:main"
-datarax-cuda-test = "scripts.run_tests_with_cuda:main"
-datarax-fresh-setup = "scripts.fresh_cuda_setup:main"
-datarax-setup-env = "scripts.setup_env:main"
-datarax-smart-test = "scripts.smart_test_runner:main"
+datarax-bench = "benchmarks.cli:main"
 
 [project.urls]
 "Bug Tracker" = "https://github.com/avitai/datarax/issues"
@@ -157,6 +191,9 @@ Documentation = "https://datarax.readthedocs.io"
 Source = "https://github.com/avitai/datarax"
 
 [tool.bandit]
+# Note: bandit excludes tests/scripts/examples because security scanning focuses on
+# production code. .pre-commit-config.yaml does NOT exclude these — pre-commit hooks
+# (ruff, pyright, formatting) intentionally run on all code including tests.
 exclude_dirs = ["tests", "scripts", "examples", "documents", "custom_modes", "notebooks", "example_data"]
 # B101: assert_used - Assert statements are the idiomatic way to write pytest tests
 # They are safe in test files as pytest rewrites them for better error messages
@@ -184,7 +221,7 @@ exclude_lines = [
   "raise ImportError"
 ]
 # Adjusted for large codebase with focused testing approach
-fail_under = 10
+fail_under = 80
 precision = 2
 show_missing = true
 skip_covered = false
@@ -211,8 +248,17 @@ include = ["src/datarax", "README.md", "LICENSE", "pyproject.toml"]
 [tool.hatch.build.targets.wheel]
 packages = ["src/datarax"]
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.hatch.version]
 path = "src/datarax/__init__.py"
+
+[tool.mypy]
+# This project uses pyright as its type checker (see [tool.pyright] below).
+# mypy is NOT configured and will produce false positives due to JAX/Flax/NNX
+# type stubs. Do not use mypy --strict for audit purposes.
+follow_imports = "skip"
 
 [tool.pydocstyle]
 add-ignore = ["D100", "D101", "D102", "D103", "D104", "D105", "D107", "D202", "D212", "D415"]
@@ -220,8 +266,14 @@ convention = "google"
 match = ".*\\.py$"
 match-dir = "^(?!tests|examples|benchmarks).*"
 
+[tool.pylint."messages_control"]
+# NNX modules require nnx.Variable as direct attrs; config dataclasses map 1:1
+# to parameters. Default max-attrs=7 is too restrictive for this domain.
+max-args = 10
+max-attributes = 12
+
 [tool.pyright]
-exclude = ["examples", "scripts", ".deprecated", "**/__pycache__", "**/.venv"]
+exclude = ["examples", "example_data", "scripts", ".deprecated", "**/__pycache__", "**/.venv"]
 include = ["src", "tests"]
 reportAbstractUsage = false
 reportArgumentType = false
@@ -309,6 +361,11 @@ warmup_iterations = 3
 JAX_ENABLE_X64 = "0"
 JAX_SKIP_CUDA_CONSTRAINTS_CHECK = "1"
 LD_LIBRARY_PATH = "/usr/local/cuda/lib64"
+# Ray 2.53's uv runtime_env hook detects uv-managed venvs and tries to
+# recreate them for workers — but the new venv lacks ray itself, causing
+# workers to crash silently and from_numpy()/iter_batches() to hang.
+RAY_DATA_DISABLE_PROGRESS_BARS = "1"
+RAY_ENABLE_UV_RUN_RUNTIME_ENV = "0"
 TF_CPP_MIN_LOG_LEVEL = "1"
 XLA_PYTHON_CLIENT_MEM_FRACTION = "0.75"
 XLA_PYTHON_CLIENT_PREALLOCATE = "false"
@@ -341,7 +398,7 @@ ignore = [
   "UP007", # Use `X | Y` for type annotations
   "UP015", # Unnecessary open mode parameters
   "UP024", # Replace aliased errors with `OSError`
-  "UP035", # Import from `collections.abc` instead
+  # UP035 — fixed: imports now use collections.abc
   "RUF005" # Consider using unpacked tuple instead of concatenation
 ]
 # E: Pyflakes and pycodestyle errors

@@ -1,0 +1,63 @@
+# =============================================================================
+# Datarax Benchmark — GPU Image (CUDA 12.4)
+# =============================================================================
+# Runs all benchmark scenarios on NVIDIA GPUs with CUDA 12.4 + cuDNN.
+# Includes both the `benchmark` extra (competing frameworks) and `gpu` extra
+# (jax[cuda12]) so JAX actually uses the GPU.
+#
+# Build:  docker build -f benchmarks/docker/Dockerfile.gpu -t datarax-bench:gpu .
+# Run:    docker run --rm --gpus all datarax-bench:gpu
+# Custom: docker run --rm --gpus all datarax-bench:gpu python -m benchmarks.runners.full_runner --help
+# =============================================================================
+
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# JAX runtime defaults
+ENV XLA_PYTHON_CLIENT_PREALLOCATE=false
+ENV XLA_PYTHON_CLIENT_MEM_FRACTION=0.75
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-venv \
+    python3.11-dev \
+    python3-pip \
+    build-essential \
+    git \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN ln -sf /usr/bin/python3.11 /usr/bin/python
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# --- Layer 1: Dependencies ---
+COPY pyproject.toml uv.lock README.md LICENSE ./
+
+RUN uv venv /app/.venv
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# benchmark + gpu extras — so JAX uses CUDA, not CPU fallback
+RUN uv pip install -e ".[benchmark,gpu]"
+
+# --- Layer 2: benchkit path dependency ---
+COPY tools/benchkit ./tools/benchkit
+RUN uv pip install -e tools/benchkit
+
+# --- Layer 3: Source + benchmark code ---
+COPY src ./src
+COPY benchmarks ./benchmarks
+COPY conftest.py ./conftest.py
+
+# Reinstall to link source
+RUN uv pip install -e ".[benchmark,gpu]"
+
+# Verify GPU JAX
+RUN python -c "import jax; print(f'JAX {jax.__version__}, devices: {jax.devices()}')" || true
+
+CMD ["python", "-m", "benchmarks.runners.full_runner", "--platform", "gpu"]

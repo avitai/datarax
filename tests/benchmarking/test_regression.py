@@ -1,4 +1,8 @@
-"""Tests for regression.py - Performance regression detection."""
+"""Tests for regression.py - Performance regression detection.
+
+Uses BenchmarkResult (replaces ProfileResult) with StatisticalAnalyzer
+integration for significance testing per Section 9.2.
+"""
 
 import json
 import tempfile
@@ -6,13 +10,14 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
-from datarax.benchmarking.profiler import ProfileResult
 from datarax.benchmarking.regression import (
     PerformanceRegression,
     RegressionDetector,
     RegressionReport,
     RegressionSeverity,
 )
+from datarax.benchmarking.statistics import StatisticalAnalyzer
+from tests.benchmarking.conftest import make_result_for_throughput as _make_result
 
 
 class TestRegressionSeverity(unittest.TestCase):
@@ -32,60 +37,65 @@ class TestPerformanceRegression(unittest.TestCase):
     def test_regression_creation(self):
         """Test creating a PerformanceRegression instance."""
         regression = PerformanceRegression(
-            metric_name="timing.latency",
+            metric_name="wall_clock_sec",
             baseline_value=1.0,
             current_value=1.5,
             regression_percent=50.0,
             severity=RegressionSeverity.HIGH,
-            description="Latency increased by 50%",
+            description="Wall clock increased by 50%",
         )
 
-        self.assertEqual(regression.metric_name, "timing.latency")
+        self.assertEqual(regression.metric_name, "wall_clock_sec")
         self.assertEqual(regression.baseline_value, 1.0)
         self.assertEqual(regression.current_value, 1.5)
         self.assertEqual(regression.regression_percent, 50.0)
         self.assertEqual(regression.severity, RegressionSeverity.HIGH)
-        self.assertEqual(regression.description, "Latency increased by 50%")
+        self.assertEqual(regression.description, "Wall clock increased by 50%")
+        self.assertIsNone(regression.p_value)
         self.assertIsInstance(regression.timestamp, datetime)
         self.assertEqual(regression.metadata, {})
 
-    def test_regression_with_metadata(self):
-        """Test PerformanceRegression with custom metadata."""
+    def test_regression_with_metadata_and_p_value(self):
+        """Test PerformanceRegression with custom metadata and p_value."""
         metadata = {"baseline_std": 0.1, "samples": 10}
         regression = PerformanceRegression(
-            metric_name="memory.peak_mb",
+            metric_name="peak_rss_mb",
             baseline_value=100.0,
             current_value=150.0,
             regression_percent=50.0,
             severity=RegressionSeverity.CRITICAL,
             description="Memory usage increased",
+            p_value=0.003,
             metadata=metadata,
         )
 
         self.assertEqual(regression.metadata, metadata)
+        self.assertEqual(regression.p_value, 0.003)
 
     def test_regression_to_dict(self):
         """Test converting PerformanceRegression to dictionary."""
         timestamp = datetime(2025, 1, 1, 12, 0, 0)
         regression = PerformanceRegression(
-            metric_name="timing.execution_ms",
+            metric_name="wall_clock_sec",
             baseline_value=10.0,
             current_value=15.0,
             regression_percent=50.0,
             severity=RegressionSeverity.MEDIUM,
             description="Execution time increased",
+            p_value=0.02,
             timestamp=timestamp,
             metadata={"test": "data"},
         )
 
         result = regression.to_dict()
 
-        self.assertEqual(result["metric_name"], "timing.execution_ms")
+        self.assertEqual(result["metric_name"], "wall_clock_sec")
         self.assertEqual(result["baseline_value"], 10.0)
         self.assertEqual(result["current_value"], 15.0)
         self.assertEqual(result["regression_percent"], 50.0)
         self.assertEqual(result["severity"], "medium")
         self.assertEqual(result["description"], "Execution time increased")
+        self.assertEqual(result["p_value"], 0.02)
         self.assertEqual(result["timestamp"], "2025-01-01T12:00:00")
         self.assertEqual(result["metadata"], {"test": "data"})
 
@@ -267,18 +277,14 @@ class TestRegressionDetector(unittest.TestCase):
         self.assertEqual(detector.regression_threshold, 0.15)
         self.assertEqual(detector.critical_threshold, 0.30)
         self.assertEqual(detector.min_samples, 5)
+        self.assertIsInstance(detector.analyzer, StatisticalAnalyzer)
 
     def test_add_baseline(self):
         """Test adding baseline measurements."""
         detector = RegressionDetector(baseline_dir=self.baseline_dir)
 
-        profile = ProfileResult(
-            timing_metrics={"execution_ms": 10.0},
-            memory_metrics={"peak_mb": 100.0},
-            gpu_metrics={},
-        )
-
-        detector.add_baseline(profile, "test_benchmark")
+        result = _make_result(wall_clock_sec=1.0)
+        detector.add_baseline(result, "test_benchmark")
 
         # Verify baseline was added
         summary = detector.get_baseline_summary()
@@ -289,14 +295,10 @@ class TestRegressionDetector(unittest.TestCase):
         """Test regression detection with no baseline data."""
         detector = RegressionDetector(baseline_dir=self.baseline_dir)
 
-        profile = ProfileResult(
-            timing_metrics={"execution_ms": 10.0},
-            memory_metrics={},
-            gpu_metrics={},
-        )
+        result = _make_result(wall_clock_sec=1.0)
 
         with self.assertWarns(UserWarning):
-            report = detector.detect_regressions(profile, "unknown_benchmark")
+            report = detector.detect_regressions(result, "unknown_benchmark")
 
         self.assertEqual(report.summary["status"], "no_baseline")
 
@@ -306,19 +308,11 @@ class TestRegressionDetector(unittest.TestCase):
 
         # Add only 2 baselines (less than min_samples=5)
         for i in range(2):
-            profile = ProfileResult(
-                timing_metrics={"execution_ms": 10.0 + i},
-                memory_metrics={},
-                gpu_metrics={},
-            )
-            detector.add_baseline(profile, "test_benchmark")
+            result = _make_result(wall_clock_sec=1.0 + i * 0.001)
+            detector.add_baseline(result, "test_benchmark")
 
         # Try to detect regressions
-        current = ProfileResult(
-            timing_metrics={"execution_ms": 20.0},
-            memory_metrics={},
-            gpu_metrics={},
-        )
+        current = _make_result(wall_clock_sec=2.0)
 
         with self.assertWarns(UserWarning):
             report = detector.detect_regressions(current, "test_benchmark")
@@ -326,33 +320,26 @@ class TestRegressionDetector(unittest.TestCase):
         self.assertEqual(report.summary["status"], "insufficient_data")
 
     def test_detect_regression_timing_increase(self):
-        """Test detecting timing regression (higher is worse)."""
+        """Test detecting timing regression (wall_clock_sec higher → regression)."""
         detector = RegressionDetector(
             baseline_dir=self.baseline_dir, regression_threshold=0.10, min_samples=3
         )
 
-        # Add 3 baseline measurements around 10ms
+        # Add 3 baseline measurements around 1.0s
         for i in range(3):
-            profile = ProfileResult(
-                timing_metrics={"execution_ms": 10.0 + i * 0.1},
-                memory_metrics={},
-                gpu_metrics={},
-            )
-            detector.add_baseline(profile, "test_benchmark")
+            result = _make_result(wall_clock_sec=1.0 + i * 0.001)
+            detector.add_baseline(result, "test_benchmark")
 
-        # Current measurement is 20% higher (should be detected as regression)
-        current = ProfileResult(
-            timing_metrics={"execution_ms": 12.0},
-            memory_metrics={},
-            gpu_metrics={},
-        )
+        # Current measurement is 20% higher (should trigger regression)
+        current = _make_result(wall_clock_sec=1.2)
 
         report = detector.detect_regressions(current, "test_benchmark")
 
         self.assertTrue(report.has_regressions())
-        self.assertEqual(len(report.regressions), 1)
-        self.assertEqual(report.regressions[0].metric_name, "timing.execution_ms")
-        self.assertGreater(report.regressions[0].regression_percent, 10.0)
+        self.assertGreater(len(report.regressions), 0)
+        # wall_clock_sec should be among the regressed metrics
+        regressed_names = {r.metric_name for r in report.regressions}
+        self.assertIn("wall_clock_sec", regressed_names)
 
     def test_detect_improvement(self):
         """Test detecting performance improvement."""
@@ -360,21 +347,13 @@ class TestRegressionDetector(unittest.TestCase):
             baseline_dir=self.baseline_dir, regression_threshold=0.10, min_samples=3
         )
 
-        # Add baselines around 10ms
+        # Add baselines around 1.0s
         for i in range(3):
-            profile = ProfileResult(
-                timing_metrics={"execution_ms": 10.0},
-                memory_metrics={},
-                gpu_metrics={},
-            )
-            detector.add_baseline(profile, "test_benchmark")
+            result = _make_result(wall_clock_sec=1.0)
+            detector.add_baseline(result, "test_benchmark")
 
-        # Current measurement is 20% lower (improvement for timing)
-        current = ProfileResult(
-            timing_metrics={"execution_ms": 8.0},
-            memory_metrics={},
-            gpu_metrics={},
-        )
+        # Current measurement is 20% lower (improvement for wall_clock_sec)
+        current = _make_result(wall_clock_sec=0.8)
 
         report = detector.detect_regressions(current, "test_benchmark")
 
@@ -389,24 +368,16 @@ class TestRegressionDetector(unittest.TestCase):
 
         # Add baselines
         for i in range(3):
-            profile = ProfileResult(
-                timing_metrics={"execution_ms": 10.0},
-                memory_metrics={},
-                gpu_metrics={},
-            )
-            detector.add_baseline(profile, "test_benchmark")
+            result = _make_result(wall_clock_sec=1.0)
+            detector.add_baseline(result, "test_benchmark")
 
-        # Current measurement within 5% (below 10% threshold)
-        current = ProfileResult(
-            timing_metrics={"execution_ms": 10.3},
-            memory_metrics={},
-            gpu_metrics={},
-        )
+        # Current measurement within 3% (below 10% threshold)
+        current = _make_result(wall_clock_sec=1.03)
 
         report = detector.detect_regressions(current, "test_benchmark")
 
         self.assertFalse(report.has_regressions())
-        self.assertIn("timing.execution_ms", report.stable_metrics)
+        self.assertIn("wall_clock_sec", report.stable_metrics)
 
     def test_severity_determination(self):
         """Test that severity levels are assigned correctly."""
@@ -418,16 +389,33 @@ class TestRegressionDetector(unittest.TestCase):
         )
 
         # Test LOW severity (10-15%)
-        self.assertEqual(detector._determine_severity(12.0), RegressionSeverity.LOW)
+        self.assertEqual(detector._determine_severity(12.0, None), RegressionSeverity.LOW)
 
         # Test MEDIUM severity (15-20%)
-        self.assertEqual(detector._determine_severity(17.0), RegressionSeverity.MEDIUM)
+        self.assertEqual(detector._determine_severity(17.0, None), RegressionSeverity.MEDIUM)
 
         # Test HIGH severity (20-25%)
-        self.assertEqual(detector._determine_severity(22.0), RegressionSeverity.HIGH)
+        self.assertEqual(detector._determine_severity(22.0, None), RegressionSeverity.HIGH)
 
         # Test CRITICAL severity (>25%)
-        self.assertEqual(detector._determine_severity(30.0), RegressionSeverity.CRITICAL)
+        self.assertEqual(detector._determine_severity(30.0, None), RegressionSeverity.CRITICAL)
+
+    def test_severity_escalation_with_p_value(self):
+        """Test that p<0.01 escalates severity per Section 9.2."""
+        detector = RegressionDetector(
+            baseline_dir=self.baseline_dir,
+            regression_threshold=0.10,
+            critical_threshold=0.25,
+        )
+
+        # Without p_value: 12% → LOW
+        self.assertEqual(detector._determine_severity(12.0, None), RegressionSeverity.LOW)
+
+        # With p<0.01: 12% → HIGH (escalated)
+        self.assertEqual(detector._determine_severity(12.0, 0.005), RegressionSeverity.HIGH)
+
+        # With p<0.01 and >critical_threshold: → CRITICAL
+        self.assertEqual(detector._determine_severity(30.0, 0.005), RegressionSeverity.CRITICAL)
 
     def test_clear_specific_baseline(self):
         """Test clearing specific benchmark baseline."""
@@ -435,12 +423,8 @@ class TestRegressionDetector(unittest.TestCase):
 
         # Add baselines for two benchmarks
         for benchmark in ["bench1", "bench2"]:
-            profile = ProfileResult(
-                timing_metrics={"execution_ms": 10.0},
-                memory_metrics={},
-                gpu_metrics={},
-            )
-            detector.add_baseline(profile, benchmark)
+            result = _make_result(wall_clock_sec=1.0)
+            detector.add_baseline(result, benchmark)
 
         # Clear only bench1
         detector.clear_baselines("bench1")
@@ -453,13 +437,8 @@ class TestRegressionDetector(unittest.TestCase):
         """Test clearing all baselines."""
         detector = RegressionDetector(baseline_dir=self.baseline_dir)
 
-        # Add baselines
-        profile = ProfileResult(
-            timing_metrics={"execution_ms": 10.0},
-            memory_metrics={},
-            gpu_metrics={},
-        )
-        detector.add_baseline(profile, "test_benchmark")
+        result = _make_result(wall_clock_sec=1.0)
+        detector.add_baseline(result, "test_benchmark")
 
         # Clear all
         detector.clear_baselines()
@@ -471,12 +450,8 @@ class TestRegressionDetector(unittest.TestCase):
         """Test that baselines are saved and loaded from disk."""
         # Create detector and add baseline
         detector1 = RegressionDetector(baseline_dir=self.baseline_dir)
-        profile = ProfileResult(
-            timing_metrics={"execution_ms": 10.0},
-            memory_metrics={},
-            gpu_metrics={},
-        )
-        detector1.add_baseline(profile, "test_benchmark")
+        result = _make_result(wall_clock_sec=1.0)
+        detector1.add_baseline(result, "test_benchmark")
 
         # Create new detector with same baseline_dir
         detector2 = RegressionDetector(baseline_dir=self.baseline_dir)
@@ -492,12 +467,8 @@ class TestRegressionDetector(unittest.TestCase):
 
         # Add 60 baselines (exceeds max_samples=50)
         for i in range(60):
-            profile = ProfileResult(
-                timing_metrics={"execution_ms": 10.0 + i},
-                memory_metrics={},
-                gpu_metrics={},
-            )
-            detector.add_baseline(profile, "test_benchmark")
+            result = _make_result(wall_clock_sec=1.0 + i * 0.001)
+            detector.add_baseline(result, "test_benchmark")
 
         summary = detector.get_baseline_summary()
         # Should be capped at 50

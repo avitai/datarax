@@ -28,7 +28,8 @@ from __future__ import annotations
 import gc
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any
+from collections.abc import Iterator
 
 # Set protobuf implementation to avoid version conflicts
 os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
@@ -40,9 +41,80 @@ import jax.numpy as jnp
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
 from datarax.sources._conversion import tf_to_jax
+from datarax.sources._eager_source_ops import (
+    batch_elements_to_dict,
+    convert_and_filter_element,
+    eager_get_batch,
+    eager_iter,
+    eager_reset,
+    reset_streaming_state,
+    validate_eager_config,
+)
 
 if TYPE_CHECKING:
     import tensorflow_datasets as tfds
+
+
+# =============================================================================
+# TFDS Builder Helpers
+# =============================================================================
+
+
+def _is_read_only_builder(builder: Any) -> bool:
+    """Check if a TFDS builder is a ReadOnlyBuilder (from try_gcs or GCS cache).
+
+    ReadOnlyBuilder reads pre-built TFRecords from GCS and needs no
+    download_and_prepare() call. We use a string-based check to avoid
+    importing the ReadOnlyBuilder class at module level (heavy import).
+    """
+    return type(builder).__name__ == "ReadOnlyBuilder"
+
+
+def _prepare_tfds_builder(
+    name: str,
+    data_dir: str | None,
+    try_gcs: bool,
+    download_and_prepare_kwargs: dict[str, Any] | None,
+    beam_num_workers: int | None = None,
+) -> Any:
+    """Create and prepare a TFDS builder, handling ReadOnlyBuilder from GCS.
+
+    Args:
+        name: TFDS dataset name
+        data_dir: Optional local data directory
+        try_gcs: Whether to try loading from GCS
+        download_and_prepare_kwargs: Optional kwargs for download_and_prepare
+        beam_num_workers: Optional number of Beam DirectRunner workers.
+            When set, enables multi-processing mode for parallel dataset
+            generation. Useful for large datasets that use Apache Beam
+            (e.g., NSynth). None means single-threaded (Beam default).
+
+    Returns:
+        A prepared TFDS builder with dataset info available.
+    """
+    import tensorflow_datasets as tfds
+
+    builder = tfds.builder(name, data_dir=data_dir, try_gcs=try_gcs)
+
+    # ReadOnlyBuilder (from try_gcs when dataset is on GCS) needs no preparation
+    if not _is_read_only_builder(builder):
+        download_kwargs = download_and_prepare_kwargs or {}
+
+        if beam_num_workers is not None:
+            import apache_beam as beam
+
+            beam_options = beam.options.pipeline_options.PipelineOptions(
+                direct_num_workers=beam_num_workers,
+                direct_running_mode="multi_processing",
+            )
+            download_config = tfds.download.DownloadConfig(
+                beam_options=beam_options,
+            )
+            builder.download_and_prepare(download_config=download_config, **download_kwargs)
+        else:
+            builder.download_and_prepare(**download_kwargs)
+
+    return builder
 
 
 # =============================================================================
@@ -79,10 +151,12 @@ class TFDSEagerConfig(StructuralConfig):
 
     # Optional parameters with defaults
     data_dir: str | None = None
+    try_gcs: bool = False
     shuffle: bool = False
     seed: int = 42  # Integer seed for Grain's index_shuffle
     as_supervised: bool = False
     download_and_prepare_kwargs: dict[str, Any] | None = None
+    beam_num_workers: int | None = None
     include_keys: set[str] | None = None
     exclude_keys: set[str] | None = None
 
@@ -102,15 +176,19 @@ class TFDSEagerConfig(StructuralConfig):
         # Call parent validation
         super().__post_init__()
 
-        # Validate required parameters
-        if self.name is None:
-            raise ValueError("name is required for TFDSEagerConfig")
-        if self.split is None:
-            raise ValueError("split is required for TFDSEagerConfig")
+        # Shared validation
+        validate_eager_config(
+            self.name,
+            self.split,
+            self.include_keys,
+            self.exclude_keys,
+            "TFDSEagerConfig",
+            try_gcs=self.try_gcs,
+            data_dir=self.data_dir,
+        )
 
-        # Validate key filtering
-        if self.include_keys is not None and self.exclude_keys is not None:
-            raise ValueError("Cannot specify both include_keys and exclude_keys")
+        if self.beam_num_workers is not None and self.beam_num_workers < 1:
+            raise ValueError("beam_num_workers must be a positive integer")
 
 
 @dataclass
@@ -143,10 +221,12 @@ class TFDSStreamingConfig(StructuralConfig):
 
     # Streaming-specific options
     data_dir: str | None = None
+    try_gcs: bool = False
     shuffle: bool = False
     shuffle_buffer_size: int = 1000
     as_supervised: bool = False
     download_and_prepare_kwargs: dict[str, Any] | None = None
+    beam_num_workers: int | None = None
     include_keys: set[str] | None = None
     exclude_keys: set[str] | None = None
     prefetch_buffer: int = 2  # Fixed, NOT AUTOTUNE
@@ -169,6 +249,16 @@ class TFDSStreamingConfig(StructuralConfig):
 
         if self.include_keys is not None and self.exclude_keys is not None:
             raise ValueError("Cannot specify both include_keys and exclude_keys")
+
+        if self.try_gcs and self.data_dir is not None:
+            raise ValueError(
+                f"Cannot specify both try_gcs=True and data_dir='{self.data_dir}' "
+                "in TFDSStreamingConfig. "
+                "try_gcs overrides data_dir to the public GCS bucket (gs://tfds-data/datasets/)."
+            )
+
+        if self.beam_num_workers is not None and self.beam_num_workers < 1:
+            raise ValueError("beam_num_workers must be a positive integer")
 
 
 # =============================================================================
@@ -265,11 +355,13 @@ class TFDSEagerSource(DataSourceModule):
         Returns:
             TFDS DatasetInfo object
         """
-        import tensorflow_datasets as tfds
-
-        builder = tfds.builder(config.name, data_dir=config.data_dir)
-        download_kwargs = config.download_and_prepare_kwargs or {}
-        builder.download_and_prepare(**download_kwargs)
+        builder = _prepare_tfds_builder(
+            config.name,
+            config.data_dir,
+            config.try_gcs,
+            config.download_and_prepare_kwargs,
+            beam_num_workers=config.beam_num_workers,
+        )
         return builder.info
 
     def _load_all_to_jax(self, config: TFDSEagerConfig) -> dict[str, jax.Array]:
@@ -291,6 +383,7 @@ class TFDSEagerSource(DataSourceModule):
             split=config.split,
             data_dir=config.data_dir,
             as_supervised=config.as_supervised,
+            try_gcs=config.try_gcs,
         )
 
         # Collect all data
@@ -340,12 +433,19 @@ class TFDSEagerSource(DataSourceModule):
         Uses Grain's index_shuffle for shuffling, which computes
         shuffled indices on-the-fly without storing a permutation array.
         """
-        self.index.set_value(0)
-        self.epoch.set_value(self.epoch.get_value() + 1)
 
-        for i in range(self.length):
-            idx = self._get_shuffled_index(i)
-            yield {k: v[idx] for k, v in self.data.items()}
+        def build_element(data: dict, idx: int) -> dict[str, jax.Array]:
+            return {k: v[idx] for k, v in data.items()}
+
+        return eager_iter(
+            self.data,
+            self.length,
+            self.index,
+            self.epoch,
+            self.shuffle,
+            self._seed,
+            build_element,
+        )
 
     def __getitem__(self, index: int) -> dict[str, jax.Array]:
         """Get element at specific index.
@@ -365,42 +465,6 @@ class TFDSEagerSource(DataSourceModule):
             raise IndexError(f"Index {index} out of range for {self.length} elements")
         return {k: v[index] for k, v in self.data.items()}
 
-    def _get_shuffled_index(self, index: int) -> int:
-        """Get shuffled index using Grain's O(1) memory Feistel cipher.
-
-        Uses grain.index_shuffle instead of jax.random.permutation:
-        - O(1) memory vs O(n) for permutation array
-        - Deterministic and reproducible
-        - Per-epoch seeding for different shuffles each epoch
-
-        Args:
-            index: Original sequential index
-
-        Returns:
-            Shuffled index for current epoch
-        """
-        if not self.shuffle:
-            return index
-
-        try:
-            from grain._src.python.experimental.index_shuffle.python import (
-                index_shuffle_module as index_shuffle,
-            )
-
-            # Different seed per epoch for varied shuffles
-            epoch = self.epoch.get_value()
-            per_epoch_seed = (self._seed + epoch) % (2**32)
-
-            return index_shuffle.index_shuffle(
-                index, max_index=self.length - 1, seed=per_epoch_seed, rounds=4
-            )
-        except ImportError:
-            # Fallback: use JAX random for this index
-            # This is less efficient but works without Grain
-            key = jax.random.key(self._seed + self.epoch.get_value())
-            perm = jax.random.permutation(key, self.length)
-            return int(perm[index])
-
     # === Batch retrieval (stateless and stateful) ===
 
     def get_batch(self, batch_size: int, key: jax.Array | None = None) -> dict[str, jax.Array]:
@@ -413,26 +477,21 @@ class TFDSEagerSource(DataSourceModule):
         Returns:
             Batch of data as dictionary with batched arrays
         """
-        if key is not None:
-            # Stateless mode: use JAX random for one-off random sampling
-            if self.shuffle:
-                indices = jax.random.permutation(key, self.length)[:batch_size]
-            else:
-                indices = jnp.arange(batch_size)
-            return {k: v[indices] for k, v in self.data.items()}
 
-        # Stateful mode: sequential iteration through shuffled indices
-        start = self.index.get_value()
-        end = min(start + batch_size, self.length)
+        def gather_fn(data: dict, indices: jax.Array) -> dict[str, jax.Array]:
+            return {k: v[indices] for k, v in data.items()}
 
-        # Build indices (using shuffled mapping if enabled)
-        indices = jnp.array([self._get_shuffled_index(i) for i in range(start, end)])
-
-        self.index.set_value(end % self.length)
-        if end >= self.length:
-            self.epoch.set_value(self.epoch.get_value() + 1)
-
-        return {k: v[indices] for k, v in self.data.items()}
+        return eager_get_batch(
+            self.data,
+            self.length,
+            self.index,
+            self.epoch,
+            self.shuffle,
+            self._seed,
+            batch_size,
+            key,
+            gather_fn,
+        )
 
     # === Dataset info access ===
 
@@ -449,10 +508,7 @@ class TFDSEagerSource(DataSourceModule):
             seed: Optional new seed (ignored, use config seed)
         """
         del seed  # Use config seed
-        self.index.set_value(0)
-        self.epoch.set_value(0)
-        if self._cache is not None:
-            self._cache.clear()
+        eager_reset(self.index, self.epoch, self._cache)
 
     def set_shuffle(self, shuffle: bool) -> None:
         """Enable or disable shuffling.
@@ -541,8 +597,6 @@ class TFDSStreamingSource(DataSourceModule):
             name = f"TFDSStreamingSource({config.name}:{config.split})"
         super().__init__(config, rngs=rngs, name=name)
 
-        import tensorflow_datasets as tfds
-
         self.dataset_name = config.name
         self.split_name = config.split
         self.shuffle = config.shuffle
@@ -551,9 +605,13 @@ class TFDSStreamingSource(DataSourceModule):
         self.exclude_keys = config.exclude_keys
 
         # Load builder and info
-        builder = tfds.builder(config.name, data_dir=config.data_dir)
-        download_kwargs = config.download_and_prepare_kwargs or {}
-        builder.download_and_prepare(**download_kwargs)
+        builder = _prepare_tfds_builder(
+            config.name,
+            config.data_dir,
+            config.try_gcs,
+            config.download_and_prepare_kwargs,
+            beam_num_workers=config.beam_num_workers,
+        )
         self._dataset_info = builder.info
 
         # Build TF dataset with optimizations
@@ -616,15 +674,12 @@ class TFDSStreamingSource(DataSourceModule):
         if self.as_supervised and isinstance(tf_element, tuple):
             tf_element = {"image": tf_element[0], "label": tf_element[1]}
 
-        # Convert with DLPack and apply filtering
-        result = {}
-        for k, v in tf_element.items():
-            if self.include_keys and k not in self.include_keys:
-                continue
-            if self.exclude_keys and k in self.exclude_keys:
-                continue
-            result[k] = tf_to_jax(v)
-        return result
+        return convert_and_filter_element(
+            tf_element,
+            self.include_keys,
+            self.exclude_keys,
+            tf_to_jax,
+        )
 
     def get_dataset_info(self) -> tfds.core.DatasetInfo:
         """Get TFDS dataset info."""
@@ -638,9 +693,7 @@ class TFDSStreamingSource(DataSourceModule):
         """
         del seed
         self._iterator = None
-        self.epoch.set_value(0)
-        if self._cache is not None:
-            self._cache.clear()
+        reset_streaming_state(self.epoch, self._cache)
 
     def _apply_transform(
         self, batch_size: int, key: jax.Array | None, stats: Any | None = None
@@ -650,20 +703,13 @@ class TFDSStreamingSource(DataSourceModule):
         Note: For streaming sources, use pipeline batching instead.
         """
         del stats, key
-        # Collect batch_size elements
-        batch_elements = []
+        elements = []
         for _ in range(batch_size):
             try:
-                batch_elements.append(next(self))
+                elements.append(next(self))
             except StopIteration:
                 break
-
-        if not batch_elements:
-            return {}
-
-        # Stack into batch
-        keys = batch_elements[0].keys()
-        return {k: jnp.stack([elem[k] for elem in batch_elements]) for k in keys}
+        return batch_elements_to_dict(elements)
 
     def __repr__(self) -> str:
         """String representation."""

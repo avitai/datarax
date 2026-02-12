@@ -1,0 +1,42 @@
+name: Performance Gate
+
+on:
+  pull_request:
+    paths:
+      - 'src/datarax/**'
+      - 'benchmarks/**'
+      - 'pyproject.toml'
+
+jobs:
+  benchmark-tier1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      XLA_FLAGS: "--xla_force_host_platform_device_count=4"
+      JAX_PLATFORMS: "cpu"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Install benchkit
+        run: uv pip install -e tools/benchkit
+
+      - name: Run Tier 1 Benchmark Gate
+        run: uv run python -m benchmarks.runners.ci_runner --repetitions 3
+
+      - name: Regression check (benchkit)
+        run: uv run benchkit check --data benchmark-data/ --threshold 0.05
+        continue-on-error: true  # Non-blocking until baseline is established
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-results
+          path: benchmark-data/
+          retention-days: 30

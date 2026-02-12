@@ -25,7 +25,8 @@ from __future__ import annotations
 
 import gc
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any
+from collections.abc import Iterator
 
 import flax.nnx as nnx
 import jax
@@ -35,6 +36,15 @@ import numpy as np
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
 from datarax.sources._conversion import hf_to_jax
+from datarax.sources._eager_source_ops import (
+    batch_elements_to_dict,
+    convert_and_filter_element,
+    eager_get_batch,
+    eager_iter,
+    eager_reset,
+    reset_streaming_state,
+    validate_eager_config,
+)
 
 if TYPE_CHECKING:
     pass
@@ -95,15 +105,10 @@ class HFEagerConfig(StructuralConfig):
         # Call parent validation
         super().__post_init__()
 
-        # Validate required parameters
-        if self.name is None:
-            raise ValueError("name is required for HFEagerConfig")
-        if self.split is None:
-            raise ValueError("split is required for HFEagerConfig")
-
-        # Validate key filtering
-        if self.include_keys is not None and self.exclude_keys is not None:
-            raise ValueError("Cannot specify both include_keys and exclude_keys")
+        # Shared validation
+        validate_eager_config(
+            self.name, self.split, self.include_keys, self.exclude_keys, "HFEagerConfig"
+        )
 
 
 @dataclass
@@ -354,12 +359,19 @@ class HFEagerSource(DataSourceModule):
         Uses Grain's index_shuffle for shuffling, which computes
         shuffled indices on-the-fly without storing a permutation array.
         """
-        self.index.set_value(0)
-        self.epoch.set_value(self.epoch.get_value() + 1)
 
-        for i in range(self.length):
-            idx = self._get_shuffled_index(i)
-            yield {k: v[idx] if isinstance(v, jax.Array) else v[idx] for k, v in self.data.items()}
+        def build_element(data: dict, idx: int) -> dict[str, Any]:
+            return {k: v[idx] if isinstance(v, jax.Array) else v[idx] for k, v in data.items()}
+
+        return eager_iter(
+            self.data,
+            self.length,
+            self.index,
+            self.epoch,
+            self.shuffle,
+            self._seed,
+            build_element,
+        )
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         """Get element at specific index.
@@ -379,41 +391,6 @@ class HFEagerSource(DataSourceModule):
             raise IndexError(f"Index {index} out of range for {self.length} elements")
         return {k: v[index] if isinstance(v, jax.Array) else v[index] for k, v in self.data.items()}
 
-    def _get_shuffled_index(self, index: int) -> int:
-        """Get shuffled index using Grain's O(1) memory Feistel cipher.
-
-        Uses grain.index_shuffle instead of jax.random.permutation:
-        - O(1) memory vs O(n) for permutation array
-        - Deterministic and reproducible
-        - Per-epoch seeding for different shuffles each epoch
-
-        Args:
-            index: Original sequential index
-
-        Returns:
-            Shuffled index for current epoch
-        """
-        if not self.shuffle:
-            return index
-
-        try:
-            from grain._src.python.experimental.index_shuffle.python import (
-                index_shuffle_module as index_shuffle,
-            )
-
-            # Different seed per epoch for varied shuffles
-            epoch = self.epoch.get_value()
-            per_epoch_seed = (self._seed + epoch) % (2**32)
-
-            return index_shuffle.index_shuffle(
-                index, max_index=self.length - 1, seed=per_epoch_seed, rounds=4
-            )
-        except ImportError:
-            # Fallback: use JAX random for this index
-            key = jax.random.key(self._seed + self.epoch.get_value())
-            perm = jax.random.permutation(key, self.length)
-            return int(perm[index])
-
     # === Batch retrieval (stateless and stateful) ===
 
     def get_batch(self, batch_size: int, key: jax.Array | None = None) -> dict[str, Any]:
@@ -426,39 +403,27 @@ class HFEagerSource(DataSourceModule):
         Returns:
             Batch of data as dictionary with batched arrays
         """
-        if key is not None:
-            # Stateless mode: use JAX random for one-off random sampling
-            if self.shuffle:
-                indices = jax.random.permutation(key, self.length)[:batch_size]
-            else:
-                indices = jnp.arange(batch_size)
 
+        def gather_fn(data: dict, indices: jax.Array) -> dict[str, Any]:
             batch = {}
-            for k, v in self.data.items():
+            for k, v in data.items():
                 if isinstance(v, jax.Array):
                     batch[k] = v[indices]
                 else:
                     batch[k] = [v[int(i)] for i in indices]
             return batch
 
-        # Stateful mode: sequential iteration through shuffled indices
-        start = self.index.get_value()
-        end = min(start + batch_size, self.length)
-
-        # Build indices (using shuffled mapping if enabled)
-        shuffled_indices = [self._get_shuffled_index(i) for i in range(start, end)]
-
-        self.index.set_value(end % self.length)
-        if end >= self.length:
-            self.epoch.set_value(self.epoch.get_value() + 1)
-
-        batch = {}
-        for k, v in self.data.items():
-            if isinstance(v, jax.Array):
-                batch[k] = v[jnp.array(shuffled_indices)]
-            else:
-                batch[k] = [v[i] for i in shuffled_indices]
-        return batch
+        return eager_get_batch(
+            self.data,
+            self.length,
+            self.index,
+            self.epoch,
+            self.shuffle,
+            self._seed,
+            batch_size,
+            key,
+            gather_fn,
+        )
 
     # === Dataset info access ===
 
@@ -475,10 +440,7 @@ class HFEagerSource(DataSourceModule):
             seed: Optional new seed (ignored, use config seed)
         """
         del seed  # Use config seed
-        self.index.set_value(0)
-        self.epoch.set_value(0)
-        if self._cache is not None:
-            self._cache.clear()
+        eager_reset(self.index, self.epoch, self._cache)
 
     def set_shuffle(self, shuffle: bool) -> None:
         """Enable or disable shuffling.
@@ -659,26 +621,12 @@ class HFStreamingSource(DataSourceModule):
             self._iterator = iter(self._hf_dataset)
 
         element = next(self._iterator)
-
-        # Convert and filter
-        result = {}
-        for k, v in element.items():
-            if self.include_keys and k not in self.include_keys:
-                continue
-            if self.exclude_keys and k in self.exclude_keys:
-                continue
-
-            # Convert to JAX (handles PIL images, numpy arrays, scalars)
-            converted = hf_to_jax(v)
-            if isinstance(converted, jax.Array):
-                result[k] = converted
-            elif isinstance(converted, int | float | bool):
-                result[k] = jnp.array(converted)
-            else:
-                # Keep as-is for non-numeric types
-                result[k] = converted
-
-        return result
+        return convert_and_filter_element(
+            element,
+            self.include_keys,
+            self.exclude_keys,
+            hf_to_jax,
+        )
 
     def get_dataset_info(self) -> Any:
         """Get HuggingFace dataset info."""
@@ -692,9 +640,7 @@ class HFStreamingSource(DataSourceModule):
         """
         del seed
         self._iterator = None
-        self.epoch.set_value(0)
-        if self._cache is not None:
-            self._cache.clear()
+        reset_streaming_state(self.epoch, self._cache)
 
     def _apply_transform(
         self, batch_size: int, key: jax.Array | None, stats: Any | None = None
@@ -704,30 +650,13 @@ class HFStreamingSource(DataSourceModule):
         Note: For streaming sources, use pipeline batching instead.
         """
         del stats, key
-        # Collect batch_size elements
-        batch_elements = []
+        elements = []
         for _ in range(batch_size):
             try:
-                batch_elements.append(next(self))
+                elements.append(next(self))
             except StopIteration:
                 break
-
-        if not batch_elements:
-            return {}
-
-        # Stack into batch
-        keys = batch_elements[0].keys()
-        batch = {}
-        for k in keys:
-            values = [elem[k] for elem in batch_elements]
-            first_val = values[0]
-            if isinstance(first_val, jax.Array):
-                batch[k] = jnp.stack(values)
-            elif isinstance(first_val, int | float | bool):
-                batch[k] = jnp.array(values)
-            else:
-                batch[k] = values
-        return batch
+        return batch_elements_to_dict(elements)
 
     def __repr__(self) -> str:
         """String representation."""

@@ -3,18 +3,15 @@
 This module provides concrete operator implementations:
 
 - MapOperator: Unified operator for full-tree and subtree transformations
+- ElementOperator: Element-level transformation wrapper
+- CompositeOperatorModule: Compose multiple operators with 11 strategies
+- ProbabilisticOperator: Apply operators with configurable probability
+- SelectorOperator: Route inputs to one of N operators
+- BatchMixOperator: Batch-level mixing (e.g., CutMix, MixUp)
 
-MapOperator supports two modes:
-1. Full-tree mode (subtree=None): Applies user function to entire element data
-2. Subtree mode (subtree specified): Applies user function to data, but only
-   affects specified subtree using JAX tree masking
-
-These operators implement the unified OperatorModule API.
-
-Feature Support Status:
-
-- MapOperator: Current implementation (deterministic mode only)
-- Stochastic mode: To be added in future update after use case analysis
+CompositeOperatorModule supports WEIGHTED_PARALLEL with three weight modes:
+static weights, learnable weights (nnx.Param), and dynamic external weights
+via ``weight_key`` for differentiable pipelines (e.g., Gumbel-Softmax policies).
 """
 
 from datarax.operators.map_operator import MapOperator

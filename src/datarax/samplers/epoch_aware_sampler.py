@@ -1,7 +1,8 @@
-# File: src/datarax/samplers/epoch_aware_sampler.py
+"""Epoch-aware sampler with per-epoch callbacks and index tracking."""
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import flax.nnx as nnx
 import numpy as np
@@ -51,10 +52,6 @@ class EpochAwareSamplerConfig(StructuralConfig):
             raise ValueError(f"num_epochs must be positive or -1 (infinite), got {self.num_epochs}")
 
 
-# TODO: This module is not used in the current implementation.
-# It is a placeholder for future use.
-# It is not used in the current implementation.
-# It is a placeholder for future use.
 class EpochAwareSamplerModule(SamplerModule):
     """Sampler with explicit epoch boundary handling.
 
@@ -69,6 +66,13 @@ class EpochAwareSamplerModule(SamplerModule):
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
     ):
+        """Initialize EpochAwareSamplerModule.
+
+        Args:
+            config: Configuration specifying num_records, epochs, shuffle, and seed.
+            rngs: Optional Flax NNX random number generators.
+            name: Optional module name for identification.
+        """
         super().__init__(config, rngs=rngs, name=name)
 
         # Store config values as Variables for NNX state tracking
@@ -156,3 +160,23 @@ class EpochAwareSamplerModule(SamplerModule):
             "records_per_epoch": num_records,
             "progress_percent": (current_index / num_records) * 100,
         }
+
+    def __len__(self) -> int:
+        """Return total number of indices across all epochs."""
+        num_epochs = self.num_epochs.get_value()
+        if num_epochs == -1:
+            raise ValueError("Cannot determine length for infinite epochs")
+        return self.num_records.get_value() * num_epochs
+
+    def reset(self, seed: int | None = None) -> None:
+        """Reset the sampler to initial state.
+
+        Args:
+            seed: Optional new base seed. If provided, changes the shuffle
+                order for subsequent iterations.
+        """
+        self.current_epoch.set_value(0)
+        self.current_index.set_value(0)
+        self.epoch_indices.set_value(None)
+        if seed is not None:
+            self.base_seed.set_value(seed)

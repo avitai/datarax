@@ -1,6 +1,7 @@
 """Sequential composition strategies."""
 
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import jax
 from jaxtyping import PyTree
@@ -17,6 +18,15 @@ class SequentialStrategy(CompositionStrategyImpl):
         operators: list[OperatorModule],
         context: StrategyContext,
     ) -> tuple[PyTree, PyTree, dict[str, Any]]:
+        """Apply operators sequentially, piping each output to the next.
+
+        Args:
+            operators: Ordered list of operators to chain.
+            context: Execution context with input data, state, and RNG params.
+
+        Returns:
+            Tuple of (data, state, metadata) after all operators have run.
+        """
         result_data, result_state, result_metadata = context.data, context.state, context.metadata
 
         for i, operator in enumerate(operators):
@@ -44,6 +54,11 @@ class ConditionalSequentialStrategy(CompositionStrategyImpl):
     """
 
     def __init__(self, conditions: list[Callable[[PyTree], bool | jax.Array]]):
+        """Initialize ConditionalSequentialStrategy.
+
+        Args:
+            conditions: List of callables that determine whether each operator is applied.
+        """
         self.conditions = conditions
 
     def apply(
@@ -51,6 +66,20 @@ class ConditionalSequentialStrategy(CompositionStrategyImpl):
         operators: list[OperatorModule],
         context: StrategyContext,
     ) -> tuple[PyTree, PyTree, dict[str, Any]]:
+        """Apply operators sequentially, skipping those whose condition is False.
+
+        Uses ``jax.lax.cond`` for vmap-compatible conditional execution.
+
+        Args:
+            operators: Operators to apply (must match length of conditions).
+            context: Execution context with input data, state, and RNG params.
+
+        Returns:
+            Tuple of (data, state, metadata) after conditional execution.
+
+        Raises:
+            ValueError: If operator count doesn't match condition count.
+        """
         result_data, result_state, result_metadata = context.data, context.state, context.metadata
 
         if len(operators) != len(self.conditions):

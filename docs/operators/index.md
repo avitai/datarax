@@ -70,6 +70,12 @@ Strategies for combining operators in `CompositeOperatorModule`:
 - [merging](merging.md) - Output merging strategies (concat, sum, mean)
 - [base](base.md) - Base strategy interface
 
+## Real-World Examples
+
+- [DADA Learned Augmentation](../examples/advanced/differentiable/dada-learned-augmentation.md) - 15 augmentation operators composed with Gumbel-Softmax for differentiable policy search
+- [Learned ISP Pipeline](../examples/advanced/differentiable/learned-isp-guide.md) - 5 custom `ModalityOperator` ISP stages with learnable `nnx.Param` parameters
+- [DDSP Audio Synthesis](../examples/advanced/differentiable/ddsp-audio-synthesis.md) - Custom `OperatorModule` subclasses for audio DSP, extending datarax beyond images
+
 ## See Also
 
 - [Element Operator Guide](element_operator.md) - Detailed element operator docs

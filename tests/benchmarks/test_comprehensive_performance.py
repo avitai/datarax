@@ -1,4 +1,4 @@
-"""Comprehensive performance benchmark suite for Datarax.
+"""Full performance benchmark suite for Datarax.
 
 This module provides rigorous performance testing following TDD principles.
 Each test is designed to:

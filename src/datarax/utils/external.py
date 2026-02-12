@@ -5,7 +5,8 @@ interfaces, particularly focused on JAX and Flax NNX integration.
 """
 
 from dataclasses import dataclass
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
+from collections.abc import Callable
 
 import flax.nnx as nnx
 import jax

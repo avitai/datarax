@@ -1,6 +1,6 @@
 """Complete pipeline performance benchmarks for Datarax.
 
-This module provides comprehensive performance benchmarks for the DAGExecutor,
+This module provides detailed performance benchmarks for the DAGExecutor,
 testing various configurations including linear pipelines, parallel processing,
 conditional branching, and complex DAG topologies.
 """

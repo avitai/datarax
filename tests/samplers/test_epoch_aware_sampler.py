@@ -2,7 +2,7 @@
 
 """Tests for EpochAwareSamplerModule.
 
-Comprehensive test suite for epoch-based sampling with shuffle
+Full test suite for epoch-based sampling with shuffle
 and callback functionality.
 """
 
@@ -390,3 +390,156 @@ class TestEpochAwareSamplerEdgeCases:
         indices2 = [idx for idx in sampler]
 
         assert indices1 == indices2 == [0, 1, 2]
+
+
+class TestEpochAwareSamplerCheckpointing:
+    """Tests for get_state/set_state checkpointing."""
+
+    def test_get_state_returns_complete_state(self):
+        """get_state() returns epoch, index, and config values."""
+        config = EpochAwareSamplerConfig(num_records=10, num_epochs=3, shuffle=True, seed=42)
+        sampler = EpochAwareSamplerModule(config, rngs=nnx.Rngs(0))
+
+        # Advance into the middle of iteration
+        iterator = iter(sampler)
+        for _ in range(5):
+            next(iterator)
+
+        state = sampler.get_state()
+
+        assert state["current_epoch"] == 0
+        assert state["current_index"] == 5
+        assert state["num_records"] == 10
+        assert state["num_epochs"] == 3
+        assert state["shuffle"] is True
+        assert state["base_seed"] == 42
+        assert "epoch_indices" in state
+        assert len(state["epoch_indices"]) == 10
+
+    def test_set_state_restores_mid_epoch(self):
+        """set_state() can resume from mid-epoch position."""
+        config = EpochAwareSamplerConfig(num_records=5, num_epochs=2, shuffle=False)
+        sampler = EpochAwareSamplerModule(config, rngs=nnx.Rngs(0))
+
+        # Advance 3 items into first epoch
+        iterator = iter(sampler)
+        for _ in range(3):
+            next(iterator)
+
+        state = sampler.get_state()
+
+        # Create a new sampler and restore state
+        config2 = EpochAwareSamplerConfig(num_records=5, num_epochs=2, shuffle=False)
+        sampler2 = EpochAwareSamplerModule(config2, rngs=nnx.Rngs(0))
+        sampler2.set_state(state)
+
+        # Should be at index 3 in epoch 0
+        assert sampler2.current_index.get_value() == 3
+        assert sampler2.current_epoch.get_value() == 0
+
+    def test_checkpoint_round_trip(self):
+        """get_state -> set_state produces identical subsequent indices."""
+        config = EpochAwareSamplerConfig(num_records=6, num_epochs=2, shuffle=True, seed=42)
+        sampler = EpochAwareSamplerModule(config, rngs=nnx.Rngs(0))
+
+        # Advance partway
+        iterator = iter(sampler)
+        for _ in range(4):
+            next(iterator)
+
+        state = sampler.get_state()
+
+        # Collect remaining indices from original
+        remaining_original = []
+        try:
+            while True:
+                remaining_original.append(next(iterator))
+        except StopIteration:
+            pass
+
+        # Restore into a new sampler and collect remaining
+        config2 = EpochAwareSamplerConfig(num_records=6, num_epochs=2, shuffle=True, seed=42)
+        sampler2 = EpochAwareSamplerModule(config2, rngs=nnx.Rngs(0))
+        sampler2.set_state(state)
+
+        remaining_restored = []
+        idx = sampler2.current_index.get_value()
+        epoch = sampler2.current_epoch.get_value()
+        num_epochs = sampler2.num_epochs.get_value()
+        num_records = sampler2.num_records.get_value()
+        epoch_indices = sampler2.epoch_indices.get_value()
+
+        # Manually iterate without calling __iter__ (which resets state)
+        while True:
+            if epoch >= num_epochs and num_epochs != -1:
+                break
+            if idx >= num_records:
+                epoch += 1
+                if epoch >= num_epochs and num_epochs != -1:
+                    break
+                sampler2.current_epoch.set_value(epoch)
+                sampler2._generate_epoch_indices()
+                epoch_indices = sampler2.epoch_indices.get_value()
+                idx = 0
+            remaining_restored.append(epoch_indices[idx])
+            idx += 1
+            sampler2.current_index.set_value(idx)
+
+        assert remaining_original == remaining_restored
+
+
+class TestEpochAwareSamplerLen:
+    """Tests for __len__."""
+
+    def test_len_single_epoch(self):
+        """len() returns num_records for single epoch."""
+        config = EpochAwareSamplerConfig(num_records=10, num_epochs=1, shuffle=False)
+        sampler = EpochAwareSamplerModule(config, rngs=nnx.Rngs(0))
+        assert len(sampler) == 10
+
+    def test_len_multi_epoch(self):
+        """len() returns num_records * num_epochs."""
+        config = EpochAwareSamplerConfig(num_records=10, num_epochs=5, shuffle=False)
+        sampler = EpochAwareSamplerModule(config, rngs=nnx.Rngs(0))
+        assert len(sampler) == 50
+
+    def test_len_infinite_raises(self):
+        """len() raises ValueError for num_epochs=-1."""
+        config = EpochAwareSamplerConfig(num_records=10, num_epochs=-1, shuffle=False)
+        sampler = EpochAwareSamplerModule(config, rngs=nnx.Rngs(0))
+        with pytest.raises(ValueError, match="Cannot determine length"):
+            len(sampler)
+
+
+class TestEpochAwareSamplerReset:
+    """Tests for reset method."""
+
+    def test_reset_restarts_iteration(self):
+        """reset() allows restarting iteration from beginning."""
+        config = EpochAwareSamplerConfig(num_records=5, num_epochs=1, shuffle=False)
+        sampler = EpochAwareSamplerModule(config, rngs=nnx.Rngs(0))
+
+        # Iterate fully
+        indices1 = [idx for idx in sampler]
+        assert len(indices1) == 5
+
+        # Reset and iterate again
+        sampler.reset()
+        indices2 = [idx for idx in sampler]
+        assert indices2 == [0, 1, 2, 3, 4]
+
+    def test_reset_with_seed_changes_shuffle(self):
+        """reset(seed=new) produces different shuffle order."""
+        config = EpochAwareSamplerConfig(num_records=10, num_epochs=1, shuffle=True, seed=42)
+        sampler = EpochAwareSamplerModule(config, rngs=nnx.Rngs(0))
+
+        indices1 = [idx for idx in sampler]
+
+        sampler.reset(seed=999)
+        indices2 = [idx for idx in sampler]
+
+        # Both should contain all indices
+        assert sorted(indices1) == list(range(10))
+        assert sorted(indices2) == list(range(10))
+        # But in different order
+        assert indices1 != indices2

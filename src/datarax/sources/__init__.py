@@ -26,6 +26,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
+from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
 from datarax.sources.array_record_source import ArrayRecordSourceModule
 
 # Type-checking imports for static analysis (not executed at runtime)
@@ -91,7 +92,10 @@ def from_tfds(
     seed: int = 42,
     rngs: nnx.Rngs | None = None,
     data_dir: str | None = None,
+    try_gcs: bool = False,
     as_supervised: bool = False,
+    download_and_prepare_kwargs: dict | None = None,
+    beam_num_workers: int | None = None,
     include_keys: set[str] | None = None,
     exclude_keys: set[str] | None = None,
 ) -> DataSourceModule:
@@ -109,7 +113,15 @@ def from_tfds(
         seed: Integer seed for shuffling (for Grain's index_shuffle)
         rngs: Optional Flax NNX RNG state
         data_dir: Optional directory for dataset storage
+        try_gcs: If True, load pre-built data from Google Cloud Storage
+            (gs://tfds-data/datasets/). Bypasses local download_and_prepare(),
+            which avoids Apache Beam dependencies for datasets like NSynth.
+            Mutually exclusive with data_dir.
         as_supervised: If True, returns {"image": ..., "label": ...}
+        download_and_prepare_kwargs: Optional kwargs for download_and_prepare
+        beam_num_workers: Number of Apache Beam DirectRunner workers for
+            parallel dataset generation. Useful for large Beam-based datasets
+            (e.g., NSynth). None uses Beam's default (single-threaded).
         include_keys: Optional set of keys to include
         exclude_keys: Optional set of keys to exclude
 
@@ -123,6 +135,12 @@ def from_tfds(
 
         # Auto-detect: MNIST is small, will use eager
         source = from_tfds("mnist", "train", shuffle=True, rngs=nnx.Rngs(0))
+
+        # Load from GCS (bypasses Apache Beam for datasets like NSynth)
+        source = from_tfds("nsynth/gansynth_subset", "train", try_gcs=True)
+
+        # Parallel dataset generation for Beam-based datasets
+        source = from_tfds("nsynth", "train", beam_num_workers=4)
 
         # Force streaming for memory-constrained environments
         source = from_tfds("mnist", "train", eager=False, rngs=nnx.Rngs(0))
@@ -140,7 +158,7 @@ def from_tfds(
         try:
             import tensorflow_datasets as tfds
 
-            builder = tfds.builder(name, data_dir=data_dir)
+            builder = tfds.builder(name, data_dir=data_dir, try_gcs=try_gcs)
             # Get size from dataset info
             split_base = split.split("[")[0]  # Handle "train[:1000]"
             if builder.info.splits and split_base in builder.info.splits:
@@ -159,7 +177,10 @@ def from_tfds(
             shuffle=shuffle,
             seed=seed,
             data_dir=data_dir,
+            try_gcs=try_gcs,
             as_supervised=as_supervised,
+            download_and_prepare_kwargs=download_and_prepare_kwargs,
+            beam_num_workers=beam_num_workers,
             include_keys=include_keys,
             exclude_keys=exclude_keys,
         )
@@ -170,7 +191,10 @@ def from_tfds(
             split=split,
             shuffle=shuffle,
             data_dir=data_dir,
+            try_gcs=try_gcs,
             as_supervised=as_supervised,
+            download_and_prepare_kwargs=download_and_prepare_kwargs,
+            beam_num_workers=beam_num_workers,
             include_keys=include_keys,
             exclude_keys=exclude_keys,
         )
@@ -273,6 +297,9 @@ __all__ = [
     # Memory source (always available)
     "MemorySource",
     "MemorySourceConfig",
+    # Mixed source
+    "MixDataSourcesNode",
+    "MixDataSourcesConfig",
     # Array record source
     "ArrayRecordSourceModule",
     # TFDS sources

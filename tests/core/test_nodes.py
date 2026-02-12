@@ -1,4 +1,4 @@
-"""Comprehensive test suite for DAG nodes.
+"""Full test suite for DAG nodes.
 
 Written FIRST following TDD principles.
 """
@@ -8,7 +8,7 @@ import pytest
 import jax
 import jax.numpy as jnp
 import flax.nnx as nnx
-from typing import Iterator
+from collections.abc import Iterator
 
 from datarax.dag.nodes import (
     Node,

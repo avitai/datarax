@@ -1,7 +1,8 @@
-# File: src/datarax/samplers/sequential_sampler.py
+"""Sequential sampler for iterating over dataset indices in order."""
 
 from dataclasses import dataclass
-from typing import Any, Iterator
+from typing import Any
+from collections.abc import Iterator
 
 import flax.nnx as nnx
 

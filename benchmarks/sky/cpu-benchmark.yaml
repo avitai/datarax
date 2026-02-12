@@ -1,0 +1,53 @@
+name: datarax-benchmark-cpu
+
+resources:
+  cpus: 8+
+  memory: 16+
+  disk_size: 50
+  use_spot: true
+  accelerators: null  # no GPU required — CPU benchmark
+
+envs:
+  WANDB_API_KEY:  # set via: sky launch ... --env WANDB_API_KEY=$WANDB_API_KEY
+  RAY_ENABLE_UV_RUN_RUNTIME_ENV: "0"
+
+setup: |
+  pip install uv
+  cd ~/datarax && uv venv --python 3.11 .venv
+  cd ~/datarax && uv pip install --python .venv/bin/python -e ".[benchmark]" -e "tools/benchkit[wandb]"
+
+run: |
+  set -euo pipefail
+  cd ~/datarax
+
+  # Clear RAY_ADDRESS so the benchmark doesn't connect to SkyPilot's Ray cluster
+  unset RAY_ADDRESS
+
+  # The datarax-bench entry point needs benchmarks/ on sys.path.
+  export PYTHONPATH="${PWD}:${PYTHONPATH:-}"
+
+  export JAX_PLATFORMS=cpu
+  export XLA_FLAGS="--xla_force_host_platform_device_count=4"
+
+  # Exclude Ray Data — hangs on SkyPilot VMs (Ray #59639).
+  .venv/bin/datarax-bench run \
+    --platform cpu \
+    --profile ci_cpu \
+    --repetitions 5 \
+    --output-dir ~/results/ \
+    --data ~/benchmark-data \
+    --adapters Datarax \
+    --adapters 'Google Grain' \
+    --adapters jax-dataloader \
+    --adapters tf.data \
+    --adapters 'PyTorch DataLoader' \
+    --adapters 'NVIDIA DALI' \
+    --adapters SPDL \
+    --adapters 'MosaicML Streaming' \
+    --adapters WebDataset \
+    --adapters 'HuggingFace Datasets' \
+    --adapters LitData \
+    --adapters 'Deep Lake'
+
+file_mounts:
+  ~/datarax: .

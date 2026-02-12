@@ -237,7 +237,6 @@ class TestOperatorModuleInitialization:
 
         # Should have all DataraxModule attributes
         assert hasattr(operator, "config")
-        assert hasattr(operator, "_iteration_count")
 
 
 # ========================================================================
@@ -981,6 +980,95 @@ class TestOperatorModuleCopying:
 
 
 # ========================================================================
+# Test Category 10: Scan Batch Strategy
+# ========================================================================
+
+
+class TestOperatorModuleScanBatchStrategy:
+    """Test scan-based batch execution strategy (sequential, low memory)."""
+
+    def test_scan_default_is_vmap(self):
+        """Default batch_strategy should be 'vmap'."""
+        config = NormalizeConfig(stochastic=False)
+        assert config.batch_strategy == "vmap"
+
+    def test_scan_config_validation(self):
+        """Invalid batch_strategy should raise ValueError."""
+        with pytest.raises(ValueError, match="batch_strategy"):
+            NormalizeConfig(stochastic=False, batch_strategy="invalid")
+
+    def test_scan_produces_same_result_as_vmap(self):
+        """Scan strategy produces identical results to vmap for deterministic ops."""
+        # Create two operators: one vmap (default), one scan
+        config_vmap = NormalizeConfig(
+            stochastic=False,
+            batch_strategy="vmap",
+            precomputed_stats={"mean": 0.5, "std": 0.2},
+        )
+        config_scan = NormalizeConfig(
+            stochastic=False,
+            batch_strategy="scan",
+            precomputed_stats={"mean": 0.5, "std": 0.2},
+        )
+        op_vmap = NormalizeOperator(config_vmap)
+        op_scan = NormalizeOperator(config_scan)
+
+        # Create batch of 4 elements
+        batch = create_test_batch(
+            data={"image": jnp.array([[0.3], [0.5], [0.7], [0.9]])},
+            states={},
+            metadata_list=[None] * 4,
+        )
+
+        result_vmap = op_vmap.apply_batch(batch)
+        result_scan = op_scan.apply_batch(batch)
+
+        assert jnp.allclose(result_vmap.data["image"], result_scan.data["image"]), (
+            "Scan and vmap should produce identical results for deterministic ops"
+        )
+
+    def test_scan_with_stochastic_operator(self):
+        """Scan strategy works with stochastic operators (shapes match)."""
+        config = RandomBrightnessConfig(
+            stochastic=True,
+            stream_name="augment",
+            batch_strategy="scan",
+        )
+        rngs = nnx.Rngs(42)
+        operator = RandomBrightnessOperator(config, rngs=rngs)
+
+        batch = create_test_batch(
+            data={"image": jnp.ones((4, 32, 32, 3)) * 0.5},
+            states={},
+            metadata_list=[None] * 4,
+        )
+
+        result = operator.apply_batch(batch)
+        assert result.batch_size == 4
+        assert result.data["image"].shape == (4, 32, 32, 3)
+
+    def test_scan_single_element_batch(self):
+        """Scan strategy works with batch size 1."""
+        config = NormalizeConfig(
+            stochastic=False,
+            batch_strategy="scan",
+            precomputed_stats={"mean": 0.5, "std": 0.2},
+        )
+        op = NormalizeOperator(config)
+
+        batch = create_test_batch(
+            data={"image": jnp.ones((1, 32, 32, 3)) * 0.7},
+            states={},
+            metadata_list=[None],
+        )
+
+        result = op.apply_batch(batch)
+        assert result.batch_size == 1
+        expected = jnp.ones((1, 32, 32, 3)) * 1.0  # (0.7 - 0.5) / 0.2
+        assert jnp.allclose(result.data["image"], expected)
+
+
+# ========================================================================
 # Test Count Summary
 # ========================================================================
 # TestOperatorModuleInitialization: 8 tests
@@ -992,5 +1080,6 @@ class TestOperatorModuleCopying:
 # TestOperatorModuleStatistics: 5 tests
 # TestOperatorModuleTrainingMode: 3 tests
 # TestOperatorModuleCopying: 5 tests
+# TestOperatorModuleScanBatchStrategy: 5 tests
 # ========================================================================
-# Total: 48 tests (within 70-90 target range - can expand categories if needed)
+# Total: 53 tests

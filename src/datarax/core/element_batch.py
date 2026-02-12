@@ -9,7 +9,8 @@ Key design decisions:
 - Efficient vectorized operations without Python loops
 """
 
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import flax.nnx as nnx
 import flax.struct as struct
@@ -645,10 +646,56 @@ def _create_batch_naive(
     return Batch(elements, validate=False)
 
 
+class BatchView:
+    """Lightweight batch container for the hot iteration path.
+
+    A plain Python object (NOT an nnx.Module) that provides the same dict-like
+    interface as Batch but without NNX Variable overhead. Uses __slots__ for
+    minimal memory footprint.
+
+    Used in the fused operator chain where we need:
+    - get_data() for adapter materialization
+    - __getitem__, __contains__, __iter__ for dict-like access
+    - batch_size for consistency checks
+    - to_batch() for conversion when full NNX Batch features are needed
+
+    Creating a BatchView is essentially free (~0μs) compared to Batch
+    which creates 5 nnx.Variable instances (~50-100μs).
+    """
+
+    __slots__ = ("_data", "_states", "batch_size")
+
+    def __init__(self, data: dict, states: dict, batch_size: int):
+        self._data = data
+        self._states = states
+        self.batch_size = batch_size
+
+    def get_data(self) -> dict:
+        """Get batched data dictionary (same interface as Batch)."""
+        return self._data
+
+    def to_batch(self) -> "Batch":
+        """Convert to full NNX Batch when needed."""
+        return Batch.from_parts(data=self._data, states=self._states, validate=False)
+
+    def __getitem__(self, key: str) -> jax.Array:
+        """Dict-like access to data arrays."""
+        return self._data[key]
+
+    def __contains__(self, key: str) -> bool:
+        """Dict-like containment check."""
+        return key in self._data
+
+    def __iter__(self):
+        """Iterate over data keys."""
+        return iter(self._data)
+
+
 # Export public API
 __all__ = [
     "Element",
     "Batch",
+    "BatchView",
     "BatchOps",
     "conditional_transform",
     "iterative_transform",

@@ -1,0 +1,53 @@
+# =============================================================================
+# Datarax Benchmark — CPU Image
+# =============================================================================
+# Runs all benchmark scenarios (including competing frameworks) on CPU.
+# Includes the full `benchmark` extra: PyTorch, DALI, Ray, MosaicML, etc.
+#
+# Build:  docker build -f benchmarks/docker/Dockerfile.cpu -t datarax-bench:cpu .
+# Run:    docker run --rm datarax-bench:cpu
+# Custom: docker run --rm datarax-bench:cpu python -m benchmarks.runners.full_runner --help
+# =============================================================================
+
+FROM python:3.11-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# Force CPU-only JAX with simulated multi-device
+ENV JAX_PLATFORMS=cpu
+ENV XLA_FLAGS="--xla_force_host_platform_device_count=4"
+
+# build-essential needed for native extensions in some benchmark deps (DALI, etc.)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# --- Layer 1: Dependencies ---
+COPY pyproject.toml uv.lock README.md LICENSE ./
+
+RUN uv venv /app/.venv
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+RUN uv pip install -e ".[benchmark]"
+
+# --- Layer 2: benchkit path dependency ---
+COPY tools/benchkit ./tools/benchkit
+RUN uv pip install -e tools/benchkit
+
+# --- Layer 3: Source + benchmark code ---
+COPY src ./src
+COPY benchmarks ./benchmarks
+COPY conftest.py ./conftest.py
+
+# Reinstall to link source
+RUN uv pip install -e ".[benchmark]"
+
+CMD ["python", "-m", "benchmarks.runners.full_runner", "--platform", "cpu"]

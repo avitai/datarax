@@ -192,20 +192,7 @@ class TestEnhancedDataraxModule:
         assert module.name == "test_module"
         assert module.config.cacheable is True
         assert module.config.precomputed_stats == {"constant": 42}
-        assert int(module._iteration_count[...]) == 0
         assert module._cache is not None
-
-    def test_iteration_counting(self, basic_module):
-        """Test iteration counting functionality."""
-        # Use [...] for IterationCount Variable access (new NNX API)
-        assert int(basic_module._iteration_count[...]) == 0
-
-        # Simulate some operations that increment counter
-        basic_module._iteration_count[...] += 1
-        assert int(basic_module._iteration_count[...]) == 1
-
-        basic_module._iteration_count[...] += 1
-        assert int(basic_module._iteration_count[...]) == 2
 
     def test_caching_functionality(self, basic_module):
         """Test caching functionality."""
@@ -297,25 +284,18 @@ class TestEnhancedDataraxModule:
 
     def test_enhanced_state_management(self, basic_module):
         """Test enhanced state management including new features."""
-        # Set some state using [...] syntax (new NNX API)
-        basic_module._iteration_count[...] = 5
         basic_module._cache["test_key"] = "test_value"
 
         # Get state
         state = basic_module.get_state()
 
-        # Check that state includes internal field names with simplified format
-        assert "_iteration_count" in state
         # _cache is not included as it's not an nnx.Variable
-
-        assert state["_iteration_count"] == 5
+        assert isinstance(state, dict)
 
         # Test state restoration
         new_config = DataraxModuleConfig(cacheable=True)
         new_module = DataraxModule(new_config)
         new_module.set_state(state)
-
-        assert int(new_module._iteration_count[...]) == 5
 
     def test_module_without_caching(self, rngs):
         """Test module behavior when caching is disabled."""

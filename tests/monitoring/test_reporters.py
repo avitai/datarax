@@ -10,6 +10,8 @@ import tempfile
 import time
 from unittest.mock import patch
 
+import pytest
+
 import numpy as np
 import flax.nnx as nnx
 
@@ -115,6 +117,33 @@ def test_file_reporter():
             # Clean up
             if os.path.exists(temp_filename):
                 os.unlink(temp_filename)
+
+
+def test_file_reporter_context_manager():
+    """Test that FileReporter works as a context manager and closes file on exit."""
+    with tempfile.NamedTemporaryFile(delete=False) as tf:
+        path = tf.name
+    try:
+        with FileReporter(filename=path, report_interval=0.0) as reporter:
+            reporter.update([MetricRecord("test", 1.0, time.time(), "test")])
+        # File should be closed after context exit
+        assert reporter.file.closed
+    finally:
+        os.unlink(path)
+
+
+def test_file_reporter_context_manager_on_exception():
+    """Test that FileReporter closes file even when exception occurs."""
+    with tempfile.NamedTemporaryFile(delete=False) as tf:
+        path = tf.name
+    try:
+        with pytest.raises(RuntimeError):
+            with FileReporter(filename=path, report_interval=0.0) as reporter:
+                reporter.update([MetricRecord("test", 1.0, time.time(), "test")])
+                raise RuntimeError("test error")
+        assert reporter.file.closed
+    finally:
+        os.unlink(path)
 
 
 def test_end_to_end_monitoring_with_console_reporter():

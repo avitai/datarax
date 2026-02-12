@@ -4,10 +4,10 @@ This module provides utilities for creating and managing JAX device meshes
 for coordinating distributed computations across multiple devices.
 """
 
-import numpy as np
-from typing import Any
+from typing import Any, Union
 
 import jax
+import numpy as np
 from jax.sharding import Mesh
 
 
@@ -19,9 +19,9 @@ class DeviceMeshManager:
     and hybrid approaches.
     """
 
+    @staticmethod
     def create_device_mesh(
-        self,
-        mesh_shape: dict[str, int] | list[tuple[str, int]],
+        mesh_shape: Union[dict[str, int], list[tuple[str, int]]],
         devices: list[Any] | None = None,
     ) -> Mesh:
         """Create a JAX device mesh with the specified shape.
@@ -69,9 +69,10 @@ class DeviceMeshManager:
 
         # Create and return the Mesh object
         axis_names = tuple(name for name, _ in mesh_shape_list)
-        return jax.sharding.Mesh(mesh_devices_array, axis_names=axis_names)
+        return Mesh(mesh_devices_array, axis_names=axis_names)
 
-    def create_data_parallel_mesh(self, num_devices: int | None = None) -> Mesh:
+    @staticmethod
+    def create_data_parallel_mesh(num_devices: int | None = None) -> Mesh:
         """Create a data-parallel device mesh.
 
         Args:
@@ -85,9 +86,10 @@ class DeviceMeshManager:
         if num_devices is not None:
             devices = devices[:num_devices]
 
-        return self.create_device_mesh([("data", len(devices))], devices)
+        return DeviceMeshManager.create_device_mesh([("data", len(devices))], devices)
 
-    def create_model_parallel_mesh(self, num_devices: int) -> Mesh:
+    @staticmethod
+    def create_model_parallel_mesh(num_devices: int) -> Mesh:
         """Create a model-parallel device mesh.
 
         Args:
@@ -103,9 +105,10 @@ class DeviceMeshManager:
                 f"devices, but only {len(devices)} are available."
             )
 
-        return self.create_device_mesh([("model", num_devices)], devices[:num_devices])
+        return DeviceMeshManager.create_device_mesh([("model", num_devices)], devices[:num_devices])
 
-    def create_hybrid_mesh(self, data_parallel_size: int, model_parallel_size: int) -> Mesh:
+    @staticmethod
+    def create_hybrid_mesh(data_parallel_size: int, model_parallel_size: int) -> Mesh:
         """Create a hybrid data-parallel and model-parallel device mesh.
 
         Args:
@@ -131,9 +134,10 @@ class DeviceMeshManager:
             ("data", data_parallel_size),
             ("model", model_parallel_size),
         ]
-        return self.create_device_mesh(mesh_shape, devices[:total_devices])
+        return DeviceMeshManager.create_device_mesh(mesh_shape, devices[:total_devices])
 
-    def get_mesh_info(self, mesh: Mesh) -> dict[str, int | dict[str, int]]:
+    @staticmethod
+    def get_mesh_info(mesh: Mesh) -> dict[str, int | dict[str, int]]:
         """Get information about a device mesh.
 
         Args:
@@ -148,9 +152,9 @@ class DeviceMeshManager:
             "axes": {},
         }
 
-        axes_info = info["axes"]
-        if isinstance(axes_info, dict):
-            for i, axis_name in enumerate(mesh.axis_names):
-                axes_info[axis_name] = mesh.devices.shape[i]
+        axes_dict: dict[str, int] = {}
+        for i, axis_name in enumerate(mesh.axis_names):
+            axes_dict[axis_name] = mesh.devices.shape[i]
+        info["axes"] = axes_dict
 
         return info

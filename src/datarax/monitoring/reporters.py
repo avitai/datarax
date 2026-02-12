@@ -4,10 +4,10 @@ This module provides implementations of MetricsObservers that report metrics
 to various outputs like console, files, or external systems.
 """
 
-import os
 import sys
 import time
-from typing import Any, cast, Set, TextIO
+from pathlib import Path
+from typing import Any, TextIO, cast
 
 from datarax.monitoring.callbacks import MetricsObserver
 from datarax.monitoring.metrics import AggregatedMetrics, MetricRecord
@@ -24,8 +24,8 @@ class ConsoleReporter(MetricsObserver):
         self,
         report_interval: float = 5.0,
         show_components: bool = True,
-        filter_components: Set[str] | None = None,
-        filter_metrics: Set[str] | None = None,
+        filter_components: set[str] | None = None,
+        filter_metrics: set[str] | None = None,
         output: TextIO = sys.stdout,
     ):
         """Initialize a new ConsoleReporter.
@@ -187,17 +187,19 @@ class FileReporter(ConsoleReporter):
             **kwargs: Additional arguments to pass to ConsoleReporter.
         """
         # Ensure the file is written to the temp/monitoring directory by default
-        if not os.path.isabs(filename):
+        filepath = Path(filename)
+        if not filepath.is_absolute():
             # Create the temp/monitoring directory if it doesn't exist
-            os.makedirs("temp/monitoring", exist_ok=True)
+            Path("temp/monitoring").mkdir(parents=True, exist_ok=True)
             # Prepend the temp/monitoring path if filename is relative
             if not filename.startswith("temp/"):
-                filename = os.path.join("temp/monitoring", os.path.basename(filename))
+                filepath = Path("temp/monitoring") / filepath.name
+                filename = str(filepath)
 
         # Ensure the directory exists
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        Path(filename).parent.mkdir(parents=True, exist_ok=True)
 
-        self.file = open(filename, mode)
+        self.file = Path(filename).open(mode)
         # Cast file to TextIO to satisfy type checker
         file_output = cast(TextIO, self.file)
         super().__init__(
@@ -206,7 +208,17 @@ class FileReporter(ConsoleReporter):
             **kwargs,
         )
 
-    def __del__(self):
-        """Close the file when the reporter is deleted."""
-        if hasattr(self, "file") and self.file:
+    def close(self):
+        """Close the file handle. Idempotent."""
+        if hasattr(self, "file") and self.file and not self.file.closed:
             self.file.close()
+
+    def __enter__(self) -> "FileReporter":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
+    def __del__(self):
+        """Safety net — prefer using as context manager."""
+        self.close()

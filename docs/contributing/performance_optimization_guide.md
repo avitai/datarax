@@ -147,20 +147,26 @@ stop_trace()
 ### Using Datarax's Benchmark Utilities
 
 ```python
-from datarax.benchmarking.pipeline_throughput import PipelineBenchmark
+from datarax.benchmarking import TimingCollector
 
-# Create a benchmark for your pipeline (pass DAGExecutor from from_source())
-benchmark = PipelineBenchmark(
-    data_stream=pipeline,
+# Create a timing collector (pass sync_fn for GPU benchmarks)
+timer = TimingCollector()
+
+# Warmup — exclude JIT compilation from measurements
+for i, batch in enumerate(pipeline):
+    if i >= 5:
+        break
+
+# Measure throughput
+result = timer.measure_iteration(
+    iter(pipeline),
     num_batches=50,
-    warmup_batches=5,
+    count_fn=lambda batch: batch["image"].shape[0],
 )
-
-# Run the benchmark and get results
-results = benchmark.run(pipeline_seed=42)
-print(f"Throughput: {results['examples_per_second']:.2f} examples/sec")
-print(f"Batches per second: {results['batches_per_second']:.2f}")
-print(f"Duration: {results['duration_seconds']:.4f}s")
+throughput = result.num_elements / result.wall_clock_sec
+print(f"Throughput: {throughput:.2f} examples/sec")
+print(f"Batches/sec: {result.num_batches / result.wall_clock_sec:.2f}")
+print(f"Duration: {result.wall_clock_sec:.4f}s")
 ```
 
 ## Common Performance Pitfalls
@@ -227,14 +233,14 @@ When submitting a PR with performance improvements:
 Datarax provides benchmark utilities for measuring performance:
 
 ```bash
-# Run all benchmarks
-./scripts/run_benchmarks.sh
+# Run full comparative benchmarks via CLI
+uv run datarax-bench run --platform cpu
 
 # Run specific benchmark tests
-JAX_PLATFORMS=cpu uv run pytest -m benchmark --benchmark-autosave
+JAX_PLATFORMS=cpu uv run pytest tests/benchmarks/ -v
 
-# View benchmark results
-ls benchmark-results/
+# Quick local summary
+uv run benchkit summary --data benchmark-data
 ```
 
 ## Conclusion

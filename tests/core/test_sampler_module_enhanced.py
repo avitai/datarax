@@ -1,12 +1,12 @@
 """Tests for enhanced SamplerModule functionality.
 
-This module contains comprehensive tests for the enhanced SamplerModule that
+This module contains thorough tests for the enhanced SamplerModule that
 leverages advanced features from DataraxModule, including caching, statistics,
 RNG handling, and state management.
 """
 
 from dataclasses import dataclass
-from typing import Iterator
+from collections.abc import Iterator
 
 import pytest
 import flax.nnx as nnx
@@ -75,11 +75,7 @@ class SimpleTestSampler(SamplerModule):
         return self.dataset_size
 
     def sample(self, n: int) -> list[int]:
-        """Override sample to use our _sample_impl method with iteration counting."""
-        # Update iteration count manually since we're bypassing the base class
-        # Uses [...] for in-place mutation of IterationCount Variable (new NNX API)
-        self._iteration_count[...] += 1
-
+        """Override sample to use our _sample_impl method."""
         # Set dataset_size if needed
         if hasattr(self, "dataset_size") and getattr(self, "dataset_size", None) is None:
             setattr(self, "dataset_size", n)
@@ -102,7 +98,6 @@ class TestSamplerModuleEnhanced:
 
         # Check enhanced features are available
         assert hasattr(sampler, "_cache")
-        assert hasattr(sampler, "_iteration_count")
         assert sampler.config.batch_stats_fn is not None  # Accessed through config
         assert hasattr(sampler, "rngs")
         assert sampler.config.cacheable is True
@@ -128,21 +123,6 @@ class TestSamplerModuleEnhanced:
 
         # Results should be identical (from cache)
         assert result1 == result2
-
-    def test_iteration_counting(self):
-        """Test iteration counting works correctly."""
-        sampler = SimpleTestSampler(dataset_size=3)
-
-        # Initial count should be 0
-        assert int(sampler._iteration_count[...]) == 0
-
-        # Call sample method
-        sampler.sample(3)
-        assert int(sampler._iteration_count[...]) == 1
-
-        # Call enhanced interface
-        sampler(3)
-        assert int(sampler._iteration_count[...]) == 2
 
     def test_statistics_computation(self):
         """Test statistics computation functionality."""
@@ -207,24 +187,18 @@ class TestSamplerModuleEnhanced:
 
         # Perform some operations to change state
         sampler(3)
-        sampler._iteration_count[...] = 42
 
         # Get state
         state = sampler.get_state()
 
         # State should contain all necessary information
         assert isinstance(state, dict)
-        # _iteration_count is now an IterationCount Variable, so it IS persisted in state
-        assert "_iteration_count" in state
-        # Cache might not be in state if not initialized or None
-        # Transform type is an enum and might not be serialized in simplified state
         # Just check that we have some state
         assert len(state) > 0
 
         # Should be able to restore state
         new_sampler = SimpleTestSampler(dataset_size=5)
         new_sampler.set_state(state)
-        assert int(new_sampler._iteration_count[...]) == 42
 
     def test_cache_reset(self):
         """Test cache reset functionality."""
@@ -250,9 +224,6 @@ class TestSamplerModuleEnhanced:
         assert len(result) == 3
         assert result == [0, 1, 2]
 
-        # Should increment iteration count
-        assert int(sampler._iteration_count[...]) == 1
-
 
 class TestSamplerModuleIntegration:
     """Test SamplerModule integration with other components."""
@@ -277,9 +248,6 @@ class TestSamplerModuleIntegration:
         result = sampler(3)
         assert len(result) == 3
 
-        # Should maintain state across calls
-        assert int(sampler._iteration_count[...]) == 1
-
     def test_consistency_with_other_modules(self):
         """Test consistency with other enhanced modules."""
         config = SimpleTestSamplerConfig(dataset_size=5, cacheable=True)
@@ -287,7 +255,6 @@ class TestSamplerModuleIntegration:
 
         # Should have same enhanced interface as other modules
         assert hasattr(sampler, "_cache")
-        assert hasattr(sampler, "_iteration_count")
         assert hasattr(sampler, "get_state")
         assert hasattr(sampler, "set_state")
         assert hasattr(sampler, "reset_cache")
@@ -341,7 +308,7 @@ class TestSamplerModuleErrorHandling:
 
 
 class TestSamplerModuleCoverage:
-    """Test comprehensive coverage of SamplerModule functionality."""
+    """Test complete coverage of SamplerModule functionality."""
 
     def test_stochastic_modes(self):
         """Test SamplerModule in stochastic and non-stochastic modes."""
@@ -398,7 +365,6 @@ class TestSamplerModuleCoverage:
 
         # Perform some operations
         sampler(3)
-        sampler._iteration_count[...] = 42
 
         # Should be able to get and set state
         state = sampler.get_state()
@@ -406,7 +372,6 @@ class TestSamplerModuleCoverage:
 
         new_sampler = SimpleTestSampler(dataset_size=5)
         new_sampler.set_state(state)
-        assert int(new_sampler._iteration_count[...]) == 42
 
 
 class TestSamplerModuleDocumentation:
@@ -565,17 +530,13 @@ class TestSamplerModuleAdditionalCoverage:
         """Test the sample method directly which has special behavior."""
         sampler = SimpleTestSampler(dataset_size=5)
 
-        # Check initial iteration count
-        assert int(sampler._iteration_count[...]) == 0
-
         # Call sample directly (not through __call__)
         result = sampler.sample(5)
         assert len(result) == 5
-        assert int(sampler._iteration_count[...]) == 1
 
         # Call again
         result = sampler.sample(5)
-        assert int(sampler._iteration_count[...]) == 2
+        assert len(result) == 5
 
     def test_zero_dataset_size(self):
         """Test behavior with zero dataset size."""
@@ -628,7 +589,6 @@ class TestSamplerModuleAdditionalCoverage:
     def test_clone_method(self):
         """Test the clone method from DataraxModule."""
         sampler = SimpleTestSampler(dataset_size=5)
-        sampler._iteration_count[...] = 10
 
         # Clone the sampler
         cloned = sampler.clone()
@@ -637,7 +597,6 @@ class TestSamplerModuleAdditionalCoverage:
         assert cloned is not sampler
 
         # Check state is preserved
-        assert int(cloned._iteration_count[...]) == 10
         assert cloned.dataset_size == 5
 
     def test_precomputed_stats_with_dict(self):
@@ -713,14 +672,11 @@ class TestSamplerModuleAdditionalCoverage:
 
         # First call - cache miss
         result1 = sampler(3)
-        assert int(sampler._iteration_count[...]) == 1
 
         # Second call - should hit cache
         result2 = sampler(3)
         assert result1 == result2
-        # Iteration count should NOT increment on cache hit (early return)
-        assert int(sampler._iteration_count[...]) == 1
 
-        # Different input should miss cache and increment
-        sampler(5)
-        assert int(sampler._iteration_count[...]) == 2
+        # Different input should miss cache
+        result3 = sampler(5)
+        assert len(result3) == 5

@@ -1,41 +1,172 @@
-# from typing import Iterator
-# import jax
-# import jax.numpy as jnp
-# import flax.nnx as nnx
+"""Mixed data source implementation for Datarax.
 
-# from datarax.core.data_source import DataSourceModule
-# from datarax.config.registry import register_component
-# from datarax.typing import Element
+This module provides a data source that mixes elements from multiple child
+sources according to configurable weights. Useful for combining heterogeneous
+data streams (e.g., different image datasets, synthetic + real data).
+"""
+
+from collections.abc import Iterator
+from dataclasses import dataclass
+from typing import Any
+
+import jax
+import jax.numpy as jnp
+import flax.nnx as nnx
+
+from datarax.core.config import StructuralConfig
+from datarax.core.data_source import DataSourceModule
+from datarax.config.registry import register_component
 
 
-# @register_component("source", "MixDataSources")
-# class MixDataSourcesNode(DataSourceModule):
-#     """Mix multiple data sources with weights."""
-#     def __init__(self,
-#         sources: list[DataSourceModule],
-#         weights: list[float],
-#         rngs: nnx.Rngs | None = None,
-#         shuffle: bool = False,
-#         cache_size: int = 0,
-#         prefetch_size: int = 0,
-#         track_metadata: bool = False,
-#         shard_id: int | None = None,
-#     ):
-#         super().__init__(rngs=rngs,
-#             cacheable=cache_size > 0,
-#             prefetchable=prefetch_size > 0,
-#             track_metadata=track_metadata,
-#             shard_id=shard_id,
-#         )
-#         self.sources = sources
-#         self.weights = weights
-#         self.rng = jax.random.key(0)
-#         assert len(sources) == len(weights), "Number of sources and weights must match"
+@dataclass
+class MixDataSourcesConfig(StructuralConfig):
+    """Configuration for MixDataSourcesNode.
 
-#     def __iter__(self) -> Iterator[Element]:
-#         """Iterate over the mixed data sources."""
-#         return iter([iter(source) for source in self.sources])
+    Attributes:
+        num_sources: Number of child sources (validated against actual sources)
+        weights: Sampling weights per source (normalized automatically)
+    """
 
-#     def __next__(self) -> Element:
-#         """Get the next element from the mixed data sources."""
-#         return [next(source)  for source in self.sources]
+    num_sources: int | None = None
+    weights: tuple[float, ...] | None = None
+
+    def __post_init__(self):
+        # Validate required fields
+        if self.num_sources is None:
+            raise ValueError("num_sources is required")
+        if self.weights is None:
+            raise ValueError("weights is required")
+        if self.num_sources < 1:
+            raise ValueError("num_sources must be >= 1")
+        if len(self.weights) != self.num_sources:
+            raise ValueError(
+                f"len(weights) ({len(self.weights)}) must match num_sources ({self.num_sources})"
+            )
+        if any(w < 0 for w in self.weights):
+            raise ValueError("All weights must be positive (>= 0)")
+        total = sum(self.weights)
+        if total <= 0:
+            raise ValueError("Sum of weights must be > 0")
+
+        # Normalize weights to sum to 1.0
+        normalized = tuple(w / total for w in self.weights)
+        object.__setattr__(self, "weights", normalized)
+
+        # Force stochastic=True (mixing requires RNG)
+        object.__setattr__(self, "stochastic", True)
+        object.__setattr__(self, "stream_name", "mix")
+
+        # Call parent validation (validates stochastic config, then freezes)
+        super().__post_init__()
+
+
+@register_component("source", "MixDataSources")
+class MixDataSourcesNode(DataSourceModule):
+    """Mix multiple data sources with configurable weights.
+
+    Sampling strategy: For each element, randomly select a source according
+    to weights, then yield the next element from that source. If the chosen
+    source is exhausted, fall back to a non-exhausted source.
+
+    Total elements = sum of all source lengths.
+    """
+
+    def __init__(
+        self,
+        config: MixDataSourcesConfig,
+        sources: list[DataSourceModule],
+        *,
+        rngs: nnx.Rngs,
+        name: str | None = None,
+    ):
+        """Initialize MixDataSourcesModule.
+
+        Args:
+            config: Configuration with num_sources, weights, and mixing seed.
+            sources: List of data source modules to mix from.
+            rngs: Flax NNX random number generators for sampling.
+            name: Optional module name for identification.
+        """
+        if name is None:
+            name = "MixDataSourcesNode"
+
+        super().__init__(config, rngs=rngs, name=name)
+
+        # Validate sources count matches config
+        if len(sources) != config.num_sources:
+            raise ValueError(
+                f"len(sources) ({len(sources)}) must match "
+                f"config.num_sources ({config.num_sources})"
+            )
+
+        # Use nnx.List so child modules are part of the NNX module graph
+        self._sources = nnx.List(sources)
+        self._weights = nnx.Variable(jnp.array(config.weights))
+        self.index = nnx.Variable(0)
+        self.epoch = nnx.Variable(0)
+        self._total_len = sum(len(s) for s in sources)
+
+        # Iterators are created fresh on each __iter__ call (not NNX state)
+        self._iterators: list[Iterator] = []
+        # Track which sources are exhausted during iteration
+        self._exhausted: list[bool] = []
+
+    def __len__(self) -> int:
+        """Return total elements across all child sources."""
+        return self._total_len
+
+    def __iter__(self) -> "MixDataSourcesNode":
+        """Reset iterators and start a new epoch."""
+        self.index.set_value(0)
+        self.epoch.set_value(self.epoch.get_value() + 1)
+        sources = list(self._sources)
+        self._iterators = [iter(s) for s in sources]
+        self._exhausted = [False] * len(sources)
+        return self
+
+    def __next__(self) -> Any:
+        """Sample a source by weight and yield the next element from it."""
+        if self.index.get_value() >= self._total_len:
+            raise StopIteration
+
+        # Sample source index according to weights
+        rng_key = self.rngs.mix()
+        weights = self._weights.get_value()
+        source_idx = int(jax.random.choice(rng_key, len(self._sources), p=weights))
+
+        # Try to get an element, falling back if the chosen source is exhausted
+        element = self._try_next(source_idx)
+        self.index.set_value(self.index.get_value() + 1)
+        return element
+
+    def _try_next(self, preferred: int) -> Any:
+        """Get next element from preferred source, falling back to others."""
+        # Try preferred source first
+        if not self._exhausted[preferred]:
+            try:
+                return next(self._iterators[preferred])
+            except StopIteration:
+                self._exhausted[preferred] = True
+
+        # Preferred is exhausted — try others in round-robin order
+        n = len(self._sources)
+        for offset in range(1, n):
+            idx = (preferred + offset) % n
+            if not self._exhausted[idx]:
+                try:
+                    return next(self._iterators[idx])
+                except StopIteration:
+                    self._exhausted[idx] = True
+
+        # All sources exhausted (shouldn't happen if _total_len is correct)
+        raise StopIteration
+
+    def reset(self) -> None:
+        """Reset all internal state and child sources to initial conditions."""
+        self.index.set_value(0)
+        self.epoch.set_value(0)
+        self._iterators = []
+        self._exhausted = []
+        for s in self._sources:
+            if hasattr(s, "reset"):
+                s.reset()

@@ -2,7 +2,8 @@
 
 import functools
 import time
-from typing import Any, Callable, TypeVar, Union
+from typing import Any, TypeVar, Union
+from collections.abc import Callable
 
 import flax.nnx as nnx
 import jax

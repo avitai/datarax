@@ -10,7 +10,8 @@ All configs use dataclass with __post_init__ validation for fail-fast configurat
 """
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from flax import nnx
 from jaxtyping import PyTree
@@ -111,6 +112,7 @@ class OperatorConfig(DataraxModuleConfig):
     # Operator-specific configuration
     stochastic: bool = False
     stream_name: str | None = None
+    batch_strategy: str = "vmap"  # "vmap" (parallel) or "scan" (sequential, low memory)
 
     def __post_init__(self):
         """Validate configuration after initialization.
@@ -125,6 +127,12 @@ class OperatorConfig(DataraxModuleConfig):
 
         # Validate stochastic configuration rules
         validate_stochastic_config(self.stochastic, self.stream_name)
+
+        # Validate batch strategy
+        if self.batch_strategy not in ("vmap", "scan"):
+            raise ValueError(
+                f"batch_strategy must be 'vmap' or 'scan', got '{self.batch_strategy}'"
+            )
 
 
 @dataclass

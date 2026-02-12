@@ -637,10 +637,10 @@ def compare_checkpoint_complexity():
 
 
 def run_comprehensive_transform_comparison():
-    """Run comprehensive transformation comparison."""
+    """Run full transformation comparison."""
 
     print("=" * 80)
-    print("COMPREHENSIVE TRANSFORMATION PIPELINE COMPARISON")
+    print("FULL TRANSFORMATION PIPELINE COMPARISON")
     print("=" * 80)
 
     test_configs = [
@@ -730,7 +730,7 @@ if __name__ == "__main__":
     print("All metrics from actual execution")
     print("=" * 80)
 
-    # Run comprehensive comparison
+    # Run full comparison
     results = run_comprehensive_transform_comparison()
 
     # Demonstrate unique capabilities

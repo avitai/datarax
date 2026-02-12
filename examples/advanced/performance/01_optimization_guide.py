@@ -24,7 +24,7 @@
 
 Master data pipeline performance optimization for Datarax. This guide covers
 profiling techniques, batch size tuning, operator optimization, and
-comprehensive benchmarking methodology.
+thorough benchmarking methodology.
 
 ## Learning Goals
 

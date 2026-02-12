@@ -1,0 +1,108 @@
+{
+  "framework": "Datarax",
+  "scenario_id": "PC-1",
+  "variant": "depth_50",
+  "timing": {
+    "wall_clock_sec": 0.748646397027187,
+    "per_batch_times": [
+      1.17509625852108e-05,
+      1.2586009688675404e-05,
+      1.2811040505766869e-05,
+      1.2665987014770508e-05,
+      1.2689037248492241e-05,
+      1.3057026080787182e-05,
+      1.3225013390183449e-05,
+      1.2494041584432125e-05,
+      1.2894975952804089e-05,
+      1.2593925930559635e-05
+    ],
+    "first_batch_time": 0.18083825299981982,
+    "num_batches": 10,
+    "num_elements": 640
+  },
+  "resources": null,
+  "environment": {
+    "timestamp": "2026-02-10T01:50:54.186020+00:00",
+    "git_commit": "f82894d140bae3764dfb34cc6a501bcd637d6c68",
+    "python_version": "3.11.10 (main, Sep  9 2024, 22:11:19) [Clang 18.1.8 ]",
+    "jax_version": "0.9.0",
+    "platform": {
+      "backend": "gpu",
+      "device_count": 1,
+      "local_device_count": 1,
+      "process_count": 1,
+      "devices": [
+        "cuda:0"
+      ]
+    },
+    "os": {
+      "system": "Linux",
+      "release": "6.8.0-94-generic",
+      "machine": "x86_64"
+    },
+    "gpu": "NVIDIA GeForce RTX 4090, 24564 MiB, 575.57.08"
+  },
+  "config": {
+    "batch_size": 64,
+    "dataset_size": 50000,
+    "element_shape": [
+      64,
+      64
+    ],
+    "transforms": [
+      "Normalize",
+      "Scale",
+      "Clip",
+      "Add",
+      "Multiply",
+      "Normalize",
+      "Scale",
+      "Clip",
+      "Add",
+      "Multiply",
+      "Normalize",
+      "Scale",
+      "Clip",
+      "Add",
+      "Multiply",
+      "Normalize",
+      "Scale",
+      "Clip",
+      "Add",
+      "Multiply",
+      "Normalize",
+      "Scale",
+      "Clip",
+      "Add",
+      "Multiply",
+      "Normalize",
+      "Scale",
+      "Clip",
+      "Add",
+      "Multiply",
+      "Normalize",
+      "Scale",
+      "Clip",
+      "Add",
+      "Multiply",
+      "Normalize",
+      "Scale",
+      "Clip",
+      "Add",
+      "Multiply",
+      "Normalize",
+      "Scale",
+      "Clip",
+      "Add",
+      "Multiply",
+      "Normalize",
+      "Scale",
+      "Clip",
+      "Add",
+      "Multiply"
+    ],
+    "seed": 42
+  },
+  "timestamp": 1770688254.2029262,
+  "extra_metrics": {}
+}

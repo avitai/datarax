@@ -14,7 +14,8 @@ state tracking (position, epoch) for resumable training.
 """
 
 from collections.abc import Iterator
-from typing import Any, Callable, Generic, TypeVar
+from typing import Any, Generic, TypeVar
+from collections.abc import Callable
 
 import jax.numpy as jnp
 from flax import nnx
@@ -72,7 +73,6 @@ class DataraxModule(nnx.Module):
         name: Module name
         _cache: Cache storage (plain dict if cacheable, None otherwise)
         _computed_stats: Computed statistics (nnx.Variable)
-        _iteration_count: Iteration counter (IterationCount wrapping jnp.array)
         _applied_count: Applied operation counter (IterationCount)
         _skipped_count: Skipped operation counter (IterationCount)
     """
@@ -111,11 +111,6 @@ class DataraxModule(nnx.Module):
         # Flag to override precomputed_stats (for reset_statistics)
         # Mark as static for proper serialization
         self._stats_reset: bool = nnx.static(False)
-
-        # Initialize iteration counter
-        # Uses IterationCount(jnp.array(0)) to ensure mutability inside transforms
-        # See: class IterationCount docstring for design rationale
-        self._iteration_count: IterationCount = IterationCount(jnp.array(0, dtype=jnp.int32))
 
         # Initialize operation counters for tracking applied/skipped operations
         # Uses IterationCount for consistency and transform compatibility

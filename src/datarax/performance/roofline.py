@@ -6,7 +6,8 @@ to identify performance bottlenecks and suggest optimizations.
 
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Tuple
+from typing import Any
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
@@ -178,7 +179,7 @@ class RooflineAnalyzer:
 
         return analysis
 
-    def _estimate_flops(self, func: Callable, args: Tuple) -> float:
+    def _estimate_flops(self, func: Callable, args: tuple) -> float:
         """Estimate FLOPs for common operations."""
         # Check for matrix multiplication
         if hasattr(func, "__name__"):
@@ -216,7 +217,7 @@ class RooflineAnalyzer:
         return float(input_bytes + output_bytes)
 
     def _generate_recommendations(
-        self, arithmetic_intensity: float, efficiency: float, args: Tuple
+        self, arithmetic_intensity: float, efficiency: float, args: tuple
     ) -> list[str]:
         """Generate optimization recommendations."""
         recommendations = []

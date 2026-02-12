@@ -9,7 +9,9 @@ import os
 import tempfile
 import time
 from functools import partial
-from typing import Any, Callable, Dict, Tuple
+from pathlib import Path
+from typing import Any
+from collections.abc import Callable
 
 import jax
 import numpy as np
@@ -91,8 +93,9 @@ class XLAOptimizer:
         # Use existing cache dir if set, otherwise create temp
         cache_dir = os.environ.get("JAX_COMPILATION_CACHE_DIR")
         if not cache_dir:
-            cache_dir = os.path.join(tempfile.gettempdir(), "jax_compilation_cache")
-            os.makedirs(cache_dir, exist_ok=True)
+            cache_path = Path(tempfile.gettempdir()) / "jax_compilation_cache"
+            cache_path.mkdir(parents=True, exist_ok=True)
+            cache_dir = str(cache_path)
 
         jax.config.update("jax_compilation_cache_dir", cache_dir)
         jax.config.update("jax_persistent_cache_min_compile_time_secs", 1.0)
@@ -306,7 +309,7 @@ class CompilationProfiler:
         self.compilation_times: dict[Any, float] = {}
         self.cache_hits: int = 0
         self.cache_misses: int = 0
-        self.shape_profiles: dict[Any, Dict] = {}
+        self.shape_profiles: dict[Any, dict] = {}
 
     def profile_function(self, func_name: str, enable_detailed_logging: bool = False) -> Callable:
         """Decorator to profile function compilation and execution.
@@ -361,7 +364,7 @@ class CompilationProfiler:
 
         return decorator
 
-    def _create_shape_signature(self, args: Tuple) -> Tuple:
+    def _create_shape_signature(self, args: tuple) -> tuple:
         """Create a signature from argument shapes for cache analysis.
 
         Args:

@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import flax.nnx as nnx
 from dataclasses import dataclass
-from typing import Iterator
+from collections.abc import Iterator
 from datarax.core.batcher import BatcherModule
 from datarax.core.config import StructuralConfig
 from datarax.typing import Element, Batch
@@ -110,7 +110,6 @@ class TestBatcherModuleEnhanced:
         # Should have DataraxModule features (accessed through config)
         assert batcher.config.cacheable
         assert batcher._cache == {}
-        assert int(batcher._iteration_count[...]) == 0
         assert batcher.config.batch_stats_fn is not None
 
     def test_basic_batching(self):
@@ -123,21 +122,6 @@ class TestBatcherModuleEnhanced:
         result = batcher(elements, batch_size=2)
         assert len(result) == 1
         assert result[0]["data"].shape == (2, 1)
-
-    def test_iteration_counting(self):
-        """Test iteration counting functionality."""
-        config = SimpleTestBatcherConfig()
-        batcher = SimpleTestBatcher(config)
-
-        elements = [{"data": jnp.array([1.0])}]
-
-        assert int(batcher._iteration_count[...]) == 0
-
-        batcher(elements, batch_size=1)
-        assert int(batcher._iteration_count[...]) == 1
-
-        batcher(elements, batch_size=1)
-        assert int(batcher._iteration_count[...]) == 2
 
     def test_statistics_computation(self):
         """Test batch statistics computation."""
@@ -173,34 +157,21 @@ class TestBatcherModuleEnhanced:
         assert stats == precomputed_stats
 
     def test_state_management(self):
-        """Test enhanced state management.
-
-        Note: _iteration_count is now an IterationCount Variable wrapping jnp.array(0).
-        Using JAX arrays (not Python int) enables mutation inside transforms and
-        persistence in checkpoints.
-
-
-        """
+        """Test enhanced state management."""
         config = SimpleTestBatcherConfig(cacheable=True)
         batcher = SimpleTestBatcher(config)
 
         # Modify internal state
-        batcher._iteration_count[...] = 5
         batcher._cache["test"] = "data"
 
         # Get state - nnx.Variable fields are included
         state = batcher.get_state()
-        # _iteration_count IS in state (it's an IterationCount Variable now)
-        assert "_iteration_count" in state
         # _cache is not included in state as it's not an nnx.Variable
         # _computed_stats IS in state as it's nnx.Variable
         assert "_computed_stats" in state
 
-        # State can be used for checkpointing - _iteration_count is restored
         new_batcher = SimpleTestBatcher(SimpleTestBatcherConfig())
         new_batcher.set_state(state)
-        # _iteration_count is restored from state
-        assert int(new_batcher._iteration_count[...]) == 5
 
     def test_cache_reset(self):
         """Test cache reset functionality."""
@@ -337,16 +308,11 @@ class TestBatcherModuleCoverage:
         assert len(batcher._cache) <= 10
 
     def test_serialization_compatibility(self):
-        """Test that enhanced BatcherModule is serialization compatible.
-
-        Note: _iteration_count is now an IterationCount Variable wrapping jnp.array(0).
-        Using JAX arrays enables mutation inside transforms and persistence in checkpoints.
-        """
+        """Test that enhanced BatcherModule is serialization compatible."""
         config = SimpleTestBatcherConfig(cacheable=True)
         batcher = SimpleTestBatcher(config)
 
         # Modify internal state
-        batcher._iteration_count[...] = 42
         batcher._cache["test"] = "value"
 
         # Get state (should be serializable)
@@ -354,17 +320,12 @@ class TestBatcherModuleCoverage:
 
         # State should contain nnx.Variable fields
         assert isinstance(state, dict)
-        # _iteration_count IS in state (it's an IterationCount Variable now)
-        assert "_iteration_count" in state
         # _computed_stats IS in state (it's nnx.Variable)
         assert "_computed_stats" in state
         # _cache is not included in state as it's not an nnx.Variable
 
-        # Should be able to restore nnx.Variable state including _iteration_count
         new_batcher = SimpleTestBatcher(SimpleTestBatcherConfig())
         new_batcher.set_state(state)
-        # _iteration_count is restored from state
-        assert int(new_batcher._iteration_count[...]) == 42
 
 
 class TestDefaultBatcherImplementation:
@@ -483,21 +444,14 @@ class TestBatcherModuleAdvancedFeatures:
         """Test module cloning."""
         config = SimpleTestBatcherConfig(cacheable=True)
         batcher = SimpleTestBatcher(config)
-        batcher._iteration_count[...] = 5
         batcher._cache["test"] = "data"
 
         # Clone the module
         cloned = batcher.clone()
 
-        # Verify cloned state
-        assert int(cloned._iteration_count[...]) == 5
         # Cache is cloned too
         assert "test" in cloned._cache
         assert cloned._cache["test"] == "data"
-
-        # Verify independence
-        cloned._iteration_count[...] = 10
-        assert int(batcher._iteration_count[...]) == 5  # Original unchanged
 
     def test_rng_stream_requirements(self):
         """Test RNG stream requirement checking."""
@@ -638,31 +592,14 @@ class TestBatcherModuleEdgeCases:
 class TestBatcherModuleConcurrency:
     """Test concurrent and parallel batching scenarios."""
 
-    def test_state_isolation_between_instances(self):
-        """Test that state is properly isolated between instances."""
-        config = SimpleTestBatcherConfig()
-        batcher1 = SimpleTestBatcher(config)
-        batcher2 = SimpleTestBatcher(config)
-
-        elements = [{"data": jnp.array([1.0])}]
-
-        # Modify state of first batcher
-        batcher1(elements, batch_size=1)
-        batcher1(elements, batch_size=1)
-
-        assert int(batcher1._iteration_count[...]) == 2
-        assert int(batcher2._iteration_count[...]) == 0
+    pass
 
 
 class TestBatcherModuleRobustness:
     """Test robustness and recovery."""
 
     def test_recovery_from_invalid_state(self):
-        """Test recovery from invalid state restoration.
-
-        Note: _iteration_count is now an IterationCount Variable wrapping jnp.array(0).
-        It can be restored via set_state() along with other nnx.Variable fields.
-        """
+        """Test recovery from invalid state restoration."""
         batcher = SimpleTestBatcher(SimpleTestBatcherConfig())
 
         # Try to restore incompatible state (with fields that don't exist)
@@ -671,8 +608,6 @@ class TestBatcherModuleRobustness:
         # Should handle gracefully - set_state ignores unknown fields
         batcher.set_state(invalid_state)
 
-        # _iteration_count stays at initial value when not in state
-        assert int(batcher._iteration_count[...]) == 0
         # _computed_stats should be restored if it exists in state
         # (depends on implementation behavior with mismatched state)
 
@@ -777,11 +712,7 @@ class TestBatcherModuleIntegrationAdvanced:
     """Advanced integration tests."""
 
     def test_batcher_state_persistence(self):
-        """Test state persistence across save/load cycles.
-
-        Note: _iteration_count is now an IterationCount Variable wrapping jnp.array(0).
-        All nnx.Variable fields (including _iteration_count, _computed_stats) are persisted.
-        """
+        """Test state persistence across save/load cycles."""
         config = SimpleTestBatcherConfig(cacheable=True)
         batcher = SimpleTestBatcher(config)
 
@@ -800,8 +731,6 @@ class TestBatcherModuleIntegrationAdvanced:
         new_batcher = SimpleTestBatcher(SimpleTestBatcherConfig(cacheable=True))
         new_batcher.set_state(state)
 
-        # _iteration_count IS persisted (it's an IterationCount Variable now)
-        assert int(new_batcher._iteration_count[...]) == 2
         # _computed_stats IS persisted (nnx.Variable)
         assert new_batcher.get_statistics() == {"mean": 1.5, "count": 3}
 

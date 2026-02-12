@@ -7,7 +7,8 @@ data processing workflows as directed acyclic graphs (DAGs).
 COMPLETE IMPLEMENTATION following TDD principles.
 """
 
-from typing import Any, Callable, Literal, Iterator
+from typing import Any, Literal
+from collections.abc import Callable, Iterator
 import jax
 import flax.nnx as nnx
 from flax.nnx.transforms.compilation import JitFn
@@ -19,6 +20,7 @@ from datarax.dag.nodes import (
     Parallel,
     Branch,
     Merge,
+    FusedOperatorNode,
     DataSourceNode,
     BatchNode,
     OperatorNode,
@@ -93,6 +95,7 @@ class DAGExecutor(nnx.Module):
         enable_caching: bool = True,
         jit_compile: bool = False,
         enforce_batch: bool = True,
+        prefetch_size: int = 2,
         name: str | None = None,
     ):
         """Initialize DAG executor.
@@ -103,6 +106,7 @@ class DAGExecutor(nnx.Module):
             enable_caching: Whether to cache intermediate results
             jit_compile: Whether to JIT compile the pipeline
             enforce_batch: Whether to enforce batch-first processing
+            prefetch_size: Number of batches to prefetch ahead (0 = disabled)
             name: Optional name for the executor
         """
         super().__init__()
@@ -130,6 +134,7 @@ class DAGExecutor(nnx.Module):
         self.enable_caching = enable_caching
         self.jit_compile = jit_compile
         self.enforce_batch = enforce_batch
+        self.prefetch_size = prefetch_size
         self.name = name or "DAGExecutor"
 
         # Pipeline state - plain Python (not nnx.Variable to avoid TraceContextError)
@@ -185,6 +190,30 @@ class DAGExecutor(nnx.Module):
         # Pipeline is deterministic and user didn't provide rngs - return None
         return None
 
+    def _any_node_matches(self, predicate: Callable[[Node], bool]) -> bool:
+        """Walk the DAG and return True if any leaf node satisfies predicate.
+
+        Handles recursion into composite nodes (Sequential, Parallel, Branch)
+        so callers only need to define the leaf-node check.
+
+        Args:
+            predicate: Function that checks a single non-composite node.
+
+        Returns:
+            True if any node in the graph satisfies the predicate.
+        """
+
+        def walk(node: Node) -> bool:
+            if isinstance(node, Sequential):
+                return any(walk(n) for n in node.nodes)
+            if isinstance(node, Parallel):
+                return any(walk(n) for n in node.nodes)
+            if isinstance(node, Branch):
+                return walk(node.true_path) or walk(node.false_path)
+            return predicate(node)
+
+        return walk(self.graph)
+
     def _detect_stochastic_ops(self) -> bool:
         """Detect if pipeline contains any stochastic operations.
 
@@ -196,46 +225,18 @@ class DAGExecutor(nnx.Module):
             True if any stochastic operations exist, False otherwise.
         """
 
-        def check_node(node: Node) -> bool:
-            """Recursively check if node or children are stochastic."""
-            # Check OperatorNode for stochastic config
-            if isinstance(node, OperatorNode):
-                operator = node.operator
-                if hasattr(operator, "config"):
-                    if getattr(operator.config, "stochastic", False):
-                        return True
-
-            # Check ShuffleNode (always stochastic)
+        def is_stochastic(node: Node) -> bool:
             if isinstance(node, ShuffleNode):
                 return True
-
-            # Check SamplerNode with shuffle
-            if isinstance(node, SamplerNode):
-                sampler = node.sampler
-                if hasattr(sampler, "config"):
-                    if getattr(sampler.config, "stochastic", False):
-                        return True
-
-            # Check DataSourceNode with shuffle
-            if isinstance(node, DataSourceNode):
-                source = node.source
-                if hasattr(source, "config"):
-                    if getattr(source.config, "stochastic", False):
-                        return True
-
-            # Recursively check composite nodes
-            if isinstance(node, Sequential):
-                return any(check_node(n) for n in node.nodes)
-            if isinstance(node, Parallel):
-                return any(check_node(n) for n in node.nodes)
-            if isinstance(node, Branch):
-                return check_node(node.true_path) or check_node(node.false_path)
-            # Merge doesn't have child nodes that need checking
-
+            for attr in ("operator", "sampler", "source"):
+                inner = getattr(node, attr, None)
+                if inner is not None and getattr(
+                    getattr(inner, "config", None), "stochastic", False
+                ):
+                    return True
             return False
 
-        # Check main graph
-        return check_node(self.graph)
+        return self._any_node_matches(is_stochastic)
 
     def _detect_stateful_ops(self) -> bool:
         """Detect if pipeline contains stateful operators that affect output.
@@ -252,29 +253,115 @@ class DAGExecutor(nnx.Module):
             True if any stateful operations exist, False otherwise.
         """
 
-        def check_node(node: Node) -> bool:
-            """Recursively check if node or children are stateful."""
-            # Check OperatorNode for explicit stateful config
+        def is_stateful(node: Node) -> bool:
             if isinstance(node, OperatorNode):
                 operator = node.operator
                 if hasattr(operator, "config"):
-                    # Explicit stateful flag takes precedence
-                    if getattr(operator.config, "stateful", False):
-                        return True
-
-            # Recursively check composite nodes
-            if isinstance(node, Sequential):
-                return any(check_node(n) for n in node.nodes)
-            if isinstance(node, Parallel):
-                return any(check_node(n) for n in node.nodes)
-            if isinstance(node, Branch):
-                return check_node(node.true_path) or check_node(node.false_path)
-            # Merge doesn't have child nodes that need checking
-
+                    return getattr(operator.config, "stateful", False)
             return False
 
-        # Check main graph
-        return check_node(self.graph)
+        return self._any_node_matches(is_stateful)
+
+    def _topological_sort(self) -> list[Node]:
+        """Flatten the graph tree into a topological execution order.
+
+        Walks the tree structure (Sequential, Parallel, Branch) and returns
+        a flat list of leaf nodes in execution order.  Sequential children
+        are ordered left-to-right; Parallel children are all included
+        (independent of each other).  Composite nodes (Sequential, Parallel)
+        are traversed but NOT included in the output — only leaf nodes appear.
+
+        Returns:
+            Flat list of leaf nodes in valid topological order.
+        """
+        order: list[Node] = []
+        seen: set[int] = set()
+
+        def walk(node: Node) -> None:
+            node_id = id(node)
+            if node_id in seen:
+                return
+            seen.add(node_id)
+
+            if isinstance(node, Sequential):
+                for child in node.nodes:
+                    walk(child)
+            elif isinstance(node, Parallel):
+                for child in node.nodes:
+                    walk(child)
+            elif isinstance(node, Branch):
+                walk(node.true_path)
+                walk(node.false_path)
+            elif isinstance(node, FusedOperatorNode):
+                # Treat fused group as a single opaque node
+                order.append(node)
+            else:
+                # Leaf node (OperatorNode, BatchNode, ShuffleNode, Merge, etc.)
+                order.append(node)
+
+        walk(self.graph)
+        return order
+
+    def _compute_fusion_groups(self) -> list[list[Node]]:
+        """Identify groups of consecutive fusible nodes in the graph.
+
+        Walks the graph's nodes (if Sequential) or treats the root as a
+        single-node sequence. Accumulates consecutive is_jit_fusible nodes
+        into fusion groups. Groups of size >= 2 are returned.
+
+        Returns:
+            List of fusible groups, each a list of consecutive fusible nodes.
+        """
+        # Get flat node list from the graph
+        if isinstance(self.graph, Sequential):
+            nodes = list(self.graph.nodes)
+        else:
+            nodes = [self.graph]
+
+        groups: list[list[Node]] = []
+        current_group: list[Node] = []
+
+        for node in nodes:
+            if node.is_jit_fusible:
+                current_group.append(node)
+            else:
+                if len(current_group) >= 2:
+                    groups.append(current_group)
+                current_group = []
+
+        # Don't forget the last group
+        if len(current_group) >= 2:
+            groups.append(current_group)
+
+        return groups
+
+    def _apply_fusion(self) -> None:
+        """Replace fusible groups in the graph with FusedOperatorNode instances.
+
+        Uses _compute_fusion_groups() as the single source of truth for
+        group detection, then rebuilds the Sequential with fused wrappers.
+        """
+        if not isinstance(self.graph, Sequential):
+            return
+
+        groups = self._compute_fusion_groups()
+        if not groups:
+            return
+
+        # Map first-node-id → group for O(1) lookup during the walk
+        group_map: dict[int, list[Node]] = {id(g[0]): g for g in groups}
+        members: set[int] = {id(n) for g in groups for n in g}
+
+        new_nodes: list[Node] = []
+        for node in self.graph.nodes:
+            if id(node) in group_map:
+                new_nodes.append(FusedOperatorNode(group_map[id(node)]))
+            elif id(node) not in members:
+                # Node is not part of any fusion group — keep as-is
+                new_nodes.append(node)
+            # else: node is a non-first member of a group — skip (already fused)
+
+        self.graph = Sequential(new_nodes)
 
     def add(self, node: Node) -> "DAGExecutor":
         """Add a node to the pipeline.
@@ -573,6 +660,10 @@ class DAGExecutor(nnx.Module):
     def _convert_to_jax_arrays(self, batch_data: Any) -> dict:
         """Convert batch data to JAX arrays.
 
+        Uses jax.device_put for efficient async host-to-device transfer.
+        This handles dicts natively (pytree support), batches the transfers,
+        and can overlap with Python execution.
+
         Handles multiple formats from source.get_batch():
         1. Dict with array values: {"image": array, "label": array}
         2. List of element dicts: [{"image": arr1, "label": 0}, ...]
@@ -585,54 +676,145 @@ class DAGExecutor(nnx.Module):
         Returns:
             Dictionary with batched JAX arrays.
         """
-        import jax.numpy as jnp
+        import numpy as np
 
-        # Handle list input
+        # Handle list input — stack into arrays first
         if isinstance(batch_data, list):
             if not batch_data:
                 return {}
-            # Check if list contains dicts (element-wise data to stack)
             if isinstance(batch_data[0], dict):
                 keys = batch_data[0].keys()
-                return {k: jnp.stack([elem[k] for elem in batch_data]) for k in keys}
-            # List of non-dict values - convert directly to JAX array
-            return {"data": jnp.asarray(batch_data)}
+                stacked = {k: np.stack([elem[k] for elem in batch_data]) for k in keys}
+                return jax.device_put(stacked)
+            return {"data": jax.device_put(np.asarray(batch_data))}
 
-        # Handle dict with array values - ensure JAX arrays
+        # Handle dict — device_put handles the entire pytree in one call
         if isinstance(batch_data, dict):
-            return {
-                k: v if isinstance(v, jax.Array) else jnp.asarray(v) for k, v in batch_data.items()
-            }
+            return jax.device_put(batch_data)
 
         # Handle raw array/non-dict data
-        return {
-            "data": batch_data if isinstance(batch_data, jax.Array) else jnp.asarray(batch_data)
-        }
+        return {"data": jax.device_put(batch_data)}
+
+    def _make_fused_step(
+        self, operators: list[OperatorNode]
+    ) -> Callable[[dict, dict], tuple[dict, dict]]:
+        """Create a fused step function for the operator chain.
+
+        Chains all operators' _vmap_apply calls into a single nnx.jit-compiled
+        function. Uses two strategies based on operator types:
+
+        Deterministic chains: operators are closure-captured so they become
+        trace constants in the compiled XLA kernel — no per-call
+        to_tree/from_tree overhead.
+
+        Stochastic chains: operators are passed as explicit arguments so
+        nnx.jit properly manages their NNX state (including RNG) through
+        the to_tree/from_tree cycle on every call.
+
+        Args:
+            operators: List of OperatorNode instances to fuse.
+
+        Returns:
+            Function: (data, states) -> (data, states)
+        """
+        ops = tuple(op_node.operator for op_node in operators)
+        has_stochastic = any(op.stochastic for op in ops)
+
+        if has_stochastic:
+            # Stochastic: pass operators as explicit arguments so nnx.jit
+            # manages RNG state through to_tree/from_tree on every call.
+            @nnx.jit
+            def fused_step_stochastic(operators_tuple, data, states):
+                for op in operators_tuple:
+                    data, states = op._vmap_apply(data, states)
+                return data, states
+
+            def call_fused(data, states):
+                return fused_step_stochastic(ops, data, states)
+
+            return call_fused
+        else:
+            # Deterministic: closure-capture for zero overhead.
+            # No mutable NNX state (RNG) to manage, so closure capture is
+            # safe and faster (operators become trace constants).
+            @nnx.jit
+            def fused_step_deterministic(data, states):
+                for op in ops:
+                    data, states = op._vmap_apply(data, states)
+                return data, states
+
+            return fused_step_deterministic
 
     def _process_batch_from_source(
         self,
         batch_data: Any,
         operators: list[OperatorNode],
+        fused_step: Callable | None = None,
     ) -> Batch:
         """Convert raw batch data to Batch and apply operators.
+
+        Uses a fused operator chain: passes raw dicts through all operators
+        via _apply_on_raw(), creating only ONE Batch object at the end.
+        This eliminates N-1 intermediate Batch objects and their associated
+        nnx.Variable overhead.
+
+        When fused_step is provided (JIT-compiled), the entire chain runs as
+        a single compiled XLA kernel for maximum throughput.
+
+        When no operators are present, keeps data as-is (numpy arrays stay
+        numpy) to avoid the memory overhead of JAX's XLA allocator.
 
         Args:
             batch_data: Raw data from source's get_batch() (dict or list of dicts).
             operators: List of OperatorNode instances to apply.
+            fused_step: Optional JIT-compiled step function from _make_fused_step.
 
         Returns:
             Processed Batch after applying all operators.
         """
-        from datarax.core.element_batch import Batch as BatchImpl
+        if operators:
+            data = self._convert_to_jax_arrays(batch_data)
+            states: dict = {}
+            if fused_step is not None:
+                data, states = fused_step(data, states)
+            else:
+                for op_node in operators:
+                    data, states = op_node.operator._apply_on_raw(data, states)
+        else:
+            # No operators — keep as numpy for zero-copy memory efficiency.
+            data = self._normalize_batch_data(batch_data)
+            states = {}
 
-        jax_data = self._convert_to_jax_arrays(batch_data)
-        batch = BatchImpl.from_parts(data=jax_data, states={}, validate=False)
+        # Single Batch creation at the end (eliminates N-1 intermediates)
+        return Batch.from_parts(data=data, states=states, validate=False)
 
-        for op_node in operators:
-            batch = op_node(batch)
+    @staticmethod
+    def _normalize_batch_data(batch_data: Any) -> dict:
+        """Normalize batch data to dict format without JAX conversion.
 
-        self._iteration_count += 1
-        return batch
+        Unlike _convert_to_jax_arrays, this keeps numpy arrays as numpy
+        to avoid XLA allocator overhead when no JAX operations are needed.
+
+        Args:
+            batch_data: Data from source's get_batch().
+
+        Returns:
+            Dictionary with array values (numpy or JAX, whatever the source provides).
+        """
+        import numpy as np
+
+        if isinstance(batch_data, dict):
+            return batch_data
+
+        if isinstance(batch_data, list):
+            if not batch_data:
+                return {}
+            if isinstance(batch_data[0], dict):
+                keys = batch_data[0].keys()
+                return {k: np.stack([elem[k] for elem in batch_data]) for k in keys}
+            return {"data": np.asarray(batch_data)}
+
+        return {"data": batch_data}
 
     def _create_batch_first_iterator(self) -> Iterator[Batch]:
         """Create batch-first iterator for optimal performance.
@@ -640,6 +822,11 @@ class DAGExecutor(nnx.Module):
         This method retrieves batches directly from the source using
         get_batch(), bypassing element-by-element iteration. This is
         10-100x faster for sources that support it.
+
+        When operators are present, creates a JIT-compiled fused step
+        function that chains all operators into a single XLA kernel.
+        The first batch triggers compilation; subsequent batches execute
+        the compiled kernel with near-zero Python overhead.
 
         Yields:
             Batches created directly from source data.
@@ -653,14 +840,21 @@ class DAGExecutor(nnx.Module):
         if hasattr(source, "reset"):
             source.reset()
 
+        # Create JIT-compiled fused step for operator chains
+        fused_step = self._make_fused_step(operators) if operators else None
+
         num_complete_batches = total_samples // batch_size
         remainder = total_samples % batch_size
 
         for _ in range(num_complete_batches):
-            yield self._process_batch_from_source(source.get_batch(batch_size), operators)
+            yield self._process_batch_from_source(
+                source.get_batch(batch_size), operators, fused_step
+            )
 
         if remainder > 0 and not drop_remainder:
-            yield self._process_batch_from_source(source.get_batch(remainder), operators)
+            yield self._process_batch_from_source(
+                source.get_batch(remainder), operators, fused_step
+            )
 
     def _create_iterator(self) -> Iterator[Batch]:
         """Create the actual iterator.
@@ -670,10 +864,23 @@ class DAGExecutor(nnx.Module):
 
         Note: Uses batch-first path when available for optimal performance.
         Falls back to element-by-element iteration for complex pipelines.
+        Wraps with Prefetcher when prefetch_size > 0 for background loading.
         """
         # Try batch-first path for optimal performance
         if self._can_use_batch_first():
-            yield from self._create_batch_first_iterator()
+            raw_iter = self._create_batch_first_iterator()
+            if self.prefetch_size > 0:
+                from datarax.control.prefetcher import Prefetcher
+
+                source_iter = Prefetcher(buffer_size=self.prefetch_size).prefetch(raw_iter)
+            else:
+                source_iter = raw_iter
+            # Increment _iteration_count on the consumer side (not in
+            # _process_batch_from_source) so prefetcher background thread
+            # doesn't race ahead of the actual consumption count.
+            for batch in source_iter:
+                self._iteration_count += 1
+                yield batch
             return
 
         # Fallback to element-by-element iteration
@@ -912,12 +1119,21 @@ class DAGExecutor(nnx.Module):
             self._reset_node(node.false_path)  # type: ignore[attr-defined]
 
     def _compile(self) -> None:
-        """JIT compile the pipeline execution."""
+        """JIT compile the pipeline execution.
+
+        Applies fusion first (replaces consecutive fusible nodes with
+        FusedOperatorNode wrappers), then creates the JIT-compiled
+        execution function with donate_argnums for memory reuse.
+        """
+        self._apply_fusion()
 
         def execute_fn(node, data, key):
             return node(data, key=key)
 
-        self._jit_execute = nnx.jit(execute_fn)
+        # donate_argnums=(1,) donates the `data` argument — XLA reuses its
+        # buffer for output since each pipeline step consumes its input.
+        # This reduces peak memory by ~1 batch_size.
+        self._jit_execute = nnx.jit(execute_fn, donate_argnums=(1,))
 
     def _compute_cache_key(self, node: Node, data: Any) -> int:
         """Compute cache key for node and data.
@@ -1112,10 +1328,11 @@ class DAGExecutor(nnx.Module):
 
         batches = []
         for batch in self:
-            if key not in batch.data:
-                available = list(batch.data.keys())
+            # Use dict-like interface (works with both Batch and BatchView)
+            if key not in batch:
+                available = list(batch)
                 raise KeyError(f"Key '{key}' not found in batch. Available keys: {available}")
-            batches.append(batch.data[key])
+            batches.append(batch[key])
 
         if not batches:
             raise ValueError("Pipeline yielded no batches")
@@ -1123,8 +1340,10 @@ class DAGExecutor(nnx.Module):
         data = jnp.concatenate(batches, axis=0)
 
         if device is None:
-            devices = jax.devices("gpu")
-            device = devices[0] if devices else jax.devices()[0]
+            try:
+                device = jax.devices("gpu")[0]
+            except RuntimeError:
+                device = jax.devices()[0]
 
         return jax.device_put(data, device)
 
@@ -1221,6 +1440,7 @@ def from_source(
     batch_size: int = 32,
     enforce_batch: bool = True,
     jit_compile: bool = False,
+    prefetch_size: int = 2,
 ) -> DAGExecutor:
     """Create a pipeline starting from a data source.
 
@@ -1229,11 +1449,14 @@ def from_source(
         batch_size: Size of batches to use (if enforce_batch is True)
         enforce_batch: Whether to enforce batch-first processing
         jit_compile: Whether to JIT compile the pipeline
+        prefetch_size: Number of batches to prefetch ahead (0 = disabled)
 
     Returns:
         DAGExecutor with source
     """
-    executor = DAGExecutor(enforce_batch=enforce_batch, jit_compile=jit_compile)
+    executor = DAGExecutor(
+        enforce_batch=enforce_batch, jit_compile=jit_compile, prefetch_size=prefetch_size
+    )
     executor.add(source)
 
     # Add a batch node if batch enforcement is enabled

@@ -127,8 +127,7 @@ jobs:
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          # Install without CUDA dependencies for macOS
-          uv pip install -e ".[all-cpu]"
+          uv pip install -e ".[dev,test,data]"
 
       - name: Setup PYTHONPATH for tests
         run: |
@@ -144,13 +143,16 @@ jobs:
           uv run pytest tests --no-integration --no-end-to-end -v --device=cpu
         continue-on-error: true
 
-      - name: Upload test results
+      - name: Prepare coverage data
+        run: uv run coverage combine || true
+        if: always()
+
+      - name: Upload coverage data
         uses: actions/upload-artifact@v4
         with:
-          name: unit-test-results-${{ matrix.python-version }}-${{ matrix.os }}
-          path: |
-            .coverage
-            test-results/
+          name: coverage-unit-${{ matrix.os }}
+          path: .coverage
+          include-hidden-files: true
         if: always()
 
   integration_tests:
@@ -191,13 +193,16 @@ jobs:
           uv run pytest tests --integration -v --device=cpu
         continue-on-error: true
 
-      - name: Upload test results
+      - name: Prepare coverage data
+        run: uv run coverage combine || true
+        if: always()
+
+      - name: Upload coverage data
         uses: actions/upload-artifact@v4
         with:
-          name: integration-test-results
-          path: |
-            .coverage
-            test-results/
+          name: coverage-integration
+          path: .coverage
+          include-hidden-files: true
         if: always()
 
   end_to_end_tests:
@@ -238,13 +243,16 @@ jobs:
           uv run pytest tests --end-to-end -v --device=cpu
         continue-on-error: true
 
-      - name: Upload test results
+      - name: Prepare coverage data
+        run: uv run coverage combine || true
+        if: always()
+
+      - name: Upload coverage data
         uses: actions/upload-artifact@v4
         with:
-          name: end-to-end-test-results
-          path: |
-            .coverage
-            test-results/
+          name: coverage-e2e
+          path: .coverage
+          include-hidden-files: true
         if: always()
 
   performance_tests:
@@ -282,8 +290,9 @@ jobs:
       - name: Run performance tests
         run: |
           # Explicitly run on CPU for GitHub workflow
+          # Disable coverage to avoid distorting benchmark timings
           export JAX_PLATFORMS="cpu"
-          uv run pytest tests --benchmark -v --benchmark-autosave --benchmark-columns=mean,stddev,min,max --device=cpu
+          uv run pytest tests --benchmark -v --no-cov --benchmark-autosave --benchmark-columns=mean,stddev,min,max --device=cpu
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
@@ -301,8 +310,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -321,36 +328,35 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv pip install -e ".[dev,test,data]"
+          uv pip install -e ".[dev,test]"
 
-      - name: Setup PYTHONPATH for tests
-        run: |
-          echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
-
-      - name: Download all coverage reports
+      - name: Download all coverage data
         uses: actions/download-artifact@v4
         with:
+          pattern: coverage-*
           path: artifacts
 
-      - name: Debug artifact contents
-        run: |
-          echo "Listing artifact directory structure:"
-          find artifacts -type f | sort
-          echo "Checking for .coverage files:"
-          find artifacts -name ".coverage" | sort
+      - name: List downloaded coverage files
+        run: find artifacts -type f | sort
 
       - name: Combine coverage reports
         run: |
-          # First check if any .coverage files exist
-          if ls artifacts/*/.coverage 1> /dev/null 2>&1; then
-            uv run coverage combine artifacts/*/.coverage
-          else
-            echo "No .coverage files found to combine, creating empty coverage report"
-            uv run coverage run --source=src/datarax -m pytest --collect-only
+          # Collect all .coverage files from artifact subdirectories
+          i=0
+          for f in $(find artifacts -name ".coverage" -type f); do
+            cp "$f" ".coverage.$i"
+            i=$((i + 1))
+          done
+
+          if [ "$i" -eq 0 ]; then
+            echo "::warning::No coverage data found from test jobs"
+            exit 0
           fi
+
+          echo "Found $i coverage file(s), combining..."
+          uv run coverage combine
           uv run coverage report
           uv run coverage xml
-        continue-on-error: true
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3

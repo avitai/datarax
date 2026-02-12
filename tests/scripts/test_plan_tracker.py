@@ -12,7 +12,6 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Set
 
 
 # ANSI color codes for terminal output
@@ -35,8 +34,8 @@ TEST_SKIPPED_PATTERN = re.compile(r"@pytest.mark.skip|pytest.skip\(")
 class ModuleStatus:
     """Status of test implementation for a module."""
 
-    implemented: Set[str] = None
-    skipped: Set[str] = None
+    implemented: set[str] = None
+    skipped: set[str] = None
     total_planned: int = 0
 
     def __post_init__(self):
@@ -58,7 +57,7 @@ def find_test_files(tests_dir: Path) -> list[Path]:
     return list(tests_dir.glob("**/test_*.py"))
 
 
-def extract_test_names(file_path: Path) -> tuple[Set[str], Set[str]]:
+def extract_test_names(file_path: Path) -> tuple[set[str], set[str]]:
     """Extract test names and skipped tests from a file."""
     implemented = set()
     skipped = set()

@@ -549,7 +549,7 @@ def test_memory_source_list_batch_gathering():
     data_tuple = tuple(range(10))
     source_tuple = MemorySource(config, data_tuple)
     batch_tuple = source_tuple.get_batch(3)
-    assert batch_tuple == [0, 1, 2]
+    assert batch_tuple == (0, 1, 2)
 
 
 def test_memory_source_array_batch_gathering():

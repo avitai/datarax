@@ -1,0 +1,71 @@
+{
+  "framework": "Datarax",
+  "scenario_id": "CV-1",
+  "variant": "small",
+  "timing": {
+    "wall_clock_sec": 0.055138995056040585,
+    "per_batch_times": [
+      9.150011464953423e-06,
+      1.3489974662661552e-05,
+      8.66700429469347e-06,
+      8.52497760206461e-06,
+      9.401002898812294e-06,
+      9.626033715903759e-06,
+      8.823932148516178e-06,
+      9.868992492556572e-06,
+      9.109964594244957e-06,
+      8.319038897752762e-06,
+      8.311006240546703e-06,
+      9.809969924390316e-06,
+      8.71298834681511e-06,
+      8.509960025548935e-06,
+      8.904957212507725e-06,
+      8.116941899061203e-06,
+      9.070034138858318e-06,
+      8.802046068012714e-06,
+      9.714975021779537e-06,
+      9.060022421181202e-06
+    ],
+    "first_batch_time": 0.0032404899829998612,
+    "num_batches": 20,
+    "num_elements": 1280
+  },
+  "resources": null,
+  "environment": {
+    "timestamp": "2026-02-10T01:56:38.617779+00:00",
+    "git_commit": "f82894d140bae3764dfb34cc6a501bcd637d6c68",
+    "python_version": "3.11.10 (main, Sep  9 2024, 22:11:19) [Clang 18.1.8 ]",
+    "jax_version": "0.9.0",
+    "platform": {
+      "backend": "gpu",
+      "device_count": 1,
+      "local_device_count": 1,
+      "process_count": 1,
+      "devices": [
+        "cuda:0"
+      ]
+    },
+    "os": {
+      "system": "Linux",
+      "release": "6.8.0-94-generic",
+      "machine": "x86_64"
+    },
+    "gpu": "NVIDIA GeForce RTX 4090, 24564 MiB, 575.57.08"
+  },
+  "config": {
+    "batch_size": 64,
+    "dataset_size": 10000,
+    "element_shape": [
+      32,
+      32,
+      3
+    ],
+    "transforms": [
+      "Normalize",
+      "CastToFloat32"
+    ],
+    "seed": 42
+  },
+  "timestamp": 1770688598.6335227,
+  "extra_metrics": {}
+}

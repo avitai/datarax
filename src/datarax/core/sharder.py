@@ -6,7 +6,8 @@ distributing batches of data across JAX devices.
 """
 
 from dataclasses import dataclass
-from typing import Any, Callable, Union
+from typing import Any, Union
+from collections.abc import Callable
 
 import flax.nnx as nnx
 from jax.sharding import Mesh, NamedSharding, PartitionSpec, Sharding

@@ -1,6 +1,7 @@
 """Parallel composition strategies."""
 
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
@@ -59,27 +60,16 @@ class ParallelStrategy(CompositionStrategyImpl):
         operators: list[OperatorModule],
         context: StrategyContext,
     ) -> tuple[PyTree, PyTree, dict[str, Any]]:
-        outputs = []
-        states = []
-        metadatas = []
+        """Apply all operators on the same input and merge their outputs.
 
-        for i, operator in enumerate(operators):
-            # Extract random params for this operator
-            op_random_params = None
-            if context.random_params and f"operator_{i}" in context.random_params:
-                op_random_params = context.random_params[f"operator_{i}"]
+        Args:
+            operators: Operators to execute in parallel on identical input.
+            context: Execution context with input data, state, and RNG params.
 
-            # Apply operator
-            out_data, out_state, out_metadata = operator.apply(
-                context.data, context.state, context.metadata, op_random_params
-            )
-            outputs.append(out_data)
-            states.append(out_state)
-            metadatas.append(out_metadata)
-
-            # Track statistics
-            if context.stats_callback and hasattr(operator, "statistics") and operator.statistics:
-                context.stats_callback(i, operator.statistics)
+        Returns:
+            Tuple of (merged_data, last_state, last_metadata).
+        """
+        outputs, states, metadatas = self._execute_operators(operators, context)
 
         # Merge outputs
         merged_data = merge_outputs(
@@ -104,27 +94,19 @@ class WeightedParallelStrategy(CompositionStrategyImpl):
         operators: list[OperatorModule],
         context: StrategyContext,
     ) -> tuple[PyTree, PyTree, dict[str, Any]]:
-        outputs = []
-        states = []
-        metadatas = []
+        """Apply operators in parallel and combine with learned weights.
 
-        for i, operator in enumerate(operators):
-            # Extract random params for this operator
-            op_random_params = None
-            if context.random_params and f"operator_{i}" in context.random_params:
-                op_random_params = context.random_params[f"operator_{i}"]
+        Args:
+            operators: Operators to execute in parallel.
+            context: Must include ``extra_params["weights"]`` JAX array.
 
-            # Apply operator
-            out_data, out_state, out_metadata = operator.apply(
-                context.data, context.state, context.metadata, op_random_params
-            )
-            outputs.append(out_data)
-            states.append(out_state)
-            metadatas.append(out_metadata)
+        Returns:
+            Tuple of (weighted_sum, last_state, last_metadata).
 
-            # Track statistics
-            if context.stats_callback and hasattr(operator, "statistics") and operator.statistics:
-                context.stats_callback(i, operator.statistics)
+        Raises:
+            ValueError: If ``weights`` not found in ``context.extra_params``.
+        """
+        outputs, states, metadatas = self._execute_operators(operators, context)
 
         # Get weights from context
         if not context.extra_params or "weights" not in context.extra_params:
@@ -157,6 +139,14 @@ class ConditionalParallelStrategy(CompositionStrategyImpl):
         merge_axis: int = 0,
         merge_fn: Callable | None = None,
     ):
+        """Initialize ConditionalParallelStrategy.
+
+        Args:
+            conditions: List of callables that determine whether each operator is applied.
+            merge_strategy: Strategy for merging active outputs (e.g. 'concat', 'stack').
+            merge_axis: Axis along which to merge outputs.
+            merge_fn: Custom merge function, overrides merge_strategy if provided.
+        """
         self.conditions = conditions
         self.merge_strategy = merge_strategy
         self.merge_axis = merge_axis
@@ -167,6 +157,17 @@ class ConditionalParallelStrategy(CompositionStrategyImpl):
         operators: list[OperatorModule],
         context: StrategyContext,
     ) -> tuple[PyTree, PyTree, dict[str, Any]]:
+        """Apply operators conditionally in parallel and merge active outputs.
+
+        Uses ``jax.lax.cond`` per operator for vmap/JIT compatibility.
+
+        Args:
+            operators: Operators to evaluate (must match length of conditions).
+            context: Execution context with input data, state, and RNG params.
+
+        Returns:
+            Tuple of (merged_data, last_state, last_metadata).
+        """
         outputs = []
         states = []
         metadatas = []

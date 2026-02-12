@@ -6,7 +6,8 @@ Enhanced with Flax NNX module support for proper RNG and Variable handling.
 """
 
 import inspect
-from typing import Any, Callable, Type
+from collections.abc import Callable
+from typing import Any
 
 import flax.nnx as nnx
 
@@ -35,7 +36,7 @@ _COMPONENT_TYPES: dict[str, type] = {
 }
 
 
-def _is_nnx_module(cls: Type) -> bool:
+def _is_nnx_module(cls: type) -> bool:
     """Check if a class is an NNX module.
 
     Args:
@@ -189,7 +190,7 @@ def _load_state_from_file(instance: nnx.Module, config: dict[str, Any]) -> None:
 
 def register_component(
     component_type: str, name: str | None = None
-) -> Callable[[Type[Any] | Callable[..., Any]], Type[Any] | Callable[..., Any]]:
+) -> Callable[[type[Any] | Callable[..., Any]], type[Any] | Callable[..., Any]]:
     """Register a component constructor with the registry.
 
     This decorator can be used to register a component constructor with
@@ -215,7 +216,7 @@ def register_component(
         ```
     """
 
-    def decorator(cls_or_fn: Type[Any] | Callable[..., Any]):
+    def decorator(cls_or_fn: type[Any] | Callable[..., Any]):
         # Use provided name or class/function name
         component_name = name or cls_or_fn.__name__
 

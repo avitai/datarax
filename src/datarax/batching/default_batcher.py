@@ -5,7 +5,8 @@ that handles batching of PyTrees.
 """
 
 from dataclasses import dataclass
-from typing import Any, Callable, Iterator
+from typing import Any
+from collections.abc import Callable, Iterator
 
 import jax
 import jax.numpy as jnp

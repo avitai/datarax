@@ -76,6 +76,12 @@ new_element = element.replace(
 - [modality](modality.md) - Data modality definitions (image, text, audio)
 - [structural](structural.md) - Structural utilities and patterns
 
+## Real-World Examples
+
+- [DADA Learned Augmentation](../examples/advanced/differentiable/dada-learned-augmentation.md) - `nnx.Param` and `nnx.value_and_grad` through augmentation operators for policy search
+- [Learned ISP Pipeline](../examples/advanced/differentiable/learned-isp-guide.md) - Custom `ModalityOperator` subclasses with learnable parameters for ISP stages
+- [DDSP Audio Synthesis](../examples/advanced/differentiable/ddsp-audio-synthesis.md) - Custom `OperatorModule` subclasses for audio, showcasing extensibility to any domain
+
 ## See Also
 
 - [Types & Protocols](../root/index.md) - Type definitions

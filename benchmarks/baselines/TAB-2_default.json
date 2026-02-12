@@ -1,0 +1,56 @@
+{
+  "framework": "Datarax",
+  "scenario_id": "TAB-2",
+  "variant": "default",
+  "timing": {
+    "wall_clock_sec": 0.05718704289756715,
+    "per_batch_times": [
+      4.9859052523970604e-05,
+      4.675006493926048e-05,
+      4.224793519824743e-05,
+      4.163803532719612e-05,
+      4.6178000047802925e-05,
+      4.1656079702079296e-05,
+      4.9347057938575745e-05,
+      4.857394378632307e-05,
+      5.893898196518421e-05,
+      8.103193249553442e-05
+    ],
+    "first_batch_time": 0.004460791940800846,
+    "num_batches": 10,
+    "num_elements": 10240
+  },
+  "resources": null,
+  "environment": {
+    "timestamp": "2026-02-10T01:50:33.269568+00:00",
+    "git_commit": "f82894d140bae3764dfb34cc6a501bcd637d6c68",
+    "python_version": "3.11.10 (main, Sep  9 2024, 22:11:19) [Clang 18.1.8 ]",
+    "jax_version": "0.9.0",
+    "platform": {
+      "backend": "gpu",
+      "device_count": 1,
+      "local_device_count": 1,
+      "process_count": 1,
+      "devices": [
+        "cuda:0"
+      ]
+    },
+    "os": {
+      "system": "Linux",
+      "release": "6.8.0-94-generic",
+      "machine": "x86_64"
+    },
+    "gpu": "NVIDIA GeForce RTX 4090, 24564 MiB, 575.57.08"
+  },
+  "config": {
+    "batch_size": 1024,
+    "dataset_size": 1000000,
+    "element_shape": [
+      13
+    ],
+    "transforms": [],
+    "seed": 42
+  },
+  "timestamp": 1770688233.2888277,
+  "extra_metrics": {}
+}

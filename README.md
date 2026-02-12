@@ -10,153 +10,73 @@
 
 ---
 
-> **⚠️ Early Development - API Unstable**
+> **Early Development - API Unstable**
 >
-> Datarax is currently in early development and undergoing rapid iteration. Please be aware of the following implications:
->
-> | Area | Status | Impact |
-> |------|--------|--------|
-> | **API** | 🔄 Unstable | Breaking changes are expected. Public interfaces may change without deprecation warnings. Pin to specific commits if stability is required. |
-> | **Tests** | 🔄 In Flux | Test suite is being expanded. Some tests may fail or be skipped. Coverage metrics are improving but not yet comprehensive. |
-> | **Documentation** | 🔄 Evolving | Docs may not reflect current implementation. Code examples might be outdated. Refer to source code and tests for accurate usage. |
->
-> We recommend waiting for a stable release (v1.0) before using Datarax in production. For research and experimentation, proceed with the understanding that APIs will evolve.
+> Datarax is in early development and undergoing rapid iteration.
+> Breaking changes are expected. Pin to specific commits if stability is required.
+> We recommend waiting for a stable release (v1.0) before using Datarax in production.
 
 ---
 
-**Datarax** (*Data + Array/JAX*) is a high-performance, extensible data pipeline framework specifically engineered for JAX-based machine learning workflows. It simplifies and accelerates the development of efficient and scalable data loading, preprocessing, and augmentation pipelines for JAX, leveraging the full potential of JAX's Just-In-Time (JIT) compilation, automatic differentiation, and hardware acceleration capabilities.
+**Datarax** (*Data + Array/JAX*) is a high-performance, extensible data pipeline framework specifically engineered for JAX-based machine learning workflows. It leverages JAX's JIT compilation, automatic differentiation, and hardware acceleration to build efficient, scalable data loading, preprocessing, and augmentation pipelines on CPUs, GPUs, and TPUs.
 
 ## Key Features
 
-- **High Performance:** Leverages JAX's JIT compilation and XLA backend to achieve near-optimal data processing speeds on CPUs, GPUs, and TPUs.
-- **JAX-Native Design:** All core components and operations are designed with JAX's functional programming paradigm and immutable data structures (PyTrees) in mind.
-- **Scalability:** Supports efficient data loading and processing for large datasets and distributed training scenarios, including multi-host and multi-device setups.
-- **Extensibility:** Easily define and integrate custom data sources, transformations, and augmentation operations.
-- **Usability:** Provides a clear, intuitive Python API and a flexible configuration system (TOML-based) for defining and managing pipelines.
-- **Determinism:** Pipeline runs are deterministic by default, crucial for reproducibility in research and production.
-- **Caching Optimization:** Multiple caching strategies for performance improvement, including function caching, transformer caching, and checkpointing.
-- **Complete Feature Set:** Supports common data pipeline operations including diverse data source handling, advanced transformations, data augmentation, batching, sharding, checkpointing, and caching.
-- **Ecosystem Integration:** Facilitates smooth integration with other JAX libraries like Flax, Optax, and Orbax.
+- **JAX-Native Design:** All core components built on JAX's functional paradigm with Flax NNX module system for state management
+- **High Performance:** JIT-compiled pipelines via XLA, with built-in profiling and roofline analysis
+- **DAG Execution Engine:** Graph-based pipeline construction with branching, parallel execution, caching, and rebatching nodes
+- **Scalability:** Multi-device and multi-host data distribution with device mesh sharding
+- **Determinism:** Reproducible pipelines by default using Grain's Feistel cipher shuffling (O(1) memory)
+- **Extensibility:** Custom data sources, operators, and augmentation strategies via composable NNX modules
+- **Benchmarking Suite:** Comparative benchmarks against 12+ frameworks (Grain, tf.data, PyTorch DataLoader, DALI, Ray Data, and more)
+- **Ecosystem Integration:** Works with Flax, Optax, Orbax, HuggingFace Datasets, and TensorFlow Datasets
+
+## Why Datarax?
+
+Datarax's differentiable pipeline architecture enables optimization paradigms that are impossible with traditional data loaders. Here are three real-world examples:
+
+### Learned Augmentation Policy (10,000x Faster Search)
+Traditional augmentation search (AutoAugment) requires 15,000 GPU-hours of RL. With datarax's differentiable operators, [DADA-style gradient-based search](examples/advanced/differentiable/01_dada_learned_augmentation_guide.py) achieves the same accuracy in **~0.1 GPU-hours** — because gradients flow through the augmentation pipeline.
+
+### Task-Optimized Image Processing (+30% Detection Accuracy)
+Camera ISPs are tuned for human perception, not AI tasks. Datarax's DAG executor lets you [build a differentiable ISP pipeline](examples/advanced/differentiable/02_learned_isp_guide.py) where detection loss backpropagates through every processing stage, automatically optimizing for **what the model actually needs**.
+
+### Cross-Domain Extensibility (Audio Synthesis in 3 Operators)
+Datarax isn't just for images. By implementing [3 custom operators for DDSP audio synthesis](examples/advanced/differentiable/03_ddsp_audio_synthesis_guide.py), you get a complete differentiable audio pipeline — with **100x less training data** than neural audio models — proving the framework extends to any domain.
+
+> **Learn more**: [Differentiable Pipeline Examples](docs/examples/advanced/differentiable/)
 
 ## Installation
-
-Install Datarax using pip:
 
 ```bash
 # Basic installation
 pip install datarax
 
-# With data loading support (HuggingFace, TFDS, Audio/Image libs)
+# With data loading support (HuggingFace, TFDS, audio/image libs)
 pip install datarax[data]
 
 # With GPU support (CUDA 12)
 pip install datarax[gpu]
 
-# Full installation with all optional dependencies
+# Full development installation
 pip install datarax[all]
 ```
 
 ### macOS / Apple Silicon
 
-Datarax supports macOS on both Intel and Apple Silicon (M1/M2/M3) processors.
-
 ```bash
-# Install for macOS (CPU mode - recommended)
+# macOS CPU mode (recommended)
 pip install datarax[all-cpu]
-
-# Run with explicit CPU backend
 JAX_PLATFORMS=cpu python your_script.py
-```
 
-**Metal GPU Acceleration (Experimental):** JAX supports Apple's Metal backend for GPU acceleration on M1+ chips:
-
-```bash
+# Metal GPU acceleration (experimental, M1/M2/M3+)
 pip install jax-metal
 JAX_PLATFORMS=metal python your_script.py
 ```
 
-> **Note:** Metal GPU acceleration is **community-tested**. CI runs on macOS with CPU only. If you can help validate Metal support, please open an issue with your results.
-
-**Known Limitations:**
-- **TensorFlow Datasets**: May hang on import on macOS ARM64. Datarax uses lazy imports to handle this.
-- **JAX Profiler**: Tracing is automatically disabled on macOS due to TensorBoard compatibility.
-
-## Development Setup
-
-For contributors and developers, Datarax uses `uv` as its package manager:
-
-```bash
-# Install uv
-pip install uv
-
-# Clone and setup
-git clone https://github.com/avitai/datarax.git
-cd datarax
-
-# Run automatic setup (creates venv & installs dependencies)
-./setup.sh
-
-# Activate the environment
-source activate.sh
-
-# Or install manually with uv
-uv pip install -e ".[dev]"
-```
-
-See the [Development Environment Guide](docs/dev_guide.md) for detailed instructions on:
-
-- Creating a virtual environment with `uv venv`
-- Installing dependencies through `pyproject.toml`
-- Running tests through pytest
-- Building and packaging Datarax
-
-## Current Status
-
-Datarax is currently in active development with a **Flax NNX-based architecture** that provides robust state management and checkpointing:
-
-### Core Architecture
-
-- **NNX Module System**: All components built on `flax.nnx.Module` for robust state management
-- **Integrated Checkpointing**: Seamless Orbax integration for stateful pipeline persistence
-- **Type Safety**: Complete type annotations and runtime validation
-- **Composability**: Modular design enabling flexible pipeline construction
-
-### Implemented Components
-
-- **Core NNX Modules**: DataraxModule, OperatorModule, StructuralModule
-- **Data Sources**: MemorySource, TFDSEagerSource/TFDSStreamingSource, HFEagerSource/HFStreamingSource (inheriting from StructuralModule/DataSourceModule)
-- **Operators**: Element-wise operators, MapOperator (inheriting from OperatorModule)
-- **DAG Execution Engine**: `DAGExecutor` and `pipeline` API for constructing flexible, graph-based data processing flows.
-- **Node System**: A rich set of nodes for building pipelines:
-  - `DataSourceNode`: entry point for data
-  - `OperatorNode`: for transformations
-  - `BatchNode` & `RebatchNode`: for batching control
-  - `ShuffleNode`, `CacheNode`: for data management
-  - Control flow nodes: `Sequential`, `Parallel`, `Branch`, `Merge`
-- **Stateful Components**:
-  - MemorySource/ArrayRecordSourceModule/HFEagerSource/HFStreamingSource for diverse data ingestion
-  - Range/ShuffleSamplerModule with reproducible random state
-  - DefaultBatcherModule with buffer state management
-  - ArraySharderModule for device-aware data distribution
-- **External Integrations**:
-  - HuggingFace Datasets with stateful iteration
-  - TensorFlow Datasets with checkpoint support
-- **Advanced Features**:
-  - Complete caching strategies with state preservation
-  - Differentiable rebatching (`DifferentiableRebatchImpl`)
-  - NNXCheckpointHandler for production-grade checkpointing
-
-Upcoming features include:
-
-- Image transformation library with JAX-native operations
-- Advanced sharding strategies for multi-device and multi-host scenarios
-- Performance optimization suite with benchmarking tools
-- Extended monitoring and metrics capabilities
-- Additional external data source integrations
+> **Note:** Metal GPU acceleration is community-tested. CI runs on macOS with CPU only.
 
 ## Quick Start
-
-Here's a simple example of using Datarax's DAG-based architecture to create a data pipeline for image classification:
 
 ```python
 import jax
@@ -172,125 +92,161 @@ from datarax.typing import Element
 
 
 def normalize(element: Element, key: jax.Array | None = None) -> Element:
-    """Normalize the image in the element."""
-    # element.data is a dict-like PyTree containing the actual data arrays
-    # Return a new Element with updated data (immutable update)
-    # update_data provides a clean API for partial updates
     return element.update_data({"image": element.data["image"] / 255.0})
 
 
-def apply_augmentation(element: Element, key: jax.Array) -> Element:
-    """Apply a simple augmentation (flipping) to the image."""
+def augment(element: Element, key: jax.Array) -> Element:
     key1, _ = jax.random.split(key)
-    flip_horizontal = jax.random.bernoulli(key1, 0.5)
-
-    # Use jax.lax.cond for JAX-compatible conditional execution
-    def flip_image(img):
-        return jnp.flip(img, axis=1)
-
-    def no_flip(img):
-        return img
-
+    flip = jax.random.bernoulli(key1, 0.5)
     new_image = jax.lax.cond(
-        flip_horizontal,
-        flip_image,
-        no_flip,
-        element.data["image"]
+        flip, lambda img: jnp.flip(img, axis=1), lambda img: img,
+        element.data["image"],
     )
     return element.update_data({"image": new_image})
 
 
-# Create some dummy data (28x28 images)
-num_samples = 1000
-image_shape = (28, 28, 1)
+# Create in-memory data source
 data = {
-    "image": np.random.randint(0, 255, (num_samples, *image_shape)).astype(np.float32),
-    "label": np.random.randint(0, 10, (num_samples,)).astype(np.int32),
+    "image": np.random.randint(0, 255, (1000, 28, 28, 1)).astype(np.float32),
+    "label": np.random.randint(0, 10, (1000,)).astype(np.int32),
 }
+source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
 
-# Create the data source using config-based API
-# MemorySource is a standard DataSource implementation for in-memory data
-source_config = MemorySourceConfig()
-source = MemorySource(source_config, data=data, rngs=nnx.Rngs(0))
+# Build pipeline with DAG-based API
+normalizer = ElementOperator(
+    ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0),
+)
+augmenter = ElementOperator(
+    ElementOperatorConfig(stochastic=True, stream_name="augmentations"),
+    fn=augment, rngs=nnx.Rngs(42),
+)
 
-# Create operators using the unified ElementOperator API
-# Normalizer is deterministic (no random key needed)
-normalizer_config = ElementOperatorConfig(stochastic=False)
-normalizer = ElementOperator(normalizer_config, fn=normalize, rngs=nnx.Rngs(0))
-
-# Augmenter is stochastic: requires stream_name for proper RNG management
-augmenter_config = ElementOperatorConfig(stochastic=True, stream_name="augmentations")
-augmenter = ElementOperator(augmenter_config, fn=apply_augmentation, rngs=nnx.Rngs(42))
-
-# Create the data pipeline using the DAG-based API
-# from_source() initializes the pipeline with:
-# 1. The DataSourceNode (data loading)
-# 2. A BatchNode (automatic batching)
-# The >> operator chains transformation operators
 pipeline = (
     from_source(source, batch_size=32)
     >> OperatorNode(normalizer)
     >> OperatorNode(augmenter)
 )
 
-# Alternative: Method Chaining
-# You can also build the pipeline using the fluent .add() method:
-# pipeline = (
-#     from_source(source, batch_size=32)
-#     .add(OperatorNode(normalizer))
-#     .add(OperatorNode(augmenter))
-# )
-
-# Create an iterator and process batches
-# The pipeline handles data streaming, batching, state management, and execution
+# Process batches
 for i, batch in enumerate(pipeline):
     if i >= 3:
         break
-
-    # Get the shape and stats for each component in the batch
-    # batch['key'] provides direct access to data arrays
-    image_batch = batch["image"]
-    label_batch = batch["label"]
-
-    print(f"Batch {i}:")
-    print(f"  Image shape: {image_batch.shape}")
-    print(f"  Label batch size: {label_batch.shape[0]}")
-    print(f"  Image min/max: {image_batch.min():.3f}/{image_batch.max():.3f}")
-
-print("Pipeline processing completed!")
+    print(f"Batch {i}: images {batch['image'].shape}, labels {batch['label'].shape}")
 ```
 
-### Advanced Pipeline
-
-For more complex workflows, Datarax supports branching and parallel execution:
+### Advanced: Branching and Parallel DAGs
 
 ```python
-from datarax.dag.nodes import Parallel, Merge, Branch
+from datarax.dag.nodes import OperatorNode, Merge, Branch
 
 # Define additional operators
-def invert(element, key=None):
+def invert(element: Element, key=None) -> Element:
     return element.update_data({"image": 1.0 - element.data["image"]})
 
+inverter = ElementOperator(
+    ElementOperatorConfig(stochastic=False), fn=invert, rngs=nnx.Rngs(0),
+)
+
 def is_high_contrast(element):
-    # Condition: check if image variance is high
     return jnp.var(element.data["image"]) > 0.1
 
 # Build a complex DAG:
 # 1. Source -> Batching
-# 2. Parallel: Normal version AND Inverted version
-# 3. Merge: Average them (Simple Ensemble)
-# 4. Branch: Apply extra noise ONLY if high contrast, otherwise normalize again
+# 2. Parallel: normalizer AND inverter (| creates a Parallel node)
+# 3. Merge: average the two branches
+# 4. Branch: conditional path based on image variance
 complex_pipeline = (
     from_source(source, batch_size=32)
-    >> (OperatorNode(normalizer) | OperatorNode(invert))
+    >> (OperatorNode(normalizer) | OperatorNode(inverter))
     >> Merge("mean")
     >> Branch(
            condition=is_high_contrast,
            true_path=OperatorNode(augmenter),
-           false_path=OperatorNode(normalizer)
+           false_path=OperatorNode(normalizer),
        )
 )
 ```
+
+## Architecture
+
+```
+src/datarax/
+  core/         # Base modules: DataSourceModule, OperatorModule, Element, Batcher, Sampler, Sharder
+  dag/          # DAG executor and node system (source, operator, batch, cache, control flow)
+  sources/      # MemorySource, TFDS (eager/streaming), HuggingFace (eager/streaming), ArrayRecord, MixedSource
+  operators/    # ElementOperator, MapOperator, CompositeOperator, modality-specific (image, text)
+    strategies/ # Sequential, Parallel, Branching, Ensemble, Merging execution strategies
+  samplers/     # Sequential, Shuffle (Feistel cipher), Range, EpochAware samplers
+  sharding/     # ArraySharder, JaxProcessSharder for multi-device distribution
+  distributed/  # DeviceMesh, DataParallel for multi-host training
+  batching/     # DefaultBatcher with buffer state management
+  checkpoint/   # NNXCheckpointHandler with Orbax integration
+  monitoring/   # Pipeline monitor, DAG monitor, reporters
+  performance/  # Roofline analysis, XLA optimization utilities
+  benchmarking/ # Profiler, comparative engine, regression guard, resource monitor
+  control/      # Prefetcher for asynchronous data loading
+  memory/       # Shared memory manager for multi-process data sharing
+  config/       # TOML-based configuration system with schema validation
+  cli/          # datarax and datarax-bench CLI entry points
+  utils/        # PyTree utilities, external integration helpers
+```
+
+## Benchmarking
+
+Datarax includes a benchmarking suite for competitive comparison against 12 data loading frameworks across 25 scenarios spanning vision, NLP, tabular, multimodal, I/O, distributed, and pipeline complexity workloads.
+
+```bash
+# Install benchmark dependencies (adds PyTorch, DALI, Ray, etc.)
+pip install datarax[benchmark]
+
+# Run benchmarks locally
+datarax-bench run --platform cpu --profile ci_cpu --repetitions 5
+
+# Run on cloud (SkyPilot)
+sky launch benchmarks/sky/gpu-benchmark.yaml --env WANDB_API_KEY=$WANDB_API_KEY
+```
+
+Benchmark results are exported to W&B with charts, gap analysis, stability reports, and raw result artifacts. See [Benchmarking Guide](docs/benchmarks/index.md) for methodology and cloud deployment.
+
+## Development Setup
+
+Datarax uses `uv` as its package manager:
+
+```bash
+# Clone and setup
+git clone https://github.com/avitai/datarax.git
+cd datarax
+pip install uv
+
+# Automatic setup
+./setup.sh && source activate.sh
+
+# Or manual install
+uv pip install -e ".[dev]"
+```
+
+### Running Tests
+
+```bash
+# CPU-only (most stable)
+JAX_PLATFORMS=cpu python -m pytest
+
+# Specific module
+JAX_PLATFORMS=cpu python -m pytest tests/sources/test_memory_source.py
+```
+
+### Docker
+
+```bash
+# Build and run
+docker build -t datarax:latest .
+docker run --rm --gpus all datarax:latest python -c "import datarax, jax; print(jax.devices())"
+
+# Benchmark images
+docker build -f benchmarks/docker/Dockerfile.gpu -t datarax-bench:gpu .
+```
+
+See [Docker Guide](docs/contributing/docker.md) for full details.
 
 ## Documentation
 
@@ -298,31 +254,11 @@ complex_pipeline = (
 - [Quick Start](docs/getting_started/quick_start.md)
 - [Core Concepts](docs/getting_started/core_concepts.md)
 - [User Guide](docs/user_guide/)
-- [API Reference](docs/index.md)
+- [API Reference](docs/api_reference/index.md)
 - [Examples](docs/examples/overview.md)
+- [Benchmarking](docs/benchmarks/index.md)
 - [Contributing](docs/contributing/contributing_guide.md)
-
-
-## Testing
-
-Datarax uses a complete test suite with support for both CPU and GPU testing:
-
-- Tests are organized to mirror the `src/datarax` package structure for easier navigation
-- All GitHub CI workflows run tests exclusively on CPU
-- Local test runs automatically use GPU when available
-- The testing infrastructure handles environment configuration to ensure consistency
-
-To run tests:
-
-```bash
-# Run all tests using CPU only (most stable)
-JAX_PLATFORMS=cpu python -m pytest
-
-# Run specific test module
-JAX_PLATFORMS=cpu python -m pytest tests/sources/test_memory_source.py
-```
-
-For more information on the test organization and how to run tests, see the [Testing Guide](tests/README.md).
+- [Docker](docs/contributing/docker.md)
 
 ## License
 

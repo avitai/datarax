@@ -1,6 +1,6 @@
 """Benchmark tests for data loading performance with different data sources.
 
-This module contains comprehensive benchmark tests for data loading,
+This module contains extensive benchmark tests for data loading,
 including performance tests, error handling, and edge cases.
 """
 
@@ -224,7 +224,7 @@ def test_comparison_benchmark(benchmark, benchmark_image_data):
     assert results["inmemory"]["examples_per_second"] > 0
 
 
-# Additional comprehensive tests for better coverage
+# Additional thorough tests for better coverage
 
 
 class TestDataLoadingPerformance:

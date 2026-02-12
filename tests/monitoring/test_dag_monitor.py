@@ -291,8 +291,8 @@ class TestMonitoredDAGExecutor:
         # Verify reset
         assert executor.total_batches_processed.get_value() == 0
         assert executor.total_elements_processed.get_value() == 0
-        assert len(executor._node_timers) == 0
-        assert len(executor._node_counts) == 0
+        assert len(executor._mon.node_timers) == 0
+        assert len(executor._mon.node_counts) == 0
 
     def test_monitored_pipeline_convenience(self):
         """Test monitored_pipeline convenience function."""

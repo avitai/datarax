@@ -1,3 +1,5 @@
+"""Composite loader nodes combining sourcing, shuffling, and batching."""
+
 from __future__ import annotations
 import jax
 from typing import Any

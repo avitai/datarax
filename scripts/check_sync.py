@@ -25,6 +25,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Allow importing sibling scripts (validate_examples lives in the same directory)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from validate_examples import find_example_files
+
 
 def extract_code_from_py(py_path: Path) -> list[str]:
     """Extract code cells from a Python percent-format file.
@@ -43,8 +47,9 @@ def extract_code_from_py(py_path: Path) -> list[str]:
 
     for part in parts[1:]:  # Skip content before first cell marker
         # Skip markdown cells (they start with triple quotes after the marker)
+        # Also handle raw strings (r""") used for markdown with special characters
         stripped = part.strip()
-        if stripped.startswith('"""') or stripped.startswith("'''"):
+        if stripped.startswith(('"""', "'''", 'r"""', "r'''")):
             continue
         if stripped:
             cells.append(stripped)
@@ -96,7 +101,17 @@ def normalize_code(code: str) -> str:
         lines.pop(0)
     while lines and not lines[-1]:
         lines.pop()
-    return "\n".join(lines)
+    # Collapse consecutive blank lines (ruff format adds PEP 8 double blanks
+    # but jupytext collapses them in notebooks)
+    collapsed: list[str] = []
+    prev_blank = False
+    for line in lines:
+        is_blank = not line
+        if is_blank and prev_blank:
+            continue
+        collapsed.append(line)
+        prev_blank = is_blank
+    return "\n".join(collapsed)
 
 
 def compare_files(py_path: Path, ipynb_path: Path) -> tuple[bool, str]:
@@ -165,35 +180,6 @@ def regenerate_notebook(py_path: Path, verbose: bool = False) -> bool:
         return result.returncode == 0
     except Exception:
         return False
-
-
-def find_example_files(base_path: Path) -> list[Path]:
-    """Find all Python example files.
-
-    Args:
-        base_path: Directory to search.
-
-    Returns:
-        List of Python file paths.
-    """
-    if base_path.is_file():
-        return [base_path] if base_path.suffix == ".py" else []
-
-    examples = []
-    for py_file in base_path.rglob("*.py"):
-        # Skip __init__.py, test files
-        if py_file.name.startswith("_"):
-            continue
-        if "test" in py_file.name.lower():
-            continue
-        # Skip comparison directory (benchmark scripts, not percent-format)
-        if "comparison" in py_file.parts:
-            continue
-        # Only include files with numbered prefixes
-        if re.match(r"^\d+_", py_file.name):
-            examples.append(py_file)
-
-    return sorted(examples)
 
 
 def main() -> int:

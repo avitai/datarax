@@ -1,0 +1,285 @@
+# Benchmark Scenario Definitions
+# Design ref: Section 5 of the benchmark report.
+# Each scenario defines dataset_size, element_shape, batch_size, transforms.
+
+# =============================================================================
+# 5.1 Computer Vision
+# =============================================================================
+
+[scenario.CV-1]
+name = "Image Classification Pipeline (Canonical)"
+category = "computer_vision"
+dataset_size = 50000
+element_shape = [256, 256, 3]
+batch_sizes = [32, 64, 128, 256, 512]
+transforms = ["RandomResizedCrop", "RandomHorizontalFlip", "Normalize", "CastToFloat32"]
+dtype = "uint8"
+
+[scenario.CV-1.variants]
+small = { dataset_size = 10000, element_shape = [32, 32, 3] }
+medium = { dataset_size = 50000, element_shape = [256, 256, 3] }
+large = { dataset_size = 200000, element_shape = [512, 512, 3] }
+
+[scenario.CV-2]
+name = "High-Resolution Medical Imaging (3D U-Net)"
+category = "computer_vision"
+dataset_size = 5000
+element_shape = [128, 128, 128]
+batch_sizes = [1, 2, 4]
+transforms = ["RandomCrop3D", "Normalize"]
+dtype = "float32"
+
+[scenario.CV-3]
+name = "Batch-Level Mixing (MixUp/CutMix)"
+category = "computer_vision"
+dataset_size = 50000
+element_shape = [224, 224, 3]
+batch_sizes = [64, 128, 256]
+transforms = ["RandomResizedCrop", "MixUp", "CutMix"]
+dtype = "uint8"
+
+[scenario.CV-4]
+name = "Multi-Resolution Pipeline"
+category = "computer_vision"
+dataset_size = 50000
+element_shape = [512, 512, 3]
+batch_sizes = [32, 64, 128]
+transforms = ["MultiScaleResize", "RandomCrop", "Normalize"]
+dtype = "uint8"
+
+# =============================================================================
+# 5.2 Natural Language Processing
+# =============================================================================
+
+[scenario.NLP-1]
+name = "Token-Based LLM Pretraining Data"
+category = "nlp"
+dataset_size = 100000
+element_shape = [2048]
+batch_sizes = [8, 16, 32, 64]
+transforms = []
+dtype = "int32"
+
+[scenario.NLP-2]
+name = "Variable-Length Text with Dynamic Padding"
+category = "nlp"
+dataset_size = 100000
+element_shape = [512]
+batch_sizes = [16, 32, 64]
+transforms = ["DynamicPad", "AttentionMask"]
+dtype = "int32"
+min_len = 10
+max_len = 512
+
+# =============================================================================
+# 5.3 Tabular
+# =============================================================================
+
+[scenario.TAB-1]
+name = "Dense Feature Table Loading"
+category = "tabular"
+dataset_size = 1000000
+element_shape = [100]
+batch_sizes = [256, 512, 1024, 4096]
+transforms = ["Normalize"]
+dtype = "float32"
+
+[scenario.TAB-2]
+name = "Sparse Feature Processing (DLRM Pattern)"
+category = "tabular"
+dataset_size = 1000000
+element_shape = [39]
+batch_sizes = [256, 512, 1024, 4096]
+transforms = ["EmbeddingLookup"]
+dtype = "mixed"
+num_dense = 13
+num_sparse = 26
+
+# =============================================================================
+# 5.4 Multi-Modal
+# =============================================================================
+
+[scenario.MM-1]
+name = "Image-Text Pair Loading (CLIP-Style)"
+category = "multimodal"
+dataset_size = 50000
+element_shape = [224, 224, 3]
+batch_sizes = [32, 64, 128]
+transforms = ["ResizeImage", "TokenizeText"]
+dtype = "mixed"
+text_len = 77
+
+[scenario.MM-2]
+name = "Audio-Text Pair Loading (ASR-Style)"
+category = "multimodal"
+dataset_size = 50000
+element_shape = [80000]
+batch_sizes = [8, 16, 32]
+transforms = ["MelSpectrogram", "TokenizeText"]
+dtype = "float32"
+sample_rate = 16000
+duration_sec = 5.0
+
+# =============================================================================
+# 5.5 Pipeline Composition
+# =============================================================================
+
+[scenario.PC-1]
+name = "Deep Transform Chain Scaling"
+category = "pipeline_composition"
+dataset_size = 50000
+element_shape = [224, 224, 3]
+batch_sizes = [64]
+transforms = ["Normalize", "RandomCrop", "RandomFlip", "ColorJitter", "RandomRotate"]
+dtype = "float32"
+
+[scenario.PC-2]
+name = "Branching/Parallel Pipeline (DAG)"
+category = "pipeline_composition"
+dataset_size = 50000
+element_shape = [224, 224, 3]
+batch_sizes = [64]
+transforms = ["BranchA", "BranchB", "Merge"]
+dtype = "float32"
+
+[scenario.PC-3]
+name = "Differentiable Rebatching"
+category = "pipeline_composition"
+dataset_size = 50000
+element_shape = [256, 256, 3]
+batch_sizes = [32, 64, 128]
+transforms = ["Unbatch", "Transform", "Rebatch"]
+dtype = "float32"
+
+[scenario.PC-4]
+name = "Probabilistic & Conditional Pipeline"
+category = "pipeline_composition"
+dataset_size = 50000
+element_shape = [224, 224, 3]
+batch_sizes = [64]
+transforms = ["ConditionalAugment", "ProbabilisticDrop"]
+dtype = "float32"
+
+[scenario.PC-5]
+name = "End-to-End Differentiable Pipeline"
+category = "pipeline_composition"
+dataset_size = 10000
+element_shape = [32, 32, 3]
+batch_sizes = [32, 64]
+transforms = ["LearnableAugment", "Normalize"]
+dtype = "float32"
+
+# =============================================================================
+# 5.6 I/O & Source Backends
+# =============================================================================
+
+[scenario.IO-1]
+name = "Source Backend Comparison"
+category = "io"
+dataset_size = 50000
+element_shape = [256, 256, 3]
+batch_sizes = [64, 128]
+transforms = ["Normalize"]
+dtype = "uint8"
+
+[scenario.IO-2]
+name = "Streaming vs. Eager Loading"
+category = "io"
+dataset_size = 100000
+element_shape = [256, 256, 3]
+batch_sizes = [64]
+transforms = ["Normalize"]
+dtype = "uint8"
+
+[scenario.IO-3]
+name = "Mixed-Source Pipeline"
+category = "io"
+dataset_size = 50000
+element_shape = [256, 256, 3]
+batch_sizes = [64]
+transforms = ["Normalize", "Merge"]
+dtype = "mixed"
+
+[scenario.IO-4]
+name = "Cache Node Effectiveness"
+category = "io"
+dataset_size = 50000
+element_shape = [256, 256, 3]
+batch_sizes = [64, 128]
+transforms = ["ExpensiveTransform", "Cache", "CheapTransform"]
+dtype = "float32"
+
+# =============================================================================
+# 5.7 Production Readiness
+# =============================================================================
+
+[scenario.PR-1]
+name = "Checkpoint Save/Restore Cycle"
+category = "production"
+dataset_size = 50000
+element_shape = [224, 224, 3]
+batch_sizes = [64]
+transforms = ["Normalize"]
+dtype = "float32"
+
+[scenario.PR-1.variants]
+small = { dataset_size = 10000, element_shape = [32, 32, 3] }
+medium = { dataset_size = 50000, element_shape = [224, 224, 3] }
+large = { dataset_size = 5000, element_shape = [128, 128, 128] }
+
+[scenario.PR-2]
+name = "Multi-Epoch Determinism Verification"
+category = "production"
+dataset_size = 50000
+element_shape = [224, 224, 3]
+batch_sizes = [64]
+transforms = ["RandomCrop", "RandomFlip"]
+dtype = "uint8"
+num_epochs = 5
+num_runs = 3
+
+# =============================================================================
+# 5.7 Distributed & Scaling
+# =============================================================================
+
+[scenario.DIST-1]
+name = "Multi-Device Sharding & Prefetch"
+category = "distributed"
+dataset_size = 100000
+element_shape = [128, 128, 3]
+batch_sizes = [64, 128]
+transforms = ["Normalize"]
+dtype = "float32"
+device_counts = [1, 2, 4, 8]
+
+[scenario.DIST-2]
+name = "Device Mesh Configuration"
+category = "distributed"
+dataset_size = 100000
+element_shape = [128, 128, 3]
+batch_sizes = [64]
+transforms = ["Normalize"]
+dtype = "float32"
+mesh_topologies = ["1d", "2d"]
+
+# =============================================================================
+# 5.9 Datarax-Unique Scenarios
+# =============================================================================
+
+[scenario.NNX-1]
+name = "Flax NNX Module Integration Overhead"
+category = "datarax_unique"
+dataset_size = 50000
+element_shape = [224, 224, 3]
+batch_sizes = [64, 128]
+transforms = ["Normalize", "RandomCrop"]
+dtype = "float32"
+
+[scenario.XFMR-1]
+name = "JIT + vmap Transform Acceleration"
+category = "datarax_unique"
+dataset_size = 50000
+element_shape = [128, 128, 3]
+batch_sizes = [32, 64, 128]
+transforms = ["Normalize", "RandomCrop", "AffineRotation"]
+dtype = "float32"

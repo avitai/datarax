@@ -216,6 +216,114 @@ class OperatorModule(DataraxModule):
     # Concrete Methods (implemented by base class)
     # ========================================================================
 
+    def _vmap_apply(
+        self,
+        batch_data: PyTree,
+        batch_states: PyTree,
+        stats: dict[str, Any] | None = None,
+    ) -> tuple[PyTree, PyTree]:
+        """Apply operator over batch via vmap (parallel) or scan (sequential).
+
+        Strategy is controlled by config.batch_strategy:
+        - "vmap": jax.vmap — fast, O(batch_size) memory
+        - "scan": jax.lax.scan — sequential, O(1) memory per element
+
+        This is the computational heart shared by apply_batch(), _apply_on_raw(),
+        and the DAG executor's fused chain.
+
+        Args:
+            batch_data: PyTree with arrays having batch dimension as axis 0.
+            batch_states: PyTree with arrays having batch dimension as axis 0.
+            stats: Optional statistics (if None, uses get_statistics()).
+
+        Returns:
+            Tuple of (transformed_data, transformed_states) as raw PyTrees.
+        """
+        if stats is None:
+            stats = self.get_statistics()
+        _stats = stats
+
+        # === RNG + RANDOM PARAMS ===
+        if self.stochastic:
+            assert self.stream_name is not None, "stochastic=True requires stream_name"
+            assert self.rngs is not None, "stochastic=True requires rngs"
+            stream_name: str = self.stream_name
+            rngs: nnx.Rngs = self.rngs
+            rng = rngs[stream_name]()
+        else:
+            rng = jax.random.key(0)
+
+        data_shapes = jax.tree.map(lambda x: x.shape, batch_data)
+        random_params_batch = self.generate_random_params(rng, data_shapes)
+
+        # === PER-ELEMENT FUNCTION + INPUTS (unified — DRY) ===
+        has_rp = random_params_batch is not None
+        if has_rp:
+
+            def _apply_with_rp(data, state, rp):
+                out_data, out_state, _ = self.apply(data, state, None, rp, _stats)
+                return out_data, out_state
+
+            apply_one = _apply_with_rp
+            inputs = (batch_data, batch_states, random_params_batch)
+        else:
+
+            def _apply_no_rp(data, state):
+                out_data, out_state, _ = self.apply(data, state, None, None, _stats)
+                return out_data, out_state
+
+            apply_one = _apply_no_rp
+            inputs = (batch_data, batch_states)
+
+        # === SCAN BRANCH (sequential, O(1) memory per element) ===
+        if self.config.batch_strategy == "scan":
+            _, result = jax.lax.scan(lambda carry, x: (carry, apply_one(*x)), None, inputs)
+            return result
+
+        # === VMAP BRANCH (parallel, needs output structure for axis specs) ===
+        input_struct_key = jax.tree.structure(batch_data)
+        cache_key = (self._unique_id, input_struct_key)
+        if cache_key not in _OUTPUT_STRUCT_CACHE:
+            sample_data = jax.tree.map(lambda x: x[0], batch_data)
+            sample_state = jax.tree.map(lambda x: x[0], batch_states)
+            _OUTPUT_STRUCT_CACHE[cache_key] = self.get_output_structure(sample_data, sample_state)
+        out_data_axes, out_state_axes = _OUTPUT_STRUCT_CACHE[cache_key]
+
+        in_data_axes = jax.tree.map(lambda _: 0, batch_data)
+        in_state_axes = jax.tree.map(lambda _: 0, batch_states)
+        if has_rp:
+            in_axes = (in_data_axes, in_state_axes, 0)
+        else:
+            in_axes = (in_data_axes, in_state_axes)
+
+        return jax.vmap(
+            apply_one,
+            in_axes=in_axes,
+            out_axes=(out_data_axes, out_state_axes),
+        )(*inputs)
+
+    def _apply_on_raw(
+        self,
+        batch_data: PyTree,
+        batch_states: PyTree,
+        stats: dict[str, Any] | None = None,
+    ) -> tuple[PyTree, PyTree]:
+        """Apply operator on raw dicts without Batch object creation.
+
+        Thin wrapper around _vmap_apply for use in the fused operator chain.
+        Returns raw (data_dict, states_dict) instead of a Batch object,
+        enabling chaining without intermediate Batch construction.
+
+        Args:
+            batch_data: Dict of batched arrays (axis 0 is batch).
+            batch_states: Dict of batched state arrays.
+            stats: Optional statistics.
+
+        Returns:
+            Tuple of (transformed_data, transformed_states) as raw dicts.
+        """
+        return self._vmap_apply(batch_data, batch_states, stats)
+
     def apply_batch(
         self,
         batch: Batch,
@@ -227,11 +335,8 @@ class OperatorModule(DataraxModule):
         and deterministic modes. It uses static branching on self.stochastic
         for JIT compilation efficiency.
 
-        The implementation:
-        1. For stochastic mode: generates random params, then vmaps apply()
-        2. For deterministic mode: directly vmaps apply() without RNG
-
-        Uses data_axes/states_axes pattern for per-key vmap control over PyTree data/states.
+        The implementation delegates to _vmap_apply() for the shared
+        computational core, then wraps the result in a Batch object.
 
         Args:
             batch: Input batch (Batch[Element] structure)
@@ -244,101 +349,32 @@ class OperatorModule(DataraxModule):
             This method is concrete (not abstract). Subclasses typically don't
             override it, but can if they need custom batch processing logic.
         """
-        # Get statistics if not provided
-        if stats is None:
-            stats = self.get_statistics()
-
         # Extract batch components for vmap processing
-        batch_data = batch.data.get_value()  # PyTree with batch dim (axis 0)
-        batch_states = batch.states.get_value()  # PyTree with batch dim (axis 0)
-        batch_metadata = batch._metadata_list  # nnx.data wrapped list (immutable, not vmapped)
+        batch_data = batch.data.get_value()
+        batch_states = batch.states.get_value()
+        batch_metadata = batch._metadata_list
 
         # Check for empty PyTree edge case (vmap requires at least one array)
-        # This is a static structure check, safe for JIT (recompiles on structure change)
-        # Must check BEFORE output structure discovery since we need x[0] for sampling
         has_data_arrays = len(jax.tree.leaves(batch_data)) > 0
         has_state_arrays = len(jax.tree.leaves(batch_states)) > 0
 
         if not has_data_arrays and not has_state_arrays:
-            # No arrays to vmap over - return batch unchanged (empty PyTree passthrough)
             return batch
 
-        # Also handle empty batch (batch_size=0) - can't get sample element
         if batch.batch_size == 0:
             return batch
 
-        # === OUTPUT STRUCTURE DISCOVERY ===
-        # Cache output structure per input structure for JIT efficiency
-        # This allows operators to add new keys to output (e.g., {"score": ...})
-        # Use module-level cache to avoid NNX pytree tracking issues with nnx.cond/switch
-        # Key includes _unique_id (not id(self)!) to differentiate between operator instances
-        # Using id(self) is unsafe because Python reuses memory addresses after GC
-        input_struct_key = jax.tree.structure(batch_data)
-        cache_key = (self._unique_id, input_struct_key)
-        if cache_key not in _OUTPUT_STRUCT_CACHE:
-            # Get sample element (unbatched) for structure discovery
-            sample_data = jax.tree.map(lambda x: x[0], batch_data)
-            sample_state = jax.tree.map(lambda x: x[0], batch_states)
+        # Delegate to shared vmap core
+        transformed_data, transformed_states = self._vmap_apply(batch_data, batch_states, stats)
 
-            # Discover output structure (may differ from input!)
-            _OUTPUT_STRUCT_CACHE[cache_key] = self.get_output_structure(sample_data, sample_state)
-
-        # get_output_structure() returns axis specs (0 for each leaf), ready for vmap
-        out_data_axes, out_state_axes = _OUTPUT_STRUCT_CACHE[cache_key]
-
-        # === AXIS SPECIFICATION ===
-        # Build in_axes from INPUT structure
-        in_data_axes = jax.tree.map(lambda _: 0, batch_data)
-        in_state_axes = jax.tree.map(lambda _: 0, batch_states)
-
-        # out_axes come directly from get_output_structure() (already contains 0 values)
-
-        # Extract data shapes (needed for random param generation)
-        data_shapes = jax.tree.map(lambda x: x.shape, batch_data)
-
-        # Generate random parameters (ALWAYS, for both stochastic and deterministic)
-        # DRY: Single code path for key generation
-        # self.stochastic and self.stream_name are marked with nnx.static()
-        # so they are compile-time constants, safe for Python control flow in JIT
-        if self.stochastic:
-            # Stochastic: use real RNG from configured stream
-            assert self.stream_name is not None, "stochastic=True requires stream_name"
-            assert self.rngs is not None, "stochastic=True requires rngs"
-            stream_name: str = self.stream_name  # Type narrowing for pyright
-            rngs: nnx.Rngs = self.rngs  # Type narrowing for pyright
-            rng = rngs[stream_name]()
-        else:
-            # Deterministic: use dummy RNG (values ignored by user functions)
-            rng = jax.random.key(0)
-
-        random_params_batch = self.generate_random_params(rng, data_shapes)
-
-        # Unified apply function (same for both modes)
-        def apply_fn(data, state, random_params):
-            """Apply transformation with random params (real or dummy)."""
-            transformed_data, transformed_state, _ = self.apply(
-                data, state, None, random_params, stats
-            )
-            return transformed_data, transformed_state
-
-        # Vmap with explicit per-key axes (supports nested PyTrees)
-        # Uses INPUT structure for in_axes, OUTPUT structure for out_axes
-        # This allows operators to add new keys to output data
-        transformed_data, transformed_states = jax.vmap(
-            apply_fn,
-            in_axes=(in_data_axes, in_state_axes, 0),
-            out_axes=(out_data_axes, out_state_axes),
-        )(batch_data, batch_states, random_params_batch)
-
-        # Reconstruct batch using from_parts (preserves batch-level data)
-        # Metadata is preserved unchanged (not transformed by operators)
+        # Reconstruct batch (preserves batch-level data)
         return Batch.from_parts(
             data=transformed_data,
             states=transformed_states,
             metadata_list=batch_metadata,
             batch_metadata=batch._batch_metadata,
             batch_state=batch.batch_state.get_value(),
-            validate=False,  # Skip validation in hot path
+            validate=False,
         )
 
     @final
@@ -355,10 +391,6 @@ class OperatorModule(DataraxModule):
             Transformed batch
         """
         # TODO: Add caching logic if config.cacheable
-
-        # Increment iteration count (same pattern as StructuralModule)
-        # Uses [...] for in-place mutation of IterationCount Variable (new NNX API)
-        self._iteration_count[...] += 1
 
         # Delegate to apply_batch
         return self.apply_batch(batch)

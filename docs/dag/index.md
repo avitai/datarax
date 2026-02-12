@@ -80,6 +80,12 @@ executor.branch(
 )
 ```
 
+## Real-World Examples
+
+- [Learned ISP Pipeline](../examples/advanced/differentiable/learned-isp-guide.md) - 5-stage differentiable ISP using `>>` operator with gradient flow through every stage
+- [DDSP Audio Synthesis](../examples/advanced/differentiable/ddsp-audio-synthesis.md) - Parallel + MergeBatchNode DAG for harmonic and noise synthesis
+- [DADA Learned Augmentation](../examples/advanced/differentiable/dada-learned-augmentation.md) - Datarax pipelines composed with Gumbel-Softmax for differentiable augmentation search
+
 ## See Also
 
 - [DAG Executor Guide](dag_executor.md) - Complete executor documentation

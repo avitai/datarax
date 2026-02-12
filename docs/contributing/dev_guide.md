@@ -395,33 +395,48 @@ python -c "import jax; print(jax.devices())"
 uv run pytest -m gpu
 ```
 
+## Docker
+
+Datarax provides Docker images for development, testing, and benchmarking across CPU/GPU/TPU platforms. See the [Docker guide](docker.md) for build instructions, GPU passthrough, and cloud deployment (Vertex AI, SkyPilot).
+
 ## Utility Scripts
 
 Located in `scripts/`:
 
 | Script | Purpose |
 |--------|---------|
-| `run_tests.sh` | Run tests with standard configuration |
-| `run_gpu_tests.sh` | Run GPU-specific tests |
-| `run_benchmarks.sh` | Run performance benchmarks |
-| `run_lint.sh` | Run linting tools |
-| `run_typecheck.sh` | Run type checking |
+| `run_tests.sh` | Run tests with auto GPU detection |
+| `run_gpu_tests.sh` | Run GPU-specific tests with CUDA config |
+| `run_full_benchmark.sh` | Run comparative benchmarks via `datarax-bench` CLI |
+| `run_all_examples_on_gpu.sh` | Run all examples on GPU |
+| `run_typecheck.sh` | Run pyright type checking |
 | `check_gpu.py` | Check GPU availability |
-| `validate_examples.py` | Validate example code |
-| `generate_docs.py` | Generate documentation |
+| `check_sync.py` | Check py/ipynb notebook sync |
+| `validate_examples.py` | Validate example file structure |
+| `jupytext_converter.py` | Convert between .py and .ipynb formats |
+| `generate_docs.py` | Generate documentation from source |
+| `generate_baselines.py` | Generate benchmark baseline data |
+| `verify_docs.py` | Verify code blocks in markdown docs |
+| `distributed_test_runner.py` | Distributed test runner for Vertex AI |
 | `submit_vertex_job.py` | Submit jobs to Vertex AI |
 
 ### Running Scripts
 
 ```bash
-# Run tests
-./scripts/run_tests.sh
+# Run tests (auto-detects GPU)
+./run_tests.sh
+
+# Run tests with specific device
+./run_tests.sh --device=cpu
 
 # Check GPU
 uv run python scripts/check_gpu.py
 
 # Validate examples
-uv run python scripts/validate_examples.py
+uv run python scripts/validate_examples.py --verbose
+
+# Check notebook sync
+uv run python scripts/check_sync.py --verbose
 ```
 
 ## Environment Variables

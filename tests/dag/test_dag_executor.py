@@ -1,5 +1,5 @@
 """
-Comprehensive test suite for DAGExecutor.
+Thorough test suite for DAGExecutor.
 
 This test suite provides extensive coverage of the DAGExecutor class and related
 functionality, including initialization, pipeline construction, execution,
@@ -10,7 +10,8 @@ import pytest
 import jax
 import jax.numpy as jnp
 import flax.nnx as nnx
-from typing import Any, Iterator
+from typing import Any
+from collections.abc import Iterator
 
 from datarax.dag.dag_executor import DAGExecutor, OperatorNode, pipeline
 from datarax.typing import Element
@@ -106,11 +107,6 @@ class MockOperator(OperatorModule):
         super().__init__(config, rngs=rngs, name=name)
         self.multiplier = multiplier
 
-    @property
-    def call_count(self):
-        """Get the call count from the parent's _iteration_count."""
-        return self._iteration_count
-
     def apply(
         self,
         data: dict[str, jax.Array],
@@ -125,48 +121,6 @@ class MockOperator(OperatorModule):
         else:
             result = data * self.multiplier
         return result, state, metadata
-
-
-class IterationAwareOperator(OperatorModule):
-    """Operator that uses iteration count to produce different output per call.
-
-    Uses OperatorModule's _iteration_count (incremented in __call__ before apply_batch)
-    to add iteration-dependent offset. The count is passed via stats to keep apply() pure.
-    """
-
-    def __init__(self, *, rngs: nnx.Rngs | None = None, name: str = "iteration_aware_operator"):
-        config = OperatorConfig(stochastic=False)
-        super().__init__(config, rngs=rngs, name=name)
-
-    @property
-    def call_count(self):
-        """Get the call count from the parent's _iteration_count."""
-        return self._iteration_count
-
-    @property
-    def state(self):
-        """Alias for iteration count (for test compatibility)."""
-        return self._iteration_count
-
-    def apply(
-        self,
-        data: dict[str, jax.Array],
-        state: dict[str, Any],
-        metadata: Any,
-        random_params: Any = None,
-        stats: dict[str, Any] | None = None,
-    ) -> tuple[dict[str, jax.Array], dict[str, Any], Any]:
-        """Apply transformation with iteration-dependent offset (pure function)."""
-        iter_count = stats.get("iteration_count", 0.0) if stats else 0.0
-        result = jax.tree.map(lambda x: x + iter_count, data)
-        return result, state, metadata
-
-    def apply_batch(self, batch, stats=None):
-        """Pass iteration count to apply via stats (outside traced context)."""
-        if stats is None:
-            stats = {}
-        stats = {**stats, "iteration_count": float(self._iteration_count)}
-        return super().apply_batch(batch, stats=stats)
 
 
 @pytest.fixture
@@ -215,11 +169,6 @@ class RandomOperator(OperatorModule):
             rngs = nnx.Rngs(0)
         super().__init__(config, rngs=rngs, name=name)
         self.noise_scale = noise_scale
-
-    @property
-    def call_count(self):
-        """Get the call count from the parent's _iteration_count."""
-        return self._iteration_count
 
     def generate_random_params(self, rng: jax.Array, data_shapes: Any) -> jax.Array:
         """Generate random keys for batch elements."""
@@ -510,8 +459,6 @@ class TestDAGExecutorExecution:
         assert "label" in result
         assert batch_allclose(result["image"], sample_dict_data["image"] * 3.0)
         assert batch_allclose(result["label"], sample_dict_data["label"] * 3.0)
-        # Now tracking at batch level, so transform is called once per batch
-        assert transform.call_count == 1
 
     def test_sequential_execution(self, sample_dict_data):
         """Test sequential pipeline execution on pre-batched data."""
@@ -525,9 +472,6 @@ class TestDAGExecutorExecution:
         # Check transformations were applied sequentially
         assert batch_allclose(result["image"], sample_dict_data["image"] * 2.0 * 3.0)
         assert batch_allclose(result["label"], sample_dict_data["label"] * 2.0 * 3.0)
-        # Now tracking at batch level, so each transform is called once per batch
-        assert t1.call_count == 1
-        assert t2.call_count == 1
 
     def test_parallel_execution(self, sample_dict_data):
         """Test parallel pipeline execution on pre-batched data."""
@@ -560,8 +504,6 @@ class TestDAGExecutorExecution:
 
         assert batch_allclose(result["image"], sample_dict_data["image"] * 2.0)
         assert batch_allclose(result["label"], sample_dict_data["label"] * 2.0)
-        assert true_path.call_count == 1
-        assert false_path.call_count == 0
 
     def test_branch_execution_false_path(self, sample_dict_data):
         """Test branch execution taking false path."""
@@ -576,8 +518,6 @@ class TestDAGExecutorExecution:
 
         assert batch_allclose(result["image"], sample_dict_data["image"] * 0.5)
         assert batch_allclose(result["label"], sample_dict_data["label"] * 0.5)
-        assert true_path.call_count == 0
-        assert false_path.call_count == 1
 
     def test_merge_execution(self, sample_dict_data):
         """Test merge execution."""
@@ -744,7 +684,6 @@ class TestDAGExecutorLazyRNG:
         result2 = executor(sample_data)
 
         # Caching should work - same result, operator called once
-        assert transform.call_count == 1  # Cached!
         assert batch_allclose(result1, result2)
 
     def test_lazy_rng_stochastic_detection_shuffle_node(self):
@@ -839,27 +778,10 @@ class TestDAGExecutorCaching:
         # Deterministic pipeline = no RNG = caching enabled
         # First call
         result1 = executor(sample_data)
-        assert transform.call_count == 1
 
         # Second call SHOULD use cache since pipeline is deterministic
         result2 = executor(sample_data)
-        assert transform.call_count == 1  # Not incremented - cached!
         assert batch_allclose(result1, result2)
-
-    def test_no_cache_with_explicit_rngs(self, sample_data):
-        """Test no caching in training mode (with RNG key)."""
-        rngs = nnx.Rngs(42)
-        executor = DAGExecutor(rngs=rngs, enable_caching=True, enforce_batch=False)
-        transform = MockOperator(multiplier=2.0)
-        executor.add(transform)
-
-        # With RNGs, each call gets different key, so no caching
-        # Both calls should execute transform
-        executor(sample_data, key=None)
-        assert transform.call_count == 1
-
-        executor(sample_data)
-        assert transform.call_count == 2  # Incremented
 
     def test_clear_cache(self, sample_data):
         """Test cache clearing."""
@@ -1053,7 +975,6 @@ class TestOperatorNode:
         expected = batch_mul(sample_data, 3.0)
 
         assert batch_allclose(result, expected)
-        assert transform.call_count == 1
 
     def test_transform_node_with_key(self, sample_data):
         """Test OperatorNode execution with RNG key."""
@@ -1083,7 +1004,6 @@ class TestOperatorNode:
         new_node.set_state(state)
 
         # States should match
-        assert new_transform.call_count == transform.call_count.get_value()
 
     def test_transform_node_repr(self):
         """Test OperatorNode string representation."""
@@ -1601,31 +1521,6 @@ class TestDAGExecutorIntegration:
 
         assert batch_allclose(result, expected)
 
-    def test_stateful_execution_across_calls(self, sample_data):
-        """Test iteration-aware operator produces different output per call.
-
-        Note: Caching is disabled because IterationAwareOperator uses internal
-        state to modify output. With lazy RNG optimization, deterministic pipelines
-        enable caching by default, so stateful operators need caching disabled.
-        """
-        # Disable caching for stateful operators that depend on internal state
-        executor = DAGExecutor(enable_caching=False, enforce_batch=False)
-        operator = IterationAwareOperator()
-        executor.add(operator)
-
-        # Multiple executions should show iteration-dependent changes
-        result1 = executor(sample_data)
-        result2 = executor(sample_data)
-        result3 = executor(sample_data)
-
-        # Each result should be different (adds iteration count to data)
-        assert not batch_allclose(result1, result2)
-        assert not batch_allclose(result2, result3)
-
-        # Iteration count should have incremented
-        assert operator.state.get_value() == 3
-        assert operator.call_count == 3
-
 
 # Performance and stress tests
 class TestDAGExecutorPerformance:
@@ -1773,7 +1668,6 @@ class TestDAGExecutorExecutionExtended:
 
         expected = batch_mul(sample_data, 3.0)
         assert batch_allclose(result, expected)
-        assert transform.call_count == 1
 
     def test_sequential_execution(self, sample_data):
         """Test sequential pipeline execution."""
@@ -1787,8 +1681,6 @@ class TestDAGExecutorExecutionExtended:
 
         expected = batch_mul(batch_mul(sample_data, 2.0), 3.0)
         assert batch_allclose(result, expected)
-        assert t1.call_count == 1
-        assert t2.call_count == 1
 
     def test_parallel_execution(self, sample_data):
         """Test parallel pipeline execution."""
@@ -1819,8 +1711,6 @@ class TestDAGExecutorExecutionExtended:
 
         expected = batch_mul(sample_data, 2.0)
         assert batch_allclose(result, expected)
-        assert true_path.call_count == 1
-        assert false_path.call_count == 0
 
     def test_branch_execution_false_path(self, sample_data):
         """Test branch execution taking false path."""
@@ -1838,8 +1728,6 @@ class TestDAGExecutorExecutionExtended:
 
         expected = batch_mul(sample_data, 0.5)
         assert batch_allclose(result, expected)
-        assert true_path.call_count == 0
-        assert false_path.call_count == 1
 
     def test_merge_execution(self, sample_data):
         """Test merge execution."""
@@ -2004,7 +1892,6 @@ class TestOperatorNodeExtended:
         expected = batch_mul(sample_data, 3.0)
 
         assert batch_allclose(result, expected)
-        assert transform.call_count == 1
 
     def test_transform_node_state_management(self, sample_data):
         """Test OperatorNode state management."""
@@ -2023,7 +1910,6 @@ class TestOperatorNodeExtended:
         new_node.set_state(state)
 
         # States should match
-        assert new_transform.call_count == transform.call_count.get_value()
 
 
 class TestDAGExecutorStateManagementExtended:

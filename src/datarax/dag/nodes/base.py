@@ -1,3 +1,5 @@
+"""Base DAG node with operator composition support."""
+
 from __future__ import annotations
 import flax.nnx as nnx
 import jax
@@ -32,6 +34,19 @@ class Node(nnx.Module):
         # Use nnx.List for proper NNX state tracking
         self.inputs: nnx.List[Node] = nnx.List([])
         self.outputs: nnx.List[Node] = nnx.List([])
+
+    @property
+    def is_jit_fusible(self) -> bool:
+        """Whether this node can participate in XLA fusion via nnx.jit.
+
+        Conservative default: False. Override to True for nodes whose
+        __call__ is a pure JAX computation (possibly with NNX state that
+        nnx.jit can extract/merge automatically).
+
+        Non-fusible nodes include those with Python-level mutable state
+        (lists, iterators, buffers) that JAX cannot trace.
+        """
+        return False
 
     def __call__(self, data: Any, *, key: jax.Array | None = None) -> Any:
         """Execute the node on input data.

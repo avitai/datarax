@@ -32,6 +32,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
+from datarax.operators.modality.image._validation import validate_field_key_shape
 
 
 @dataclass
@@ -50,9 +51,6 @@ class PatchDropoutOperatorConfig(ModalityOperatorConfig):
         clip_range: Range for clipping output values. None means no clipping.
                    Default: None (patch dropout preserves valid ranges)
 
-    Note:
-        The patch_size can be specified as a single int for square patches,
-        which will be converted to (size, size) tuple automatically.
     """
 
     num_patches: int = field(default=4, kw_only=True)
@@ -69,22 +67,14 @@ class PatchDropoutOperatorConfig(ModalityOperatorConfig):
         if self.num_patches < 0:
             raise ValueError(f"num_patches must be non-negative, got {self.num_patches}")
 
-        # Validate and normalize patch_size
-        if isinstance(self.patch_size, int):
-            # Convert int to tuple for backward compatibility
-            if self.patch_size <= 0:
-                raise ValueError(f"patch_size must be positive, got {self.patch_size}")
-            object.__setattr__(self, "patch_size", (self.patch_size, self.patch_size))
-        elif isinstance(self.patch_size, tuple):
-            if len(self.patch_size) != 2:
-                raise ValueError(f"patch_size must be a tuple of length 2, got {self.patch_size}")
-            patch_h, patch_w = self.patch_size
-            if patch_h <= 0 or patch_w <= 0:
-                raise ValueError(f"patch_size dimensions must be positive, got {self.patch_size}")
-        else:
-            raise TypeError(
-                f"patch_size must be int or tuple[int, int], got {type(self.patch_size)}"
-            )
+        # Validate patch_size
+        if not isinstance(self.patch_size, tuple):
+            raise TypeError(f"patch_size must be tuple[int, int], got {type(self.patch_size)}")
+        if len(self.patch_size) != 2:
+            raise ValueError(f"patch_size must be a tuple of length 2, got {self.patch_size}")
+        patch_h, patch_w = self.patch_size
+        if patch_h <= 0 or patch_w <= 0:
+            raise ValueError(f"patch_size dimensions must be positive, got {self.patch_size}")
 
         # Validate drop_value
         if not isinstance(self.drop_value, int | float):
@@ -180,14 +170,8 @@ class PatchDropoutOperator(ModalityOperator):
         Raises:
             KeyError: If field_key not in data_shapes
         """
-        if self.config.field_key not in data_shapes:
-            raise KeyError(
-                f"Field key '{self.config.field_key}' not found in data_shapes. "
-                f"Available keys: {list(data_shapes.keys())}"
-            )
-
         # Get shape: (batch_size, H, W, C) or (batch_size, H, W)
-        full_shape = data_shapes[self.config.field_key]
+        full_shape = validate_field_key_shape(data_shapes, self.config.field_key)
         batch_size = full_shape[0]
         image_height = full_shape[1]
         image_width = full_shape[2]

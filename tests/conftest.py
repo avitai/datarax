@@ -34,6 +34,13 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+# Pre-import Deep Lake before TensorFlow to avoid fatal OpenSSL conflict.
+# See benchmarks/adapters/_preload.py for the full explanation.
+try:
+    import benchmarks.adapters._preload  # noqa: F401
+except ImportError:
+    pass  # benchmarks package not on path (core tests only)
+
 # Configure TensorFlow - only on Linux
 # Note: TensorFlow import on macOS ARM64 can hang during pytest collection due to
 # Metal/GPU device detection issues. This is a known upstream issue (tensorflow/tensorflow#52138).
@@ -154,10 +161,15 @@ def pytest_collection_modifyitems(config, items):
     # Only run specified test types if explicitly requested
     if run_integration or run_end_to_end or run_benchmark:
         for item in items:
-            if run_integration and "integration" not in item.keywords:
-                if run_end_to_end and "end_to_end" not in item.keywords:
-                    if run_benchmark and "benchmark" not in item.keywords:
-                        item.add_marker(pytest.mark.skip(reason="test type not selected"))
+            selected = False
+            if run_integration and "integration" in item.keywords:
+                selected = True
+            if run_end_to_end and "end_to_end" in item.keywords:
+                selected = True
+            if run_benchmark and "benchmark" in item.keywords:
+                selected = True
+            if not selected:
+                item.add_marker(pytest.mark.skip(reason="test type not selected"))
 
     # Skip integration tests if requested
     if skip_integration:

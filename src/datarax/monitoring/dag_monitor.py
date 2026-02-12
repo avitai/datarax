@@ -4,7 +4,9 @@ This module provides MonitoredDAGExecutor that integrates metrics collection
 with the DAGExecutor pipeline system.
 """
 
-from typing import Any, Iterator
+from dataclasses import dataclass, field
+from typing import Any
+from collections.abc import Iterator
 import time
 import jax
 import flax.nnx as nnx
@@ -14,6 +16,18 @@ from datarax.dag.nodes import Node
 from datarax.monitoring.callbacks import CallbackRegistry
 from datarax.monitoring.metrics import MetricsCollector, MetricRecord
 from datarax.typing import Batch
+
+
+@dataclass
+class _MonitoringState:
+    """Mutable pipeline monitoring state."""
+
+    notify_counter: int = 0
+    notify_threshold: int = 100
+    node_timers: dict[str, list[float]] = field(default_factory=dict)
+    node_counts: dict[str, int] = field(default_factory=dict)
+    pipeline_start_time: float | None = None
+    batch_times: list[float] = field(default_factory=list)
 
 
 class MonitoredDAGExecutor(DAGExecutor):
@@ -90,12 +104,7 @@ class MonitoredDAGExecutor(DAGExecutor):
         self.track_memory = track_memory
 
         # Monitoring state
-        self._notify_counter = 0
-        self._notify_threshold = notify_threshold
-        self._node_timers: dict[str, list[float]] = {}  # Track timing per node
-        self._node_counts: dict[str, int] = {}  # Track execution counts per node
-        self._pipeline_start_time: float | None = None
-        self._batch_times: list[float] = []
+        self._mon = _MonitoringState(notify_threshold=notify_threshold)
 
         # Performance metrics
         self.total_batches_processed = nnx.Variable(0)
@@ -110,7 +119,7 @@ class MonitoredDAGExecutor(DAGExecutor):
         """
         # Start pipeline metrics
         if self.metrics.enabled:
-            self._pipeline_start_time = time.time()
+            self._mon.pipeline_start_time = time.time()
             self.metrics.start_timer("pipeline_iteration", "pipeline")
 
             # Record pipeline configuration
@@ -129,9 +138,9 @@ class MonitoredDAGExecutor(DAGExecutor):
             # Track DataSourceNode metrics since it's not in the execution graph
             if self._source_node is not None:
                 node_name = "DataSource"
-                if node_name not in self._node_timers:
-                    self._node_timers[node_name] = []
-                    self._node_counts[node_name] = 0
+                if node_name not in self._mon.node_timers:
+                    self._mon.node_timers[node_name] = []
+                    self._mon.node_counts[node_name] = 0
 
         # Initialize batch counter
         self._batch_count = 0
@@ -163,8 +172,8 @@ class MonitoredDAGExecutor(DAGExecutor):
             if self.metrics.enabled and self._source_node is not None:
                 source_time = time.time() - source_start
                 node_name = "DataSource"
-                self._node_timers[node_name].append(source_time)
-                self._node_counts[node_name] += 1
+                self._mon.node_timers[node_name].append(source_time)
+                self._mon.node_counts[node_name] += 1
 
                 self.metrics.record_metric(
                     f"node_{node_name}_execution_time",
@@ -172,7 +181,7 @@ class MonitoredDAGExecutor(DAGExecutor):
                     component="nodes",
                     metadata={
                         "node_type": "DataSourceNode",
-                        "execution_count": self._node_counts[node_name],
+                        "execution_count": self._mon.node_counts[node_name],
                     },
                 )
 
@@ -210,7 +219,7 @@ class MonitoredDAGExecutor(DAGExecutor):
 
                 # Record batch processing time
                 batch_time = time.time() - batch_start
-                self._batch_times.append(batch_time)
+                self._mon.batch_times.append(batch_time)
 
                 self.metrics.record_metric(
                     "batch_processing_time",
@@ -220,10 +229,10 @@ class MonitoredDAGExecutor(DAGExecutor):
                 )
 
                 # Check if we should notify observers
-                self._notify_counter += 1
-                if self._notify_counter >= self._notify_threshold:
+                self._mon.notify_counter += 1
+                if self._mon.notify_counter >= self._mon.notify_threshold:
                     self._notify_observers()
-                    self._notify_counter = 0
+                    self._mon.notify_counter = 0
 
             return batch
 
@@ -261,11 +270,11 @@ class MonitoredDAGExecutor(DAGExecutor):
 
             # Record container metrics
             execution_time = time.time() - start_time
-            if node_name not in self._node_timers:
-                self._node_timers[node_name] = []
-                self._node_counts[node_name] = 0
-            self._node_timers[node_name].append(execution_time)
-            self._node_counts[node_name] += 1
+            if node_name not in self._mon.node_timers:
+                self._mon.node_timers[node_name] = []
+                self._mon.node_counts[node_name] = 0
+            self._mon.node_timers[node_name].append(execution_time)
+            self._mon.node_counts[node_name] += 1
 
             self.metrics.record_metric(
                 f"node_{node_name}_execution_time",
@@ -273,7 +282,7 @@ class MonitoredDAGExecutor(DAGExecutor):
                 component="nodes",
                 metadata={
                     "node_type": type(node).__name__,
-                    "execution_count": self._node_counts[node_name],
+                    "execution_count": self._mon.node_counts[node_name],
                 },
             )
 
@@ -319,12 +328,12 @@ class MonitoredDAGExecutor(DAGExecutor):
             execution_time = time.time() - start_time
 
             # Update node statistics
-            if node_name not in self._node_timers:
-                self._node_timers[node_name] = []
-                self._node_counts[node_name] = 0
+            if node_name not in self._mon.node_timers:
+                self._mon.node_timers[node_name] = []
+                self._mon.node_counts[node_name] = 0
 
-            self._node_timers[node_name].append(execution_time)
-            self._node_counts[node_name] += 1
+            self._mon.node_timers[node_name].append(execution_time)
+            self._mon.node_counts[node_name] += 1
 
             # Record detailed metrics
             self.metrics.record_metric(
@@ -333,7 +342,7 @@ class MonitoredDAGExecutor(DAGExecutor):
                 component="nodes",
                 metadata={
                     "node_type": type(node).__name__,
-                    "execution_count": self._node_counts[node_name],
+                    "execution_count": self._mon.node_counts[node_name],
                 },
             )
 
@@ -419,17 +428,17 @@ class MonitoredDAGExecutor(DAGExecutor):
             )
 
         # Batch timing statistics
-        if self._batch_times:
-            stats["avg_batch_time"] = sum(self._batch_times) / len(self._batch_times)
-            stats["min_batch_time"] = min(self._batch_times)
-            stats["max_batch_time"] = max(self._batch_times)
+        if self._mon.batch_times:
+            stats["avg_batch_time"] = sum(self._mon.batch_times) / len(self._mon.batch_times)
+            stats["min_batch_time"] = min(self._mon.batch_times)
+            stats["max_batch_time"] = max(self._mon.batch_times)
 
         # Node statistics
-        for node_name, times in self._node_timers.items():
+        for node_name, times in self._mon.node_timers.items():
             if times:
                 stats[f"node_{node_name}_avg_time"] = sum(times) / len(times)
                 stats[f"node_{node_name}_total_time"] = sum(times)
-                stats[f"node_{node_name}_count"] = self._node_counts[node_name]
+                stats[f"node_{node_name}_count"] = self._mon.node_counts[node_name]
 
         # Cache statistics
         if self.enable_caching and self._cache is not None:
@@ -470,8 +479,8 @@ class MonitoredDAGExecutor(DAGExecutor):
 
     def _finalize_metrics(self) -> None:
         """Finalize metrics collection at end of iteration."""
-        if self._pipeline_start_time:
-            total_time = time.time() - self._pipeline_start_time
+        if self._mon.pipeline_start_time:
+            total_time = time.time() - self._mon.pipeline_start_time
             self.total_processing_time.set_value(total_time)
 
             self.metrics.stop_timer("pipeline_iteration", "pipeline")
@@ -515,11 +524,12 @@ class MonitoredDAGExecutor(DAGExecutor):
 
         # Add node breakdown
         report["nodes"] = {}
-        for node_name in self._node_timers:
+        for node_name in self._mon.node_timers:
             report["nodes"][node_name] = {
-                "execution_count": self._node_counts[node_name],
-                "total_time": sum(self._node_timers[node_name]),
-                "avg_time": sum(self._node_timers[node_name]) / len(self._node_timers[node_name]),
+                "execution_count": self._mon.node_counts[node_name],
+                "total_time": sum(self._mon.node_timers[node_name]),
+                "avg_time": sum(self._mon.node_timers[node_name])
+                / len(self._mon.node_timers[node_name]),
             }
 
         return report
@@ -527,10 +537,10 @@ class MonitoredDAGExecutor(DAGExecutor):
     def reset_metrics(self) -> None:
         """Reset all metrics and counters."""
         self.metrics.clear()
-        self._node_timers.clear()
-        self._node_counts.clear()
-        self._batch_times.clear()
-        self._notify_counter = 0
+        self._mon.node_timers.clear()
+        self._mon.node_counts.clear()
+        self._mon.batch_times.clear()
+        self._mon.notify_counter = 0
         self.total_batches_processed.set_value(0)
         self.total_elements_processed.set_value(0)
         self.total_processing_time.set_value(0.0)

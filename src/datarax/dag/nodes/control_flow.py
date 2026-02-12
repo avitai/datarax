@@ -1,9 +1,13 @@
+"""Control flow nodes: Identity, Sequential, Parallel, and Conditional composition."""
+
 from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import flax.nnx as nnx
-from typing import Callable, Literal, Any
+from typing import Literal, Any
+from collections.abc import Callable
 
+from datarax.core.element_batch import Batch
 from datarax.dag.nodes.base import Node
 
 
@@ -51,6 +55,11 @@ class Sequential(Node):
         for i in range(len(self.nodes) - 1):
             if isinstance(self.nodes[i], Node) and isinstance(self.nodes[i + 1], Node):
                 self.nodes[i].connect_to(self.nodes[i + 1])
+
+    @property
+    def is_jit_fusible(self) -> bool:
+        """Sequential is fusible iff all children are fusible."""
+        return all(n.is_jit_fusible for n in self.nodes)
 
     def __call__(self, data: Any, *, key: jax.Array | None = None) -> Any:
         """Execute nodes sequentially.
@@ -105,6 +114,11 @@ class Parallel(Node):
         super().__init__()
         # Use nnx.List for proper NNX state tracking
         self.nodes = nnx.List(nodes)
+
+    @property
+    def is_jit_fusible(self) -> bool:
+        """Parallel is fusible iff all branches are fusible."""
+        return all(n.is_jit_fusible for n in self.nodes)
 
     def __call__(self, data: Any, *, key: jax.Array | None = None) -> list[Any]:
         """Execute nodes in parallel.
@@ -290,6 +304,116 @@ class Merge(Node):
     def __repr__(self) -> str:
         """String representation."""
         return f"Merge(strategy={self.strategy}, axis={self.axis})"
+
+
+class MergeBatchNode(Node):
+    """Merges parallel Batch outputs back into a single Batch.
+
+    ``Parallel`` nodes return ``list[Batch]``, but subsequent ``OperatorNode``
+    requires a single ``Batch`` input.  This node bridges the gap by extracting
+    raw data from each Batch, merging via ``jax.tree.map``, and reconstructing
+    a Batch.
+
+    Strategies:
+        - 'mean': Element-wise mean across branches.
+        - 'sum': Element-wise sum across branches.
+
+    Examples:
+        Merge parallel branches:
+
+        ```python
+        from datarax.dag.nodes import Parallel, OperatorNode, MergeBatchNode
+
+        pipeline = (source
+                    >> Parallel([branch_a, branch_b])
+                    >> MergeBatchNode(strategy="mean"))
+        ```
+    """
+
+    def __init__(self, strategy: str = "mean", name: str | None = None):
+        """Initialize MergeBatchNode.
+
+        Args:
+            strategy: Merge strategy to apply across branch outputs ('mean' or 'sum').
+            name: Optional node name for identification.
+        """
+        super().__init__(name=name or "MergeBatch")
+        self.strategy = strategy
+
+    def __call__(self, data: Any, *, key: jax.Array | None = None) -> Any:
+        if not isinstance(data, list):
+            return data
+        if len(data) == 1:
+            return data[0]
+
+        # Extract raw PyTree data from each Batch
+        data_dicts = [b.data.get_value() for b in data]
+
+        if self.strategy == "mean":
+            merged = jax.tree.map(lambda *xs: jnp.mean(jnp.stack(xs), axis=0), *data_dicts)
+        elif self.strategy == "sum":
+            merged = jax.tree.map(lambda *xs: sum(xs), *data_dicts)
+        else:
+            raise ValueError(f"Unknown merge strategy: {self.strategy}")
+
+        # Reconstruct Batch with merged data and first batch's states
+        first = data[0]
+        return Batch.from_parts(
+            data=merged,
+            states=first.states.get_value(),
+            validate=False,
+        )
+
+    def __repr__(self) -> str:
+        return f"MergeBatchNode(strategy={self.strategy})"
+
+
+class FusedOperatorNode(Node):
+    """A fused group of OperatorNodes executed under a single nnx.jit boundary.
+
+    Chains multiple fusible operators into one XLA compilation, reducing
+    Python→XLA round-trips from N to 1. Must use nnx.jit (not jax.jit)
+    because child operators have NNX state (IterationCount, nnx.Param, nnx.Rngs).
+
+    Transparent: same input/output contract as calling the child nodes sequentially.
+    """
+
+    def __init__(self, nodes: list[Node]):
+        """Initialize fused operator node.
+
+        Args:
+            nodes: List of fusible nodes to chain.
+        """
+        super().__init__(name="FusedOperators")
+        self.fused_nodes = nnx.List(nodes)
+        self._jit_fn = None
+
+    @property
+    def is_jit_fusible(self) -> bool:
+        return True
+
+    def __call__(self, data: Any, *, key: jax.Array | None = None) -> Any:
+        """Execute fused operator chain.
+
+        On first call, compiles the chain with nnx.jit. Subsequent calls
+        reuse the compiled function.
+        """
+        if self._jit_fn is None:
+
+            @nnx.jit
+            def fused_call(fused_node, d):
+                result = d
+                for node in fused_node.fused_nodes:
+                    result = node(result, key=None)
+                return result
+
+            self._jit_fn = fused_call
+
+        return self._jit_fn(self, data)
+
+    def __repr__(self) -> str:
+        names = [n.name if hasattr(n, "name") else str(n) for n in self.fused_nodes]
+        return f"FusedOperatorNode({' >> '.join(names)})"
 
 
 # Convenience functions

@@ -1,6 +1,6 @@
 # Examples Overview
 
-Datarax provides a comprehensive set of examples organized by complexity and topic.
+Datarax provides a full set of examples organized by complexity and topic.
 Each example follows a consistent structure with learning goals, prerequisites, and
 expected outcomes.
 
@@ -35,7 +35,7 @@ Essential examples for understanding Datarax fundamentals.
 | Example | Level | Description |
 |---------|-------|-------------|
 | [Simple Pipeline](core/simple-pipeline.md) | Beginner | Basic pipeline with memory source and operators |
-| [Pipeline Tutorial](core/pipeline-tutorial.md) | Intermediate | Comprehensive guide to operators and composition |
+| [Pipeline Tutorial](core/pipeline-tutorial.md) | Intermediate | Thorough guide to operators and composition |
 | [Operators Tutorial](core/operators-tutorial.md) | Intermediate | Deep dive into operator types and patterns |
 | [CIFAR-10 Quick Reference](core/cifar10-quickref.md) | Beginner | CIFAR-10 dataset loading and preprocessing |
 | [Augmentation Quick Reference](core/augmentation-quickref.md) | Beginner | Image augmentation techniques |
@@ -56,6 +56,38 @@ Connect Datarax with external data sources and libraries.
 | [TFDS Quick Reference](integration/tfds/tfds-quickref.md) | Beginner | Load datasets from TensorFlow Datasets |
 | [ArrayRecord Quick Reference](integration/arrayrecord/arrayrecord-quickref.md) | Intermediate | Google's ArrayRecord format integration |
 
+### Differentiable Pipelines (Why Datarax)
+
+Flagship examples demonstrating datarax's unique differentiable pipeline capabilities.
+
+<div class="grid cards" markdown>
+
+-   :material-auto-fix:{ .lg .middle } **Learned Augmentation (DADA)**
+
+    ---
+
+    10,000x faster augmentation policy search via gradient descent
+
+    [:octicons-arrow-right-24: Advanced Guide](advanced/differentiable/dada-learned-augmentation.md)
+
+-   :material-camera:{ .lg .middle } **Learned ISP for Detection**
+
+    ---
+
+    End-to-end differentiable image signal processing pipeline
+
+    [:octicons-arrow-right-24: Advanced Guide](advanced/differentiable/learned-isp-guide.md)
+
+-   :material-music-note:{ .lg .middle } **DDSP Audio Synthesis**
+
+    ---
+
+    Custom operators for differentiable digital signal processing
+
+    [:octicons-arrow-right-24: Advanced Guide](advanced/differentiable/ddsp-audio-synthesis.md)
+
+</div>
+
 ### Advanced
 
 Production-ready patterns and optimization techniques.
@@ -73,6 +105,9 @@ Production-ready patterns and optimization techniques.
 | [Optimization Guide](advanced/performance/optimization-guide.md) | Advanced | Performance tuning and profiling |
 | [Sampling Tutorial](advanced/sampling/sampling-tutorial.md) | Intermediate | Sequential, shuffle, range, and epoch-aware samplers |
 | [End-to-End CIFAR-10](advanced/training/e2e-cifar10-guide.md) | Advanced | Complete training pipeline with all features |
+| [DADA Learned Augmentation](advanced/differentiable/dada-learned-augmentation.md) | Advanced | Differentiable augmentation policy search |
+| [Learned ISP Guide](advanced/differentiable/learned-isp-guide.md) | Advanced | End-to-end ISP optimization for object detection |
+| [DDSP Audio Synthesis](advanced/differentiable/ddsp-audio-synthesis.md) | Advanced | Custom operators for differentiable audio processing |
 
 ## Documentation Tiers
 
@@ -113,6 +148,7 @@ The examples cover all major Datarax features:
 | Distributed | Sharding, Multi-device | Complete |
 | Checkpointing | State save/restore, Resumable training | Complete |
 | Monitoring | Metrics, Reporters, Callbacks | Complete |
+| Differentiable Pipelines | DADA, ISP, DDSP | Complete |
 
 ## Running Examples
 
@@ -171,7 +207,7 @@ Want to add your own examples? We welcome contributions!
 
     ---
 
-    Comprehensive standards for creating educational examples and tutorials
+    Complete standards for creating educational examples and tutorials
 
     [:octicons-arrow-right-24: Read the Guide](../contributing/example_documentation_design.md)
 

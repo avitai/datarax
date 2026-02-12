@@ -885,5 +885,5 @@ if __name__ == "__main__":
     print("=" * 70)
     print("\nCONCLUSION:")
     print("These measurements prove that the stateful NNX approach")
-    print("provides a fundamentally superior architecture for ML pipelines.")
+    print("provides strong architectural advantages for ML pipelines.")
     print("=" * 70)

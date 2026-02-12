@@ -5,7 +5,8 @@ that use flax.nnx.Module for state management and JAX transformation
 compatibility.
 """
 
-from typing import Any, Iterator
+from typing import Any
+from collections.abc import Iterator
 
 from flax import nnx
 
@@ -144,10 +145,6 @@ class SamplerModule(StructuralModule):
         if self.config.cacheable and self._cache is not None and cache_key is not None:
             self._cache[cache_key] = result
 
-        # Update iteration count
-        # Uses [...] for in-place mutation of IterationCount Variable (new NNX API)
-        self._iteration_count[...] += 1
-
         return result
 
     def _sample_impl(self, n: int) -> list[int]:
@@ -199,10 +196,6 @@ class SamplerModule(StructuralModule):
             The default implementation simply collects all indices from the iterator.
             Subclasses may override this for more efficient implementations.
         """
-        # Update iteration count for direct sample calls
-        # Uses [...] for in-place mutation of IterationCount Variable (new NNX API)
-        self._iteration_count[...] += 1
-
         # Set dataset_size if the sampler needs it
         if hasattr(self, "dataset_size") and getattr(self, "dataset_size", None) is None:
             setattr(self, "dataset_size", n)
@@ -241,6 +234,27 @@ class SamplerModule(StructuralModule):
         super().set_state(state)
         if "stream_name" in state:
             self.stream_name = state["stream_name"]
+
+    def _split_state(self, state: dict[str, Any], custom_keys: set[str]) -> dict[str, Any]:
+        """Split state dict into base NNX state and custom sampler state.
+
+        Separates sampler-specific keys from the full state dict, restores
+        the base state via the parent set_state chain, and returns only
+        the custom sampler state.
+
+        Args:
+            state: Full state dictionary from checkpoint
+            custom_keys: Set of keys that belong to the sampler subclass
+
+        Returns:
+            Dictionary containing only the custom keys present in state
+        """
+        base_state = {k: v for k, v in state.items() if k not in custom_keys}
+        if base_state:
+            # Call through the full SamplerModule.set_state chain
+            # (handles stream_name + parent StructuralModule state)
+            SamplerModule.set_state(self, base_state)
+        return {k: state[k] for k in custom_keys if k in state}
 
     def reset(self, seed: int | None = None) -> None:
         """Reset the sampler state, typically used to start a new epoch.

@@ -3,7 +3,7 @@
 Enhanced Comparison: Distributed Processing and Memory Management.
 
 This example demonstrates how datarax's stateful approach provides
-superior multi-worker coordination, memory efficiency, and JAX sharding
+streamlined multi-worker coordination, memory efficiency, and JAX sharding
 integration compared to Grain's stateless design.
 """
 
@@ -16,7 +16,8 @@ import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import flax.nnx as nnx
 import jax
@@ -384,7 +385,7 @@ class StatefulDistributedLoader(nnx.Module):
 
     @property
     def stats(self) -> dict:
-        """Get comprehensive statistics."""
+        """Get detailed statistics."""
         active_workers = sum(w.value for w in self.worker_active)
         total_worker_samples = sum(w.value for w in self.worker_samples)
         total_errors = sum(e.value for e in self.worker_errors)
@@ -797,5 +798,5 @@ if __name__ == "__main__":
     print("✓ Simpler error handling (Workshop)")
 
     print("\nConclusion: Datarax's stateful approach provides")
-    print("superior distributed processing capabilities with less code")
+    print("streamlined distributed processing capabilities with less code")
     print("=" * 80)
