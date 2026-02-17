@@ -89,13 +89,11 @@ benchmark = [
   # Tier 3: Specialized
   "litdata>=0.2", # Lightning LitData — cloud streaming
   "ray[data]>=2.9", # Ray Data — distributed actor-based
-  "datasets>=2.14", # Hugging Face Datasets (also in data extra)
+  "datasets>=2.21", # Hugging Face Datasets (>=2.21 for pyarrow 15+ compat)
   "deeplake>=4.0", # Deep Lake — AI database
   # Benchmark infrastructure
   "tabulate>=0.9", # Table formatting for reports
-  "rich>=13.0", # Rich terminal output for benchmark runners
-  # Benchmark analysis and dashboard
-  "benchkit @ {root:uri}/tools/benchkit"
+  "rich>=13.0" # Rich terminal output for benchmark runners
 ]
 # Note: FFCV requires system OpenCV (libopencv-dev) — install separately via:
 # sudo apt-get install libopencv-dev && pip install ffcv>=1.0
@@ -110,13 +108,13 @@ data = [
   # Data loading and processing dependencies
   "grain-nightly; sys_platform == 'linux'", # Google's high-performance data loading library (Linux only)
   "tensorflow-datasets>=4.9.2", # For TFDS integration
-  "datasets>=2.14.0", # For HuggingFace datasets
+  "datasets>=2.21", # For HuggingFace datasets (>=2.21 for pyarrow 15+ compat)
   "pillow>=10.0.0", # For image processing
   "soundfile>=0.12.1", # For audio processing
   "librosa>=0.10.0" # For advanced audio processing
 ]
 dev = [
-  "benchkit[wandb,stats] @ {root:uri}/tools/benchkit", # local benchmark toolkit + optional test deps
+  # benchkit: install locally via `uv pip install -e "tools/benchkit[wandb,stats]"` or use the `local` extra
   "build>=1.0.3",
   "coverage>=7",
   "ipykernel>=6.29.5",
@@ -154,7 +152,8 @@ docs = [
 ]
 examples = [
   # Optional dependencies for running advanced examples
-  "apache-beam>=2.50,<2.65", # TFDS requires <2.65 (Beam >=2.65 causes etils pickle recursion)
+  # Note: apache-beam removed — it forces dill==0.3.1.1 (source-only multiprocess, hangs build).
+  # Install manually if needed for TFDS beam downloads: uv pip install "apache-beam>=2.50,<2.65"
   "keras>=3.0", # Required by DADA example for CIFAR-10 loading
   "torchcrepe", # CREPE pretrained weights for DDSP audio synthesis example (bundles .pth files)
   "h5py>=3.0" # Alternative CREPE weight loading from Keras .h5 files
@@ -183,7 +182,6 @@ test = [
 
 [project.scripts]
 datarax = "datarax.cli:main"
-datarax-bench = "benchmarks.cli:main"
 
 [project.urls]
 "Bug Tracker" = "https://github.com/avitai/datarax/issues"
@@ -204,6 +202,12 @@ skips = ["B101", "B110"]
 directory = "htmlcov"
 skip_covered = false
 skip_empty = false
+
+[tool.coverage.paths]
+source = [
+  "src",
+  "*/datarax/src"
+]
 
 [tool.coverage.report]
 exclude_lines = [
@@ -230,6 +234,7 @@ skip_covered = false
 branch = true
 omit = ["*/tests/*", "*/conftest.py", "*/__pycache__/*", "*/scripts/*", "*/examples/*", "*/benchmark/*", "*/example_data/*"]
 parallel = true
+relative_files = true
 source = ["src"]
 
 [tool.coverage.xml]
@@ -247,9 +252,6 @@ include = ["src/datarax", "README.md", "LICENSE", "pyproject.toml"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/datarax"]
-
-[tool.hatch.metadata]
-allow-direct-references = true
 
 [tool.hatch.version]
 path = "src/datarax/__init__.py"

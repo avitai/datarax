@@ -462,29 +462,18 @@ def hsv_to_rgb(hsv: jax.Array) -> jax.Array:
     # Vectorize the function to process all pixels
     convert_vmap = jax.vmap(convert_pixel)
 
-    # For higher dimensional inputs, we need to apply vmap multiple times
+    # For higher dimensional inputs, flatten to 1D, apply vmap, reshape back.
+    # This matches rgb_to_hsv()'s approach and avoids nested vmap overhead.
     shape = h_norm.shape
-    if len(shape) == 1:
-        # For a single row of pixels
-        rgb = convert_vmap(h_norm, c, x, m)
-    elif len(shape) == 2:
-        # For a 2D image
-        convert_vmap2d = jax.vmap(convert_vmap)
-        rgb = convert_vmap2d(
-            h_norm.reshape(shape[0], shape[1]),
-            c.reshape(shape[0], shape[1]),
-            x.reshape(shape[0], shape[1]),
-            m.reshape(shape[0], shape[1]),
-        )
+    if len(shape) == 0:
+        rgb = convert_pixel(h_norm, c, x, m)
     else:
-        # Handle other shapes by reshaping first, then applying vmap
-        # Use -1 to let JAX infer the dimension size statically
-        flat_shape = (-1,)
+        flat = (-1,)
         rgb = convert_vmap(
-            h_norm.reshape(flat_shape),
-            c.reshape(flat_shape),
-            x.reshape(flat_shape),
-            m.reshape(flat_shape),
+            h_norm.reshape(flat),
+            c.reshape(flat),
+            x.reshape(flat),
+            m.reshape(flat),
         )
         rgb = rgb.reshape((*shape, 3))
 
@@ -554,6 +543,32 @@ def adjust_hue(
     return hsv_to_rgb(hsv)
 
 
+def _adjust_hsv(
+    image: jax.Array,
+    saturation_factor: float | jax.Array | None = None,
+    hue_delta: float | jax.Array | None = None,
+) -> jax.Array:
+    """Batch saturation + hue adjustment in a single RGB-HSV roundtrip.
+
+    When both adjustments are needed, this avoids the cost of two separate
+    rgb_to_hsv / hsv_to_rgb conversions.
+
+    Args:
+        image: Input RGB image as JAX array with values in [0, 1] and shape [H, W, 3].
+        saturation_factor: Multiplicative factor for saturation channel. None to skip.
+        hue_delta: Additive offset for hue channel (radians). None to skip.
+
+    Returns:
+        Adjusted RGB image, clipped to [0, 1].
+    """
+    hsv = rgb_to_hsv(image)
+    if saturation_factor is not None:
+        hsv = hsv.at[..., 1].set(jnp.clip(hsv[..., 1] * saturation_factor, 0.0, 1.0))
+    if hue_delta is not None:
+        hsv = hsv.at[..., 0].set((hsv[..., 0] + hue_delta) % (2 * jnp.pi))
+    return hsv_to_rgb(hsv)
+
+
 def color_jitter(
     image: jax.Array,
     brightness: float = 0.0,
@@ -596,12 +611,12 @@ def color_jitter(
             # Use maximum positive adjustment for testing
             result = adjust_contrast(result, 1.0 + contrast)
 
-        if saturation != 0.0:
-            # Use maximum positive adjustment for testing
+        # Batch sat+hue into a single RGB↔HSV roundtrip when both are active
+        if saturation != 0.0 and hue != 0.0:
+            result = _adjust_hsv(result, saturation_factor=1.0 + saturation, hue_delta=hue)
+        elif saturation != 0.0:
             result = adjust_saturation(result, 1.0 + saturation)
-
-        if hue != 0.0:
-            # Use maximum positive adjustment for testing
+        elif hue != 0.0:
             result = adjust_hue(result, hue)
 
         return jnp.clip(result, 0.0, 1.0)
@@ -617,16 +632,24 @@ def color_jitter(
         key, _ = jax.random.split(key)
         result = adjust_contrast(result, contrast_factor)
 
-    if saturation != 0.0:
-        saturation_factor = 1.0 + jax.random.uniform(key, (), minval=-saturation, maxval=saturation)
-        key, _ = jax.random.split(key)
-        result = adjust_saturation(result, saturation_factor)
+    # Batch sat+hue into a single RGB↔HSV roundtrip when both are active
+    has_saturation = saturation != 0.0
+    has_hue = hue != 0.0
 
-    if hue != 0.0:
-        # Scale the hue to the proper range
-        hue_delta = jax.random.uniform(key, (), minval=-hue, maxval=hue)
+    if has_saturation and has_hue:
+        sat_factor = 1.0 + jax.random.uniform(key, (), minval=-saturation, maxval=saturation)
         key, _ = jax.random.split(key)
-        result = adjust_hue(result, hue_delta)
+        h_delta = jax.random.uniform(key, (), minval=-hue, maxval=hue)
+        key, _ = jax.random.split(key)
+        result = _adjust_hsv(result, saturation_factor=sat_factor, hue_delta=h_delta)
+    elif has_saturation:
+        sat_factor = 1.0 + jax.random.uniform(key, (), minval=-saturation, maxval=saturation)
+        key, _ = jax.random.split(key)
+        result = adjust_saturation(result, sat_factor)
+    elif has_hue:
+        h_delta = jax.random.uniform(key, (), minval=-hue, maxval=hue)
+        key, _ = jax.random.split(key)
+        result = adjust_hue(result, h_delta)
 
     return jnp.clip(result, 0.0, 1.0)
 

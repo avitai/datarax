@@ -1,305 +1,247 @@
 """Distributed metrics collection utilities for Datarax.
 
-This module provides a unified implementation for collecting and aggregating
-metrics across multiple devices in distributed training settings.
-Supports both static method usage and NNX module instantiation.
+This module provides functions for collecting and aggregating metrics
+across multiple devices in distributed training settings.
+
+Two API variants are provided:
+
+- **Default functions** (reduce_mean, reduce_sum, etc.): Use standard JAX
+  operations (jnp.mean, jnp.sum) on global arrays. Work in SPMD contexts
+  with nnx.jit + mesh.
+
+- **Collective functions** (reduce_mean_collective, etc.): Use JAX collective
+  operations (lax.pmean, lax.psum). Only valid inside pmap or shard_map contexts.
 """
 
-from typing import Any, Union
+from typing import Any
 
-import flax.nnx as nnx
 import jax
+import jax.numpy as jnp
 from jax import lax
 
 
-class DistributedMetrics(nnx.Module):
-    """Unified distributed metrics collection utilities for Datarax.
+# ---------------------------------------------------------------------------
+# SPMD-compatible reductions (work with global arrays in nnx.jit)
+# ---------------------------------------------------------------------------
 
-    This class provides methods for aggregating metrics across multiple devices
-    in a distributed training setting, including mean, sum, and custom reduction
-    operations.
 
-    Supports both static method usage (stateless) and instance method usage (stateful).
+def reduce_mean(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Compute the mean of metrics using standard JAX operations.
 
-    Usage:
-        # Static method usage (stateless)
-        metrics = DistributedMetrics.reduce_mean_static(metrics)
+    Works with global arrays in SPMD contexts (nnx.jit + mesh).
 
-        # Instance method usage (stateful)
-        dm = DistributedMetrics()
-        metrics = dm.reduce_mean(metrics)
+    Args:
+        metrics: The metrics to reduce.
+
+    Returns:
+        A dictionary of mean-reduced metrics.
     """
 
-    def __init__(self):
-        """Initialize DistributedMetrics module."""
-        super().__init__()
+    def maybe_mean(x: Any) -> Any:
+        if isinstance(x, jax.Array) and x.ndim > 0:
+            return jnp.mean(x)
+        return x
 
-    def all_gather(self, metrics: dict[str, Any], axis_name: str = "batch") -> dict[str, Any]:
-        """Gather metrics from all devices.
+    return jax.tree.map(maybe_mean, metrics)
 
-        Args:
-            metrics: The metrics to gather.
-            axis_name: The name of the axis to gather across.
 
-        Returns:
-            A dictionary of gathered metrics.
-        """
+def reduce_sum(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Compute the sum of metrics using standard JAX operations.
 
-        def maybe_gather(x):
-            if isinstance(x, jax.Array | jax.Array):
-                return jax.lax.all_gather(x, axis_name=axis_name)
-            return x
+    Works with global arrays in SPMD contexts (nnx.jit + mesh).
 
-        return jax.tree.map(maybe_gather, metrics)
+    Args:
+        metrics: The metrics to reduce.
 
-    @staticmethod
-    def all_gather_static(metrics: dict[str, Any], axis_name: str = "batch") -> dict[str, Any]:
-        """Static version of all_gather."""
-        return jax.tree.map(
-            lambda x: jax.lax.all_gather(x, axis_name=axis_name)
-            if isinstance(x, jax.Array | jax.Array)
-            else x,
-            metrics,
-        )
+    Returns:
+        A dictionary of summed metrics.
+    """
 
-    def reduce_mean(self, metrics: dict[str, Any], axis_name: str = "batch") -> dict[str, Any]:
-        """Compute the mean of metrics across devices.
+    def maybe_sum(x: Any) -> Any:
+        if isinstance(x, jax.Array) and x.ndim > 0:
+            return jnp.sum(x)
+        return x
 
-        Args:
-            metrics: The metrics to reduce.
-            axis_name: The name of the axis to reduce across.
+    return jax.tree.map(maybe_sum, metrics)
 
-        Returns:
-            A dictionary of mean metrics.
-        """
 
-        def maybe_mean(x):
-            if isinstance(x, jax.Array | jax.Array):
-                return lax.pmean(x, axis_name=axis_name)
-            return x
+def reduce_max(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Compute the maximum of metrics using standard JAX operations.
 
-        return jax.tree.map(maybe_mean, metrics)
+    Works with global arrays in SPMD contexts (nnx.jit + mesh).
 
-    @staticmethod
-    def reduce_mean_static(metrics: dict[str, Any], axis_name: str = "batch") -> dict[str, Any]:
-        """Static version of reduce_mean."""
-        return jax.tree.map(
-            lambda x: lax.pmean(x, axis_name=axis_name)
-            if isinstance(x, jax.Array | jax.Array)
-            else x,
-            metrics,
-        )
+    Args:
+        metrics: The metrics to reduce.
 
-    def reduce_sum(self, metrics: dict[str, Any], axis_name: str = "batch") -> dict[str, Any]:
-        """Compute the sum of metrics across devices.
+    Returns:
+        A dictionary of maximum metrics.
+    """
 
-        Args:
-            metrics: The metrics to reduce.
-            axis_name: The name of the axis to reduce across.
+    def maybe_max(x: Any) -> Any:
+        if isinstance(x, jax.Array) and x.ndim > 0:
+            return jnp.max(x)
+        return x
 
-        Returns:
-            A dictionary of summed metrics.
-        """
+    return jax.tree.map(maybe_max, metrics)
 
-        def maybe_sum(x):
-            if isinstance(x, jax.Array | jax.Array):
-                return lax.psum(x, axis_name=axis_name)
-            return x
 
-        return jax.tree.map(maybe_sum, metrics)
+def reduce_min(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Compute the minimum of metrics using standard JAX operations.
 
-    @staticmethod
-    def reduce_sum_static(metrics: dict[str, Any], axis_name: str = "batch") -> dict[str, Any]:
-        """Static version of reduce_sum."""
-        return jax.tree.map(
-            lambda x: lax.psum(x, axis_name=axis_name)
-            if isinstance(x, jax.Array | jax.Array)
-            else x,
-            metrics,
-        )
+    Works with global arrays in SPMD contexts (nnx.jit + mesh).
 
-    def reduce_max(self, metrics: dict[str, Any], axis_name: str = "batch") -> dict[str, Any]:
-        """Compute the maximum of metrics across devices.
+    Args:
+        metrics: The metrics to reduce.
 
-        Args:
-            metrics: The metrics to reduce.
-            axis_name: The name of the axis to reduce across.
+    Returns:
+        A dictionary of minimum metrics.
+    """
 
-        Returns:
-            A dictionary of maximum metrics.
-        """
+    def maybe_min(x: Any) -> Any:
+        if isinstance(x, jax.Array) and x.ndim > 0:
+            return jnp.min(x)
+        return x
 
-        def maybe_max(x):
-            if isinstance(x, jax.Array | jax.Array):
-                return lax.pmax(x, axis_name=axis_name)
-            return x
+    return jax.tree.map(maybe_min, metrics)
 
-        return jax.tree.map(maybe_max, metrics)
 
-    @staticmethod
-    def reduce_max_static(metrics: dict[str, Any], axis_name: str = "batch") -> dict[str, Any]:
-        """Static version of reduce_max."""
-        return jax.tree.map(
-            lambda x: lax.pmax(x, axis_name=axis_name)
-            if isinstance(x, jax.Array | jax.Array)
-            else x,
-            metrics,
-        )
+_SPMD_REDUCTION_OPS: dict[str, Any] = {
+    "mean": jnp.mean,
+    "sum": jnp.sum,
+    "max": jnp.max,
+    "min": jnp.min,
+}
 
-    def reduce_min(self, metrics: dict[str, Any], axis_name: str = "batch") -> dict[str, Any]:
-        """Compute the minimum of metrics across devices.
 
-        Args:
-            metrics: The metrics to reduce.
-            axis_name: The name of the axis to reduce across.
+def reduce_custom(
+    metrics: dict[str, Any],
+    reduce_fn: dict[str, str | None] | None = None,
+) -> dict[str, Any]:
+    """Apply custom reduction operations to metrics.
 
-        Returns:
-            A dictionary of minimum metrics.
-        """
+    Uses standard JAX operations. Works in SPMD contexts.
 
-        def maybe_min(x):
-            if isinstance(x, jax.Array | jax.Array):
-                return lax.pmin(x, axis_name=axis_name)
-            return x
+    Args:
+        metrics: The metrics to reduce.
+        reduce_fn: A dictionary mapping metric names to reduction operations.
+            Each operation should be one of {"mean", "sum", "max", "min"}.
+            If None, defaults to "mean" for all metrics.
 
-        return jax.tree.map(maybe_min, metrics)
+    Returns:
+        A dictionary of reduced metrics.
+    """
+    if reduce_fn is None:
+        return reduce_mean(metrics)
 
-    @staticmethod
-    def reduce_min_static(metrics: dict[str, Any], axis_name: str = "batch") -> dict[str, Any]:
-        """Static version of reduce_min."""
-        return jax.tree.map(
-            lambda x: lax.pmin(x, axis_name=axis_name)
-            if isinstance(x, jax.Array | jax.Array)
-            else x,
-            metrics,
-        )
+    result = {}
+    for key, value in metrics.items():
+        operation = reduce_fn.get(key, "mean")
+        op_fn = _SPMD_REDUCTION_OPS.get(operation) if operation else None
 
-    def reduce_custom(
-        self,
-        metrics: dict[str, Any],
-        reduce_fn: dict[str, str | None] | None = None,
-        axis_name: str = "batch",
-    ) -> dict[str, Any]:
-        """Apply custom reduction operations to metrics.
+        if op_fn is not None and isinstance(value, jax.Array) and value.ndim > 0:
+            result[key] = op_fn(value)
+        else:
+            result[key] = value
 
-        Args:
-            metrics: The metrics to reduce.
-            reduce_fn: A dictionary mapping metric names to reduction operations.
-                Each operation should be one of {"mean", "sum", "max", "min"}.
-                If None, defaults to "mean" for all metrics.
-            axis_name: The name of the axis to reduce across.
+    return result
 
-        Returns:
-            A dictionary of reduced metrics.
-        """
-        if reduce_fn is None:
-            # Default to mean reduction for all metrics
-            return self.reduce_mean(metrics, axis_name)
 
-        result = {}
-        for key, value in metrics.items():
-            operation = reduce_fn.get(key, "mean")
-            is_array = isinstance(value, jax.Array | jax.Array)
+# ---------------------------------------------------------------------------
+# Collective reductions (only valid inside pmap or shard_map)
+# ---------------------------------------------------------------------------
 
-            if operation == "mean" and is_array:
-                result[key] = lax.pmean(value, axis_name=axis_name)
-            elif operation == "sum" and is_array:
-                result[key] = lax.psum(value, axis_name=axis_name)
-            elif operation == "max" and is_array:
-                result[key] = lax.pmax(value, axis_name=axis_name)
-            elif operation == "min" and is_array:
-                result[key] = lax.pmin(value, axis_name=axis_name)
-            else:
-                # If unknown operation or not an array, keep the value as is
-                result[key] = value
 
-        return result
+def reduce_mean_collective(
+    metrics: dict[str, Any],
+    axis_name: str = "batch",
+) -> dict[str, Any]:
+    """Compute the mean of metrics using collective operations.
 
-    @staticmethod
-    def reduce_custom_static(
-        metrics: dict[str, Any],
-        reduce_fn: dict[str, str | None] | None = None,
-        axis_name: str = "batch",
-    ) -> dict[str, Any]:
-        """Static version of reduce_custom."""
-        if reduce_fn is None:
-            # Default to mean reduction for all metrics
-            return DistributedMetrics.reduce_mean_static(metrics, axis_name)
+    Only valid inside a pmap or shard_map context.
 
-        result = {}
-        for key, value in metrics.items():
-            operation = reduce_fn.get(key, "mean")
+    Args:
+        metrics: The metrics to reduce.
+        axis_name: The name of the axis to reduce across.
 
-            if operation == "mean":
-                result[key] = (
-                    lax.pmean(value, axis_name=axis_name)
-                    if isinstance(value, jax.Array | jax.Array)
-                    else value
-                )
-            elif operation == "sum":
-                result[key] = (
-                    lax.psum(value, axis_name=axis_name)
-                    if isinstance(value, jax.Array | jax.Array)
-                    else value
-                )
-            elif operation == "max":
-                result[key] = (
-                    lax.pmax(value, axis_name=axis_name)
-                    if isinstance(value, jax.Array | jax.Array)
-                    else value
-                )
-            elif operation == "min":
-                result[key] = (
-                    lax.pmin(value, axis_name=axis_name)
-                    if isinstance(value, jax.Array | jax.Array)
-                    else value
-                )
-            else:
-                # If unknown operation, just keep the value as is
-                result[key] = value
+    Returns:
+        A dictionary of mean metrics.
+    """
 
-        return result
+    def maybe_mean(x: Any) -> Any:
+        if isinstance(x, jax.Array):
+            return lax.pmean(x, axis_name=axis_name)
+        return x
 
-    def collect_from_devices(self, metrics: dict[str, Any]) -> dict[str, Union[list[Any], Any]]:
-        """Collect metrics from all devices.
+    return jax.tree.map(maybe_mean, metrics)
 
-        This function should be called outside of a pmapped function to collect
-        metrics from all devices.
 
-        Args:
-            metrics: The metrics from all devices, with the first dimension
-                corresponding to the device axis.
+def reduce_sum_collective(
+    metrics: dict[str, Any],
+    axis_name: str = "batch",
+) -> dict[str, Any]:
+    """Compute the sum of metrics using collective operations.
 
-        Returns:
-            A dictionary of metrics, with each value being a list of the values
-            from each device.
-        """
-        result: dict[str, Union[list[Any], Any]] = {}
-        for key, value in metrics.items():
-            is_array = isinstance(value, jax.Array | jax.Array)
-            has_dim = is_array and value.ndim > 0
+    Only valid inside a pmap or shard_map context.
 
-            if has_dim:
-                # If array, collect the values from each device
-                device_values = [value[i] for i in range(value.shape[0])]
-                result[key] = device_values
-            else:
-                # If not array or scalar, just keep the value
-                result[key] = value
+    Args:
+        metrics: The metrics to reduce.
+        axis_name: The name of the axis to reduce across.
 
-        return result
+    Returns:
+        A dictionary of summed metrics.
+    """
 
-    @staticmethod
-    def collect_from_devices_static(metrics: dict[str, Any]) -> dict[str, Union[list[Any], Any]]:
-        """Static version of collect_from_devices."""
-        result: dict[str, Union[list[Any], Any]] = {}
-        for key, value in metrics.items():
-            if isinstance(value, jax.Array | jax.Array) and value.ndim > 0:
-                # If array, collect the values from each device
-                device_values = [value[i] for i in range(value.shape[0])]
-                result[key] = device_values
-            else:
-                # If not array or scalar, just keep the value
-                result[key] = value
+    def maybe_sum(x: Any) -> Any:
+        if isinstance(x, jax.Array):
+            return lax.psum(x, axis_name=axis_name)
+        return x
 
-        return result
+    return jax.tree.map(maybe_sum, metrics)
+
+
+def all_gather(
+    metrics: dict[str, Any],
+    axis_name: str = "batch",
+) -> dict[str, Any]:
+    """Gather metrics from all devices.
+
+    Only valid inside a pmap or shard_map context.
+
+    Args:
+        metrics: The metrics to gather.
+        axis_name: The name of the axis to gather across.
+
+    Returns:
+        A dictionary of gathered metrics.
+    """
+
+    def maybe_gather(x: Any) -> Any:
+        if isinstance(x, jax.Array):
+            return lax.all_gather(x, axis_name=axis_name)
+        return x
+
+    return jax.tree.map(maybe_gather, metrics)
+
+
+def collect_from_devices(metrics: dict[str, Any]) -> dict[str, list[Any] | Any]:
+    """Collect metrics from all devices.
+
+    Call outside of a pmapped function to split per-device values
+    from the leading device axis.
+
+    Args:
+        metrics: The metrics from all devices, with the first dimension
+            corresponding to the device axis.
+
+    Returns:
+        A dictionary of metrics, with array values split into per-device lists.
+    """
+    result: dict[str, list[Any] | Any] = {}
+    for key, value in metrics.items():
+        is_array = isinstance(value, jax.Array)
+        if is_array and value.ndim > 0:
+            result[key] = [value[i] for i in range(value.shape[0])]
+        else:
+            result[key] = value
+
+    return result

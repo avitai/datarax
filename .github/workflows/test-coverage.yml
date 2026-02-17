@@ -23,18 +23,10 @@ jobs:
           python-version: '3.11'
 
       - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-
-      - name: Configure uv cache
-        uses: actions/cache@v3
+        uses: astral-sh/setup-uv@v4
         with:
-          path: |
-            ~/.cache/uv
-            ~/.cache/uv/virtualenvs
-          key: ${{ runner.os }}-uv-coverage-report-${{ hashFiles('pyproject.toml', 'uv.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-uv-coverage-report-
+          enable-cache: true
+          cache-suffix: "coverage"
 
       - name: Create virtual environment
         run: |

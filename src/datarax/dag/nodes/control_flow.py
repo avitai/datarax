@@ -291,9 +291,8 @@ class Merge(Node):
             return jax.tree.map(lambda *xs: jnp.concatenate(xs, axis=self.axis), *inputs)
         elif self.strategy == "sum":
             # Sum all PyTree leaves element-wise
-            return jax.tree.map(lambda *xs: sum(xs), *inputs)
+            return jax.tree.map(lambda *xs: jnp.sum(jnp.stack(xs, axis=0), axis=0), *inputs)
         elif self.strategy == "mean":
-            # Average all PyTree leaves
             return jax.tree.map(lambda *xs: jnp.mean(jnp.stack(xs, axis=0), axis=0), *inputs)
         elif self.strategy == "stack":
             # Stack all PyTree leaves
@@ -352,7 +351,7 @@ class MergeBatchNode(Node):
         if self.strategy == "mean":
             merged = jax.tree.map(lambda *xs: jnp.mean(jnp.stack(xs), axis=0), *data_dicts)
         elif self.strategy == "sum":
-            merged = jax.tree.map(lambda *xs: sum(xs), *data_dicts)
+            merged = jax.tree.map(lambda *xs: jnp.sum(jnp.stack(xs), axis=0), *data_dicts)
         else:
             raise ValueError(f"Unknown merge strategy: {self.strategy}")
 

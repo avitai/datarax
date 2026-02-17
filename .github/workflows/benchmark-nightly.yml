@@ -21,6 +21,7 @@ jobs:
     env:
       XLA_FLAGS: "--xla_force_host_platform_device_count=4"
       JAX_PLATFORMS: "cpu"
+      CUDA_VISIBLE_DEVICES: ""
     steps:
       - uses: actions/checkout@v4
 
@@ -36,7 +37,8 @@ jobs:
         env:
           WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
         run: >
-          uv run datarax-bench run
+          uv run python -c "from benchmarks.cli import main; main()"
+          run
           --platform cpu
           --repetitions 3
           --wandb

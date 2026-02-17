@@ -123,6 +123,8 @@ class WandBExporter(Exporter):
             figures: {key: matplotlib.figure.Figure} mapping.
                 Keys become W&B panel names (use slash for grouping).
         """
+        if not WANDB_AVAILABLE or wandb.run is None:
+            return
         for key, fig in figures.items():
             wandb.log({key: wandb.Image(fig)})
 
@@ -132,6 +134,8 @@ class WandBExporter(Exporter):
         Args:
             html: {key: html_string} mapping.
         """
+        if not WANDB_AVAILABLE or wandb.run is None:
+            return
         for key, html_str in html.items():
             wandb.log({key: wandb.Html(html_str)})
 
@@ -142,6 +146,8 @@ class WandBExporter(Exporter):
             tables: {key: (columns, rows)} where columns is list of strings
                 and rows is list of lists.
         """
+        if not WANDB_AVAILABLE or wandb.run is None:
+            return
         for key, (columns, rows) in tables.items():
             wandb.log({key: wandb.Table(columns=columns, data=rows)})
 

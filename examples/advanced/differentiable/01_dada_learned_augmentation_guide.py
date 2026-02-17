@@ -340,7 +340,7 @@ def translate_y(image: jax.Array, magnitude: jax.Array) -> jax.Array:
 def shear_x(image: jax.Array, magnitude: jax.Array) -> jax.Array:
     """Shear image along X axis. Magnitude [0,1] maps to [-0.3, 0.3]."""
     shear_factor = magnitude * 0.6 - 0.3
-    h, w, c = image.shape
+    h, w, _ = image.shape
     # Build coordinate grid for affine shear
     ys = jnp.arange(h, dtype=jnp.float32)
     xs = jnp.arange(w, dtype=jnp.float32)
@@ -349,29 +349,31 @@ def shear_x(image: jax.Array, magnitude: jax.Array) -> jax.Array:
     src_x = grid_x + shear_factor * (grid_y - h / 2.0)
     src_x = jnp.clip(src_x, 0, w - 1)
 
-    # Bilinear interpolation per channel
+    # Bilinear interpolation per channel via vmap
+    coords = jnp.stack([grid_y.ravel(), src_x.ravel()])
+
     def interp_channel(ch: jax.Array) -> jax.Array:
-        coords = jnp.stack([grid_y.ravel(), src_x.ravel()])
         return jax.scipy.ndimage.map_coordinates(ch, coords, order=1, mode="nearest").reshape(h, w)
 
-    return jnp.stack([interp_channel(image[..., i]) for i in range(c)], axis=-1)
+    return jnp.moveaxis(jax.vmap(interp_channel)(jnp.moveaxis(image, -1, 0)), 0, -1)
 
 
 def shear_y(image: jax.Array, magnitude: jax.Array) -> jax.Array:
     """Shear image along Y axis. Magnitude [0,1] maps to [-0.3, 0.3]."""
     shear_factor = magnitude * 0.6 - 0.3
-    h, w, c = image.shape
+    h, w, _ = image.shape
     ys = jnp.arange(h, dtype=jnp.float32)
     xs = jnp.arange(w, dtype=jnp.float32)
     grid_y, grid_x = jnp.meshgrid(ys, xs, indexing="ij")
     src_y = grid_y + shear_factor * (grid_x - w / 2.0)
     src_y = jnp.clip(src_y, 0, h - 1)
 
+    coords = jnp.stack([src_y.ravel(), grid_x.ravel()])
+
     def interp_channel(ch: jax.Array) -> jax.Array:
-        coords = jnp.stack([src_y.ravel(), grid_x.ravel()])
         return jax.scipy.ndimage.map_coordinates(ch, coords, order=1, mode="nearest").reshape(h, w)
 
-    return jnp.stack([interp_channel(image[..., i]) for i in range(c)], axis=-1)
+    return jnp.moveaxis(jax.vmap(interp_channel)(jnp.moveaxis(image, -1, 0)), 0, -1)
 
 
 def solarize(image: jax.Array, magnitude: jax.Array) -> jax.Array:
@@ -436,7 +438,7 @@ def rotate(image: jax.Array, magnitude: jax.Array) -> jax.Array:
     """Rotate image. Magnitude [0,1] maps to [-30, 30] degrees."""
     angle_deg = magnitude * 60.0 - 30.0
     angle_rad = angle_deg * jnp.pi / 180.0
-    h, w, c = image.shape
+    h, w, _ = image.shape
     cy, cx = h / 2.0, w / 2.0
 
     ys = jnp.arange(h, dtype=jnp.float32)
@@ -450,11 +452,12 @@ def rotate(image: jax.Array, magnitude: jax.Array) -> jax.Array:
     src_x = jnp.clip(src_x, 0, w - 1)
     src_y = jnp.clip(src_y, 0, h - 1)
 
+    coords = jnp.stack([src_y.ravel(), src_x.ravel()])
+
     def interp_channel(ch: jax.Array) -> jax.Array:
-        coords = jnp.stack([src_y.ravel(), src_x.ravel()])
         return jax.scipy.ndimage.map_coordinates(ch, coords, order=1, mode="nearest").reshape(h, w)
 
-    return jnp.stack([interp_channel(image[..., i]) for i in range(c)], axis=-1)
+    return jnp.moveaxis(jax.vmap(interp_channel)(jnp.moveaxis(image, -1, 0)), 0, -1)
 
 
 def add_noise(image: jax.Array, magnitude: jax.Array) -> jax.Array:

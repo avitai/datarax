@@ -40,10 +40,8 @@ class TestDeviceMeshManagerStaticMethods(unittest.TestCase):
 
     def test_create_device_mesh_insufficient_devices_error(self):
         """Test that creating mesh with too few devices raises ValueError."""
-        with self.assertRaises(ValueError) as ctx:
+        with self.assertRaises(ValueError):
             DeviceMeshManager.create_device_mesh([("data", 100)])
-        self.assertIn("Not enough devices", str(ctx.exception))
-        self.assertIn("100", str(ctx.exception))
 
     def test_create_data_parallel_mesh_default(self):
         """Test creating data-parallel mesh with all available devices."""

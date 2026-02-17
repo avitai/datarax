@@ -529,25 +529,22 @@ class SharpeningOperator(ModalityOperator):
         image = self._extract_field(data, self.config.field_key)
         strength = jax.nn.sigmoid(self.strength[...])
 
-        # Apply blur per channel using learned kernel
+        # Apply blur using depthwise convolution (single XLA op)
         kernel = self.kernel[...]
         kernel = kernel / (jnp.sum(kernel) + 1e-6)  # Normalize
 
-        def blur_channel(ch: jax.Array) -> jax.Array:
-            # Manual 2D convolution via sliding window
-            h, w = ch.shape
-            padded = jnp.pad(ch, 1, mode="edge")
-            blurred = jnp.zeros_like(ch)
-            for di in range(3):
-                for dj in range(3):
-                    blurred = blurred + kernel[di, dj] * padded[di : di + h, dj : dj + w]
-            return blurred
-
-        # Apply per channel
-        blurred = jnp.stack(
-            [blur_channel(image[..., c]) for c in range(image.shape[-1])],
-            axis=-1,
-        )
+        h, w, c = image.shape
+        padded = jnp.pad(image, ((1, 1), (1, 1), (0, 0)), mode="edge")
+        # Depthwise conv: same kernel applied independently per channel
+        kernel_conv = jnp.tile(kernel[:, :, None, None], (1, 1, 1, c))  # (3, 3, 1, C)
+        blurred = jax.lax.conv_general_dilated(
+            padded[None, ...],  # (1, H+2, W+2, C)
+            kernel_conv,
+            window_strides=(1, 1),
+            padding="VALID",
+            dimension_numbers=("NHWC", "HWIO", "NHWC"),
+            feature_group_count=c,
+        )[0]  # (H, W, C)
 
         # Unsharp mask: enhance edges
         detail = image - blurred

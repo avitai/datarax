@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import benchkit
+benchkit = pytest.importorskip("benchkit")
 from benchmarks.export import export_to_benchkit
 from benchmarks.runners.full_runner import ComparativeResults
 from datarax.benchmarking.results import BenchmarkResult

@@ -1,13 +1,17 @@
 # Publish to PyPI when a GitHub Release is created
 # Uses Trusted Publishers (OIDC) - no API tokens needed!
 #
-# Setup required on PyPI:
-# 1. Go to https://pypi.org/manage/project/datarax/settings/publishing/
-# 2. Add a new trusted publisher with:
+# Setup required on PyPI (https://pypi.org/manage/project/datarax/settings/publishing/):
 #    - Owner: avitai
 #    - Repository: datarax
 #    - Workflow name: publish.yml
 #    - Environment: pypi
+#
+# Setup required on TestPyPI (https://test.pypi.org/manage/project/datarax/settings/publishing/):
+#    - Owner: avitai
+#    - Repository: datarax
+#    - Workflow name: publish.yml
+#    - Environment: testpypi
 
 name: Publish to PyPI
 
@@ -81,6 +85,8 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+          verbose: true
+          skip-existing: true
 
   publish-pypi:
     name: Publish to PyPI
@@ -105,3 +111,5 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          verbose: true

@@ -4,7 +4,7 @@ This module provides utilities for creating and managing JAX device meshes
 for coordinating distributed computations across multiple devices.
 """
 
-from typing import Any, Union
+from typing import Any
 
 import jax
 import numpy as np
@@ -21,7 +21,7 @@ class DeviceMeshManager:
 
     @staticmethod
     def create_device_mesh(
-        mesh_shape: Union[dict[str, int], list[tuple[str, int]]],
+        mesh_shape: dict[str, int] | list[tuple[str, int]],
         devices: list[Any] | None = None,
     ) -> Mesh:
         """Create a JAX device mesh with the specified shape.
@@ -44,31 +44,25 @@ class DeviceMeshManager:
         else:
             mesh_shape_list = mesh_shape
 
-        # Get devices if not provided
+        axis_names = tuple(name for name, _ in mesh_shape_list)
+        mesh_dims = tuple(size for _, size in mesh_shape_list)
+
+        # Use jax.make_mesh for topology-aware device ordering
         if devices is None:
-            devices = jax.devices()
+            return jax.make_mesh(mesh_dims, axis_names)
 
-        # Calculate the total number of devices needed
+        # Manual path for explicitly provided devices
         total_devices = 1
-        for _, size in mesh_shape_list:
-            total_devices *= size
+        for dim in mesh_dims:
+            total_devices *= dim
 
-        # Verify we have enough devices
         if len(devices) < total_devices:
             raise ValueError(
                 f"Not enough devices. Mesh requires {total_devices} devices, "
                 f"but only {len(devices)} are available."
             )
 
-        # Create the mesh
-        mesh_dims = tuple(size for _, size in mesh_shape_list)
-        mesh_devices = devices[:total_devices]
-
-        # Reshape devices list to match mesh dimensions
-        mesh_devices_array = np.array(mesh_devices).reshape(mesh_dims)
-
-        # Create and return the Mesh object
-        axis_names = tuple(name for name, _ in mesh_shape_list)
+        mesh_devices_array = np.array(devices[:total_devices]).reshape(mesh_dims)
         return Mesh(mesh_devices_array, axis_names=axis_names)
 
     @staticmethod

@@ -153,10 +153,17 @@ class DevicePlacement:
 
         Args:
             default_device: Default device to use when none is specified.
-                If None, uses jax.devices()[0].
+                If None, lazily resolves to jax.devices()[0] on first access.
         """
-        self.default_device = default_device or jax.devices()[0]
-        self._hardware_type = self._detect_hardware_type()
+        self._default_device: jax.Device | None = default_device  # type: ignore[name-defined]
+        self._hardware_type_cache: HardwareType | None = None
+
+    @property
+    def default_device(self) -> jax.Device:  # type: ignore[name-defined]
+        """Get the default device, lazily resolving on first access."""
+        if self._default_device is None:
+            self._default_device = jax.devices()[0]
+        return self._default_device
 
     def _detect_hardware_type(self) -> HardwareType:
         """Detect the hardware type from available devices.
@@ -433,7 +440,7 @@ class DevicePlacement:
         Returns:
             BatchSizeRecommendation with hardware-specific values.
         """
-        hw_type = hardware_type or self._hardware_type
+        hw_type = hardware_type or self.hardware_type
         return _BATCH_SIZE_RECOMMENDATIONS.get(
             hw_type, _BATCH_SIZE_RECOMMENDATIONS[HardwareType.UNKNOWN]
         )
@@ -458,7 +465,7 @@ class DevicePlacement:
             return (
                 False,
                 f"Batch size {batch_size} is below minimum recommended {rec.min_batch_size} "
-                f"for {self._hardware_type.value}. Performance will be significantly degraded.",
+                f"for {self.hardware_type.value}. Performance will be significantly degraded.",
             )
 
         if batch_size < rec.critical_batch_size:
@@ -466,18 +473,20 @@ class DevicePlacement:
                 return (
                     True,
                     f"Batch size {batch_size} is below critical size {rec.critical_batch_size} "
-                    f"for {self._hardware_type.value}. Consider increasing for optimal throughput.",
+                    f"for {self.hardware_type.value}. Consider increasing for optimal throughput.",
                 )
 
         if batch_size >= rec.optimal_batch_size:
-            return True, f"Batch size {batch_size} is optimal for {self._hardware_type.value}."
+            return True, f"Batch size {batch_size} is optimal for {self.hardware_type.value}."
 
-        return True, f"Batch size {batch_size} is acceptable for {self._hardware_type.value}."
+        return True, f"Batch size {batch_size} is acceptable for {self.hardware_type.value}."
 
     @property
     def hardware_type(self) -> HardwareType:
-        """Get the detected hardware type."""
-        return self._hardware_type
+        """Get the detected hardware type, lazily resolving on first access."""
+        if self._hardware_type_cache is None:
+            self._hardware_type_cache = self._detect_hardware_type()
+        return self._hardware_type_cache
 
     @property
     def num_devices(self) -> int:
@@ -493,7 +502,7 @@ class DevicePlacement:
         devices = jax.devices()
         return {
             "num_devices": len(devices),
-            "hardware_type": self._hardware_type.value,
+            "hardware_type": self.hardware_type.value,
             "platforms": list({d.platform for d in devices}),
             "device_kinds": list({str(d.device_kind) for d in devices if d.device_kind}),
             "devices": [

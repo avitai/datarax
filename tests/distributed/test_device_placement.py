@@ -4,6 +4,8 @@ This module contains tests for the DevicePlacement class and related utilities
 for explicit device placement of JAX arrays and PyTrees.
 """
 
+from unittest import mock
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -66,6 +68,22 @@ class TestDevicePlacementInitialization:
         device = jax.devices()[0]
         placement = DevicePlacement(default_device=device)
         assert placement.default_device is device
+
+    def test_lazy_init_does_not_call_jax_devices(self):
+        """Test that constructing DevicePlacement(None) does not call jax.devices()."""
+        with mock.patch("datarax.distributed.device_placement.jax.devices") as mock_devices:
+            placement = DevicePlacement(default_device=None)
+            mock_devices.assert_not_called()
+            assert placement._default_device is None
+            assert placement._hardware_type_cache is None
+
+    def test_lazy_init_resolves_on_access(self):
+        """Test that default_device is lazily resolved on first access."""
+        placement = DevicePlacement(default_device=None)
+        assert placement._default_device is None
+        device = placement.default_device
+        assert device is not None
+        assert placement._default_device is not None
 
     def test_hardware_detection(self):
         """Test that hardware type is detected."""

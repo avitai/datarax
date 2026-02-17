@@ -159,6 +159,10 @@ class FullExporter:
         #    Keep the W&B run open so we can log additional artifacts.
         url = self._exporter.export_run(run, finish=False)
 
+        # If W&B init failed (no auth / wandb not installed), skip all logging.
+        if not url:
+            return ""
+
         # 2. Charts (datarax-specific)
         self._log_charts(comparative, chart_dir)
 

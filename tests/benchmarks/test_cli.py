@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytest.importorskip("benchkit")
+
 from datarax.benchmarking.results import BenchmarkResult
 from datarax.benchmarking.timing import TimingSample
 

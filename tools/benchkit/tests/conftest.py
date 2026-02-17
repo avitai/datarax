@@ -2,7 +2,8 @@
 
 import pytest
 
-from benchkit.models import Metric, MetricDef, MetricPriority, Point, Run
+benchkit = pytest.importorskip("benchkit")
+from benchkit.models import Metric, MetricDef, MetricPriority, Point, Run  # noqa: E402
 
 
 def make_run(framework_metrics: dict[str, dict[str, float]], **kwargs) -> Run:
