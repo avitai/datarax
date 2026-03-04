@@ -1,6 +1,6 @@
 """LitData adapter for the benchmark framework.
 
-Wraps Lightning's LitData StreamingDataset with the BenchmarkAdapter lifecycle.
+Wraps Lightning's LitData StreamingDataset with the PipelineAdapter lifecycle.
 Tier 3 -- supports 2 scenarios. Requires format conversion in setup().
 
 Design ref: Section 14.2 of the benchmark report.
@@ -23,7 +23,7 @@ import numpy as np
 
 from benchmarks.adapters import register
 from benchmarks.adapters._utils import cleanup_temp_dir, setup_temp_dir
-from benchmarks.adapters.base import BenchmarkAdapter, ScenarioConfig
+from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
 
 class _SampleExtractor:
@@ -41,8 +41,8 @@ class _SampleExtractor:
 
 
 @register
-class LitDataAdapter(BenchmarkAdapter):
-    """BenchmarkAdapter for Lightning LitData.
+class LitDataAdapter(PipelineAdapter):
+    """PipelineAdapter for Lightning LitData.
 
     Requires format conversion via optimize() in setup().
     """

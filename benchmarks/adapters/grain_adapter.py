@@ -1,6 +1,6 @@
 """Grain adapter for the benchmark framework.
 
-Wraps Google Grain's MapDataset API with the BenchmarkAdapter lifecycle.
+Wraps Google Grain's MapDataset API with the PipelineAdapter lifecycle.
 Grain is a Tier 1 JAX ecosystem alternative -- already a base dependency.
 
 Uses the MapDataset API (recommended for Grain v0.2+):
@@ -27,7 +27,7 @@ from benchmarks.adapters._utils import (
     random_brightness,
     random_scale,
 )
-from benchmarks.adapters.base import BenchmarkAdapter, ScenarioConfig
+from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
 
 class _NumpyDataSource:
@@ -64,8 +64,8 @@ _GRAIN_TRANSFORMS: dict[str, Any] = {
 
 
 @register
-class GrainAdapter(BenchmarkAdapter):
-    """BenchmarkAdapter for Google Grain.
+class GrainAdapter(PipelineAdapter):
+    """PipelineAdapter for Google Grain.
 
     Uses the MapDataset API (Grain v0.2+) for idiomatic pipeline construction.
     """

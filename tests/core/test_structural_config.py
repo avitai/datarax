@@ -16,9 +16,10 @@ import pytest
 
 # NOTE: Import will fail initially (RED phase) - this is expected!
 try:
-    from datarax.core.config import DataraxModuleConfig, StructuralConfig
+    from datarax.core.config import DataraxModuleConfig, FrozenInstanceError, StructuralConfig
 except ImportError:
     DataraxModuleConfig = None
+    FrozenInstanceError = None
     StructuralConfig = None
 
 
@@ -69,7 +70,7 @@ class TestStructuralConfigFrozenBehavior:
         config = StructuralConfig()
 
         # Attempting to modify should raise FrozenInstanceError
-        with pytest.raises(Exception):  # dataclasses.FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             config.cacheable = True
 
     def test_frozen_enforces_compile_time_constants(self):
@@ -80,7 +81,7 @@ class TestStructuralConfigFrozenBehavior:
         assert config.cacheable is True
 
         # Should not be modifiable
-        with pytest.raises(Exception):
+        with pytest.raises(FrozenInstanceError):
             config.cacheable = False
 
     def test_child_frozen_config(self):
@@ -111,7 +112,7 @@ class TestStructuralConfigFrozenBehavior:
         config = StructuralConfig(precomputed_stats=stats)
 
         # Config is frozen
-        with pytest.raises(Exception):
+        with pytest.raises(FrozenInstanceError):
             config.cacheable = True
 
         # But the dict inside can be modified (not ideal but acceptable)
@@ -317,7 +318,7 @@ class TestStructuralConfigDataclass:
         config = StructuralConfig()
 
         # Attempting modification should fail
-        with pytest.raises(Exception):
+        with pytest.raises(FrozenInstanceError):
             config.cacheable = True
 
     def test_repr_shows_all_fields(self):

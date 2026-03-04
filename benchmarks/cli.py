@@ -12,9 +12,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import click
+from calibrax.storage import Store
 
-import benchkit
-from benchmarks.export import FullExporter, export_to_benchkit
+from benchmarks.export import FullExporter, export_to_calibrax
 from benchmarks.runners.full_runner import ComparativeResults, FullRunner
 
 
@@ -33,7 +33,7 @@ def main() -> None:
 @click.option("--baseline/--no-baseline", default=True)
 @click.option("--wandb/--no-wandb", "use_wandb", default=True)
 @click.option("--charts/--no-charts", "use_charts", default=True)
-@click.option("--data", default="benchmark-data", type=click.Path(), help="benchkit store dir")
+@click.option("--data", default="benchmark-data", type=click.Path(), help="calibrax store dir")
 @click.option("--project", default=None, help="W&B project override")
 @click.option("--entity", default=None, help="W&B entity override")
 def run(
@@ -74,12 +74,12 @@ def run(
     n_scenarios = len(comparative.all_scenario_ids)
     click.echo(f"Completed: {n_adapters} adapters, {n_scenarios} scenarios")
 
-    # 2. Convert to benchkit Run
-    benchkit_run = export_to_benchkit(comparative)
+    # 2. Convert to calibrax Run
+    calibrax_run = export_to_calibrax(comparative)
 
-    # 3. Save to benchkit store
-    store = benchkit.Store(data)
-    store.save(benchkit_run)
+    # 3. Save to calibrax store
+    store = Store(data)
+    store.save(calibrax_run)
     click.echo(f"Saved to store: {data}")
 
     # 4. Load baseline if requested
@@ -91,7 +91,7 @@ def run(
         chart_dir = Path(data) / "charts" if use_charts else None
         url = exporter.export(
             comparative,
-            benchkit_run,
+            calibrax_run,
             baseline=baseline_run,
             chart_dir=chart_dir,
             results_dir=output_path,
@@ -105,8 +105,8 @@ def run(
 
     # 6. Set as baseline for future comparisons
     if baseline:
-        store.set_baseline(benchkit_run.id)
-        click.echo(f"Set baseline: {benchkit_run.id}")
+        store.set_baseline(calibrax_run.id)
+        click.echo(f"Set baseline: {calibrax_run.id}")
 
     click.echo("Done.")
 
@@ -117,7 +117,7 @@ def run(
     default="benchmark-data/reports/latest",
     type=click.Path(exists=True),
 )
-@click.option("--data", default="benchmark-data", type=click.Path(), help="benchkit store dir")
+@click.option("--data", default="benchmark-data", type=click.Path(), help="calibrax store dir")
 @click.option("--project", default=None, help="W&B project override")
 @click.option("--entity", default=None, help="W&B entity override")
 def export(
@@ -129,13 +129,13 @@ def export(
     """Re-export existing results to W&B."""
     click.echo(f"Loading results from {results_dir}")
     comparative = ComparativeResults.load(Path(results_dir))
-    benchkit_run = export_to_benchkit(comparative)
+    calibrax_run = export_to_calibrax(comparative)
 
-    store = benchkit.Store(data)
-    store.save(benchkit_run)
+    store = Store(data)
+    store.save(calibrax_run)
 
     exporter = FullExporter(store, project=project, entity=entity)
-    url = exporter.export(comparative, benchkit_run, results_dir=Path(results_dir))
+    url = exporter.export(comparative, calibrax_run, results_dir=Path(results_dir))
     if url:
         click.echo(f"W&B dashboard: {url}")
     else:

@@ -19,7 +19,7 @@ This module provides three monitoring components:
 ## Quick Start
 
 ```python
-from datarax.benchmarking import AdvancedMonitor
+from calibrax import AdvancedMonitor
 
 monitor = AdvancedMonitor()
 
@@ -41,4 +41,4 @@ print(f"Critical alerts: {summary['critical_alerts']}")
 
 ---
 
-::: datarax.benchmarking.monitor
+::: calibrax.monitor

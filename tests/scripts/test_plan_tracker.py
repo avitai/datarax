@@ -30,6 +30,67 @@ TEST_CLASS_PATTERN = re.compile(r"class\s+(Test\w+)\s*\(")
 TEST_SKIPPED_PATTERN = re.compile(r"@pytest.mark.skip|pytest.skip\(")
 
 
+def _is_skipped(preceding_lines: str) -> bool:
+    """Return True when skip decorators/calls are near a test definition."""
+    return bool(TEST_SKIPPED_PATTERN.search(preceding_lines))
+
+
+def _extract_function_tests(content: str) -> tuple[set[str], set[str]]:
+    """Extract top-level test functions and classify skipped vs implemented."""
+    implemented: set[str] = set()
+    skipped: set[str] = set()
+
+    for match in TEST_FUNCTION_PATTERN.finditer(content):
+        test_name = match.group(1)
+        start = match.start()
+        line_start = content.rfind("\n", 0, start) + 1
+        preceding_lines = content[max(0, line_start - 300) : start]
+        if _is_skipped(preceding_lines):
+            skipped.add(test_name)
+        else:
+            implemented.add(test_name)
+
+    return implemented, skipped
+
+
+def _class_block(content: str, class_start: int) -> str:
+    """Return class block content using indentation-based block detection."""
+    lines = content[class_start:].splitlines()
+    if not lines:
+        return ""
+
+    class_indent = len(lines[0]) - len(lines[0].lstrip())
+    collected: list[str] = [lines[0]]
+    for line in lines[1:]:
+        stripped = line.strip()
+        if stripped and (len(line) - len(line.lstrip())) <= class_indent:
+            break
+        collected.append(line)
+    return "\n".join(collected)
+
+
+def _extract_class_tests(content: str) -> tuple[set[str], set[str]]:
+    """Extract class test methods and classify skipped vs implemented."""
+    implemented: set[str] = set()
+    skipped: set[str] = set()
+
+    for class_match in TEST_CLASS_PATTERN.finditer(content):
+        class_name = class_match.group(1)
+        class_content = _class_block(content, class_match.start())
+        for method_match in re.finditer(r"def\s+(test_\w+)\s*\(", class_content):
+            method_name = method_match.group(1)
+            test_name = f"{class_name}.{method_name}"
+            method_start = method_match.start()
+            method_line_start = class_content.rfind("\n", 0, method_start) + 1
+            preceding_lines = class_content[max(0, method_line_start - 300) : method_start]
+            if _is_skipped(preceding_lines):
+                skipped.add(test_name)
+            else:
+                implemented.add(test_name)
+
+    return implemented, skipped
+
+
 @dataclass
 class ModuleStatus:
     """Status of test implementation for a module."""
@@ -59,57 +120,13 @@ def find_test_files(tests_dir: Path) -> list[Path]:
 
 def extract_test_names(file_path: Path) -> tuple[set[str], set[str]]:
     """Extract test names and skipped tests from a file."""
-    implemented = set()
-    skipped = set()
-
     with open(file_path, "r") as f:
         content = f.read()
 
-    # Extract test functions
-    for match in TEST_FUNCTION_PATTERN.finditer(content):
-        test_name = match.group(1)
-        start = match.start()
-
-        # Check if the test is skipped
-        line_start = content.rfind("\n", 0, start) + 1
-        if line_start > 0:
-            preceding_lines = content[max(0, line_start - 300) : start]
-            if TEST_SKIPPED_PATTERN.search(preceding_lines):
-                skipped.add(test_name)
-            else:
-                implemented.add(test_name)
-
-    # Extract test classes and their methods
-    for class_match in TEST_CLASS_PATTERN.finditer(content):
-        class_name = class_match.group(1)
-        class_start = class_match.end()
-
-        # Find the end of the class definition
-        class_level = 1
-        class_end = class_start
-        for i, char in enumerate(content[class_start:], class_start):
-            if char == "{":
-                class_level += 1
-            elif char == "}":
-                class_level -= 1
-                if class_level == 0:
-                    class_end = i + 1
-                    break
-
-        # Extract test methods within the class
-        class_content = content[class_start:class_end]
-        for method_match in re.finditer(r"def\s+(test_\w+)\s*\(", class_content):
-            test_name = f"{class_name}.{method_match.group(1)}"
-            method_start = method_match.start()
-
-            # Check if the method is skipped
-            method_line_start = class_content.rfind("\n", 0, method_start) + 1
-            if method_line_start > 0:
-                preceding_lines = class_content[max(0, method_line_start - 300) : method_start]
-                if TEST_SKIPPED_PATTERN.search(preceding_lines):
-                    skipped.add(test_name)
-                else:
-                    implemented.add(test_name)
+    function_implemented, function_skipped = _extract_function_tests(content)
+    class_implemented, class_skipped = _extract_class_tests(content)
+    implemented = function_implemented | class_implemented
+    skipped = function_skipped | class_skipped
 
     return implemented, skipped
 

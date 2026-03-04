@@ -33,18 +33,14 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule
+from datarax.sources._config_base import SourceConfigBase
 from datarax.sources._conversion import hf_to_jax
 from datarax.sources._eager_source_ops import (
-    batch_elements_to_dict,
     convert_and_filter_element,
-    eager_get_batch,
-    eager_iter,
-    eager_reset,
-    reset_streaming_state,
-    validate_eager_config,
+    validate_shared_eager_source_config,
+    validate_shared_streaming_source_config,
 )
+from datarax.sources._source_base import EagerSourceBase, StreamingSourceBase
 
 if TYPE_CHECKING:
     pass
@@ -55,12 +51,42 @@ if TYPE_CHECKING:
 # =============================================================================
 
 
+def _prepare_hf_download_kwargs(download_kwargs: dict[str, Any] | None) -> dict[str, Any]:
+    """Prepare HF kwargs with security-pinned revision."""
+    resolved = dict(download_kwargs or {})
+    resolved.setdefault("revision", "main")
+    return resolved
+
+
+def _append_hf_converted_value(arrays: dict[str, list[Any]], key: str, value: Any) -> None:
+    """Convert a HF value and append it to per-key buffers."""
+    converted = hf_to_jax(value)
+    if isinstance(converted, jax.Array):
+        arrays.setdefault(key, []).append(converted)
+    elif isinstance(converted, np.ndarray | int | float | bool):
+        arrays.setdefault(key, []).append(jnp.array(converted))
+    else:
+        arrays.setdefault(key, []).append(converted)
+
+
+def _finalize_hf_arrays(arrays: dict[str, list[Any]]) -> dict[str, Any]:
+    """Stack buffered HF values into batched outputs where possible."""
+    result: dict[str, Any] = {}
+    for key, values in arrays.items():
+        if values and isinstance(values[0], jax.Array):
+            result[key] = jnp.stack(values)
+        elif values and isinstance(values[0], int | float | bool):
+            result[key] = jnp.array(values)
+        else:
+            result[key] = values
+    return result
+
+
 @dataclass
-class HFEagerConfig(StructuralConfig):
+class HFEagerConfig(SourceConfigBase):
     """Configuration for HFEagerSource (loads all data to JAX at init).
 
-    All original HfDataSourceConfig options are preserved for backward
-    compatibility while adding the eager-loading behavior.
+    Configuration for eager-loading HuggingFace datasets into JAX arrays.
 
     Args:
         name: Name of the dataset in HuggingFace Hub (required)
@@ -77,42 +103,21 @@ class HFEagerConfig(StructuralConfig):
         This ensures O(1) memory shuffling and reproducible per-epoch seeds.
     """
 
-    # Required parameters use None sentinel for frozen dataclass
-    name: str | None = None
-    split: str | None = None
-
-    # Optional parameters with defaults
-    data_dir: str | None = None
     shuffle: bool = False
     seed: int = 42  # Integer seed for Grain's index_shuffle
     download_kwargs: dict[str, Any] | None = None
-    include_keys: set[str] | None = None
-    exclude_keys: set[str] | None = None
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
-        # HFEagerSource is deterministic unless shuffle is enabled
-        if self.shuffle:
-            object.__setattr__(self, "stochastic", True)
-            if self.stream_name is None:
-                object.__setattr__(self, "stream_name", "shuffle")
-            # Validate seed range for Grain's index_shuffle
-            if self.seed < 0 or self.seed >= 2**32:
-                raise ValueError("seed must be in [0, 2**32)")
-        else:
-            object.__setattr__(self, "stochastic", False)
-
-        # Call parent validation
-        super().__post_init__()
-
-        # Shared validation
-        validate_eager_config(
-            self.name, self.split, self.include_keys, self.exclude_keys, "HFEagerConfig"
+        validate_shared_eager_source_config(
+            self,
+            "HFEagerConfig",
+            seed=self.seed,
         )
 
 
 @dataclass
-class HFStreamingConfig(StructuralConfig):
+class HFStreamingConfig(SourceConfigBase):
     """Configuration for HFStreamingSource (streams data from HF dataset).
 
     Use this for datasets too large to fit in memory or when using HuggingFace's
@@ -130,37 +135,14 @@ class HFStreamingConfig(StructuralConfig):
         exclude_keys: Optional set of keys to exclude from output
     """
 
-    # Required parameters
-    name: str | None = None
-    split: str | None = None
-
-    # Streaming-specific options
-    data_dir: str | None = None
     streaming: bool = False
     shuffle: bool = False
     shuffle_buffer_size: int = 1000
     download_kwargs: dict[str, Any] | None = None
-    include_keys: set[str] | None = None
-    exclude_keys: set[str] | None = None
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
-        if self.shuffle:
-            object.__setattr__(self, "stochastic", True)
-            if self.stream_name is None:
-                object.__setattr__(self, "stream_name", "shuffle")
-        else:
-            object.__setattr__(self, "stochastic", False)
-
-        super().__post_init__()
-
-        if self.name is None:
-            raise ValueError("name is required for HFStreamingConfig")
-        if self.split is None:
-            raise ValueError("split is required for HFStreamingConfig")
-
-        if self.include_keys is not None and self.exclude_keys is not None:
-            raise ValueError("Cannot specify both include_keys and exclude_keys")
+        validate_shared_streaming_source_config(self, "HFStreamingConfig")
 
 
 # =============================================================================
@@ -168,7 +150,7 @@ class HFStreamingConfig(StructuralConfig):
 # =============================================================================
 
 
-class HFEagerSource(DataSourceModule):
+class HFEagerSource(EagerSourceBase):
     """Eager-loading HuggingFace source for small/medium datasets.
 
     Loads ALL data to JAX arrays at initialization, then operates like a
@@ -270,10 +252,7 @@ class HFEagerSource(DataSourceModule):
         Returns:
             HuggingFace DatasetInfo object if available
         """
-        download_kwargs = config.download_kwargs or {}
-        # Add revision for security (bandit B615)
-        if "revision" not in download_kwargs:
-            download_kwargs["revision"] = "main"
+        download_kwargs = _prepare_hf_download_kwargs(config.download_kwargs)
 
         # Load dataset to get info
         dataset = self._datasets_module.load_dataset(  # nosec B615
@@ -299,9 +278,7 @@ class HFEagerSource(DataSourceModule):
         Returns:
             Dictionary mapping keys to JAX arrays
         """
-        download_kwargs = config.download_kwargs or {}
-        if "revision" not in download_kwargs:
-            download_kwargs["revision"] = "main"
+        download_kwargs = _prepare_hf_download_kwargs(config.download_kwargs)
 
         dataset = self._datasets_module.load_dataset(  # nosec B615
             config.name,
@@ -310,8 +287,7 @@ class HFEagerSource(DataSourceModule):
             **download_kwargs,
         )
 
-        # Collect all data
-        arrays: dict[str, list] = {}
+        arrays: dict[str, list[Any]] = {}
         for element in dataset:
             for k, v in element.items():
                 # Apply key filtering
@@ -319,162 +295,15 @@ class HFEagerSource(DataSourceModule):
                     continue
                 if config.exclude_keys and k in config.exclude_keys:
                     continue
+                _append_hf_converted_value(arrays, k, v)
 
-                if k not in arrays:
-                    arrays[k] = []
+        if not arrays:
+            raise ValueError(
+                "Dataset produced no elements after loading/filtering. "
+                "Check split selection and include/exclude key filters."
+            )
 
-                # Convert to JAX (handles PIL images, numpy arrays, scalars)
-                converted = hf_to_jax(v)
-                # Only include if it was successfully converted to array
-                if isinstance(converted, jax.Array):
-                    arrays[k].append(converted)
-                elif isinstance(converted, np.ndarray | int | float | bool):
-                    arrays[k].append(jnp.array(converted))
-                else:
-                    # Non-numeric types (strings, etc.) - store as-is for now
-                    arrays[k].append(converted)
-
-        # Stack to single arrays where possible
-        result = {}
-        for k, v in arrays.items():
-            if v and isinstance(v[0], jax.Array):
-                result[k] = jnp.stack(v)
-            elif v and isinstance(v[0], int | float | bool):
-                result[k] = jnp.array(v)
-            else:
-                # Keep as list for non-stackable types
-                result[k] = v  # type: ignore[assignment]
-
-        return result
-
-    # === Core iteration (matches MemorySource pattern) ===
-
-    def __len__(self) -> int:
-        """Return the total number of data elements."""
-        return self.length
-
-    def __iter__(self) -> Iterator[dict[str, Any]]:
-        """Iterate over data elements with O(1) memory shuffling.
-
-        Uses Grain's index_shuffle for shuffling, which computes
-        shuffled indices on-the-fly without storing a permutation array.
-        """
-
-        def build_element(data: dict, idx: int) -> dict[str, Any]:
-            return {k: v[idx] if isinstance(v, jax.Array) else v[idx] for k, v in data.items()}
-
-        return eager_iter(
-            self.data,
-            self.length,
-            self.index,
-            self.epoch,
-            self.shuffle,
-            self._seed,
-            build_element,
-        )
-
-    def __getitem__(self, index: int) -> dict[str, Any]:
-        """Get element at specific index.
-
-        Args:
-            index: Index of element to retrieve (supports negative indexing)
-
-        Returns:
-            Data element at the specified index
-
-        Raises:
-            IndexError: If index is out of bounds
-        """
-        if index < 0:
-            index = self.length + index
-        if index < 0 or index >= self.length:
-            raise IndexError(f"Index {index} out of range for {self.length} elements")
-        return {k: v[index] if isinstance(v, jax.Array) else v[index] for k, v in self.data.items()}
-
-    # === Batch retrieval (stateless and stateful) ===
-
-    def get_batch(self, batch_size: int, key: jax.Array | None = None) -> dict[str, Any]:
-        """Get batch - stateless (with key) or stateful (without key).
-
-        Args:
-            batch_size: Number of elements in the batch
-            key: Optional RNG key for stateless random sampling
-
-        Returns:
-            Batch of data as dictionary with batched arrays
-        """
-
-        def gather_fn(data: dict, indices: jax.Array) -> dict[str, Any]:
-            batch = {}
-            for k, v in data.items():
-                if isinstance(v, jax.Array):
-                    batch[k] = v[indices]
-                else:
-                    batch[k] = [v[int(i)] for i in indices]
-            return batch
-
-        return eager_get_batch(
-            self.data,
-            self.length,
-            self.index,
-            self.epoch,
-            self.shuffle,
-            self._seed,
-            batch_size,
-            key,
-            gather_fn,
-        )
-
-    # === Dataset info access ===
-
-    def get_dataset_info(self) -> Any:
-        """Get HuggingFace dataset info (cached from init)."""
-        return self._dataset_info
-
-    # === State management ===
-
-    def reset(self, seed: int | None = None) -> None:
-        """Reset the source to the beginning.
-
-        Args:
-            seed: Optional new seed (ignored, use config seed)
-        """
-        del seed  # Use config seed
-        eager_reset(self.index, self.epoch, self._cache)
-
-    def set_shuffle(self, shuffle: bool) -> None:
-        """Enable or disable shuffling.
-
-        Args:
-            shuffle: Whether to shuffle data
-        """
-        self.shuffle = shuffle
-
-    def _apply_transform(
-        self, batch_size: int, key: jax.Array | None, stats: Any | None = None
-    ) -> dict[str, Any]:
-        """Apply transform (get batch) - for compatibility with TransformBase.
-
-        Args:
-            batch_size: Size of batch to retrieve
-            key: Optional RNG key
-            stats: Unused (for compatibility)
-
-        Returns:
-            Batch of data
-        """
-        del stats
-        return self.get_batch(batch_size, key)
-
-    def __repr__(self) -> str:
-        """String representation."""
-        return (
-            f"HFEagerSource("
-            f"dataset={self.dataset_name}:{self.split_name}, "
-            f"length={self.length}, "
-            f"shuffle={self.shuffle}, "
-            f"epoch={self.epoch.get_value()})"
-        )
+        return _finalize_hf_arrays(arrays)
 
 
 # =============================================================================
@@ -482,7 +311,7 @@ class HFEagerSource(DataSourceModule):
 # =============================================================================
 
 
-class HFStreamingSource(DataSourceModule):
+class HFStreamingSource(StreamingSourceBase):
     """Streaming HuggingFace source for large datasets.
 
     Thin wrapper around HuggingFace dataset for data that can't fit in memory.
@@ -543,18 +372,8 @@ class HFStreamingSource(DataSourceModule):
                 "using: pip install datarax[hf]"
             ) from e
 
-        self.dataset_name = config.name
-        self.split_name = config.split
-        self.streaming = config.streaming
-        self.shuffle = config.shuffle
-        self.shuffle_buffer_size = config.shuffle_buffer_size
-        self.include_keys = config.include_keys
-        self.exclude_keys = config.exclude_keys
-
         # Load the dataset
-        download_kwargs = config.download_kwargs or {}
-        if "revision" not in download_kwargs:
-            download_kwargs["revision"] = "main"
+        download_kwargs = _prepare_hf_download_kwargs(config.download_kwargs)
 
         self._hf_dataset = self._datasets_module.load_dataset(  # nosec B615
             config.name,
@@ -583,14 +402,54 @@ class HFStreamingSource(DataSourceModule):
         # Try to get length
         if not config.streaming:
             try:
-                self.length: int | None = len(self._hf_dataset)
+                self._length: int | None = len(self._hf_dataset)
             except (TypeError, AttributeError):
-                self.length = None
+                self._length = None
         else:
-            self.length = None
+            self._length = None
 
         self._iterator: Iterator | None = None
         self.epoch = nnx.Variable(0)
+
+    @property
+    def dataset_name(self) -> str | None:
+        """Dataset name from source config."""
+        return self.config.name
+
+    @property
+    def split_name(self) -> str | None:
+        """Dataset split from source config."""
+        return self.config.split
+
+    @property
+    def streaming(self) -> bool:
+        """Streaming mode flag from source config."""
+        return self.config.streaming
+
+    @property
+    def shuffle(self) -> bool:
+        """Shuffle flag from source config."""
+        return self.config.shuffle
+
+    @property
+    def shuffle_buffer_size(self) -> int:
+        """Shuffle buffer size from source config."""
+        return self.config.shuffle_buffer_size
+
+    @property
+    def include_keys(self) -> set[str] | None:
+        """Optional key-include filter from source config."""
+        return self.config.include_keys
+
+    @property
+    def exclude_keys(self) -> set[str] | None:
+        """Optional key-exclude filter from source config."""
+        return self.config.exclude_keys
+
+    @property
+    def length(self) -> int | None:
+        """Dataset length when known."""
+        return self._length
 
     def __len__(self) -> int:
         """Return the total number of data elements if known.
@@ -628,43 +487,6 @@ class HFStreamingSource(DataSourceModule):
             hf_to_jax,
         )
 
-    def get_dataset_info(self) -> Any:
-        """Get HuggingFace dataset info."""
-        return self._dataset_info
-
-    def reset(self, seed: int | None = None) -> None:
-        """Reset the source to the beginning.
-
-        Args:
-            seed: Unused (for interface compatibility)
-        """
-        del seed
-        self._iterator = None
-        reset_streaming_state(self.epoch, self._cache)
-
-    def _apply_transform(
-        self, batch_size: int, key: jax.Array | None, stats: Any | None = None
-    ) -> dict[str, Any]:
-        """Apply transform - for compatibility with TransformBase.
-
-        Note: For streaming sources, use pipeline batching instead.
-        """
-        del stats, key
-        elements = []
-        for _ in range(batch_size):
-            try:
-                elements.append(next(self))
-            except StopIteration:
-                break
-        return batch_elements_to_dict(elements)
-
-    def __repr__(self) -> str:
-        """String representation."""
-        return (
-            f"HFStreamingSource("
-            f"dataset={self.dataset_name}:{self.split_name}, "
-            f"length={self.length}, "
-            f"shuffle={self.shuffle}, "
-            f"streaming={self.streaming}, "
-            f"epoch={self.epoch.get_value()})"
-        )
+    def _repr_extra_fields(self) -> dict[str, Any]:
+        """Add source-mode details to the shared representation."""
+        return {"streaming": self.streaming}

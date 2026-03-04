@@ -1,6 +1,6 @@
 """WebDataset adapter for the benchmark framework.
 
-Wraps WebDataset's TAR-based streaming with the BenchmarkAdapter lifecycle.
+Wraps WebDataset's TAR-based streaming with the PipelineAdapter lifecycle.
 Tier 2 cloud/streaming -- supports 3 scenarios.
 
 Design ref: Section 14.2 of the benchmark report.
@@ -16,12 +16,12 @@ import numpy as np
 
 from benchmarks.adapters import register
 from benchmarks.adapters._utils import cleanup_temp_dir, setup_temp_dir, write_numpy_tar
-from benchmarks.adapters.base import BenchmarkAdapter, ScenarioConfig
+from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
 
 @register
-class WebDatasetAdapter(BenchmarkAdapter):
-    """BenchmarkAdapter for WebDataset.
+class WebDatasetAdapter(PipelineAdapter):
+    """PipelineAdapter for WebDataset.
 
     Requires TAR shard conversion in setup(). Uses numpy serialization
     (.npy extension) for fair comparison with in-memory loaders.

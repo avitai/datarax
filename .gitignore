@@ -251,3 +251,6 @@ benchmark-data/
 # JAX/XLA compilation caches (local development)
 .cache/jax/
 .cache/xla/
+
+# activated virtual environments
+activate.sh

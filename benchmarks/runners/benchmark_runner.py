@@ -11,13 +11,19 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from types import ModuleType
-from benchmarks.adapters.base import BenchmarkAdapter
+
+from benchmarks.adapters.base import PipelineAdapter
 from benchmarks.core.baselines import BaselineStore
 from benchmarks.core.config_loader import load_hardware_profile
 from benchmarks.core.platform import can_run_scenario, estimate_scenario_memory_mb
+from benchmarks.core.result_model import (
+    result_scenario_id,
+    result_variant,
+    throughput_elements_per_sec,
+)
 from benchmarks.scenarios import discover_scenarios
 from benchmarks.scenarios.base import ScenarioVariant, run_scenario
-from datarax.benchmarking.results import BenchmarkResult
+from calibrax.core import BenchmarkResult
 
 
 class BenchmarkRunner:
@@ -49,7 +55,7 @@ class BenchmarkRunner:
     def run_scenario(
         self,
         scenario_module: ModuleType,
-        adapter: BenchmarkAdapter,
+        adapter: PipelineAdapter,
         variant_name: str | None = None,
         num_repetitions: int = 5,
     ) -> BenchmarkResult:
@@ -57,7 +63,7 @@ class BenchmarkRunner:
 
         Args:
             scenario_module: Scenario module with VARIANTS, get_variant(), etc.
-            adapter: BenchmarkAdapter to test.
+            adapter: PipelineAdapter to test.
             variant_name: Variant name (uses TIER1_VARIANT or first variant if None).
             num_repetitions: Number of repetitions (median selected).
 
@@ -83,7 +89,7 @@ class BenchmarkRunner:
 
     def run_all(
         self,
-        adapter: BenchmarkAdapter,
+        adapter: PipelineAdapter,
         scenario_filter: set[str] | None = None,
         tier: int | None = None,
         num_repetitions: int = 5,
@@ -91,7 +97,7 @@ class BenchmarkRunner:
         """Run all matching scenarios.
 
         Args:
-            adapter: BenchmarkAdapter to test.
+            adapter: PipelineAdapter to test.
             scenario_filter: Only run scenarios with these IDs. None = all.
             tier: If 1, only run Tier 1 scenarios.
             num_repetitions: Repetitions per scenario.
@@ -130,7 +136,7 @@ class BenchmarkRunner:
                     variant_name,
                     num_repetitions,
                 )
-                result.save(self.output_dir / f"{scenario_id}_{result.variant}.json")
+                result.save(self.output_dir / f"{scenario_id}_{result_variant(result)}.json")
                 results.append(result)
             except Exception as exc:
                 print(f"SKIP {scenario_id}: {exc}", file=sys.stderr)
@@ -139,7 +145,7 @@ class BenchmarkRunner:
 
     def generate_baselines(
         self,
-        adapter: BenchmarkAdapter,
+        adapter: PipelineAdapter,
         baselines_dir: Path | str,
         num_repetitions: int = 5,
         tier: int | None = None,
@@ -148,7 +154,7 @@ class BenchmarkRunner:
         """Generate baselines for all supported scenarios.
 
         Args:
-            adapter: BenchmarkAdapter to test.
+            adapter: PipelineAdapter to test.
             baselines_dir: Directory for baseline JSON files.
             num_repetitions: Repetitions per scenario.
             tier: If 1, only generate Tier 1 baselines. None = all.
@@ -192,7 +198,7 @@ class BenchmarkRunner:
                     )
                     path = store.save(baseline_name, result)
                     saved.append(path)
-                    throughput = result.throughput_elements_sec()
+                    throughput = throughput_elements_per_sec(result)
                     print(f"  OK {baseline_name}: {throughput:.0f} elem/s")
                 except Exception as exc:
                     print(
@@ -288,8 +294,8 @@ def main() -> None:
         )
         print(f"Completed {len(results)} scenarios.")
         for r in results:
-            throughput = r.throughput_elements_sec()
-            print(f"  {r.scenario_id}/{r.variant}: {throughput:.0f} elem/s")
+            throughput = throughput_elements_per_sec(r)
+            print(f"  {result_scenario_id(r)}/{result_variant(r)}: {throughput:.0f} elem/s")
 
 
 if __name__ == "__main__":

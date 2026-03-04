@@ -11,4 +11,4 @@ Statistical analysis for benchmark measurements, including bootstrap confidence 
 
 ---
 
-::: datarax.benchmarking.statistics
+::: calibrax.statistics

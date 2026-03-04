@@ -182,7 +182,7 @@ def clear_device_memory():
         try:
             jax.clear_caches()
             # Additional GPU-specific cleanup could be added here
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError) as e:
             logger.warning(f"Failed to clear device memory: {e}")
 
 

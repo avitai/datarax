@@ -468,22 +468,13 @@ class TestCheckpointingErrorHandling:
                 DataraxModuleConfig(), features=32, layers=1, rngs=rngs
             )
 
-            # This may fail or partially succeed depending on implementation
-            # The important thing is it doesn't crash the system
-            try:
-                with warnings.catch_warnings():
-                    warnings.filterwarnings(
-                        "ignore", "Sharding info not provided when restoring", UserWarning
-                    )
-                    restored_state = handler.restore(temp_dir)
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore", "Sharding info not provided when restoring", UserWarning
+                )
+                restored_state = handler.restore(temp_dir)
+            with pytest.raises(ValueError, match="structurally incompatible"):
                 incompatible_module.set_state(restored_state)
-                # If it succeeds, verify basic functionality
-                x = jnp.ones((2, 32))
-                y = incompatible_module(x)
-                assert y.shape == (2, 32)
-            except Exception:
-                # Expected for incompatible architectures
-                pass
 
     def test_partial_state_restoration(self):
         """Test restoration when some state components are missing."""
@@ -503,10 +494,5 @@ class TestCheckpointingErrorHandling:
             DataraxModuleConfig(), features=16, layers=1, rngs=nnx.Rngs(999)
         )
 
-        # Should handle partial restoration gracefully
-        fresh_module.set_state(partial_state)
-
-        # Verify basic functionality still works
-        x = jnp.ones((2, 16))
-        y = fresh_module(x)
-        assert y.shape == (2, 16)
+        with pytest.raises(ValueError, match="structurally incompatible"):
+            fresh_module.set_state(partial_state)

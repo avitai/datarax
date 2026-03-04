@@ -22,7 +22,7 @@ Performance measurement and analysis tools for data pipelines. Use these tools t
 ## Quick Start
 
 ```python
-from datarax.benchmarking import TimingCollector
+from calibrax import TimingCollector
 
 # Measure throughput (CPU — pass sync_fn for GPU)
 timer = TimingCollector()
@@ -50,7 +50,7 @@ print(f"First batch: {result.first_batch_time:.4f}s (includes JIT)")
 ## GPU Memory Profiling
 
 ```python
-from datarax.benchmarking import GPUMemoryProfiler, MemoryOptimizer
+from calibrax import GPUMemoryProfiler, MemoryOptimizer
 
 # Check GPU memory usage
 profiler = GPUMemoryProfiler()

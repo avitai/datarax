@@ -11,6 +11,7 @@ Design follows Grain's prefetch pattern:
 
 import queue
 import threading
+from dataclasses import dataclass
 from typing import TypeVar
 from collections.abc import Iterator
 
@@ -22,8 +23,12 @@ T = TypeVar("T")
 # instances in the queue (which breaks if data items are Exception subclasses).
 _END = object()
 
-# Wrapper to propagate exceptions from the producer thread.
-_ERROR = type("_ErrorWrapper", (), {"__init__": lambda self, e: setattr(self, "exc", e)})
+
+@dataclass(frozen=True)
+class _ErrorWrapper:
+    """Container for forwarding producer exceptions to the consumer thread."""
+
+    exc: Exception
 
 
 class Prefetcher:
@@ -53,7 +58,7 @@ class Prefetcher:
         Returns:
             An iterator that yields prefetched items.
         """
-        buf: queue.Queue = queue.Queue(maxsize=self.buffer_size)
+        buf: queue.Queue[object] = queue.Queue(maxsize=self.buffer_size)
         stop_event = threading.Event()
 
         def producer():
@@ -62,8 +67,8 @@ class Prefetcher:
                     if stop_event.is_set():
                         return
                     buf.put(item)
-            except Exception as e:
-                buf.put(_ERROR(e))
+            except Exception as e:  # noqa: BLE001 - propagate arbitrary iterator errors
+                buf.put(_ErrorWrapper(e))
             finally:
                 buf.put(_END)
 
@@ -81,7 +86,7 @@ class Prefetcher:
 
                 if item is _END:
                     break
-                if isinstance(item, _ERROR):
+                if isinstance(item, _ErrorWrapper):
                     raise item.exc
                 yield item
         finally:

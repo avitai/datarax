@@ -10,7 +10,7 @@ path (closure-capture, zero per-call overhead).
 
 Not a Tier-1 scenario (requires both variants for meaningful results).
 
-Design ref: Phase 2 optimization -- stochastic JIT support.
+Design ref: v2 optimization -- stochastic JIT support.
 """
 
 from __future__ import annotations

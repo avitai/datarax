@@ -21,7 +21,7 @@ This module provides three components:
 ### Check GPU memory
 
 ```python
-from datarax.benchmarking import GPUMemoryProfiler
+from calibrax import GPUMemoryProfiler
 
 profiler = GPUMemoryProfiler()
 usage = profiler.get_memory_usage()
@@ -32,7 +32,7 @@ print(f"Utilization: {usage.get('gpu_memory_utilization', 0):.1%}")
 ### Analyze pipeline memory
 
 ```python
-from datarax.benchmarking import MemoryOptimizer
+from calibrax import MemoryOptimizer
 
 optimizer = MemoryOptimizer()
 analysis = optimizer.analyze_pipeline_memory(pipeline_fn, sample_data)
@@ -44,4 +44,4 @@ for suggestion in analysis["suggestions"]:
 
 ---
 
-::: datarax.benchmarking.profiler
+::: calibrax.profiler

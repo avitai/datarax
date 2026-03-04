@@ -30,10 +30,7 @@ class SequentialStrategy(CompositionStrategyImpl):
         result_data, result_state, result_metadata = context.data, context.state, context.metadata
 
         for i, operator in enumerate(operators):
-            # Extract random params for this operator
-            op_random_params = None
-            if context.random_params and f"operator_{i}" in context.random_params:
-                op_random_params = context.random_params[f"operator_{i}"]
+            op_random_params = self._extract_operator_random_params(context.random_params, i)
 
             # Apply operator
             result_data, result_state, result_metadata = operator.apply(
@@ -41,8 +38,7 @@ class SequentialStrategy(CompositionStrategyImpl):
             )
 
             # Track statistics
-            if context.stats_callback and hasattr(operator, "statistics") and operator.statistics:
-                context.stats_callback(i, operator.statistics)
+            self._emit_operator_statistics(operator, i, context.stats_callback)
 
         return result_data, result_state, result_metadata
 
@@ -89,32 +85,17 @@ class ConditionalSequentialStrategy(CompositionStrategyImpl):
             )
 
         for i, (operator, condition) in enumerate(zip(operators, self.conditions)):
-            # Extract random params for this operator
-            op_random_params = None
-            if context.random_params and f"operator_{i}" in context.random_params:
-                op_random_params = context.random_params[f"operator_{i}"]
-
-            # Use JAX control flow for vmap compatibility
-            def apply_fn(operands):
-                d, s, m, rp = operands
-                return operator.apply(d, s, m, rp)
-
-            def noop_fn(operands):
-                d, s, m, _ = operands
-                return d, s, m
-
-            # Evaluate condition on data *before* this operator?
-            # Original implementation: condition(result_data) i.e. current data
-            # Evaluate condition and apply operator conditionally using jax.lax.cond
-            result_data, result_state, result_metadata = jax.lax.cond(
+            op_random_params = self._extract_operator_random_params(context.random_params, i)
+            result_data, result_state, result_metadata = self._apply_operator_conditionally(
+                operator,
                 condition(result_data),
-                apply_fn,
-                noop_fn,
-                (result_data, result_state, result_metadata, op_random_params),
+                result_data,
+                result_state,
+                result_metadata,
+                op_random_params,
             )
 
             # Track statistics
-            if context.stats_callback and hasattr(operator, "statistics") and operator.statistics:
-                context.stats_callback(i, operator.statistics)
+            self._emit_operator_statistics(operator, i, context.stats_callback)
 
         return result_data, result_state, result_metadata

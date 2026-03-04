@@ -16,10 +16,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from benchmarks.adapters.base import BenchmarkAdapter, ScenarioConfig
+from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
+from benchmarks.core.result_model import throughput_elements_per_sec
 from benchmarks.scenarios.base import DEFAULT_SEED, ScenarioVariant, make_get_variant, run_scenario
-from datarax.benchmarking.results import BenchmarkResult
+from calibrax.core import BenchmarkResult
 
 SCENARIO_ID: str = "IO-4"
 TIER1_VARIANT: str | None = None
@@ -60,7 +61,7 @@ get_variant = make_get_variant(VARIANTS)
 
 
 def run_direct(
-    adapter: BenchmarkAdapter,
+    adapter: PipelineAdapter,
     num_batches: int = 50,
     warmup_batches: int = 5,
 ) -> dict[str, Any]:
@@ -95,8 +96,8 @@ def run_direct(
         )
         epoch_results.append(result)
 
-    first_throughput = epoch_results[0].throughput_elements_sec()
-    last_throughput = epoch_results[-1].throughput_elements_sec()
+    first_throughput = throughput_elements_per_sec(epoch_results[0])
+    last_throughput = throughput_elements_per_sec(epoch_results[-1])
     speedup = last_throughput / first_throughput if first_throughput > 0 else 0.0
 
     return {

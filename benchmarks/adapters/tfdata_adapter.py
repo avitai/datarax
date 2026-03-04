@@ -1,6 +1,6 @@
 """tf.data adapter for the benchmark framework.
 
-Wraps TensorFlow's tf.data.Dataset with the BenchmarkAdapter lifecycle.
+Wraps TensorFlow's tf.data.Dataset with the PipelineAdapter lifecycle.
 Tier 1 -- uses AUTOTUNE for idiomatic best practice.
 
 Design ref: Section 7.3 of the benchmark report.
@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 
 from benchmarks.adapters import register
-from benchmarks.adapters.base import BenchmarkAdapter, ScenarioConfig
+from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
 
 # ---------------------------------------------------------------------------
@@ -71,8 +71,8 @@ def _get_tf_transform(name: str) -> Any:
 
 
 @register
-class TfDataAdapter(BenchmarkAdapter):
-    """BenchmarkAdapter for tf.data."""
+class TfDataAdapter(PipelineAdapter):
+    """PipelineAdapter for tf.data."""
 
     def __init__(self) -> None:
         self._dataset: Any = None

@@ -20,10 +20,15 @@ from benchmarks.adapters import get_available_adapters
 from benchmarks.core.config_loader import load_hardware_profile
 from benchmarks.core.environment import capture_environment
 from benchmarks.core.platform import can_run_scenario
+from benchmarks.core.result_model import (
+    result_scenario_id,
+    result_variant,
+    throughput_elements_per_sec,
+)
 from benchmarks.runners.benchmark_runner import BenchmarkRunner
 from benchmarks.scenarios import discover_scenarios
 from benchmarks.scenarios.base import run_scenario
-from datarax.benchmarking.results import BenchmarkResult
+from calibrax.core import BenchmarkResult
 
 
 @dataclass
@@ -57,7 +62,7 @@ class ComparativeResults:
         for adapter_name, adapter_results in self.results.items():
             adapter_files = []
             for result in adapter_results:
-                fname = f"{adapter_name}_{result.scenario_id}_{result.variant}.json"
+                fname = f"{adapter_name}_{result_scenario_id(result)}_{result_variant(result)}.json"
                 # Sanitize filename
                 fname = fname.replace(" ", "_")
                 result.save(output_dir / fname)
@@ -90,7 +95,7 @@ class ComparativeResults:
         out: dict[str, BenchmarkResult] = {}
         for adapter_name, adapter_results in self.results.items():
             for r in adapter_results:
-                if r.scenario_id == scenario_id:
+                if result_scenario_id(r) == scenario_id:
                     out[adapter_name] = r
                     break
         return out
@@ -105,7 +110,7 @@ class ComparativeResults:
         ids: set[str] = set()
         for adapter_results in self.results.values():
             for r in adapter_results:
-                ids.add(r.scenario_id)
+                ids.add(result_scenario_id(r))
         return ids
 
 
@@ -197,7 +202,7 @@ class FullRunner:
                         num_repetitions=num_repetitions,
                     )
                     adapter_results.append(result)
-                    throughput = result.throughput_elements_sec()
+                    throughput = throughput_elements_per_sec(result)
                     print(
                         f"  {scenario_id}/{variant_name}: {throughput:.0f} elem/s",
                         file=sys.stderr,
@@ -258,9 +263,9 @@ class FullRunner:
 
         for adapter_name, results in comparative.results.items():
             summary["results_summary"][adapter_name] = {
-                r.scenario_id: {
-                    "throughput_elem_s": r.throughput_elements_sec(),
-                    "variant": r.variant,
+                result_scenario_id(r): {
+                    "throughput_elem_s": throughput_elements_per_sec(r),
+                    "variant": result_variant(r),
                 }
                 for r in results
             }

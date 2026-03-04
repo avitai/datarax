@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from benchmarks.core.result_model import result_scenario_id, throughput_elements_per_sec
 from benchmarks.runners.full_runner import ComparativeResults
 
 
@@ -173,8 +174,8 @@ class GapDetector:
 
     def _get_datarax_throughput(self, scenario_id: str) -> float | None:
         for r in self._results.results.get(self._datarax_name, []):
-            if r.scenario_id == scenario_id:
-                return r.throughput_elements_sec()
+            if result_scenario_id(r) == scenario_id:
+                return throughput_elements_per_sec(r)
         return None
 
     def _top_alternative(self, scenario_id: str) -> tuple[str, float]:
@@ -185,8 +186,8 @@ class GapDetector:
             if adapter_name == self._datarax_name:
                 continue
             for r in adapter_results:
-                if r.scenario_id == scenario_id:
-                    tp = r.throughput_elements_sec()
+                if result_scenario_id(r) == scenario_id:
+                    tp = throughput_elements_per_sec(r)
                     if tp > best_tp:
                         best_tp = tp
                         best_name = adapter_name

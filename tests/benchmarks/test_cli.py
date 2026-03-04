@@ -5,11 +5,9 @@ import time
 from unittest.mock import MagicMock, patch
 
 import pytest
+from calibrax.profiling import TimingSample
 
-pytest.importorskip("benchkit")
-
-from datarax.benchmarking.results import BenchmarkResult
-from datarax.benchmarking.timing import TimingSample
+from benchmarks.core.result_model import build_benchmark_result
 
 
 @pytest.fixture
@@ -20,12 +18,12 @@ def results_dir(tmp_path):
 
     timing = TimingSample(
         wall_clock_sec=1.0,
-        per_batch_times=[0.01, 0.009, 0.011, 0.01, 0.01],
+        per_batch_times=(0.01, 0.009, 0.011, 0.01, 0.01),
         first_batch_time=0.05,
         num_batches=5,
         num_elements=5000,
     )
-    result = BenchmarkResult(
+    result = build_benchmark_result(
         framework="Datarax",
         scenario_id="CV-1",
         variant="small",

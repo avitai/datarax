@@ -168,7 +168,7 @@ class DataLoader(Sequential):
                 if hasattr(node, "set_state") and isinstance(node_state, dict):
                     try:
                         node.set_state(node_state)
-                    except Exception:
+                    except (AttributeError, TypeError, ValueError, RuntimeError):
                         # If setting state fails, continue with other nodes
                         pass
 

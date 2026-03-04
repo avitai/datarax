@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from datarax.benchmarking.statistics import StatisticalAnalyzer
+from benchmarks.core.result_model import result_scenario_id
+from calibrax.statistics import StatisticalAnalyzer
 
 from benchmarks.runners.full_runner import ComparativeResults
 
@@ -69,9 +70,9 @@ class StabilityValidator:
                 stats = self._analyzer.summarize(r.timing.per_batch_times)
 
                 if stats.cv < self._threshold:
-                    stable.append((r.scenario_id, adapter_name))
+                    stable.append((result_scenario_id(r), adapter_name))
                 else:
-                    unstable.append((r.scenario_id, adapter_name, stats.cv))
+                    unstable.append((result_scenario_id(r), adapter_name, stats.cv))
 
         total = len(stable) + len(unstable)
         return StabilityReport(

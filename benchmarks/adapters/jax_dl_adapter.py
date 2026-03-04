@@ -1,6 +1,6 @@
 """jax-dataloader adapter for the benchmark framework.
 
-Wraps jax-dataloader's minimal DataLoader with the BenchmarkAdapter lifecycle.
+Wraps jax-dataloader's minimal DataLoader with the PipelineAdapter lifecycle.
 Tier 1 JAX ecosystem -- lightweight, only supports CV-1.
 
 Design ref: Section 14.2 of the benchmark report.
@@ -28,7 +28,7 @@ import numpy as np
 
 from benchmarks.adapters import register
 from benchmarks.adapters._utils import cast_to_float32, normalize_uint8
-from benchmarks.adapters.base import BenchmarkAdapter, ScenarioConfig
+from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
 _JAX_DL_TRANSFORMS: dict[str, Any] = {
     "Normalize": normalize_uint8,
@@ -59,8 +59,8 @@ def _create_jax_loader(dataset: Any, batch_size: int, shuffle: bool, drop_last: 
 
 
 @register
-class JaxDataloaderAdapter(BenchmarkAdapter):
-    """BenchmarkAdapter for jax-dataloader."""
+class JaxDataloaderAdapter(PipelineAdapter):
+    """PipelineAdapter for jax-dataloader."""
 
     def __init__(self) -> None:
         self._loader: Any = None

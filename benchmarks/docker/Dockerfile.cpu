@@ -38,11 +38,7 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 RUN uv pip install -e ".[benchmark]"
 
-# --- Layer 2: benchkit path dependency ---
-COPY tools/benchkit ./tools/benchkit
-RUN uv pip install -e tools/benchkit
-
-# --- Layer 3: Source + benchmark code ---
+# --- Layer 2: Source + benchmark code ---
 COPY src ./src
 COPY benchmarks ./benchmarks
 COPY conftest.py ./conftest.py

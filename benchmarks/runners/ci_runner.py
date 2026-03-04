@@ -19,10 +19,16 @@ from typing import Any
 from benchmarks.adapters.datarax_adapter import DataraxAdapter
 from benchmarks.core.baselines import BaselineStore
 from benchmarks.core.platform import can_run_scenario
+from benchmarks.core.result_model import (
+    latency_percentiles_ms,
+    result_scenario_id,
+    result_variant,
+    throughput_elements_per_sec,
+)
 from benchmarks.runners.benchmark_runner import BenchmarkRunner
 from benchmarks.scenarios import discover_scenarios
 from benchmarks.scenarios.base import run_scenario
-from datarax.benchmarking.results import BenchmarkResult
+from calibrax.core import BenchmarkResult
 
 # Default paths
 _DEFAULT_BASELINES = Path("benchmarks/baselines")
@@ -82,7 +88,7 @@ def run_tier1_gate(
     if baselines_dir is not None:
         store = BaselineStore(baselines_dir)
         for result in results:
-            baseline_name = f"{result.scenario_id}_{result.variant}"
+            baseline_name = f"{result_scenario_id(result)}_{result_variant(result)}"
             verdict = store.compare(baseline_name, result)
             verdicts.append(verdict)
     else:
@@ -111,8 +117,8 @@ def generate_ci_report(
     lines.append("")
 
     for result, verdict in zip(results, verdicts):
-        throughput = result.throughput_elements_sec()
-        latencies = result.latency_percentiles()
+        throughput = throughput_elements_per_sec(result)
+        latencies = latency_percentiles_ms(result)
 
         status_str = "NO BASELINE"
         if verdict is not None:
@@ -120,7 +126,7 @@ def generate_ci_report(
             ratio = verdict.get("throughput_ratio", 0.0)
             status_str = f"{status.upper()} (ratio: {ratio:.2f})"
 
-        lines.append(f"  {result.scenario_id}/{result.variant}:")
+        lines.append(f"  {result_scenario_id(result)}/{result_variant(result)}:")
         lines.append(f"    Throughput: {throughput:.0f} elem/s")
         lines.append(f"    p50: {latencies['p50']:.2f}ms  p99: {latencies['p99']:.2f}ms")
         lines.append(f"    Status: {status_str}")
@@ -187,7 +193,7 @@ def main() -> None:
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
     for result in results:
-        result.save(out / f"ci_{result.scenario_id}_{result.variant}.json")
+        result.save(out / f"ci_{result_scenario_id(result)}_{result_variant(result)}.json")
 
     # Exit code
     if any(v is not None and v.get("status") == "failure" for v in verdicts):

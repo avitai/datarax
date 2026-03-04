@@ -17,7 +17,7 @@ setup: |
   pip install uv
   cd ~/datarax && uv venv --python 3.11 .venv
   cd ~/datarax && .venv/bin/python -m ensurepip 2>/dev/null || true
-  cd ~/datarax && uv pip install --python .venv/bin/python -e ".[benchmark,gpu]" -e "tools/benchkit[wandb]"
+  cd ~/datarax && uv pip install --python .venv/bin/python -e ".[benchmark,gpu]" "calibrax[wandb] @ git+https://github.com/avitai/calibrax.git"
 
 run: |
   set -euo pipefail

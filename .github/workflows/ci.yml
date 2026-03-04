@@ -33,22 +33,17 @@ jobs:
       - name: Install dependencies
         run: |
           uv pip install -e ".[dev]"
-          # Make sure tomli is installed for Python < 3.11
-          uv pip install tomli
-          # Install type stubs for common libraries
-          uv pip install types-requests types-setuptools
 
       - name: Setup PYTHONPATH for tests
         run: |
           echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
 
-      - name: Run Ruff
+      - name: Run pre-commit (Ruff-only hooks)
+        env:
+          PRE_COMMIT_HOME: /tmp/pre-commit-cache
+          UV_CACHE_DIR: /tmp/uv-cache
         run: |
-          uv run ruff check .
-
-      - name: Run Pyright
-        run: |
-          uv run pyright || echo "Pyright check completed with issues"
+          uv run pre-commit run --all-files --show-diff-on-failure --color=always
 
   examples:
     name: Validate Examples

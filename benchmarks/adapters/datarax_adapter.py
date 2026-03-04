@@ -1,7 +1,7 @@
 """Datarax adapter -- reference implementation for the benchmark framework.
 
 Wraps Datarax's public API (from_source, MemorySource, DAGExecutor)
-using the BenchmarkAdapter lifecycle: setup -> warmup -> iterate -> teardown.
+using the PipelineAdapter lifecycle: setup -> warmup -> iterate -> teardown.
 
 Supports all 25 scenarios with transform chaining via
 OperatorNode and topology dispatch for DAG-based scenarios. External
@@ -22,7 +22,7 @@ from flax import nnx
 
 from benchmarks.adapters import register
 from benchmarks.adapters._utils import cast_to_float32, normalize_uint8
-from benchmarks.adapters.base import BenchmarkAdapter, ScenarioConfig
+from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 from datarax import OperatorNode, from_source
 from datarax.core.config import ElementOperatorConfig
 from datarax.core.element_batch import Element
@@ -129,8 +129,8 @@ _ALL_TRANSFORM_FNS: dict[str, Any] = {**_TRANSFORM_FNS, **_STOCHASTIC_TRANSFORM_
 
 
 @register
-class DataraxAdapter(BenchmarkAdapter):
-    """BenchmarkAdapter implementation for Datarax.
+class DataraxAdapter(PipelineAdapter):
+    """PipelineAdapter implementation for Datarax.
 
     Supports all 25 benchmark scenarios. For standard sequential pipelines,
     chains OperatorNode wrappers for each transform in config.transforms.

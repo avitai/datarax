@@ -2,6 +2,7 @@
 
 import os
 import platform
+import importlib.util
 import sys
 from typing import Any
 
@@ -30,6 +31,38 @@ elif IS_LINUX:
     os.environ["TF_CUDNN_DETERMINISTIC"] = "1"
     os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 
+
+def _configure_test_jax_platforms() -> None:
+    """Set a safe JAX backend default for test runs.
+
+    Tests should run on CPU by default, while still allowing explicit
+    CUDA platform selection via environment override.
+    """
+    explicit_platforms = os.environ.get("DATARAX_TEST_JAX_PLATFORMS")
+    if explicit_platforms:
+        os.environ["JAX_PLATFORMS"] = explicit_platforms
+        return
+
+    requested = os.environ.get("JAX_PLATFORMS", "")
+    if not requested:
+        os.environ["JAX_PLATFORMS"] = "cpu"
+        return
+
+    # If CUDA is requested but CUDA plugin support is missing in this env,
+    # force CPU to avoid backend initialization failures during test collection.
+    if "cuda" in requested:
+        has_cuda_plugin = (
+            importlib.util.find_spec("jax_cuda12_plugin") is not None
+            or importlib.util.find_spec("jax_cuda13_plugin") is not None
+            or importlib.util.find_spec("jax_plugins.xla_cuda12") is not None
+            or importlib.util.find_spec("jax_plugins.xla_cuda13") is not None
+        )
+        if not has_cuda_plugin:
+            os.environ["JAX_PLATFORMS"] = "cpu"
+
+
+_configure_test_jax_platforms()
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -54,11 +87,11 @@ if not IS_MACOS:
             # Disable all GPUs for TensorFlow to avoid conflicts with JAX
             try:
                 tf.config.set_visible_devices([], "GPU")
-            except Exception:
+            except (RuntimeError, ValueError):
                 pass
     except ImportError:
         pass  # TensorFlow not installed
-    except Exception as e:
+    except (OSError, RuntimeError, ValueError) as e:
         print(f"Warning: Could not configure TensorFlow: {e}")
 
 
@@ -70,7 +103,7 @@ try:
     # Apply beartype configuration to enable runtime type checking
     try:
         beartype.beartype(conf=BeartypeConf(strategy=BeartypeStrategy.On))
-    except Exception as e:
+    except (RuntimeError, TypeError, ValueError) as e:
         print(f"Warning: Could not apply beartype configuration: {e}")
 except ImportError:
     # Beartype is not installed, skipping configuration
@@ -143,6 +176,72 @@ def pytest_addoption(parser):
     )
 
 
+def _mark_unselected_test_types(
+    items: list[Any],
+    *,
+    run_integration: bool,
+    run_end_to_end: bool,
+    run_benchmark: bool,
+) -> None:
+    """Skip tests outside explicitly requested test categories."""
+    requested_markers: set[str] = set()
+    if run_integration:
+        requested_markers.add("integration")
+    if run_end_to_end:
+        requested_markers.add("end_to_end")
+    if run_benchmark:
+        requested_markers.add("benchmark")
+
+    if not requested_markers:
+        return
+
+    for item in items:
+        if not any(marker in item.keywords for marker in requested_markers):
+            item.add_marker(pytest.mark.skip(reason="test type not selected"))
+
+
+def _apply_explicit_skip_flags(
+    items: list[Any], *, skip_integration: bool, skip_end_to_end: bool
+) -> None:
+    """Apply explicit command-line skip flags."""
+    if skip_integration:
+        skip_int = pytest.mark.skip(reason="integration test not selected")
+        for item in items:
+            if "integration" in item.keywords:
+                item.add_marker(skip_int)
+
+    if skip_end_to_end:
+        skip_e2e = pytest.mark.skip(reason="end-to-end test not selected")
+        for item in items:
+            if "end_to_end" in item.keywords:
+                item.add_marker(skip_e2e)
+
+
+def _apply_device_filter(items: list[Any], *, device_option: str) -> None:
+    """Filter tests by requested device type."""
+    if device_option == "all":
+        return
+
+    for item in items:
+        if device_option == "cpu" and ("gpu" in item.keywords or "tpu" in item.keywords):
+            item.add_marker(pytest.mark.skip(reason="test not selected for cpu"))
+        elif device_option == "gpu" and "tpu" in item.keywords:
+            item.add_marker(pytest.mark.skip(reason="test not selected for gpu"))
+        elif device_option == "tpu":
+            if "gpu" in item.keywords:
+                item.add_marker(pytest.mark.skip(reason="test not selected for tpu"))
+            if "tpu" in item.keywords:
+                item.add_marker(pytest.mark.skip(reason="TPU tests skipped for stability"))
+
+
+def _skip_tpu_tests_unconditionally(items: list[Any]) -> None:
+    """Always skip TPU tests to avoid unstable runtime crashes."""
+    skip_tpu = pytest.mark.skip(reason="TPU tests skipped for stability")
+    for item in items:
+        if "tpu" in item.keywords:
+            item.add_marker(skip_tpu)
+
+
 # Skip tests based on command-line options
 def pytest_collection_modifyitems(config, items):
     """Skip tests based on command-line options."""
@@ -153,66 +252,20 @@ def pytest_collection_modifyitems(config, items):
     skip_end_to_end = config.getoption("--no-end-to-end")
     device_option = config.getoption("--device")
 
-    # Skip appropriately based on options
-    skip_int = pytest.mark.skip(reason="integration test not selected")
-    skip_e2e = pytest.mark.skip(reason="end-to-end test not selected")
-    pytest.mark.skip(reason="benchmark not selected")
-
-    # Only run specified test types if explicitly requested
-    if run_integration or run_end_to_end or run_benchmark:
-        for item in items:
-            selected = False
-            if run_integration and "integration" in item.keywords:
-                selected = True
-            if run_end_to_end and "end_to_end" in item.keywords:
-                selected = True
-            if run_benchmark and "benchmark" in item.keywords:
-                selected = True
-            if not selected:
-                item.add_marker(pytest.mark.skip(reason="test type not selected"))
-
-    # Skip integration tests if requested
-    if skip_integration:
-        for item in items:
-            if "integration" in item.keywords:
-                item.add_marker(skip_int)
-
-    # Skip end-to-end tests if requested
-    if skip_end_to_end:
-        for item in items:
-            if "end_to_end" in item.keywords:
-                item.add_marker(skip_e2e)
+    _mark_unselected_test_types(
+        items,
+        run_integration=run_integration,
+        run_end_to_end=run_end_to_end,
+        run_benchmark=run_benchmark,
+    )
+    _apply_explicit_skip_flags(
+        items, skip_integration=skip_integration, skip_end_to_end=skip_end_to_end
+    )
 
     # Note: Benchmarks are now run by default to ensure complete testing
     # They can still be explicitly excluded with pytest -m "not benchmark"
-
-    # Handle device-specific test selection
-    if device_option != "all":
-        for item in items:
-            if device_option == "cpu":
-                if "gpu" in item.keywords or "tpu" in item.keywords:
-                    item.add_marker(
-                        pytest.mark.skip(reason=f"test not selected for {device_option}")
-                    )
-            elif device_option == "gpu":
-                if "tpu" in item.keywords:
-                    item.add_marker(
-                        pytest.mark.skip(reason=f"test not selected for {device_option}")
-                    )
-            elif device_option == "tpu":
-                if "gpu" in item.keywords:
-                    item.add_marker(
-                        pytest.mark.skip(reason=f"test not selected for {device_option}")
-                    )
-                # Skip TPU tests for safety
-                if "tpu" in item.keywords:
-                    item.add_marker(pytest.mark.skip(reason="TPU tests skipped for stability"))
-
-    # Skip TPU tests unconditionally to avoid segmentation faults
-    skip_tpu = pytest.mark.skip(reason="TPU tests skipped for stability")
-    for item in items:
-        if "tpu" in item.keywords:
-            item.add_marker(skip_tpu)
+    _apply_device_filter(items, device_option=device_option)
+    _skip_tpu_tests_unconditionally(items)
 
 
 # Define fixtures that can be reused across tests

@@ -21,6 +21,16 @@ from flax import nnx
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
+TFDS_ARCHITECTURE_SKIP_EXCEPTIONS = (
+    ImportError,
+    FileNotFoundError,
+    OSError,
+    RuntimeError,
+    ValueError,
+    NotImplementedError,
+)
+
+
 # =============================================================================
 # Tests for Eager Source Architecture (using MemorySource as reference)
 # =============================================================================
@@ -164,7 +174,7 @@ class TestTFDSEagerSource:
             assert isinstance(source.data["image"], jax.Array)
             assert source.data["image"].shape[0] == 100
             assert len(source) == 100
-        except Exception as e:
+        except TFDS_ARCHITECTURE_SKIP_EXCEPTIONS as e:
             pytest.skip(f"Could not load MNIST: {e}")
 
     @pytest.mark.tfds
@@ -185,7 +195,7 @@ class TestTFDSEagerSource:
 
             assert len(items) == 6
             assert isinstance(items[0]["image"], jax.Array)
-        except Exception as e:
+        except TFDS_ARCHITECTURE_SKIP_EXCEPTIONS as e:
             pytest.skip(f"Could not load MNIST: {e}")
 
     @pytest.mark.tfds
@@ -199,7 +209,7 @@ class TestTFDSEagerSource:
 
             info = source.get_dataset_info()
             assert info is not None
-        except Exception as e:
+        except TFDS_ARCHITECTURE_SKIP_EXCEPTIONS as e:
             pytest.skip(f"Could not load MNIST: {e}")
 
     @pytest.mark.tfds
@@ -217,7 +227,7 @@ class TestTFDSEagerSource:
 
             # Shuffling should produce different orders
             assert epoch1_items != epoch2_items or len(epoch1_items) < 3
-        except Exception as e:
+        except TFDS_ARCHITECTURE_SKIP_EXCEPTIONS as e:
             pytest.skip(f"Could not load MNIST: {e}")
 
     @pytest.mark.tfds
@@ -231,7 +241,7 @@ class TestTFDSEagerSource:
 
             assert "image" in source.data
             assert "label" not in source.data
-        except Exception as e:
+        except TFDS_ARCHITECTURE_SKIP_EXCEPTIONS as e:
             pytest.skip(f"Could not load MNIST: {e}")
 
 
@@ -270,7 +280,7 @@ class TestTFDSStreamingSource:
                     break
 
             assert len(items) == 6
-        except Exception as e:
+        except TFDS_ARCHITECTURE_SKIP_EXCEPTIONS as e:
             pytest.skip(f"Could not load MNIST: {e}")
 
     @pytest.mark.tfds
@@ -285,7 +295,7 @@ class TestTFDSStreamingSource:
             item = next(iter(source))
             assert isinstance(item["image"], jax.Array)
             assert isinstance(item["label"], jax.Array)
-        except Exception as e:
+        except TFDS_ARCHITECTURE_SKIP_EXCEPTIONS as e:
             pytest.skip(f"Could not load MNIST: {e}")
 
 

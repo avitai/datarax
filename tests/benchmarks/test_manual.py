@@ -1,101 +1,74 @@
-"""Manual test for nnx transformations in Datarax.
+"""Focused vmap behavior tests for JAX and Flax NNX.
 
-This is a simplified test to debug the batch structure and vmap issues.
+These tests validate explicit expected behavior instead of acting as
+print-based manual diagnostics.
 """
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
 
-# Create simple test data
-def create_test_data():
-    np.random.seed(42)
-    images = np.random.rand(10, 32, 32, 3).astype(np.float32)
-    labels = np.random.randint(0, 10, size=(10,)).astype(np.int32)
+def create_test_data() -> dict[str, np.ndarray]:
+    """Create deterministic test data."""
+    rng = np.random.default_rng(42)
+    images = rng.random((10, 32, 32, 3), dtype=np.float32)
+    labels = rng.integers(0, 10, size=(10,), dtype=np.int32)
     return {"image": images, "label": labels}
 
 
-# Simple transform function
-def normalize(element):
-    if isinstance(element, dict) and "image" in element:
-        result = dict(element)
-        result["image"] = result["image"] / 255.0
-        return result
-    return element
+def normalize(element: dict[str, jax.Array]) -> dict[str, jax.Array]:
+    """Normalize image field while preserving label field."""
+    return {
+        "image": element["image"] / 255.0,
+        "label": element["label"],
+    }
 
 
-# Create a vmapped function
-def test_vmap():
-    print("\n=== Testing vmap ===")
-
-    # Create data
+def test_jax_vmap_over_dict_batch() -> None:
+    """jax.vmap should handle dict batches as PyTrees."""
     data = create_test_data()
-    print("Data structure:", jax.tree.map(lambda x: x.shape, data))
-
-    # Create a batch manually by taking a slice
     batch = {k: v[:4] for k, v in data.items()}
-    print("Batch structure:", jax.tree.map(lambda x: x.shape, batch))
-
-    # Define a simple vmap function
     vmapped_fn = jax.vmap(normalize, in_axes=0)
 
-    # Try alternative format
-    batch_as_tuple = tuple(batch[k] for k in ["image", "label"])
-    print("Batch as tuple:", jax.tree.map(lambda x: x.shape, batch_as_tuple))
+    result = vmapped_fn(batch)
 
-    try:
-        # Try to apply to the batch directly (expected to fail)
-        print("Attempting to apply vmap to batch dict...")
-        result = vmapped_fn(batch)
-        print("Result:", jax.tree.map(lambda x: x.shape, result))
-    except Exception as e:
-        print("Failed with error:", str(e))
+    assert result["image"].shape == (4, 32, 32, 3)
+    assert result["label"].shape == (4,)
+    assert jnp.allclose(result["image"], batch["image"] / 255.0)
+    assert jnp.array_equal(result["label"], batch["label"])
 
-    # Define a function that works on a tuple of arrays
-    def normalize_tuple(data_tuple):
+
+def test_jax_vmap_over_tuple_batch() -> None:
+    """jax.vmap should handle tuple batches."""
+    data = create_test_data()
+    batch = {k: v[:4] for k, v in data.items()}
+    batch_as_tuple = (batch["image"], batch["label"])
+
+    def normalize_tuple(data_tuple: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
         images, labels = data_tuple
         return images / 255.0, labels
 
     vmapped_tuple_fn = jax.vmap(normalize_tuple)
+    result_images, result_labels = vmapped_tuple_fn(batch_as_tuple)
 
-    try:
-        print("\nAttempting to apply vmap to batch as tuple...")
-        result_tuple = vmapped_tuple_fn(batch_as_tuple)
-        print("Result tuple:", jax.tree.map(lambda x: x.shape, result_tuple))
-    except Exception as e:
-        print("Failed with error:", str(e))
+    assert result_images.shape == (4, 32, 32, 3)
+    assert result_labels.shape == (4,)
+    assert jnp.allclose(result_images, batch["image"] / 255.0)
+    assert jnp.array_equal(result_labels, batch["label"])
 
-    # Try a simpler approach - apply to individual elements first
-    print("\nProcessing batch by elements:")
-    processed = []
-    for i in range(len(batch["image"])):
-        element = {"image": batch["image"][i], "label": batch["label"][i]}
-        processed.append(normalize(element))
 
-    print("Processed first element:", processed[0])
+def test_nnx_vmap_over_array() -> None:
+    """nnx.vmap should apply elementwise array transformation."""
+    data = create_test_data()
+    test_array = data["image"][:4]
 
-    # Create a new flax.nnx vmap transformation function
-    print("\nTesting flax.nnx.vmap with a simple array function:")
-
-    # Simple function that works on a single array
-    def scale_array(x):
+    def scale_array(x: jax.Array) -> jax.Array:
         return x / 255.0
 
-    # Get a sample array
-    test_array = batch["image"]
-    print("Test array shape:", test_array.shape)
-
-    # Create a vmapped function using nnx.vmap
     nnx_vmapped = nnx.vmap(scale_array)
+    result_array = nnx_vmapped(test_array)
 
-    try:
-        result_array = nnx_vmapped(test_array)
-        print("nnx.vmap result shape:", result_array.shape)
-        print("First element scaled:", result_array[0, 0, 0, :3])
-    except Exception as e:
-        print("Failed with error:", str(e))
-
-
-if __name__ == "__main__":
-    test_vmap()
+    assert result_array.shape == test_array.shape
+    assert jnp.allclose(result_array, test_array / 255.0)

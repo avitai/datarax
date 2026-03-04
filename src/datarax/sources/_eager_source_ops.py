@@ -25,6 +25,54 @@ import jax
 import jax.numpy as jnp
 
 
+def configure_stochastic_from_shuffle(
+    config: Any,
+    *,
+    shuffle: bool,
+    default_stream_name: str = "shuffle",
+) -> None:
+    """Set stochastic and stream_name based on shuffle flag."""
+    if shuffle:
+        object.__setattr__(config, "stochastic", True)
+        if config.stream_name is None:
+            object.__setattr__(config, "stream_name", default_stream_name)
+    else:
+        object.__setattr__(config, "stochastic", False)
+
+
+def validate_required_name_split(
+    name: str | None,
+    split: str | None,
+    config_class_name: str,
+) -> None:
+    """Validate required name/split fields."""
+    if name is None:
+        raise ValueError(f"name is required for {config_class_name}")
+    if split is None:
+        raise ValueError(f"split is required for {config_class_name}")
+
+
+def validate_include_exclude_keys(
+    include_keys: set[str] | None,
+    exclude_keys: set[str] | None,
+) -> None:
+    """Validate include/exclude key filters are not both set."""
+    if include_keys is not None and exclude_keys is not None:
+        raise ValueError("Cannot specify both include_keys and exclude_keys")
+
+
+def validate_seed_range(seed: int) -> None:
+    """Validate shuffle seed range for Grain index_shuffle compatibility."""
+    if seed < 0 or seed >= 2**32:
+        raise ValueError("seed must be in [0, 2**32)")
+
+
+def validate_positive_optional_int(value: int | None, field_name: str) -> None:
+    """Validate an optional integer field is positive when provided."""
+    if value is not None and value < 1:
+        raise ValueError(f"{field_name} must be a positive integer")
+
+
 def get_shuffled_index(
     index: int,
     shuffle: bool,
@@ -166,6 +214,102 @@ def eager_reset(
         cache.clear()
 
 
+def build_eager_element(data: dict[str, Any], idx: int) -> dict[str, Any]:
+    """Build one element from eager in-memory data for a given index."""
+    return {k: v[idx] if isinstance(v, jax.Array) else v[idx] for k, v in data.items()}
+
+
+def get_eager_item(data: dict[str, Any], length: int, index: int) -> dict[str, Any]:
+    """Return one eager element with bounds checking and negative indexing."""
+    resolved_index = index + length if index < 0 else index
+    if resolved_index < 0 or resolved_index >= length:
+        raise IndexError(f"Index {index} out of range for {length} elements")
+    return build_eager_element(data, resolved_index)
+
+
+def gather_eager_batch(data: dict[str, Any], indices: jax.Array) -> dict[str, Any]:
+    """Gather an eager batch for JAX arrays and Python sequence leaves."""
+    batch: dict[str, Any] = {}
+    for k, v in data.items():
+        if isinstance(v, jax.Array):
+            batch[k] = v[indices]
+        else:
+            batch[k] = [v[int(i)] for i in indices]
+    return batch
+
+
+def eager_iter_default(
+    data: dict[str, Any],
+    length: int,
+    index_var: Any,
+    epoch_var: Any,
+    shuffle: bool,
+    seed: int,
+) -> Iterator[dict[str, Any]]:
+    """Iterate eager source data with the shared default element builder."""
+    return eager_iter(data, length, index_var, epoch_var, shuffle, seed, build_eager_element)
+
+
+def eager_get_batch_default(
+    data: dict[str, Any],
+    length: int,
+    index_var: Any,
+    epoch_var: Any,
+    shuffle: bool,
+    seed: int,
+    batch_size: int,
+    key: jax.Array | None,
+) -> dict[str, Any]:
+    """Get eager source batches with the shared default gather function."""
+    return eager_get_batch(
+        data,
+        length,
+        index_var,
+        epoch_var,
+        shuffle,
+        seed,
+        batch_size,
+        key,
+        gather_eager_batch,
+    )
+
+
+def format_source_repr(
+    class_name: str,
+    dataset_name: str | None,
+    split_name: str | None,
+    length: int | None,
+    shuffle: bool,
+    epoch: int,
+    extra_fields: dict[str, Any] | None = None,
+) -> str:
+    """Format a stable source repr string with optional extra fields."""
+    fields: list[tuple[str, Any]] = [
+        ("dataset", f"{dataset_name}:{split_name}"),
+        ("length", length),
+        ("shuffle", shuffle),
+    ]
+    if extra_fields:
+        fields.extend(extra_fields.items())
+    fields.append(("epoch", epoch))
+    serialized = ", ".join(f"{key}={value}" for key, value in fields)
+    return f"{class_name}({serialized})"
+
+
+def streaming_apply_batch(
+    next_item: Callable[[], dict[str, Any]],
+    batch_size: int,
+) -> dict[str, Any]:
+    """Collect up to batch_size elements from a streaming iterator."""
+    elements = []
+    for _ in range(batch_size):
+        try:
+            elements.append(next_item())
+        except StopIteration:
+            break
+    return batch_elements_to_dict(elements)
+
+
 def validate_eager_config(
     name: str | None,
     split: str | None,
@@ -190,17 +334,98 @@ def validate_eager_config(
     Raises:
         ValueError: If validation fails
     """
-    if name is None:
-        raise ValueError(f"name is required for {config_class_name}")
-    if split is None:
-        raise ValueError(f"split is required for {config_class_name}")
-    if include_keys is not None and exclude_keys is not None:
-        raise ValueError("Cannot specify both include_keys and exclude_keys")
+    validate_required_name_split(name, split, config_class_name)
+    validate_include_exclude_keys(include_keys, exclude_keys)
     if try_gcs and data_dir is not None:
         raise ValueError(
             f"Cannot specify both try_gcs=True and data_dir='{data_dir}' in {config_class_name}. "
             "try_gcs overrides data_dir to the public GCS bucket (gs://tfds-data/datasets/)."
         )
+
+
+def finalize_eager_config_validation(
+    *,
+    config: Any,
+    super_post_init: Callable[[], None],
+    config_class_name: str,
+    name: str | None,
+    split: str | None,
+    include_keys: set[str] | None,
+    exclude_keys: set[str] | None,
+    seed: int,
+    try_gcs: bool = False,
+    data_dir: str | None = None,
+) -> None:
+    """Run shared eager-config validation flow."""
+    configure_stochastic_from_shuffle(config, shuffle=config.shuffle)
+    if config.shuffle:
+        validate_seed_range(seed)
+    super_post_init()
+    validate_eager_config(
+        name,
+        split,
+        include_keys,
+        exclude_keys,
+        config_class_name,
+        try_gcs=try_gcs,
+        data_dir=data_dir,
+    )
+
+
+def finalize_streaming_config_validation(
+    *,
+    config: Any,
+    super_post_init: Callable[[], None],
+    config_class_name: str,
+    name: str | None,
+    split: str | None,
+    include_keys: set[str] | None,
+    exclude_keys: set[str] | None,
+) -> None:
+    """Run shared streaming-config validation flow."""
+    configure_stochastic_from_shuffle(config, shuffle=config.shuffle)
+    super_post_init()
+    validate_required_name_split(name, split, config_class_name)
+    validate_include_exclude_keys(include_keys, exclude_keys)
+
+
+def validate_shared_eager_source_config(
+    config: Any,
+    config_class_name: str,
+    *,
+    seed: int,
+    try_gcs: bool = False,
+    data_dir: str | None = None,
+) -> None:
+    """Validate a source eager config using standard dataclass fields."""
+    finalize_eager_config_validation(
+        config=config,
+        super_post_init=super(type(config), config).__post_init__,
+        config_class_name=config_class_name,
+        name=config.name,
+        split=config.split,
+        include_keys=config.include_keys,
+        exclude_keys=config.exclude_keys,
+        seed=seed,
+        try_gcs=try_gcs,
+        data_dir=data_dir,
+    )
+
+
+def validate_shared_streaming_source_config(
+    config: Any,
+    config_class_name: str,
+) -> None:
+    """Validate a source streaming config using standard dataclass fields."""
+    finalize_streaming_config_validation(
+        config=config,
+        super_post_init=super(type(config), config).__post_init__,
+        config_class_name=config_class_name,
+        name=config.name,
+        split=config.split,
+        include_keys=config.include_keys,
+        exclude_keys=config.exclude_keys,
+    )
 
 
 def filter_keys(

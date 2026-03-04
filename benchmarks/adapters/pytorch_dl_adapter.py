@@ -1,6 +1,6 @@
 """PyTorch DataLoader adapter for the benchmark framework.
 
-Wraps torch.utils.data.DataLoader with the BenchmarkAdapter lifecycle.
+Wraps torch.utils.data.DataLoader with the PipelineAdapter lifecycle.
 Tier 2 universal baseline.
 
 Design ref: Section 7.3 of the benchmark report.
@@ -21,7 +21,7 @@ from benchmarks.adapters._utils import (
     random_brightness,
     random_scale,
 )
-from benchmarks.adapters.base import BenchmarkAdapter, ScenarioConfig
+from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
 _PYTORCH_TRANSFORMS: dict[str, Any] = {
     "Normalize": normalize_uint8,
@@ -50,8 +50,8 @@ class _DictDataset:
 
 
 @register
-class PyTorchDataLoaderAdapter(BenchmarkAdapter):
-    """BenchmarkAdapter for PyTorch DataLoader."""
+class PyTorchDataLoaderAdapter(PipelineAdapter):
+    """PipelineAdapter for PyTorch DataLoader."""
 
     def __init__(self) -> None:
         self._loader: Any = None

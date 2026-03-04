@@ -8,7 +8,7 @@ All variants prepend Normalize for uint8-to-float32 conversion.
 
 Not a Tier-1 scenario.
 
-Design ref: Phase 2 optimization -- stochastic JIT support.
+Design ref: v2 optimization -- stochastic JIT support.
 """
 
 from __future__ import annotations

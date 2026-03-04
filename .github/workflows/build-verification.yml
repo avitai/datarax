@@ -51,6 +51,10 @@ jobs:
         run: |
           echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
 
+      - name: Clean old build artifacts
+        run: |
+          rm -rf dist build *.egg-info
+
       - name: Build package
         run: |
           uv run python -m build
@@ -58,10 +62,6 @@ jobs:
       - name: Verify package
         run: |
           uv run twine check dist/*
-
-      - name: Run type checking
-        run: |
-          uv run pyright || echo "Pyright check completed with issues"
 
       - name: Test installation in clean environment
         run: |

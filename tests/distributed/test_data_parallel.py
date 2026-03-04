@@ -184,9 +184,7 @@ class TestSpmdTrainStep:
         # At least one parameter leaf must have changed
         leaves_before = jax.tree.leaves(params_before)
         leaves_after = jax.tree.leaves(params_after)
-        any_changed = any(
-            not jnp.array_equal(b, a) for b, a in zip(leaves_before, leaves_after)
-        )
+        any_changed = any(not jnp.array_equal(b, a) for b, a in zip(leaves_before, leaves_after))
         assert any_changed, "Parameters should change after a training step"
 
     def test_loss_decreases_over_steps(self):

@@ -61,6 +61,73 @@ def rngs():
     return nnx.Rngs(default=42, augment=43, shuffle=44)
 
 
+def _count_examples_in_batch(batch: Any) -> int:
+    """Count examples in a batch while handling different batch structures."""
+    if isinstance(batch, dict) and "image" in batch:
+        return int(batch["image"].shape[0])
+    if isinstance(batch, dict) and "text" in batch:
+        return int(batch["text"].shape[0])
+
+    leaves = jax.tree_util.tree_leaves(batch)
+    if not leaves:
+        return 0
+
+    first_value = leaves[0]
+    if hasattr(first_value, "shape"):
+        return int(first_value.shape[0])
+    return 1
+
+
+def _build_pipeline_for_benchmark(
+    data: list[dict[str, Any]],
+    *,
+    batch_size: int,
+    num_transforms: int,
+    num_augmenters: int,
+    prefetch_size: int | None,
+    buffer_size: int | None,
+) -> DAGExecutor:
+    """Build a benchmark pipeline with the requested configuration."""
+    source_rngs = nnx.Rngs(default=42)
+    source = MemorySource(MemorySourceConfig(), data, rngs=source_rngs)
+
+    rngs = nnx.Rngs(default=42, augment=43, shuffle=44)
+    pipeline = DAGExecutor(rngs=rngs).add(source)
+
+    if buffer_size is not None:
+        pipeline = pipeline.add(ShuffleNode(buffer_size=buffer_size, seed=42))
+
+    pipeline = pipeline.batch(batch_size=batch_size)
+
+    det_config = ElementOperatorConfig(stochastic=False)
+    for _ in range(num_transforms):
+        pipeline = pipeline.operate(ElementOperator(det_config, fn=lambda e, k: e))
+
+    if num_augmenters > 0:
+        stoch_config = ElementOperatorConfig(stochastic=True, stream_name="augment")
+        for _ in range(num_augmenters):
+            pipeline = pipeline.operate(ElementOperator(stoch_config, fn=lambda e, k: e, rngs=rngs))
+
+    if prefetch_size is not None:
+        pipeline = pipeline.add(PrefetchNode(buffer_size=prefetch_size))
+
+    return pipeline
+
+
+def _warmup_pipeline(pipeline: DAGExecutor, warmup_steps: int) -> None:
+    """Run warmup steps to trigger compilation before measurement."""
+    if warmup_steps <= 0:
+        return
+
+    iterator = iter(pipeline)
+    for i, batch in enumerate(iterator):
+        if hasattr(batch, "block_until_ready"):
+            batch.block_until_ready()
+        if i >= warmup_steps - 1:
+            break
+    pipeline.reset()
+
+
 def benchmark_pipeline_configuration(
     data: list[dict[str, Any]],
     batch_size: int,
@@ -72,54 +139,18 @@ def benchmark_pipeline_configuration(
     warmup_steps: int = 3,
 ):
     """Benchmark a pipeline with various configurations."""
-    # Create the data source with RNGs
-    rngs = nnx.Rngs(default=42)
-    source = MemorySource(MemorySourceConfig(), data, rngs=rngs)
+    del benchmark_runner
 
-    # Start building the pipeline with RNGs
-    rngs = nnx.Rngs(default=42, augment=43, shuffle=44)
-    pipeline = DAGExecutor(rngs=rngs).add(source)
-
-    # Add shuffle if buffer size is provided (BEFORE batching)
-    if buffer_size is not None:
-        pipeline = pipeline.add(ShuffleNode(buffer_size=buffer_size, seed=42))
-
-    # Set batch size (BEFORE transforms and augmenters)
-    pipeline = pipeline.batch(batch_size=batch_size)
-
-    # Add transforms (deterministic operators) - Element API: fn(element, key) -> element
-    det_config = ElementOperatorConfig(stochastic=False)
-    for i in range(num_transforms):
-        identity_op = ElementOperator(det_config, fn=lambda e, k: e)
-        pipeline = pipeline.operate(identity_op)
-
-    # Add augmenters if requested (stochastic operators)
-    if num_augmenters > 0:
-        stoch_config = ElementOperatorConfig(stochastic=True, stream_name="augment")
-        for i in range(num_augmenters):
-            identity_aug = ElementOperator(stoch_config, fn=lambda e, k: e, rngs=rngs)
-            pipeline = pipeline.operate(identity_aug)
-
-    # Add prefetch if requested
-    if prefetch_size is not None:
-        pipeline = pipeline.add(PrefetchNode(buffer_size=prefetch_size))
-
-    # Create iterator
+    pipeline = _build_pipeline_for_benchmark(
+        data,
+        batch_size=batch_size,
+        num_transforms=num_transforms,
+        num_augmenters=num_augmenters,
+        prefetch_size=prefetch_size,
+        buffer_size=buffer_size,
+    )
+    _warmup_pipeline(pipeline, warmup_steps)
     iterator = iter(pipeline)
-
-    # Warmup (process a few batches to trigger JIT compilation)
-    if warmup_steps > 0:
-        warmup_batches = []
-        for i, batch in enumerate(iterator):
-            if hasattr(batch, "block_until_ready"):
-                batch.block_until_ready()
-            warmup_batches.append(batch)
-            if i >= warmup_steps - 1:
-                break
-
-        # Reset and create new iterator for actual measurement
-        pipeline.reset()
-        iterator = iter(pipeline)
 
     # Measure performance
     start_time = time.time()
@@ -132,24 +163,7 @@ def benchmark_pipeline_configuration(
             batch.block_until_ready()
 
         num_batches += 1
-        # Count actual examples (handle last incomplete batch)
-        if isinstance(batch, dict) and "image" in batch:
-            num_examples += batch["image"].shape[0]
-        elif isinstance(batch, dict) and "text" in batch:
-            num_examples += batch["text"].shape[0]
-        else:
-            # Fallback - assume first dimension is batch size
-            leaves = jax.tree_util.tree_leaves(batch)
-            if leaves:
-                first_value = leaves[0]
-                if hasattr(first_value, "shape"):
-                    num_examples += first_value.shape[0]
-                else:
-                    # If no shape, assume batch size of 1
-                    num_examples += 1
-            else:
-                # Empty batch, skip
-                continue
+        num_examples += _count_examples_in_batch(batch)
 
         # Stop after processing 50 batches or all data
         if num_batches >= 50:
@@ -309,17 +323,13 @@ def test_shuffle_impact(benchmark, benchmark_image_data, buffer_size):
         pipeline = pipeline.batch(batch_size=32)
 
         # Process limited batches
-        try:
-            iterator = iter(pipeline)
-            num_batches = 0
+        iterator = iter(pipeline)
+        num_batches = 0
 
-            for batch in iterator:
-                num_batches += 1
-                if num_batches >= 10:
-                    break
-        except Exception as e:
-            print(f"Error during iteration: {e}")
-            return 0
+        for batch in iterator:
+            num_batches += 1
+            if num_batches >= 10:
+                break
 
         return num_batches
 

@@ -1,5 +1,6 @@
 """Pytest fixtures for benchmark application layer tests."""
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -8,6 +9,10 @@ import pytest
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.adapters.datarax_adapter import DataraxAdapter
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
+
+# Keep benchmark-suite tests deterministic and CPU-safe unless explicitly overridden.
+if "JAX_PLATFORMS" not in os.environ:
+    os.environ["JAX_PLATFORMS"] = "cpu"
 
 
 @pytest.fixture

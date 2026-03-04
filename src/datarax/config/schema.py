@@ -13,20 +13,7 @@ and supports configuration of NNX-specific features, including:
 
 from dataclasses import dataclass, field
 from collections.abc import Callable
-from typing import Any, Union
-
-
-# Type alias for schema type definitions
-SchemaType = Union[
-    type[str],
-    type[int],
-    type[float],
-    type[bool],
-    type[list],
-    type[dict],
-    "ConfigSchema",
-    type["ConfigSchema"],
-]
+from typing import Any
 
 
 class ValidationError(Exception):
@@ -47,7 +34,7 @@ class SchemaField:
         description: Optional description of the field
     """
 
-    type: SchemaType
+    type: "SchemaType"
     required: bool = True
     default: Any = None
     validator: Callable[[Any], bool] | None = None
@@ -141,6 +128,10 @@ class ConfigSchema:
             ValidationError: If the configuration fails validation
         """
         return cls.validate(config)
+
+
+# Runtime-safe alias: schema fields accept Python types and/or schema instances.
+SchemaType = type[Any] | ConfigSchema
 
 
 class SchemaValidator:

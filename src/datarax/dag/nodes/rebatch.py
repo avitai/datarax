@@ -65,7 +65,7 @@ class DifferentiableRebatchImpl(nnx.Module):
         if self.buffer.get_value() is None:
             try:
                 self._initialize_buffer(batch)
-            except Exception:
+            except Exception:  # noqa: BLE001 - JAX tracing can raise multiple runtime errors
                 # Inside JAX transformation, cannot mutate state
                 # Return a simple pass-through for gradient computation
                 return batch, True
@@ -75,7 +75,7 @@ class DifferentiableRebatchImpl(nnx.Module):
             self._add_to_buffer(batch, batch_size)
             # Try to emit a batch
             return self._try_emit()
-        except Exception:
+        except Exception:  # noqa: BLE001 - JAX tracing can raise multiple runtime errors
             # Inside JAX transformation, cannot mutate state
             # Return a simple pass-through for gradient computation
             return batch, True
@@ -273,7 +273,7 @@ class FastRebatchImpl(nnx.Module):
         if self.buffer.get_value() is None:
             try:
                 self._initialize_buffer(batch)
-            except Exception:
+            except Exception:  # noqa: BLE001 - JAX tracing can raise multiple runtime errors
                 # Inside JAX transformation, cannot mutate state
                 return batch, True
 
@@ -282,7 +282,7 @@ class FastRebatchImpl(nnx.Module):
             self._add_to_circular_buffer(batch, batch_size)
             # Try to emit
             return self._try_emit()
-        except Exception:
+        except Exception:  # noqa: BLE001 - JAX tracing can raise multiple runtime errors
             # Inside JAX transformation, cannot mutate state
             return batch, True
 
@@ -608,7 +608,7 @@ class RebatchNode(Node):
                 try:
                     current = self.elements_processed.get_value()
                     self.elements_processed.set_value(current + batch_size)
-                except Exception:
+                except Exception:  # noqa: BLE001 - JAX tracing can raise multiple runtime errors
                     # Inside JAX transformation, skip statistics
                     pass
 
@@ -620,7 +620,7 @@ class RebatchNode(Node):
             try:
                 current = self.batches_emitted.get_value()
                 self.batches_emitted.set_value(current + 1)
-            except Exception:
+            except Exception:  # noqa: BLE001 - JAX tracing can raise multiple runtime errors
                 # Inside JAX transformation, skip statistics
                 pass
             return output
@@ -647,7 +647,7 @@ class RebatchNode(Node):
                     )
                 current_emitted = self.batches_emitted.get_value()
                 self.batches_emitted.set_value(current_emitted + 1)
-            except Exception:
+            except Exception:  # noqa: BLE001 - JAX tracing can raise multiple runtime errors
                 # Inside JAX transformation, skip statistics
                 pass
 

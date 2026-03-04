@@ -15,9 +15,9 @@ from benchmarks.adapters.base import IterationResult, ScenarioConfig
 from benchmarks.adapters.datarax_adapter import DataraxAdapter
 from benchmarks.core.baselines import BaselineStore
 from benchmarks.core.environment import capture_environment
+from benchmarks.core.result_model import build_benchmark_result, throughput_elements_per_sec
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
-from datarax.benchmarking.results import BenchmarkResult
-from datarax.benchmarking.timing import TimingSample
+from calibrax.profiling import TimingSample
 
 
 class TestFullPipelineIntegration:
@@ -60,13 +60,13 @@ class TestFullPipelineIntegration:
 
         # 6. Build BenchmarkResult from iteration data
         env = capture_environment()
-        result = BenchmarkResult(
+        result = build_benchmark_result(
             framework=adapter.name,
             scenario_id=config.scenario_id,
             variant="small",
             timing=TimingSample(
                 wall_clock_sec=iteration_result.wall_clock_sec,
-                per_batch_times=iteration_result.per_batch_times,
+                per_batch_times=tuple(iteration_result.per_batch_times),
                 first_batch_time=iteration_result.first_batch_time,
                 num_batches=iteration_result.num_batches,
                 num_elements=iteration_result.num_elements,
@@ -79,7 +79,7 @@ class TestFullPipelineIntegration:
             },
         )
 
-        assert result.throughput_elements_sec() > 0
+        assert throughput_elements_per_sec(result) > 0
 
         # 7. Save as baseline
         store = BaselineStore(tmp_path / "baselines")
@@ -119,13 +119,13 @@ class TestFullPipelineIntegration:
         iteration_result = adapter.iterate(num_batches=5)
 
         # 4. Build result
-        result = BenchmarkResult(
+        result = build_benchmark_result(
             framework="Datarax",
             scenario_id="NLP-1",
             variant="small",
             timing=TimingSample(
                 wall_clock_sec=iteration_result.wall_clock_sec,
-                per_batch_times=iteration_result.per_batch_times,
+                per_batch_times=tuple(iteration_result.per_batch_times),
                 first_batch_time=iteration_result.first_batch_time,
                 num_batches=iteration_result.num_batches,
                 num_elements=iteration_result.num_elements,
@@ -147,13 +147,13 @@ class TestFullPipelineIntegration:
     def test_regression_detection_integration(self, tmp_path: Path):
         """Test that BaselineStore detects a simulated regression."""
         # Save a fast baseline
-        fast_result = BenchmarkResult(
+        fast_result = build_benchmark_result(
             framework="Datarax",
             scenario_id="CV-1",
             variant="small",
             timing=TimingSample(
                 wall_clock_sec=1.0,
-                per_batch_times=[0.02] * 50,
+                per_batch_times=tuple([0.02] * 50),
                 first_batch_time=0.04,
                 num_batches=50,
                 num_elements=5000,
@@ -167,13 +167,13 @@ class TestFullPipelineIntegration:
         store.save("regression_test", fast_result)
 
         # Create a "regressed" result (2x slower)
-        slow_result = BenchmarkResult(
+        slow_result = build_benchmark_result(
             framework="Datarax",
             scenario_id="CV-1",
             variant="small",
             timing=TimingSample(
                 wall_clock_sec=2.0,
-                per_batch_times=[0.04] * 50,
+                per_batch_times=tuple([0.04] * 50),
                 first_batch_time=0.08,
                 num_batches=50,
                 num_elements=5000,

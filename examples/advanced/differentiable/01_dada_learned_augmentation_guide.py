@@ -473,7 +473,10 @@ def add_noise(image: jax.Array, magnitude: jax.Array) -> jax.Array:
 
 
 def cutout(image: jax.Array, magnitude: jax.Array) -> jax.Array:
-    """Apply cutout (zero-mask a square patch). Patch size = magnitude * 16."""
+    """Apply cutout by masking a centered square patch.
+
+    The patch size scales with ``magnitude`` up to 16 pixels.
+    """
     h, w, _ = image.shape
     patch_size = (magnitude * 16.0).astype(jnp.int32)
     # Center patch at image center (deterministic for gradient flow)

@@ -30,6 +30,63 @@ from datarax.core.operator import OperatorModule  # noqa: E402
 from datarax.core.config import OperatorConfig  # noqa: E402
 
 
+HF_INTEGRATION_SKIP_EXCEPTIONS = (
+    FileNotFoundError,
+    OSError,
+    RuntimeError,
+    ValueError,
+)
+
+
+def _create_tokenized_numeric_dataset(n_samples: int) -> Any:
+    """Create tokenized numeric-only dataset compatible with HFEagerSource."""
+    rows = []
+    for i in range(n_samples):
+        text = f"sample text {i} for classification"
+        label = i % 2
+        tokens = [VOCAB.get(word, 0) for word in text.lower().split()][:MAX_TOKEN_LEN]
+        tokens += [0] * (MAX_TOKEN_LEN - len(tokens))
+        rows.append({"tokens": tokens, "label": label})
+    return datasets.Dataset.from_dict(
+        {"tokens": [row["tokens"] for row in rows], "label": [row["label"] for row in rows]}
+    )
+
+
+def _patch_train_test_datasets(monkeypatch: Any, train_data: Any, test_data: Any) -> None:
+    """Patch datasets.load_dataset to return train/test fixtures by split."""
+
+    def mock_load_dataset(name, split=None, **kwargs):
+        del name, kwargs
+        return train_data if split == "train" else test_data
+
+    monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
+
+
+def _collect_losses(
+    pipeline: DAGExecutor, train_step: Any, model: Any, optimizer: nnx.Optimizer, steps: int
+) -> list[float]:
+    """Run a bounded number of training steps and return losses."""
+    losses: list[float] = []
+    for step_index, batch in enumerate(pipeline):
+        if step_index >= steps:
+            break
+        loss = train_step(model, optimizer, batch)
+        losses.append(float(loss))
+    return losses
+
+
+def _collect_accuracies(
+    pipeline: DAGExecutor, eval_step: Any, model: Any, steps: int
+) -> list[float]:
+    """Run a bounded number of eval steps and return accuracies."""
+    accuracies: list[float] = []
+    for step_index, batch in enumerate(pipeline):
+        if step_index >= steps:
+            break
+        accuracies.append(float(eval_step(model, batch)))
+    return accuracies
+
+
 # ============================================================================
 # Test Fixtures
 # ============================================================================
@@ -273,34 +330,9 @@ def test_hf_source_full_training_pipeline(monkeypatch):
     before elements enter the pipeline.
     """
 
-    def create_tokenized_dataset(n_samples: int):
-        """Create pre-tokenized dataset (text already converted to token arrays)."""
-        data = []
-        for i in range(n_samples):
-            text = f"sample text {i} for classification"
-            label = i % 2
-            # Pre-tokenize: convert text to array
-            tokens = [VOCAB.get(word, 0) for word in text.lower().split()][:MAX_TOKEN_LEN]
-            tokens += [0] * (MAX_TOKEN_LEN - len(tokens))
-            data.append({"tokens": tokens, "label": label})
-        return datasets.Dataset.from_dict(
-            {
-                "tokens": [d["tokens"] for d in data],
-                "label": [d["label"] for d in data],
-            }
-        )
-
-    # Create pre-tokenized datasets
-    train_data = create_tokenized_dataset(6)
-    test_data = create_tokenized_dataset(3)
-
-    def mock_load_dataset(name, split=None, **kwargs):
-        if split == "train":
-            return train_data
-        else:
-            return test_data
-
-    monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
+    train_data = _create_tokenized_numeric_dataset(6)
+    test_data = _create_tokenized_numeric_dataset(3)
+    _patch_train_test_datasets(monkeypatch, train_data, test_data)
 
     # Create data sources with pre-tokenized data (HFEagerSource loads all to JAX)
     train_config = HFEagerConfig(name="mock_dataset", split="train", shuffle=False)
@@ -333,13 +365,7 @@ def test_hf_source_full_training_pipeline(monkeypatch):
         optimizer.update(model, grads)
         return loss
 
-    # Train for a few steps
-    losses = []
-    for i, batch in enumerate(train_pipeline):
-        if i >= 3:  # Train for 3 steps
-            break
-        loss = train_step(model, optimizer, batch)
-        losses.append(float(loss))
+    losses = _collect_losses(train_pipeline, train_step, model, optimizer, steps=3)
 
     # Verify training occurred
     assert len(losses) == 3
@@ -353,13 +379,7 @@ def test_hf_source_full_training_pipeline(monkeypatch):
         accuracy = jnp.mean(predictions == batch["label"])  # tokenize_element outputs "label" key
         return accuracy
 
-    # Evaluate
-    accuracies = []
-    for i, batch in enumerate(test_pipeline):
-        if i >= 2:  # Evaluate 2 batches
-            break
-        acc = eval_step(model, batch)
-        accuracies.append(float(acc))
+    accuracies = _collect_accuracies(test_pipeline, eval_step, model, steps=2)
 
     # Verify evaluation
     assert len(accuracies) == 2
@@ -494,7 +514,7 @@ def test_hf_with_real_dataset():
 
             break  # Only test one batch
 
-    except Exception as e:
+    except HF_INTEGRATION_SKIP_EXCEPTIONS as e:
         # Skip if network issues or dataset not available
         pytest.skip(f"Could not load real dataset: {e}")
 
@@ -595,7 +615,7 @@ def test_pipeline_with_empty_dataset(monkeypatch):
 
     # HFEagerSource should raise error for empty dataset
     # (can't determine length with no data)
-    with pytest.raises(Exception):  # StopIteration or similar
+    with pytest.raises(ValueError, match="produced no elements"):
         HFEagerSource(config, rngs=nnx.Rngs(42))
 
 

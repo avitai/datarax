@@ -39,29 +39,28 @@ By default, `uv run pytest` runs only the core test suite in `tests/`:
 uv run pytest                    # core tests only (tests/)
 ```
 
-To run **all** test suites — including benchmark application tests and benchkit library tests — use the `--all-suites` flag:
+To run **all** test suites — including benchmark application tests — use the `--all-suites` flag:
 
 ```bash
-uv run pytest --all-suites       # tests/ + benchmarks/tests/ + tools/benchkit/tests/
+uv run pytest --all-suites       # tests/ + benchmarks/tests/
 ```
 
 You can also run individual suites directly:
 
 ```bash
-uv run pytest benchmarks/tests/           # benchmark adapter & runner tests
-uv run pytest tools/benchkit/tests/       # benchkit analysis library tests
+uv run pytest tests/               # core test suite
+uv run pytest benchmarks/tests/    # benchmark adapter & runner tests
 ```
 
 ## Test Directory Structure
 
-Datarax has three independent test suites. The core suite (`tests/`) mirrors the `src/datarax` package structure. The other two suites test the benchmark application layer and the benchkit analysis library respectively.
+Datarax has two independent test suites. The core suite (`tests/`) mirrors the `src/datarax` package structure. The second suite tests the benchmark application layer.
 
 ```text
 tests/                           # Core test suite (default)
 ├── augment/                     #   Augmentation functionality
 ├── batching/                    #   Batch processing
-├── benchmarking/                #   Benchmarking engine (src/datarax/benchmarking/)
-├── benchmarks/                  #   Performance benchmarks
+├── benchmarks/                  #   Performance-focused tests
 ├── checkpoint/                  #   Checkpoint functionality
 ├── cli/                         #   CLI tools
 ├── config/                      #   Configuration handling
@@ -86,16 +85,9 @@ benchmarks/tests/                # Benchmark application suite (--all-suites)
 ├── test_config_loader.py        #   TOML config loading
 ├── test_baselines.py            #   Baseline store
 └── conftest.py                  #   Adapter-specific fixtures
-
-tools/benchkit/tests/            # benchkit library suite (--all-suites)
-├── test_models.py               #   Data model serde round-trip
-├── test_store.py                #   JSON store and baselines
-├── test_analysis.py             #   Regression detection, CIs, ranking
-├── test_wandb_exporter.py       #   W&B export (WANDB_MODE=offline)
-└── test_cli.py                  #   CLI commands via CliRunner
 ```
 
-The `--all-suites` flag (defined in the root `conftest.py`) collects all three suites in a single pytest run.
+The `--all-suites` flag (defined in the root `conftest.py`) collects both suites in a single pytest run.
 
 ## Test Categories
 
@@ -174,7 +166,7 @@ The `tests/conftest.py` file provides:
 
 | Option | Values | Description |
 |--------|--------|-------------|
-| `--all-suites` | flag | Collect all test suites: `tests/`, `benchmarks/tests/`, `tools/benchkit/tests/` |
+| `--all-suites` | flag | Collect all test suites: `tests/`, `benchmarks/tests/` |
 | `--device` | `cpu`, `gpu`, `tpu`, `all` | Select device type for tests (default: `all`) |
 | `--integration` | flag | Include integration tests |
 | `--end-to-end` | flag | Include end-to-end tests |

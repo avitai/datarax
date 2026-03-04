@@ -100,37 +100,46 @@ class NoiseOperatorConfig(ModalityOperatorConfig):
     def __post_init__(self):
         """Validate configuration parameters."""
         super().__post_init__()
+        self._validate_mode()
+        self._validate_gaussian_params()
+        self._validate_salt_pepper_params()
+        self._validate_poisson_params()
 
-        # Validate mode
+    def _validate_mode(self) -> None:
+        """Validate selected noise mode."""
         if self.mode not in ("gaussian", "salt_pepper", "poisson"):
             raise ValueError(
                 f"mode must be 'gaussian', 'salt_pepper', or 'poisson', got '{self.mode}'"
             )
 
-        # Validate Gaussian parameters
-        if self.mode == "gaussian":
-            if self.noise_std < 0:
-                raise ValueError(f"noise_std must be non-negative, got {self.noise_std}")
+    def _validate_gaussian_params(self) -> None:
+        """Validate gaussian-specific parameters."""
+        if self.mode != "gaussian":
+            return
+        if self.noise_std < 0:
+            raise ValueError(f"noise_std must be non-negative, got {self.noise_std}")
 
-        # Validate Salt & Pepper parameters
-        if self.mode == "salt_pepper":
-            if not 0.0 <= self.salt_prob <= 1.0:
-                raise ValueError(f"salt_prob must be in [0.0, 1.0], got {self.salt_prob}")
-            if not 0.0 <= self.pepper_prob <= 1.0:
-                raise ValueError(f"pepper_prob must be in [0.0, 1.0], got {self.pepper_prob}")
-            if self.salt_prob + self.pepper_prob > 1.0:
-                raise ValueError("Sum of salt_prob and pepper_prob cannot exceed 1.0")
-            if self.salt_value is not None and not isinstance(self.salt_value, int | float):
-                raise TypeError(f"salt_value must be a number or None, got {type(self.salt_value)}")
-            if self.pepper_value is not None and not isinstance(self.pepper_value, int | float):
-                raise TypeError(
-                    f"pepper_value must be a number or None, got {type(self.pepper_value)}"
-                )
+    def _validate_salt_pepper_params(self) -> None:
+        """Validate salt-and-pepper-specific parameters."""
+        if self.mode != "salt_pepper":
+            return
+        if not 0.0 <= self.salt_prob <= 1.0:
+            raise ValueError(f"salt_prob must be in [0.0, 1.0], got {self.salt_prob}")
+        if not 0.0 <= self.pepper_prob <= 1.0:
+            raise ValueError(f"pepper_prob must be in [0.0, 1.0], got {self.pepper_prob}")
+        if self.salt_prob + self.pepper_prob > 1.0:
+            raise ValueError("Sum of salt_prob and pepper_prob cannot exceed 1.0")
+        if self.salt_value is not None and not isinstance(self.salt_value, int | float):
+            raise TypeError(f"salt_value must be a number or None, got {type(self.salt_value)}")
+        if self.pepper_value is not None and not isinstance(self.pepper_value, int | float):
+            raise TypeError(f"pepper_value must be a number or None, got {type(self.pepper_value)}")
 
-        # Validate Poisson parameters
-        if self.mode == "poisson":
-            if self.lam_scale <= 0:
-                raise ValueError(f"lam_scale must be positive, got {self.lam_scale}")
+    def _validate_poisson_params(self) -> None:
+        """Validate poisson-specific parameters."""
+        if self.mode != "poisson":
+            return
+        if self.lam_scale <= 0:
+            raise ValueError(f"lam_scale must be positive, got {self.lam_scale}")
 
 
 class NoiseOperator(ModalityOperator):

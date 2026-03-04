@@ -1,6 +1,7 @@
 # File: tests/integration/test_end_to_end_pipeline.py
 
 from unittest.mock import Mock, patch
+from typing import Any
 
 import numpy as np
 import jax
@@ -14,6 +15,63 @@ from datarax.sources.array_record_source import ArrayRecordSourceModule, ArrayRe
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.core.element_batch import Element
 from datarax.core.config import StructuralConfig
+
+
+from datarax.core.data_source import DataSourceModule
+
+
+class IndexedNumericSource(DataSourceModule):
+    """Simple configurable source for integration pipeline tests."""
+
+    def __init__(
+        self,
+        config: StructuralConfig,
+        *,
+        source_id: int,
+        multiplier: float,
+        total_items: int,
+        rngs=None,
+        name=None,
+    ):
+        super().__init__(config, rngs=rngs, name=name)
+        self.source_id = source_id
+        self.multiplier = multiplier
+        self.total_items = total_items
+        self.index = nnx.Variable(0)
+
+    def __iter__(self):
+        self.index.set_value(0)
+        return self
+
+    def __next__(self):
+        current_index = int(self.index.get_value())
+        if current_index >= self.total_items:
+            raise StopIteration
+        result = {
+            "source": jnp.array(self.source_id),
+            "value": jnp.array(float(current_index * self.multiplier)),
+        }
+        self.index.set_value(current_index + 1)
+        return result
+
+
+def _collect_pipeline_batches(pipeline: DAGExecutor, max_steps: int = 3) -> list[dict[str, Any]]:
+    """Collect non-empty batches from a pipeline."""
+    batches: list[dict[str, Any]] = []
+    for step_index, batch in enumerate(pipeline):
+        if batch is not None:
+            batches.append(batch)
+        if step_index >= max_steps - 1:
+            break
+    return batches
+
+
+def _assert_batches_for_source(batches: list[dict[str, Any]], source_id: int) -> None:
+    """Assert batch collection belongs to the expected source id."""
+    assert len(batches) > 0, f"Should have batches from source {source_id}"
+    for batch in batches:
+        assert "source" in batch
+        assert jnp.all(batch["source"] == source_id)
 
 
 class TestEndToEndPipeline:
@@ -175,92 +233,21 @@ class TestEndToEndPipeline:
         - Proper source identification in output batches
         - Parallel data loading capabilities
         """
-        from datarax.core.data_source import DataSourceModule
+        source1 = IndexedNumericSource(
+            StructuralConfig(), source_id=1, multiplier=10.0, total_items=20
+        )
+        source2 = IndexedNumericSource(
+            StructuralConfig(), source_id=2, multiplier=100.0, total_items=10
+        )
 
-        # Create proper DataSourceModule subclasses with config-first pattern
-        class SimpleSource1(DataSourceModule):
-            def __init__(self, config: StructuralConfig, *, rngs=None, name=None):
-                super().__init__(config, rngs=rngs, name=name)
-                self.index = nnx.Variable(0)
+        pipeline1 = DAGExecutor().add(source1).add(BatchNode(batch_size=4))
+        pipeline2 = DAGExecutor().add(source2).add(BatchNode(batch_size=4))
 
-            def __iter__(self):
-                self.index.set_value(0)
-                return self
+        results1 = _collect_pipeline_batches(pipeline1, max_steps=3)
+        results2 = _collect_pipeline_batches(pipeline2, max_steps=3)
 
-            def __next__(self):
-                if self.index.get_value() >= 20:  # Produce 20 items
-                    raise StopIteration
-                result = {
-                    "source": jnp.array(1),
-                    "value": jnp.array(float(self.index.get_value() * 10)),
-                }
-                self.index.set_value(self.index.get_value() + 1)
-                return result
-
-        class SimpleSource2(DataSourceModule):
-            def __init__(self, config: StructuralConfig, *, rngs=None, name=None):
-                super().__init__(config, rngs=rngs, name=name)
-                self.index = nnx.Variable(0)
-
-            def __iter__(self):
-                self.index.set_value(0)
-                return self
-
-            def __next__(self):
-                if self.index.get_value() >= 10:  # Produce 10 items
-                    raise StopIteration
-                result = {
-                    "source": jnp.array(2),
-                    "value": jnp.array(float(self.index.get_value() * 100)),
-                }
-                self.index.set_value(self.index.get_value() + 1)
-                return result
-
-        # Create two data sources with config
-        source1 = SimpleSource1(StructuralConfig())
-        source2 = SimpleSource2(StructuralConfig())
-
-        # Create two simple pipelines and merge them
-        # This demonstrates parallel processing from multiple sources
-        pipeline1 = DAGExecutor()
-        pipeline1.add(source1)  # Add DataSourceModule directly
-        pipeline1.add(BatchNode(batch_size=4))
-
-        pipeline2 = DAGExecutor()
-        pipeline2.add(source2)  # Add DataSourceModule directly
-        pipeline2.add(BatchNode(batch_size=4))
-
-        # Process each pipeline separately and collect results
-        # This is simpler than trying to merge at the DAG level
-        results1 = []
-        results2 = []
-
-        for i, batch in enumerate(pipeline1):
-            if batch is not None:
-                results1.append(batch)
-            if i >= 2:  # Get a few batches
-                break
-
-        for i, batch in enumerate(pipeline2):
-            if batch is not None:
-                results2.append(batch)
-            if i >= 2:  # Get a few batches
-                break
-
-        # Verify we got batches from both sources
-        assert len(results1) > 0, "Should have batches from source 1"
-        assert len(results2) > 0, "Should have batches from source 2"
-
-        # Verify the sources are correctly identified
-        for batch in results1:
-            assert "source" in batch
-            # All items in this batch should be from source 1
-            assert jnp.all(batch["source"] == 1)
-
-        for batch in results2:
-            assert "source" in batch
-            # All items in this batch should be from source 2
-            assert jnp.all(batch["source"] == 2)
+        _assert_batches_for_source(results1, source_id=1)
+        _assert_batches_for_source(results2, source_id=2)
 
     def test_pipeline_basic_functionality(self):
         """Test basic DAGExecutor pipeline construction and iteration.

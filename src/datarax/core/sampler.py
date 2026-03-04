@@ -102,7 +102,7 @@ class SamplerModule(StructuralModule):
         if self.config.batch_stats_fn is not None:
             try:
                 return self.config.batch_stats_fn(data)
-            except Exception:
+            except (AttributeError, TypeError, ValueError, RuntimeError):
                 return None
 
         return None
@@ -230,10 +230,14 @@ class SamplerModule(StructuralModule):
         Args:
             state: A dictionary containing the internal state to restore.
         """
+        # stream_name is not part of NNX variable state; restore it separately.
+        stream_name = state.get("stream_name")
+        base_state = {k: v for k, v in state.items() if k != "stream_name"}
+
         # Use the enhanced DataraxModule implementation
-        super().set_state(state)
-        if "stream_name" in state:
-            self.stream_name = state["stream_name"]
+        super().set_state(base_state)
+        if stream_name is not None:
+            self.stream_name = stream_name
 
     def _split_state(self, state: dict[str, Any], custom_keys: set[str]) -> dict[str, Any]:
         """Split state dict into base NNX state and custom sampler state.

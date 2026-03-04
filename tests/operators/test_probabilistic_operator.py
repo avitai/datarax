@@ -285,6 +285,28 @@ class TestProbabilisticOperatorJAXCompatibility:
         assert jnp.allclose(result_data["value"], expected)
 
 
+class TestProbabilisticOperatorDifferentiability:
+    """Test gradient flow through deterministic probabilistic wrappers."""
+
+    def test_grad_when_probability_is_one(self):
+        """p=1 path should preserve child-operator differentiability."""
+        rngs = nnx.Rngs(0)
+        child_config = MapOperatorConfig(stochastic=False)
+        child_op = MapOperator(child_config, fn=lambda x, key: 4.0 * x, rngs=rngs)
+
+        prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=1.0)
+        prob_op = ProbabilisticOperator(prob_config, rngs=rngs)
+
+        def loss(x):
+            output_data, _, _ = prob_op.apply({"value": x}, {}, None)
+            return jnp.sum(output_data["value"])
+
+        inputs = jnp.array([0.5, -1.0, 2.0], dtype=jnp.float32)
+        grad = jax.grad(loss)(inputs)
+
+        assert jnp.allclose(grad, jnp.full_like(inputs, 4.0))
+
+
 class TestProbabilisticOperatorEdgeCases:
     """Test edge cases and error handling."""
 

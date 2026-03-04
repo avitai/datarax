@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from datarax.benchmarking.timing import TimingCollector
+from calibrax.profiling import TimingCollector
 
 
 @pytest.mark.benchmark
@@ -31,7 +31,7 @@ class TestBatchAlignment:
             for _ in range(iterations):
                 yield workload_fn()
 
-        sync_fn = lambda: jnp.array(0.0).block_until_ready()
+        sync_fn = lambda _result: jnp.array(0.0).block_until_ready()
         collector = TimingCollector(sync_fn=sync_fn)
         return collector.measure_iteration(workload_iter(), num_batches=iterations)
 

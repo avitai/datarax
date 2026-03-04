@@ -5,8 +5,6 @@ optimized for use with JAX transformations like jit and vmap. All functions are 
 to be compatible with JAX's functional programming model.
 """
 
-from typing import Union
-
 import jax
 import jax.numpy as jnp
 
@@ -150,8 +148,8 @@ def random_crop(
 
 def normalize(
     image: jax.Array,
-    mean: Union[float, jax.Array],
-    std: Union[float, jax.Array],
+    mean: float | jax.Array,
+    std: float | jax.Array,
     clip: bool = False,
 ) -> jax.Array:
     """Normalize an image by subtracting mean and dividing by std.
@@ -569,6 +567,98 @@ def _adjust_hsv(
     return hsv_to_rgb(hsv)
 
 
+def _validate_color_jitter_image(image: jax.Array) -> None:
+    """Validate that color jitter input is an RGB image."""
+    if len(image.shape) != 3 or image.shape[2] != 3:
+        raise ValueError("Color jittering requires RGB images with shape [H, W, 3]")
+
+
+def _has_color_jitter_adjustment(
+    brightness: float, contrast: float, saturation: float, hue: float
+) -> bool:
+    """Return True when at least one jitter adjustment is enabled."""
+    return any(value != 0.0 for value in (brightness, contrast, saturation, hue))
+
+
+def _apply_saturation_and_hue_static(image: jax.Array, saturation: float, hue: float) -> jax.Array:
+    """Apply saturation and hue adjustments with deterministic factors."""
+    if saturation != 0.0 and hue != 0.0:
+        return _adjust_hsv(image, saturation_factor=1.0 + saturation, hue_delta=hue)
+    if saturation != 0.0:
+        return adjust_saturation(image, 1.0 + saturation)
+    if hue != 0.0:
+        return adjust_hue(image, hue)
+    return image
+
+
+def _advance_key(key: jax.Array) -> jax.Array:
+    """Advance RNG key deterministically using split semantics."""
+    key, _ = jax.random.split(key)
+    return key
+
+
+def _apply_saturation_and_hue_random(
+    image: jax.Array, saturation: float, hue: float, key: jax.Array
+) -> tuple[jax.Array, jax.Array]:
+    """Apply random saturation/hue adjustments and return updated key."""
+    has_saturation = saturation != 0.0
+    has_hue = hue != 0.0
+
+    if has_saturation and has_hue:
+        sat_factor = 1.0 + jax.random.uniform(key, (), minval=-saturation, maxval=saturation)
+        key = _advance_key(key)
+        h_delta = jax.random.uniform(key, (), minval=-hue, maxval=hue)
+        key = _advance_key(key)
+        return _adjust_hsv(image, saturation_factor=sat_factor, hue_delta=h_delta), key
+
+    if has_saturation:
+        sat_factor = 1.0 + jax.random.uniform(key, (), minval=-saturation, maxval=saturation)
+        key = _advance_key(key)
+        return adjust_saturation(image, sat_factor), key
+
+    if has_hue:
+        h_delta = jax.random.uniform(key, (), minval=-hue, maxval=hue)
+        key = _advance_key(key)
+        return adjust_hue(image, h_delta), key
+
+    return image, key
+
+
+def _apply_color_jitter_static(
+    image: jax.Array, brightness: float, contrast: float, saturation: float, hue: float
+) -> jax.Array:
+    """Apply deterministic color jitter (max positive adjustment)."""
+    result = image
+    if brightness != 0.0:
+        result = adjust_brightness(result, 1.0 + brightness)
+    if contrast != 0.0:
+        result = adjust_contrast(result, 1.0 + contrast)
+    result = _apply_saturation_and_hue_static(result, saturation, hue)
+    return result
+
+
+def _apply_color_jitter_random(
+    image: jax.Array,
+    brightness: float,
+    contrast: float,
+    saturation: float,
+    hue: float,
+    key: jax.Array,
+) -> jax.Array:
+    """Apply random color jitter sampled from the provided RNG key."""
+    result = image
+    if brightness != 0.0:
+        brightness_factor = 1.0 + jax.random.uniform(key, (), minval=-brightness, maxval=brightness)
+        key = _advance_key(key)
+        result = adjust_brightness(result, brightness_factor)
+    if contrast != 0.0:
+        contrast_factor = 1.0 + jax.random.uniform(key, (), minval=-contrast, maxval=contrast)
+        key = _advance_key(key)
+        result = adjust_contrast(result, contrast_factor)
+    result, _ = _apply_saturation_and_hue_random(result, saturation, hue, key)
+    return result
+
+
 def color_jitter(
     image: jax.Array,
     brightness: float = 0.0,
@@ -590,67 +680,15 @@ def color_jitter(
     Returns:
         Color-jittered image, clipped to [0, 1].
     """
-    # Ensure image is in the right format
-    if len(image.shape) != 3 or image.shape[2] != 3:
-        raise ValueError("Color jittering requires RGB images with shape [H, W, 3]")
-
-    # If no jittering is requested, return the original image
-    if brightness == 0.0 and contrast == 0.0 and saturation == 0.0 and hue == 0.0:
+    _validate_color_jitter_image(image)
+    if not _has_color_jitter_adjustment(brightness, contrast, saturation, hue):
         return image
 
-    # Apply adjustments in a fixed order: brightness, contrast, saturation, hue
-    result = image
-
-    # If key is not provided, use maximum adjustment for consistent testing
     if key is None:
-        if brightness != 0.0:
-            # Use maximum positive adjustment for testing
-            result = adjust_brightness(result, 1.0 + brightness)
-
-        if contrast != 0.0:
-            # Use maximum positive adjustment for testing
-            result = adjust_contrast(result, 1.0 + contrast)
-
-        # Batch sat+hue into a single RGB↔HSV roundtrip when both are active
-        if saturation != 0.0 and hue != 0.0:
-            result = _adjust_hsv(result, saturation_factor=1.0 + saturation, hue_delta=hue)
-        elif saturation != 0.0:
-            result = adjust_saturation(result, 1.0 + saturation)
-        elif hue != 0.0:
-            result = adjust_hue(result, hue)
-
+        result = _apply_color_jitter_static(image, brightness, contrast, saturation, hue)
         return jnp.clip(result, 0.0, 1.0)
 
-    # Random adjustments with provided key
-    if brightness != 0.0:
-        brightness_factor = 1.0 + jax.random.uniform(key, (), minval=-brightness, maxval=brightness)
-        key, _ = jax.random.split(key)
-        result = adjust_brightness(result, brightness_factor)
-
-    if contrast != 0.0:
-        contrast_factor = 1.0 + jax.random.uniform(key, (), minval=-contrast, maxval=contrast)
-        key, _ = jax.random.split(key)
-        result = adjust_contrast(result, contrast_factor)
-
-    # Batch sat+hue into a single RGB↔HSV roundtrip when both are active
-    has_saturation = saturation != 0.0
-    has_hue = hue != 0.0
-
-    if has_saturation and has_hue:
-        sat_factor = 1.0 + jax.random.uniform(key, (), minval=-saturation, maxval=saturation)
-        key, _ = jax.random.split(key)
-        h_delta = jax.random.uniform(key, (), minval=-hue, maxval=hue)
-        key, _ = jax.random.split(key)
-        result = _adjust_hsv(result, saturation_factor=sat_factor, hue_delta=h_delta)
-    elif has_saturation:
-        sat_factor = 1.0 + jax.random.uniform(key, (), minval=-saturation, maxval=saturation)
-        key, _ = jax.random.split(key)
-        result = adjust_saturation(result, sat_factor)
-    elif has_hue:
-        h_delta = jax.random.uniform(key, (), minval=-hue, maxval=hue)
-        key, _ = jax.random.split(key)
-        result = adjust_hue(result, h_delta)
-
+    result = _apply_color_jitter_random(image, brightness, contrast, saturation, hue, key)
     return jnp.clip(result, 0.0, 1.0)
 
 

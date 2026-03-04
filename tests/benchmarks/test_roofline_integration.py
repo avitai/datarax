@@ -9,6 +9,9 @@ import pytest
 from datarax.performance.roofline import RooflineAnalyzer
 
 
+ROOFLINE_SKIP_EXCEPTIONS = (NotImplementedError, RuntimeError, ValueError, TypeError)
+
+
 @pytest.mark.benchmark
 def test_roofline_metrics_collection():
     """Verify that roofline metrics are collected when enabled."""
@@ -25,7 +28,7 @@ def test_roofline_metrics_collection():
     # Analyze
     try:
         results = analyzer.analyze_operation(matmul_op, None)
-    except Exception as e:
+    except ROOFLINE_SKIP_EXCEPTIONS as e:
         pytest.skip(f"Roofline analysis not available: {e}")
 
     print("Collected Metrics Keys:", results.keys())

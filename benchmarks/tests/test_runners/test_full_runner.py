@@ -10,8 +10,12 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from datarax.benchmarking.results import BenchmarkResult
-from datarax.benchmarking.timing import TimingSample
+from benchmarks.core.result_model import (
+    build_benchmark_result,
+    result_scenario_id,
+)
+from calibrax.core import BenchmarkResult
+from calibrax.profiling import TimingSample
 
 
 def _make_timing_sample(wall_clock: float = 1.0) -> TimingSample:
@@ -28,7 +32,7 @@ def _make_result(
     framework: str = "Datarax",
     scenario_id: str = "CV-1",
 ) -> BenchmarkResult:
-    return BenchmarkResult(
+    return build_benchmark_result(
         framework=framework,
         scenario_id=scenario_id,
         variant="small",
@@ -102,7 +106,7 @@ class TestComparativeResults:
         cv1 = results.get_scenario_results("CV-1")
         assert "Datarax" in cv1
         assert "Grain" in cv1
-        assert cv1["Datarax"].scenario_id == "CV-1"
+        assert result_scenario_id(cv1["Datarax"]) == "CV-1"
 
     def test_get_results_for_adapter(self):
         """get_adapter_results returns all results for one adapter."""
@@ -119,7 +123,7 @@ class TestComparativeResults:
 
         datarax = results.get_adapter_results("Datarax")
         assert len(datarax) == 2
-        assert {r.scenario_id for r in datarax} == {"CV-1", "NLP-1"}
+        assert {result_scenario_id(r) for r in datarax} == {"CV-1", "NLP-1"}
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +238,7 @@ class TestFullRunner:
         )
         for results in comparative.results.values():
             for r in results:
-                assert r.scenario_id == "CV-1"
+                assert result_scenario_id(r) == "CV-1"
 
     def test_saves_results_to_release_dir(self, tmp_path: Path):
         """run_comparative must save result JSONs to output_dir."""

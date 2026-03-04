@@ -180,27 +180,35 @@ class DevicePlacement:
         device_kind = str(device.device_kind).lower() if device.device_kind else ""
 
         if platform == "tpu":
-            if "v5e" in device_kind or "v5 lite" in device_kind:
-                return HardwareType.TPU_V5E
-            elif "v5p" in device_kind:
-                return HardwareType.TPU_V5P
-            elif "v4" in device_kind:
-                return HardwareType.TPU_V4
-            return HardwareType.TPU_V4  # Default TPU
+            return self._detect_tpu_type(device_kind)
 
-        elif platform == "gpu" or platform == "cuda":
-            if "h100" in device_kind:
-                return HardwareType.H100
-            elif "a100" in device_kind:
-                return HardwareType.A100
-            elif "v100" in device_kind:
-                return HardwareType.V100
-            return HardwareType.A100  # Default modern GPU
+        if platform in {"gpu", "cuda"}:
+            return self._detect_gpu_type(device_kind)
 
-        elif platform == "cpu":
+        if platform == "cpu":
             return HardwareType.CPU
 
         return HardwareType.UNKNOWN
+
+    def _detect_tpu_type(self, device_kind: str) -> HardwareType:
+        """Detect TPU generation from device kind."""
+        if "v5e" in device_kind or "v5 lite" in device_kind:
+            return HardwareType.TPU_V5E
+        if "v5p" in device_kind:
+            return HardwareType.TPU_V5P
+        if "v4" in device_kind:
+            return HardwareType.TPU_V4
+        return HardwareType.TPU_V4
+
+    def _detect_gpu_type(self, device_kind: str) -> HardwareType:
+        """Detect GPU generation from device kind."""
+        if "h100" in device_kind:
+            return HardwareType.H100
+        if "a100" in device_kind:
+            return HardwareType.A100
+        if "v100" in device_kind:
+            return HardwareType.V100
+        return HardwareType.A100
 
     def place_on_device(
         self,
@@ -360,73 +368,90 @@ class DevicePlacement:
             achieves ~20-50% throughput increase over single-stage prefetching by
             overlapping CPU data preparation with device transfer.
         """
+        device = device or self.default_device
+        cpu_buffer = cpu_buffer_size if cpu_buffer_size is not None else buffer_size * 2
+        return self._two_stage_prefetch_generator(data_iterator, device, buffer_size, cpu_buffer)
+
+    def _two_stage_prefetch_generator(
+        self,
+        data_iterator: Any,
+        device: jax.Device,  # type: ignore[name-defined]
+        buffer_size: int,
+        cpu_buffer: int,
+    ) -> Any:
+        """Yield data with CPU and device prefetch overlap."""
         import queue
         import threading
 
-        device = device or self.default_device
-        cpu_buffer = cpu_buffer_size if cpu_buffer_size is not None else buffer_size * 2
+        cpu_queue: queue.Queue = queue.Queue(maxsize=cpu_buffer)
+        stop_event = threading.Event()
+        error_holder: list[Exception] = []
+        producer_thread = threading.Thread(
+            target=self._cpu_prefetch_producer,
+            args=(data_iterator, cpu_queue, stop_event, error_holder),
+            daemon=True,
+        )
+        producer_thread.start()
 
-        def two_stage_prefetch_gen():
-            # Stage 1: CPU-side prefetch with threading
-            cpu_queue: queue.Queue = queue.Queue(maxsize=cpu_buffer)
-            stop_event = threading.Event()
-            error_holder: list[Exception] = []
+        try:
+            yield from self._consume_prefetched_items(
+                cpu_queue, error_holder, device=device, buffer_size=buffer_size
+            )
+        finally:
+            stop_event.set()
+            self._drain_cpu_queue(cpu_queue)
+            producer_thread.join(timeout=1.0)
 
-            def producer():
-                """Background thread that fills the CPU buffer."""
-                try:
-                    for item in data_iterator:
-                        if stop_event.is_set():
-                            break
-                        cpu_queue.put(item)
-                except Exception as e:
-                    error_holder.append(e)
-                finally:
-                    cpu_queue.put(None)  # Sentinel to signal completion
+    def _cpu_prefetch_producer(
+        self,
+        data_iterator: Any,
+        cpu_queue: Any,
+        stop_event: Any,
+        error_holder: list[Exception],
+    ) -> None:
+        """Fill the CPU queue from the upstream iterator."""
+        try:
+            for item in data_iterator:
+                if stop_event.is_set():
+                    break
+                cpu_queue.put(item)
+        except Exception as e:  # noqa: BLE001 - iterator failures are forwarded to consumer
+            error_holder.append(e)
+        finally:
+            cpu_queue.put(None)
 
-            # Start background producer thread
-            producer_thread = threading.Thread(target=producer, daemon=True)
-            producer_thread.start()
+    def _consume_prefetched_items(
+        self,
+        cpu_queue: Any,
+        error_holder: list[Exception],
+        *,
+        device: jax.Device,  # type: ignore[name-defined]
+        buffer_size: int,
+    ) -> Any:
+        """Consume CPU-buffered items, transfer to device, and yield in order."""
+        device_buffer: list[Any] = []
+        while True:
+            item = cpu_queue.get()
+            if error_holder:
+                raise error_holder[0]
+            if item is None:
+                break
 
+            device_buffer.append(self.place_on_device(item, device))
+            if len(device_buffer) > buffer_size:
+                yield device_buffer.pop(0)
+
+        yield from device_buffer
+
+    def _drain_cpu_queue(self, cpu_queue: Any) -> None:
+        """Drain pending queue items to avoid producer deadlocks."""
+        import queue
+
+        while True:
             try:
-                # Stage 2: Device transfer with buffer
-                device_buffer: list = []
-
-                while True:
-                    # Get item from CPU buffer
-                    item = cpu_queue.get()
-
-                    # Check for errors in producer
-                    if error_holder:
-                        raise error_holder[0]
-
-                    # Check for completion sentinel
-                    if item is None:
-                        break
-
-                    # Transfer to device and add to device buffer
-                    placed = self.place_on_device(item, device)
-                    device_buffer.append(placed)
-
-                    # Yield from device buffer when it exceeds target size
-                    if len(device_buffer) > buffer_size:
-                        yield device_buffer.pop(0)
-
-                # Drain remaining device buffer
-                yield from device_buffer
-
-            finally:
-                # Signal producer to stop and wait for thread
-                stop_event.set()
-                # Clear any remaining items to unblock producer
-                while True:
-                    try:
-                        cpu_queue.get_nowait()
-                    except queue.Empty:
-                        break
-                producer_thread.join(timeout=1.0)
-
-        return two_stage_prefetch_gen()
+                cpu_queue.get_nowait()
+            except queue.Empty:
+                return
 
     def get_batch_size_recommendation(
         self,

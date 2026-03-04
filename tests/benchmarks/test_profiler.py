@@ -6,8 +6,9 @@ Tests for BenchmarkResult (replacing ProfileResult) are in tests/benchmarking/te
 
 import jax.numpy as jnp
 
-from datarax.benchmarking.profiler import (
+from calibrax.profiling import (
     GPUMemoryProfiler,
+    MemoryAnalysis,
     MemoryOptimizer,
 )
 
@@ -85,11 +86,11 @@ class TestMemoryOptimizer:
 
         analysis = optimizer.analyze_pipeline_memory(simple_function, {})
 
-        assert isinstance(analysis, dict)
-        assert "baseline_memory_mb" in analysis
-        assert "peak_memory_mb" in analysis
-        assert "suggestions" in analysis
-        assert isinstance(analysis["suggestions"], list)
+        assert isinstance(analysis, MemoryAnalysis)
+        assert analysis.baseline_memory_mb >= 0
+        assert analysis.peak_memory_mb >= 0
+        assert isinstance(analysis.peak_usage_mb, float)
+        assert isinstance(analysis.suggestions, tuple)
 
     def test_analyze_memory_intensive_function(self):
         """Test memory analysis of memory-intensive function."""
@@ -102,6 +103,7 @@ class TestMemoryOptimizer:
 
         analysis = optimizer.analyze_pipeline_memory(memory_intensive_function, {})
 
-        assert isinstance(analysis, dict)
-        assert analysis["peak_usage_mb"] >= 0
-        assert 0 <= analysis.get("memory_efficiency", 0) <= 1
+        assert isinstance(analysis, MemoryAnalysis)
+        assert analysis.peak_usage_mb >= 0
+        # CalibraX efficiency can be negative when retained memory > peak delta.
+        assert analysis.memory_efficiency <= 1

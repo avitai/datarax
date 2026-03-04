@@ -6,7 +6,7 @@ distributing batches of data across JAX devices.
 """
 
 from dataclasses import dataclass
-from typing import Any, Union
+from typing import Any
 from collections.abc import Callable
 
 import flax.nnx as nnx
@@ -128,7 +128,7 @@ class SharderModule(DataraxModule):
         batch: Batch,
         transform_fn: Callable[[Batch], Batch],
         mesh: Mesh,
-        in_spec: Union[LogicalAxisSpec, PartitionSpec],
+        in_spec: LogicalAxisSpec | PartitionSpec,
         out_spec: LogicalAxisSpec | PartitionSpec | None = None,
     ) -> Batch:
         """Apply a transformation to each shard of the batch in parallel.

@@ -32,6 +32,7 @@ dependencies = [
   "array-record>=0.4",
   "astunparse>=1.6",
   "beartype>=0.14.1",
+  "calibrax @ git+https://github.com/avitai/calibrax.git",
   "chex>=0.1.7",
   "cloudpickle>=2",
   "decorator>=5",
@@ -114,7 +115,7 @@ data = [
   "librosa>=0.10.0" # For advanced audio processing
 ]
 dev = [
-  # benchkit: install locally via `uv pip install -e "tools/benchkit[wandb,stats]"` or use the `local` extra
+  # calibrax: install via `uv pip install "calibrax[wandb,stats] @ git+https://github.com/avitai/calibrax.git"`
   "build>=1.0.3",
   "coverage>=7",
   "ipykernel>=6.29.5",
@@ -253,6 +254,9 @@ include = ["src/datarax", "README.md", "LICENSE", "pyproject.toml"]
 [tool.hatch.build.targets.wheel]
 packages = ["src/datarax"]
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.hatch.version]
 path = "src/datarax/__init__.py"
 
@@ -287,6 +291,9 @@ reportGeneralTypeIssues = false
 reportIncompatibleMethodOverride = false
 reportIncompatibleVariableOverride = false
 reportIndexIssue = false
+# Benchmarks depend on many optional adapters/frameworks that are intentionally
+# not required in every dev environment or pre-commit hook env.
+reportMissingImports = false
 reportOperatorIssue = false
 reportOptionalCall = false
 reportOptionalIterable = false
@@ -295,10 +302,11 @@ reportOptionalOperand = false
 reportOptionalSubscript = false
 reportPossiblyUnboundVariable = false
 reportReturnType = false
+reportUnsupportedDunderAll = false
 reportUnusedExpression = false
 
 [tool.pytest.ini_options]
-addopts = "--strict-markers --strict-config --verbose --tb=short --color=yes --durations=10 --cov=src/ --cov-report=term-missing --cov-report=html --cov-fail-under=30 --timeout=300 --json-report --json-report-file=temp/test-results.json --json-report-indent=2"
+addopts = "--strict-markers --strict-config --verbose --tb=short --color=yes --durations=10 --cov=src/ --cov-report=term-missing --cov-report=html --cov-fail-under=80 --timeout=300 --json-report --json-report-file=temp/test-results.json --json-report-indent=2"
 cache_dir = ".pytest_cache"
 # Additional settings
 console_output_style = "progress"

@@ -5,7 +5,7 @@ supporting save and restore of iterator state for resumable iteration.
 """
 
 from pathlib import Path
-from typing import TypeVar, Union
+from typing import TypeVar
 
 from datarax.checkpoint.handlers import OrbaxCheckpointHandler
 from datarax.typing import CheckpointableIterator
@@ -24,7 +24,7 @@ class IteratorCheckpoint:
 
     def __init__(
         self,
-        base_dir: Union[str, Path],
+        base_dir: str | Path,
         handler: OrbaxCheckpointHandler | None = None,
         async_checkpointing: bool = False,
     ):
@@ -38,8 +38,6 @@ class IteratorCheckpoint:
         """
         self.base_dir = Path(base_dir)
         self.handler = handler or OrbaxCheckpointHandler(async_checkpointing=async_checkpointing)
-        # Store restore_args for test compatibility
-        self.restore_args = None
 
     def save(
         self,
@@ -64,26 +62,22 @@ class IteratorCheckpoint:
         Raises:
             ValueError: If the iterator does not implement get_state.
         """
-        # Verify the iterator implements get_state properly
         if not hasattr(iterator, "get_state") or not callable(iterator.get_state):
             raise ValueError("Iterator does not implement get_state method")
-
-        try:
-            # Get state directly from the iterator
-            state_dict = iterator.get_state()
-
-            # Save the state using the checkpoint handler
-            return self.handler.save(
-                self.base_dir,
-                state_dict,
-                step=step,
-                keep=keep,
-                overwrite=overwrite,
-                metadata=metadata,
+        state_dict = iterator.get_state()
+        if not isinstance(state_dict, dict):
+            raise ValueError(
+                f"Iterator get_state() must return dict, got {type(state_dict).__name__}"
             )
-        except Exception as e:
-            msg = f"Failed to checkpoint iterator: {e}"
-            raise ValueError(msg) from e
+
+        return self.handler.save(
+            self.base_dir,
+            state_dict,
+            step=step,
+            keep=keep,
+            overwrite=overwrite,
+            metadata=metadata,
+        )
 
     def restore(
         self,
@@ -103,91 +97,18 @@ class IteratorCheckpoint:
             ValueError: If the iterator does not implement set_state or if the
                 checkpoint cannot be restored.
         """
-        # Verify the iterator implements set_state properly
         if not hasattr(iterator, "set_state") or not callable(iterator.set_state):
             msg = f"Iterator of type {type(iterator)} does not implement "
             msg += "set_state"
             raise ValueError(msg)
 
-        try:
-            # Use the restore_args if set (for tests)
-            if self.restore_args is not None:
-                state_dict = self.handler.restore(
-                    self.base_dir,
-                    step=step,
-                    restore_args=self.restore_args,
-                )
-            else:
-                # Try to create proper sharding info for the restore
-                try:
-                    # Attempt restore with updated sharding parameters
-                    from orbax.checkpoint import args as ocp_args
+        if not hasattr(iterator, "get_state") or not callable(iterator.get_state):
+            raise ValueError("Iterator does not implement get_state method")
 
-                    # Get current state as template for structure
-                    template_state = iterator.get_state()
-                    # Create restore args without deprecated sharding parameter
-                    restore_args = ocp_args.PyTreeRestore()
-                    # Restore with modern API
-                    state_dict = self.handler.restore(
-                        self.base_dir,
-                        step=step,
-                        target=template_state,
-                        restore_args=restore_args,
-                    )
-                except (ImportError, AttributeError, TypeError) as e:
-                    # Fall back if orbax.checkpoint.args not available or sharding issue
-                    if "sharding" in str(e).lower():
-                        # Handle sharding parameter adjustment
-                        # Get current state as template for structure
-                        template_state = iterator.get_state()
-                        state_dict = self.handler.restore(
-                            self.base_dir,
-                            step=step,
-                            target=template_state,
-                        )
-                    else:
-                        # Fall back to default restore
-                        # Get current state as template for structure
-                        template_state = iterator.get_state()
-                        state_dict = self.handler.restore(
-                            self.base_dir,
-                            step=step,
-                            target=template_state,
-                        )
-
-            # Apply the state to the iterator
-            iterator.set_state(state_dict)
-
-            # Return the updated iterator
-            return iterator
-        except Exception as e:
-            # Check if this is just a sharding warning that's not actually fatal
-            error_msg = str(e)
-            if "sharding info not provided" in error_msg.lower():
-                # This is likely just a warning about sharding in single-device scenarios
-                # Import warnings to suppress the orbax warning and continue
-                import warnings
-
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore", message=".*Sharding info not provided.*")
-                    try:
-                        # Retry the restore operation with warnings suppressed
-                        template_state = iterator.get_state()
-                        state_dict = self.handler.restore(
-                            self.base_dir,
-                            step=step,
-                            target=template_state,
-                        )
-                        iterator.set_state(state_dict)
-                        return iterator
-                    except Exception as retry_e:
-                        # If the retry also fails, that's the real error
-                        msg = f"Failed to restore iterator checkpoint: {retry_e}"
-                        raise ValueError(msg) from retry_e
-            else:
-                # For other types of errors, re-raise as before
-                msg = f"Failed to restore iterator checkpoint: {e}"
-                raise ValueError(msg) from e
+        restored = self.handler.restore(self.base_dir, step=step, target=iterator)
+        if restored is not iterator:
+            raise ValueError("Iterator restore failed: handler did not return the target iterator")
+        return restored
 
     def restore_latest(
         self,

@@ -24,6 +24,9 @@ def merge_outputs(
     Returns:
         Merged output
     """
+    if not outputs:
+        raise ValueError("outputs must not be empty")
+
     if merge_fn is not None:
         # Use custom merge function
         return merge_fn(outputs)
@@ -38,8 +41,8 @@ def merge_outputs(
         # Stack along merge_axis
         return jax.tree.map(lambda *args: jnp.stack(args, axis=merge_axis), *outputs)
     elif merge_strategy == "sum":
-        # Element-wise sum
-        return jax.tree.map(lambda *args: sum(args), *outputs)
+        # Element-wise sum with pure JAX reduction (trace/JIT friendly)
+        return jax.tree.map(lambda *args: jnp.sum(jnp.stack(args, axis=0), axis=0), *outputs)
     elif merge_strategy == "mean":
         # Element-wise mean
         return jax.tree.map(lambda *args: jnp.mean(jnp.stack(args), axis=0), *outputs)
@@ -77,6 +80,13 @@ def merge_outputs_conditional(
     Returns:
         Merged output with only True-condition outputs
     """
+    if not outputs:
+        raise ValueError("outputs must not be empty")
+    if len(conditions) != len(outputs):
+        raise ValueError(
+            f"conditions length ({len(conditions)}) must match outputs length ({len(outputs)})"
+        )
+
     # Convert conditions to boolean array
     cond_mask = jnp.stack(conditions)  # shape: (num_ops,) - use stack for 0-d arrays
 
@@ -84,48 +94,39 @@ def merge_outputs_conditional(
         return merge_fn(outputs)
 
     if merge_strategy is None or merge_strategy == "concat":
-        # Concat: concatenate ALL outputs (identity or transformed)
-        # This gives fixed shapes required for vmap compatibility
-        def concat_all(*args):
-            return jnp.concatenate(args, axis=merge_axis)
+        return jax.tree.map(lambda *args: jnp.concatenate(args, axis=merge_axis), *outputs)
 
-        return jax.tree.map(concat_all, *outputs)
+    if merge_strategy == "stack":
+        return jax.tree.map(lambda *args: jnp.stack(args, axis=merge_axis), *outputs)
 
-    elif merge_strategy == "stack":
-        # Stack: stack ALL outputs
-        def stack_all(*args):
-            return jnp.stack(args, axis=merge_axis)
+    if merge_strategy == "sum":
+        return jax.tree.map(lambda *args: _sum_masked(args, cond_mask), *outputs)
 
-        return jax.tree.map(stack_all, *outputs)
+    if merge_strategy == "mean":
+        return jax.tree.map(lambda *args: _mean_masked(args, cond_mask), *outputs)
 
-    elif merge_strategy == "sum":
-        # Sum: zero-mask False outputs using JAX ops
-        def sum_masked(*args):
-            stacked = jnp.stack(args, axis=0)  # (num_ops, ...)
-            # Broadcast mask to match stacked shape
-            mask_shape = [len(cond_mask)] + [1] * (stacked.ndim - 1)
-            mask_broadcast = cond_mask.reshape(mask_shape)
-            masked = stacked * mask_broadcast
-            return jnp.sum(masked, axis=0)
-
-        return jax.tree.map(sum_masked, *outputs)
-
-    elif merge_strategy == "mean":
-        # Mean: zero-mask False outputs, divide by True count
-        def mean_masked(*args):
-            stacked = jnp.stack(args, axis=0)  # (num_ops, ...)
-            mask_shape = [len(cond_mask)] + [1] * (stacked.ndim - 1)
-            mask_broadcast = cond_mask.reshape(mask_shape)
-            masked = stacked * mask_broadcast
-            total = jnp.sum(masked, axis=0)
-            count = jnp.sum(cond_mask)
-            return total / jnp.maximum(count, 1.0)
-
-        return jax.tree.map(mean_masked, *outputs)
-
-    elif merge_strategy == "dict":
+    if merge_strategy == "dict":
         # Dict: include all operators (even False conditions)
         return merge_outputs(outputs, merge_strategy, merge_axis, merge_fn)
 
-    else:
-        raise ValueError(f"Unknown merge_strategy: {merge_strategy}")
+    raise ValueError(f"Unknown merge_strategy: {merge_strategy}")
+
+
+def _masked_stack(values: tuple[jax.Array, ...], cond_mask: jax.Array) -> jax.Array:
+    """Stack operator values and apply a broadcasted condition mask."""
+    stacked = jnp.stack(values, axis=0)
+    mask_shape = [len(cond_mask)] + [1] * (stacked.ndim - 1)
+    return stacked * cond_mask.reshape(mask_shape)
+
+
+def _sum_masked(values: tuple[jax.Array, ...], cond_mask: jax.Array) -> jax.Array:
+    """Sum values from operators with True conditions."""
+    masked = _masked_stack(values, cond_mask)
+    return jnp.sum(masked, axis=0)
+
+
+def _mean_masked(values: tuple[jax.Array, ...], cond_mask: jax.Array) -> jax.Array:
+    """Average values from operators with True conditions."""
+    total = _sum_masked(values, cond_mask)
+    count = jnp.sum(cond_mask)
+    return total / jnp.maximum(count, 1.0)

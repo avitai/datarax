@@ -147,7 +147,7 @@ stop_trace()
 ### Using Datarax's Benchmark Utilities
 
 ```python
-from datarax.benchmarking import TimingCollector
+from calibrax import TimingCollector
 
 # Create a timing collector (pass sync_fn for GPU benchmarks)
 timer = TimingCollector()
@@ -240,7 +240,7 @@ uv run datarax-bench run --platform cpu
 JAX_PLATFORMS=cpu uv run pytest tests/benchmarks/ -v
 
 # Quick local summary
-uv run benchkit summary --data benchmark-data
+uv run calibrax summary --data benchmark-data
 ```
 
 ## Conclusion

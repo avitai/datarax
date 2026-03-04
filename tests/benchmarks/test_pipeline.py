@@ -87,15 +87,14 @@ def test_memory_usage_benchmark(benchmark: Callable) -> None:
         has_memory_profiler = True
     except ImportError:
         has_memory_profiler = False
-        print("INFO: memory_profiler is not installed but continuing test")
-        has_memory_profiler = False  # We don't skip anymore
 
     # Generate test data - using smaller dataset for faster benchmarks
     num_samples = 2000
+    batch_size = 32
     data = generate_image_data(num_samples=num_samples, image_height=32, image_width=32)
 
     # Define a pipeline processing function
-    def create_and_process_pipeline() -> None:
+    def create_and_process_pipeline() -> int:
         source_config = MemorySourceConfig()
         source = MemorySource(source_config, data)
         config = ElementOperatorConfig(stochastic=False)
@@ -130,14 +129,14 @@ def test_memory_usage_benchmark(benchmark: Callable) -> None:
         pipeline = (
             DAGExecutor()
             .add(source)
-            .add(BatchNode(32))
+            .add(BatchNode(batch_size))
             .add(OperatorNode(normalize_op))
             .add(OperatorNode(power_op))
             .add(OperatorNode(clip_op))
         )
 
         # Process all data
-        list(iter(pipeline))
+        return len(list(iter(pipeline)))
 
     if has_memory_profiler:
         # Measure memory usage
@@ -169,10 +168,11 @@ def test_memory_usage_benchmark(benchmark: Callable) -> None:
         benchmark = dummy_benchmark
 
     # Execute benchmark
-    benchmark(create_and_process_pipeline)
-
-    # Just a basic assertion
-    assert True, "Memory benchmark completed"
+    batches_processed = benchmark(create_and_process_pipeline)
+    expected_batches = num_samples // batch_size
+    if num_samples % batch_size > 0:
+        expected_batches += 1
+    assert batches_processed == expected_batches
 
 
 if __name__ == "__main__":

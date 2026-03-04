@@ -8,16 +8,30 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
 import jax.numpy as jnp
 
-from datarax.benchmarking.timing import TimingCollector, TimingSample
+from calibrax.profiling import TimingCollector, TimingSample
+
+JSONValue = dict[str, "JSONValue"] | list["JSONValue"] | str | int | float | bool | None
 
 
 def _make_sync_fn():
     """Create a JAX device sync function for accurate GPU timing."""
-    return lambda: jnp.array(0.0).block_until_ready()
+
+    def _sync(result: Any) -> None:
+        if hasattr(result, "block_until_ready"):
+            result.block_until_ready()
+            return
+        if isinstance(result, tuple | list):
+            for item in result:
+                if hasattr(item, "block_until_ready"):
+                    item.block_until_ready()
+            return
+        jnp.array(0.0).block_until_ready()
+
+    return _sync
 
 
 def _sample_to_dict(sample: TimingSample) -> dict[str, Any]:
@@ -52,9 +66,7 @@ def save_benchmark_results(results: dict, output_path: str) -> None:
     """Save benchmark results to a JSON file."""
     Path(output_path).resolve().parent.mkdir(parents=True, exist_ok=True)
 
-    def make_serializable(
-        obj: Any,
-    ) -> Union[dict[str, Any], list[Any], str, int, float, bool, None]:
+    def make_serializable(obj: Any) -> JSONValue:
         if isinstance(obj, int | float | str | bool | type(None)):
             return obj
         elif isinstance(obj, list | tuple):

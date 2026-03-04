@@ -11,13 +11,14 @@ Design ref: Section 7 of the benchmark report.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 from collections.abc import Callable
+from typing import Any
 
-from benchmarks.adapters.base import BenchmarkAdapter, IterationResult, ScenarioConfig
+from benchmarks.adapters.base import PipelineAdapter, IterationResult, ScenarioConfig
 from benchmarks.core.environment import capture_environment
-from datarax.benchmarking.results import BenchmarkResult
-from datarax.benchmarking.timing import TimingSample
+from benchmarks.core.result_model import build_benchmark_result
+from calibrax.core import BenchmarkResult
+from calibrax.profiling import TimingSample
 
 DEFAULT_SEED: int = 42
 """Default RNG seed used across all benchmark scenarios for reproducibility."""
@@ -69,7 +70,7 @@ def _iteration_to_timing(result: IterationResult) -> TimingSample:
 
 
 def run_scenario(
-    adapter: BenchmarkAdapter,
+    adapter: PipelineAdapter,
     variant: ScenarioVariant,
     num_batches: int = 50,
     warmup_batches: int = 5,
@@ -109,7 +110,7 @@ def run_scenario(
     timing = _iteration_to_timing(median_result)
     env = capture_environment()
 
-    return BenchmarkResult(
+    return build_benchmark_result(
         framework=adapter.name,
         scenario_id=config.scenario_id,
         variant=config.extra.get("variant_name", "default"),

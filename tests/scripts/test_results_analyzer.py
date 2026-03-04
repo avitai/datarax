@@ -1270,7 +1270,7 @@ def load_coverage_data(coverage_path: str) -> dict[str, Any] | None:
     try:
         with open(coverage_path, "r") as f:
             return json.load(f)
-    except Exception as e:
+    except (OSError, json.JSONDecodeError) as e:
         logger.warning(f"Failed to load coverage data: {e}")
         return None
 
@@ -1361,7 +1361,7 @@ def get_github_url(test_location: str, line_number: int | None = None) -> str:
             if line_number:
                 return f"{base_url}#L{line_number}"
             return base_url
-    except Exception:
+    except (subprocess.CalledProcessError, IndexError, OSError):
         pass
 
     return "#"

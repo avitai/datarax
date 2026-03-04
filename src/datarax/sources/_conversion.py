@@ -40,6 +40,7 @@ _TF_DLPACK_COMPATIBLE_DTYPES: frozenset[str] = frozenset(
         "bfloat16",
     ]
 )
+_TF_DLPACK_CONVERSION_ERRORS = (TypeError, ValueError)
 
 
 def tf_to_jax(tf_tensor: Any) -> jax.Array:
@@ -83,7 +84,7 @@ def tf_to_jax(tf_tensor: Any) -> jax.Array:
     except (ImportError, AttributeError, RuntimeError):
         # TensorFlow not available, dlpack not supported, or conversion failed
         pass
-    except Exception:
+    except _TF_DLPACK_CONVERSION_ERRORS:
         # Any other DLPack error - fall back to numpy
         pass
 

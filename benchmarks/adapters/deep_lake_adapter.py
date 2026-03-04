@@ -1,6 +1,6 @@
 """Deep Lake adapter for the benchmark framework.
 
-Wraps Deep Lake's tensor database with the BenchmarkAdapter lifecycle.
+Wraps Deep Lake's tensor database with the PipelineAdapter lifecycle.
 Tier 3 specialized -- only supports CV-1.
 
 Design ref: Section 14.2 of the benchmark report.
@@ -26,7 +26,7 @@ import numpy as np
 
 from benchmarks.adapters import register
 from benchmarks.adapters._utils import cast_to_float32, normalize_uint8, setup_temp_dir
-from benchmarks.adapters.base import BenchmarkAdapter, ScenarioConfig
+from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
 _DEEPLAKE_TRANSFORMS: dict[str, Any] = {
     "Normalize": normalize_uint8,
@@ -35,8 +35,8 @@ _DEEPLAKE_TRANSFORMS: dict[str, Any] = {
 
 
 @register
-class DeepLakeAdapter(BenchmarkAdapter):
-    """BenchmarkAdapter for Deep Lake v4.
+class DeepLakeAdapter(PipelineAdapter):
+    """PipelineAdapter for Deep Lake v4.
 
     Uses a temporary directory for storage (v4 has no in-memory mode).
     """

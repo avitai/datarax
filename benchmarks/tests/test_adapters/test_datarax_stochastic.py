@@ -65,7 +65,7 @@ class TestStochasticTransformFunctions:
     """Stochastic transform functions modify data using RNG key."""
 
     def test_gaussian_noise_modifies_data(self, sample_element, rng_key):
-        """GaussianNoise adds noise — output differs from input."""
+        """Gaussian noise adds perturbation so output differs from input."""
         fn = _STOCHASTIC_TRANSFORM_FNS["GaussianNoise"]
         result = fn(sample_element, rng_key)
 
@@ -75,7 +75,7 @@ class TestStochasticTransformFunctions:
         assert jnp.max(diff) < 1.0, "Noise too large"
 
     def test_random_brightness_modifies_data(self, sample_element, rng_key):
-        """RandomBrightness shifts values — output differs from input."""
+        """Random brightness shifts values so output differs from input."""
         fn = _STOCHASTIC_TRANSFORM_FNS["RandomBrightness"]
         result = fn(sample_element, rng_key)
 
@@ -85,7 +85,7 @@ class TestStochasticTransformFunctions:
         assert jnp.allclose(diff, diff[0, 0, 0]), "Brightness not uniform"
 
     def test_random_scale_modifies_data(self, sample_element, rng_key):
-        """RandomScale multiplies values — output differs from input."""
+        """Random scale multiplies values so output differs from input."""
         fn = _STOCHASTIC_TRANSFORM_FNS["RandomScale"]
         result = fn(sample_element, rng_key)
 

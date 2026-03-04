@@ -41,8 +41,8 @@ class TestXLAOptimization(unittest.TestCase):
         sample_input = jnp.ones((10, 10))
         try:
             smart_compiler.aot_compile(lambda x: x * 2, sample_input)
-        except Exception:
-            pass
+        except (NotImplementedError, RuntimeError, TypeError, ValueError):
+            self.skipTest("AOT compilation is not available on this backend")
 
     def test_rematerialization(self):
         """Test gradient checkpointing wrapper."""
@@ -62,18 +62,12 @@ class TestXLAOptimization(unittest.TestCase):
             # Case 1: Enough devices
             mock_devices.return_value = [DummyDevice() for _ in range(4)]
 
-            try:
-                mesh = DistributedUtils.create_mesh((2, 2), ("x", "y"))
-                self.assertIsInstance(mesh, jax.sharding.Mesh)
-                self.assertEqual(mesh.shape["x"], 2)
-                self.assertEqual(mesh.shape["y"], 2)
-            except Exception as e:
-                # If checking assertion fails, it raises
-                raise e
+            mesh = DistributedUtils.create_mesh((2, 2), ("x", "y"))
+            self.assertIsInstance(mesh, jax.sharding.Mesh)
+            self.assertEqual(mesh.shape["x"], 2)
+            self.assertEqual(mesh.shape["y"], 2)
 
             # Case 2: Not enough devices
             mock_devices.return_value = [DummyDevice()]
-            try:
+            with self.assertRaises(ValueError):
                 DistributedUtils.create_mesh((4,), ("x",))
-            except Exception:
-                pass

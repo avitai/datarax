@@ -1,10 +1,15 @@
 """Unit tests for merging strategies."""
 
 import jax.numpy as jnp
+import pytest
 from datarax.operators.strategies.merging import merge_outputs, merge_outputs_conditional
 
 
 class TestMergeOutputs:
+    def test_merge_empty_outputs_raises(self):
+        with pytest.raises(ValueError, match="outputs must not be empty"):
+            merge_outputs([], "sum")
+
     def test_merge_concat(self):
         outputs = [jnp.array([1, 2]), jnp.array([3, 4])]
         merged = merge_outputs(outputs, "concat", merge_axis=0)
@@ -65,6 +70,16 @@ class TestMergeOutputs:
 
 
 class TestMergeOutputsConditional:
+    def test_merge_conditional_empty_outputs_raises(self):
+        with pytest.raises(ValueError, match="outputs must not be empty"):
+            merge_outputs_conditional([], [], "sum")
+
+    def test_merge_conditional_mismatched_lengths_raises(self):
+        outputs = [jnp.array([1, 2]), jnp.array([3, 4])]
+        conditions = [jnp.array(True)]
+        with pytest.raises(ValueError, match="conditions length"):
+            merge_outputs_conditional(outputs, conditions, "sum")
+
     def test_merge_conditional_sum(self):
         outputs = [jnp.array([1, 2]), jnp.array([3, 4])]  # Assume identity returned for False
         conditions = [jnp.array(True), jnp.array(False)]

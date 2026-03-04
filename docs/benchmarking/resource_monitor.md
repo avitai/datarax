@@ -11,4 +11,4 @@ Background 10 Hz resource sampling for CPU, memory, and GPU utilization during b
 
 ---
 
-::: datarax.benchmarking.resource_monitor
+::: calibrax.resource_monitor

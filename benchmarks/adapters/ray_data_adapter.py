@@ -1,6 +1,6 @@
 """Ray Data adapter for the benchmark framework.
 
-Wraps Ray Data's actor-based distributed Dataset with the BenchmarkAdapter
+Wraps Ray Data's actor-based distributed Dataset with the PipelineAdapter
 lifecycle. Tier 3 -- supports 3 scenarios.
 
 Design ref: Section 14.2 of the benchmark report.
@@ -26,7 +26,9 @@ client); it does NOT call ``ray stop`` which would kill SkyPilot's cluster.
 from __future__ import annotations
 
 import os
-import subprocess
+
+# Controlled local subprocess calls for Ray CLI lifecycle.
+import subprocess  # nosec B404
 import sys
 from collections.abc import Iterator
 from typing import Any
@@ -34,7 +36,7 @@ from typing import Any
 import numpy as np
 
 from benchmarks.adapters import register
-from benchmarks.adapters.base import BenchmarkAdapter, ScenarioConfig
+from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
 # Dedicated port so we don't collide with SkyPilot's Ray (default 6379).
 _BENCH_RAY_PORT = 6399
@@ -57,7 +59,8 @@ def _stop_ray() -> None:
     SkyPilot-managed VMs (it would kill SkyPilot's orchestration cluster).
     The test fixture ``ray_shutdown`` in conftest.py calls this.
     """
-    subprocess.run(
+    # Static command list; no user-controlled input.
+    subprocess.run(  # nosec B603
         [sys.executable, "-m", "ray.scripts.scripts", "stop", "--force"],
         capture_output=True,
     )
@@ -70,7 +73,8 @@ def _start_ray_head(num_cpus: int) -> None:
     SkyPilot's orchestration cluster.  Starting via CLI (separate process
     tree) avoids fork-safety issues with native extensions like deeplake.
     """
-    subprocess.run(
+    # Static command list; no user-controlled input.
+    subprocess.run(  # nosec B603
         [
             sys.executable,
             "-m",
@@ -89,8 +93,8 @@ def _start_ray_head(num_cpus: int) -> None:
 
 
 @register
-class RayDataAdapter(BenchmarkAdapter):
-    """BenchmarkAdapter for Ray Data.
+class RayDataAdapter(PipelineAdapter):
+    """PipelineAdapter for Ray Data.
 
     Callers must ensure ``ray.shutdown()`` is called when done (the
     ``ray_shutdown`` test fixture handles this automatically).

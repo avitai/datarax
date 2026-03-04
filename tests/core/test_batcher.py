@@ -598,18 +598,15 @@ class TestBatcherModuleConcurrency:
 class TestBatcherModuleRobustness:
     """Test robustness and recovery."""
 
-    def test_recovery_from_invalid_state(self):
-        """Test recovery from invalid state restoration."""
+    def test_invalid_state_restoration_raises(self):
+        """Invalid checkpoint state should fail fast with a clear error."""
         batcher = SimpleTestBatcher(SimpleTestBatcherConfig())
 
         # Try to restore incompatible state (with fields that don't exist)
         invalid_state = {"non_existent_field": 42, "_computed_stats": {"custom": "data"}}
 
-        # Should handle gracefully - set_state ignores unknown fields
-        batcher.set_state(invalid_state)
-
-        # _computed_stats should be restored if it exists in state
-        # (depends on implementation behavior with mismatched state)
+        with pytest.raises(ValueError, match="structurally incompatible"):
+            batcher.set_state(invalid_state)
 
     def test_handling_none_elements(self):
         """Test handling of None in elements."""

@@ -28,7 +28,7 @@
 - **Scalability:** Multi-device and multi-host data distribution with device mesh sharding
 - **Determinism:** Reproducible pipelines by default using Grain's Feistel cipher shuffling (O(1) memory)
 - **Extensibility:** Custom data sources, operators, and augmentation strategies via composable NNX modules
-- **Benchmarking Suite:** Comparative benchmarks against 12+ frameworks (Grain, tf.data, PyTorch DataLoader, DALI, Ray Data, and more)
+- **Benchmarking Suite:** Comparative benchmarks against 12+ frameworks with Calibrax-powered analysis and regression checks
 - **Ecosystem Integration:** Works with Flax, Optax, Orbax, HuggingFace Datasets, and TensorFlow Datasets
 
 ## Why Datarax?
@@ -36,9 +36,11 @@
 JAX has mature libraries for models (Flax), optimizers (Optax), and checkpointing (Orbax), but lacks a dedicated data pipeline framework that operates at the same level of abstraction. Existing options are either framework-agnostic loaders that return NumPy arrays (losing JIT/autodiff benefits) or wrappers around tf.data/PyTorch that introduce cross-framework overhead. Datarax aims to fill this gap. The framework is under active development with ongoing performance optimization — the architecture is functional, but throughput and API surface are still being refined.
 
 ### JAX-Native from the Ground Up
+
 Every component — sources, operators, batchers, samplers, sharders — is a Flax NNX module. Pipeline state is managed through NNX's variable system, which means operators can hold learnable parameters, be serialized with Orbax, and participate in JAX transformations (`jit`, `vmap`, `grad`) without special handling.
 
 ### Differentiable Data Pipelines
+
 Because operators are NNX modules, gradients flow through the entire pipeline. This enables approaches that are not possible with standard data loaders:
 
 - [Gradient-based augmentation search](examples/advanced/differentiable/01_dada_learned_augmentation_guide.py) — replacing RL-based methods like AutoAugment with direct optimization
@@ -48,39 +50,42 @@ Because operators are NNX modules, gradients flow through the entire pipeline. T
 See the [differentiable pipeline examples](docs/examples/advanced/differentiable/) for details.
 
 ### DAG Execution Model
+
 Pipelines are directed acyclic graphs, not linear chains. The `>>` operator composes sequential steps, `|` creates parallel branches, and control-flow nodes (`Branch`, `Merge`, `SplitField`) handle conditional and multi-path logic. The DAG executor manages scheduling, caching, and rebatching across the graph.
 
 ### Deterministic Reproducibility
+
 Shuffling uses Grain's Feistel cipher permutation, which generates a full-epoch permutation in O(1) memory without materializing the index array. Combined with explicit RNG key threading through every stochastic operator, pipelines produce identical output given the same seed — across restarts, devices, and host counts.
 
 ### Built-in Competitive Benchmarking
-The benchmarking engine profiles datarax against 12+ frameworks (Grain, tf.data, PyTorch DataLoader, DALI, Ray Data, and others) across standardized scenarios. Results feed a regression guard that catches performance regressions in CI and a gap analysis that identifies optimization targets relative to the fastest framework per scenario. This benchmark-driven development loop is how datarax tracks its progress toward competitive throughput — current results and optimization status are tracked in the [benchmarking documentation](docs/benchmarks/index.md).
+
+The benchmarking suite profiles datarax against 12+ frameworks (Grain, tf.data, PyTorch DataLoader, DALI, Ray Data, and others) across standardized scenarios. Results are converted to CalibraX runs for direction-aware metrics, regression gating, and W&B export. This benchmark-driven loop is how datarax tracks progress toward competitive throughput — current results and optimization status are tracked in the [benchmarking documentation](docs/benchmarks/index.md).
 
 ## Installation
 
 ```bash
 # Basic installation
-pip install datarax
+uv pip install datarax
 
 # With data loading support (HuggingFace, TFDS, audio/image libs)
-pip install datarax[data]
+uv pip install "datarax[data]"
 
 # With GPU support (CUDA 12)
-pip install datarax[gpu]
+uv pip install "datarax[gpu]"
 
 # Full development installation
-pip install datarax[all]
+uv pip install "datarax[all]"
 ```
 
 ### macOS / Apple Silicon
 
 ```bash
 # macOS CPU mode (recommended)
-pip install datarax[all-cpu]
+uv pip install "datarax[all-cpu]"
 JAX_PLATFORMS=cpu python your_script.py
 
 # Metal GPU acceleration (experimental, M1/M2/M3+)
-pip install jax-metal
+uv pip install jax-metal
 JAX_PLATFORMS=metal python your_script.py
 ```
 
@@ -193,11 +198,10 @@ src/datarax/
   checkpoint/   # NNXCheckpointHandler with Orbax integration
   monitoring/   # Pipeline monitor, DAG monitor, reporters
   performance/  # Roofline analysis, XLA optimization utilities
-  benchmarking/ # Profiler, comparative engine, regression guard, resource monitor
   control/      # Prefetcher for asynchronous data loading
   memory/       # Shared memory manager for multi-process data sharing
   config/       # TOML-based configuration system with schema validation
-  cli/          # datarax and datarax-bench CLI entry points
+  cli/          # datarax CLI entry point
   utils/        # PyTree utilities, external integration helpers
 ```
 
@@ -207,10 +211,13 @@ Datarax includes a benchmarking suite for comparison against 12+ data loading fr
 
 ```bash
 # Install benchmark dependencies (adds PyTorch, DALI, Ray, etc.)
-pip install datarax[benchmark]
+uv sync --extra benchmark
+
+# Optional: install CalibraX with W&B support explicitly
+uv pip install "calibrax[wandb] @ git+https://github.com/avitai/calibrax.git"
 
 # Run benchmarks locally
-datarax-bench run --platform cpu --profile ci_cpu --repetitions 5
+uv run python -m benchmarks.runners.full_runner --platform cpu --repetitions 5
 
 # Run on cloud (SkyPilot)
 sky launch benchmarks/sky/gpu-benchmark.yaml --env WANDB_API_KEY=$WANDB_API_KEY
@@ -226,23 +233,25 @@ Datarax uses `uv` as its package manager:
 # Clone and setup
 git clone https://github.com/avitai/datarax.git
 cd datarax
-pip install uv
 
 # Automatic setup
 ./setup.sh && source activate.sh
 
 # Or manual install
-uv pip install -e ".[dev]"
+uv sync --extra dev
 ```
 
 ### Running Tests
 
 ```bash
 # CPU-only (most stable)
-JAX_PLATFORMS=cpu python -m pytest
+JAX_PLATFORMS=cpu uv run pytest
+
+# Include benchmark test suite in the same run
+JAX_PLATFORMS=cpu uv run pytest --all-suites
 
 # Specific module
-JAX_PLATFORMS=cpu python -m pytest tests/sources/test_memory_source.py
+JAX_PLATFORMS=cpu uv run pytest tests/sources/test_memory_source_module.py
 ```
 
 ### Docker

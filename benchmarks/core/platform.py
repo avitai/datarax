@@ -10,9 +10,15 @@ from __future__ import annotations
 
 import functools
 import math
-import subprocess
+
+# Controlled local system introspection commands (nvidia-smi).
+import subprocess  # nosec B404
+from typing import TYPE_CHECKING
 
 import jax
+
+if TYPE_CHECKING:
+    from benchmarks.scenarios.base import ScenarioVariant
 
 
 # ---------------------------------------------------------------------------
@@ -114,8 +120,9 @@ def _get_gpu_memory_mb() -> float | None:
         Available GPU memory in MB, or None if no GPU / nvidia-smi unavailable.
     """
     try:
+        # Static nvidia-smi query; no user-controlled input.
         output = (
-            subprocess.check_output(
+            subprocess.check_output(  # nosec B603 B607
                 [
                     "nvidia-smi",
                     "--query-gpu=memory.free",
@@ -188,7 +195,7 @@ def estimate_scenario_memory_mb(
 
 
 def can_run_scenario(
-    variant: ScenarioVariant,  # noqa: F821 — forward ref to avoid circular import
+    variant: ScenarioVariant,
     safety_factor: float = 2.5,
     backend: str | None = None,
 ) -> bool:

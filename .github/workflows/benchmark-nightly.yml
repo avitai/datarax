@@ -30,8 +30,8 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras
 
-      - name: Install benchkit
-        run: uv pip install -e tools/benchkit[wandb]
+      - name: Install calibrax (W&B extras)
+        run: uv pip install "calibrax[wandb] @ git+https://github.com/avitai/calibrax.git"
 
       - name: Run benchmarks and export to W&B
         env:
@@ -60,7 +60,7 @@ jobs:
   #     - uses: actions/checkout@v4
   #     - uses: astral-sh/setup-uv@v4
   #     - run: uv sync --all-extras
-  #     - run: uv pip install -e tools/benchkit[wandb]
+  #     - run: uv pip install "calibrax[wandb] @ git+https://github.com/avitai/calibrax.git"
   #     - name: Run GPU benchmarks and export
   #       env:
   #         WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
@@ -85,7 +85,7 @@ jobs:
   #     - uses: actions/checkout@v4
   #     - uses: astral-sh/setup-uv@v4
   #     - run: uv sync --all-extras
-  #     - run: uv pip install -e tools/benchkit[wandb]
+  #     - run: uv pip install "calibrax[wandb] @ git+https://github.com/avitai/calibrax.git"
   #     - name: Run TPU benchmarks and export
   #       env:
   #         WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}

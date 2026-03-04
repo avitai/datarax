@@ -249,61 +249,58 @@ class DataraxModule(nnx.Module):
         """
         import jax
 
-        def _hash_value(value: Any) -> int:
-            """Hash a single value, handling JAX arrays specially."""
-            if isinstance(value, jax.Array):
-                # Content-based hash for JAX arrays:
-                # Combine shape, dtype, and a sample of values for efficiency
-                shape_hash = hash(value.shape)
-                dtype_hash = hash(str(value.dtype))
+        leaves_hash = self._hash_pytree_leaves(input_data, jax)
+        if leaves_hash is not None:
+            return leaves_hash
+        return self._hash_fallback(input_data)
 
-                # For large arrays, sample values to avoid expensive full hashing
-                # Use first, middle, and last elements plus sum for content fingerprint
-                if value.size > 0:
-                    flat = value.flatten()
-                    # Sample up to 10 elements spread across the array
-                    sample_size = min(10, flat.size)
-                    indices = jnp.linspace(0, flat.size - 1, sample_size, dtype=jnp.int32)
-                    samples = flat[indices]
-                    # Convert to Python tuple for hashing (blocking operation)
-                    try:
-                        content_hash = hash(tuple(float(x) for x in samples.tolist()))
-                    except (TypeError, ValueError):
-                        # Fallback for non-numeric dtypes
-                        content_hash = hash(value.size)
-                else:
-                    content_hash = 0
-
-                return hash((shape_hash, dtype_hash, content_hash))
-            elif isinstance(value, (int, float, str, bool, type(None))):
-                return hash(value)
-            elif isinstance(value, (tuple, frozenset)):
-                return hash(value)
-            elif isinstance(value, list):
-                return hash(tuple(_hash_value(v) for v in value))
-            elif isinstance(value, dict):
-                return hash(tuple(sorted((k, _hash_value(v)) for k, v in value.items())))
-            else:
-                # Fallback: try Python hash, then id
-                try:
-                    return hash(value)
-                except TypeError:
-                    return id(value)
-
-        # Handle PyTrees by hashing all leaves
+    def _hash_pytree_leaves(self, input_data: Any, jax_module: Any) -> int | None:
+        """Hash all pytree leaves, returning None when pytree traversal fails."""
         try:
-            leaves = jax.tree.leaves(input_data)
-            if leaves:
-                return hash(tuple(_hash_value(leaf) for leaf in leaves))
-            else:
-                # Empty PyTree
-                return hash(())
-        except Exception:
-            # If tree processing fails, fall back to simple hash/id
-            try:
-                return hash(input_data)
-            except TypeError:
-                return id(input_data)
+            leaves = jax_module.tree.leaves(input_data)
+        except (TypeError, ValueError, AttributeError, RuntimeError):
+            return None
+        if not leaves:
+            return hash(())
+        return hash(tuple(self._hash_value(leaf, jax_module) for leaf in leaves))
+
+    def _hash_value(self, value: Any, jax_module: Any) -> int:
+        """Hash a value with special handling for arrays and nested containers."""
+        if isinstance(value, jax_module.Array):
+            return self._hash_jax_array(value)
+        if isinstance(value, (int, float, str, bool, type(None), tuple, frozenset)):
+            return hash(value)
+        if isinstance(value, list):
+            return hash(tuple(self._hash_value(v, jax_module) for v in value))
+        if isinstance(value, dict):
+            hashed_items = tuple(
+                sorted((k, self._hash_value(v, jax_module)) for k, v in value.items())
+            )
+            return hash(hashed_items)
+        return self._hash_fallback(value)
+
+    def _hash_jax_array(self, value: Any) -> int:
+        """Hash a JAX array using shape/dtype and sampled content."""
+        shape_hash = hash(value.shape)
+        dtype_hash = hash(str(value.dtype))
+        if value.size == 0:
+            return hash((shape_hash, dtype_hash, 0))
+        flat = value.flatten()
+        sample_size = min(10, flat.size)
+        indices = jnp.linspace(0, flat.size - 1, sample_size, dtype=jnp.int32)
+        samples = flat[indices]
+        try:
+            content_hash = hash(tuple(float(x) for x in samples.tolist()))
+        except (TypeError, ValueError):
+            content_hash = hash(value.size)
+        return hash((shape_hash, dtype_hash, content_hash))
+
+    def _hash_fallback(self, value: Any) -> int:
+        """Hash a value using Python hash, falling back to object identity."""
+        try:
+            return hash(value)
+        except TypeError:
+            return id(value)
 
     def reset_cache(self) -> None:
         """Clear the cache.
@@ -386,45 +383,153 @@ class DataraxModule(nnx.Module):
 
         This method implements the Checkpointable protocol using NNX state
         management. It restores the module state from a serialized format.
+        Restoration is strict: checkpoint structure must match module state.
 
         Args:
             state: A dictionary containing the internal state to restore.
+
+        Raises:
+            TypeError: If state is not a dictionary.
+            ValueError: If checkpoint structure does not match module state.
         """
-        # Get current state structure
+        if not isinstance(state, dict):
+            raise TypeError(f"State must be a dict, got {type(state).__name__}")
+
         current_state = nnx.state(self)
+        current_dict = nnx.to_pure_dict(current_state)
 
-        # Replace with saved state
         try:
-            nnx.replace_by_pure_dict(current_state, state)
-            nnx.update(self, current_state)
-        except (ValueError, TypeError):
-            # If there's a structural mismatch, do compatible restoration
-            self._restore_compatible_state(state)
+            self._validate_state_compatibility(self, current_dict, state)
+        except ValueError as exc:
+            raise ValueError(
+                "Checkpoint state is structurally incompatible with module state. "
+                "Regenerate checkpoints after architecture/config changes."
+            ) from exc
 
-    def _restore_compatible_state(self, state: dict[str, Any]) -> None:
-        """Restore only compatible state fields, ignoring structural mismatches.
+        self._restore_state_tree(self, state)
 
-        This method safely restores state even when the module structure
-        has changed between save and restore.
+    @staticmethod
+    def _is_array_like(value: Any) -> bool:
+        """Return True when value behaves like an ndarray/jax.Array leaf."""
+        return hasattr(value, "shape") and hasattr(value, "dtype")
 
-        Args:
-            state: Dictionary containing the state to restore.
+    def _validate_state_compatibility(
+        self, target: Any, current: Any, saved: Any, path: tuple[str | int, ...] = ()
+    ) -> None:
+        """Validate strict checkpoint compatibility.
+
+        Rules:
+        - Dict/list/tuple container structure must match exactly.
+        - Array leaves must match shape and dtype.
+        - Scalar/object leaves may change value/type (for flexible Variable payloads).
         """
-        # Try to directly update attributes that exist
-        for key, value in state.items():
-            if hasattr(self, key):
-                attr = getattr(self, key)
-                if isinstance(attr, nnx.Variable):
-                    # Use set_value for Variable assignment (new NNX API)
-                    attr.set_value(value)
-                elif hasattr(attr, "__dict__"):
-                    # For nested modules, recursively update
-                    if isinstance(value, dict):
-                        for subkey, subvalue in value.items():
-                            if hasattr(attr, subkey):
-                                subattr = getattr(attr, subkey)
-                                if isinstance(subattr, nnx.Variable):
-                                    subattr.set_value(subvalue)
+        location = self._format_state_path(path)
+        if isinstance(target, nnx.Variable):
+            self._validate_array_leaf(current, saved, location)
+            return
+
+        if isinstance(target, nnx.Module):
+            self._validate_module_state(target, current, saved, path, location)
+            return
+
+        if isinstance(current, dict):
+            self._validate_mapping_state(current, saved, location)
+            return
+
+        self._validate_array_leaf(current, saved, location)
+
+    @staticmethod
+    def _format_state_path(path: tuple[str | int, ...]) -> str:
+        """Format state path tuple for readable error messages."""
+        return ".".join(str(part) for part in path) if path else "<root>"
+
+    def _validate_array_leaf(self, current: Any, saved: Any, location: str) -> None:
+        """Validate shape/dtype compatibility for array-like leaves."""
+        if not (self._is_array_like(current) and self._is_array_like(saved)):
+            return
+        if current.shape != saved.shape:
+            raise ValueError(
+                f"Array shape mismatch at {location}: expected {current.shape}, got {saved.shape}"
+            )
+        if current.dtype != saved.dtype:
+            raise ValueError(
+                f"Array dtype mismatch at {location}: expected {current.dtype}, got {saved.dtype}"
+            )
+
+    def _validate_mapping_state(self, current: dict[Any, Any], saved: Any, location: str) -> None:
+        """Validate mapping type and exact key-set equality."""
+        if not isinstance(saved, dict):
+            raise ValueError(
+                f"State node type mismatch at {location}: expected dict, got {type(saved).__name__}"
+            )
+        current_keys = set(current)
+        saved_keys = set(saved)
+        if current_keys == saved_keys:
+            return
+        missing = sorted(current_keys - saved_keys)
+        extra = sorted(saved_keys - current_keys)
+        raise ValueError(f"State keys mismatch at {location}: missing={missing}, extra={extra}")
+
+    def _validate_module_state(
+        self,
+        target: nnx.Module,
+        current: Any,
+        saved: Any,
+        path: tuple[str | int, ...],
+        location: str,
+    ) -> None:
+        """Validate module subtree recursively against a saved subtree."""
+        if not isinstance(current, dict):
+            raise ValueError(
+                f"Current state mismatch at {location}: expected dict, got {type(current).__name__}"
+            )
+        self._validate_mapping_state(current, saved, location)
+        saved_dict = saved
+        for key in current:
+            child = self._resolve_state_child(target, key, path)
+            self._validate_state_compatibility(child, current[key], saved_dict[key], (*path, key))
+
+    def _resolve_state_child(
+        self, target: nnx.Module, key: str | int, path: tuple[str | int, ...]
+    ) -> Any:
+        """Resolve a child object referenced by a state key."""
+        if isinstance(key, str) and hasattr(target, key):
+            return getattr(target, key)
+        if hasattr(target, "__getitem__"):
+            try:
+                return target[key]  # type: ignore[index]
+            except (KeyError, IndexError, TypeError):
+                pass
+        location = ".".join(str(p) for p in path) if path else "<root>"
+        raise ValueError(f"State path {location} has no child for key {key!r}")
+
+    def _restore_state_tree(
+        self, target: Any, saved: Any, path: tuple[str | int, ...] = ()
+    ) -> None:
+        """Restore validated state into an NNX object tree."""
+        if isinstance(target, nnx.Variable):
+            target.set_value(saved)
+            return
+
+        if isinstance(target, nnx.Module):
+            if not isinstance(saved, dict):
+                location = ".".join(str(p) for p in path) if path else "<root>"
+                raise ValueError(
+                    f"Invalid state node at {location}: expected dict, got {type(saved).__name__}"
+                )
+            for key, value in saved.items():
+                child = self._resolve_state_child(target, key, path)
+                self._restore_state_tree(child, value, (*path, key))
+            return
+
+        if isinstance(target, list | tuple):
+            if not isinstance(saved, list | tuple):
+                location = ".".join(str(p) for p in path) if path else "<root>"
+                raise ValueError(
+                    f"Invalid sequence state at {location}: got {type(saved).__name__}"
+                )
+            for index, (child, value) in enumerate(zip(target, saved, strict=True)):
+                self._restore_state_tree(child, value, (*path, index))
 
     def clone(self) -> "DataraxModule":
         """Create a new instance with the same state as this module.

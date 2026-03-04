@@ -73,6 +73,52 @@ class MockDataSource(DataSourceModule):
         return data
 
 
+class ComplexMockDataSource(DataSourceModule):
+    """Mock source that yields nested metadata for complex-data tests."""
+
+    def __init__(self, *, rngs: nnx.Rngs | None = None):
+        config = MockDataSourceConfig()
+        super().__init__(config, rngs=rngs)
+        self.index = nnx.Variable(0)
+
+    def _next_complex_record(self) -> dict[str, Any] | None:
+        """Return next record or None when exhausted."""
+        current_index = int(self.index.get_value())
+        if current_index >= 10:
+            return None
+        record = {
+            "features": jnp.array([current_index, current_index * 2]),
+            "labels": jnp.array(current_index % 2),
+            "metadata": {"id": current_index},
+        }
+        self.index.set_value(current_index + 1)
+        return record
+
+    def __call__(self, key=None):
+        del key
+        return self._next_complex_record()
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        record = self._next_complex_record()
+        if record is None:
+            raise StopIteration
+        return record
+
+
+def _collect_non_none_batches(executor: DAGExecutor, max_steps: int) -> list[dict | Batch]:
+    """Collect non-empty batches from executor for a bounded number of steps."""
+    collected: list[dict | Batch] = []
+    for step_index, batch in enumerate(executor):
+        if batch is not None:
+            collected.append(batch)
+        if step_index >= max_steps - 1:
+            break
+    return collected
+
+
 class SimpleOperator(OperatorModule):
     """Simple operator for testing."""
 
@@ -422,51 +468,13 @@ class TestDAGExecutorAdvanced:
     def test_dag_executor_with_complex_data(self):
         """Test DAGExecutor with complex data structures."""
 
-        class ComplexDataSource(DataSourceModule):
-            def __init__(self, *, rngs: nnx.Rngs | None = None):
-                config = MockDataSourceConfig()
-                super().__init__(config, rngs=rngs)
-                self.index = nnx.Variable(0)
-
-            def __call__(self, key=None):
-                if self.index.get_value() >= 10:
-                    return None
-
-                data = {
-                    "features": jnp.array([self.index.get_value(), self.index.get_value() * 2]),
-                    "labels": jnp.array(self.index.get_value() % 2),
-                    "metadata": {"id": self.index.get_value()},
-                }
-                self.index.set_value(self.index.get_value() + 1)
-                return data
-
-            def __iter__(self):
-                return self
-
-            def __next__(self):
-                if self.index.get_value() >= 10:
-                    raise StopIteration
-
-                data = {
-                    "features": jnp.array([self.index.get_value(), self.index.get_value() * 2]),
-                    "labels": jnp.array(self.index.get_value() % 2),
-                    "metadata": {"id": self.index.get_value()},
-                }
-                self.index.set_value(self.index.get_value() + 1)
-                return data
-
         # Create pipeline with complex data
         executor = DAGExecutor()
-        executor.add(ComplexDataSource())
+        executor.add(ComplexMockDataSource())
         executor.add(BatchNode(batch_size=3))
 
         # Execute pipeline
-        batches = []
-        for i, batch in enumerate(executor):
-            if batch is not None:
-                batches.append(batch)
-            if i >= 2:
-                break
+        batches = _collect_non_none_batches(executor, max_steps=3)
 
         # Verify complex data handling
         assert len(batches) > 0

@@ -29,6 +29,8 @@ from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
 from datarax.sources.array_record_source import ArrayRecordSourceModule
 
+_TFDS_AUTO_DETECT_ERRORS = (ImportError, AttributeError, KeyError, TypeError, ValueError, OSError)
+
 # Type-checking imports for static analysis (not executed at runtime)
 if TYPE_CHECKING:
     import flax.nnx as nnx
@@ -76,6 +78,19 @@ def __getattr__(name: str):
 def __dir__():
     """Include lazy imports in dir() for discoverability."""
     return list(__all__)
+
+
+def _infer_tfds_eager_mode(name: str, split: str, data_dir: str | None, try_gcs: bool) -> bool:
+    """Infer eager mode for TFDS sources based on split size."""
+    import tensorflow_datasets as tfds
+
+    builder = tfds.builder(name, data_dir=data_dir, try_gcs=try_gcs)
+    split_base = split.split("[")[0]  # Handle "train[:1000]"
+    if builder.info.splits and split_base in builder.info.splits:
+        size_bytes = builder.info.splits[split_base].num_bytes
+        size_mb = size_bytes / 1e6 if size_bytes else 0
+        return size_mb < 1000  # < 1GB → eager
+    return True  # Default to eager for unknown splits
 
 
 # =============================================================================
@@ -156,19 +171,9 @@ def from_tfds(
     # Auto-detect based on dataset size if not specified
     if eager is None:
         try:
-            import tensorflow_datasets as tfds
-
-            builder = tfds.builder(name, data_dir=data_dir, try_gcs=try_gcs)
-            # Get size from dataset info
-            split_base = split.split("[")[0]  # Handle "train[:1000]"
-            if builder.info.splits and split_base in builder.info.splits:
-                size_bytes = builder.info.splits[split_base].num_bytes
-                size_mb = size_bytes / 1e6 if size_bytes else 0
-                eager = size_mb < 1000  # < 1GB → eager
-            else:
-                eager = True  # Default to eager for unknown splits
-        except Exception:
-            eager = True  # Default to eager on errors
+            eager = _infer_tfds_eager_mode(name, split, data_dir, try_gcs)
+        except _TFDS_AUTO_DETECT_ERRORS:
+            eager = True  # Default to eager on inference errors
 
     if eager:
         config = TFDSEagerConfig(

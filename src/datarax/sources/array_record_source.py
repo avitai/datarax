@@ -10,6 +10,7 @@ import numpy as np
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
 from datarax.typing import Element
+from datarax.utils.state import build_state_with_iteration_fields, restore_iteration_and_fields
 
 
 @dataclass
@@ -144,29 +145,28 @@ class ArrayRecordSourceModule(DataSourceModule):
 
     def get_state(self) -> dict[str, Any]:
         """Get complete state for checkpointing."""
-        state = super().get_state()
         shuffled_indices = self.shuffled_indices.get_value()
-        state.update(
-            {
-                "current_index": self.current_index.get_value(),
-                "current_epoch": self.current_epoch.get_value(),
+        return build_state_with_iteration_fields(
+            super().get_state(),
+            current_index=self.current_index.get_value(),
+            current_epoch=self.current_epoch.get_value(),
+            extra_fields={
                 "prefetch_cache": self.prefetch_cache.get_value(),
                 "shuffled_indices": shuffled_indices.tolist()
                 if shuffled_indices is not None
                 else None,
-            }
+            },
         )
-        return state
 
     def set_state(self, state: dict[str, Any]) -> None:
         """Restore state from checkpoint."""
         super().set_state(state)
-        if "current_index" in state:
-            self.current_index.set_value(state["current_index"])
-        if "current_epoch" in state:
-            self.current_epoch.set_value(state["current_epoch"])
-        if "prefetch_cache" in state:
-            self.prefetch_cache.set_value(state["prefetch_cache"])
+        restore_iteration_and_fields(
+            state,
+            current_index=self.current_index,
+            current_epoch=self.current_epoch,
+            prefetch_cache=self.prefetch_cache,
+        )
         if "shuffled_indices" in state and state["shuffled_indices"] is not None:
             self.shuffled_indices.set_value(np.array(state["shuffled_indices"]))
 

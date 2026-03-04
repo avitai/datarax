@@ -209,8 +209,8 @@ class TestDynamicOutputStructure:
         assert jnp.allclose(result_data["result"][0], jnp.array([4.0]))
         assert jnp.allclose(result_data["result"][1], jnp.array([9.0]))
 
-    def test_backward_compatible_same_structure(self, config, rngs):
-        """Existing operators (same in/out structure) still work."""
+    def test_structure_preserving_operator_still_works(self, config, rngs):
+        """Operators with unchanged in/out structure execute correctly."""
         op = StructurePreservingOperator(config, rngs=rngs)
 
         elements = [

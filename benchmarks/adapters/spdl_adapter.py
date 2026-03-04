@@ -1,6 +1,6 @@
 """Meta SPDL adapter for the benchmark framework.
 
-Wraps SPDL's thread-based DataLoader with the BenchmarkAdapter lifecycle.
+Wraps SPDL's thread-based DataLoader with the PipelineAdapter lifecycle.
 Tier 2 -- key I/O performance baseline.
 
 Design ref: Section 14.2 of the benchmark report.
@@ -21,7 +21,7 @@ from benchmarks.adapters._utils import (
     random_brightness,
     random_scale,
 )
-from benchmarks.adapters.base import BenchmarkAdapter, ScenarioConfig
+from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
 _SPDL_TRANSFORMS: dict[str, Any] = {
     "Normalize": normalize_uint8,
@@ -33,8 +33,8 @@ _SPDL_TRANSFORMS: dict[str, Any] = {
 
 
 @register
-class SpdlAdapter(BenchmarkAdapter):
-    """BenchmarkAdapter for Meta SPDL.
+class SpdlAdapter(PipelineAdapter):
+    """PipelineAdapter for Meta SPDL.
 
     SPDL uses threads (not processes) for I/O -- lower overhead on CPU-bound
     workloads.  Uses ``spdl.dataloader.DataLoader`` for index-based iteration

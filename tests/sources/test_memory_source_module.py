@@ -474,22 +474,21 @@ def test_memory_source_stateless_batch_with_shuffle():
     assert not jnp.array_equal(batch1["values"], batch3["values"])
 
 
-def test_memory_source_apply_transform():
-    """Test the _apply_transform method for TransformBase compatibility."""
-    # Test _apply_transform method (line 235)
+def test_memory_source_get_batch_behavior():
+    """Test direct batch retrieval behavior."""
     data = {"values": jnp.arange(15)}
     config = MemorySourceConfig()
     source = MemorySource(config, data)
 
-    # Call _apply_transform directly
-    batch = source._apply_transform(5, None)
+    # Stateful batch retrieval
+    batch = source.get_batch(5)
     assert "values" in batch
     assert len(batch["values"]) == 5
     assert jnp.array_equal(batch["values"], jnp.arange(5))
 
-    # With key for shuffling
+    # Stateless batch retrieval with key
     key = jax.random.key(42)
-    batch_with_key = source._apply_transform(5, key)
+    batch_with_key = source.get_batch(5, key)
     assert "values" in batch_with_key
     assert len(batch_with_key["values"]) == 5
 

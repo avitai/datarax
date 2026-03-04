@@ -15,8 +15,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-from datarax.benchmarking.results import BenchmarkResult
-from datarax.benchmarking.statistics import StatisticalAnalyzer
+from benchmarks.core.result_model import throughput_elements_per_sec
+from calibrax.core import BenchmarkResult
+from calibrax.statistics import StatisticalAnalyzer, welch_t_test
 
 
 class BaselineStore:
@@ -104,7 +105,7 @@ class BaselineStore:
             if baseline_timing["wall_clock_sec"] > 0
             else 0.0
         )
-        current_throughput = current.throughput_elements_sec()
+        current_throughput = throughput_elements_per_sec(current)
 
         throughput_ratio = (
             current_throughput / baseline_throughput if baseline_throughput > 0 else 0.0
@@ -119,7 +120,7 @@ class BaselineStore:
         t_stat = None
 
         if len(baseline_batch_times) >= 2 and len(current_batch_times) >= 2:
-            t_stat, p_value = self._analyzer.welch_t_test(baseline_batch_times, current_batch_times)
+            t_stat, p_value = welch_t_test(baseline_batch_times, current_batch_times)
 
             # Only flag if current is slower (higher batch times)
             current_mean = sum(current_batch_times) / len(current_batch_times)

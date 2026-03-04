@@ -290,9 +290,11 @@ def test_gather_from_shards():
 
             # Shard the PyTree
             sharded_tree = jax.tree.map(
-                lambda x: jax.device_put(x, row_sharding)
-                if x.ndim >= 2
-                else jax.device_put(x, replicated_sharding),
+                lambda x: (
+                    jax.device_put(x, row_sharding)
+                    if x.ndim >= 2
+                    else jax.device_put(x, replicated_sharding)
+                ),
                 tree,
             )
 

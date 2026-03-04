@@ -591,15 +591,12 @@ class TestNodeJAXCompatibility:
 
         # Should be jittable (though may not be useful in practice)
         # This tests that the node doesn't use non-jittable operations
-        try:
-            jitted_fn = nnx.jit(process_with_batch)
-            # Test with simple data
-            test_data = {"value": jnp.array(1.0)}
-            result = jitted_fn(test_data)
-            # Result may be None (accumulating) or a batch
-            assert result is None or isinstance(result, dict)
-        except Exception as e:
-            pytest.fail(f"BatchNode should be JIT compatible: {e}")
+        jitted_fn = nnx.jit(process_with_batch)
+        # Test with simple data
+        test_data = {"value": jnp.array(1.0)}
+        result = jitted_fn(test_data)
+        # Result may be None (accumulating) or a batch
+        assert result is None or isinstance(result, dict)
 
     def test_operator_node_jit_compatibility(self, simple_operator):
         """Test OperatorNode is compatible with nnx.jit compilation.
@@ -614,17 +611,12 @@ class TestNodeJAXCompatibility:
         def process_with_operator(node, batch):
             return node(batch)
 
-        try:
-            # Create proper Batch object
-            test_batch = make_batch_from_data([{"value": jnp.array(2.0), "index": jnp.array(2)}])
-            result = process_with_operator(operator_node, test_batch)
+        # Create proper Batch object
+        test_batch = make_batch_from_data([{"value": jnp.array(2.0), "index": jnp.array(2)}])
+        result = process_with_operator(operator_node, test_batch)
 
-            assert result is not None
-            assert jnp.array_equal(
-                result.data.get_value()["value"], jnp.array([6.0])
-            )  # [2.0] * 3.0
-        except Exception as e:
-            pytest.fail(f"OperatorNode should be JIT compatible: {e}")
+        assert result is not None
+        assert jnp.array_equal(result.data.get_value()["value"], jnp.array([6.0]))  # [2.0] * 3.0
 
     def test_operator_node_grad_compatibility(self, simple_operator):
         """Test OperatorNode is compatible with NNX gradient computation.
@@ -641,19 +633,16 @@ class TestNodeJAXCompatibility:
             result = node(batch)
             return jnp.sum(result.data.get_value()["value"] ** 2)
 
-        try:
-            # Use nnx.grad with argnums=1 to differentiate w.r.t. x (second argument)
-            # nnx.grad handles module state propagation automatically
-            grad_fn = nnx.grad(loss_fn, argnums=1)
-            x = jnp.array(2.0)  # Scalar value for single element
-            gradient = grad_fn(operator_node, x)
+        # Use nnx.grad with argnums=1 to differentiate w.r.t. x (second argument)
+        # nnx.grad handles module state propagation automatically
+        grad_fn = nnx.grad(loss_fn, argnums=1)
+        x = jnp.array(2.0)  # Scalar value for single element
+        gradient = grad_fn(operator_node, x)
 
-            # Gradient should be computed correctly
-            # loss = (x * 3)^2 = 9x^2, so grad = 18x = 36 for x=2
-            expected_grad = jnp.array(36.0)
-            assert jnp.allclose(gradient, expected_grad)
-        except Exception as e:
-            pytest.fail(f"OperatorNode should be differentiable: {e}")
+        # Gradient should be computed correctly
+        # loss = (x * 3)^2 = 9x^2, so grad = 18x = 36 for x=2
+        expected_grad = jnp.array(36.0)
+        assert jnp.allclose(gradient, expected_grad)
 
     def test_data_source_node_limitations(self, mock_source):
         """Test DataSourceNode limitations with JAX (expected to have limitations)."""
@@ -666,10 +655,10 @@ class TestNodeJAXCompatibility:
 
         # This test documents the expected behavior
         # DataSourceNode may not be JIT compatible, which is acceptable
+        jitted_fn = nnx.jit(process_with_source)
         try:
-            jitted_fn = nnx.jit(process_with_source)
             jitted_fn(None)
             # If it works, great! If not, that's expected for DataSourceNode
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             # Expected for stateful DataSourceNode
             pass

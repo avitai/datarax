@@ -11,4 +11,4 @@ Framework-agnostic timing with GPU synchronization support for accurate JAX benc
 
 ---
 
-::: datarax.benchmarking.timing
+::: calibrax.timing

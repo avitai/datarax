@@ -1,6 +1,6 @@
 """FFCV adapter for the benchmark framework.
 
-Wraps FFCV's .beton format loader with the BenchmarkAdapter lifecycle.
+Wraps FFCV's .beton format loader with the PipelineAdapter lifecycle.
 Tier 2 vision-only -- supports only CV-1.
 
 Design ref: Section 14.2 of the benchmark report.
@@ -17,7 +17,7 @@ import numpy as np
 
 from benchmarks.adapters import register
 from benchmarks.adapters._utils import cast_to_float32, normalize_uint8
-from benchmarks.adapters.base import BenchmarkAdapter, ScenarioConfig
+from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
 _FFCV_TRANSFORMS: dict[str, Any] = {
     "Normalize": normalize_uint8,
@@ -26,8 +26,8 @@ _FFCV_TRANSFORMS: dict[str, Any] = {
 
 
 @register
-class FfcvAdapter(BenchmarkAdapter):
-    """BenchmarkAdapter for FFCV.
+class FfcvAdapter(PipelineAdapter):
+    """PipelineAdapter for FFCV.
 
     FFCV requires .beton format. setup() writes synthetic data to a temp
     .beton file, teardown() cleans it up.

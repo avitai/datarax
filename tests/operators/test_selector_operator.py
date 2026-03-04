@@ -11,6 +11,7 @@ Test Coverage:
 - Stochastic behavior (different keys, reproducibility)
 """
 
+import jax
 import jax.numpy as jnp
 import pytest
 from flax import nnx
@@ -350,3 +351,33 @@ class TestSelectorOperatorJAX:
             val = float(result_data["value"][i, 0])
             original = float(i + 1)
             assert val in [original + 1, original + 10]
+
+
+class TestSelectorOperatorDifferentiability:
+    """Test gradient flow through selected operator branches."""
+
+    def test_grad_through_selected_branch(self):
+        """Selected operator branch should remain differentiable."""
+        config = MapOperatorConfig(stochastic=False)
+        rngs = nnx.Rngs(0)
+        op1 = MapOperator(config, fn=lambda x, key: 2.0 * x, rngs=rngs)
+        op2 = MapOperator(config, fn=lambda x, key: 5.0 * x + 1.0, rngs=rngs)
+
+        selector = SelectorOperator(
+            SelectorOperatorConfig(operators=[op1, op2], weights=[1.0, 0.0]),
+            rngs=nnx.Rngs(0),
+        )
+
+        random_params = {
+            "selected_indices": jnp.asarray(0, dtype=jnp.int32),
+            "child_params": {"operator_0": None, "operator_1": None},
+        }
+
+        def loss(x):
+            output_data, _, _ = selector.apply({"value": x}, {}, None, random_params=random_params)
+            return jnp.sum(output_data["value"])
+
+        inputs = jnp.array([1.0, -3.0, 2.5], dtype=jnp.float32)
+        grad = jax.grad(loss)(inputs)
+
+        assert jnp.allclose(grad, jnp.full_like(inputs, 2.0))

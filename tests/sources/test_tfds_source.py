@@ -33,6 +33,16 @@ from datarax.sources import (
 )
 
 
+TFDS_TEST_SKIP_EXCEPTIONS = (
+    ImportError,
+    FileNotFoundError,
+    OSError,
+    RuntimeError,
+    ValueError,
+    NotImplementedError,
+)
+
+
 # Set a fixed memory limit for TensorFlow to avoid OOM issues in CI
 gpus = tf.config.list_physical_devices("GPU")
 if gpus:
@@ -81,7 +91,7 @@ def test_tfds_eager_source_stateless():
         assert data["image"].shape == (28, 28, 1)
         assert data["label"].shape == ()
 
-    except Exception as e:
+    except TFDS_TEST_SKIP_EXCEPTIONS as e:
         # Skip if data cannot be loaded (e.g., no internet)
         pytest.skip(f"Could not load MNIST dataset: {e}")
 
@@ -107,7 +117,7 @@ def test_tfds_eager_source_stateful():
         assert batch1["image"].shape[0] == 5  # Batch size
         assert batch1["label"].shape[0] == 5
 
-    except Exception as e:
+    except TFDS_TEST_SKIP_EXCEPTIONS as e:
         pytest.skip(f"Could not load MNIST dataset: {e}")
 
 
@@ -129,7 +139,7 @@ def test_tfds_eager_source_with_shuffling():
 
         assert len(items) == 10
 
-    except Exception as e:
+    except TFDS_TEST_SKIP_EXCEPTIONS as e:
         pytest.skip(f"Could not load MNIST dataset: {e}")
 
 
@@ -152,7 +162,7 @@ def test_tfds_eager_source_with_include_keys():
         assert "image" in data
         assert "label" not in data
 
-    except Exception as e:
+    except TFDS_TEST_SKIP_EXCEPTIONS as e:
         pytest.skip(f"Could not load MNIST dataset: {e}")
 
 
@@ -175,7 +185,7 @@ def test_tfds_eager_source_with_exclude_keys():
         assert "image" in data
         assert "label" not in data
 
-    except Exception as e:
+    except TFDS_TEST_SKIP_EXCEPTIONS as e:
         pytest.skip(f"Could not load MNIST dataset: {e}")
 
 
@@ -196,7 +206,7 @@ def test_tfds_eager_source_stateless_batch():
         assert "label" in batch
         assert batch["image"].shape[0] == 10
 
-    except Exception as e:
+    except TFDS_TEST_SKIP_EXCEPTIONS as e:
         pytest.skip(f"Could not load MNIST dataset: {e}")
 
 
@@ -214,7 +224,7 @@ def test_tfds_eager_source_as_supervised():
         # With as_supervised, keys should be 'image' and 'label'
         assert "image" in data or "label" in data
 
-    except Exception as e:
+    except TFDS_TEST_SKIP_EXCEPTIONS as e:
         pytest.skip(f"Could not load MNIST dataset: {e}")
 
 
@@ -379,7 +389,7 @@ def test_tfds_eager_source_repr():
         assert "TFDSEagerSource" in repr_str
         assert "mnist" in repr_str
 
-    except Exception as e:
+    except TFDS_TEST_SKIP_EXCEPTIONS as e:
         pytest.skip(f"Could not create TFDSEagerSource: {e}")
 
 
@@ -490,7 +500,7 @@ class TestEagerSourceTryGcsPassthrough:
             config = TFDSEagerConfig(name="mnist", split="train", try_gcs=True)
             try:
                 TFDSEagerSource(config)
-            except Exception:
+            except TFDS_TEST_SKIP_EXCEPTIONS:
                 pass  # May fail on cleanup, but we check the call
 
             # Verify try_gcs was passed to tfds.load
@@ -519,7 +529,7 @@ class TestStreamingSourceTryGcsPassthrough:
             config = TFDSStreamingConfig(name="mnist", split="train", try_gcs=True)
             try:
                 TFDSStreamingSource(config)
-            except Exception:
+            except TFDS_TEST_SKIP_EXCEPTIONS:
                 pass
 
             mock_prepare.assert_called_once_with("mnist", None, True, None, beam_num_workers=None)
@@ -548,7 +558,7 @@ def test_tfds_streaming_source_basic():
         assert isinstance(data["image"], jax.Array)
         assert isinstance(data["label"], jax.Array)
 
-    except Exception as e:
+    except TFDS_TEST_SKIP_EXCEPTIONS as e:
         pytest.skip(f"Could not load MNIST dataset: {e}")
 
 
@@ -570,7 +580,7 @@ def test_tfds_streaming_source_with_shuffling():
 
         assert len(items) == 5
 
-    except Exception as e:
+    except TFDS_TEST_SKIP_EXCEPTIONS as e:
         pytest.skip(f"Could not load MNIST dataset: {e}")
 
 
@@ -589,7 +599,7 @@ def test_tfds_streaming_source_fixed_prefetch():
         data = next(iter(source))
         assert "image" in data
 
-    except Exception as e:
+    except TFDS_TEST_SKIP_EXCEPTIONS as e:
         pytest.skip(f"Could not load MNIST dataset: {e}")
 
 
@@ -625,7 +635,7 @@ def test_from_tfds_creates_eager_for_small_datasets():
         assert hasattr(source, "data")
         assert isinstance(source, TFDSEagerSource)
 
-    except Exception as e:
+    except TFDS_TEST_SKIP_EXCEPTIONS as e:
         pytest.skip(f"Could not load MNIST dataset: {e}")
 
 
@@ -636,7 +646,7 @@ def test_from_tfds_force_eager():
         source = from_tfds("mnist", "test[:10]", eager=True, rngs=nnx.Rngs(0))
         assert isinstance(source, TFDSEagerSource)
 
-    except Exception as e:
+    except TFDS_TEST_SKIP_EXCEPTIONS as e:
         pytest.skip(f"Could not load MNIST dataset: {e}")
 
 
@@ -647,7 +657,7 @@ def test_from_tfds_force_streaming():
         source = from_tfds("mnist", "test[:10]", eager=False, rngs=nnx.Rngs(0))
         assert isinstance(source, TFDSStreamingSource)
 
-    except Exception as e:
+    except TFDS_TEST_SKIP_EXCEPTIONS as e:
         pytest.skip(f"Could not load MNIST dataset: {e}")
 
 
@@ -660,7 +670,7 @@ def test_from_tfds_with_shuffling():
         # Should have shuffling enabled
         assert source.shuffle is True
 
-    except Exception as e:
+    except TFDS_TEST_SKIP_EXCEPTIONS as e:
         pytest.skip(f"Could not load MNIST dataset: {e}")
 
 
@@ -690,7 +700,7 @@ class TestFromTfdsFactoryTryGcs:
         ):
             try:
                 from_tfds("mnist", "train", eager=True, try_gcs=True)
-            except Exception:
+            except TFDS_TEST_SKIP_EXCEPTIONS:
                 return  # May fail on JAX stacking, but config was validated
 
     def test_try_gcs_passed_to_streaming_config(self):
@@ -733,7 +743,7 @@ class TestFromTfdsFactoryTryGcs:
                     eager=True,
                     download_and_prepare_kwargs=kwargs,
                 )
-            except Exception:
+            except TFDS_TEST_SKIP_EXCEPTIONS:
                 pass
 
             # _prepare_tfds_builder should have received the kwargs
@@ -751,7 +761,7 @@ class TestFromTfdsFactoryTryGcs:
             # Auto-detect mode (eager=None)
             try:
                 from_tfds("mnist", "train", try_gcs=True)
-            except Exception:
+            except TFDS_TEST_SKIP_EXCEPTIONS:
                 pass
 
             # The auto-detect call should pass try_gcs
@@ -786,7 +796,7 @@ class TestFromTfdsFactoryBeamWorkers:
         ):
             try:
                 from_tfds("mnist", "train", eager=True, beam_num_workers=4)
-            except Exception:
+            except TFDS_TEST_SKIP_EXCEPTIONS:
                 pass
 
             # _prepare_tfds_builder should have received beam_num_workers=4

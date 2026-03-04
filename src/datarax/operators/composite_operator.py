@@ -162,20 +162,25 @@ class CompositeOperatorConfig(OperatorConfig):
     def __post_init__(self) -> None:
         """Validate configuration."""
         super().__post_init__()
+        self._validate_required_fields()
+        self._validate_conditional_strategies()
+        self._validate_weighted_parallel_strategy()
+        self._validate_branching_strategy()
+        object.__setattr__(self, "stochastic", self._infer_child_stochastic())
 
-        # Validate required fields
+    def _validate_required_fields(self) -> None:
+        """Validate required fields and operator container basics."""
         if self.strategy is None:
             raise ValueError("strategy is required")
         if self.operators is None:
             raise ValueError("operators is required")
-
-        # Validate operators type
         if not isinstance(self.operators, list):
             raise ValueError("operators must be a list")
         if not self.operators:
             raise ValueError("operators list cannot be empty")
 
-        # Validate strategy-specific requirements
+    def _validate_conditional_strategies(self) -> None:
+        """Validate conditions for conditional composition strategies."""
         if self.strategy in [
             CompositionStrategy.CONDITIONAL_SEQUENTIAL,
             CompositionStrategy.CONDITIONAL_PARALLEL,
@@ -185,35 +190,30 @@ class CompositeOperatorConfig(OperatorConfig):
             if len(self.conditions) != len(self.operators):
                 raise ValueError("Number of conditions must match number of operators")
 
-        if self.strategy == CompositionStrategy.WEIGHTED_PARALLEL:
-            if self.weight_key is not None:
-                # Dynamic mode: weights come from data[weight_key] at call time
-                if self.learnable_weights:
-                    raise ValueError("Cannot combine weight_key with learnable_weights")
-                if self.weights is not None:
-                    raise ValueError("Cannot combine weight_key with explicit weights")
-            elif self.weights is None:
-                # Default: equal weights
-                object.__setattr__(
-                    self, "weights", [1.0 / len(self.operators)] * len(self.operators)
-                )
-            elif len(self.weights) != len(self.operators):
-                raise ValueError("Number of weights must match number of operators")
+    def _validate_weighted_parallel_strategy(self) -> None:
+        """Validate weighted-parallel configuration and defaults."""
+        if self.strategy != CompositionStrategy.WEIGHTED_PARALLEL:
+            return
+        if self.weight_key is not None:
+            if self.learnable_weights:
+                raise ValueError("Cannot combine weight_key with learnable_weights")
+            if self.weights is not None:
+                raise ValueError("Cannot combine weight_key with explicit weights")
+            return
+        if self.weights is None:
+            object.__setattr__(self, "weights", [1.0 / len(self.operators)] * len(self.operators))
+            return
+        if len(self.weights) != len(self.operators):
+            raise ValueError("Number of weights must match number of operators")
 
-        if self.strategy == CompositionStrategy.BRANCHING:
-            if self.router is None:
-                raise ValueError("BRANCHING strategy requires router function")
+    def _validate_branching_strategy(self) -> None:
+        """Validate branching strategy requirements."""
+        if self.strategy == CompositionStrategy.BRANCHING and self.router is None:
+            raise ValueError("BRANCHING strategy requires router function")
 
-        # Determine if composite is stochastic (any child stochastic)
-        if isinstance(self.operators, list):
-            child_stochastic = any(getattr(op.config, "stochastic", False) for op in self.operators)
-        else:  # dict
-            child_stochastic = any(
-                getattr(op.config, "stochastic", False) for op in self.operators.values()
-            )
-
-        # Override stochastic based on children
-        object.__setattr__(self, "stochastic", child_stochastic)
+    def _infer_child_stochastic(self) -> bool:
+        """Infer whether any child operator is stochastic."""
+        return any(getattr(op.config, "stochastic", False) for op in self.operators)
 
 
 class CompositeOperatorModule(OperatorModule):

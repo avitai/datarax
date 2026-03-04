@@ -885,7 +885,7 @@ class TestNoiseOperatorStochasticMode:
         batch = Batch(elements=elements)
 
         result_batch = operator.apply_batch(batch)
-        result_images = result_batch.data.value["image"]
+        result_images = result_batch.data.get_value()["image"]
 
         # Each batch element should have different noise
         assert not jnp.allclose(result_images[0], result_images[1])
@@ -972,7 +972,7 @@ class TestNoiseOperatorJAXCompatibility:
         batch = Batch(elements=elements)
 
         result_batch = operator.apply_batch(batch)
-        result_images = result_batch.data.value["image"]
+        result_images = result_batch.data.get_value()["image"]
 
         assert result_images.shape == (8, 32, 32, 3)
 

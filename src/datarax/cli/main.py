@@ -15,6 +15,38 @@ from datarax import __version__
 from datarax.dag import DAGExecutor
 
 
+_CONFIG_LOAD_ERRORS = (OSError, tomllib.TOMLDecodeError)
+_PIPELINE_ERRORS = _CONFIG_LOAD_ERRORS + (KeyError, TypeError, ValueError, RuntimeError)
+
+
+def _load_toml_config(config_path: str) -> dict[str, Any]:
+    """Load TOML configuration from disk."""
+    with Path(config_path).open("rb") as f:
+        return tomllib.load(f)
+
+
+def _coerce_override_value(raw_value: str) -> Any:
+    """Coerce override value into int/float when possible."""
+    for parser in (int, float):
+        try:
+            return parser(raw_value)
+        except ValueError:
+            continue
+    return raw_value
+
+
+def _apply_overrides(config: dict[str, Any], overrides: dict[str, str]) -> None:
+    """Apply dotted-key overrides to a nested config dictionary."""
+    for dotted_key, raw_value in overrides.items():
+        keys = dotted_key.split(".")
+        target = config
+        for key in keys[:-1]:
+            if key not in target or not isinstance(target[key], dict):
+                target[key] = {}
+            target = target[key]
+        target[keys[-1]] = _coerce_override_value(raw_value)
+
+
 def validate_config(config_path: str) -> bool:
     """Validate a pipeline configuration file.
 
@@ -25,8 +57,7 @@ def validate_config(config_path: str) -> bool:
         True if valid, False otherwise.
     """
     try:
-        with Path(config_path).open("rb") as f:
-            config = tomllib.load(f)
+        config = _load_toml_config(config_path)
 
         # Check required sections
         if "pipeline" not in config:
@@ -46,7 +77,7 @@ def validate_config(config_path: str) -> bool:
             return False
 
         return True
-    except Exception as e:
+    except _CONFIG_LOAD_ERRORS as e:
         print(f"Error validating config: {e}", file=sys.stderr)
         return False
 
@@ -62,29 +93,11 @@ def run_pipeline(config_path: str, overrides: dict[str, str] | None = None) -> i
         Exit code (0 for success).
     """
     try:
-        with Path(config_path).open("rb") as f:
-            config = tomllib.load(f)
+        config = _load_toml_config(config_path)
 
         # Apply overrides
         if overrides:
-            for key, value in overrides.items():
-                # Parse nested keys like "pipeline.batch_size"
-                keys = key.split(".")
-                target = config
-                for k in keys[:-1]:
-                    if k not in target:
-                        target[k] = {}
-                    target = target[k]
-
-                # Try to parse value as number
-                try:
-                    if "." in value:
-                        target[keys[-1]] = float(value)
-                    else:
-                        target[keys[-1]] = int(value)
-                except ValueError:
-                    # Keep as string
-                    target[keys[-1]] = value
+            _apply_overrides(config, overrides)
 
         print(f"Loading pipeline: {config['pipeline']['name']}")
 
@@ -107,7 +120,7 @@ def run_pipeline(config_path: str, overrides: dict[str, str] | None = None) -> i
         print("Pipeline execution completed successfully")
         return 0
 
-    except Exception as e:
+    except _PIPELINE_ERRORS as e:
         print(f"Error running pipeline: {e}", file=sys.stderr)
         return 1
 
@@ -123,12 +136,19 @@ def run_benchmark(dataset: str, **kwargs: Any) -> int:
         Exit code.
     """
     try:
-        from datarax.benchmarking import run_benchmark as _run_benchmark
+        from calibrax.cli import main as calibrax_main
 
-        results = _run_benchmark(dataset, **kwargs)
-        print(f"Benchmark results: {results}")
+        data_dir = str(kwargs.get("data", "benchmark-data"))
+        print(
+            "The legacy 'datarax benchmark' command now delegates to calibrax.\n"
+            f"Dataset argument '{dataset}' is ignored; showing summary for store: {data_dir}"
+        )
+        calibrax_main.main(
+            args=["summary", "--data", data_dir],
+            standalone_mode=False,
+        )
         return 0
-    except Exception as e:
+    except (ImportError, RuntimeError, ValueError, TypeError) as e:
         print(f"Error running benchmark: {e}", file=sys.stderr)
         return 1
 
@@ -231,7 +251,7 @@ to = "batch"
         Path(output_path).write_text(template_content)
         print(f"Created pipeline template at {output_path}")
         return True
-    except Exception as e:
+    except OSError as e:
         print(f"Error creating template: {e}", file=sys.stderr)
         return False
 
@@ -249,8 +269,9 @@ def profile_pipeline(config_path: str, num_iterations: int = 100) -> dict[str, f
     import time
 
     try:
-        with Path(config_path).open("rb") as f:
-            config = tomllib.load(f)
+        config = _load_toml_config(config_path)
+        if num_iterations <= 0:
+            raise ValueError("num_iterations must be greater than zero")
 
         if "dag" in config:
             executor = DAGExecutor.from_config(config["dag"])
@@ -282,7 +303,9 @@ def profile_pipeline(config_path: str, num_iterations: int = 100) -> dict[str, f
 
             return metrics
 
-    except Exception as e:
+        return {}
+
+    except _PIPELINE_ERRORS as e:
         print(f"Error profiling pipeline: {e}", file=sys.stderr)
         return {}
 

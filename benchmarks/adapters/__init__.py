@@ -1,6 +1,6 @@
 """Benchmark adapter registry.
 
-Provides a decorator-based registry for BenchmarkAdapter implementations
+Provides a decorator-based registry for PipelineAdapter implementations
 and functions to discover available adapters.
 
 Design ref: Section 7.4 of the benchmark report.
@@ -10,18 +10,18 @@ from __future__ import annotations
 
 import importlib
 
-from benchmarks.adapters.base import BenchmarkAdapter
+from benchmarks.adapters.base import PipelineAdapter
 
-_ADAPTER_REGISTRY: dict[str, type[BenchmarkAdapter]] = {}
+_ADAPTER_REGISTRY: dict[str, type[PipelineAdapter]] = {}
 
 
-def register(cls: type[BenchmarkAdapter]) -> type[BenchmarkAdapter]:
-    """Register a BenchmarkAdapter subclass in the global registry.
+def register(cls: type[PipelineAdapter]) -> type[PipelineAdapter]:
+    """Register a PipelineAdapter subclass in the global registry.
 
     Usage::
 
         @register
-        class MyAdapter(BenchmarkAdapter):
+        class MyAdapter(PipelineAdapter):
             ...
     """
     # Use the adapter's name property to key the registry
@@ -30,7 +30,7 @@ def register(cls: type[BenchmarkAdapter]) -> type[BenchmarkAdapter]:
     return cls
 
 
-def get_available_adapters() -> dict[str, type[BenchmarkAdapter]]:
+def get_available_adapters() -> dict[str, type[PipelineAdapter]]:
     """Return all registered adapters that are currently available."""
     return {
         name: adapter_cls
@@ -39,7 +39,7 @@ def get_available_adapters() -> dict[str, type[BenchmarkAdapter]]:
     }
 
 
-def get_adapters_for_scenario(scenario_id: str) -> dict[str, type[BenchmarkAdapter]]:
+def get_adapters_for_scenario(scenario_id: str) -> dict[str, type[PipelineAdapter]]:
     """Return registered adapters that support a given scenario."""
     return {
         name: adapter_cls

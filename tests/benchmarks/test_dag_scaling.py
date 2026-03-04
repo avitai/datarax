@@ -6,7 +6,7 @@ Uses TimingCollector for measurement (replaces AdvancedProfiler).
 import jax.numpy as jnp
 import pytest
 
-from datarax.benchmarking.timing import TimingCollector
+from calibrax.profiling import TimingCollector
 from datarax.core.element_batch import Batch
 from datarax.dag.dag_executor import DAGExecutor
 from tests.benchmarks.complex_dag_builder import ComplexDAGBuilder
@@ -31,7 +31,7 @@ class TestDAGScaling:
             for _ in range(iterations):
                 yield workload_fn()
 
-        sync_fn = lambda: jnp.array(0.0).block_until_ready()
+        sync_fn = lambda _result: jnp.array(0.0).block_until_ready()
         collector = TimingCollector(sync_fn=sync_fn)
         return collector.measure_iteration(workload_iter(), num_batches=iterations)
 

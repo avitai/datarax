@@ -166,7 +166,7 @@ class DefaultBatcher(BatcherModule):
             try:
                 # Always return JAX arrays for consistency
                 return jnp.stack(leaves)
-            except Exception:
+            except (TypeError, ValueError, RuntimeError):
                 # If stacking fails, fall back to a list
                 return list(leaves)
 

@@ -16,9 +16,9 @@ from datarax.core.nodes import OperatorNode
 from datarax.dag import DAGExecutor
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import MemorySource, MemorySourceConfig
-from datarax.benchmarking.timing import TimingCollector, TimingSample
-from datarax.benchmarking.comparative import BenchmarkComparison
-from datarax.benchmarking.results import BenchmarkResult
+from calibrax.analysis import rank_table
+from calibrax.core import Metric, MetricDef, MetricDirection, Point, Run
+from calibrax.profiling import TimingCollector, TimingSample
 
 
 def _sync_fn():
@@ -122,27 +122,38 @@ def run_comparison_benchmark():
         "advanced": create_advanced_pipeline(batch_size=32),
     }
 
-    comparison = BenchmarkComparison()
+    points: list[Point] = []
     for name, pipeline in configs.items():
         sample = measure_pipeline(pipeline, num_batches=30)
-        result = BenchmarkResult(
-            framework="Datarax",
-            scenario_id="custom",
-            variant=name,
-            timing=sample,
-            resources=None,
-            environment={},
-            config={"batch_size": 32},
+        throughput = (
+            sample.num_elements / sample.wall_clock_sec if sample.wall_clock_sec > 0 else 0.0
         )
-        comparison.add_result(name, result)
+        points.append(
+            Point(
+                name=f"custom/{name}",
+                scenario="custom",
+                tags={"framework": "Datarax", "variant": name},
+                metrics={"throughput": Metric(value=throughput)},
+            )
+        )
 
-    print(f"\n  Best config:  {comparison.best_config}")
-    print(f"  Worst config: {comparison.worst_config}")
-    ratios = comparison.get_performance_ratio()
-    for name, ratio in ratios.items():
-        print(f"  {name}: {ratio:.2f}x relative throughput")
+    run = Run(
+        points=tuple(points),
+        metric_defs={
+            "throughput": MetricDef(
+                name="throughput",
+                unit="elem/s",
+                direction=MetricDirection.HIGHER,
+            )
+        },
+    )
 
-    return comparison
+    rankings = rank_table(run, "throughput", group_by_tag="variant")
+    print("\n  Ranking by throughput:")
+    for row in rankings:
+        print(f"  {row.rank}. {row.label}: {row.value:.2f} elem/s")
+
+    return run
 
 
 def run_batch_size_benchmark():

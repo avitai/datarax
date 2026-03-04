@@ -160,7 +160,7 @@ class SmartCompilation:
             compiled = lowered.compile()
             logging.info(f"AOT compilation successful for {func.__name__}")
             return compiled
-        except Exception as e:
+        except (AttributeError, RuntimeError, TypeError, ValueError) as e:
             logging.warning(f"AOT compilation failed: {e}. Falling back to standard JIT.")
             return jit_func
 
@@ -274,11 +274,9 @@ class DistributedUtils:
             expected *= d
 
         if n_devices < expected:
-            logging.warning(
-                f"Not enough devices for mesh {axis_dims} (Needed {expected}, Has {n_devices}). "
-                "Falling back to CPU mesh."
+            raise ValueError(
+                f"Not enough devices for mesh {axis_dims}: required {expected}, found {n_devices}"
             )
-            # Fallback logic could be better, but for now just warn
 
         mesh_devices = np.array(devices[:expected]).reshape(axis_dims)
         return jax.sharding.Mesh(mesh_devices, axis_names)

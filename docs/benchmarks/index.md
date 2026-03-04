@@ -1,6 +1,6 @@
 # Benchmark Results
 
-Datarax includes a full benchmark suite that measures performance across 25 scenarios alongside 14 data loading frameworks. Results are analyzed with [benchkit](dashboard.md) and published to a W&B dashboard.
+Datarax includes a full benchmark suite that measures performance across 25 scenarios alongside 14 data loading frameworks. Results are analyzed with [calibrax](dashboard.md) and published to a W&B dashboard.
 
 ## Overview
 
@@ -47,7 +47,7 @@ graph LR
 -   [Methodology](methodology.md) -- Timing protocol, warmup strategy, statistical analysis
 -   [Framework Comparison](comparison.md) -- Results with charts and comparative analysis
 -   [Cloud Benchmarking](cloud.md) -- Running benchmarks on Vast.ai, Lambda, GCP via SkyPilot
--   [Dashboard & benchkit](dashboard.md) -- W&B dashboard, regression gates, and the benchkit analysis library
+-   [Dashboard & calibrax](dashboard.md) -- W&B dashboard, regression gates, and the calibrax analysis library
 
 ---
 
@@ -61,11 +61,11 @@ The full workflow: install dependencies, run benchmarks, analyze results, export
 # Core datarax + all benchmark adapters
 uv sync --all-extras
 
-# benchkit (analysis CLI)
-uv pip install -e tools/benchkit
+# calibrax (analysis CLI, installed from GitHub)
+uv pip install "calibrax @ git+https://github.com/avitai/calibrax.git"
 
 # Optional: W&B export support
-uv pip install -e "tools/benchkit[wandb]"
+uv pip install "calibrax[wandb] @ git+https://github.com/avitai/calibrax.git"
 ```
 
 ### 2. Run
@@ -136,7 +136,7 @@ Results are saved to a local `benchmark-data/` directory (not committed to versi
 | `--wandb/--no-wandb` | `--wandb` | Enable/disable W&B export (`datarax-bench` only) |
 | `--charts/--no-charts` | `--charts` | Enable/disable chart generation (`datarax-bench` only) |
 | `--baseline/--no-baseline` | `--baseline` | Set run as baseline for future comparisons (`datarax-bench` only) |
-| `--data` | `benchmark-data` | benchkit store directory path (`datarax-bench` only) |
+| `--data` | `benchmark-data` | calibrax store directory path (`datarax-bench` only) |
 | `--project` | from config | W&B project override (`datarax-bench` only) |
 | `--entity` | from config | W&B entity override (`datarax-bench` only) |
 
@@ -220,27 +220,27 @@ Profiles control warmup batches, measurement batches, and timeouts:
 
 ### 3. Analyze
 
-After running, use benchkit to check for regressions and view a summary:
+After running, use calibrax to check for regressions and view a summary:
 
 ```bash
 # Terminal summary
-benchkit summary --data benchmark-data/
+calibrax summary --data benchmark-data/
 
 # Regression check against baseline (exits non-zero on failure)
-benchkit check --data benchmark-data/ --threshold 0.05
+calibrax check --data benchmark-data/ --threshold 0.05
 
 # Set current run as the baseline for future comparisons
-benchkit baseline --data benchmark-data/ --run latest
+calibrax baseline --data benchmark-data/ --run latest
 ```
 
 ### 4. Export to W&B (optional)
 
 ```bash
 export WANDB_API_KEY="..."
-benchkit export --data benchmark-data/
+calibrax export --data benchmark-data/
 ```
 
-See [Dashboard & benchkit](dashboard.md) for W&B setup details and the full benchkit CLI reference.
+See [Dashboard & calibrax](dashboard.md) for W&B setup details and the full calibrax CLI reference.
 
 ---
 

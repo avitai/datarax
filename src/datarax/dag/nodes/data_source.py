@@ -4,7 +4,8 @@ from __future__ import annotations
 import jax
 
 import flax.nnx as nnx
-from typing import Any, Union
+from flax import errors as flax_errors
+from typing import Any
 from collections.abc import Iterator
 
 from datarax.dag.nodes.base import Node
@@ -53,15 +54,25 @@ class DataSourceNode(Node):
             object.__setattr__(self, "_iterator", iter(self.source))
 
         try:
-            return next(self._iterator)
+            return self._next_element()
         except StopIteration:
             # Try to reset for next epoch
             try:
                 object.__setattr__(self, "_iterator", iter(self.source))
-                return next(self._iterator)
+                return self._next_element()
             except StopIteration:
                 # Source is truly exhausted
                 return None
+
+    def _next_element(self) -> Element:
+        """Get next source element with explicit trace-context limitation handling."""
+        try:
+            return next(self._iterator)
+        except flax_errors.TraceContextError as e:
+            raise RuntimeError(
+                "DataSourceNode is stateful and cannot run inside nnx.jit. "
+                "Run it as the pipeline entry outside compiled transforms."
+            ) from e
 
     def __iter__(self):
         """Iterate over source."""
@@ -231,7 +242,7 @@ class OperatorNode(Node):
 
     def __init__(
         self,
-        operator: Union[OperatorModule, BatcherModule],
+        operator: OperatorModule | BatcherModule,
         name: str | None = None,
     ):
         """Initialize operator node.

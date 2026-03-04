@@ -349,7 +349,7 @@ nav:
       - Methodology: benchmarks/methodology.md
       - Framework Comparison: benchmarks/comparison.md
       - Cloud Benchmarking: benchmarks/cloud.md
-      - Dashboard & benchkit: benchmarks/dashboard.md
+      - Dashboard & CalibraX: benchmarks/dashboard.md
   - Contributing:
       - Guide: contributing/contributing_guide.md
       - Example Documentation Design: contributing/example_documentation_design.md

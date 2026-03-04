@@ -410,16 +410,164 @@ def evaluate(model: nnx.Module, test_stream: DAGExecutor, max_steps: int = 5) ->
     }
 
 
+def _require_tfds_dependency() -> None:
+    """Skip the test when TFDS is unavailable."""
+    try:
+        import tensorflow_datasets as tfds  # noqa: F401
+    except ImportError:
+        pytest.skip("tensorflow_datasets not installed")
+
+
+def _create_train_eval_steps() -> tuple[Any, Any]:
+    """Create jitted train/eval steps for checkpoint integration test."""
+
+    @nnx.jit
+    def train_step(
+        model: nnx.Module,
+        optimizer: nnx.Optimizer,
+        metrics: nnx.MultiMetric,
+        images: jax.Array,
+        labels: jax.Array,
+    ) -> None:
+        """Train for a single step."""
+
+        def loss_fn(
+            model: nnx.Module, images: jax.Array, labels: jax.Array
+        ) -> tuple[jax.Array, jax.Array]:
+            logits = model(images)
+            loss = optax.softmax_cross_entropy_with_integer_labels(
+                logits=logits, labels=labels
+            ).mean()
+            return loss, logits
+
+        grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)
+        (loss, logits), grads = grad_fn(model, images, labels)
+        metrics.update(loss=loss, logits=logits, labels=labels)
+        optimizer.update(model, grads)
+
+    @nnx.jit
+    def eval_step(
+        model: nnx.Module, metrics: nnx.MultiMetric, images: jax.Array, labels: jax.Array
+    ) -> None:
+        """Evaluate for a single step."""
+        logits = model(images)
+        loss = optax.softmax_cross_entropy_with_integer_labels(logits=logits, labels=labels).mean()
+        metrics.update(loss=loss, logits=logits, labels=labels)
+
+    return train_step, eval_step
+
+
+def _save_step_checkpoint(
+    checkpoint_handler: OrbaxCheckpointHandler,
+    checkpoint_dir: Path,
+    step: int,
+    model: nnx.Module,
+    optimizer: nnx.Optimizer,
+    metrics: nnx.MultiMetric,
+) -> None:
+    """Save model, optimizer, and metric state at a specific step."""
+    _, model_state = nnx.split(model)
+    _, optimizer_state = nnx.split(optimizer)
+    _, metrics_state = nnx.split(metrics)
+    checkpoint_handler.save(
+        directory=os.path.join(checkpoint_dir, f"model_step_{step}"),
+        target=model_state,
+    )
+    checkpoint_handler.save(
+        directory=os.path.join(checkpoint_dir, f"optimizer_step_{step}"),
+        target=optimizer_state,
+    )
+    checkpoint_handler.save(
+        directory=os.path.join(checkpoint_dir, f"metrics_step_{step}"),
+        target=metrics_state,
+    )
+
+
+def _run_training_loop(
+    train_stream: DAGExecutor,
+    train_step: Any,
+    model: nnx.Module,
+    optimizer: nnx.Optimizer,
+    metrics: nnx.MultiMetric,
+    *,
+    step_start: int,
+    max_steps: int,
+    checkpoint_every: int,
+    checkpoint_handler: OrbaxCheckpointHandler,
+    checkpoint_dir: Path,
+    data_checkpoint: PipelineCheckpoint | None = None,
+) -> int:
+    """Run bounded training loop with periodic checkpoint saves."""
+    step = step_start
+    for batch_idx, batch in enumerate(train_stream):
+        images = jnp.array(batch["image"])
+        labels = jnp.array(batch["label"])
+        train_step(model, optimizer, metrics, images, labels)
+        step += 1
+
+        if step % checkpoint_every == 0:
+            print(f"Saving checkpoint at step {step}")
+            _save_step_checkpoint(
+                checkpoint_handler, checkpoint_dir, step, model, optimizer, metrics
+            )
+            if data_checkpoint is not None:
+                data_checkpoint.save(train_stream, step=step, overwrite=True)
+
+        if batch_idx + 1 >= max_steps:
+            break
+    return step
+
+
+def _evaluate_loop(
+    stream: DAGExecutor, eval_step: Any, model: nnx.Module, metrics: nnx.MultiMetric
+) -> dict[str, float]:
+    """Evaluate model across stream and return metric summary."""
+    for batch in stream:
+        images = jnp.array(batch["image"])
+        labels = jnp.array(batch["label"])
+        eval_step(model, metrics, images, labels)
+    computed = metrics.compute()
+    metrics.reset()
+    return computed
+
+
+def _restore_from_checkpoint(
+    checkpoint_handler: OrbaxCheckpointHandler,
+    checkpoint_dir: Path,
+    step: int,
+    model: nnx.Module,
+    optimizer: nnx.Optimizer,
+    metrics: nnx.MultiMetric,
+) -> tuple[Any, Any, Any]:
+    """Restore model/optimizer/metrics from step checkpoint."""
+    model_graphdef, model_abstract_state = nnx.split(model)
+    optimizer_graphdef, optimizer_abstract_state = nnx.split(optimizer)
+    metrics_graphdef, metrics_abstract_state = nnx.split(metrics)
+
+    restored_model_state = checkpoint_handler.restore(
+        directory=os.path.join(checkpoint_dir, f"model_step_{step}"),
+        target=model_abstract_state,
+    )
+    restored_optimizer_state = checkpoint_handler.restore(
+        directory=os.path.join(checkpoint_dir, f"optimizer_step_{step}"),
+        target=optimizer_abstract_state,
+    )
+    restored_metrics_state = checkpoint_handler.restore(
+        directory=os.path.join(checkpoint_dir, f"metrics_step_{step}"),
+        target=metrics_abstract_state,
+    )
+    return (
+        nnx.merge(model_graphdef, restored_model_state),
+        nnx.merge(optimizer_graphdef, restored_optimizer_state),
+        nnx.merge(metrics_graphdef, restored_metrics_state),
+    )
+
+
 @pytest.mark.integration
 @pytest.mark.filterwarnings("ignore:Sharding info not provided when restoring")
 def test_training_with_checkpointing():
     """End-to-end test of training with checkpointing and resumption."""
-
-    # Skip if tensorflow_datasets not installed
-    try:
-        import tensorflow_datasets as tfds  # noqa
-    except ImportError:
-        pytest.skip("tensorflow_datasets not installed")
+    _require_tfds_dependency()
 
     # Parameters
     batch_size = 32
@@ -456,80 +604,24 @@ def test_training_with_checkpointing():
         # Save initial data stream state with step=0
         data_checkpoint.save(train_stream, step=0, overwrite=True)
 
-        # Define train and eval steps (following Flax tutorial pattern)
-        @nnx.jit
-        def train_step(
-            model: nnx.Module,
-            optimizer: nnx.Optimizer,
-            metrics: nnx.MultiMetric,
-            images: jax.Array,
-            labels: jax.Array,
-        ) -> None:
-            """Train for a single step."""
-
-            def loss_fn(
-                model: nnx.Module, images: jax.Array, labels: jax.Array
-            ) -> tuple[jax.Array, jax.Array]:
-                logits = model(images)
-                loss = optax.softmax_cross_entropy_with_integer_labels(
-                    logits=logits, labels=labels
-                ).mean()
-                return loss, logits
-
-            grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)
-            (loss, logits), grads = grad_fn(model, images, labels)
-            metrics.update(loss=loss, logits=logits, labels=labels)
-            optimizer.update(model, grads)
-
-        @nnx.jit
-        def eval_step(
-            model: nnx.Module, metrics: nnx.MultiMetric, images: jax.Array, labels: jax.Array
-        ) -> None:
-            """Evaluate for a single step."""
-            logits = model(images)
-            loss = optax.softmax_cross_entropy_with_integer_labels(
-                logits=logits, labels=labels
-            ).mean()
-            metrics.update(loss=loss, logits=logits, labels=labels)
+        train_step, eval_step = _create_train_eval_steps()
 
         # First training phase
         step = 0
         for epoch in range(num_epochs):
-            # Training loop
-            for batch_idx, batch in enumerate(train_stream):
-                # Convert batch data to JAX arrays
-                images = jnp.array(batch["image"])
-                labels = jnp.array(batch["label"])
-                # Train step
-                train_step(model, optimizer, metrics, images, labels)
-                step += 1
-
-                # Checkpoint periodically
-                if step % checkpoint_every == 0:
-                    print(f"Saving checkpoint at step {step}")
-                    # Split NNX objects to get their state for checkpointing
-                    _, model_state = nnx.split(model)
-                    _, optimizer_state = nnx.split(optimizer)
-                    _, metrics_state = nnx.split(metrics)
-
-                    checkpoint_handler.save(
-                        directory=os.path.join(checkpoint_dir, f"model_step_{step}"),
-                        target=model_state,
-                    )
-                    checkpoint_handler.save(
-                        directory=os.path.join(checkpoint_dir, f"optimizer_step_{step}"),
-                        target=optimizer_state,
-                    )
-                    checkpoint_handler.save(
-                        directory=os.path.join(checkpoint_dir, f"metrics_step_{step}"),
-                        target=metrics_state,
-                    )
-                    # Save data checkpoint with step-specific path
-                    data_checkpoint.save(train_stream, step=step, overwrite=True)
-
-                # Limit steps per epoch for testing
-                if batch_idx + 1 >= max_steps_per_epoch:
-                    break
+            step = _run_training_loop(
+                train_stream,
+                train_step,
+                model,
+                optimizer,
+                metrics,
+                step_start=step,
+                max_steps=max_steps_per_epoch,
+                checkpoint_every=checkpoint_every,
+                checkpoint_handler=checkpoint_handler,
+                checkpoint_dir=checkpoint_dir,
+                data_checkpoint=data_checkpoint,
+            )
 
             # Print metrics at the end of epoch
             epoch_metrics = metrics.compute()
@@ -539,20 +631,12 @@ def test_training_with_checkpointing():
             )
             metrics.reset()
 
-            # Final checkpoint is already saved via the step-based checkpointing above
-
         # Evaluate after version 1.0
-        for batch in test_stream:
-            images = jnp.array(batch["image"])
-            labels = jnp.array(batch["label"])
-            eval_step(model, metrics, images, labels)
-
-        phase1_metrics = metrics.compute()
+        phase1_metrics = _evaluate_loop(test_stream, eval_step, model, metrics)
         print(
             f"Version 1.0 Evaluation: Loss = {phase1_metrics['loss']:.4f}, "
             f"Accuracy = {phase1_metrics['accuracy']:.4f}"
         )
-        metrics.reset()
 
         # Create new model, optimizer and metrics to simulate restarting training
         new_model = SimpleConvNet(num_classes=10, rngs=rngs)
@@ -564,69 +648,33 @@ def test_training_with_checkpointing():
 
         # Load checkpoints
         print("Loading checkpoint and resuming training...")
-        # Create abstract states for restoration
-        model_graphdef, model_abstract_state = nnx.split(new_model)
-        optimizer_graphdef, optimizer_abstract_state = nnx.split(new_optimizer)
-        metrics_graphdef, metrics_abstract_state = nnx.split(new_metrics)
-
-        # Restore the states from the latest checkpoint
-        # Find the latest step that was saved
         latest_step = step  # Use the current step as the latest
-        restored_model_state = checkpoint_handler.restore(
-            directory=os.path.join(checkpoint_dir, f"model_step_{latest_step}"),
-            target=model_abstract_state,
+        restored_model, restored_optimizer, restored_metrics = _restore_from_checkpoint(
+            checkpoint_handler,
+            checkpoint_dir,
+            latest_step,
+            new_model,
+            new_optimizer,
+            new_metrics,
         )
-        restored_optimizer_state = checkpoint_handler.restore(
-            directory=os.path.join(checkpoint_dir, f"optimizer_step_{latest_step}"),
-            target=optimizer_abstract_state,
-        )
-        restored_metrics_state = checkpoint_handler.restore(
-            directory=os.path.join(checkpoint_dir, f"metrics_step_{latest_step}"),
-            target=metrics_abstract_state,
-        )
-
-        # Merge back to get the restored objects
-        restored_model = nnx.merge(model_graphdef, restored_model_state)
-        restored_optimizer = nnx.merge(optimizer_graphdef, restored_optimizer_state)
-        restored_metrics = nnx.merge(metrics_graphdef, restored_metrics_state)
 
         # Create new data stream (don't restore state as it causes structure mismatch)
         new_train_stream, new_test_stream = setup_data_pipeline(batch_size)
         # Note: Skipping data stream restoration as the pipeline structure may have changed
 
         # Continue training for one more epoch
-        for batch_idx, batch in enumerate(new_train_stream):
-            # Convert batch data to JAX arrays
-            images = jnp.array(batch["image"])
-            labels = jnp.array(batch["label"])
-            # Train step
-            train_step(restored_model, restored_optimizer, restored_metrics, images, labels)
-            step += 1
-
-            # Checkpoint periodically
-            if step % checkpoint_every == 0:
-                print(f"Saving checkpoint at step {step}")
-                # Split NNX objects to get their state for checkpointing
-                _, restored_model_state = nnx.split(restored_model)
-                _, restored_optimizer_state = nnx.split(restored_optimizer)
-                _, restored_metrics_state = nnx.split(restored_metrics)
-
-                checkpoint_handler.save(
-                    directory=os.path.join(checkpoint_dir, f"model_step_{step}"),
-                    target=restored_model_state,
-                )
-                checkpoint_handler.save(
-                    directory=os.path.join(checkpoint_dir, f"optimizer_step_{step}"),
-                    target=restored_optimizer_state,
-                )
-                checkpoint_handler.save(
-                    directory=os.path.join(checkpoint_dir, f"metrics_step_{step}"),
-                    target=restored_metrics_state,
-                )
-
-            # Limit steps for testing
-            if batch_idx + 1 >= max_steps_per_epoch:
-                break
+        step = _run_training_loop(
+            new_train_stream,
+            train_step,
+            restored_model,
+            restored_optimizer,
+            restored_metrics,
+            step_start=step,
+            max_steps=max_steps_per_epoch,
+            checkpoint_every=checkpoint_every,
+            checkpoint_handler=checkpoint_handler,
+            checkpoint_dir=checkpoint_dir,
+        )
 
         # Print metrics for the additional epoch
         continuation_metrics = restored_metrics.compute()
@@ -637,12 +685,7 @@ def test_training_with_checkpointing():
         restored_metrics.reset()
 
         # Final evaluation
-        for batch in new_test_stream:
-            images = jnp.array(batch["image"])
-            labels = jnp.array(batch["label"])
-            eval_step(restored_model, restored_metrics, images, labels)
-
-        final_metrics = restored_metrics.compute()
+        final_metrics = _evaluate_loop(new_test_stream, eval_step, restored_model, restored_metrics)
         print(
             f"Final Evaluation: Loss = {final_metrics['loss']:.4f}, "
             f"Accuracy = {final_metrics['accuracy']:.4f}"

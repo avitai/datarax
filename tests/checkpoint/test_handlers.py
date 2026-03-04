@@ -5,6 +5,8 @@ import shutil
 import tempfile
 import unittest
 import warnings
+from pathlib import Path
+from unittest import mock
 
 import flax.nnx as nnx
 import jax
@@ -229,7 +231,7 @@ class TestOrbaxCheckpointHandler(unittest.TestCase):
 
             # Check that it's step 2 (the latest)
             self.assertEqual(restored_latest["value"], 2)
-        except Exception as e:
+        except (ValueError, RuntimeError, TypeError, OSError) as e:
             # Skip the test if we have orbax compatibility issues
             if "structure" in str(e).lower() or "sharding" in str(e).lower():
                 self.skipTest(
@@ -237,6 +239,45 @@ class TestOrbaxCheckpointHandler(unittest.TestCase):
                 )
             else:
                 raise
+
+    def test_step_save_disables_async_when_handler_is_sync(self):
+        """Step checkpoints should be synchronous when handler async mode is disabled."""
+        handler = OrbaxCheckpointHandler(async_checkpointing=False)
+        with (
+            mock.patch.object(handler.checkpointer, "save") as save_mock,
+            mock.patch.object(handler.checkpointer, "wait_until_finished") as wait_mock,
+        ):
+            handler.save(self.temp_dir, {"value": 1}, step=1)
+        save_mock.assert_called_once()
+        wait_mock.assert_called_once()
+
+    def test_restore_preprocesses_target_tree_before_orbax_restore(self):
+        """Restore target should use the same preprocessing rules as save."""
+        checkpoint_path = Path(self.temp_dir) / "checkpoint"
+        checkpoint_path.mkdir(parents=True, exist_ok=True)
+        target = SimpleCheckpointable("initial")
+
+        with (
+            mock.patch.object(self.handler, "_find_checkpoint_path", return_value=checkpoint_path),
+            mock.patch.object(
+                self.handler,
+                "_orbax_restore",
+                return_value={
+                    "value": {
+                        "__string__": True,
+                        "char_codes": [ord(c) for c in "restored"],
+                    },
+                    "step": 7,
+                },
+            ) as restore_mock,
+        ):
+            restored = self.handler.restore(self.temp_dir, target)
+
+        restore_item = restore_mock.call_args.kwargs["item"]
+        self.assertIsInstance(restore_item["value"], dict)
+        self.assertTrue(restore_item["value"]["__string__"])
+        self.assertEqual(restored._value, "restored")
+        self.assertEqual(restored._step, 7)
 
 
 class SampleDataraxModule(DataraxModule):

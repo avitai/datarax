@@ -220,52 +220,67 @@ class RooflineAnalyzer:
         self, arithmetic_intensity: float, efficiency: float, args: tuple
     ) -> list[str]:
         """Generate optimization recommendations."""
-        recommendations = []
+        recommendations: list[str] = []
+        self._append_intensity_recommendation(recommendations, arithmetic_intensity)
+        self._append_efficiency_recommendation(recommendations, efficiency)
+        self._append_batch_size_recommendation(recommendations, args)
+        self._append_tile_alignment_recommendation(recommendations, args)
+        if recommendations:
+            return recommendations
+        return ["Operation is well-optimized for this hardware."]
 
-        # Check arithmetic intensity
-        if arithmetic_intensity < self.hw_specs.critical_intensity:
-            recommendations.append(
-                f"Memory-bound operation (intensity: {arithmetic_intensity:.1f} < "
-                f"{self.hw_specs.critical_intensity}). Increase batch size or fuse operations."
-            )
+    def _append_intensity_recommendation(
+        self, recommendations: list[str], arithmetic_intensity: float
+    ) -> None:
+        """Append recommendation for memory-bound operations."""
+        if arithmetic_intensity >= self.hw_specs.critical_intensity:
+            return
+        recommendations.append(
+            f"Memory-bound operation (intensity: {arithmetic_intensity:.1f} < "
+            f"{self.hw_specs.critical_intensity}). Increase batch size or fuse operations."
+        )
 
-        # Check efficiency
-        if efficiency < 0.7:
-            recommendations.append(
-                f"Low efficiency ({efficiency:.2f}). Check for shape misalignments "
-                f"or suboptimal compilation."
-            )
+    def _append_efficiency_recommendation(
+        self, recommendations: list[str], efficiency: float
+    ) -> None:
+        """Append recommendation for low utilization."""
+        if efficiency >= 0.7:
+            return
+        recommendations.append(
+            f"Low efficiency ({efficiency:.2f}). Check for shape misalignments "
+            f"or suboptimal compilation."
+        )
 
-        # Check batch sizes
+    def _append_batch_size_recommendation(self, recommendations: list[str], args: tuple) -> None:
+        """Append recommendation when the effective batch size is too small."""
         for arg in args:
-            if hasattr(arg, "shape") and len(arg.shape) > 0:
-                batch_size = arg.shape[0]
-                if batch_size < self.hw_specs.optimal_batch_size:
+            if not hasattr(arg, "shape") or len(arg.shape) == 0:
+                continue
+            batch_size = arg.shape[0]
+            if batch_size < self.hw_specs.optimal_batch_size:
+                recommendations.append(
+                    f"Small batch size ({batch_size} < "
+                    f"{self.hw_specs.optimal_batch_size}). Increase for better utilization."
+                )
+                return
+
+    def _append_tile_alignment_recommendation(
+        self, recommendations: list[str], args: tuple
+    ) -> None:
+        """Append recommendation for misaligned tensor dimensions."""
+        tile_size = self.hw_specs.preferred_tile_size
+        if tile_size is None:
+            return
+        for arg in args:
+            if not hasattr(arg, "shape"):
+                continue
+            for dim in arg.shape:
+                if dim % tile_size != 0:
                     recommendations.append(
-                        f"Small batch size ({batch_size} < "
-                        f"{self.hw_specs.optimal_batch_size}). Increase for better utilization."
+                        f"Shape dimension {dim} not aligned to {tile_size}. "
+                        "Consider padding for better performance."
                     )
-                    break
-
-        # Check shape alignment
-        for arg in args:
-            if hasattr(arg, "shape"):
-                for dim in arg.shape:
-                    if (
-                        self.hw_specs.preferred_tile_size
-                        and dim % self.hw_specs.preferred_tile_size != 0
-                    ):
-                        recommendations.append(
-                            f"Shape dimension {dim} not aligned to "
-                            f"{self.hw_specs.preferred_tile_size}. "
-                            f"Consider padding for better performance."
-                        )
-                        break
-
-        if not recommendations:
-            recommendations.append("Operation is well-optimized for this hardware.")
-
-        return recommendations
+                    return
 
     def find_optimal_batch_size(
         self, sample_input: jax.Array, target_hardware: str | None = None

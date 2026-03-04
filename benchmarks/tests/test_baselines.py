@@ -7,8 +7,9 @@ Design ref: Sections 9.1, 9.2 of the benchmark report.
 from pathlib import Path
 
 from benchmarks.core.baselines import BaselineStore
-from datarax.benchmarking.results import BenchmarkResult
-from datarax.benchmarking.timing import TimingSample
+from benchmarks.core.result_model import build_benchmark_result
+from calibrax.core import BenchmarkResult
+from calibrax.profiling import TimingSample
 
 
 def _make_result(
@@ -20,13 +21,13 @@ def _make_result(
     """Create a BenchmarkResult for testing."""
     if per_batch_time is None:
         per_batch_time = wall_clock_sec / num_batches
-    return BenchmarkResult(
+    return build_benchmark_result(
         framework="Datarax",
         scenario_id="CV-1",
         variant="small",
         timing=TimingSample(
             wall_clock_sec=wall_clock_sec,
-            per_batch_times=[per_batch_time] * num_batches,
+            per_batch_times=tuple([per_batch_time] * num_batches),
             first_batch_time=per_batch_time * 2,
             num_batches=num_batches,
             num_elements=num_elements,
@@ -72,8 +73,8 @@ class TestBaselineStoreSaveLoad:
 
         loaded = store.load("test_baseline")
         assert loaded is not None
-        assert loaded["framework"] == "Datarax"
-        assert loaded["scenario_id"] == "CV-1"
+        assert loaded["tags"]["framework"] == "Datarax"
+        assert loaded["tags"]["scenario_id"] == "CV-1"
 
     def test_load_nonexistent_returns_none(self, tmp_path: Path):
         """Test loading a nonexistent baseline returns None."""
@@ -194,13 +195,13 @@ class TestBaselineStoreDualGate:
             mean_batch_time + rng.uniform(-jitter, jitter) for _ in range(num_batches)
         ]
         wall_clock_sec = sum(per_batch_times)
-        return BenchmarkResult(
+        return build_benchmark_result(
             framework="Datarax",
             scenario_id="CV-1",
             variant="small",
             timing=TimingSample(
                 wall_clock_sec=wall_clock_sec,
-                per_batch_times=per_batch_times,
+                per_batch_times=tuple(per_batch_times),
                 first_batch_time=per_batch_times[0] * 2,
                 num_batches=num_batches,
                 num_elements=num_elements,

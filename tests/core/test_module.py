@@ -294,7 +294,8 @@ class TestEnhancedDataraxModule:
 
         # Test state restoration
         new_config = DataraxModuleConfig(cacheable=True)
-        new_module = DataraxModule(new_config)
+        # State restoration is strict: target must have compatible RNG structure.
+        new_module = DataraxModule(new_config, rngs=nnx.Rngs(0))
         new_module.set_state(state)
 
     def test_module_without_caching(self, rngs):

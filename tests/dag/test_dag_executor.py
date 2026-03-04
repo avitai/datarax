@@ -1294,7 +1294,7 @@ class TestDAGExecutorErrorHandling:
                 super().__init__(config, name="reshape1")
 
             def apply(self, data, state, metadata, random_params=None, stats=None):
-                result = data.reshape(-1)  # Flatten
+                result = {"_array": data["_array"].reshape(-1)}  # Flatten to 1D
                 return result, state, metadata
 
         class ReshapeOperator2(OperatorModule):
@@ -1308,7 +1308,7 @@ class TestDAGExecutorErrorHandling:
         executor.parallel([OperatorNode(ReshapeOperator1()), OperatorNode(ReshapeOperator2())])
         executor.merge("concat")  # This should fail due to shape mismatch
 
-        with pytest.raises(Exception):  # JAX will raise an error for incompatible shapes
+        with pytest.raises((TypeError, ValueError)):  # JAX error for incompatible shapes
             executor(sample_data)
 
 
@@ -1717,8 +1717,8 @@ class TestDAGExecutorExecutionExtended:
         # Disable batch enforcement for direct execution tests
         executor = DAGExecutor(enforce_batch=False)
         # Condition must access Batch data: x.data.get_value()["_array"].shape[0]
-        condition = (
-            lambda x: x.data.get_value()["_array"].shape[0] > 10
+        condition = lambda x: (
+            x.data.get_value()["_array"].shape[0] > 10
         )  # False for our sample data
         true_path = MockOperator(multiplier=2.0, name="true")
         false_path = MockOperator(multiplier=0.5, name="false")

@@ -18,7 +18,7 @@ The detector is **direction-aware**: throughput decreases are regressions, but l
 ## Quick Start
 
 ```python
-from datarax.benchmarking import RegressionDetector, BenchmarkResult
+from calibrax import RegressionDetector, BenchmarkResult
 
 detector = RegressionDetector(baseline_dir="baselines/")
 
@@ -39,4 +39,4 @@ for regression in report.regressions:
 
 ---
 
-::: datarax.benchmarking.regression
+::: calibrax.regression

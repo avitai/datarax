@@ -1,11 +1,11 @@
 """Root conftest: adds --all-suites flag to run all test directories.
 
 By default, pytest only runs tests/ (configured in pyproject.toml testpaths).
-Use --all-suites to also collect benchmarks/tests/ and tools/benchkit/tests/.
+Use --all-suites to also collect benchmarks/tests/.
 
 Usage:
     uv run pytest                    # core tests only (tests/)
-    uv run pytest --all-suites       # all test suites
+    uv run pytest --all-suites       # tests/ + benchmarks/tests/
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ def pytest_addoption(parser):
         "--all-suites",
         action="store_true",
         default=False,
-        help="Run all test suites: tests/, benchmarks/tests/, tools/benchkit/tests/",
+        help="Run all test suites: tests/, benchmarks/tests/",
     )
 
 
@@ -29,7 +29,6 @@ def pytest_configure(config):
     root = Path(config.rootpath)
     extra_dirs = [
         root / "benchmarks" / "tests",
-        root / "tools" / "benchkit" / "tests",
     ]
 
     for d in extra_dirs:

@@ -1,4 +1,4 @@
-"""BenchmarkAdapter abstract base class and supporting dataclasses.
+"""PipelineAdapter abstract base class and supporting dataclasses.
 
 Defines the framework-agnostic interface for benchmarking any data loading
 framework. Each adapter wraps a specific library (Datarax, Grain, PyTorch
@@ -6,8 +6,8 @@ DataLoader, etc.) and exposes a uniform setup -> warmup -> iterate -> teardown
 lifecycle.
 
 The ``iterate()`` and ``warmup()`` methods use the Template Method pattern:
-subclasses implement ``_iterate_batches()`` and ``_materialize_batch()``
-to plug in framework-specific behavior, while the base class handles timing
+subclasses implement ``_iterate_batches()`` and ``_materialize_batch()`` to
+plug in framework-specific behavior, while the base class handles timing
 bookkeeping and ``IterationResult`` construction.
 
 Design ref: Section 7.1 of the benchmark report.
@@ -20,6 +20,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
+
+from calibrax.core import BenchmarkAdapter as CalibraxBenchmarkAdapter
 
 
 @dataclass
@@ -70,7 +72,7 @@ class IterationResult:
     extra_metrics: dict[str, float] = field(default_factory=dict)
 
 
-class BenchmarkAdapter(ABC):
+class PipelineAdapter(CalibraxBenchmarkAdapter, ABC):
     """Abstract adapter for benchmarking any data loading framework.
 
     Subclasses wrap a specific framework and expose a uniform lifecycle:
@@ -116,6 +118,10 @@ class BenchmarkAdapter(ABC):
     def teardown(self) -> None:
         """Release resources (close dataset handles, free GPU memory)."""
         ...
+
+    def __init__(self) -> None:
+        """Initialize the underlying calibrax adapter base."""
+        super().__init__(target={"name": "pipeline"})
 
     def supports_scenario(self, scenario_id: str) -> bool:
         """Check whether this adapter supports a given scenario."""

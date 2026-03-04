@@ -884,7 +884,7 @@ def extract_test_name(file_path: Path, line_number: int) -> str:
                 if match:
                     return match.group(1)
 
-    except Exception as e:
+    except (OSError, SyntaxError, UnicodeDecodeError, ValueError) as e:
         logger.debug(f"Failed to extract test name from {file_path}:{line_number}: {e}")
 
     return "unknown"
@@ -1262,7 +1262,7 @@ def get_github_url(test_location: str) -> str:
                 line_num = f"L{parts[1]}"
 
             return f"https://github.com/{owner_repo}/blob/{branch}/{file_path}#{line_num}"
-    except Exception:
+    except (subprocess.CalledProcessError, IndexError, OSError):
         pass
 
     return "#"

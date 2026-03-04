@@ -2,7 +2,7 @@
 
 import functools
 import time
-from typing import Any, TypeVar, Union
+from typing import Any, TypeVar
 from collections.abc import Callable
 
 import flax.nnx as nnx
@@ -84,7 +84,7 @@ def assert_batch_contains_keys(batch: dict[str, Any], keys: list[str]) -> None:
 
 
 def assert_batch_shape(
-    batch: dict[str, Any], key: str, expected_shape: Union[tuple[int, ...], list[int]]
+    batch: dict[str, Any], key: str, expected_shape: tuple[int, ...] | list[int]
 ) -> None:
     """Assert that a batch key has the expected shape.
 

@@ -3,6 +3,7 @@
 import abc
 from typing import Any
 from collections.abc import Callable
+import jax
 
 from jaxtyping import PyTree
 from dataclasses import dataclass
@@ -25,6 +26,51 @@ class StrategyContext:
 class CompositionStrategyImpl(abc.ABC):
     """Abstract base class for composition strategies."""
 
+    @staticmethod
+    def _extract_operator_random_params(
+        random_params: dict[str, Any] | None, operator_index: int
+    ) -> Any | None:
+        """Extract random params payload for one operator index."""
+        if random_params is None:
+            return None
+        return random_params.get(f"operator_{operator_index}")
+
+    @staticmethod
+    def _apply_operator_conditionally(
+        operator: OperatorModule,
+        should_apply: bool | jax.Array,
+        data: PyTree,
+        state: PyTree,
+        metadata: dict[str, Any],
+        random_params: Any | None,
+    ) -> tuple[PyTree, PyTree, dict[str, Any]]:
+        """Apply operator with JAX control flow (cond) for trace compatibility."""
+
+        def apply_fn(operands: tuple[PyTree, PyTree, dict[str, Any], Any | None]):
+            d, s, m, rp = operands
+            return operator.apply(d, s, m, rp)
+
+        def noop_fn(operands: tuple[PyTree, PyTree, dict[str, Any], Any | None]):
+            d, s, m, _ = operands
+            return d, s, m
+
+        return jax.lax.cond(
+            should_apply,
+            apply_fn,
+            noop_fn,
+            (data, state, metadata, random_params),
+        )
+
+    @staticmethod
+    def _emit_operator_statistics(
+        operator: OperatorModule,
+        operator_index: int,
+        stats_callback: Callable[[int, dict[str, Any]], None] | None,
+    ) -> None:
+        """Send operator statistics to callback when available."""
+        if stats_callback and hasattr(operator, "statistics") and operator.statistics:
+            stats_callback(operator_index, operator.statistics)
+
     def _execute_operators(
         self,
         operators: list[OperatorModule],
@@ -41,17 +87,14 @@ class CompositionStrategyImpl(abc.ABC):
         """
         outputs, states, metadatas = [], [], []
         for i, operator in enumerate(operators):
-            op_random_params = None
-            if context.random_params and f"operator_{i}" in context.random_params:
-                op_random_params = context.random_params[f"operator_{i}"]
+            op_random_params = self._extract_operator_random_params(context.random_params, i)
             out_data, out_state, out_metadata = operator.apply(
                 context.data, context.state, context.metadata, op_random_params
             )
             outputs.append(out_data)
             states.append(out_state)
             metadatas.append(out_metadata)
-            if context.stats_callback and hasattr(operator, "statistics") and operator.statistics:
-                context.stats_callback(i, operator.statistics)
+            self._emit_operator_statistics(operator, i, context.stats_callback)
         return outputs, states, metadatas
 
     @abc.abstractmethod

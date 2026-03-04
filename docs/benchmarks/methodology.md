@@ -49,8 +49,8 @@ Each scenario runs multiple repetitions. The **median** result is selected to re
 Statistical analysis uses:
 
 1.  **Coefficient of Variation (CV)**: Measurement stability check — CV < 10% required for publishable results
-2.  **Bootstrap CI**: 95% confidence intervals via 1000 bootstrap resamples (`benchkit.bootstrap_ci`)
-3.  **Threshold-based regression detection**: Direction-aware comparison against baseline (`benchkit.detect_regressions`). Default threshold is 5% — see [Dashboard & benchkit](dashboard.md#regression-detection) for details
+2.  **Bootstrap CI**: 95% confidence intervals via 1000 bootstrap resamples (`calibrax.bootstrap_ci`)
+3.  **Threshold-based regression detection**: Direction-aware comparison against baseline (`calibrax.detect_regressions`). Default threshold is 5% — see [Dashboard & calibrax](dashboard.md#regression-detection) for details
 4.  **Modified Z-score**: Outlier detection using MAD-based robust statistics
 
 ---

@@ -43,9 +43,9 @@ repos:
       - id: ruff # linter with automatic fixes including whitespace and unused variables
         args: [--fix, --unsafe-fixes]
         exclude: ^(documents|custom_modes|notebooks|example_data)/
-        types_or: [python, pyi, jupyter, toml]
+        types_or: [python, pyi, jupyter]
       - id: ruff-format # formatter
-        types_or: [python, pyi, jupyter, toml]
+        types_or: [python, pyi, jupyter]
         exclude: ^(documents|custom_modes|notebooks|example_data)/
 
   # GitHub Actions simulation - exact mirror of CI checks
@@ -53,14 +53,23 @@ repos:
     hooks:
       - id: ruff-docstring-whitespace
         name: ruff-docstring-whitespace (auto-fix whitespace)
-        entry: ruff check --select=W291,W292,W293,F841 --fix --unsafe-fixes
+        entry: uv run --no-sync ruff check --select=W291,W292,W293,F841 --fix --unsafe-fixes
         language: system
         types: [python]
         exclude: ^(documents|custom_modes|notebooks|example_data)/
         pass_filenames: true
+      - id: ruff-best-practices-check
+        name: ruff-best-practices-check (SWE policy)
+        entry: uv run --no-sync ruff check --select=BLE001,B006,E722,T201,PTH,C901,S105,S106,S608
+        language: system
+        files: ^src/
+        types: [python]
+        # print() is allowed in CLI user-facing commands.
+        exclude: ^(documents|custom_modes|notebooks|example_data)/|^src/datarax/cli/
+        pass_filenames: true
       - id: ruff-github-actions-check
         name: ruff-github-actions-check (mirrors CI)
-        entry: uv run ruff check --output-format=github
+        entry: uv run --no-sync ruff check --output-format=github
         language: system
         types: [python]
         exclude: ^(documents|custom_modes|notebooks|example_data)/
@@ -68,7 +77,7 @@ repos:
         always_run: true
       - id: ruff-critical-check
         name: ruff-critical-check (fast CI-critical rules only)
-        entry: uv run ruff check --select=RUF005,B904,F821,F822,F823 --output-format=github
+        entry: uv run --no-sync ruff check --select=B904,F821,F822,F823 --output-format=github
         language: system
         types: [python]
         exclude: ^(documents|custom_modes|notebooks|example_data)/

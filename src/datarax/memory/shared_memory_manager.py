@@ -121,5 +121,5 @@ class SharedMemoryManager(nnx.Module):
         """Safety net — prefer using as context manager."""
         try:
             self.cleanup()
-        except Exception:
+        except (AttributeError, FileNotFoundError, OSError):
             pass

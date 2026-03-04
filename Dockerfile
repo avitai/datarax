@@ -46,11 +46,7 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 # Install main + dev/gpu/test/data extras (not benchmark, not docs)
 RUN uv pip install -e ".[dev,gpu,test,data]"
 
-# --- Layer 2: benchkit path dependency ---
-COPY tools/benchkit ./tools/benchkit
-RUN uv pip install -e tools/benchkit
-
-# --- Layer 3: Source code (changes frequently, invalidates only this layer) ---
+# --- Layer 2: Source code (changes frequently, invalidates only this layer) ---
 COPY src ./src
 COPY tests ./tests
 COPY scripts ./scripts

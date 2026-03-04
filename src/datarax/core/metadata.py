@@ -239,7 +239,7 @@ def _decode_key(arr: jax.Array | None) -> str | None:
             valid_bytes.append(b)
 
         return bytes(valid_bytes).decode("utf-8")
-    except Exception:
+    except (TypeError, ValueError, UnicodeDecodeError):
         return "<DECODE_ERROR>"
 
 

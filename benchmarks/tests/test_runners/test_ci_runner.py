@@ -11,9 +11,14 @@ from pathlib import Path
 import pytest
 
 from benchmarks.adapters.datarax_adapter import DataraxAdapter
+from benchmarks.core.result_model import (
+    build_benchmark_result,
+    result_scenario_id,
+    result_variant,
+)
 from benchmarks.runners.benchmark_runner import BenchmarkRunner
 from benchmarks.scenarios.base import run_scenario
-from datarax.benchmarking.results import BenchmarkResult
+from calibrax.core import BenchmarkResult
 
 
 # ---------------------------------------------------------------------------
@@ -57,8 +62,8 @@ class TestBenchmarkRunner:
 
         result = runner.run_scenario(cv1, adapter, variant_name="small")
         assert isinstance(result, BenchmarkResult)
-        assert result.scenario_id == "CV-1"
-        assert result.variant == "small"
+        assert result_scenario_id(result) == "CV-1"
+        assert result_variant(result) == "small"
         assert result.timing.num_batches > 0
 
     def test_run_scenario_uses_tier1_variant_by_default(
@@ -70,7 +75,7 @@ class TestBenchmarkRunner:
         from benchmarks.scenarios.vision import cv1_image_classification as cv1
 
         result = runner.run_scenario(cv1, adapter, variant_name=None)
-        assert result.variant == "small"  # CV-1's TIER1_VARIANT
+        assert result_variant(result) == "small"  # CV-1's TIER1_VARIANT
 
     def test_run_all_returns_results(
         self,
@@ -85,7 +90,7 @@ class TestBenchmarkRunner:
         )
         assert len(results) >= 1
         assert all(isinstance(r, BenchmarkResult) for r in results)
-        assert results[0].scenario_id == "CV-1"
+        assert result_scenario_id(results[0]) == "CV-1"
 
     def test_run_all_saves_results(
         self,
@@ -138,7 +143,7 @@ class TestBaselineGeneration:
 
         loaded = store.load("CV-1_small")
         assert loaded is not None
-        assert loaded["scenario_id"] == "CV-1"
+        assert loaded["tags"]["scenario_id"] == "CV-1"
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +166,7 @@ class TestCIRunner:
         from benchmarks.runners.ci_runner import generate_ci_report
 
         # Create minimal test data
-        result = BenchmarkResult(
+        result = build_benchmark_result(
             framework="Datarax",
             scenario_id="CV-1",
             variant="small",
@@ -179,7 +184,7 @@ class TestCIRunner:
         """CI report must include verdict status when provided."""
         from benchmarks.runners.ci_runner import generate_ci_report
 
-        result = BenchmarkResult(
+        result = build_benchmark_result(
             framework="Datarax",
             scenario_id="CV-1",
             variant="small",
@@ -223,7 +228,7 @@ class TestCIRunner:
 
 def _make_timing_sample():
     """Create a minimal TimingSample for testing."""
-    from datarax.benchmarking.timing import TimingSample
+    from calibrax.profiling import TimingSample
 
     return TimingSample(
         wall_clock_sec=1.0,

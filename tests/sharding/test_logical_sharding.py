@@ -4,12 +4,72 @@ This module demonstrates the enhanced logical axis naming functionality
 for more descriptive sharding specifications, without creating circular imports.
 """
 
+from typing import Any
+
 import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from jax.sharding import Mesh, PartitionSpec
+
+
+def _build_test_device_mesh(real_devices: list[Any]) -> tuple[np.ndarray, bool]:
+    """Build a stable mesh layout for the current device count."""
+    if len(real_devices) >= 8:
+        return np.array(real_devices[:8]).reshape(2, 4), False
+
+    device_count = len(real_devices)
+    if device_count == 1:
+        return np.array(real_devices).reshape(1, 1), True
+
+    n_cols = max(1, device_count // 2)
+    n_rows = min(2, device_count // n_cols)
+    return np.array(real_devices[: n_rows * n_cols]).reshape(n_rows, n_cols), True
+
+
+class LogicalShardingHelper(nnx.Module):
+    """Simple logical-axis utility used by sharding tests."""
+
+    def __init__(self, sharding_rules):
+        super().__init__()
+        self.sharding_rules = sharding_rules
+
+    def get_partition_spec(self, logical_spec):
+        """Convert logical axes to physical partition spec."""
+        physical_spec = []
+        for dim in logical_spec:
+            if dim is None:
+                physical_spec.append(None)
+            else:
+                mapped = next((phys for log, phys in self.sharding_rules if log == dim), dim)
+                physical_spec.append(mapped)
+        return PartitionSpec(*physical_spec)
+
+    def get_named_sharding(self, mesh, logical_spec):
+        """Get named sharding from logical spec."""
+        pspec = self.get_partition_spec(logical_spec)
+        return jax.sharding.NamedSharding(mesh, pspec)
+
+    def shard_with_logical_names(self, array, mesh, logical_spec):
+        """Shard array using logical axis names."""
+        named_sharding = self.get_named_sharding(mesh, logical_spec)
+        return jax.device_put(array, named_sharding)
+
+    def apply_parallel_transform(self, array, transform_fn, mesh, in_spec, out_spec=None):
+        """Apply transformation in parallel using logical names."""
+        in_pspec = self.get_partition_spec(in_spec)
+        out_pspec = self.get_partition_spec(out_spec) if out_spec else in_pspec
+        with mesh:
+            shard_fn = nnx.shard_map(
+                transform_fn, mesh=mesh, in_specs=(in_pspec,), out_specs=out_pspec
+            )
+            return shard_fn(array)
+
+    def create_sharded_param(self, init_fn, shape, logical_spec):
+        """Create a sharded parameter."""
+        del logical_spec
+        return nnx.Param(init_fn(None, shape))
 
 
 class TestLogicalSharding:
@@ -19,23 +79,7 @@ class TestLogicalSharding:
         """Set up test fixtures for each test method."""
         # Check if we have enough devices for full mesh testing
         self.real_devices = jax.devices()
-        if len(self.real_devices) >= 8:
-            # Full 2x4 mesh for true multi-device testing
-            device_mesh = np.array(self.real_devices[:8]).reshape(2, 4)
-            self.limited_test = False
-        else:
-            # For limited devices, create a smaller mesh (1x1 or 2x1)
-            self.limited_test = True
-            device_count = len(self.real_devices)
-            if device_count == 1:
-                # Single device case - 1x1 mesh
-                device_mesh = np.array(self.real_devices).reshape(1, 1)
-            else:
-                # Multiple but fewer than 8 devices - use what we have in a 2xN mesh
-                # where N is half the available devices (minimum 1)
-                n_cols = max(1, device_count // 2)
-                n_rows = min(2, device_count // n_cols)
-                device_mesh = np.array(self.real_devices[: n_rows * n_cols]).reshape(n_rows, n_cols)
+        device_mesh, self.limited_test = _build_test_device_mesh(self.real_devices)
 
         # Create the mesh with our available devices
         self.mesh = Mesh(device_mesh, axis_names=("data", "model"))
@@ -46,49 +90,6 @@ class TestLogicalSharding:
             ("hidden", "model"),  # 'hidden' maps to 'model' dimension
             ("feature", None),  # 'feature' is not sharded
         ]
-
-        # Create simple version of logical sharding utilities
-        class LogicalShardingHelper(nnx.Module):
-            def __init__(self, sharding_rules):
-                super().__init__()
-                self.sharding_rules = sharding_rules
-
-            def get_partition_spec(self, logical_spec):
-                """Convert logical axes to physical partition spec."""
-                physical_spec = []
-                for dim in logical_spec:
-                    if dim is None:
-                        physical_spec.append(None)
-                    else:
-                        mapped = next(
-                            (phys for log, phys in self.sharding_rules if log == dim), dim
-                        )
-                        physical_spec.append(mapped)
-                return PartitionSpec(*physical_spec)
-
-            def get_named_sharding(self, mesh, logical_spec):
-                """Get named sharding from logical spec."""
-                pspec = self.get_partition_spec(logical_spec)
-                return jax.sharding.NamedSharding(mesh, pspec)
-
-            def shard_with_logical_names(self, array, mesh, logical_spec):
-                """Shard array using logical axis names."""
-                named_sharding = self.get_named_sharding(mesh, logical_spec)
-                return jax.device_put(array, named_sharding)
-
-            def apply_parallel_transform(self, array, transform_fn, mesh, in_spec, out_spec=None):
-                """Apply transformation in parallel using logical names."""
-                in_pspec = self.get_partition_spec(in_spec)
-                out_pspec = self.get_partition_spec(out_spec) if out_spec else in_pspec
-                with mesh:
-                    return nnx.shard_map(
-                        transform_fn, mesh=mesh, in_specs=(in_pspec,), out_specs=out_pspec
-                    )(array)
-
-            def create_sharded_param(self, init_fn, shape, logical_spec):
-                """Create a sharded parameter."""
-                param = nnx.Param(init_fn(None, shape))
-                return param
 
         # Create our helper
         self.sharder = LogicalShardingHelper(self.sharding_rules)

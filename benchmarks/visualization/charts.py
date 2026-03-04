@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.figure import Figure
 
+from benchmarks.core.result_model import result_scenario_id, throughput_elements_per_sec
 from benchmarks.runners.full_runner import ComparativeResults
 
 # Use non-interactive backend for CI/headless environments
@@ -118,7 +119,7 @@ class ChartGenerator:
             for sid in scenario_ids:
                 scenario_results = self._results.get_scenario_results(sid)
                 r = scenario_results.get(adapter)
-                throughputs.append(r.throughput_elements_sec() if r else 0)
+                throughputs.append(throughput_elements_per_sec(r) if r else 0)
 
             offset = (i - n_adapters / 2 + 0.5) * bar_width
             ax.bar(
@@ -149,7 +150,7 @@ class ChartGenerator:
         for adapter_name, adapter_results in self._results.results.items():
             if adapter_name == "Datarax":
                 continue
-            tps = [r.throughput_elements_sec() for r in adapter_results]
+            tps = [throughput_elements_per_sec(r) for r in adapter_results]
             adapter_avg[adapter_name] = sum(tps) / len(tps) if tps else 0
 
         top_adapters = sorted(
@@ -169,7 +170,7 @@ class ChartGenerator:
             for sid in scenario_ids:
                 scenario_r = self._results.get_scenario_results(sid)
                 r = scenario_r.get(adapter)
-                values.append(r.throughput_elements_sec() if r else 0)
+                values.append(throughput_elements_per_sec(r) if r else 0)
             values.append(values[0])  # Close polygon
 
             ax.plot(
@@ -272,7 +273,7 @@ class ChartGenerator:
             for r in adapter_results:
                 dim_val = r.config.get(dimension, r.config.get("batch_size", 0))
                 if isinstance(dim_val, (int, float)):
-                    points[int(dim_val)] = r.throughput_elements_sec()
+                    points[int(dim_val)] = throughput_elements_per_sec(r)
 
             if points:
                 xs = sorted(points.keys())
@@ -303,11 +304,12 @@ class ChartGenerator:
         for adapter_name, adapter_results in sorted(self._results.results.items()):
             depths: dict[int, float] = {}
             for r in adapter_results:
-                if r.scenario_id.startswith("PC"):
+                scenario_id = result_scenario_id(r)
+                if scenario_id.startswith("PC"):
                     depth = r.config.get("extra", {}).get("chain_depth", None)
                     if depth is None:
-                        depth = int(r.scenario_id.split("-")[-1]) if "-" in r.scenario_id else 1
-                    depths[depth] = r.throughput_elements_sec()
+                        depth = int(scenario_id.split("-")[-1]) if "-" in scenario_id else 1
+                    depths[depth] = throughput_elements_per_sec(r)
 
             if depths:
                 xs = sorted(depths.keys())
@@ -326,7 +328,7 @@ class ChartGenerator:
             for adapter_name, adapter_results in sorted(self._results.results.items()):
                 if adapter_results:
                     xs = list(range(1, len(adapter_results) + 1))
-                    ys = [r.throughput_elements_sec() for r in adapter_results]
+                    ys = [throughput_elements_per_sec(r) for r in adapter_results]
                     ax.plot(
                         xs,
                         ys,
@@ -355,7 +357,9 @@ class ChartGenerator:
         # Build support matrix: 1 if adapter has results for scenario
         matrix = np.zeros((len(adapters), len(scenario_ids)))
         for i, adapter in enumerate(adapters):
-            scenario_results = {r.scenario_id for r in self._results.results.get(adapter, [])}
+            scenario_results = {
+                result_scenario_id(r) for r in self._results.results.get(adapter, [])
+            }
             for j, sid in enumerate(scenario_ids):
                 matrix[i, j] = 1.0 if sid in scenario_results else 0.0
 

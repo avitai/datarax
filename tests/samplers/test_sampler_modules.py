@@ -121,7 +121,8 @@ def test_shuffle_sampler_serialization():
 
     # Create a new sampler and restore the state
     restored_config = ShuffleSamplerConfig(buffer_size=5, dataset_size=20)
-    restored = ShuffleSampler(restored_config, rngs=nnx.Rngs(0))
+    # Use the same stream schema for strict checkpoint compatibility.
+    restored = ShuffleSampler(restored_config, rngs=create_rngs(seed=0))
     restored.set_state(state)
 
     # Check that the parameters were restored

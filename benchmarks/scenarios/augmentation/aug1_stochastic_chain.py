@@ -10,7 +10,7 @@ Transforms: Normalize (deterministic) + GaussianNoise + RandomBrightness
 
 Tier-1 variant: small (fast CI regression guard).
 
-Design ref: Phase 2 optimization -- stochastic JIT support.
+Design ref: v2 optimization -- stochastic JIT support.
 """
 
 from __future__ import annotations

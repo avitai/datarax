@@ -1,6 +1,6 @@
 """HuggingFace Datasets adapter for the benchmark framework.
 
-Wraps HF Datasets' Arrow-based Dataset with the BenchmarkAdapter lifecycle.
+Wraps HF Datasets' Arrow-based Dataset with the PipelineAdapter lifecycle.
 Tier 3 specialized -- NLP and tabular.
 
 Design ref: Section 14.2 of the benchmark report.
@@ -15,7 +15,7 @@ import numpy as np
 
 from benchmarks.adapters import register
 from benchmarks.adapters._utils import cast_to_float32, normalize_uint8
-from benchmarks.adapters.base import BenchmarkAdapter, ScenarioConfig
+from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
 _HF_TRANSFORMS: dict[str, Any] = {
     "Normalize": normalize_uint8,
@@ -24,8 +24,8 @@ _HF_TRANSFORMS: dict[str, Any] = {
 
 
 @register
-class HfDatasetsAdapter(BenchmarkAdapter):
-    """BenchmarkAdapter for HuggingFace Datasets."""
+class HfDatasetsAdapter(PipelineAdapter):
+    """PipelineAdapter for HuggingFace Datasets."""
 
     def __init__(self) -> None:
         self._dataset: Any = None

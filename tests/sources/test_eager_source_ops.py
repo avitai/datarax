@@ -288,8 +288,8 @@ class TestValidateEagerConfig(unittest.TestCase):
             )
         self.assertIn("MyConfig", str(ctx.exception))
 
-    def test_defaults_backward_compatible(self):
-        """Calling without try_gcs/data_dir still works (backward compat)."""
+    def test_defaults_are_explicitly_supported(self):
+        """Calling without try_gcs/data_dir uses explicit default behavior."""
         validate_eager_config("mnist", "train", None, None, "TestConfig")
 
 

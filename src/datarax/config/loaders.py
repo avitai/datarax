@@ -5,7 +5,7 @@ for Datarax pipelines and components.
 """
 
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
 import tomli_w  # type: ignore
 
@@ -15,7 +15,7 @@ except ImportError:
     import tomli as tomllib  # type: ignore
 
 
-def load_toml(config_path: Union[str, Path], encoding: str = "utf-8") -> dict[str, Any]:
+def load_toml(config_path: str | Path, encoding: str = "utf-8") -> dict[str, Any]:
     """Load a TOML configuration file.
 
     Args:
@@ -38,9 +38,7 @@ def load_toml(config_path: Union[str, Path], encoding: str = "utf-8") -> dict[st
         return tomllib.load(f)
 
 
-def save_toml(
-    config: dict[str, Any], config_path: Union[str, Path], encoding: str = "utf-8"
-) -> None:
+def save_toml(config: dict[str, Any], config_path: str | Path, encoding: str = "utf-8") -> None:
     """Save a configuration dictionary to a TOML file.
 
     Args:
@@ -87,7 +85,7 @@ def deep_merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str,
 
 
 def load_config_with_includes(
-    config_path: Union[str, Path],
+    config_path: str | Path,
     encoding: str = "utf-8",
     include_key: str = "include",
     processed_paths: set[Path] | None = None,

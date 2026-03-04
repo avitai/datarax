@@ -1,4 +1,4 @@
-"""Tests for BenchmarkAdapter ABC, ScenarioConfig, IterationResult, and registry.
+"""Tests for PipelineAdapter ABC, ScenarioConfig, IterationResult, and registry.
 
 TDD: Write tests first, then implement.
 Design ref: Sections 7.1, 7.4 of the benchmark report.
@@ -10,10 +10,11 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
+from calibrax.core import BenchmarkAdapter as CalibraxBenchmarkAdapter
 
 from benchmarks.adapters.base import (
-    BenchmarkAdapter,
     IterationResult,
+    PipelineAdapter,
     ScenarioConfig,
 )
 
@@ -128,11 +129,11 @@ class TestIterationResult:
 
 
 # ---------------------------------------------------------------------------
-# BenchmarkAdapter ABC tests
+# PipelineAdapter ABC tests
 # ---------------------------------------------------------------------------
 
 
-class ConcreteAdapter(BenchmarkAdapter):
+class ConcreteAdapter(PipelineAdapter):
     """Minimal concrete adapter for testing the ABC.
 
     Implements the Template Method hooks (_iterate_batches, _materialize_batch)
@@ -174,7 +175,7 @@ class ConcreteAdapter(BenchmarkAdapter):
         return [batch]
 
 
-class UnavailableAdapter(BenchmarkAdapter):
+class UnavailableAdapter(PipelineAdapter):
     """Adapter that reports itself as unavailable."""
 
     @property
@@ -204,13 +205,17 @@ class UnavailableAdapter(BenchmarkAdapter):
         return []
 
 
-class TestBenchmarkAdapterABC:
-    """Test BenchmarkAdapter abstract base class."""
+class TestPipelineAdapterABC:
+    """Test PipelineAdapter abstract base class."""
 
     def test_cannot_instantiate_abc_directly(self):
-        """Test that BenchmarkAdapter cannot be instantiated."""
+        """Test that PipelineAdapter cannot be instantiated."""
         with pytest.raises(TypeError):
-            BenchmarkAdapter()  # type: ignore[abstract]
+            PipelineAdapter()  # type: ignore[abstract]
+
+    def test_extends_calibrax_benchmark_adapter(self):
+        """Pipeline adapter must inherit from calibrax BenchmarkAdapter."""
+        assert issubclass(PipelineAdapter, CalibraxBenchmarkAdapter)
 
     def test_concrete_adapter_properties(self):
         """Test concrete adapter implements required properties."""

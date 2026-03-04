@@ -16,6 +16,7 @@ Features Showcased:
 """
 
 import platform
+from typing import Any
 import pytest
 
 # Skip entire module on macOS ARM64 - TensorFlow import hangs during pytest collection
@@ -262,6 +263,107 @@ def create_eval_pipeline(
     )
 
 
+def _require_tfds_dependency() -> None:
+    """Skip test when TFDS dependency is unavailable."""
+    try:
+        import tensorflow_datasets as tfds  # noqa: F401
+    except ImportError:
+        pytest.skip("tensorflow_datasets not installed")
+
+
+def _create_mnist_sources() -> tuple[TFDSEagerSource, TFDSEagerSource]:
+    """Create train/test eager TFDS sources for MNIST integration tests."""
+    train_config = TFDSEagerConfig(
+        name="mnist:3.*.*",
+        split="train[:500]",
+        shuffle=True,
+    )
+    test_config = TFDSEagerConfig(
+        name="mnist:3.*.*",
+        split="test[:100]",
+        shuffle=False,
+    )
+    return (
+        TFDSEagerSource(train_config, rngs=nnx.Rngs(0)),
+        TFDSEagerSource(test_config, rngs=nnx.Rngs(1)),
+    )
+
+
+def _create_train_eval_pipelines(
+    train_source: TFDSEagerSource, test_source: TFDSEagerSource, augment_key: jax.Array
+) -> tuple[DAGExecutor, DAGExecutor]:
+    """Create train/eval pipelines with independent preprocessing operators."""
+    preprocess_op = create_preprocess_operator(rngs=nnx.Rngs(default=2))
+    augment_op = create_augmentation_operator(
+        rngs=nnx.Rngs(default=augment_key, augment=jax.random.split(augment_key)[0])
+    )
+    train_pipeline = create_train_pipeline(
+        source=train_source,
+        preprocess_op=preprocess_op,
+        augment_op=augment_op,
+        batch_size=32,
+        shuffle_buffer=50,
+    )
+    eval_preprocess_op = create_preprocess_operator(rngs=nnx.Rngs(default=3))
+    eval_pipeline = create_eval_pipeline(
+        source=test_source,
+        preprocess_op=eval_preprocess_op,
+        batch_size=32,
+    )
+    return train_pipeline, eval_pipeline
+
+
+def _run_training_epochs(
+    model: ImageClassifier,
+    optimizer: nnx.Optimizer,
+    train_pipeline: DAGExecutor,
+    train_step: Any,
+    *,
+    num_epochs: int,
+    batches_per_epoch: int,
+) -> None:
+    """Run bounded training epochs and print aggregate metrics."""
+    for epoch in range(num_epochs):
+        model.train()
+        epoch_losses: list[float] = []
+        epoch_accuracies: list[float] = []
+
+        for batch_count, batch in enumerate(train_pipeline, start=1):
+            if batch["image"].shape[0] == 0:
+                continue
+            loss, accuracy = train_step(model, optimizer, batch)
+            if not (jnp.isnan(loss) or jnp.isnan(accuracy)):
+                epoch_losses.append(float(loss))
+                epoch_accuracies.append(float(accuracy))
+            if batch_count >= batches_per_epoch:
+                break
+
+        if epoch_losses:
+            print(
+                f"Epoch {epoch + 1}: Loss = {np.mean(epoch_losses):.4f}, "
+                f"Accuracy = {np.mean(epoch_accuracies):.4f}"
+            )
+
+
+def _evaluate_model(
+    model: ImageClassifier, eval_pipeline: DAGExecutor, eval_step: Any, max_batches: int
+) -> tuple[list[float], list[float]]:
+    """Run bounded evaluation and return loss/accuracy traces."""
+    model.eval()
+    losses: list[float] = []
+    accuracies: list[float] = []
+    for batch_count, batch in enumerate(eval_pipeline, start=1):
+        if batch["image"].shape[0] == 0:
+            continue
+        loss, accuracy = eval_step(model, batch)
+        if not (jnp.isnan(loss) or jnp.isnan(accuracy)):
+            losses.append(float(loss))
+            accuracies.append(float(accuracy))
+        if batch_count >= max_batches:
+            break
+    return losses, accuracies
+
+
 # =============================================================================
 # MAIN TEST
 # =============================================================================
@@ -279,76 +381,21 @@ def test_image_classification_end_to_end():
     5. NNX model training with proper optimizer API
     6. Mode switching via model.train() / model.eval()
     """
-    # Create RNG with all required streams
+    _require_tfds_dependency()
+
     key = jax.random.key(0)
     params_key, dropout_key, augment_key = jax.random.split(key, 3)
     model_rngs = nnx.Rngs(params=params_key, dropout=dropout_key)
-
-    # Skip if tensorflow_datasets not installed
-    try:
-        import tensorflow_datasets as tfds  # noqa: F401
-    except ImportError:
-        pytest.skip("tensorflow_datasets not installed")
-
-    # ==========================================================================
-    # DATA SOURCES
-    # ==========================================================================
-
-    train_config = TFDSEagerConfig(
-        name="mnist:3.*.*",
-        split="train[:500]",  # Small subset for testing
-        shuffle=True,
+    train_source, test_source = _create_mnist_sources()
+    train_pipeline, eval_pipeline = _create_train_eval_pipelines(
+        train_source=train_source,
+        test_source=test_source,
+        augment_key=augment_key,
     )
-    train_source = TFDSEagerSource(train_config, rngs=nnx.Rngs(0))
-
-    test_config = TFDSEagerConfig(
-        name="mnist:3.*.*",
-        split="test[:100]",  # Small subset for testing
-        shuffle=False,
-    )
-    test_source = TFDSEagerSource(test_config, rngs=nnx.Rngs(1))
-
-    # ==========================================================================
-    # OPERATORS
-    # ==========================================================================
-
-    # Create operators with proper RNG streams
-    preprocess_op = create_preprocess_operator(rngs=nnx.Rngs(default=2))
-    augment_op = create_augmentation_operator(
-        rngs=nnx.Rngs(default=augment_key, augment=jax.random.split(augment_key)[0])
-    )
-
-    # ==========================================================================
-    # PIPELINES
-    # ==========================================================================
-
-    train_pipeline = create_train_pipeline(
-        source=train_source,
-        preprocess_op=preprocess_op,
-        augment_op=augment_op,
-        batch_size=32,
-        shuffle_buffer=50,
-    )
-
-    # Create new preprocess operator for eval (operators are stateful)
-    eval_preprocess_op = create_preprocess_operator(rngs=nnx.Rngs(default=3))
-    eval_pipeline = create_eval_pipeline(
-        source=test_source,
-        preprocess_op=eval_preprocess_op,
-        batch_size=32,
-    )
-
-    # ==========================================================================
-    # MODEL AND OPTIMIZER
-    # ==========================================================================
 
     num_classes = 10
     model = ImageClassifier(num_classes=num_classes, rngs=model_rngs)
     optimizer = nnx.Optimizer(model, optax.adam(1e-3), wrt=nnx.Param)
-
-    # ==========================================================================
-    # TRAINING FUNCTIONS
-    # ==========================================================================
 
     def loss_fn(model: ImageClassifier, batch: Batch) -> tuple[jax.Array, jax.Array]:
         """Compute loss and logits for a batch."""
@@ -397,70 +444,15 @@ def test_image_classification_end_to_end():
 
         return loss, accuracy
 
-    # ==========================================================================
-    # TRAINING LOOP
-    # ==========================================================================
-
-    num_epochs = 2
-    batches_per_epoch = 5
-
-    for epoch in range(num_epochs):
-        # Set model to training mode (enables dropout, updates batchnorm stats)
-        model.train()
-
-        epoch_losses = []
-        epoch_accuracies = []
-
-        batch_count = 0
-        for batch in train_pipeline:
-            if batch["image"].shape[0] == 0:
-                continue
-
-            try:
-                loss, accuracy = train_step(model, optimizer, batch)
-                if not (jnp.isnan(loss) or jnp.isnan(accuracy)):
-                    epoch_losses.append(float(loss))
-                    epoch_accuracies.append(float(accuracy))
-            except Exception as e:
-                print(f"Training error: {e}")
-                continue
-
-            batch_count += 1
-            if batch_count >= batches_per_epoch:
-                break
-
-        if epoch_losses:
-            avg_loss = np.mean(epoch_losses)
-            avg_acc = np.mean(epoch_accuracies)
-            print(f"Epoch {epoch + 1}: Loss = {avg_loss:.4f}, Accuracy = {avg_acc:.4f}")
-
-    # ==========================================================================
-    # EVALUATION
-    # ==========================================================================
-
-    # Set model to evaluation mode (disables dropout, uses running batchnorm stats)
-    model.eval()
-
-    test_losses = []
-    test_accuracies = []
-
-    batch_count = 0
-    for batch in eval_pipeline:
-        if batch["image"].shape[0] == 0:
-            continue
-
-        try:
-            loss, accuracy = eval_step(model, batch)
-            if not (jnp.isnan(loss) or jnp.isnan(accuracy)):
-                test_losses.append(float(loss))
-                test_accuracies.append(float(accuracy))
-        except Exception as e:
-            print(f"Evaluation error: {e}")
-            continue
-
-        batch_count += 1
-        if batch_count >= 3:
-            break
+    _run_training_epochs(
+        model,
+        optimizer,
+        train_pipeline,
+        train_step,
+        num_epochs=2,
+        batches_per_epoch=5,
+    )
+    test_losses, test_accuracies = _evaluate_model(model, eval_pipeline, eval_step, max_batches=3)
 
     if test_losses:
         final_loss = np.mean(test_losses)

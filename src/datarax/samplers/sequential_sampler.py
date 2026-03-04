@@ -8,6 +8,12 @@ import flax.nnx as nnx
 
 from datarax.core.config import StructuralConfig
 from datarax.core.sampler import SamplerModule
+from datarax.samplers._validation import validate_num_records_and_epochs
+from datarax.utils.state import (
+    build_state_with_iteration_fields,
+    restore_iteration_variables,
+    restore_optional_variable_fields,
+)
 
 
 @dataclass
@@ -26,16 +32,7 @@ class SequentialSamplerConfig(StructuralConfig):
     def __post_init__(self):
         """Validate configuration after initialization."""
         super().__post_init__()
-
-        # Validate num_records (required)
-        if self.num_records is None:
-            raise ValueError("num_records is required")
-        if self.num_records <= 0:
-            raise ValueError(f"num_records must be positive, got {self.num_records}")
-
-        # Validate num_epochs
-        if self.num_epochs < -1 or self.num_epochs == 0:
-            raise ValueError(f"num_epochs must be positive or -1 (infinite), got {self.num_epochs}")
+        validate_num_records_and_epochs(self.num_records, self.num_epochs)
 
 
 class SequentialSamplerModule(SamplerModule):
@@ -121,28 +118,30 @@ class SequentialSamplerModule(SamplerModule):
 
     def get_state(self) -> dict[str, Any]:
         """Get state for checkpointing."""
-        state = super().get_state()
-        state.update(
-            {
-                "current_index": self.current_index.get_value(),
-                "current_epoch": self.current_epoch.get_value(),
-                "num_records": self.num_records.get_value(),
-                "num_epochs": self.num_epochs.get_value(),
-            }
+        base_state = super().get_state()
+        base_state["num_records"] = self.num_records.get_value()
+        base_state["num_epochs"] = self.num_epochs.get_value()
+        return build_state_with_iteration_fields(
+            base_state,
+            current_index=self.current_index.get_value(),
+            current_epoch=self.current_epoch.get_value(),
         )
-        return state
 
     def set_state(self, state: dict[str, Any]) -> None:
         """Restore state from checkpoint."""
         super().set_state(state)
-        if "current_index" in state:
-            self.current_index.set_value(state["current_index"])
-        if "current_epoch" in state:
-            self.current_epoch.set_value(state["current_epoch"])
-        if "num_records" in state:
-            self.num_records.set_value(state["num_records"])
-        if "num_epochs" in state:
-            self.num_epochs.set_value(state["num_epochs"])
+        restore_iteration_variables(
+            state,
+            current_index=self.current_index,
+            current_epoch=self.current_epoch,
+        )
+        restore_optional_variable_fields(
+            state,
+            {
+                "num_records": self.num_records,
+                "num_epochs": self.num_epochs,
+            },
+        )
         # Mark as initialized and state restored to prevent __iter__ from resetting
         self._initialized = True
         self._state_restored = True

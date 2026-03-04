@@ -179,32 +179,21 @@ class ConditionalParallelStrategy(CompositionStrategyImpl):
 
         # Second pass: apply operators with jax.lax.cond
         for i, (operator, cond_result) in enumerate(zip(operators, condition_results)):
-            # Extract random params
-            op_random_params = None
-            if context.random_params and f"operator_{i}" in context.random_params:
-                op_random_params = context.random_params[f"operator_{i}"]
-
-            def apply_fn(operands):
-                d, s, m, rp = operands
-                return operator.apply(d, s, m, rp)
-
-            def noop_fn(operands):
-                d, s, m, _ = operands
-                return d, s, m
-
-            out_data, out_state, out_metadata = jax.lax.cond(
+            op_random_params = self._extract_operator_random_params(context.random_params, i)
+            out_data, out_state, out_metadata = self._apply_operator_conditionally(
+                operator,
                 cond_result,
-                apply_fn,
-                noop_fn,
-                (context.data, context.state, context.metadata, op_random_params),
+                context.data,
+                context.state,
+                context.metadata,
+                op_random_params,
             )
 
             outputs.append(out_data)
             states.append(out_state)
             metadatas.append(out_metadata)
 
-            if context.stats_callback and hasattr(operator, "statistics") and operator.statistics:
-                context.stats_callback(i, operator.statistics)
+            self._emit_operator_statistics(operator, i, context.stats_callback)
 
         if not outputs:
             return context.data, context.state, context.metadata

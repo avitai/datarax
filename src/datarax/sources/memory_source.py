@@ -6,7 +6,7 @@ with support for both stateless and stateful operation modes.
 """
 
 from dataclasses import dataclass
-from typing import Any, Union
+from typing import Any
 from collections.abc import Iterator, Sequence
 import jax
 import flax.nnx as nnx
@@ -16,6 +16,7 @@ from datarax.core.data_source import DataSourceModule
 from datarax.core.metadata import MetadataManager, RecordMetadata
 from datarax.config.registry import register_component
 from datarax.samplers.index_shuffle import index_shuffle
+from datarax.sources._eager_source_ops import configure_stochastic_from_shuffle
 
 
 @dataclass
@@ -44,13 +45,7 @@ class MemorySourceConfig(StructuralConfig):
 
     def __post_init__(self):
         """Validate configuration after initialization."""
-        # MemorySource is deterministic unless shuffle is enabled
-        if self.shuffle:
-            object.__setattr__(self, "stochastic", True)
-            if self.stream_name is None:
-                object.__setattr__(self, "stream_name", "shuffle")
-        else:
-            object.__setattr__(self, "stochastic", False)
+        configure_stochastic_from_shuffle(self, shuffle=self.shuffle)
 
         if self.num_workers < 1:
             raise ValueError(f"num_workers must be >= 1, got {self.num_workers}")
@@ -104,12 +99,12 @@ class MemorySource(DataSourceModule):
     """
 
     # Static data container (not trainable parameters)
-    data: Union[dict[str, Any], list[Any], Sequence[Any]] = nnx.data()
+    data: dict[str, Any] | list[Any] | Sequence[Any] = nnx.data()
 
     def __init__(
         self,
         config: MemorySourceConfig,
-        data: Union[dict[str, Any], list[Any], Sequence[Any]],
+        data: dict[str, Any] | list[Any] | Sequence[Any],
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
@@ -312,21 +307,6 @@ class MemorySource(DataSourceModule):
             # Shuffled: gather by the shuffled indices for this range
             indices = self._get_indices()
             return self._gather_batch(indices[start:end])
-
-    def _apply_transform(
-        self, batch_size: int, key: jax.Array | None, stats: Any | None = None
-    ) -> Any:
-        """Apply transform (get batch) - for compatibility with TransformBase.
-
-        Args:
-            batch_size: Size of batch to retrieve
-            key: Optional RNG key
-            stats: Unused (for compatibility)
-
-        Returns:
-            Batch of data
-        """
-        return self.get_batch(batch_size, key)
 
     def _derive_shuffle_seed(self) -> int:
         """Derive an integer seed from the JAX RNG stream for the current epoch.

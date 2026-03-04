@@ -14,7 +14,7 @@ except ImportError:
 
 from pathlib import Path
 
-from datarax.benchmarking.timing import TimingCollector
+from calibrax.profiling import TimingCollector
 
 # Path to the converted dataset directory (in gitignored tests/data)
 DATASET_DIR = Path("tests/data/imagenet64_arrayrecord")

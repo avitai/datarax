@@ -31,25 +31,19 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from collections.abc import Iterator
 
-# Set protobuf implementation to avoid version conflicts
-os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
-
 import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
 
-from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule
+from datarax.sources._config_base import SourceConfigBase
 from datarax.sources._conversion import tf_to_jax
 from datarax.sources._eager_source_ops import (
-    batch_elements_to_dict,
     convert_and_filter_element,
-    eager_get_batch,
-    eager_iter,
-    eager_reset,
-    reset_streaming_state,
-    validate_eager_config,
+    validate_shared_eager_source_config,
+    validate_shared_streaming_source_config,
+    validate_positive_optional_int,
 )
+from datarax.sources._source_base import EagerSourceBase, StreamingSourceBase
 
 if TYPE_CHECKING:
     import tensorflow_datasets as tfds
@@ -68,6 +62,11 @@ def _is_read_only_builder(builder: Any) -> bool:
     importing the ReadOnlyBuilder class at module level (heavy import).
     """
     return type(builder).__name__ == "ReadOnlyBuilder"
+
+
+def _configure_protobuf_runtime() -> None:
+    """Configure protobuf runtime before importing TensorFlow ecosystem modules."""
+    os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 
 
 def _prepare_tfds_builder(
@@ -92,6 +91,7 @@ def _prepare_tfds_builder(
     Returns:
         A prepared TFDS builder with dataset info available.
     """
+    _configure_protobuf_runtime()
     import tensorflow_datasets as tfds
 
     builder = tfds.builder(name, data_dir=data_dir, try_gcs=try_gcs)
@@ -123,11 +123,10 @@ def _prepare_tfds_builder(
 
 
 @dataclass
-class TFDSEagerConfig(StructuralConfig):
+class TFDSEagerConfig(SourceConfigBase):
     """Configuration for TFDSEagerSource (loads all data to JAX at init).
 
-    All original TfdsDataSourceConfig options are preserved for backward
-    compatibility while adding the eager-loading behavior.
+    Configuration for eager-loading TensorFlow Datasets into JAX arrays.
 
     Args:
         name: Name of the dataset in TFDS (required)
@@ -145,54 +144,28 @@ class TFDSEagerConfig(StructuralConfig):
         This ensures O(1) memory shuffling and reproducible per-epoch seeds.
     """
 
-    # Required parameters use None sentinel for frozen dataclass
-    name: str | None = None
-    split: str | None = None
-
-    # Optional parameters with defaults
-    data_dir: str | None = None
     try_gcs: bool = False
     shuffle: bool = False
     seed: int = 42  # Integer seed for Grain's index_shuffle
     as_supervised: bool = False
     download_and_prepare_kwargs: dict[str, Any] | None = None
     beam_num_workers: int | None = None
-    include_keys: set[str] | None = None
-    exclude_keys: set[str] | None = None
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
-        # TFDSEagerSource is deterministic unless shuffle is enabled
-        if self.shuffle:
-            object.__setattr__(self, "stochastic", True)
-            if self.stream_name is None:
-                object.__setattr__(self, "stream_name", "shuffle")
-            # Validate seed range for Grain's index_shuffle
-            if self.seed < 0 or self.seed >= 2**32:
-                raise ValueError("seed must be in [0, 2**32)")
-        else:
-            object.__setattr__(self, "stochastic", False)
-
-        # Call parent validation
-        super().__post_init__()
-
-        # Shared validation
-        validate_eager_config(
-            self.name,
-            self.split,
-            self.include_keys,
-            self.exclude_keys,
+        validate_shared_eager_source_config(
+            self,
             "TFDSEagerConfig",
+            seed=self.seed,
             try_gcs=self.try_gcs,
             data_dir=self.data_dir,
         )
 
-        if self.beam_num_workers is not None and self.beam_num_workers < 1:
-            raise ValueError("beam_num_workers must be a positive integer")
+        validate_positive_optional_int(self.beam_num_workers, "beam_num_workers")
 
 
 @dataclass
-class TFDSStreamingConfig(StructuralConfig):
+class TFDSStreamingConfig(SourceConfigBase):
     """Configuration for TFDSStreamingSource (streams data from TF dataset).
 
     Use this for datasets too large to fit in memory. The streaming source
@@ -215,40 +188,17 @@ class TFDSStreamingConfig(StructuralConfig):
         background thread storms that cause delays during epoch transitions.
     """
 
-    # Required parameters
-    name: str | None = None
-    split: str | None = None
-
-    # Streaming-specific options
-    data_dir: str | None = None
     try_gcs: bool = False
     shuffle: bool = False
     shuffle_buffer_size: int = 1000
     as_supervised: bool = False
     download_and_prepare_kwargs: dict[str, Any] | None = None
     beam_num_workers: int | None = None
-    include_keys: set[str] | None = None
-    exclude_keys: set[str] | None = None
     prefetch_buffer: int = 2  # Fixed, NOT AUTOTUNE
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
-        if self.shuffle:
-            object.__setattr__(self, "stochastic", True)
-            if self.stream_name is None:
-                object.__setattr__(self, "stream_name", "shuffle")
-        else:
-            object.__setattr__(self, "stochastic", False)
-
-        super().__post_init__()
-
-        if self.name is None:
-            raise ValueError("name is required for TFDSStreamingConfig")
-        if self.split is None:
-            raise ValueError("split is required for TFDSStreamingConfig")
-
-        if self.include_keys is not None and self.exclude_keys is not None:
-            raise ValueError("Cannot specify both include_keys and exclude_keys")
+        validate_shared_streaming_source_config(self, "TFDSStreamingConfig")
 
         if self.try_gcs and self.data_dir is not None:
             raise ValueError(
@@ -257,8 +207,7 @@ class TFDSStreamingConfig(StructuralConfig):
                 "try_gcs overrides data_dir to the public GCS bucket (gs://tfds-data/datasets/)."
             )
 
-        if self.beam_num_workers is not None and self.beam_num_workers < 1:
-            raise ValueError("beam_num_workers must be a positive integer")
+        validate_positive_optional_int(self.beam_num_workers, "beam_num_workers")
 
 
 # =============================================================================
@@ -266,7 +215,7 @@ class TFDSStreamingConfig(StructuralConfig):
 # =============================================================================
 
 
-class TFDSEagerSource(DataSourceModule):
+class TFDSEagerSource(EagerSourceBase):
     """Eager-loading TFDS source for small/medium datasets.
 
     Loads ALL data to JAX arrays at initialization, then operates like a
@@ -278,7 +227,7 @@ class TFDSEagerSource(DataSourceModule):
         - Pure JAX iteration after init (no TF threads during training)
         - O(1) memory shuffling via Grain's index_shuffle (Feistel cipher)
         - Full checkpointing support (indices only, no external state)
-        - All original TFDSSource features preserved
+        - Supports `as_supervised` mode and key filtering
 
     Performance:
         - Eliminates ~0.4s epoch 2 delay from TF AUTOTUNE threads
@@ -376,6 +325,7 @@ class TFDSEagerSource(DataSourceModule):
         Returns:
             Dictionary mapping keys to JAX arrays
         """
+        _configure_protobuf_runtime()
         import tensorflow_datasets as tfds
 
         ds = tfds.load(
@@ -421,136 +371,13 @@ class TFDSEagerSource(DataSourceModule):
             pass
         gc.collect()
 
-    # === Core iteration (matches MemorySource pattern) ===
-
-    def __len__(self) -> int:
-        """Return the total number of data elements."""
-        return self.length
-
-    def __iter__(self) -> Iterator[dict[str, jax.Array]]:
-        """Iterate over data elements with O(1) memory shuffling.
-
-        Uses Grain's index_shuffle for shuffling, which computes
-        shuffled indices on-the-fly without storing a permutation array.
-        """
-
-        def build_element(data: dict, idx: int) -> dict[str, jax.Array]:
-            return {k: v[idx] for k, v in data.items()}
-
-        return eager_iter(
-            self.data,
-            self.length,
-            self.index,
-            self.epoch,
-            self.shuffle,
-            self._seed,
-            build_element,
-        )
-
-    def __getitem__(self, index: int) -> dict[str, jax.Array]:
-        """Get element at specific index.
-
-        Args:
-            index: Index of element to retrieve (supports negative indexing)
-
-        Returns:
-            Data element at the specified index
-
-        Raises:
-            IndexError: If index is out of bounds
-        """
-        if index < 0:
-            index = self.length + index
-        if index < 0 or index >= self.length:
-            raise IndexError(f"Index {index} out of range for {self.length} elements")
-        return {k: v[index] for k, v in self.data.items()}
-
-    # === Batch retrieval (stateless and stateful) ===
-
-    def get_batch(self, batch_size: int, key: jax.Array | None = None) -> dict[str, jax.Array]:
-        """Get batch - stateless (with key) or stateful (without key).
-
-        Args:
-            batch_size: Number of elements in the batch
-            key: Optional RNG key for stateless random sampling
-
-        Returns:
-            Batch of data as dictionary with batched arrays
-        """
-
-        def gather_fn(data: dict, indices: jax.Array) -> dict[str, jax.Array]:
-            return {k: v[indices] for k, v in data.items()}
-
-        return eager_get_batch(
-            self.data,
-            self.length,
-            self.index,
-            self.epoch,
-            self.shuffle,
-            self._seed,
-            batch_size,
-            key,
-            gather_fn,
-        )
-
-    # === Dataset info access ===
-
-    def get_dataset_info(self) -> tfds.core.DatasetInfo:
-        """Get TFDS dataset info (cached from init)."""
-        return self._dataset_info
-
-    # === State management ===
-
-    def reset(self, seed: int | None = None) -> None:
-        """Reset the source to the beginning.
-
-        Args:
-            seed: Optional new seed (ignored, use config seed)
-        """
-        del seed  # Use config seed
-        eager_reset(self.index, self.epoch, self._cache)
-
-    def set_shuffle(self, shuffle: bool) -> None:
-        """Enable or disable shuffling.
-
-        Args:
-            shuffle: Whether to shuffle data
-        """
-        self.shuffle = shuffle
-
-    def _apply_transform(
-        self, batch_size: int, key: jax.Array | None, stats: Any | None = None
-    ) -> dict[str, jax.Array]:
-        """Apply transform (get batch) - for compatibility with TransformBase.
-
-        Args:
-            batch_size: Size of batch to retrieve
-            key: Optional RNG key
-            stats: Unused (for compatibility)
-
-        Returns:
-            Batch of data
-        """
-        del stats
-        return self.get_batch(batch_size, key)
-
-    def __repr__(self) -> str:
-        """String representation."""
-        return (
-            f"TFDSEagerSource("
-            f"dataset={self.dataset_name}:{self.split_name}, "
-            f"length={self.length}, "
-            f"shuffle={self.shuffle}, "
-            f"epoch={self.epoch.get_value()})"
-        )
-
 
 # =============================================================================
 # TFDSStreamingSource - Thin Wrapper for Large Datasets
 # =============================================================================
 
 
-class TFDSStreamingSource(DataSourceModule):
+class TFDSStreamingSource(StreamingSourceBase):
     """Streaming TFDS source for large datasets.
 
     Thin wrapper around TF dataset for data that can't fit in memory.
@@ -679,44 +506,4 @@ class TFDSStreamingSource(DataSourceModule):
             self.include_keys,
             self.exclude_keys,
             tf_to_jax,
-        )
-
-    def get_dataset_info(self) -> tfds.core.DatasetInfo:
-        """Get TFDS dataset info."""
-        return self._dataset_info
-
-    def reset(self, seed: int | None = None) -> None:
-        """Reset the source to the beginning.
-
-        Args:
-            seed: Unused (for interface compatibility)
-        """
-        del seed
-        self._iterator = None
-        reset_streaming_state(self.epoch, self._cache)
-
-    def _apply_transform(
-        self, batch_size: int, key: jax.Array | None, stats: Any | None = None
-    ) -> dict[str, jax.Array]:
-        """Apply transform - for compatibility with TransformBase.
-
-        Note: For streaming sources, use pipeline batching instead.
-        """
-        del stats, key
-        elements = []
-        for _ in range(batch_size):
-            try:
-                elements.append(next(self))
-            except StopIteration:
-                break
-        return batch_elements_to_dict(elements)
-
-    def __repr__(self) -> str:
-        """String representation."""
-        return (
-            f"TFDSStreamingSource("
-            f"dataset={self.dataset_name}:{self.split_name}, "
-            f"length={self.length}, "
-            f"shuffle={self.shuffle}, "
-            f"epoch={self.epoch.get_value()})"
         )

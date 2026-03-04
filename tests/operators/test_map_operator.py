@@ -855,12 +855,35 @@ class TestMapOperatorJIT:
 
         # Verify
         expected = (jnp.ones((2, 3, 3, 1)) - 0.5) / 0.5
-        assert jnp.allclose(result.data.value["image"], expected)
+        assert jnp.allclose(result.data.get_value()["image"], expected)
 
 
 # ========================================================================
 # Test Category 7: Integration Tests
 # ========================================================================
+
+
+class TestMapOperatorDifferentiability:
+    """Test MapOperator gradient flow for non-structural transformations."""
+
+    def test_grad_through_deterministic_map(self):
+        """Deterministic map functions should remain differentiable."""
+
+        def affine(x, key):
+            del key
+            return 3.0 * x + 1.0
+
+        config = MapOperatorConfig(subtree=None, stochastic=False)
+        op = MapOperator(config, fn=affine, rngs=nnx.Rngs(0))
+
+        def loss(x):
+            output_data, _, _ = op.apply({"value": x}, {}, None)
+            return jnp.sum(output_data["value"])
+
+        inputs = jnp.array([1.0, 2.0, -1.0], dtype=jnp.float32)
+        grad = jax.grad(loss)(inputs)
+
+        assert jnp.allclose(grad, jnp.full_like(inputs, 3.0))
 
 
 class TestMapOperatorIntegration:

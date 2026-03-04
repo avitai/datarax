@@ -24,14 +24,14 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras
 
-      - name: Install benchkit
-        run: uv pip install -e tools/benchkit
+      - name: Install calibrax
+        run: uv pip install "calibrax @ git+https://github.com/avitai/calibrax.git"
 
       - name: Run Tier 1 Benchmark Gate
         run: uv run python -m benchmarks.runners.ci_runner --repetitions 3
 
-      - name: Regression check (benchkit)
-        run: uv run benchkit check --data benchmark-data/ --threshold 0.05
+      - name: Regression check (calibrax)
+        run: uv run calibrax check --data benchmark-data/ --threshold 0.05
         continue-on-error: true  # Non-blocking until baseline is established
 
       - uses: actions/upload-artifact@v4

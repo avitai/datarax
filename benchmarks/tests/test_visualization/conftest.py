@@ -10,7 +10,7 @@ import time
 import pytest
 
 from benchmarks.tests.test_analysis.conftest import make_comparative_results, make_result
-from datarax.benchmarking.results import BenchmarkResult
+from calibrax.core import BenchmarkResult
 
 
 @pytest.fixture

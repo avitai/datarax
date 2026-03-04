@@ -9,7 +9,9 @@ Design ref: Section 6.4.8 of the benchmark report.
 from __future__ import annotations
 
 import platform
-import subprocess
+
+# Controlled local system introspection commands (git/nvidia-smi).
+import subprocess  # nosec B404
 import sys
 from datetime import UTC, datetime
 from typing import Any
@@ -63,8 +65,9 @@ def capture_environment() -> dict[str, Any]:
 def _get_git_commit() -> str:
     """Get current git commit hash, or 'unknown' if not in a repo."""
     try:
+        # Static git command; no user-controlled input.
         return (
-            subprocess.check_output(
+            subprocess.check_output(  # nosec B603 B607
                 ["git", "rev-parse", "HEAD"],
                 stderr=subprocess.DEVNULL,
             )
@@ -78,8 +81,9 @@ def _get_git_commit() -> str:
 def _get_gpu_info() -> str | None:
     """Query nvidia-smi for GPU information."""
     try:
+        # Static nvidia-smi query; no user-controlled input.
         return (
-            subprocess.check_output(
+            subprocess.check_output(  # nosec B603 B607
                 [
                     "nvidia-smi",
                     "--query-gpu=name,memory.total,driver_version",

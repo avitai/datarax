@@ -10,6 +10,7 @@ References:
 """
 
 from pathlib import Path
+import shutil
 from typing import Any
 
 import flax.nnx as nnx
@@ -58,6 +59,24 @@ class OrbaxCheckpointHandler:
     def wait_until_finished(self) -> None:
         """Block until any outstanding async save completes."""
         self.checkpointer.wait_until_finished()
+
+    def _orbax_restore(self, checkpoint_path: str, item: Any | None = None) -> Any:
+        """Restore checkpoint data with cross-version Orbax compatibility."""
+        if item is None:
+            return self.checkpointer.restore(checkpoint_path)
+        try:
+            return self.checkpointer.restore(checkpoint_path, item=item)
+        except TypeError:
+            # Older Orbax accepted positional target only.
+            return self.checkpointer.restore(checkpoint_path, item)
+
+    def _state_for_checkpoint(self, target: Any) -> Any:
+        """Normalize a checkpoint target into a serializable state tree."""
+        if isinstance(target, Checkpointable):
+            return target.get_state()
+        if isinstance(target, nnx.Module):
+            return nnx.to_pure_dict(nnx.state(target))
+        return target
 
     def _preprocess(self, target: Any) -> Any:
         """Single-pass preprocessing for checkpoint serialization.
@@ -139,11 +158,7 @@ class OrbaxCheckpointHandler:
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
 
-        # Extract state from Checkpointable objects
-        if isinstance(target, Checkpointable):
-            state = target.get_state()
-        else:
-            state = target
+        state = self._state_for_checkpoint(target)
 
         # Add metadata if provided
         if metadata:
@@ -156,18 +171,15 @@ class OrbaxCheckpointHandler:
         state = self._preprocess(state)
 
         if step is not None:
-            # Versioned checkpoints with CheckpointManager
-            options = ocp.CheckpointManagerOptions(max_to_keep=keep, create=True)
-            with ocp.CheckpointManager(str(directory), options=options) as manager:
-                save_args = ocp.args.StandardSave(state)  # type: ignore[call-arg]
-                manager.save(step, args=save_args)
-                manager.wait_until_finished()
-
-            saved_path = str(directory / str(step))
-            if not Path(saved_path).exists():
-                ckpt_path = str(directory / f"ckpt-{step}")
-                if Path(ckpt_path).exists():
-                    saved_path = ckpt_path
+            # Versioned checkpoints: save each step into its own checkpoint directory.
+            # Using direct checkpointers here avoids CheckpointManager-specific stalls
+            # observed in some environments while preserving restore-by-step behavior.
+            step_dir = directory / f"ckpt-{step}"
+            self.checkpointer.save(str(step_dir), state, force=overwrite)
+            if not self.async_checkpointing:
+                self.checkpointer.wait_until_finished()
+            saved_path = str(step_dir)
+            self._prune_old_checkpoints(directory, keep)
         else:
             # Single checkpoint
             self.checkpointer.save(str(directory / "checkpoint"), state, force=overwrite)
@@ -200,43 +212,67 @@ class OrbaxCheckpointHandler:
         Raises:
             ValueError: If directory doesn't exist or no checkpoints found.
         """
-        directory = Path(directory)
-        if not directory.exists():
-            raise ValueError(f"Checkpoint directory not found: {directory}")
+        actual_path = self._resolve_restore_path(directory, step)
 
-        checkpoint_path = self._find_checkpoint_path(directory, step)
-        default_subdir = checkpoint_path / "default"
-        actual_path = default_subdir if default_subdir.exists() else checkpoint_path
-
-        # Ensure any async save is complete before restoring
         if self.async_checkpointing:
             self.checkpointer.wait_until_finished()
 
-        # Restore state
-        state = self.checkpointer.restore(str(actual_path))
-
-        # Single-pass restoration: strings + PRNG keys in one tree walk
-        state = self._restore(state)
-
-        # Extract metadata
-        metadata = None
-        if isinstance(state, dict) and "__metadata__" in state:
-            metadata = state.pop("__metadata__")
-        if isinstance(state, dict) and "__state__" in state:
-            state = state["__state__"]
+        restore_target = self._build_restore_target(target)
+        state = self._orbax_restore(str(actual_path), item=restore_target)
+        state = self._decode_restored_state(state, restore_target)
+        state, metadata = self._extract_state_and_metadata(state)
 
         if metadata_only:
             return metadata
 
-        # Apply state to target if provided
-        if target is not None:
-            if isinstance(target, Checkpointable):
-                target.set_state(state)
-                return target
-            elif isinstance(target, nnx.Module):
-                nnx.update(target, state)
-                return target
+        return self._apply_restored_state(target, state)
 
+    def _resolve_restore_path(self, directory: str | Path, step: int | None) -> Path:
+        """Resolve concrete checkpoint path, including Orbax default subdir."""
+        base_dir = Path(directory)
+        if not base_dir.exists():
+            raise ValueError(f"Checkpoint directory not found: {base_dir}")
+        checkpoint_path = self._find_checkpoint_path(base_dir, step)
+        default_subdir = checkpoint_path / "default"
+        return default_subdir if default_subdir.exists() else checkpoint_path
+
+    def _build_restore_target(self, target: Any | None) -> Any | None:
+        """Build preprocessed restore target tree for Orbax validation."""
+        if target is None:
+            return None
+        # Restore target must mirror the serialized structure saved to disk.
+        # This keeps Orbax metadata validation consistent for transformed
+        # leaves such as PRNG keys and string markers.
+        return self._preprocess(self._state_for_checkpoint(target))
+
+    def _decode_restored_state(self, state: Any, restore_target: Any | None) -> Any:
+        """Decode serialized tree and recover integer paths when needed."""
+        decoded_state = self._restore(state)
+        # Orbax can stringify integer path segments when restoring pure dicts
+        # without a target tree. Recover integer paths for NNX container states.
+        if restore_target is None and isinstance(decoded_state, dict):
+            return nnx.restore_int_paths(decoded_state)
+        return decoded_state
+
+    def _extract_state_and_metadata(self, state: Any) -> tuple[Any, Any | None]:
+        """Split payload into state and optional metadata envelope."""
+        metadata: Any | None = None
+        if isinstance(state, dict) and "__metadata__" in state:
+            metadata = state.pop("__metadata__")
+        if isinstance(state, dict) and "__state__" in state:
+            return state["__state__"], metadata
+        return state, metadata
+
+    def _apply_restored_state(self, target: Any | None, state: Any) -> Any:
+        """Apply restored state to target when one is provided."""
+        if target is None:
+            return state
+        if isinstance(target, Checkpointable):
+            target.set_state(state)
+            return target
+        if isinstance(target, nnx.Module):
+            nnx.update(target, state)
+            return target
         return state
 
     def _find_checkpoint_path(self, directory: Path, step: int | None) -> Path:
@@ -284,6 +320,19 @@ class OrbaxCheckpointHandler:
                     except ValueError:
                         continue
         return sorted(steps)
+
+    def _prune_old_checkpoints(self, directory: Path, keep: int | None) -> None:
+        """Delete oldest versioned checkpoints beyond the keep count."""
+        if keep is None or keep <= 0:
+            return
+        steps = self.get_checkpoint_steps(directory)
+        if len(steps) <= keep:
+            return
+        for step in steps[: len(steps) - keep]:
+            for name in (f"ckpt-{step}", str(step)):
+                checkpoint_path = directory / name
+                if checkpoint_path.exists():
+                    shutil.rmtree(checkpoint_path, ignore_errors=True)
 
     def latest_step(self, directory: str | Path) -> int | None:
         """Get the latest checkpoint step."""

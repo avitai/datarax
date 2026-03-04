@@ -1,6 +1,6 @@
 """MosaicML StreamingDataset adapter for the benchmark framework.
 
-Wraps MosaicML's StreamingDataset (MDS format) with the BenchmarkAdapter
+Wraps MosaicML's StreamingDataset (MDS format) with the PipelineAdapter
 lifecycle. Tier 2 cloud/streaming -- supports 5 scenarios.
 
 Design ref: Section 14.2 of the benchmark report.
@@ -28,12 +28,12 @@ import numpy as np
 
 from benchmarks.adapters import register
 from benchmarks.adapters._utils import cleanup_temp_dir, setup_temp_dir
-from benchmarks.adapters.base import BenchmarkAdapter, ScenarioConfig
+from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
 
 @register
-class MosaicAdapter(BenchmarkAdapter):
-    """BenchmarkAdapter for MosaicML StreamingDataset.
+class MosaicAdapter(PipelineAdapter):
+    """PipelineAdapter for MosaicML StreamingDataset.
 
     Requires MDS format conversion in setup(). Uses a temp directory for
     the converted data, cleaned up in teardown().

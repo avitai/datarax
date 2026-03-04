@@ -6,13 +6,13 @@ with controllable timing distributions for stability/report/gap testing.
 
 from __future__ import annotations
 
-import time
 
 import numpy as np
 import pytest
 
-from datarax.benchmarking.results import BenchmarkResult
-from datarax.benchmarking.timing import TimingSample
+from benchmarks.core.result_model import build_benchmark_result
+from calibrax.core import BenchmarkResult
+from calibrax.profiling import TimingSample
 
 
 def make_result(
@@ -53,7 +53,7 @@ def make_result(
         num_elements=num_elements,
     )
 
-    return BenchmarkResult(
+    return build_benchmark_result(
         framework=framework,
         scenario_id=scenario_id,
         variant=variant,
@@ -67,7 +67,6 @@ def make_result(
             "transforms": [],
             "seed": 42,
         },
-        timestamp=time.time(),
     )
 
 

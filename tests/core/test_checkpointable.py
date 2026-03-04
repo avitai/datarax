@@ -514,23 +514,20 @@ class TestCheckpointVersioningAndMigration:
     """Test checkpoint versioning and migration."""
 
     def test_checkpoint_versioning(self):
-        """Test checkpoint version compatibility."""
+        """Unknown version keys must not be injected into module state."""
         rngs = nnx.Rngs(42)
         module = SimpleModule(10, rngs=rngs)
 
-        # Save checkpoint with version info
+        # Versioning belongs in checkpoint metadata, not module state.
         state = module.get_state()
         state["__version__"] = "1.0.0"
 
-        # Create new module and restore
         new_module = SimpleModule(10, rngs=nnx.Rngs(123))
-        new_module.set_state(state)
-
-        # Should restore despite version info
-        assert new_module.counter.get_value() == module.counter.get_value()
+        with pytest.raises(ValueError, match="structurally incompatible"):
+            new_module.set_state(state)
 
     def test_checkpoint_migration(self):
-        """Test migrating old checkpoint format to new."""
+        """Legacy/partial state formats should fail fast."""
         # Simulate old checkpoint format
         old_state = {
             "counter": 5,
@@ -542,24 +539,24 @@ class TestCheckpointVersioningAndMigration:
         rngs = nnx.Rngs(42)
         module = SimpleModule(10, rngs=rngs)
 
-        # Should handle partial state restoration
-        module.set_state(old_state)
-        assert module.counter.get_value() == 5
+        with pytest.raises(ValueError, match="structurally incompatible"):
+            module.set_state(old_state)
 
     def test_incompatible_state_restoration(self):
-        """Test handling of incompatible state restoration."""
+        """Completely incompatible state should raise."""
         rngs = nnx.Rngs(42)
         module = SimpleModule(10, rngs=rngs)
 
         # Try to restore completely incompatible state
         incompatible_state = {"non_existent_field": 123, "another_field": "value"}
 
-        # Should handle gracefully
-        module.set_state(incompatible_state)
-        # Module should still be functional
+        with pytest.raises(ValueError, match="structurally incompatible"):
+            module.set_state(incompatible_state)
+
+        # Module should still be functional after failed restore.
         x = jnp.ones((5, 10))
         result = module(x)
-        assert result is not None
+        assert result.shape == (5, 10)
 
 
 class TestErrorRecoveryAndCorruption:
@@ -581,16 +578,15 @@ class TestErrorRecoveryAndCorruption:
                 module = SimpleModule(10, rngs=rngs)
 
                 # Should handle error gracefully
-                try:
+                with pytest.raises(
+                    (ValueError, RuntimeError, OSError, FileNotFoundError, TypeError)
+                ):
                     with warnings.catch_warnings():
                         warnings.filterwarnings("ignore")
                         handler.restore(tmp_dir, module)
-                except Exception:
-                    # Expected to fail, but should not crash
-                    pass
 
     def test_partial_checkpoint_recovery(self):
-        """Test recovery from partial checkpoints."""
+        """Partial checkpoint states should fail fast."""
         rngs = nnx.Rngs(42)
         module = SimpleModule(10, rngs=rngs)
 
@@ -600,14 +596,9 @@ class TestErrorRecoveryAndCorruption:
         # Create partial state (missing some fields)
         partial_state = {k: v for k, v in full_state.items() if k != "linear"}
 
-        # Try to restore partial state
         new_module = SimpleModule(10, rngs=nnx.Rngs(123))
-        new_module.set_state(partial_state)
-
-        # Should maintain functionality despite partial restoration
-        x = jnp.ones((5, 10))
-        result = new_module(x)
-        assert result is not None
+        with pytest.raises(ValueError, match="structurally incompatible"):
+            new_module.set_state(partial_state)
 
     def test_checkpoint_atomic_save(self):
         """Test atomic checkpoint saving."""

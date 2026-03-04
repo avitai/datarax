@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterator
 
 import jax.numpy as jnp
 
-from datarax.benchmarking.timing import TimingCollector
+from calibrax.profiling import TimingCollector
 
 
 def measure_adapter_throughput(
@@ -28,7 +28,7 @@ def measure_adapter_throughput(
     Returns throughput. Reusable across all P0-P5 tests (DRY).
 
     Args:
-        adapter: BenchmarkAdapter instance.
+        adapter: PipelineAdapter instance.
         config: ScenarioConfig for the benchmark.
         data: Synthetic data dict for the scenario.
         warmup_batches: Number of warmup iterations.
@@ -50,7 +50,7 @@ def measure_pipeline_throughput(
     warmup_batches: int = 5,
     measure_batches: int = 50,
     count_fn: Callable[[Any], int] | None = None,
-    sync_fn: Callable[[], None] | None = None,
+    sync_fn: Callable[[Any], None] | None = None,
 ) -> float:
     """Measure raw pipeline throughput in elements/sec.
 
@@ -66,14 +66,18 @@ def measure_pipeline_throughput(
     Returns:
         Throughput in elements per second.
     """
-    sync = sync_fn or (lambda: jnp.array(0.0).block_until_ready())
+
+    def default_sync(_result: Any) -> None:
+        jnp.array(0.0).block_until_ready()
+
+    sync = sync_fn or default_sync
     collector = TimingCollector(sync_fn=sync)
 
     # Warmup: consume and discard warmup_batches
     for i, _ in enumerate(pipeline_iter):
         if i >= warmup_batches:
             break
-        sync()
+        sync(None)
 
     # Measure
     result = collector.measure_iteration(

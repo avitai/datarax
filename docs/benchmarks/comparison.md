@@ -110,15 +110,15 @@ After running benchmarks, export to W&B for interactive exploration:
 
 ```bash
 export WANDB_API_KEY="..."
-benchkit export --data benchmark-data/
+calibrax export --data benchmark-data/
 ```
 
-See [Dashboard & benchkit](dashboard.md) for setup details.
+See [Dashboard & calibrax](dashboard.md) for setup details.
 
 ### Terminal Summary
 
 For a quick local overview without W&B:
 
 ```bash
-benchkit summary --data benchmark-data/
+calibrax summary --data benchmark-data/
 ```

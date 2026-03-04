@@ -356,9 +356,10 @@ class TestStateManagement:
     def test_set_state_with_rules(self):
         """Test set_state restores sharding rules."""
         sharder = ConcreteSharderModule()
-        state = {
-            "sharding_rules": [("model", "model_axis")],
-        }
+        # set_state expects full checkpoint structure; start from current state
+        # and update only the sharding rule payload.
+        state = sharder.get_state()
+        state["sharding_rules"] = [("model", "model_axis")]
 
         sharder.set_state(state)
 

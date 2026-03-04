@@ -127,24 +127,14 @@ class TestIteratorCheckpoint(unittest.TestCase):
         # Save the iterator state
         path = self.checkpoint.save(self.iterator, step=1)
 
-        # Debug: Print path and check if it exists
-        print(f"Saved checkpoint path: {path}")
-        print(f"Path exists: {os.path.exists(path)}")
-
         # Check that the path exists
         self.assertTrue(os.path.exists(path))
 
         # Create a new iterator
         new_iterator = SimpleIterator(self.test_data)
 
-        try:
-            # Restore with the iterator checkpoint (using modern API)
-            restored = self.checkpoint.restore(new_iterator, step=1)
-        except Exception as e:
-            if "sharding" in str(e).lower():
-                self.skipTest(f"Skipping test due to sharding issue in Orbax: {e}")
-            else:
-                raise e
+        # Restore with the iterator checkpoint
+        restored = self.checkpoint.restore(new_iterator, step=1)
 
         # Check that it's the same object
         self.assertIs(restored, new_iterator)
@@ -159,47 +149,27 @@ class TestIteratorCheckpoint(unittest.TestCase):
     def test_restore_with_version(self):
         """Test restoring with different versions."""
         # Save at different states
-        paths = []
         for i in range(3):
             # Iterate a bit
             for _ in range(10):
                 next(self.iterator)
 
             # Save the iterator state with a high keep value to preserve all checkpoints
-            path = self.checkpoint.save(self.iterator, step=i + 1, keep=10)
-            paths.append(path)
+            self.checkpoint.save(self.iterator, step=i + 1, keep=10)
 
-            # Debug: Print information about the checkpoint
-            print(f"Saved checkpoint {i + 1} at path: {path}")
-            print(f"Path exists: {os.path.exists(path)}")
-            if os.path.exists(path):
-                if os.path.isdir(path):
-                    print(f"Directory contents: {os.listdir(path)}")
-                else:
-                    print(f"Not a directory. File size: {os.path.getsize(path)} bytes")
+        # Test restoring from step 2
+        new_iterator = SimpleIterator(self.test_data)
+        restored = self.checkpoint.restore(new_iterator, step=2)
 
-        # Print all checkpoint directories
-        print(f"All paths in temp_dir: {os.listdir(self.temp_dir)}")
+        # Check that the state was restored correctly
+        self.assertEqual(restored.idx, 20)
 
-        try:
-            # Test restoring from step 2 (using modern API)
-            new_iterator = SimpleIterator(self.test_data)
-            restored = self.checkpoint.restore(new_iterator, step=2)
+        # Test restoring the latest (step 3)
+        new_iterator = SimpleIterator(self.test_data)
+        restored = self.checkpoint.restore(new_iterator)
 
-            # Check that the state was restored correctly
-            self.assertEqual(restored.idx, 20)
-
-            # Test restoring the latest (step 3)
-            new_iterator = SimpleIterator(self.test_data)
-            restored = self.checkpoint.restore(new_iterator)
-
-            # Check that the state was restored correctly
-            self.assertEqual(restored.idx, 30)
-        except Exception as e:
-            if "sharding" in str(e).lower():
-                self.skipTest(f"Skipping test due to sharding issue in Orbax: {e}")
-            else:
-                raise e
+        # Check that the state was restored correctly
+        self.assertEqual(restored.idx, 30)
 
 
 class TestPipelineCheckpoint(unittest.TestCase):
@@ -256,20 +226,14 @@ class TestPipelineCheckpoint(unittest.TestCase):
         # Create a new iterator
         new_iterator = SimpleIterator(self.test_data)
 
-        try:
-            # Restore the latest checkpoint (using modern API)
-            restored = self.checkpoint.restore_latest(new_iterator)
+        # Restore the latest checkpoint
+        restored = self.checkpoint.restore_latest(new_iterator)
 
-            # Check that it's the same object
-            self.assertIs(restored, new_iterator)
+        # Check that it's the same object
+        self.assertIs(restored, new_iterator)
 
-            # Check that the state was restored correctly
-            self.assertEqual(restored.idx, 10)
-        except Exception as e:
-            if "sharding" in str(e).lower():
-                self.skipTest(f"Skipping test due to sharding issue in Orbax: {e}")
-            else:
-                raise e
+        # Check that the state was restored correctly
+        self.assertEqual(restored.idx, 10)
 
         # Create a no-checkpoint scenario
         with tempfile.TemporaryDirectory() as empty_dir:

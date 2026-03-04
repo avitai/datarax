@@ -13,6 +13,7 @@ Test Coverage:
 - Stochastic behavior (different keys, deterministic with same seed)
 """
 
+import jax
 import jax.numpy as jnp
 import pytest
 from flax import nnx
@@ -408,6 +409,31 @@ class TestBatchMixOperatorJAX:
             results.add(val)
 
         assert len(results) > 1, "JIT should preserve randomness"
+
+
+class TestBatchMixOperatorDifferentiability:
+    """Test gradient flow through MixUp batch mixing."""
+
+    def test_mixup_is_differentiable_wrt_inputs(self):
+        """MixUp path should produce finite gradients for input arrays."""
+        config = BatchMixOperatorConfig(mode="mixup", alpha=1.0)
+        op = BatchMixOperator(config, rngs=nnx.Rngs({"batch_mix": 0}))
+
+        def loss(values):
+            batch = Batch.from_parts(
+                data={"value": values},
+                states={},
+                metadata_list=[None] * values.shape[0],
+                validate=False,
+            )
+            mixed = op._apply_mixup(batch, jax.random.key(0))
+            return jnp.sum(mixed.get_data()["value"])
+
+        inputs = jnp.array([[1.0], [3.0]], dtype=jnp.float32)
+        grad = jax.grad(loss)(inputs)
+
+        assert jnp.all(jnp.isfinite(grad))
+        assert jnp.allclose(grad, jnp.ones_like(inputs))
 
 
 class TestBatchMixOperatorEdgeCases:

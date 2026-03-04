@@ -635,7 +635,35 @@ class TestElementOperatorJAXCompatibility:
 
 
 # ========================================================================
-# Test Category 8: Integration Tests
+# Test Category 8: Differentiability
+# ========================================================================
+
+
+class TestElementOperatorDifferentiability:
+    """Test ElementOperator gradient flow for data transformations."""
+
+    def test_grad_through_element_transform(self):
+        """Element-level affine transforms should remain differentiable."""
+
+        def affine_transform(element, key):
+            del key
+            return element.replace(data={"value": 2.0 * element.data["value"] + 5.0})
+
+        config = ElementOperatorConfig(stochastic=False)
+        op = ElementOperator(config, fn=affine_transform, rngs=nnx.Rngs(0))
+
+        def loss(x):
+            output_data, _, _ = op.apply({"value": x}, {}, None)
+            return jnp.sum(output_data["value"])
+
+        inputs = jnp.array([1.0, -2.0, 4.0], dtype=jnp.float32)
+        grad = jax.grad(loss)(inputs)
+
+        assert jnp.allclose(grad, jnp.full_like(inputs, 2.0))
+
+
+# ========================================================================
+# Test Category 9: Integration Tests
 # ========================================================================
 
 

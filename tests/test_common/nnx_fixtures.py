@@ -147,7 +147,7 @@ class SimpleSamplerModule(nnx.Module):
         """Get the sampling indices."""
         if not self._has_generated.get_value():
             self.generate_indices(length, rngs=rngs)
-        return self.indices.value
+        return self.indices.get_value()
 
 
 @pytest.fixture
@@ -173,21 +173,13 @@ def data_source(simple_data):
 
 @pytest.fixture
 def transformer():
-    """Create a simple deterministic operator module for testing.
-
-    Note: Fixture name kept as 'transformer' for backward compatibility
-    with existing tests that use this fixture.
-    """
+    """Create a simple deterministic operator module for testing."""
     return SimpleDeterministicOperator(scale=2.0, offset=1.0)
 
 
 @pytest.fixture
 def augmenter():
-    """Create a simple stochastic operator module for testing.
-
-    Note: Fixture name kept as 'augmenter' for backward compatibility
-    with existing tests that use this fixture.
-    """
+    """Create a simple stochastic operator module for testing."""
     # Initialize with RNGs directly in constructor
     rngs = nnx.Rngs(0, augment=1)
     module = SimpleStochasticOperator(magnitude=0.1, rngs=rngs)

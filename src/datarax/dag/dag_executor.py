@@ -9,6 +9,7 @@ COMPLETE IMPLEMENTATION following TDD principles.
 
 from typing import Any, Literal
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 import jax
 import flax.nnx as nnx
 from flax.nnx.transforms.compilation import JitFn
@@ -37,6 +38,34 @@ from datarax.core.batcher import BatcherModule
 from datarax.core.sampler import SamplerModule
 from datarax.core.sharder import SharderModule
 from datarax.typing import Batch
+
+
+@dataclass
+class _ExecutorConfigState:
+    """Configuration state for DAGExecutor."""
+
+    enable_caching: bool
+    jit_compile: bool
+    enforce_batch: bool
+    prefetch_size: int
+    name: str
+
+
+@dataclass
+class _ExecutorRuntimeState:
+    """Mutable runtime state for DAGExecutor."""
+
+    rngs_seed: nnx.Rngs | None
+    rngs: nnx.Rngs | None = None
+    needs_rng: bool | None = None
+    has_stateful_ops: bool | None = None
+    iteration_count: int = 0
+    epoch_count: int = 0
+    source_node: DataSourceNode | None = None
+    batch_node: BatchNode | None = None
+    iterator: Iterator[Batch] | None = None
+    cache: dict[int, Any] | None = None
+    jit_execute: JitFn | None = None
 
 
 class DAGExecutor(nnx.Module):
@@ -125,36 +154,153 @@ class DAGExecutor(nnx.Module):
         else:
             self.graph = graph
 
-        # Configuration - lazy RNG (only created when needed)
-        # Store rngs parameter but defer creation until pipeline needs it
-        self._rngs_seed = rngs  # Store for lazy initialization
-        self._rngs: nnx.Rngs | None = None  # Lazily initialized
-        self._needs_rng: bool | None = None  # Cached stochastic detection
-        self._has_stateful_ops: bool | None = None  # Cached stateful detection
-        self.enable_caching = enable_caching
-        self.jit_compile = jit_compile
-        self.enforce_batch = enforce_batch
-        self.prefetch_size = prefetch_size
-        self.name = name or "DAGExecutor"
+        self._config_state = _ExecutorConfigState(
+            enable_caching=enable_caching,
+            jit_compile=jit_compile,
+            enforce_batch=enforce_batch,
+            prefetch_size=prefetch_size,
+            name=name or "DAGExecutor",
+        )
+        self._runtime_state = _ExecutorRuntimeState(
+            rngs_seed=rngs,
+            cache={} if enable_caching else None,
+        )
 
-        # Pipeline state - plain Python (not nnx.Variable to avoid TraceContextError)
-        # These are used for iteration tracking, not gradient computation
-        self._iteration_count: int = 0
-        self._epoch_count: int = 0
-
-        # Execution state - plain Python attributes (not tracked by NNX)
-        self._source_node: DataSourceNode | None = None
-        self._batch_node: BatchNode | None = None
-        self._iterator: Iterator[Batch] | None = None
-        self._cache: dict[int, Any] | None = {} if enable_caching else None
-
-        # JIT compiled execution function
-        self._jit_execute: JitFn | None = None
         if jit_compile:
             self._compile()
 
         # Validate graph
         self._validate_graph()
+
+    @property
+    def enable_caching(self) -> bool:
+        """Whether executor caching is enabled."""
+        return self._config_state.enable_caching
+
+    @enable_caching.setter
+    def enable_caching(self, value: bool) -> None:
+        self._config_state.enable_caching = value
+
+    @property
+    def jit_compile(self) -> bool:
+        """Whether executor uses JIT compilation."""
+        return self._config_state.jit_compile
+
+    @jit_compile.setter
+    def jit_compile(self, value: bool) -> None:
+        self._config_state.jit_compile = value
+
+    @property
+    def enforce_batch(self) -> bool:
+        """Whether batch-first ordering is enforced."""
+        return self._config_state.enforce_batch
+
+    @enforce_batch.setter
+    def enforce_batch(self, value: bool) -> None:
+        self._config_state.enforce_batch = value
+
+    @property
+    def prefetch_size(self) -> int:
+        """Configured prefetch size."""
+        return self._config_state.prefetch_size
+
+    @prefetch_size.setter
+    def prefetch_size(self, value: int) -> None:
+        self._config_state.prefetch_size = value
+
+    @property
+    def name(self) -> str:
+        """Executor display name."""
+        return self._config_state.name
+
+    @name.setter
+    def name(self, value: str) -> None:
+        self._config_state.name = value
+
+    @property
+    def _rngs_seed(self) -> nnx.Rngs | None:
+        return self._runtime_state.rngs_seed
+
+    @_rngs_seed.setter
+    def _rngs_seed(self, value: nnx.Rngs | None) -> None:
+        self._runtime_state.rngs_seed = value
+
+    @property
+    def _rngs(self) -> nnx.Rngs | None:
+        return self._runtime_state.rngs
+
+    @_rngs.setter
+    def _rngs(self, value: nnx.Rngs | None) -> None:
+        self._runtime_state.rngs = value
+
+    @property
+    def _needs_rng(self) -> bool | None:
+        return self._runtime_state.needs_rng
+
+    @_needs_rng.setter
+    def _needs_rng(self, value: bool | None) -> None:
+        self._runtime_state.needs_rng = value
+
+    @property
+    def _has_stateful_ops(self) -> bool | None:
+        return self._runtime_state.has_stateful_ops
+
+    @_has_stateful_ops.setter
+    def _has_stateful_ops(self, value: bool | None) -> None:
+        self._runtime_state.has_stateful_ops = value
+
+    @property
+    def _iteration_count(self) -> int:
+        return self._runtime_state.iteration_count
+
+    @_iteration_count.setter
+    def _iteration_count(self, value: int) -> None:
+        self._runtime_state.iteration_count = value
+
+    @property
+    def _epoch_count(self) -> int:
+        return self._runtime_state.epoch_count
+
+    @_epoch_count.setter
+    def _epoch_count(self, value: int) -> None:
+        self._runtime_state.epoch_count = value
+
+    @property
+    def _source_node(self) -> DataSourceNode | None:
+        return self._runtime_state.source_node
+
+    @_source_node.setter
+    def _source_node(self, value: DataSourceNode | None) -> None:
+        self._runtime_state.source_node = value
+
+    @property
+    def _batch_node(self) -> BatchNode | None:
+        return self._runtime_state.batch_node
+
+    @_batch_node.setter
+    def _batch_node(self, value: BatchNode | None) -> None:
+        self._runtime_state.batch_node = value
+
+    @property
+    def _iterator(self) -> Iterator[Batch] | None:
+        return self._runtime_state.iterator
+
+    @_iterator.setter
+    def _iterator(self, value: Iterator[Batch] | None) -> None:
+        self._runtime_state.iterator = value
+
+    @property
+    def _cache(self) -> dict[int, Any] | None:
+        return self._runtime_state.cache
+
+    @_cache.setter
+    def _cache(self, value: dict[int, Any] | None) -> None:
+        self._runtime_state.cache = value
+
+    @property
+    def _jit_execute(self) -> JitFn | None:
+        """JIT-compiled execute function cached in runtime state."""
+        return self._runtime_state.jit_execute
 
     @property
     def rngs(self) -> nnx.Rngs | None:
@@ -173,8 +319,7 @@ class DAGExecutor(nnx.Module):
 
         # If user provided explicit rngs, always use them
         if self._rngs_seed is not None:
-            # Use object.__setattr__ to bypass NNX checking for plain Python attribute
-            object.__setattr__(self, "_rngs", self._rngs_seed)
+            self._rngs = self._rngs_seed
             return self._rngs
 
         # Check if pipeline needs RNG (cache result)
@@ -184,7 +329,7 @@ class DAGExecutor(nnx.Module):
         # Only create default RNG if pipeline has stochastic ops
         if self._needs_rng:
             new_rngs = nnx.Rngs(0)
-            object.__setattr__(self, "_rngs", new_rngs)
+            self._rngs = new_rngs
             return self._rngs
 
         # Pipeline is deterministic and user didn't provide rngs - return None
@@ -374,55 +519,63 @@ class DAGExecutor(nnx.Module):
         Returns:
             Self for chaining
         """
-        # Convert module to node if needed
-        if isinstance(node, DataSourceModule):
-            node = DataSourceNode(node)
-            self._source_node = nnx.data(node)
-            # Don't add source to the execution graph, just store it
+        normalized_node = self._normalize_added_node(node)
+        if normalized_node is None:
             return self
-        elif isinstance(node, OperatorModule):
-            # Check if stochastic for OperatorNode vs OperatorNode
-            if hasattr(node, "config") and getattr(node.config, "stochastic", False):
-                node = OperatorNode(node)
-            else:
-                node = OperatorNode(node)
-        elif isinstance(node, BatcherModule):
-            node = OperatorNode(node)
-        elif isinstance(node, SamplerModule):
-            node = SamplerNode(node)
-        elif isinstance(node, SharderModule):
-            node = SharderNode(node)
-        elif isinstance(node, DataSourceNode):
-            # Handle DataSourceNode directly
-            self._source_node = nnx.data(node)
-            # Don't add source to the execution graph, just store it
-            return self
-        elif not isinstance(node, Node):
-            raise ValueError(f"Unsupported type: {type(node)}")
-
-        # Check for batch enforcement
-        if self.enforce_batch:
-            if isinstance(node, BatchNode):
-                self._batch_node = nnx.data(node)
-            elif isinstance(node, OperatorNode | OperatorNode):
-                if self._batch_node is None:
-                    raise ValueError(
-                        "Batch-first enforcement: Add BatchNode before transforms. "
-                        "Use executor.add(BatchNode(batch_size)) first."
-                    )
-
-        # Update graph
-        if isinstance(self.graph, Identity):
-            self.graph: Node = node
-        else:
-            self.graph: Node = self.graph >> node
-
-        # Invalidate caches when graph structure changes
-        self._jit_execute = None
-        self._needs_rng = None  # Force re-detection of stochastic ops
-        self._has_stateful_ops = None  # Force re-detection of stateful ops
-
+        self._enforce_batch_order(normalized_node)
+        self._append_node_to_graph(normalized_node)
+        self._invalidate_execution_caches()
         return self
+
+    def _normalize_added_node(self, node: Any) -> Node | None:
+        """Normalize supported module/container types to a DAG node."""
+        if isinstance(node, DataSourceModule):
+            self._set_source_node(DataSourceNode(node))
+            return None
+        if isinstance(node, DataSourceNode):
+            self._set_source_node(node)
+            return None
+        if isinstance(node, OperatorModule):
+            return OperatorNode(node)
+        if isinstance(node, BatcherModule):
+            return OperatorNode(node)
+        if isinstance(node, SamplerModule):
+            return SamplerNode(node)
+        if isinstance(node, SharderModule):
+            return SharderNode(node)
+        if isinstance(node, Node):
+            return node
+        raise ValueError(f"Unsupported type: {type(node)}")
+
+    def _set_source_node(self, node: DataSourceNode) -> None:
+        """Set source node outside the graph execution chain."""
+        self._source_node = nnx.data(node)
+
+    def _enforce_batch_order(self, node: Node) -> None:
+        """Enforce batch-first operator ordering when configured."""
+        if not self.enforce_batch:
+            return
+        if isinstance(node, BatchNode):
+            self._batch_node = nnx.data(node)
+            return
+        if isinstance(node, OperatorNode) and self._batch_node is None:
+            raise ValueError(
+                "Batch-first enforcement: Add BatchNode before transforms. "
+                "Use executor.add(BatchNode(batch_size)) first."
+            )
+
+    def _append_node_to_graph(self, node: Node) -> None:
+        """Append a node sequentially to the current graph."""
+        if isinstance(self.graph, Identity):
+            self.graph = node
+            return
+        self.graph = self.graph >> node
+
+    def _invalidate_execution_caches(self) -> None:
+        """Invalidate derived execution caches after graph mutation."""
+        self._runtime_state.jit_execute = None
+        self._needs_rng = None
+        self._has_stateful_ops = None
 
     def parallel(self, nodes: list[Node]) -> "DAGExecutor":
         """Add parallel branches to the pipeline.
@@ -946,8 +1099,8 @@ class DAGExecutor(nnx.Module):
                 return self._cache[cache_key]
 
         # Execute node
-        if self._jit_execute is not None:
-            result = self._jit_execute(node, data, key)
+        if self._runtime_state.jit_execute is not None:
+            result = self._runtime_state.jit_execute(node, data, key)
         else:
             result = node(data, key=key)
 
@@ -1133,7 +1286,7 @@ class DAGExecutor(nnx.Module):
         # donate_argnums=(1,) donates the `data` argument — XLA reuses its
         # buffer for output since each pipeline step consumes its input.
         # This reduces peak memory by ~1 batch_size.
-        self._jit_execute = nnx.jit(execute_fn, donate_argnums=(1,))
+        self._runtime_state.jit_execute = nnx.jit(execute_fn, donate_argnums=(1,))
 
     def _compute_cache_key(self, node: Node, data: Any) -> int:
         """Compute cache key for node and data.
@@ -1213,66 +1366,37 @@ class DAGExecutor(nnx.Module):
         Args:
             state: State dictionary from get_state()
         """
-        # Restore NNX state
         if "nnx_state" in state:
-            current_state = nnx.state(self)
-            try:
-                nnx.replace_by_pure_dict(current_state, state["nnx_state"])
-                nnx.update(self, current_state)
-            except ValueError as e:
-                # If structures don't match exactly, try a more selective update
-                # This can happen when loading state from slightly different pipeline versions
-                import warnings
+            self._restore_nnx_state(state["nnx_state"])
+        self._restore_graph_state(state.get("graph_state"))
+        self._restore_counters_and_cache(state)
 
-                warnings.warn(
-                    f"State structure mismatch during restore: {e}. Attempting selective restore."
-                )
+    def _restore_nnx_state(self, saved_state: Any) -> None:
+        """Restore NNX state strictly.
 
-                # Only update matching keys
-                saved_dict = state["nnx_state"]
-                current_dict = nnx.to_pure_dict(current_state)
+        Raises:
+            ValueError: If the saved state structure does not match current module structure.
+        """
+        if not isinstance(saved_state, dict):
+            raise ValueError(f"Invalid NNX checkpoint state type: {type(saved_state).__name__}")
+        saved_state = nnx.restore_int_paths(saved_state)
+        current_state = nnx.state(self)
+        nnx.replace_by_pure_dict(current_state, saved_state)
+        nnx.update(self, current_state)
 
-                def selective_update(current: Any, saved: Any, path: str = "") -> Any:
-                    """Recursively update only matching paths."""
-                    if isinstance(current, dict) and isinstance(saved, dict):
-                        result = {}
-                        for key in current:
-                            if key in saved:
-                                new_path = f"{path}.{key}" if path else key
-                                result[key] = selective_update(current[key], saved[key], new_path)
-                            else:
-                                # Keep current value if not in saved
-                                result[key] = current[key]
-                        return result
-                    elif isinstance(current, list | tuple) and isinstance(saved, list | tuple):
-                        result = []
-                        for i, (c_item, s_item) in enumerate(zip(current, saved)):
-                            result.append(selective_update(c_item, s_item, f"{path}[{i}]"))
-                        # Return same type as current
-                        return type(current)(result)
-                    else:
-                        # Leaf node - update if types match
-                        if type(current) == type(saved):
-                            return saved
-                        return current
+    def _restore_graph_state(self, graph_state: Any) -> None:
+        """Restore graph-level checkpoint state when supported."""
+        if graph_state is None:
+            return
+        if hasattr(self.graph, "set_state"):
+            self.graph.set_state(graph_state)  # type: ignore[attr-defined]
 
-                updated_dict = selective_update(current_dict, saved_dict)
-                assert isinstance(updated_dict, dict)
-                nnx.replace_by_pure_dict(current_state, updated_dict)
-                nnx.update(self, current_state)
-
-        # Restore graph state
-        if "graph_state" in state and state["graph_state"] is not None:
-            if hasattr(self.graph, "set_state"):
-                self.graph.set_state(state["graph_state"])  # type: ignore[attr-defined]
-
-        # Restore counters
+    def _restore_counters_and_cache(self, state: dict[str, Any]) -> None:
+        """Restore iteration counters and cache payload from checkpoint."""
         if "iteration_count" in state:
             self._iteration_count = state["iteration_count"]
         if "epoch_count" in state:
             self._epoch_count = state["epoch_count"]
-
-        # Restore cache
         if "cache" in state and state["cache"] is not None:
             self._cache = state["cache"]
 

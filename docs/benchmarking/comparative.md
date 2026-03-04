@@ -16,7 +16,7 @@ Compare performance across configurations or versions.
 ## Quick Start
 
 ```python
-from datarax.benchmarking import BenchmarkComparison, BenchmarkResult
+from calibrax import BenchmarkComparison, BenchmarkResult
 
 comparison = BenchmarkComparison()
 comparison.add_result("baseline", baseline_result)
@@ -37,4 +37,4 @@ comparison.save("comparison_results.json")
 
 ---
 
-::: datarax.benchmarking.comparative
+::: calibrax.comparative

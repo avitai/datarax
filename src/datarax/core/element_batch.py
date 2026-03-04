@@ -618,7 +618,7 @@ def create_batch_from_arrays(
             # Fallback to naive creation if complex, but here we optimize for common case.
             try:
                 batched_states[k] = jnp.stack([s[k] for s in states], axis=0)
-            except Exception:
+            except (TypeError, ValueError, KeyError):
                 # Fallback to slow path if stacking fails (e.g. different structures)
                 return _create_batch_naive(data, states, metadata_list)
 

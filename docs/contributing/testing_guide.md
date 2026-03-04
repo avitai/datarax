@@ -20,7 +20,7 @@ The simplest way to run tests is with the `run_tests.sh` script:
 # Run core tests (tests/ only)
 uv run pytest
 
-# Run ALL test suites (tests/ + benchmarks/tests/ + tools/benchkit/tests/)
+# Run ALL test suites (tests/ + benchmarks/tests/)
 uv run pytest --all-suites
 
 # Run all tests, automatically using both CPU and GPU if available
@@ -75,7 +75,7 @@ Tests are configured with several pytest markers and command-line options:
 
 ### Test Suite Selection
 
-- `--all-suites`: Collect all test suites (`tests/`, `benchmarks/tests/`, `tools/benchkit/tests/`). Without this flag, only `tests/` is collected (configured in `pyproject.toml` via `testpaths`).
+- `--all-suites`: Collect all test suites (`tests/`, `benchmarks/tests/`). Without this flag, only `tests/` is collected (configured in `pyproject.toml` via `testpaths`).
 
 ### Device Selection
 

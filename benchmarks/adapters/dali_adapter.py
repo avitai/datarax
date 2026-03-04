@@ -1,6 +1,6 @@
 """NVIDIA DALI adapter for the benchmark framework.
 
-Wraps NVIDIA DALI's GPU-accelerated pipeline with the BenchmarkAdapter
+Wraps NVIDIA DALI's GPU-accelerated pipeline with the PipelineAdapter
 lifecycle. Tier 2 -- requires CUDA.
 
 Design ref: Section 14.2 of the benchmark report.
@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 
 from benchmarks.adapters import register
-from benchmarks.adapters.base import BenchmarkAdapter, ScenarioConfig
+from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
 
 class _ExternalSourceIterator:
@@ -39,8 +39,8 @@ class _ExternalSourceIterator:
 
 
 @register
-class DaliAdapter(BenchmarkAdapter):
-    """BenchmarkAdapter for NVIDIA DALI."""
+class DaliAdapter(PipelineAdapter):
+    """PipelineAdapter for NVIDIA DALI."""
 
     def __init__(self) -> None:
         self._pipe: Any = None

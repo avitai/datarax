@@ -149,9 +149,9 @@ class ArraySharder(SharderModule):
         info["batch_pre_sharding"] = {
             "structure": jax.tree_util.tree_structure(batch),
             "shapes": jax.tree.map(
-                lambda x: getattr(x, "shape", None)
-                if isinstance(x, jax.Array | jax.Array)
-                else None,
+                lambda x: (
+                    getattr(x, "shape", None) if isinstance(x, jax.Array | jax.Array) else None
+                ),
                 batch,
             ),
         }
@@ -163,9 +163,9 @@ class ArraySharder(SharderModule):
         info["batch_post_sharding"] = {
             "structure": jax.tree_util.tree_structure(sharded_batch),
             "shapes": jax.tree.map(
-                lambda x: getattr(x, "shape", None)
-                if isinstance(x, jax.Array | jax.Array)
-                else None,
+                lambda x: (
+                    getattr(x, "shape", None) if isinstance(x, jax.Array | jax.Array) else None
+                ),
                 sharded_batch,
             ),
             "shardings": jax.tree.map(

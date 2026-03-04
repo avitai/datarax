@@ -4,7 +4,7 @@ Datarax provides a benchmarking suite to measure and analyze the performance of 
 
 ## Overview
 
-The benchmarking module (`datarax.benchmarking`) allows you to:
+The benchmarking module (`calibrax`) allows you to:
 
 1.  **Time pipeline throughput** with `TimingCollector` (GPU-sync aware).
 2.  **Profile GPU memory** with `GPUMemoryProfiler` and optimize with `MemoryOptimizer`.
@@ -19,7 +19,7 @@ The benchmarking module (`datarax.benchmarking`) allows you to:
 Use `TimingCollector` to measure samples/sec with optional GPU synchronization:
 
 ```python
-from datarax.benchmarking import TimingCollector
+from calibrax import TimingCollector
 
 # CPU timing (pass sync_fn for GPU — see docstring)
 timer = TimingCollector()
@@ -38,7 +38,7 @@ print(f"First batch: {result.first_batch_time:.4f}s (includes JIT)")
 Use `GPUMemoryProfiler` to check GPU memory usage:
 
 ```python
-from datarax.benchmarking import GPUMemoryProfiler
+from calibrax import GPUMemoryProfiler
 
 profiler = GPUMemoryProfiler()
 usage = profiler.get_memory_usage()
@@ -48,7 +48,7 @@ print(f"GPU memory used: {usage['gpu_memory_used_mb']:.1f} MB")
 Use `MemoryOptimizer` to analyze a pipeline's memory footprint:
 
 ```python
-from datarax.benchmarking import MemoryOptimizer
+from calibrax import MemoryOptimizer
 
 optimizer = MemoryOptimizer()
 analysis = optimizer.analyze_pipeline_memory(pipeline_fn, sample_data)
@@ -62,7 +62,7 @@ for suggestion in analysis["suggestions"]:
 Use `BenchmarkComparison` to compare results from different configurations:
 
 ```python
-from datarax.benchmarking import BenchmarkComparison, BenchmarkResult
+from calibrax import BenchmarkComparison, BenchmarkResult
 
 comparison = BenchmarkComparison()
 comparison.add_result("baseline", baseline_result)

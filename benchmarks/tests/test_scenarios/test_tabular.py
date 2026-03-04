@@ -13,7 +13,7 @@ from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.adapters.datarax_adapter import DataraxAdapter
 from benchmarks.scenarios.base import ScenarioVariant
 from benchmarks.tests.test_scenarios.conftest import assert_valid_variant, run_quick_scenario
-from datarax.benchmarking.results import BenchmarkResult
+from calibrax.core import BenchmarkResult
 
 
 # ===========================================================================
@@ -83,7 +83,7 @@ class TestTAB1Scenario:
         )
         result = run_quick_scenario(datarax_adapter, tiny_variant)
         assert isinstance(result, BenchmarkResult)
-        assert result.scenario_id == "TAB-1"
+        assert result.tags["scenario_id"] == "TAB-1"
         assert result.timing.num_batches > 0
 
 
@@ -166,5 +166,5 @@ class TestTAB2Scenario:
         )
         result = run_quick_scenario(datarax_adapter, tiny_variant)
         assert isinstance(result, BenchmarkResult)
-        assert result.scenario_id == "TAB-2"
+        assert result.tags["scenario_id"] == "TAB-2"
         assert result.timing.num_batches > 0

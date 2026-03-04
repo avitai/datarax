@@ -1,7 +1,7 @@
 """Energon adapter for the benchmark framework.
 
 Wraps NVIDIA's Megatron Energon multi-modal data loader with the
-BenchmarkAdapter lifecycle. Tier 3 -- only supports MM-1.
+PipelineAdapter lifecycle. Tier 3 -- only supports MM-1.
 
 Design ref: Section 14.2 of the benchmark report.
 """
@@ -15,12 +15,12 @@ import numpy as np
 
 from benchmarks.adapters import register
 from benchmarks.adapters._utils import cleanup_temp_dir, setup_temp_dir, write_numpy_tar
-from benchmarks.adapters.base import BenchmarkAdapter, ScenarioConfig
+from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
 
 @register
-class EnergonAdapter(BenchmarkAdapter):
-    """BenchmarkAdapter for NVIDIA Megatron Energon.
+class EnergonAdapter(PipelineAdapter):
+    """PipelineAdapter for NVIDIA Megatron Energon.
 
     Energon is Megatron-LM's multi-modal data loading library. Requires
     separate installation (megatron-energon). Only supports MM-1.

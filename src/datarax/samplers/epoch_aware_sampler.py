@@ -9,6 +9,7 @@ import numpy as np
 
 from datarax.core.config import StructuralConfig
 from datarax.core.sampler import SamplerModule
+from datarax.samplers._validation import validate_num_records_and_epochs
 
 
 @dataclass
@@ -40,16 +41,7 @@ class EpochAwareSamplerConfig(StructuralConfig):
 
         # Call parent validation
         super().__post_init__()
-
-        # Validate num_records (required)
-        if self.num_records is None:
-            raise ValueError("num_records is required")
-        if self.num_records <= 0:
-            raise ValueError(f"num_records must be positive, got {self.num_records}")
-
-        # Validate num_epochs
-        if self.num_epochs < -1 or self.num_epochs == 0:
-            raise ValueError(f"num_epochs must be positive or -1 (infinite), got {self.num_epochs}")
+        validate_num_records_and_epochs(self.num_records, self.num_epochs)
 
 
 class EpochAwareSamplerModule(SamplerModule):

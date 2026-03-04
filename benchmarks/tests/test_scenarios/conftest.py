@@ -9,7 +9,7 @@ from __future__ import annotations
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.adapters.datarax_adapter import DataraxAdapter
 from benchmarks.scenarios.base import ScenarioVariant, run_scenario
-from datarax.benchmarking.results import BenchmarkResult
+from calibrax.core import BenchmarkResult
 
 
 def assert_valid_variant(variant: ScenarioVariant) -> None:

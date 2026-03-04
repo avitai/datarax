@@ -288,7 +288,7 @@ def test_hf_eager_source_empty_dataset(monkeypatch):
     config = HFEagerConfig(name="empty_dataset", split="train")
 
     # Should raise error because no data to load
-    with pytest.raises(Exception):  # Will fail due to empty data
+    with pytest.raises(ValueError, match="produced no elements"):
         HFEagerSource(config, rngs=nnx.Rngs(42))
 
 
