@@ -1,23 +1,26 @@
+# pyright: reportArgumentType=false, reportReturnType=false, reportOperatorIssue=false
 """Tests for enhanced BatcherModule functionality.
 
 This module contains thorough tests for the enhanced BatcherModule that
 inherits advanced features from StructuralModule.
 """
 
-import pytest
+from collections.abc import Iterator
+from dataclasses import dataclass
+
+import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import flax.nnx as nnx
-from dataclasses import dataclass
-from collections.abc import Iterator
+import pytest
+
 from datarax.core.batcher import BatcherModule
 from datarax.core.config import StructuralConfig
-from datarax.typing import Element, Batch
+from datarax.typing import Batch, Element
 
 
-@dataclass
-class SimpleTestBatcherConfig(StructuralConfig):
+@dataclass(frozen=True)
+class SimpleTestBatcherConfig(StructuralConfig):  # type: ignore[reportGeneralTypeIssues]
     """Configuration for SimpleTestBatcher."""
 
     def __post_init__(self):
@@ -74,7 +77,7 @@ class SimpleTestBatcher(BatcherModule):
         if isinstance(elements[0], dict):
             result = {}
             for key in elements[0].keys():
-                values = [elem[key] for elem in elements]
+                values = [elem[key] for elem in elements]  # type: ignore[reportIndexIssue]
 
                 # If all values are arrays, stack them
                 if all(isinstance(v, jax.Array | np.ndarray) for v in values):
@@ -162,7 +165,8 @@ class TestBatcherModuleEnhanced:
         batcher = SimpleTestBatcher(config)
 
         # Modify internal state
-        batcher._cache["test"] = "data"
+        assert batcher._cache is not None
+        batcher._cache["test"] = "data"  # type: ignore[reportArgumentType]
 
         # Get state - nnx.Variable fields are included
         state = batcher.get_state()
@@ -179,11 +183,13 @@ class TestBatcherModuleEnhanced:
         batcher = SimpleTestBatcher(config)
 
         # Add to cache
-        batcher._cache["key1"] = "value1"
+        assert batcher._cache is not None
+        batcher._cache["key1"] = "value1"  # type: ignore[reportArgumentType]
         assert len(batcher._cache) == 1
 
         # Reset cache
         batcher.reset_cache()
+        assert batcher._cache is not None
         assert len(batcher._cache) == 0
 
 
@@ -192,7 +198,7 @@ class TestBatcherModuleIntegration:
 
     def test_pipeline_integration(self):
         """Test integration with pipeline infrastructure."""
-        from datarax.dag import DAGExecutor, BatchNode
+        from datarax.dag import BatchNode, DAGExecutor
 
         batcher = SimpleTestBatcher(SimpleTestBatcherConfig())
 
@@ -313,7 +319,8 @@ class TestBatcherModuleCoverage:
         batcher = SimpleTestBatcher(config)
 
         # Modify internal state
-        batcher._cache["test"] = "value"
+        assert batcher._cache is not None
+        batcher._cache["test"] = "value"  # type: ignore[reportArgumentType]
 
         # Get state (should be serializable)
         state = batcher.get_state()
@@ -444,14 +451,16 @@ class TestBatcherModuleAdvancedFeatures:
         """Test module cloning."""
         config = SimpleTestBatcherConfig(cacheable=True)
         batcher = SimpleTestBatcher(config)
-        batcher._cache["test"] = "data"
+        assert batcher._cache is not None
+        batcher._cache["test"] = "data"  # type: ignore[reportArgumentType]
 
         # Clone the module
         cloned = batcher.clone()
 
         # Cache is cloned too
+        assert cloned._cache is not None
         assert "test" in cloned._cache
-        assert cloned._cache["test"] == "data"
+        assert cloned._cache["test"] == "data"  # type: ignore[reportArgumentType]
 
     def test_rng_stream_requirements(self):
         """Test RNG stream requirement checking."""
@@ -658,6 +667,7 @@ class TestBatcherModuleDocumentation:
 
         elements = [{"data": jnp.array([i])} for i in range(5)]
         stats = batcher.compute_statistics(elements)
+        assert stats is not None
 
         assert stats["count"] == 5
 
@@ -770,7 +780,7 @@ class TestBatcherModulePerformance:
 
         start = time.time()
         batcher_uncached(elements, batch_size=10)
-        time.time() - start
+        _uncached_first_time = time.time() - start
 
         # Second run - cached should be faster
         start = time.time()

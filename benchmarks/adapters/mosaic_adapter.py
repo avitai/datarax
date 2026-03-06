@@ -21,6 +21,7 @@ import logging
 from collections.abc import Iterator
 from typing import Any
 
+
 # Suppress noisy background-thread tracebacks from MosaicML's shard downloader.
 logging.getLogger("concurrent.futures").setLevel(logging.CRITICAL)
 
@@ -40,21 +41,25 @@ class MosaicAdapter(PipelineAdapter):
     """
 
     def __init__(self) -> None:
+        """Initialize the MosaicML Streaming adapter."""
+        super().__init__()
         self._dataset: Any = None
-        self._config: ScenarioConfig | None = None
         self._tmp_dir: Any = None
 
     @property
     def name(self) -> str:
+        """Return the adapter display name."""
         return "MosaicML Streaming"
 
     @property
     def version(self) -> str:
+        """Return the MosaicML Streaming version string."""
         import streaming
 
         return getattr(streaming, "__version__", "unknown")
 
     def is_available(self) -> bool:
+        """Return True if MosaicML Streaming is installed."""
         try:
             import streaming  # noqa: F401
 
@@ -63,12 +68,14 @@ class MosaicAdapter(PipelineAdapter):
             return False
 
     def supported_scenarios(self) -> set[str]:
+        """Return the set of supported benchmark scenario IDs."""
         return {
             "CV-1",  # Raw streaming throughput (MDS format)
             "NLP-1",  # No transforms
         }
 
     def setup(self, config: ScenarioConfig, data: Any) -> None:
+        """Set up the MosaicML pipeline for the given scenario configuration."""
         from streaming import MDSWriter, StreamingDataset
 
         mds_dir, self._tmp_dir = setup_temp_dir(config, "mds")
@@ -98,6 +105,7 @@ class MosaicAdapter(PipelineAdapter):
         batch_samples: list[Any] = []
         for sample in self._dataset:
             batch_samples.append(sample)
+            assert self._config is not None
             if len(batch_samples) >= self._config.batch_size:
                 yield batch_samples
                 batch_samples = []
@@ -107,7 +115,8 @@ class MosaicAdapter(PipelineAdapter):
         return [np.stack([np.asarray(s[k]) for s in batch]) for k in keys]
 
     def teardown(self) -> None:
+        """Release resources and reset adapter state."""
         self._dataset = None
-        self._config = None
         cleanup_temp_dir(self._tmp_dir)
         self._tmp_dir = None
+        super().teardown()

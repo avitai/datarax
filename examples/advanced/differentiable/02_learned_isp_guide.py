@@ -83,6 +83,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import matplotlib
 import numpy as np
 import optax
 from flax import nnx
@@ -93,17 +94,18 @@ from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 from datarax.dag.dag_executor import DAGExecutor
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import (
-    CompositeOperatorModule,
     CompositeOperatorConfig,
+    CompositeOperatorModule,
     CompositionStrategy,
 )
 from datarax.sources import MemorySource, MemorySourceConfig
 
-import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 from pathlib import Path
+
+import matplotlib.pyplot as plt
+
 
 # Output directory for saved figures
 OUTPUT_DIR = Path("docs/assets/images/examples")
@@ -312,7 +314,7 @@ The operator pattern follows BrightnessOperator:
 
 
 # --- Operator 1: Color Correction Matrix (CCM) ---
-@dataclass
+@dataclass(frozen=True)
 class CCMConfig(ModalityOperatorConfig):
     """Configuration for Color Correction Matrix operator."""
 
@@ -330,6 +332,7 @@ class CCMOperator(ModalityOperator):
     """
 
     def __init__(self, config: CCMConfig, *, rngs: nnx.Rngs):
+        """Initialize CCMOperator."""
         super().__init__(config, rngs=rngs)
         self.config: CCMConfig = config
         # Learnable 3x3 color correction matrix (init = identity)
@@ -343,6 +346,7 @@ class CCMOperator(ModalityOperator):
         random_params: Any = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+        """Apply learnable color correction matrix to the image."""
         image = self._extract_field(data, self.config.field_key)
         # Apply color correction: output_rgb = input_rgb @ CCM
         transformed = jnp.einsum("...c,cd->...d", image, self.ccm[...])
@@ -352,7 +356,7 @@ class CCMOperator(ModalityOperator):
 
 
 # --- Operator 2: Desaturation ---
-@dataclass
+@dataclass(frozen=True)
 class DesaturationConfig(ModalityOperatorConfig):
     """Configuration for Desaturation operator."""
 
@@ -369,6 +373,7 @@ class DesaturationOperator(ModalityOperator):
     """
 
     def __init__(self, config: DesaturationConfig, *, rngs: nnx.Rngs):
+        """Initialize DesaturationOperator."""
         super().__init__(config, rngs=rngs)
         self.config: DesaturationConfig = config
         # Learnable desaturation strength (init = 0 = no desaturation)
@@ -382,6 +387,7 @@ class DesaturationOperator(ModalityOperator):
         random_params: Any = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+        """Apply learnable desaturation blending color with grayscale."""
         image = self._extract_field(data, self.config.field_key)
         strength = jax.nn.sigmoid(self.strength[...])  # Constrain to [0, 1]
         gray = jnp.mean(image, axis=-1, keepdims=True)
@@ -393,7 +399,7 @@ class DesaturationOperator(ModalityOperator):
 
 
 # --- Operator 3: Tone Mapping ---
-@dataclass
+@dataclass(frozen=True)
 class ToneMappingConfig(ModalityOperatorConfig):
     """Configuration for Tone Mapping operator."""
 
@@ -412,6 +418,7 @@ class ToneMappingOperator(ModalityOperator):
     """
 
     def __init__(self, config: ToneMappingConfig, *, rngs: nnx.Rngs):
+        """Initialize ToneMappingOperator."""
         super().__init__(config, rngs=rngs)
         self.config: ToneMappingConfig = config
         # Learnable control points (init = identity curve: y = x)
@@ -425,6 +432,7 @@ class ToneMappingOperator(ModalityOperator):
         random_params: Any = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+        """Apply piecewise-linear tone mapping curve to the image."""
         image = self._extract_field(data, self.config.field_key)
         # Apply piecewise-linear tone curve per channel
         n = self.config.num_control_points
@@ -442,7 +450,7 @@ class ToneMappingOperator(ModalityOperator):
 
 
 # --- Operator 4: Gamma Correction ---
-@dataclass
+@dataclass(frozen=True)
 class GammaCorrectionConfig(ModalityOperatorConfig):
     """Configuration for Gamma Correction operator."""
 
@@ -459,6 +467,7 @@ class GammaCorrectionOperator(ModalityOperator):
     """
 
     def __init__(self, config: GammaCorrectionConfig, *, rngs: nnx.Rngs):
+        """Initialize GammaCorrectionOperator."""
         super().__init__(config, rngs=rngs)
         self.config: GammaCorrectionConfig = config
         # Learnable gamma (init = 1.0 = identity)
@@ -473,6 +482,7 @@ class GammaCorrectionOperator(ModalityOperator):
         random_params: Any = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+        """Apply learnable gamma correction to the image."""
         image = self._extract_field(data, self.config.field_key)
         gamma = jnp.exp(self.log_gamma[...])  # Always positive
         gamma = jnp.clip(gamma, 0.1, 5.0)  # Reasonable range
@@ -483,7 +493,7 @@ class GammaCorrectionOperator(ModalityOperator):
 
 
 # --- Operator 5: Sharpening ---
-@dataclass
+@dataclass(frozen=True)
 class SharpeningConfig(ModalityOperatorConfig):
     """Configuration for Sharpening operator."""
 
@@ -501,6 +511,7 @@ class SharpeningOperator(ModalityOperator):
     """
 
     def __init__(self, config: SharpeningConfig, *, rngs: nnx.Rngs):
+        """Initialize SharpeningOperator."""
         super().__init__(config, rngs=rngs)
         self.config: SharpeningConfig = config
         # Learnable sharpening strength
@@ -526,6 +537,7 @@ class SharpeningOperator(ModalityOperator):
         random_params: Any = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+        """Apply learnable unsharp mask sharpening to the image."""
         image = self._extract_field(data, self.config.field_key)
         strength = jax.nn.sigmoid(self.strength[...])
 
@@ -700,6 +712,7 @@ class CNNDetector(nnx.Module):
     """
 
     def __init__(self, num_classes: int = 10, *, rngs: nnx.Rngs):
+        """Initialize CNNDetector."""
         hidden_dims = [32, 64, 128, 256]
         in_features = 3
 
@@ -1121,7 +1134,12 @@ print("\nSUCCESS: All 5 ISP stages receive gradients through the composite!")
 # Step 8: Analyze what the ISP learned
 def analyze_isp(isp_composite: CompositeOperatorModule) -> None:
     """Print analysis of learned ISP parameters."""
-    ccm, desat, tonemap, gamma_op, sharpen = list(isp_composite.operators)
+    ccm: CCMOperator
+    desat: DesaturationOperator
+    tonemap: ToneMappingOperator
+    gamma_op: GammaCorrectionOperator
+    sharpen: SharpeningOperator
+    ccm, desat, tonemap, gamma_op, sharpen = list(isp_composite.operators)  # type: ignore[reportAssignmentType]
 
     print("\n=== Learned ISP Parameters ===")
 

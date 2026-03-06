@@ -1,13 +1,20 @@
 """Composite loader nodes combining sourcing, shuffling, and batching."""
 
 from __future__ import annotations
-import jax
+
+import logging
+from collections.abc import Generator
 from typing import Any
 
+import jax
+
+from datarax.core.data_source import DataSourceModule
 from datarax.dag.nodes.base import Node
 from datarax.dag.nodes.control_flow import Sequential
-from datarax.dag.nodes.data_source import DataSourceNode, BatchNode, ShuffleNode
-from datarax.core.data_source import DataSourceModule
+from datarax.dag.nodes.data_source import BatchNode, DataSourceNode, ShuffleNode
+
+
+logger = logging.getLogger(__name__)
 
 
 class DataLoader(Sequential):
@@ -40,7 +47,7 @@ class DataLoader(Sequential):
         drop_remainder: bool = False,
         shuffle_seed: int | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize data loader.
 
         Args:
@@ -101,11 +108,11 @@ class DataLoader(Sequential):
         object.__setattr__(self, "_iterator", None)
         self._iteration_count = 0
 
-    def __iter__(self):
+    def __iter__(self) -> Generator[Any, None, None]:
         """Make DataLoader iterable."""
         return self._create_iterator()
 
-    def _create_iterator(self):
+    def _create_iterator(self) -> Generator[Any, None, None]:
         """Create iterator for DataLoader."""
         self._iteration_count = 0
         while True:
@@ -131,8 +138,9 @@ class DataLoader(Sequential):
                 if hasattr(self, "nodes") and len(self.nodes) > 0:
                     # Find the BatchNode and flush it
                     for node in self.nodes:
-                        if hasattr(node, "flush"):
-                            final_batch = node.flush()
+                        flush_fn = getattr(node, "flush", None)
+                        if flush_fn is not None:
+                            final_batch = flush_fn()
                             if final_batch is not None:
                                 self._iteration_count += 1
                                 yield final_batch
@@ -145,8 +153,9 @@ class DataLoader(Sequential):
 
         # Get state from each node in the pipeline
         for i, node in enumerate(self.nodes):
-            if hasattr(node, "get_state"):
-                node_state = node.get_state()
+            get_state_fn = getattr(node, "get_state", None)
+            if get_state_fn is not None:
+                node_state = get_state_fn()
             else:
                 # For nodes without get_state, try to get basic state info
                 node_state = {
@@ -165,9 +174,10 @@ class DataLoader(Sequential):
         # Set state for each node if available
         if "nodes" in state and len(state["nodes"]) == len(self.nodes):
             for i, (node, node_state) in enumerate(zip(self.nodes, state["nodes"])):
-                if hasattr(node, "set_state") and isinstance(node_state, dict):
+                set_state_fn = getattr(node, "set_state", None)
+                if set_state_fn is not None and isinstance(node_state, dict):
                     try:
-                        node.set_state(node_state)
+                        set_state_fn(node_state)
                     except (AttributeError, TypeError, ValueError, RuntimeError):
                         # If setting state fails, continue with other nodes
                         pass

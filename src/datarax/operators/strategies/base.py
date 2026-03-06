@@ -1,14 +1,18 @@
 """Base class for composition strategies."""
 
 import abc
-from typing import Any
+import logging
 from collections.abc import Callable
-import jax
-
-from jaxtyping import PyTree
 from dataclasses import dataclass
+from typing import Any
+
+import jax
+from jaxtyping import PyTree
 
 from datarax.core.operator import OperatorModule
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -46,11 +50,15 @@ class CompositionStrategyImpl(abc.ABC):
     ) -> tuple[PyTree, PyTree, dict[str, Any]]:
         """Apply operator with JAX control flow (cond) for trace compatibility."""
 
-        def apply_fn(operands: tuple[PyTree, PyTree, dict[str, Any], Any | None]):
+        def apply_fn(
+            operands: tuple[PyTree, PyTree, dict[str, Any], Any | None],
+        ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
             d, s, m, rp = operands
             return operator.apply(d, s, m, rp)
 
-        def noop_fn(operands: tuple[PyTree, PyTree, dict[str, Any], Any | None]):
+        def noop_fn(
+            operands: tuple[PyTree, PyTree, dict[str, Any], Any | None],
+        ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
             d, s, m, _ = operands
             return d, s, m
 
@@ -68,8 +76,9 @@ class CompositionStrategyImpl(abc.ABC):
         stats_callback: Callable[[int, dict[str, Any]], None] | None,
     ) -> None:
         """Send operator statistics to callback when available."""
-        if stats_callback and hasattr(operator, "statistics") and operator.statistics:
-            stats_callback(operator_index, operator.statistics)
+        stats = getattr(operator, "statistics", None)
+        if stats_callback and stats:
+            stats_callback(operator_index, stats)
 
     def _execute_operators(
         self,

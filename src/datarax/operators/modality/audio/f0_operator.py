@@ -7,6 +7,7 @@ for training, local weighted average for inference).
 All operations are pure JAX/Flax NNX — fully vmap/JIT/grad compatible.
 """
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,7 +25,10 @@ from datarax.operators.modality.audio.crepe_model import (
 )
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class CrepeF0Config(OperatorConfig):
     """Configuration for CrepeF0Operator.
 
@@ -80,7 +84,8 @@ class CrepeF0Operator(OperatorModule):
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
+        """Initialize the F0 extraction operator."""
         super().__init__(config, rngs=rngs, name=name)
         self.config: CrepeF0Config = config
 
@@ -166,7 +171,7 @@ class CrepeF0Operator(OperatorModule):
             frames_padded = jnp.pad(frames_input, ((0, total_padded - n_frames), (0, 0), (0, 0)))
             frames_chunked = frames_padded.reshape(n_chunks, batch_frames, frame_size, 1)
 
-            def _crepe_scan_fn(carry, chunk):
+            def _crepe_scan_fn(carry: Any, chunk: Any) -> tuple[Any, Any]:
                 return carry, self.crepe_model(chunk)
 
             _, probs_chunked = jax.lax.scan(_crepe_scan_fn, None, frames_chunked)
@@ -175,13 +180,13 @@ class CrepeF0Operator(OperatorModule):
         # Decode pitch per frame
         if self.config.differentiable:
             # Vectorize over frames — decode_pitch_differentiable works on (360,)
-            def _decode_diff(p):
+            def _decode_diff(p: Any) -> Any:
                 return decode_pitch_differentiable(p, self.config.decode_temperature)
 
             f0_hz, confidence = jax.vmap(_decode_diff)(probs)
         else:
 
-            def _decode_local(p):
+            def _decode_local(p: Any) -> Any:
                 return decode_pitch_local(p)
 
             f0_hz, confidence = jax.vmap(_decode_local)(probs)

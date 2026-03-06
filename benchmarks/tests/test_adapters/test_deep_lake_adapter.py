@@ -19,6 +19,7 @@ import pytest
 
 from benchmarks.tests.test_adapters.conftest import assert_valid_iteration_result
 
+
 deeplake = pytest.importorskip("deeplake")
 
 
@@ -41,8 +42,9 @@ class TestDeepLakeAdapterProperties:
 
     def test_supported_scenarios(self):
         from benchmarks.adapters.deep_lake_adapter import DeepLakeAdapter
+        from benchmarks.tests.test_adapters.conftest import assert_supported_scenarios
 
-        assert DeepLakeAdapter().supported_scenarios() == {"CV-1"}
+        assert_supported_scenarios(DeepLakeAdapter(), must_include={"CV-1"})
 
 
 class TestDeepLakeAdapterLifecycle:

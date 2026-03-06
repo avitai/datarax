@@ -1,3 +1,4 @@
+# pyright: reportOptionalMemberAccess=false
 """Tests for Datarax's random state handling with NNX modules.
 
 This module tests random key generation, seed reproduction, key splitting,

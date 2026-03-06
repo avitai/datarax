@@ -14,10 +14,10 @@ import time
 
 # Suppress warnings
 import warnings
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
-from collections.abc import Callable
 
 import flax.nnx as nnx
 import jax
@@ -65,6 +65,7 @@ class GrainDistributedLoader:
         shard_options: GrainShardOptions | None = None,
         prefetch_size: int = 10,
     ):
+        """Initialize GrainDistributedLoader."""
         self.data = data
         self.num_workers = num_workers
         self.shard_options = shard_options or GrainShardOptions(1, 0)
@@ -195,6 +196,7 @@ class SharedMemoryPool(nnx.Module):
     """Efficient shared memory management with NNX."""
 
     def __init__(self, capacity_mb: int = 100):
+        """Initialize SharedMemoryPool."""
         self.capacity_mb = capacity_mb
 
         # Automatic state tracking
@@ -276,6 +278,7 @@ class StatefulDistributedLoader(nnx.Module):
         num_shards: int = 1,
         memory_pool_mb: int = 100,
     ):
+        """Initialize StatefulDistributedLoader."""
         self.data = data
         self.num_workers = num_workers
 
@@ -419,6 +422,7 @@ class JAXShardedLoader(nnx.Module):
     def __init__(
         self, data: np.ndarray, mesh: jax.sharding.Mesh | None = None, batch_size: int = 32
     ):
+        """Initialize JAXShardedLoader."""
         self.data = data
         self.batch_size = batch_size
 

@@ -23,11 +23,11 @@ architectural separation between **eager** and **streaming** sources:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
-from datarax.sources.array_record_source import ArrayRecordSourceModule
+
 
 _TFDS_AUTO_DETECT_ERRORS = (ImportError, AttributeError, KeyError, TypeError, ValueError, OSError)
 
@@ -35,11 +35,10 @@ _TFDS_AUTO_DETECT_ERRORS = (ImportError, AttributeError, KeyError, TypeError, Va
 if TYPE_CHECKING:
     import flax.nnx as nnx
 
-    from datarax.sources.tfds_source import (
-        TFDSEagerConfig,
-        TFDSEagerSource,
-        TFDSStreamingConfig,
-        TFDSStreamingSource,
+    from datarax.core.data_source import DataSourceModule
+    from datarax.sources.array_record_source import (
+        ArrayRecordSourceConfig,
+        ArrayRecordSourceModule,
     )
     from datarax.sources.hf_source import (
         HFEagerConfig,
@@ -47,11 +46,19 @@ if TYPE_CHECKING:
         HFStreamingConfig,
         HFStreamingSource,
     )
-    from datarax.core.data_source import DataSourceModule
+    from datarax.sources.tfds_source import (
+        TFDSEagerConfig,
+        TFDSEagerSource,
+        TFDSStreamingConfig,
+        TFDSStreamingSource,
+    )
 
 # Lazy imports for modules with heavy dependencies (TensorFlow, HuggingFace)
 # This prevents import hangs on macOS ARM64 and speeds up import time
 _lazy_imports = {
+    # ArrayRecord source (requires grain)
+    "ArrayRecordSourceModule": "datarax.sources.array_record_source",
+    "ArrayRecordSourceConfig": "datarax.sources.array_record_source",
     # TFDS sources
     "TFDSEagerSource": "datarax.sources.tfds_source",
     "TFDSEagerConfig": "datarax.sources.tfds_source",
@@ -65,7 +72,7 @@ _lazy_imports = {
 }
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Lazy import for TFDS and HF sources to avoid heavy dependency loading."""
     if name in _lazy_imports:
         import importlib
@@ -75,7 +82,7 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def __dir__():
+def __dir__() -> list[str]:
     """Include lazy imports in dir() for discoverability."""
     return list(__all__)
 
@@ -305,8 +312,9 @@ __all__ = [
     # Mixed source
     "MixDataSourcesNode",
     "MixDataSourcesConfig",
-    # Array record source
+    # Array record source (lazy — requires grain)
     "ArrayRecordSourceModule",
+    "ArrayRecordSourceConfig",
     # TFDS sources
     "TFDSEagerSource",
     "TFDSEagerConfig",

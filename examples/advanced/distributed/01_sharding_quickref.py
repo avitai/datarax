@@ -60,6 +60,7 @@ from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import MemorySource, MemorySourceConfig
 
+
 print(f"JAX devices: {jax.devices()}")
 print(f"Device count: {len(jax.devices())}")
 

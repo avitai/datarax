@@ -16,8 +16,8 @@ from flax import nnx
 
 # GREEN phase - imports enabled
 from datarax.operators.composite_operator import (
-    CompositeOperatorModule,
     CompositeOperatorConfig,
+    CompositeOperatorModule,
     CompositionStrategy,
 )
 from datarax.operators.map_operator import MapOperator, MapOperatorConfig
@@ -165,6 +165,7 @@ class TestConfigValidation:
         # Should not raise - validation passes
         composite = CompositeOperatorModule(composite_config)
         assert composite.config.strategy == CompositionStrategy.CONDITIONAL_SEQUENTIAL
+        assert composite.config.conditions is not None
         assert len(composite.config.conditions) == 2
 
     def test_valid_conditional_parallel_config(self):

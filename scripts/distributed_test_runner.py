@@ -6,12 +6,14 @@ This script initializes the JAX distributed system and then runs the test suite.
 It is designed to be the entrypoint for distributed containers.
 """
 
-import os
-import sys
 import json
 import logging
+import os
 import subprocess
+import sys
+
 import jax
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -87,6 +89,7 @@ def setup_distributed_environment():
 
 
 def main():
+    """Set up distributed JAX environment and run pytest."""
     setup_distributed_environment()
 
     # Run pytest

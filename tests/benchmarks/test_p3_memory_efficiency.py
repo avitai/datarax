@@ -6,9 +6,9 @@ Note: The comparative benchmark (vs SPDL adapter) requires the spdl package
 and is skipped if unavailable. The functional tests always run.
 """
 
-import pytest
-import numpy as np
 import flax.nnx as nnx
+import numpy as np
+import pytest
 
 from datarax.sources import MemorySource, MemorySourceConfig
 from tests.benchmarks.performance_targets import (

@@ -40,6 +40,7 @@ def extract_code_blocks(md_content: str) -> list[tuple[int, str]]:
 
 
 def run_file(file_path: str):
+    """Extract and execute Python code blocks from a documentation file."""
     print(f"Checking {file_path}...")
     try:
         with open(file_path, "r", encoding="utf-8") as f:
@@ -81,6 +82,7 @@ def run_file(file_path: str):
 
 
 def main():
+    """Verify Python code blocks in markdown documentation files."""
     parser = argparse.ArgumentParser(description="Verify python code blocks in markdown.")
     parser.add_argument("path", help="File or directory to verify")
     args = parser.parse_args()

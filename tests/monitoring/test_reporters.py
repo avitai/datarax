@@ -10,10 +10,9 @@ import tempfile
 import time
 from unittest.mock import patch
 
-import pytest
-
-import numpy as np
 import flax.nnx as nnx
+import numpy as np
+import pytest
 
 from datarax.monitoring.metrics import MetricRecord
 from datarax.monitoring.pipeline import MonitoredPipeline

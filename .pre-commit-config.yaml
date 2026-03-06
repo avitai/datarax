@@ -162,7 +162,7 @@ repos:
     rev: 6.3.0
     hooks:
       - id: pydocstyle
-        exclude: ^(documents|custom_modes|notebooks|tests|.deprecated|example_data)/
+        exclude: ^(documents|custom_modes|notebooks|tests|.deprecated|example_data)/|^conftest\.py$
         additional_dependencies: ["pydocstyle[toml]"]
         args: ["--config=pyproject.toml"]
 

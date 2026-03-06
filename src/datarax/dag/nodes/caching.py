@@ -1,14 +1,20 @@
 """Cache node for storing and reusing expensive transformation results."""
 
 from __future__ import annotations
-import jax
+
 import hashlib
+import logging
 from collections import OrderedDict
-import flax.nnx as nnx
 from typing import Any
+
+import flax.nnx as nnx
+import jax
 
 from datarax.dag.nodes.base import Node
 from datarax.typing import Batch
+
+
+logger = logging.getLogger(__name__)
 
 
 class Cache(Node):
@@ -26,7 +32,7 @@ class Cache(Node):
         ```
     """
 
-    def __init__(self, node: Node, cache_size: int = 100):
+    def __init__(self, node: Node, cache_size: int = 100) -> None:
         """Initialize caching node.
 
         Args:
@@ -78,11 +84,21 @@ class Cache(Node):
             return self.node(data, key=key)
 
     def _compute_cache_key(self, data: Any) -> int:
-        """Compute cache key for data."""
+        """Compute cache key for data.
+
+        Uses shape/dtype metadata only — no device-to-host transfers.
+        """
         if isinstance(data, jax.Array):
-            return hash((data.shape, data.dtype, float(data.sum())))
+            return hash((data.shape, data.dtype, id(data)))
         elif isinstance(data, dict):
-            return hash(tuple(sorted(data.keys())))
+            parts = []
+            for k in sorted(data.keys()):
+                v = data[k]
+                if hasattr(v, "shape"):
+                    parts.append((k, v.shape, getattr(v, "dtype", None), id(v)))
+                else:
+                    parts.append((k, id(v)))
+            return hash(tuple(parts))
         else:
             return hash(str(data))
 
@@ -103,7 +119,7 @@ class CacheNode(Node):
     Uses LRU-style caching with configurable size.
     """
 
-    def __init__(self, inner_node: Node, cache_size: int = 100, name: str | None = None):
+    def __init__(self, inner_node: Node, cache_size: int = 100, name: str | None = None) -> None:
         """Initialize cache node.
 
         Args:
@@ -165,19 +181,21 @@ class CacheNode(Node):
         return result
 
     def _compute_cache_key(self, data: Any) -> str:
-        """Compute hash key for data."""
+        """Compute hash key for data.
+
+        Uses shape/dtype metadata and object identity — no device-to-host
+        transfers. This avoids blocking Python on GPU/TPU reductions.
+        """
         if isinstance(data, dict):
-            # Hash dict structure and values
             key_parts = []
             for k, v in sorted(data.items()):
                 if hasattr(v, "shape"):
-                    # Include shape, dtype, and a hash of the actual values
-                    key_parts.append(f"{k}:{v.shape}:{v.dtype}:{float(v.sum())}")
+                    key_parts.append(f"{k}:{v.shape}:{v.dtype}:{id(v)}")
                 else:
                     key_parts.append(f"{k}:{hash(v)}")
             key_str = "|".join(key_parts)
         elif hasattr(data, "shape"):
-            key_str = f"{data.shape}:{data.dtype}:{float(data.sum())}"
+            key_str = f"{data.shape}:{data.dtype}:{id(data)}"
         else:
             key_str = str(hash(data))
 
@@ -187,7 +205,7 @@ class CacheNode(Node):
         """Clear the cache."""
         self.cache.set_value(OrderedDict())
 
-    def get_stats(self) -> dict[str, int]:
+    def get_stats(self) -> dict[str, int | float]:
         """Get cache statistics."""
         hits = self.hits.get_value()
         misses = self.misses.get_value()

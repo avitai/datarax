@@ -50,10 +50,12 @@ uv pip install "datarax[tfds]" matplotlib
 # GPU Memory Configuration
 import os
 
+
 os.environ["CUDA_VISIBLE_DEVICES_FOR_TF"] = ""
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import tensorflow as tf
+
 
 tf.config.set_visible_devices([], "GPU")
 
@@ -71,6 +73,7 @@ from datarax import from_source
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
+
 
 print(f"JAX backend: {jax.default_backend()}")
 
@@ -271,6 +274,7 @@ class InterleavedIterator:
         self.exhausted = [False] * len(pipelines)
 
     def __iter__(self):
+        """Iterate over interleaved pipeline batches."""
         return self
 
     def __next__(self):
@@ -483,6 +487,7 @@ print(f"Saved: {output_dir / 'cv-multisource-distribution.png'}")
 
 # %%
 import time
+
 
 # Benchmark single source
 mnist_src = TFDSEagerSource(

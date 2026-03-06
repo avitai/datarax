@@ -20,8 +20,8 @@ from flax import nnx
 
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.adapters.datarax_adapter import (
-    DataraxAdapter,
     _STOCHASTIC_TRANSFORM_FNS,
+    DataraxAdapter,
 )
 from datarax.core.element_batch import Element
 

@@ -1,0 +1,15 @@
+# GPU RTX 4090 Hardware Profile
+#
+# Local profile for single-GPU development and parity checks against cloud A100 runs.
+
+[profile]
+name = "gpu_rtx4090"
+backend = "gpu"
+max_batch_size = 256
+num_batches = 40
+warmup_batches = 6
+timeout_seconds = 600
+
+[profile.scenarios]
+# Align with cloud full-profile comparison set.
+include = ["CV-1", "CV-2", "NLP-1", "NLP-2", "TAB-1", "TAB-2", "PC-1", "PC-2", "IO-1", "IO-2", "DIST-1", "PR-1", "PR-2"]

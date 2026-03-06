@@ -8,6 +8,7 @@ import pytest
 
 from benchmarks.tests.test_adapters.conftest import assert_valid_iteration_result
 
+
 jdl = pytest.importorskip("jax_dataloader")
 
 
@@ -30,8 +31,9 @@ class TestJaxDLAdapterProperties:
 
     def test_supported_scenarios(self):
         from benchmarks.adapters.jax_dl_adapter import JaxDataloaderAdapter
+        from benchmarks.tests.test_adapters.conftest import assert_supported_scenarios
 
-        assert JaxDataloaderAdapter().supported_scenarios() == {"CV-1"}
+        assert_supported_scenarios(JaxDataloaderAdapter(), must_include={"CV-1"})
 
 
 class TestJaxDLAdapterLifecycle:

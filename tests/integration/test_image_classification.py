@@ -17,7 +17,9 @@ Features Showcased:
 
 import platform
 from typing import Any
+
 import pytest
+
 
 # Skip entire module on macOS ARM64 - TensorFlow import hangs during pytest collection
 # due to Metal/GPU device detection issues. This is a known upstream issue:
@@ -40,8 +42,8 @@ from flax import nnx
 
 from datarax.core.config import ElementOperatorConfig
 from datarax.core.element_batch import Element
-from datarax.dag.nodes import OperatorNode, DataSourceNode
 from datarax.dag import DAGExecutor
+from datarax.dag.nodes import DataSourceNode, OperatorNode
 from datarax.operators.element_operator import ElementOperator
 from datarax.operators.modality.image.brightness_operator import (
     BrightnessOperator,
@@ -313,6 +315,13 @@ def _create_train_eval_pipelines(
     return train_pipeline, eval_pipeline
 
 
+def _extract_batch_data(batch: Any) -> dict[str, jax.Array]:
+    """Extract data dict from batch (supports dict, Batch, and BatchView)."""
+    if isinstance(batch, dict):
+        return batch
+    return batch.get_data()
+
+
 def _run_training_epochs(
     model: ImageClassifier,
     optimizer: nnx.Optimizer,
@@ -329,9 +338,10 @@ def _run_training_epochs(
         epoch_accuracies: list[float] = []
 
         for batch_count, batch in enumerate(train_pipeline, start=1):
-            if batch["image"].shape[0] == 0:
+            batch_data = _extract_batch_data(batch)
+            if batch_data["image"].shape[0] == 0:
                 continue
-            loss, accuracy = train_step(model, optimizer, batch)
+            loss, accuracy = train_step(model, optimizer, batch_data)
             if not (jnp.isnan(loss) or jnp.isnan(accuracy)):
                 epoch_losses.append(float(loss))
                 epoch_accuracies.append(float(accuracy))
@@ -353,9 +363,10 @@ def _evaluate_model(
     losses: list[float] = []
     accuracies: list[float] = []
     for batch_count, batch in enumerate(eval_pipeline, start=1):
-        if batch["image"].shape[0] == 0:
+        batch_data = _extract_batch_data(batch)
+        if batch_data["image"].shape[0] == 0:
             continue
-        loss, accuracy = eval_step(model, batch)
+        loss, accuracy = eval_step(model, batch_data)
         if not (jnp.isnan(loss) or jnp.isnan(accuracy)):
             losses.append(float(loss))
             accuracies.append(float(accuracy))

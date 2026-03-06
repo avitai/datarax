@@ -14,9 +14,13 @@ Example:
     # => PartitionSpec("data", "model")
 """
 
+import logging
 from dataclasses import dataclass
 
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

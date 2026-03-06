@@ -15,9 +15,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from benchmarks.core.result_model import throughput_elements_per_sec
 from calibrax.core import BenchmarkResult
 from calibrax.statistics import StatisticalAnalyzer, welch_t_test
+
+from benchmarks.core.result_model import throughput_elements_per_sec
 
 
 class BaselineStore:
@@ -28,6 +29,7 @@ class BaselineStore:
     """
 
     def __init__(self, baselines_dir: Path | str):
+        """Initialize the baseline store with the given directory."""
         self.baselines_dir = Path(baselines_dir)
         self.baselines_dir.mkdir(parents=True, exist_ok=True)
         self._analyzer = StatisticalAnalyzer()
@@ -113,6 +115,7 @@ class BaselineStore:
 
         # Compare per-batch times using Welch's t-test
         baseline_batch_times = baseline_timing.get("per_batch_times", [])
+        assert current.timing is not None
         current_batch_times = current.timing.per_batch_times
 
         status = "pass"

@@ -75,7 +75,7 @@ class TestDropoutOperatorConfig:
         with pytest.raises(TypeError, match="dropout_rate must be a number"):
             DropoutOperatorConfig(
                 field_key="image",
-                dropout_rate="0.2",  # String instead of float
+                dropout_rate="0.2",  # String instead of float  # type: ignore[reportArgumentType]
             )
 
     def test_invalid_mode(self):
@@ -84,7 +84,7 @@ class TestDropoutOperatorConfig:
             DropoutOperatorConfig(
                 field_key="image",
                 dropout_rate=0.2,
-                mode="invalid",
+                mode="invalid",  # type: ignore[reportArgumentType]
             )
 
 
@@ -203,7 +203,7 @@ class TestDropoutOperatorTransformations:
 
         # Create batch of elements
         images = jnp.ones((4, 16, 16, 3))
-        elements = [Element(data={"image": img}, state={}, metadata={}) for img in images]
+        elements = [Element(data={"image": img}, state={}) for img in images]
         batch = Batch(elements=elements)
 
         result_batch = operator.apply_batch(batch)
@@ -226,7 +226,7 @@ class TestDropoutOperatorTransformations:
 
         # Create batch of elements
         images = jnp.ones((2, 16, 16, 3))
-        elements = [Element(data={"image": img}, state={}, metadata={}) for img in images]
+        elements = [Element(data={"image": img}, state={}) for img in images]
         batch = Batch(elements=elements)
 
         result_batch = operator.apply_batch(batch)
@@ -404,7 +404,7 @@ class TestDropoutOperatorStochasticMode:
 
         # Create batch with identical images
         images = jnp.ones((4, 16, 16, 3))
-        elements = [Element(data={"image": img}, state={}, metadata={}) for img in images]
+        elements = [Element(data={"image": img}, state={}) for img in images]
         batch = Batch(elements=elements)
 
         result_batch = operator.apply_batch(batch)
@@ -464,7 +464,7 @@ class TestDropoutOperatorJAXCompatibility:
             return op.apply_batch(batch)
 
         images = jnp.ones((2, 16, 16, 3))
-        elements = [Element(data={"image": img}, state={}, metadata={}) for img in images]
+        elements = [Element(data={"image": img}, state={}) for img in images]
         batch = Batch(elements=elements)
 
         result_batch = jit_apply_batch(operator, batch)
@@ -482,7 +482,7 @@ class TestDropoutOperatorJAXCompatibility:
 
         # apply_batch uses vmap internally
         images = jnp.ones((4, 32, 32, 3))
-        elements = [Element(data={"image": img}, state={}, metadata={}) for img in images]
+        elements = [Element(data={"image": img}, state={}) for img in images]
         batch = Batch(elements=elements)
 
         result_batch = operator.apply_batch(batch)

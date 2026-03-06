@@ -145,7 +145,7 @@ class ComponentExtractor:
 
                 # Create the new file
                 print(f"Creating {new_file_path}")
-                new_file_path.write_text(content)
+                new_file_path.write_text("\n".join(content))
 
             print(f"Processed {file_path}")
 

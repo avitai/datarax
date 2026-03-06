@@ -4,8 +4,9 @@ This module provides functions for data-parallel training in JAX models,
 supporting both modern SPMD (via nnx.jit + mesh) and legacy pmap patterns.
 """
 
-from typing import Any
+import logging
 from collections.abc import Callable
+from typing import Any
 
 import flax.nnx as nnx
 import jax
@@ -15,6 +16,9 @@ from jax import lax
 from jax.sharding import Mesh, PartitionSpec, Sharding
 
 from datarax.typing import Batch
+
+
+logger = logging.getLogger(__name__)
 
 
 def create_data_parallel_sharding(mesh: Mesh, data_axis: str = "data") -> Sharding:

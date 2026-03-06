@@ -4,16 +4,20 @@ This module provides tools for analyzing operations based on the roofline model
 to identify performance bottlenecks and suggest optimizations.
 """
 
+import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class HardwareSpecs:
     """Hardware specifications for roofline analysis."""
 
@@ -77,7 +81,7 @@ HARDWARE_SPECS = {
 class RooflineAnalyzer:
     """Analyze operations based on roofline model for performance optimization."""
 
-    def __init__(self, hardware: str = "auto"):
+    def __init__(self, hardware: str = "auto") -> None:
         """Initialize analyzer with hardware configuration.
 
         Args:
@@ -314,7 +318,7 @@ class RooflineAnalyzer:
             Optimized operation
         """
 
-        def optimized_operation(*args, **kwargs):
+        def optimized_operation(*args: Any, **kwargs: Any) -> Any:
             # Estimate current arithmetic intensity
             total_flops = sum(x.size * 2 for x in args if hasattr(x, "size"))
             total_bytes = sum(x.size * x.dtype.itemsize for x in args if hasattr(x, "size"))

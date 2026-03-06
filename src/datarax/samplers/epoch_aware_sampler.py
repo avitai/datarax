@@ -1,8 +1,9 @@
 """Epoch-aware sampler with per-epoch callbacks and index tracking."""
 
-from dataclasses import dataclass
-from typing import Any
+import logging
 from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any, Self
 
 import flax.nnx as nnx
 import numpy as np
@@ -12,7 +13,10 @@ from datarax.core.sampler import SamplerModule
 from datarax.samplers._validation import validate_num_records_and_epochs
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class EpochAwareSamplerConfig(StructuralConfig):
     """Configuration for EpochAwareSamplerModule.
 
@@ -30,7 +34,7 @@ class EpochAwareSamplerConfig(StructuralConfig):
     shuffle: bool = True
     seed: int = 42
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration after initialization."""
         # Set stochastic based on shuffle (override if needed)
         if self.shuffle:
@@ -57,7 +61,7 @@ class EpochAwareSamplerModule(SamplerModule):
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize EpochAwareSamplerModule.
 
         Args:
@@ -79,9 +83,12 @@ class EpochAwareSamplerModule(SamplerModule):
         self.epoch_indices: nnx.Variable[list[int] | None] = nnx.Variable(None)
         self.epoch_complete_callbacks: nnx.Variable[list[Callable[[int], None]]] = nnx.Variable([])
 
-    def _generate_epoch_indices(self):
+    def _generate_epoch_indices(self) -> None:
         """Generate indices for current epoch."""
-        indices = np.arange(self.num_records.get_value())
+        num_records = self.num_records.get_value()
+        if num_records is None:
+            raise ValueError("num_records must be set before generating indices")
+        indices = np.arange(num_records)
 
         if self.shuffle.get_value():
             # Different shuffle per epoch
@@ -89,10 +96,10 @@ class EpochAwareSamplerModule(SamplerModule):
             rng = np.random.RandomState(epoch_seed)
             rng.shuffle(indices)
 
-        self.epoch_indices.set_value(indices)
+        self.epoch_indices.set_value(indices.tolist())
         self.current_index.set_value(0)
 
-    def __iter__(self):
+    def __iter__(self) -> Self:
         """Initialize iteration."""
         self.current_epoch.set_value(0)
         self._generate_epoch_indices()
@@ -107,6 +114,8 @@ class EpochAwareSamplerModule(SamplerModule):
 
         current_index = self.current_index.get_value()
         num_records = self.num_records.get_value()
+        if num_records is None:
+            raise ValueError("num_records must be set")
         if current_index >= num_records:
             # Epoch complete
             self._on_epoch_complete()
@@ -128,14 +137,14 @@ class EpochAwareSamplerModule(SamplerModule):
 
         return idx
 
-    def _on_epoch_complete(self):
+    def _on_epoch_complete(self) -> None:
         """Handle epoch completion."""
         callbacks = self.epoch_complete_callbacks.get_value()
         current_epoch = self.current_epoch.get_value()
         for callback in callbacks:
             callback(current_epoch)
 
-    def add_epoch_callback(self, callback: Callable):
+    def add_epoch_callback(self, callback: Callable) -> None:
         """Add callback for epoch completion."""
         callbacks = self.epoch_complete_callbacks.get_value()
         callbacks.append(callback)
@@ -145,12 +154,16 @@ class EpochAwareSamplerModule(SamplerModule):
         """Get current epoch progress."""
         current_index = self.current_index.get_value()
         num_records = self.num_records.get_value()
+        if num_records is None or num_records == 0:
+            progress = 0.0
+        else:
+            progress = (current_index / num_records) * 100
         return {
             "current_epoch": self.current_epoch.get_value(),
             "total_epochs": self.num_epochs.get_value(),
             "current_index": current_index,
             "records_per_epoch": num_records,
-            "progress_percent": (current_index / num_records) * 100,
+            "progress_percent": progress,
         }
 
     def __len__(self) -> int:
@@ -158,7 +171,10 @@ class EpochAwareSamplerModule(SamplerModule):
         num_epochs = self.num_epochs.get_value()
         if num_epochs == -1:
             raise ValueError("Cannot determine length for infinite epochs")
-        return self.num_records.get_value() * num_epochs
+        num_records = self.num_records.get_value()
+        if num_records is None:
+            raise ValueError("num_records must be set")
+        return num_records * num_epochs
 
     def reset(self, seed: int | None = None) -> None:
         """Reset the sampler to initial state.

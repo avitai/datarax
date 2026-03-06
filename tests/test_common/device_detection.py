@@ -82,13 +82,13 @@ def is_distributed_env() -> bool:
     return process_count > 1
 
 
-def get_device_info() -> dict[str, dict[str, int]]:
+def get_device_info() -> dict[str, int | dict[str, int]]:
     """Get detailed device information.
 
     Returns:
         A dictionary with device information.
     """
-    device_info: dict[str, dict[str, int]] = {
+    device_info: dict[str, int | dict[str, int]] = {
         "total": len(jax.devices()),
         "by_type": {
             "cpu": jax.local_device_count("cpu"),
@@ -147,4 +147,4 @@ def create_device_mesh(
     device_array: jax.Array = jnp.array(devices[:total_devices_in_mesh])
     device_array = jnp.reshape(device_array, mesh_shape)
 
-    return jax.sharding.Mesh(device_array, mesh_axes)
+    return jax.sharding.Mesh(device_array, mesh_axes)  # type: ignore[reportArgumentType]

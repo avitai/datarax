@@ -208,7 +208,7 @@ echo -e "${CYAN}   uv run pre-commit run --all-files    ${NC}# Run code quality 
 echo -e "${CYAN}   uv run pytest --cov=datarax tests/  ${NC}# Run tests with coverage"
 echo ""
 echo -e "${GREEN}📊 Benchmarking:${NC}"
-echo -e "${CYAN}   uv run python -m datarax.benchmarking  ${NC}# Run benchmarks"
+echo -e "${CYAN}   uv run python -m benchmarks.runners.full_runner --platform cpu  ${NC}# Run benchmarks"
 echo -e "${CYAN}   ./scripts/gpu_test_manager.py        ${NC}# GPU testing utilities"
 echo ""
 echo -e "${YELLOW}💡 To deactivate: ${NC}deactivate"

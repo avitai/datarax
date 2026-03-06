@@ -32,12 +32,17 @@ Example:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
 import jax
 from jax.sharding import Mesh, NamedSharding, PartitionSpec, Sharding, SingleDeviceSharding
+
+
+logger = logging.getLogger(__name__)
+
 
 # Note: jax.Device type is used with type: ignore comment to avoid pyright issues
 
@@ -148,7 +153,7 @@ class DevicePlacement:
         ```
     """
 
-    def __init__(self, default_device: jax.Device | None = None):  # type: ignore[name-defined]
+    def __init__(self, default_device: jax.Device | None = None) -> None:  # type: ignore[name-defined]
         """Initialize DevicePlacement.
 
         Args:

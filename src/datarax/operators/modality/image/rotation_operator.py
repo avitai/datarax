@@ -8,6 +8,7 @@ This module provides rotation augmentation with:
 - Support for 2D (grayscale) and 3D (RGB) images
 """
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,7 +20,10 @@ from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 from datarax.operators.modality.image import functional
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class RotationOperatorConfig(ModalityOperatorConfig):
     """Configuration for rotation augmentation operator.
 
@@ -42,7 +46,7 @@ class RotationOperatorConfig(ModalityOperatorConfig):
     # Clip range (inherited from ModalityOperatorConfig, default (0.0, 1.0))
     clip_range: tuple[float, float] = (0.0, 1.0)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration parameters."""
         super().__post_init__()
 
@@ -104,7 +108,7 @@ class RotationOperator(ModalityOperator):
         config: RotationOperatorConfig,
         *,
         rngs: nnx.Rngs | None = None,
-    ):
+    ) -> None:
         """Initialize the rotation operator.
 
         Args:
@@ -115,6 +119,8 @@ class RotationOperator(ModalityOperator):
             ValueError: If stochastic=True but rngs is None (raised by base class).
         """
         super().__init__(config, rngs=rngs)
+        # Type narrowing for pyright — config is RotationOperatorConfig
+        self.config: RotationOperatorConfig = config
 
     def generate_random_params(
         self,

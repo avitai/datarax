@@ -147,7 +147,7 @@ stop_trace()
 ### Using Datarax's Benchmark Utilities
 
 ```python
-from calibrax import TimingCollector
+from calibrax.profiling import TimingCollector
 
 # Create a timing collector (pass sync_fn for GPU benchmarks)
 timer = TimingCollector()

@@ -50,12 +50,12 @@ class SimpleDeterministicOperator(nnx.Module):
     def __call__(self, element: Element) -> Element:
         """Apply transformation to a single element."""
         result = {}
-        for key, value in element.items():
+        for key, value in element.items():  # type: ignore[reportAttributeAccessIssue]
             if hasattr(value, "shape"):  # Only transform arrays
                 result[key] = value * self.scale + self.offset
             else:
                 result[key] = value
-        return result
+        return result  # type: ignore[reportReturnType]
 
     def apply_batch(self, batch: Batch) -> Batch:
         """Apply transformation to a batch of elements."""
@@ -86,19 +86,19 @@ class SimpleStochasticOperator(nnx.Module):
         if rngs is None:
             rngs = self.rngs
 
-        if not hasattr(rngs, "augment"):
+        if rngs is None or not hasattr(rngs, "augment"):
             raise ValueError("RNG stream 'augment' is required")
         aug_rng = rngs.augment()
 
         result = {}
-        for key, value in element.items():
+        for key, value in element.items():  # type: ignore[reportAttributeAccessIssue]
             if hasattr(value, "shape") and value.dtype in (jnp.float32, jnp.float64):
                 # Add random noise to float arrays
                 noise = jax.random.normal(aug_rng, value.shape) * self.magnitude
                 result[key] = value + noise
             else:
                 result[key] = value
-        return result
+        return result  # type: ignore[reportReturnType]
 
     def apply_batch(self, batch: Batch, *, rngs=None) -> Batch:
         """Apply augmentation to a batch of elements."""
@@ -130,7 +130,7 @@ class SimpleSamplerModule(nnx.Module):
         if rngs is None:
             rngs = self.rngs
 
-        if not hasattr(rngs, "sampling"):
+        if rngs is None or not hasattr(rngs, "sampling"):
             raise ValueError("RNG stream 'sampling' is required")
         sampling_rng = rngs.sampling()
 

@@ -1,13 +1,20 @@
 from __future__ import annotations
-import jax
-import jax.numpy as jnp
-import flax.nnx as nnx
+
+import logging
 import warnings
 from typing import Any, Literal
+
+import flax.nnx as nnx
+import jax
+import jax.numpy as jnp
 
 from datarax.dag.nodes.base import Node
 from datarax.typing import Batch
 from datarax.utils.pytree_utils import get_batch_size, is_non_jax_leaf
+
+
+logger = logging.getLogger(__name__)
+
 
 """RebatchNode implementation for Datarax.
 
@@ -27,7 +34,7 @@ class DifferentiableRebatchImpl(nnx.Module):
     and lax.cond to maintain full differentiability through the rebatching process.
     """
 
-    def __init__(self, target_batch_size: int, max_buffer_size: int = 512):
+    def __init__(self, target_batch_size: int, max_buffer_size: int = 512) -> None:
         """Initialize differentiable rebatch implementation.
 
         Args:
@@ -39,8 +46,8 @@ class DifferentiableRebatchImpl(nnx.Module):
         self.max_buffer_size = max_buffer_size
 
         # JAX buffer state - initialized on first use
-        self.buffer = nnx.Variable(None)
-        self.buffer_mask = nnx.Variable(None)
+        self.buffer: nnx.Variable[Any] = nnx.Variable(None)
+        self.buffer_mask: nnx.Variable[jax.Array | None] = nnx.Variable(None)
         self.buffer_size = nnx.Variable(0)
 
     def __call__(self, batch: Batch | None) -> tuple[Batch | None, bool]:
@@ -83,7 +90,7 @@ class DifferentiableRebatchImpl(nnx.Module):
     def _initialize_buffer(self, example_batch: Batch) -> None:
         """Initialize JAX buffer with correct PyTree structure."""
 
-        def create_buffer_leaf(x):
+        def create_buffer_leaf(x) -> Any:
             if isinstance(x, jax.Array):
                 # Create buffer with max_buffer_size as first dimension
                 shape = (self.max_buffer_size, *x.shape[1:])
@@ -112,7 +119,7 @@ class DifferentiableRebatchImpl(nnx.Module):
                 return
 
         # Update buffer with dynamic_update_slice for differentiability
-        def update_buffer_leaf(buffer_leaf, batch_leaf):
+        def update_buffer_leaf(buffer_leaf: Any, batch_leaf: Any) -> Any:
             if isinstance(batch_leaf, jax.Array) and isinstance(buffer_leaf, jax.Array):
                 # Ensure batch_leaf has correct size
                 if batch_leaf.shape[0] > batch_size:
@@ -145,6 +152,7 @@ class DifferentiableRebatchImpl(nnx.Module):
         # Update mask to track valid entries
         mask_update = jnp.ones(batch_size, dtype=bool)
         buffer_mask_val = self.buffer_mask.get_value()
+        assert buffer_mask_val is not None
         new_mask = jax.lax.dynamic_update_slice(buffer_mask_val, mask_update, (start_idx,))
         self.buffer_mask.set_value(new_mask)
 
@@ -170,7 +178,7 @@ class DifferentiableRebatchImpl(nnx.Module):
     def _extract_batch(self, start: int, size: int) -> Batch:
         """Extract a batch from buffer using JAX operations."""
 
-        def extract_leaf(buffer_leaf):
+        def extract_leaf(buffer_leaf: Any) -> Any:
             if isinstance(buffer_leaf, jax.Array):
                 return jax.lax.dynamic_slice(
                     buffer_leaf,
@@ -186,7 +194,7 @@ class DifferentiableRebatchImpl(nnx.Module):
     def _shift_buffer(self, shift_amount: int) -> None:
         """Shift buffer to remove first shift_amount elements."""
 
-        def shift_leaf(buffer_leaf):
+        def shift_leaf(buffer_leaf: Any) -> Any:
             if isinstance(buffer_leaf, jax.Array):
                 # Use roll for simplicity (maintains differentiability)
                 return jnp.roll(buffer_leaf, -shift_amount, axis=0)
@@ -197,7 +205,9 @@ class DifferentiableRebatchImpl(nnx.Module):
 
         new_buffer = jax.tree.map(shift_leaf, self.buffer.get_value(), is_leaf=is_non_jax_leaf)
         self.buffer.set_value(new_buffer)
-        new_mask = jnp.roll(self.buffer_mask.get_value(), -shift_amount)
+        mask_val = self.buffer_mask.get_value()
+        assert mask_val is not None
+        new_mask = jnp.roll(mask_val, -shift_amount)
         self.buffer_mask.set_value(new_mask)
 
     def flush(self) -> Batch | None:
@@ -235,7 +245,7 @@ class FastRebatchImpl(nnx.Module):
     using a circular buffer for efficient memory usage.
     """
 
-    def __init__(self, target_batch_size: int, max_buffer_size: int = 512):
+    def __init__(self, target_batch_size: int, max_buffer_size: int = 512) -> None:
         """Initialize fast rebatch implementation.
 
         Args:
@@ -247,7 +257,7 @@ class FastRebatchImpl(nnx.Module):
         self.max_buffer_size = max_buffer_size
 
         # Circular buffer state
-        self.buffer = nnx.Variable(None)
+        self.buffer: nnx.Variable[list[Any] | None] = nnx.Variable(None)
         self.write_index = nnx.Variable(0)
         self.read_index = nnx.Variable(0)
         self.count = nnx.Variable(0)
@@ -308,6 +318,8 @@ class FastRebatchImpl(nnx.Module):
 
         # Get buffer copy for modification
         buffer_list = self.buffer.get_value()
+        if buffer_list is None:
+            return
 
         # Add each element from batch
         for i in range(batch_size):
@@ -330,6 +342,8 @@ class FastRebatchImpl(nnx.Module):
             elements = []
             read_idx = self.read_index.get_value()
             buffer_list = self.buffer.get_value()
+            if buffer_list is None:
+                return None, False
 
             for i in range(self.target_batch_size):
                 buffer_idx = (read_idx + i) % self.max_buffer_size
@@ -348,7 +362,7 @@ class FastRebatchImpl(nnx.Module):
     def _extract_element(self, batch: Batch, index: int) -> Any:
         """Extract single element from batch."""
 
-        def get_item(x):
+        def get_item(x: Any) -> Any:
             if isinstance(x, jax.Array):
                 return x[index]
             elif hasattr(x, "__getitem__"):
@@ -357,12 +371,12 @@ class FastRebatchImpl(nnx.Module):
 
         return jax.tree.map(get_item, batch)
 
-    def _stack_elements(self, elements: list[Any]) -> Batch:
+    def _stack_elements(self, elements: list[Any]) -> Batch | None:
         """Stack list of elements into batch."""
         if not elements:
             return None
 
-        def stack_fn(*xs):
+        def stack_fn(*xs: Any) -> Any:
             if all(isinstance(x, jax.Array) for x in xs):
                 return jnp.stack(xs, axis=0)
             return list(xs)
@@ -378,6 +392,8 @@ class FastRebatchImpl(nnx.Module):
             read_idx = self.read_index.get_value()
             remaining = int(current_count)
             buffer_list = self.buffer.get_value()
+            if buffer_list is None:
+                return None
 
             for i in range(remaining):
                 buffer_idx = (read_idx + i) % self.max_buffer_size
@@ -415,7 +431,7 @@ class GradientTransparentRebatchImpl(nnx.Module):
     maintaining gradient connectivity through the data values.
     """
 
-    def __init__(self, target_batch_size: int, max_buffer_size: int = 512):
+    def __init__(self, target_batch_size: int, max_buffer_size: int = 512) -> None:
         """Initialize gradient-transparent implementation.
 
         Args:
@@ -479,7 +495,7 @@ class GradientTransparentRebatchImpl(nnx.Module):
     def _extract_element(self, batch: Batch, index: int) -> Any:
         """Extract single element from batch."""
 
-        def get_item(x):
+        def get_item(x: Any) -> Any:
             if isinstance(x, jax.Array):
                 return x[index]
             elif hasattr(x, "__getitem__"):
@@ -488,12 +504,12 @@ class GradientTransparentRebatchImpl(nnx.Module):
 
         return jax.tree.map(get_item, batch, is_leaf=is_non_jax_leaf)
 
-    def _stack_elements(self, elements: list[Any]) -> Batch:
+    def _stack_elements(self, elements: list[Any]) -> Batch | None:
         """Stack elements while preserving gradient flow."""
         if not elements:
             return None
 
-        def stack_fn(*xs):
+        def stack_fn(*xs: Any) -> Any:
             if all(isinstance(x, jax.Array) for x in xs):
                 # Simple stack - gradients flow through naturally
                 return jnp.stack(xs, axis=0)
@@ -553,7 +569,7 @@ class RebatchNode(Node):
         mode: Literal["differentiable", "fast", "gradient_transparent"] = "gradient_transparent",
         max_buffer_size: int = 512,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize rebatch node.
 
         Args:

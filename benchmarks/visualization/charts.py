@@ -18,6 +18,7 @@ from matplotlib.figure import Figure
 from benchmarks.core.result_model import result_scenario_id, throughput_elements_per_sec
 from benchmarks.runners.full_runner import ComparativeResults
 
+
 # Use non-interactive backend for CI/headless environments
 matplotlib.use("Agg")
 
@@ -67,6 +68,7 @@ class ChartGenerator:
     """
 
     def __init__(self, results: ComparativeResults, output_dir: Path) -> None:
+        """Initialize the chart generator with results and output directory."""
         self._results = results
         self._output_dir = Path(output_dir)
         self._output_dir.mkdir(parents=True, exist_ok=True)
@@ -155,7 +157,7 @@ class ChartGenerator:
 
         top_adapters = sorted(
             adapter_avg,
-            key=adapter_avg.get,
+            key=lambda k: adapter_avg.get(k, 0.0),
             reverse=True,
         )[:top_n]
         adapters = ["Datarax", *top_adapters]
@@ -196,7 +198,7 @@ class ChartGenerator:
 
         scenario_results = self._results.get_scenario_results(scenario_id)
         for adapter_name, result in sorted(scenario_results.items()):
-            if not result.timing.per_batch_times:
+            if result.timing is None or not result.timing.per_batch_times:
                 continue
             times_ms = np.array(result.timing.per_batch_times) * 1000
             sorted_times = np.sort(times_ms)

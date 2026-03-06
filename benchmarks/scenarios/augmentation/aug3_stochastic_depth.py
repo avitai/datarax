@@ -13,12 +13,14 @@ Design ref: v2 optimization -- stochastic JIT support.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
 
 from benchmarks.adapters.base import ScenarioConfig
-from benchmarks.scenarios.base import DEFAULT_SEED, ScenarioVariant, make_get_variant
+from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, ScenarioVariant
+
 
 SCENARIO_ID: str = "AUG-3"
 """Unique scenario identifier."""
@@ -49,7 +51,11 @@ def _build_stochastic_chain(depth: int) -> list[str]:
     return ["Normalize", *stochastic_ops]
 
 
-def _make_data_generator(dataset_size: int, shape: tuple[int, int], seed: int) -> callable:
+def _make_data_generator(
+    dataset_size: int,
+    shape: tuple[int, int],
+    seed: int,
+) -> Callable[[], dict[str, Any]]:
     """Return a lazy data generator for uint8 2D data."""
 
     def _generate() -> dict[str, Any]:

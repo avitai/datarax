@@ -5,16 +5,22 @@ separation of static and dynamic fields to avoid JIT recompilation.
 """
 
 from __future__ import annotations
-from typing import Any
-from dataclasses import dataclass
-import dataclasses
 
-import jax
+import dataclasses
+import logging
+from dataclasses import dataclass
+from typing import Any
+
 import flax.nnx as nnx
+import jax
+import jax.core
 from jax.tree_util import register_pytree_node
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class RecordMetadata:
     """Metadata for a record in the data pipeline.
 
@@ -49,7 +55,7 @@ class RecordMetadata:
         return list(jax.random.split(self.rng_key, num))
 
 
-@dataclass
+@dataclass(frozen=True)
 class Metadata:
     """Metadata for tracking experiment state.
 
@@ -83,10 +89,10 @@ class Metadata:
     # Init-only param: encodes a string key into _encoded_key on construction
     key: dataclasses.InitVar[str | None] = None
 
-    def __post_init__(self, key: str | None):
+    def __post_init__(self, key: str | None) -> None:
         """Initialize encoded key from string if provided."""
         if self._encoded_key is None and key is not None:
-            self._encoded_key = _encode_key(key)
+            object.__setattr__(self, "_encoded_key", _encode_key(key))
 
     @property
     def record_key(self) -> str | None:
@@ -244,7 +250,7 @@ def _decode_key(arr: jax.Array | None) -> str | None:
 
 
 # Custom pytree registration
-def _metadata_flatten(metadata):
+def _metadata_flatten(metadata: Metadata) -> tuple[tuple, tuple]:
     """Flatten Metadata for pytree, excluding static fields."""
     # Dynamic values become leaves
     dynamic = (
@@ -261,7 +267,7 @@ def _metadata_flatten(metadata):
     return dynamic, static
 
 
-def _metadata_unflatten(static, dynamic):
+def _metadata_unflatten(static: tuple, dynamic: tuple) -> Metadata:
     """Reconstruct Metadata from pytree."""
     (source_info,) = static
     index, epoch, global_step, batch_idx, shard_id, rng_key, encoded_key = dynamic
@@ -402,7 +408,7 @@ class MetadataManager(nnx.Module):
         initial_step: int = 0,
         track_batches: bool = False,
         shard_id: int | None = None,
-    ):
+    ) -> None:
         """Initialize the MetadataManager.
 
         Args:

@@ -221,7 +221,7 @@ def create_test_tfrecord(output_path: str, num_samples: int = 100, seed: int = 4
             )
 
             # Write example
-            writer.write(example.SerializeToString())
+            writer.write(example.SerializeToString())  # type: ignore[reportAttributeAccessIssue]
 
 
 def create_npz_file(output_path: str, num_samples: int = 100, seed: int = 42) -> None:

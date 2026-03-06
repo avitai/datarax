@@ -4,21 +4,21 @@ This module contains integration tests for the Datarax monitoring system,
 including tests with JAX operations and performance testing.
 """
 
-from typing import Any
 import time
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from flax import nnx
 
-from datarax.monitoring.callbacks import MetricsObserver, MetricRecord
+from datarax.dag.nodes import BatchNode, OperatorNode
+from datarax.monitoring.callbacks import MetricRecord, MetricsObserver
 from datarax.monitoring.pipeline import MonitoredPipeline
+from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import MemorySource
 from datarax.sources.memory_source import MemorySourceConfig
-from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.dag.nodes import BatchNode, OperatorNode
-from flax import nnx
 
 
 def test_monitored_pipeline_with_jax_operations():
@@ -74,14 +74,34 @@ def test_monitored_pipeline_with_jax_operations():
     assert len(observer.metrics_received) > 0
 
 
+def _normalize_element(element, key):
+    """Normalize element data to [0, 1] — gives each batch real tensor work."""
+    new_data = {k: v / (jnp.max(jnp.abs(v)) + 1e-8) for k, v in element.data.items()}
+    return element.replace(data=new_data)
+
+
 @pytest.fixture(scope="module")
 def monitoring_test_pipelines():
-    """Create test pipelines once per module for consistent benchmarking."""
-    data = {"value": np.arange(2000)}
-    source = MemorySource(MemorySourceConfig(), data, rngs=nnx.Rngs(0))
+    """Create test pipelines with a semi-realistic workload.
 
-    pipeline_no_metrics = MonitoredPipeline(source, metrics_enabled=False).batch(1)
-    pipeline_with_metrics = MonitoredPipeline(source, metrics_enabled=True).batch(1)
+    Uses image-like data (2000×32×32×3) with a normalization transform so each
+    batch does real tensor operations. This gives a meaningful baseline against
+    which monitoring overhead is measured — not an artificially near-zero one.
+    """
+    data = [{"image": np.random.randn(32, 32, 3).astype(np.float32)} for _ in range(2000)]
+
+    norm_config = ElementOperatorConfig(stochastic=False)
+    norm_op = ElementOperator(norm_config, fn=_normalize_element)
+
+    source_no = MemorySource(MemorySourceConfig(), data, rngs=nnx.Rngs(0))
+    pipeline_no_metrics = (
+        MonitoredPipeline(source_no, metrics_enabled=False).batch(64).add(OperatorNode(norm_op))
+    )
+
+    source_with = MemorySource(MemorySourceConfig(), data, rngs=nnx.Rngs(1))
+    pipeline_with_metrics = (
+        MonitoredPipeline(source_with, metrics_enabled=True).batch(64).add(OperatorNode(norm_op))
+    )
 
     # Warmup both pipelines (important for JIT compilation)
     for _ in range(5):
@@ -166,11 +186,10 @@ def test_performance_impact(monitoring_test_pipelines):
     # Calculate overhead ratio
     overhead_ratio = with_metrics_median / no_metrics_median
 
-    # Verify that the performance impact is reasonable
-    # A 20% overhead (1.20x) is acceptable for monitoring benefits.
-    # The actual overhead is typically 10-15%, but we allow margin for
-    # natural timing variation that interleaved measurement reduces but
-    # cannot eliminate entirely.
+    # Verify that the performance impact is reasonable.
+    # With a semi-realistic workload (image-like tensors + normalization),
+    # monitoring overhead should be small relative to actual batch processing.
+    # We allow 20% (1.20x) to account for CI timing variance.
     assert overhead_ratio < 1.20, (
         f"Metrics overhead too high: {overhead_ratio:.2f}x "
         f"(median no_metrics={no_metrics_median:.3f}s, "

@@ -1,19 +1,19 @@
 """Benchmark tests for Datarax pipeline components."""
 
 import time
-from typing import Any
 from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 import pytest
 from test_common.data_generators import generate_image_data
 
-from datarax.dag import DAGExecutor
-from datarax.sources.memory_source import MemorySource, MemorySourceConfig
-from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.dag.nodes import BatchNode, OperatorNode
 from datarax.core.element_batch import Element
+from datarax.dag import DAGExecutor
+from datarax.dag.nodes import BatchNode, OperatorNode
+from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
 
 @pytest.mark.benchmark

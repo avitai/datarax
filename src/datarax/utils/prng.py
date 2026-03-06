@@ -13,8 +13,14 @@ Usage Note:
     the specific stream (e.g., `rngs.params()`) to generate a unique key.
 """
 
+import logging
+
 import flax.nnx as nnx
 import jax
+
+
+logger = logging.getLogger(__name__)
+
 
 # Standard stream names for consistency
 DEFAULT_RNG_STREAMS = ["augment", "dropout", "params", "shuffling", "default"]

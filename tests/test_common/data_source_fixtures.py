@@ -4,12 +4,13 @@ This module provides test fixtures and mock data sources for testing
 Datarax components, particularly for state management and pipeline testing.
 """
 
-from typing import Any
 from collections.abc import Iterator
+from typing import Any
 
 import flax.nnx as nnx
 import jax.numpy as jnp
 
+from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
 from datarax.typing import Element
 
@@ -34,7 +35,7 @@ class MockDataSourceModule(DataSourceModule):
             rngs: Optional Rngs object for randomness.
             name: Optional name for the module.
         """
-        super().__init__(rngs=rngs, name=name)
+        super().__init__(StructuralConfig(stochastic=False), rngs=rngs, name=name)
         self.size = nnx.Variable(size)
         self._current_position = nnx.Variable(0)
         self.custom_state = nnx.Variable({"extra_data": "initial value"})
@@ -49,11 +50,11 @@ class MockDataSourceModule(DataSourceModule):
         """Set the current position value."""
         self._current_position.set_value(value)
 
-    def __iter__(self) -> Iterator[Element]:
+    def __iter__(self) -> Iterator[dict[str, Any]]:
         """Return an iterator over the data source.
 
         Returns:
-            An iterator yielding integers starting from current_position.
+            An iterator yielding dicts starting from current_position.
         """
         for i in range(self._current_position.get_value(), self.size.get_value()):
             self._current_position.set_value(i + 1)

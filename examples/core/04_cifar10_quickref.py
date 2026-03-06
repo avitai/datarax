@@ -52,10 +52,12 @@ uv pip install "datarax[tfds]"
 # GPU Memory Configuration - prevent TensorFlow from using GPU
 import os
 
+
 os.environ["CUDA_VISIBLE_DEVICES_FOR_TF"] = ""
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import tensorflow as tf
+
 
 tf.config.set_visible_devices([], "GPU")
 
@@ -67,6 +69,7 @@ from datarax import from_source
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
+
 
 # %% [markdown]
 """
@@ -225,6 +228,7 @@ for i, batch in enumerate(pipeline):
 # %%
 # Aggregate statistics across batches
 import jax.numpy as jnp
+
 
 mean_of_means = jnp.stack(all_means).mean(axis=0)
 mean_of_stds = jnp.stack(all_stds).mean(axis=0)

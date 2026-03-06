@@ -7,6 +7,7 @@ It requires TensorFlow which can hang on macOS ARM64 during import.
 import platform
 from typing import NoReturn
 
+
 # Guard against TensorFlow import hang on macOS ARM64 during pytest collection
 # This is a known upstream issue: https://github.com/tensorflow/tensorflow/issues/52138
 IS_MACOS = platform.system() == "Darwin"
@@ -30,11 +31,11 @@ def convert_to_array_record() -> str | NoReturn:
     # Import TensorFlow and other dependencies only when not on macOS
     import os
     import pickle
+    from pathlib import Path
 
     import numpy as np
     import tensorflow as tf
-    from array_record.python import array_record_module
-    from pathlib import Path
+    from array_record.python import array_record_module  # type: ignore[reportAttributeAccessIssue]
     from tqdm import tqdm
 
     # Source path from user

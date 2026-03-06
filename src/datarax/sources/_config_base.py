@@ -1,11 +1,15 @@
 """Shared configuration primitives for source backends."""
 
+import logging
 from dataclasses import dataclass
 
 from datarax.core.config import StructuralConfig
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class SourceConfigBase(StructuralConfig):
     """Common fields shared by eager and streaming source configs."""
 

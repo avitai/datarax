@@ -5,9 +5,12 @@ roofline analysis, XLA compilation strategies, and JAX transformation
 optimization patterns.
 """
 
+from datarax.performance.goodput import GoodputMetrics, GoodputTracker
 from datarax.performance.roofline import HardwareSpecs, RooflineAnalyzer
 from datarax.performance.xla_optimization import (
+    apply_xla_flags,
     CompilationProfiler,
+    get_xla_flags,
     MemoryEfficientCompilation,
     SmartCompilation,
     XLAOptimizer,
@@ -21,4 +24,8 @@ __all__ = [
     "SmartCompilation",
     "MemoryEfficientCompilation",
     "CompilationProfiler",
+    "GoodputTracker",
+    "GoodputMetrics",
+    "get_xla_flags",
+    "apply_xla_flags",
 ]

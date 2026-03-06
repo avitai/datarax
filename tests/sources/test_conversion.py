@@ -4,16 +4,16 @@ This module contains tests for the zero-copy data conversion utilities
 that convert TensorFlow and HuggingFace data to JAX arrays.
 """
 
-import numpy as np
-import pytest
 import jax
 import jax.numpy as jnp
+import numpy as np
+import pytest
 
 from datarax.sources._conversion import (
-    tf_to_jax,
-    hf_to_jax,
     convert_batch_to_jax,
+    hf_to_jax,
     stack_batches,
+    tf_to_jax,
 )
 
 

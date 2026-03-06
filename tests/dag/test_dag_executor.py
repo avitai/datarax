@@ -6,31 +6,32 @@ functionality, including initialization, pipeline construction, execution,
 caching, state management, and integration with various node types.
 """
 
-import pytest
+from collections.abc import Iterator
+from typing import Any
+
+import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
-import flax.nnx as nnx
-from typing import Any
-from collections.abc import Iterator
+import pytest
 
-from datarax.dag.dag_executor import DAGExecutor, OperatorNode, pipeline
-from datarax.typing import Element
+from datarax.core.config import OperatorConfig, StructuralConfig
+from datarax.core.data_source import DataSourceModule
 from datarax.core.element_batch import Batch
+from datarax.core.operator import OperatorModule
+from datarax.dag.dag_executor import DAGExecutor, OperatorNode, pipeline
 from datarax.dag.nodes import (
-    Identity,
-    Sequential,
-    Parallel,
     Branch,
-    Merge,
-    SplitFields,
-    parallel,
     branch,
     DataLoader,
     DataSourceNode,
+    Identity,
+    Merge,
+    Parallel,
+    parallel,
+    Sequential,
+    SplitFields,
 )
-from datarax.core.operator import OperatorModule
-from datarax.core.config import OperatorConfig, StructuralConfig
-from datarax.core.data_source import DataSourceModule
+from datarax.typing import Element
 
 
 def batch_allclose(a: Batch | Any, b: Batch | Any, rtol: float = 1e-5, atol: float = 1e-8) -> bool:
@@ -55,7 +56,7 @@ def batch_mul(batch: Batch, scalar: float) -> Batch:
     return Batch.from_parts(
         data=new_data,
         states=batch.states.get_value(),
-        metadata_list=batch._metadata_list,
+        metadata_list=batch._metadata_list.get_value(),
         validate=False,
     )
 
@@ -66,7 +67,7 @@ def batch_add(batch1: Batch, batch2: Batch) -> Batch:
     return Batch.from_parts(
         data=new_data,
         states=batch1.states.get_value(),
-        metadata_list=batch1._metadata_list,
+        metadata_list=batch1._metadata_list.get_value(),
         validate=False,
     )
 
@@ -285,7 +286,7 @@ class TestDAGExecutorPipelineConstruction:
         assert len(executor.graph.nodes) == 2
         assert isinstance(executor.graph.nodes[0], BatchNode)
         assert isinstance(executor.graph.nodes[1], OperatorNode)
-        assert executor.graph.nodes[1].operator is mock_operator
+        assert executor.graph.nodes[1].operator is mock_operator  # type: ignore[reportAttributeAccessIssue]
 
     def test_add_node_to_empty(self):
         """Test adding node to empty executor."""
@@ -340,7 +341,7 @@ class TestDAGExecutorPipelineConstruction:
         assert len(executor.graph.nodes) == 2
         assert isinstance(executor.graph.nodes[0], BatchNode)
         assert isinstance(executor.graph.nodes[1], Parallel)
-        assert len(executor.graph.nodes[1].nodes) == 3
+        assert len(executor.graph.nodes[1].nodes) == 3  # type: ignore[reportAttributeAccessIssue]
 
     def test_branch_construction(self):
         """Test branch construction."""
@@ -362,7 +363,7 @@ class TestDAGExecutorPipelineConstruction:
         assert len(executor.graph.nodes) == 2
         assert isinstance(executor.graph.nodes[0], BatchNode)
         assert isinstance(executor.graph.nodes[1], Branch)
-        assert executor.graph.nodes[1].condition is condition
+        assert executor.graph.nodes[1].condition is condition  # type: ignore[reportAttributeAccessIssue]
 
     def test_merge_construction(self):
         """Test merge construction."""
@@ -436,9 +437,9 @@ class TestDAGExecutorPipelineConstruction:
         assert len(executor.graph.nodes) == 3
         # Node 0 is BatchNode
         assert isinstance(executor.graph.nodes[1], OperatorNode)
-        assert executor.graph.nodes[1].operator is t1
+        assert executor.graph.nodes[1].operator is t1  # type: ignore[reportAttributeAccessIssue]
         assert isinstance(executor.graph.nodes[2], OperatorNode)
-        assert executor.graph.nodes[2].operator is t2
+        assert executor.graph.nodes[2].operator is t2  # type: ignore[reportAttributeAccessIssue]
 
 
 class TestDAGExecutorExecution:
@@ -513,7 +514,7 @@ class TestDAGExecutorExecution:
         true_path = MockOperator(multiplier=2.0, name="true")
         false_path = MockOperator(multiplier=0.5, name="false")
 
-        executor.branch(condition, true_path, false_path)
+        executor.branch(condition, true_path, false_path)  # type: ignore[reportArgumentType]
         result = executor(sample_dict_data)
 
         assert batch_allclose(result["image"], sample_dict_data["image"] * 0.5)
@@ -525,7 +526,7 @@ class TestDAGExecutorExecution:
         t1 = MockOperator(multiplier=1.0, name="t1")
         t2 = MockOperator(multiplier=2.0, name="t2")
 
-        executor.parallel([t1, t2]).merge("sum")
+        executor.parallel([t1, t2]).merge("sum")  # type: ignore[reportArgumentType]
         result = executor(sample_dict_data)
 
         # After merge with "sum", the results from parallel branches are summed
@@ -793,10 +794,12 @@ class TestDAGExecutorCaching:
 
         # Populate cache - no key will be generated since rngs is None
         executor(sample_data)
+        assert executor._cache is not None
         assert len(executor._cache) > 0
 
         # Clear cache
         executor.clear_cache()
+        assert executor._cache is not None
         assert len(executor._cache) == 0
 
     def test_cache_with_cached_node(self, sample_data):
@@ -1156,7 +1159,7 @@ class TestDAGExecutorComplexScenarios:
         # Simple false path
         false_path = MockOperator(multiplier=0.1, name="false")
 
-        executor.branch(condition, true_path, OperatorNode(false_path))
+        executor.branch(condition, true_path, OperatorNode(false_path))  # type: ignore[reportArgumentType]
 
         result = executor(sample_data)
 
@@ -1235,7 +1238,7 @@ class TestDAGExecutorErrorHandling:
         executor.parallel([OperatorNode(t1), OperatorNode(t2)])
 
         # Create merge with invalid strategy
-        merge_node = Merge(strategy="invalid_strategy")
+        merge_node = Merge(strategy="invalid_strategy")  # type: ignore[reportArgumentType]
         executor.add(merge_node)
 
         with pytest.raises(ValueError, match="Unknown merge strategy"):
@@ -1319,7 +1322,7 @@ class TestDAGExecutorVisualization:
         """Test visualization of empty DAG."""
         executor = DAGExecutor(enforce_batch=False)
 
-        viz = executor.visualize()
+        viz = executor._visualize()
 
         assert isinstance(viz, str)
         assert "DAGExecutor" in viz
@@ -1330,7 +1333,7 @@ class TestDAGExecutorVisualization:
         executor = DAGExecutor(enforce_batch=False)
         executor.add(OperatorNode(MockOperator(name="test_transform")))
 
-        viz = executor.visualize()
+        viz = executor._visualize()
 
         assert isinstance(viz, str)
         assert "DAGExecutor" in viz
@@ -1347,7 +1350,7 @@ class TestDAGExecutorVisualization:
             "concat"
         )
 
-        viz = executor.visualize()
+        viz = executor._visualize()
 
         assert isinstance(viz, str)
         assert "DAGExecutor" in viz
@@ -1379,8 +1382,8 @@ class TestConvenienceFunctions:
 
     def test_pipeline_function(self, sample_data):
         """Test pipeline() convenience function with DataLoader first."""
-        from datarax.dag.nodes import DataLoader
         from datarax.core.data_source import DataSourceModule
+        from datarax.dag.nodes import DataLoader
 
         # Create a simple data source
         class SimpleSource(DataSourceModule):
@@ -1413,7 +1416,7 @@ class TestConvenienceFunctions:
         t2 = MockOperator(multiplier=3.0, name="t2")
 
         # Pipeline must start with DataLoader
-        p = pipeline(loader, t1, t2)
+        p = pipeline(loader, t1, t2)  # type: ignore[reportArgumentType]
 
         assert isinstance(p, DAGExecutor)
         # Note: Result will be batched due to DataLoader
@@ -1577,7 +1580,7 @@ class TestDAGExecutorPerformance:
 
         # Create 50 parallel transforms
         transforms = [MockOperator(multiplier=1.0, name=f"t{i}") for i in range(50)]
-        executor.parallel(transforms)
+        executor.parallel(transforms)  # type: ignore[reportArgumentType]
 
         result = executor(data)
 
@@ -1689,7 +1692,7 @@ class TestDAGExecutorExecutionExtended:
         t1 = MockOperator(multiplier=2.0, name="t1")
         t2 = MockOperator(multiplier=3.0, name="t2")
 
-        executor.parallel([t1, t2])
+        executor.parallel([t1, t2])  # type: ignore[reportArgumentType]
         result = executor(sample_data)
 
         assert isinstance(result, list)
@@ -1706,7 +1709,7 @@ class TestDAGExecutorExecutionExtended:
         true_path = MockOperator(multiplier=2.0, name="true")
         false_path = MockOperator(multiplier=0.5, name="false")
 
-        executor.branch(condition, true_path, false_path)
+        executor.branch(condition, true_path, false_path)  # type: ignore[reportArgumentType]
         result = executor(sample_data)
 
         expected = batch_mul(sample_data, 2.0)
@@ -1723,7 +1726,7 @@ class TestDAGExecutorExecutionExtended:
         true_path = MockOperator(multiplier=2.0, name="true")
         false_path = MockOperator(multiplier=0.5, name="false")
 
-        executor.branch(condition, true_path, false_path)
+        executor.branch(condition, true_path, false_path)  # type: ignore[reportArgumentType]
         result = executor(sample_data)
 
         expected = batch_mul(sample_data, 0.5)
@@ -1736,7 +1739,7 @@ class TestDAGExecutorExecutionExtended:
         t1 = MockOperator(multiplier=1.0, name="t1")
         t2 = MockOperator(multiplier=2.0, name="t2")
 
-        executor.parallel([t1, t2]).merge("sum")
+        executor.parallel([t1, t2]).merge("sum")  # type: ignore[reportArgumentType]
         result = executor(sample_data)
 
         expected = batch_add(
@@ -1776,7 +1779,7 @@ class TestDAGExecutorPipelineConstructionExtended:
         t2 = MockOperator(multiplier=3.0, name="t2")
         t3 = MockOperator(multiplier=4.0, name="t3")
 
-        result = executor.parallel([t1, t2, t3])
+        result = executor.parallel([t1, t2, t3])  # type: ignore[reportArgumentType]
 
         assert result is executor
         assert isinstance(executor.graph, Parallel)
@@ -1790,7 +1793,7 @@ class TestDAGExecutorPipelineConstructionExtended:
         true_path = MockOperator(multiplier=2.0, name="true")
         false_path = MockOperator(multiplier=0.5, name="false")
 
-        result = executor.branch(condition, true_path, false_path)
+        result = executor.branch(condition, true_path, false_path)  # type: ignore[reportArgumentType]
 
         assert result is executor
         assert isinstance(executor.graph, Branch)
@@ -1869,6 +1872,7 @@ class TestDAGExecutorCachingExtended:
 
         # Clear cache
         executor.clear_cache()
+        assert executor._cache is not None
         assert len(executor._cache) == 0
 
 
@@ -1988,7 +1992,7 @@ class TestConvenienceFunctionsExtended:
         t2 = MockOperator(multiplier=3.0, name="t2")
 
         # Pipeline must start with DataLoader
-        p = pipeline(loader, t1, t2)
+        p = pipeline(loader, t1, t2)  # type: ignore[reportArgumentType]
 
         assert isinstance(p, DAGExecutor)
         # Note: Result will be batched due to DataLoader
@@ -1999,7 +2003,7 @@ class TestConvenienceFunctionsExtended:
 
         # Should raise error when not starting with DataLoader
         with pytest.raises(ValueError, match="First node must be a DataLoader"):
-            pipeline(t1)
+            pipeline(t1)  # type: ignore[reportArgumentType]
 
         # Should raise error for empty pipeline
         with pytest.raises(ValueError, match="Pipeline must have at least one node"):
@@ -2108,7 +2112,7 @@ class TestDAGExecutorVisualizationExtended:
         """Test visualization of empty DAG."""
         executor = DAGExecutor()
 
-        viz = executor.visualize()
+        viz = executor._visualize()
 
         assert isinstance(viz, str)
         assert "DAGExecutor" in viz
@@ -2120,7 +2124,7 @@ class TestDAGExecutorVisualizationExtended:
         executor = DAGExecutor(enforce_batch=False)
         executor.add(OperatorNode(MockOperator(name="test_transform")))
 
-        viz = executor.visualize()
+        viz = executor._visualize()
 
         assert isinstance(viz, str)
         assert "DAGExecutor" in viz
@@ -2261,7 +2265,7 @@ class TestDAGExecutorModuleConversions:
         """Test that multiple module types convert correctly in sequence."""
         from datarax.core.sampler import SamplerModule
         from datarax.core.sharder import SharderModule
-        from datarax.dag.nodes import Sequential, SamplerNode, SharderNode
+        from datarax.dag.nodes import SamplerNode, Sequential, SharderNode
 
         # Create minimal test modules
         class TestSampler(SamplerModule):
@@ -2310,17 +2314,17 @@ class TestDAGExecutorModuleConversions:
 
         # Try to add an unsupported type
         with pytest.raises(ValueError, match="Unsupported type"):
-            executor.add("not a module or node")
+            executor.add("not a module or node")  # type: ignore[reportArgumentType]
 
         with pytest.raises(ValueError, match="Unsupported type"):
-            executor.add(42)
+            executor.add(42)  # type: ignore[reportArgumentType]
 
         with pytest.raises(ValueError, match="Unsupported type"):
-            executor.add(lambda x: x * 2)  # Raw function not wrapped
+            executor.add(lambda x: x * 2)  # type: ignore[reportArgumentType]
 
 
 class TestCollectToArray:
-    """Tests for DAGExecutor.collect_to_array() method."""
+    """Tests for DAGExecutor._collect_to_array() method."""
 
     @pytest.fixture
     def mock_source_with_get_batch(self):
@@ -2382,7 +2386,7 @@ class TestCollectToArray:
         source = mock_source_with_get_batch(size=50, feature_dim=8)
         pipeline = from_source(source, batch_size=10)
 
-        result = pipeline.collect_to_array(key="image")
+        result = pipeline._collect_to_array(key="image")
 
         assert isinstance(result, jax.Array)
         assert result.shape[0] == 50  # Total samples
@@ -2395,7 +2399,7 @@ class TestCollectToArray:
         source = mock_source_with_get_batch(size=20, feature_dim=4)
         pipeline = from_source(source, batch_size=5)
 
-        result = pipeline.collect_to_array()  # Uses default key="image"
+        result = pipeline._collect_to_array()  # Uses default key="image"
 
         assert isinstance(result, jax.Array)
         assert result.shape == (20, 4)
@@ -2408,7 +2412,7 @@ class TestCollectToArray:
         pipeline = from_source(source, batch_size=5)
 
         device = jax.devices()[0]
-        result = pipeline.collect_to_array(key="image", device=device)
+        result = pipeline._collect_to_array(key="image", device=device)
 
         assert isinstance(result, jax.Array)
         # Check that result is on the specified device
@@ -2422,7 +2426,7 @@ class TestCollectToArray:
         pipeline = from_source(source, batch_size=5)
 
         with pytest.raises(KeyError, match="Key 'nonexistent' not found"):
-            pipeline.collect_to_array(key="nonexistent")
+            pipeline._collect_to_array(key="nonexistent")
 
     def test_collect_empty_pipeline_raises(self):
         """Test ValueError for empty pipeline."""
@@ -2460,7 +2464,7 @@ class TestCollectToArray:
         pipeline = from_source(source, batch_size=5)
 
         with pytest.raises(ValueError, match="no batches"):
-            pipeline.collect_to_array()
+            pipeline._collect_to_array()
 
     def test_collect_preserves_dtype(self, mock_source_with_get_batch):
         """Test dtype preservation during collection."""
@@ -2506,7 +2510,7 @@ class TestCollectToArray:
         source = Float16Source(size=10)
         pipeline = from_source(source, batch_size=5)
 
-        result = pipeline.collect_to_array(key="image")
+        result = pipeline._collect_to_array(key="image")
 
         assert result.dtype == jnp.float16
 
@@ -2517,7 +2521,7 @@ class TestCollectToArray:
         source = mock_source_with_get_batch(size=30, feature_dim=4)
         pipeline = from_source(source, batch_size=10)
 
-        result = pipeline.collect_to_array(key="label")
+        result = pipeline._collect_to_array(key="label")
 
         assert isinstance(result, jax.Array)
         assert result.shape == (30,)  # Labels are scalars per element
@@ -2529,7 +2533,7 @@ class TestCollectToArray:
         source = mock_source_with_get_batch(size=5, feature_dim=3)
         pipeline = from_source(source, batch_size=2)
 
-        result = pipeline.collect_to_array(key="image")
+        result = pipeline._collect_to_array(key="image")
 
         # Each element i has image values all equal to i
         # So result[0] should be [0, 0, 0], result[1] should be [1, 1, 1], etc.

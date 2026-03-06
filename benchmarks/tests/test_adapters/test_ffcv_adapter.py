@@ -8,6 +8,7 @@ import pytest
 
 from benchmarks.tests.test_adapters.conftest import assert_valid_iteration_result
 
+
 ffcv = pytest.importorskip("ffcv")
 
 
@@ -30,8 +31,9 @@ class TestFfcvAdapterProperties:
 
     def test_supported_scenarios(self):
         from benchmarks.adapters.ffcv_adapter import FfcvAdapter
+        from benchmarks.tests.test_adapters.conftest import assert_supported_scenarios
 
-        assert FfcvAdapter().supported_scenarios() == {"CV-1"}
+        assert_supported_scenarios(FfcvAdapter(), must_include={"CV-1"})
 
 
 class TestFfcvAdapterLifecycle:

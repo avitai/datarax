@@ -8,6 +8,7 @@ import pytest
 
 from benchmarks.tests.test_adapters.conftest import assert_valid_iteration_result
 
+
 litdata = pytest.importorskip("litdata")
 
 
@@ -30,9 +31,9 @@ class TestLitDataAdapterProperties:
 
     def test_supported_scenarios(self):
         from benchmarks.adapters.litdata_adapter import LitDataAdapter
+        from benchmarks.tests.test_adapters.conftest import assert_supported_scenarios
 
-        expected = {"CV-1"}
-        assert LitDataAdapter().supported_scenarios() == expected
+        assert_supported_scenarios(LitDataAdapter(), must_include={"CV-1"})
 
 
 class TestLitDataAdapterLifecycle:

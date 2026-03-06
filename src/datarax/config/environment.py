@@ -4,8 +4,12 @@ This module provides utilities for integrating environment variables with
 configuration files, allowing for environment-specific overrides.
 """
 
+import logging
 import os
 from typing import Any
+
+
+logger = logging.getLogger(__name__)
 
 
 def get_env_value(env_var: str, default: Any = None, prefix: str = "DATARAX_") -> str | None:

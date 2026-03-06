@@ -10,7 +10,7 @@ import argparse
 import os
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -95,15 +95,9 @@ def _extract_class_tests(content: str) -> tuple[set[str], set[str]]:
 class ModuleStatus:
     """Status of test implementation for a module."""
 
-    implemented: set[str] = None
-    skipped: set[str] = None
+    implemented: set[str] = field(default_factory=set)
+    skipped: set[str] = field(default_factory=set)
     total_planned: int = 0
-
-    def __post_init__(self):
-        if self.implemented is None:
-            self.implemented = set()
-        if self.skipped is None:
-            self.skipped = set()
 
     @property
     def implementation_percentage(self) -> float:

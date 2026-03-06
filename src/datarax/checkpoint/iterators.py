@@ -4,11 +4,15 @@ This module provides checkpoint handlers for data iterators and streams,
 supporting save and restore of iterator state for resumable iteration.
 """
 
+import logging
 from pathlib import Path
 from typing import TypeVar
 
 from datarax.checkpoint.handlers import OrbaxCheckpointHandler
 from datarax.typing import CheckpointableIterator
+
+
+logger = logging.getLogger(__name__)
 
 
 # Define covariant type parameter for iterators
@@ -27,7 +31,7 @@ class IteratorCheckpoint:
         base_dir: str | Path,
         handler: OrbaxCheckpointHandler | None = None,
         async_checkpointing: bool = False,
-    ):
+    ) -> None:
         """Initialize the iterator checkpoint handler.
 
         Args:

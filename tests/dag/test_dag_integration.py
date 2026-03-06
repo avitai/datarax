@@ -5,21 +5,21 @@ This file consolidates valuable test logic from the old Pipeline tests and rewri
 to use proper DAGExecutor patterns, following TDD principles and the new architecture.
 """
 
+from dataclasses import dataclass
 from typing import Any
 
-import pytest
+import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
-import flax.nnx as nnx
+import pytest
 
-from dataclasses import dataclass
-from datarax.core.data_source import DataSourceModule
-from datarax.dag.nodes import DataLoader, BatchNode, OperatorNode
-from datarax.core.operator import OperatorModule
 from datarax.core.config import OperatorConfig, StructuralConfig
+from datarax.core.data_source import DataSourceModule
+from datarax.core.element_batch import Batch, Element
+from datarax.core.operator import OperatorModule
 from datarax.dag.dag_executor import DAGExecutor
+from datarax.dag.nodes import BatchNode, DataLoader, OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.core.element_batch import Element, Batch
 
 
 def batch_keys(batch):
@@ -34,8 +34,8 @@ def batch_has_key(batch, key: str) -> bool:
     return key in batch_keys(batch)
 
 
-@dataclass
-class MockDataSourceConfig(StructuralConfig):
+@dataclass(frozen=True)
+class MockDataSourceConfig(StructuralConfig):  # type: ignore[reportGeneralTypeIssues]
     """Config for mock data source."""
 
     pass

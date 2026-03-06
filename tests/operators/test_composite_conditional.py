@@ -14,14 +14,15 @@ Test Coverage:
 import jax.numpy as jnp
 from flax import nnx
 
+from datarax.core.element_batch import Batch, Element
+
 # GREEN phase - imports enabled
 from datarax.operators.composite_operator import (
-    CompositeOperatorModule,
     CompositeOperatorConfig,
+    CompositeOperatorModule,
     CompositionStrategy,
 )
 from datarax.operators.map_operator import MapOperator, MapOperatorConfig
-from datarax.core.element_batch import Batch, Element
 
 
 class TestConditionalSequential:
@@ -389,7 +390,7 @@ class TestConditionalAdvanced:
         assert jnp.allclose(result_data["value"], expected)
         # State should pass through unchanged (MapOperator doesn't modify state)
         # Note: States are now PyTree format {key: array([val1, val2])}
-        assert jnp.array_equal(result_states["counter"], jnp.array([10, 10]))
+        assert jnp.array_equal(result_states["counter"], jnp.array([10, 10]))  # type: ignore[reportCallIssue, reportArgumentType]
 
     def test_conditional_with_metadata_based_conditions(self):
         """Test conditions that depend on metadata values."""
@@ -417,8 +418,8 @@ class TestConditionalAdvanced:
         # Create batch with metadata
         batch = Batch(
             [
-                Element(data={"value": jnp.array([1.0])}, metadata={"quality": 0.95}),
-                Element(data={"value": jnp.array([2.0])}, metadata={"quality": 0.95}),
+                Element(data={"value": jnp.array([1.0])}, metadata={"quality": 0.95}),  # type: ignore[reportArgumentType]
+                Element(data={"value": jnp.array([2.0])}, metadata={"quality": 0.95}),  # type: ignore[reportArgumentType]
             ]
         )
 

@@ -9,13 +9,15 @@ Configuration is loaded from 'vertex_config.yaml' if present.
 """
 
 import argparse
-import yaml
 import os
 import sys
-from google.cloud import aiplatform
+
+import yaml
+from google.cloud import aiplatform  # type: ignore[reportAttributeAccessIssue]
 
 
 def load_config(config_path="vertex_config.yaml"):
+    """Load Vertex AI job configuration from a YAML file."""
     if os.path.exists(config_path):
         with open(config_path, "r") as f:
             return yaml.safe_load(f)
@@ -23,6 +25,7 @@ def load_config(config_path="vertex_config.yaml"):
 
 
 def submit_job(args, config):
+    """Submit a custom training job to Vertex AI."""
     # Merge args and config
     project_id = args.project_id or config.get("project_id")
     location = args.location or config.get("location", "us-central1")
@@ -83,6 +86,7 @@ def submit_job(args, config):
 
 
 def main():
+    """Parse arguments and submit a Vertex AI custom job."""
     parser = argparse.ArgumentParser(description="Submit Vertex AI Job")
     parser.add_argument("--image_uri", help="Docker image URI (e.g. gcr.io/prj/img:tag)")
     parser.add_argument("--project_id", help="GCP Project ID")

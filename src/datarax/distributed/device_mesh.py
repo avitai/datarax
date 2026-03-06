@@ -4,11 +4,15 @@ This module provides utilities for creating and managing JAX device meshes
 for coordinating distributed computations across multiple devices.
 """
 
+import logging
 from typing import Any
 
 import jax
 import numpy as np
 from jax.sharding import Mesh
+
+
+logger = logging.getLogger(__name__)
 
 
 class DeviceMeshManager:

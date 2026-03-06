@@ -5,8 +5,13 @@ optimized for use with JAX transformations like jit and vmap. All functions are 
 to be compatible with JAX's functional programming model.
 """
 
+import logging
+
 import jax
 import jax.numpy as jnp
+
+
+logger = logging.getLogger(__name__)
 
 
 def resize_image(
@@ -242,7 +247,7 @@ def random_flip_up_down(
 
 def adjust_brightness(
     image: jax.Array,
-    factor: float,
+    factor: float | jax.Array,
 ) -> jax.Array:
     """Adjust the brightness of an image.
 
@@ -274,7 +279,7 @@ def adjust_brightness_delta(
 
 def adjust_contrast(
     image: jax.Array,
-    factor: float,
+    factor: float | jax.Array,
 ) -> jax.Array:
     """Adjust the contrast of an image.
 
@@ -324,7 +329,7 @@ def rgb_to_hsv(rgb: jax.Array) -> jax.Array:
 
     # Using a different approach to avoid broadcasting issues
     # Create a function that processes a single pixel
-    def convert_pixel(rgb_pixel):
+    def convert_pixel(rgb_pixel: jax.Array) -> jax.Array:
         r, g, b = rgb_pixel
 
         # Find the maximum and minimum values
@@ -356,8 +361,12 @@ def rgb_to_hsv(rgb: jax.Array) -> jax.Array:
         is_b_max = (b == v) & is_color
         h_b = 4.0 + (r - g) / jnp.maximum(diff, 1e-10)
 
-        # Combine hue values based on which channel is maximum
-        h = jnp.where(is_r_max, h_r, jnp.where(is_g_max, h_g, jnp.where(is_b_max, h_b, 0.0)))
+        # Combine hue values based on which channel is maximum.
+        # jnp.where supports scalar broadcast at runtime, but JAX's type stubs
+        # don't model all overloads — suppress reportCallIssue on these calls.
+        h_inner = jnp.where(is_b_max, h_b, 0.0)  # type: ignore[reportCallIssue]
+        h_mid = jnp.where(is_g_max, h_g, h_inner)  # type: ignore[reportCallIssue]
+        h = jnp.where(is_r_max, h_r, h_mid)  # type: ignore[reportCallIssue]
 
         # Convert hue to radians (from [0,6] to [0,2π])
         h = h * jnp.pi / 3.0
@@ -407,52 +416,34 @@ def hsv_to_rgb(hsv: jax.Array) -> jax.Array:
 
     # Using a different approach to avoid broadcasting issues
     # Create a function that processes a single pixel
-    def convert_pixel(h_val, c_val, x_val, m_val):
+    def convert_pixel(
+        h_val: jax.Array,
+        c_val: jax.Array,
+        x_val: jax.Array,
+        m_val: jax.Array,
+    ) -> jax.Array:
         # Convert a single HSV pixel to RGB
         sector = jnp.floor(h_val).astype(jnp.int32) % 6
 
         # Create the RGB values directly based on the sector
-        r = jnp.where(
-            sector == 0,
-            c_val,
-            jnp.where(
-                sector == 1,
-                x_val,
-                jnp.where(
-                    sector == 2,
-                    0.0,
-                    jnp.where(sector == 3, 0.0, jnp.where(sector == 4, x_val, c_val)),
-                ),
-            ),
-        )
+        # Decomposed to avoid nested jnp.where type inference issues
+        r_45 = jnp.where(sector == 4, x_val, c_val)  # type: ignore[reportCallIssue]
+        r_345 = jnp.where(sector == 3, 0.0, r_45)  # type: ignore[reportCallIssue]
+        r_2345 = jnp.where(sector == 2, 0.0, r_345)  # type: ignore[reportCallIssue]
+        r_12345 = jnp.where(sector == 1, x_val, r_2345)  # type: ignore[reportCallIssue]
+        r = jnp.where(sector == 0, c_val, r_12345)  # type: ignore[reportCallIssue]
 
-        g = jnp.where(
-            sector == 0,
-            x_val,
-            jnp.where(
-                sector == 1,
-                c_val,
-                jnp.where(
-                    sector == 2,
-                    c_val,
-                    jnp.where(sector == 3, x_val, jnp.where(sector == 4, 0.0, 0.0)),
-                ),
-            ),
-        )
+        g_45 = jnp.where(sector == 4, 0.0, 0.0)  # type: ignore[reportCallIssue]
+        g_345 = jnp.where(sector == 3, x_val, g_45)  # type: ignore[reportCallIssue]
+        g_2345 = jnp.where(sector == 2, c_val, g_345)  # type: ignore[reportCallIssue]
+        g_12345 = jnp.where(sector == 1, c_val, g_2345)  # type: ignore[reportCallIssue]
+        g = jnp.where(sector == 0, x_val, g_12345)  # type: ignore[reportCallIssue]
 
-        b = jnp.where(
-            sector == 0,
-            0.0,
-            jnp.where(
-                sector == 1,
-                0.0,
-                jnp.where(
-                    sector == 2,
-                    x_val,
-                    jnp.where(sector == 3, c_val, jnp.where(sector == 4, c_val, x_val)),
-                ),
-            ),
-        )
+        b_45 = jnp.where(sector == 4, c_val, x_val)  # type: ignore[reportCallIssue]
+        b_345 = jnp.where(sector == 3, c_val, b_45)  # type: ignore[reportCallIssue]
+        b_2345 = jnp.where(sector == 2, x_val, b_345)  # type: ignore[reportCallIssue]
+        b_12345 = jnp.where(sector == 1, 0.0, b_2345)  # type: ignore[reportCallIssue]
+        b = jnp.where(sector == 0, 0.0, b_12345)  # type: ignore[reportCallIssue]
 
         # Add the monochromatic component to each channel
         return jnp.stack([r + m_val, g + m_val, b + m_val], axis=-1)
@@ -484,7 +475,7 @@ def hsv_to_rgb(hsv: jax.Array) -> jax.Array:
 
 def adjust_saturation(
     image: jax.Array,
-    factor: float,
+    factor: float | jax.Array,
 ) -> jax.Array:
     """Adjust the saturation of an image.
 
@@ -511,7 +502,7 @@ def adjust_saturation(
 
 def adjust_hue(
     image: jax.Array,
-    delta: float,
+    delta: float | jax.Array,
 ) -> jax.Array:
     """Adjust the hue of an image.
 
@@ -527,14 +518,14 @@ def adjust_hue(
         raise ValueError("Hue adjustment requires RGB images with shape [H, W, 3]")
 
     # Ensure delta is in valid range
-    delta = jnp.clip(delta, -jnp.pi, jnp.pi)
+    clamped_delta = jnp.clip(delta, -jnp.pi, jnp.pi)
 
     # Convert to HSV color space
     hsv = rgb_to_hsv(image)
 
     # Adjust hue channel (index 0)
     # Add delta and ensure it stays in [0, 2π] range
-    new_hue = (hsv[..., 0] + delta) % (2 * jnp.pi)
+    new_hue = (hsv[..., 0] + clamped_delta) % (2 * jnp.pi)
     hsv = hsv.at[..., 0].set(new_hue)
 
     # Convert back to RGB

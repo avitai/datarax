@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from calibrax.core import BenchmarkResult
 
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.adapters.datarax_adapter import DataraxAdapter
 from benchmarks.scenarios.base import ScenarioVariant
 from benchmarks.tests.test_scenarios.conftest import assert_valid_variant, run_quick_scenario
-from calibrax.core import BenchmarkResult
 
 
 # ===========================================================================
@@ -84,6 +84,7 @@ class TestNLP1Scenario:
         result = run_quick_scenario(datarax_adapter, tiny_variant)
         assert isinstance(result, BenchmarkResult)
         assert result.tags["scenario_id"] == "NLP-1"
+        assert result.timing is not None
         assert result.timing.num_batches > 0
 
 
@@ -170,4 +171,5 @@ class TestNLP2Scenario:
         result = run_quick_scenario(datarax_adapter, tiny_variant)
         assert isinstance(result, BenchmarkResult)
         assert result.tags["scenario_id"] == "NLP-2"
+        assert result.timing is not None
         assert result.timing.num_batches > 0

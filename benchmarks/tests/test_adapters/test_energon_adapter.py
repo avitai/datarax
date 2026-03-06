@@ -6,6 +6,7 @@ Only supports MM-1. Requires separate Megatron-LM install.
 
 import pytest
 
+
 energon = pytest.importorskip("megatron.energon")
 
 
@@ -28,8 +29,9 @@ class TestEnergonAdapterProperties:
 
     def test_supported_scenarios(self):
         from benchmarks.adapters.energon_adapter import EnergonAdapter
+        from benchmarks.tests.test_adapters.conftest import assert_supported_scenarios
 
-        assert EnergonAdapter().supported_scenarios() == {"MM-1"}
+        assert_supported_scenarios(EnergonAdapter(), must_include={"MM-1"})
 
 
 class TestEnergonAdapterLifecycle:

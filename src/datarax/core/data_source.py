@@ -5,11 +5,14 @@ that use flax.nnx.Module for state management and JAX transformation
 compatibility.
 """
 
+import logging
 from collections.abc import Iterator
-
 
 from datarax.core.structural import StructuralModule
 from datarax.typing import Element
+
+
+logger = logging.getLogger(__name__)
 
 
 class DataSourceModule(StructuralModule):
@@ -28,7 +31,7 @@ class DataSourceModule(StructuralModule):
 
     Examples:
         ```python
-        @dataclass
+        @dataclass(frozen=True)
         class MyDataSourceConfig(StructuralConfig):
             required_param: int | None = None
             def __post_init__(self):

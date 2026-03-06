@@ -22,8 +22,8 @@ class TestSharedMemoryManager:
     def test_initialization(self, manager):
         """Test SharedMemoryManager initialization."""
         assert isinstance(manager, nnx.Module)
-        assert isinstance(manager.shared_blocks.get_value(), dict)
-        assert isinstance(manager.array_metadata.get_value(), dict)
+        assert isinstance(manager.shared_blocks.get_value(), dict)  # type: ignore[reportAttributeAccessIssue]
+        assert isinstance(manager.array_metadata.get_value(), dict)  # type: ignore[reportAttributeAccessIssue]
 
     def test_make_shared_small_array(self, manager):
         """Test that small arrays are not made shared."""
@@ -117,15 +117,15 @@ class TestSharedMemoryManager:
     def test_context_manager_cleanup(self):
         """Test that context manager cleans up shared memory on exit."""
         with SharedMemoryManager() as manager:
-            manager.make_shared("test", np.ones((1024, 1024)))
-            assert len(manager.shared_blocks.get_value()) == 1
+            manager.make_shared("test", np.ones((1024, 1024)))  # type: ignore[reportArgumentType]
+            assert len(manager.shared_blocks.get_value()) == 1  # type: ignore[reportAttributeAccessIssue]
         # After exit, blocks should be cleaned
-        assert len(manager.shared_blocks.get_value()) == 0
+        assert len(manager.shared_blocks.get_value()) == 0  # type: ignore[reportAttributeAccessIssue]
 
     def test_context_manager_cleanup_on_exception(self):
         """Test that context manager cleans up even when exception occurs."""
         with pytest.raises(RuntimeError):
             with SharedMemoryManager() as manager:
-                manager.make_shared("test", np.ones((1024, 1024)))
+                manager.make_shared("test", np.ones((1024, 1024)))  # type: ignore[reportArgumentType]
                 raise RuntimeError("test error")
         assert len(manager.shared_blocks.get_value()) == 0

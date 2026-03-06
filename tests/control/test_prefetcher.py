@@ -90,6 +90,62 @@ class TestPrefetcher(unittest.TestCase):
         # Iterator should be cleanly terminated when it goes out of scope
         # (tested by not consuming remaining items)
 
+    def test_partial_consumption_close_is_fast(self):
+        """Explicit close() after partial consumption should return quickly."""
+
+        def fast_infinite_generator():
+            i = 0
+            while True:
+                yield i
+                i += 1
+
+        prefetcher = Prefetcher(buffer_size=1)
+        iterator = prefetcher.prefetch(fast_infinite_generator())
+
+        self.assertEqual(next(iterator), 0)
+
+        start = time.perf_counter()
+        iterator.close()
+        elapsed = time.perf_counter() - start
+
+        self.assertLess(elapsed, 0.5)
+
+    def test_close_stops_producer_thread_deterministically(self):
+        """close() should stop the producer thread and be idempotent."""
+
+        def infinite_generator():
+            i = 0
+            while True:
+                yield i
+                i += 1
+
+        prefetcher = Prefetcher(buffer_size=1)
+        iterator = prefetcher.prefetch(infinite_generator())
+
+        self.assertEqual(next(iterator), 0)
+        iterator.close()
+        iterator.close()  # idempotent
+
+        self.assertTrue(hasattr(iterator, "_thread"))
+        self.assertFalse(iterator._thread.is_alive())
+
+    def test_exception_propagation_then_close(self):
+        """Exceptions still propagate and close() remains safe afterwards."""
+
+        def error_generator():
+            yield 1
+            raise RuntimeError("boom")
+
+        prefetcher = Prefetcher(buffer_size=1)
+        iterator = prefetcher.prefetch(error_generator())
+
+        self.assertEqual(next(iterator), 1)
+        with self.assertRaises(RuntimeError) as ctx:
+            next(iterator)
+        self.assertIn("boom", str(ctx.exception))
+
+        iterator.close()
+
     def test_multiple_prefetch_instances(self):
         """Test using multiple prefetcher instances simultaneously."""
         prefetcher1 = Prefetcher(buffer_size=2)

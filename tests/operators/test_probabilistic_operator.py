@@ -16,13 +16,14 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
+from datarax.core.element_batch import Batch, Element
+from datarax.operators.map_operator import MapOperator, MapOperatorConfig
+
 # TDD RED phase - imports will fail until implementation exists
 from datarax.operators.probabilistic_operator import (
     ProbabilisticOperator,
     ProbabilisticOperatorConfig,
 )
-from datarax.operators.map_operator import MapOperator, MapOperatorConfig
-from datarax.core.element_batch import Batch, Element
 
 
 class TestProbabilisticOperatorConfig:
@@ -335,7 +336,7 @@ class TestProbabilisticOperatorEdgeCases:
 
         # State should pass through unchanged (MapOperator doesn't modify state)
         result_states = result_batch.states.get_value()
-        assert jnp.array_equal(result_states["counter"], jnp.array([10, 20]))
+        assert jnp.array_equal(result_states["counter"], jnp.array([10, 20]))  # type: ignore[reportCallIssue, reportArgumentType]
 
     def test_child_operator_metadata_passthrough(self):
         """Test that metadata is correctly passed through to child operator."""
@@ -352,8 +353,8 @@ class TestProbabilisticOperatorEdgeCases:
         # Create batch with metadata
         batch = Batch(
             [
-                Element(data={"value": jnp.array([1.0])}, metadata={"source": "test1"}),
-                Element(data={"value": jnp.array([2.0])}, metadata={"source": "test2"}),
+                Element(data={"value": jnp.array([1.0])}, metadata={"source": "test1"}),  # type: ignore[reportArgumentType]
+                Element(data={"value": jnp.array([2.0])}, metadata={"source": "test2"}),  # type: ignore[reportArgumentType]
             ]
         )
 

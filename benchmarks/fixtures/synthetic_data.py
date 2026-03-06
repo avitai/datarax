@@ -19,6 +19,7 @@ class SyntheticDataGenerator:
     """
 
     def __init__(self, seed: int = 42):
+        """Initialize the synthetic data generator with a random seed."""
         self.rng = np.random.default_rng(seed)
 
     def images(

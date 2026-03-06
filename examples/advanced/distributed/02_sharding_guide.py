@@ -53,10 +53,12 @@ Single-device systems will run in simulation mode showing the concepts.
 # GPU Memory Configuration
 import os
 
+
 os.environ["CUDA_VISIBLE_DEVICES_FOR_TF"] = ""
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import tensorflow as tf
+
 
 tf.config.set_visible_devices([], "GPU")
 
@@ -76,6 +78,7 @@ from datarax import from_source
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
+
 
 print(f"JAX backend: {jax.default_backend()}")
 print(f"JAX devices: {jax.devices()}")
@@ -177,6 +180,8 @@ def create_sharding_spec(shape, mesh, shard_first_dim=True):
 if mesh is not None:
     image_sharding = create_sharding_spec((64, 32, 32, 3), mesh)
     label_sharding = create_sharding_spec((64,), mesh)
+    assert image_sharding is not None  # noqa: S101
+    assert label_sharding is not None  # noqa: S101
     print(f"Image sharding: {image_sharding.spec}")
     print(f"Label sharding: {label_sharding.spec}")
 
@@ -499,7 +504,7 @@ fig, ax = plt.subplots(figsize=(12, 6))
 for dev in range(min(max(num_devices, 2), 4)):  # Show up to 4 devices
     ax.plot(device_utilization[dev], label=f"Device {dev}", alpha=0.8)
 
-ax.axhline(y=np.mean(device_utilization), color="red", linestyle="--", label="Mean")
+ax.axhline(y=float(np.mean(device_utilization)), color="red", linestyle="--", label="Mean")
 ax.set_xlabel("Step")
 ax.set_ylabel("Utilization")
 ax.set_title("Device Utilization During Sharded Data Loading")

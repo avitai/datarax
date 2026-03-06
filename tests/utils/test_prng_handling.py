@@ -12,7 +12,7 @@ import os
 import flax.nnx as nnx
 import jax
 
-from datarax.utils.prng import DEFAULT_RNG_STREAMS, create_rngs
+from datarax.utils.prng import create_rngs, DEFAULT_RNG_STREAMS
 
 
 # Force CPU mode for consistent testing

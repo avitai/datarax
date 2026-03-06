@@ -11,18 +11,18 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import pytest
-from tests.test_common.data_generators import generate_image_data, generate_text_data
+from flax import nnx
 
 from datarax import DAGExecutor
+from datarax.core.element_batch import Element
+from datarax.dag.nodes import (
+    PrefetchNode,
+    ShuffleNode,
+)
+from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import MemorySource
 from datarax.sources.memory_source import MemorySourceConfig
-from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.core.element_batch import Element
-from flax import nnx
-from datarax.dag.nodes import (
-    ShuffleNode,
-    PrefetchNode,
-)
+from tests.test_common.data_generators import generate_image_data, generate_text_data
 
 
 # Mark all tests in this file as benchmarks
@@ -62,19 +62,21 @@ def rngs():
 
 
 def _count_examples_in_batch(batch: Any) -> int:
-    """Count examples in a batch while handling different batch structures."""
-    if isinstance(batch, dict) and "image" in batch:
+    """Count examples in a batch while handling different batch structures.
+
+    Supports dict, Batch, and BatchView via duck typing.
+    """
+    if "image" in batch:
         return int(batch["image"].shape[0])
-    if isinstance(batch, dict) and "text" in batch:
+    if "text" in batch:
         return int(batch["text"].shape[0])
 
-    leaves = jax.tree_util.tree_leaves(batch)
-    if not leaves:
-        return 0
-
-    first_value = leaves[0]
-    if hasattr(first_value, "shape"):
-        return int(first_value.shape[0])
+    # Fallback — get first value via iteration (works for dict/Batch/BatchView)
+    first_key = next(iter(batch), None)
+    if first_key is not None:
+        value = batch[first_key]
+        if hasattr(value, "shape"):
+            return int(value.shape[0])
     return 1
 
 
@@ -209,12 +211,7 @@ def test_batch_size_impact(benchmark, benchmark_image_data, batch_size):
 
         for batch in iterator:
             num_batches += 1
-            if isinstance(batch, dict) and "image" in batch:
-                num_examples += batch["image"].shape[0]
-            else:
-                leaves = jax.tree_util.tree_leaves(batch)
-                if leaves and hasattr(leaves[0], "shape"):
-                    num_examples += leaves[0].shape[0]
+            num_examples += _count_examples_in_batch(batch)
 
             # Process only 10 batches for benchmarking
             if num_batches >= 10:
@@ -480,7 +477,7 @@ def test_parallel_processing_performance(benchmark, benchmark_image_data, num_pa
         ]
 
         # Add parallel processing
-        pipeline = pipeline.parallel(transforms)
+        pipeline = pipeline.parallel(transforms)  # type: ignore[reportArgumentType]
 
         # Add merge to combine results
         pipeline = pipeline.merge(strategy="stack", axis=0)
@@ -589,7 +586,7 @@ def test_branching_performance(benchmark, benchmark_text_data):
         rngs = nnx.Rngs(default=42, augment=43, shuffle=44)
         pipeline = DAGExecutor(rngs=rngs)
         pipeline = pipeline.add(source).batch(batch_size=32)
-        pipeline = pipeline.branch(length_condition, long_path, short_path)
+        pipeline = pipeline.branch(length_condition, long_path, short_path)  # type: ignore[reportArgumentType]
 
         # Process batches
         iterator = iter(pipeline)
@@ -692,7 +689,7 @@ def test_complex_dag_topology_performance(benchmark, benchmark_image_data):
                 ),
             ),
         ]
-        pipeline = pipeline.parallel(preprocess_transforms)
+        pipeline = pipeline.parallel(preprocess_transforms)  # type: ignore[reportArgumentType]
         pipeline = pipeline.merge(strategy="mean", axis=0)
 
         # Stage 2: Sequential processing - Element API
@@ -725,7 +722,7 @@ def test_complex_dag_topology_performance(benchmark, benchmark_image_data):
                 ),
             ),
         ]
-        pipeline = pipeline.parallel(feature_transforms)
+        pipeline = pipeline.parallel(feature_transforms)  # type: ignore[reportArgumentType]
         pipeline = pipeline.merge(strategy="concat", axis=-1)
 
         # Process batches

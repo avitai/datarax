@@ -1,20 +1,25 @@
 """Data source, batch, and shuffle node wrappers for the DAG."""
 
 from __future__ import annotations
-import jax
+
+import logging
+from collections.abc import Iterator
+from typing import Any
 
 import flax.nnx as nnx
+import jax
 from flax import errors as flax_errors
-from typing import Any
-from collections.abc import Iterator
 
-from datarax.dag.nodes.base import Node
-from datarax.typing import Batch, Element
+from datarax.core.batcher import BatcherModule
 from datarax.core.data_source import DataSourceModule
 from datarax.core.operator import OperatorModule
-from datarax.core.batcher import BatcherModule
 from datarax.core.sampler import SamplerModule
 from datarax.core.sharder import SharderModule
+from datarax.dag.nodes.base import Node
+from datarax.typing import Batch, Element
+
+
+logger = logging.getLogger(__name__)
 
 
 class DataSourceNode(Node):
@@ -25,7 +30,9 @@ class DataSourceNode(Node):
     checkpointing.
     """
 
-    def __init__(self, source: DataSourceModule, name: str | None = None):
+    _iterator: Iterator[Element] | None
+
+    def __init__(self, source: DataSourceModule, name: str | None = None) -> None:
         """Initialize data source node.
 
         Args:
@@ -66,6 +73,8 @@ class DataSourceNode(Node):
 
     def _next_element(self) -> Element:
         """Get next source element with explicit trace-context limitation handling."""
+        if self._iterator is None:
+            raise StopIteration("Iterator not initialized")
         try:
             return next(self._iterator)
         except flax_errors.TraceContextError as e:
@@ -74,7 +83,7 @@ class DataSourceNode(Node):
                 "Run it as the pipeline entry outside compiled transforms."
             ) from e
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Any]:
         """Iterate over source."""
         return iter(self.source)
 
@@ -98,7 +107,12 @@ class BatchNode(Node):
     All downstream nodes receive batched data.
     """
 
-    def __init__(self, batch_size: int, drop_remainder: bool = False, name: str | None = None):
+    def __init__(
+        self,
+        batch_size: int,
+        drop_remainder: bool = False,
+        name: str | None = None,
+    ) -> None:
         """Initialize batch node.
 
         Args:
@@ -174,14 +188,14 @@ class BatchNode(Node):
         self._buffer = nnx.data([])
         return batch
 
-    def _create_batch(self, elements: list[Element]) -> Batch:
+    def _create_batch(self, elements: list[Element]) -> Batch | None:
         """Create batch from list of elements.
 
         Args:
             elements: List of elements to batch
 
         Returns:
-            Batched data with batch dimension as first axis
+            Batched data with batch dimension as first axis, or None if empty
         """
         if not elements:
             return None
@@ -244,7 +258,7 @@ class OperatorNode(Node):
         self,
         operator: OperatorModule | BatcherModule,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize operator node.
 
         Args:
@@ -313,7 +327,7 @@ class ShuffleNode(Node):
     Implements reservoir sampling for efficient shuffling.
     """
 
-    def __init__(self, buffer_size: int, seed: int | None = None, name: str | None = None):
+    def __init__(self, buffer_size: int, seed: int | None = None, name: str | None = None) -> None:
         """Initialize shuffle node.
 
         Args:
@@ -415,7 +429,7 @@ class PrefetchNode(Node):
     performance.
     """
 
-    def __init__(self, buffer_size: int = 2, name: str | None = None):
+    def __init__(self, buffer_size: int = 2, name: str | None = None) -> None:
         """Initialize prefetch node.
 
         Args:
@@ -477,7 +491,7 @@ class SamplerNode(Node):
     Samplers control the iteration order of data elements.
     """
 
-    def __init__(self, sampler: SamplerModule, name: str | None = None):
+    def __init__(self, sampler: SamplerModule, name: str | None = None) -> None:
         """Initialize sampler node.
 
         Args:
@@ -500,11 +514,14 @@ class SamplerNode(Node):
         Returns:
             Sampled element
         """
-        # Samplers typically work on indices or elements directly
-        # They control iteration order, not transformation
-        return self.sampler(data, key=key) if key is not None else self.sampler(data)
+        # SamplerModule.__call__ is typed for index-based sampling (n: int) -> list[int],
+        # but SamplerNode may wrap custom samplers with element-based __call__ signatures.
+        # The node-level interface passes data through for pipeline compatibility.
+        if key is not None:
+            return self.sampler(data, key=key)  # type: ignore[arg-type, return-value]
+        return self.sampler(data)  # type: ignore[arg-type, return-value]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Any]:
         """Create iterator from sampler.
 
         Returns:
@@ -512,13 +529,14 @@ class SamplerNode(Node):
         """
         return iter(self.sampler)
 
-    def __next__(self):
+    def __next__(self) -> int:
         """Get next sampled element.
 
         Returns:
             Next element according to sampling strategy
         """
-        return next(self.sampler)
+        # SamplerModule subclasses implement __next__ via __iter__
+        return next(iter(self.sampler))
 
     def get_state(self) -> dict[str, Any]:
         """Get sampler state."""
@@ -539,7 +557,7 @@ class SharderNode(Node):
     Sharders distribute data across devices/processes.
     """
 
-    def __init__(self, sharder: SharderModule, name: str | None = None):
+    def __init__(self, sharder: SharderModule, name: str | None = None) -> None:
         """Initialize sharder node.
 
         Args:

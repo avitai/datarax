@@ -1,19 +1,23 @@
 """Data source for reading from ArrayRecord format files."""
 
+import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Self
 
 import flax.nnx as nnx
-import grain.python as grain
+import grain
+import grain.sources
 import numpy as np
 
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
-from datarax.typing import Element
 from datarax.utils.state import build_state_with_iteration_fields, restore_iteration_and_fields
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class ArrayRecordSourceConfig(StructuralConfig):
     """Configuration for ArrayRecordSourceModule.
 
@@ -41,6 +45,9 @@ class ArrayRecordSourceModule(DataSourceModule):
     Shuffling is handled at the sampler level or through file ordering.
     """
 
+    # Narrow config type for pyright (base stores via nnx.static)
+    config: ArrayRecordSourceConfig  # pyright: ignore[reportIncompatibleVariableOverride]
+
     def __init__(
         self,
         config: ArrayRecordSourceConfig,
@@ -48,7 +55,7 @@ class ArrayRecordSourceModule(DataSourceModule):
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize ArrayRecord source with state management.
 
         Args:
@@ -60,12 +67,12 @@ class ArrayRecordSourceModule(DataSourceModule):
         super().__init__(config, rngs=rngs, name=name)
 
         # Initialize Grain data source (doesn't take seed parameter)
-        self.grain_source = grain.ArrayRecordDataSource(paths=paths)
+        self.grain_source = grain.sources.ArrayRecordDataSource(paths=paths)
 
         # Stateful variables using nnx.Variable
         self.current_index = nnx.Variable(0)
         self.current_epoch = nnx.Variable(0)
-        self.total_records = nnx.Variable(len(self.grain_source))
+        self.total_records = nnx.Variable(len(self.grain_source))  # type: ignore[arg-type]
 
         # Cache for prefetched records
         self.prefetch_cache: nnx.Variable[dict[str, Any]] = nnx.Variable({})
@@ -80,7 +87,7 @@ class ArrayRecordSourceModule(DataSourceModule):
         if self.config.shuffle_files:
             self._initialize_shuffle()
 
-    def _initialize_shuffle(self):
+    def _initialize_shuffle(self) -> None:
         """Initialize shuffled indices for the epoch."""
         if self.config.shuffle_files:
             # Create shuffled indices
@@ -93,14 +100,14 @@ class ArrayRecordSourceModule(DataSourceModule):
         """Return total number of records."""
         return self.total_records.get_value()
 
-    def __iter__(self):
+    def __iter__(self) -> Self:
         """Initialize iteration with state tracking."""
         self.current_index.set_value(0)
         if self.current_epoch.get_value() == 0 or not self.iterator_initialized.get_value():
             self._initialize_iterator()
         return self
 
-    def __next__(self) -> Element:
+    def __next__(self) -> Any:  # type: ignore[override]
         """Get next element with state management."""
         current_epoch = self.current_epoch.get_value()
         # Check if we've completed all epochs
@@ -137,7 +144,7 @@ class ArrayRecordSourceModule(DataSourceModule):
 
         return element
 
-    def _initialize_iterator(self):
+    def _initialize_iterator(self) -> None:
         """Initialize internal iterator with proper state."""
         if self.config.shuffle_files:
             self._initialize_shuffle()
@@ -170,7 +177,7 @@ class ArrayRecordSourceModule(DataSourceModule):
         if "shuffled_indices" in state and state["shuffled_indices"] is not None:
             self.shuffled_indices.set_value(np.array(state["shuffled_indices"]))
 
-    def __getitem__(self, idx: int) -> Element:
+    def __getitem__(self, idx: int) -> Any:
         """Get element by index for subscriptable access.
 
         Args:

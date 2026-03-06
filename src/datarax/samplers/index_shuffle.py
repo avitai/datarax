@@ -12,6 +12,10 @@ Key properties:
 """
 
 import hashlib
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 def _round_fn(value: int, key: int, modulus: int) -> int:

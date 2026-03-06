@@ -4,9 +4,10 @@ This module provides a default implementation of the BatcherModule interface
 that handles batching of PyTrees.
 """
 
+import logging
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any
-from collections.abc import Callable, Iterator
 
 import jax
 import jax.numpy as jnp
@@ -18,7 +19,10 @@ from datarax.core.config import StructuralConfig
 from datarax.typing import Batch, Element
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class DefaultBatcherConfig(StructuralConfig):
     """Configuration for DefaultBatcher.
 
@@ -26,7 +30,7 @@ class DefaultBatcherConfig(StructuralConfig):
     beyond the base StructuralConfig.
     """
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration after initialization."""
         # DefaultBatcher is deterministic (no randomness)
         object.__setattr__(self, "stochastic", False)
@@ -48,7 +52,7 @@ class DefaultBatcher(BatcherModule):
         collate_fn: Callable[[list[Element]], Batch] | None = None,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize a DefaultBatcher.
 
         Args:

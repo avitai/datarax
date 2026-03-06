@@ -14,20 +14,21 @@ import optax
 import pytest
 from flax import nnx
 
+
 # Skip tests if datasets not installed
 datasets = pytest.importorskip("datasets")
 
-from datarax.dag.nodes import BatchNode, OperatorNode  # noqa: E402
-from datarax.dag import DAGExecutor  # noqa: E402
-from datarax.sources import (  # noqa: E402
-    HFEagerSource,
-    HFEagerConfig,
-    HFStreamingSource,
-    HFStreamingConfig,
-)
+from datarax.core.config import OperatorConfig  # noqa: E402
 from datarax.core.element_batch import Element  # noqa: E402
 from datarax.core.operator import OperatorModule  # noqa: E402
-from datarax.core.config import OperatorConfig  # noqa: E402
+from datarax.dag import DAGExecutor  # noqa: E402
+from datarax.dag.nodes import BatchNode, OperatorNode  # noqa: E402
+from datarax.sources import (  # noqa: E402
+    HFEagerConfig,
+    HFEagerSource,
+    HFStreamingConfig,
+    HFStreamingSource,
+)
 
 
 HF_INTEGRATION_SKIP_EXCEPTIONS = (
@@ -62,6 +63,13 @@ def _patch_train_test_datasets(monkeypatch: Any, train_data: Any, test_data: Any
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
 
 
+def _extract_batch_data(batch: Any) -> dict[str, Any]:
+    """Extract data dict from batch (supports dict, Batch, and BatchView)."""
+    if isinstance(batch, dict):
+        return batch
+    return batch.get_data()
+
+
 def _collect_losses(
     pipeline: DAGExecutor, train_step: Any, model: Any, optimizer: nnx.Optimizer, steps: int
 ) -> list[float]:
@@ -70,7 +78,8 @@ def _collect_losses(
     for step_index, batch in enumerate(pipeline):
         if step_index >= steps:
             break
-        loss = train_step(model, optimizer, batch)
+        batch_data = _extract_batch_data(batch)
+        loss = train_step(model, optimizer, batch_data)
         losses.append(float(loss))
     return losses
 
@@ -83,7 +92,8 @@ def _collect_accuracies(
     for step_index, batch in enumerate(pipeline):
         if step_index >= steps:
             break
-        accuracies.append(float(eval_step(model, batch)))
+        batch_data = _extract_batch_data(batch)
+        accuracies.append(float(eval_step(model, batch_data)))
     return accuracies
 
 
@@ -505,8 +515,7 @@ def test_hf_with_real_dataset():
 
         # Get one batch
         for batch in pipeline:
-            # Verify batch structure
-            assert isinstance(batch, dict)
+            # Verify batch structure (dict-like: supports __contains__ and __getitem__)
             assert "label" in batch
 
             # Verify batch size - streaming batches may be smaller

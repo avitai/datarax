@@ -23,14 +23,14 @@ Test Categories:
 
 from typing import Any, cast
 
-import pytest
 import jax
 import jax.numpy as jnp
+import pytest
 from flax import nnx
 
 from datarax.core.config import ElementOperatorConfig
-from datarax.operators.element_operator import ElementOperator
 from datarax.core.element_batch import Batch, Element
+from datarax.operators.element_operator import ElementOperator
 
 
 # ========================================================================

@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from calibrax.core import BenchmarkResult
+
 from benchmarks.adapters import get_available_adapters
 from benchmarks.core.config_loader import load_hardware_profile
 from benchmarks.core.environment import capture_environment
@@ -28,7 +30,6 @@ from benchmarks.core.result_model import (
 from benchmarks.runners.benchmark_runner import BenchmarkRunner
 from benchmarks.scenarios import discover_scenarios
 from benchmarks.scenarios.base import run_scenario
-from calibrax.core import BenchmarkResult
 
 
 @dataclass
@@ -46,6 +47,10 @@ class ComparativeResults:
     environment: dict[str, Any]
     platform: str
     timestamp: float
+    requested_platform: str | None = None
+    active_backend: str | None = None
+    profile_name: str | None = None
+    gpu_name: str | None = None
 
     def save(self, output_dir: Path) -> None:
         """Save all results as individual JSONs plus a manifest."""
@@ -54,6 +59,10 @@ class ComparativeResults:
 
         manifest: dict[str, Any] = {
             "platform": self.platform,
+            "requested_platform": self.requested_platform or self.platform,
+            "active_backend": self.active_backend,
+            "profile_name": self.profile_name,
+            "gpu_name": self.gpu_name,
             "timestamp": self.timestamp,
             "environment": self.environment,
             "adapters": {},
@@ -76,6 +85,19 @@ class ComparativeResults:
         """Load ComparativeResults from a directory with manifest."""
         output_dir = Path(output_dir)
         manifest = json.loads((output_dir / "manifest.json").read_text())
+        required = {
+            "requested_platform",
+            "active_backend",
+            "profile_name",
+            "gpu_name",
+            "platform",
+            "timestamp",
+            "environment",
+            "adapters",
+        }
+        missing = sorted(required - set(manifest))
+        if missing:
+            raise ValueError(f"manifest missing required manifest fields: {missing}")
 
         results: dict[str, list[BenchmarkResult]] = {}
         for adapter_name, filenames in manifest["adapters"].items():
@@ -83,11 +105,23 @@ class ComparativeResults:
                 BenchmarkResult.load(output_dir / fname) for fname in filenames
             ]
 
+        env_backend = manifest["environment"].get("platform", {}).get("backend")
+        if env_backend != manifest["active_backend"]:
+            raise ValueError(
+                "manifest backend mismatch: "
+                f"environment.backend={env_backend!r}, "
+                f"active_backend={manifest['active_backend']!r}",
+            )
+
         return cls(
             results=results,
-            environment=manifest.get("environment", {}),
+            environment=manifest["environment"],
             platform=manifest["platform"],
             timestamp=manifest["timestamp"],
+            requested_platform=manifest["requested_platform"],
+            active_backend=manifest["active_backend"],
+            profile_name=manifest["profile_name"],
+            gpu_name=manifest["gpu_name"],
         )
 
     def get_scenario_results(self, scenario_id: str) -> dict[str, BenchmarkResult]:
@@ -132,13 +166,18 @@ class FullRunner:
         hardware_profile: str = "ci_cpu",
         platform: str = "cpu",
     ) -> None:
+        """Initialize the full comparative runner."""
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.profile_name = hardware_profile
         self.platform = platform
         self.profile = load_hardware_profile(hardware_profile)
+        self._profile_settings = self.profile.get("profile", {})
+        self.active_backend: str | None = None
         self._runner = BenchmarkRunner(
             output_dir=self.output_dir,
             hardware_profile=hardware_profile,
+            platform=platform,
         )
 
     def run_comparative(
@@ -157,6 +196,7 @@ class FullRunner:
         Returns:
             ComparativeResults containing all results.
         """
+        self.active_backend = self._runner.ensure_backend(self.platform)
         available = get_available_adapters()
         scenarios = discover_scenarios()
 
@@ -164,11 +204,24 @@ class FullRunner:
         if adapter_filter is not None:
             available = {name: cls for name, cls in available.items() if name in adapter_filter}
 
-        # Apply scenario filter
-        if scenario_filter is not None:
-            scenarios = [mod for mod in scenarios if mod.SCENARIO_ID in scenario_filter]
+        # Apply scenario filter (explicit filter has precedence over profile include/exclude)
+        scenarios = [
+            mod
+            for mod in scenarios
+            if self._runner._is_scenario_enabled(  # noqa: SLF001
+                scenario_id=mod.SCENARIO_ID,
+                explicit_filter=scenario_filter,
+            )
+        ]
 
         env = capture_environment()
+        env_backend = env.get("platform", {}).get("backend")
+        if env_backend != self.active_backend:
+            raise RuntimeError(
+                f"Environment backend mismatch: expected {self.active_backend!r}, "
+                f"captured {env_backend!r}",
+            )
+
         all_results: dict[str, list[BenchmarkResult]] = {}
 
         for adapter_name, adapter_cls in available.items():
@@ -181,12 +234,10 @@ class FullRunner:
                 if not adapter.supports_scenario(scenario_id):
                     continue
 
-                variant_name = getattr(mod, "TIER1_VARIANT", None)
-                if variant_name is None:
-                    variant_name = next(iter(mod.VARIANTS))
+                variant_name = self._runner._get_variant_for_scenario(mod)  # noqa: SLF001
 
                 variant = mod.get_variant(variant_name)
-                if not can_run_scenario(variant):
+                if not can_run_scenario(variant, backend=self.active_backend):
                     print(
                         f"  SKIP {scenario_id}: exceeds memory",
                         file=sys.stderr,
@@ -207,7 +258,7 @@ class FullRunner:
                         f"  {scenario_id}/{variant_name}: {throughput:.0f} elem/s",
                         file=sys.stderr,
                     )
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 — benchmark resilience: skip failing scenarios
                     print(
                         f"  FAIL {scenario_id}: {exc}",
                         file=sys.stderr,
@@ -221,6 +272,10 @@ class FullRunner:
             environment=env,
             platform=self.platform,
             timestamp=time.time(),
+            requested_platform=self.platform,
+            active_backend=self.active_backend,
+            profile_name=self.profile_name,
+            gpu_name=env.get("gpu"),
         )
 
         # Save results and summary
@@ -255,6 +310,10 @@ class FullRunner:
         """Write a human-readable summary.json."""
         summary: dict[str, Any] = {
             "platform": comparative.platform,
+            "requested_platform": comparative.requested_platform,
+            "active_backend": comparative.active_backend,
+            "profile_name": comparative.profile_name,
+            "gpu_name": comparative.gpu_name,
             "timestamp": comparative.timestamp,
             "adapters": list(comparative.results.keys()),
             "scenarios": list(comparative.all_scenario_ids),

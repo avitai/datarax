@@ -30,9 +30,9 @@ from datarax.distributed.device_mesh import DeviceMeshManager
 from datarax.distributed.device_placement import (
     BatchSizeRecommendation,
     DevicePlacement,
-    HardwareType,
     distribute_batch,
     get_batch_size_recommendation,
+    HardwareType,
     place_on_device,
     prefetch_to_device,
 )
@@ -48,11 +48,11 @@ from datarax.distributed.metrics import (
     reduce_sum_collective,
 )
 from datarax.distributed.sharding import (
-    MeshRules,
     apply_sharding_rules,
     create_named_sharding,
     data_parallel_rules,
     fsdp_rules,
+    MeshRules,
 )
 
 

@@ -28,21 +28,25 @@ class WebDatasetAdapter(PipelineAdapter):
     """
 
     def __init__(self) -> None:
+        """Initialize the WebDataset adapter."""
+        super().__init__()
         self._dataset: Any = None
-        self._config: ScenarioConfig | None = None
         self._tmp_dir: Any = None
 
     @property
     def name(self) -> str:
+        """Return the adapter display name."""
         return "WebDataset"
 
     @property
     def version(self) -> str:
+        """Return the WebDataset version string."""
         import webdataset
 
         return getattr(webdataset, "__version__", "unknown")
 
     def is_available(self) -> bool:
+        """Return True if WebDataset is installed."""
         try:
             import webdataset  # noqa: F401
 
@@ -51,12 +55,14 @@ class WebDatasetAdapter(PipelineAdapter):
             return False
 
     def supported_scenarios(self) -> set[str]:
+        """Return the set of supported benchmark scenario IDs."""
         return {
             "CV-1",  # Raw streaming throughput (TAR format)
             "NLP-1",  # No transforms
         }
 
     def setup(self, config: ScenarioConfig, data: Any) -> None:
+        """Set up the WebDataset pipeline for the given scenario configuration."""
         import webdataset as wds
 
         shard_dir, self._tmp_dir = setup_temp_dir(config, "shards")
@@ -95,7 +101,8 @@ class WebDatasetAdapter(PipelineAdapter):
         return [np.asarray(batch)]
 
     def teardown(self) -> None:
+        """Release resources and reset adapter state."""
         self._dataset = None
-        self._config = None
         cleanup_temp_dir(self._tmp_dir)
         self._tmp_dir = None
+        super().teardown()

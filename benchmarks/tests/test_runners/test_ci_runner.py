@@ -6,9 +6,12 @@ before full integration testing.
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
+from calibrax.core import BenchmarkResult
 
 from benchmarks.adapters.datarax_adapter import DataraxAdapter
 from benchmarks.core.result_model import (
@@ -18,7 +21,6 @@ from benchmarks.core.result_model import (
 )
 from benchmarks.runners.benchmark_runner import BenchmarkRunner
 from benchmarks.scenarios.base import run_scenario
-from calibrax.core import BenchmarkResult
 
 
 # ---------------------------------------------------------------------------
@@ -30,12 +32,17 @@ class TestBenchmarkRunner:
     """Tests for the BenchmarkRunner orchestrator."""
 
     @pytest.fixture
-    def runner(self, tmp_path: Path) -> BenchmarkRunner:
-        """Runner with ci_cpu profile and temp output dir."""
-        return BenchmarkRunner(
-            output_dir=tmp_path / "output",
-            hardware_profile="ci_cpu",
-        )
+    def runner(self, tmp_path: Path) -> Generator[BenchmarkRunner]:
+        """Runner with ci_cpu profile and temp output dir.
+
+        Patches init_platform so tests work regardless of actual hardware
+        (GPU, TPU, or CPU). Individual tests can override with their own patch.
+        """
+        with patch("benchmarks.runners.benchmark_runner.init_platform", return_value="cpu"):
+            yield BenchmarkRunner(
+                output_dir=tmp_path / "output",
+                hardware_profile="ci_cpu",
+            )
 
     @pytest.fixture
     def adapter(self) -> DataraxAdapter:
@@ -52,6 +59,23 @@ class TestBenchmarkRunner:
         assert runner.num_batches > 0
         assert runner.warmup_batches > 0
 
+    def test_ensure_backend_uses_profile_backend(self, runner: BenchmarkRunner):
+        """Backend initialization should honor profile backend."""
+        with patch("benchmarks.runners.benchmark_runner.init_platform", return_value="cpu") as init:
+            backend = runner.ensure_backend()
+        init.assert_called_once_with("cpu")
+        assert backend == "cpu"
+
+    def test_ensure_backend_rejects_platform_profile_mismatch(self, tmp_path: Path):
+        """Requested platform must match backend in profile."""
+        runner = BenchmarkRunner(
+            output_dir=tmp_path / "output",
+            hardware_profile="ci_cpu",
+            platform="gpu",
+        )
+        with pytest.raises(ValueError, match="Platform/profile mismatch"):
+            runner.ensure_backend()
+
     def test_run_single_scenario(
         self,
         runner: BenchmarkRunner,
@@ -64,6 +88,7 @@ class TestBenchmarkRunner:
         assert isinstance(result, BenchmarkResult)
         assert result_scenario_id(result) == "CV-1"
         assert result_variant(result) == "small"
+        assert result.timing is not None
         assert result.timing.num_batches > 0
 
     def test_run_scenario_uses_tier1_variant_by_default(
@@ -105,6 +130,52 @@ class TestBenchmarkRunner:
         )
         json_files = list(runner.output_dir.glob("*.json"))
         assert len(json_files) >= 1
+
+    def test_run_all_applies_profile_include_by_default(self, tmp_path: Path):
+        """When no explicit filter is provided, profile.scenarios.include must apply."""
+        runner = BenchmarkRunner(
+            output_dir=tmp_path / "output",
+            hardware_profile="ci_cpu",
+        )
+        adapter = MagicMock()
+        adapter.supports_scenario.return_value = True
+
+        cv1 = MagicMock()
+        cv1.SCENARIO_ID = "CV-1"
+        cv1.VARIANTS = {"small": object()}
+        cv1.TIER1_VARIANT = "small"
+        cv1.get_variant.return_value = MagicMock(config=MagicMock(scenario_id="CV-1"))
+
+        nlp2 = MagicMock()
+        nlp2.SCENARIO_ID = "NLP-2"
+        nlp2.VARIANTS = {"default": object()}
+        nlp2.TIER1_VARIANT = "default"
+        nlp2.get_variant.return_value = MagicMock(config=MagicMock(scenario_id="NLP-2"))
+
+        fake_result = build_benchmark_result(
+            framework="Datarax",
+            scenario_id="CV-1",
+            variant="small",
+            timing=_make_timing_sample(),
+            resources=None,
+            environment={},
+            config={"batch_size": 10, "dataset_size": 100},
+        )
+
+        with (
+            patch(
+                "benchmarks.runners.benchmark_runner.discover_scenarios",
+                return_value=[cv1, nlp2],
+            ),
+            patch("benchmarks.runners.benchmark_runner.can_run_scenario", return_value=True),
+            patch.object(runner, "run_scenario", return_value=fake_result),
+            patch("benchmarks.runners.benchmark_runner.init_platform", return_value="cpu"),
+        ):
+            results = runner.run_all(adapter, scenario_filter=None, num_repetitions=1)
+
+        ids = {result_scenario_id(r) for r in results}
+        assert "CV-1" in ids
+        assert "NLP-2" not in ids
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +303,7 @@ def _make_timing_sample():
 
     return TimingSample(
         wall_clock_sec=1.0,
-        per_batch_times=[0.1, 0.1, 0.1],
+        per_batch_times=(0.1, 0.1, 0.1),
         first_batch_time=0.15,
         num_batches=3,
         num_elements=30,

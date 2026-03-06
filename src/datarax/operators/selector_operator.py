@@ -23,6 +23,8 @@ Examples:
     ```
 """
 
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -35,7 +37,10 @@ from datarax.core.config import OperatorConfig
 from datarax.core.operator import OperatorModule
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class SelectorOperatorConfig(OperatorConfig):
     """Configuration for SelectorOperator.
 
@@ -56,7 +61,7 @@ class SelectorOperatorConfig(OperatorConfig):
     weights: list[float] | None = field(default=None, kw_only=True)
     normalized_weights: jax.Array = field(init=False, repr=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration and normalize weights."""
         # Validate at least one operator
         if not self.operators:
@@ -119,7 +124,7 @@ class SelectorOperator(OperatorModule):
         config: SelectorOperatorConfig,
         *,
         rngs: nnx.Rngs | None = None,
-    ):
+    ) -> None:
         """Initialize selector operator.
 
         Args:
@@ -246,8 +251,8 @@ class SelectorOperator(OperatorModule):
 
         # Create branch functions for each operator
         # Each branch applies its operator with its specific random params
-        def make_branch_fn(i: int, operator: OperatorModule):
-            def branch_fn(operands):
+        def make_branch_fn(i: int, operator: OperatorModule) -> Callable:
+            def branch_fn(operands: Any) -> tuple[Any, Any, Any]:
                 d, s, m, cp_dict, st = operands
                 # Get this operator's random params
                 op_params = cp_dict.get(f"operator_{i}", None)

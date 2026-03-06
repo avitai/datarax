@@ -43,21 +43,25 @@ class DaliAdapter(PipelineAdapter):
     """PipelineAdapter for NVIDIA DALI."""
 
     def __init__(self) -> None:
+        """Initialize the DALI adapter."""
+        super().__init__()
         self._pipe: Any = None
         self._iterator: Any = None
-        self._config: ScenarioConfig | None = None
 
     @property
     def name(self) -> str:
+        """Return the adapter display name."""
         return "NVIDIA DALI"
 
     @property
     def version(self) -> str:
+        """Return the DALI version string."""
         import nvidia.dali as dali
 
         return getattr(dali, "__version__", "unknown")
 
     def is_available(self) -> bool:
+        """Return True if DALI is installed and CUDA is available."""
         try:
             import nvidia.dali  # noqa: F401
 
@@ -69,11 +73,14 @@ class DaliAdapter(PipelineAdapter):
             return False
 
     def supported_scenarios(self) -> set[str]:
+        """Return the set of supported benchmark scenario IDs."""
         return {
             "CV-1",  # Normalize + CastToFloat32 on uint8 images
+            "HCV-1",  # ImageNet-scale with heavy GPU transforms (native DALI)
             "NLP-1",  # No transforms (pure iteration)
             "TAB-1",  # Normalize on float32 (pass-through)
             "DIST-1",  # Normalize on float32
+            "HPC-1",  # SSL 8-op chain (native DALI GPU)
             "AUG-1",  # Stochastic chain
             "AUG-2",  # Deterministic vs stochastic
             "AUG-3",  # Stochastic depth scaling
@@ -94,6 +101,7 @@ class DaliAdapter(PipelineAdapter):
         return _DTYPE_MAP.get(np_dtype, types.FLOAT)
 
     def setup(self, config: ScenarioConfig, data: Any) -> None:
+        """Set up the DALI pipeline for the given scenario configuration."""
         from nvidia.dali import fn, pipeline_def, types
         from nvidia.dali.plugin.pytorch import DALIGenericIterator, LastBatchPolicy
 
@@ -119,6 +127,41 @@ class DaliAdapter(PipelineAdapter):
                     images = fn.brightness(images, brightness=fn.random.uniform(range=(-0.2, 0.2)))
                 elif t_name == "RandomScale":
                     images = images * fn.random.uniform(range=(0.8, 1.2))
+                # --- Heavy transforms (native DALI GPU ops for HCV-1/HPC-1) ---
+                elif t_name == "RandomResizedCrop":
+                    images = fn.random_resized_crop(
+                        images,
+                        size=(224, 224),
+                        random_area=(0.08, 1.0),
+                        random_aspect_ratio=(3.0 / 4.0, 4.0 / 3.0),
+                    )
+                elif t_name == "RandomHorizontalFlip":
+                    images = fn.flip(images, horizontal=fn.random.coin_flip())
+                elif t_name == "ColorJitter":
+                    images = fn.brightness_contrast(
+                        images,
+                        brightness=fn.random.uniform(range=(0.6, 1.4)),
+                        contrast=fn.random.uniform(range=(0.6, 1.4)),
+                    )
+                    images = fn.saturation(images, saturation=fn.random.uniform(range=(0.6, 1.4)))
+                elif t_name == "GaussianBlur":
+                    images = fn.gaussian_blur(images, sigma=(0.1, 2.0), window_size=5)
+                elif t_name == "RandomSolarize":
+                    # DALI: invert pixels above threshold with 50% probability
+                    should_solarize = fn.random.coin_flip(probability=0.5)
+                    solarized = types.Constant(255) - images
+                    mask = images >= types.Constant(128)
+                    inverted = mask * solarized + (1 - mask) * images
+                    images = should_solarize * inverted + (1 - should_solarize) * images
+                elif t_name == "RandomGrayscale":
+                    should_gray = fn.random.coin_flip(probability=0.2)
+                    gray = fn.color_space_conversion(
+                        images,
+                        image_type=types.RGB,
+                        output_type=types.GRAY,
+                    )
+                    gray_3ch = fn.cat(gray, gray, gray, axis=2)
+                    images = should_gray * gray_3ch + (1 - should_gray) * images
             return images
 
         self._pipe = pipe()
@@ -145,6 +188,7 @@ class DaliAdapter(PipelineAdapter):
         return [batch[0]["data"].cpu().numpy()]
 
     def teardown(self) -> None:
+        """Release resources and reset adapter state."""
         self._iterator = None
         self._pipe = None
-        self._config = None
+        super().teardown()

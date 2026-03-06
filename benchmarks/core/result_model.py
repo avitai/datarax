@@ -8,6 +8,7 @@ import numpy as np
 from calibrax.core import BenchmarkResult, Metric
 from calibrax.profiling import ResourceSummary, TimingSample
 
+
 _DEFAULT_DOMAIN = "datarax_pipeline_benchmarks"
 _FRAMEWORK_TAG = "framework"
 _SCENARIO_TAG = "scenario_id"

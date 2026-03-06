@@ -13,11 +13,15 @@ Two API variants are provided:
   operations (lax.pmean, lax.psum). Only valid inside pmap or shard_map contexts.
 """
 
+import logging
 from typing import Any
 
 import jax
 import jax.numpy as jnp
 from jax import lax
+
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------

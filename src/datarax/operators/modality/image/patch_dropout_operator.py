@@ -24,6 +24,7 @@ Examples:
     ```
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -35,7 +36,10 @@ from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 from datarax.operators.modality.image._validation import validate_field_key_shape
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class PatchDropoutOperatorConfig(ModalityOperatorConfig):
     """Configuration for PatchDropoutOperator.
 
@@ -57,7 +61,7 @@ class PatchDropoutOperatorConfig(ModalityOperatorConfig):
     patch_size: tuple[int, int] = field(default=(8, 8), kw_only=True)
     drop_value: float = field(default=0.0, kw_only=True)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration parameters."""
         super().__post_init__()
 
@@ -135,7 +139,7 @@ class PatchDropoutOperator(ModalityOperator):
         config: PatchDropoutOperatorConfig,
         *,
         rngs: nnx.Rngs,
-    ):
+    ) -> None:
         """Initialize the patch dropout operator.
 
         Args:
@@ -296,7 +300,7 @@ class PatchDropoutOperator(ModalityOperator):
             )
 
         # Apply patches using JAX-compatible loop
-        def apply_single_patch(i, img):
+        def apply_single_patch(i: int, img: jax.Array) -> jax.Array:
             """Apply a single patch to the image."""
             x = x_positions[i]
             y = y_positions[i]

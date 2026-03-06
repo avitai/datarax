@@ -4,8 +4,8 @@ TDD RED phase: These tests define the expected behavior of MixDataSourcesConfig
 and MixDataSourcesNode before implementation.
 """
 
-import pytest
 import flax.nnx as nnx
+import pytest
 
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode

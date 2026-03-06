@@ -15,8 +15,8 @@ import pytest
 from datarax.batching.default_batcher import DefaultBatcher, DefaultBatcherConfig
 from datarax.checkpoint.handlers import OrbaxCheckpointHandler
 from datarax.core.config import DataraxModuleConfig
-from datarax.dag import DAGExecutor
 from datarax.core.module import DataraxModule
+from datarax.dag import DAGExecutor
 from datarax.samplers.range_sampler import RangeSampler, RangeSamplerConfig
 from datarax.samplers.shuffle_sampler import ShuffleSampler, ShuffleSamplerConfig
 from datarax.sharding.array_sharder import ArraySharder

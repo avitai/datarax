@@ -76,6 +76,7 @@ class GrainTransformPipeline:
     """Grain-style transformation pipeline with external state."""
 
     def __init__(self, transforms: list):
+        """Initialize GrainTransformPipeline."""
         self.transforms = transforms
         # External state dictionary for any stateful operations
         self.state = {
@@ -146,6 +147,7 @@ class StatefulNormalizeTransform(nnx.Module):
     """Stateful normalization with running statistics."""
 
     def __init__(self, momentum: float = 0.1):
+        """Initialize StatefulNormalizeTransform."""
         self.momentum = momentum
 
         # Automatic state tracking with NNX
@@ -196,6 +198,7 @@ class StatefulAugmentationTransform(nnx.Module):
     """Stateful augmentation with internal RNG."""
 
     def __init__(self, noise_scale: float = 0.1):
+        """Initialize StatefulAugmentationTransform."""
         self.noise_scale = noise_scale
 
         # Internal RNG management
@@ -221,6 +224,7 @@ class LearnableTransform(nnx.Module):
     """Learnable transformation - only possible with stateful approach."""
 
     def __init__(self, input_dim: int, output_dim: int):
+        """Initialize LearnableTransform."""
         # Learnable parameters
         key = jax.random.key(0)
         self.weight = nnx.Param(jax.random.normal(key, (input_dim, output_dim)) * 0.01)
@@ -309,6 +313,7 @@ class StatefulTransformPipeline(nnx.Module):
     """Stateful transformation pipeline with automatic state management."""
 
     def __init__(self, transforms: list[nnx.Module]):
+        """Initialize StatefulTransformPipeline."""
         self.transforms = transforms
 
         # Pipeline statistics

@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+
 try:
     import tomllib  # Python 3.11+
 except ModuleNotFoundError:

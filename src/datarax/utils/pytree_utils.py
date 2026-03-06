@@ -10,14 +10,18 @@ and validate JAX PyTrees and Datarax Batch objects. It encompasses:
 - Structure introspection and consistency validation
 """
 
-from typing import Any
+import logging
 from collections.abc import Callable
+from typing import Any
 
 import jax
 import numpy as np
 from jaxtyping import Array
 
 from datarax.core.element_batch import Batch, BatchOps, Element
+
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -116,7 +120,7 @@ def get_batch_size(batch: Batch | dict) -> int | None:
         Batch size, or None if batch size cannot be determined
     """
     # Handle proper Batch objects
-    if hasattr(batch, "batch_size"):
+    if isinstance(batch, Batch):
         return batch.batch_size
 
     # Handle plain dicts (common in tests and simple pipelines)

@@ -72,6 +72,11 @@ requires-python = ">=3.11"
 all = ["datarax[data,dev,docs,gpu,test]"]
 all-cpu = ["datarax[data,dev,docs,test]"]
 all-macos = ["datarax[data,dev,docs,metal,test]"]
+automation = [
+  # Local cloud orchestration dependencies (benchmarks/automation/vast_orchestrator.py)
+  "skypilot[vast]>=0.11,<0.12",
+  "click<8.3" # SkyPilot 0.11.x launch incompatibility with click>=8.3
+]
 # benchmark extra is separate — it pulls in 12 Linux-only frameworks (DALI, PyTorch, Ray, etc.)
 # Install explicitly: pip install datarax[benchmark]
 benchmark = [
@@ -108,6 +113,7 @@ cuda-dev = [
 data = [
   # Data loading and processing dependencies
   "grain-nightly; sys_platform == 'linux'", # Google's high-performance data loading library (Linux only)
+  "importlib_resources>=5.0", # Backport required by grain/etils on some Python versions
   "tensorflow-datasets>=4.9.2", # For TFDS integration
   "datasets>=2.21", # For HuggingFace datasets (>=2.21 for pyarrow 15+ compat)
   "pillow>=10.0.0", # For image processing
@@ -118,6 +124,9 @@ dev = [
   # calibrax: install via `uv pip install "calibrax[wandb,stats] @ git+https://github.com/avitai/calibrax.git"`
   "build>=1.0.3",
   "coverage>=7",
+  "google-cloud-aiplatform>=1.38.0",
+  "google-cloud-storage>=2.14.0",
+  "interrogate>=1.5",
   "ipykernel>=6.29.5",
   "pydeps>=1.12.17",
   "pyright>=1.1.336",
@@ -126,15 +135,15 @@ dev = [
   "pytest-benchmark>=4",
   "pytest-cov>=6.1.1",
   "pytest-env>=1.0.1",
+  "pytest-json-report>=1.5.0",
+  "pytest-randomly>=3.15",
   "pytest-timeout>=2.1",
   "pytest-xdist>=3.6",
-  "shellcheck-py>=0.10.0.1",
   "python-dotenv>=1",
+  "radon>=6.0",
   "ruff>=0.1.5",
-  "twine>=4.0.2",
-  "pytest-json-report>=1.5.0",
-  "google-cloud-aiplatform>=1.38.0",
-  "google-cloud-storage>=2.14.0"
+  "shellcheck-py>=0.10.0.1",
+  "twine>=4.0.2"
 ]
 docs = [
   "griffe>=1.7.3",
@@ -267,10 +276,31 @@ path = "src/datarax/__init__.py"
 follow_imports = "skip"
 
 [tool.pydocstyle]
-add-ignore = ["D100", "D101", "D102", "D103", "D104", "D105", "D107", "D202", "D212", "D415"]
+add-ignore = [
+  "D100",
+  "D200",
+  "D202",
+  "D203",
+  "D204",
+  "D205",
+  "D212",
+  "D213",
+  "D400",
+  "D401",
+  "D404",
+  "D415"
+]
+add-select = [
+  "D101",
+  "D102",
+  "D103",
+  "D104",
+  "D105",
+  "D107"
+]
 convention = "google"
-match = ".*\\.py$"
-match-dir = "^(?!tests|examples|benchmarks).*"
+match = "(?!test_).*\\.py"
+match-dir = "(?!tests|scripts|examples|benchmarks).*"
 
 [tool.pylint."messages_control"]
 # NNX modules require nnx.Variable as direct attrs; config dataclasses map 1:1
@@ -279,31 +309,19 @@ max-args = 10
 max-attributes = 12
 
 [tool.pyright]
-exclude = ["examples", "example_data", "scripts", ".deprecated", "**/__pycache__", "**/.venv"]
-include = ["src", "tests"]
-reportAbstractUsage = false
-reportArgumentType = false
-reportAssignmentType = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
+exclude = ["example_data", ".deprecated", "**/__pycache__", "**/.venv"]
+include = ["src", "tests", "examples", "scripts", "benchmarks"]
+pythonVersion = "3.11"
+# JAX/Flax/NNX ecosystem requires these specific suppressions due to
+# dynamic attribute access patterns and type stub limitations.
 reportFunctionMemberAccess = false
-reportGeneralTypeIssues = false
 reportIncompatibleMethodOverride = false
 reportIncompatibleVariableOverride = false
-reportIndexIssue = false
 # Benchmarks depend on many optional adapters/frameworks that are intentionally
 # not required in every dev environment or pre-commit hook env.
 reportMissingImports = false
-reportOperatorIssue = false
-reportOptionalCall = false
-reportOptionalIterable = false
-reportOptionalMemberAccess = false
-reportOptionalOperand = false
-reportOptionalSubscript = false
-reportPossiblyUnboundVariable = false
-reportReturnType = false
-reportUnsupportedDunderAll = false
-reportUnusedExpression = false
+reportMissingTypeStubs = false
+typeCheckingMode = "basic"
 
 [tool.pytest.ini_options]
 addopts = "--strict-markers --strict-config --verbose --tb=short --color=yes --durations=10 --cov=src/ --cov-report=term-missing --cov-report=html --cov-fail-under=80 --timeout=300 --json-report --json-report-file=temp/test-results.json --json-report-indent=2"
@@ -368,22 +386,23 @@ warmup = true
 warmup_iterations = 3
 
 [tool.pytest-env]
-JAX_ENABLE_X64 = "0"
-JAX_SKIP_CUDA_CONSTRAINTS_CHECK = "1"
+# D: prefix = set as default only (don't override existing env vars)
+"D:JAX_ENABLE_X64" = "0"
+"D:JAX_SKIP_CUDA_CONSTRAINTS_CHECK" = "1"
+"D:TF_CPP_MIN_LOG_LEVEL" = "1"
+"D:XLA_PYTHON_CLIENT_MEM_FRACTION" = "0.75"
+"D:XLA_PYTHON_CLIENT_PREALLOCATE" = "false"
+# These must always be set (no D: prefix) to prevent framework interference
 LD_LIBRARY_PATH = "/usr/local/cuda/lib64"
 # Ray 2.53's uv runtime_env hook detects uv-managed venvs and tries to
 # recreate them for workers — but the new venv lacks ray itself, causing
 # workers to crash silently and from_numpy()/iter_batches() to hang.
 RAY_DATA_DISABLE_PROGRESS_BARS = "1"
 RAY_ENABLE_UV_RUN_RUNTIME_ENV = "0"
-TF_CPP_MIN_LOG_LEVEL = "1"
-XLA_PYTHON_CLIENT_MEM_FRACTION = "0.75"
-XLA_PYTHON_CLIENT_PREALLOCATE = "false"
 
 [tool.ruff]
 extend-include = ["*.ipynb"]
 line-length = 100
-src = []
 target-version = "py311"
 
 [tool.ruff.format]
@@ -411,11 +430,7 @@ ignore = [
   # UP035 — fixed: imports now use collections.abc
   "RUF005" # Consider using unpacked tuple instead of concatenation
 ]
-# E: Pyflakes and pycodestyle errors
-# F: Pyflakes
-# I: isort
-# W: pycodestyle warnings
-select = ["E", "F", "UP"]
+select = ["E", "F", "I", "UP", "W"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true

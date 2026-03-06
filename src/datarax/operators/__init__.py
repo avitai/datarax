@@ -14,12 +14,19 @@ static weights, learnable weights (nnx.Param), and dynamic external weights
 via ``weight_key`` for differentiable pipelines (e.g., Gumbel-Softmax policies).
 """
 
-from datarax.operators.map_operator import MapOperator
+from datarax.core.config import (
+    BatchMixOperatorConfig,
+    ElementOperatorConfig,
+    MapOperatorConfig,
+)
+from datarax.operators.batch_mix_operator import BatchMixOperator
 from datarax.operators.composite_operator import (
-    CompositeOperatorModule,
     CompositeOperatorConfig,
+    CompositeOperatorModule,
     CompositionStrategy,
 )
+from datarax.operators.element_operator import ElementOperator
+from datarax.operators.map_operator import MapOperator
 from datarax.operators.probabilistic_operator import (
     ProbabilisticOperator,
     ProbabilisticOperatorConfig,
@@ -28,13 +35,7 @@ from datarax.operators.selector_operator import (
     SelectorOperator,
     SelectorOperatorConfig,
 )
-from datarax.operators.element_operator import ElementOperator
-from datarax.operators.batch_mix_operator import BatchMixOperator
-from datarax.core.config import (
-    BatchMixOperatorConfig,
-    ElementOperatorConfig,
-    MapOperatorConfig,
-)
+
 
 __all__ = [
     # Core operators

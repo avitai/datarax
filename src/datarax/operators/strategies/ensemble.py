@@ -1,19 +1,23 @@
 """Ensemble composition strategies."""
 
+import logging
 from typing import Any
 
 import jax
 import jax.numpy as jnp
 from jaxtyping import PyTree
 
-from datarax.operators.strategies.base import CompositionStrategyImpl, StrategyContext
 from datarax.core.operator import OperatorModule
+from datarax.operators.strategies.base import CompositionStrategyImpl, StrategyContext
+
+
+logger = logging.getLogger(__name__)
 
 
 class EnsembleStrategy(CompositionStrategyImpl):
     """Applies operators in parallel and reduces outputs (mean, sum, etc)."""
 
-    def __init__(self, mode: str):
+    def __init__(self, mode: str) -> None:
         """Initialize ensemble strategy.
 
         Args:

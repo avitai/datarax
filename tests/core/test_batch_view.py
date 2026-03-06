@@ -95,7 +95,7 @@ class TestBatchViewToBatch:
         states = {"count": jnp.zeros((4,))}
         view = BatchView(data=data, states=states, batch_size=4)
         batch = view.to_batch()
-        assert jnp.allclose(batch.states.get_value()["count"], jnp.zeros((4,)))
+        assert jnp.allclose(batch.states.get_value()["count"], jnp.zeros((4,)))  # type: ignore[reportCallIssue]
 
 
 # ========================================================================

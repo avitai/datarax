@@ -5,11 +5,15 @@ that use flax.nnx.Module for state management and JAX transformation
 compatibility.
 """
 
-from typing import Any
+import logging
 from collections.abc import Iterator
+from typing import Any
 
 from datarax.core.structural import StructuralModule
 from datarax.typing import Batch, Element
+
+
+logger = logging.getLogger(__name__)
 
 
 class BatcherModule(StructuralModule):

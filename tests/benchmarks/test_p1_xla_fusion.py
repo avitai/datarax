@@ -4,12 +4,14 @@ Target: Sub-linear throughput degradation for chains of 10+ transforms.
 Tests both Sequential-level fusion and DAG-level topological fusion.
 """
 
-import pytest
 import jax.numpy as jnp
+import pytest
+
 from datarax.core.element_batch import Batch
 from datarax.dag.dag_executor import DAGExecutor
-from datarax.dag.nodes.control_flow import Sequential, FusedOperatorNode
-from datarax.dag.nodes.data_source import OperatorNode, BatchNode
+from datarax.dag.nodes.base import Node
+from datarax.dag.nodes.control_flow import FusedOperatorNode, Sequential
+from datarax.dag.nodes.data_source import BatchNode, OperatorNode
 from tests.benchmarks.complex_dag_builder import ComplexDAGBuilder, MatMulOperator
 
 
@@ -37,7 +39,7 @@ class TestP1XLAFusion:
 
     def test_is_jit_fusible_sequential_all_fusible(self):
         """Verify Sequential with all-fusible children is fusible."""
-        ops = [OperatorNode(MatMulOperator(64, 64)) for _ in range(3)]
+        ops: list[Node] = [OperatorNode(MatMulOperator(64, 64)) for _ in range(3)]
         assert Sequential(ops).is_jit_fusible
 
     def test_is_jit_fusible_sequential_mixed(self):
@@ -98,7 +100,7 @@ class TestP1XLAFusion:
         executor = DAGExecutor(graph=graph, jit_compile=False, enforce_batch=False)
         executor._apply_fusion()
 
-        result_nodes = list(executor.graph.nodes)
+        result_nodes = list(executor.graph.nodes)  # type: ignore[reportAttributeAccessIssue]
         # [FusedOperatorNode([op_0, op_1]), BatchNode, FusedOperatorNode([op_2, op_3])]
         assert len(result_nodes) == 3
         assert isinstance(result_nodes[0], FusedOperatorNode)
@@ -118,14 +120,14 @@ class TestP1XLAFusion:
             expected = op(expected)
 
         # Run through FusedOperatorNode
-        fused = FusedOperatorNode(ops)
+        fused = FusedOperatorNode(ops)  # type: ignore[reportArgumentType]
         result = fused(batch)
 
         assert jnp.allclose(result.data["x"], expected.data["x"], atol=1e-5)
 
     def test_fused_operator_node_repr(self):
         """Verify FusedOperatorNode repr shows child node names."""
-        ops = [
+        ops: list[Node] = [
             OperatorNode(MatMulOperator(64, 64), name="A"),
             OperatorNode(MatMulOperator(64, 64), name="B"),
         ]

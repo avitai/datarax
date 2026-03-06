@@ -91,6 +91,7 @@ from datarax.operators.modality.image import (
 )
 from datarax.sources import MemorySource, MemorySourceConfig
 
+
 print(f"JAX version: {jax.__version__}")
 print(f"Devices: {jax.devices()}")
 

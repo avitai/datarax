@@ -11,22 +11,11 @@ Test Categories:
 - Field access and defaults
 """
 
-import pytest
 from typing import Any
 
+import pytest
 
-# NOTE: Import will fail initially (RED phase) - this is expected!
-try:
-    from datarax.core.config import DataraxModuleConfig, OperatorConfig
-except ImportError:
-    DataraxModuleConfig = None
-    OperatorConfig = None
-
-
-pytestmark = pytest.mark.skipif(
-    OperatorConfig is None,
-    reason="OperatorConfig not implemented yet (RED phase)",
-)
+from datarax.core.config import DataraxModuleConfig, OperatorConfig
 
 
 class TestOperatorConfigStochasticConstruction:
@@ -203,8 +192,8 @@ class TestOperatorConfigChildInheritance:
         """Test child config can add operator-specific fields."""
         from dataclasses import dataclass
 
-        @dataclass
-        class RandomBrightnessConfig(OperatorConfig):
+        @dataclass(frozen=True)
+        class RandomBrightnessConfig(OperatorConfig):  # type: ignore[reportGeneralTypeIssues]
             """Child config with brightness-specific parameters."""
 
             min_factor: float = 0.8
@@ -229,8 +218,8 @@ class TestOperatorConfigChildInheritance:
         """Test child config inherits all parent validation rules."""
         from dataclasses import dataclass
 
-        @dataclass
-        class ChildConfig(OperatorConfig):
+        @dataclass(frozen=True)
+        class ChildConfig(OperatorConfig):  # type: ignore[reportGeneralTypeIssues]
             """Simple child config."""
 
             extra_param: float = 1.0
@@ -251,8 +240,8 @@ class TestOperatorConfigChildInheritance:
         """Test child config can add its own validation."""
         from dataclasses import dataclass
 
-        @dataclass
-        class MixupConfig(OperatorConfig):
+        @dataclass(frozen=True)
+        class MixupConfig(OperatorConfig):  # type: ignore[reportGeneralTypeIssues]
             """Mixup augmentation config."""
 
             alpha: float = 1.0
@@ -294,8 +283,8 @@ class TestOperatorConfigChildInheritance:
         """Test that parent validation runs before child validation."""
         from dataclasses import dataclass
 
-        @dataclass
-        class OrderTestConfig(OperatorConfig):
+        @dataclass(frozen=True)
+        class OrderTestConfig(OperatorConfig):  # type: ignore[reportGeneralTypeIssues]
             """Config to test validation order."""
 
             test_field: float = 1.0
@@ -329,13 +318,15 @@ class TestOperatorConfigDataclass:
 
         assert is_dataclass(OperatorConfig)
 
-    def test_not_frozen(self):
-        """Test that OperatorConfig is mutable (not frozen)."""
+    def test_is_frozen(self):
+        """Test that OperatorConfig is frozen (immutable)."""
+        from dataclasses import FrozenInstanceError
+
         config = OperatorConfig()
 
-        # Should be able to modify (mutable for learnable parameters)
-        config.cacheable = True
-        assert config.cacheable is True
+        # Should NOT be able to modify fields (frozen)
+        with pytest.raises(FrozenInstanceError):
+            config.cacheable = True  # type: ignore[reportAttributeAccessIssue]
 
     def test_repr_shows_all_fields(self):
         """Test that __repr__ includes all field values."""

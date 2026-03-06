@@ -8,8 +8,8 @@ and is skipped if unavailable. The functional integration test for prefetch
 always runs.
 """
 
-import pytest
 import flax.nnx as nnx
+import pytest
 
 from datarax.sources import MemorySource, MemorySourceConfig
 

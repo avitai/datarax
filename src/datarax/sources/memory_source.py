@@ -5,21 +5,26 @@ This module provides a data source that serves data from in-memory collections
 with support for both stateless and stateful operation modes.
 """
 
+import logging
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any
-from collections.abc import Iterator, Sequence
-import jax
-import flax.nnx as nnx
 
+import flax.nnx as nnx
+import jax
+
+from datarax.config.registry import register_component
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
 from datarax.core.metadata import MetadataManager, RecordMetadata
-from datarax.config.registry import register_component
 from datarax.samplers.index_shuffle import index_shuffle
 from datarax.sources._eager_source_ops import configure_stochastic_from_shuffle
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class MemorySourceConfig(StructuralConfig):
     """Configuration for MemorySource (in-memory data source).
 
@@ -43,7 +48,7 @@ class MemorySourceConfig(StructuralConfig):
     shard_id: int | None = None
     num_workers: int = 1
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration after initialization."""
         configure_stochastic_from_shuffle(self, shuffle=self.shuffle)
 
@@ -98,6 +103,9 @@ class MemorySource(DataSourceModule):
         ```
     """
 
+    # Narrow config type for pyright (base stores via nnx.static)
+    config: MemorySourceConfig  # pyright: ignore[reportIncompatibleVariableOverride]
+
     # Static data container (not trainable parameters)
     data: dict[str, Any] | list[Any] | Sequence[Any] = nnx.data()
 
@@ -108,7 +116,7 @@ class MemorySource(DataSourceModule):
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize memory source with config.
 
         Args:
@@ -165,7 +173,7 @@ class MemorySource(DataSourceModule):
 
         # Shuffle state (computed lazily per epoch)
         self._shuffle_seed: int | None = None  # Feistel seed, derived from RNG
-        self._shuffled_indices = nnx.Variable(None)  # Materialized only for get_batch
+        self._shuffled_indices: nnx.Variable[list[int] | None] = nnx.Variable(None)
         self._last_shuffle_epoch = nnx.Variable(-1)
 
         # Optional metadata tracking
@@ -321,6 +329,8 @@ class MemorySource(DataSourceModule):
         last_shuffle_epoch = self._last_shuffle_epoch.get_value()
 
         if self._shuffle_seed is None or last_shuffle_epoch != current_epoch:
+            # rngs is guaranteed non-None when shuffle=True (stochastic config)
+            assert self.rngs is not None  # noqa: S101 (invariant, not control flow)
             stream_name = self.config.stream_name or "shuffle"
             rng_stream = getattr(self.rngs, stream_name, self.rngs.default)
             key = rng_stream()
@@ -403,15 +413,18 @@ class MemorySource(DataSourceModule):
         For non-contiguous access (shuffled), uses fancy indexing which
         creates copies. For contiguous ranges, prefer _gather_batch_slice.
 
+        Uses numpy indexing for host-side operations to avoid dispatching
+        through JAX's XLA allocator for what is fundamentally a CPU operation.
+
         Args:
             indices: List of indices to gather.
 
         Returns:
             Batch of elements.
         """
-        import jax.numpy as jnp
+        import numpy as np
 
-        idx_array = jnp.array(indices)
+        idx_array = np.array(indices)
         data = self.data
         if isinstance(data, dict):
             batch = {}
@@ -420,7 +433,7 @@ class MemorySource(DataSourceModule):
                     if isinstance(value, list | tuple):
                         batch[key] = [value[i] for i in indices]
                     else:
-                        # Array-like: fancy indexing (JAX requires jnp.array, not list)
+                        # Array-like: numpy fancy indexing (host-side, no XLA dispatch)
                         batch[key] = value[idx_array]
                 else:
                     batch[key] = [value] * len(indices)
@@ -428,8 +441,8 @@ class MemorySource(DataSourceModule):
         else:
             if isinstance(data, list | tuple):
                 return [data[i] for i in indices]
-            else:
-                return data[idx_array]
+            # Array-like (numpy/JAX): supports fancy indexing
+            return data[idx_array]  # type: ignore[index]
 
     def reset(self, seed: int | None = None) -> None:
         """Reset the source to the beginning.

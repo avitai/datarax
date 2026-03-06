@@ -7,12 +7,12 @@ including performance tests, error handling, and edge cases.
 import platform
 import time
 from typing import Any
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
-import jax
 import jax.numpy as jnp
-import pytest
 import numpy as np
+import pytest
+
 
 # Detect macOS - TensorFlow crashes on macOS ARM64 due to Metal/GPU detection issues
 # https://github.com/tensorflow/tensorflow/issues/52138
@@ -21,11 +21,20 @@ IS_MACOS = platform.system() == "Darwin"
 # Import TFDS and HF modules
 # These dependencies are now included in the test-cpu dependencies
 # in pyproject.toml, so we don't need to skip these tests
-from tests.test_common.data_generators import generate_image_data
-
 from datarax.dag import DAGExecutor
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
-from datarax.sources.array_record_source import ArrayRecordSourceModule, ArrayRecordSourceConfig
+from tests.test_common.data_generators import generate_image_data
+
+
+try:
+    from datarax.sources.array_record_source import (
+        ArrayRecordSourceConfig,
+        ArrayRecordSourceModule,
+    )
+
+    HAS_GRAIN = True
+except ImportError:
+    HAS_GRAIN = False
 
 
 # Set skip flags to False since we now have these dependencies in test-cpu
@@ -70,13 +79,13 @@ def benchmark_stream_iteration(data_stream, num_batches=100):
     for batch in executor:
         batches_processed += 1
 
-        # Count examples
-        if isinstance(batch, dict) and "image" in batch:
+        # Count examples — use duck typing for dict/Batch/BatchView compatibility
+        if "image" in batch:
             examples_processed += batch["image"].shape[0]
         else:
-            # Fallback - assume first dimension is batch size
-            first_value = jax.tree_util.tree_leaves(batch)[0]
-            examples_processed += first_value.shape[0]
+            # Fallback — get first value via iteration (works for dict/Batch/BatchView)
+            first_key = next(iter(batch))
+            examples_processed += batch[first_key].shape[0]
 
         # Stop after processing specified number of batches
         if batches_processed >= num_batches:
@@ -261,7 +270,7 @@ class TestDataLoadingPerformance:
             count = 0
             for batch in data_stream:
                 count += 1
-                assert "value" in batch
+                assert "value" in batch  # Works for dict/Batch/BatchView
                 if count > 10:  # Safety limit
                     break
             return {"count": count}
@@ -283,7 +292,7 @@ class TestDataLoadingPerformance:
             for batch in data_stream:
                 batch_count += 1
                 # Count items in batch
-                if isinstance(batch, dict) and "image" in batch:
+                if "image" in batch:
                     total_items += batch["image"].shape[0]
                 if batch_count > 10:  # Safety limit
                     break
@@ -395,7 +404,7 @@ class TestDataSourceIntegration:
         batch_count = 0
         for batch in executor:
             batch_count += 1
-            if isinstance(batch, dict) and "image" in batch:
+            if "image" in batch:
                 # Check normalization was applied
                 assert jnp.max(batch["image"]) <= 1.0
             if batch_count >= 3:
@@ -477,6 +486,7 @@ class TestBenchmarkUtilities:
         assert jax_module is not None
 
 
+@pytest.mark.skipif(not HAS_GRAIN, reason="grain not available")
 class TestArrayRecordSourcePerformance:
     """Performance tests for ArrayRecordSourceModule."""
 
@@ -493,7 +503,7 @@ class TestArrayRecordSourcePerformance:
         """Test iteration performance."""
         import time
 
-        with patch("grain.python.ArrayRecordDataSource", return_value=mock_grain_source):
+        with patch("grain.sources.ArrayRecordDataSource", return_value=mock_grain_source):
             config = ArrayRecordSourceConfig()
             source = ArrayRecordSourceModule(config, paths="dummy.array_record")
 
@@ -519,7 +529,7 @@ class TestArrayRecordSourcePerformance:
         process = psutil.Process(os.getpid())
         initial_memory = process.memory_info().rss / 1024 / 1024  # MB
 
-        with patch("grain.python.ArrayRecordDataSource", return_value=mock_grain_source):
+        with patch("grain.sources.ArrayRecordDataSource", return_value=mock_grain_source):
             config = ArrayRecordSourceConfig()
             source = ArrayRecordSourceModule(config, paths="dummy.array_record")
 

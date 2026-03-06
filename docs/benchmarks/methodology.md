@@ -35,6 +35,7 @@ Warmup ensures JIT compilation, caching, and pipeline priming are excluded from 
 |---------|---------------|-------------------|
 | CI CPU | 3 | 20 |
 | GPU A100 | 8 | 50 |
+| GPU RTX 4090 | 6 | 40 |
 | TPU v5e | 8 | 50 |
 
 !!! note "Why warmup matters"
@@ -62,6 +63,30 @@ Statistical analysis uses:
 3.  **Cache clearing**: JAX caches, Python GC, and CUDA memory cleared between framework runs
 4.  **Supported scenarios only**: Each framework runs only the scenarios it supports (no penalty for missing features)
 5.  **Equal transforms**: Each adapter implements the same transforms required by a scenario (e.g., CV-1 requires Normalize + CastToFloat32). Adapters that cannot implement a scenario's transforms are excluded from that scenario rather than measured with less work
+6.  **Profile-gated defaults**: Hardware profile scenario include/exclude lists are applied by default; explicit `--scenarios` overrides profile gating
+7.  **Backend truth**: Each manifest records both `requested_platform` and `active_backend`; mismatches fail validation in the automated Vast workflow
+8.  **Two fairness lenses**:
+    - Same-backend head-to-head: compare frameworks only on the shared supported-scenario intersection.
+    - Native-optimal capability: evaluate each framework on scenarios that reflect its best native path.
+9.  **Provisioning determinism**: Automated Vast runs pin a named cluster, validate hardware/backend before benchmarking, and apply timeout -> status check -> same-cluster retry before optional fallback.
+10. **Stall fail-fast diagnostics**: If launch output is silent past the configured stall threshold, automation runs `sky queue` and `sky logs --tail` and exits with a clear failure reason instead of waiting indefinitely.
+11. **Stage-level GPU reservation**: Remote verify and benchmark stage commands request GPU resources explicitly (`sky exec --gpus <class>:1`) to prevent no-device stage execution.
+12. **Artifact layout integrity**: Cloud artifact collection validates transfer method compatibility and normalizes nested `results/results/*` layouts that can occur with some `scp` variants.
+
+---
+
+## Backend Truth Contract
+
+Every canonical benchmark run must record and validate:
+
+| Field | Source | Expected value for GPU runs |
+|-------|--------|-----------------------------|
+| `requested_platform` | Runner CLI/profile | `gpu` |
+| `active_backend` | `init_platform()` / JAX | `gpu` |
+| `environment.platform.devices` | Runtime probe | Includes `cuda` devices |
+| `gpu_name` | Environment capture | Matches expected hardware class (for Vast automation: A100) |
+
+Automated Vast two-pass runs fail fast if any of these checks do not match expected values.
 
 ---
 
@@ -77,6 +102,7 @@ Statistical analysis uses:
 | I/O Patterns | IO-1, IO-2, IO-3, IO-4 | Sequential vs random, streaming, caching |
 | Distributed | DIST-1, DIST-2 | Multi-device sharding and mesh config |
 | Production | PR-1, PR-2 | Checkpointing, determinism |
+| Augmentation | AUG-1, AUG-2, AUG-3 | Stochastic transform pipeline overhead |
 | Datarax Unique | NNX-1, XFMR-1 | Flax NNX integration, JIT+vmap acceleration |
 
 ---

@@ -31,6 +31,7 @@ from datarax.operators.modality.image.rotation_operator import (
     RotationOperatorConfig,
 )
 
+
 __all__ = [
     "BrightnessOperator",
     "BrightnessOperatorConfig",

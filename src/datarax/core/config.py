@@ -9,18 +9,19 @@ This module provides typed configuration classes for all Datarax modules:
 All configs use dataclass with __post_init__ validation for fail-fast configuration errors.
 """
 
-from dataclasses import dataclass
-from typing import Any
+import logging
 from collections.abc import Callable
+from dataclasses import (
+    dataclass,
+    FrozenInstanceError as FrozenInstanceError,  # noqa: F401 — re-export
+)
+from typing import Any
 
 from flax import nnx
 from jaxtyping import PyTree
 
 
-class FrozenInstanceError(Exception):
-    """Raised when attempting to modify a frozen config instance."""
-
-    pass
+logger = logging.getLogger(__name__)
 
 
 def validate_stochastic_config(stochastic: bool, stream_name: str | None) -> None:
@@ -45,7 +46,7 @@ def validate_stochastic_config(stochastic: bool, stream_name: str | None) -> Non
         )
 
 
-@dataclass
+@dataclass(frozen=True)
 class DataraxModuleConfig:
     """Base configuration for all Datarax modules.
 
@@ -69,7 +70,7 @@ class DataraxModuleConfig:
     batch_stats_fn: Callable | nnx.Module | None = None
     precomputed_stats: dict[str, Any] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration after initialization.
 
         Raises:
@@ -83,7 +84,7 @@ class DataraxModuleConfig:
             )
 
 
-@dataclass
+@dataclass(frozen=True)
 class OperatorConfig(DataraxModuleConfig):
     """Configuration for OperatorModule (mutable, learnable).
 
@@ -114,7 +115,7 @@ class OperatorConfig(DataraxModuleConfig):
     stream_name: str | None = None
     batch_strategy: str = "vmap"  # "vmap" (parallel) or "scan" (sequential, low memory)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration after initialization.
 
         Validates both base config (via super) and operator-specific rules.
@@ -135,7 +136,7 @@ class OperatorConfig(DataraxModuleConfig):
             )
 
 
-@dataclass
+@dataclass(frozen=True)
 class MapOperatorConfig(OperatorConfig):
     """Configuration for MapOperator - unified deterministic/stochastic operator.
 
@@ -195,7 +196,7 @@ class MapOperatorConfig(OperatorConfig):
     # MapOperator.__init__ enforces stochastic=False
 
 
-@dataclass
+@dataclass(frozen=True)
 class ElementOperatorConfig(OperatorConfig):
     """Configuration for ElementOperator - element-level transformation operator.
 
@@ -236,7 +237,7 @@ class ElementOperatorConfig(OperatorConfig):
     pass
 
 
-@dataclass
+@dataclass(frozen=True)
 class BatchMixOperatorConfig(OperatorConfig):
     """Configuration for BatchMixOperator - unified MixUp and CutMix batch augmentation.
 
@@ -289,7 +290,7 @@ class BatchMixOperatorConfig(OperatorConfig):
     stochastic: bool = True
     stream_name: str | None = "batch_mix"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration after initialization.
 
         Raises:
@@ -312,7 +313,7 @@ class BatchMixOperatorConfig(OperatorConfig):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class StructuralConfig(DataraxModuleConfig):
     """Configuration for StructuralModule (runtime immutable, compile-time constants).
 
@@ -346,11 +347,10 @@ class StructuralConfig(DataraxModuleConfig):
     stochastic: bool = False
     stream_name: str | None = None
 
-    def __post_init__(self):
-        """Validate configuration and freeze instance.
+    def __post_init__(self) -> None:
+        """Validate configuration.
 
-        Validates both base config (via super) and structural-specific rules,
-        then marks the instance as frozen to prevent further modifications.
+        Validates both base config (via super) and structural-specific rules.
 
         Raises:
             ValueError: If configuration is invalid.
@@ -360,25 +360,3 @@ class StructuralConfig(DataraxModuleConfig):
 
         # Validate stochastic configuration rules
         validate_stochastic_config(self.stochastic, self.stream_name)
-
-        # Mark as frozen after validation (must use object.__setattr__)
-        object.__setattr__(self, "_frozen", True)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        """Override setattr to enforce immutability after initialization.
-
-        Args:
-            name: Attribute name
-            value: Attribute value
-
-        Raises:
-            FrozenInstanceError: If attempting to modify frozen instance
-        """
-        # Check if instance is frozen (after __post_init__ completes)
-        if hasattr(self, "_frozen") and object.__getattribute__(self, "_frozen"):
-            raise FrozenInstanceError(
-                f"Cannot modify frozen StructuralConfig field '{name}'. "
-                f"StructuralConfig instances are immutable after construction."
-            )
-        # Allow normal attribute setting during initialization
-        object.__setattr__(self, name, value)

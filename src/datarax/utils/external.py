@@ -4,9 +4,10 @@ This module provides utility functions for working with external libraries and
 interfaces, particularly focused on JAX and Flax NNX integration.
 """
 
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, TypeVar
-from collections.abc import Callable
 
 import flax.nnx as nnx
 import jax
@@ -16,10 +17,13 @@ from datarax.core.config import OperatorConfig
 from datarax.core.operator import OperatorModule
 
 
+logger = logging.getLogger(__name__)
+
+
 T = TypeVar("T")
 
 
-@dataclass
+@dataclass(frozen=True)
 class ExternalAdapterConfig(OperatorConfig):
     """Configuration for ExternalLibraryAdapter.
 
@@ -31,7 +35,7 @@ class ExternalAdapterConfig(OperatorConfig):
     """
 
     stochastic: bool = True
-    stream_name: str = "augment"
+    stream_name: str | None = "augment"
 
 
 class ExternalLibraryAdapter(OperatorModule):
@@ -65,7 +69,7 @@ class ExternalLibraryAdapter(OperatorModule):
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize the ExternalLibraryAdapter.
 
         Args:
@@ -181,7 +185,7 @@ class PureJaxAdapter(OperatorModule):
         fn: Callable[[dict[str, Any]], dict[str, Any]],
         *,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize PureJaxAdapter.
 
         Args:

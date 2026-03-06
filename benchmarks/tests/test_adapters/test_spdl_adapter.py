@@ -8,6 +8,7 @@ import pytest
 
 from benchmarks.tests.test_adapters.conftest import assert_valid_iteration_result
 
+
 spdl = pytest.importorskip("spdl")
 
 
@@ -30,17 +31,12 @@ class TestSpdlAdapterProperties:
 
     def test_supported_scenarios(self):
         from benchmarks.adapters.spdl_adapter import SpdlAdapter
+        from benchmarks.tests.test_adapters.conftest import assert_supported_scenarios
 
-        expected = {
-            "CV-1",
-            "NLP-1",
-            "TAB-1",
-            "DIST-1",
-            "AUG-1",
-            "AUG-2",
-            "AUG-3",
-        }
-        assert SpdlAdapter().supported_scenarios() == expected
+        assert_supported_scenarios(
+            SpdlAdapter(),
+            must_include={"CV-1", "NLP-1", "HCV-1", "HPC-1", "AUG-1"},
+        )
 
 
 class TestSpdlAdapterLifecycle:

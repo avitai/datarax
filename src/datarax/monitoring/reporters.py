@@ -4,13 +4,17 @@ This module provides implementations of MetricsObservers that report metrics
 to various outputs like console, files, or external systems.
 """
 
+import logging
 import sys
 import time
 from pathlib import Path
-from typing import Any, TextIO, cast
+from typing import Any, cast, TextIO
 
 from datarax.monitoring.callbacks import MetricsObserver
 from datarax.monitoring.metrics import AggregatedMetrics, MetricRecord
+
+
+logger = logging.getLogger(__name__)
 
 
 class ConsoleReporter(MetricsObserver):
@@ -27,7 +31,7 @@ class ConsoleReporter(MetricsObserver):
         filter_components: set[str] | None = None,
         filter_metrics: set[str] | None = None,
         output: TextIO = sys.stdout,
-    ):
+    ) -> None:
         """Initialize a new ConsoleReporter.
 
         Args:
@@ -60,7 +64,7 @@ class ConsoleReporter(MetricsObserver):
             return False
         return True
 
-    def update(self, metrics: list[MetricRecord]):
+    def update(self, metrics: list[MetricRecord]) -> None:
         """Handle updated metrics.
 
         Args:
@@ -157,7 +161,7 @@ class ConsoleReporter(MetricsObserver):
         lines.append("\n")
         return "\n".join(lines)
 
-    def clear(self):
+    def clear(self) -> None:
         """Clear all aggregated metrics."""
         self.aggregated.clear()
         self.last_report_time = 0.0
@@ -176,7 +180,7 @@ class FileReporter(ConsoleReporter):
         mode: str = "a",
         report_interval: float = 60.0,
         **kwargs: Any,
-    ):
+    ) -> None:
         """Initialize a new FileReporter.
 
         Args:
@@ -208,17 +212,19 @@ class FileReporter(ConsoleReporter):
             **kwargs,
         )
 
-    def close(self):
+    def close(self) -> None:
         """Close the file handle. Idempotent."""
         if hasattr(self, "file") and self.file and not self.file.closed:
             self.file.close()
 
     def __enter__(self) -> "FileReporter":
+        """Enter context manager."""
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit context manager and release resources."""
         self.close()
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Safety net — prefer using as context manager."""
         self.close()

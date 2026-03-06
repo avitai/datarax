@@ -1,3 +1,4 @@
+# pyright: reportArgumentType=false
 """
 Individual Node Unit Tests.
 
@@ -8,16 +9,16 @@ they should not be used directly in data pipelines (DataLoader should be used in
 
 from typing import Any
 
-import pytest
+import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
-import flax.nnx as nnx
+import pytest
 
-from datarax.dag.nodes import ShuffleNode, BatchNode, DataSourceNode, OperatorNode
-from datarax.core.data_source import DataSourceModule
-from datarax.core.operator import OperatorModule
 from datarax.core.config import OperatorConfig, StructuralConfig
-from datarax.core.element_batch import Element, Batch
+from datarax.core.data_source import DataSourceModule
+from datarax.core.element_batch import Batch, Element
+from datarax.core.operator import OperatorModule
+from datarax.dag.nodes import BatchNode, DataSourceNode, OperatorNode, ShuffleNode
 
 
 class MockDataSource(DataSourceModule):
@@ -473,7 +474,7 @@ class TestDataSourceNodeIndependent:
         result2 = new_source_node(None)
 
         if result1 is not None and result2 is not None:
-            assert result1["index"] == result2["index"]
+            assert result1["index"] == result2["index"]  # type: ignore[reportIndexIssue]
 
 
 def make_batch_from_data(data_list: list[dict[str, jax.Array]]) -> Batch:

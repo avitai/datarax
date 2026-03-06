@@ -1,8 +1,9 @@
 """Sequential sampler for iterating over dataset indices in order."""
 
+import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
-from collections.abc import Iterator
 
 import flax.nnx as nnx
 
@@ -16,7 +17,10 @@ from datarax.utils.state import (
 )
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class SequentialSamplerConfig(StructuralConfig):
     """Configuration for SequentialSamplerModule.
 
@@ -29,7 +33,7 @@ class SequentialSamplerConfig(StructuralConfig):
     num_records: int | None = None
     num_epochs: int = 1
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration after initialization."""
         super().__post_init__()
         validate_num_records_and_epochs(self.num_records, self.num_epochs)
@@ -48,7 +52,7 @@ class SequentialSamplerModule(SamplerModule):
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize sequential sampler with config.
 
         Args:
@@ -66,16 +70,16 @@ class SequentialSamplerModule(SamplerModule):
         self.current_index = nnx.Variable(0)
         self.current_epoch = nnx.Variable(0)
         self._initialized: bool = False
-        self._state_restored: bool = False
+        self._is_state_restored: bool = False
 
     def __iter__(self) -> Iterator[int]:
         """Initialize iteration."""
         # Only reset if state wasn't explicitly restored
-        if not getattr(self, "_state_restored", False):
+        if not getattr(self, "_is_state_restored", False):
             self.current_index.set_value(0)
             self.current_epoch.set_value(0)
         self._initialized = True
-        self._state_restored = False  # Reset flag after first iteration
+        self._is_state_restored = False  # Reset flag after first iteration
         return self
 
     def __next__(self) -> int:
@@ -90,6 +94,8 @@ class SequentialSamplerModule(SamplerModule):
 
         current_index = self.current_index.get_value()
         num_records = self.num_records.get_value()
+        if num_records is None:
+            raise ValueError("num_records must be set")
 
         # Check if we need to start a new epoch
         if current_index >= num_records:
@@ -114,7 +120,10 @@ class SequentialSamplerModule(SamplerModule):
         num_epochs = self.num_epochs.get_value()
         if num_epochs == -1:
             raise ValueError("Cannot determine length for infinite epochs")
-        return self.num_records.get_value() * num_epochs
+        num_records = self.num_records.get_value()
+        if num_records is None:
+            raise ValueError("num_records must be set")
+        return num_records * num_epochs
 
     def get_state(self) -> dict[str, Any]:
         """Get state for checkpointing."""
@@ -144,4 +153,4 @@ class SequentialSamplerModule(SamplerModule):
         )
         # Mark as initialized and state restored to prevent __iter__ from resetting
         self._initialized = True
-        self._state_restored = True
+        self._is_state_restored = True

@@ -26,10 +26,11 @@ Architecture Insight:
 from __future__ import annotations
 
 import gc
+import logging
 import os
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
 from collections.abc import Iterator
+from dataclasses import dataclass
+from typing import Any, TYPE_CHECKING
 
 import flax.nnx as nnx
 import jax
@@ -39,11 +40,15 @@ from datarax.sources._config_base import SourceConfigBase
 from datarax.sources._conversion import tf_to_jax
 from datarax.sources._eager_source_ops import (
     convert_and_filter_element,
+    validate_positive_optional_int,
     validate_shared_eager_source_config,
     validate_shared_streaming_source_config,
-    validate_positive_optional_int,
 )
 from datarax.sources._source_base import EagerSourceBase, StreamingSourceBase
+
+
+logger = logging.getLogger(__name__)
+
 
 if TYPE_CHECKING:
     import tensorflow_datasets as tfds
@@ -122,7 +127,7 @@ def _prepare_tfds_builder(
 # =============================================================================
 
 
-@dataclass
+@dataclass(frozen=True)
 class TFDSEagerConfig(SourceConfigBase):
     """Configuration for TFDSEagerSource (loads all data to JAX at init).
 
@@ -164,7 +169,7 @@ class TFDSEagerConfig(SourceConfigBase):
         validate_positive_optional_int(self.beam_num_workers, "beam_num_workers")
 
 
-@dataclass
+@dataclass(frozen=True)
 class TFDSStreamingConfig(SourceConfigBase):
     """Configuration for TFDSStreamingSource (streams data from TF dataset).
 
@@ -304,8 +309,11 @@ class TFDSEagerSource(EagerSourceBase):
         Returns:
             TFDS DatasetInfo object
         """
+        # name validated non-None by config __post_init__
+        name = config.name
+        assert name is not None  # noqa: S101 (invariant, not control flow)
         builder = _prepare_tfds_builder(
-            config.name,
+            name,
             config.data_dir,
             config.try_gcs,
             config.download_and_prepare_kwargs,
@@ -328,8 +336,12 @@ class TFDSEagerSource(EagerSourceBase):
         _configure_protobuf_runtime()
         import tensorflow_datasets as tfds
 
+        # name validated non-None by config __post_init__
+        name = config.name
+        assert name is not None  # noqa: S101 (invariant, not control flow)
+
         ds = tfds.load(
-            config.name,
+            name,
             split=config.split,
             data_dir=config.data_dir,
             as_supervised=config.as_supervised,
@@ -337,8 +349,8 @@ class TFDSEagerSource(EagerSourceBase):
         )
 
         # Collect all data
-        arrays: dict[str, list] = {}
-        for tf_element in ds:
+        arrays: dict[str, list[Any]] = {}
+        for tf_element in ds:  # type: ignore[union-attr]
             # Handle as_supervised tuple format
             if config.as_supervised and isinstance(tf_element, tuple):
                 tf_element = {"image": tf_element[0], "label": tf_element[1]}
@@ -366,7 +378,7 @@ class TFDSEagerSource(EagerSourceBase):
         try:
             import tensorflow as tf
 
-            tf.keras.backend.clear_session()
+            tf.keras.backend.clear_session()  # type: ignore[reportAttributeAccessIssue]
         except ImportError:
             pass
         gc.collect()
@@ -431,9 +443,13 @@ class TFDSStreamingSource(StreamingSourceBase):
         self.include_keys = config.include_keys
         self.exclude_keys = config.exclude_keys
 
+        # name/split validated non-None by config __post_init__
+        name = config.name
+        assert name is not None  # noqa: S101 (invariant, not control flow)
+
         # Load builder and info
         builder = _prepare_tfds_builder(
-            config.name,
+            name,
             config.data_dir,
             config.try_gcs,
             config.download_and_prepare_kwargs,
@@ -458,8 +474,10 @@ class TFDSStreamingSource(StreamingSourceBase):
         self._tf_dataset = self._tf_dataset.prefetch(config.prefetch_buffer)
 
         # Try to get length from split info
+        split = config.split
         try:
-            split_base = config.split.split("[")[0]  # Handle splits like "train[:1000]"
+            assert split is not None  # noqa: S101 (invariant, not control flow)
+            split_base = split.split("[")[0]  # Handle splits like "train[:1000]"
             self.length: int | None = self._dataset_info.splits[split_base].num_examples
         except (AttributeError, KeyError):
             self.length = None
@@ -492,10 +510,12 @@ class TFDSStreamingSource(StreamingSourceBase):
         Raises:
             StopIteration: When dataset is exhausted
         """
-        if self._iterator is None:
-            self._iterator = iter(self._tf_dataset)
+        iterator = self._iterator
+        if iterator is None:
+            iterator = iter(self._tf_dataset)
+            self._iterator = iterator
 
-        tf_element = next(self._iterator)
+        tf_element = next(iterator)
 
         # Handle as_supervised tuple format
         if self.as_supervised and isinstance(tf_element, tuple):

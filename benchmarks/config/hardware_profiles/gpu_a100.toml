@@ -12,5 +12,5 @@ warmup_batches = 8
 timeout_seconds = 600
 
 [profile.scenarios]
-# Run all scenarios on GPU
-include = ["CV-1", "CV-2", "NLP-1", "NLP-2", "TAB-1", "TAB-2", "PC-1", "PC-2", "IO-1", "IO-2", "DIST-1", "PR-1", "PR-2"]
+# Run all scenarios on GPU — includes heavy production-realistic scenarios
+include = ["CV-1", "CV-2", "HCV-1", "NLP-1", "NLP-2", "TAB-1", "TAB-2", "PC-1", "PC-2", "HPC-1", "IO-1", "IO-2", "DIST-1", "PR-1", "PR-2"]

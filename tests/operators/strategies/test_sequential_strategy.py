@@ -3,11 +3,12 @@
 from unittest.mock import MagicMock
 
 import jax.numpy as jnp
+
 from datarax.core.operator import OperatorModule
 from datarax.operators.strategies.base import StrategyContext
 from datarax.operators.strategies.sequential import (
-    SequentialStrategy,
     ConditionalSequentialStrategy,
+    SequentialStrategy,
 )
 from tests.test_common.mock_operators import MultiplierMockOperator as MockOperator
 

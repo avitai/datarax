@@ -20,6 +20,7 @@ Examples:
     ```
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -31,7 +32,10 @@ from datarax.core.config import OperatorConfig
 from datarax.core.operator import OperatorModule
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class ProbabilisticOperatorConfig(OperatorConfig):
     """Configuration for ProbabilisticOperator.
 
@@ -53,7 +57,7 @@ class ProbabilisticOperatorConfig(OperatorConfig):
     operator: OperatorModule = field(kw_only=True)
     probability: float = field(default=0.5, kw_only=True)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration and infer stochastic mode."""
         # Validate probability range
         if not isinstance(self.probability, int | float):
@@ -118,7 +122,7 @@ class ProbabilisticOperator(OperatorModule):
         config: ProbabilisticOperatorConfig,
         *,
         rngs: nnx.Rngs | None = None,
-    ):
+    ) -> None:
         """Initialize probabilistic operator.
 
         Args:
@@ -230,12 +234,12 @@ class ProbabilisticOperator(OperatorModule):
         )
 
         # Define branch functions for jax.lax.cond
-        def apply_fn(operands):
+        def apply_fn(operands: Any) -> tuple[Any, Any, Any]:
             """Branch: apply child operator."""
             d, s, m, cp, st = operands
             return self.operator.apply(d, s, m, cp, st)
 
-        def passthrough_fn(operands):
+        def passthrough_fn(operands: Any) -> tuple[Any, Any, Any]:
             """Branch: return input unchanged."""
             d, s, m, _, _ = operands
             return d, s, m

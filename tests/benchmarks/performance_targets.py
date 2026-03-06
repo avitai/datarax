@@ -6,11 +6,10 @@ after. This module provides the common measurement and assertion infrastructure.
 """
 
 import time
-from typing import Any
 from collections.abc import Callable, Iterator
+from typing import Any
 
 import jax.numpy as jnp
-
 from calibrax.profiling import TimingCollector
 
 

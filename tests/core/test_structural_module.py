@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false
 """Tests for StructuralModule - non-parametric structural processor.
 
 This test suite validates StructuralModule - the base class for all
@@ -11,102 +12,77 @@ Test Categories:
 5. Module copying with frozen configs
 """
 
-import pytest
-from flax import nnx
-import jax
-import jax.numpy as jnp
-
-
-# NOTE: Import will fail initially (RED phase) - this is expected!
-try:
-    from datarax.core.config import StructuralConfig, FrozenInstanceError
-    from datarax.core.structural import StructuralModule
-    from datarax.core.element_batch import Batch, Element
-except ImportError:
-    StructuralConfig = None
-    StructuralModule = None
-    Batch = None
-    Element = None
-    FrozenInstanceError = None
-
-
-pytestmark = pytest.mark.skipif(
-    StructuralModule is None,
-    reason="StructuralModule not implemented yet (RED phase)",
-)
-
-
 # ========================================================================
 # Test Fixtures: Example Structural Module Implementations
 # ========================================================================
-
 from dataclasses import dataclass
 
-if StructuralConfig is not None:
+import jax
+import jax.numpy as jnp
+import pytest
+from flax import nnx
 
-    @dataclass
-    class BatcherConfig(StructuralConfig):
-        """Config for batching operation."""
-
-        batch_size: int = 32
-
-        def __post_init__(self):
-            super().__post_init__()
-            if self.batch_size <= 0:
-                raise ValueError("batch_size must be positive")
+from datarax.core.config import FrozenInstanceError, StructuralConfig
+from datarax.core.structural import StructuralModule
 
 
-if StructuralModule is not None:
+@dataclass(frozen=True)
+class BatcherConfig(StructuralConfig):  # type: ignore[reportGeneralTypeIssues]
+    """Config for batching operation."""
 
-    class SimpleBatcher(StructuralModule):
-        """Simple batcher that groups elements into batches."""
+    batch_size: int = 32
 
-        def process(self, elements: list, *args, **kwargs) -> list:
-            """Group elements into batches of fixed size."""
-            batch_size = self.config.batch_size
-            batches = []
-
-            for i in range(0, len(elements), batch_size):
-                batch_elements = elements[i : i + batch_size]
-                batches.append(batch_elements)
-
-            return batches
+    def __post_init__(self):
+        super().__post_init__()
+        if self.batch_size <= 0:
+            raise ValueError("batch_size must be positive")
 
 
-if StructuralConfig is not None:
+class SimpleBatcher(StructuralModule):
+    """Simple batcher that groups elements into batches."""
 
-    @dataclass
-    class SamplerConfig(StructuralConfig):
-        """Config for sampling operation."""
+    def process(self, elements: list, *args, **kwargs) -> list:
+        """Group elements into batches of fixed size."""
+        batch_size = self.config.batch_size
+        batches = []
 
-        num_samples: int = 100
-        replacement: bool = False
+        for i in range(0, len(elements), batch_size):
+            batch_elements = elements[i : i + batch_size]
+            batches.append(batch_elements)
 
-        def __post_init__(self):
-            super().__post_init__()
-            if self.num_samples <= 0:
-                raise ValueError("num_samples must be positive")
+        return batches
 
 
-if StructuralModule is not None:
+@dataclass(frozen=True)
+class SamplerConfig(StructuralConfig):  # type: ignore[reportGeneralTypeIssues]
+    """Config for sampling operation."""
 
-    class SimpleSampler(StructuralModule):
-        """Simple sampler that generates indices (deterministic or stochastic)."""
+    num_samples: int = 100
+    replacement: bool = False
 
-        def process(self, dataset_size: int, *args, **kwargs) -> list[int]:
-            """Generate sampling indices."""
-            num_samples = self.config.num_samples
+    def __post_init__(self):
+        super().__post_init__()
+        if self.num_samples <= 0:
+            raise ValueError("num_samples must be positive")
 
-            if self.config.stochastic:
-                # Stochastic sampling with RNG
-                rng = self.rngs[self.config.stream_name]()
-                indices = jax.random.choice(
-                    rng, dataset_size, shape=(num_samples,), replace=self.config.replacement
-                )
-                return indices.tolist()
-            else:
-                # Deterministic sequential sampling
-                return list(range(min(num_samples, dataset_size)))
+
+class SimpleSampler(StructuralModule):
+    """Simple sampler that generates indices (deterministic or stochastic)."""
+
+    def process(self, dataset_size: int, *args, **kwargs) -> list[int]:
+        """Generate sampling indices."""
+        num_samples = self.config.num_samples
+
+        if self.config.stochastic:
+            # Stochastic sampling with RNG
+            rng = self.rngs[self.config.stream_name]()  # type: ignore[reportOptionalSubscript]
+            indices = jax.random.choice(
+                rng, dataset_size, shape=(num_samples,), replace=self.config.replacement
+            )
+            return indices.tolist()
+        else:
+            # Deterministic sequential sampling
+            return list(range(min(num_samples, dataset_size)))
 
 
 # ========================================================================

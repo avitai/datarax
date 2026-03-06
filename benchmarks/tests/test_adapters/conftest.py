@@ -10,12 +10,70 @@ DRY: All adapter tests import these fixtures instead of creating their own.
 import numpy as np
 import pytest
 
-from benchmarks.adapters.base import IterationResult, ScenarioConfig
+from benchmarks.adapters.base import IterationResult, PipelineAdapter, ScenarioConfig
 
 
 # ---------------------------------------------------------------------------
 # Shared assertion helpers
 # ---------------------------------------------------------------------------
+
+
+def assert_supported_scenarios(
+    adapter: PipelineAdapter,
+    must_include: set[str],
+) -> None:
+    """Assert that supported_scenarios() is structurally valid and self-consistent.
+
+    Validates:
+    1. Returns a non-empty set of strings
+    2. Contains all required anchor scenarios (catches regressions)
+    3. Every claimed scenario ID corresponds to a real discoverable scenario
+       module (catches stale/phantom IDs)
+    4. If using auto-detection: scenarios are consistent with available_transforms()
+
+    This design is forward-compatible: adding new scenarios or transforms
+    never breaks any test. But removing a transform (which drops scenario
+    support) or claiming support for a non-existent scenario is caught.
+
+    Args:
+        adapter: The adapter to check.
+        must_include: Scenario IDs that MUST be present (anchor scenarios).
+    """
+    from benchmarks.scenarios import discover_scenarios
+
+    scenarios = adapter.supported_scenarios()
+    assert isinstance(scenarios, set), f"Expected set, got {type(scenarios)}"
+    assert len(scenarios) > 0, "supported_scenarios() returned empty set"
+    assert all(isinstance(s, str) for s in scenarios), "All scenario IDs must be strings"
+
+    # Anchor check: required scenarios must be present (catches regressions)
+    missing = must_include - scenarios
+    assert not missing, f"Missing required scenarios: {sorted(missing)}"
+
+    # Consistency check: every claimed scenario must exist in the registry
+    known_ids = {mod.SCENARIO_ID for mod in discover_scenarios()}
+    phantom = scenarios - known_ids
+    assert not phantom, (
+        f"Adapter claims support for unknown scenario IDs: {sorted(phantom)}. "
+        "Either add the scenario module or remove the ID from supported_scenarios()."
+    )
+
+    # Auto-detection consistency: if adapter has available_transforms(),
+    # verify supported_scenarios() is derivable from those transforms
+    transforms = adapter.available_transforms()
+    if transforms:
+        for scenario_id in scenarios:
+            mod = next((m for m in discover_scenarios() if m.SCENARIO_ID == scenario_id), None)
+            if mod is None:
+                continue
+            # At least one variant must be runnable with available transforms
+            has_runnable_variant = any(
+                set(v.config.transforms) <= transforms for v in mod.VARIANTS.values()
+            )
+            assert has_runnable_variant, (
+                f"Adapter claims {scenario_id} but lacks transforms for all variants. "
+                f"Available: {sorted(transforms)}"
+            )
 
 
 def assert_valid_iteration_result(result: IterationResult) -> None:

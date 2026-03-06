@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-from datarax.sharding.jax_process_sharder import JaxProcessSharderModule, JaxProcessSharderConfig
+from datarax.sharding.jax_process_sharder import JaxProcessSharderConfig, JaxProcessSharderModule
 
 
 class TestDistributedSharding:

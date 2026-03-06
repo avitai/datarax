@@ -71,6 +71,7 @@ from datarax.operators.composite_operator import (
 # See advanced examples for probabilistic operator usage
 from datarax.sources import MemorySource, MemorySourceConfig
 
+
 print(f"JAX version: {jax.__version__}")
 print(f"JAX backend: {jax.default_backend()}")
 

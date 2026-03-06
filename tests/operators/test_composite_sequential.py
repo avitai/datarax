@@ -17,14 +17,15 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
+from datarax.core.element_batch import Batch, Element
+
 # GREEN phase - imports enabled
 from datarax.operators.composite_operator import (
-    CompositeOperatorModule,
     CompositeOperatorConfig,
+    CompositeOperatorModule,
     CompositionStrategy,
 )
 from datarax.operators.map_operator import MapOperator, MapOperatorConfig
-from datarax.core.element_batch import Batch, Element
 
 
 class TestSequentialBasics:
@@ -218,7 +219,7 @@ class TestSequentialDataFlow:
 
         # Create batch with metadata (MapOperator passes through unchanged)
         batch = Batch(
-            [Element(data={"value": jnp.array([1.0])}, metadata={"source": "test", "version": 1})]
+            [Element(data={"value": jnp.array([1.0])}, metadata={"source": "test", "version": 1})]  # type: ignore[reportArgumentType]
         )
 
         # Apply composite

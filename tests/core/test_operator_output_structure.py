@@ -17,7 +17,7 @@ from flax import nnx
 
 from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import Batch, Element
-from datarax.core.operator import OperatorModule, _OUTPUT_STRUCT_CACHE
+from datarax.core.operator import _OUTPUT_STRUCT_CACHE, OperatorModule
 
 
 # =============================================================================

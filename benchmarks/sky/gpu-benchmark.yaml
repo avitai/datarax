@@ -7,6 +7,8 @@ resources:
 
 envs:
   WANDB_API_KEY:  # set via: sky launch ... --env WANDB_API_KEY=$WANDB_API_KEY
+  JAX_PLATFORMS: "cuda,cpu"
+  JAX_PLATFORM_NAME: "gpu"
   TF_FORCE_GPU_ALLOW_GROWTH: "true"
   TF_CPP_MIN_LOG_LEVEL: "2"
   XLA_PYTHON_CLIENT_PREALLOCATE: "false"
@@ -14,10 +16,20 @@ envs:
   RAY_ENABLE_UV_RUN_RUNTIME_ENV: "0"
 
 setup: |
-  pip install uv
+  if ! command -v uv >/dev/null 2>&1; then
+    if command -v curl >/dev/null 2>&1; then
+      curl -LsSf https://astral.sh/uv/install.sh | sh
+    elif command -v wget >/dev/null 2>&1; then
+      wget -qO- https://astral.sh/uv/install.sh | sh
+    else
+      echo "ERROR: neither curl nor wget is available to install uv" >&2
+      exit 1
+    fi
+  fi
+  export PATH="$HOME/.local/bin:$PATH"
   cd ~/datarax && uv venv --python 3.11 .venv
-  cd ~/datarax && .venv/bin/python -m ensurepip 2>/dev/null || true
-  cd ~/datarax && uv pip install --python .venv/bin/python -e ".[benchmark,gpu]" "calibrax[wandb] @ git+https://github.com/avitai/calibrax.git"
+  cd ~/datarax && uv sync --extra benchmark --extra gpu
+  cd ~/datarax && uv pip install --python .venv/bin/python wandb
 
 run: |
   set -euo pipefail
@@ -27,15 +39,14 @@ run: |
   # SkyPilot's Ray (port 6379) stays running for --down/logs/status.
   unset RAY_ADDRESS
 
-  # The datarax-bench entry point needs benchmarks/ on sys.path.
-  # `python -m` adds CWD automatically, but console scripts don't.
+  # Run benchmark CLI as a module for deterministic availability.
   export PYTHONPATH="${PWD}:${PYTHONPATH:-}"
 
   # Quick sanity check (separate process)
   .venv/bin/python -c "import jax; print(f'JAX {jax.__version__}, backend: {jax.default_backend()}, devices: {jax.devices()}')"
 
   # Exclude Ray Data — hangs on SkyPilot VMs (Ray #59639).
-  .venv/bin/datarax-bench run \
+  .venv/bin/python -m benchmarks.cli run \
     --platform gpu \
     --profile gpu_a100 \
     --repetitions 5 \

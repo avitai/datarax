@@ -9,8 +9,8 @@ Performance measurement and analysis tools for data pipelines. Use these tools t
 | **TimingCollector** | Measure samples/sec with GPU sync | Throughput metrics |
 | **GPUMemoryProfiler** | GPU memory profiling | Memory usage stats |
 | **MemoryOptimizer** | Pipeline memory analysis | Optimization suggestions |
-| **BenchmarkComparison** | A/B comparison | Relative performance ratios |
-| **RegressionDetector** | Track over time | Regression reports |
+| **detect_regressions** | Track over time | Regression alerts |
+| **rank_table** | Compare frameworks | Ranked performance tables |
 | **AdvancedMonitor** | Real-time monitoring | Live metrics + alerts |
 
 !!! tip "Benchmarking best practices"
@@ -22,7 +22,7 @@ Performance measurement and analysis tools for data pipelines. Use these tools t
 ## Quick Start
 
 ```python
-from calibrax import TimingCollector
+from calibrax.profiling import TimingCollector
 
 # Measure throughput (CPU — pass sync_fn for GPU)
 timer = TimingCollector()
@@ -50,7 +50,7 @@ print(f"First batch: {result.first_batch_time:.4f}s (includes JIT)")
 ## GPU Memory Profiling
 
 ```python
-from calibrax import GPUMemoryProfiler, MemoryOptimizer
+from calibrax.profiling import GPUMemoryProfiler, MemoryOptimizer
 
 # Check GPU memory usage
 profiler = GPUMemoryProfiler()

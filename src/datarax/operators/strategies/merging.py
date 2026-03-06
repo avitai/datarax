@@ -1,10 +1,15 @@
 """Merging utilities for parallel and ensemble strategies."""
 
+import logging
 from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 from jaxtyping import PyTree
+
+
+logger = logging.getLogger(__name__)
 
 
 def merge_outputs(
@@ -51,7 +56,7 @@ def merge_outputs(
         # CRITICAL for vmap compatibility: Preserve input PyTree structure
         # Implementation: Use jax.tree.map to transform each leaf into operator dict
 
-        def make_operator_dict(*values):
+        def make_operator_dict(*values: Any) -> dict[str, Any]:
             """Create dict mapping operator_i to each operator's output value."""
             return {f"operator_{i}": val for i, val in enumerate(values)}
 

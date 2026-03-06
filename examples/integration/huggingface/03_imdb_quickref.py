@@ -59,6 +59,7 @@ from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import HFEagerConfig, HFEagerSource
 
+
 print(f"JAX devices: {jax.devices()}")
 
 # %% [markdown]
@@ -82,7 +83,6 @@ Each sample contains:
 config = HFEagerConfig(
     name="stanfordnlp/imdb",  # Use full dataset path for reliability
     split="train",
-    streaming=True,  # Stream to avoid downloading 84MB
     download_kwargs={"trust_remote_code": True},
 )
 
@@ -178,7 +178,6 @@ source2 = HFEagerSource(
     HFEagerConfig(
         name="stanfordnlp/imdb",
         split="train",
-        streaming=True,
         download_kwargs={"trust_remote_code": True},
         exclude_keys={"text"},  # Exclude text field - can't batch strings
     ),
@@ -223,7 +222,8 @@ for i, batch in enumerate(pipeline):
         total_positive += 1 if labels == 1 else 0
 
     if i < 3:  # Show first 3 batches
-        print(f"Batch {i}: {batch_size} samples, labels={labels[:5]}...")
+        label_preview = labels[:5] if hasattr(labels, "__getitem__") else labels  # type: ignore[reportIndexIssue]
+        print(f"Batch {i}: {batch_size} samples, labels={label_preview}...")
 
 print(f"\nSentiment Summary ({total_reviews} reviews analyzed):")
 print(f"  Positive: {total_positive} ({100 * total_positive / total_reviews:.1f}%)")
@@ -291,7 +291,6 @@ def main():
     config = HFEagerConfig(
         name="stanfordnlp/imdb",
         split="train",
-        streaming=True,
         download_kwargs={"trust_remote_code": True},
         exclude_keys={"text"},
     )

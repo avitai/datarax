@@ -19,6 +19,7 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from itertools import islice
 from typing import Any
 
 from calibrax.core import BenchmarkAdapter as CalibraxBenchmarkAdapter
@@ -114,27 +115,82 @@ class PipelineAdapter(CalibraxBenchmarkAdapter, ABC):
         """Build the data pipeline from config and synthetic data."""
         ...
 
-    @abstractmethod
     def teardown(self) -> None:
-        """Release resources (close dataset handles, free GPU memory)."""
-        ...
+        """Release resources shared by all adapters.
+
+        Resets ``_config`` to ``None``.  Subclasses should call
+        ``super().teardown()`` **after** their own cleanup so that
+        ``_config`` is still available during framework-specific teardown.
+        """
+        self._config = None
 
     def __init__(self) -> None:
-        """Initialize the underlying calibrax adapter base."""
+        """Initialize the underlying calibrax adapter base.
+
+        Sets ``_config`` to ``None``.  Subclasses MUST call
+        ``super().__init__()`` before setting their own attributes.
+        """
         super().__init__(target={"name": "pipeline"})
+        self._config: ScenarioConfig | None = None
 
     def supports_scenario(self, scenario_id: str) -> bool:
         """Check whether this adapter supports a given scenario."""
         return scenario_id in self.supported_scenarios()
 
-    @abstractmethod
+    def available_transforms(self) -> set[str]:
+        """Return the set of transform names this adapter can execute.
+
+        Override this to enable automatic scenario support detection.
+        When overridden, ``supported_scenarios()`` will automatically
+        derive which scenarios this adapter can run based on whether it
+        has all required transforms.
+
+        Returns:
+            Set of transform name strings (e.g. {"Normalize", "CastToFloat32"}).
+            Default returns empty set, which means supported_scenarios()
+            must be overridden directly.
+        """
+        return set()
+
     def supported_scenarios(self) -> set[str]:
-        """Return the set of scenario IDs this adapter can run."""
-        ...
+        """Return the set of scenario IDs this adapter can run.
+
+        Default implementation derives support from ``available_transforms()``:
+        a scenario is supported if the adapter has all transforms it requires
+        (or the scenario requires no transforms). Adapters that don't use the
+        transform registry pattern should override this directly.
+        """
+        transforms = self.available_transforms()
+        if not transforms:
+            return set()
+
+        from benchmarks.scenarios import discover_scenarios
+
+        supported: set[str] = set()
+        for mod in discover_scenarios():
+            for variant in mod.VARIANTS.values():
+                required = set(variant.config.transforms)
+                if required <= transforms:
+                    supported.add(mod.SCENARIO_ID)
+                    break
+        return supported
 
     # ------------------------------------------------------------------
     # Template Method: iterate & warmup
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _close_iterator(iterator: Iterator[Any]) -> None:
+        close_fn = getattr(iterator, "close", None)
+        if callable(close_fn):
+            close_fn()
+
+    def _iter_exact_batches(self, num_batches: int) -> Iterator[Any]:
+        iterator = iter(self._iterate_batches())
+        try:
+            yield from islice(iterator, max(0, num_batches))
+        finally:
+            self._close_iterator(iterator)
 
     def warmup(self, num_batches: int = 3) -> None:
         """Run warmup batches to trigger JIT compilation, caching, etc.
@@ -142,9 +198,7 @@ class PipelineAdapter(CalibraxBenchmarkAdapter, ABC):
         Default implementation iterates and materializes batches.
         Override if the framework needs extra steps (e.g. iterator reset).
         """
-        for i, batch in enumerate(self._iterate_batches()):
-            if i >= num_batches:
-                break
+        for batch in self._iter_exact_batches(num_batches):
             self._materialize_batch(batch)
 
     def iterate(self, num_batches: int) -> IterationResult:
@@ -161,10 +215,7 @@ class PipelineAdapter(CalibraxBenchmarkAdapter, ABC):
 
         start = time.perf_counter()
 
-        for i, batch in enumerate(self._iterate_batches()):
-            if i >= num_batches:
-                break
-
+        for batch in self._iter_exact_batches(num_batches):
             batch_start = time.perf_counter()
             arrays = self._materialize_batch(batch)
             batch_end = time.perf_counter()
@@ -233,7 +284,7 @@ class PipelineAdapter(CalibraxBenchmarkAdapter, ABC):
         """Get the adapter name for registry keying."""
         try:
             return cls().name
-        except Exception:
+        except (ImportError, AttributeError):
             return cls.__name__
 
     @classmethod
@@ -241,7 +292,7 @@ class PipelineAdapter(CalibraxBenchmarkAdapter, ABC):
         """Instantiate to check availability (used by registry)."""
         try:
             return cls().is_available()
-        except Exception:
+        except (ImportError, ModuleNotFoundError):
             return False
 
     @classmethod
@@ -249,5 +300,5 @@ class PipelineAdapter(CalibraxBenchmarkAdapter, ABC):
         """Instantiate to get supported scenarios (used by registry)."""
         try:
             return cls().supported_scenarios()
-        except Exception:
+        except (ImportError, AttributeError):
             return set()

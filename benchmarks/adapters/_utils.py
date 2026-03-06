@@ -80,6 +80,173 @@ def random_scale(
     return (arr * np.random.uniform(low, high)).astype(arr.dtype)
 
 
+# ---------------------------------------------------------------------------
+# Compute-heavy transforms for production-realistic benchmarks (HCV-1, HPC-1)
+# ---------------------------------------------------------------------------
+# These implement the standard SSL/ImageNet augmentation pipeline in pure
+# numpy (CPU). Datarax uses GPU-JIT-compiled JAX versions. The performance
+# gap between numpy-CPU and JAX-GPU is what the heavy benchmarks measure.
+
+
+def random_resized_crop(
+    arr: np.ndarray,
+    target_h: int = 224,
+    target_w: int = 224,
+    scale_low: float = 0.08,
+    scale_high: float = 1.0,
+) -> np.ndarray:
+    """Random crop + bilinear resize to target size (numpy CPU)."""
+    h, w = arr.shape[0], arr.shape[1]
+    area = h * w
+    scale = np.random.uniform(scale_low, scale_high)
+    crop_area = int(area * scale)
+    aspect = np.exp(np.random.uniform(-np.log(4 / 3), np.log(4 / 3)))
+    crop_w = min(int(np.sqrt(crop_area * aspect)), w)
+    crop_h = min(int(np.sqrt(crop_area / aspect)), h)
+    x0 = np.random.randint(0, max(w - crop_w, 1) + 1)
+    y0 = np.random.randint(0, max(h - crop_h, 1) + 1)
+    cropped = arr[y0 : y0 + crop_h, x0 : x0 + crop_w]
+
+    # Bilinear resize via nearest-neighbor (fast numpy approximation)
+    row_idx = (np.arange(target_h) * crop_h / target_h).astype(int)
+    col_idx = (np.arange(target_w) * crop_w / target_w).astype(int)
+    row_idx = np.clip(row_idx, 0, crop_h - 1)
+    col_idx = np.clip(col_idx, 0, crop_w - 1)
+    return cropped[np.ix_(row_idx, col_idx)].astype(arr.dtype)
+
+
+def random_horizontal_flip(arr: np.ndarray, p: float = 0.5) -> np.ndarray:
+    """Flip image horizontally with probability p."""
+    if np.random.random() < p:
+        return np.ascontiguousarray(arr[:, ::-1])
+    return arr
+
+
+def color_jitter(
+    arr: np.ndarray,
+    brightness: float = 0.4,
+    contrast: float = 0.4,
+    saturation: float = 0.4,
+) -> np.ndarray:
+    """Per-channel brightness/contrast/saturation jitter."""
+    result = arr.astype(np.float32)
+    # Brightness
+    result = result + np.random.uniform(-brightness, brightness)
+    # Contrast
+    mean = result.mean()
+    factor = np.random.uniform(max(0, 1 - contrast), 1 + contrast)
+    result = (result - mean) * factor + mean
+    # Saturation (approximate: blend with grayscale)
+    if result.ndim == 3 and result.shape[-1] == 3:
+        gray = result.mean(axis=-1, keepdims=True)
+        sat_factor = np.random.uniform(max(0, 1 - saturation), 1 + saturation)
+        result = gray + (result - gray) * sat_factor
+    return np.clip(result, 0, 255).astype(arr.dtype)
+
+
+def gaussian_blur_np(
+    arr: np.ndarray,
+    kernel_size: int = 5,
+    sigma: float = 1.0,
+) -> np.ndarray:
+    """5x5 Gaussian blur via separable convolution (numpy CPU)."""
+    from scipy.ndimage import gaussian_filter
+
+    if arr.ndim == 3:
+        # Apply per-channel
+        return gaussian_filter(arr.astype(np.float32), sigma=(sigma, sigma, 0)).astype(arr.dtype)
+    return gaussian_filter(arr.astype(np.float32), sigma=sigma).astype(arr.dtype)
+
+
+def random_solarize(arr: np.ndarray, threshold: int = 128) -> np.ndarray:
+    """Invert pixels above threshold."""
+    if np.random.random() < 0.5:
+        mask = arr >= threshold
+        result = arr.copy()
+        result[mask] = 255 - result[mask]
+        return result
+    return arr
+
+
+def random_grayscale(arr: np.ndarray, p: float = 0.2) -> np.ndarray:
+    """Convert to grayscale with probability p (replicate across channels)."""
+    if arr.ndim == 3 and arr.shape[-1] == 3 and np.random.random() < p:
+        gray = arr.mean(axis=-1, keepdims=True).astype(arr.dtype)
+        return np.broadcast_to(gray, arr.shape).copy()
+    return arr
+
+
+# ---------------------------------------------------------------------------
+# NLP / Tabular transforms for heavy benchmark scenarios (HNLP-1, HTAB-1)
+# ---------------------------------------------------------------------------
+
+
+def log_transform(arr: np.ndarray) -> np.ndarray:
+    """Element-wise log1p transform for dense features."""
+    return np.log1p(np.abs(arr.astype(np.float32))).astype(arr.dtype)
+
+
+def hash_embedding_index(
+    arr: np.ndarray,
+    num_buckets: int = 10000,
+) -> np.ndarray:
+    """Hash integers into embedding bucket indices."""
+    return (np.abs(arr) % num_buckets).astype(np.int32)
+
+
+def create_causal_mask(arr: np.ndarray) -> np.ndarray:
+    """Create a lower-triangular causal attention mask.
+
+    Input shape: (seq_len,) token IDs -> output shape: (seq_len, seq_len).
+    """
+    seq_len = arr.shape[-1] if arr.ndim > 1 else arr.shape[0]
+    return np.tril(np.ones((seq_len, seq_len), dtype=np.float32))
+
+
+def create_attention_mask(arr: np.ndarray, pad_id: int = 0) -> np.ndarray:
+    """Create binary attention mask (1 for real tokens, 0 for padding)."""
+    return (arr != pad_id).astype(np.float32)
+
+
+def pad_to_max_len(arr: np.ndarray, max_len: int = 512, pad_id: int = 0) -> np.ndarray:
+    """Pad a 1-D token sequence to max_len."""
+    if arr.shape[0] >= max_len:
+        return arr[:max_len]
+    pad_width = max_len - arr.shape[0]
+    return np.pad(arr, (0, pad_width), constant_values=pad_id)
+
+
+# ---------------------------------------------------------------------------
+# Standard transform registry (DRY: shared by numpy-based adapters)
+# ---------------------------------------------------------------------------
+# Maps transform names to array-level functions. Adapters that support the
+# full set import this directly; adapters supporting a subset can pick keys.
+# Framework-specific adapters (tf.data, DALI, Datarax) define their own.
+
+STANDARD_TRANSFORMS: dict[str, Any] = {
+    "Normalize": normalize_uint8,
+    "CastToFloat32": cast_to_float32,
+    "GaussianNoise": gaussian_noise,
+    "RandomBrightness": random_brightness,
+    "RandomScale": random_scale,
+    "RandomResizedCrop": random_resized_crop,
+    "RandomHorizontalFlip": random_horizontal_flip,
+    "ColorJitter": color_jitter,
+    "GaussianBlur": gaussian_blur_np,
+    "RandomSolarize": random_solarize,
+    "RandomGrayscale": random_grayscale,
+    "LogTransform": log_transform,
+    "CreateAttentionMask": create_attention_mask,
+    "CausalMaskGeneration": create_causal_mask,
+}
+
+# Minimal subset used by adapters that only support basic transforms
+BASIC_TRANSFORMS: dict[str, Any] = {
+    "Normalize": normalize_uint8,
+    "CastToFloat32": cast_to_float32,
+}
+
+
 def apply_to_dict(
     fn: Any,
     element: dict[str, np.ndarray],

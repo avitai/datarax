@@ -38,6 +38,7 @@ Examples:
     ```
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -49,7 +50,10 @@ from datarax.core.config import OperatorConfig
 from datarax.core.operator import OperatorModule
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class CrossModalOperatorConfig(OperatorConfig):
     """Configuration for cross-modal operators.
 
@@ -131,7 +135,7 @@ class CrossModalOperatorConfig(OperatorConfig):
     # Whether to validate input field alignment
     validate_alignment: bool = field(default=True, kw_only=True)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration parameters.
 
         Validates:
@@ -267,7 +271,7 @@ class CrossModalOperator(OperatorModule):
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize CrossModalOperator.
 
         Args:

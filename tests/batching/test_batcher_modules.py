@@ -75,7 +75,7 @@ def test_default_batcher_custom_collate():
 
     # Create a default batcher module with the custom collate function
     config = DefaultBatcherConfig(stochastic=False)
-    batcher = DefaultBatcher(config, collate_fn=custom_collate, rngs=nnx.Rngs(0))
+    batcher = DefaultBatcher(config, collate_fn=custom_collate, rngs=nnx.Rngs(0))  # type: ignore[reportArgumentType]
 
     # Create some elements to batch
     elements = [{"x": np.array([i, i + 1]), "y": np.array([i * 2])} for i in range(3)]

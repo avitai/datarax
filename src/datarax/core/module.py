@@ -13,14 +13,17 @@ Also provides CheckpointableIteratorModule for data sources that need iteration
 state tracking (position, epoch) for resumable training.
 """
 
-from collections.abc import Iterator
+import logging
+from collections.abc import Callable, Iterator
 from typing import Any, Generic, TypeVar
-from collections.abc import Callable
 
 import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.config import DataraxModuleConfig
+
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -83,7 +86,7 @@ class DataraxModule(nnx.Module):
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize DataraxModule with config.
 
         Args:
@@ -110,7 +113,7 @@ class DataraxModule(nnx.Module):
         self._computed_stats: nnx.Variable[dict[str, Any] | None] = nnx.Variable(None)
         # Flag to override precomputed_stats (for reset_statistics)
         # Mark as static for proper serialization
-        self._stats_reset: bool = nnx.static(False)
+        self._is_stats_reset: bool = nnx.static(False)
 
         # Initialize operation counters for tracking applied/skipped operations
         # Uses IterationCount for consistency and transform compatibility
@@ -198,8 +201,8 @@ class DataraxModule(nnx.Module):
             Dictionary of statistics, or None if no statistics available
         """
         # If reset was called, return None regardless of precomputed_stats
-        # _stats_reset is a plain boolean (static), safe for JIT control flow
-        if self._stats_reset:
+        # _is_stats_reset is a plain boolean (static), safe for JIT control flow
+        if self._is_stats_reset:
             return None
 
         # Priority 1: Precomputed stats (static)
@@ -218,7 +221,7 @@ class DataraxModule(nnx.Module):
             stats: Dictionary of statistics to set
         """
         self._computed_stats.set_value(stats)
-        self._stats_reset = False  # Clear reset flag when setting new stats
+        self._is_stats_reset = False  # Clear reset flag when setting new stats
 
     def reset_statistics(self) -> None:
         """Reset all statistics to None.
@@ -228,7 +231,7 @@ class DataraxModule(nnx.Module):
         will return None until new statistics are set or computed.
         """
         self._computed_stats.set_value(None)
-        self._stats_reset = True  # Mark that stats have been reset
+        self._is_stats_reset = True  # Mark that stats have been reset
 
     # ========================================================================
     # Caching System
@@ -280,20 +283,13 @@ class DataraxModule(nnx.Module):
         return self._hash_fallback(value)
 
     def _hash_jax_array(self, value: Any) -> int:
-        """Hash a JAX array using shape/dtype and sampled content."""
-        shape_hash = hash(value.shape)
-        dtype_hash = hash(str(value.dtype))
-        if value.size == 0:
-            return hash((shape_hash, dtype_hash, 0))
-        flat = value.flatten()
-        sample_size = min(10, flat.size)
-        indices = jnp.linspace(0, flat.size - 1, sample_size, dtype=jnp.int32)
-        samples = flat[indices]
-        try:
-            content_hash = hash(tuple(float(x) for x in samples.tolist()))
-        except (TypeError, ValueError):
-            content_hash = hash(value.size)
-        return hash((shape_hash, dtype_hash, content_hash))
+        """Hash a JAX array using shape/dtype and identity.
+
+        Uses only host-side metadata — no device-to-host transfers.
+        Previous implementation sampled values via .tolist() which forced
+        a blocking D2H sync on GPU/TPU.
+        """
+        return hash((value.shape, str(value.dtype), id(value)))
 
     def _hash_fallback(self, value: Any) -> int:
         """Hash a value using Python hash, falling back to object identity."""
@@ -624,7 +620,7 @@ class CheckpointableIteratorModule(DataraxModule, Generic[T_co]):
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize the CheckpointableIteratorModule.
 
         Args:

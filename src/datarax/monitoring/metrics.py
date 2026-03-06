@@ -5,9 +5,13 @@ during pipeline operation. These utilities enable monitoring of pipeline
 performance, throughput, and resource usage.
 """
 
+import logging
 from dataclasses import dataclass
 from time import time
 from typing import Any
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -39,7 +43,7 @@ class MetricsCollector:
         enabled: Whether metrics collection is enabled.
     """
 
-    def __init__(self, enabled: bool = True):
+    def __init__(self, enabled: bool = True) -> None:
         """Initialize a new MetricsCollector.
 
         Args:
@@ -47,9 +51,9 @@ class MetricsCollector:
         """
         self.enabled = enabled
         self._metrics: list[MetricRecord] = []
-        self._start_times: dict[str, float] = {}
+        self._start_times: dict[str | tuple[str, str], float] = {}
 
-    def start_timer(self, name: str, component: str = "pipeline"):
+    def start_timer(self, name: str, component: str = "pipeline") -> None:
         """Start timing an operation.
 
         Args:
@@ -62,7 +66,7 @@ class MetricsCollector:
 
     def stop_timer(
         self, name: str, component: str = "pipeline", metadata: dict[str, Any] | None = None
-    ):
+    ) -> None:
         """Stop timing and record elapsed time.
 
         Args:
@@ -87,7 +91,7 @@ class MetricsCollector:
         value: float,
         component: str = "pipeline",
         metadata: dict[str, Any] | None = None,
-    ):
+    ) -> None:
         """Record a metric value.
 
         Args:
@@ -117,7 +121,7 @@ class MetricsCollector:
         """
         return self._metrics
 
-    def clear(self):
+    def clear(self) -> None:
         """Clear all metrics and timers."""
         self._metrics = []
         self._start_times = {}
@@ -130,13 +134,13 @@ class AggregatedMetrics:
     collected metrics.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize a new AggregatedMetrics instance."""
         self._values: dict[str, list[float]] = {}
         self._timestamps: dict[str, list[float]] = {}
         self._components: dict[str, str] = {}
 
-    def add_metrics(self, metrics: list[MetricRecord]):
+    def add_metrics(self, metrics: list[MetricRecord]) -> None:
         """Add metrics to the aggregator.
 
         Args:
@@ -252,7 +256,7 @@ class AggregatedMetrics:
 
         return len(timestamps) / time_period
 
-    def clear(self):
+    def clear(self) -> None:
         """Clear all aggregated metrics."""
         self._values = {}
         self._timestamps = {}

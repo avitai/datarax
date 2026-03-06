@@ -1,7 +1,7 @@
 """Custom benchmark script for Datarax.
 
 Demonstrates how to use Datarax's benchmark utilities directly
-in Python code, using TimingCollector and BenchmarkComparison.
+in Python code, using TimingCollector and rank_table.
 """
 
 import time
@@ -9,6 +9,9 @@ import time
 import jax
 import jax.numpy as jnp
 import numpy as np
+from calibrax.analysis import rank_table
+from calibrax.core import Metric, MetricDef, MetricDirection, Point, Run
+from calibrax.profiling import TimingCollector, TimingSample
 from flax import nnx
 
 from datarax import from_source
@@ -16,12 +19,9 @@ from datarax.core.nodes import OperatorNode
 from datarax.dag import DAGExecutor
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import MemorySource, MemorySourceConfig
-from calibrax.analysis import rank_table
-from calibrax.core import Metric, MetricDef, MetricDirection, Point, Run
-from calibrax.profiling import TimingCollector, TimingSample
 
 
-def _sync_fn():
+def _sync_fn(_: object = None) -> None:
     """JAX device sync for accurate GPU timing."""
     jnp.array(0.0).block_until_ready()
 

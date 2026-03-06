@@ -21,6 +21,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from flax import nnx
 
+
 matplotlib.use("Agg")
 
 from datarax import from_source
@@ -372,6 +373,7 @@ def plot_results(results: dict, output_dir: Path) -> None:
 
 
 def main():
+    """CLI entry point for the performance sweep benchmark."""
     parser = argparse.ArgumentParser(description="Performance Sweep Benchmark")
     parser.add_argument("--samples", type=int, default=5000)
     parser.add_argument("--quick", action="store_true", help="Run quick subset")

@@ -11,30 +11,46 @@ Compare performance across configurations or versions.
 
 ## Overview
 
-`BenchmarkComparison` collects `BenchmarkResult` objects from multiple configurations, automatically identifies the best and worst performers by throughput, and computes performance ratios relative to the best. Results can be serialized to JSON for archival.
+Calibrax provides comparative analysis through `Run` objects containing multiple `Point` entries (one per framework/configuration). The `rank_table()` function ranks entries by any metric with direction-aware sorting, while `compare_configurations()` produces a full comparison report between two runs.
 
 ## Quick Start
 
 ```python
-from calibrax import BenchmarkComparison, BenchmarkResult
+from calibrax.analysis import rank_table, compare_configurations
+from calibrax.core import Metric, MetricDef, MetricDirection, Point, Run
 
-comparison = BenchmarkComparison()
-comparison.add_result("baseline", baseline_result)
-comparison.add_result("optimized", optimized_result)
+# Build a run with results from multiple configurations
+run = Run(
+    points=(
+        Point(
+            name="CV-1/baseline",
+            scenario="CV-1",
+            tags={"framework": "baseline"},
+            metrics={"throughput": Metric(value=15000.0)},
+        ),
+        Point(
+            name="CV-1/optimized",
+            scenario="CV-1",
+            tags={"framework": "optimized"},
+            metrics={"throughput": Metric(value=20000.0)},
+        ),
+    ),
+    metric_defs={
+        "throughput": MetricDef(
+            name="throughput",
+            unit="elem/s",
+            direction=MetricDirection.HIGHER,
+        ),
+    },
+)
 
-# Identify fastest
-print(f"Best: {comparison.best_config}")
-print(f"Worst: {comparison.worst_config}")
-
-# Performance ratios (1.0 = best)
-ratios = comparison.get_performance_ratio()
-for name, ratio in ratios.items():
-    print(f"  {name}: {ratio:.2%} of best")
-
-# Save for later analysis
-comparison.save("comparison_results.json")
+# Rank by throughput (direction-aware: higher is better)
+rankings = rank_table(run, "throughput")
+for row in rankings:
+    marker = " (best)" if row.is_best else ""
+    print(f"  {row.rank}. {row.label}: {row.value:.0f} elem/s{marker}")
 ```
 
 ---
 
-::: calibrax.comparative
+::: calibrax.analysis

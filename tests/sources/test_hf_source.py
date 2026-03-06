@@ -4,20 +4,21 @@ This module contains unit tests for the HuggingFace Datasets data source adapter
 testing both eager-loading and streaming source functionality.
 """
 
+import jax
 import numpy as np
 import pytest
 from flax import nnx
-import jax
+
 
 # Skip tests if datasets is not available
 datasets = pytest.importorskip("datasets")
 
 from datarax.sources import (
-    HFEagerSource,
-    HFEagerConfig,
-    HFStreamingSource,
-    HFStreamingConfig,
     from_hf,
+    HFEagerConfig,
+    HFEagerSource,
+    HFStreamingConfig,
+    HFStreamingSource,
 )
 
 
@@ -426,4 +427,4 @@ def test_from_hf_with_shuffling(mock_numeric_dataset, monkeypatch):
     source = from_hf("mock", "train", shuffle=True, seed=42, rngs=nnx.Rngs(0))
 
     # Should have shuffling enabled
-    assert source.shuffle is True
+    assert source.shuffle is True  # type: ignore[reportAttributeAccessIssue]

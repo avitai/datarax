@@ -12,7 +12,7 @@ import jax
 from flax import nnx
 from tqdm import tqdm
 
-from datarax.core import Pipeline
+from datarax.core import Pipeline  # type: ignore[reportAttributeAccessIssue]
 from datarax.sources import HFEagerConfig, HFEagerSource
 
 
@@ -68,7 +68,6 @@ def dataset_compatibility_test(
         config = HFEagerConfig(
             name=path,
             split=split,
-            streaming=streaming,
             data_dir=data_dir,
         )
         source = HFEagerSource(config, rngs=nnx.Rngs(0))

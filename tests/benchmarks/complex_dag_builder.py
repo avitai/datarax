@@ -1,11 +1,12 @@
+from typing import Any
+
+import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
-import flax.nnx as nnx
-from typing import Any
-from datarax.dag.nodes import Node, Sequential, Parallel, OperatorNode, MergeBatchNode
-from datarax.core.operator import OperatorModule
 
 from datarax.core.config import OperatorConfig
+from datarax.core.operator import OperatorModule
+from datarax.dag.nodes import MergeBatchNode, Node, OperatorNode, Parallel, Sequential
 
 
 class MatMulOperator(OperatorModule):

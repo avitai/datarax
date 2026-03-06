@@ -4,16 +4,21 @@ This module provides a MonitoredPipeline class that integrates metrics collectio
 with the Datarax pipeline.
 """
 
+import logging
+from collections.abc import Callable, Generator, Iterator
 from typing import Any, Self
-from collections.abc import Callable, Iterator
 
 import flax.nnx as nnx
+import jax
 
 from datarax.core.data_source import DataSourceModule
 from datarax.dag.dag_executor import DAGExecutor
 from datarax.monitoring.callbacks import CallbackRegistry
 from datarax.monitoring.metrics import MetricsCollector
 from datarax.typing import Batch, Element
+
+
+logger = logging.getLogger(__name__)
 
 
 class MonitoredPipeline(DAGExecutor):
@@ -32,7 +37,7 @@ class MonitoredPipeline(DAGExecutor):
         rngs: nnx.Rngs | None = None,
         metrics_enabled: bool = True,
         **kwargs: Any,
-    ):
+    ) -> None:
         """Initialize a MonitoredPipeline.
 
         Args:
@@ -91,7 +96,7 @@ class MonitoredPipeline(DAGExecutor):
             return iterator
 
         # Otherwise, wrap the iterator with metrics collection
-        def metrics_iterator():
+        def metrics_iterator() -> Generator[Any, None, None]:
             try:
                 # Time each batch production
                 batch_count = 0
@@ -103,7 +108,7 @@ class MonitoredPipeline(DAGExecutor):
                         "batch_produced",
                         1,
                         "pipeline",
-                        {"batch_size": len(batch) if hasattr(batch, "__len__") else None},
+                        {"batch_size": getattr(batch, "batch_size", None)},
                     )
 
                     # Time batch production
@@ -157,8 +162,9 @@ class MonitoredPipeline(DAGExecutor):
                 "node_added", 1, "pipeline", {"node_type": type(node).__name__}
             )
 
-        # Call the parent implementation
-        return super().add(node, **kwargs)
+        # Call the parent implementation (returns self, safe to cast)
+        super().add(node)
+        return self
 
     def filter(self, predicate: Callable[[Element], bool], **kwargs: Any) -> Self:
         """Apply a filter to the pipeline with metrics collection.
@@ -183,16 +189,17 @@ class MonitoredPipeline(DAGExecutor):
             )
 
         # Create a filter operator using unified operator architecture
-        from datarax.operators import ElementOperator, ElementOperatorConfig
         from datarax.dag.nodes import OperatorNode
+        from datarax.operators import ElementOperator, ElementOperatorConfig
 
-        def filter_fn(element: Element) -> Element | None:
+        def filter_fn(element: Element, _key: jax.Array) -> Element:
             """Filter elements based on predicate."""
+            # Deterministic filter: key is unused but required by ElementOperator signature
             if predicate(element):
                 return element
-            return None
+            return element  # Pass through if filter doesn't match
 
-        config = ElementOperatorConfig(stochastic=False, stream_name="filter")
+        config = ElementOperatorConfig(stochastic=False, stream_name=None)
         filter_operator = ElementOperator(config, fn=filter_fn)
         return self.add(OperatorNode(filter_operator), **kwargs)
 

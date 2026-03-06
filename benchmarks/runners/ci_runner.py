@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from calibrax.core import BenchmarkResult
+
 from benchmarks.adapters.datarax_adapter import DataraxAdapter
 from benchmarks.core.baselines import BaselineStore
 from benchmarks.core.platform import can_run_scenario
@@ -28,7 +30,7 @@ from benchmarks.core.result_model import (
 from benchmarks.runners.benchmark_runner import BenchmarkRunner
 from benchmarks.scenarios import discover_scenarios
 from benchmarks.scenarios.base import run_scenario
-from calibrax.core import BenchmarkResult
+
 
 # Default paths
 _DEFAULT_BASELINES = Path("benchmarks/baselines")
@@ -80,7 +82,7 @@ def run_tier1_gate(
                 num_repetitions=num_repetitions,
             )
             results.append(result)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — CI resilience: report and continue
             print(f"ERROR running {scenario_id}: {exc}", file=sys.stderr)
 
     # Compare against baselines

@@ -10,11 +10,11 @@ import pytest
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 from datarax.distributed.sharding import (
-    MeshRules,
     apply_sharding_rules,
     create_named_sharding,
     data_parallel_rules,
     fsdp_rules,
+    MeshRules,
 )
 
 

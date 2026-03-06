@@ -25,6 +25,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+
 # Allow importing sibling scripts (validate_examples lives in the same directory)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from validate_examples import find_example_files

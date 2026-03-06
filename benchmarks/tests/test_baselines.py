@@ -6,10 +6,11 @@ Design ref: Sections 9.1, 9.2 of the benchmark report.
 
 from pathlib import Path
 
-from benchmarks.core.baselines import BaselineStore
-from benchmarks.core.result_model import build_benchmark_result
 from calibrax.core import BenchmarkResult
 from calibrax.profiling import TimingSample
+
+from benchmarks.core.baselines import BaselineStore
+from benchmarks.core.result_model import build_benchmark_result
 
 
 def _make_result(
@@ -100,6 +101,7 @@ class TestBaselineStoreSaveLoad:
         store.save("baseline", _make_result(wall_clock_sec=2.0))
 
         loaded = store.load("baseline")
+        assert loaded is not None
         assert loaded["timing"]["wall_clock_sec"] == 2.0
 
 
@@ -116,6 +118,7 @@ class TestBaselineStoreCompare:
         current = _make_result(wall_clock_sec=1.0, num_elements=5000)
         verdict = store.compare("baseline", current)
 
+        assert verdict is not None
         assert verdict["status"] == "pass"
 
     def test_compare_warning_on_mild_regression(self, tmp_path: Path):
@@ -129,6 +132,7 @@ class TestBaselineStoreCompare:
         current = _make_result(wall_clock_sec=1.3, num_elements=5000)
         verdict = store.compare("baseline", current)
 
+        assert verdict is not None
         assert verdict["status"] in ("warning", "failure")
 
     def test_compare_failure_on_severe_regression(self, tmp_path: Path):
@@ -141,6 +145,7 @@ class TestBaselineStoreCompare:
         current = _make_result(wall_clock_sec=2.0, num_elements=5000)
         verdict = store.compare("baseline", current)
 
+        assert verdict is not None
         assert verdict["status"] == "failure"
 
     def test_compare_pass_on_improvement(self, tmp_path: Path):
@@ -153,6 +158,7 @@ class TestBaselineStoreCompare:
         current = _make_result(wall_clock_sec=1.0, num_elements=5000)
         verdict = store.compare("baseline", current)
 
+        assert verdict is not None
         assert verdict["status"] == "pass"
 
     def test_compare_nonexistent_baseline_returns_none(self, tmp_path: Path):
@@ -172,6 +178,7 @@ class TestBaselineStoreCompare:
         current = _make_result(wall_clock_sec=1.0, num_elements=5000)
         verdict = store.compare("baseline", current)
 
+        assert verdict is not None
         assert "throughput_ratio" in verdict
         assert "baseline_throughput" in verdict
         assert "current_throughput" in verdict
@@ -256,10 +263,12 @@ class TestBaselineStoreDualGate:
 
         # Default failure_ratio=0.80 → should fail (0.77 < 0.80)
         verdict_default = store.compare("test", current)
+        assert verdict_default is not None
         assert verdict_default["status"] == "failure"
 
         # Stricter failure_ratio=0.70 → should pass (0.77 > 0.70)
         verdict_strict = store.compare("test", current, failure_ratio=0.70)
+        assert verdict_strict is not None
         assert verdict_strict["status"] in ("pass", "warning")
 
 

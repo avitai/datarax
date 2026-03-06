@@ -18,11 +18,11 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
+from datarax.core.element_batch import Batch, Element
 from datarax.operators.batch_mix_operator import (
     BatchMixOperator,
     BatchMixOperatorConfig,
 )
-from datarax.core.element_batch import Batch, Element
 
 
 class TestBatchMixOperatorConfig:

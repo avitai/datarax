@@ -6,9 +6,9 @@ Note: These tests require nvidia.dali and GPU hardware.
 They are automatically skipped on CPU-only systems.
 """
 
-import pytest
 import jax
 import jax.numpy as jnp
+import pytest
 
 from datarax.core.element_batch import Batch
 
@@ -74,13 +74,13 @@ class TestP2GPUAugmentation:
         """
         pytest.importorskip("nvidia.dali")
 
-        from tests.benchmarks.performance_targets import (
-            measure_adapter_throughput,
-            assert_within_ratio,
-        )
         from benchmarks.adapters.base import ScenarioConfig
-        from benchmarks.adapters.datarax_adapter import DataraxAdapter
         from benchmarks.adapters.dali_adapter import DaliAdapter as DALIAdapter
+        from benchmarks.adapters.datarax_adapter import DataraxAdapter
+        from tests.benchmarks.performance_targets import (
+            assert_within_ratio,
+            measure_adapter_throughput,
+        )
 
         config = ScenarioConfig(
             scenario_id="CV-1",

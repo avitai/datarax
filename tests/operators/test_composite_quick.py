@@ -4,17 +4,17 @@ This test validates that the core implementation works before we implement
 all 94 detailed tests. Tests config, sequential, parallel, and ensemble.
 """
 
-import pytest
 import jax.numpy as jnp
+import pytest
 from flax import nnx
 
+from datarax.core.element_batch import Batch, Element
 from datarax.operators.composite_operator import (
-    CompositeOperatorModule,
     CompositeOperatorConfig,
+    CompositeOperatorModule,
     CompositionStrategy,
 )
 from datarax.operators.map_operator import MapOperator, MapOperatorConfig
-from datarax.core.element_batch import Batch, Element
 
 
 class TestCompositeQuickIntegration:

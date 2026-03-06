@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+
 # Detect macOS - TensorFlow crashes on macOS ARM64
 IS_MACOS = platform.system() == "Darwin"
 

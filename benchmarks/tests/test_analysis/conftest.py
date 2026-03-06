@@ -6,13 +6,12 @@ with controllable timing distributions for stability/report/gap testing.
 
 from __future__ import annotations
 
-
 import numpy as np
 import pytest
-
-from benchmarks.core.result_model import build_benchmark_result
 from calibrax.core import BenchmarkResult
 from calibrax.profiling import TimingSample
+
+from benchmarks.core.result_model import build_benchmark_result
 
 
 def make_result(
@@ -47,7 +46,7 @@ def make_result(
 
     timing = TimingSample(
         wall_clock_sec=wall_clock,
-        per_batch_times=per_batch_times,
+        per_batch_times=tuple(per_batch_times),
         first_batch_time=per_batch_times[0] * 1.5,
         num_batches=num_batches,
         num_elements=num_elements,

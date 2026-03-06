@@ -5,18 +5,19 @@ File: tests/monitoring/test_dag_monitor.py
 """
 
 import time
-import jax
-import jax.numpy as jnp
-import flax.nnx as nnx
 from typing import Any
 
-from datarax.monitoring.dag_monitor import MonitoredDAGExecutor, monitored_pipeline
-from datarax.monitoring.callbacks import MetricsObserver
-from datarax.monitoring.metrics import MetricRecord
-from datarax.dag.nodes import DataSourceNode, BatchNode, OperatorNode
+import flax.nnx as nnx
+import jax
+import jax.numpy as jnp
+
+from datarax.core.config import OperatorConfig, StructuralConfig
 from datarax.core.data_source import DataSourceModule
 from datarax.core.operator import OperatorModule
-from datarax.core.config import OperatorConfig, StructuralConfig
+from datarax.dag.nodes import BatchNode, DataSourceNode, OperatorNode
+from datarax.monitoring.callbacks import MetricsObserver
+from datarax.monitoring.dag_monitor import monitored_pipeline, MonitoredDAGExecutor
+from datarax.monitoring.metrics import MetricRecord
 
 
 class MockDataSource(DataSourceModule):
@@ -301,7 +302,7 @@ class TestMonitoredDAGExecutor:
         transform = OperatorNode(MockOperator(name="test_transform"))
 
         # Create using convenience function
-        executor = monitored_pipeline(source, batch, transform, metrics_enabled=True)
+        executor = monitored_pipeline(source, batch, transform, metrics_enabled=True)  # type: ignore[reportArgumentType]
 
         assert isinstance(executor, MonitoredDAGExecutor)
         assert executor.metrics.enabled is True

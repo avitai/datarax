@@ -103,8 +103,8 @@ class TestBatchStatePyTreeStacking:
         # States should be stacked like data
         assert batch.batch_size == 3
         assert "count" in batch.states.get_value()
-        assert batch.states.get_value()["count"].shape == (3,)
-        assert jnp.array_equal(batch.states.get_value()["count"], jnp.array([0, 1, 2]))
+        assert batch.states.get_value()["count"].shape == (3,)  # type: ignore[reportCallIssue]
+        assert jnp.array_equal(batch.states.get_value()["count"], jnp.array([0, 1, 2]))  # type: ignore[reportCallIssue]
 
     def test_batch_stacks_multiple_state_fields(self):
         """Test batch construction stacks multiple state fields."""
@@ -130,10 +130,10 @@ class TestBatchStatePyTreeStacking:
 
         assert "count" in batch.states.get_value()
         assert "flag" in batch.states.get_value()
-        assert batch.states.get_value()["count"].shape == (3,)
-        assert batch.states.get_value()["flag"].shape == (3,)
-        assert jnp.array_equal(batch.states.get_value()["count"], jnp.array([0, 1, 2]))
-        assert jnp.array_equal(batch.states.get_value()["flag"], jnp.array([True, False, True]))
+        assert batch.states.get_value()["count"].shape == (3,)  # type: ignore[reportCallIssue]
+        assert batch.states.get_value()["flag"].shape == (3,)  # type: ignore[reportCallIssue]
+        assert jnp.array_equal(batch.states.get_value()["count"], jnp.array([0, 1, 2]))  # type: ignore[reportCallIssue]
+        assert jnp.array_equal(batch.states.get_value()["flag"], jnp.array([True, False, True]))  # type: ignore[reportCallIssue]
 
     def test_batch_stacks_nested_pytree_states(self):
         """Test batch construction stacks nested PyTree states."""
@@ -161,13 +161,13 @@ class TestBatchStatePyTreeStacking:
         # Nested structure should be preserved
         assert "counters" in batch.states.get_value()
         assert "score" in batch.states.get_value()
-        assert "augment" in batch.states.get_value()["counters"]
-        assert "transform" in batch.states.get_value()["counters"]
+        assert "augment" in batch.states.get_value()["counters"]  # type: ignore[reportCallIssue]
+        assert "transform" in batch.states.get_value()["counters"]  # type: ignore[reportCallIssue]
 
         # Values should be stacked
-        assert batch.states.get_value()["counters"]["augment"].shape == (2,)
-        assert batch.states.get_value()["counters"]["transform"].shape == (2,)
-        assert batch.states.get_value()["score"].shape == (2,)
+        assert batch.states.get_value()["counters"]["augment"].shape == (2,)  # type: ignore[reportCallIssue]
+        assert batch.states.get_value()["counters"]["transform"].shape == (2,)  # type: ignore[reportCallIssue]
+        assert batch.states.get_value()["score"].shape == (2,)  # type: ignore[reportCallIssue]
 
     def test_batch_stacks_python_primitive_states(self):
         """Test batch construction with Python primitives in states."""
@@ -187,9 +187,9 @@ class TestBatchStatePyTreeStacking:
         batch = Batch(elements)
 
         # Python primitives should be stacked as JAX arrays
-        assert isinstance(batch.states.get_value()["id"], jax.Array)
-        assert isinstance(batch.states.get_value()["ratio"], jax.Array)
-        assert isinstance(batch.states.get_value()["flag"], jax.Array)
+        assert isinstance(batch.states.get_value()["id"], jax.Array)  # type: ignore[reportCallIssue]
+        assert isinstance(batch.states.get_value()["ratio"], jax.Array)  # type: ignore[reportCallIssue]
+        assert isinstance(batch.states.get_value()["flag"], jax.Array)  # type: ignore[reportCallIssue]
 
 
 class TestBatchFromPartsWithPyTreeStates:
@@ -206,7 +206,7 @@ class TestBatchFromPartsWithPyTreeStates:
         assert batch.batch_size == 4
         assert "count" in batch.states.get_value()
         assert "flag" in batch.states.get_value()
-        assert batch.states.get_value()["count"].shape == (4,)
+        assert batch.states.get_value()["count"].shape == (4,)  # type: ignore[reportCallIssue]
 
     def test_from_parts_validates_state_batch_size(self):
         """Test from_parts validates state arrays have correct batch size."""
@@ -229,8 +229,8 @@ class TestBatchFromPartsWithPyTreeStates:
         )
 
         assert batch.batch_size == 3
-        assert batch.states.get_value()["counters"]["augment"].shape == (3,)
-        assert batch.states.get_value()["score"].shape == (3,)
+        assert batch.states.get_value()["counters"]["augment"].shape == (3,)  # type: ignore[reportCallIssue]
+        assert batch.states.get_value()["score"].shape == (3,)  # type: ignore[reportCallIssue]
 
 
 class TestBatchGetElementWithPyTreeStates:
@@ -281,8 +281,8 @@ class TestVmapCompatibilityWithPyTreeStates:
             return {"x": data_dict["x"] + state_dict["count"]}
 
         # vmap with per-key axes
-        data_axes = {k: 0 for k in batch.data.get_value().keys()}
-        states_axes = {k: 0 for k in batch.states.get_value().keys()}
+        data_axes = {k: 0 for k in batch.data.get_value().keys()}  # type: ignore[reportAttributeAccessIssue]
+        states_axes = {k: 0 for k in batch.states.get_value().keys()}  # type: ignore[reportAttributeAccessIssue]
 
         result = jax.vmap(process_element, in_axes=(data_axes, states_axes), out_axes=data_axes)(
             batch.data.get_value(), batch.states.get_value()
@@ -305,8 +305,8 @@ class TestVmapCompatibilityWithPyTreeStates:
             new_state = {"count": state_dict["count"] + 1}
             return data_dict, new_state
 
-        data_axes = {k: 0 for k in batch.data.get_value().keys()}
-        states_axes = {k: 0 for k in batch.states.get_value().keys()}
+        data_axes = {k: 0 for k in batch.data.get_value().keys()}  # type: ignore[reportAttributeAccessIssue]
+        states_axes = {k: 0 for k in batch.states.get_value().keys()}  # type: ignore[reportAttributeAccessIssue]
 
         result_data, result_states = jax.vmap(
             increment_count,

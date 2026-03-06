@@ -16,12 +16,12 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
+from datarax.core.element_batch import Batch, Element
+from datarax.operators.map_operator import MapOperator, MapOperatorConfig
 from datarax.operators.selector_operator import (
     SelectorOperator,
     SelectorOperatorConfig,
 )
-from datarax.operators.map_operator import MapOperator, MapOperatorConfig
-from datarax.core.element_batch import Batch, Element
 
 
 class TestSelectorOperatorConfig:

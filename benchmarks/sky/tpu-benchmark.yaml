@@ -9,9 +9,20 @@ envs:
   RAY_ENABLE_UV_RUN_RUNTIME_ENV: "0"
 
 setup: |
-  pip install uv
+  if ! command -v uv >/dev/null 2>&1; then
+    if command -v curl >/dev/null 2>&1; then
+      curl -LsSf https://astral.sh/uv/install.sh | sh
+    elif command -v wget >/dev/null 2>&1; then
+      wget -qO- https://astral.sh/uv/install.sh | sh
+    else
+      echo "ERROR: neither curl nor wget is available to install uv" >&2
+      exit 1
+    fi
+  fi
+  export PATH="$HOME/.local/bin:$PATH"
   cd ~/datarax && uv venv --python 3.11 .venv
-  cd ~/datarax && uv pip install --python .venv/bin/python -e ".[benchmark]" "calibrax[wandb] @ git+https://github.com/avitai/calibrax.git"
+  cd ~/datarax && uv sync --extra benchmark
+  cd ~/datarax && uv pip install --python .venv/bin/python wandb
 
 run: |
   set -euo pipefail
@@ -20,11 +31,11 @@ run: |
   # Clear RAY_ADDRESS so the benchmark doesn't connect to SkyPilot's Ray cluster
   unset RAY_ADDRESS
 
-  # The datarax-bench entry point needs benchmarks/ on sys.path.
+  # Run benchmark CLI as a module for deterministic availability.
   export PYTHONPATH="${PWD}:${PYTHONPATH:-}"
 
   # Exclude Ray Data — hangs on SkyPilot VMs (Ray #59639).
-  .venv/bin/datarax-bench run \
+  .venv/bin/python -m benchmarks.cli run \
     --platform tpu \
     --profile tpu_v5e \
     --repetitions 5 \

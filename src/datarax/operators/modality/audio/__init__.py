@@ -9,10 +9,13 @@ Both operators follow the standard OperatorModule contract (apply/apply_batch)
 and are fully vmap/JIT/grad compatible.
 """
 
+from typing import Any
+
 from datarax.operators.modality.audio.loudness_operator import (
     LoudnessConfig,
     LoudnessOperator,
 )
+
 
 __all__ = [
     "LoudnessConfig",
@@ -20,7 +23,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Lazy imports for CREPE-related classes (heavy weight loading)."""
     if name in ("CrepeF0Operator", "CrepeF0Config"):
         from datarax.operators.modality.audio.f0_operator import (

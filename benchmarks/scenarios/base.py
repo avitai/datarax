@@ -10,15 +10,17 @@ Design ref: Section 7 of the benchmark report.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
-from benchmarks.adapters.base import PipelineAdapter, IterationResult, ScenarioConfig
-from benchmarks.core.environment import capture_environment
-from benchmarks.core.result_model import build_benchmark_result
 from calibrax.core import BenchmarkResult
 from calibrax.profiling import TimingSample
+
+from benchmarks.adapters.base import IterationResult, PipelineAdapter, ScenarioConfig
+from benchmarks.core.environment import capture_environment
+from benchmarks.core.result_model import build_benchmark_result
+
 
 DEFAULT_SEED: int = 42
 """Default RNG seed used across all benchmark scenarios for reproducibility."""
@@ -62,7 +64,7 @@ def _iteration_to_timing(result: IterationResult) -> TimingSample:
     """Convert an IterationResult to a TimingSample."""
     return TimingSample(
         wall_clock_sec=result.wall_clock_sec,
-        per_batch_times=result.per_batch_times,
+        per_batch_times=tuple(result.per_batch_times),
         first_batch_time=result.first_batch_time,
         num_batches=result.num_batches,
         num_elements=result.num_elements,

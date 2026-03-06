@@ -50,10 +50,12 @@ uv pip install "datarax[tfds]" matplotlib
 # GPU Memory Configuration
 import os
 
+
 os.environ["CUDA_VISIBLE_DEVICES_FOR_TF"] = ""
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import tensorflow as tf
+
 
 tf.config.set_visible_devices([], "GPU")
 
@@ -81,6 +83,7 @@ from datarax.operators.modality.image import (
     RotationOperatorConfig,
 )
 from datarax.sources import MemorySource, MemorySourceConfig
+
 
 print(f"JAX backend: {jax.default_backend()}")
 print(f"JAX devices: {jax.devices()}")
@@ -119,6 +122,7 @@ class PipelineBenchmark:
     """Utility for benchmarking pipeline configurations."""
 
     def __init__(self, warmup_batches: int = 5, measure_batches: int = 50):
+        """Initialize PipelineBenchmark."""
         self.warmup_batches = warmup_batches
         self.measure_batches = measure_batches
         self.results = []
@@ -392,7 +396,7 @@ p95_times = [r["p95_ms"] for r in op_results]
 
 # Average latency
 ax1 = axes[0]
-colors = plt.cm.viridis(np.linspace(0.2, 0.8, len(names)))
+colors = plt.cm.viridis(np.linspace(0.2, 0.8, len(names)))  # type: ignore[reportAttributeAccessIssue]
 bars = ax1.barh(names, avg_times, color=colors)
 ax1.set_xlabel("Latency (ms)")
 ax1.set_title("Average Operator Latency per Batch")
@@ -539,8 +543,8 @@ best_tp = tp_list[best_bs_idx]
 print("\n1. BATCH SIZE OPTIMIZATION")
 print(f"   Optimal batch size: {best_bs}")
 print(f"   Peak throughput: {best_tp:,.0f} samples/s")
-lower_bs = batch_sizes[max(0, best_bs_idx - 1)]
-upper_bs = batch_sizes[min(len(batch_sizes) - 1, best_bs_idx + 1)]
+lower_bs = batch_sizes[max(0, int(best_bs_idx) - 1)]
+upper_bs = batch_sizes[min(len(batch_sizes) - 1, int(best_bs_idx) + 1)]
 print(f"   Recommendation: Use batch sizes between {lower_bs} and {upper_bs}")
 
 # Operator overhead

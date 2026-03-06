@@ -23,6 +23,7 @@ class SimpleDataraxModule(DataraxModule):
         super().__init__(config, rngs=rngs)
         # Initialize the counter variable and dense layer in __init__
         self.counter = nnx.Variable(0)
+        assert rngs is not None
         self.dense = nnx.Linear(8, 4, rngs=rngs)  # Specify in_features and out_features
 
     def __call__(self, x, increment: bool = True):
@@ -109,11 +110,11 @@ def test_clone():
     cloned_module = module.clone()
 
     # Check that the state was cloned correctly
-    assert cloned_module.counter.get_value() == 3
+    assert cloned_module.counter.get_value() == 3  # type: ignore[reportAttributeAccessIssue]
 
     # Check that the cloned module works independently
     cloned_module(x)
-    assert cloned_module.counter.get_value() == 4
+    assert cloned_module.counter.get_value() == 4  # type: ignore[reportAttributeAccessIssue]
     assert module.counter.get_value() == 3
 
     # Test that the weights are the same by checking output
@@ -231,30 +232,30 @@ class TestEnhancedDataraxModule:
         # Different data should produce different key
         assert key1 != key3
 
-        # Test with JAX arrays - content-based hashing
-        # Same content should produce same key regardless of array identity
+        # Test with JAX arrays - identity-based hashing (no device-to-host sync)
+        # Same array object should produce same key
         data1 = jnp.array([1, 2, 3])
         array_key1 = basic_module._compute_cache_key(data1)
-        # Same array object should produce same key
         array_key2 = basic_module._compute_cache_key(data1)
         assert array_key1 == array_key2
 
-        # Different array objects with SAME content should have SAME key (content-based)
+        # Different array objects produce different keys (identity-based)
         data2 = jnp.array([1, 2, 3])  # Same content, different object
         array_key3 = basic_module._compute_cache_key(data2)
-        assert array_key1 == array_key3  # Content-based: same content = same key
+        assert array_key1 != array_key3  # Identity-based: different object = different key
 
-        # Different content should produce different key
+        # Different content with different objects also produce different keys
         data3 = jnp.array([4, 5, 6])  # Different content
         array_key4 = basic_module._compute_cache_key(data3)
-        assert array_key1 != array_key4  # Different content = different key
+        assert array_key1 != array_key4
 
-        # Test with PyTree structures
+        # Test with PyTree structures - identity-based
         pytree1 = {"a": jnp.array([1, 2]), "b": jnp.array([3, 4])}
-        pytree2 = {"a": jnp.array([1, 2]), "b": jnp.array([3, 4])}  # Same content
-        pytree3 = {"a": jnp.array([9, 9]), "b": jnp.array([3, 4])}  # Different content
-        assert basic_module._compute_cache_key(pytree1) == basic_module._compute_cache_key(pytree2)
-        assert basic_module._compute_cache_key(pytree1) != basic_module._compute_cache_key(pytree3)
+        # Same object = same key
+        assert basic_module._compute_cache_key(pytree1) == basic_module._compute_cache_key(pytree1)
+        # Different objects = different keys
+        pytree2 = {"a": jnp.array([1, 2]), "b": jnp.array([3, 4])}
+        assert basic_module._compute_cache_key(pytree1) != basic_module._compute_cache_key(pytree2)
 
     def test_statistics_computation(self, rngs):
         """Test batch statistics computation."""

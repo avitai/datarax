@@ -11,4 +11,4 @@ Serializable benchmark result containers with typed fields for throughput, laten
 
 ---
 
-::: calibrax.results
+::: calibrax.core.result

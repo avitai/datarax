@@ -74,6 +74,7 @@ from datarax.operators.modality.image import (
 # It's different from field filtering (see Part 4 for field filtering)
 from datarax.sources import MemorySource, MemorySourceConfig
 
+
 print(f"JAX version: {jax.__version__}")
 
 # %% [markdown]

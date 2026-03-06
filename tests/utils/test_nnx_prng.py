@@ -22,7 +22,7 @@ def test_with_jax_key_wrapper():
         # Generate noise for the data field
         noise = jax.random.normal(key, shape=data["data"].shape)  # type: ignore
         # Add noise only to the 'data' field
-        return {"data": data["data"] + noise}
+        return {"data": data["data"] + noise}  # type: ignore[reportReturnType]
 
     # Wrap the function to work with RngStreams
     wrapped_function = with_jax_key_wrapper(external_function)
@@ -32,7 +32,7 @@ def test_with_jax_key_wrapper():
     stream = rngs["augment"]
 
     # Create test data
-    data: Element = {"data": jnp.zeros((3, 3))}
+    data = {"data": jnp.zeros((3, 3))}
 
     # Apply the wrapped function
     result = wrapped_function(data, stream)
@@ -57,7 +57,7 @@ def test_with_jax_key_decorator():
     stream = rngs["augment"]
 
     # Create test data
-    data: Element = {"data": jnp.zeros((3, 3))}
+    data = {"data": jnp.zeros((3, 3))}
 
     # Apply the decorated function directly with a stream
     result = decorated_function(data, stream)

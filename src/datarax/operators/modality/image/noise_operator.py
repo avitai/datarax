@@ -27,6 +27,7 @@ Examples:
     ```
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -38,7 +39,10 @@ from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 from datarax.operators.modality.image._validation import validate_field_key_shape
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class NoiseOperatorConfig(ModalityOperatorConfig):
     """Configuration for NoiseOperator.
 
@@ -97,7 +101,7 @@ class NoiseOperatorConfig(ModalityOperatorConfig):
     # Override default clip_range to (0.0, 1.0)
     clip_range: tuple[float, float] | None = field(default=(0.0, 1.0), kw_only=True)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration parameters."""
         super().__post_init__()
         self._validate_mode()
@@ -196,7 +200,7 @@ class NoiseOperator(ModalityOperator):
         config: NoiseOperatorConfig,
         *,
         rngs: nnx.Rngs,
-    ):
+    ) -> None:
         """Initialize the noise operator.
 
         Args:

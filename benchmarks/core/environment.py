@@ -13,7 +13,7 @@ import platform
 # Controlled local system introspection commands (git/nvidia-smi).
 import subprocess  # nosec B404
 import sys
-from datetime import UTC, datetime
+from datetime import datetime, UTC
 from typing import Any
 
 import jax
@@ -55,8 +55,8 @@ def capture_environment() -> dict[str, Any]:
     if jax.default_backend() == "tpu":
         env["tpu_type"] = str(jax.devices()[0])
         try:
-            env["libtpu_version"] = jax.extend.backend.get_backend().platform_version
-        except Exception:
+            env["libtpu_version"] = jax.extend.backend.get_backend().platform_version  # type: ignore[reportAttributeAccessIssue]
+        except (ImportError, AttributeError):
             pass
 
     return env

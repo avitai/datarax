@@ -32,7 +32,7 @@ def test_jax_vmap_over_dict_batch() -> None:
     batch = {k: v[:4] for k, v in data.items()}
     vmapped_fn = jax.vmap(normalize, in_axes=0)
 
-    result = vmapped_fn(batch)
+    result = vmapped_fn(batch)  # type: ignore[reportArgumentType]
 
     assert result["image"].shape == (4, 32, 32, 3)
     assert result["label"].shape == (4,)
@@ -51,7 +51,7 @@ def test_jax_vmap_over_tuple_batch() -> None:
         return images / 255.0, labels
 
     vmapped_tuple_fn = jax.vmap(normalize_tuple)
-    result_images, result_labels = vmapped_tuple_fn(batch_as_tuple)
+    result_images, result_labels = vmapped_tuple_fn(batch_as_tuple)  # type: ignore[reportArgumentType]
 
     assert result_images.shape == (4, 32, 32, 3)
     assert result_labels.shape == (4,)
@@ -68,7 +68,7 @@ def test_nnx_vmap_over_array() -> None:
         return x / 255.0
 
     nnx_vmapped = nnx.vmap(scale_array)
-    result_array = nnx_vmapped(test_array)
+    result_array = nnx_vmapped(test_array)  # type: ignore[reportArgumentType]
 
     assert result_array.shape == test_array.shape
     assert jnp.allclose(result_array, test_array / 255.0)

@@ -8,19 +8,85 @@ import logging
 import os
 import tempfile
 import time
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 from typing import Any
-from collections.abc import Callable
 
 import jax
 import numpy as np
 
 
+logger = logging.getLogger(__name__)
+
+
+def get_xla_flags(backend: str) -> list[str]:
+    """Return hardware-specific XLA compiler flags for the given backend.
+
+    Selects flags based on the backend to avoid setting backend-specific flags
+    (e.g. GPU Triton flags) on incompatible backends which would cause a fatal
+    XLA parse error.
+
+    Args:
+        backend: Target backend ('gpu', 'tpu', 'cpu'). Pass ``jax.default_backend()``
+                 for auto-detection.
+
+    Returns:
+        List of ``--xla_*`` flag strings appropriate for the backend.
+    """
+    if backend == "gpu":
+        # Async collective flags (async_all_gather, async_all_reduce,
+        # async_reduce_scatter) and memory_space_assignment were removed in
+        # XLA 2024.10+ — these optimizations are now always-on.  Setting the
+        # old flag names causes a FATAL parse error in parse_flags_from_env.cc,
+        # which also crashes co-resident TF/PyTorch-XLA runtimes that share
+        # the XLA_FLAGS env var.
+        return [
+            "--xla_gpu_enable_latency_hiding_scheduler=true",
+            "--xla_gpu_strict_conv_algorithm_picker=false",
+            "--xla_gpu_triton_gemm_any=True",
+            "--xla_gpu_enable_triton_gemm=true",
+            "--xla_gpu_all_gather_combine_threshold_bytes=134217728",
+            "--xla_gpu_reduce_scatter_combine_threshold_bytes=134217728",
+        ]
+    if backend == "tpu":
+        return [
+            "--xla_tpu_enable_async_collective_fusion=true",
+            "--xla_enable_async_all_gather=true",
+        ]
+    if backend == "cpu":
+        return [
+            "--xla_cpu_enable_fast_math=true",
+        ]
+    return []
+
+
+def apply_xla_flags(backend: str) -> None:
+    """Apply hardware-specific XLA flags to the ``XLA_FLAGS`` environment variable.
+
+    Merges flags returned by :func:`get_xla_flags` into the existing
+    ``XLA_FLAGS`` env var, skipping any flag whose name is already present.
+
+    Args:
+        backend: Target backend ('gpu', 'tpu', 'cpu').
+    """
+    flags = get_xla_flags(backend)
+    if not flags:
+        return
+
+    existing = os.environ.get("XLA_FLAGS", "")
+    for flag in flags:
+        if flag.split("=")[0] not in existing:
+            existing += " " + flag
+
+    os.environ["XLA_FLAGS"] = existing.strip()
+    logger.info("XLA flags configured for %s: %d flags set", backend, len(flags))
+
+
 class XLAOptimizer:
     """Configure XLA compiler for maximum performance."""
 
-    def __init__(self, target_hardware: str = "auto"):
+    def __init__(self, target_hardware: str = "auto") -> None:
         """Initialize XLA optimizer with hardware-specific configuration.
 
         Args:
@@ -31,43 +97,19 @@ class XLAOptimizer:
         self.setup_jax_config()
         self.setup_compilation_cache()
 
-    def setup_xla_flags(self):
-        """Configure XLA compiler flags for maximum performance."""
-        # Core XLA optimizations
-        # See jax_guide.md 5.1.1 Essential XLA Flags
-        flags = [
-            # CPU Optimizations
-            "--xla_cpu_enable_fast_math=true",
-            "--xla_force_host_platform_device_count=1",
-            # GPU/TPU Common Latency Hiding
-            "--xla_gpu_enable_latency_hiding_scheduler=true",
-            "--xla_gpu_enable_async_all_gather=true",
-            "--xla_gpu_enable_async_all_reduce=true",
-            "--xla_gpu_enable_async_reduce_scatter=true",
-            # GPU Specific (Triton)
-            "--xla_gpu_triton_gemm_any=True",
-            "--xla_gpu_enable_triton_gemm=true",
-            # Memory Optimization (Collective Combining)
-            "--xla_gpu_all_gather_combine_threshold_bytes=134217728",  # 128MB
-            "--xla_gpu_reduce_scatter_combine_threshold_bytes=134217728",  # 128MB
-            "--xla_gpu_enable_memory_space_assignment=true",
-        ]
+    def setup_xla_flags(self) -> None:
+        """Configure XLA compiler flags for maximum performance.
 
-        # Combine flags based on hardware
-        # Note: In modern JAX, setting these mainly affects XLA init.
-        # We append to XLA_FLAGS env var.
+        Delegates to :func:`apply_xla_flags` after resolving ``"auto"``
+        to the actual backend.
+        """
+        backend = self.target_hardware
+        if backend == "auto":
+            backend = jax.default_backend()
 
-        existing_flags = os.environ.get("XLA_FLAGS", "")
-        # Only add flags not already present
-        for flag in flags:
-            if flag.split("=")[0] not in existing_flags:
-                existing_flags += " " + flag
+        apply_xla_flags(backend)
 
-        os.environ["XLA_FLAGS"] = existing_flags.strip()
-
-        logging.info(f"XLA flags configured: {len(flags)} optimization flags set")
-
-    def setup_jax_config(self):
+    def setup_jax_config(self) -> None:
         """Configure JAX-specific optimizations."""
         # Enable 32-bit by default for speed
         jax.config.update("jax_enable_x64", False)
@@ -86,9 +128,9 @@ class XLAOptimizer:
             # GPU-specific configurations
             jax.config.update("jax_default_matmul_precision", "high")
 
-        logging.info(f"JAX configuration optimized for {backend}")
+        logger.info(f"JAX configuration optimized for {backend}")
 
-    def setup_compilation_cache(self):
+    def setup_compilation_cache(self) -> None:
         """Setup persistent compilation cache."""
         # Use existing cache dir if set, otherwise create temp
         cache_dir = os.environ.get("JAX_COMPILATION_CACHE_DIR")
@@ -100,13 +142,13 @@ class XLAOptimizer:
         jax.config.update("jax_compilation_cache_dir", cache_dir)
         jax.config.update("jax_persistent_cache_min_compile_time_secs", 1.0)
 
-        logging.info(f"Compilation cache enabled at: {cache_dir}")
+        logger.info(f"Compilation cache enabled at: {cache_dir}")
 
 
 class SmartCompilation:
     """Intelligent compilation strategies for different scenarios."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize smart compilation system."""
         self.compilation_cache: dict[Any, Callable] = {}
         self.shape_signatures: dict[Any, Any] = {}
@@ -123,10 +165,10 @@ class SmartCompilation:
         """
 
         @partial(jax.jit)
-        def compiled_version(*args, **kwargs):
+        def compiled_version(*args: Any, **kwargs: Any) -> Any:
             return func(*args, **kwargs)
 
-        def adaptive_wrapper(*args, **kwargs):
+        def adaptive_wrapper(*args: Any, **kwargs: Any) -> Any:
             # Calculate total computation size
             total_size = sum(x.size if hasattr(x, "size") else 1 for x in jax.tree.leaves(args))
 
@@ -158,10 +200,10 @@ class SmartCompilation:
         try:
             lowered = jit_func.lower(*args, **kwargs)
             compiled = lowered.compile()
-            logging.info(f"AOT compilation successful for {func.__name__}")
+            logger.info(f"AOT compilation successful for {func.__name__}")
             return compiled
         except (AttributeError, RuntimeError, TypeError, ValueError) as e:
-            logging.warning(f"AOT compilation failed: {e}. Falling back to standard JIT.")
+            logger.warning(f"AOT compilation failed: {e}. Falling back to standard JIT.")
             return jit_func
 
     def shard_map_jit(self, mesh: jax.sharding.Mesh, in_specs: Any, out_specs: Any) -> Callable:
@@ -177,7 +219,7 @@ class SmartCompilation:
         """
         from jax.experimental.shard_map import shard_map
 
-        def decorator(func):
+        def decorator(func: Callable) -> Any:
             return shard_map(func, mesh=mesh, in_specs=in_specs, out_specs=out_specs)
 
         return decorator
@@ -190,6 +232,9 @@ class MemoryEfficientCompilation:
     def donate_wrapper(func: Callable, donate_args: tuple[int, ...] | None = None) -> Callable:
         """Wrapper to automatically donate large arrays.
 
+        Caches the compiled function keyed by donate_argnums to avoid
+        recompilation on every call.
+
         Args:
             func: Function to wrap
             donate_args: Indices of arguments to donate, or None for auto-detect
@@ -197,21 +242,28 @@ class MemoryEfficientCompilation:
         Returns:
             Memory-efficient wrapped function
         """
+        # Cache compiled functions keyed by donate_argnums
+        _compiled_cache: dict[tuple[int, ...], Callable] = {}
 
-        def optimized_func(*args, **kwargs):
-            # Automatically determine which arguments to donate
-            if donate_args is None:
-                auto_donate = []
-                for i, arg in enumerate(args):
-                    if hasattr(arg, "size") and arg.size > 1024 * 1024:  # >1MB
-                        auto_donate.append(i)
+        if donate_args is not None:
+            # Static donate args: compile once upfront
+            compiled = partial(jax.jit, donate_argnums=donate_args)(func)
+            return compiled
 
+        def optimized_func(*args: Any, **kwargs: Any) -> Any:
+            auto_donate: list[int] = []
+            for i, arg in enumerate(args):
+                if hasattr(arg, "size") and arg.size > 1024 * 1024:  # >1MB
+                    auto_donate.append(i)
+
+            cache_key = tuple(auto_donate)
+            compiled = _compiled_cache.get(cache_key)
+            if compiled is None:
                 if auto_donate:
-                    compiled = partial(jax.jit, donate_argnums=tuple(auto_donate))(func)
+                    compiled = partial(jax.jit, donate_argnums=cache_key)(func)
                 else:
                     compiled = jax.jit(func)
-            else:
-                compiled = partial(jax.jit, donate_argnums=donate_args)(func)
+                _compiled_cache[cache_key] = compiled
 
             return compiled(*args, **kwargs)
 
@@ -302,7 +354,7 @@ class DistributedUtils:
 class CompilationProfiler:
     """Profile and optimize JAX compilation performance."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize compilation profiler."""
         self.compilation_times: dict[Any, float] = {}
         self.cache_hits: int = 0
@@ -326,7 +378,7 @@ class CompilationProfiler:
                 jax.config.update("jax_log_compiles", True)
                 jax.config.update("jax_explain_cache_misses", True)
 
-            def profiled_wrapper(*args, **kwargs):
+            def profiled_wrapper(*args: Any, **kwargs: Any) -> Any:
                 # Create signature for caching analysis
                 signature = self._create_shape_signature(args)
 
@@ -354,7 +406,7 @@ class CompilationProfiler:
                     "compile_time": compile_time,
                 }
 
-                logging.info(f"Compiled {func_name} for signature {signature}: {compile_time:.3f}s")
+                logger.info(f"Compiled {func_name} for signature {signature}: {compile_time:.3f}s")
 
                 return result
 

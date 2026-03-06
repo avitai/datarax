@@ -2,6 +2,7 @@
 
 import jax.numpy as jnp
 import pytest
+
 from datarax.operators.strategies.merging import merge_outputs, merge_outputs_conditional
 
 

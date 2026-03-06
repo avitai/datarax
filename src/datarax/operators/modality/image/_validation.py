@@ -1,5 +1,10 @@
 """Shared validation helpers for image operators."""
 
+import logging
+
+
+logger = logging.getLogger(__name__)
+
 
 def validate_field_key_shape(
     data_shapes: dict[str, tuple[int, ...]],

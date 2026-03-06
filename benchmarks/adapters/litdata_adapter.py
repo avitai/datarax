@@ -48,21 +48,25 @@ class LitDataAdapter(PipelineAdapter):
     """
 
     def __init__(self) -> None:
+        """Initialize the LitData adapter."""
+        super().__init__()
         self._loader: Any = None
-        self._config: ScenarioConfig | None = None
         self._tmp_dir: Any = None
 
     @property
     def name(self) -> str:
+        """Return the adapter display name."""
         return "LitData"
 
     @property
     def version(self) -> str:
+        """Return the LitData version string."""
         import litdata
 
         return getattr(litdata, "__version__", "unknown")
 
     def is_available(self) -> bool:
+        """Return True if LitData is installed."""
         try:
             import litdata  # noqa: F401
 
@@ -71,10 +75,12 @@ class LitDataAdapter(PipelineAdapter):
             return False
 
     def supported_scenarios(self) -> set[str]:
+        """Return the set of supported benchmark scenario IDs."""
         return {"CV-1"}  # Raw streaming throughput (LitData format)
 
     def setup(self, config: ScenarioConfig, data: Any) -> None:
-        from litdata import StreamingDataLoader, StreamingDataset, optimize
+        """Set up the LitData pipeline for the given scenario configuration."""
+        from litdata import optimize, StreamingDataLoader, StreamingDataset
 
         output_dir, self._tmp_dir = setup_temp_dir(config, "litdata")
 
@@ -120,7 +126,8 @@ class LitDataAdapter(PipelineAdapter):
         return [np.asarray(batch)]
 
     def teardown(self) -> None:
+        """Release resources and reset adapter state."""
         self._loader = None
-        self._config = None
         cleanup_temp_dir(self._tmp_dir)
         self._tmp_dir = None
+        super().teardown()

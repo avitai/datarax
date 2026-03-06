@@ -17,27 +17,13 @@ Test Categories:
 7. JIT compilation compatibility
 """
 
-import pytest
 import jax
 import jax.numpy as jnp
 from flax import nnx
 
-# Import guard for TDD RED phase
-try:
-    from datarax.core.config import MapOperatorConfig
-    from datarax.operators.map_operator import MapOperator
-    from datarax.core.element_batch import Batch, Element
-except ImportError:
-    MapOperatorConfig = None
-    MapOperator = None
-    Batch = None
-    Element = None
-
-
-pytestmark = pytest.mark.skipif(
-    MapOperator is None,
-    reason="MapOperator not implemented yet (RED phase)",
-)
+from datarax.core.config import MapOperatorConfig
+from datarax.core.element_batch import Batch, Element
+from datarax.operators.map_operator import MapOperator
 
 
 # ========================================================================
@@ -477,6 +463,7 @@ class TestMapOperatorStochastic:
         random_params = op.generate_random_params(rng, data_shapes)
 
         # Verify structure matches
+        assert random_params is not None
         assert set(random_params.keys()) == {"image", "mask"}
         # Verify each leaf is array of keys (one per batch element)
         assert random_params["image"].shape == (batch_size, 2)  # PRNGKey shape is (2,)
@@ -497,6 +484,7 @@ class TestMapOperatorStochastic:
             data_shapes = {"data": (batch_size, 10)}
             rng = jax.random.PRNGKey(0)
             random_params = op.generate_random_params(rng, data_shapes)
+            assert random_params is not None
             assert random_params["data"].shape == (batch_size, 2)
 
     def test_stochastic_full_tree_adds_noise(self):
@@ -672,7 +660,7 @@ class TestMapOperatorEdgeCases:
 
         # State completely unchanged
         result_states = result_batch.get_states()
-        assert jnp.allclose(result_states["model_state"], jnp.array([[100.0]]))
+        assert jnp.allclose(result_states["model_state"], jnp.array([[100.0]]))  # type: ignore[reportCallIssue, reportArgumentType]
 
     def test_metadata_unchanged(self):
         """Metadata dict is never modified."""

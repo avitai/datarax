@@ -4,25 +4,25 @@ This script provides detailed profiling information about the Datarax pipeline
 to identify optimization opportunities.
 """
 
-import time
 import cProfile
 import pstats
-from io import StringIO
+import time
 from dataclasses import dataclass
+from io import StringIO
 
+import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
-import flax.nnx as nnx
 
+from datarax.core.config import StructuralConfig
+from datarax.core.data_source import DataSourceModule
 from datarax.dag import DAGExecutor
+from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import MemorySource
 from datarax.sources.memory_source import MemorySourceConfig
-from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.core.data_source import DataSourceModule
-from datarax.core.config import StructuralConfig
 
 
-@dataclass
+@dataclass(frozen=True)
 class MockDataSourceConfig(StructuralConfig):
     """Configuration for MockDataSource."""
 

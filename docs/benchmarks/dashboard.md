@@ -149,30 +149,43 @@ Output shows timestamp, value, optional CI bounds, and commit hash for each run.
 ## Python API
 
 ```python
-import calibrax
+from calibrax.analysis import detect_regressions, rank_table
+from calibrax.core import (
+    Metric,
+    MetricDef,
+    MetricDirection,
+    MetricPriority,
+    Point,
+    Run,
+)
+from calibrax.storage import Store
 
 # Initialize store (JSON backend)
-store = calibrax.Store("benchmark-data/")
+store = Store("benchmark-data/")
 
 # Create and save a run
-run = calibrax.Run(
-    points=[
-        calibrax.Point(
-            "CV-1/small", scenario="CV-1",
+run = Run(
+    points=(
+        Point(
+            name="CV-1/small",
+            scenario="CV-1",
             tags={"framework": "Datarax"},
-            metrics={"throughput": calibrax.Metric(20158)},
+            metrics={"throughput": Metric(value=20158.0)},
         ),
-        calibrax.Point(
-            "CV-1/small", scenario="CV-1",
+        Point(
+            name="CV-1/small",
+            scenario="CV-1",
             tags={"framework": "Grain"},
-            metrics={"throughput": calibrax.Metric(20071)},
+            metrics={"throughput": Metric(value=20071.0)},
         ),
-    ],
+    ),
     metric_defs={
-        "throughput": calibrax.MetricDef(
-            "throughput", "elem/s", "higher",
+        "throughput": MetricDef(
+            name="throughput",
+            unit="elem/s",
+            direction=MetricDirection.HIGHER,
             group="Throughput",
-            priority=calibrax.MetricPriority.PRIMARY,
+            priority=MetricPriority.PRIMARY,
         ),
     },
 )
@@ -181,8 +194,8 @@ store.save(run)
 # Run analysis (all offline, no W&B needed)
 baseline = store.get_baseline()
 if baseline:
-    regressions = calibrax.detect_regressions(run, baseline)
-    ranks = calibrax.rank_table(run, "throughput", group_by_tag="framework")
+    regressions = detect_regressions(run, baseline)
+    ranks = rank_table(run, "throughput", group_by_tag="framework")
 ```
 
 ### Export to W&B
@@ -190,7 +203,7 @@ if baseline:
 ```python
 from calibrax.exporters.wandb import WandBExporter
 
-exporter = WandBExporter.from_store(store)
+exporter = WandBExporter(project="datarax-benchmarks")
 url = exporter.export_run(run)
 exporter.export_analysis(run, baseline)
 print(f"Dashboard: {url}")

@@ -50,10 +50,12 @@ uv pip install "datarax[tfds]" flax optax matplotlib seaborn
 # GPU Memory Configuration
 import os
 
+
 os.environ["CUDA_VISIBLE_DEVICES_FOR_TF"] = ""
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import tensorflow as tf
+
 
 tf.config.set_visible_devices([], "GPU")
 
@@ -83,6 +85,7 @@ from datarax.operators.modality.image import (
     NoiseOperatorConfig,
 )
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
+
 
 print(f"JAX backend: {jax.default_backend()}")
 print(f"JAX devices: {jax.devices()}")
@@ -310,6 +313,7 @@ class ResidualBlock(nnx.Module):
     """Basic residual block with skip connection."""
 
     def __init__(self, in_channels: int, out_channels: int, stride: int, rngs: nnx.Rngs):
+        """Initialize ResidualBlock."""
         self.conv1 = nnx.Conv(
             in_channels,
             out_channels,
@@ -343,6 +347,7 @@ class ResidualBlock(nnx.Module):
             self.skip = None
 
     def __call__(self, x):
+        """Apply residual block with optional skip projection."""
         identity = x
 
         out = self.conv1(x)
@@ -365,6 +370,7 @@ class CIFAR10Net(nnx.Module):
     """ResNet-inspired network for CIFAR-10."""
 
     def __init__(self, rngs: nnx.Rngs):
+        """Initialize CIFAR10Net."""
         # Initial convolution
         self.conv1 = nnx.Conv(3, 32, kernel_size=(3, 3), padding="SAME", rngs=rngs)
         self.bn1 = nnx.BatchNorm(32, rngs=rngs)
@@ -379,6 +385,7 @@ class CIFAR10Net(nnx.Module):
         self.fc = nnx.Linear(128, NUM_CLASSES, rngs=rngs)
 
     def __call__(self, x):
+        """Forward pass through residual blocks and classification head."""
         # Initial
         x = self.conv1(x)
         x = self.bn1(x)
@@ -622,7 +629,7 @@ print(f"Saved: {output_dir / 'e2e-confusion-matrix.png'}")
 per_class_acc = confusion.diagonal() / confusion.sum(axis=1)
 
 fig, ax = plt.subplots(figsize=(12, 6))
-colors = plt.cm.viridis(np.linspace(0.2, 0.8, NUM_CLASSES))
+colors = plt.cm.viridis(np.linspace(0.2, 0.8, NUM_CLASSES))  # type: ignore[reportAttributeAccessIssue]
 bars = ax.bar(CIFAR10_CLASSES, per_class_acc, color=colors)
 ax.set_xlabel("Class")
 ax.set_ylabel("Accuracy")
@@ -649,7 +656,7 @@ print(f"Saved: {output_dir / 'e2e-per-class-accuracy.png'}")
 fig, ax = plt.subplots(figsize=(10, 5))
 ax.bar(range(1, NUM_EPOCHS + 1), throughputs, color="steelblue")
 ax.axhline(
-    y=np.mean(throughputs),
+    y=float(np.mean(throughputs)),
     color="red",
     linestyle="--",
     label=f"Mean: {np.mean(throughputs):.0f} samples/s",

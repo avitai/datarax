@@ -50,10 +50,12 @@ uv pip install "datarax[tfds]" matplotlib
 # GPU Memory Configuration
 import os
 
+
 os.environ["CUDA_VISIBLE_DEVICES_FOR_TF"] = ""
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import tensorflow as tf
+
 
 tf.config.set_visible_devices([], "GPU")
 
@@ -86,6 +88,7 @@ from datarax.operators.modality.image import (
     RotationOperatorConfig,
 )
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
+
 
 print(f"JAX backend: {jax.default_backend()}")
 
@@ -559,7 +562,7 @@ fig, ax = plt.subplots(figsize=(10, 6))
 names = list(latencies.keys())
 values = list(latencies.values())
 
-bars = ax.barh(names, values, color=plt.cm.viridis(np.linspace(0.2, 0.8, len(names))))
+bars = ax.barh(names, values, color=plt.cm.viridis(np.linspace(0.2, 0.8, len(names))))  # type: ignore[reportAttributeAccessIssue]
 ax.set_xlabel("Latency (ms)")
 ax.set_title("Augmentation Latency per Batch (64 samples)")
 

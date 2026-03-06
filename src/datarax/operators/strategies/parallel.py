@@ -1,15 +1,19 @@
 """Parallel composition strategies."""
 
+import logging
+from collections.abc import Callable, Sequence
 from typing import Any
-from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
 from jaxtyping import PyTree
 
+from datarax.core.operator import OperatorModule
 from datarax.operators.strategies.base import CompositionStrategyImpl, StrategyContext
 from datarax.operators.strategies.merging import merge_outputs, merge_outputs_conditional
-from datarax.core.operator import OperatorModule
+
+
+logger = logging.getLogger(__name__)
 
 
 class ParallelStrategy(CompositionStrategyImpl):
@@ -38,7 +42,7 @@ class ParallelStrategy(CompositionStrategyImpl):
         merge_strategy: str | None = None,
         merge_axis: int = 0,
         merge_fn: Callable | None = None,
-    ):
+    ) -> None:
         """Initialize parallel strategy.
 
         Args:
@@ -134,11 +138,11 @@ class ConditionalParallelStrategy(CompositionStrategyImpl):
 
     def __init__(
         self,
-        conditions: list[Callable[[PyTree], bool | jax.Array]],
+        conditions: Sequence[Callable[[PyTree], bool | jax.Array]],
         merge_strategy: str | None = None,
         merge_axis: int = 0,
         merge_fn: Callable | None = None,
-    ):
+    ) -> None:
         """Initialize ConditionalParallelStrategy.
 
         Args:

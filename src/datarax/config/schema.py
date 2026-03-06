@@ -11,9 +11,13 @@ and supports configuration of NNX-specific features, including:
 - NNX module configuration options
 """
 
-from dataclasses import dataclass, field
+import logging
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
+
+
+logger = logging.getLogger(__name__)
 
 
 class ValidationError(Exception):

@@ -7,6 +7,7 @@ stored as nnx.Param, making them learnable during end-to-end training.
 All operations are pure JAX — fully vmap/JIT/grad compatible.
 """
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,6 +18,9 @@ from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
 from datarax.core.operator import OperatorModule
+
+
+logger = logging.getLogger(__name__)
 
 
 def _a_weighting_jax(frequencies: jax.Array) -> jax.Array:
@@ -52,7 +56,7 @@ def _a_weighting_jax(frequencies: jax.Array) -> jax.Array:
     return weights
 
 
-@dataclass
+@dataclass(frozen=True)
 class LoudnessConfig(OperatorConfig):
     """Configuration for LoudnessOperator.
 
@@ -94,7 +98,8 @@ class LoudnessOperator(OperatorModule):
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
+        """Initialize the loudness extraction operator."""
         super().__init__(config, rngs=rngs, name=name)
         self.config: LoudnessConfig = config
 

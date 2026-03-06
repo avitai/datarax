@@ -16,11 +16,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
-from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
-from benchmarks.core.result_model import throughput_elements_per_sec
-from benchmarks.scenarios.base import DEFAULT_SEED, ScenarioVariant, make_get_variant, run_scenario
 from calibrax.core import BenchmarkResult
+
+from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
+from benchmarks.core.result_model import throughput_elements_per_sec
+from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
+from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, run_scenario, ScenarioVariant
+
 
 SCENARIO_ID: str = "IO-4"
 TIER1_VARIANT: str | None = None

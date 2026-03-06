@@ -6,6 +6,7 @@ test_ensemble_strategy, test_sequential_strategy, and test_parallel_strategy.
 
 import jax
 import jax.numpy as jnp
+
 from datarax.core.operator import OperatorModule
 
 
@@ -46,7 +47,7 @@ class MultiplierMockOperator(OperatorModule):
         if "count" in new_state:
             new_state["count"] += 1
 
-        new_metadata = metadata.copy()
+        new_metadata = metadata.copy() if metadata else {}
         new_metadata["visited"] = [*new_metadata.get("visited", []), self.name]
 
         return new_data, new_state, new_metadata

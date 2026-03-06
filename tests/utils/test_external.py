@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
-from flax import nnx
 import pytest
+from flax import nnx
 
 from datarax.core.batcher import Batch
 from datarax.utils.external import (

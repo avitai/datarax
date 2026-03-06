@@ -86,10 +86,10 @@ class TestOperatorWithSimplePyTreeStates:
 
         # States should be incremented
         assert result.batch_size == 4
-        assert jnp.array_equal(result.states.get_value()["count"], jnp.array([1, 2, 3, 4]))
+        assert jnp.array_equal(result.states.get_value()["count"], jnp.array([1, 2, 3, 4]))  # type: ignore[reportCallIssue]
 
         # Data should be unchanged
-        assert jnp.allclose(result.data.get_value()["x"], batch.data.get_value()["x"])
+        assert jnp.allclose(result.data.get_value()["x"], batch.data.get_value()["x"])  # type: ignore[reportCallIssue]
 
     def test_stochastic_operator_modifies_states(self):
         """Test stochastic operator correctly modifies PyTree states."""
@@ -107,14 +107,14 @@ class TestOperatorWithSimplePyTreeStates:
         result = operator.apply_batch(batch)
 
         # Count should be incremented
-        assert jnp.array_equal(result.states.get_value()["count"], jnp.ones((4,), dtype=jnp.int32))
+        assert jnp.array_equal(result.states.get_value()["count"], jnp.ones((4,), dtype=jnp.int32))  # type: ignore[reportCallIssue]
 
         # last_scale should be updated (random values)
-        assert not jnp.allclose(result.states.get_value()["last_scale"], jnp.ones((4,)))
-        assert result.states.get_value()["last_scale"].shape == (4,)
+        assert not jnp.allclose(result.states.get_value()["last_scale"], jnp.ones((4,)))  # type: ignore[reportCallIssue]
+        assert result.states.get_value()["last_scale"].shape == (4,)  # type: ignore[reportCallIssue]
 
         # Data should be scaled
-        assert not jnp.allclose(result.data.get_value()["x"], batch.data.get_value()["x"])
+        assert not jnp.allclose(result.data.get_value()["x"], batch.data.get_value()["x"])  # type: ignore[reportCallIssue]
 
     def test_operator_preserves_metadata(self):
         """Test that metadata is preserved (not vmapped over)."""
@@ -157,17 +157,19 @@ class TestOperatorWithNestedPyTreeStates:
 
         # Augment counter should be incremented
         assert jnp.array_equal(
-            result.states.get_value()["counters"]["augment"], jnp.array([1, 2, 3])
+            result.states.get_value()["counters"]["augment"],  # type: ignore[reportCallIssue]
+            jnp.array([1, 2, 3]),
         )
 
         # Transform counter should be unchanged
         assert jnp.array_equal(
-            result.states.get_value()["counters"]["transform"], jnp.array([10, 20, 30])
+            result.states.get_value()["counters"]["transform"],  # type: ignore[reportCallIssue]
+            jnp.array([10, 20, 30]),
         )
 
         # Score should be scaled by 1.1
         expected_scores = jnp.array([0.5, 0.7, 0.9]) * 1.1
-        assert jnp.allclose(result.states.get_value()["score"], expected_scores)
+        assert jnp.allclose(result.states.get_value()["score"], expected_scores)  # type: ignore[reportCallIssue]
 
     def test_deeply_nested_states(self):
         """Test operator with deeply nested state structure."""
@@ -194,7 +196,8 @@ class TestOperatorWithNestedPyTreeStates:
         result = operator.apply_batch(batch)
 
         assert jnp.array_equal(
-            result.states.get_value()["level1"]["level2"]["level3"]["value"], jnp.array([1, 2])
+            result.states.get_value()["level1"]["level2"]["level3"]["value"],  # type: ignore[reportCallIssue]
+            jnp.array([1, 2]),
         )
 
 
@@ -221,9 +224,10 @@ class TestOperatorStatePreservation:
 
         # States should be identical
         assert jnp.array_equal(
-            result.states.get_value()["count"], batch.states.get_value()["count"]
+            result.states.get_value()["count"],  # type: ignore[reportCallIssue]
+            batch.states.get_value()["count"],  # type: ignore[reportCallIssue]
         )
-        assert jnp.array_equal(result.states.get_value()["flag"], batch.states.get_value()["flag"])
+        assert jnp.array_equal(result.states.get_value()["flag"], batch.states.get_value()["flag"])  # type: ignore[reportCallIssue]
 
 
 class TestOperatorEdgeCases:
@@ -277,8 +281,8 @@ class TestOperatorEdgeCases:
 
         result = operator.apply_batch(batch)
 
-        assert jnp.array_equal(result.states.get_value()["jax_array"], jnp.array([2, 3]))
-        assert jnp.array_equal(result.states.get_value()["python_int"], jnp.array([11, 21]))
+        assert jnp.array_equal(result.states.get_value()["jax_array"], jnp.array([2, 3]))  # type: ignore[reportCallIssue]
+        assert jnp.array_equal(result.states.get_value()["python_int"], jnp.array([11, 21]))  # type: ignore[reportCallIssue]
 
     def test_operator_with_scalar_batch_size_1(self):
         """Test operator with batch size 1 (states still have batch axis)."""
@@ -293,8 +297,8 @@ class TestOperatorEdgeCases:
         result = operator.apply_batch(batch)
 
         assert result.batch_size == 1
-        assert result.states.get_value()["count"].shape == (1,)
-        assert result.states.get_value()["count"][0] == 1
+        assert result.states.get_value()["count"].shape == (1,)  # type: ignore[reportCallIssue]
+        assert result.states.get_value()["count"][0] == 1  # type: ignore[reportCallIssue]
 
 
 class TestOperatorJITCompilation:
@@ -317,7 +321,7 @@ class TestOperatorJITCompilation:
         # Should compile and run without errors
         result = process_batch(batch)
 
-        assert jnp.array_equal(result.states.get_value()["count"], jnp.array([1, 2, 3, 4]))
+        assert jnp.array_equal(result.states.get_value()["count"], jnp.array([1, 2, 3, 4]))  # type: ignore[reportCallIssue]
 
     def test_stochastic_operator_jit_compiles(self):
         """Test stochastic operator compiles with PyTree states."""
@@ -336,8 +340,8 @@ class TestOperatorJITCompilation:
         # Should work (nnx.jit handles stateful operations)
         result = operator.apply_batch(batch)
 
-        assert result.states.get_value()["count"].shape == (4,)
-        assert result.states.get_value()["last_scale"].shape == (4,)
+        assert result.states.get_value()["count"].shape == (4,)  # type: ignore[reportCallIssue]
+        assert result.states.get_value()["last_scale"].shape == (4,)  # type: ignore[reportCallIssue]
 
 
 class TestOperatorBatchStateVsBatchedStates:
@@ -364,7 +368,7 @@ class TestOperatorBatchStateVsBatchedStates:
         result = operator.apply_batch(batch)
 
         # Element states should be modified
-        assert jnp.array_equal(result.states.get_value()["count"], jnp.array([1, 2, 3]))
+        assert jnp.array_equal(result.states.get_value()["count"], jnp.array([1, 2, 3]))  # type: ignore[reportCallIssue]
 
         # Batch state should be preserved (operator doesn't touch it)
-        assert result.batch_state.get_value()["total_processed"] == 100
+        assert result.batch_state.get_value()["total_processed"] == 100  # type: ignore[reportCallIssue]

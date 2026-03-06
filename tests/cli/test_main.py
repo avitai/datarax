@@ -1,6 +1,7 @@
 """Tests for the Datarax CLI main module."""
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from datarax.cli.main import main
@@ -165,8 +166,8 @@ batch_size = 32
 
         # The run_pipeline function should catch exceptions internally
         # So we mock at a deeper level
-        with patch("datarax.cli.main.DAGExecutor") as mock_executor:
-            mock_executor.from_config.side_effect = RuntimeError("Pipeline failed")
+        with patch("datarax.cli.main.DAGConfig") as mock_config:
+            mock_config.from_dict.side_effect = RuntimeError("Pipeline failed")
             exit_code = main(["run", "--config-path", str(config_file)])
 
         assert exit_code == 1
@@ -247,15 +248,15 @@ inputs = ["source"]
         """)
 
         # This should work with the actual implementation
-        with patch("datarax.cli.main.DAGExecutor") as mock_executor:
+        with patch("datarax.cli.main.DAGConfig") as mock_config:
             mock_instance = MagicMock()
-            mock_executor.from_config.return_value = mock_instance
-            mock_instance.run.return_value = None
+            mock_instance.__iter__ = MagicMock(return_value=iter([]))
+            mock_config.from_dict.return_value = mock_instance
 
             exit_code = main(["run", "--config-path", str(config_file)])
 
         assert exit_code == 0
-        mock_executor.from_config.assert_called_once()
+        mock_config.from_dict.assert_called_once()
 
     def test_validate_complex_config(self, tmp_path):
         """Test validation of a complex pipeline configuration."""

@@ -14,7 +14,8 @@ import numpy as np
 
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
-from benchmarks.scenarios.base import DEFAULT_SEED, ScenarioVariant, make_get_variant
+from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, ScenarioVariant
+
 
 SCENARIO_ID: str = "PR-1"
 TIER1_VARIANT: str | None = None

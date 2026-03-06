@@ -6,36 +6,37 @@ field-splitting, and rebatching nodes.
 """
 
 from datarax.dag.nodes.base import Node
+from datarax.dag.nodes.caching import Cache, CacheNode
 from datarax.dag.nodes.control_flow import (
-    Identity,
-    Sequential,
-    Parallel,
     Branch,
+    branch,
+    FusedOperatorNode,
+    Identity,
     Merge,
     MergeBatchNode,
-    FusedOperatorNode,
-    branch,
+    Parallel,
     parallel,
+    Sequential,
 )
-from datarax.dag.nodes.caching import Cache, CacheNode
 from datarax.dag.nodes.data_source import (
-    DataSourceNode,
     BatchNode,
+    DataSourceNode,
     OperatorNode,
-    ShuffleNode,
     PrefetchNode,
     SamplerNode,
     SharderNode,
+    ShuffleNode,
 )
+from datarax.dag.nodes.field_operators import SplitField, SplitFields
 from datarax.dag.nodes.loaders import DataLoader, dataloader
-from datarax.dag.nodes.field_operators import SplitFields, SplitField
 from datarax.dag.nodes.rebatch import (
-    RebatchNode,
     DifferentiableRebatchImpl,
     FastRebatchImpl,
     GradientTransparentRebatchImpl,
     rebatch,
+    RebatchNode,
 )
+
 
 __all__ = [
     "Node",

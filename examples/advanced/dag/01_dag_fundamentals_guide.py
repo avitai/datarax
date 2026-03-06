@@ -86,14 +86,14 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax import from_source, DAGExecutor
+from datarax import DAGExecutor, from_source
 from datarax.dag.nodes import (
-    Node,
-    DataSourceNode,
     BatchNode,
-    OperatorNode,
-    Identity,
     Cache,
+    DataSourceNode,
+    Identity,
+    Node,
+    OperatorNode,
 )
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.modality.image import (
@@ -101,6 +101,7 @@ from datarax.operators.modality.image import (
     BrightnessOperatorConfig,
 )
 from datarax.sources import MemorySource, MemorySourceConfig
+
 
 print(f"JAX version: {jax.__version__}")
 print(f"Devices: {jax.devices()}")
@@ -186,7 +187,7 @@ print(f"  Type: {type(explicit_pipeline).__name__}")
 
 # %%
 # Execute the explicit pipeline
-executor = DAGExecutor(explicit_pipeline, data_source=source2)
+executor = DAGExecutor(explicit_pipeline)
 
 batch_count = 0
 sample_count = 0
@@ -253,7 +254,7 @@ print("Pipeline with operators:")
 print(f"  {pipeline_with_ops}")
 
 # Execute
-executor = DAGExecutor(pipeline_with_ops, data_source=source3)
+executor = DAGExecutor(pipeline_with_ops)
 batch = next(iter(executor))
 
 print(f"  Output range: [{batch['image'].min():.4f}, {batch['image'].max():.4f}]")
@@ -364,7 +365,7 @@ Add shuffling and prefetching for training pipelines.
 # %%
 # Create a training-ready pipeline with shuffle and prefetch
 source4 = MemorySource(
-    MemorySourceConfig(shuffle=True, seed=42),  # Shuffled source
+    MemorySourceConfig(shuffle=True),  # Shuffled source
     data=data,
     rngs=nnx.Rngs(3),
 )
@@ -410,7 +411,7 @@ def build_production_pipeline(data, batch_size=32, shuffle=True):
     """
     # Create source
     source = MemorySource(
-        MemorySourceConfig(shuffle=shuffle, seed=42),
+        MemorySourceConfig(shuffle=shuffle),
         data=data,
         rngs=nnx.Rngs(0),
     )
@@ -488,10 +489,12 @@ class TrackedNode(Node):
     """Node that tracks when it's executed."""
 
     def __init__(self, name: str):
+        """Initialize TrackedNode."""
         super().__init__(name=name)
         self.call_count = nnx.Variable(0)
 
     def __call__(self, data, *, key=None):
+        """Forward pass that increments the call counter."""
         del key  # Unused
         self.call_count.value += 1
         return data

@@ -8,6 +8,7 @@ import pytest
 
 from benchmarks.tests.test_adapters.conftest import assert_valid_iteration_result
 
+
 nvidia_dali = pytest.importorskip("nvidia.dali")
 
 # DALI requires CUDA — skip all tests if no GPU available
@@ -46,20 +47,12 @@ class TestDaliAdapterProperties:
 
     def test_supported_scenarios(self):
         from benchmarks.adapters.dali_adapter import DaliAdapter
+        from benchmarks.tests.test_adapters.conftest import assert_supported_scenarios
 
-        expected = {
-            "CV-1",
-            "CV-2",
-            "CV-3",
-            "CV-4",
-            "MM-2",
-            "PC-1",
-            "DIST-1",
-            "AUG-1",
-            "AUG-2",
-            "AUG-3",
-        }
-        assert DaliAdapter().supported_scenarios() == expected
+        assert_supported_scenarios(
+            DaliAdapter(),
+            must_include={"CV-1", "NLP-1", "HCV-1", "HPC-1"},
+        )
 
 
 class TestDaliAdapterLifecycle:

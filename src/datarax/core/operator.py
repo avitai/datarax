@@ -13,6 +13,7 @@ Key Features:
 - Statistics system (inherited from DataraxModule)
 """
 
+import logging
 from typing import Any, final
 
 import jax
@@ -22,6 +23,38 @@ from jaxtyping import PyTree
 from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import Batch
 from datarax.core.module import DataraxModule
+
+
+logger = logging.getLogger(__name__)
+
+
+def extract_batch_size(data_shapes: PyTree) -> int:
+    """Extract batch size from a PyTree of shape tuples.
+
+    Traverses the PyTree treating tuples as atomic leaves (since JAX
+    normally unfolds tuples as nodes) and returns the first axis of
+    the first leaf shape.
+
+    Args:
+        data_shapes: PyTree with same structure as batch data, where each
+                     leaf is a shape tuple (e.g. ``(batch_size, H, W, C)``).
+
+    Returns:
+        The batch size (first element of the first shape found).
+
+    Raises:
+        ValueError: If the shape tree has no leaves.
+    """
+    batch_sizes = jax.tree.map(
+        lambda shape: shape[0], data_shapes, is_leaf=lambda x: isinstance(x, tuple)
+    )
+    batch_size_leaves = jax.tree.leaves(batch_sizes)
+
+    if not batch_size_leaves:
+        raise ValueError("Cannot extract batch size from an empty shape tree")
+
+    return batch_size_leaves[0]
+
 
 # Module-level cache for output structure discovery.
 # Using module-level cache instead of instance attribute avoids NNX pytree tracking,
@@ -58,13 +91,15 @@ class OperatorModule(DataraxModule):
         stream_name: RNG stream name (from config, required if stochastic=True)
     """
 
+    config: OperatorConfig  # pyright: ignore[reportIncompatibleVariableOverride]
+
     def __init__(
         self,
         config: OperatorConfig,
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize OperatorModule with config.
 
         Args:
@@ -260,7 +295,7 @@ class OperatorModule(DataraxModule):
         has_rp = random_params_batch is not None
         if has_rp:
 
-            def _apply_with_rp(data, state, rp):
+            def _apply_with_rp(data: Any, state: Any, rp: Any) -> tuple[Any, Any]:
                 out_data, out_state, _ = self.apply(data, state, None, rp, _stats)
                 return out_data, out_state
 
@@ -268,7 +303,7 @@ class OperatorModule(DataraxModule):
             inputs = (batch_data, batch_states, random_params_batch)
         else:
 
-            def _apply_no_rp(data, state):
+            def _apply_no_rp(data: Any, state: Any) -> tuple[Any, Any]:
                 out_data, out_state, _ = self.apply(data, state, None, None, _stats)
                 return out_data, out_state
 
@@ -371,8 +406,8 @@ class OperatorModule(DataraxModule):
         return Batch.from_parts(
             data=transformed_data,
             states=transformed_states,
-            metadata_list=batch_metadata,
-            batch_metadata=batch._batch_metadata,
+            metadata_list=batch_metadata.get_value(),
+            batch_metadata=batch._batch_metadata.get_value(),
             batch_state=batch.batch_state.get_value(),
             validate=False,
         )

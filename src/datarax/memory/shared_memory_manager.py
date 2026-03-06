@@ -1,9 +1,13 @@
 """Shared memory manager for multi-worker data pipeline scenarios."""
 
+import logging
 from multiprocessing import shared_memory
 
 import flax.nnx as nnx
 import jax
+
+
+logger = logging.getLogger(__name__)
 
 
 class SharedMemoryManager(nnx.Module):
@@ -13,7 +17,7 @@ class SharedMemoryManager(nnx.Module):
     to avoid duplication across workers.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize SharedMemoryManager with empty block and metadata tracking."""
         super().__init__()
         self.shared_blocks = nnx.Variable({})
@@ -100,7 +104,7 @@ class SharedMemoryManager(nnx.Module):
             # Convert to JAX array
             return jax.numpy.array(shared_np_array)
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up shared memory blocks."""
         # Use get_value() for non-array Variables (new NNX API)
         blocks_dict = self.shared_blocks.get_value()
@@ -112,12 +116,14 @@ class SharedMemoryManager(nnx.Module):
         self.array_metadata.set_value({})
 
     def __enter__(self) -> "SharedMemoryManager":
+        """Enter context manager."""
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit context manager and release resources."""
         self.cleanup()
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Safety net — prefer using as context manager."""
         try:
             self.cleanup()

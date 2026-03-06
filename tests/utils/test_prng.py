@@ -1,8 +1,8 @@
 """Tests for random utility functions."""
 
+import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
-import flax.nnx as nnx
 
 from datarax.utils.prng import create_rngs, DEFAULT_RNG_STREAMS
 

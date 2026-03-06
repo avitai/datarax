@@ -7,36 +7,78 @@ data processing workflows as directed acyclic graphs (DAGs).
 COMPLETE IMPLEMENTATION following TDD principles.
 """
 
-from typing import Any, Literal
+import logging
+import os
+import tempfile
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
-import jax
-import flax.nnx as nnx
-from flax.nnx.transforms.compilation import JitFn
+from dataclasses import dataclass, field
+from functools import partial
+from pathlib import Path
+from typing import Any, cast, Literal
 
-from datarax.dag.nodes import (
-    Node,
-    Identity,
-    Sequential,
-    Parallel,
-    Branch,
-    Merge,
-    FusedOperatorNode,
-    DataSourceNode,
-    BatchNode,
-    OperatorNode,
-    ShuffleNode,
-    CacheNode,
-    DataLoader,
-    SamplerNode,
-    SharderNode,
-)
-from datarax.core.module import DataraxModule
-from datarax.core.data_source import DataSourceModule
-from datarax.core.operator import OperatorModule
+import flax.nnx as nnx
+import jax
+from flax.nnx.transforms.compilation import JitFn, JitWrapped
+
+
+_logger = logging.getLogger(__name__)
+_IS_XLA_INITIALIZED = False
+
+
+def _ensure_xla_optimized() -> None:
+    """Apply hardware-specific XLA flags and enable compilation cache.
+
+    Called once per process on first DAGExecutor creation. Idempotent — repeated
+    calls are no-ops. This replaces the need for manual XLAOptimizer() instantiation.
+    """
+    global _IS_XLA_INITIALIZED  # noqa: PLW0603
+    if _IS_XLA_INITIALIZED:
+        return
+    _IS_XLA_INITIALIZED = True
+
+    from datarax.performance.xla_optimization import apply_xla_flags
+
+    backend = jax.default_backend()
+
+    # --- Hardware-specific XLA flags (delegated to canonical source) ---
+    apply_xla_flags(backend)
+
+    # --- Persistent compilation cache ---
+    cache_dir = os.environ.get("JAX_COMPILATION_CACHE_DIR")
+    if not cache_dir:
+        cache_path = Path(tempfile.gettempdir()) / "datarax_jax_cache"
+        cache_path.mkdir(parents=True, exist_ok=True)
+        cache_dir = str(cache_path)
+
+    jax.config.update("jax_compilation_cache_dir", cache_dir)
+    jax.config.update("jax_persistent_cache_min_compile_time_secs", 1.0)
+    _logger.debug("Compilation cache enabled at: %s", cache_dir)
+
+
 from datarax.core.batcher import BatcherModule
+from datarax.core.data_source import DataSourceModule
+from datarax.core.element_batch import BatchView
+from datarax.core.module import DataraxModule
+from datarax.core.operator import OperatorModule
 from datarax.core.sampler import SamplerModule
 from datarax.core.sharder import SharderModule
+from datarax.dag.nodes import (
+    BatchNode,
+    Branch,
+    CacheNode,
+    DataLoader,
+    DataSourceNode,
+    FusedOperatorNode,
+    Identity,
+    Merge,
+    Node,
+    OperatorNode,
+    Parallel,
+    SamplerNode,
+    Sequential,
+    SharderNode,
+    ShuffleNode,
+)
 from datarax.typing import Batch
 
 
@@ -48,6 +90,7 @@ class _ExecutorConfigState:
     jit_compile: bool
     enforce_batch: bool
     prefetch_size: int
+    device_prefetch: bool
     name: str
 
 
@@ -63,9 +106,12 @@ class _ExecutorRuntimeState:
     epoch_count: int = 0
     source_node: DataSourceNode | None = None
     batch_node: BatchNode | None = None
-    iterator: Iterator[Batch] | None = None
+    iterator: Iterator[Any] | None = None
     cache: dict[int, Any] | None = None
-    jit_execute: JitFn | None = None
+    fused_step_cache: dict[tuple[Any, ...], Callable[[dict, dict], tuple[dict, dict]]] = field(
+        default_factory=dict
+    )
+    jit_execute: JitFn | JitWrapped | partial | None = None
 
 
 class DAGExecutor(nnx.Module):
@@ -125,8 +171,9 @@ class DAGExecutor(nnx.Module):
         jit_compile: bool = False,
         enforce_batch: bool = True,
         prefetch_size: int = 2,
+        device_prefetch: bool = False,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize DAG executor.
 
         Args:
@@ -136,9 +183,13 @@ class DAGExecutor(nnx.Module):
             jit_compile: Whether to JIT compile the pipeline
             enforce_batch: Whether to enforce batch-first processing
             prefetch_size: Number of batches to prefetch ahead (0 = disabled)
+            device_prefetch: Enable two-stage prefetch with async device transfer.
+                When True, adds a DevicePrefetcher stage after CPU prefetch that
+                calls jax.device_put in a background thread. Requires prefetch_size > 0.
             name: Optional name for the executor
         """
         super().__init__()
+        _ensure_xla_optimized()
 
         # Initialize graph
         if graph is None:
@@ -159,6 +210,7 @@ class DAGExecutor(nnx.Module):
             jit_compile=jit_compile,
             enforce_batch=enforce_batch,
             prefetch_size=prefetch_size,
+            device_prefetch=device_prefetch,
             name=name or "DAGExecutor",
         )
         self._runtime_state = _ExecutorRuntimeState(
@@ -207,6 +259,15 @@ class DAGExecutor(nnx.Module):
     @prefetch_size.setter
     def prefetch_size(self, value: int) -> None:
         self._config_state.prefetch_size = value
+
+    @property
+    def device_prefetch(self) -> bool:
+        """Whether two-stage device prefetch is enabled."""
+        return self._config_state.device_prefetch
+
+    @device_prefetch.setter
+    def device_prefetch(self, value: bool) -> None:
+        self._config_state.device_prefetch = value
 
     @property
     def name(self) -> str:
@@ -282,11 +343,11 @@ class DAGExecutor(nnx.Module):
         self._runtime_state.batch_node = value
 
     @property
-    def _iterator(self) -> Iterator[Batch] | None:
+    def _iterator(self) -> Iterator[Any] | None:
         return self._runtime_state.iterator
 
     @_iterator.setter
-    def _iterator(self, value: Iterator[Batch] | None) -> None:
+    def _iterator(self, value: Iterator[Any] | None) -> None:
         self._runtime_state.iterator = value
 
     @property
@@ -298,7 +359,7 @@ class DAGExecutor(nnx.Module):
         self._runtime_state.cache = value
 
     @property
-    def _jit_execute(self) -> JitFn | None:
+    def _jit_execute(self) -> JitFn | JitWrapped | partial | None:
         """JIT-compiled execute function cached in runtime state."""
         return self._runtime_state.jit_execute
 
@@ -508,10 +569,17 @@ class DAGExecutor(nnx.Module):
 
         self.graph = Sequential(new_nodes)
 
-    def add(self, node: Node) -> "DAGExecutor":
+    def add(
+        self,
+        node: (
+            Node | DataSourceModule | OperatorModule | BatcherModule | SamplerModule | SharderModule
+        ),
+    ) -> "DAGExecutor":
         """Add a node to the pipeline.
 
-        Extends the current graph sequentially.
+        Extends the current graph sequentially. Accepts Node instances
+        or module types (DataSourceModule, OperatorModule, etc.) which
+        are auto-wrapped into the appropriate Node.
 
         Args:
             node: Node or module to add
@@ -574,6 +642,7 @@ class DAGExecutor(nnx.Module):
     def _invalidate_execution_caches(self) -> None:
         """Invalidate derived execution caches after graph mutation."""
         self._runtime_state.jit_execute = None
+        self._runtime_state.fused_step_cache.clear()
         self._needs_rng = None
         self._has_stateful_ops = None
 
@@ -700,6 +769,7 @@ class DAGExecutor(nnx.Module):
             pipeline = from_source(source) >> normalize >> augment
             ```
         """
+        # _normalize_added_node handles OperatorModule → OperatorNode conversion
         return self.add(other)
 
     def __call__(self, data: Any, *, key: jax.Array | None = None) -> Any:
@@ -721,7 +791,7 @@ class DAGExecutor(nnx.Module):
 
         return self._execute(self.graph, data, key)
 
-    def __iter__(self) -> Iterator[Batch]:
+    def __iter__(self) -> Iterator[Any]:
         """Create iterator for the pipeline.
 
         Returns:
@@ -740,7 +810,7 @@ class DAGExecutor(nnx.Module):
         self._epoch_count += 1
         return self
 
-    def __next__(self) -> Batch:
+    def __next__(self) -> Any:
         """Get next batch from the pipeline.
 
         Returns:
@@ -753,6 +823,15 @@ class DAGExecutor(nnx.Module):
             raise ValueError("Call iter() first or use in for loop")
 
         return next(self._iterator)
+
+    def close(self) -> None:
+        """Close the active iterator and release streaming resources."""
+        if self._iterator is None:
+            return
+        close_fn = getattr(self._iterator, "close", None)
+        if callable(close_fn):
+            close_fn()
+        self._iterator = None
 
     def _can_use_batch_first(self) -> bool:
         """Check if batch-first execution path can be used.
@@ -795,7 +874,7 @@ class DAGExecutor(nnx.Module):
         """
         operators = []
 
-        def collect_operators(node: Node):
+        def collect_operators(node: Node) -> None:
             """Recursively collect operators from node graph."""
             if isinstance(node, OperatorNode):
                 operators.append(node)
@@ -870,40 +949,64 @@ class DAGExecutor(nnx.Module):
         Returns:
             Function: (data, states) -> (data, states)
         """
-        ops = tuple(op_node.operator for op_node in operators)
+        # In fused steps, all operators are OperatorModule (not BatcherModule)
+        ops = tuple(cast(OperatorModule, op_node.operator) for op_node in operators)
         has_stochastic = any(op.stochastic for op in ops)
 
         if has_stochastic:
             # Stochastic: pass operators as explicit arguments so nnx.jit
             # manages RNG state through to_tree/from_tree on every call.
+            # Use nnx.cached_partial to cache graph traversal of operators —
+            # only data/states are re-traced on each call, not the operator graph.
             @nnx.jit
-            def fused_step_stochastic(operators_tuple, data, states):
+            def fused_step_stochastic(operators_tuple: Any, data: Any, states: Any) -> Any:
                 for op in operators_tuple:
                     data, states = op._vmap_apply(data, states)
                 return data, states
 
-            def call_fused(data, states):
-                return fused_step_stochastic(ops, data, states)
-
-            return call_fused
+            return nnx.cached_partial(fused_step_stochastic, ops)
         else:
             # Deterministic: closure-capture for zero overhead.
             # No mutable NNX state (RNG) to manage, so closure capture is
             # safe and faster (operators become trace constants).
             @nnx.jit
-            def fused_step_deterministic(data, states):
+            def fused_step_deterministic(data: Any, states: Any) -> Any:
                 for op in ops:
                     data, states = op._vmap_apply(data, states)
                 return data, states
 
             return fused_step_deterministic
 
+    def _fused_step_cache_key(self, operators: list[OperatorNode]) -> tuple[Any, ...]:
+        """Build a stable operator-chain signature for fused-step caching."""
+        return tuple(
+            (
+                operator_node.operator.__class__.__qualname__,
+                id(operator_node.operator),
+                repr(getattr(operator_node.operator, "config", None)),
+            )
+            for operator_node in operators
+        )
+
+    def _get_or_create_fused_step(
+        self, operators: list[OperatorNode]
+    ) -> Callable[[dict, dict], tuple[dict, dict]] | None:
+        """Return cached fused-step for operator chain, compiling on first use."""
+        if not operators:
+            return None
+        cache_key = self._fused_step_cache_key(operators)
+        cached = self._runtime_state.fused_step_cache.get(cache_key)
+        if cached is None:
+            cached = self._make_fused_step(operators)
+            self._runtime_state.fused_step_cache[cache_key] = cached
+        return cached
+
     def _process_batch_from_source(
         self,
         batch_data: Any,
         operators: list[OperatorNode],
         fused_step: Callable | None = None,
-    ) -> Batch:
+    ) -> BatchView:
         """Convert raw batch data to Batch and apply operators.
 
         Uses a fused operator chain: passes raw dicts through all operators
@@ -923,7 +1026,7 @@ class DAGExecutor(nnx.Module):
             fused_step: Optional JIT-compiled step function from _make_fused_step.
 
         Returns:
-            Processed Batch after applying all operators.
+            Processed lightweight BatchView after applying all operators.
         """
         if operators:
             data = self._convert_to_jax_arrays(batch_data)
@@ -932,14 +1035,19 @@ class DAGExecutor(nnx.Module):
                 data, states = fused_step(data, states)
             else:
                 for op_node in operators:
-                    data, states = op_node.operator._apply_on_raw(data, states)
+                    op = cast(OperatorModule, op_node.operator)
+                    data, states = op._apply_on_raw(data, states)
         else:
             # No operators — keep as numpy for zero-copy memory efficiency.
             data = self._normalize_batch_data(batch_data)
             states = {}
 
-        # Single Batch creation at the end (eliminates N-1 intermediates)
-        return Batch.from_parts(data=data, states=states, validate=False)
+        if data:
+            batch_size = int(jax.tree.leaves(data)[0].shape[0])
+        else:
+            batch_size = 0
+
+        return BatchView(data=data, states=states, batch_size=batch_size)
 
     @staticmethod
     def _normalize_batch_data(batch_data: Any) -> dict:
@@ -969,7 +1077,7 @@ class DAGExecutor(nnx.Module):
 
         return {"data": batch_data}
 
-    def _create_batch_first_iterator(self) -> Iterator[Batch]:
+    def _create_batch_first_iterator(self) -> Iterator[BatchView]:
         """Create batch-first iterator for optimal performance.
 
         This method retrieves batches directly from the source using
@@ -984,32 +1092,53 @@ class DAGExecutor(nnx.Module):
         Yields:
             Batches created directly from source data.
         """
+        assert self._source_node is not None, "No source node configured"
+        assert self._batch_node is not None, "No batch node configured"
         source = self._source_node.source
         batch_size = self._batch_node.batch_size
         drop_remainder = self._batch_node.drop_remainder
         total_samples = len(source)
         operators = self._get_post_batch_operators()
 
-        if hasattr(source, "reset"):
-            source.reset()
+        reset_fn = getattr(source, "reset", None)
+        if reset_fn is not None:
+            reset_fn()
 
-        # Create JIT-compiled fused step for operator chains
-        fused_step = self._make_fused_step(operators) if operators else None
+        # Reuse compiled fused steps across epochs for unchanged operator chains.
+        fused_step = self._get_or_create_fused_step(operators)
+
+        # DataSourceModule subclasses provide get_batch at runtime
+        get_batch: Callable[..., Any] = getattr(source, "get_batch")
 
         num_complete_batches = total_samples // batch_size
         remainder = total_samples % batch_size
 
         for _ in range(num_complete_batches):
-            yield self._process_batch_from_source(
-                source.get_batch(batch_size), operators, fused_step
-            )
+            yield self._process_batch_from_source(get_batch(batch_size), operators, fused_step)
 
         if remainder > 0 and not drop_remainder:
-            yield self._process_batch_from_source(
-                source.get_batch(remainder), operators, fused_step
-            )
+            yield self._process_batch_from_source(get_batch(remainder), operators, fused_step)
 
-    def _create_iterator(self) -> Iterator[Batch]:
+    def _wrap_with_prefetch(self, raw_iter: Iterator[Any]) -> Iterator[Any]:
+        """Wrap an iterator with prefetch buffers if configured.
+
+        Returns:
+            The original iterator if prefetch is disabled, otherwise a
+            prefetch-wrapped iterator (optionally with device prefetch).
+        """
+        if self.prefetch_size <= 0:
+            return raw_iter
+
+        from datarax.control.prefetcher import DevicePrefetcher, Prefetcher
+
+        source_iter = Prefetcher(buffer_size=self.prefetch_size).prefetch(raw_iter)
+        if self.device_prefetch:
+            source_iter = DevicePrefetcher(buffer_size=max(self.prefetch_size // 2, 1)).prefetch(
+                source_iter
+            )
+        return source_iter
+
+    def _create_iterator(self) -> Iterator[Any]:
         """Create the actual iterator.
 
         Returns:
@@ -1019,25 +1148,30 @@ class DAGExecutor(nnx.Module):
         Falls back to element-by-element iteration for complex pipelines.
         Wraps with Prefetcher when prefetch_size > 0 for background loading.
         """
-        # Try batch-first path for optimal performance
         if self._can_use_batch_first():
-            raw_iter = self._create_batch_first_iterator()
-            if self.prefetch_size > 0:
-                from datarax.control.prefetcher import Prefetcher
+            yield from self._iterate_batch_first()
+            return
 
-                source_iter = Prefetcher(buffer_size=self.prefetch_size).prefetch(raw_iter)
-            else:
-                source_iter = raw_iter
+        yield from self._iterate_element_by_element()
+
+    def _iterate_batch_first(self) -> Iterator[Any]:
+        """Batch-first iteration path for optimal performance."""
+        raw_iter = self._create_batch_first_iterator()
+        source_iter = self._wrap_with_prefetch(raw_iter)
+        try:
             # Increment _iteration_count on the consumer side (not in
             # _process_batch_from_source) so prefetcher background thread
             # doesn't race ahead of the actual consumption count.
             for batch in source_iter:
                 self._iteration_count += 1
                 yield batch
-            return
+        finally:
+            close_fn = getattr(source_iter, "close", None)
+            if callable(close_fn):
+                close_fn()
 
-        # Fallback to element-by-element iteration
-        # (needed for complex pipelines with shuffle nodes, etc.)
+    def _iterate_element_by_element(self) -> Iterator[Any]:
+        """Element-by-element fallback for complex pipelines."""
         if self._source_node is None:
             raise RuntimeError("No data source node found in DAG")
         source_iter = iter(self._source_node)
@@ -1048,26 +1182,22 @@ class DAGExecutor(nnx.Module):
         self._cache = None
 
         try:
-            # Process through pipeline
             for element in source_iter:
-                # Get RNG key for this iteration
                 key = None
                 if self.rngs is not None:
                     self._iteration_count += 1
                     key = self.rngs()
 
-                # Execute pipeline
                 result = self._execute(self.graph, element, key)
-
-                # Yield if we got a result (batching might buffer)
                 if result is not None:
                     yield result
 
-            # Flush any remaining data from all buffered nodes
             yield from self._flush_all_buffers()
         finally:
-            # Restore cache for single-call operations
             self._cache = saved_cache
+            close_fn = getattr(source_iter, "close", None)
+            if callable(close_fn):
+                close_fn()
 
     def _execute(self, node: Node, data: Any, key: jax.Array | None = None) -> Any:
         """Execute a node in the graph.
@@ -1093,7 +1223,7 @@ class DAGExecutor(nnx.Module):
                 self._has_stateful_ops = self._detect_stateful_ops()
             can_cache = not self._has_stateful_ops
 
-        if can_cache:
+        if can_cache and self._cache is not None:
             cache_key = self._compute_cache_key(node, data)
             if cache_key in self._cache:
                 return self._cache[cache_key]
@@ -1105,7 +1235,7 @@ class DAGExecutor(nnx.Module):
             result = node(data, key=key)
 
         # Cache result if deterministic and stateless
-        if can_cache and result is not None and cache_key is not None:
+        if can_cache and result is not None and cache_key is not None and self._cache is not None:
             self._cache[cache_key] = result
 
         return result
@@ -1143,8 +1273,9 @@ class DAGExecutor(nnx.Module):
         while True:
             flushed_any = False
             for node in flushable_nodes:
-                if hasattr(node, "flush"):
-                    flushed = node.flush()
+                flush_fn = getattr(node, "flush", None)
+                if flush_fn is not None:
+                    flushed = flush_fn()
                     if flushed is not None:
                         flushed_any = True
                         yield flushed
@@ -1280,7 +1411,7 @@ class DAGExecutor(nnx.Module):
         """
         self._apply_fusion()
 
-        def execute_fn(node, data, key):
+        def execute_fn(node: Any, data: Any, key: Any) -> Any:
             return node(data, key=key)
 
         # donate_argnums=(1,) donates the `data` argument — XLA reuses its
@@ -1303,8 +1434,9 @@ class DAGExecutor(nnx.Module):
         node_id = id(node)
 
         if isinstance(data, jax.Array):
+            # Use shape/dtype + object identity — no device-to-host transfer
             data_hash = hashlib.md5(
-                f"{data.shape}:{data.dtype}:{float(data.sum())}".encode(), usedforsecurity=False
+                f"{data.shape}:{data.dtype}:{id(data)}".encode(), usedforsecurity=False
             ).hexdigest()
         elif isinstance(data, dict):
             parts = []
@@ -1324,7 +1456,7 @@ class DAGExecutor(nnx.Module):
         # Check for cycles (simplified check)
         visited = set()
 
-        def visit(node):
+        def visit(node: Any) -> None:
             if id(node) in visited:
                 raise ValueError("Cycle detected in graph")
             visited.add(id(node))
@@ -1400,7 +1532,7 @@ class DAGExecutor(nnx.Module):
         if "cache" in state and state["cache"] is not None:
             self._cache = state["cache"]
 
-    def collect_to_array(
+    def _collect_to_array(
         self,
         key: str = "image",
         device: jax.Device | None = None,  # type: ignore[name-defined]
@@ -1437,8 +1569,8 @@ class DAGExecutor(nnx.Module):
             from datarax import from_source
 
             pipeline = from_source(mnist_source, batch_size=64)
-            images = pipeline.collect_to_array(key="image")
-            labels = pipeline.collect_to_array(key="label")
+            images = pipeline._collect_to_array(key="image")
+            labels = pipeline._collect_to_array(key="label")
 
             # Use with JAX training loop
             def train_step(i, state):
@@ -1477,7 +1609,7 @@ class DAGExecutor(nnx.Module):
             self._cache.clear()
 
         # Clear node caches
-        def clear_node_cache(node):
+        def clear_node_cache(node: Any) -> None:
             if isinstance(node, CacheNode):
                 node.clear_cache()
             elif hasattr(node, "nodes"):
@@ -1486,7 +1618,7 @@ class DAGExecutor(nnx.Module):
 
         clear_node_cache(self.graph)
 
-    def visualize(self) -> str:
+    def _visualize(self) -> str:
         """Get text visualization of the pipeline.
 
         Returns:
@@ -1565,6 +1697,7 @@ def from_source(
     enforce_batch: bool = True,
     jit_compile: bool = False,
     prefetch_size: int = 2,
+    device_prefetch: bool = False,
 ) -> DAGExecutor:
     """Create a pipeline starting from a data source.
 
@@ -1574,12 +1707,16 @@ def from_source(
         enforce_batch: Whether to enforce batch-first processing
         jit_compile: Whether to JIT compile the pipeline
         prefetch_size: Number of batches to prefetch ahead (0 = disabled)
+        device_prefetch: Enable two-stage prefetch with async device transfer
 
     Returns:
         DAGExecutor with source
     """
     executor = DAGExecutor(
-        enforce_batch=enforce_batch, jit_compile=jit_compile, prefetch_size=prefetch_size
+        enforce_batch=enforce_batch,
+        jit_compile=jit_compile,
+        prefetch_size=prefetch_size,
+        device_prefetch=device_prefetch,
     )
     executor.add(source)
 

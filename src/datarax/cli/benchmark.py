@@ -7,17 +7,18 @@ import argparse
 import json
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import jax.numpy as jnp
-
 from calibrax.profiling import TimingCollector, TimingSample
+
 
 JSONValue = dict[str, "JSONValue"] | list["JSONValue"] | str | int | float | bool | None
 
 
-def _make_sync_fn():
+def _make_sync_fn() -> Callable[[Any], None]:
     """Create a JAX device sync function for accurate GPU timing."""
 
     def _sync(result: Any) -> None:

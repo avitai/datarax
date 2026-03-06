@@ -28,8 +28,8 @@ from datarax.core.operator import OperatorModule
 # ========================================================================
 
 
-@dataclass
-class ScaleConfig(OperatorConfig):
+@dataclass(frozen=True)
+class ScaleConfig(OperatorConfig):  # type: ignore[reportGeneralTypeIssues]
     """Config for deterministic scale operator."""
 
     factor: float = 2.0
@@ -39,12 +39,12 @@ class ScaleOperator(OperatorModule):
     """Deterministic operator: multiplies data by a factor."""
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
-        new_data = jax.tree.map(lambda x: x * self.config.factor, data)
+        new_data = jax.tree.map(lambda x: x * self.config.factor, data)  # type: ignore[reportAttributeAccessIssue]
         return new_data, state, metadata
 
 
-@dataclass
-class StochasticNoiseConfig(OperatorConfig):
+@dataclass(frozen=True)
+class StochasticNoiseConfig(OperatorConfig):  # type: ignore[reportGeneralTypeIssues]
     """Config for stochastic noise operator."""
 
     noise_scale: float = 0.1
@@ -63,7 +63,7 @@ class StochasticNoiseOperator(OperatorModule):
         # data_shapes is a PyTree of shape tuples; use is_leaf to treat tuples as atoms
         shapes = jax.tree.leaves(data_shapes, is_leaf=lambda x: isinstance(x, tuple))
         batch_size = shapes[0][0]
-        return jax.random.normal(rng, shape=(batch_size,)) * self.config.noise_scale
+        return jax.random.normal(rng, shape=(batch_size,)) * self.config.noise_scale  # type: ignore[reportAttributeAccessIssue]
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
         noise = random_params if random_params is not None else 0.0

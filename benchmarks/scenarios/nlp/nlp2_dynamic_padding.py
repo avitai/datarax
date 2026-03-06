@@ -8,13 +8,15 @@ Design ref: Section 7 of the benchmark report.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
 
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
-from benchmarks.scenarios.base import DEFAULT_SEED, ScenarioVariant, make_get_variant
+from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, ScenarioVariant
+
 
 SCENARIO_ID: str = "NLP-2"
 TIER1_VARIANT: str | None = None
@@ -32,7 +34,11 @@ _VARIANT_SPECS: dict[str, dict[str, Any]] = {
 }
 
 
-def _make_data_generator(dataset_size: int, max_len: int, seed: int = DEFAULT_SEED) -> callable:
+def _make_data_generator(
+    dataset_size: int,
+    max_len: int,
+    seed: int = DEFAULT_SEED,
+) -> Callable[[], dict[str, Any]]:
     """Create a lazy data generator for padded variable-length sequences."""
 
     def generate() -> dict[str, Any]:

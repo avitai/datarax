@@ -1,6 +1,6 @@
 # Benchmark Results
 
-Datarax includes a full benchmark suite that measures performance across 25 scenarios alongside 14 data loading frameworks. Results are analyzed with [calibrax](dashboard.md) and published to a W&B dashboard.
+Datarax includes a benchmark catalog of 28 scenarios and a canonical cross-framework comparison set of 13 scenarios across 15 adapters (Datarax + 14 peer frameworks). Results are analyzed with [calibrax](dashboard.md) and published to a W&B dashboard.
 
 ## Overview
 
@@ -85,7 +85,7 @@ uv pip install "calibrax[wandb] @ git+https://github.com/avitai/calibrax.git"
 
 === "Shell Script"
 
-    Run all scenarios across every installed adapter:
+    Run the profile-defined scenario set across every installed adapter:
 
     ```bash
     ./scripts/run_full_benchmark.sh             # CPU, 5 repetitions
@@ -111,9 +111,41 @@ uv pip install "calibrax[wandb] @ git+https://github.com/avitai/calibrax.git"
         --repetitions 3
     ```
 
+=== "Automated Vast Two-Pass"
+
+    Preferred for canonical GPU reports and backend-truth validation:
+
+    ```bash
+    ./.venv/bin/python -m benchmarks.automation.vast_orchestrator \
+        --infra vast \
+        --cluster datarax-vast-a100 \
+        --mode two-pass \
+        --on-demand \
+        --download-dir benchmark-data/reports/vast/latest \
+        --analyze \
+        --yes \
+        --no-spot-fallback \
+        --launch-timeout-sec 900 \
+        --stall-timeout-sec 300
+    ```
+
+    The orchestrator reports live progress from long `sky` commands using `peek:` lines (setup, launch, benchmark execution milestones). For on-demand runs, timeout handling checks cluster visibility and retries the same cluster before optional spot fallback. If launch output stalls, the orchestrator fails fast and automatically captures `sky queue` + `sky logs --tail` diagnostics. Stage runs are executed with explicit GPU reservation (`sky exec --gpus A100:1`) and artifact download logic auto-normalizes `scp` nested-layout edge cases.
+
+    Dry-run (no provisioning):
+
+    ```bash
+    ./.venv/bin/python -m benchmarks.automation.vast_orchestrator \
+        --infra vast \
+        --cluster datarax-vast-a100 \
+        --mode two-pass \
+        --download-dir benchmark-data/reports/vast/latest \
+        --dry-run \
+        --yes
+    ```
+
 === "CI Gate"
 
-    Lightweight regression gate — 6 Tier 1 scenarios, Datarax only:
+    Lightweight regression gate — 6 fast gate scenarios, Datarax only:
 
     ```bash
     uv run python -m benchmarks.runners.ci_runner --repetitions 3
@@ -128,7 +160,7 @@ Results are saved to a local `benchmark-data/` directory (not committed to versi
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--platform` | `cpu` | Target platform (see [Platforms](#platforms) below) |
-| `--scenarios` | all | Space-separated scenario IDs (see [Scenarios](#scenarios) below) |
+| `--scenarios` | profile include list | Space-separated scenario IDs (see [Scenarios](#scenarios) below). Explicit `--scenarios` overrides profile include/exclude lists. |
 | `--adapters` | all installed | Space-separated adapter names (see [Adapters](#adapters) below) |
 | `--profile` | `ci_cpu` | Hardware profile (see [Profiles](#hardware-profiles) below) |
 | `--repetitions` | `5` | Number of repetitions per scenario (median is selected) |
@@ -150,7 +182,7 @@ Results are saved to a local `benchmark-data/` directory (not committed to versi
 
 #### Scenarios
 
-25 scenarios across 9 categories. Pass any combination to `--scenarios`:
+28 scenarios across 10 categories. Pass any combination to `--scenarios`:
 
 | ID | Category | Description |
 |----|----------|-------------|
@@ -177,6 +209,9 @@ Results are saved to a local `benchmark-data/` directory (not committed to versi
 | `DIST-2` | Distributed | Device mesh configuration |
 | `PR-1` | Production | Checkpoint save/restore cycle |
 | `PR-2` | Production | Multi-epoch determinism verification |
+| `AUG-1` | Augmentation | Stochastic augmentation chain throughput |
+| `AUG-2` | Augmentation | Deterministic vs stochastic transform overhead |
+| `AUG-3` | Augmentation | Stochastic depth pipeline behavior |
 | `NNX-1` | Datarax Unique | Flax NNX module integration overhead |
 | `XFMR-1` | Datarax Unique | JIT + vmap transform acceleration |
 
@@ -188,7 +223,7 @@ Each adapter supports only the scenarios where it implements the required transf
 
 | `--adapters` value | Tier | Framework | Supported Scenarios |
 |--------------------|------|-----------|-------------------|
-| `Datarax` | -- | Datarax (always available) | All 25 |
+| `Datarax` | -- | Datarax (always available) | All 28 |
 | `Google Grain` | Tier 1 | Google Grain | CV-1, NLP-1, TAB-1, DIST-1, PR-1 |
 | `jax-dataloader` | Tier 1 | JAX DataLoader | CV-1 |
 | `tf.data` | Tier 2 | TensorFlow tf.data | CV-1, NLP-1, TAB-1, DIST-1, PR-1 |
@@ -212,11 +247,14 @@ Each adapter supports only the scenarios where it implements the required transf
 
 Profiles control warmup batches, measurement batches, and timeouts:
 
-| Profile | Backend | Warmup | Batches | Timeout |
-|---------|---------|--------|---------|---------|
-| `ci_cpu` | CPU | 3 | 20 | 5 min |
-| `gpu_a100` | GPU | 8 | 50 | -- |
-| `tpu_v5e` | TPU | 8 | 50 | -- |
+| Profile | Backend | Warmup | Batches | Timeout | Default Scenario Set |
+|---------|---------|--------|---------|---------|----------------------|
+| `ci_cpu` | CPU | 3 | 20 | 5 min | 6 scenarios (CI gate set) |
+| `gpu_a100` | GPU | 8 | 50 | -- | 13 core cross-framework scenarios |
+| `gpu_rtx4090` | GPU | 6 | 40 | -- | 13 core cross-framework scenarios |
+| `tpu_v5e` | TPU | 8 | 50 | -- | 10 TPU-compatible scenarios |
+
+Profile scenario include lists are enforced by default. Use `--scenarios` to run an explicit scenario subset outside the default profile list.
 
 ### 3. Analyze
 
@@ -252,4 +290,6 @@ All benchmarks use:
 2.  **Fixed warmup protocol** -- 3-8 batches depending on hardware profile
 3.  **Median-of-N selection** -- reduces sensitivity to outlier runs
 4.  **Environment fingerprinting** -- hardware/software version tracking
-5.  **JSON-per-run storage** -- every run saved locally for offline analysis
+5.  **Backend-truth recording** -- manifests include both `requested_platform` and `active_backend`
+6.  **JSON-per-run storage** -- every run saved locally for offline analysis
+7.  **CLI run-state visibility** -- orchestrator emits progress bars, heartbeat updates, live `peek:` command output, and failure summaries

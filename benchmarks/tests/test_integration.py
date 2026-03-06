@@ -10,6 +10,7 @@ Design ref: Section 11.1 of the benchmark report.
 from pathlib import Path
 
 import pytest
+from calibrax.profiling import TimingSample
 
 from benchmarks.adapters.base import IterationResult, ScenarioConfig
 from benchmarks.adapters.datarax_adapter import DataraxAdapter
@@ -17,7 +18,6 @@ from benchmarks.core.baselines import BaselineStore
 from benchmarks.core.environment import capture_environment
 from benchmarks.core.result_model import build_benchmark_result, throughput_elements_per_sec
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
-from calibrax.profiling import TimingSample
 
 
 class TestFullPipelineIntegration:
@@ -140,6 +140,7 @@ class TestFullPipelineIntegration:
         store.save("NLP-1_small", result)
         verdict = store.compare("NLP-1_small", result)
 
+        assert verdict is not None
         assert verdict["status"] == "pass"
 
         adapter.teardown()
@@ -184,6 +185,7 @@ class TestFullPipelineIntegration:
         )
 
         verdict = store.compare("regression_test", slow_result)
+        assert verdict is not None
         assert verdict["status"] == "failure"
         assert verdict["throughput_ratio"] < 1.0
 

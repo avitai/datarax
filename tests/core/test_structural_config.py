@@ -13,20 +13,7 @@ Test Categories:
 
 import pytest
 
-
-# NOTE: Import will fail initially (RED phase) - this is expected!
-try:
-    from datarax.core.config import DataraxModuleConfig, FrozenInstanceError, StructuralConfig
-except ImportError:
-    DataraxModuleConfig = None
-    FrozenInstanceError = None
-    StructuralConfig = None
-
-
-pytestmark = pytest.mark.skipif(
-    StructuralConfig is None,
-    reason="StructuralConfig not implemented yet (RED phase)",
-)
+from datarax.core.config import DataraxModuleConfig, FrozenInstanceError, StructuralConfig
 
 
 class TestStructuralConfigConstruction:
@@ -71,7 +58,7 @@ class TestStructuralConfigFrozenBehavior:
 
         # Attempting to modify should raise FrozenInstanceError
         with pytest.raises(FrozenInstanceError):
-            config.cacheable = True
+            config.cacheable = True  # type: ignore[reportAttributeAccessIssue]
 
     def test_frozen_enforces_compile_time_constants(self):
         """Test that frozen config represents compile-time constants."""
@@ -82,15 +69,16 @@ class TestStructuralConfigFrozenBehavior:
 
         # Should not be modifiable
         with pytest.raises(FrozenInstanceError):
-            config.cacheable = False
+            config.cacheable = False  # type: ignore[reportAttributeAccessIssue]
 
     def test_child_frozen_config(self):
         """Test that child configs inherit runtime freezing behavior."""
         from dataclasses import dataclass
+
         from datarax.core.config import FrozenInstanceError
 
-        @dataclass
-        class BatcherConfig(StructuralConfig):
+        @dataclass(frozen=True)
+        class BatcherConfig(StructuralConfig):  # type: ignore[reportGeneralTypeIssues]
             """Child config for batcher (inherits runtime freezing)."""
 
             batch_size: int = 32
@@ -101,10 +89,10 @@ class TestStructuralConfigFrozenBehavior:
 
         # Should be frozen (runtime immutability inherited from parent)
         with pytest.raises(FrozenInstanceError) as exc_info:
-            config.batch_size = 128
+            config.batch_size = 128  # type: ignore[reportAttributeAccessIssue]
 
-        # Error message should be informative
-        assert "frozen" in str(exc_info.value).lower()
+        # Error message should mention the field
+        assert "batch_size" in str(exc_info.value)
 
     def test_frozen_with_mutable_precomputed_stats(self):
         """Test that precomputed_stats dict itself is not frozen."""
@@ -113,7 +101,7 @@ class TestStructuralConfigFrozenBehavior:
 
         # Config is frozen
         with pytest.raises(FrozenInstanceError):
-            config.cacheable = True
+            config.cacheable = True  # type: ignore[reportAttributeAccessIssue]
 
         # But the dict inside can be modified (not ideal but acceptable)
         stats["count"] = 2000  # Modifying original dict
@@ -206,10 +194,11 @@ class TestStructuralConfigChildInheritance:
     def test_child_config_adds_fields(self):
         """Test child config can add structural-specific fields."""
         from dataclasses import dataclass
+
         from datarax.core.config import FrozenInstanceError
 
-        @dataclass
-        class BatcherConfig(StructuralConfig):
+        @dataclass(frozen=True)
+        class BatcherConfig(StructuralConfig):  # type: ignore[reportGeneralTypeIssues]
             """Batcher config with batch_size parameter (inherits runtime freezing)."""
 
             batch_size: int = 32
@@ -230,14 +219,14 @@ class TestStructuralConfigChildInheritance:
 
         # Frozen (runtime immutability inherited from parent)
         with pytest.raises(FrozenInstanceError):
-            config.batch_size = 128
+            config.batch_size = 128  # type: ignore[reportAttributeAccessIssue]
 
     def test_child_config_inherits_validation(self):
         """Test child config inherits all parent validation rules."""
         from dataclasses import dataclass
 
-        @dataclass
-        class ChildConfig(StructuralConfig):
+        @dataclass(frozen=True)
+        class ChildConfig(StructuralConfig):  # type: ignore[reportGeneralTypeIssues]
             """Simple child config (inherits runtime freezing)."""
 
             extra_param: int = 10
@@ -254,8 +243,8 @@ class TestStructuralConfigChildInheritance:
         """Test child config with convenience method for updates."""
         from dataclasses import dataclass, replace
 
-        @dataclass
-        class BatcherConfig(StructuralConfig):
+        @dataclass(frozen=True)
+        class BatcherConfig(StructuralConfig):  # type: ignore[reportGeneralTypeIssues]
             """Batcher config with convenience method (inherits runtime freezing)."""
 
             batch_size: int = 32
@@ -277,8 +266,8 @@ class TestStructuralConfigChildInheritance:
         """Test child validation works correctly with runtime freezing."""
         from dataclasses import dataclass
 
-        @dataclass
-        class SamplerConfig(StructuralConfig):
+        @dataclass(frozen=True)
+        class SamplerConfig(StructuralConfig):  # type: ignore[reportGeneralTypeIssues]
             """Sampler config with validation (inherits runtime freezing)."""
 
             num_samples: int = 100
@@ -319,7 +308,7 @@ class TestStructuralConfigDataclass:
 
         # Attempting modification should fail
         with pytest.raises(FrozenInstanceError):
-            config.cacheable = True
+            config.cacheable = True  # type: ignore[reportAttributeAccessIssue]
 
     def test_repr_shows_all_fields(self):
         """Test that __repr__ includes all field values."""

@@ -57,10 +57,11 @@ This module implements several critical patterns for vmap and JIT compatibility:
 These patterns ensure all strategies work correctly inside jax.vmap and jax.jit.
 """
 
+import logging
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from enum import Enum, auto
-from typing import Any
-from collections.abc import Callable
+from enum import auto, Enum
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -69,6 +70,9 @@ from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
 from datarax.core.operator import OperatorModule
+
+
+logger = logging.getLogger(__name__)
 
 
 class CompositionStrategy(Enum):
@@ -94,7 +98,7 @@ class CompositionStrategy(Enum):
     BRANCHING = auto()  # Route through different paths
 
 
-@dataclass
+@dataclass(frozen=True)
 class CompositeOperatorConfig(OperatorConfig):
     """Configuration for composite operators.
 
@@ -135,7 +139,7 @@ class CompositeOperatorConfig(OperatorConfig):
 
     # Core composition settings
     strategy: CompositionStrategy | None = field(default=None)
-    operators: list[OperatorModule] | None = field(default=None)
+    operators: Sequence[OperatorModule] | None = field(default=None)
 
     # Merge settings (for parallel/ensemble strategies)
     merge_strategy: str | None = None  # "concat", "stack", "sum", "mean", "dict"
@@ -149,7 +153,7 @@ class CompositeOperatorConfig(OperatorConfig):
 
     # Conditions (for conditional strategies)
     # Conditions can return Python bool or JAX scalar (converted automatically)
-    conditions: list[Callable[[PyTree], bool | jax.Array]] | None = None
+    conditions: Sequence[Callable[[PyTree], bool | jax.Array]] | None = None
     # Note: require_at_least_one feature removed - incompatible with vmap tracing
     # Future: Could validate static conditions at config time, but dynamic
     # data-dependent conditions cannot be checked inside vmap
@@ -187,6 +191,8 @@ class CompositeOperatorConfig(OperatorConfig):
         ]:
             if self.conditions is None:
                 raise ValueError(f"{self.strategy.name} requires conditions")
+            if self.operators is None:
+                raise ValueError("operators is required")
             if len(self.conditions) != len(self.operators):
                 raise ValueError("Number of conditions must match number of operators")
 
@@ -194,6 +200,8 @@ class CompositeOperatorConfig(OperatorConfig):
         """Validate weighted-parallel configuration and defaults."""
         if self.strategy != CompositionStrategy.WEIGHTED_PARALLEL:
             return
+        if self.operators is None:
+            raise ValueError("operators is required")
         if self.weight_key is not None:
             if self.learnable_weights:
                 raise ValueError("Cannot combine weight_key with learnable_weights")
@@ -213,6 +221,8 @@ class CompositeOperatorConfig(OperatorConfig):
 
     def _infer_child_stochastic(self) -> bool:
         """Infer whether any child operator is stochastic."""
+        if self.operators is None:
+            return False
         return any(getattr(op.config, "stochastic", False) for op in self.operators)
 
 
@@ -234,7 +244,7 @@ class CompositeOperatorModule(OperatorModule):
         config: CompositeOperatorConfig,
         *,
         rngs: nnx.Rngs | None = None,
-    ):
+    ) -> None:
         """Initialize composite operator.
 
         Args:
@@ -262,21 +272,22 @@ class CompositeOperatorModule(OperatorModule):
         # Initialize strategy implementation
         self._init_strategy()
 
-    def _init_strategy(self):
+    def _init_strategy(self) -> None:
         """Initialize the composition strategy implementation."""
         from datarax.operators.strategies import (
-            SequentialStrategy,
-            ConditionalSequentialStrategy,
-            ParallelStrategy,
-            WeightedParallelStrategy,
-            ConditionalParallelStrategy,
-            EnsembleStrategy,
             BranchingStrategy,
+            ConditionalParallelStrategy,
+            ConditionalSequentialStrategy,
+            EnsembleStrategy,
+            ParallelStrategy,
+            SequentialStrategy,
+            WeightedParallelStrategy,
         )
 
         if self.config.strategy == CompositionStrategy.SEQUENTIAL:
             self.strategy_impl = SequentialStrategy()
         elif self.config.strategy == CompositionStrategy.CONDITIONAL_SEQUENTIAL:
+            assert self.config.conditions is not None  # validated in config
             self.strategy_impl = ConditionalSequentialStrategy(self.config.conditions)
         elif self.config.strategy == CompositionStrategy.DYNAMIC_SEQUENTIAL:
             self.strategy_impl = SequentialStrategy()
@@ -289,6 +300,7 @@ class CompositeOperatorModule(OperatorModule):
         elif self.config.strategy == CompositionStrategy.WEIGHTED_PARALLEL:
             self.strategy_impl = WeightedParallelStrategy()
         elif self.config.strategy == CompositionStrategy.CONDITIONAL_PARALLEL:
+            assert self.config.conditions is not None  # validated in config
             self.strategy_impl = ConditionalParallelStrategy(
                 conditions=self.config.conditions,
                 merge_strategy=self.config.merge_strategy,
@@ -305,6 +317,7 @@ class CompositeOperatorModule(OperatorModule):
             mode = self.config.strategy.name.split("_")[1].lower()
             self.strategy_impl = EnsembleStrategy(mode=mode)
         elif self.config.strategy == CompositionStrategy.BRANCHING:
+            assert self.config.router is not None  # validated in config
             self.strategy_impl = BranchingStrategy(router=self.config.router)
         else:
             raise ValueError(f"Unknown strategy: {self.config.strategy}")
@@ -389,7 +402,7 @@ class CompositeOperatorModule(OperatorModule):
                 extra_params["weights"] = jnp.array(self.config.weights)
 
         # Stats callback
-        def stats_callback(index: int, stats: dict[str, Any]):
+        def stats_callback(index: int, stats: dict[str, Any]) -> None:
             # Updates NNX variable
             current_stats = self.operator_statistics.get_value()
             current_stats[f"operator_{index}"] = stats
@@ -428,7 +441,9 @@ class CompositeOperatorModule(OperatorModule):
         if self.config.strategy != CompositionStrategy.DYNAMIC_SEQUENTIAL:
             raise ValueError("remove_operator only available for DYNAMIC_SEQUENTIAL")
 
-        return self.operators.pop(index)
+        # DYNAMIC_SEQUENTIAL always uses nnx.List
+        operators = cast(nnx.List[OperatorModule], self.operators)
+        return operators.pop(index)
 
     def clear_operators(self) -> None:
         """Clear all operators from dynamic sequential."""

@@ -19,7 +19,7 @@ This module provides three monitoring components:
 ## Quick Start
 
 ```python
-from calibrax import AdvancedMonitor
+from calibrax.monitoring import AdvancedMonitor
 
 monitor = AdvancedMonitor()
 
@@ -41,4 +41,4 @@ print(f"Critical alerts: {summary['critical_alerts']}")
 
 ---
 
-::: calibrax.monitor
+::: calibrax.monitoring

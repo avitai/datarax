@@ -51,17 +51,20 @@ uv pip install "datarax[tfds]"
 # This MUST be set BEFORE importing tensorflow
 import os
 
+
 os.environ["CUDA_VISIBLE_DEVICES_FOR_TF"] = ""  # TF-specific GPU disable
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress all TF logs
 
 # Force TF to CPU-only mode BEFORE importing JAX
 import tensorflow as tf
 
+
 tf.config.set_visible_devices([], "GPU")
 
 # Now import JAX which will handle GPU
 import jax.numpy as jnp
 from flax import nnx
+
 
 # Conditionally import TFDS source
 try:
@@ -74,6 +77,7 @@ except ImportError as e:
 from datarax import from_source
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
+
 
 # %% [markdown]
 """

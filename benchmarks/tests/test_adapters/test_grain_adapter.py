@@ -8,7 +8,9 @@ import pytest
 
 from benchmarks.tests.test_adapters.conftest import assert_valid_iteration_result
 
+
 grain = pytest.importorskip("grain")
+pytest.importorskip("grain.sources", reason="Grain installation incomplete")
 
 
 class TestGrainAdapterProperties:
@@ -30,18 +32,12 @@ class TestGrainAdapterProperties:
 
     def test_supported_scenarios(self):
         from benchmarks.adapters.grain_adapter import GrainAdapter
+        from benchmarks.tests.test_adapters.conftest import assert_supported_scenarios
 
-        expected = {
-            "CV-1",
-            "NLP-1",
-            "TAB-1",
-            "DIST-1",
-            "PR-1",
-            "AUG-1",
-            "AUG-2",
-            "AUG-3",
-        }
-        assert GrainAdapter().supported_scenarios() == expected
+        assert_supported_scenarios(
+            GrainAdapter(),
+            must_include={"CV-1", "HCV-1", "NLP-1", "TAB-1", "HPC-1", "AUG-1"},
+        )
 
 
 class TestGrainAdapterLifecycle:

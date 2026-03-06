@@ -103,7 +103,7 @@ class DDSPDecoder(nnx.Module):
 Each operator extends `OperatorModule` directly:
 
 ```python
-@dataclass
+@dataclass(frozen=True)
 class ReverbConfig(OperatorConfig):
     ir_length: int = 16000  # 1 second at 16kHz
 

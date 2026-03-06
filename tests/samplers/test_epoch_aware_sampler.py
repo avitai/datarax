@@ -467,7 +467,9 @@ class TestEpochAwareSamplerCheckpointing:
         epoch = sampler2.current_epoch.get_value()
         num_epochs = sampler2.num_epochs.get_value()
         num_records = sampler2.num_records.get_value()
+        assert num_records is not None
         epoch_indices = sampler2.epoch_indices.get_value()
+        assert epoch_indices is not None
 
         # Manually iterate without calling __iter__ (which resets state)
         while True:
@@ -480,6 +482,7 @@ class TestEpochAwareSamplerCheckpointing:
                 sampler2.current_epoch.set_value(epoch)
                 sampler2._generate_epoch_indices()
                 epoch_indices = sampler2.epoch_indices.get_value()
+                assert epoch_indices is not None
                 idx = 0
             remaining_restored.append(epoch_indices[idx])
             idx += 1

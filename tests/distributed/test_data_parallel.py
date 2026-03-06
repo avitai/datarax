@@ -29,20 +29,20 @@ class TestCreateDataParallelSharding:
         """Test creating sharding with single device mesh."""
         mesh = DeviceMeshManager.create_data_parallel_mesh(num_devices=1)
         sharding = create_data_parallel_sharding(mesh)
-        assert sharding.spec == jax.sharding.PartitionSpec("data")
+        assert sharding.spec == jax.sharding.PartitionSpec("data")  # type: ignore[reportAttributeAccessIssue]
 
     def test_custom_data_axis(self):
         """Test creating sharding with custom axis name."""
         mesh = DeviceMeshManager.create_device_mesh([("batch", 1)])
         sharding = create_data_parallel_sharding(mesh, data_axis="batch")
-        assert sharding.spec == jax.sharding.PartitionSpec("batch")
+        assert sharding.spec == jax.sharding.PartitionSpec("batch")  # type: ignore[reportAttributeAccessIssue]
 
     @pytest.mark.skipif(jax.device_count() < 2, reason="Requires 2+ devices")
     def test_multi_device_sharding(self):
         """Test creating sharding across multiple devices."""
         mesh = DeviceMeshManager.create_data_parallel_mesh(num_devices=2)
         sharding = create_data_parallel_sharding(mesh)
-        assert sharding.spec == jax.sharding.PartitionSpec("data")
+        assert sharding.spec == jax.sharding.PartitionSpec("data")  # type: ignore[reportAttributeAccessIssue]
 
 
 class TestShardBatch:
@@ -54,7 +54,7 @@ class TestShardBatch:
         sharding = create_data_parallel_sharding(mesh)
         batch = {"inputs": jnp.ones((4, 2)), "targets": jnp.zeros((4,))}
 
-        result = shard_batch(batch, sharding)
+        result = shard_batch(batch, sharding)  # type: ignore[reportArgumentType]
 
         assert result["inputs"].shape == (4, 2)
         assert result["targets"].shape == (4,)
@@ -65,7 +65,7 @@ class TestShardBatch:
         sharding = create_data_parallel_sharding(mesh)
         batch = {"data": jnp.ones((4, 2)), "label": "test_string"}
 
-        result = shard_batch(batch, sharding)
+        result = shard_batch(batch, sharding)  # type: ignore[reportArgumentType]
 
         assert result["label"] == "test_string"
 
@@ -76,7 +76,7 @@ class TestShardBatch:
         sharding = create_data_parallel_sharding(mesh)
         batch = {"inputs": jnp.ones((4, 2)), "targets": jnp.zeros((4,))}
 
-        result = shard_batch(batch, sharding)
+        result = shard_batch(batch, sharding)  # type: ignore[reportArgumentType]
 
         assert result["inputs"].shape == (4, 2)
         assert result["targets"].shape == (4,)
@@ -166,7 +166,7 @@ class TestSpmdTrainStep:
         def loss_fn(m: nnx.Module, b: dict) -> jax.Array:
             return jnp.mean((m(b["x"]) - b["y"]) ** 2)
 
-        loss = spmd_train_step(model, optimizer, loss_fn, batch)
+        loss = spmd_train_step(model, optimizer, loss_fn, batch)  # type: ignore[reportArgumentType]
         assert jnp.isfinite(loss)
 
     def test_updates_parameters(self):
@@ -178,7 +178,7 @@ class TestSpmdTrainStep:
         def loss_fn(m: nnx.Module, b: dict) -> jax.Array:
             return jnp.mean((m(b["x"]) - b["y"]) ** 2)
 
-        spmd_train_step(model, optimizer, loss_fn, batch)
+        spmd_train_step(model, optimizer, loss_fn, batch)  # type: ignore[reportArgumentType]
         params_after = nnx.state(model, nnx.Param)
 
         # At least one parameter leaf must have changed
@@ -195,8 +195,8 @@ class TestSpmdTrainStep:
         def loss_fn(m: nnx.Module, b: dict) -> jax.Array:
             return jnp.mean((m(b["x"]) - b["y"]) ** 2)
 
-        loss_first = spmd_train_step(model, optimizer, loss_fn, batch)
+        loss_first = spmd_train_step(model, optimizer, loss_fn, batch)  # type: ignore[reportArgumentType]
         for _ in range(10):
-            loss_last = spmd_train_step(model, optimizer, loss_fn, batch)
+            loss_last = spmd_train_step(model, optimizer, loss_fn, batch)  # type: ignore[reportArgumentType]
 
         assert float(loss_last) < float(loss_first)

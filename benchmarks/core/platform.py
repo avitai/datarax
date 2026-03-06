@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 import jax
 
+
 if TYPE_CHECKING:
     from benchmarks.scenarios.base import ScenarioVariant
 

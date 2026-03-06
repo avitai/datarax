@@ -4,9 +4,10 @@ This module provides a unified range sampler that generates a sequence of intege
 Supports both static method usage and NNX module instantiation.
 """
 
+import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
-from collections.abc import Iterator
 
 import flax.nnx as nnx
 
@@ -15,7 +16,10 @@ from datarax.core.sampler import SamplerModule
 from datarax.typing import Element
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class RangeSamplerConfig(StructuralConfig):
     """Configuration for RangeSampler.
 
@@ -29,7 +33,7 @@ class RangeSamplerConfig(StructuralConfig):
     stop: int | None = None
     step: int = 1
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration after initialization."""
         # RangeSampler is always deterministic
         object.__setattr__(self, "stochastic", False)
@@ -75,7 +79,7 @@ class RangeSampler(SamplerModule):
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize a RangeSampler with config.
 
         Args:
@@ -212,8 +216,9 @@ class RangeSampler(SamplerModule):
                 self._current_position.set_value(sampler_state["current_position"])
 
             # Recalculate length
-            range_length = (self.stop - self.start) / self.step
-            self._length = max(0, int(range_length))
+            if self.stop is not None:
+                range_length = (self.stop - self.start) / self.step
+                self._length = max(0, int(range_length))
         else:
             # Alternative state format support
             if "start" in state:
@@ -224,8 +229,9 @@ class RangeSampler(SamplerModule):
                 self.step = state["step"]
 
             # Recalculate length
-            range_length = (self.stop - self.start) / self.step
-            self._length = max(0, int(range_length))
+            if self.stop is not None:
+                range_length = (self.stop - self.start) / self.step
+                self._length = max(0, int(range_length))
 
     def reset(self, seed: int | None = None) -> None:
         """Reset the sampler to the beginning.

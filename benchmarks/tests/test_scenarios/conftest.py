@@ -6,10 +6,11 @@ scenario test modules, eliminating duplication (DRY principle).
 
 from __future__ import annotations
 
+from calibrax.core import BenchmarkResult
+
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.adapters.datarax_adapter import DataraxAdapter
-from benchmarks.scenarios.base import ScenarioVariant, run_scenario
-from calibrax.core import BenchmarkResult
+from benchmarks.scenarios.base import run_scenario, ScenarioVariant
 
 
 def assert_valid_variant(variant: ScenarioVariant) -> None:

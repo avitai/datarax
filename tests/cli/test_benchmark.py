@@ -109,7 +109,7 @@ class TestSaveBenchmarkResults:
         output_path = tmp_path / "results.json"
         results = [1, 2, 3]  # Not a dict
 
-        save_benchmark_results(results, str(output_path))
+        save_benchmark_results(results, str(output_path))  # type: ignore[reportArgumentType]
 
         with open(output_path) as f:
             loaded = json.load(f)

@@ -23,7 +23,7 @@ class TestDefaultBatcher:
             return {"data": jnp.stack(batch)}
 
         config = DefaultBatcherConfig(stochastic=False)
-        batcher = DefaultBatcher(config, collate_fn=custom_collate, rngs=nnx.Rngs(0))
+        batcher = DefaultBatcher(config, collate_fn=custom_collate, rngs=nnx.Rngs(0))  # type: ignore[reportArgumentType]
         assert batcher.collate_fn == custom_collate
 
     def test_batch_arrays(self):
@@ -116,7 +116,7 @@ class TestDefaultBatcher:
             return jnp.sum(jnp.stack(batch))
 
         config = DefaultBatcherConfig(stochastic=False)
-        batcher = DefaultBatcher(config, collate_fn=custom_collate, rngs=nnx.Rngs(0))
+        batcher = DefaultBatcher(config, collate_fn=custom_collate, rngs=nnx.Rngs(0))  # type: ignore[reportArgumentType]
         data = [jnp.array(i) for i in range(9)]
 
         batches = list(batcher(iter(data), batch_size=3))

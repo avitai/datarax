@@ -75,6 +75,14 @@ class TestLoadHardwareProfile:
         assert isinstance(settings["num_batches"], int)
         assert isinstance(settings["warmup_batches"], int)
 
+    def test_loads_gpu_rtx4090_profile(self):
+        """The local RTX 4090 profile must be loadable."""
+        profile = load_hardware_profile("gpu_rtx4090")
+        settings = profile["profile"]
+        assert settings["backend"] == "gpu"
+        assert settings["num_batches"] > 0
+        assert settings["warmup_batches"] > 0
+
     def test_missing_profile_raises(self):
         """Loading a nonexistent profile raises FileNotFoundError."""
         with pytest.raises(FileNotFoundError):

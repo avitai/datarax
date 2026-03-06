@@ -1,6 +1,10 @@
 """State restoration helpers for NNX variables."""
 
+import logging
 from typing import Any
+
+
+logger = logging.getLogger(__name__)
 
 
 def restore_optional_variable_fields(

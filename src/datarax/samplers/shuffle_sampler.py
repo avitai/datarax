@@ -4,10 +4,11 @@ This module provides a unified sampler that shuffles the order of data access.
 Supports both static method usage and NNX module instantiation.
 """
 
+import logging
 import random
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
-from collections.abc import Iterator
 
 import flax.nnx as nnx
 import jax
@@ -17,7 +18,10 @@ from datarax.core.config import StructuralConfig
 from datarax.core.sampler import SamplerModule
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class ShuffleSamplerConfig(StructuralConfig):
     """Configuration for ShuffleSampler.
 
@@ -31,7 +35,7 @@ class ShuffleSamplerConfig(StructuralConfig):
     dataset_size: int | None = None
     seed: int | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration after initialization."""
         # ShuffleSampler is always stochastic
         object.__setattr__(self, "stochastic", True)
@@ -78,7 +82,7 @@ class ShuffleSampler(SamplerModule):
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize a ShuffleSampler with config.
 
         Args:
@@ -108,7 +112,7 @@ class ShuffleSampler(SamplerModule):
         if self.seed is not None:
             self._init_fallback_random_state()
 
-    def _init_fallback_random_state(self):
+    def _init_fallback_random_state(self) -> None:
         """Initialize the random state for fallback shuffling."""
         if self.seed is not None:
             self._fallback.rng = random.Random(self.seed)  # nosec B311

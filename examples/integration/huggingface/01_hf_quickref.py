@@ -58,6 +58,7 @@ from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import HFEagerConfig, HFEagerSource
 
+
 print(f"JAX devices: {jax.devices()}")
 
 # %% [markdown]
@@ -78,7 +79,6 @@ Key parameters:
 config = HFEagerConfig(
     name="mnist",
     split="train",
-    streaming=True,  # Stream data instead of downloading all
 )
 
 source = HFEagerSource(config, rngs=nnx.Rngs(0))
@@ -209,7 +209,7 @@ def main():
     print("=" * 50)
 
     # Load dataset
-    config = HFEagerConfig(name="mnist", split="train", streaming=True)
+    config = HFEagerConfig(name="mnist", split="train")
     source = HFEagerSource(config, rngs=nnx.Rngs(0))
 
     # Create pipeline with normalization

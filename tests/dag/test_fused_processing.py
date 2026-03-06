@@ -18,8 +18,8 @@ import numpy as np
 import pytest
 from flax import nnx
 
-from datarax.core.config import OperatorConfig, ElementOperatorConfig
-from datarax.core.element_batch import Batch
+from datarax.core.config import ElementOperatorConfig, OperatorConfig
+from datarax.core.element_batch import Batch, BatchView
 from datarax.core.operator import OperatorModule
 from datarax.dag.dag_executor import from_source
 from datarax.dag.nodes import OperatorNode
@@ -32,8 +32,10 @@ from datarax.sources import MemorySource, MemorySourceConfig
 # ========================================================================
 
 
-@dataclass
-class ScaleConfig(OperatorConfig):
+@dataclass(frozen=True)
+class ScaleConfig(OperatorConfig):  # type: ignore[reportGeneralTypeIssues]
+    """Configuration for scale operator."""
+
     factor: float = 2.0
 
 
@@ -41,12 +43,14 @@ class ScaleOperator(OperatorModule):
     """Deterministic operator: multiplies data by a factor."""
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
-        new_data = jax.tree.map(lambda x: x * self.config.factor, data)
+        new_data = jax.tree.map(lambda x: x * self.config.factor, data)  # type: ignore[reportAttributeAccessIssue]
         return new_data, state, metadata
 
 
-@dataclass
-class AddConfig(OperatorConfig):
+@dataclass(frozen=True)
+class AddConfig(OperatorConfig):  # type: ignore[reportGeneralTypeIssues]
+    """Configuration for add operator."""
+
     offset: float = 1.0
 
 
@@ -54,12 +58,12 @@ class AddOperator(OperatorModule):
     """Deterministic operator: adds offset to data."""
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
-        new_data = jax.tree.map(lambda x: x + self.config.offset, data)
+        new_data = jax.tree.map(lambda x: x + self.config.offset, data)  # type: ignore[reportAttributeAccessIssue]
         return new_data, state, metadata
 
 
-@dataclass
-class StochasticNoiseConfig(OperatorConfig):
+@dataclass(frozen=True)
+class StochasticNoiseConfig(OperatorConfig):  # type: ignore[reportGeneralTypeIssues]
     """Config for stochastic noise operator."""
 
     noise_scale: float = 0.1
@@ -76,7 +80,7 @@ class StochasticNoiseOperator(OperatorModule):
     def generate_random_params(self, rng, data_shapes):
         shapes = jax.tree.leaves(data_shapes, is_leaf=lambda x: isinstance(x, tuple))
         batch_size = shapes[0][0]
-        return jax.random.normal(rng, shape=(batch_size,)) * self.config.noise_scale
+        return jax.random.normal(rng, shape=(batch_size,)) * self.config.noise_scale  # type: ignore[reportAttributeAccessIssue]
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
         noise = random_params if random_params is not None else 0.0
@@ -411,6 +415,55 @@ class TestJitFusedChain:
             batches_2[0].get_data()["val"],
         )
 
+    def test_fused_step_cache_reuses_compiled_step(self, monkeypatch):
+        """Repeated epochs on unchanged chain reuse the same fused-step object."""
+        raw = [{"val": np.ones((4,), dtype=np.float32) * i} for i in range(16)]
+        source = MemorySource(MemorySourceConfig(shuffle=False), data=raw, rngs=nnx.Rngs(0))
+        scale_op = ScaleOperator(ScaleConfig(stochastic=False, factor=2.0))
+        pipeline = from_source(source, batch_size=4)
+        pipeline = pipeline >> OperatorNode(scale_op)
+
+        original_make_fused_step = pipeline._make_fused_step
+        calls = {"count": 0}
+
+        def counted_make_fused_step(operators):
+            calls["count"] += 1
+            return original_make_fused_step(operators)
+
+        monkeypatch.setattr(pipeline, "_make_fused_step", counted_make_fused_step)
+
+        list(pipeline)
+        list(pipeline)
+
+        assert calls["count"] == 1
+
+    def test_fused_step_cache_invalidates_on_graph_mutation(self, monkeypatch):
+        """Graph mutation should invalidate cached fused-step compilation."""
+        raw = [{"val": np.ones((4,), dtype=np.float32) * i} for i in range(16)]
+        source = MemorySource(MemorySourceConfig(shuffle=False), data=raw, rngs=nnx.Rngs(0))
+        scale_op = ScaleOperator(ScaleConfig(stochastic=False, factor=2.0))
+        add_op = AddOperator(AddConfig(stochastic=False, offset=1.0))
+        pipeline = from_source(source, batch_size=4)
+        pipeline = pipeline >> OperatorNode(scale_op)
+
+        original_make_fused_step = pipeline._make_fused_step
+        calls = {"count": 0}
+
+        def counted_make_fused_step(operators):
+            calls["count"] += 1
+            return original_make_fused_step(operators)
+
+        monkeypatch.setattr(pipeline, "_make_fused_step", counted_make_fused_step)
+
+        list(pipeline)  # compile chain: [scale]
+        list(pipeline)  # cache hit (no new compile)
+
+        pipeline = pipeline >> OperatorNode(add_op)  # mutate chain -> invalidate cache
+        list(pipeline)  # compile chain: [scale, add]
+        list(pipeline)  # cache hit for mutated chain
+
+        assert calls["count"] == 2
+
 
 # ========================================================================
 # Tests: Prefetching integration
@@ -467,3 +520,29 @@ class TestPrefetchIntegration:
 
         batches = list(pipeline)
         assert len(batches) == 2
+
+
+class TestBatchFirstReturnsBatchView:
+    """Batch-first path should return lightweight BatchView objects."""
+
+    def test_batch_first_path_returns_batch_view(self):
+        raw = [{"val": np.ones((4,), dtype=np.float32)} for _ in range(8)]
+        source = MemorySource(MemorySourceConfig(shuffle=False), data=raw, rngs=nnx.Rngs(0))
+        pipeline = from_source(source, batch_size=4)
+
+        first_batch = next(iter(pipeline))
+
+        assert isinstance(first_batch, BatchView)
+        assert first_batch.batch_size == 4
+        assert "val" in first_batch
+
+    def test_batch_view_can_materialize_full_batch(self):
+        raw = [{"val": np.ones((4,), dtype=np.float32)} for _ in range(8)]
+        source = MemorySource(MemorySourceConfig(shuffle=False), data=raw, rngs=nnx.Rngs(0))
+        pipeline = from_source(source, batch_size=4)
+
+        batch_view = next(iter(pipeline))
+        materialized = batch_view.to_batch()
+
+        assert isinstance(materialized, Batch)
+        assert jnp.allclose(materialized.get_data()["val"], batch_view.get_data()["val"])

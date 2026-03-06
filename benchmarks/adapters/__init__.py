@@ -12,6 +12,7 @@ import importlib
 
 from benchmarks.adapters.base import PipelineAdapter
 
+
 _ADAPTER_REGISTRY: dict[str, type[PipelineAdapter]] = {}
 
 
@@ -70,6 +71,7 @@ def _try_import(module_path: str) -> None:
 # Datarax adapter — always available (core framework)
 # Import triggers @register on DataraxAdapter
 from benchmarks.adapters.datarax_adapter import DataraxAdapter  # noqa: F401, E402
+
 
 # Peer framework adapters — import triggers @register
 _PEER_MODULES = [

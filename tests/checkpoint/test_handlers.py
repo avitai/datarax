@@ -201,7 +201,7 @@ class TestOrbaxCheckpointHandler(unittest.TestCase):
         if hasattr(restored_params, "get_value"):
             restored_params = restored_params.get_value()
 
-        self.assertTrue(jnp.array_equal(original_params, restored_params))
+        self.assertTrue(jnp.array_equal(original_params, restored_params))  # type: ignore[reportArgumentType]
 
     def test_versioning(self):
         """Test checkpoint versioning support."""

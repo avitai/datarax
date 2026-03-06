@@ -33,6 +33,7 @@ from benchmarks.core.result_model import (
 from benchmarks.runners.full_runner import ComparativeResults
 from benchmarks.visualization.charts import ChartGenerator
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -143,6 +144,7 @@ class FullExporter:
         project: str | None = None,
         entity: str | None = None,
     ) -> None:
+        """Initialize the full exporter with store and W&B configuration."""
         self._store = store
         self._project = project or "datarax-benchmarks"
         self._entity = entity
@@ -192,8 +194,8 @@ class FullExporter:
         for key, method in chart_methods:
             try:
                 figures[key] = method()
-            except Exception:
-                pass
+            except (ValueError, OSError, RuntimeError):
+                logger.warning("Chart generation failed for %s", key, exc_info=True)
         self._exporter.log_figures(figures)
         for fig in figures.values():
             plt.close(fig)
@@ -243,7 +245,7 @@ class FullExporter:
             logger.warning("wandb not installed - skipping artifact upload")
             return
 
-        if wandb.run is None:
+        if wandb.run is None:  # type: ignore[reportAttributeAccessIssue]
             logger.warning("No active W&B run - skipping artifact upload")
             return
 
@@ -255,7 +257,7 @@ class FullExporter:
             return
 
         name = f"benchmark-results-{run.commit or 'latest'}"
-        artifact = wandb.Artifact(
+        artifact = wandb.Artifact(  # type: ignore[reportAttributeAccessIssue]
             name=name,
             type="benchmark-results",
             metadata={
@@ -265,7 +267,7 @@ class FullExporter:
             },
         )
         artifact.add_dir(str(results_path))
-        wandb.log_artifact(artifact)
+        wandb.log_artifact(artifact)  # type: ignore[reportAttributeAccessIssue]
         logger.info("Uploaded results artifact: %s (%s)", name, results_path)
 
     def _log_stability(self, comparative: ComparativeResults) -> None:

@@ -1,18 +1,19 @@
+# pyright: reportOptionalMemberAccess=false
 """Tests for the Element and Batch modules."""
 
-import pytest
 import jax
 import jax.numpy as jnp
+import pytest
 from jax import tree_util
 
 from datarax.core.element_batch import (
-    Element,
     Batch,
     BatchOps,
     conditional_transform,
-    iterative_transform,
-    create_element,
     create_batch_from_arrays,
+    create_element,
+    Element,
+    iterative_transform,
 )
 from datarax.core.metadata import Metadata
 
@@ -28,7 +29,7 @@ def transform_batch(batch: Batch, scale: float = 1.0) -> Batch:
     return Batch.from_parts(
         data=transformed_data,
         states=batch.states.get_value(),
-        metadata_list=batch._metadata_list,
+        metadata_list=batch._metadata_list,  # type: ignore[reportArgumentType]
         validate=False,
     )
 
@@ -554,11 +555,11 @@ class TestControlFlow:
             return transform_batch(b, 0.5)
 
         # Test true condition
-        result_true = conditional_transform(batch, true_fn, false_fn, True)
+        result_true = conditional_transform(batch, true_fn, false_fn, True)  # type: ignore[reportArgumentType]
         assert jnp.array_equal(result_true.get_data()["x"], jnp.array([[2.0, 2.0, 2.0]]))
 
         # Test false condition
-        result_false = conditional_transform(batch, true_fn, false_fn, False)
+        result_false = conditional_transform(batch, true_fn, false_fn, False)  # type: ignore[reportArgumentType]
         assert jnp.array_equal(result_false.get_data()["x"], jnp.array([[0.5, 0.5, 0.5]]))
 
     def test_iterative_transform(self):

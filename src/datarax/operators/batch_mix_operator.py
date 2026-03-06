@@ -22,6 +22,7 @@ Key Features:
 - Full JAX compatibility (JIT, grad)
 """
 
+import logging
 from typing import Any
 
 import jax
@@ -32,6 +33,9 @@ from jaxtyping import PyTree
 from datarax.core.config import BatchMixOperatorConfig
 from datarax.core.element_batch import Batch
 from datarax.core.operator import OperatorModule
+
+
+logger = logging.getLogger(__name__)
 
 
 class BatchMixOperator(OperatorModule):
@@ -70,7 +74,7 @@ class BatchMixOperator(OperatorModule):
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize BatchMixOperator.
 
         Args:
@@ -198,8 +202,8 @@ class BatchMixOperator(OperatorModule):
         return Batch.from_parts(
             data=mixed_data,
             states=batch.states.get_value(),
-            metadata_list=batch._metadata_list,
-            batch_metadata=batch._batch_metadata,
+            metadata_list=batch._metadata_list.get_value(),
+            batch_metadata=batch._batch_metadata.get_value(),
             batch_state=batch.batch_state.get_value(),
             validate=False,
         )
@@ -292,8 +296,8 @@ class BatchMixOperator(OperatorModule):
         return Batch.from_parts(
             data=result_data,
             states=batch.states.get_value(),
-            metadata_list=batch._metadata_list,
-            batch_metadata=batch._batch_metadata,
+            metadata_list=batch._metadata_list.get_value(),
+            batch_metadata=batch._batch_metadata.get_value(),
             batch_state=batch.batch_state.get_value(),
             validate=False,
         )

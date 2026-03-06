@@ -8,8 +8,8 @@ The benchmarking module (`calibrax`) allows you to:
 
 1.  **Time pipeline throughput** with `TimingCollector` (GPU-sync aware).
 2.  **Profile GPU memory** with `GPUMemoryProfiler` and optimize with `MemoryOptimizer`.
-3.  **Compare configurations** side-by-side with `BenchmarkComparison`.
-4.  **Detect regressions** against historical baselines with `RegressionDetector`.
+3.  **Compare frameworks** with `rank_table()` and `compare_configurations()`.
+4.  **Detect regressions** against historical baselines with `detect_regressions()`.
 5.  **Monitor in real time** with `AdvancedMonitor` and `ProductionMonitor`.
 
 ## Quick Start
@@ -19,7 +19,7 @@ The benchmarking module (`calibrax`) allows you to:
 Use `TimingCollector` to measure samples/sec with optional GPU synchronization:
 
 ```python
-from calibrax import TimingCollector
+from calibrax.profiling import TimingCollector
 
 # CPU timing (pass sync_fn for GPU — see docstring)
 timer = TimingCollector()
@@ -38,7 +38,7 @@ print(f"First batch: {result.first_batch_time:.4f}s (includes JIT)")
 Use `GPUMemoryProfiler` to check GPU memory usage:
 
 ```python
-from calibrax import GPUMemoryProfiler
+from calibrax.profiling import GPUMemoryProfiler
 
 profiler = GPUMemoryProfiler()
 usage = profiler.get_memory_usage()
@@ -48,7 +48,7 @@ print(f"GPU memory used: {usage['gpu_memory_used_mb']:.1f} MB")
 Use `MemoryOptimizer` to analyze a pipeline's memory footprint:
 
 ```python
-from calibrax import MemoryOptimizer
+from calibrax.profiling import MemoryOptimizer
 
 optimizer = MemoryOptimizer()
 analysis = optimizer.analyze_pipeline_memory(pipeline_fn, sample_data)
@@ -59,21 +59,39 @@ for suggestion in analysis["suggestions"]:
 
 ### Comparative Benchmarking
 
-Use `BenchmarkComparison` to compare results from different configurations:
+Use `rank_table()` to rank frameworks by any metric:
 
 ```python
-from calibrax import BenchmarkComparison, BenchmarkResult
+from calibrax.analysis import rank_table
+from calibrax.core import Metric, MetricDef, MetricDirection, Point, Run
 
-comparison = BenchmarkComparison()
-comparison.add_result("baseline", baseline_result)
-comparison.add_result("optimized", optimized_result)
+run = Run(
+    points=(
+        Point(
+            name="CV-1/baseline",
+            scenario="CV-1",
+            tags={"framework": "baseline"},
+            metrics={"throughput": Metric(value=15000.0)},
+        ),
+        Point(
+            name="CV-1/optimized",
+            scenario="CV-1",
+            tags={"framework": "optimized"},
+            metrics={"throughput": Metric(value=20000.0)},
+        ),
+    ),
+    metric_defs={
+        "throughput": MetricDef(
+            name="throughput",
+            unit="elem/s",
+            direction=MetricDirection.HIGHER,
+        ),
+    },
+)
 
-ratios = comparison.get_performance_ratio()
-print(f"Best config: {comparison.best_config}")
-for name, ratio in ratios.items():
-    print(f"  {name}: {ratio:.2%} of best")
-
-comparison.save("comparison_results.json")
+rankings = rank_table(run, "throughput")
+for row in rankings:
+    print(f"  {row.rank}. {row.label}: {row.value:.0f} elem/s")
 ```
 
 ## Advanced Usage

@@ -12,9 +12,9 @@ import pytest
 
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.core.platform import (
+    can_run_scenario,
     estimate_scenario_memory_mb,
     get_available_memory_mb,
-    can_run_scenario,
 )
 from benchmarks.scenarios.base import ScenarioVariant
 

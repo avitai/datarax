@@ -45,14 +45,15 @@ VERSION: 2.0.0
 """
 
 import argparse
+import hashlib
 import json
+import logging
 import os
 import subprocess
 from collections import defaultdict
 from datetime import datetime
 from typing import Any
-import logging
-import hashlib
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")

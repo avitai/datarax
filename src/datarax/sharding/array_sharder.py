@@ -5,8 +5,9 @@ sharding of JAX arrays across devices. Supports both static method usage
 and NNX module instantiation.
 """
 
-from typing import Any
+import logging
 from collections.abc import Callable
+from typing import Any
 
 import flax.nnx as nnx
 import jax
@@ -19,6 +20,9 @@ from datarax.core.sharder import (
     SharderModuleConfig,
 )
 from datarax.typing import Batch
+
+
+logger = logging.getLogger(__name__)
 
 
 class ArraySharder(SharderModule):
@@ -34,7 +38,7 @@ class ArraySharder(SharderModule):
         config: SharderModuleConfig | None = None,
         *,
         rngs: nnx.Rngs | None = None,
-    ):
+    ) -> None:
         """Initialize the ArraySharder.
 
         Args:

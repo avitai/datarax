@@ -1,37 +1,38 @@
+# pyright: reportArgumentType=false, reportReturnType=false
 """Full test suite for DAG nodes.
 
 Written FIRST following TDD principles.
 """
 
-import pytest
-
-import jax
-import jax.numpy as jnp
-import flax.nnx as nnx
 from collections.abc import Iterator
 
+import flax.nnx as nnx
+import jax
+import jax.numpy as jnp
+import pytest
+
+from datarax.core.config import StructuralConfig
+from datarax.core.data_source import DataSourceModule
+from datarax.core.element_batch import create_batch_from_arrays
+from datarax.core.module import DataraxModule
+from datarax.core.operator import OperatorModule
 from datarax.dag.nodes import (
-    Node,
-    DataSourceNode,
     BatchNode,
-    OperatorNode,
-    ShuffleNode,
     CacheNode,
-    Sequential,
-    Parallel,
-    RebatchNode,
+    DataLoader,
+    dataloader,
+    DataSourceNode,
     DifferentiableRebatchImpl,
     FastRebatchImpl,
     GradientTransparentRebatchImpl,
-    dataloader,
-    DataLoader,
+    Node,
+    OperatorNode,
+    Parallel,
+    RebatchNode,
+    Sequential,
+    ShuffleNode,
 )
-from datarax.core.element_batch import create_batch_from_arrays
-from datarax.core.data_source import DataSourceModule
-from datarax.core.operator import OperatorModule
-from datarax.core.config import StructuralConfig
 from datarax.typing import Batch, Element
-from datarax.core.module import DataraxModule
 
 
 class MockDataSource(DataSourceModule):
@@ -379,8 +380,12 @@ class TestShuffleNode:
 
         # Flush both
         for _ in range(5):
-            outputs1.append(node1.flush()["id"])
-            outputs2.append(node2.flush()["id"])
+            flushed1 = node1.flush()
+            flushed2 = node2.flush()
+            assert flushed1 is not None
+            assert flushed2 is not None
+            outputs1.append(flushed1["id"])
+            outputs2.append(flushed2["id"])
 
         # Should produce same order
         assert outputs1 == outputs2
@@ -508,7 +513,7 @@ class TestIntegration:
             create_mock_operator(factor=2.0, rngs=nnx.Rngs()), name="test_transform"
         )
 
-        source >> batch >> transform
+        _pipeline = source >> batch >> transform
 
         # Execute pipeline
         results = []
@@ -1136,11 +1141,11 @@ class TestImplementationSpecificFeatures:
 def test_module_imports() -> None:
     """Test that all expected exports are available."""
     from datarax.dag.nodes import (
-        RebatchNode,
         DifferentiableRebatchImpl,
         FastRebatchImpl,
         GradientTransparentRebatchImpl,
         rebatch,
+        RebatchNode,
     )
 
     assert RebatchNode is not None
@@ -1368,8 +1373,8 @@ class TestDataLoaderIntegration:
 
     def test_dataloader_composition_with_transforms(self):
         """Test DataLoader composition with transform nodes."""
-        from datarax.dag.nodes import OperatorNode
         from datarax.core.config import DataraxModuleConfig
+        from datarax.dag.nodes import OperatorNode
 
         class SimpleTransform(DataraxModule):
             def __init__(self):

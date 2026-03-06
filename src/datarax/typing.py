@@ -5,15 +5,20 @@ checkpointing protocols used throughout the codebase.
 """
 
 from __future__ import annotations
-from typing import Any, Protocol, TypeAlias, TypeVar, runtime_checkable
+
+import logging
 from collections.abc import Callable
+from typing import Any, Protocol, runtime_checkable, TypeAlias, TypeVar
 
 import jax
 
 # Import concrete implementations
-from datarax.core.element_batch import Element as ElementImpl
-from datarax.core.element_batch import Batch as BatchImpl
+from datarax.core.element_batch import Batch as BatchImpl, Element as ElementImpl
 from datarax.core.metadata import Metadata
+
+
+logger = logging.getLogger(__name__)
+
 
 # Type aliases for implementations
 Element: TypeAlias = ElementImpl

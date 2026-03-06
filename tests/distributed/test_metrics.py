@@ -173,7 +173,7 @@ class TestCollectFromDevices:
         """Test that scalar arrays are kept as-is."""
         metrics = {"scalar": jnp.array(1.0)}
         result = collect_from_devices(metrics)
-        assert float(result["scalar"]) == 1.0
+        assert float(result["scalar"]) == 1.0  # type: ignore[reportArgumentType]
 
     def test_non_array_unchanged(self):
         """Test that non-array values pass through."""

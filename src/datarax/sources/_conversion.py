@@ -13,12 +13,16 @@ Key Functions:
 
 from __future__ import annotations
 
-from typing import Any
+import logging
 from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+
+
+logger = logging.getLogger(__name__)
 
 
 # DLPack-compatible dtypes for TensorFlow->JAX zero-copy transfer

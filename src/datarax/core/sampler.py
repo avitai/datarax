@@ -5,13 +5,17 @@ that use flax.nnx.Module for state management and JAX transformation
 compatibility.
 """
 
-from typing import Any
+import logging
 from collections.abc import Iterator
+from typing import Any
 
 from flax import nnx
 
-from datarax.core.structural import StructuralModule
 from datarax.core.config import StructuralConfig
+from datarax.core.structural import StructuralModule
+
+
+logger = logging.getLogger(__name__)
 
 
 class SamplerModule(StructuralModule):
@@ -38,7 +42,7 @@ class SamplerModule(StructuralModule):
         class SequentialSamplerConfig(StructuralConfig):
             num_records: int = 100
             num_epochs: int = 1
-        SequentialSamplerConfig = dataclass(SequentialSamplerConfig)
+        SequentialSamplerConfig = dataclass(frozen=True)(SequentialSamplerConfig)
 
         class SequentialSamplerModule(SamplerModule):
             def process(self, dataset_size):
@@ -56,7 +60,7 @@ class SamplerModule(StructuralModule):
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize SamplerModule with config.
 
         Args:
@@ -93,9 +97,9 @@ class SamplerModule(StructuralModule):
         """
         # Priority 1: Precomputed stats (static)
         if self.config.precomputed_stats is not None:
-            # Handle both nnx.Variable and dict
+            # Handle both nnx.Variable and dict (runtime duck-type check)
             if hasattr(self.config.precomputed_stats, "get_value"):
-                return self.config.precomputed_stats.get_value()
+                return self.config.precomputed_stats.get_value()  # type: ignore[union-attr]
             return self.config.precomputed_stats
 
         # Priority 2: Dynamic computation via batch_stats_fn

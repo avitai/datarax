@@ -15,11 +15,13 @@ Design ref: v2 optimization -- stochastic JIT support.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
-from benchmarks.scenarios.base import DEFAULT_SEED, ScenarioVariant, make_get_variant
+from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, ScenarioVariant
+
 
 SCENARIO_ID: str = "AUG-1"
 """Unique scenario identifier."""
@@ -30,7 +32,13 @@ TIER1_VARIANT: str | None = "small"
 _TRANSFORMS: list[str] = ["Normalize", "GaussianNoise", "RandomBrightness"]
 
 
-def _make_data_generator(dataset_size: int, h: int, w: int, c: int, seed: int) -> callable:
+def _make_data_generator(
+    dataset_size: int,
+    h: int,
+    w: int,
+    c: int,
+    seed: int,
+) -> Callable[[], dict[str, Any]]:
     """Return a lazy data generator for uint8 images."""
 
     def _generate() -> dict[str, Any]:

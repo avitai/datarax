@@ -71,15 +71,16 @@ uv pip install "datarax[data]"
 from flax import nnx
 
 from datarax.samplers import (
-    SequentialSamplerModule,
-    SequentialSamplerConfig,
-    ShuffleSampler,
-    ShuffleSamplerConfig,
+    EpochAwareSamplerConfig,
+    EpochAwareSamplerModule,
     RangeSampler,
     RangeSamplerConfig,
-    EpochAwareSamplerModule,
-    EpochAwareSamplerConfig,
+    SequentialSamplerConfig,
+    SequentialSamplerModule,
+    ShuffleSampler,
+    ShuffleSamplerConfig,
 )
+
 
 print("Advanced Sampling Tutorial")
 print("=" * 50)

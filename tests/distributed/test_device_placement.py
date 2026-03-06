@@ -15,9 +15,9 @@ from jax.sharding import Mesh, NamedSharding, PartitionSpec, SingleDeviceShardin
 from datarax.distributed.device_placement import (
     BatchSizeRecommendation,
     DevicePlacement,
-    HardwareType,
     distribute_batch,
     get_batch_size_recommendation,
+    HardwareType,
     place_on_device,
 )
 

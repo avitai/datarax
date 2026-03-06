@@ -1,9 +1,15 @@
 """Base DAG node with operator composition support."""
 
 from __future__ import annotations
+
+import logging
+from typing import Any
+
 import flax.nnx as nnx
 import jax
-from typing import Any
+
+
+logger = logging.getLogger(__name__)
 
 
 class Node(nnx.Module):
@@ -23,7 +29,7 @@ class Node(nnx.Module):
         outputs: List of output nodes this node feeds into.
     """
 
-    def __init__(self, name: str | None = None):
+    def __init__(self, name: str | None = None) -> None:
         """Initialize node.
 
         Args:

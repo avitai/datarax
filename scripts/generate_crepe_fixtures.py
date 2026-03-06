@@ -18,6 +18,7 @@ import pathlib
 
 import numpy as np
 
+
 OUTPUT_DIR = pathlib.Path(__file__).parent.parent / "tests" / "fixtures" / "crepe"
 SAMPLE_RATE = 16000
 
@@ -37,13 +38,14 @@ def generate_test_signals():
     for name, sig in signals.items():
         if name != "silence":
             mean = np.mean(sig)
-            std = max(np.std(sig), 1e-8)
+            std = max(float(np.std(sig)), 1e-8)
             signals[name] = (sig - mean) / std
 
     return signals
 
 
 def main():
+    """Generate CREPE reference fixtures using the original TensorFlow model."""
     try:
         import crepe
     except ImportError:
@@ -75,7 +77,7 @@ def main():
 
         # Decode using CREPE's own decoding
         cents_mapping = np.linspace(0, 7180, 360) + 1997.3794084376191
-        center = np.argmax(probs[0])
+        center = int(np.argmax(probs[0]))
         conf = np.max(probs[0])
 
         # Local weighted average (matching CREPE's decode)

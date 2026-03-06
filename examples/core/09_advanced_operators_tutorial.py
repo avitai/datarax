@@ -73,14 +73,6 @@ from flax import nnx
 
 from datarax import from_source
 from datarax.dag.nodes import OperatorNode
-from datarax.operators.probabilistic_operator import (
-    ProbabilisticOperator,
-    ProbabilisticOperatorConfig,
-)
-from datarax.operators.selector_operator import (
-    SelectorOperator,
-    SelectorOperatorConfig,
-)
 from datarax.operators.modality.image import (
     BrightnessOperator,
     BrightnessOperatorConfig,
@@ -93,7 +85,16 @@ from datarax.operators.modality.image.patch_dropout_operator import (
     PatchDropoutOperator,
     PatchDropoutOperatorConfig,
 )
+from datarax.operators.probabilistic_operator import (
+    ProbabilisticOperator,
+    ProbabilisticOperatorConfig,
+)
+from datarax.operators.selector_operator import (
+    SelectorOperator,
+    SelectorOperatorConfig,
+)
 from datarax.sources import MemorySource, MemorySourceConfig
+
 
 print(f"JAX version: {jax.__version__}")
 print(f"Devices: {jax.devices()}")

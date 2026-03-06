@@ -52,10 +52,12 @@ uv pip install "datarax[tfds]" flax optax matplotlib
 # GPU Memory Configuration
 import os
 
+
 os.environ["CUDA_VISIBLE_DEVICES_FOR_TF"] = ""
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import tensorflow as tf
+
 
 tf.config.set_visible_devices([], "GPU")
 
@@ -81,6 +83,7 @@ from datarax.operators.modality.image import (
     NoiseOperatorConfig,
 )
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
+
 
 print(f"JAX backend: {jax.default_backend()}")
 print(f"JAX devices: {jax.devices()}")
@@ -335,6 +338,7 @@ class MNISTClassifier(nnx.Module):
     """Simple CNN for MNIST classification."""
 
     def __init__(self, rngs: nnx.Rngs):
+        """Initialize MNISTClassifier."""
         # Convolutional layers
         self.conv1 = nnx.Conv(1, 32, kernel_size=(3, 3), padding="SAME", rngs=rngs)
         self.conv2 = nnx.Conv(32, 64, kernel_size=(3, 3), padding="SAME", rngs=rngs)
@@ -344,6 +348,7 @@ class MNISTClassifier(nnx.Module):
         self.dense2 = nnx.Linear(128, NUM_CLASSES, rngs=rngs)
 
     def __call__(self, x: jax.Array) -> jax.Array:
+        """Forward pass through conv blocks, flatten, and dense layers."""
         # Conv block 1: Conv -> ReLU -> MaxPool
         x = self.conv1(x)
         x = nnx.relu(x)
@@ -401,7 +406,7 @@ def train_step(model: MNISTClassifier, optimizer: nnx.Optimizer, batch: dict) ->
 
 
 @nnx.jit
-def eval_step(model: MNISTClassifier, batch: dict) -> tuple[jax.Array, jax.Array]:
+def eval_step(model: MNISTClassifier, batch: dict) -> tuple[jax.Array, int]:
     """Single evaluation step."""
     images = batch["image"]
     labels = batch["label"]
@@ -566,7 +571,10 @@ plt.figure(figsize=(10, 6))
 plt.plot(batch_throughputs, alpha=0.5)
 avg_throughput = np.mean(batch_throughputs)
 plt.axhline(
-    y=avg_throughput, color="r", linestyle="--", label=f"Average: {avg_throughput:.0f} samples/s"
+    y=float(avg_throughput),
+    color="r",
+    linestyle="--",
+    label=f"Average: {avg_throughput:.0f} samples/s",
 )
 plt.xlabel("Batch")
 plt.ylabel("Throughput (samples/second)")

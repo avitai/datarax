@@ -23,6 +23,7 @@ Examples:
 
     Stochastic audio operator with learnable parameters:
 
+
     ```python
     config = ModalityOperatorConfig(
         field_key="waveform",
@@ -33,6 +34,7 @@ Examples:
     ```
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -45,7 +47,10 @@ from datarax.core.config import OperatorConfig
 from datarax.core.operator import OperatorModule
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class ModalityOperatorConfig(OperatorConfig):
     """Configuration for modality-specific operators.
 
@@ -127,7 +132,7 @@ class ModalityOperatorConfig(OperatorConfig):
     # Domain-specific validation rules (handled by subclasses)
     validate_domain_constraints: bool = field(default=True, kw_only=True)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration parameters.
 
         Validates:
@@ -260,7 +265,7 @@ class ModalityOperator(OperatorModule):
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize ModalityOperator.
 
         Args:

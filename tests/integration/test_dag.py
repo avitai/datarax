@@ -11,8 +11,8 @@ class TestDAGIntegration:
 
     def test_mnist_pipeline(self):
         """Test realistic MNIST pipeline with transforms."""
-        from datarax.sources.memory_source import MemorySource, MemorySourceConfig
         from datarax.operators import ElementOperator, ElementOperatorConfig
+        from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
         # Create data
         data = [{"image": jnp.ones((28, 28, 1)), "label": i} for i in range(100)]
@@ -103,6 +103,7 @@ class TestDAGIntegration:
     def test_performance(self):
         """Test pipeline performance."""
         import time
+
         from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
         # Large dataset

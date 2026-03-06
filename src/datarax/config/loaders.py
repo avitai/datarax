@@ -4,15 +4,19 @@ This module provides functions for loading and saving TOML configuration files
 for Datarax pipelines and components.
 """
 
+import logging
 from pathlib import Path
 from typing import Any
 
 import tomli_w  # type: ignore
 
+
 try:
     import tomllib  # type: ignore
 except ImportError:
     import tomli as tomllib  # type: ignore
+
+logger = logging.getLogger(__name__)
 
 
 def load_toml(config_path: str | Path, encoding: str = "utf-8") -> dict[str, Any]:

@@ -8,8 +8,12 @@ small_image_data, nlp1_small_config, small_token_data) and
 benchmarks/tests/test_adapters/conftest.py (mm1_small_config, etc.).
 """
 
+from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.adapters.datarax_adapter import DataraxAdapter
-from benchmarks.tests.test_adapters.conftest import assert_valid_iteration_result
+from benchmarks.tests.test_adapters.conftest import (
+    assert_supported_scenarios,
+    assert_valid_iteration_result,
+)
 
 
 class TestDataraxAdapterProperties:
@@ -29,13 +33,10 @@ class TestDataraxAdapterProperties:
         assert adapter.is_available() is True
 
     def test_supported_scenarios(self):
-        adapter = DataraxAdapter()
-        scenarios = adapter.supported_scenarios()
-        assert isinstance(scenarios, set)
-        assert "CV-1" in scenarios
-        assert "NLP-1" in scenarios
-        # Datarax supports all 28 scenarios (25 original + 3 AUG)
-        assert len(scenarios) == 28
+        assert_supported_scenarios(
+            DataraxAdapter(),
+            must_include={"CV-1", "NLP-1", "TAB-1", "HCV-1", "HPC-1", "AUG-1"},
+        )
 
 
 class TestDataraxAdapterLifecycle:
@@ -72,6 +73,27 @@ class TestDataraxAdapterLifecycle:
 
         adapter.teardown()
 
+    def test_warmup_consumes_exact_num_batches(self, cv1_small_config, small_image_data):
+        adapter = DataraxAdapter()
+        adapter.setup(cv1_small_config, small_image_data)
+        assert adapter._pipeline._iteration_count == 0  # type: ignore[reportAttributeAccessIssue]
+
+        adapter.warmup(num_batches=2)
+
+        assert adapter._pipeline._iteration_count == 2  # type: ignore[reportAttributeAccessIssue]
+        adapter.teardown()
+
+    def test_iterate_consumes_exact_num_batches(self, cv1_small_config, small_image_data):
+        adapter = DataraxAdapter()
+        adapter.setup(cv1_small_config, small_image_data)
+        assert adapter._pipeline._iteration_count == 0  # type: ignore[reportAttributeAccessIssue]
+
+        result = adapter.iterate(num_batches=3)
+
+        assert result.num_batches == 3
+        assert adapter._pipeline._iteration_count == 3  # type: ignore[reportAttributeAccessIssue]
+        adapter.teardown()
+
     def test_iterate_total_bytes_positive(self, cv1_small_config, small_image_data):
         adapter = DataraxAdapter()
         adapter.setup(cv1_small_config, small_image_data)
@@ -101,4 +123,30 @@ class TestDataraxAdapterNLP:
         assert result.num_batches > 0
         assert result.num_elements > 0
 
+        adapter.teardown()
+
+
+class TestDataraxAdapterPrefetchPolicy:
+    """Benchmark adapter should control prefetch policy explicitly."""
+
+    def test_setup_defaults_prefetch_to_two(self, cv1_small_config, small_image_data):
+        adapter = DataraxAdapter()
+        adapter.setup(cv1_small_config, small_image_data)
+        assert adapter._pipeline.prefetch_size == 2  # type: ignore[reportAttributeAccessIssue]
+        adapter.teardown()
+
+    def test_setup_prefetch_override_from_extra(self, cv1_small_config, small_image_data):
+        adapter = DataraxAdapter()
+        override_config = ScenarioConfig(
+            scenario_id=cv1_small_config.scenario_id,
+            dataset_size=cv1_small_config.dataset_size,
+            element_shape=cv1_small_config.element_shape,
+            batch_size=cv1_small_config.batch_size,
+            transforms=cv1_small_config.transforms,
+            num_workers=cv1_small_config.num_workers,
+            seed=cv1_small_config.seed,
+            extra={**cv1_small_config.extra, "prefetch_size": 4},
+        )
+        adapter.setup(override_config, small_image_data)
+        assert adapter._pipeline.prefetch_size == 4  # type: ignore[reportAttributeAccessIssue]
         adapter.teardown()

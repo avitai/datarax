@@ -10,19 +10,9 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
-# Import under test — will fail in RED phase
-try:
-    from datarax.operators.modality.audio.f0_operator import (
-        CrepeF0Config,
-        CrepeF0Operator,
-    )
-except ImportError:
-    CrepeF0Config = None
-    CrepeF0Operator = None
-
-pytestmark = pytest.mark.skipif(
-    CrepeF0Operator is None,
-    reason="CrepeF0Operator not implemented yet (RED phase)",
+from datarax.operators.modality.audio.f0_operator import (
+    CrepeF0Config,
+    CrepeF0Operator,
 )
 
 

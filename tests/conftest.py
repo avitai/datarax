@@ -1,10 +1,11 @@
 """Test configuration for Datarax."""
 
+import importlib.util
 import os
 import platform
-import importlib.util
 import sys
 from typing import Any
+
 
 # Detect platform
 IS_MACOS = platform.system() == "Darwin"
@@ -66,6 +67,7 @@ _configure_test_jax_platforms()
 import jax
 import jax.numpy as jnp
 import pytest
+
 
 # Pre-import Deep Lake before TensorFlow to avoid fatal OpenSSL conflict.
 # See benchmarks/adapters/_preload.py for the full explanation.

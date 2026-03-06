@@ -58,6 +58,7 @@ from datarax.monitoring.reporters import ConsoleReporter
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
+
 # %% [markdown]
 """
 ## Key Concepts

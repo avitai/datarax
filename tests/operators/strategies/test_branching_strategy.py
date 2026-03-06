@@ -2,6 +2,7 @@
 
 import jax
 import jax.numpy as jnp
+
 from datarax.operators.strategies.base import StrategyContext
 from datarax.operators.strategies.branching import BranchingStrategy
 from tests.test_common.mock_operators import ConstantMockOperator as MockOperator

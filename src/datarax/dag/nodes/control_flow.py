@@ -1,14 +1,20 @@
 """Control flow nodes: Identity, Sequential, Parallel, and Conditional composition."""
 
 from __future__ import annotations
+
+import logging
+from collections.abc import Callable
+from typing import Any, Literal
+
+import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
-import flax.nnx as nnx
-from typing import Literal, Any
-from collections.abc import Callable
 
 from datarax.core.element_batch import Batch
 from datarax.dag.nodes.base import Node
+
+
+logger = logging.getLogger(__name__)
 
 
 class Identity(Node):
@@ -41,7 +47,7 @@ class Sequential(Node):
         ```
     """
 
-    def __init__(self, nodes: list[Node]):
+    def __init__(self, nodes: list[Node]) -> None:
         """Initialize sequential node.
 
         Args:
@@ -105,7 +111,7 @@ class Parallel(Node):
         ```
     """
 
-    def __init__(self, nodes: list[Node]):
+    def __init__(self, nodes: list[Node]) -> None:
         """Initialize parallel node.
 
         Args:
@@ -174,7 +180,7 @@ class Branch(Node):
         condition: Callable[[Any], bool],
         true_path: Node,
         false_path: Node,
-    ):
+    ) -> None:
         """Initialize branch node.
 
         Args:
@@ -260,7 +266,7 @@ class Merge(Node):
 
     def __init__(
         self, strategy: Literal["concat", "sum", "mean", "stack"] = "concat", axis: int = -1
-    ):
+    ) -> None:
         """Initialize merge node.
 
         Args:
@@ -329,7 +335,7 @@ class MergeBatchNode(Node):
         ```
     """
 
-    def __init__(self, strategy: str = "mean", name: str | None = None):
+    def __init__(self, strategy: str = "mean", name: str | None = None) -> None:
         """Initialize MergeBatchNode.
 
         Args:
@@ -340,6 +346,7 @@ class MergeBatchNode(Node):
         self.strategy = strategy
 
     def __call__(self, data: Any, *, key: jax.Array | None = None) -> Any:
+        """Merge multiple branch outputs into a single batch using the configured strategy."""
         if not isinstance(data, list):
             return data
         if len(data) == 1:
@@ -364,6 +371,7 @@ class MergeBatchNode(Node):
         )
 
     def __repr__(self) -> str:
+        """Return string representation of MergeBatchNode."""
         return f"MergeBatchNode(strategy={self.strategy})"
 
 
@@ -377,7 +385,7 @@ class FusedOperatorNode(Node):
     Transparent: same input/output contract as calling the child nodes sequentially.
     """
 
-    def __init__(self, nodes: list[Node]):
+    def __init__(self, nodes: list[Node]) -> None:
         """Initialize fused operator node.
 
         Args:
@@ -389,6 +397,7 @@ class FusedOperatorNode(Node):
 
     @property
     def is_jit_fusible(self) -> bool:
+        """Return True — fused nodes are always JIT-fusible."""
         return True
 
     def __call__(self, data: Any, *, key: jax.Array | None = None) -> Any:
@@ -400,7 +409,7 @@ class FusedOperatorNode(Node):
         if self._jit_fn is None:
 
             @nnx.jit
-            def fused_call(fused_node, d):
+            def fused_call(fused_node: Any, d: Any) -> Any:
                 result = d
                 for node in fused_node.fused_nodes:
                     result = node(result, key=None)
@@ -411,6 +420,7 @@ class FusedOperatorNode(Node):
         return self._jit_fn(self, data)
 
     def __repr__(self) -> str:
+        """Return string representation of the fused operator chain."""
         names = [n.name if hasattr(n, "name") else str(n) for n in self.fused_nodes]
         return f"FusedOperatorNode({' >> '.join(names)})"
 
@@ -427,7 +437,7 @@ def parallel(*nodes: Node) -> Parallel:
     Returns:
         Parallel node
     """
-    return Parallel(nodes)
+    return Parallel(list(nodes))
 
 
 def branch(

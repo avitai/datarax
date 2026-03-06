@@ -50,10 +50,12 @@ uv pip install "datarax[tfds]" flax optax matplotlib
 # GPU Memory Configuration
 import os
 
+
 os.environ["CUDA_VISIBLE_DEVICES_FOR_TF"] = ""
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import tensorflow as tf
+
 
 tf.config.set_visible_devices([], "GPU")
 
@@ -71,13 +73,15 @@ import numpy as np
 import optax
 from flax import nnx
 
+from datarax import from_source
+
 # Datarax imports
 from datarax.checkpoint import PipelineCheckpoint
-from datarax.typing import CheckpointableIterator
-from datarax import from_source
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
+from datarax.typing import CheckpointableIterator
+
 
 print(f"JAX backend: {jax.default_backend()}")
 
@@ -131,6 +135,7 @@ class CheckpointableTrainingPipeline(CheckpointableIterator[dict]):
         seed: int = 42,
         num_epochs: int | None = None,
     ):
+        """Initialize CheckpointableTrainingPipeline."""
         self.dataset_name = dataset_name
         self.split = split
         self.batch_size = batch_size
@@ -186,6 +191,7 @@ class CheckpointableTrainingPipeline(CheckpointableIterator[dict]):
         self._iterator = iter(self._pipeline)
 
     def __iter__(self):
+        """Iterate over training batches."""
         return self
 
     def __next__(self) -> dict:
@@ -270,11 +276,13 @@ class SimpleCNN(nnx.Module):
     """Simple CNN for MNIST."""
 
     def __init__(self, rngs: nnx.Rngs):
+        """Initialize SimpleCNN."""
         self.conv1 = nnx.Conv(1, 16, kernel_size=(3, 3), padding="SAME", rngs=rngs)
         self.conv2 = nnx.Conv(16, 32, kernel_size=(3, 3), padding="SAME", rngs=rngs)
         self.dense = nnx.Linear(32 * 7 * 7, 10, rngs=rngs)
 
     def __call__(self, x):
+        """Forward pass through the CNN."""
         x = nnx.relu(self.conv1(x))
         x = nnx.max_pool(x, window_shape=(2, 2), strides=(2, 2))
         x = nnx.relu(self.conv2(x))
@@ -287,6 +295,7 @@ class TrainingState:
     """Complete training state including model, optimizer, and metrics."""
 
     def __init__(self, model: SimpleCNN, optimizer: nnx.Optimizer, metrics: dict):
+        """Initialize TrainingState."""
         self.model = model
         self.optimizer = optimizer
         self.metrics = metrics
@@ -641,7 +650,7 @@ print(f"\nCheckpoint latency: {avg_ckpt_time * 1000:.1f} ms (avg of 5)")
 fig, ax = plt.subplots(figsize=(8, 5))
 ax.bar(range(5), [t * 1000 for t in checkpoint_times], color="steelblue")
 mean_ms = avg_ckpt_time * 1000
-ax.axhline(y=mean_ms, color="red", linestyle="--", label=f"Mean: {mean_ms:.1f} ms")
+ax.axhline(y=float(mean_ms), color="red", linestyle="--", label=f"Mean: {mean_ms:.1f} ms")
 ax.set_xlabel("Trial")
 ax.set_ylabel("Latency (ms)")
 ax.set_title("Checkpoint Save Latency")

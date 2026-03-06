@@ -28,10 +28,10 @@ def main():
     print()
 
     # Create a sampler that generates numbers from 0 to 99
-    sampler = RangeSampler(start=0, stop=100)
+    sampler = RangeSampler(start=0, stop=100)  # type: ignore[reportCallIssue]
 
     # Create a monitored pipeline
-    pipeline = MonitoredPipeline(sampler)
+    pipeline = MonitoredPipeline(sampler)  # type: ignore[reportArgumentType]
 
     # Register both console and file reporters
     console_reporter = ConsoleReporter(report_interval=2.0)
@@ -44,7 +44,7 @@ def main():
     pipeline.callbacks.register(file_reporter)
 
     # Transform raw numbers into dictionaries with features
-    pipeline = pipeline.map(
+    pipeline = pipeline.map(  # type: ignore[reportAttributeAccessIssue]
         lambda x: {
             "value": x * x,
             "original": x,

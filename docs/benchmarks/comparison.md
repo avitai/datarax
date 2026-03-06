@@ -24,7 +24,7 @@ Each adapter supports only the scenarios where it implements the required transf
 
 | Framework | CV-1 | NLP-1 | TAB-1 | MM-1 | DIST-1 | PR-1 | Total |
 |-----------|:----:|:-----:|:-----:|:----:|:------:|:----:|:-----:|
-| **Datarax** | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | **25** |
+| **Datarax** | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | **28** |
 | Google Grain | :white_check_mark: | :white_check_mark: | :white_check_mark: | | :white_check_mark: | :white_check_mark: | 5 |
 | tf.data | :white_check_mark: | :white_check_mark: | :white_check_mark: | | :white_check_mark: | :white_check_mark: | 5 |
 | PyTorch DataLoader | :white_check_mark: | :white_check_mark: | :white_check_mark: | | :white_check_mark: | :white_check_mark: | 5 |
@@ -40,8 +40,19 @@ Each adapter supports only the scenarios where it implements the required transf
 | Deep Lake | :white_check_mark: | | | | | | 1 |
 | Energon | | | | :white_check_mark: | | | 1 |
 
-!!! note "Datarax supports all 25 scenarios"
-    The table above shows the 6 most widely supported scenarios. Datarax uniquely supports all 25 scenarios including PC-1 through PC-5 (pipeline complexity), IO-1 through IO-4 (I/O patterns), and NNX-1/XFMR-1 (Datarax-unique features).
+!!! note "Datarax supports all 28 scenarios"
+    The table above shows the 6 most widely supported scenarios. Datarax supports the full 28-scenario catalog, including AUG-1/AUG-2/AUG-3, PC-1 through PC-5, IO-1 through IO-4, and NNX-1/XFMR-1.
+
+---
+
+## Fair Comparison Views
+
+Use two complementary views to avoid misleading conclusions:
+
+1.  **Same-backend, shared-coverage view (canonical):** compare frameworks only on the scenario intersection they all support on the same backend/hardware profile.
+2.  **Native-optimal view:** compare frameworks on scenarios that represent each framework's strongest native capabilities.
+
+Canonical published cloud reports use on-demand Vast A100 runs, profile-controlled scenario sets, and manifest/backend-truth validation.
 
 ---
 

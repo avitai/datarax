@@ -1,13 +1,19 @@
 """Field-level operator nodes for multimodal data processing."""
 
 from __future__ import annotations
+
+import logging
+from typing import Any
+
+import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
-import flax.nnx as nnx
-from typing import Any
 
 from datarax.dag.nodes.base import Node
 from datarax.typing import Batch
+
+
+logger = logging.getLogger(__name__)
 
 
 class SplitFields(Node):
@@ -29,7 +35,7 @@ class SplitFields(Node):
         ```
     """
 
-    def __init__(self, field_transforms: dict[str, Node]):
+    def __init__(self, field_transforms: dict[str, Node]) -> None:
         """Initialize field splitter.
 
         Args:
@@ -50,7 +56,9 @@ class SplitFields(Node):
             Batch with transformed data fields
         """
         data = batch.data.get_value()
-        states = batch.states.get_value()
+        states_val = batch.states.get_value()
+        # States is a dict PyTree in practice; coerce for type safety
+        states: dict[str, Any] = states_val if isinstance(states_val, dict) else {}
 
         if not isinstance(data, dict):
             raise TypeError(f"SplitFields expects Batch with dict data, got {type(data)}")
@@ -62,6 +70,7 @@ class SplitFields(Node):
         else:
             key_dict = {k: None for k in self.field_transforms.keys()}
 
+        metadata_list = batch._metadata_list.get_value()
         result_data = {}
         result_states = {}
         for field, transform in self.field_transforms.items():
@@ -71,7 +80,7 @@ class SplitFields(Node):
                 mini_batch = Batch.from_parts(
                     data={field: data[field]},
                     states={field: field_state},
-                    metadata_list=batch._metadata_list,
+                    metadata_list=metadata_list,
                     validate=False,
                 )
                 # Apply transform (expects Batch, returns Batch)
@@ -89,8 +98,8 @@ class SplitFields(Node):
         return Batch.from_parts(
             data=result_data,
             states=result_states,
-            metadata_list=batch._metadata_list,
-            batch_metadata=batch._batch_metadata,
+            metadata_list=metadata_list,
+            batch_metadata=batch._batch_metadata.get_value(),
             batch_state=batch.batch_state.get_value(),
             validate=False,
         )
@@ -108,7 +117,7 @@ class SplitField(Node):
     processing paths.
     """
 
-    def __init__(self, fields: list[str], name: str | None = None):
+    def __init__(self, fields: list[str], name: str | None = None) -> None:
         """Initialize field splitter.
 
         Args:

@@ -164,7 +164,7 @@ class TestTFDSEagerSource:
     @pytest.mark.tfds
     def test_tfds_eager_loads_all_at_init(self):
         """TFDS eager source loads all data to JAX arrays at init."""
-        from datarax.sources import TFDSEagerSource, TFDSEagerConfig
+        from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 
         try:
             config = TFDSEagerConfig(name="mnist", split="train[:100]")
@@ -180,7 +180,7 @@ class TestTFDSEagerSource:
     @pytest.mark.tfds
     def test_tfds_eager_iteration_is_pure_jax(self):
         """After init, iteration should be pure JAX operations."""
-        from datarax.sources import TFDSEagerSource, TFDSEagerConfig
+        from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 
         try:
             config = TFDSEagerConfig(name="mnist", split="train[:50]")
@@ -201,7 +201,7 @@ class TestTFDSEagerSource:
     @pytest.mark.tfds
     def test_tfds_eager_dataset_info_available(self):
         """Dataset info should be cached and available."""
-        from datarax.sources import TFDSEagerSource, TFDSEagerConfig
+        from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 
         try:
             config = TFDSEagerConfig(name="mnist", split="train[:10]")
@@ -215,7 +215,7 @@ class TestTFDSEagerSource:
     @pytest.mark.tfds
     def test_tfds_eager_with_shuffling(self):
         """Shuffling should work with Grain's index_shuffle."""
-        from datarax.sources import TFDSEagerSource, TFDSEagerConfig
+        from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 
         try:
             config = TFDSEagerConfig(name="mnist", split="train[:100]", shuffle=True, seed=42)
@@ -233,7 +233,7 @@ class TestTFDSEagerSource:
     @pytest.mark.tfds
     def test_tfds_eager_include_keys_filter(self):
         """include_keys should filter output."""
-        from datarax.sources import TFDSEagerSource, TFDSEagerConfig
+        from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 
         try:
             config = TFDSEagerConfig(name="mnist", split="train[:10]", include_keys={"image"})
@@ -266,7 +266,7 @@ class TestTFDSStreamingSource:
     @pytest.mark.tfds
     def test_tfds_streaming_uses_fixed_prefetch(self):
         """Streaming source should use fixed prefetch, not AUTOTUNE."""
-        from datarax.sources import TFDSStreamingSource, TFDSStreamingConfig
+        from datarax.sources import TFDSStreamingConfig, TFDSStreamingSource
 
         try:
             config = TFDSStreamingConfig(name="mnist", split="train[:50]", prefetch_buffer=2)
@@ -286,7 +286,7 @@ class TestTFDSStreamingSource:
     @pytest.mark.tfds
     def test_tfds_streaming_produces_jax_arrays(self):
         """Each batch should produce JAX arrays."""
-        from datarax.sources import TFDSStreamingSource, TFDSStreamingConfig
+        from datarax.sources import TFDSStreamingConfig, TFDSStreamingSource
 
         try:
             config = TFDSStreamingConfig(name="mnist", split="train[:10]")
@@ -327,7 +327,8 @@ class TestHFEagerSource:
     def test_hf_eager_loads_all_at_init(self, mock_dataset, monkeypatch):
         """HF eager source loads all data to JAX arrays at init."""
         import datasets
-        from datarax.sources import HFEagerSource, HFEagerConfig
+
+        from datarax.sources import HFEagerConfig, HFEagerSource
 
         def mock_load_dataset(name, split=None, **kwargs):
             return mock_dataset
@@ -345,7 +346,8 @@ class TestHFEagerSource:
     def test_hf_eager_iteration(self, mock_dataset, monkeypatch):
         """Iteration should work after init."""
         import datasets
-        from datarax.sources import HFEagerSource, HFEagerConfig
+
+        from datarax.sources import HFEagerConfig, HFEagerSource
 
         def mock_load_dataset(name, split=None, **kwargs):
             return mock_dataset
@@ -362,7 +364,8 @@ class TestHFEagerSource:
     def test_hf_eager_with_filters(self, mock_dataset, monkeypatch):
         """include_keys filter should work."""
         import datasets
-        from datarax.sources import HFEagerSource, HFEagerConfig
+
+        from datarax.sources import HFEagerConfig, HFEagerSource
 
         def mock_load_dataset(name, split=None, **kwargs):
             return mock_dataset
@@ -389,6 +392,7 @@ class TestFactoryFunctions:
         """from_hf should create eager source by default."""
         pytest.importorskip("datasets")
         import datasets
+
         from datarax.sources import from_hf
 
         mock_data = {"label": list(range(5))}
@@ -409,6 +413,7 @@ class TestFactoryFunctions:
         """from_hf with streaming=True should create streaming source."""
         pytest.importorskip("datasets")
         import datasets
+
         from datarax.sources import from_hf
 
         mock_data = {"label": list(range(5))}
@@ -425,7 +430,7 @@ class TestFactoryFunctions:
 
         # Should be streaming source (has .streaming attribute set to True)
         assert hasattr(source, "streaming")
-        assert source.streaming is True
+        assert source.streaming is True  # type: ignore[reportAttributeAccessIssue]
 
 
 # =============================================================================

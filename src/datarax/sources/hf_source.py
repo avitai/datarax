@@ -24,9 +24,10 @@ Architecture Insight:
 from __future__ import annotations
 
 import gc
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+import logging
 from collections.abc import Iterator
+from dataclasses import dataclass
+from typing import Any
 
 import flax.nnx as nnx
 import jax
@@ -42,8 +43,8 @@ from datarax.sources._eager_source_ops import (
 )
 from datarax.sources._source_base import EagerSourceBase, StreamingSourceBase
 
-if TYPE_CHECKING:
-    pass
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -82,7 +83,7 @@ def _finalize_hf_arrays(arrays: dict[str, list[Any]]) -> dict[str, Any]:
     return result
 
 
-@dataclass
+@dataclass(frozen=True)
 class HFEagerConfig(SourceConfigBase):
     """Configuration for HFEagerSource (loads all data to JAX at init).
 
@@ -116,7 +117,7 @@ class HFEagerConfig(SourceConfigBase):
         )
 
 
-@dataclass
+@dataclass(frozen=True)
 class HFStreamingConfig(SourceConfigBase):
     """Configuration for HFStreamingSource (streams data from HF dataset).
 
@@ -254,10 +255,16 @@ class HFEagerSource(EagerSourceBase):
         """
         download_kwargs = _prepare_hf_download_kwargs(config.download_kwargs)
 
+        # name/split validated non-None by config __post_init__
+        name = config.name
+        split = config.split
+        assert name is not None  # noqa: S101 (invariant, not control flow)
+        assert split is not None  # noqa: S101 (invariant, not control flow)
+
         # Load dataset to get info
         dataset = self._datasets_module.load_dataset(  # nosec B615
-            config.name,
-            split=config.split,
+            name,
+            split=split,
             data_dir=config.data_dir,
             **download_kwargs,
         )
@@ -280,9 +287,15 @@ class HFEagerSource(EagerSourceBase):
         """
         download_kwargs = _prepare_hf_download_kwargs(config.download_kwargs)
 
+        # name/split validated non-None by config __post_init__
+        name = config.name
+        split = config.split
+        assert name is not None  # noqa: S101 (invariant, not control flow)
+        assert split is not None  # noqa: S101 (invariant, not control flow)
+
         dataset = self._datasets_module.load_dataset(  # nosec B615
-            config.name,
-            split=config.split,
+            name,
+            split=split,
             data_dir=config.data_dir,
             **download_kwargs,
         )
@@ -339,6 +352,9 @@ class HFStreamingSource(StreamingSourceBase):
         ```
     """
 
+    # Narrow config type for pyright (base stores via nnx.static)
+    config: HFStreamingConfig  # pyright: ignore[reportIncompatibleVariableOverride]
+
     def __init__(
         self,
         config: HFStreamingConfig,
@@ -375,21 +391,29 @@ class HFStreamingSource(StreamingSourceBase):
         # Load the dataset
         download_kwargs = _prepare_hf_download_kwargs(config.download_kwargs)
 
+        # name/split validated non-None by config __post_init__
+        name = config.name
+        split = config.split
+        assert name is not None  # noqa: S101 (invariant, not control flow)
+        assert split is not None  # noqa: S101 (invariant, not control flow)
+
         self._hf_dataset = self._datasets_module.load_dataset(  # nosec B615
-            config.name,
-            split=config.split,
+            name,
+            split=split,
             data_dir=config.data_dir,
-            streaming=config.streaming,
+            streaming=config.streaming,  # type: ignore[arg-type]
             **download_kwargs,
         )
 
         # Apply shuffling if requested
         if config.shuffle:
             if config.streaming:
-                self._hf_dataset = self._hf_dataset.shuffle(
-                    buffer_size=config.shuffle_buffer_size,
-                    seed=42,
-                )
+                # HF IterableDataset.shuffle accepts buffer_size (type stubs incomplete)
+                shuffle_kwargs: dict[str, Any] = {
+                    "buffer_size": config.shuffle_buffer_size,
+                    "seed": 42,
+                }
+                self._hf_dataset = self._hf_dataset.shuffle(**shuffle_kwargs)
             else:
                 self._hf_dataset = self._hf_dataset.shuffle(seed=42)
 
@@ -399,10 +423,10 @@ class HFStreamingSource(StreamingSourceBase):
         else:
             self._dataset_info = None
 
-        # Try to get length
+        # Try to get length (non-streaming Dataset supports __len__)
         if not config.streaming:
             try:
-                self._length: int | None = len(self._hf_dataset)
+                self._length: int | None = len(self._hf_dataset)  # type: ignore[arg-type]
             except (TypeError, AttributeError):
                 self._length = None
         else:
@@ -476,10 +500,12 @@ class HFStreamingSource(StreamingSourceBase):
         Raises:
             StopIteration: When dataset is exhausted
         """
-        if self._iterator is None:
-            self._iterator = iter(self._hf_dataset)
+        iterator = self._iterator
+        if iterator is None:
+            iterator = iter(self._hf_dataset)
+            self._iterator = iterator
 
-        element = next(self._iterator)
+        element = next(iterator)
         return convert_and_filter_element(
             element,
             self.include_keys,

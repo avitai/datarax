@@ -12,6 +12,7 @@ import pytest
 
 from benchmarks.tests.test_adapters.conftest import assert_valid_iteration_result
 
+
 ray = pytest.importorskip("ray")
 
 
@@ -35,9 +36,9 @@ class TestRayDataAdapterProperties:
 
     def test_supported_scenarios(self):
         from benchmarks.adapters.ray_data_adapter import RayDataAdapter
+        from benchmarks.tests.test_adapters.conftest import assert_supported_scenarios
 
-        expected = {"NLP-1", "TAB-1"}
-        assert RayDataAdapter().supported_scenarios() == expected
+        assert_supported_scenarios(RayDataAdapter(), must_include={"NLP-1", "TAB-1"})
 
 
 class TestRayDataAdapterLifecycle:

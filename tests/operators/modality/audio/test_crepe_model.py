@@ -16,29 +16,15 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
-
-# Import under test — will fail in RED phase
-try:
-    from datarax.operators.modality.audio.crepe_model import (
-        CENTS_MAPPING,
-        CrepeModel,
-        decode_pitch_differentiable,
-        decode_pitch_local,
-        load_crepe_weights,
-        max_pool_1d,
-    )
-except ImportError:
-    CrepeModel = None
-    load_crepe_weights = None
-    decode_pitch_local = None
-    decode_pitch_differentiable = None
-    max_pool_1d = None
-    CENTS_MAPPING = None
-
-pytestmark = pytest.mark.skipif(
-    CrepeModel is None,
-    reason="CrepeModel not implemented yet (RED phase)",
+from datarax.operators.modality.audio.crepe_model import (
+    CENTS_MAPPING,
+    CrepeModel,
+    decode_pitch_differentiable,
+    decode_pitch_local,
+    load_crepe_weights,
+    max_pool_1d,
 )
+
 
 FIXTURES_DIR = pathlib.Path(__file__).parent.parent.parent.parent / "fixtures" / "crepe"
 
@@ -98,6 +84,7 @@ class TestCrepeModelArchitecture:
         """Final dense layer: 2048 → 360."""
         model = CrepeModel(capacity="full", rngs=nnx.Rngs(0))
         assert model.classifier.kernel[...].shape == (2048, 360)
+        assert model.classifier.bias is not None
         assert model.classifier.bias[...].shape == (360,)
 
 

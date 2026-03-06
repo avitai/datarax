@@ -5,14 +5,14 @@ This test file defines the expected behavior of DataLoader as the proper entry p
 for data processing pipelines, following TDD principles.
 """
 
-import pytest
-import jax.numpy as jnp
 import flax.nnx as nnx
+import jax.numpy as jnp
+import pytest
 
-from datarax.dag.nodes import DataLoader
-from datarax.core.data_source import DataSourceModule
 from datarax.core.config import StructuralConfig
+from datarax.core.data_source import DataSourceModule
 from datarax.dag.dag_executor import DAGExecutor
+from datarax.dag.nodes import DataLoader
 from datarax.typing import Batch
 
 

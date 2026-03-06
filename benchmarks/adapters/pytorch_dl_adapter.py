@@ -14,22 +14,11 @@ from typing import Any
 import numpy as np
 
 from benchmarks.adapters import register
-from benchmarks.adapters._utils import (
-    cast_to_float32,
-    gaussian_noise,
-    normalize_uint8,
-    random_brightness,
-    random_scale,
-)
+from benchmarks.adapters._utils import STANDARD_TRANSFORMS
 from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
-_PYTORCH_TRANSFORMS: dict[str, Any] = {
-    "Normalize": normalize_uint8,
-    "CastToFloat32": cast_to_float32,
-    "GaussianNoise": gaussian_noise,
-    "RandomBrightness": random_brightness,
-    "RandomScale": random_scale,
-}
+
+_PYTORCH_TRANSFORMS = STANDARD_TRANSFORMS
 
 
 class _DictDataset:
@@ -54,20 +43,24 @@ class PyTorchDataLoaderAdapter(PipelineAdapter):
     """PipelineAdapter for PyTorch DataLoader."""
 
     def __init__(self) -> None:
+        """Initialize the PyTorch DataLoader adapter."""
+        super().__init__()
         self._loader: Any = None
-        self._config: ScenarioConfig | None = None
 
     @property
     def name(self) -> str:
+        """Return the adapter display name."""
         return "PyTorch DataLoader"
 
     @property
     def version(self) -> str:
+        """Return the PyTorch version string."""
         import torch
 
         return torch.__version__
 
     def is_available(self) -> bool:
+        """Return True if PyTorch is installed."""
         try:
             import torch  # noqa: F401
 
@@ -75,19 +68,12 @@ class PyTorchDataLoaderAdapter(PipelineAdapter):
         except ImportError:
             return False
 
-    def supported_scenarios(self) -> set[str]:
-        return {
-            "CV-1",  # Normalize + CastToFloat32
-            "NLP-1",  # No transforms
-            "TAB-1",  # Normalize on float32
-            "DIST-1",  # Normalize on float32
-            "PR-1",  # Normalize on float32
-            "AUG-1",  # Stochastic chain
-            "AUG-2",  # Deterministic vs stochastic
-            "AUG-3",  # Stochastic depth scaling
-        }
+    def available_transforms(self) -> set[str]:
+        """All transforms PyTorch DataLoader can execute."""
+        return set(_PYTORCH_TRANSFORMS)
 
     def setup(self, config: ScenarioConfig, data: Any) -> None:
+        """Set up the PyTorch DataLoader for the given scenario configuration."""
         import torch
         from torch.utils.data import DataLoader
 
@@ -129,5 +115,6 @@ class PyTorchDataLoaderAdapter(PipelineAdapter):
         return arrays
 
     def teardown(self) -> None:
+        """Release resources and reset adapter state."""
         self._loader = None
-        self._config = None
+        super().teardown()

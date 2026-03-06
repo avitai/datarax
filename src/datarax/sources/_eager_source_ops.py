@@ -18,11 +18,15 @@ Streaming helpers use callback parameters (convert_fn) to stay backend-agnostic.
 
 from __future__ import annotations
 
-from typing import Any
+import logging
 from collections.abc import Callable, Iterator
+from typing import Any
 
 import jax
 import jax.numpy as jnp
+
+
+logger = logging.getLogger(__name__)
 
 
 def configure_stochastic_from_shuffle(
@@ -96,14 +100,10 @@ def get_shuffled_index(
         return index
 
     try:
-        from grain._src.python.experimental.index_shuffle.python import (
-            index_shuffle_module as index_shuffle,
-        )
+        from grain.experimental import index_shuffle
 
         per_epoch_seed = (seed + epoch) % (2**32)
-        return index_shuffle.index_shuffle(
-            index, max_index=length - 1, seed=per_epoch_seed, rounds=4
-        )
+        return index_shuffle(index=index, max_index=length - 1, seed=per_epoch_seed, rounds=4)
     except ImportError:
         key = jax.random.key(seed + epoch)
         perm = jax.random.permutation(key, length)
@@ -297,7 +297,7 @@ def format_source_repr(
 
 
 def streaming_apply_batch(
-    next_item: Callable[[], dict[str, Any]],
+    next_item: Callable[[], Any],
     batch_size: int,
 ) -> dict[str, Any]:
     """Collect up to batch_size elements from a streaming iterator."""
@@ -389,6 +389,18 @@ def finalize_streaming_config_validation(
     validate_include_exclude_keys(include_keys, exclude_keys)
 
 
+def _get_super_post_init(config: Any) -> Callable[[], None]:
+    """Get the __post_init__ method from the parent class of the given config instance."""
+    parent_post_init = getattr(super(type(config), config), "__post_init__", None)
+    if parent_post_init is None:
+
+        def noop() -> None:
+            pass
+
+        return noop
+    return parent_post_init
+
+
 def validate_shared_eager_source_config(
     config: Any,
     config_class_name: str,
@@ -400,7 +412,7 @@ def validate_shared_eager_source_config(
     """Validate a source eager config using standard dataclass fields."""
     finalize_eager_config_validation(
         config=config,
-        super_post_init=super(type(config), config).__post_init__,
+        super_post_init=_get_super_post_init(config),
         config_class_name=config_class_name,
         name=config.name,
         split=config.split,
@@ -419,7 +431,7 @@ def validate_shared_streaming_source_config(
     """Validate a source streaming config using standard dataclass fields."""
     finalize_streaming_config_validation(
         config=config,
-        super_post_init=super(type(config), config).__post_init__,
+        super_post_init=_get_super_post_init(config),
         config_class_name=config_class_name,
         name=config.name,
         split=config.split,

@@ -11,7 +11,7 @@ from calibrax.profiling import ResourceSummary, TimingSample
 from calibrax.storage import Store
 
 from benchmarks.core.result_model import build_benchmark_result
-from benchmarks.export import FullExporter, export_to_calibrax
+from benchmarks.export import export_to_calibrax, FullExporter
 from benchmarks.runners.full_runner import ComparativeResults
 
 
@@ -121,6 +121,7 @@ class TestFullExporter:
         mock_store: Store,
         mock_wandb_exporter: MagicMock,
     ):
+        pytest.importorskip("wandb")
         exporter = FullExporter(mock_store)
         exporter._exporter = mock_wandb_exporter
 

@@ -8,6 +8,7 @@ import pytest
 
 from benchmarks.tests.test_adapters.conftest import assert_valid_iteration_result
 
+
 datasets = pytest.importorskip("datasets")
 
 
@@ -30,9 +31,9 @@ class TestHfDatasetsAdapterProperties:
 
     def test_supported_scenarios(self):
         from benchmarks.adapters.hf_datasets_adapter import HfDatasetsAdapter
+        from benchmarks.tests.test_adapters.conftest import assert_supported_scenarios
 
-        expected = {"NLP-1", "TAB-1"}
-        assert HfDatasetsAdapter().supported_scenarios() == expected
+        assert_supported_scenarios(HfDatasetsAdapter(), must_include={"NLP-1", "TAB-1"})
 
 
 class TestHfDatasetsAdapterLifecycle:

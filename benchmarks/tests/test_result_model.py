@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from calibrax.core import BenchmarkResult
 from calibrax.profiling import ResourceSummary, TimingSample
 

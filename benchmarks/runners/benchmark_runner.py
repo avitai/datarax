@@ -11,19 +11,25 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
+
+from calibrax.core import BenchmarkResult
 
 from benchmarks.adapters.base import PipelineAdapter
 from benchmarks.core.baselines import BaselineStore
 from benchmarks.core.config_loader import load_hardware_profile
-from benchmarks.core.platform import can_run_scenario, estimate_scenario_memory_mb
+from benchmarks.core.platform import (
+    can_run_scenario,
+    estimate_scenario_memory_mb,
+    init_platform,
+)
 from benchmarks.core.result_model import (
     result_scenario_id,
     result_variant,
     throughput_elements_per_sec,
 )
 from benchmarks.scenarios import discover_scenarios
-from benchmarks.scenarios.base import ScenarioVariant, run_scenario
-from calibrax.core import BenchmarkResult
+from benchmarks.scenarios.base import run_scenario, ScenarioVariant
 
 
 class BenchmarkRunner:
@@ -38,18 +44,26 @@ class BenchmarkRunner:
         self,
         output_dir: Path | str,
         hardware_profile: str = "ci_cpu",
+        platform: str | None = None,
     ) -> None:
+        """Initialize the benchmark runner with output directory and profile."""
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.profile_name = hardware_profile
+        self.requested_platform = platform
         self.profile = load_hardware_profile(hardware_profile)
         self._profile_settings = self.profile.get("profile", {})
+        self.active_backend: str | None = None
+        self.expected_backend: str | None = None
 
     @property
     def num_batches(self) -> int:
+        """Return the number of measured batches per scenario run."""
         return self._profile_settings.get("num_batches", 20)
 
     @property
     def warmup_batches(self) -> int:
+        """Return the number of warmup batches before measurement."""
         return self._profile_settings.get("warmup_batches", 3)
 
     def run_scenario(
@@ -70,6 +84,8 @@ class BenchmarkRunner:
         Returns:
             BenchmarkResult from median repetition.
         """
+        self.ensure_backend()
+
         if variant_name is None:
             variant_name = getattr(scenario_module, "TIER1_VARIANT", None)
             if variant_name is None:
@@ -105,12 +121,16 @@ class BenchmarkRunner:
         Returns:
             List of BenchmarkResults.
         """
+        active_backend = self.ensure_backend()
         scenarios = discover_scenarios(tier=tier)
         results: list[BenchmarkResult] = []
 
         for mod in scenarios:
             scenario_id = mod.SCENARIO_ID
-            if scenario_filter and scenario_id not in scenario_filter:
+            if not self._is_scenario_enabled(
+                scenario_id=scenario_id,
+                explicit_filter=scenario_filter,
+            ):
                 continue
             if not adapter.supports_scenario(scenario_id):
                 continue
@@ -118,7 +138,7 @@ class BenchmarkRunner:
             # Determine variant and check memory
             variant_name = self._get_variant_for_scenario(mod)
             variant = mod.get_variant(variant_name)
-            if not can_run_scenario(variant):
+            if not can_run_scenario(variant, backend=active_backend):
                 mb = estimate_scenario_memory_mb(
                     variant.config.dataset_size,
                     variant.config.element_shape,
@@ -138,7 +158,7 @@ class BenchmarkRunner:
                 )
                 result.save(self.output_dir / f"{scenario_id}_{result_variant(result)}.json")
                 results.append(result)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — benchmark resilience: skip failing scenarios
                 print(f"SKIP {scenario_id}: {exc}", file=sys.stderr)
 
         return results
@@ -163,12 +183,15 @@ class BenchmarkRunner:
         Returns:
             List of paths to saved baseline files.
         """
+        active_backend = self.ensure_backend()
         store = BaselineStore(baselines_dir)
         scenarios = discover_scenarios(tier=tier)
         saved: list[Path] = []
 
         for mod in scenarios:
             scenario_id = mod.SCENARIO_ID
+            if not self._is_scenario_enabled(scenario_id=scenario_id, explicit_filter=None):
+                continue
             if not adapter.supports_scenario(scenario_id):
                 continue
 
@@ -180,7 +203,7 @@ class BenchmarkRunner:
                     print(f"  EXISTS {baseline_name}")
                     continue
 
-                if not can_run_scenario(variant):
+                if not can_run_scenario(variant, backend=active_backend):
                     mb = estimate_scenario_memory_mb(
                         variant.config.dataset_size,
                         variant.config.element_shape,
@@ -200,7 +223,7 @@ class BenchmarkRunner:
                     saved.append(path)
                     throughput = throughput_elements_per_sec(result)
                     print(f"  OK {baseline_name}: {throughput:.0f} elem/s")
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 — benchmark resilience: skip failing baselines
                     print(
                         f"  FAIL {baseline_name}: {exc}",
                         file=sys.stderr,
@@ -220,6 +243,68 @@ class BenchmarkRunner:
             return tier1
         return next(iter(mod.VARIANTS))
 
+    def ensure_backend(self, requested_platform: str | None = None) -> str:
+        """Initialize and validate the active backend once per runner."""
+        requested = requested_platform or self.requested_platform
+        profile_backend = self._profile_settings.get("backend")
+        if requested is not None and profile_backend is not None and requested != profile_backend:
+            raise ValueError(
+                f"Platform/profile mismatch: requested={requested}, "
+                f"profile backend={profile_backend} ({self.profile_name})",
+            )
+
+        expected_backend = profile_backend or requested or "cpu"
+        self.expected_backend = expected_backend
+
+        if self.active_backend is not None:
+            if self.active_backend != expected_backend:
+                raise RuntimeError(
+                    f"Backend already initialized to {self.active_backend}, "
+                    f"expected {expected_backend}",
+                )
+            return self.active_backend
+
+        try:
+            active_backend = init_platform(expected_backend)
+        except (RuntimeError, ImportError, OSError) as exc:
+            try:
+                import jax
+
+                active_backend = jax.default_backend()
+            except (ImportError, RuntimeError):  # pragma: no cover - catastrophic env failure
+                active_backend = "unknown"
+            raise RuntimeError(
+                f"Unable to initialize backend {expected_backend!r}; "
+                f"active backend is {active_backend!r}"
+            ) from exc
+
+        if active_backend != expected_backend:
+            raise RuntimeError(
+                f"Backend mismatch: expected {expected_backend!r}, got {active_backend!r}. "
+                "Set JAX_PLATFORMS/JAX_PLATFORM_NAME to match the selected profile.",
+            )
+        self.active_backend = active_backend
+        return active_backend
+
+    def _is_scenario_enabled(
+        self,
+        scenario_id: str,
+        explicit_filter: set[str] | None,
+    ) -> bool:
+        """Apply explicit filters first, then profile include/exclude lists."""
+        if explicit_filter is not None:
+            return scenario_id in explicit_filter
+
+        scenario_cfg: dict[str, Any] = self._profile_settings.get("scenarios", {})
+        include = set(scenario_cfg.get("include", []))
+        exclude = set(scenario_cfg.get("exclude", []))
+
+        if include and scenario_id not in include:
+            return False
+        if scenario_id in exclude:
+            return False
+        return True
+
 
 def main() -> None:
     """CLI entry point for benchmark runner."""
@@ -228,6 +313,12 @@ def main() -> None:
     from benchmarks.adapters.datarax_adapter import DataraxAdapter
 
     parser = argparse.ArgumentParser(description="Datarax Benchmark Runner")
+    parser.add_argument(
+        "--platform",
+        default=None,
+        choices=["cpu", "gpu", "tpu"],
+        help="Requested backend platform (must match profile backend if set)",
+    )
     parser.add_argument(
         "--profile",
         default="ci_cpu",
@@ -273,6 +364,7 @@ def main() -> None:
     runner = BenchmarkRunner(
         output_dir=Path(args.output_dir),
         hardware_profile=args.profile,
+        platform=args.platform,
     )
     adapter = DataraxAdapter()
 

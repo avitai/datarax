@@ -91,12 +91,12 @@ from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import Batch
 from datarax.core.operator import OperatorModule
 from datarax.operators import (
-    CompositeOperatorModule,
     CompositeOperatorConfig,
+    CompositeOperatorModule,
     CompositionStrategy,
 )
+from datarax.operators.modality.audio import LoudnessConfig, LoudnessOperator
 from datarax.sources import MemorySource, MemorySourceConfig
-from datarax.operators.modality.audio import LoudnessOperator, LoudnessConfig
 
 
 def exp_sigmoid(x, exponent=10.0, max_value=2.0, threshold=1e-7):
@@ -110,16 +110,19 @@ def exp_sigmoid(x, exponent=10.0, max_value=2.0, threshold=1e-7):
     return max_value * jax.nn.sigmoid(x) ** jnp.log(exponent) + threshold
 
 
-from datarax.operators.modality.audio.crepe_model import load_crepe_weights
-from datarax.operators.modality.audio.f0_operator import CrepeF0Operator, CrepeF0Config
-
 import warnings
 
 import matplotlib
 
+from datarax.operators.modality.audio.crepe_model import load_crepe_weights
+from datarax.operators.modality.audio.f0_operator import CrepeF0Config, CrepeF0Operator
+
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 from pathlib import Path
+
+import matplotlib.pyplot as plt
+
 
 # Output directory for saved figures
 OUTPUT_DIR = Path("docs/assets/images/examples")
@@ -322,9 +325,10 @@ def load_nsynth(
             loudness: (N, 1000) float32 — dB-range normalized loudness in [0,1]
             f0_hz: (N, 1000) float32 — raw f0 in Hz
     """
-    import os as _os
-    import glob
     import csv
+    import glob
+    import os as _os
+
     import tensorflow as tf
 
     # Prevent TF from claiming GPU memory (only JAX needs it)
@@ -361,14 +365,14 @@ def load_nsynth(
     # Step 2: Load GANSynth split IDs (acoustic instruments, pitch [24,84])
     gansynth_train_ids = set()
     with tf.io.gfile.GFile(dl_paths["gansynth_splits"]) as f:
-        reader = csv.DictReader(f)
+        reader = csv.DictReader(f)  # type: ignore[reportArgumentType]
         for row in reader:
             if row["split"] == "train":
                 gansynth_train_ids.add(row["id"])
     print(f"  GANSynth train subset: {len(gansynth_train_ids)} note IDs")
 
     # Step 3: Read raw TFRecords, filter to GANSynth subset, collect samples
-    train_dir = dl_paths["examples"]["train"]
+    train_dir = dl_paths["examples"]["train"]  # type: ignore[reportIndexIssue]
     if _os.path.isdir(train_dir):
         tfrecord_files = sorted(glob.glob(_os.path.join(train_dir, "*.tfrecord*")))
     else:
@@ -581,7 +585,7 @@ frequency changes create phase discontinuities (audible clicks).
 
 
 # --- Operator 1: Harmonic Synthesizer ---
-@dataclass
+@dataclass(frozen=True)
 class HarmonicSynthConfig(OperatorConfig):
     """Configuration for Harmonic Synthesizer.
 
@@ -615,6 +619,7 @@ class HarmonicSynthOperator(OperatorModule):
     """
 
     def __init__(self, config: HarmonicSynthConfig, *, rngs: nnx.Rngs | None = None):
+        """Initialize HarmonicSynthOperator."""
         super().__init__(config, rngs=rngs)
         self.config: HarmonicSynthConfig = config
 
@@ -679,7 +684,7 @@ class HarmonicSynthOperator(OperatorModule):
 
 
 # --- Operator 2: Filtered Noise ---
-@dataclass
+@dataclass(frozen=True)
 class FilteredNoiseConfig(OperatorConfig):
     """Configuration for Filtered Noise synthesizer.
 
@@ -706,6 +711,7 @@ class FilteredNoiseOperator(OperatorModule):
     """
 
     def __init__(self, config: FilteredNoiseConfig, *, rngs: nnx.Rngs | None = None):
+        """Initialize FilteredNoiseOperator."""
         super().__init__(config, rngs=rngs)
         self.config: FilteredNoiseConfig = config
         # Fixed noise for deterministic gradients
@@ -753,7 +759,7 @@ class FilteredNoiseOperator(OperatorModule):
 
 
 # --- Operator 3: Reverb ---
-@dataclass
+@dataclass(frozen=True)
 class ReverbConfig(OperatorConfig):
     """Configuration for trainable Reverb operator.
 
@@ -779,6 +785,7 @@ class ReverbOperator(OperatorModule):
     """
 
     def __init__(self, config: ReverbConfig, *, rngs: nnx.Rngs | None = None):
+        """Initialize ReverbOperator."""
         super().__init__(config, rngs=rngs)
         self.config: ReverbConfig = config
 
@@ -925,6 +932,7 @@ class DDSPDecoder(nnx.Module):
         n_mlp_layers: int = 3,
         rngs: nnx.Rngs,
     ):
+        """Initialize DDSPDecoder."""
         self.n_harmonics = n_harmonics
         self.n_noise_bands = n_noise_bands
 
@@ -950,6 +958,7 @@ class DDSPDecoder(nnx.Module):
         # Initialize noise head bias to -5.0 so noise starts near-zero
         # (matching DDSP paper's initial_bias=-5.0 for FilteredNoise)
         self.noise_head = nnx.Linear(hidden_dim, n_noise_bands, rngs=rngs)
+        assert self.noise_head.bias is not None  # noqa: S101
         self.noise_head.bias.value = jnp.full(n_noise_bands, -5.0)
 
     def __call__(self, f0: jax.Array, loudness: jax.Array) -> tuple[jax.Array, jax.Array]:
@@ -1320,7 +1329,7 @@ def train_ddsp(
     # Joint optimizer with gradient clipping (matching DDSP reference: global norm 3.0)
     all_params = (decoder, synth_composite)
     optimizer = nnx.Optimizer(
-        all_params,
+        all_params,  # type: ignore[reportArgumentType]
         optax.chain(
             optax.clip_by_global_norm(3.0),
             optax.adam(schedule),
@@ -1437,6 +1446,7 @@ all_params = (decoder, synth_composite)
 
 
 def verify_loss(params: tuple) -> jax.Array:
+    """Compute multi-scale spectral loss for gradient verification."""
     dec, synth_comp = params
     pred = synthesize_batch(dec, synth_comp, f0, loudness, f0_hz)
     return multi_scale_spectral_loss(pred, target)
@@ -1639,7 +1649,7 @@ def analyze_ddsp(
     print("\n=== Learned DDSP Parameters ===")
 
     # Extract reverb from composite: SEQUENTIAL([WEIGHTED_PARALLEL(...), Reverb])
-    reverb = list(synth_composite.operators)[1]
+    reverb: ReverbOperator = list(synth_composite.operators)[1]  # type: ignore[reportAssignmentType]
 
     # Decoder statistics
     dec_params = sum(p.size for p in jax.tree.leaves(nnx.state(decoder, nnx.Param)))
@@ -1704,7 +1714,7 @@ def analyze_ddsp(
     n_show_harmonics = min(20, len(amps_np))
     harmonic_nums = np.arange(1, n_show_harmonics + 1)
     freqs = harmonic_nums * 440  # Hz
-    colors = plt.cm.plasma(np.linspace(0.2, 0.8, n_show_harmonics))
+    colors = plt.cm.plasma(np.linspace(0.2, 0.8, n_show_harmonics))  # type: ignore[reportAttributeAccessIssue]
     axes[1].bar(
         harmonic_nums,
         amps_np[:n_show_harmonics],

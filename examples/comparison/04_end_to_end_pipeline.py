@@ -32,6 +32,7 @@ class GrainMLPipeline:
     """Complete ML pipeline using Grain's stateless approach."""
 
     def __init__(self, config: dict[str, Any]):
+        """Initialize GrainMLPipeline."""
         self.config = config
 
         # All state must be managed externally
@@ -259,6 +260,7 @@ class DataPipeline(nnx.Module):
     """Complete data pipeline as a unified NNX module."""
 
     def __init__(self, config: dict[str, Any], rngs: nnx.Rngs | None = None):
+        """Initialize DataPipeline."""
         # Configuration
         self.config = config
 
@@ -332,12 +334,14 @@ class NormalizationModule(nnx.Module):
     """Stateful normalization with automatic tracking."""
 
     def __init__(self):
+        """Initialize NormalizationModule."""
         self.running_mean = nnx.BatchStat(0.0)
         self.running_std = nnx.BatchStat(1.0)
         self.momentum = 0.1
         self.count = nnx.Variable(0)
 
     def __call__(self, data: jax.Array) -> jax.Array:
+        """Normalize data using running statistics."""
         # Automatic state updates
         batch_mean = jnp.mean(data)
         batch_std = jnp.std(data)
@@ -357,12 +361,14 @@ class FeatureExtractorModule(nnx.Module):
     """Learnable feature extraction."""
 
     def __init__(self, input_dim: int, hidden_dim: int, output_dim: int):
+        """Initialize FeatureExtractorModule."""
         self.w1 = nnx.Param(jax.random.normal(jax.random.key(0), (input_dim, hidden_dim)) * 0.01)
         self.b1 = nnx.Param(jnp.zeros(hidden_dim))
         self.w2 = nnx.Param(jax.random.normal(jax.random.key(1), (hidden_dim, output_dim)) * 0.01)
         self.b2 = nnx.Param(jnp.zeros(output_dim))
 
     def __call__(self, data: jax.Array) -> jax.Array:
+        """Apply two-layer linear feature extraction with ReLU."""
         hidden = jax.nn.relu(jnp.dot(data, self.w1.value) + self.b1.value)
         return jnp.dot(hidden, self.w2.value) + self.b2.value
 
@@ -373,6 +379,7 @@ class AugmentationModule(nnx.Module):
     def __init__(
         self, noise_scale: float = 0.01, dropout_rate: float = 0.1, rngs: nnx.Rngs | None = None
     ):
+        """Initialize AugmentationModule."""
         self.noise_scale = noise_scale
         self.dropout_rate = dropout_rate
         self.rngs = rngs or nnx.Rngs(42)
@@ -381,6 +388,7 @@ class AugmentationModule(nnx.Module):
         self.augmentation_count = nnx.Variable(0)
 
     def __call__(self, data: jax.Array) -> jax.Array:
+        """Apply noise injection and dropout augmentation."""
         # Add noise - automatic PRNG management
         noise = jax.random.normal(self.rngs(), data.shape) * self.noise_scale
         data = data + noise
@@ -398,6 +406,7 @@ class WorkshopMLPipeline(nnx.Module):
     """Complete ML pipeline with unified state management."""
 
     def __init__(self, config: dict[str, Any]):
+        """Initialize WorkshopMLPipeline."""
         self.config = config
         self.rngs = nnx.Rngs(config["seed"])
 

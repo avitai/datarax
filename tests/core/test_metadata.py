@@ -1,13 +1,14 @@
+# pyright: reportArgumentType=false
 """Tests for the Metadata module."""
 
 import jax
 import jax.numpy as jnp
 
 from datarax.core.metadata import (
-    Metadata,
-    create_metadata,
-    split_rng_tree,
     batch_metadata,
+    create_metadata,
+    Metadata,
+    split_rng_tree,
     update_metadata_batch,
 )
 

@@ -1,23 +1,21 @@
 # File: tests/integration/test_end_to_end_pipeline.py
 
-from unittest.mock import Mock, patch
 from typing import Any
+from unittest.mock import Mock, patch
 
-import numpy as np
+import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
-import flax.nnx as nnx
+import numpy as np
 
+from datarax.control.prefetcher import Prefetcher
+from datarax.core.config import StructuralConfig
+from datarax.core.data_source import DataSourceModule
+from datarax.core.element_batch import Element
 from datarax.dag import DAGExecutor
 from datarax.dag.nodes import BatchNode, OperatorNode
-from datarax.control.prefetcher import Prefetcher
-from datarax.sources.array_record_source import ArrayRecordSourceModule, ArrayRecordSourceConfig
 from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.core.element_batch import Element
-from datarax.core.config import StructuralConfig
-
-
-from datarax.core.data_source import DataSourceModule
+from datarax.sources.array_record_source import ArrayRecordSourceConfig, ArrayRecordSourceModule
 
 
 class IndexedNumericSource(DataSourceModule):
@@ -94,7 +92,7 @@ class TestEndToEndPipeline:
             side_effect=lambda idx: {"image": np.random.rand(28, 28), "label": np.array(idx % 10)}
         )
 
-        with patch("grain.python.ArrayRecordDataSource", return_value=mock_grain_source):
+        with patch("grain.sources.ArrayRecordDataSource", return_value=mock_grain_source):
             # Create source with config-first pattern
             config = ArrayRecordSourceConfig(num_epochs=2)
             source = ArrayRecordSourceModule(config, paths="dummy.array_record")
@@ -265,7 +263,7 @@ class TestEndToEndPipeline:
 
         # Patch where the name is looked up (module's namespace)
         with patch(
-            "datarax.sources.array_record_source.grain.ArrayRecordDataSource",
+            "datarax.sources.array_record_source.grain.sources.ArrayRecordDataSource",
             return_value=mock_source,
         ):
             # Create pipeline with DAGExecutor (config-first pattern)

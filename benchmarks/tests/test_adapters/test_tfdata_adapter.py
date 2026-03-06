@@ -7,6 +7,7 @@ import pytest
 
 from benchmarks.tests.test_adapters.conftest import assert_valid_iteration_result
 
+
 tf = pytest.importorskip("tensorflow")
 
 
@@ -29,18 +30,12 @@ class TestTfDataAdapterProperties:
 
     def test_supported_scenarios(self):
         from benchmarks.adapters.tfdata_adapter import TfDataAdapter
+        from benchmarks.tests.test_adapters.conftest import assert_supported_scenarios
 
-        expected = {
-            "CV-1",
-            "NLP-1",
-            "TAB-1",
-            "DIST-1",
-            "PR-1",
-            "AUG-1",
-            "AUG-2",
-            "AUG-3",
-        }
-        assert TfDataAdapter().supported_scenarios() == expected
+        assert_supported_scenarios(
+            TfDataAdapter(),
+            must_include={"CV-1", "NLP-1", "HCV-1", "HPC-1", "AUG-1"},
+        )
 
 
 class TestTfDataAdapterLifecycle:

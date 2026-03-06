@@ -6,8 +6,9 @@ Enhanced with Flax NNX module support for proper RNG and Variable handling.
 """
 
 import inspect
+import logging
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeVar
 
 import flax.nnx as nnx
 
@@ -17,6 +18,11 @@ from datarax.core.operator import OperatorModule
 from datarax.core.sampler import SamplerModule
 from datarax.core.sharder import SharderModule
 from datarax.utils.prng import create_rngs
+
+
+_T = TypeVar("_T")
+
+logger = logging.getLogger(__name__)
 
 
 # Type alias for component constructors
@@ -36,11 +42,11 @@ _COMPONENT_TYPES: dict[str, type] = {
 }
 
 
-def _is_nnx_module(cls: type) -> bool:
+def _is_nnx_module(cls: Any) -> bool:
     """Check if a class is an NNX module.
 
     Args:
-        cls: Class to check.
+        cls: Class or callable to check.
 
     Returns:
         True if the class inherits from nnx.Module.
@@ -188,9 +194,7 @@ def _load_state_from_file(instance: nnx.Module, config: dict[str, Any]) -> None:
         raise NotImplementedError("State loading from file not yet implemented")
 
 
-def register_component(
-    component_type: str, name: str | None = None
-) -> Callable[[type[Any] | Callable[..., Any]], type[Any] | Callable[..., Any]]:
+def register_component(component_type: str, name: str | None = None) -> Callable[[_T], _T]:
     """Register a component constructor with the registry.
 
     This decorator can be used to register a component constructor with
@@ -216,13 +220,13 @@ def register_component(
         ```
     """
 
-    def decorator(cls_or_fn: type[Any] | Callable[..., Any]):
+    def decorator(cls_or_fn: _T) -> _T:
         # Use provided name or class/function name
-        component_name = name or cls_or_fn.__name__
+        component_name = name or getattr(cls_or_fn, "__name__", str(cls_or_fn))
 
         # Register the component constructor
         key = f"{component_type}.{component_name}"
-        _COMPONENT_REGISTRY[key] = cls_or_fn
+        _COMPONENT_REGISTRY[key] = cls_or_fn  # type: ignore[assignment]
 
         # Return the original class or function
         return cls_or_fn

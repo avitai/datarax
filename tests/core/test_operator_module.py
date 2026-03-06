@@ -15,103 +15,81 @@ Test Categories (from operator-module-api.md):
 9. Module copying (config-based)
 """
 
-import pytest
-from flax import nnx
-import jax
-import jax.numpy as jnp
-
-
-# NOTE: Import will fail initially (RED phase) - this is expected!
-try:
-    from datarax.core.config import OperatorConfig
-    from datarax.core.operator import OperatorModule
-    from datarax.core.element_batch import Batch
-except ImportError:
-    OperatorConfig = None
-    OperatorModule = None
-    Batch = None
-
-
-pytestmark = pytest.mark.skipif(
-    OperatorModule is None,
-    reason="OperatorModule not implemented yet (RED phase)",
-)
-
-
 # ========================================================================
 # Test Fixture: Example Operator Implementations
 # ========================================================================
-
 # Example 1: Simple stochastic operator (random brightness)
 from dataclasses import dataclass
 
-if OperatorConfig is not None:
+import jax
+import jax.numpy as jnp
+import pytest
+from flax import nnx
 
-    @dataclass
-    class RandomBrightnessConfig(OperatorConfig):
-        """Config for random brightness operator."""
-
-        min_factor: float = 0.8
-        max_factor: float = 1.2
-
-        def __post_init__(self):
-            super().__post_init__()
-            if self.min_factor >= self.max_factor:
-                raise ValueError("min_factor must be < max_factor")
-            if self.min_factor <= 0 or self.max_factor <= 0:
-                raise ValueError("Brightness factors must be positive")
+from datarax.core.config import OperatorConfig
+from datarax.core.element_batch import Batch
+from datarax.core.operator import OperatorModule
 
 
-if OperatorModule is not None:
+@dataclass(frozen=True)
+class RandomBrightnessConfig(OperatorConfig):  # type: ignore[reportGeneralTypeIssues]
+    """Config for random brightness operator."""
 
-    class RandomBrightnessOperator(OperatorModule):
-        """Stochastic operator that adjusts brightness randomly."""
+    min_factor: float = 0.8
+    max_factor: float = 1.2
 
-        def generate_random_params(self, rng, data_shapes):
-            batch_size = data_shapes["image"][0]
-            # Generate one brightness factor per batch element
-            return jax.random.uniform(
-                rng,
-                shape=(batch_size,),
-                minval=self.config.min_factor,
-                maxval=self.config.max_factor,
-            )
-
-        def apply(self, data, state, metadata, random_params=None, stats=None):
-            factor = random_params if random_params is not None else 1.0
-            transformed_data = {**data, "image": jnp.clip(data["image"] * factor, 0.0, 1.0)}
-            return transformed_data, state, metadata
+    def __post_init__(self):
+        super().__post_init__()
+        if self.min_factor >= self.max_factor:
+            raise ValueError("min_factor must be < max_factor")
+        if self.min_factor <= 0 or self.max_factor <= 0:
+            raise ValueError("Brightness factors must be positive")
 
 
-if OperatorConfig is not None:
+class RandomBrightnessOperator(OperatorModule):
+    """Stochastic operator that adjusts brightness randomly."""
 
-    @dataclass
-    class NormalizeConfig(OperatorConfig):
-        """Config for normalization operator (deterministic)."""
+    def generate_random_params(self, rng, data_shapes):
+        batch_size = data_shapes["image"][0]
+        # Generate one brightness factor per batch element
+        return jax.random.uniform(
+            rng,
+            shape=(batch_size,),
+            minval=self.config.min_factor,  # type: ignore[reportAttributeAccessIssue]
+            maxval=self.config.max_factor,  # type: ignore[reportAttributeAccessIssue]
+        )
 
-        # No operator-specific fields needed
-        pass
+    def apply(self, data, state, metadata, random_params=None, stats=None):
+        factor = random_params if random_params is not None else 1.0
+        transformed_data = {**data, "image": jnp.clip(data["image"] * factor, 0.0, 1.0)}
+        return transformed_data, state, metadata
 
 
-if OperatorModule is not None:
+@dataclass(frozen=True)
+class NormalizeConfig(OperatorConfig):  # type: ignore[reportGeneralTypeIssues]
+    """Config for normalization operator (deterministic)."""
 
-    class NormalizeOperator(OperatorModule):
-        """Deterministic operator that normalizes data using statistics."""
+    # No operator-specific fields needed
+    pass
 
-        def apply(self, data, state, metadata, random_params=None, stats=None):
-            # Get stats from config
-            if stats is None:
-                stats = self.get_statistics()
 
-            if stats is None:
-                # No normalization if no stats available
-                return data, state, metadata
+class NormalizeOperator(OperatorModule):
+    """Deterministic operator that normalizes data using statistics."""
 
-            mean = stats.get("mean", 0.0)
-            std = stats.get("std", 1.0)
+    def apply(self, data, state, metadata, random_params=None, stats=None):
+        # Get stats from config
+        if stats is None:
+            stats = self.get_statistics()
 
-            transformed_data = {**data, "image": (data["image"] - mean) / std}
-            return transformed_data, state, metadata
+        if stats is None:
+            # No normalization if no stats available
+            return data, state, metadata
+
+        mean = stats.get("mean", 0.0)
+        std = stats.get("std", 1.0)
+
+        transformed_data = {**data, "image": (data["image"] - mean) / std}
+        return transformed_data, state, metadata
 
 
 # ========================================================================
@@ -927,13 +905,13 @@ class TestOperatorModuleCopying:
 
         # Should have new config
         assert copy.config is config2
-        assert copy.config.min_factor == 0.5
-        assert copy.config.max_factor == 1.5
+        assert copy.config.min_factor == 0.5  # type: ignore[reportAttributeAccessIssue]
+        assert copy.config.max_factor == 1.5  # type: ignore[reportAttributeAccessIssue]
 
         # Original unchanged
         assert operator.config is config1
-        assert operator.config.min_factor == 0.8
-        assert operator.config.max_factor == 1.2
+        assert operator.config.min_factor == 0.8  # type: ignore[reportAttributeAccessIssue]
+        assert operator.config.max_factor == 1.2  # type: ignore[reportAttributeAccessIssue]
 
     def test_copy_with_new_rngs(self):
         """Test copying with new RNG state."""
@@ -974,7 +952,7 @@ class TestOperatorModuleCopying:
         metadata = None
 
         result1, _, _ = operator.apply(data, state, metadata)
-        result2, _, _ = copy.apply(data, state, metadata)
+        result2, _, _ = copy.apply(data, state, metadata)  # type: ignore[reportAttributeAccessIssue]
 
         assert jnp.array_equal(result1["image"], result2["image"])
 

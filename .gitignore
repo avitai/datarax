@@ -240,6 +240,8 @@ wandb/
 .wandb*
 
 # Secrets (API keys, credentials — never commit)
+secret.sh
+**/secret.sh
 secrets.sh
 **/secrets.sh
 
@@ -254,3 +256,4 @@ benchmark-data/
 
 # activated virtual environments
 activate.sh
+secrets.sh

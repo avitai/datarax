@@ -36,8 +36,12 @@ def results_dir(tmp_path):
 
     manifest = {
         "platform": "cpu",
+        "requested_platform": "cpu",
+        "active_backend": "cpu",
+        "profile_name": "ci_cpu",
+        "gpu_name": "none",
         "timestamp": time.time(),
-        "environment": {"cpu": "test"},
+        "environment": {"cpu": "test", "platform": {"backend": "cpu"}},
         "adapters": {
             "Datarax": ["Datarax_CV-1_small.json"],
         },
@@ -58,6 +62,7 @@ class TestCLI:
     def test_run_no_wandb(self, tmp_path):
         """datarax-bench run --no-wandb should complete without W&B."""
         from click.testing import CliRunner
+
         from benchmarks.cli import main
 
         runner = CliRunner()
@@ -92,6 +97,7 @@ class TestCLI:
     def test_export_loads_and_exports(self, results_dir, tmp_path):
         """datarax-bench export should load existing results and export to W&B."""
         from click.testing import CliRunner
+
         from benchmarks.cli import main
 
         runner = CliRunner()
@@ -116,6 +122,7 @@ class TestCLI:
     def test_analyze_generates_output(self, results_dir, tmp_path):
         """datarax-bench analyze should create analysis output files."""
         from click.testing import CliRunner
+
         from benchmarks.cli import main
 
         output_dir = tmp_path / "analysis"
@@ -137,6 +144,7 @@ class TestCLI:
     def test_report_generates_markdown(self, results_dir, tmp_path):
         """datarax-bench report should produce a markdown file."""
         from click.testing import CliRunner
+
         from benchmarks.cli import main
 
         report_path = tmp_path / "report.md"

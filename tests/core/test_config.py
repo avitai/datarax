@@ -10,25 +10,12 @@ Test Categories:
 - Invalid configurations
 """
 
-import pytest
 from typing import Any
+
+import pytest
 from flax import nnx
 
-
-# NOTE: Import will fail initially (RED phase) - this is expected!
-# Implementation will be created in src/datarax/core/config.py
-try:
-    from datarax.core.config import DataraxModuleConfig
-except ImportError:
-    # Expected during RED phase - tests should fail
-    DataraxModuleConfig = None
-
-
-# Skip all tests if implementation doesn't exist yet
-pytestmark = pytest.mark.skipif(
-    DataraxModuleConfig is None,
-    reason="DataraxModuleConfig not implemented yet (RED phase)",
-)
+from datarax.core.config import DataraxModuleConfig
 
 
 class TestDataraxModuleConfigConstruction:
@@ -147,8 +134,8 @@ class TestDataraxModuleConfigInheritance:
         """Test that child configs can add their own fields."""
         from dataclasses import dataclass
 
-        @dataclass
-        class ChildConfig(DataraxModuleConfig):
+        @dataclass(frozen=True)
+        class ChildConfig(DataraxModuleConfig):  # type: ignore[reportGeneralTypeIssues]
             """Child config with additional field."""
 
             extra_field: int = 42
@@ -161,8 +148,8 @@ class TestDataraxModuleConfigInheritance:
         """Test that child configs inherit parent validation."""
         from dataclasses import dataclass
 
-        @dataclass
-        class ChildConfig(DataraxModuleConfig):
+        @dataclass(frozen=True)
+        class ChildConfig(DataraxModuleConfig):  # type: ignore[reportGeneralTypeIssues]
             """Child config that inherits validation."""
 
             pass
@@ -175,8 +162,8 @@ class TestDataraxModuleConfigInheritance:
         """Test that child configs can add their own validation."""
         from dataclasses import dataclass
 
-        @dataclass
-        class ChildConfig(DataraxModuleConfig):
+        @dataclass(frozen=True)
+        class ChildConfig(DataraxModuleConfig):  # type: ignore[reportGeneralTypeIssues]
             """Child config with additional validation."""
 
             min_value: float = 0.0
@@ -207,12 +194,14 @@ class TestDataraxModuleConfigDataclass:
 
         assert is_dataclass(DataraxModuleConfig)
 
-    def test_not_frozen_by_default(self):
-        """Test that base config is mutable (not frozen)."""
+    def test_is_frozen(self):
+        """Test that base config is frozen (immutable)."""
+        from dataclasses import FrozenInstanceError
+
         config = DataraxModuleConfig()
-        # Should be able to modify fields (mutable)
-        config.cacheable = True
-        assert config.cacheable is True
+        # Should NOT be able to modify fields (frozen)
+        with pytest.raises(FrozenInstanceError):
+            config.cacheable = True  # type: ignore[reportAttributeAccessIssue]
 
     def test_repr_includes_fields(self):
         """Test that __repr__ shows field values."""

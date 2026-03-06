@@ -58,6 +58,7 @@ import jax.numpy as jnp
 from datarax.checkpoint import PipelineCheckpoint
 from datarax.typing import CheckpointableIterator
 
+
 print(f"JAX backend: {jax.default_backend()}")
 
 # %% [markdown]
@@ -82,6 +83,7 @@ class SimplePipeline(CheckpointableIterator[dict[str, jax.Array]]):
         shuffle: bool = True,
         seed: int = 42,
     ):
+        """Initialize SimplePipeline."""
         self.data = data
         self.batch_size = batch_size
         self.shuffle = shuffle
@@ -100,6 +102,7 @@ class SimplePipeline(CheckpointableIterator[dict[str, jax.Array]]):
         return indices
 
     def __iter__(self) -> "SimplePipeline":
+        """Iterate over batches."""
         return self
 
     def iterator(self, pipeline_seed: int | None = None) -> "SimplePipeline":
@@ -146,6 +149,7 @@ class SimplePipeline(CheckpointableIterator[dict[str, jax.Array]]):
         self.indices = state["indices"]
 
     def __len__(self) -> int:
+        """Return the number of batches per epoch."""
         return (len(self.data) + self.batch_size - 1) // self.batch_size
 
 

@@ -2,30 +2,28 @@
 
 from typing import Any
 
+import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-import flax.nnx as nnx
-
+from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.typing import Batch, Element
 from datarax.utils.pytree_utils import (
-    is_jax_array,
-    is_batch_leaf,
-    is_non_jax_leaf,
-    get_batch_size,
-    is_single_element,
     add_batch_dimension,
+    apply_to_batch_dimension,
+    concatenate_batches,
+    get_batch_size,
+    get_pytree_structure_info,
+    is_batch_leaf,
+    is_jax_array,
+    is_non_jax_leaf,
+    is_single_element,
     remove_batch_dimension,
     split_batch,
-    concatenate_batches,
-    apply_to_batch_dimension,
     validate_batch_consistency,
-    get_pytree_structure_info,
 )
-
-from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.typing import Element, Batch
 
 
 class TestIsJaxArray:

@@ -1,13 +1,15 @@
 import os
 import unittest
 from unittest.mock import patch
+
 import jax
 import jax.numpy as jnp
+
 from datarax.performance.xla_optimization import (
-    XLAOptimizer,
-    SmartCompilation,
-    MemoryEfficientCompilation,
     DistributedUtils,
+    MemoryEfficientCompilation,
+    SmartCompilation,
+    XLAOptimizer,
 )
 
 
@@ -22,18 +24,32 @@ class TestXLAOptimization(unittest.TestCase):
         else:
             os.environ["XLA_FLAGS"] = self.original_xla_flags
 
-    def test_xla_flags_configuration(self):
-        """Test that XLA flags are correctly configured."""
+    def test_xla_flags_cpu_backend(self):
+        """Test that CPU-specific XLA flags are set for CPU backend."""
         if "XLA_FLAGS" in os.environ:
             del os.environ["XLA_FLAGS"]
 
-        # Mock backend to ensure consistency in tests
         with patch("jax.default_backend", return_value="cpu"):
             XLAOptimizer(target_hardware="auto")
 
         flags = os.environ.get("XLA_FLAGS", "")
-        # Verify core flags
+        self.assertIn("--xla_cpu_enable_fast_math=true", flags)
+        self.assertNotIn("--xla_gpu_", flags)
+
+    def test_xla_flags_gpu_backend(self):
+        """Test that GPU-specific XLA flags are set for GPU backend."""
+        if "XLA_FLAGS" in os.environ:
+            del os.environ["XLA_FLAGS"]
+
+        with patch("jax.default_backend", return_value="gpu"):
+            XLAOptimizer(target_hardware="auto")
+
+        flags = os.environ.get("XLA_FLAGS", "")
         self.assertIn("--xla_gpu_enable_latency_hiding_scheduler=true", flags)
+        self.assertIn("--xla_gpu_strict_conv_algorithm_picker=false", flags)
+        self.assertNotIn("--xla_gpu_enable_async_all_gather", flags)
+        self.assertNotIn("--xla_gpu_enable_memory_space_assignment", flags)
+        self.assertNotIn("--xla_cpu_", flags)
 
     def test_aot_compile(self):
         """Test AOT compilation wrapper."""

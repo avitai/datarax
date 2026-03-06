@@ -8,11 +8,13 @@ Design ref: Section 7 of the benchmark report.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
-from benchmarks.scenarios.base import DEFAULT_SEED, ScenarioVariant, make_get_variant
+from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, ScenarioVariant
+
 
 SCENARIO_ID: str = "TAB-2"
 TIER1_VARIANT: str | None = None
@@ -37,7 +39,7 @@ def _make_data_generator(
     num_dense: int,
     num_sparse: int,
     seed: int = DEFAULT_SEED,
-) -> callable:
+) -> Callable[[], dict[str, Any]]:
     """Create a lazy data generator for sparse feature data."""
 
     def generate() -> dict[str, Any]:

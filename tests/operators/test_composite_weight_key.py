@@ -11,18 +11,18 @@ Test Coverage:
 - Advanced scenarios (JIT compatibility, gradient flow, batch processing via __call__)
 """
 
-import pytest
 import jax
 import jax.numpy as jnp
+import pytest
 from flax import nnx
 
+from datarax.core.element_batch import Batch, Element
 from datarax.operators.composite_operator import (
-    CompositeOperatorModule,
     CompositeOperatorConfig,
+    CompositeOperatorModule,
     CompositionStrategy,
 )
 from datarax.operators.map_operator import MapOperator, MapOperatorConfig
-from datarax.core.element_batch import Batch, Element
 
 
 class TestWeightKeyConfig:

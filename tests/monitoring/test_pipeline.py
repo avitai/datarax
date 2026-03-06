@@ -5,15 +5,16 @@ of the Datarax monitoring system.
 """
 
 from typing import Any
-import numpy as np
-import flax.nnx as nnx
 
-from datarax.monitoring.callbacks import MetricsObserver, MetricRecord
+import flax.nnx as nnx
+import numpy as np
+
+from datarax.dag.nodes import BatchNode, OperatorNode
+from datarax.monitoring.callbacks import MetricRecord, MetricsObserver
 from datarax.monitoring.pipeline import MonitoredPipeline
+from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import MemorySource
 from datarax.sources.memory_source import MemorySourceConfig
-from datarax.dag.nodes import BatchNode, OperatorNode
-from datarax.operators import ElementOperator, ElementOperatorConfig
 
 
 class TestMonitoredPipeline:

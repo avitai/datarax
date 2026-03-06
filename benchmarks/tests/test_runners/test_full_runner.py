@@ -10,18 +10,20 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+from calibrax.core import BenchmarkResult
+from calibrax.profiling import TimingSample
+
 from benchmarks.core.result_model import (
     build_benchmark_result,
     result_scenario_id,
 )
-from calibrax.core import BenchmarkResult
-from calibrax.profiling import TimingSample
 
 
 def _make_timing_sample(wall_clock: float = 1.0) -> TimingSample:
     return TimingSample(
         wall_clock_sec=wall_clock,
-        per_batch_times=[0.05] * 20,
+        per_batch_times=tuple([0.05] * 20),
         first_batch_time=0.08,
         num_batches=20,
         num_elements=640,
@@ -81,6 +83,10 @@ class TestComparativeResults:
             environment={"platform": {"backend": "cpu"}},
             platform="cpu",
             timestamp=time.time(),
+            requested_platform="cpu",
+            active_backend="cpu",
+            profile_name="ci_cpu",
+            gpu_name=None,
         )
         results.save(tmp_path)
 
@@ -88,6 +94,43 @@ class TestComparativeResults:
         assert "Datarax" in loaded.results
         assert len(loaded.results["Datarax"]) == 1
         assert loaded.platform == "cpu"
+
+    def test_roundtrip_preserves_backend_metadata(self, tmp_path: Path):
+        """requested/active backend metadata should survive save/load."""
+        from benchmarks.runners.full_runner import ComparativeResults
+
+        results = ComparativeResults(
+            results={"Datarax": [_make_result()]},
+            environment={"platform": {"backend": "gpu"}},
+            platform="gpu",
+            timestamp=time.time(),
+            requested_platform="gpu",
+            active_backend="gpu",
+            profile_name="gpu_a100",
+            gpu_name="NVIDIA A100",
+        )
+        results.save(tmp_path)
+        loaded = ComparativeResults.load(tmp_path)
+
+        assert loaded.requested_platform == "gpu"
+        assert loaded.active_backend == "gpu"
+        assert loaded.profile_name == "gpu_a100"
+        assert loaded.gpu_name == "NVIDIA A100"
+
+    def test_load_rejects_manifest_without_backend_truth_fields(self, tmp_path: Path):
+        """Legacy manifests without required backend-truth fields should fail fast."""
+        from benchmarks.runners.full_runner import ComparativeResults
+
+        manifest = {
+            "platform": "gpu",
+            "timestamp": time.time(),
+            "environment": {"platform": {"backend": "gpu", "devices": ["cuda:0"]}},
+            "adapters": {"Datarax": []},
+        }
+        (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+
+        with pytest.raises(ValueError, match="missing required manifest fields"):
+            ComparativeResults.load(tmp_path)
 
     def test_get_results_for_scenario(self):
         """get_scenario_results returns results grouped by adapter."""
@@ -207,6 +250,7 @@ class TestFullRunner:
             patch("benchmarks.runners.full_runner.get_available_adapters", return_value=available),
             patch("benchmarks.runners.full_runner.discover_scenarios", return_value=scenarios),
             patch("benchmarks.runners.full_runner.run_scenario", side_effect=mock_run_scenario),
+            patch.object(runner._runner, "ensure_backend", return_value="cpu"),
         ):
             comparative = runner.run_comparative(
                 scenario_filter=scenario_filter,
@@ -259,6 +303,8 @@ class TestFullRunner:
         summary = json.loads(summary_path.read_text())
         assert "adapters" in summary
         assert "scenarios" in summary
+        assert "requested_platform" in summary
+        assert "active_backend" in summary
 
     def test_skips_unavailable_adapters(self, tmp_path: Path):
         """run_comparative with adapter_filter excludes non-matching adapters."""
@@ -293,6 +339,7 @@ class TestFullRunner:
             patch("benchmarks.runners.full_runner.discover_scenarios", return_value=scenarios),
             patch("benchmarks.runners.full_runner.run_scenario", side_effect=mock_run_scenario),
             patch.object(runner, "_clear_framework_caches") as mock_clear,
+            patch.object(runner._runner, "ensure_backend", return_value="cpu"),
         ):
             runner.run_comparative(num_repetitions=1)
 
@@ -309,3 +356,32 @@ class TestFullRunner:
             platform="cpu",
         )
         assert runner.platform == "cpu"
+
+    def test_profile_include_applies_when_no_explicit_filter(self, tmp_path: Path):
+        """Profile include list should constrain scenarios by default."""
+        from benchmarks.runners.full_runner import FullRunner
+
+        runner = FullRunner(output_dir=tmp_path, hardware_profile="ci_cpu")
+        available, scenarios = _setup_mocks(["Datarax"], ["CV-1", "NLP-2"])
+
+        def mock_run_scenario(
+            adapter,
+            variant,
+            num_batches=50,
+            warmup_batches=5,
+            num_repetitions=5,
+        ):
+            return _make_result(adapter.name, variant.config.scenario_id)
+
+        with (
+            _patch_full_runner(),
+            patch("benchmarks.runners.full_runner.get_available_adapters", return_value=available),
+            patch("benchmarks.runners.full_runner.discover_scenarios", return_value=scenarios),
+            patch("benchmarks.runners.full_runner.run_scenario", side_effect=mock_run_scenario),
+            patch.object(runner._runner, "ensure_backend", return_value="cpu"),
+        ):
+            comparative = runner.run_comparative(num_repetitions=1)
+
+        ran_ids = {result_scenario_id(r) for r in comparative.results["Datarax"]}
+        assert "CV-1" in ran_ids
+        assert "NLP-2" not in ran_ids

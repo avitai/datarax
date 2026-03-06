@@ -36,6 +36,7 @@ class ComparisonReportGenerator:
         results: ComparativeResults,
         datarax_name: str = "Datarax",
     ) -> None:
+        """Initialize the comparison report generator."""
         self._results = results
         self._datarax_name = datarax_name
 

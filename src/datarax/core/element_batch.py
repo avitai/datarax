@@ -9,8 +9,9 @@ Key design decisions:
 - Efficient vectorized operations without Python loops
 """
 
+import logging
+from collections.abc import Callable, Iterator
 from typing import Any
-from collections.abc import Callable
 
 import flax.nnx as nnx
 import flax.struct as struct
@@ -19,6 +20,9 @@ import jax.numpy as jnp
 from jaxtyping import PyTree
 
 from .metadata import Metadata
+
+
+logger = logging.getLogger(__name__)
 
 
 @struct.dataclass
@@ -83,6 +87,14 @@ class Element:
         transformed_data = jax.tree.map(fn, self.data)
         return self.replace(data=transformed_data)
 
+    def replace(self, **kwargs: Any) -> "Element":
+        """Return a new Element with specified fields replaced.
+
+        This method is provided by ``@struct.dataclass`` at runtime.
+        The stub exists solely for static type-checking support.
+        """
+        ...  # Implemented by @struct.dataclass decorator
+
 
 class Batch(nnx.Module):
     """Batch container using Flax NNX patterns.
@@ -96,7 +108,7 @@ class Batch(nnx.Module):
     - All operations are JAX-compatible for JIT compilation
     """
 
-    def __init__(self, elements: list[Element], validate: bool = True):
+    def __init__(self, elements: list[Element], validate: bool = True) -> None:
         """Initialize batch from list of Elements.
 
         Args:
@@ -112,8 +124,8 @@ class Batch(nnx.Module):
             self.data = nnx.Variable({})
             self.states = nnx.Variable([])
             # Use nnx.Variable for metadata to ensure it's treated as state (contains JAX arrays)
-            self._metadata_list = nnx.Variable([])
-            self._batch_metadata = nnx.Variable(None)
+            self._metadata_list: nnx.Variable[list[Any]] = nnx.Variable([])
+            self._batch_metadata: nnx.Variable[Metadata | None] = nnx.Variable(None)
             self.batch_state = nnx.Variable({})
             return
 
@@ -139,8 +151,8 @@ class Batch(nnx.Module):
 
         # Store metadata in Variables because they contain JAX arrays (_encoded_key)
         # and must be part of State (not GraphDef) to avoid recompilation.
-        self._metadata_list = nnx.Variable(metadata_list)
-        self._batch_metadata = nnx.Variable(None)
+        self._metadata_list: nnx.Variable[list[Any]] = nnx.Variable(metadata_list)
+        self._batch_metadata: nnx.Variable[Metadata | None] = nnx.Variable(None)
 
         if validate:
             self._validate()
@@ -197,7 +209,7 @@ class Batch(nnx.Module):
             # Validate batch dimension consistency across all arrays
             batch_sizes = set()
 
-            def check_batch_dim(x):
+            def check_batch_dim(x: Any) -> Any:
                 if isinstance(x, jax.Array):
                     batch_sizes.add(x.shape[0])
                 return x
@@ -260,13 +272,13 @@ class Batch(nnx.Module):
 
         return batch
 
-    def _validate(self):
+    def _validate(self) -> None:
         """Validate batch consistency."""
         if self.batch_size == 0:
             return
 
         # Check batch dimensions using tree.map to handle nested PyTrees
-        def check_batch_size(x):
+        def check_batch_size(x: Any) -> Any:
             if isinstance(x, jax.Array) and x.shape[0] != self.batch_size:
                 raise ValueError(f"Array has batch size {x.shape[0]}, expected {self.batch_size}")
             return x
@@ -297,9 +309,12 @@ class Batch(nnx.Module):
 
     def get_elements(self, indices: slice | list[int]) -> list[Element]:
         """Get multiple elements by indices or slice."""
+        resolved: list[int] | range
         if isinstance(indices, slice):
-            indices = range(*indices.indices(self.batch_size))
-        return [self.get_element(i) for i in indices]
+            resolved = range(*indices.indices(self.batch_size))
+        else:
+            resolved = indices
+        return [self.get_element(i) for i in resolved]
 
     def slice(self, start: int, end: int) -> "Batch":
         """Create new batch from slice of elements (O(1) view)."""
@@ -359,7 +374,7 @@ class Batch(nnx.Module):
         """Check if key exists in data for dict-like containment check."""
         return key in self.data.get_value()
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         """Iterate over data keys for dict-like iteration."""
         return iter(self.data.get_value())
 
@@ -375,11 +390,11 @@ class Batch(nnx.Module):
         """Get batch-level metadata."""
         return self._batch_metadata.get_value()
 
-    def set_batch_metadata(self, metadata: Metadata):
+    def set_batch_metadata(self, metadata: Metadata) -> None:
         """Set batch-level metadata."""
         self._batch_metadata.set_value(metadata)
 
-    def update_batch_state(self, updates: dict[str, Any]):
+    def update_batch_state(self, updates: dict[str, Any]) -> None:
         """Update batch-level state (merge behavior)."""
         current = dict(self.batch_state.get_value())
         current.update(updates)
@@ -403,7 +418,7 @@ def _scan_batch_elements(batch: Batch, fn: Callable[[Element], Element]) -> Batc
     if batch.batch_size == 0:
         return Batch([])
 
-    def scan_fn(carry, elem_idx):
+    def scan_fn(carry: Any, elem_idx: Any) -> tuple[Any, Any]:
         # Get element at index
         elem = batch.get_element(elem_idx)
         # Apply transformation
@@ -422,14 +437,13 @@ def _scan_batch_elements(batch: Batch, fn: Callable[[Element], Element]) -> Batc
         if hasattr(transformed_elements, "data"):
             # If scan preserved structure
             elem_data = jax.tree.map(lambda x: x[i], transformed_elements.data)
+            # Scan returns batched state/metadata; index with int
+            raw_state = getattr(transformed_elements, "state", None)
+            raw_metadata = getattr(transformed_elements, "metadata", None)
             elem = Element(
                 data=elem_data,
-                state=transformed_elements.state[i]
-                if hasattr(transformed_elements, "state")
-                else {},
-                metadata=transformed_elements.metadata[i]
-                if hasattr(transformed_elements, "metadata")
-                else None,
+                state=raw_state[i] if raw_state is not None else {},
+                metadata=raw_metadata[i] if raw_metadata is not None else None,
             )
             elements.append(elem)
         else:
@@ -565,11 +579,11 @@ def while_transform(
 ) -> Batch:
     """Apply while loop transformation using nnx.while_loop."""
 
-    def loop_cond(state):
+    def loop_cond(state: tuple[Batch, int]) -> Any:
         batch_state, iteration = state
         return cond_fn(batch_state) & (iteration < max_iterations)
 
-    def loop_body(state):
+    def loop_body(state: tuple[Batch, int]) -> tuple[Batch, int]:
         batch_state, iteration = state
         new_batch = body_fn(batch_state)
         return (new_batch, iteration + 1)
@@ -665,7 +679,8 @@ class BatchView:
 
     __slots__ = ("_data", "_states", "batch_size")
 
-    def __init__(self, data: dict, states: dict, batch_size: int):
+    def __init__(self, data: dict, states: dict, batch_size: int) -> None:
+        """Initialize lightweight batch view from raw data, states, and batch size."""
         self._data = data
         self._states = states
         self.batch_size = batch_size
@@ -686,7 +701,7 @@ class BatchView:
         """Dict-like containment check."""
         return key in self._data
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         """Iterate over data keys."""
         return iter(self._data)
 

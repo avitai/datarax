@@ -27,21 +27,25 @@ class EnergonAdapter(PipelineAdapter):
     """
 
     def __init__(self) -> None:
+        """Initialize the Energon adapter."""
+        super().__init__()
         self._dataset: Any = None
-        self._config: ScenarioConfig | None = None
         self._tmp_dir: Any = None
 
     @property
     def name(self) -> str:
+        """Return the adapter display name."""
         return "Energon"
 
     @property
     def version(self) -> str:
+        """Return the Energon version string."""
         import megatron.energon
 
         return getattr(megatron.energon, "__version__", "unknown")
 
     def is_available(self) -> bool:
+        """Return True if Megatron Energon is installed."""
         try:
             import megatron.energon  # noqa: F401
 
@@ -50,10 +54,12 @@ class EnergonAdapter(PipelineAdapter):
             return False
 
     def supported_scenarios(self) -> set[str]:
+        """Return the set of supported benchmark scenario IDs."""
         return {"MM-1"}
 
     def setup(self, config: ScenarioConfig, data: Any) -> None:
-        from megatron.energon import WorkerConfig, get_train_dataset
+        """Set up the Energon pipeline for the given scenario configuration."""
+        from megatron.energon import get_train_dataset, WorkerConfig
 
         data_path, self._tmp_dir = setup_temp_dir(config, "energon_data")
 
@@ -76,7 +82,8 @@ class EnergonAdapter(PipelineAdapter):
         return [np.asarray(batch)]
 
     def teardown(self) -> None:
+        """Release resources and reset adapter state."""
         self._dataset = None
-        self._config = None
         cleanup_temp_dir(self._tmp_dir)
         self._tmp_dir = None
+        super().teardown()

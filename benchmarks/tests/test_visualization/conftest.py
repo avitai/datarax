@@ -8,9 +8,9 @@ from __future__ import annotations
 import time
 
 import pytest
+from calibrax.core import BenchmarkResult
 
 from benchmarks.tests.test_analysis.conftest import make_comparative_results, make_result
-from calibrax.core import BenchmarkResult
 
 
 @pytest.fixture

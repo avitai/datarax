@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import optax
 from flax import nnx
 
-from datarax.core import Pipeline
+from datarax.core import Pipeline  # type: ignore[reportAttributeAccessIssue]
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import HFEagerConfig, HFEagerSource
 
@@ -175,7 +175,6 @@ def main():
     train_config = HFEagerConfig(
         name="glue",
         split="train[:sst2]",  # SST-2 subset of GLUE
-        streaming=False,
         shuffle=True,
         seed=42,
     )
@@ -184,7 +183,6 @@ def main():
     val_config = HFEagerConfig(
         name="glue",
         split="validation[:sst2]",
-        streaming=False,
     )
     val_source = HFEagerSource(val_config, rngs=nnx.Rngs(1))
 
@@ -192,7 +190,11 @@ def main():
 
     # Create ElementOperator for tokenization
     tokenizer_config = ElementOperatorConfig(stochastic=False)
-    tokenizer = ElementOperator(tokenizer_config, fn=tokenize_glue_sst2, rngs=nnx.Rngs(0))
+    tokenizer = ElementOperator(
+        tokenizer_config,
+        fn=tokenize_glue_sst2,  # type: ignore[reportArgumentType]
+        rngs=nnx.Rngs(0),
+    )
 
     # Create data streams with transformations using the fluent API
     train_stream = Pipeline(train_source).map(tokenizer).batch(batch_size=32)

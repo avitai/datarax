@@ -9,6 +9,7 @@ import sys
 
 import numpy as np
 
+
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "src"))
 
 import jax.numpy as jnp
@@ -22,6 +23,7 @@ from datarax.operators.modality.audio.crepe_model import (
 
 
 def main():
+    """Generate CREPE reference fixtures using the JAX model implementation."""
     model = CrepeModel(capacity="full", rngs=nnx.Rngs(0))
     load_crepe_weights(model)
     model.eval()

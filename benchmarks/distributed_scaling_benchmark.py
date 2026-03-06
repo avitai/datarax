@@ -128,6 +128,7 @@ References
 import argparse
 import os
 
+
 _pre_parser = argparse.ArgumentParser(add_help=False)
 _pre_parser.add_argument("--platform", type=str, default="cpu")
 _pre_parser.add_argument("--num-devices", type=int, default=None)
@@ -153,6 +154,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from flax import nnx
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
+
 
 matplotlib.use("Agg")
 
@@ -496,6 +498,7 @@ def plot_results(results: dict, output_dir: Path) -> None:
 
 
 def main():
+    """CLI entry point for the distributed scaling benchmark."""
     parser = argparse.ArgumentParser(description="Distributed Scaling Benchmark")
     parser.add_argument(
         "--platform",

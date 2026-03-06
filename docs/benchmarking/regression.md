@@ -11,32 +11,62 @@ Detect performance regressions over time.
 
 ## Overview
 
-`RegressionDetector` compares current benchmark results against historical baselines using statistical analysis. It uses Welch's t-test when enough samples are available (per Section 9.2 of the benchmark report) and falls back to percentage thresholds for small sample sizes. Configurable thresholds control regression (default 10%) and critical (default 25%) severity levels.
+The `detect_regressions()` function compares a current `Run` against a baseline `Run` and flags metrics that degraded beyond a configurable threshold (default 5%). Detection is **direction-aware**: throughput decreases are regressions, but latency decreases are improvements. Metrics with direction `info` are skipped.
 
-The detector is **direction-aware**: throughput decreases are regressions, but latency decreases are improvements.
+Points are matched between runs using a composite key of `(name, tags)`, ensuring that "CV-1/small for Datarax" is compared against the correct baseline even when multiple frameworks share the same point name.
 
 ## Quick Start
 
 ```python
-from calibrax import RegressionDetector, BenchmarkResult
+from calibrax.analysis import detect_regressions
+from calibrax.core import Metric, MetricDef, MetricDirection, Point, Run
 
-detector = RegressionDetector(baseline_dir="baselines/")
+baseline = Run(
+    points=(
+        Point(
+            name="CV-1/small",
+            scenario="CV-1",
+            tags={"framework": "Datarax"},
+            metrics={"throughput": Metric(value=20000.0)},
+        ),
+    ),
+    metric_defs={
+        "throughput": MetricDef(
+            name="throughput",
+            unit="elem/s",
+            direction=MetricDirection.HIGHER,
+        ),
+    },
+)
 
-# Add historical baselines (run this multiple times over different runs)
-detector.add_baseline(baseline_result, "my_pipeline")
+current = Run(
+    points=(
+        Point(
+            name="CV-1/small",
+            scenario="CV-1",
+            tags={"framework": "Datarax"},
+            metrics={"throughput": Metric(value=18000.0)},
+        ),
+    ),
+    metric_defs=baseline.metric_defs,
+)
 
-# Later: detect regressions against baselines
-report = detector.detect_regressions(current_result, "my_pipeline")
-
-if report.has_critical_regressions():
-    print("CRITICAL regressions detected!")
-    worst = report.get_worst_regression()
-    print(f"  {worst.description}")
-
-for regression in report.regressions:
-    print(f"  [{regression.severity.value}] {regression.description} (p={regression.p_value})")
+regressions = detect_regressions(current, baseline, threshold=0.05)
+for r in regressions:
+    print(f"  {r.metric} on {r.point_name}: {r.delta_pct:+.1f}%")
+    print(f"    baseline={r.baseline_value:.0f} -> current={r.current_value:.0f}")
 ```
+
+### CI Integration
+
+The `calibrax check` CLI command wraps `detect_regressions()` for CI pipelines:
+
+```bash
+calibrax check --data benchmark-data/ --threshold 0.05
+```
+
+Exits with code 1 if any regressions exceed the threshold.
 
 ---
 
-::: calibrax.regression
+::: calibrax.analysis.regression

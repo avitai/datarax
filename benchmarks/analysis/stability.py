@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from benchmarks.core.result_model import result_scenario_id
 from calibrax.statistics import StatisticalAnalyzer
 
+from benchmarks.core.result_model import result_scenario_id
 from benchmarks.runners.full_runner import ComparativeResults
 
 
@@ -47,6 +47,7 @@ class StabilityValidator:
     """
 
     def __init__(self, cv_threshold: float = 0.10):
+        """Initialize the stability validator with a CV threshold."""
         self._threshold = cv_threshold
         self._analyzer = StatisticalAnalyzer()
 
@@ -64,7 +65,7 @@ class StabilityValidator:
 
         for adapter_name, adapter_results in results.results.items():
             for r in adapter_results:
-                if not r.timing.per_batch_times:
+                if r.timing is None or not r.timing.per_batch_times:
                     continue
 
                 stats = self._analyzer.summarize(r.timing.per_batch_times)

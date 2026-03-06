@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from datarax.core.data_source import DataSourceModule
-from datarax.sources.array_record_source import ArrayRecordSourceModule, ArrayRecordSourceConfig
+from datarax.sources.array_record_source import ArrayRecordSourceConfig, ArrayRecordSourceModule
 
 
 class TestArrayRecordSourceModule:
@@ -37,7 +37,7 @@ class TestArrayRecordSourceModule:
 
     def test_initialization(self, temp_array_record_files):
         """Test that ArrayRecordSourceModule initializes correctly."""
-        with patch("grain.python.ArrayRecordDataSource") as mock_grain_class:
+        with patch("grain.sources.ArrayRecordDataSource") as mock_grain_class:
             # Setup mock to return an object with __len__
             mock_instance = MagicMock()
             mock_instance.__len__.return_value = 100
@@ -62,7 +62,7 @@ class TestArrayRecordSourceModule:
 
     def test_initialization_with_pattern(self):
         """Test initialization with glob pattern."""
-        with patch("grain.python.ArrayRecordDataSource") as mock_grain_class:
+        with patch("grain.sources.ArrayRecordDataSource") as mock_grain_class:
             mock_instance = MagicMock()
             mock_instance.__len__.return_value = 100
             mock_grain_class.return_value = mock_instance
@@ -76,7 +76,7 @@ class TestArrayRecordSourceModule:
 
     def test_length(self, mock_grain_source):
         """Test that length returns correct number of records."""
-        with patch("grain.python.ArrayRecordDataSource", return_value=mock_grain_source):
+        with patch("grain.sources.ArrayRecordDataSource", return_value=mock_grain_source):
             config = ArrayRecordSourceConfig()
             source = ArrayRecordSourceModule(config, paths="dummy.array_record")
 
@@ -85,7 +85,7 @@ class TestArrayRecordSourceModule:
 
     def test_iteration_single_epoch(self, mock_grain_source):
         """Test iteration through a single epoch."""
-        with patch("grain.python.ArrayRecordDataSource", return_value=mock_grain_source):
+        with patch("grain.sources.ArrayRecordDataSource", return_value=mock_grain_source):
             config = ArrayRecordSourceConfig(num_epochs=1)
             source = ArrayRecordSourceModule(config, paths="dummy.array_record")
 
@@ -106,7 +106,7 @@ class TestArrayRecordSourceModule:
 
     def test_iteration_multiple_epochs(self, mock_grain_source):
         """Test iteration through multiple epochs."""
-        with patch("grain.python.ArrayRecordDataSource", return_value=mock_grain_source):
+        with patch("grain.sources.ArrayRecordDataSource", return_value=mock_grain_source):
             config = ArrayRecordSourceConfig(num_epochs=2)
             source = ArrayRecordSourceModule(config, paths="dummy.array_record")
 
@@ -123,7 +123,7 @@ class TestArrayRecordSourceModule:
 
     def test_infinite_epochs(self, mock_grain_source):
         """Test infinite epoch iteration."""
-        with patch("grain.python.ArrayRecordDataSource", return_value=mock_grain_source):
+        with patch("grain.sources.ArrayRecordDataSource", return_value=mock_grain_source):
             config = ArrayRecordSourceConfig(num_epochs=-1)  # Infinite
             source = ArrayRecordSourceModule(config, paths="dummy.array_record")
 
@@ -140,7 +140,7 @@ class TestArrayRecordSourceModule:
 
     def test_state_checkpointing(self, mock_grain_source):
         """Test state saving and restoration."""
-        with patch("grain.python.ArrayRecordDataSource", return_value=mock_grain_source):
+        with patch("grain.sources.ArrayRecordDataSource", return_value=mock_grain_source):
             config = ArrayRecordSourceConfig()
             source = ArrayRecordSourceModule(config, paths="dummy.array_record")
 
@@ -174,7 +174,7 @@ class TestArrayRecordSourceModule:
 
     def test_shuffling_with_seed(self):
         """Test that shuffling with seed is deterministic."""
-        with patch("grain.python.ArrayRecordDataSource") as mock_grain_class:
+        with patch("grain.sources.ArrayRecordDataSource") as mock_grain_class:
             mock_instance = MagicMock()
             mock_instance.__len__.return_value = 100
             mock_grain_class.return_value = mock_instance
@@ -189,7 +189,7 @@ class TestArrayRecordSourceModule:
 
     def test_prefetch_cache(self, mock_grain_source):
         """Test prefetch cache functionality."""
-        with patch("grain.python.ArrayRecordDataSource", return_value=mock_grain_source):
+        with patch("grain.sources.ArrayRecordDataSource", return_value=mock_grain_source):
             config = ArrayRecordSourceConfig()
             source = ArrayRecordSourceModule(config, paths="dummy.array_record")
 
@@ -205,7 +205,7 @@ class TestArrayRecordSourceModule:
 
     def test_error_handling_missing_file(self):
         """Test error handling for missing files."""
-        with patch("grain.python.ArrayRecordDataSource") as mock_grain_class:
+        with patch("grain.sources.ArrayRecordDataSource") as mock_grain_class:
             # Make ArrayRecordDataSource raise an error
             mock_grain_class.side_effect = Exception("File not found")
             config = ArrayRecordSourceConfig()
@@ -215,7 +215,7 @@ class TestArrayRecordSourceModule:
 
     def test_integration_with_rngs(self):
         """Test integration with NNX Rngs."""
-        with patch("grain.python.ArrayRecordDataSource") as mock_grain_class:
+        with patch("grain.sources.ArrayRecordDataSource") as mock_grain_class:
             mock_instance = MagicMock()
             mock_instance.__len__.return_value = 100
             mock_grain_class.return_value = mock_instance

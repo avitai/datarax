@@ -20,6 +20,7 @@ Examples:
     ```
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -30,7 +31,10 @@ from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 from datarax.operators.modality.image import functional
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class BrightnessOperatorConfig(ModalityOperatorConfig):
     """Configuration for BrightnessOperator.
 
@@ -55,7 +59,7 @@ class BrightnessOperatorConfig(ModalityOperatorConfig):
     brightness_range: tuple[float, float] = field(default=(-0.2, 0.2), kw_only=True)
     brightness_delta: float = field(default=0.0, kw_only=True)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration parameters."""
         super().__post_init__()
 
@@ -116,7 +120,7 @@ class BrightnessOperator(ModalityOperator):
         ```
     """
 
-    def __init__(self, config: BrightnessOperatorConfig, *, rngs: nnx.Rngs):
+    def __init__(self, config: BrightnessOperatorConfig, *, rngs: nnx.Rngs) -> None:
         """Initialize BrightnessOperator with configuration.
 
         Args:

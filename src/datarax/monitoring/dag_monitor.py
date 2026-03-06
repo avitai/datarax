@@ -4,17 +4,22 @@ This module provides MonitoredDAGExecutor that integrates metrics collection
 with the DAGExecutor pipeline system.
 """
 
+import logging
+import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
-from collections.abc import Iterator
-import time
-import jax
+
 import flax.nnx as nnx
+import jax
 
 from datarax.dag.dag_executor import DAGExecutor
 from datarax.dag.nodes import Node
 from datarax.monitoring.callbacks import CallbackRegistry
-from datarax.monitoring.metrics import MetricsCollector, MetricRecord
+from datarax.monitoring.metrics import MetricRecord, MetricsCollector
+
+
+logger = logging.getLogger(__name__)
 from datarax.typing import Batch
 
 
@@ -75,7 +80,7 @@ class MonitoredDAGExecutor(DAGExecutor):
         notify_threshold: int = 100,
         track_memory: bool = True,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize monitored DAG executor.
 
         Args:
@@ -260,7 +265,7 @@ class MonitoredDAGExecutor(DAGExecutor):
             return super()._execute(node, data, key)
 
         # Import node types
-        from datarax.dag.nodes import Sequential, Parallel, BatchNode, OperatorNode
+        from datarax.dag.nodes import BatchNode, OperatorNode, Parallel, Sequential
 
         if isinstance(node, Sequential | Parallel):
             node_name, result = self._execute_composite_node(
@@ -384,8 +389,9 @@ class MonitoredDAGExecutor(DAGExecutor):
     def _record_memory_usage(self) -> None:
         """Record current memory usage."""
         try:
-            import psutil
             import os
+
+            import psutil
 
             process = psutil.Process(os.getpid())
             memory_info = process.memory_info()
@@ -476,7 +482,7 @@ class MonitoredDAGExecutor(DAGExecutor):
         """
         stats = {}
 
-        from datarax.dag.nodes import CacheNode, Sequential, Parallel
+        from datarax.dag.nodes import CacheNode, Parallel, Sequential
 
         if isinstance(node, CacheNode):
             cache_stats = node.get_stats()

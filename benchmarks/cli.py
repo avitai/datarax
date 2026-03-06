@@ -14,7 +14,7 @@ from pathlib import Path
 import click
 from calibrax.storage import Store
 
-from benchmarks.export import FullExporter, export_to_calibrax
+from benchmarks.export import export_to_calibrax, FullExporter
 from benchmarks.runners.full_runner import ComparativeResults, FullRunner
 
 
@@ -207,3 +207,7 @@ def report(results_dir: str, output: str) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(markdown)
     click.echo(f"Report saved to {output_path}")
+
+
+if __name__ == "__main__":
+    main()

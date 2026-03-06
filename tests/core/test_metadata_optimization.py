@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 from jax import tree_util
+
 from datarax.core.metadata import Metadata
 
 

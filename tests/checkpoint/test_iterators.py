@@ -10,8 +10,8 @@ import jax.numpy as jnp
 
 from datarax.checkpoint.iterators import (
     CheckpointableIterator,
-    PipelineCheckpoint,
     IteratorCheckpoint,
+    PipelineCheckpoint,
 )
 
 
@@ -140,7 +140,8 @@ class TestIteratorCheckpoint(unittest.TestCase):
         self.assertIs(restored, new_iterator)
 
         # Check that the state was restored correctly
-        self.assertEqual(restored.idx, 10)
+        restored_idx = restored.idx  # type: ignore[reportAttributeAccessIssue]
+        self.assertEqual(restored_idx, 10)
 
         # Check that iteration continues correctly
         next_value = next(restored)
@@ -162,14 +163,16 @@ class TestIteratorCheckpoint(unittest.TestCase):
         restored = self.checkpoint.restore(new_iterator, step=2)
 
         # Check that the state was restored correctly
-        self.assertEqual(restored.idx, 20)
+        restored_idx = restored.idx  # type: ignore[reportAttributeAccessIssue]
+        self.assertEqual(restored_idx, 20)
 
         # Test restoring the latest (step 3)
         new_iterator = SimpleIterator(self.test_data)
         restored = self.checkpoint.restore(new_iterator)
 
         # Check that the state was restored correctly
-        self.assertEqual(restored.idx, 30)
+        restored_idx = restored.idx  # type: ignore[reportAttributeAccessIssue]
+        self.assertEqual(restored_idx, 30)
 
 
 class TestPipelineCheckpoint(unittest.TestCase):
@@ -233,7 +236,8 @@ class TestPipelineCheckpoint(unittest.TestCase):
         self.assertIs(restored, new_iterator)
 
         # Check that the state was restored correctly
-        self.assertEqual(restored.idx, 10)
+        restored_idx = restored.idx  # type: ignore[reportAttributeAccessIssue]
+        self.assertEqual(restored_idx, 10)
 
         # Create a no-checkpoint scenario
         with tempfile.TemporaryDirectory() as empty_dir:

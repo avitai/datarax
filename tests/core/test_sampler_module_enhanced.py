@@ -1,3 +1,4 @@
+# pyright: reportArgumentType=false, reportAttributeAccessIssue=false
 """Tests for enhanced SamplerModule functionality.
 
 This module contains thorough tests for the enhanced SamplerModule that
@@ -5,19 +6,19 @@ leverages advanced features from DataraxModule, including caching, statistics,
 RNG handling, and state management.
 """
 
-from dataclasses import dataclass
 from collections.abc import Iterator
+from dataclasses import dataclass
 
-import pytest
 import flax.nnx as nnx
+import pytest
 
-from datarax.core.sampler import SamplerModule
 from datarax.core.config import StructuralConfig
+from datarax.core.sampler import SamplerModule
 from datarax.utils.prng import create_rngs
 
 
-@dataclass
-class SimpleTestSamplerConfig(StructuralConfig):
+@dataclass(frozen=True)
+class SimpleTestSamplerConfig(StructuralConfig):  # type: ignore[reportGeneralTypeIssues]
     """Configuration for SimpleTestSampler."""
 
     dataset_size: int = 10
@@ -151,6 +152,7 @@ class TestSamplerModuleEnhanced:
 
         # Statistics should be available
         stats = sampler._compute_statistics([])
+        assert stats is not None
         assert stats["dataset_size"] == 100
         assert stats["type"] == "test"
 
@@ -417,6 +419,7 @@ class TestSamplerModuleDocumentation:
         # Should have computed statistics
         assert hasattr(sampler, "_last_computed_stats")
         stats = sampler._last_computed_stats
+        assert stats is not None
         assert stats["count"] == 3
         assert stats["sum"] == sum([0, 1, 2])
 
@@ -469,10 +472,12 @@ class TestSamplerModuleAdditionalCoverage:
 
         # Test with valid data
         stats = sampler._compute_statistics([1, 2, 3])
+        assert stats is not None
         assert stats["mean"] == 2.0
 
         # Test with empty data
         stats = sampler._compute_statistics([])
+        assert stats is not None
         assert stats["mean"] == 0
 
     def test_sample_impl_method(self):
@@ -607,6 +612,7 @@ class TestSamplerModuleAdditionalCoverage:
 
         # Access precomputed stats through _compute_statistics
         stats = sampler._compute_statistics([])
+        assert stats is not None
         assert stats["mean"] == 5.0
         assert stats["std"] == 2.0
 
@@ -614,7 +620,7 @@ class TestSamplerModuleAdditionalCoverage:
         """Test sample method when dataset_size starts as None."""
         # Create a modified sampler where dataset_size can be None
         sampler = SimpleTestSampler(dataset_size=5)
-        sampler.dataset_size = None
+        sampler.dataset_size = None  # type: ignore[reportGeneralTypeIssues]
 
         # Call sample with n
         sampler.sample(10)
@@ -625,7 +631,7 @@ class TestSamplerModuleAdditionalCoverage:
     def test_default_sample_implementation(self):
         """Test the default sample implementation that uses iterator."""
 
-        @dataclass
+        @dataclass(frozen=True)
         class IteratorOnlySamplerConfig(StructuralConfig):
             """Config for IteratorOnlySampler."""
 

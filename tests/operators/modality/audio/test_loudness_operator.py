@@ -14,27 +14,13 @@ Test categories:
 """
 
 import jax.numpy as jnp
-import pytest
 from flax import nnx
 
 from datarax.core.element_batch import Batch
-
-
-# Import under test — will fail in RED phase
-try:
-    from datarax.operators.modality.audio.loudness_operator import (
-        LoudnessConfig,
-        LoudnessOperator,
-        _a_weighting_jax,
-    )
-except ImportError:
-    LoudnessConfig = None
-    LoudnessOperator = None
-    _a_weighting_jax = None
-
-pytestmark = pytest.mark.skipif(
-    LoudnessOperator is None,
-    reason="LoudnessOperator not implemented yet (RED phase)",
+from datarax.operators.modality.audio.loudness_operator import (
+    _a_weighting_jax,
+    LoudnessConfig,
+    LoudnessOperator,
 )
 
 

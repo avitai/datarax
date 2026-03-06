@@ -1,5 +1,6 @@
 """JAX process sharder for distributing data across multiple processes."""
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,7 +11,10 @@ import numpy as np
 from datarax.core.sharder import SharderModule, SharderModuleConfig
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class JaxProcessSharderConfig(SharderModuleConfig):
     """Configuration for JaxProcessSharderModule.
 
@@ -33,7 +37,7 @@ class JaxProcessSharderModule(SharderModule):
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize JaxProcessSharderModule.
 
         Args:
@@ -44,6 +48,7 @@ class JaxProcessSharderModule(SharderModule):
         if config is None:
             config = JaxProcessSharderConfig()
         super().__init__(config, rngs=rngs, name=name)
+        self.config: JaxProcessSharderConfig = config
         self.process_index = nnx.Variable(jax.process_index())
         self.process_count = nnx.Variable(jax.process_count())
         self.local_device_count = nnx.Variable(jax.local_device_count())

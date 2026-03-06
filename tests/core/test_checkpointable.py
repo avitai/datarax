@@ -44,11 +44,13 @@ class SimpleIteratorModule(CheckpointableIteratorModule):
 
     def __next__(self) -> int:
         """Get next item."""
-        if self.position.get_value() >= self.max_items:
+        pos = self.position.get_value()
+        assert pos is not None
+        if pos >= self.max_items:
             raise StopIteration
 
-        current = self.position.get_value()
-        self.position.set_value(self.position.get_value() + 1)
+        current = pos
+        self.position.set_value(pos + 1)
         self.current.set_value(current)
         return current
 
@@ -121,11 +123,11 @@ class TestDataraxModuleCheckpointing:
 
         # Should have same state but be different objects
         assert module is not cloned
-        assert module.counter.get_value() == cloned.counter.get_value()
+        assert module.counter.get_value() == cloned.counter.get_value()  # type: ignore[reportAttributeAccessIssue]
 
         # Changing one shouldn't affect the other
         module(x)
-        assert module.counter.get_value() != cloned.counter.get_value()
+        assert module.counter.get_value() != cloned.counter.get_value()  # type: ignore[reportAttributeAccessIssue]
 
 
 class TestCheckpointableIteratorModule:

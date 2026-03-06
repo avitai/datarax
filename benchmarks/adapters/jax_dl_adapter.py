@@ -27,13 +27,11 @@ from typing import Any
 import numpy as np
 
 from benchmarks.adapters import register
-from benchmarks.adapters._utils import cast_to_float32, normalize_uint8
+from benchmarks.adapters._utils import BASIC_TRANSFORMS
 from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
-_JAX_DL_TRANSFORMS: dict[str, Any] = {
-    "Normalize": normalize_uint8,
-    "CastToFloat32": cast_to_float32,
-}
+
+_JAX_DL_TRANSFORMS = BASIC_TRANSFORMS
 
 
 def _create_jax_loader(dataset: Any, batch_size: int, shuffle: bool, drop_last: bool) -> Any:
@@ -63,21 +61,25 @@ class JaxDataloaderAdapter(PipelineAdapter):
     """PipelineAdapter for jax-dataloader."""
 
     def __init__(self) -> None:
+        """Initialize the jax-dataloader adapter."""
+        super().__init__()
         self._loader: Any = None
-        self._config: ScenarioConfig | None = None
         self._transform_fns: list[Any] = []
 
     @property
     def name(self) -> str:
+        """Return the adapter display name."""
         return "jax-dataloader"
 
     @property
     def version(self) -> str:
+        """Return the jax-dataloader version string."""
         import jax_dataloader as jdl
 
         return getattr(jdl, "__version__", "unknown")
 
     def is_available(self) -> bool:
+        """Return True if jax-dataloader is installed."""
         try:
             import jax_dataloader  # noqa: F401
 
@@ -85,10 +87,12 @@ class JaxDataloaderAdapter(PipelineAdapter):
         except ImportError:
             return False
 
-    def supported_scenarios(self) -> set[str]:
-        return {"CV-1"}
+    def available_transforms(self) -> set[str]:
+        """Return the registry of available transform functions."""
+        return set(_JAX_DL_TRANSFORMS)
 
     def setup(self, config: ScenarioConfig, data: Any) -> None:
+        """Set up the jax-dataloader pipeline for the given scenario."""
         import jax_dataloader as jdl
 
         primary_key = next(iter(data))
@@ -116,6 +120,7 @@ class JaxDataloaderAdapter(PipelineAdapter):
         return [arr]
 
     def teardown(self) -> None:
+        """Release resources and reset adapter state."""
         self._loader = None
-        self._config = None
         self._transform_fns = []
+        super().teardown()

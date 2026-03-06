@@ -21,6 +21,7 @@ Used by:
 
 import os
 
+
 # --- Ray isolation (must be set before `import ray`) ---
 # SkyPilot sets RAY_ADDRESS to its orchestration cluster.  If the benchmark
 # connects to that cluster, Ray workers inherit SkyPilot's uv runtime_env
@@ -51,5 +52,5 @@ try:
     import jax
 
     jax.devices()
-except Exception:
+except (ImportError, RuntimeError):
     pass

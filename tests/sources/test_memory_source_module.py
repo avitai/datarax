@@ -3,14 +3,14 @@
 This module tests the functionality of the unified MemorySource implementation.
 """
 
+import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-import flax.nnx as nnx
 
-from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.core.metadata import RecordMetadata
+from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
 
 def test_memory_source_basic_functionality():
@@ -344,14 +344,21 @@ def test_memory_source_batch_metadata():
     assert len(metadata_list) == 5
     assert all(isinstance(m, RecordMetadata) for m in metadata_list)
     assert all(m.shard_id == 1 for m in metadata_list)
-    assert all(m.source_info["source"] == "memory" for m in metadata_list)
+    assert all(
+        m.source_info is not None and m.source_info["source"] == "memory" for m in metadata_list
+    )
 
     # Check batch positions
     for i, meta in enumerate(metadata_list):
+        assert meta.source_info is not None
         assert meta.source_info["batch_position"] == i
 
     # Get another batch - batch index should increment
     batch2, metadata_list2 = source.get_batch_with_metadata(5)
+    assert metadata_list2[0] is not None
+    assert metadata_list[0] is not None
+    assert metadata_list2[0].batch_idx is not None
+    assert metadata_list[0].batch_idx is not None
     assert metadata_list2[0].batch_idx > metadata_list[0].batch_idx
 
 
@@ -388,6 +395,7 @@ def test_memory_source_metadata_reset():
     source.reset()
 
     # Check that metadata manager was also reset
+    assert source.metadata_manager is not None
     assert source.metadata_manager.state.get_value()["global_step"] == 0
     assert source.metadata_manager.state.get_value()["index"] == 0
     assert source.metadata_manager.state.get_value()["epoch"] == 0
@@ -410,11 +418,14 @@ def test_memory_source_metadata_with_shuffling():
     element, metadata = source.get_with_metadata(0)
 
     # Check that shuffle info is in source_info
+    assert metadata.source_info is not None
     assert metadata.source_info["shuffle_enabled"] is True
 
     # Get batch with metadata
     batch, meta_list = source.get_batch_with_metadata(3)
-    assert all(m.source_info["shuffle_enabled"] is True for m in meta_list)
+    assert all(
+        m.source_info is not None and m.source_info["shuffle_enabled"] is True for m in meta_list
+    )
 
 
 def test_memory_source_metadata_epoch_tracking():
@@ -556,7 +567,7 @@ def test_memory_source_array_batch_gathering():
     # Test array batch gathering (line 314)
     data = jnp.arange(20).reshape(20, 1)
     config = MemorySourceConfig()
-    source = MemorySource(config, data)
+    source = MemorySource(config, data)  # type: ignore[reportArgumentType]
 
     # Get batch
     batch = source.get_batch(5)

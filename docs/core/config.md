@@ -162,7 +162,7 @@ Extend the base classes for custom modules:
 from dataclasses import dataclass
 from datarax.core.config import OperatorConfig
 
-@dataclass
+@dataclass(frozen=True)
 class MyCustomOperatorConfig(OperatorConfig):
     """Configuration for MyCustomOperator."""
 

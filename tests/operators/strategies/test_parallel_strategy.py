@@ -3,11 +3,12 @@
 from unittest.mock import MagicMock
 
 import jax.numpy as jnp
+
 from datarax.operators.strategies.base import StrategyContext
 from datarax.operators.strategies.parallel import (
+    ConditionalParallelStrategy,
     ParallelStrategy,
     WeightedParallelStrategy,
-    ConditionalParallelStrategy,
 )
 from tests.test_common.mock_operators import ConstantMockOperator as MockOperator
 

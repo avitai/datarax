@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from flax import nnx
 
+
 matplotlib.use("Agg")
 
 from datarax import from_source
@@ -269,6 +270,7 @@ def plot_results(results: dict, output_dir: Path) -> None:
 
 
 def main():
+    """CLI entry point for the MNIST pipeline benchmark."""
     parser = argparse.ArgumentParser(description="MNIST Pipeline Benchmark")
     parser.add_argument("--samples", type=int, default=10000, help="Number of samples")
     parser.add_argument("--epochs", type=int, default=1, help="Number of epochs")

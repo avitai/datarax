@@ -5,7 +5,9 @@ with the new eager/streaming architecture.
 """
 
 import platform
+
 import pytest
+
 
 # Skip entire module on macOS ARM64 - TensorFlow import hangs during pytest collection
 # due to Metal/GPU device detection issues. This is a known upstream issue:
@@ -17,19 +19,20 @@ if platform.system() == "Darwin":
         allow_module_level=True,
     )
 
-import jax
 import flax.nnx as nnx
+import jax
+
 
 # Skip tests if tensorflow or tensorflow_datasets is not available
 tf = pytest.importorskip("tensorflow")
 pytest.importorskip("tensorflow_datasets")
 
 from datarax.sources import (
-    TFDSEagerSource,
-    TFDSEagerConfig,
-    TFDSStreamingSource,
-    TFDSStreamingConfig,
     from_tfds,
+    TFDSEagerConfig,
+    TFDSEagerSource,
+    TFDSStreamingConfig,
+    TFDSStreamingSource,
 )
 
 
@@ -324,7 +327,8 @@ class TestPrepareTfdsBuilderBeamWorkers:
     def test_beam_options_constructed_when_workers_set(self):
         """beam_num_workers should produce PipelineOptions in download_config."""
         pytest.importorskip("apache_beam")
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from datarax.sources.tfds_source import _prepare_tfds_builder
 
         mock_builder = MagicMock()
@@ -347,7 +351,8 @@ class TestPrepareTfdsBuilderBeamWorkers:
 
     def test_no_beam_options_when_workers_none(self):
         """No beam_options should be constructed when beam_num_workers is None."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from datarax.sources.tfds_source import _prepare_tfds_builder
 
         mock_builder = MagicMock()
@@ -363,7 +368,8 @@ class TestPrepareTfdsBuilderBeamWorkers:
 
     def test_beam_options_not_constructed_for_read_only_builder(self):
         """ReadOnlyBuilder should skip download entirely, no beam options."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from datarax.sources.tfds_source import _prepare_tfds_builder
 
         mock_builder = MagicMock()
@@ -414,11 +420,12 @@ class TestPrepareTfdsBuilder:
 
     def test_regular_builder_calls_download_and_prepare(self):
         """Non-ReadOnlyBuilder should have download_and_prepare called."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from datarax.sources.tfds_source import _prepare_tfds_builder
 
         mock_builder = MagicMock()
-        mock_builder.__class__ = type("RegularBuilder", (), {})
+        mock_builder.__class__ = type("RegularBuilder", (), {})  # type: ignore[reportAttributeAccessIssue]
 
         with patch("tensorflow_datasets.builder", return_value=mock_builder) as mock_tfds_builder:
             with patch("datarax.sources.tfds_source._is_read_only_builder", return_value=False):
@@ -430,7 +437,8 @@ class TestPrepareTfdsBuilder:
 
     def test_read_only_builder_skips_download_and_prepare(self):
         """ReadOnlyBuilder (from try_gcs) should NOT call download_and_prepare."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from datarax.sources.tfds_source import _prepare_tfds_builder
 
         mock_builder = MagicMock()
@@ -445,7 +453,8 @@ class TestPrepareTfdsBuilder:
 
     def test_try_gcs_passed_to_tfds_builder(self):
         """try_gcs should be forwarded to tfds.builder()."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from datarax.sources.tfds_source import _prepare_tfds_builder
 
         mock_builder = MagicMock()
@@ -459,7 +468,8 @@ class TestPrepareTfdsBuilder:
 
     def test_download_kwargs_passed_through(self):
         """download_and_prepare_kwargs should be unpacked to download_and_prepare."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from datarax.sources.tfds_source import _prepare_tfds_builder
 
         mock_builder = MagicMock()
@@ -484,7 +494,7 @@ class TestEagerSourceTryGcsPassthrough:
 
     def test_try_gcs_passed_to_load(self):
         """try_gcs should be forwarded to tfds.load() in _load_all_to_jax."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         # Create a mock dataset that returns one element
         mock_element = {"image": tf.constant([[1]]), "label": tf.constant(0)}
@@ -514,7 +524,7 @@ class TestStreamingSourceTryGcsPassthrough:
 
     def test_try_gcs_passed_to_prepare_builder(self):
         """try_gcs should be forwarded to _prepare_tfds_builder."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         mock_builder = MagicMock()
         mock_builder.info.splits = {"train": MagicMock(num_examples=100)}
@@ -668,7 +678,7 @@ def test_from_tfds_with_shuffling():
         source = from_tfds("mnist", "test[:20]", shuffle=True, seed=42, rngs=nnx.Rngs(0))
 
         # Should have shuffling enabled
-        assert source.shuffle is True
+        assert source.shuffle is True  # type: ignore[reportAttributeAccessIssue]
 
     except TFDS_TEST_SKIP_EXCEPTIONS as e:
         pytest.skip(f"Could not load MNIST dataset: {e}")
@@ -684,7 +694,7 @@ class TestFromTfdsFactoryTryGcs:
 
     def test_try_gcs_passed_to_eager_config(self):
         """try_gcs should be forwarded to TFDSEagerConfig."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         mock_builder = MagicMock()
         mock_builder.info.splits = {"train": MagicMock(num_bytes=100_000)}
@@ -705,7 +715,7 @@ class TestFromTfdsFactoryTryGcs:
 
     def test_try_gcs_passed_to_streaming_config(self):
         """try_gcs should be forwarded to TFDSStreamingConfig."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         mock_builder = MagicMock()
         mock_builder.info.splits = {"train": MagicMock(num_examples=100)}
@@ -721,7 +731,7 @@ class TestFromTfdsFactoryTryGcs:
 
     def test_download_kwargs_passed_to_eager_config(self):
         """download_and_prepare_kwargs should be forwarded to TFDSEagerConfig."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         mock_builder = MagicMock()
         mock_builder.info.splits = {"train": MagicMock(num_bytes=100_000)}
@@ -752,7 +762,7 @@ class TestFromTfdsFactoryTryGcs:
 
     def test_try_gcs_passed_to_auto_detect_builder(self):
         """try_gcs should be forwarded to tfds.builder() during auto-detection."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         mock_builder = MagicMock()
         mock_builder.info.splits = {"train": MagicMock(num_bytes=100_000)}
@@ -780,7 +790,7 @@ class TestFromTfdsFactoryBeamWorkers:
 
     def test_beam_workers_passed_to_eager_config(self):
         """beam_num_workers should be forwarded to TFDSEagerConfig."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         mock_builder = MagicMock()
         mock_builder.info.splits = {"train": MagicMock(num_bytes=100_000)}
@@ -806,7 +816,7 @@ class TestFromTfdsFactoryBeamWorkers:
 
     def test_beam_workers_passed_to_streaming_config(self):
         """beam_num_workers should be forwarded to TFDSStreamingConfig."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         mock_builder = MagicMock()
         mock_builder.info.splits = {"train": MagicMock(num_examples=100)}

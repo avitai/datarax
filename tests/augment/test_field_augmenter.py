@@ -4,14 +4,14 @@ This file tests MapOperator configured for field-specific transformations
 that target specific data fields.
 """
 
+import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
-import flax.nnx as nnx
 import numpy as np
 
-from datarax.operators import MapOperator
 from datarax.core.config import MapOperatorConfig
 from datarax.core.element_batch import create_batch_from_arrays
+from datarax.operators import MapOperator
 
 
 class TestFieldOperations:

@@ -60,6 +60,7 @@ class StatefulLoader(nnx.Module):
     """Datarax style: State managed internally."""
 
     def __init__(self, data, batch_size=3):
+        """Initialize StatefulLoader."""
         self.data = data
         self.batch_size = batch_size
 

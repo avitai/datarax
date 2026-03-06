@@ -1,19 +1,23 @@
 """Branching composition strategy."""
 
-from typing import Any
+import logging
 from collections.abc import Callable
+from typing import Any
 
 import jax
 from jaxtyping import PyTree
 
-from datarax.operators.strategies.base import CompositionStrategyImpl, StrategyContext
 from datarax.core.operator import OperatorModule
+from datarax.operators.strategies.base import CompositionStrategyImpl, StrategyContext
+
+
+logger = logging.getLogger(__name__)
 
 
 class BranchingStrategy(CompositionStrategyImpl):
     """Applies branching strategy with vmap-compatible integer routing."""
 
-    def __init__(self, router: Callable[[PyTree], int | jax.Array]):
+    def __init__(self, router: Callable[[PyTree], int | jax.Array]) -> None:
         """Initialize branching strategy.
 
         Args:
@@ -42,8 +46,8 @@ class BranchingStrategy(CompositionStrategyImpl):
         branch_index = self.router(context.data)
 
         # Create list of branch functions that call each operator's apply method
-        def make_branch_fn(i, operator):
-            def branch_fn(operands):
+        def make_branch_fn(i: int, operator: OperatorModule) -> Callable:
+            def branch_fn(operands: Any) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
                 d, s, m, rp = operands
                 # Extract random params for this specific operator
                 op_random_params = None

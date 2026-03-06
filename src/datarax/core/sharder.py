@@ -5,9 +5,10 @@ all NNX-based sharder implementations in Datarax. Sharders are responsible for
 distributing batches of data across JAX devices.
 """
 
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-from collections.abc import Callable
 
 import flax.nnx as nnx
 from jax.sharding import Mesh, NamedSharding, PartitionSpec, Sharding
@@ -17,13 +18,16 @@ from datarax.core.module import DataraxModule
 from datarax.typing import Batch
 
 
+logger = logging.getLogger(__name__)
+
+
 # Type aliases for sharding specifications
 AxisName = str
 LogicalAxisSpec = tuple[AxisName | None, ...]
 ShardingRules = list[tuple[AxisName, AxisName | None]]
 
 
-@dataclass
+@dataclass(frozen=True)
 class SharderModuleConfig(DataraxModuleConfig):
     """Configuration for SharderModule.
 
@@ -50,7 +54,7 @@ class SharderModule(DataraxModule):
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize the SharderModule.
 
         Args:
@@ -62,6 +66,8 @@ class SharderModule(DataraxModule):
         if config is None:
             config = SharderModuleConfig()
         super().__init__(config, rngs=rngs, name=name)
+        # Type narrowing for pyright
+        self.config: SharderModuleConfig = config
 
     def get_partition_spec(self, logical_spec: LogicalAxisSpec | PartitionSpec) -> PartitionSpec:
         """Convert a logical axis specification to a physical PartitionSpec.

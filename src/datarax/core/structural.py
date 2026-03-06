@@ -15,12 +15,16 @@ Key Features:
 - Statistics system (inherited from DataraxModule)
 """
 
+import logging
 from typing import Any
 
 from flax import nnx
 
 from datarax.core.config import StructuralConfig
 from datarax.core.module import DataraxModule
+
+
+logger = logging.getLogger(__name__)
 
 
 class StructuralModule(DataraxModule):
@@ -70,7 +74,7 @@ class StructuralModule(DataraxModule):
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize StructuralModule with config.
 
         Args:

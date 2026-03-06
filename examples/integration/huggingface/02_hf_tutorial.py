@@ -64,6 +64,7 @@ from datarax.operators.composite_operator import (
 )
 from datarax.sources import HFEagerConfig, HFEagerSource
 
+
 print(f"JAX version: {jax.__version__}")
 print(f"JAX backend: {jax.default_backend()}")
 
@@ -91,7 +92,6 @@ print(f"JAX backend: {jax.default_backend()}")
 basic_config = HFEagerConfig(
     name="mnist",
     split="train[:1000]",  # Load first 1000 samples
-    streaming=False,  # Download full dataset
 )
 
 basic_source = HFEagerSource(basic_config, rngs=nnx.Rngs(0))
@@ -147,7 +147,6 @@ shuffle_config = HFEagerConfig(
     split="train[:2000]",
     shuffle=True,
     seed=42,  # Integer seed for Grain's index_shuffle
-    shuffle_buffer_size=500,  # Shuffle in chunks of 500
 )
 
 # Create source with explicit RNG for reproducibility
@@ -157,7 +156,6 @@ shuffle_source = HFEagerSource(
 )
 
 print("Shuffle configuration:")
-print(f"  Buffer size: {shuffle_config.shuffle_buffer_size}")
 print(f"  Seed: {shuffle_config.seed}")
 
 # %% [markdown]
@@ -186,20 +184,18 @@ print("Mode Comparison:")
 streaming_config = HFEagerConfig(
     name="mnist",
     split="train",
-    streaming=True,
 )
 streaming_source = HFEagerSource(streaming_config, rngs=nnx.Rngs(0))
 
 try:
-    print(f"Streaming mode length: {len(streaming_source)}")
+    print(f"Eager mode length: {len(streaming_source)}")
 except (NotImplementedError, TypeError):
-    print("Streaming mode length: N/A (not available in streaming)")
+    print("Eager mode length: N/A")
 
 # Downloaded mode (using subset)
 downloaded_config = HFEagerConfig(
     name="mnist",
     split="train[:1000]",
-    streaming=False,
 )
 downloaded_source = HFEagerSource(downloaded_config, rngs=nnx.Rngs(0))
 print(f"Downloaded mode length: {len(downloaded_source)}")
@@ -285,7 +281,6 @@ train_config = HFEagerConfig(
     split="train[:5000]",
     shuffle=True,
     seed=42,
-    shuffle_buffer_size=1000,
     include_keys={"image", "label"},
 )
 

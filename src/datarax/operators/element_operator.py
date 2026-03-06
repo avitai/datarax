@@ -17,8 +17,9 @@ Key Features:
 - Uses Element.replace() pattern for immutable updates
 """
 
-from typing import Any, cast
+import logging
 from collections.abc import Callable
+from typing import Any, cast
 
 import jax
 from flax import nnx
@@ -27,8 +28,11 @@ from jaxtyping import PyTree
 from datarax.core.config import ElementOperatorConfig
 from datarax.core.element_batch import Element
 from datarax.core.metadata import Metadata
-from datarax.core.operator import OperatorModule
+from datarax.core.operator import extract_batch_size, OperatorModule
 from datarax.typing import PRNGKey
+
+
+logger = logging.getLogger(__name__)
 
 
 class ElementOperator(OperatorModule):
@@ -86,7 +90,7 @@ class ElementOperator(OperatorModule):
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize ElementOperator.
 
         Args:
@@ -108,7 +112,7 @@ class ElementOperator(OperatorModule):
         self,
         rng: PRNGKey,
         data_shapes: PyTree,
-    ) -> PRNGKey:
+    ) -> PRNGKey | None:
         """Generate random parameters for batch transformation.
 
         For ElementOperator, generates one RNG key per batch element.
@@ -121,20 +125,18 @@ class ElementOperator(OperatorModule):
                         Examples: {"image": (batch_size, H, W, C)}
 
         Returns:
-            Array of shape (batch_size, 2) - one PRNGKey per element
+            Array of shape (batch_size, 2) - one PRNGKey per element,
+            or None for deterministic operators.
         """
-        # Extract batch size from any array shape in the data
-        # Use is_leaf to treat tuples as atomic values
-        batch_sizes = jax.tree.map(
-            lambda shape: shape[0], data_shapes, is_leaf=lambda x: isinstance(x, tuple)
-        )
-        batch_size_leaves = jax.tree.leaves(batch_sizes)
+        if not self.stochastic:
+            return None
 
-        if not batch_size_leaves:
+        # Extract batch size from any array shape in the data
+        try:
+            batch_size = extract_batch_size(data_shapes)
+        except ValueError:
             # Empty tree - return single key (edge case)
             return jax.random.split(rng, 1)
-
-        batch_size = batch_size_leaves[0]
 
         # Generate one key per batch element
         return jax.random.split(rng, batch_size)

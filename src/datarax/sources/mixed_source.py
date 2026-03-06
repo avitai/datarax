@@ -5,20 +5,24 @@ sources according to configurable weights. Useful for combining heterogeneous
 data streams (e.g., different image datasets, synthetic + real data).
 """
 
+import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
+import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
-import flax.nnx as nnx
 
+from datarax.config.registry import register_component
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
-from datarax.config.registry import register_component
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class MixDataSourcesConfig(StructuralConfig):
     """Configuration for MixDataSourcesNode.
 
@@ -30,7 +34,8 @@ class MixDataSourcesConfig(StructuralConfig):
     num_sources: int | None = None
     weights: tuple[float, ...] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Validate and normalize mixed-source configuration fields."""
         # Validate required fields
         if self.num_sources is None:
             raise ValueError("num_sources is required")
@@ -78,7 +83,7 @@ class MixDataSourcesNode(DataSourceModule):
         *,
         rngs: nnx.Rngs,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize MixDataSourcesModule.
 
         Args:
@@ -119,7 +124,7 @@ class MixDataSourcesNode(DataSourceModule):
         """Reset iterators and start a new epoch."""
         self.index.set_value(0)
         self.epoch.set_value(self.epoch.get_value() + 1)
-        sources = list(self._sources)
+        sources: list[DataSourceModule] = list(self._sources)
         self._iterators = [iter(s) for s in sources]
         self._exhausted = [False] * len(sources)
         return self
@@ -129,6 +134,8 @@ class MixDataSourcesNode(DataSourceModule):
         if self.index.get_value() >= self._total_len:
             raise StopIteration
 
+        # rngs is guaranteed non-None by StructuralModule (stochastic=True)
+        assert self.rngs is not None  # noqa: S101 (invariant, not control flow)
         # Sample source index according to weights
         rng_key = self.rngs.mix()
         weights = self._weights.get_value()
@@ -168,5 +175,6 @@ class MixDataSourcesNode(DataSourceModule):
         self._iterators = []
         self._exhausted = []
         for s in self._sources:
-            if hasattr(s, "reset"):
-                s.reset()
+            reset_fn = getattr(s, "reset", None)
+            if reset_fn is not None:
+                reset_fn()

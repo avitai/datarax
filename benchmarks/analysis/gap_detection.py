@@ -81,6 +81,7 @@ class GapDetector:
         action_threshold: float = 2.0,
         datarax_name: str = "Datarax",
     ) -> None:
+        """Initialize the gap detector with threshold configuration."""
         self._results = results
         self._warning = warning_threshold
         self._action = action_threshold

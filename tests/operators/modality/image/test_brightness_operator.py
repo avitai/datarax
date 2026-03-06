@@ -58,7 +58,7 @@ class TestBrightnessOperatorConfig:
         with pytest.raises(ValueError, match="brightness_range must be a tuple"):
             BrightnessOperatorConfig(
                 field_key="image",
-                brightness_range=(-0.2,),  # Wrong length
+                brightness_range=(-0.2,),  # Wrong length  # type: ignore[reportArgumentType]
             )
 
         with pytest.raises(ValueError, match="min <= max"):
@@ -140,7 +140,7 @@ class TestBrightnessOperatorTransformations:
 
         # Create batch of elements
         images = jnp.ones((4, 32, 32, 3)) * 0.5
-        elements = [Element(data={"image": img}, state={}, metadata={}) for img in images]
+        elements = [Element(data={"image": img}, state={}) for img in images]
         batch = Batch(elements=elements)
 
         result_batch = operator.apply_batch(batch)
@@ -164,7 +164,7 @@ class TestBrightnessOperatorTransformations:
 
         # Create batch with values that will exceed [0,1] after adjustment
         images = jnp.ones((2, 16, 16, 3)) * 0.9
-        elements = [Element(data={"image": img}, state={}, metadata={}) for img in images]
+        elements = [Element(data={"image": img}, state={}) for img in images]
         batch = Batch(elements=elements)
 
         result_batch = operator.apply_batch(batch)
@@ -186,7 +186,7 @@ class TestBrightnessOperatorTransformations:
         operator = BrightnessOperator(config, rngs=nnx.Rngs(42, augment=1))
 
         images = jnp.ones((2, 16, 16, 3)) * 0.8
-        elements = [Element(data={"image": img}, state={}, metadata={}) for img in images]
+        elements = [Element(data={"image": img}, state={}) for img in images]
         batch = Batch(elements=elements)
 
         result_batch = operator.apply_batch(batch)
@@ -323,7 +323,7 @@ class TestBrightnessOperatorStochasticMode:
 
         # Create batch with identical images
         images = jnp.ones((4, 16, 16, 3)) * 0.5
-        elements = [Element(data={"image": img}, state={}, metadata={}) for img in images]
+        elements = [Element(data={"image": img}, state={}) for img in images]
         batch = Batch(elements=elements)
 
         result_batch = operator.apply_batch(batch)
@@ -377,7 +377,7 @@ class TestBrightnessOperatorJAXCompatibility:
             return op.apply_batch(batch)
 
         images = jnp.ones((2, 16, 16, 3)) * 0.5
-        elements = [Element(data={"image": img}, state={}, metadata={}) for img in images]
+        elements = [Element(data={"image": img}, state={}) for img in images]
         batch = Batch(elements=elements)
 
         result_batch = jit_apply_batch(operator, batch)
@@ -394,7 +394,7 @@ class TestBrightnessOperatorJAXCompatibility:
 
         # apply_batch uses vmap internally
         images = jnp.ones((4, 32, 32, 3)) * 0.5
-        elements = [Element(data={"image": img}, state={}, metadata={}) for img in images]
+        elements = [Element(data={"image": img}, state={}) for img in images]
         batch = Batch(elements=elements)
 
         result_batch = operator.apply_batch(batch)

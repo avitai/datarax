@@ -1,13 +1,17 @@
 """Sequential composition strategies."""
 
+import logging
+from collections.abc import Callable, Sequence
 from typing import Any
-from collections.abc import Callable
 
 import jax
 from jaxtyping import PyTree
 
-from datarax.operators.strategies.base import CompositionStrategyImpl, StrategyContext
 from datarax.core.operator import OperatorModule
+from datarax.operators.strategies.base import CompositionStrategyImpl, StrategyContext
+
+
+logger = logging.getLogger(__name__)
 
 
 class SequentialStrategy(CompositionStrategyImpl):
@@ -27,7 +31,9 @@ class SequentialStrategy(CompositionStrategyImpl):
         Returns:
             Tuple of (data, state, metadata) after all operators have run.
         """
-        result_data, result_state, result_metadata = context.data, context.state, context.metadata
+        result_data: PyTree = context.data
+        result_state: PyTree = context.state
+        result_metadata: dict[str, Any] | None = context.metadata
 
         for i, operator in enumerate(operators):
             op_random_params = self._extract_operator_random_params(context.random_params, i)
@@ -40,7 +46,7 @@ class SequentialStrategy(CompositionStrategyImpl):
             # Track statistics
             self._emit_operator_statistics(operator, i, context.stats_callback)
 
-        return result_data, result_state, result_metadata
+        return result_data, result_state, result_metadata or {}
 
 
 class ConditionalSequentialStrategy(CompositionStrategyImpl):
@@ -49,7 +55,7 @@ class ConditionalSequentialStrategy(CompositionStrategyImpl):
     Only applies operators where condition evaluates to True.
     """
 
-    def __init__(self, conditions: list[Callable[[PyTree], bool | jax.Array]]):
+    def __init__(self, conditions: Sequence[Callable[[PyTree], bool | jax.Array]]) -> None:
         """Initialize ConditionalSequentialStrategy.
 
         Args:

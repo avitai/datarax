@@ -38,6 +38,7 @@ import numpy as np
 from benchmarks.adapters import register
 from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
+
 # Dedicated port so we don't collide with SkyPilot's Ray (default 6379).
 _BENCH_RAY_PORT = 6399
 
@@ -101,21 +102,25 @@ class RayDataAdapter(PipelineAdapter):
     """
 
     def __init__(self) -> None:
+        """Initialize the Ray Data adapter."""
+        super().__init__()
         self._dataset: Any = None
-        self._config: ScenarioConfig | None = None
         self._started_head: bool = False
 
     @property
     def name(self) -> str:
+        """Return the adapter display name."""
         return "Ray Data"
 
     @property
     def version(self) -> str:
+        """Return the Ray version string."""
         import ray
 
         return ray.__version__
 
     def is_available(self) -> bool:
+        """Return True if Ray Data is installed."""
         try:
             import ray.data  # noqa: F401
 
@@ -124,12 +129,14 @@ class RayDataAdapter(PipelineAdapter):
             return False
 
     def supported_scenarios(self) -> set[str]:
+        """Return the set of supported benchmark scenario IDs."""
         return {
             "NLP-1",  # No transforms (pure iteration)
             "TAB-1",  # Normalize on float32 (pass-through)
         }
 
     def setup(self, config: ScenarioConfig, data: Any) -> None:
+        """Set up the Ray Data pipeline for the given scenario configuration."""
         import ray
         import ray.data as rd
 
@@ -149,6 +156,7 @@ class RayDataAdapter(PipelineAdapter):
         self._config = config
 
     def _iterate_batches(self) -> Iterator[Any]:
+        assert self._config is not None
         yield from self._dataset.iter_batches(
             batch_size=self._config.batch_size,
             batch_format="numpy",
@@ -159,8 +167,8 @@ class RayDataAdapter(PipelineAdapter):
         return [arr]
 
     def teardown(self) -> None:
+        """Release resources and reset adapter state."""
         self._dataset = None
-        self._config = None
 
         import ray
 
@@ -172,3 +180,5 @@ class RayDataAdapter(PipelineAdapter):
         # port _BENCH_RAY_PORT is left orphaned — harmless since VMs are
         # terminated after the run.  `ray.shutdown()` above disconnects
         # the client, freeing resources for the next adapter.
+
+        super().teardown()

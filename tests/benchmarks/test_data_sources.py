@@ -6,11 +6,13 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import pytest
-from datarax import DAGExecutor
 from flax import nnx
+
+from datarax import DAGExecutor
+from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import MemorySource
 from datarax.sources.memory_source import MemorySourceConfig
-from datarax.operators import ElementOperator, ElementOperatorConfig
+
 
 # Use mark.benchmark to indicate these are performance tests
 pytestmark = pytest.mark.benchmark

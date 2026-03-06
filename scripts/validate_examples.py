@@ -29,6 +29,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+
 # Required sections in order of appearance
 REQUIRED_SECTIONS = [
     "Overview",

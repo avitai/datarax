@@ -80,7 +80,7 @@ class TestNoiseOperatorConfig:
         with pytest.raises(
             ValueError, match="mode must be 'gaussian', 'salt_pepper', or 'poisson'"
         ):
-            NoiseOperatorConfig(field_key="image", mode="invalid")
+            NoiseOperatorConfig(field_key="image", mode="invalid")  # type: ignore[reportArgumentType]
 
     def test_config_negative_noise_std(self):
         """Test that negative noise_std raises ValueError."""
@@ -139,7 +139,7 @@ class TestNoiseOperatorConfig:
             NoiseOperatorConfig(
                 field_key="image",
                 mode="salt_pepper",
-                salt_value="invalid",
+                salt_value="invalid",  # type: ignore[reportArgumentType]
             )
 
     def test_config_invalid_pepper_value_type(self):
@@ -148,7 +148,7 @@ class TestNoiseOperatorConfig:
             NoiseOperatorConfig(
                 field_key="image",
                 mode="salt_pepper",
-                pepper_value="invalid",
+                pepper_value="invalid",  # type: ignore[reportArgumentType]
             )
 
     def test_config_non_positive_lam_scale(self):
@@ -303,7 +303,7 @@ class TestNoiseOperatorGaussianTransformations:
         from datarax.core.element_batch import Batch, Element
 
         images = jnp.ones((4, 32, 32, 3)) * 0.5
-        elements = [Element(data={"image": img}, state={}, metadata={}) for img in images]
+        elements = [Element(data={"image": img}, state={}) for img in images]
         batch = Batch(elements=elements)
 
         result_batch = operator.apply_batch(batch)
@@ -417,7 +417,7 @@ class TestNoiseOperatorSaltPepperTransformations:
         from datarax.core.element_batch import Batch, Element
 
         images = jnp.ones((4, 32, 32, 3)) * 0.5
-        elements = [Element(data={"image": img}, state={}, metadata={}) for img in images]
+        elements = [Element(data={"image": img}, state={}) for img in images]
         batch = Batch(elements=elements)
 
         result_batch = operator.apply_batch(batch)
@@ -576,7 +576,7 @@ class TestNoiseOperatorPoissonTransformations:
         from datarax.core.element_batch import Batch, Element
 
         images = jnp.ones((4, 32, 32, 3)) * 0.5
-        elements = [Element(data={"image": img}, state={}, metadata={}) for img in images]
+        elements = [Element(data={"image": img}, state={}) for img in images]
         batch = Batch(elements=elements)
 
         result_batch = operator.apply_batch(batch)
@@ -763,10 +763,10 @@ class TestNoiseOperatorEdgeCases:
         state = {}
         metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata)
+        result, _, _ = operator.apply(data, state, metadata)  # type: ignore[reportArgumentType]
 
         # Nested field should be transformed
-        assert not jnp.allclose(result["data"]["image"], data["data"]["image"])
+        assert not jnp.allclose(result["data"]["image"], data["data"]["image"])  # type: ignore[reportArgumentType]
 
     def test_no_clipping(self):
         """Test with clip_range=None to disable clipping."""
@@ -881,7 +881,7 @@ class TestNoiseOperatorStochasticMode:
         from datarax.core.element_batch import Batch, Element
 
         images = jnp.ones((4, 32, 32, 3)) * 0.5
-        elements = [Element(data={"image": img}, state={}, metadata={}) for img in images]
+        elements = [Element(data={"image": img}, state={}) for img in images]
         batch = Batch(elements=elements)
 
         result_batch = operator.apply_batch(batch)
@@ -968,7 +968,7 @@ class TestNoiseOperatorJAXCompatibility:
         from datarax.core.element_batch import Batch, Element
 
         images = jnp.ones((8, 32, 32, 3)) * 0.5
-        elements = [Element(data={"image": img}, state={}, metadata={}) for img in images]
+        elements = [Element(data={"image": img}, state={}) for img in images]
         batch = Batch(elements=elements)
 
         result_batch = operator.apply_batch(batch)

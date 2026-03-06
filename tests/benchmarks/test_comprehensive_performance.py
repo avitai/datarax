@@ -16,17 +16,17 @@ Performance Targets (based on profiling analysis):
 import time
 from dataclasses import dataclass
 
-import pytest
-import jax.numpy as jnp
 import flax.nnx as nnx
+import jax.numpy as jnp
+import pytest
 
+from datarax.core.config import StructuralConfig
+from datarax.core.data_source import DataSourceModule
+from datarax.core.element_batch import Batch, Element
 from datarax.dag import from_source
+from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import MemorySource
 from datarax.sources.memory_source import MemorySourceConfig
-from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.core.data_source import DataSourceModule
-from datarax.core.config import StructuralConfig
-from datarax.core.element_batch import Element, Batch
 
 
 # =============================================================================
@@ -34,7 +34,7 @@ from datarax.core.element_batch import Element, Batch
 # =============================================================================
 
 
-@dataclass
+@dataclass(frozen=True)
 class BenchmarkDataSourceConfig(StructuralConfig):
     """Configuration for benchmark data source."""
 

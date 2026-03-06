@@ -15,15 +15,19 @@ Key Features:
 BREAKING CHANGE: User functions MUST accept key parameter even in deterministic mode.
 """
 
-from typing import Any
+import logging
 from collections.abc import Callable
+from typing import Any
 
 import jax
 from flax import nnx
 from jaxtyping import PyTree
 
 from datarax.core.config import MapOperatorConfig
-from datarax.core.operator import OperatorModule
+from datarax.core.operator import extract_batch_size, OperatorModule
+
+
+logger = logging.getLogger(__name__)
 
 
 class MapOperator(OperatorModule):
@@ -80,7 +84,7 @@ class MapOperator(OperatorModule):
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
-    ):
+    ) -> None:
         """Initialize MapOperator.
 
         Args:
@@ -152,7 +156,7 @@ class MapOperator(OperatorModule):
         self,
         rng: jax.Array,
         data_shapes: PyTree,
-    ) -> PyTree:
+    ) -> PyTree | None:
         """Generate random parameters for batch transformation.
 
         Generates PyTree of RNG keys matching data structure, with one key per
@@ -165,7 +169,8 @@ class MapOperator(OperatorModule):
 
         Returns:
             PyTree of keys matching data structure, each leaf is Array[batch_size, 2]
-            Examples: {"image": Array[batch_size, 2]} where 2 is PRNGKey shape
+            Examples: {"image": Array[batch_size, 2]} where 2 is PRNGKey shape,
+            or None for deterministic operators.
 
         Implementation:
             1. Flatten data_shapes to get list of shapes
@@ -174,19 +179,16 @@ class MapOperator(OperatorModule):
             4. For each leaf key, split into batch_size keys
             5. Unflatten into PyTree matching original structure
         """
-        # Extract batch sizes from shape tuples (JAX gotcha: tuples are nodes, not leaves)
-        # Use is_leaf to treat tuples as atomic values
-        batch_sizes = jax.tree.map(
-            lambda shape: shape[0], data_shapes, is_leaf=lambda x: isinstance(x, tuple)
-        )
-        batch_size_leaves = jax.tree.leaves(batch_sizes)
+        if not self.stochastic:
+            return None
 
-        if not batch_size_leaves:
+        # Extract batch size from shape tuples (JAX gotcha: tuples are nodes, not leaves)
+        try:
+            batch_size = extract_batch_size(data_shapes)
+        except ValueError:
             # Empty tree - return empty structure
             _, tree_def = jax.tree.flatten(data_shapes)
             return jax.tree.unflatten(tree_def, [])
-
-        batch_size = batch_size_leaves[0]
 
         # Flatten to get list of shapes and tree structure
         shape_leaves, tree_def = jax.tree.flatten(
@@ -245,7 +247,7 @@ class MapOperator(OperatorModule):
         else:
             keys = random_params
 
-        def transform_leaf(keypath, leaf, key):
+        def transform_leaf(keypath: Any, leaf: Any, key: Any) -> Any:
             """Transform leaf if it should be transformed."""
             # Check subtree filter (full-tree mode: always transform)
             if self._is_subtree_mode:

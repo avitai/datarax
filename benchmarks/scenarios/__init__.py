@@ -15,7 +15,9 @@ from __future__ import annotations
 import importlib
 import pkgutil
 from types import ModuleType
+
 from benchmarks.scenarios.base import ScenarioVariant  # noqa: F401
+
 
 # Category -> subpackage mapping
 _CATEGORY_PACKAGES = [

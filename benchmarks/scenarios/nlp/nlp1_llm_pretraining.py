@@ -8,11 +8,13 @@ Design ref: Section 7 of the benchmark report.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
-from benchmarks.scenarios.base import DEFAULT_SEED, ScenarioVariant, make_get_variant
+from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, ScenarioVariant
+
 
 SCENARIO_ID: str = "NLP-1"
 TIER1_VARIANT: str | None = "small"
@@ -35,7 +37,11 @@ _VARIANT_SPECS: dict[str, dict[str, Any]] = {
 }
 
 
-def _make_data_generator(dataset_size: int, seq_len: int, seed: int = DEFAULT_SEED) -> callable:
+def _make_data_generator(
+    dataset_size: int,
+    seq_len: int,
+    seed: int = DEFAULT_SEED,
+) -> Callable[[], dict[str, Any]]:
     """Create a lazy data generator for token sequences."""
 
     def generate() -> dict[str, Any]:

@@ -160,7 +160,7 @@ class ConcreteAdapter(PipelineAdapter):
         self._batch_size = config.batch_size
 
     def teardown(self) -> None:
-        pass
+        super().teardown()
 
     def supported_scenarios(self) -> set[str]:
         return {"CV-1", "NLP-1"}
@@ -190,10 +190,10 @@ class UnavailableAdapter(PipelineAdapter):
         return False
 
     def setup(self, config: ScenarioConfig, data: Any) -> None:
-        pass
+        self._config = config
 
     def teardown(self) -> None:
-        pass
+        super().teardown()
 
     def supported_scenarios(self) -> set[str]:
         return {"CV-1"}

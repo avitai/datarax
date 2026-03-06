@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+import logging
 from collections.abc import Iterator
+from typing import Any
 
 import flax.nnx as nnx
 import jax
@@ -20,10 +21,35 @@ from datarax.sources._eager_source_ops import (
 )
 
 
-class EagerSourceBase(DataSourceModule):
-    """Shared eager-source behavior for in-memory JAX-backed datasets."""
+logger = logging.getLogger(__name__)
 
+
+class EagerSourceBase(DataSourceModule):
+    """Shared eager-source behavior for in-memory JAX-backed datasets.
+
+    Subclasses must define the following attributes in their ``__init__``:
+
+    - ``data`` (``dict[str, Any]``): The loaded dataset as a key→array mapping.
+    - ``length`` (``int``): Total number of elements.
+    - ``index`` (``nnx.Variable``): Current iteration index.
+    - ``epoch`` (``nnx.Variable``): Current epoch counter.
+    - ``_seed`` (``int``): Base integer seed for Grain index_shuffle.
+    - ``shuffle`` (``bool``): Whether to shuffle during iteration.
+    - ``dataset_name`` (``str | None``): Human-readable dataset name.
+    - ``split_name`` (``str | None``): Dataset split identifier.
+    - ``_dataset_info`` (``Any``): Cached backend-specific dataset metadata.
+    """
+
+    # -- Abstract attribute declarations (set by concrete subclasses) --
     data: dict[str, Any] = nnx.data()
+    length: int
+    index: nnx.Variable[int]  # pyright: ignore[reportGeneralTypeIssues]
+    epoch: nnx.Variable[int]  # pyright: ignore[reportGeneralTypeIssues]
+    _seed: int
+    shuffle: bool
+    dataset_name: str | None
+    split_name: str | None
+    _dataset_info: Any
 
     def __len__(self) -> int:
         """Return total number of elements."""
@@ -88,7 +114,27 @@ class EagerSourceBase(DataSourceModule):
 
 
 class StreamingSourceBase(DataSourceModule):
-    """Shared streaming-source behavior for iterator-backed datasets."""
+    """Shared streaming-source behavior for iterator-backed datasets.
+
+    Subclasses must define the following attributes in their ``__init__``:
+
+    - ``epoch`` (``nnx.Variable``): Current epoch counter.
+    - ``_iterator`` (``Iterator | None``): The active backend iterator.
+    - ``dataset_name`` (``str | None``): Human-readable dataset name.
+    - ``split_name`` (``str | None``): Dataset split identifier.
+    - ``length`` (``int | None``): Total number of elements (None if unknown).
+    - ``shuffle`` (``bool``): Whether to shuffle during iteration.
+    - ``_dataset_info`` (``Any``): Cached backend-specific dataset metadata.
+    """
+
+    # -- Abstract attribute declarations (set by concrete subclasses) --
+    epoch: nnx.Variable[int]  # pyright: ignore[reportGeneralTypeIssues]
+    _iterator: Iterator[Any] | None
+    dataset_name: str | None
+    split_name: str | None
+    length: int | None
+    shuffle: bool
+    _dataset_info: Any
 
     def get_dataset_info(self) -> Any:
         """Return cached backend-specific dataset metadata."""

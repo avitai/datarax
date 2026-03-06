@@ -2,6 +2,7 @@
 
 import jax.numpy as jnp
 import pytest
+
 from datarax.operators.strategies.base import StrategyContext
 from datarax.operators.strategies.ensemble import EnsembleStrategy
 from tests.test_common.mock_operators import ConstantMockOperator as MockOperator

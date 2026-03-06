@@ -5,8 +5,12 @@ Uses TimingCollector for measurement (replaces AdvancedProfiler).
 
 import pytest
 
+
 try:
-    import grain.python as grain
+    import grain
+    import grain.samplers
+    import grain.sharding
+    import grain.transforms
 
     HAS_GRAIN = True
 except ImportError:
@@ -15,6 +19,7 @@ except ImportError:
 from pathlib import Path
 
 from calibrax.profiling import TimingCollector
+
 
 # Path to the converted dataset directory (in gitignored tests/data)
 DATASET_DIR = Path("tests/data/imagenet64_arrayrecord")
@@ -44,15 +49,15 @@ class TestRealIO:
             source = ArrayRecordSourceModule(config=src_config, paths=[str(p) for p in shards])
 
             loader = grain.DataLoader(
-                data_source=source.grain_source,
-                sampler=grain.SequentialSampler(
-                    num_records=len(source.grain_source),
-                    shard_options=grain.ShardOptions(
+                data_source=source.grain_source,  # type: ignore[reportArgumentType]
+                sampler=grain.samplers.SequentialSampler(
+                    num_records=len(source.grain_source),  # type: ignore[reportArgumentType]
+                    shard_options=grain.sharding.ShardOptions(
                         shard_index=0, shard_count=1, drop_remainder=True
                     ),
                 ),
                 worker_count=workers,
-                operations=[grain.Batch(128, drop_remainder=True)],
+                operations=[grain.transforms.Batch(128, drop_remainder=True)],
             )
 
             # Warmup

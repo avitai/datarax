@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import Any
 
 import jax
+
 from datarax import __version__
-from datarax.dag import DAGExecutor
+from datarax.dag import DAGConfig
 
 
 _CONFIG_LOAD_ERRORS = (OSError, tomllib.TOMLDecodeError)
@@ -104,7 +105,7 @@ def run_pipeline(config_path: str, overrides: dict[str, str] | None = None) -> i
         # Create and run pipeline using DAGExecutor
         if "dag" in config:
             # Modern DAG-based pipeline
-            executor = DAGExecutor.from_config(config["dag"])
+            executor = DAGConfig.from_dict(config["dag"])
             print("Starting pipeline execution...")
 
             # Run the pipeline
@@ -274,7 +275,7 @@ def profile_pipeline(config_path: str, num_iterations: int = 100) -> dict[str, f
             raise ValueError("num_iterations must be greater than zero")
 
         if "dag" in config:
-            executor = DAGExecutor.from_config(config["dag"])
+            executor = DAGConfig.from_dict(config["dag"])
 
             # Warmup
             for _ in range(10):

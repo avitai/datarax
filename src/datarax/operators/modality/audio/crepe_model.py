@@ -11,11 +11,16 @@ Architecture: 6 × (Conv1D + BatchNorm + ReLU + Dropout + MaxPool) + Dense + Sig
 Output: 360-bin pitch probability distribution (20 cents/bin, ~32 Hz to ~1975 Hz)
 """
 
+import logging
 import pathlib
 
 import jax
 import jax.numpy as jnp
 from flax import nnx
+
+
+logger = logging.getLogger(__name__)
+
 
 # CREPE pitch bins: 360 bins spanning 1997.38 cents to 9177.38 cents
 # Each bin is 20 cents wide. Cents = 1200 * log2(f / f_ref)
@@ -86,7 +91,8 @@ class CrepeModel(nnx.Module):
         rngs: Flax NNX random number generators.
     """
 
-    def __init__(self, capacity: str = "full", *, rngs: nnx.Rngs):
+    def __init__(self, capacity: str = "full", *, rngs: nnx.Rngs) -> None:
+        """Initialize CREPE model with the given capacity variant."""
         super().__init__()
 
         if capacity not in _CAPACITY_MULTIPLIERS:
@@ -283,20 +289,21 @@ def _load_from_pth(model: CrepeModel, pth_path: pathlib.Path) -> None:
         w = state[f"conv{layer_idx}.weight"].numpy()  # (out, in, k, 1)
         w = w.squeeze(-1)  # (out, in, k)
         w = w.transpose(2, 1, 0)  # (k, in, out)
-        model.conv_layers[i].kernel[...] = jnp.array(w)
-        model.conv_layers[i].bias[...] = jnp.array(state[f"conv{layer_idx}.bias"].numpy())
+        # pyright: ignore[reportIndexIssue] — NNX Datatype supports [...] indexing at runtime
+        model.conv_layers[i].kernel[...] = jnp.array(w)  # pyright: ignore[reportIndexIssue]
+        model.conv_layers[i].bias[...] = jnp.array(state[f"conv{layer_idx}.bias"].numpy())  # pyright: ignore[reportIndexIssue, reportOptionalSubscript]
 
         # BatchNorm
-        model.batch_norms[i].scale[...] = jnp.array(state[f"conv{layer_idx}_BN.weight"].numpy())
-        model.batch_norms[i].bias[...] = jnp.array(state[f"conv{layer_idx}_BN.bias"].numpy())
-        model.batch_norms[i].mean[...] = jnp.array(
+        model.batch_norms[i].scale[...] = jnp.array(state[f"conv{layer_idx}_BN.weight"].numpy())  # pyright: ignore[reportIndexIssue]
+        model.batch_norms[i].bias[...] = jnp.array(state[f"conv{layer_idx}_BN.bias"].numpy())  # pyright: ignore[reportIndexIssue]
+        model.batch_norms[i].mean[...] = jnp.array(  # pyright: ignore[reportIndexIssue]
             state[f"conv{layer_idx}_BN.running_mean"].numpy()
         )
-        model.batch_norms[i].var[...] = jnp.array(state[f"conv{layer_idx}_BN.running_var"].numpy())
+        model.batch_norms[i].var[...] = jnp.array(state[f"conv{layer_idx}_BN.running_var"].numpy())  # pyright: ignore[reportIndexIssue]
 
     # Classifier: PyTorch (360, 2048) → Flax (2048, 360)
-    model.classifier.kernel[...] = jnp.array(state["classifier.weight"].numpy().T)
-    model.classifier.bias[...] = jnp.array(state["classifier.bias"].numpy())
+    model.classifier.kernel[...] = jnp.array(state["classifier.weight"].numpy().T)  # pyright: ignore[reportIndexIssue]
+    model.classifier.bias[...] = jnp.array(state["classifier.bias"].numpy())  # pyright: ignore[reportIndexIssue, reportOptionalSubscript]
 
 
 def _load_from_h5(model: CrepeModel, h5_path: pathlib.Path) -> None:
@@ -311,19 +318,19 @@ def _load_from_h5(model: CrepeModel, h5_path: pathlib.Path) -> None:
             conv_name = f"conv1d{'_' + str(i) if i > 0 else ''}"
             bn_name = f"batch_normalization{'_' + str(i) if i > 0 else ''}"
 
-            conv_group = f[conv_name][conv_name]
-            model.conv_layers[i].kernel[...] = jnp.array(conv_group["kernel:0"][:])
-            model.conv_layers[i].bias[...] = jnp.array(conv_group["bias:0"][:])
+            conv_group = f[conv_name][conv_name]  # pyright: ignore[reportIndexIssue]
+            model.conv_layers[i].kernel[...] = jnp.array(conv_group["kernel:0"][:])  # pyright: ignore[reportIndexIssue]
+            model.conv_layers[i].bias[...] = jnp.array(conv_group["bias:0"][:])  # pyright: ignore[reportIndexIssue, reportOptionalSubscript]
 
-            bn_group = f[bn_name][bn_name]
-            model.batch_norms[i].scale[...] = jnp.array(bn_group["gamma:0"][:])
-            model.batch_norms[i].bias[...] = jnp.array(bn_group["beta:0"][:])
-            model.batch_norms[i].mean[...] = jnp.array(bn_group["moving_mean:0"][:])
-            model.batch_norms[i].var[...] = jnp.array(bn_group["moving_variance:0"][:])
+            bn_group = f[bn_name][bn_name]  # pyright: ignore[reportIndexIssue]
+            model.batch_norms[i].scale[...] = jnp.array(bn_group["gamma:0"][:])  # pyright: ignore[reportIndexIssue]
+            model.batch_norms[i].bias[...] = jnp.array(bn_group["beta:0"][:])  # pyright: ignore[reportIndexIssue]
+            model.batch_norms[i].mean[...] = jnp.array(bn_group["moving_mean:0"][:])  # pyright: ignore[reportIndexIssue]
+            model.batch_norms[i].var[...] = jnp.array(bn_group["moving_variance:0"][:])  # pyright: ignore[reportIndexIssue]
 
-        dense_group = f["dense"]["dense"]
-        model.classifier.kernel[...] = jnp.array(dense_group["kernel:0"][:])
-        model.classifier.bias[...] = jnp.array(dense_group["bias:0"][:])
+        dense_group = f["dense"]["dense"]  # pyright: ignore[reportIndexIssue]
+        model.classifier.kernel[...] = jnp.array(dense_group["kernel:0"][:])  # pyright: ignore[reportIndexIssue]
+        model.classifier.bias[...] = jnp.array(dense_group["bias:0"][:])  # pyright: ignore[reportIndexIssue, reportOptionalSubscript]
 
 
 def load_crepe_weights(

@@ -6,12 +6,12 @@ they work together properly in realistic scenarios.
 Updated to use current API (removed MetadataTracker, transform_batch references).
 """
 
-import pytest
 import jax
 import jax.numpy as jnp
+import pytest
 
-from datarax.core.metadata import Metadata, batch_metadata
-from datarax.core.element_batch import Element, Batch, BatchOps
+from datarax.core.element_batch import Batch, BatchOps, Element
+from datarax.core.metadata import batch_metadata, Metadata
 
 
 class TestMetadataElementIntegration:
@@ -32,6 +32,7 @@ class TestMetadataElementIntegration:
 
         element = Element(data={"x": jnp.zeros((10,))}, metadata=meta)
 
+        assert element.metadata is not None
         assert element.metadata.index == 100
         assert element.metadata.record_key == "file_05_rec_100"
         assert element.metadata.rng_key is not None
@@ -39,7 +40,10 @@ class TestMetadataElementIntegration:
         # Test transformation preserves metadata (except specific updates if any)
         # Note: transform creates new element with same metadata
         transformed = element.transform(lambda x: x + 1)
+        assert transformed.metadata is not None
         assert transformed.metadata.index == 100
+        assert transformed.metadata.rng_key is not None
+        assert meta.rng_key is not None
         assert jnp.array_equal(transformed.metadata.rng_key, meta.rng_key)
 
     def test_element_metadata_in_jax_transforms(self):
@@ -62,6 +66,7 @@ class TestMetadataElementIntegration:
         # Should have added noise
         assert not jnp.allclose(processed.data["x"], jnp.zeros(5))
         # Metadata preserved
+        assert processed.metadata is not None
         assert processed.metadata.rng_key is not None
 
     def test_element_metadata_update_workflow(self):
@@ -72,6 +77,7 @@ class TestMetadataElementIntegration:
         # Process and update metadata using current API
         for step in range(3):
             # Update metadata for next step using current API methods
+            assert elem.metadata is not None
             new_metadata = elem.metadata.increment_step().replace(index=elem.metadata.index + 1)
             elem = elem.with_metadata(new_metadata)
 
@@ -79,6 +85,7 @@ class TestMetadataElementIntegration:
             elem = elem.transform(lambda x: x + 1)
 
         # Check final state
+        assert elem.metadata is not None
         assert elem.metadata.index == 3
         assert elem.metadata.global_step == 3
         assert jnp.array_equal(elem.data["x"], jnp.array([4, 5, 6]))
@@ -104,6 +111,7 @@ class TestMetadataBatchIntegration:
         # Check elements preserve metadata
         for i in range(4):
             elem = batch.get_element(i)
+            assert elem.metadata is not None
             assert elem.metadata.index == i
             assert elem.metadata.rng_key is not None
 
@@ -129,9 +137,12 @@ class TestMetadataBatchIntegration:
 
         # Retrieve and verify
         retrieved = batch.get_batch_metadata()
+        assert retrieved is not None
         assert retrieved.index == 5
         assert retrieved.record_key == "batch_05"
-        assert batch.get_element(0).metadata.index == 0
+        elem0_meta = batch.get_element(0).metadata
+        assert elem0_meta is not None
+        assert elem0_meta.index == 0
 
     def test_batch_metadata_aggregation(self):
         """Test aggregating metadata from elements to batch."""
@@ -150,11 +161,15 @@ class TestMetadataBatchIntegration:
         metadata_list = [batch.get_element(i).metadata for i in range(4)]
 
         # Create batch metadata from elements (current API - no batch_size arg)
-        batch_meta = batch_metadata(metadata_list)
+        # All elements have metadata, so filter out None for type safety
+        valid_metadata = [m for m in metadata_list if m is not None]
+        batch_meta = batch_metadata(valid_metadata)
         batch.set_batch_metadata(batch_meta)
 
-        assert batch.get_batch_metadata().epoch == 1
-        assert batch.get_batch_metadata().rng_key is not None
+        batch_meta_result = batch.get_batch_metadata()
+        assert batch_meta_result is not None
+        assert batch_meta_result.epoch == 1
+        assert batch_meta_result.rng_key is not None
 
 
 class TestDataPipelineScenarios:
@@ -168,6 +183,8 @@ class TestDataPipelineScenarios:
             if elem.metadata and elem.metadata.rng_key is not None:
                 # Split key for different augmentations
                 keys = elem.metadata.split_rng(2)
+                assert keys[0] is not None
+                assert keys[1] is not None
 
                 # Add random noise
                 noise = jax.random.normal(keys[0], elem.data["image"].shape)
@@ -222,6 +239,7 @@ class TestDataPipelineScenarios:
             # Update metadata for this shard
             for i in range(device_batch.batch_size):
                 elem = device_batch.get_element(i)
+                assert elem.metadata is not None
                 # Use with_shard() instead of for_shard()
                 new_metadata = elem.metadata.with_shard(device_id)
                 assert new_metadata.shard_id == device_id
@@ -249,13 +267,19 @@ class TestDataPipelineScenarios:
 
         # Check metadata preserved correctly
         assert filtered.batch_size == 3
-        assert filtered.get_element(0).metadata.index == 0
-        assert filtered.get_element(1).metadata.index == 2
-        assert filtered.get_element(2).metadata.index == 4
+        meta0 = filtered.get_element(0).metadata
+        meta1 = filtered.get_element(1).metadata
+        meta2 = filtered.get_element(2).metadata
+        assert meta0 is not None
+        assert meta1 is not None
+        assert meta2 is not None
+        assert meta0.index == 0
+        assert meta1.index == 2
+        assert meta2.index == 4
 
         # Check epochs preserved
-        assert filtered.get_element(0).metadata.epoch == 0
-        assert filtered.get_element(2).metadata.epoch == 1
+        assert meta0.epoch == 0
+        assert meta2.epoch == 1
 
 
 class TestEdgeCasesIntegration:
@@ -272,9 +296,13 @@ class TestEdgeCasesIntegration:
         batch = Batch(elements)
 
         # Should handle mixed metadata
-        assert batch.get_element(0).metadata.index == 0
+        meta0 = batch.get_element(0).metadata
+        assert meta0 is not None
+        assert meta0.index == 0
         assert batch.get_element(1).metadata is None
-        assert batch.get_element(2).metadata.index == 2
+        meta2 = batch.get_element(2).metadata
+        assert meta2 is not None
+        assert meta2.index == 2
 
     def test_metadata_with_large_source_info(self):
         """Test metadata with large source_info dictionary."""
@@ -287,6 +315,8 @@ class TestEdgeCasesIntegration:
 
         # Should handle large metadata
         retrieved = batch.get_element(0).metadata
+        assert retrieved is not None
+        assert retrieved.source_info is not None
         assert len(retrieved.source_info) == 1000
         assert retrieved.source_info["key_500"] == "value_500"
 

@@ -4,7 +4,12 @@ This module implements the observer pattern for metrics collection and event
 handling in Datarax pipelines.
 """
 
+import logging
+
 from datarax.monitoring.metrics import MetricRecord
+
+
+logger = logging.getLogger(__name__)
 
 
 class MetricsObserver:
@@ -14,7 +19,7 @@ class MetricsObserver:
     pipeline operation.
     """
 
-    def update(self, metrics: list[MetricRecord]):
+    def update(self, metrics: list[MetricRecord]) -> None:
         """Handle updated metrics.
 
         Args:
@@ -30,11 +35,11 @@ class CallbackRegistry:
     about metrics and events.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize a new CallbackRegistry."""
         self._observers: list[MetricsObserver] = []
 
-    def register(self, observer: MetricsObserver):
+    def register(self, observer: MetricsObserver) -> None:
         """Register an observer.
 
         Args:
@@ -57,7 +62,7 @@ class CallbackRegistry:
             return True
         return False
 
-    def notify(self, metrics: list[MetricRecord]):
+    def notify(self, metrics: list[MetricRecord]) -> None:
         """Notify all observers of new metrics.
 
         Args:
@@ -66,6 +71,6 @@ class CallbackRegistry:
         for observer in self._observers:
             observer.update(metrics)
 
-    def clear(self):
+    def clear(self) -> None:
         """Remove all registered observers."""
         self._observers = []

@@ -14,10 +14,9 @@ Test Coverage:
 - Exception-raising conditions
 """
 
-import pytest
-
 # Edge cases now being implemented
 import jax.numpy as jnp
+import pytest
 from flax import nnx
 
 from datarax.core.element_batch import Batch, Element

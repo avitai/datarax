@@ -1,3 +1,4 @@
+# pyright: reportArgumentType=false
 """Extensive tests for the SharderModule base class.
 
 This module contains tests for the SharderModule class from datarax.core.sharder,
@@ -277,7 +278,7 @@ class TestShardingOperation:
 
         sharded_batch = sharder.shard(sample_batch, sharding)
 
-        assert set(sharded_batch.keys()) == set(sample_batch.keys())
+        assert set(sharded_batch.keys()) == set(sample_batch.keys())  # type: ignore[reportAttributeAccessIssue]
         for key in sample_batch:
             assert isinstance(sharded_batch[key], jax.Array)
             assert sharded_batch[key].sharding == sharding

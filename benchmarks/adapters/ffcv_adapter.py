@@ -16,13 +16,11 @@ from typing import Any
 import numpy as np
 
 from benchmarks.adapters import register
-from benchmarks.adapters._utils import cast_to_float32, normalize_uint8
+from benchmarks.adapters._utils import BASIC_TRANSFORMS
 from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
-_FFCV_TRANSFORMS: dict[str, Any] = {
-    "Normalize": normalize_uint8,
-    "CastToFloat32": cast_to_float32,
-}
+
+_FFCV_TRANSFORMS = BASIC_TRANSFORMS
 
 
 @register
@@ -34,23 +32,27 @@ class FfcvAdapter(PipelineAdapter):
     """
 
     def __init__(self) -> None:
+        """Initialize the FFCV adapter."""
+        super().__init__()
         self._loader: Any = None
-        self._config: ScenarioConfig | None = None
         self._beton_path: Path | None = None
         self._tmp_dir: Any = None
         self._transform_fns: list[Any] = []
 
     @property
     def name(self) -> str:
+        """Return the adapter display name."""
         return "FFCV"
 
     @property
     def version(self) -> str:
+        """Return the FFCV version string."""
         import ffcv
 
         return getattr(ffcv, "__version__", "unknown")
 
     def is_available(self) -> bool:
+        """Return True if FFCV is installed."""
         try:
             import ffcv  # noqa: F401
 
@@ -58,10 +60,12 @@ class FfcvAdapter(PipelineAdapter):
         except ImportError:
             return False
 
-    def supported_scenarios(self) -> set[str]:
-        return {"CV-1"}
+    def available_transforms(self) -> set[str]:
+        """Return the registry of available transform functions."""
+        return set(_FFCV_TRANSFORMS)
 
     def setup(self, config: ScenarioConfig, data: Any) -> None:
+        """Set up the FFCV pipeline for the given scenario configuration."""
         from ffcv.fields import NDArrayField
         from ffcv.fields.basics import IntField
         from ffcv.loader import Loader, OrderOption
@@ -116,10 +120,11 @@ class FfcvAdapter(PipelineAdapter):
         return [arr]
 
     def teardown(self) -> None:
+        """Release resources and reset adapter state."""
         self._loader = None
-        self._config = None
         self._beton_path = None
         self._transform_fns = []
         if self._tmp_dir is not None:
             self._tmp_dir.cleanup()
             self._tmp_dir = None
+        super().teardown()

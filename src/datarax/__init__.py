@@ -13,38 +13,39 @@ from datarax.core.operator import OperatorModule
 from datarax.core.sampler import SamplerModule
 from datarax.core.sharder import SharderModule
 
-# Distributed utilities
-from datarax.distributed import prefetch_to_device
-
-# DAG components
-from datarax.dag.dag_executor import DAGExecutor, pipeline, from_source
-from datarax.dag.nodes import (
-    Node,
-    DataSourceNode,
-    BatchNode,
-    OperatorNode,
-    ShuffleNode,
-    CacheNode,
-    Sequential,
-    Parallel,
-    Branch,
-    Merge,
-    SplitField,
-    rebatch,
-    RebatchNode,
-    DifferentiableRebatchImpl,
-    FastRebatchImpl,
-    GradientTransparentRebatchImpl,
-)
-
 # Configuration
 from datarax.dag.dag_config import DAGConfig
 
+# DAG components
+from datarax.dag.dag_executor import DAGExecutor, from_source, pipeline
+from datarax.dag.nodes import (
+    BatchNode,
+    Branch,
+    CacheNode,
+    DataSourceNode,
+    DifferentiableRebatchImpl,
+    FastRebatchImpl,
+    GradientTransparentRebatchImpl,
+    Merge,
+    Node,
+    OperatorNode,
+    Parallel,
+    rebatch,
+    RebatchNode,
+    Sequential,
+    ShuffleNode,
+    SplitField,
+)
+
+# Distributed utilities
+from datarax.distributed import prefetch_to_device
+
 # Monitoring
-from datarax.monitoring.dag_monitor import MonitoredDAGExecutor, monitored_pipeline
+from datarax.monitoring.dag_monitor import monitored_pipeline, MonitoredDAGExecutor
 
 # Types
 from datarax.typing import Batch, Element
+
 
 __version__ = "0.1.1"
 

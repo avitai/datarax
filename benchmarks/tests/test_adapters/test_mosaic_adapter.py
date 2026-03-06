@@ -8,6 +8,7 @@ import pytest
 
 from benchmarks.tests.test_adapters.conftest import assert_valid_iteration_result
 
+
 streaming = pytest.importorskip("streaming")
 
 
@@ -30,9 +31,9 @@ class TestMosaicAdapterProperties:
 
     def test_supported_scenarios(self):
         from benchmarks.adapters.mosaic_adapter import MosaicAdapter
+        from benchmarks.tests.test_adapters.conftest import assert_supported_scenarios
 
-        expected = {"CV-1", "NLP-1"}
-        assert MosaicAdapter().supported_scenarios() == expected
+        assert_supported_scenarios(MosaicAdapter(), must_include={"CV-1", "NLP-1"})
 
 
 class TestMosaicAdapterLifecycle:

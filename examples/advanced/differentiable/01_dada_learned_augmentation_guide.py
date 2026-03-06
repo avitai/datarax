@@ -79,6 +79,7 @@ from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
+import matplotlib
 import numpy as np
 import optax
 from flax import nnx
@@ -86,19 +87,20 @@ from flax import nnx
 from datarax import from_source
 from datarax.core.element_batch import Batch, Element
 from datarax.operators import (
-    CompositeOperatorModule,
     CompositeOperatorConfig,
+    CompositeOperatorModule,
     CompositionStrategy,
     ElementOperator,
     ElementOperatorConfig,
 )
 from datarax.sources import MemorySource, MemorySourceConfig
 
-import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 from pathlib import Path
+
+import matplotlib.pyplot as plt
+
 
 # Output directory for saved figures
 OUTPUT_DIR = Path("docs/assets/images/examples")
@@ -353,7 +355,12 @@ def shear_x(image: jax.Array, magnitude: jax.Array) -> jax.Array:
     coords = jnp.stack([grid_y.ravel(), src_x.ravel()])
 
     def interp_channel(ch: jax.Array) -> jax.Array:
-        return jax.scipy.ndimage.map_coordinates(ch, coords, order=1, mode="nearest").reshape(h, w)
+        return jax.scipy.ndimage.map_coordinates(
+            ch,
+            coords,  # type: ignore[reportArgumentType]
+            order=1,
+            mode="nearest",
+        ).reshape(h, w)
 
     return jnp.moveaxis(jax.vmap(interp_channel)(jnp.moveaxis(image, -1, 0)), 0, -1)
 
@@ -371,7 +378,12 @@ def shear_y(image: jax.Array, magnitude: jax.Array) -> jax.Array:
     coords = jnp.stack([src_y.ravel(), grid_x.ravel()])
 
     def interp_channel(ch: jax.Array) -> jax.Array:
-        return jax.scipy.ndimage.map_coordinates(ch, coords, order=1, mode="nearest").reshape(h, w)
+        return jax.scipy.ndimage.map_coordinates(
+            ch,
+            coords,  # type: ignore[reportArgumentType]
+            order=1,
+            mode="nearest",
+        ).reshape(h, w)
 
     return jnp.moveaxis(jax.vmap(interp_channel)(jnp.moveaxis(image, -1, 0)), 0, -1)
 
@@ -455,7 +467,12 @@ def rotate(image: jax.Array, magnitude: jax.Array) -> jax.Array:
     coords = jnp.stack([src_y.ravel(), src_x.ravel()])
 
     def interp_channel(ch: jax.Array) -> jax.Array:
-        return jax.scipy.ndimage.map_coordinates(ch, coords, order=1, mode="nearest").reshape(h, w)
+        return jax.scipy.ndimage.map_coordinates(
+            ch,
+            coords,  # type: ignore[reportArgumentType]
+            order=1,
+            mode="nearest",
+        ).reshape(h, w)
 
     return jnp.moveaxis(jax.vmap(interp_channel)(jnp.moveaxis(image, -1, 0)), 0, -1)
 
@@ -631,6 +648,7 @@ class WideResidualBlock(nnx.Module):
         *,
         rngs: nnx.Rngs,
     ):
+        """Initialize WideResidualBlock."""
         self.bn1 = nnx.BatchNorm(in_channels, rngs=rngs)
         self.conv1 = nnx.Conv(
             in_channels,
@@ -662,6 +680,7 @@ class WideResidualBlock(nnx.Module):
             )
 
     def __call__(self, x: jax.Array) -> jax.Array:
+        """Apply residual block with BN-ReLU-Conv-BN-ReLU-Conv and skip connection."""
         residual = x
         out = nnx.relu(self.bn1(x))
         if self.needs_projection:
@@ -684,6 +703,7 @@ class WideResidualGroup(nnx.Module):
         *,
         rngs: nnx.Rngs,
     ):
+        """Initialize WideResidualGroup."""
         blocks = []
         for i in range(num_blocks):
             s = stride if i == 0 else 1
@@ -692,6 +712,7 @@ class WideResidualGroup(nnx.Module):
         self.blocks = nnx.List(blocks)
 
     def __call__(self, x: jax.Array) -> jax.Array:
+        """Apply all residual blocks sequentially."""
         for block in self.blocks:
             x = block(x)
         return x
@@ -706,6 +727,7 @@ class WideResNet(nnx.Module):
     """
 
     def __init__(self, num_classes: int = 10, *, rngs: nnx.Rngs):
+        """Initialize WideResNet."""
         widen = 2
         n_blocks = 6  # (40 - 4) / 6 = 6
 
@@ -774,6 +796,7 @@ class AugmentationPolicy(nnx.Module):
         *,
         rngs: nnx.Rngs,
     ):
+        """Initialize AugmentationPolicy."""
         self.num_sub_policies = num_sub_policies
         self.ops_per_sub_policy = ops_per_sub_policy
         self.num_ops = num_ops
@@ -787,7 +810,7 @@ class AugmentationPolicy(nnx.Module):
         # (num_sub_policies, ops_per_sub_policy)
         self.prob_logits = nnx.Param(jnp.zeros((num_sub_policies, ops_per_sub_policy)))
 
-    def sample_sub_policy(self, key: jax.Array) -> int:
+    def sample_sub_policy(self, key: jax.Array) -> jax.Array:
         """Uniformly sample a sub-policy index."""
         return jax.random.randint(key, (), 0, self.num_sub_policies)
 
@@ -899,6 +922,7 @@ class RELAXControlVariate(nnx.Module):
     """
 
     def __init__(self, input_dim: int = NUM_OPS, *, rngs: nnx.Rngs):
+        """Initialize RELAXControlVariate."""
         self.net = nnx.Sequential(
             nnx.Linear(input_dim, 64, rngs=rngs),
             nnx.relu,
@@ -1070,7 +1094,7 @@ def run_dada_search(
     lr_policy: float = 3e-3,
     temp_start: float = 1.0,
     temp_end: float = 0.1,
-) -> tuple[WideResNet, AugmentationPolicy]:
+) -> tuple[WideResNet, AugmentationPolicy, dict]:
     """Run DADA augmentation policy search.
 
     Args:
@@ -1411,7 +1435,7 @@ ranked_idx = np.argsort(-avg_probs)
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
 
 # Bar chart of operation preferences (ranked)
-colors = plt.cm.viridis(np.linspace(0.2, 0.8, NUM_OPS))
+colors = plt.cm.viridis(np.linspace(0.2, 0.8, NUM_OPS))  # type: ignore[reportAttributeAccessIssue]
 ranked_names = [op_names[i] for i in ranked_idx]
 ranked_probs = [float(avg_probs[i]) for i in ranked_idx]
 bars = ax1.barh(
@@ -1438,7 +1462,7 @@ aug_images = augment_batch(sample_images, policy, key, temperature=0.5)
 model.train()
 
 for i in range(8):
-    ax2_sub = fig.add_axes([0.55 + (i % 4) * 0.11, 0.55 - (i // 4) * 0.45, 0.1, 0.35])
+    ax2_sub = fig.add_axes((0.55 + (i % 4) * 0.11, 0.55 - (i // 4) * 0.45, 0.1, 0.35))  # type: ignore[reportCallIssue]
     ax2_sub.imshow(np.clip(np.array(aug_images[i]), 0, 1), interpolation="nearest")
     ax2_sub.axis("off")
     if i < 4:

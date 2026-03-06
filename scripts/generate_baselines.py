@@ -17,6 +17,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from benchmarks.adapters.datarax_adapter import DataraxAdapter
@@ -25,6 +26,7 @@ from benchmarks.runners.benchmark_runner import BenchmarkRunner
 
 
 def main() -> None:
+    """Generate benchmark baseline JSON files for regression testing."""
     import argparse
 
     parser = argparse.ArgumentParser(description="Generate benchmark baselines")

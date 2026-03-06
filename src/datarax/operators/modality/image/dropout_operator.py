@@ -22,6 +22,7 @@ Examples:
     ```
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -32,7 +33,10 @@ from flax import nnx
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 
 
-@dataclass
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class DropoutOperatorConfig(ModalityOperatorConfig):
     """Configuration for DropoutOperator.
 
@@ -53,7 +57,7 @@ class DropoutOperatorConfig(ModalityOperatorConfig):
     dropout_rate: float = field(default=0.1, kw_only=True)
     mode: Literal["pixel", "channel"] = field(default="pixel", kw_only=True)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration parameters."""
         super().__post_init__()
 
@@ -119,7 +123,7 @@ class DropoutOperator(ModalityOperator):
         config: DropoutOperatorConfig,
         *,
         rngs: nnx.Rngs,
-    ):
+    ) -> None:
         """Initialize the dropout operator.
 
         Args:

@@ -13,11 +13,13 @@ Design ref: Section 7.4.4 of the benchmark report.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
-from benchmarks.scenarios.base import DEFAULT_SEED, ScenarioVariant, make_get_variant
+from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, ScenarioVariant
+
 
 # ---------------------------------------------------------------------------
 # Module-level constants
@@ -46,7 +48,7 @@ def _make_data_generator(
     w: int,
     c: int,
     seed: int,
-) -> callable:
+) -> Callable[[], dict[str, Any]]:
     """Return a lazy data generator for float32 images."""
 
     def _generate() -> dict[str, Any]:

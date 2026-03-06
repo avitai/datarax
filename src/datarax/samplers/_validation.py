@@ -1,5 +1,10 @@
 """Validation helpers shared by sampler configs."""
 
+import logging
+
+
+logger = logging.getLogger(__name__)
+
 
 def validate_num_records_and_epochs(num_records: int | None, num_epochs: int) -> None:
     """Validate common sampler config bounds for record and epoch counts."""

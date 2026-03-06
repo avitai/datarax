@@ -14,13 +14,11 @@ from typing import Any
 import numpy as np
 
 from benchmarks.adapters import register
-from benchmarks.adapters._utils import cast_to_float32, normalize_uint8
+from benchmarks.adapters._utils import BASIC_TRANSFORMS
 from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
-_HF_TRANSFORMS: dict[str, Any] = {
-    "Normalize": normalize_uint8,
-    "CastToFloat32": cast_to_float32,
-}
+
+_HF_TRANSFORMS = BASIC_TRANSFORMS
 
 
 @register
@@ -28,20 +26,24 @@ class HfDatasetsAdapter(PipelineAdapter):
     """PipelineAdapter for HuggingFace Datasets."""
 
     def __init__(self) -> None:
+        """Initialize the HuggingFace Datasets adapter."""
+        super().__init__()
         self._dataset: Any = None
-        self._config: ScenarioConfig | None = None
 
     @property
     def name(self) -> str:
+        """Return the adapter display name."""
         return "HuggingFace Datasets"
 
     @property
     def version(self) -> str:
+        """Return the HuggingFace Datasets version string."""
         import datasets
 
         return datasets.__version__
 
     def is_available(self) -> bool:
+        """Return True if HuggingFace Datasets is installed."""
         try:
             import datasets  # noqa: F401
 
@@ -49,13 +51,12 @@ class HfDatasetsAdapter(PipelineAdapter):
         except ImportError:
             return False
 
-    def supported_scenarios(self) -> set[str]:
-        return {
-            "NLP-1",  # No transforms (HF's strength: NLP)
-            "TAB-1",  # Normalize on float32
-        }
+    def available_transforms(self) -> set[str]:
+        """Return the registry of available transform functions."""
+        return set(_HF_TRANSFORMS)
 
     def setup(self, config: ScenarioConfig, data: Any) -> None:
+        """Set up the HuggingFace Datasets pipeline for the given scenario."""
         from datasets import Dataset
 
         self._transform_fns = [_HF_TRANSFORMS[t] for t in config.transforms if t in _HF_TRANSFORMS]
@@ -66,6 +67,7 @@ class HfDatasetsAdapter(PipelineAdapter):
         self._config = config
 
     def _iterate_batches(self) -> Iterator[dict]:
+        assert self._config is not None
         batch_size = self._config.batch_size
         for i in range(0, len(self._dataset), batch_size):
             yield self._dataset[i : i + batch_size]
@@ -77,5 +79,6 @@ class HfDatasetsAdapter(PipelineAdapter):
         return arrays
 
     def teardown(self) -> None:
+        """Release resources and reset adapter state."""
         self._dataset = None
-        self._config = None
+        super().teardown()

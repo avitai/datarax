@@ -47,6 +47,32 @@ batch_sizes = [32, 64, 128]
 transforms = ["MultiScaleResize", "RandomCrop", "Normalize"]
 dtype = "uint8"
 
+[scenario.HCV-1]
+name = "ImageNet-Scale Image Classification (Heavy)"
+category = "computer_vision"
+dataset_size = 1281167
+element_shape = [224, 224, 3]
+batch_sizes = [256, 512, 1024, 2048]
+transforms = ["RandomResizedCrop", "RandomHorizontalFlip", "ColorJitter", "Normalize", "CastToFloat32"]
+dtype = "uint8"
+
+[scenario.HCV-1.variants]
+imagenet_small = { dataset_size = 50000, element_shape = [224, 224, 3] }
+imagenet_medium = { dataset_size = 200000, element_shape = [224, 224, 3] }
+
+[scenario.HCV-2]
+name = "Dense Prediction Pipeline (Segmentation)"
+category = "computer_vision"
+dataset_size = 118287
+element_shape = [640, 640, 3]
+batch_sizes = [8, 16, 32, 64]
+transforms = ["RandomResizedCrop", "RandomHorizontalFlip", "ColorJitter", "Normalize", "CastToFloat32"]
+dtype = "uint8"
+
+[scenario.HCV-2.variants]
+seg_small = { dataset_size = 10000, element_shape = [256, 256, 3] }
+seg_medium = { dataset_size = 50000, element_shape = [640, 640, 3] }
+
 # =============================================================================
 # 5.2 Natural Language Processing
 # =============================================================================
@@ -71,6 +97,32 @@ dtype = "int32"
 min_len = 10
 max_len = 512
 
+[scenario.HNLP-1]
+name = "Long-Context LLM Pretraining"
+category = "nlp"
+dataset_size = 10000000
+element_shape = [8192]
+batch_sizes = [32, 64, 128, 256]
+transforms = ["CreateAttentionMask", "CausalMaskGeneration"]
+dtype = "int32"
+
+[scenario.HNLP-1.variants]
+short_context = { dataset_size = 100000, element_shape = [2048] }
+long_context = { dataset_size = 1000000, element_shape = [8192] }
+
+[scenario.HNLP-2]
+name = "Text Tokenization Pipeline"
+category = "nlp"
+dataset_size = 1000000
+element_shape = [512]
+batch_sizes = [64, 128, 256]
+transforms = ["PadToMaxLen", "CreateAttentionMask"]
+dtype = "int32"
+
+[scenario.HNLP-2.variants]
+small = { dataset_size = 100000, element_shape = [256] }
+medium = { dataset_size = 500000, element_shape = [512] }
+
 # =============================================================================
 # 5.3 Tabular
 # =============================================================================
@@ -83,6 +135,21 @@ element_shape = [100]
 batch_sizes = [256, 512, 1024, 4096]
 transforms = ["Normalize"]
 dtype = "float32"
+
+[scenario.HTAB-1]
+name = "Large-Scale Recommendation Pipeline"
+category = "tabular"
+dataset_size = 100000000
+element_shape = [39]
+batch_sizes = [4096, 8192, 16384, 65536]
+transforms = ["LogTransform", "HashEmbeddingIndex", "Normalize"]
+dtype = "mixed"
+num_dense = 13
+num_sparse = 26
+
+[scenario.HTAB-1.variants]
+small = { dataset_size = 1000000, element_shape = [39] }
+medium = { dataset_size = 10000000, element_shape = [39] }
 
 [scenario.TAB-2]
 name = "Sparse Feature Processing (DLRM Pattern)"
@@ -109,6 +176,20 @@ transforms = ["ResizeImage", "TokenizeText"]
 dtype = "mixed"
 text_len = 77
 
+[scenario.HMM-1]
+name = "Vision-Language Contrastive Pipeline (CLIP-Scale)"
+category = "multimodal"
+dataset_size = 10000000
+element_shape = [224, 224, 3]
+batch_sizes = [256, 512, 1024, 4096]
+transforms = ["RandomResizedCrop", "Normalize", "CastToFloat32"]
+dtype = "mixed"
+text_len = 77
+
+[scenario.HMM-1.variants]
+clip_small = { dataset_size = 50000, element_shape = [224, 224, 3] }
+clip_medium = { dataset_size = 500000, element_shape = [224, 224, 3] }
+
 [scenario.MM-2]
 name = "Audio-Text Pair Loading (ASR-Style)"
 category = "multimodal"
@@ -132,6 +213,33 @@ element_shape = [224, 224, 3]
 batch_sizes = [64]
 transforms = ["Normalize", "RandomCrop", "RandomFlip", "ColorJitter", "RandomRotate"]
 dtype = "float32"
+
+[scenario.HPC-1]
+name = "SSL/Contrastive Learning Chain (Heavy)"
+category = "pipeline_composition"
+dataset_size = 1281167
+element_shape = [224, 224, 3]
+batch_sizes = [64, 128, 256]
+transforms = ["RandomResizedCrop", "RandomHorizontalFlip", "ColorJitter", "RandomGrayscale", "GaussianBlur", "RandomSolarize", "Normalize", "CastToFloat32"]
+dtype = "uint8"
+
+[scenario.HPC-1.variants]
+ssl_small = { dataset_size = 10000, element_shape = [224, 224, 3] }
+ssl_medium = { dataset_size = 50000, element_shape = [224, 224, 3] }
+ssl_large = { dataset_size = 200000, element_shape = [224, 224, 3] }
+
+[scenario.HPC-2]
+name = "Multi-View DAG Augmentation"
+category = "pipeline_composition"
+dataset_size = 500000
+element_shape = [224, 224, 3]
+batch_sizes = [128, 256]
+transforms = ["RandomResizedCrop", "ColorJitter", "GaussianBlur", "RandomSolarize", "RandomGrayscale"]
+dtype = "uint8"
+
+[scenario.HPC-2.variants]
+dag_small = { dataset_size = 10000, element_shape = [224, 224, 3] }
+dag_medium = { dataset_size = 100000, element_shape = [224, 224, 3] }
 
 [scenario.PC-2]
 name = "Branching/Parallel Pipeline (DAG)"
@@ -241,6 +349,20 @@ num_runs = 3
 # =============================================================================
 # 5.7 Distributed & Scaling
 # =============================================================================
+
+[scenario.HDIST-1]
+name = "Multi-Device Sharded Data Pipeline"
+category = "distributed"
+dataset_size = 1281167
+element_shape = [224, 224, 3]
+batch_sizes = [256, 1024, 4096]
+transforms = ["RandomResizedCrop", "Normalize", "CastToFloat32"]
+dtype = "uint8"
+device_counts = [1, 2, 4, 8]
+
+[scenario.HDIST-1.variants]
+shard_small = { dataset_size = 50000, element_shape = [224, 224, 3] }
+shard_medium = { dataset_size = 200000, element_shape = [224, 224, 3] }
 
 [scenario.DIST-1]
 name = "Multi-Device Sharding & Prefetch"

@@ -12,12 +12,14 @@ Design ref: Section 7.4.1 of the benchmark report.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
 
 from benchmarks.adapters.base import ScenarioConfig
-from benchmarks.scenarios.base import DEFAULT_SEED, ScenarioVariant, make_get_variant
+from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, ScenarioVariant
+
 
 # ---------------------------------------------------------------------------
 # Module-level constants
@@ -53,7 +55,11 @@ def _build_transform_chain(depth: int) -> list[str]:
     return [_TRANSFORM_CYCLE[i % len(_TRANSFORM_CYCLE)] for i in range(depth)]
 
 
-def _make_data_generator(dataset_size: int, shape: tuple[int, int], seed: int) -> callable:
+def _make_data_generator(
+    dataset_size: int,
+    shape: tuple[int, int],
+    seed: int,
+) -> Callable[[], dict[str, Any]]:
     """Return a lazy data generator for the given shape."""
 
     def _generate() -> dict[str, Any]:

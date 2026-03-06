@@ -9,8 +9,9 @@ References:
 - orbax/checkpoint/_src/handlers/random_key_checkpoint_handler.py
 """
 
-from pathlib import Path
+import logging
 import shutil
+from pathlib import Path
 from typing import Any
 
 import flax.nnx as nnx
@@ -20,6 +21,8 @@ import orbax.checkpoint as ocp
 
 from datarax.typing import Checkpointable
 
+
+logger = logging.getLogger(__name__)
 
 # Import after others to avoid circular imports
 try:
@@ -41,7 +44,7 @@ class OrbaxCheckpointHandler:
     - random_key_checkpoint_handler.py for PRNG key handling
     """
 
-    def __init__(self, async_checkpointing: bool = False):
+    def __init__(self, async_checkpointing: bool = False) -> None:
         """Initialize the handler.
 
         Args:
@@ -65,7 +68,8 @@ class OrbaxCheckpointHandler:
         if item is None:
             return self.checkpointer.restore(checkpoint_path)
         try:
-            return self.checkpointer.restore(checkpoint_path, item=item)
+            # Orbax accepts item= at runtime but stubs may not declare it
+            return self.checkpointer.restore(checkpoint_path, item=item)  # type: ignore[reportCallIssue]
         except TypeError:
             # Older Orbax accepted positional target only.
             return self.checkpointer.restore(checkpoint_path, item)

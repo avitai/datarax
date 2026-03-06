@@ -57,6 +57,7 @@ from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import MemorySource, MemorySourceConfig
 
+
 # %% [markdown]
 """
 ## Step 1: Create Sample Data

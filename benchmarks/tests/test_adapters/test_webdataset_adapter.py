@@ -8,6 +8,7 @@ import pytest
 
 from benchmarks.tests.test_adapters.conftest import assert_valid_iteration_result
 
+
 wds = pytest.importorskip("webdataset")
 
 
@@ -30,9 +31,9 @@ class TestWebDatasetAdapterProperties:
 
     def test_supported_scenarios(self):
         from benchmarks.adapters.webdataset_adapter import WebDatasetAdapter
+        from benchmarks.tests.test_adapters.conftest import assert_supported_scenarios
 
-        expected = {"CV-1", "NLP-1"}
-        assert WebDatasetAdapter().supported_scenarios() == expected
+        assert_supported_scenarios(WebDatasetAdapter(), must_include={"CV-1", "NLP-1"})
 
 
 class TestWebDatasetAdapterLifecycle:

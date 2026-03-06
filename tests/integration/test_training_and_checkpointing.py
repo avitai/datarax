@@ -9,7 +9,9 @@ This test demonstrates a complete ML workflow including:
 """
 
 import platform
+
 import pytest
+
 
 # Skip entire module on macOS ARM64 - TensorFlow import hangs during pytest collection
 # due to Metal/GPU device detection issues. This is a known upstream issue:
@@ -34,20 +36,20 @@ import numpy as np
 import optax  # type: ignore
 from flax import nnx
 
+
 # Suppress the orbax checkpoint warning about sharding
 warnings.filterwarnings("ignore", message=".*Sharding info not provided when restoring.*")
 
-from datarax.typing import Batch
-
-from datarax.dag.nodes import BatchNode, DataSourceNode, OperatorNode  # type: ignore
 from datarax.checkpoint import (
-    PipelineCheckpoint,  # type: ignore
     OrbaxCheckpointHandler,  # type: ignore
+    PipelineCheckpoint,  # type: ignore
 )
-from datarax.dag import DAGExecutor  # type: ignore
-from datarax.sources.tfds_source import TFDSEagerConfig, TFDSEagerSource  # type: ignore
-from datarax.core.operator import OperatorModule  # type: ignore
 from datarax.core.config import OperatorConfig  # type: ignore
+from datarax.core.operator import OperatorModule  # type: ignore
+from datarax.dag import DAGExecutor  # type: ignore
+from datarax.dag.nodes import BatchNode, DataSourceNode, OperatorNode  # type: ignore
+from datarax.sources.tfds_source import TFDSEagerConfig, TFDSEagerSource  # type: ignore
+from datarax.typing import Batch
 
 
 # Skip if tensorflow_datasets not installed
@@ -98,7 +100,7 @@ class SimpleConvNet(nnx.Module):
         return logits
 
 
-def preprocess_mnist(batch: Batch) -> Batch:
+def preprocess_mnist(batch: dict[str, Any] | Batch) -> dict[str, jax.Array]:
     """Preprocess MNIST images for the model."""
     # Convert images to float and normalize to [0, 1]
     images = jnp.asarray(batch["image"], dtype=jnp.float32) / 255.0
@@ -108,7 +110,7 @@ def preprocess_mnist(batch: Batch) -> Batch:
     return {"image": images, "label": labels}
 
 
-def simple_augmentation(batch: Batch, rng: jax.Array) -> Batch:
+def simple_augmentation(batch: dict[str, Any] | Batch, rng: jax.Array) -> dict[str, jax.Array]:
     """Simple data augmentation for MNIST images.
 
     Args:
@@ -282,7 +284,7 @@ def train_epoch(
         (loss, logits), grads = grad_fn(optimizer.model, images, labels)
 
         # Update optimizer (which updates the model) - new NNX API
-        optimizer.update(optimizer.model, grads)
+        optimizer.update(optimizer.model, grads)  # type: ignore[reportCallIssue]
 
         # Compute accuracy
         accuracy = compute_accuracy(logits, labels)
@@ -326,9 +328,9 @@ def train_epoch(
                 epoch=epoch,
                 step=step,
                 metrics={
-                    "loss": np.mean(losses),
-                    "accuracy": np.mean(accuracies),
-                    "step_time": np.mean(times),
+                    "loss": float(np.mean(losses)),
+                    "accuracy": float(np.mean(accuracies)),
+                    "step_time": float(np.mean(times)),
                 },
             )
             # Update to use the correct save method with directory
@@ -338,7 +340,7 @@ def train_epoch(
 
             # Save data stream state if provided
             if data_checkpoint_handler:
-                data_checkpoint_handler.save(train_stream)
+                data_checkpoint_handler.save(train_stream)  # type: ignore[reportArgumentType]
 
         # Limit steps per epoch for testing
         if batch_idx + 1 >= max_steps_per_epoch:
@@ -349,10 +351,10 @@ def train_epoch(
     avg_accuracy = np.mean(accuracies)
     avg_step_time = np.mean(times)
 
-    metrics = {
-        "loss": avg_loss,
-        "accuracy": avg_accuracy,
-        "step_time": avg_step_time,
+    metrics: dict[str, float] = {
+        "loss": float(avg_loss),
+        "accuracy": float(avg_accuracy),
+        "step_time": float(avg_step_time),
     }
 
     print(
@@ -376,7 +378,7 @@ def evaluate(model: nnx.Module, test_stream: DAGExecutor, max_steps: int = 5) ->
         """Evaluation step."""
         # Extract images and labels from the batch
         # Convert to JAX arrays immediately to avoid string indexing issues
-        batch_dict = batch if isinstance(batch, dict) else dict(batch)
+        batch_dict: dict = batch if isinstance(batch, dict) else dict(batch)  # type: ignore[reportCallIssue]
         images = jnp.asarray(batch_dict.get("image"))
         labels = jnp.asarray(batch_dict.get("label"))
 
@@ -388,9 +390,10 @@ def evaluate(model: nnx.Module, test_stream: DAGExecutor, max_steps: int = 5) ->
     losses = []
     accuracies = []
 
-    # Process test batches
+    # Process test batches — extract data dict for nnx.jit compatibility
     for batch_idx, batch in enumerate(test_stream):
-        loss, accuracy = eval_step(model, batch)
+        batch_data = batch.get_data() if hasattr(batch, "get_data") else batch
+        loss, accuracy = eval_step(model, batch_data)
         losses.append(loss.item())
         accuracies.append(accuracy.item())
 
@@ -405,8 +408,8 @@ def evaluate(model: nnx.Module, test_stream: DAGExecutor, max_steps: int = 5) ->
     print(f"Test: Loss = {test_loss:.4f}, Accuracy = {test_accuracy:.4f}")
 
     return {
-        "test_loss": test_loss,
-        "test_accuracy": test_accuracy,
+        "test_loss": float(test_loss),
+        "test_accuracy": float(test_accuracy),
     }
 
 
@@ -511,7 +514,7 @@ def _run_training_loop(
                 checkpoint_handler, checkpoint_dir, step, model, optimizer, metrics
             )
             if data_checkpoint is not None:
-                data_checkpoint.save(train_stream, step=step, overwrite=True)
+                data_checkpoint.save(train_stream, step=step, overwrite=True)  # type: ignore[reportArgumentType]
 
         if batch_idx + 1 >= max_steps:
             break
@@ -602,7 +605,7 @@ def test_training_with_checkpointing():
             os.path.join(checkpoint_dir, "data_stream"), checkpoint_handler
         )
         # Save initial data stream state with step=0
-        data_checkpoint.save(train_stream, step=0, overwrite=True)
+        data_checkpoint.save(train_stream, step=0, overwrite=True)  # type: ignore[reportArgumentType]
 
         train_step, eval_step = _create_train_eval_steps()
 

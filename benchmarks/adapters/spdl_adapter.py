@@ -14,22 +14,11 @@ from typing import Any
 import numpy as np
 
 from benchmarks.adapters import register
-from benchmarks.adapters._utils import (
-    cast_to_float32,
-    gaussian_noise,
-    normalize_uint8,
-    random_brightness,
-    random_scale,
-)
+from benchmarks.adapters._utils import STANDARD_TRANSFORMS
 from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
-_SPDL_TRANSFORMS: dict[str, Any] = {
-    "Normalize": normalize_uint8,
-    "CastToFloat32": cast_to_float32,
-    "GaussianNoise": gaussian_noise,
-    "RandomBrightness": random_brightness,
-    "RandomScale": random_scale,
-}
+
+_SPDL_TRANSFORMS = STANDARD_TRANSFORMS
 
 
 @register
@@ -42,21 +31,25 @@ class SpdlAdapter(PipelineAdapter):
     """
 
     def __init__(self) -> None:
+        """Initialize the SPDL adapter."""
+        super().__init__()
         self._loader: Any = None
         self._data: dict[str, np.ndarray] | None = None
-        self._config: ScenarioConfig | None = None
 
     @property
     def name(self) -> str:
+        """Return the adapter display name."""
         return "SPDL"
 
     @property
     def version(self) -> str:
+        """Return the SPDL version string."""
         import spdl
 
         return getattr(spdl, "__version__", "unknown")
 
     def is_available(self) -> bool:
+        """Return True if SPDL is installed."""
         try:
             import spdl.dataloader  # noqa: F401
 
@@ -64,18 +57,12 @@ class SpdlAdapter(PipelineAdapter):
         except ImportError:
             return False
 
-    def supported_scenarios(self) -> set[str]:
-        return {
-            "CV-1",  # Normalize + CastToFloat32
-            "NLP-1",  # No transforms
-            "TAB-1",  # Normalize on float32
-            "DIST-1",  # Normalize on float32
-            "AUG-1",  # Stochastic chain
-            "AUG-2",  # Deterministic vs stochastic
-            "AUG-3",  # Stochastic depth scaling
-        }
+    def available_transforms(self) -> set[str]:
+        """All transforms SPDL can execute."""
+        return set(_SPDL_TRANSFORMS)
 
     def setup(self, config: ScenarioConfig, data: Any) -> None:
+        """Set up the SPDL pipeline for the given scenario configuration."""
         import spdl.dataloader
 
         self._data = data
@@ -90,6 +77,7 @@ class SpdlAdapter(PipelineAdapter):
         )
 
     def _iterate_batches(self) -> Iterator[dict[str, np.ndarray]]:
+        assert self._data is not None
         for batch_indices in self._loader:
             indices = np.asarray(batch_indices)
             yield {k: v[indices] for k, v in self._data.items()}
@@ -101,6 +89,7 @@ class SpdlAdapter(PipelineAdapter):
         return arrays
 
     def teardown(self) -> None:
+        """Release resources and reset adapter state."""
         self._loader = None
         self._data = None
-        self._config = None
+        super().teardown()
