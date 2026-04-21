@@ -13,6 +13,7 @@ class SimpleDataSourceModule(nnx.Module):
 
     def __init__(self, data: list[Element], *, rngs=None):
         """Initialize the mock data source."""
+        del rngs
         super().__init__()
         self.data = data
         self.index = nnx.Variable(0)
@@ -43,6 +44,7 @@ class SimpleDeterministicOperator(nnx.Module):
 
     def __init__(self, scale: float = 1.0, offset: float = 0.0, *, rngs=None):
         """Initialize the deterministic operator module."""
+        del rngs
         super().__init__()
         self.scale = scale
         self.offset = offset

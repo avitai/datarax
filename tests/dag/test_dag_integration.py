@@ -52,6 +52,7 @@ class MockDataSource(DataSourceModule):
 
     def __call__(self, key=None):
         """Return next data element."""
+        del key
         if self.index.get_value() >= self.data_size:
             return None
 
@@ -136,6 +137,7 @@ class SimpleOperator(OperatorModule):
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, jax.Array], dict[str, Any], Any]:
         """Apply the transformation."""
+        del random_params, stats
         if "value" in data:
             result_data = {"value": data["value"] * self.multiplier, "index": data["index"]}
         else:
@@ -230,6 +232,7 @@ class TestDAGCompleteIntegration:
 
         # Define a simple element transformation function
         def add_ten_fn(element: Element, key: jax.Array) -> Element:
+            del key
             data = element.data
             if isinstance(data, dict) and "value" in data:
                 new_data = {"value": data["value"] + 10, "index": data["index"]}
@@ -321,6 +324,7 @@ class TestDAGCompleteIntegration:
 
     def test_pipeline_with_different_batch_sizes(self, mock_source, simple_operator):
         """Test pipeline behavior with different batch sizes."""
+        del mock_source
         batch_sizes = [2, 4, 8]
 
         for batch_size in batch_sizes:
@@ -368,6 +372,7 @@ class TestDAGCompleteIntegration:
         """Test pipeline error handling with invalid operators."""
 
         def failing_fn(element: Element, key: jax.Array) -> Element:
+            del element, key
             raise ValueError("Intentional test error")
 
         config = ElementOperatorConfig(stochastic=False)
@@ -394,7 +399,7 @@ class TestDataLoaderStandalone:
         dataloader = DataLoader(
             mock_source,
             batch_size=4,
-            shuffle_buffer_size=None,  # No shuffling for predictable results
+            backend="datarax",
             drop_remainder=False,
         )
 

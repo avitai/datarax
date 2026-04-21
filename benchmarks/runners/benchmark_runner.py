@@ -30,6 +30,7 @@ from benchmarks.core.result_model import (
 )
 from benchmarks.scenarios import discover_scenarios
 from benchmarks.scenarios.base import run_scenario, ScenarioVariant
+from datarax.utils.console import emit
 
 
 class BenchmarkRunner:
@@ -143,7 +144,7 @@ class BenchmarkRunner:
                     variant.config.dataset_size,
                     variant.config.element_shape,
                 )
-                print(
+                emit(
                     f"SKIP {scenario_id}/{variant_name}: {mb:.0f} MB exceeds available memory",
                     file=sys.stderr,
                 )
@@ -159,7 +160,7 @@ class BenchmarkRunner:
                 result.save(self.output_dir / f"{scenario_id}_{result_variant(result)}.json")
                 results.append(result)
             except Exception as exc:  # noqa: BLE001 — benchmark resilience: skip failing scenarios
-                print(f"SKIP {scenario_id}: {exc}", file=sys.stderr)
+                emit(f"SKIP {scenario_id}: {exc}", file=sys.stderr)
 
         return results
 
@@ -200,7 +201,7 @@ class BenchmarkRunner:
                 baseline_name = f"{scenario_id}_{variant_name}"
 
                 if not force and store.load(baseline_name) is not None:
-                    print(f"  EXISTS {baseline_name}")
+                    emit(f"  EXISTS {baseline_name}")
                     continue
 
                 if not can_run_scenario(variant, backend=active_backend):
@@ -208,7 +209,7 @@ class BenchmarkRunner:
                         variant.config.dataset_size,
                         variant.config.element_shape,
                     )
-                    print(f"  SKIP {baseline_name} ({mb:.0f} MB exceeds memory)")
+                    emit(f"  SKIP {baseline_name} ({mb:.0f} MB exceeds memory)")
                     continue
 
                 try:
@@ -222,9 +223,9 @@ class BenchmarkRunner:
                     path = store.save(baseline_name, result)
                     saved.append(path)
                     throughput = throughput_elements_per_sec(result)
-                    print(f"  OK {baseline_name}: {throughput:.0f} elem/s")
+                    emit(f"  OK {baseline_name}: {throughput:.0f} elem/s")
                 except Exception as exc:  # noqa: BLE001 — benchmark resilience: skip failing baselines
-                    print(
+                    emit(
                         f"  FAIL {baseline_name}: {exc}",
                         file=sys.stderr,
                     )
@@ -369,13 +370,13 @@ def main() -> None:
     adapter = DataraxAdapter()
 
     if args.generate_baselines:
-        print("Generating baselines...")
+        emit("Generating baselines...")
         saved = runner.generate_baselines(
             adapter,
             args.baselines_dir,
             args.repetitions,
         )
-        print(f"Generated {len(saved)} baselines.")
+        emit(f"Generated {len(saved)} baselines.")
     else:
         scenario_filter = set(args.scenarios) if args.scenarios else None
         results = runner.run_all(
@@ -384,10 +385,10 @@ def main() -> None:
             tier=args.tier,
             num_repetitions=args.repetitions,
         )
-        print(f"Completed {len(results)} scenarios.")
+        emit(f"Completed {len(results)} scenarios.")
         for r in results:
             throughput = throughput_elements_per_sec(r)
-            print(f"  {result_scenario_id(r)}/{result_variant(r)}: {throughput:.0f} elem/s")
+            emit(f"  {result_scenario_id(r)}/{result_variant(r)}: {throughput:.0f} elem/s")
 
 
 if __name__ == "__main__":

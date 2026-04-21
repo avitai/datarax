@@ -157,7 +157,7 @@ class ModernDocGenerator:
         """Load documentation cache for incremental builds."""
         if self.cache_file.exists():
             try:
-                with open(self.cache_file, "r") as f:
+                with open(self.cache_file) as f:
                     return json.load(f)
             except Exception as e:
                 logger.warning(f"Could not load cache: {e}")
@@ -273,7 +273,7 @@ class ModernDocGenerator:
             module_name = ".".join(module_parts)
 
             # Read and parse file
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 content = f.read()
 
             # Get file hash for incremental builds
@@ -611,7 +611,7 @@ class ModernDocGenerator:
                 "import jax",
                 "import jax.numpy as jnp",
                 "from flax import nnx",
-                "from datarax import from_source",
+                "from datarax import build_source_pipeline",
                 "from datarax.core.nodes import OperatorNode",
                 "from datarax.operators import ElementOperator, ElementOperatorConfig",
                 "from datarax.sources import MemorySource, MemorySourceConfig",
@@ -633,7 +633,7 @@ class ModernDocGenerator:
                 "",
                 "# 4. Build pipeline",
                 "pipeline = (",
-                "    from_source(source, batch_size=32)",
+                "    build_source_pipeline(source, batch_size=32)",
                 "    >> OperatorNode(normalizer)",
                 ")",
                 "",
@@ -690,7 +690,7 @@ class ModernDocGenerator:
 
         try:
             # Read current configuration
-            with open(mkdocs_path, "r", encoding="utf-8") as f:
+            with open(mkdocs_path, encoding="utf-8") as f:
                 content = f.read()
 
             # Generate navigation structure

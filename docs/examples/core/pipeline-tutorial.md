@@ -69,7 +69,7 @@ flowchart LR
     end
 
     subgraph Pipeline["Pipeline DAG"]
-        FS[from_source<br/>batch_size]
+        FS[build_source_pipeline<br/>batch_size]
         ON1[OperatorNode 1<br/>Normalizer]
         ON2[OperatorNode 2<br/>Composite]
         ON3[OperatorNode 3<br/>Brightness]
@@ -211,11 +211,11 @@ Created composite operator with SEQUENTIAL strategy (2 operators)
 Chain everything together using the DAG API.
 
 ```python
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 
 pipeline = (
-    from_source(source, batch_size=32)
+    build_source_pipeline(source, batch_size=32)
     .add(OperatorNode(normalizer))
     .add(OperatorNode(augmentation_pipeline))
     .add(OperatorNode(brightness_op))
@@ -271,7 +271,7 @@ def create_pipeline_with_seed(seed: int):
         fn=random_flip,
         rngs=nnx.Rngs(flip=seed),
     )
-    return from_source(src, batch_size=8).add(OperatorNode(norm)).add(OperatorNode(flip))
+    return build_source_pipeline(src, batch_size=8).add(OperatorNode(norm)).add(OperatorNode(flip))
 
 # Create two pipelines with same seed
 p1 = create_pipeline_with_seed(42)

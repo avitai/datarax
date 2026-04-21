@@ -261,6 +261,7 @@ class TestWrappers:
     def test_with_jax_key_decorator(self):
         @with_jax_key
         def decorated_fn(data, key):
+            del key
             return data + 1.0  # Simple op to verify call
 
         rngs = nnx.Rngs(augment=42)
@@ -279,6 +280,7 @@ class TestToDataraxOperator:
 
     def test_stochastic_function(self):
         def stochastic_fn(data, key):
+            del key
             return data
 
         rngs = nnx.Rngs(augment=42)

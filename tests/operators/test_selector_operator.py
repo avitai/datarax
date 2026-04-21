@@ -36,8 +36,8 @@ class TestSelectorOperatorConfig:
         """Weights list length must match operators count."""
         rngs = nnx.Rngs(0)
         config = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config, fn=lambda x, key: x * 2, rngs=rngs)
-        op2 = MapOperator(config, fn=lambda x, key: x * 3, rngs=rngs)
+        op1 = MapOperator(config, fn=lambda x, _key: x * 2, rngs=rngs)
+        op2 = MapOperator(config, fn=lambda x, _key: x * 3, rngs=rngs)
 
         with pytest.raises(ValueError, match="must match"):
             SelectorOperatorConfig(operators=[op1, op2], weights=[0.5])
@@ -46,8 +46,8 @@ class TestSelectorOperatorConfig:
         """Weights should be normalized to sum to 1.0."""
         rngs = nnx.Rngs(0)
         config = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config, fn=lambda x, key: x * 2, rngs=rngs)
-        op2 = MapOperator(config, fn=lambda x, key: x * 3, rngs=rngs)
+        op1 = MapOperator(config, fn=lambda x, _key: x * 2, rngs=rngs)
+        op2 = MapOperator(config, fn=lambda x, _key: x * 3, rngs=rngs)
 
         selector_config = SelectorOperatorConfig(operators=[op1, op2], weights=[2.0, 8.0])
 
@@ -58,8 +58,8 @@ class TestSelectorOperatorConfig:
         """Default weights should be uniform."""
         rngs = nnx.Rngs(0)
         config = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config, fn=lambda x, key: x * 2, rngs=rngs)
-        op2 = MapOperator(config, fn=lambda x, key: x * 3, rngs=rngs)
+        op1 = MapOperator(config, fn=lambda x, _key: x * 2, rngs=rngs)
+        op2 = MapOperator(config, fn=lambda x, _key: x * 3, rngs=rngs)
 
         selector_config = SelectorOperatorConfig(operators=[op1, op2])
 
@@ -70,7 +70,7 @@ class TestSelectorOperatorConfig:
         """Verify the operator is always stochastic (always makes random choice)."""
         rngs = nnx.Rngs(0)
         config = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config, fn=lambda x, _key: x * 2, rngs=rngs)
 
         selector_config = SelectorOperatorConfig(operators=[op1])
         assert selector_config.stochastic is True
@@ -83,9 +83,9 @@ class TestSelectorOperatorInit:
         """Initialize selector with multiple operators."""
         rngs = nnx.Rngs(0)
         config = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config, fn=lambda x, key: x * 2, rngs=rngs)
-        op2 = MapOperator(config, fn=lambda x, key: x * 3, rngs=rngs)
-        op3 = MapOperator(config, fn=lambda x, key: x * 4, rngs=rngs)
+        op1 = MapOperator(config, fn=lambda x, _key: x * 2, rngs=rngs)
+        op2 = MapOperator(config, fn=lambda x, _key: x * 3, rngs=rngs)
+        op3 = MapOperator(config, fn=lambda x, _key: x * 4, rngs=rngs)
 
         selector_config = SelectorOperatorConfig(operators=[op1, op2, op3])
         selector = SelectorOperator(selector_config, rngs=rngs)
@@ -97,7 +97,7 @@ class TestSelectorOperatorInit:
         """Single operator selector should work (always selects the one)."""
         rngs = nnx.Rngs(0)
         config = MapOperatorConfig(stochastic=False)
-        op = MapOperator(config, fn=lambda x, key: x * 2, rngs=rngs)
+        op = MapOperator(config, fn=lambda x, _key: x * 2, rngs=rngs)
 
         selector_config = SelectorOperatorConfig(operators=[op])
         selector = SelectorOperator(selector_config, rngs=rngs)
@@ -108,8 +108,8 @@ class TestSelectorOperatorInit:
         """Initialize with custom weights."""
         rngs = nnx.Rngs(0)
         config = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config, fn=lambda x, key: x + 1, rngs=rngs)
-        op2 = MapOperator(config, fn=lambda x, key: x + 10, rngs=rngs)
+        op1 = MapOperator(config, fn=lambda x, _key: x + 1, rngs=rngs)
+        op2 = MapOperator(config, fn=lambda x, _key: x + 10, rngs=rngs)
 
         selector_config = SelectorOperatorConfig(operators=[op1, op2], weights=[0.9, 0.1])
         selector = SelectorOperator(selector_config, rngs=rngs)
@@ -125,9 +125,9 @@ class TestSelectorOperatorBasic:
         rngs = nnx.Rngs(0)
         config = MapOperatorConfig(stochastic=False)
         # Operators that add 1, 10, or 100
-        op1 = MapOperator(config, fn=lambda x, key: x + 1, rngs=rngs)
-        op2 = MapOperator(config, fn=lambda x, key: x + 10, rngs=rngs)
-        op3 = MapOperator(config, fn=lambda x, key: x + 100, rngs=rngs)
+        op1 = MapOperator(config, fn=lambda x, _key: x + 1, rngs=rngs)
+        op2 = MapOperator(config, fn=lambda x, _key: x + 10, rngs=rngs)
+        op3 = MapOperator(config, fn=lambda x, _key: x + 100, rngs=rngs)
 
         selector_config = SelectorOperatorConfig(operators=[op1, op2, op3])
         selector = SelectorOperator(selector_config, rngs=rngs)
@@ -144,9 +144,9 @@ class TestSelectorOperatorBasic:
         rngs = nnx.Rngs(42)
         config = MapOperatorConfig(stochastic=False)
         # Operators that add identifiable values
-        op1 = MapOperator(config, fn=lambda x, key: x + 1, rngs=rngs)
-        op2 = MapOperator(config, fn=lambda x, key: x + 10, rngs=rngs)
-        op3 = MapOperator(config, fn=lambda x, key: x + 100, rngs=rngs)
+        op1 = MapOperator(config, fn=lambda x, _key: x + 1, rngs=rngs)
+        op2 = MapOperator(config, fn=lambda x, _key: x + 10, rngs=rngs)
+        op3 = MapOperator(config, fn=lambda x, _key: x + 100, rngs=rngs)
 
         selector_config = SelectorOperatorConfig(operators=[op1, op2, op3])
         selector = SelectorOperator(selector_config, rngs=nnx.Rngs(0))
@@ -170,8 +170,8 @@ class TestSelectorOperatorBasic:
         config = MapOperatorConfig(stochastic=False)
         rngs = nnx.Rngs(0)
         # Operators that add identifiable values
-        op1 = MapOperator(config, fn=lambda x, key: x + 1, rngs=rngs)
-        op2 = MapOperator(config, fn=lambda x, key: x + 10, rngs=rngs)
+        op1 = MapOperator(config, fn=lambda x, _key: x + 1, rngs=rngs)
+        op2 = MapOperator(config, fn=lambda x, _key: x + 10, rngs=rngs)
 
         # 90% weight on op1, 10% on op2
         selector_config = SelectorOperatorConfig(operators=[op1, op2], weights=[0.9, 0.1])
@@ -197,7 +197,7 @@ class TestSelectorOperatorEdgeCases:
         """Single operator should always be selected."""
         config = MapOperatorConfig(stochastic=False)
         rngs = nnx.Rngs(0)
-        op = MapOperator(config, fn=lambda x, key: x * 3, rngs=rngs)
+        op = MapOperator(config, fn=lambda x, _key: x * 3, rngs=rngs)
 
         selector_config = SelectorOperatorConfig(operators=[op])
         selector = SelectorOperator(selector_config, rngs=rngs)
@@ -212,8 +212,8 @@ class TestSelectorOperatorEdgeCases:
         """Operator with weight 0 should never be selected."""
         config = MapOperatorConfig(stochastic=False)
         rngs = nnx.Rngs(0)
-        op1 = MapOperator(config, fn=lambda x, key: x + 1, rngs=rngs)
-        op2 = MapOperator(config, fn=lambda x, key: x + 100, rngs=rngs)
+        op1 = MapOperator(config, fn=lambda x, _key: x + 1, rngs=rngs)
+        op2 = MapOperator(config, fn=lambda x, _key: x + 100, rngs=rngs)
 
         # Weight 1.0 on op1, 0 on op2 - should always select op1
         selector_config = SelectorOperatorConfig(operators=[op1, op2], weights=[1.0, 0.0])
@@ -234,9 +234,9 @@ class TestSelectorOperatorStochastic:
         """Different RNG keys should produce different selections over many runs."""
         config = MapOperatorConfig(stochastic=False)
         rngs = nnx.Rngs(0)
-        op1 = MapOperator(config, fn=lambda x, key: x + 1, rngs=rngs)
-        op2 = MapOperator(config, fn=lambda x, key: x + 10, rngs=rngs)
-        op3 = MapOperator(config, fn=lambda x, key: x + 100, rngs=rngs)
+        op1 = MapOperator(config, fn=lambda x, _key: x + 1, rngs=rngs)
+        op2 = MapOperator(config, fn=lambda x, _key: x + 10, rngs=rngs)
+        op3 = MapOperator(config, fn=lambda x, _key: x + 100, rngs=rngs)
 
         selector_config = SelectorOperatorConfig(operators=[op1, op2, op3])
 
@@ -255,8 +255,8 @@ class TestSelectorOperatorStochastic:
         """Same RNG key should produce the same selection."""
         config = MapOperatorConfig(stochastic=False)
         rngs = nnx.Rngs(0)
-        op1 = MapOperator(config, fn=lambda x, key: x + 1, rngs=rngs)
-        op2 = MapOperator(config, fn=lambda x, key: x + 10, rngs=rngs)
+        op1 = MapOperator(config, fn=lambda x, _key: x + 1, rngs=rngs)
+        op2 = MapOperator(config, fn=lambda x, _key: x + 10, rngs=rngs)
 
         selector_config = SelectorOperatorConfig(operators=[op1, op2])
 
@@ -279,8 +279,8 @@ class TestSelectorOperatorJAX:
         """Verify the operator works with JIT compilation."""
         config = MapOperatorConfig(stochastic=False)
         rngs = nnx.Rngs(0)
-        op1 = MapOperator(config, fn=lambda x, key: x + 1, rngs=rngs)
-        op2 = MapOperator(config, fn=lambda x, key: x + 10, rngs=rngs)
+        op1 = MapOperator(config, fn=lambda x, _key: x + 1, rngs=rngs)
+        op2 = MapOperator(config, fn=lambda x, _key: x + 10, rngs=rngs)
 
         selector_config = SelectorOperatorConfig(operators=[op1, op2])
         selector = SelectorOperator(selector_config, rngs=rngs)
@@ -300,9 +300,9 @@ class TestSelectorOperatorJAX:
         """JIT compilation should preserve randomness across calls."""
         config = MapOperatorConfig(stochastic=False)
         rngs = nnx.Rngs(0)
-        op1 = MapOperator(config, fn=lambda x, key: x + 1, rngs=rngs)
-        op2 = MapOperator(config, fn=lambda x, key: x + 10, rngs=rngs)
-        op3 = MapOperator(config, fn=lambda x, key: x + 100, rngs=rngs)
+        op1 = MapOperator(config, fn=lambda x, _key: x + 1, rngs=rngs)
+        op2 = MapOperator(config, fn=lambda x, _key: x + 10, rngs=rngs)
+        op3 = MapOperator(config, fn=lambda x, _key: x + 100, rngs=rngs)
 
         selector_config = SelectorOperatorConfig(operators=[op1, op2, op3])
 
@@ -326,8 +326,8 @@ class TestSelectorOperatorJAX:
         """Verify the operator works with vmap for batch processing."""
         config = MapOperatorConfig(stochastic=False)
         rngs = nnx.Rngs(0)
-        op1 = MapOperator(config, fn=lambda x, key: x + 1, rngs=rngs)
-        op2 = MapOperator(config, fn=lambda x, key: x + 10, rngs=rngs)
+        op1 = MapOperator(config, fn=lambda x, _key: x + 1, rngs=rngs)
+        op2 = MapOperator(config, fn=lambda x, _key: x + 10, rngs=rngs)
 
         selector_config = SelectorOperatorConfig(operators=[op1, op2])
         selector = SelectorOperator(selector_config, rngs=rngs)
@@ -360,8 +360,8 @@ class TestSelectorOperatorDifferentiability:
         """Selected operator branch should remain differentiable."""
         config = MapOperatorConfig(stochastic=False)
         rngs = nnx.Rngs(0)
-        op1 = MapOperator(config, fn=lambda x, key: 2.0 * x, rngs=rngs)
-        op2 = MapOperator(config, fn=lambda x, key: 5.0 * x + 1.0, rngs=rngs)
+        op1 = MapOperator(config, fn=lambda x, _key: 2.0 * x, rngs=rngs)
+        op2 = MapOperator(config, fn=lambda x, _key: 5.0 * x + 1.0, rngs=rngs)
 
         selector = SelectorOperator(
             SelectorOperatorConfig(operators=[op1, op2], weights=[1.0, 0.0]),

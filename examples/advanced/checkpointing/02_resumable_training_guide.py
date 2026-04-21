@@ -73,7 +73,7 @@ import numpy as np
 import optax
 from flax import nnx
 
-from datarax import from_source
+from datarax import build_source_pipeline
 
 # Datarax imports
 from datarax.checkpoint import PipelineCheckpoint
@@ -185,7 +185,7 @@ class CheckpointableTrainingPipeline(CheckpointableIterator[dict]):
         )
 
         # Build pipeline
-        self._pipeline = from_source(self._source, batch_size=self.batch_size).add(
+        self._pipeline = build_source_pipeline(self._source, batch_size=self.batch_size).add(
             OperatorNode(preprocessor)
         )
         self._iterator = iter(self._pipeline)
@@ -405,7 +405,7 @@ def run_training(
 
         # Checkpoint
         if step % checkpoint_interval == 0 and step > start_step:
-            checkpointer.save(
+            checkpointer.save_to_directory(
                 pipeline,
                 step=step,
                 metadata={"epoch": pipeline.epoch, "loss": float(loss)},
@@ -640,7 +640,7 @@ for i in range(5):
 
     # Time checkpoint save
     start = time.time()
-    checkpointer.save(test_pipeline, step=i * 10, keep=1, overwrite=True)
+    checkpointer.save_to_directory(test_pipeline, step=i * 10, keep=1, overwrite=True)
     checkpoint_times.append(time.time() - start)
 
 avg_ckpt_time = np.mean(checkpoint_times)
@@ -740,7 +740,7 @@ def main():
         if i >= 20:
             break
         if i % 10 == 0:
-            ckpt.save(pipeline, step=i, keep=2, overwrite=True)
+            ckpt.save_to_directory(pipeline, step=i, keep=2, overwrite=True)
 
     print(f"Completed {pipeline.global_step} steps")
 

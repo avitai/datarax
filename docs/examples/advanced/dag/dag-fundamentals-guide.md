@@ -28,7 +28,7 @@ By the end of this guide, you will be able to:
 
 | PyTorch | Datarax DAG |
 |---------|-------------|
-| `DataLoader(dataset)` | `from_source(source)` or `DataSourceNode(source)` |
+| `DataLoader(dataset)` | `build_source_pipeline(source)` or `DataSourceNode(source)` |
 | `transforms.Compose` | `Sequential([...])` or `node1 >> node2` |
 | Multiple dataloaders | `Parallel([...])` or `node1 \| node2` |
 | `collate_fn` | `BatchNode` with custom logic |
@@ -49,7 +49,7 @@ By the end of this guide, you will be able to:
 
 | Grain | Datarax DAG |
 |-------|-------------|
-| `grain.DataLoader` | `DAGExecutor` or `from_source()` |
+| `grain.DataLoader` | `DAGExecutor` or `build_source_pipeline()` |
 | `grain.MapTransform` | `OperatorNode(ElementOperator(...))` |
 | `grain.Batch` | `BatchNode(batch_size)` |
 | N/A | `Cache`, `Sequential`, `Parallel`, `Branch` |
@@ -129,14 +129,14 @@ Datarax DAG nodes form a hierarchy with specific responsibilities:
 | `Sequential` | Chain operations | `node1 >> node2` |
 | `Parallel` | Multiple branches | `node1 \| node2` |
 
-### Part 2: Simple Pipeline with from_source()
+### Part 2: Simple Pipeline with build_source_pipeline()
 
 ```python
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
-pipeline = from_source(source, batch_size=32)
+pipeline = build_source_pipeline(source, batch_size=32)
 
 for batch in pipeline:
     print(f"Batch: {batch['image'].shape}")
@@ -212,7 +212,7 @@ def build_production_pipeline(data, batch_size=32, shuffle=True):
     )
 
     pipeline = (
-        from_source(source, batch_size=batch_size)
+        build_source_pipeline(source, batch_size=batch_size)
         .add(OperatorNode(normalize_op, name="Normalize"))
         .add(OperatorNode(augment_op, name="Augment"))
     )
@@ -229,7 +229,7 @@ Running the guide produces:
 DAG Pipeline Fundamentals Guide
 ============================================================
 
-1. Simple Pipeline (from_source):
+1. Simple Pipeline (build_source_pipeline):
    Batch shape: (16, 32, 32, 3)
 
 2. Sequential Composition (>> operator):

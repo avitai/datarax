@@ -242,7 +242,7 @@ class TestIntegrationWithOrbax:
         # Save with Orbax handler (using context manager for proper cleanup)
         with tempfile.TemporaryDirectory() as tmp_dir:
             with OrbaxCheckpointHandler() as handler:
-                checkpoint_path = handler.save(tmp_dir, module)
+                checkpoint_path = handler.save_to_directory(tmp_dir, module)
                 assert Path(checkpoint_path).exists()
 
                 # Create new module and restore
@@ -271,7 +271,7 @@ class TestIntegrationWithOrbax:
         # Save with Orbax handler (using context manager for proper cleanup)
         with tempfile.TemporaryDirectory() as tmp_dir:
             with OrbaxCheckpointHandler() as handler:
-                checkpoint_path = handler.save(tmp_dir, iterator)
+                checkpoint_path = handler.save_to_directory(tmp_dir, iterator)
                 assert Path(checkpoint_path).exists()
 
                 # Create new iterator and restore
@@ -309,7 +309,7 @@ class TestOrbaxCheckpointHandlers:
         # Save using Orbax handler (with context manager for proper cleanup)
         with tempfile.TemporaryDirectory() as temp_dir:
             with OrbaxCheckpointHandler() as handler:
-                checkpoint_path = handler.save(temp_dir, module)
+                checkpoint_path = handler.save_to_directory(temp_dir, module)
                 assert checkpoint_path is not None
 
                 # Create a new module to restore into
@@ -345,7 +345,7 @@ class TestOrbaxCheckpointHandlers:
         # Save using Orbax handler (with context manager for proper cleanup)
         with tempfile.TemporaryDirectory() as temp_dir:
             with OrbaxCheckpointHandler() as handler:
-                checkpoint_path = handler.save(temp_dir, module)
+                checkpoint_path = handler.save_to_directory(temp_dir, module)
                 assert checkpoint_path is not None
 
                 # Create a new module to restore into
@@ -428,7 +428,7 @@ class TestCheckpointManagerIntegration:
         with tempfile.TemporaryDirectory() as tmp_dir:
             with OrbaxCheckpointHandler() as handler:
                 # Save checkpoint (simulating manager with step in path)
-                handler.save(f"{tmp_dir}/step_0", module)
+                handler.save_to_directory(f"{tmp_dir}/step_0", module)
 
                 # Modify module
                 x = jnp.ones((5, 10))
@@ -458,7 +458,7 @@ class TestCheckpointManagerIntegration:
                 # Save multiple checkpoints
                 for step in range(5):
                     module(x)  # Increment counter
-                    handler.save(f"{tmp_dir}/step_{step}", module)
+                    handler.save_to_directory(f"{tmp_dir}/step_{step}", module)
                     saved_steps.append(step)
 
                 # Verify we can restore from different steps
@@ -486,7 +486,7 @@ class TestDistributedCheckpointing:
         # Save and restore should handle sharded state
         with tempfile.TemporaryDirectory() as tmp_dir:
             with OrbaxCheckpointHandler() as handler:
-                handler.save(tmp_dir, module)
+                handler.save_to_directory(tmp_dir, module)
 
                 # Restore to new module
                 new_module = SimpleModule(10, rngs=nnx.Rngs(123))
@@ -508,7 +508,7 @@ class TestDistributedCheckpointing:
         with tempfile.TemporaryDirectory() as tmp_dir:
             with OrbaxCheckpointHandler() as handler:
                 # Save with process index simulation
-                checkpoint_path = handler.save(tmp_dir, module)
+                checkpoint_path = handler.save_to_directory(tmp_dir, module)
                 assert Path(checkpoint_path).exists()
 
 
@@ -610,7 +610,7 @@ class TestErrorRecoveryAndCorruption:
         with tempfile.TemporaryDirectory() as tmp_dir:
             with OrbaxCheckpointHandler() as handler:
                 # Save should be atomic (all or nothing)
-                checkpoint_path = handler.save(tmp_dir, module)
+                checkpoint_path = handler.save_to_directory(tmp_dir, module)
 
                 # Verify checkpoint integrity
                 assert Path(checkpoint_path).exists()
@@ -646,7 +646,7 @@ class TestAsyncCheckpointing:
                 with tempfile.TemporaryDirectory() as tmp_dir:
                     # Use context manager to ensure proper cleanup of async operations
                     with OrbaxCheckpointHandler() as handler:
-                        checkpoint_path = handler.save(tmp_dir, module)
+                        checkpoint_path = handler.save_to_directory(tmp_dir, module)
                         results.append(checkpoint_path is not None)
 
             # Run multiple saves concurrently
@@ -683,7 +683,7 @@ class TestPerformanceAndStress:
                 import time
 
                 start_time = time.time()
-                checkpoint_path = handler.save(tmp_dir, large_module)
+                checkpoint_path = handler.save_to_directory(tmp_dir, large_module)
                 save_time = time.time() - start_time
 
                 # Should complete in reasonable time
@@ -702,7 +702,7 @@ class TestPerformanceAndStress:
                 # Save many checkpoints rapidly
                 for i in range(10):
                     module(x)
-                    checkpoint_path = handler.save(f"{tmp_dir}/ckpt_{i}", module)
+                    checkpoint_path = handler.save_to_directory(f"{tmp_dir}/ckpt_{i}", module)
                     assert Path(checkpoint_path).exists()
 
     def test_checkpoint_memory_efficiency(self):
@@ -739,7 +739,7 @@ class TestCheckpointHandlerEdgeCases:
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             with OrbaxCheckpointHandler() as handler:
-                checkpoint_path = handler.save(tmp_dir, module)
+                checkpoint_path = handler.save_to_directory(tmp_dir, module)
                 assert Path(checkpoint_path).exists()
 
     def test_nested_module_checkpointing(self):
@@ -761,7 +761,7 @@ class TestCheckpointHandlerEdgeCases:
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             with OrbaxCheckpointHandler() as handler:
-                handler.save(tmp_dir, module)
+                handler.save_to_directory(tmp_dir, module)
 
                 # Restore to new nested module
                 new_module = NestedModule(nnx.Rngs(123))

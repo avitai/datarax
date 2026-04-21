@@ -20,7 +20,13 @@ _CONFIG_LOAD_ERRORS = (OSError, tomllib.TOMLDecodeError)
 _PIPELINE_ERRORS = _CONFIG_LOAD_ERRORS + (KeyError, TypeError, ValueError, RuntimeError)
 
 
-def _load_toml_config(config_path: str) -> dict[str, Any]:
+def _emit(message: str = "", *, error: bool = False) -> None:
+    """Write CLI output without direct print calls."""
+    stream = sys.stderr if error else sys.stdout
+    stream.write(f"{message}\n")
+
+
+def _load_config_from_toml(config_path: str) -> dict[str, Any]:
     """Load TOML configuration from disk."""
     with Path(config_path).open("rb") as f:
         return tomllib.load(f)
@@ -48,7 +54,7 @@ def _apply_overrides(config: dict[str, Any], overrides: dict[str, str]) -> None:
         target[keys[-1]] = _coerce_override_value(raw_value)
 
 
-def validate_config(config_path: str) -> bool:
+def is_config_valid(config_path: str) -> bool:
     """Validate a pipeline configuration file.
 
     Args:
@@ -58,28 +64,28 @@ def validate_config(config_path: str) -> bool:
         True if valid, False otherwise.
     """
     try:
-        config = _load_toml_config(config_path)
+        config = _load_config_from_toml(config_path)
 
         # Check required sections
         if "pipeline" not in config:
-            print("Error: Missing [pipeline] section", file=sys.stderr)
+            _emit("Error: Missing [pipeline] section", error=True)
             return False
 
         if "name" not in config["pipeline"]:
-            print("Error: Missing pipeline name", file=sys.stderr)
+            _emit("Error: Missing pipeline name", error=True)
             return False
 
         # Check for DAG format (required)
         if "dag" not in config and "sources" not in config:
-            print(
+            _emit(
                 "Error: Missing pipeline definition (no [dag] or [sources] section)",
-                file=sys.stderr,
+                error=True,
             )
             return False
 
         return True
     except _CONFIG_LOAD_ERRORS as e:
-        print(f"Error validating config: {e}", file=sys.stderr)
+        _emit(f"Error validating config: {e}", error=True)
         return False
 
 
@@ -94,35 +100,35 @@ def run_pipeline(config_path: str, overrides: dict[str, str] | None = None) -> i
         Exit code (0 for success).
     """
     try:
-        config = _load_toml_config(config_path)
+        config = _load_config_from_toml(config_path)
 
         # Apply overrides
         if overrides:
             _apply_overrides(config, overrides)
 
-        print(f"Loading pipeline: {config['pipeline']['name']}")
+        _emit(f"Loading pipeline: {config['pipeline']['name']}")
 
         # Create and run pipeline using DAGExecutor
         if "dag" in config:
             # Modern DAG-based pipeline
             executor = DAGConfig.from_dict(config["dag"])
-            print("Starting pipeline execution...")
+            _emit("Starting pipeline execution...")
 
             # Run the pipeline
             for batch_num, batch in enumerate(executor):
                 if batch_num % 100 == 0:
-                    print(f"Processed batch {batch_num}")
+                    _emit(f"Processed batch {batch_num}")
                 # In real implementation, we'd process the batch
 
         else:
-            print("Non-DAG pipeline format not supported. Please use DAG format.")
+            _emit("Non-DAG pipeline format not supported. Please use DAG format.")
             return 1
 
-        print("Pipeline execution completed successfully")
+        _emit("Pipeline execution completed successfully")
         return 0
 
     except _PIPELINE_ERRORS as e:
-        print(f"Error running pipeline: {e}", file=sys.stderr)
+        _emit(f"Error running pipeline: {e}", error=True)
         return 1
 
 
@@ -140,7 +146,7 @@ def run_benchmark(dataset: str, **kwargs: Any) -> int:
         from calibrax.cli import main as calibrax_main
 
         data_dir = str(kwargs.get("data", "benchmark-data"))
-        print(
+        _emit(
             "The legacy 'datarax benchmark' command now delegates to calibrax.\n"
             f"Dataset argument '{dataset}' is ignored; showing summary for store: {data_dir}"
         )
@@ -150,7 +156,7 @@ def run_benchmark(dataset: str, **kwargs: Any) -> int:
         )
         return 0
     except (ImportError, RuntimeError, ValueError, TypeError) as e:
-        print(f"Error running benchmark: {e}", file=sys.stderr)
+        _emit(f"Error running benchmark: {e}", error=True)
         return 1
 
 
@@ -175,7 +181,7 @@ def list_components(component_type: str | None = None) -> dict[str, list]:
     return components
 
 
-def create_pipeline_template(output_path: str, template: str = "basic") -> bool:
+def is_pipeline_template_written_to_path(output_path: str, template: str = "basic") -> bool:
     """Create a pipeline configuration template.
 
     Args:
@@ -250,10 +256,10 @@ to = "batch"
     try:
         template_content = templates.get(template, templates["basic"])
         Path(output_path).write_text(template_content)
-        print(f"Created pipeline template at {output_path}")
+        _emit(f"Created pipeline template at {output_path}")
         return True
     except OSError as e:
-        print(f"Error creating template: {e}", file=sys.stderr)
+        _emit(f"Error creating template: {e}", error=True)
         return False
 
 
@@ -270,7 +276,7 @@ def profile_pipeline(config_path: str, num_iterations: int = 100) -> dict[str, f
     import time
 
     try:
-        config = _load_toml_config(config_path)
+        config = _load_config_from_toml(config_path)
         if num_iterations <= 0:
             raise ValueError("num_iterations must be greater than zero")
 
@@ -298,32 +304,32 @@ def profile_pipeline(config_path: str, num_iterations: int = 100) -> dict[str, f
                 "ms_per_batch": latency * 1000,
             }
 
-            print("Performance Metrics:")
-            print(f"  Throughput: {throughput:.2f} batches/sec")
-            print(f"  Latency: {latency * 1000:.2f} ms/batch")
+            _emit("Performance Metrics:")
+            _emit(f"  Throughput: {throughput:.2f} batches/sec")
+            _emit(f"  Latency: {latency * 1000:.2f} ms/batch")
 
             return metrics
 
         return {}
 
     except _PIPELINE_ERRORS as e:
-        print(f"Error profiling pipeline: {e}", file=sys.stderr)
+        _emit(f"Error profiling pipeline: {e}", error=True)
         return {}
 
 
 def _handle_run(args: argparse.Namespace) -> int:
     """Handle the 'run' subcommand."""
     if not Path(args.config_path).exists():
-        print(f"Error: Config file not found: {args.config_path}", file=sys.stderr)
+        _emit(f"Error: Config file not found: {args.config_path}", error=True)
         return 1
 
     overrides = {}
     if args.override:
         for override in args.override:
             if "=" not in override:
-                print(
+                _emit(
                     f"Error: Invalid override format: {override}. Expected format: key=value",
-                    file=sys.stderr,
+                    error=True,
                 )
                 return 1
             key, value = override.split("=", 1)
@@ -335,11 +341,11 @@ def _handle_run(args: argparse.Namespace) -> int:
 def _handle_validate(args: argparse.Namespace) -> int:
     """Handle the 'validate' subcommand."""
     if not Path(args.config_path).exists():
-        print(f"Error: Config file not found: {args.config_path}", file=sys.stderr)
+        _emit(f"Error: Config file not found: {args.config_path}", error=True)
         return 1
 
-    if validate_config(args.config_path):
-        print("Configuration is valid")
+    if is_config_valid(args.config_path):
+        _emit("Configuration is valid")
         return 0
     return 1
 
@@ -357,21 +363,22 @@ def _handle_list(args: argparse.Namespace) -> int:
     """Handle the 'list' subcommand."""
     components = list_components(args.type)
     for comp_type, comp_list in components.items():
-        print(f"\n{comp_type.capitalize()}:")
+        _emit()
+        _emit(f"{comp_type.capitalize()}:")
         for comp in comp_list:
-            print(f"  - {comp}")
+            _emit(f"  - {comp}")
     return 0
 
 
 def _handle_create(args: argparse.Namespace) -> int:
     """Handle the 'create' subcommand."""
-    return 0 if create_pipeline_template(args.output, args.template) else 1
+    return 0 if is_pipeline_template_written_to_path(args.output, args.template) else 1
 
 
 def _handle_profile(args: argparse.Namespace) -> int:
     """Handle the 'profile' subcommand."""
     if not Path(args.config_path).exists():
-        print(f"Error: Config file not found: {args.config_path}", file=sys.stderr)
+        _emit(f"Error: Config file not found: {args.config_path}", error=True)
         return 1
 
     metrics = profile_pipeline(args.config_path, args.num_iterations)
@@ -381,7 +388,7 @@ def _handle_profile(args: argparse.Namespace) -> int:
 def _handle_version(args: argparse.Namespace) -> int:
     """Handle the 'version' subcommand."""
     del args  # unused
-    print(f"Datarax version {__version__}")
+    _emit(f"Datarax version {__version__}")
     return 0
 
 

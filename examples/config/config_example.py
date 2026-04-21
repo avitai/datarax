@@ -31,7 +31,7 @@ def main():
     print("-" * 80)
 
     # Load the configuration file
-    cfg = config.load_toml(config_path)
+    cfg = config.load_toml_from_path(config_path)
 
     print("Original configuration:")
     print_config(cfg)

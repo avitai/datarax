@@ -68,10 +68,10 @@ class DefaultBatcher(BatcherModule):
     def process(
         self,
         elements: Iterator[Element],
-        *args: Any,
+        *_args: Any,
         batch_size: int,
         drop_remainder: bool = False,
-        **kwargs: Any,
+        **_kwargs: Any,
     ) -> Iterator[Batch]:
         """Group individual data elements into batches.
 
@@ -151,10 +151,10 @@ class DefaultBatcher(BatcherModule):
             return self.collate_fn(elements)
 
         # Use our safe tree_map implementation that handles PRNGKey dtypes
-        return self._safe_tree_map(self._stack_leaves, *elements)
+        return self._safe_tree_map(self._stack_leaf_values, *elements)
 
     @staticmethod
-    def _stack_leaves(
+    def _stack_leaf_values(
         *leaves: jax.Array | np.ndarray | Any,
     ) -> jax.Array | list:
         """Stack leaf values from multiple elements.

@@ -27,6 +27,9 @@ class MetricsObserver:
         """
         raise NotImplementedError("Subclasses must implement update()")
 
+    def reset(self) -> None:
+        """Reset observer-local state before a new monitoring run."""
+
 
 class CallbackRegistry:
     """Registry for callbacks during pipeline operation.
@@ -48,11 +51,11 @@ class CallbackRegistry:
         if observer not in self._observers:
             self._observers.append(observer)
 
-    def unregister(self, observer: MetricsObserver) -> bool:
+    def is_observer_unregistered(self, observer: MetricsObserver) -> bool:
         """Unregister an observer.
 
         Args:
-            observer: Observer to unregister.
+            observer: Observer to is_observer_unregistered.
 
         Returns:
             True if the observer was found and removed, False otherwise.

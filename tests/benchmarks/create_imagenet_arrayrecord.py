@@ -7,6 +7,8 @@ It requires TensorFlow which can hang on macOS ARM64 during import.
 import platform
 from typing import NoReturn
 
+from datarax.utils.console import emit
+
 
 # Guard against TensorFlow import hang on macOS ARM64 during pytest collection
 # This is a known upstream issue: https://github.com/tensorflow/tensorflow/issues/52138
@@ -29,7 +31,6 @@ def convert_to_array_record() -> str | NoReturn:
         )
 
     # Import TensorFlow and other dependencies only when not on macOS
-    import os
     import pickle
     from pathlib import Path
 
@@ -45,19 +46,19 @@ def convert_to_array_record() -> str | NoReturn:
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    print(f"Reading data from {SOURCE_DATA_PATH}")
+    emit(f"Reading data from {SOURCE_DATA_PATH}")
 
     # Logic adapted from the user's data.py
     train_dir = SOURCE_DATA_PATH / "data/train_data"
-    train_files = sorted(os.listdir(train_dir))
+    train_files = sorted(path.name for path in train_dir.iterdir())
 
     output_path = OUTPUT_DIR / "imagenet64.arrayrecord"
 
     if output_path.exists():
-        print(f"Output file {output_path} already exists. Skipping conversion.")
+        emit(f"Output file {output_path} already exists. Skipping conversion.")
         return str(output_path)
 
-    print(f"Writing to {output_path}")
+    emit(f"Writing to {output_path}")
     writer = array_record_module.ArrayRecordWriter(str(output_path), "group_size:1")
 
     total_records = 0
@@ -65,7 +66,7 @@ def convert_to_array_record() -> str | NoReturn:
     # Process files one by one to avoid OOM during conversion (unlike the original script)
     for train_file in tqdm(train_files, desc="Converting files"):
         file_path = train_dir / train_file
-        with open(file_path, "rb") as fo:
+        with file_path.open("rb") as fo:
             data = pickle.load(fo)
 
             # Extract data and labels
@@ -103,7 +104,7 @@ def convert_to_array_record() -> str | NoReturn:
                 total_records += 1
 
     writer.close()
-    print(f"Converted {total_records} records to {output_path}")
+    emit(f"Converted {total_records} records to {output_path}")
     return str(output_path)
 
 

@@ -118,6 +118,7 @@ class CrepeF0Operator(OperatorModule):
             (data_with_f0, state, metadata) where data_with_f0 has original
             keys plus "f0_hz" and "f0_confidence" with shape (n_frames,).
         """
+        del random_params, stats
         audio = data["audio"]
         f0_hz, confidence = self._extract_f0(audio)
         out_data = {**data, "f0_hz": f0_hz, "f0_confidence": confidence}

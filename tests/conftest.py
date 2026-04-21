@@ -4,6 +4,7 @@ import importlib.util
 import os
 import platform
 import sys
+from pathlib import Path
 from typing import Any
 
 
@@ -53,13 +54,21 @@ def _configure_test_jax_platforms() -> None:
     # force CPU to avoid backend initialization failures during test collection.
     if "cuda" in requested:
         has_cuda_plugin = (
-            importlib.util.find_spec("jax_cuda12_plugin") is not None
-            or importlib.util.find_spec("jax_cuda13_plugin") is not None
-            or importlib.util.find_spec("jax_plugins.xla_cuda12") is not None
-            or importlib.util.find_spec("jax_plugins.xla_cuda13") is not None
+            _module_exists("jax_cuda12_plugin")
+            or _module_exists("jax_cuda13_plugin")
+            or _module_exists("jax_plugins.xla_cuda12")
+            or _module_exists("jax_plugins.xla_cuda13")
         )
         if not has_cuda_plugin:
             os.environ["JAX_PLATFORMS"] = "cpu"
+
+
+def _module_exists(module_name: str) -> bool:
+    """Return whether a module can be imported without importing it."""
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except ModuleNotFoundError:
+        return False
 
 
 _configure_test_jax_platforms()
@@ -67,6 +76,8 @@ _configure_test_jax_platforms()
 import jax
 import jax.numpy as jnp
 import pytest
+
+from datarax.utils.console import emit
 
 
 # Pre-import Deep Lake before TensorFlow to avoid fatal OpenSSL conflict.
@@ -94,7 +105,7 @@ if not IS_MACOS:
     except ImportError:
         pass  # TensorFlow not installed
     except (OSError, RuntimeError, ValueError) as e:
-        print(f"Warning: Could not configure TensorFlow: {e}")
+        emit(f"Warning: Could not configure TensorFlow: {e}")
 
 
 # Configure beartype for runtime type checking
@@ -106,18 +117,18 @@ try:
     try:
         beartype.beartype(conf=BeartypeConf(strategy=BeartypeStrategy.On))
     except (RuntimeError, TypeError, ValueError) as e:
-        print(f"Warning: Could not apply beartype configuration: {e}")
+        emit(f"Warning: Could not apply beartype configuration: {e}")
 except ImportError:
     # Beartype is not installed, skipping configuration
     pass
 
 # Add the tests directory to the Python path for easy importing of test_common
-tests_dir = os.path.dirname(os.path.abspath(__file__))
+tests_dir = str(Path(__file__).resolve().parent)
 if tests_dir not in sys.path:
     sys.path.insert(0, tests_dir)
 
 # Add the src directory to the Python path so tests can import modules
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from test_common.device_detection import (
     has_multiple_devices,
@@ -331,6 +342,7 @@ def temp_checkpoint_dir(tmpdir) -> str:
 @pytest.fixture
 def device_matrix(request):
     """Create a matrix of available devices for testing different configurations."""
+    del request
     device_counts = {
         "cpu": jax.local_device_count("cpu"),
         "gpu": jax.local_device_count("gpu"),

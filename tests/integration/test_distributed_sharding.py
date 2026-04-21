@@ -15,6 +15,7 @@ class TestDistributedSharding:
     def test_shard_by_process(self, mock_index, mock_count):
         """Test sharding across JAX processes."""
         # Config-first pattern: create config, then module
+        del mock_count, mock_index
         config = JaxProcessSharderConfig(drop_remainder=True)
         sharder = JaxProcessSharderModule(config)
 
@@ -31,6 +32,7 @@ class TestDistributedSharding:
     def test_last_process_sharding(self, mock_index, mock_count):
         """Test sharding for last process."""
         # Config-first pattern
+        del mock_count, mock_index
         config = JaxProcessSharderConfig(drop_remainder=False)
         sharder = JaxProcessSharderModule(config)
 
@@ -38,8 +40,9 @@ class TestDistributedSharding:
         data = list(range(102))  # Not divisible by 4
         sharded = sharder.shard_data(data)
 
-        # Last process gets remainder
-        assert len(sharded) == 27  # 25 + 2 remainder
+        # Grain-style even split distributes the remainder to earlier processes.
+        assert len(sharded) == 25
+        assert sharded == list(range(77, 102))
 
     def test_array_sharding(self):
         """Test sharding of numpy arrays."""

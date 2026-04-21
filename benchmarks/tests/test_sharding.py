@@ -9,7 +9,7 @@ from __future__ import annotations
 import jax
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
-from benchmarks.core.sharding import create_device_mesh, shard_batch
+from benchmarks.core.sharding import create_device_mesh, place_batch_on_shards
 
 
 class TestCreateDeviceMesh:
@@ -58,18 +58,18 @@ class TestCreateDeviceMesh:
 
 
 class TestShardBatch:
-    """Tests for shard_batch()."""
+    """Tests for place_batch_on_shards()."""
 
     def test_returns_named_sharding(self):
-        """shard_batch returns a NamedSharding instance."""
+        """place_batch_on_shards returns a NamedSharding instance."""
         mesh = create_device_mesh()
-        sharding = shard_batch(mesh)
+        sharding = place_batch_on_shards(mesh)
         assert isinstance(sharding, NamedSharding)
 
     def test_sharding_spec_partitions_first_axis(self):
         """The partition spec shards along the first (batch) dimension."""
         mesh = create_device_mesh()
-        sharding = shard_batch(mesh, axis_name="data")
+        sharding = place_batch_on_shards(mesh, axis_name="data")
         assert sharding.spec == PartitionSpec("data")
 
     def test_custom_axis_name(self):
@@ -79,5 +79,5 @@ class TestShardBatch:
             mesh_shape=(num_devices,),
             axis_names=("batch",),
         )
-        sharding = shard_batch(mesh, axis_name="batch")
+        sharding = place_batch_on_shards(mesh, axis_name="batch")
         assert sharding.spec == PartitionSpec("batch")

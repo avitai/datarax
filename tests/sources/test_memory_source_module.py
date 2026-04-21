@@ -419,12 +419,13 @@ def test_memory_source_metadata_with_shuffling():
 
     # Check that shuffle info is in source_info
     assert metadata.source_info is not None
-    assert metadata.source_info["shuffle_enabled"] is True
+    assert metadata.source_info["random_order_enabled"] is True
 
     # Get batch with metadata
     batch, meta_list = source.get_batch_with_metadata(3)
     assert all(
-        m.source_info is not None and m.source_info["shuffle_enabled"] is True for m in meta_list
+        m.source_info is not None and m.source_info["random_order_enabled"] is True
+        for m in meta_list
     )
 
 
@@ -597,9 +598,9 @@ def test_memory_source_reset_with_cache():
     assert len(source._cache) == 0  # Cache should be cleared
 
 
-def test_memory_source_set_shuffle():
-    """Test set_shuffle method to enable/disable shuffling."""
-    # Test set_shuffle method (lines 337-339)
+def test_memory_source_set_random_order():
+    """Test set_random_order method to enable/disable shuffling."""
+    # Test set_random_order method (lines 337-339)
     data = list(range(100))
     # Include default stream for fallback behavior
     rngs = nnx.Rngs(default=0, shuffle=42)
@@ -607,11 +608,11 @@ def test_memory_source_set_shuffle():
     source = MemorySource(config, data, rngs=rngs)
 
     # Initially not shuffling
-    assert source.shuffle is False
+    assert source.is_random_order is False
 
     # Enable shuffling
-    source.set_shuffle(True)
-    assert source.shuffle is True
+    source.set_random_order(True)
+    assert source.is_random_order is True
 
     # Get data - should be shuffled
     items = list(source)
@@ -619,8 +620,8 @@ def test_memory_source_set_shuffle():
     assert items != list(range(100))  # Should be shuffled
 
     # Disable shuffling
-    source.set_shuffle(False)
-    assert source.shuffle is False
+    source.set_random_order(False)
+    assert source.is_random_order is False
     assert source._shuffled_indices.get_value() is None  # Should clear shuffled indices
 
     # Get data - should not be shuffled

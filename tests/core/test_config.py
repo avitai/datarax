@@ -41,6 +41,7 @@ class TestDataraxModuleConfigConstruction:
         """Test config with dynamic statistics function."""
 
         def compute_stats(batch: Any) -> dict[str, Any]:
+            del batch
             return {"mean": 0.5}
 
         config = DataraxModuleConfig(batch_stats_fn=compute_stats)
@@ -53,6 +54,7 @@ class TestDataraxModuleConfigConstruction:
 
         class StatsModule(nnx.Module):
             def __call__(self, batch: Any) -> dict[str, Any]:
+                del batch
                 return {"mean": 0.5}
 
         stats_module = StatsModule()
@@ -71,7 +73,7 @@ class TestDataraxModuleConfigConstruction:
     def test_all_valid_combinations(self):
         """Test various valid parameter combinations."""
         # Cacheable with stats function
-        config1 = DataraxModuleConfig(cacheable=True, batch_stats_fn=lambda x: {"mean": 0.5})
+        config1 = DataraxModuleConfig(cacheable=True, batch_stats_fn=lambda _x: {"mean": 0.5})
         assert config1.cacheable is True
         assert config1.batch_stats_fn is not None
 
@@ -88,6 +90,7 @@ class TestDataraxModuleConfigValidation:
         """Test that batch_stats_fn and precomputed_stats are mutually exclusive."""
 
         def compute_stats(batch: Any) -> dict[str, Any]:
+            del batch
             return {"mean": 0.5}
 
         with pytest.raises(ValueError) as exc_info:
@@ -101,7 +104,7 @@ class TestDataraxModuleConfigValidation:
     def test_validation_error_message_quality(self):
         """Test that validation errors have helpful messages."""
         with pytest.raises(ValueError) as exc_info:
-            DataraxModuleConfig(batch_stats_fn=lambda x: {}, precomputed_stats={})
+            DataraxModuleConfig(batch_stats_fn=lambda _x: {}, precomputed_stats={})
 
         error_msg = str(exc_info.value)
         # Message should explain the mutual exclusivity
@@ -156,7 +159,7 @@ class TestDataraxModuleConfigInheritance:
 
         # Should still enforce mutual exclusivity
         with pytest.raises(ValueError):
-            ChildConfig(batch_stats_fn=lambda x: {}, precomputed_stats={})
+            ChildConfig(batch_stats_fn=lambda _x: {}, precomputed_stats={})
 
     def test_child_config_can_add_validation(self):
         """Test that child configs can add their own validation."""
@@ -176,7 +179,7 @@ class TestDataraxModuleConfigInheritance:
 
         # Parent validation still works
         with pytest.raises(ValueError):
-            ChildConfig(batch_stats_fn=lambda x: {}, precomputed_stats={})
+            ChildConfig(batch_stats_fn=lambda _x: {}, precomputed_stats={})
 
         # Child validation works
         with pytest.raises(ValueError) as exc_info:

@@ -48,10 +48,10 @@ import argparse
 import hashlib
 import json
 import logging
-import os
 import subprocess
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 
@@ -1247,20 +1247,20 @@ def parse_args() -> argparse.Namespace:
 
 def load_json_report(report_path: str) -> dict[str, Any] | None:
     """Load and parse pytest JSON report."""
-    if not os.path.exists(report_path):
+    if not Path(report_path).exists():
         logger.error(f"Report file not found: {report_path}")
         logger.info(
             f"Generate report with: uv run pytest --json-report --json-report-file={report_path}"
         )
         return None
 
-    with open(report_path, "r") as f:
+    with Path(report_path).open() as f:
         return json.load(f)
 
 
 def load_coverage_data(coverage_path: str) -> dict[str, Any] | None:
     """Load and parse coverage JSON report."""
-    if not coverage_path or not os.path.exists(coverage_path):
+    if not coverage_path or not Path(coverage_path).exists():
         logger.info(f"Coverage file not found: {coverage_path}")
         logger.info(
             "Generate coverage with: uv run pytest --cov=src/datarax "
@@ -1269,7 +1269,7 @@ def load_coverage_data(coverage_path: str) -> dict[str, Any] | None:
         return None
 
     try:
-        with open(coverage_path, "r") as f:
+        with Path(coverage_path).open() as f:
             return json.load(f)
     except (OSError, json.JSONDecodeError) as e:
         logger.warning(f"Failed to load coverage data: {e}")
@@ -1759,8 +1759,8 @@ def generate_dashboard(
     )
 
     # Write to file
-    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-    with open(output_path, "w") as f:
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    with Path(output_path).open("w") as f:
         f.write(html)
 
     logger.info(f"Dashboard generated at: {output_path}")

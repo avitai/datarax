@@ -1,7 +1,7 @@
 """Test data generators for Datarax tests."""
 
-import os
 import random
+from pathlib import Path
 
 import numpy as np
 
@@ -153,7 +153,7 @@ def write_image_files(
     np.random.seed(seed)
     random.seed(seed)
 
-    os.makedirs(output_dir, exist_ok=True)
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     file_paths = []
     labels = []
@@ -164,8 +164,8 @@ def write_image_files(
         labels.append(label)
 
         # Create class directory if it doesn't exist
-        class_dir = os.path.join(output_dir, f"class_{label}")
-        os.makedirs(class_dir, exist_ok=True)
+        class_dir = Path(output_dir) / f"class_{label}"
+        class_dir.mkdir(parents=True, exist_ok=True)
 
         # Generate random image data
         if num_channels == 1:
@@ -180,7 +180,7 @@ def write_image_files(
             img = PIL.Image.fromarray(img_data, mode="RGB")
 
         # Save the image
-        file_path = os.path.join(class_dir, f"image_{i}.png")
+        file_path = class_dir / f"image_{i}.png"
         img.save(file_path)
         file_paths.append(file_path)
 

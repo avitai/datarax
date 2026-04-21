@@ -231,7 +231,6 @@ import ast
 import hashlib
 import json
 import logging
-import os
 import re
 import subprocess
 from collections import defaultdict
@@ -860,7 +859,7 @@ def parse_args() -> argparse.Namespace:
 def extract_test_name(file_path: Path, line_number: int) -> str:
     """Extract the test function or class name from a Python file."""
     try:
-        with open(file_path, "r") as f:
+        with file_path.open() as f:
             source = f.read()
 
         tree = ast.parse(source)
@@ -929,10 +928,10 @@ def find_skipped_tests() -> list[dict[str, Any]]:
     skipped_tests = []
 
     for file_path in tests_dir.glob("**/*.py"):
-        relative_path = file_path.relative_to(Path("."))
+        relative_path = file_path.relative_to(Path())
         module_name = str(relative_path.parent).replace("/", ".").replace("tests.", "")
 
-        with open(file_path, "r") as f:
+        with file_path.open() as f:
             try:
                 content = f.read()
                 for i, line in enumerate(content.splitlines(), 1):
@@ -983,13 +982,13 @@ def find_skipped_tests() -> list[dict[str, Any]]:
 
 def parse_inventory_file(inventory_path: str) -> list[dict[str, Any]]:
     """Parse the inventory Markdown file to extract test information."""
-    if not os.path.exists(inventory_path):
+    if not Path(inventory_path).exists():
         logger.warning(f"Inventory file not found: {inventory_path}")
         return []
 
     logger.info(f"Parsing inventory file: {inventory_path}")
 
-    with open(inventory_path, "r") as f:
+    with Path(inventory_path).open() as f:
         content = f.read()
 
     # Extract table rows - now with test name field
@@ -1035,7 +1034,7 @@ def update_inventory_file(inventory_path: str, tests: list[dict[str, Any]]) -> N
     logger.info(f"Updating inventory file: {inventory_path}")
 
     # Ensure directory exists
-    os.makedirs(os.path.dirname(inventory_path) or ".", exist_ok=True)
+    Path(inventory_path).parent.mkdir(parents=True, exist_ok=True)
 
     # Sort tests by module and then by ID
     tests = sorted(tests, key=lambda x: (x.get("module", ""), x["id"]))
@@ -1080,7 +1079,7 @@ def update_inventory_file(inventory_path: str, tests: list[dict[str, Any]]) -> N
         content += f"{test.get('status', 'To Fix')} | {test.get('priority', 3)} |\n"
 
     # Write the file
-    with open(inventory_path, "w") as f:
+    with Path(inventory_path).open("w") as f:
         f.write(content)
 
     logger.info(f"Inventory file updated with {total_count} tests")
@@ -1139,8 +1138,8 @@ def track_history(history_path: str, stats: dict[str, Any]) -> dict[str, Any]:
     """Track changes over time."""
     history = []
 
-    if os.path.exists(history_path):
-        with open(history_path, "r") as f:
+    if Path(history_path).exists():
+        with Path(history_path).open() as f:
             history = json.load(f)
 
     # Add current stats
@@ -1151,8 +1150,8 @@ def track_history(history_path: str, stats: dict[str, Any]) -> dict[str, Any]:
     history = history[-100:]
 
     # Save updated history
-    os.makedirs(os.path.dirname(history_path) or ".", exist_ok=True)
-    with open(history_path, "w") as f:
+    Path(history_path).parent.mkdir(parents=True, exist_ok=True)
+    with Path(history_path).open("w") as f:
         json.dump(history, f, indent=2)
 
     # Calculate trends
@@ -1324,10 +1323,10 @@ def generate_dashboard(
     )
 
     # Ensure output directory exists
-    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
     # Write HTML file
-    with open(output_path, "w") as f:
+    with Path(output_path).open("w") as f:
         f.write(html_content)
 
     logger.info(f"Dashboard generated successfully at: {output_path}")
@@ -1381,10 +1380,10 @@ def generate_json_output(
     json_data["summary"]["by_module"] = dict(json_data["summary"]["by_module"])
 
     # Ensure output directory exists
-    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
     # Write JSON file
-    with open(output_path, "w") as f:
+    with Path(output_path).open("w") as f:
         json.dump(json_data, f, indent=2)
 
     logger.info("JSON output generated successfully")
@@ -1448,7 +1447,7 @@ def main() -> None:
             logger.info(f"Found {new_count} new skipped tests")
     else:
         # Just load from existing inventory
-        if not os.path.exists(args.inventory):
+        if not Path(args.inventory).exists():
             logger.error(f"Inventory file not found: {args.inventory}")
             logger.info("Run with --scan flag to create initial inventory")
             return

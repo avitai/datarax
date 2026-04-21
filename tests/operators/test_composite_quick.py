@@ -27,10 +27,10 @@ class TestCompositeQuickIntegration:
 
         # Create two simple map operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 10, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 10, rngs=rngs)
 
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
@@ -62,10 +62,10 @@ class TestCompositeQuickIntegration:
 
         # Create two map operators that transform differently
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         # Create parallel composite with concat
         composite_config = CompositeOperatorConfig(
@@ -97,10 +97,10 @@ class TestCompositeQuickIntegration:
 
         # Create two map operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         # Create parallel composite with stack
         composite_config = CompositeOperatorConfig(
@@ -132,13 +132,13 @@ class TestCompositeQuickIntegration:
 
         # Create three map operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 1.0, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 1.0, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 2.0, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 2.0, rngs=rngs)
 
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x * 3.0, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x * 3.0, rngs=rngs)
 
         # Create ensemble composite with mean
         composite_config = CompositeOperatorConfig(
@@ -164,10 +164,10 @@ class TestCompositeQuickIntegration:
 
         # Create two map operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2.0, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2.0, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3.0, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3.0, rngs=rngs)
 
         # Create ensemble composite with sum
         composite_config = CompositeOperatorConfig(
@@ -200,10 +200,10 @@ class TestCompositeQuickIntegration:
         rngs = nnx.Rngs(0)
 
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 2, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 2, rngs=rngs)
 
         # Should raise if router is missing
         with pytest.raises(ValueError, match="BRANCHING strategy requires router"):
@@ -218,7 +218,7 @@ class TestCompositeQuickIntegration:
 
         # Create one deterministic and one stochastic operator
         det_config = MapOperatorConfig(stochastic=False)
-        det_op = MapOperator(det_config, fn=lambda x, key: x, rngs=rngs)
+        det_op = MapOperator(det_config, fn=lambda x, _key: x, rngs=rngs)
 
         # Note: MapOperator doesn't support stochastic yet, so we'll just
         # test with deterministic for now

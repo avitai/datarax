@@ -146,7 +146,7 @@ config = TFDSEagerConfig(
 ## Integration with DAG Pipelines
 
 ```python
-from datarax.dag import from_source
+from datarax.dag import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 
 config = TFDSEagerConfig(
@@ -157,7 +157,7 @@ config = TFDSEagerConfig(
 source = TFDSEagerSource(config)
 
 pipeline = (
-    from_source(source, batch_size=128)
+    build_source_pipeline(source, batch_size=128)
     >> OperatorNode(normalize_op)
     >> OperatorNode(augment_op)
 )

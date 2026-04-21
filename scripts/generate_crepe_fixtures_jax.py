@@ -18,14 +18,14 @@ from flax import nnx
 from datarax.operators.modality.audio.crepe_model import (
     CrepeModel,
     decode_pitch_local,
-    load_crepe_weights,
+    load_crepe_weights_from_path,
 )
 
 
 def main():
     """Generate CREPE reference fixtures using the JAX model implementation."""
     model = CrepeModel(capacity="full", rngs=nnx.Rngs(0))
-    load_crepe_weights(model)
+    load_crepe_weights_from_path(model)
     model.eval()
 
     sr = 16000

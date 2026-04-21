@@ -99,7 +99,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.modality.image import (
@@ -298,14 +298,14 @@ def create_single_aug_pipeline(operator, seed=0):
         rngs=nnx.Rngs(0),
     )
 
-    return from_source(source, batch_size=64).add(OperatorNode(prep)).add(OperatorNode(operator))
+    return build_source_pipeline(source, batch_size=64).add(OperatorNode(prep)).add(OperatorNode(operator))
 
 # Get baseline (no augmentation)
 baseline_source = TFDSEagerSource(
     TFDSEagerConfig(name="fashion_mnist", split="train[:64]", shuffle=False),
     rngs=nnx.Rngs(0),
 )
-baseline_pipeline = from_source(baseline_source, batch_size=64).add(OperatorNode(preprocessor))
+baseline_pipeline = build_source_pipeline(baseline_source, batch_size=64).add(OperatorNode(preprocessor))
 baseline_batch = next(iter(baseline_pipeline))
 baseline_images = np.array(baseline_batch["image"])
 baseline_labels = np.array(baseline_batch["label"])
@@ -438,7 +438,7 @@ def create_full_augmentation_pipeline(seed=42):
 
     # Build pipeline
     return (
-        from_source(source, batch_size=BATCH_SIZE)
+        build_source_pipeline(source, batch_size=BATCH_SIZE)
         .add(OperatorNode(prep))
         .add(OperatorNode(brightness))
         .add(OperatorNode(contrast))

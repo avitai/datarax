@@ -1,6 +1,6 @@
 """Datarax adapter -- reference implementation for the benchmark framework.
 
-Wraps Datarax's public API (from_source, MemorySource, DAGExecutor)
+Wraps Datarax's public API (build_source_pipeline, MemorySource, DAGExecutor)
 using the PipelineAdapter lifecycle: setup -> warmup -> iterate -> teardown.
 
 Supports all 25 scenarios with transform chaining via
@@ -23,10 +23,11 @@ from flax import nnx
 from benchmarks.adapters import register
 from benchmarks.adapters._utils import cast_to_float32, normalize_uint8
 from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
-from datarax import from_source, OperatorNode
+from datarax import build_source_pipeline, OperatorNode
 from datarax.core.config import ElementOperatorConfig
 from datarax.core.element_batch import Element
 from datarax.operators.element_operator import ElementOperator
+from datarax.performance.synchronization import block_until_ready_tree
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -42,34 +43,40 @@ from datarax.sources import MemorySource, MemorySourceConfig
 
 def _normalize(element: Element, key: jax.Array) -> Element:
     """Normalize uint8 images to [0, 1] float32."""
+    del key
     return element.replace(data=jax.tree.map(normalize_uint8, element.data))
 
 
 def _cast_to_float32(element: Element, key: jax.Array) -> Element:
     """Cast all arrays to float32."""
+    del key
     return element.replace(data=jax.tree.map(cast_to_float32, element.data))
 
 
 def _scale(element: Element, key: jax.Array) -> Element:
     """Scale all values by 2.0."""
+    del key
     new_data = jax.tree.map(lambda x: x * 2.0, element.data)
     return element.replace(data=new_data)
 
 
 def _clip(element: Element, key: jax.Array) -> Element:
     """Clip values to [0, 1]."""
+    del key
     new_data = jax.tree.map(lambda x: jnp.clip(x, 0.0, 1.0), element.data)
     return element.replace(data=new_data)
 
 
 def _add(element: Element, key: jax.Array) -> Element:
     """Add 0.1 to all values."""
+    del key
     new_data = jax.tree.map(lambda x: x + 0.1, element.data)
     return element.replace(data=new_data)
 
 
 def _multiply(element: Element, key: jax.Array) -> Element:
     """Multiply all values by 0.9."""
+    del key
     new_data = jax.tree.map(lambda x: x * 0.9, element.data)
     return element.replace(data=new_data)
 
@@ -248,18 +255,21 @@ def _random_grayscale(element: Element, key: jax.Array) -> Element:
 
 def _log_transform(element: Element, key: jax.Array) -> Element:
     """Element-wise log1p for dense features (HTAB-1)."""
+    del key
     new_data = jax.tree.map(lambda x: jnp.log1p(jnp.abs(x)), element.data)
     return element.replace(data=new_data)
 
 
 def _hash_embedding_index(element: Element, key: jax.Array) -> Element:
     """Hash integers into embedding bucket indices (HTAB-1)."""
+    del key
     new_data = jax.tree.map(lambda x: jnp.abs(x) % 10000, element.data)
     return element.replace(data=new_data)
 
 
 def _create_attention_mask(element: Element, key: jax.Array) -> Element:
     """Create binary attention mask: 1 for real tokens, 0 for padding (HNLP-1)."""
+    del key
     new_data = jax.tree.map(lambda x: (x != 0).astype(jnp.float32), element.data)
     return element.replace(data=new_data)
 
@@ -269,6 +279,8 @@ def _create_causal_mask(element: Element, key: jax.Array) -> Element:
 
     O(seq_len^2) computation -- benefits from JIT compilation.
     """
+
+    del key
 
     def make_mask(x: jax.Array) -> jax.Array:
         seq_len = x.shape[-1] if x.ndim > 1 else x.shape[0]
@@ -426,7 +438,7 @@ class DataraxAdapter(PipelineAdapter):
 
         source = self._create_source(config, data, rngs)
         prefetch_size = int(config.extra.get("prefetch_size", 2)) if config.extra else 2
-        pipeline = from_source(
+        pipeline = build_source_pipeline(
             source,
             batch_size=config.batch_size,
             prefetch_size=prefetch_size,
@@ -444,11 +456,7 @@ class DataraxAdapter(PipelineAdapter):
 
     def _materialize_batch(self, batch: Any) -> list[Any]:
         data = batch.get_data()  # Works with both Batch and BatchView
-        # block_until_ready is JAX-specific; numpy arrays don't have it.
-        # When the pipeline has no operators, data stays as numpy (zero-copy).
-        for leaf in jax.tree.leaves(data):
-            if hasattr(leaf, "block_until_ready"):
-                leaf.block_until_ready()
+        block_until_ready_tree(data)
         return jax.tree.leaves(data)
 
     def teardown(self) -> None:

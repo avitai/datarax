@@ -8,6 +8,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from datarax.utils.console import emit
+
 
 @pytest.fixture
 def device_mesh():
@@ -141,6 +143,7 @@ def nnx_module_fixture():
             self.dense2 = nnx.Linear(in_features=features, out_features=1, rngs=nnx.Rngs(1))
 
         def __call__(self, x, training: bool = False):
+            del training
             x = self.dense1(x)
             x = jax.nn.relu(x)
             x = self.dense2(x)
@@ -188,7 +191,7 @@ def device_agnostic_test():
 def gpu_test():
     """Skip test if GPU is not available."""
     if jax.local_device_count("gpu") == 0:
-        print("INFO: Skipping test that requires GPU")
+        emit("INFO: Skipping test that requires GPU")
         pytest.skip("Test requires GPU")
     return True
 
@@ -198,10 +201,10 @@ def tpu_test():
     """Skip test if TPU is not available."""
     try:
         if jax.local_device_count("tpu") == 0:
-            print("INFO: Skipping test that requires TPU")
+            emit("INFO: Skipping test that requires TPU")
             pytest.skip("Test requires TPU")
     except RuntimeError:
-        print("INFO: TPU backend failed to initialize. Skipping test that requires TPU.")
+        emit("INFO: TPU backend failed to initialize. Skipping test that requires TPU.")
         pytest.skip("Test requires TPU")
     return True
 
@@ -211,7 +214,7 @@ def multi_device_test():
     """Skip test if multiple devices are not available."""
     device_count = jax.local_device_count()
     if device_count < 2:
-        print(
+        emit(
             f"INFO: Only {device_count} device(s) available. "
             f"Skipping test that requires multiple devices."
         )

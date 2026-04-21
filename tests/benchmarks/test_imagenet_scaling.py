@@ -5,6 +5,8 @@ Uses TimingCollector for measurement (replaces AdvancedProfiler).
 
 import pytest
 
+from datarax.utils.console import emit
+
 
 try:
     import grain
@@ -80,7 +82,7 @@ class TestRealIO:
             )
 
             results[workers] = throughput
-            print(f"Workers {workers}: {throughput:.1f} batches/s (Latency: {latency_ms:.2f} ms)")
+            emit(f"Workers {workers}: {throughput:.1f} batches/s (Latency: {latency_ms:.2f} ms)")
 
         best_throughput = max(results.values())
-        print(f"Peak Throughput: {best_throughput:.1f} batches/s")
+        emit(f"Peak Throughput: {best_throughput:.1f} batches/s")

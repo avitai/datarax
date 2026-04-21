@@ -1,6 +1,7 @@
 """Shared memory manager for multi-worker data pipeline scenarios."""
 
 import logging
+from contextlib import suppress
 from multiprocessing import shared_memory
 
 import flax.nnx as nnx
@@ -97,20 +98,23 @@ class SharedMemoryManager(nnx.Module):
         else:
             # Large array in shared memory
             shm = shared_memory.SharedMemory(name=metadata["name"])
-
-            # Create numpy array from shared memory
-            shared_np_array = np.ndarray(metadata["shape"], dtype=metadata["dtype"], buffer=shm.buf)
-
-            # Convert to JAX array
-            return jax.numpy.array(shared_np_array)
+            try:
+                shared_np_array = np.ndarray(
+                    metadata["shape"], dtype=metadata["dtype"], buffer=shm.buf
+                )
+                return jax.numpy.array(np.array(shared_np_array, copy=True))
+            finally:
+                shm.close()
 
     def cleanup(self) -> None:
         """Clean up shared memory blocks."""
         # Use get_value() for non-array Variables (new NNX API)
         blocks_dict = self.shared_blocks.get_value()
         for shm in blocks_dict.values():
-            shm.close()
-            shm.unlink()
+            with suppress(FileNotFoundError, OSError):
+                shm.close()
+            with suppress(FileNotFoundError, OSError):
+                shm.unlink()
         # Set empty dicts to clear
         self.shared_blocks.set_value({})
         self.array_metadata.set_value({})
@@ -119,7 +123,7 @@ class SharedMemoryManager(nnx.Module):
         """Enter context manager."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self, _exc_type, _exc_val, _exc_tb) -> None:
         """Exit context manager and release resources."""
         self.cleanup()
 

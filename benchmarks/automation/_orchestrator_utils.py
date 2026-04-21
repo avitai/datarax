@@ -19,6 +19,8 @@ from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any
 
+from datarax.utils.console import emit
+
 
 # ── Constants ──────────────────────────────────────────────────────────
 
@@ -148,7 +150,7 @@ def _status(message: str, *, level: str = "INFO", transient: bool = False) -> No
         content_width = max(terminal_width - len(prefix), 8)
         single = _shorten(str(message), limit=content_width)
         line = f"{prefix}{single}"
-        print("\r" + line.ljust(terminal_width), end="", flush=True)
+        emit("\r" + line.ljust(terminal_width), end="", flush=True)
         _TRANSIENT_ACTIVE = True
         _TRANSIENT_LINE = line
         return
@@ -168,10 +170,10 @@ def _status(message: str, *, level: str = "INFO", transient: bool = False) -> No
             break_on_hyphens=False,
         )
         if not wrapped:
-            print(prefix.rstrip(), flush=True)
+            emit(prefix.rstrip(), flush=True)
             continue
         for part in wrapped:
-            print(f"{prefix}{part}", flush=True)
+            emit(f"{prefix}{part}", flush=True)
 
     if redraw_transient:
         transient_line = _shorten(_TRANSIENT_LINE, limit=terminal_width)

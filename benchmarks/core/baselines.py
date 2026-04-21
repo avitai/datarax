@@ -60,7 +60,7 @@ class BaselineStore:
         filepath = self.baselines_dir / f"{name}.json"
         if not filepath.exists():
             return None
-        with open(filepath) as f:
+        with filepath.open() as f:
             return json.load(f)
 
     def compare(

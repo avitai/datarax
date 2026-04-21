@@ -20,6 +20,7 @@ from datarax.dag import DAGExecutor
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import MemorySource
 from datarax.sources.memory_source import MemorySourceConfig
+from datarax.utils.console import emit
 
 
 @dataclass(frozen=True)
@@ -116,7 +117,7 @@ def profile_with_transforms(
     # Add identity transforms
     det_config = ElementOperatorConfig(stochastic=False)
     for i in range(num_transforms):
-        identity_op = ElementOperator(det_config, fn=lambda e, k: e)
+        identity_op = ElementOperator(det_config, fn=lambda e, _k: e)
         pipeline = pipeline.operate(identity_op)
 
     # Profile iteration
@@ -232,60 +233,60 @@ def profile_with_cprofile(num_samples: int = 500, batch_size: int = 32) -> str:
 
 def run_all_profiles():
     """Run all profiling scenarios and print results."""
-    print("=" * 80)
-    print("Datarax Pipeline Performance Profile")
-    print("=" * 80)
+    emit("=" * 80)
+    emit("Datarax Pipeline Performance Profile")
+    emit("=" * 80)
 
     # Warm up JAX
-    print("\nWarming up JAX...")
+    emit("\nWarming up JAX...")
     _ = jnp.ones((100, 100)) @ jnp.ones((100, 100))
-    print("Done.\n")
+    emit("Done.\n")
 
     # 1. Basic pipeline
-    print("-" * 40)
-    print("1. Basic Pipeline (no transforms)")
-    print("-" * 40)
+    emit("-" * 40)
+    emit("1. Basic Pipeline (no transforms)")
+    emit("-" * 40)
     timings = profile_basic_pipeline(num_samples=2000, batch_size=32)
-    print(f"  Iterator creation: {timings['iterator_creation'] * 1000:.2f} ms")
+    emit(f"  Iterator creation: {timings['iterator_creation'] * 1000:.2f} ms")
     batches = timings["total_batches"]
     batch_proc_ms = timings["batch_processing"] * 1000
-    print(f"  Batch processing ({batches} batches): {batch_proc_ms:.2f} ms")
+    emit(f"  Batch processing ({batches} batches): {batch_proc_ms:.2f} ms")
     time_per_batch = timings["batch_processing"] / max(batches, 1) * 1000
-    print(f"  Time per batch: {time_per_batch:.2f} ms")
-    print(f"  Batches/sec: {timings['total_batches'] / max(timings['total_time'], 0.001):.2f}")
+    emit(f"  Time per batch: {time_per_batch:.2f} ms")
+    emit(f"  Batches/sec: {timings['total_batches'] / max(timings['total_time'], 0.001):.2f}")
 
     # 2. With transforms
-    print("\n" + "-" * 40)
-    print("2. Pipeline with 2 Identity Transforms")
-    print("-" * 40)
+    emit("\n" + "-" * 40)
+    emit("2. Pipeline with 2 Identity Transforms")
+    emit("-" * 40)
     timings = profile_with_transforms(num_samples=2000, batch_size=32, num_transforms=2)
-    print(f"  Iterator creation: {timings['iterator_creation'] * 1000:.2f} ms")
+    emit(f"  Iterator creation: {timings['iterator_creation'] * 1000:.2f} ms")
     batches = timings["total_batches"]
     batch_proc_ms = timings["batch_processing"] * 1000
-    print(f"  Batch processing ({batches} batches): {batch_proc_ms:.2f} ms")
+    emit(f"  Batch processing ({batches} batches): {batch_proc_ms:.2f} ms")
     time_per_batch = timings["batch_processing"] / max(batches, 1) * 1000
-    print(f"  Time per batch: {time_per_batch:.2f} ms")
-    print(f"  Batches/sec: {timings['total_batches'] / max(timings['total_time'], 0.001):.2f}")
+    emit(f"  Time per batch: {time_per_batch:.2f} ms")
+    emit(f"  Batches/sec: {timings['total_batches'] / max(timings['total_time'], 0.001):.2f}")
 
     # 3. Component breakdown
-    print("\n" + "-" * 40)
-    print("3. Component Breakdown")
-    print("-" * 40)
+    emit("\n" + "-" * 40)
+    emit("3. Component Breakdown")
+    emit("-" * 40)
     timings = profile_component_breakdown()
     for name, time_val in timings.items():
-        print(f"  {name}: {time_val * 1000:.2f} ms")
+        emit(f"  {name}: {time_val * 1000:.2f} ms")
 
     # 4. cProfile output
-    print("\n" + "-" * 40)
-    print("4. cProfile Analysis (Top Functions)")
-    print("-" * 40)
+    emit("\n" + "-" * 40)
+    emit("4. cProfile Analysis (Top Functions)")
+    emit("-" * 40)
     profile_output = profile_with_cprofile(num_samples=1000, batch_size=32)
-    print(profile_output)
+    emit(profile_output)
 
     # 5. Comparison: Direct vs Pipeline
-    print("\n" + "-" * 40)
-    print("5. Direct Processing vs Pipeline Overhead")
-    print("-" * 40)
+    emit("\n" + "-" * 40)
+    emit("5. Direct Processing vs Pipeline Overhead")
+    emit("-" * 40)
 
     # Direct jnp.stack for comparison
     num_batches = 50
@@ -302,8 +303,8 @@ def run_all_profiles():
         jnp.stack([d["label"] for d in batch_data], axis=0)
     direct_time = time.perf_counter() - start
 
-    print(f"  Direct jnp.stack ({num_batches} batches): {direct_time * 1000:.2f} ms")
-    print(f"  Direct batches/sec: {num_batches / direct_time:.2f}")
+    emit(f"  Direct jnp.stack ({num_batches} batches): {direct_time * 1000:.2f} ms")
+    emit(f"  Direct batches/sec: {num_batches / direct_time:.2f}")
 
     # Compare with pipeline
     all_data = [item for batch_data in data_per_batch for item in batch_data]
@@ -319,9 +320,9 @@ def run_all_profiles():
             break
     pipeline_time = time.perf_counter() - start
 
-    print(f"  Pipeline ({batch_count} batches): {pipeline_time * 1000:.2f} ms")
-    print(f"  Pipeline batches/sec: {batch_count / pipeline_time:.2f}")
-    print(f"  Overhead ratio: {pipeline_time / direct_time:.2f}x")
+    emit(f"  Pipeline ({batch_count} batches): {pipeline_time * 1000:.2f} ms")
+    emit(f"  Pipeline batches/sec: {batch_count / pipeline_time:.2f}")
+    emit(f"  Overhead ratio: {pipeline_time / direct_time:.2f}x")
 
 
 if __name__ == "__main__":

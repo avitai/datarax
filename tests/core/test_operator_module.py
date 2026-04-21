@@ -60,6 +60,7 @@ class RandomBrightnessOperator(OperatorModule):
         )
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
+        del stats
         factor = random_params if random_params is not None else 1.0
         transformed_data = {**data, "image": jnp.clip(data["image"] * factor, 0.0, 1.0)}
         return transformed_data, state, metadata
@@ -78,6 +79,7 @@ class NormalizeOperator(OperatorModule):
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
         # Get stats from config
+        del random_params
         if stats is None:
             stats = self.get_statistics()
 
@@ -766,6 +768,7 @@ class TestOperatorModuleStatistics:
         call_count = 0
 
         def compute_stats(batch):
+            del batch
             nonlocal call_count
             call_count += 1
             return {"mean": 0.5}

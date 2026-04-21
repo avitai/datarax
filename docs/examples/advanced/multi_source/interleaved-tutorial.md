@@ -168,12 +168,12 @@ def create_fashion_preprocessor():
 ```python
 # Create individual pipelines
 mnist_pipeline = (
-    from_source(mnist_source, batch_size=16)
+    build_source_pipeline(mnist_source, batch_size=16)
     .add(OperatorNode(create_mnist_preprocessor()))
 )
 
 fashion_pipeline = (
-    from_source(fashion_source, batch_size=16)
+    build_source_pipeline(fashion_source, batch_size=16)
     .add(OperatorNode(create_fashion_preprocessor()))
 )
 

@@ -14,8 +14,8 @@ class TestMetadataOptimization:
         meta = Metadata(key="test_key_123")
 
         # Check if it has internal byte representation (implementation dependent name)
-        # We expect the public property '.record_key' to return the string
-        assert meta.record_key == "test_key_123"
+        # We expect the public property '.entry_key' to return the string
+        assert meta.entry_key == "test_key_123"
 
         # We expect some internal attribute to hold the bytes or array
         # This asserts the INTENT of the change - that we can access it as an array
@@ -97,19 +97,19 @@ class TestMetadataOptimization:
         assert metadata._encoded_key.shape == (128,)
 
         # Verify property returns string
-        assert metadata.record_key == "file_1_record_10"
+        assert metadata.entry_key == "file_1_record_10"
 
         # Flatten and unflatten
         leaves, treedef = tree_util.tree_flatten(metadata)
         reconstructed = tree_util.tree_unflatten(treedef, leaves)
 
-        assert reconstructed.record_key == "file_1_record_10"
+        assert reconstructed.entry_key == "file_1_record_10"
 
     def test_none_key(self):
         """Test handling of None key."""
         meta = Metadata(key=None)
-        assert meta.record_key is None
+        assert meta.entry_key is None
 
         leaves, treedef = tree_util.tree_flatten(meta)
         reconstructed = tree_util.tree_unflatten(treedef, leaves)
-        assert reconstructed.record_key is None
+        assert reconstructed.entry_key is None

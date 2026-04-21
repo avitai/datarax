@@ -42,6 +42,7 @@ class SimpleTestBatcher(BatcherModule):
         **kwargs,
     ) -> list[Batch]:
         """Simple batching implementation for testing."""
+        del args, kwargs
         if batch_size <= 0:
             raise ValueError("batch_size must be positive")
 

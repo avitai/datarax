@@ -99,12 +99,14 @@ class TestEndToEndPipeline:
 
             # Define operations as ElementOperator functions
             def normalize_fn(element: Element, key: jax.Array) -> Element:
+                del key
                 data = element.data
                 new_data = {**data, "image": jnp.asarray(data["image"]) / 255.0}
                 return element.replace(data=new_data)
 
             def augment_fn(element: Element, key: jax.Array) -> Element:
                 # Simple augmentation
+                del key
                 data = element.data
                 if np.random.random() > 0.5:
                     new_data = {**data, "image": jnp.fliplr(data["image"])}
@@ -190,11 +192,13 @@ class TestEndToEndPipeline:
 
         # Define transformation functions for ElementOperator
         def multiply_by_2_fn(element: Element, key: jax.Array) -> Element:
+            del key
             data = element.data
             new_data = {"value": data["value"] * 2}
             return element.replace(data=new_data)
 
         def add_one_fn(element: Element, key: jax.Array) -> Element:
+            del key
             data = element.data
             new_data = {"value": data["value"] + 1}
             return element.replace(data=new_data)

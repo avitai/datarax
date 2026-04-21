@@ -184,7 +184,7 @@ final_selector = SelectorOperator(
 
 # Build pipeline
 pipeline = (
-    from_source(source, batch_size=32)
+    build_source_pipeline(source, batch_size=32)
     .add(OperatorNode(prob_bright))
     .add(OperatorNode(prob_contrast))
     .add(OperatorNode(final_selector))

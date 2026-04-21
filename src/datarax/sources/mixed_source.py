@@ -11,12 +11,12 @@ from dataclasses import dataclass
 from typing import Any
 
 import flax.nnx as nnx
-import jax
-import jax.numpy as jnp
+import grain
 
 from datarax.config.registry import register_component
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
+from datarax.sources._grain_streaming import data_source_to_iter_dataset, mix_streaming_sources
 
 
 logger = logging.getLogger(__name__)
@@ -57,9 +57,8 @@ class MixDataSourcesConfig(StructuralConfig):
         normalized = tuple(w / total for w in self.weights)
         object.__setattr__(self, "weights", normalized)
 
-        # Force stochastic=True (mixing requires RNG)
-        object.__setattr__(self, "stochastic", True)
-        object.__setattr__(self, "stream_name", "mix")
+        object.__setattr__(self, "stochastic", False)
+        object.__setattr__(self, "stream_name", None)
 
         # Call parent validation (validates stochastic config, then freezes)
         super().__post_init__()
@@ -69,9 +68,7 @@ class MixDataSourcesConfig(StructuralConfig):
 class MixDataSourcesNode(DataSourceModule):
     """Mix multiple data sources with configurable weights.
 
-    Sampling strategy: For each element, randomly select a source according
-    to weights, then yield the next element from that source. If the chosen
-    source is exhausted, fall back to a non-exhausted source.
+    Sampling strategy is delegated to Grain's weighted ``IterDataset.mix``.
 
     Total elements = sum of all source lengths.
     """
@@ -81,15 +78,15 @@ class MixDataSourcesNode(DataSourceModule):
         config: MixDataSourcesConfig,
         sources: list[DataSourceModule],
         *,
-        rngs: nnx.Rngs,
+        rngs: nnx.Rngs | None = None,
         name: str | None = None,
     ) -> None:
         """Initialize MixDataSourcesModule.
 
         Args:
-            config: Configuration with num_sources, weights, and mixing seed.
+            config: Configuration with num_sources and weights.
             sources: List of data source modules to mix from.
-            rngs: Flax NNX random number generators for sampling.
+            rngs: Optional Flax NNX random number generators.
             name: Optional module name for identification.
         """
         if name is None:
@@ -104,17 +101,16 @@ class MixDataSourcesNode(DataSourceModule):
                 f"config.num_sources ({config.num_sources})"
             )
 
-        # Use nnx.List so child modules are part of the NNX module graph
+        weights = config.weights
+        if weights is None:
+            raise ValueError("weights is required")
+
         self._sources = nnx.List(sources)
-        self._weights = nnx.Variable(jnp.array(config.weights))
+        self._weights = tuple(weights)
         self.index = nnx.Variable(0)
         self.epoch = nnx.Variable(0)
         self._total_len = sum(len(s) for s in sources)
-
-        # Iterators are created fresh on each __iter__ call (not NNX state)
-        self._iterators: list[Iterator] = []
-        # Track which sources are exhausted during iteration
-        self._exhausted: list[bool] = []
+        self._iterator: Iterator[Any] | None = None
 
     def __len__(self) -> int:
         """Return total elements across all child sources."""
@@ -124,9 +120,7 @@ class MixDataSourcesNode(DataSourceModule):
         """Reset iterators and start a new epoch."""
         self.index.set_value(0)
         self.epoch.set_value(self.epoch.get_value() + 1)
-        sources: list[DataSourceModule] = list(self._sources)
-        self._iterators = [iter(s) for s in sources]
-        self._exhausted = [False] * len(sources)
+        self._iterator = iter(self.to_grain_iter_dataset())
         return self
 
     def __next__(self) -> Any:
@@ -134,46 +128,24 @@ class MixDataSourcesNode(DataSourceModule):
         if self.index.get_value() >= self._total_len:
             raise StopIteration
 
-        # rngs is guaranteed non-None by StructuralModule (stochastic=True)
-        assert self.rngs is not None  # noqa: S101 (invariant, not control flow)
-        # Sample source index according to weights
-        rng_key = self.rngs.mix()
-        weights = self._weights.get_value()
-        source_idx = int(jax.random.choice(rng_key, len(self._sources), p=weights))
-
-        # Try to get an element, falling back if the chosen source is exhausted
-        element = self._try_next(source_idx)
+        if self._iterator is None:
+            self._iterator = iter(self.to_grain_iter_dataset())
+        element = next(self._iterator)
         self.index.set_value(self.index.get_value() + 1)
         return element
 
-    def _try_next(self, preferred: int) -> Any:
-        """Get next element from preferred source, falling back to others."""
-        # Try preferred source first
-        if not self._exhausted[preferred]:
-            try:
-                return next(self._iterators[preferred])
-            except StopIteration:
-                self._exhausted[preferred] = True
-
-        # Preferred is exhausted — try others in round-robin order
-        n = len(self._sources)
-        for offset in range(1, n):
-            idx = (preferred + offset) % n
-            if not self._exhausted[idx]:
-                try:
-                    return next(self._iterators[idx])
-                except StopIteration:
-                    self._exhausted[idx] = True
-
-        # All sources exhausted (shouldn't happen if _total_len is correct)
-        raise StopIteration
+    def to_grain_iter_dataset(self) -> grain.IterDataset:
+        """Return the Grain mixed streaming dataset backing this source."""
+        return mix_streaming_sources(
+            [data_source_to_iter_dataset(source) for source in self._sources],
+            weights=self._weights,
+        )
 
     def reset(self) -> None:
         """Reset all internal state and child sources to initial conditions."""
         self.index.set_value(0)
         self.epoch.set_value(0)
-        self._iterators = []
-        self._exhausted = []
+        self._iterator = None
         for s in self._sources:
             reset_fn = getattr(s, "reset", None)
             if reset_fn is not None:

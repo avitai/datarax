@@ -3,7 +3,38 @@ build-backend = "hatchling.build"
 requires = ["hatchling>=1.18"]
 
 [dependency-groups]
-dev = ["nbqa>=1.9.1", "pytest-json-report>=1.5.0"]
+dev = [
+  "bandit[toml]>=1.8.0",
+  "build>=1.0.3",
+  "coverage>=7",
+  "deadcode>=2.4.1",
+  "deptry>=0.23.0",
+  "flake8>=7.0",
+  "flake8-functions-names>=0.4.0",
+  "import-linter>=2.0",
+  "interrogate>=1.5",
+  "ipykernel>=6.29.5",
+  "jupytext>=1.16.0",
+  "nbqa>=1.9.1",
+  "pre-commit>=4.3.0",
+  "pylint>=3.0",
+  "pyright>=1.1.336",
+  "pytest>=8.3.5",
+  "pytest-asyncio>=0.23",
+  "pytest-benchmark>=4",
+  "pytest-cov>=6.1.1",
+  "pytest-env>=1.0.1",
+  "pytest-json-report>=1.5.0",
+  "pytest-randomly>=3.15",
+  "pytest-timeout>=2.1",
+  "pytest-xdist>=3.6",
+  "radon>=6.0",
+  "ruff>=0.1.5",
+  "shellcheck-py>=0.10.0.1",
+  "vulture>=2.14",
+  "wemake-python-styleguide>=1.0",
+  "xenon>=0.9.3"
+]
 
 [project]
 authors = [{name = "Mahdi Shafiei"}]
@@ -27,34 +58,23 @@ classifiers = [
   "Operating System :: MacOS :: MacOS X"
 ]
 dependencies = [
-  "absl-py>=1",
-  "antlr4-python3-runtime==4.9.3", # Specific version required by hydra-core and omegaconf
   "array-record>=0.4",
-  "astunparse>=1.6",
-  "beartype>=0.14.1",
   "calibrax @ git+https://github.com/avitai/calibrax.git",
-  "chex>=0.1.7",
-  "cloudpickle>=2",
-  "decorator>=5",
-  "dm-tree>=0.1.8",
   "flax>=0.12.0",
-  "grain>=0.1",
+  "grain-nightly>=0.2.16.dev20260112",
   "jax>=0.6.1",
   "jaxtyping>=0.2.20",
   "optax>=0.1.4",
   "orbax-checkpoint>=0.11.10",
-  "pyarrow>=12",
-  "ruff>=0.1.5",
-  "scipy>=1.10",
-  "protobuf>=5.28.0", # Required by grain>=0.2 and tensorflow>=2.20
-  "tensorflow>=2.20.0", # Requires protobuf>=5.28.0
+  "protobuf>=5.28.0,<6", # TFDS 4.9.9 is warning-clean with TensorFlow 2.20 protobuf runtime
+  "tensorflow>=2.20.0,<2.21", # TensorFlow 2.21 requires protobuf 6 and trips TFDS descriptor warnings
   "tensorflow-datasets>=4.9.2", # Required for TFDS source tests
-  "tensorflow-metadata>=1.15.0", # Minimum version to avoid protobuf deprecation warnings
   'tomli>=2; python_version < "3.11"',
   "tomli-w>=1",
-  "matplotlib",
-  "pre-commit>=4.3.0",
-  "psutil>=5.9.0"
+  "numpy>=1.26",
+  "psutil>=5.9.0",
+  "PyYAML>=6",
+  "toml>=0.10.2"
 ]
 description = "Datarax: A high-performance, NNX-based data pipeline framework for JAX"
 dynamic = ["version"]
@@ -62,7 +82,7 @@ keywords = ["jax", "flax", "nnx", "data-loading", "machine-learning", "workshop"
 license = {file = "LICENSE"}
 name = "datarax"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 
 [project.optional-dependencies]
 # Platform-specific installation:
@@ -98,6 +118,7 @@ benchmark = [
   "datasets>=2.21", # Hugging Face Datasets (>=2.21 for pyarrow 15+ compat)
   "deeplake>=4.0", # Deep Lake — AI database
   # Benchmark infrastructure
+  "matplotlib>=3.8", # Plotting for benchmark reports
   "tabulate>=0.9", # Table formatting for reports
   "rich>=13.0" # Rich terminal output for benchmark runners
 ]
@@ -107,12 +128,11 @@ benchmark = [
 cuda-dev = [
   # Complete CUDA development environment
   # Includes all dev tools, testing, and GPU support
-  # Automatically configured via scripts/fresh_cuda_setup.sh
+  # Automatically configured via setup.sh and scripts/setup_env.py
   "datarax[dev,gpu]"
 ]
 data = [
   # Data loading and processing dependencies
-  "grain-nightly; sys_platform == 'linux'", # Google's high-performance data loading library (Linux only)
   "importlib_resources>=5.0", # Backport required by grain/etils on some Python versions
   "tensorflow-datasets>=4.9.2", # For TFDS integration
   "datasets>=2.21", # For HuggingFace datasets (>=2.21 for pyarrow 15+ compat)
@@ -122,14 +142,22 @@ data = [
 ]
 dev = [
   # calibrax: install via `uv pip install "calibrax[wandb,stats] @ git+https://github.com/avitai/calibrax.git"`
+  "bandit[toml]>=1.8.0",
   "build>=1.0.3",
   "coverage>=7",
+  "deadcode>=2.4.1",
+  "deptry>=0.23.0",
+  "flake8>=7.0",
+  "flake8-functions-names>=0.4.0",
   "google-cloud-aiplatform>=1.38.0",
   "google-cloud-storage>=2.14.0",
+  "import-linter>=2.0",
   "interrogate>=1.5",
   "ipykernel>=6.29.5",
   "pydeps>=1.12.17",
+  "pylint>=3.0",
   "pyright>=1.1.336",
+  "pre-commit>=4.3.0",
   "pytest>=8.3.5",
   "pytest-asyncio>=0.23",
   "pytest-benchmark>=4",
@@ -143,7 +171,10 @@ dev = [
   "radon>=6.0",
   "ruff>=0.1.5",
   "shellcheck-py>=0.10.0.1",
-  "twine>=4.0.2"
+  "twine>=4.0.2",
+  "vulture>=2.14",
+  "wemake-python-styleguide>=1.0",
+  "xenon>=0.9.3"
 ]
 docs = [
   "griffe>=1.7.3",
@@ -165,6 +196,7 @@ examples = [
   # Note: apache-beam removed — it forces dill==0.3.1.1 (source-only multiprocess, hangs build).
   # Install manually if needed for TFDS beam downloads: uv pip install "apache-beam>=2.50,<2.65"
   "keras>=3.0", # Required by DADA example for CIFAR-10 loading
+  "matplotlib>=3.8", # Plotting in example notebooks/scripts
   "torchcrepe", # CREPE pretrained weights for DDSP audio synthesis example (bundles .pth files)
   "h5py>=3.0" # Alternative CREPE weight loading from Keras .h5 files
 ]
@@ -181,6 +213,7 @@ metal = [
 test = [
   "beartype>=0.14.1",
   "coverage>=7",
+  "matplotlib>=3.8",
   "pytest>=8.3.5",
   "pytest-asyncio>=0.23",
   "pytest-benchmark>=4",
@@ -253,9 +286,59 @@ output = "coverage.xml"
 [tool.datarax.cuda]
 auto_detect = true
 documentation = "docs/setup/cuda-setup.md"
-environment_file = ".env"
+environment_file = ".datarax.env"
 fallback_to_cpu = true
-setup_scripts = ["scripts/fresh_cuda_setup.sh", "scripts/setup_env.py", "scripts/run_tests_with_cuda.sh"]
+setup_scripts = ["setup.sh", "activate.sh", "scripts/setup_env.py", "scripts/verify_datarax_gpu.py", "scripts/run_gpu_tests.sh"]
+
+[tool.deptry]
+extend_exclude = ["benchmarks", "examples", "scripts", "tests"]
+ignore_notebooks = true
+known_first_party = ["datarax"]
+optional_dependencies_dev_groups = ["dev", "docs", "test"]
+
+[tool.deptry.package_module_name_map]
+PyYAML = ["yaml"]
+"grain-nightly" = ["grain"]
+"jax-dataloader" = ["jax_dataloader"]
+"mkdocs-gen-files" = ["mkdocs_gen_files"]
+"mkdocs-include-exclude-files" = ["mkdocs_include_exclude_files"]
+"mkdocs-ipynb" = ["mkdocs_ipynb"]
+"mkdocs-jupyter" = ["mkdocs_jupyter"]
+"mkdocs-literate-nav" = ["mkdocs_literate_nav"]
+"mkdocs-material" = ["mkdocs_material"]
+"mkdocstrings-python" = ["mkdocstrings"]
+"mosaicml-streaming" = ["streaming"]
+"nvidia-dali-cuda120" = ["nvidia"]
+"pymdown-extensions" = ["pymdownx"]
+
+[tool.deptry.per_rule_ignores]
+DEP001 = ["apache_beam"]
+DEP002 = [
+  "array-record",
+  "click",
+  "datarax",
+  "deeplake",
+  "importlib_resources",
+  "jax-dataloader",
+  "jax-metal",
+  "jaxlib",
+  "keras",
+  "librosa",
+  "litdata",
+  "matplotlib",
+  "mosaicml-streaming",
+  "nvidia-dali-cuda120",
+  "pillow",
+  "protobuf",
+  "ray",
+  "rich",
+  "skypilot",
+  "soundfile",
+  "spdl",
+  "tabulate",
+  "torchvision",
+  "webdataset"
+]
 
 [tool.hatch.build.targets.sdist]
 include = ["src/datarax", "README.md", "LICENSE", "pyproject.toml"]
@@ -341,8 +424,6 @@ filterwarnings = [
   # TODO: Fix Orbax checkpoint warnings - need to provide proper sharding info when restoring
   "ignore:Sharding info not provided when restoring.*:UserWarning:orbax.*",
   "ignore:Sharding info not provided when restoring.*:UserWarning",
-  # TODO: Fix Flax NNX deprecation - update to use type() instead of .type attribute
-  "ignore:'.type' is deprecated:DeprecationWarning",
   # Resource warnings from checkpoint operations (cleanup issues, not functional failures)
   "ignore:unclosed <socket.socket.*:ResourceWarning",
   "ignore:unclosed event loop.*:ResourceWarning",
@@ -392,8 +473,6 @@ warmup_iterations = 3
 "D:TF_CPP_MIN_LOG_LEVEL" = "1"
 "D:XLA_PYTHON_CLIENT_MEM_FRACTION" = "0.75"
 "D:XLA_PYTHON_CLIENT_PREALLOCATE" = "false"
-# These must always be set (no D: prefix) to prevent framework interference
-LD_LIBRARY_PATH = "/usr/local/cuda/lib64"
 # Ray 2.53's uv runtime_env hook detects uv-managed venvs and tries to
 # recreate them for workers — but the new venv lacks ray itself, causing
 # workers to crash silently and from_numpy()/iter_batches() to hang.
@@ -417,16 +496,10 @@ fixable = ["I001", "F401", "E", "W", "W291", "W292", "W293", "F841"]
 ignore = [
   "E402", # Module level import not at top of file
   "E721", # Do not compare types directly
-  "E731", # Do not assign a lambda expression, use a def (we can refactor these later)
   "E741", # Ambiguous variable name
   "F722", # Forward annotation syntax error
   "W391", # Blank line at end of file
   "E203", # Whitespace before ':'
-  # Typing modernization warnings - can be fixed later in a dedicated PR
-  "UP006", # Use `list` instead of `List` for type annotation
-  "UP007", # Use `X | Y` for type annotations
-  "UP015", # Unnecessary open mode parameters
-  "UP024", # Replace aliased errors with `OSError`
   # UP035 — fixed: imports now use collections.abc
   "RUF005" # Consider using unpacked tuple instead of concatenation
 ]
@@ -441,6 +514,11 @@ order-by-type = false
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
+
+[tool.ruff.lint.pylint]
+# Datarax exposes configuration-heavy scientific entrypoints. Keep the threshold
+# explicit and bounded so PLR0913 remains active for accidental API sprawl.
+max-args = 13
 
 [tool.uv]
 python-preference = "only-managed"

@@ -43,7 +43,7 @@ class IteratorCheckpoint:
         self.base_dir = Path(base_dir)
         self.handler = handler or OrbaxCheckpointHandler(async_checkpointing=async_checkpointing)
 
-    def save(
+    def save_to_directory(
         self,
         iterator: CheckpointableIterator[T_co],
         step: int | None = None,
@@ -51,7 +51,7 @@ class IteratorCheckpoint:
         overwrite: bool = False,
         metadata: dict[str, int | str | float | bool] | None = None,
     ) -> str:
-        """Save the state of an iterator.
+        """Save the state of an iterator to the checkpoint directory.
 
         Args:
             iterator: The iterator to checkpoint.
@@ -74,7 +74,7 @@ class IteratorCheckpoint:
                 f"Iterator get_state() must return dict, got {type(state_dict).__name__}"
             )
 
-        return self.handler.save(
+        return self.handler.save_to_directory(
             self.base_dir,
             state_dict,
             step=step,
@@ -166,7 +166,7 @@ class PipelineCheckpoint(IteratorCheckpoint):
     functionality like conditional saving based on step intervals.
     """
 
-    def save_at_step(
+    def save_to_step(
         self,
         data_stream: CheckpointableIterator[T_co],
         step: int,
@@ -195,7 +195,7 @@ class PipelineCheckpoint(IteratorCheckpoint):
             return None
 
         # Save checkpoint using the inherited method
-        return self.save(
+        return self.save_to_directory(
             data_stream,
             step=step,
             keep=keep,

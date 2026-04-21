@@ -86,7 +86,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import HFEagerConfig, HFEagerSource
@@ -131,7 +131,7 @@ filtered_config = HFEagerConfig(
 filtered_source = HFEagerSource(filtered_config, rngs=nnx.Rngs(1))
 
 # Check what fields are available
-pipeline = from_source(filtered_source, batch_size=1)
+pipeline = build_source_pipeline(filtered_source, batch_size=1)
 batch = next(iter(pipeline))
 
 print("Filtered fields:")
@@ -217,8 +217,8 @@ source1 = HFEagerSource(shuffle_config, rngs=nnx.Rngs(42))
 source2 = HFEagerSource(shuffle_config, rngs=nnx.Rngs(42))
 
 # Get first batch from each
-batch1 = next(iter(from_source(source1, batch_size=8)))
-batch2 = next(iter(from_source(source2, batch_size=8)))
+batch1 = next(iter(build_source_pipeline(source1, batch_size=8)))
+batch2 = next(iter(build_source_pipeline(source2, batch_size=8)))
 
 # Verify identical batches
 print(f"Same seed produces identical batches: {jnp.allclose(batch1['image'], batch2['image'])}")
@@ -381,7 +381,7 @@ train_config = HFEagerConfig(
 train_source = HFEagerSource(train_config, rngs=nnx.Rngs(0))
 
 # Chain: Source -> Augmentation -> Output
-training_pipeline = from_source(train_source, batch_size=64).add(OperatorNode(augmentation))
+training_pipeline = build_source_pipeline(train_source, batch_size=64).add(OperatorNode(augmentation))
 
 print("Training pipeline:")
 print("  HFEagerSource(mnist) -> Normalize -> RandomFlip -> Output")

@@ -14,6 +14,7 @@ from datarax.dag import DAGExecutor
 from datarax.dag.nodes import BatchNode, OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
+from datarax.utils.console import emit
 
 
 @pytest.mark.benchmark
@@ -25,6 +26,7 @@ def test_datastream_throughput_benchmark(benchmark: Callable) -> None:
 
     # Define a simple transformation - Element API: fn(element, key) -> element
     def normalize(element: Element, key: jax.Array) -> Element:
+        del key
         new_data = {"image": element.data["image"] / 255.0, "label": element.data["label"]}
         return element.replace(data=new_data)
 
@@ -102,13 +104,13 @@ def test_memory_usage_benchmark(benchmark: Callable) -> None:
         # Create operators - Element API: fn(element, key) -> element
         normalize_op = ElementOperator(
             config,
-            fn=lambda e, k: e.replace(
+            fn=lambda e, _k: e.replace(
                 data={"image": e.data["image"] / 255.0, "label": e.data["label"]}
             ),
         )
         power_op = ElementOperator(
             config,
-            fn=lambda e, k: e.replace(
+            fn=lambda e, _k: e.replace(
                 data={
                     "image": jnp.power(e.data["image"], 1.5),
                     "label": e.data["label"],
@@ -117,7 +119,7 @@ def test_memory_usage_benchmark(benchmark: Callable) -> None:
         )
         clip_op = ElementOperator(
             config,
-            fn=lambda e, k: e.replace(
+            fn=lambda e, _k: e.replace(
                 data={
                     "image": jnp.clip(e.data["image"], 0.0, 1.0),
                     "label": e.data["label"],
@@ -155,9 +157,9 @@ def test_memory_usage_benchmark(benchmark: Callable) -> None:
         memory_increase = peak - baseline
 
         # Log the results for analysis
-        print(f"Baseline memory: {baseline:.2f} MiB")
-        print(f"Peak memory: {peak:.2f} MiB")
-        print(f"Memory increase: {memory_increase:.2f} MiB")
+        emit(f"Baseline memory: {baseline:.2f} MiB")
+        emit(f"Peak memory: {peak:.2f} MiB")
+        emit(f"Memory increase: {memory_increase:.2f} MiB")
 
     # Define a dummy benchmark function if the actual benchmark is not available
     if not hasattr(benchmark, "__call__"):

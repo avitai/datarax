@@ -194,7 +194,7 @@ for epoch in range(2):
 
         # Save checkpoint every 3 steps
         if step % 3 == 0:
-            save_path = checkpointer.save(
+            save_path = checkpointer.save_to_directory(
                 pipeline,
                 step=step,
                 metadata={"epoch": epoch, "batch": batch_idx},
@@ -287,7 +287,7 @@ def main():
         for batch in pipeline.iterator():
             step += 1
             if step % 5 == 0:
-                checkpointer.save(pipeline, step=step, keep=2, overwrite=True)
+                checkpointer.save_to_directory(pipeline, step=step, keep=2, overwrite=True)
 
     # Test restoration
     new_pipeline = SimplePipeline(data, batch_size=10, shuffle=True)

@@ -543,87 +543,6 @@ def collect_artifacts(
     capture_limit_chars: int | None = DEFAULT_CAPTURE_LIMIT_CHARS,
 ) -> None:
     """Download benchmark results and remote logs."""
-
-    def normalize_nested_results_dir() -> None:
-        """Flatten `target/results/*` into `target/*` when scp adds an extra level."""
-        nested_root = target / "results"
-        if not nested_root.is_dir():
-            return
-        _status(
-            "Normalizing nested artifact layout produced by scp (results/results -> results)",
-            level="WARN",
-        )
-        for child in list(nested_root.iterdir()):
-            destination = target / child.name
-            if child.is_dir():
-                shutil.copytree(child, destination, dirs_exist_ok=True)
-                shutil.rmtree(child)
-            else:
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(child, destination)
-                child.unlink()
-        shutil.rmtree(nested_root, ignore_errors=True)
-
-    def copy_with_scp() -> None:
-        # SkyPilot CLI compatibility path for versions without `sky rsync`.
-        _run_logged_command(
-            [sky_executable, "status", cluster],
-            logs_dir / "sky_status_for_scp.log",
-            check=False,
-            live_peek=False,
-            capture_limit_chars=capture_limit_chars,
-        )
-        attempts = [
-            {"remote_path": "~/results", "legacy_protocol": False},
-            {"remote_path": "/root/results", "legacy_protocol": False},
-            {"remote_path": "~/results/.", "legacy_protocol": False},
-            {"remote_path": "~/results", "legacy_protocol": True},
-        ]
-        failures: list[str] = []
-        for idx, attempt in enumerate(attempts):
-            remote_path = attempt["remote_path"]
-            legacy_protocol = bool(attempt["legacy_protocol"])
-            scp_cmd = [
-                "scp",
-                "-r",
-                "-q",
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                "StrictHostKeyChecking=accept-new",
-            ]
-            if legacy_protocol:
-                scp_cmd.append("-O")
-            scp_cmd.extend([f"{cluster}:{remote_path}", str(target)])
-
-            log_name = "scp_results.log" if idx == 0 else f"scp_results_retry_{idx}.log"
-            try:
-                _run_logged_command(
-                    scp_cmd,
-                    logs_dir / log_name,
-                    check=True,
-                    timeout_sec=600,
-                    live_peek=live_peek,
-                    peek_interval_sec=peek_interval_sec,
-                    capture_limit_chars=capture_limit_chars,
-                )
-                normalize_nested_results_dir()
-                return
-            except OrchestrationError as exc:
-                failure = (
-                    f"attempt={idx + 1} source={cluster}:{remote_path} "
-                    f"legacy_protocol={legacy_protocol} error={exc}"
-                )
-                failures.append(failure)
-                _status(
-                    f"SCP artifact copy attempt {idx + 1}/{len(attempts)} failed; retrying",
-                    level="WARN",
-                )
-
-        raise OrchestrationError(
-            "All scp artifact copy attempts failed.\n" + "\n".join(failures[-4:]),
-        )
-
     normalized_transfer = transfer_method.strip().lower().replace("_", "-")
     if normalized_transfer not in {"auto", "sky-rsync", "scp"}:
         raise OrchestrationError(
@@ -634,7 +553,15 @@ def collect_artifacts(
     target = run_root / "results"
     target.mkdir(parents=True, exist_ok=True)
     if normalized_transfer == "scp":
-        copy_with_scp()
+        _copy_artifacts_with_scp(
+            cluster=cluster,
+            target=target,
+            logs_dir=logs_dir,
+            sky_executable=sky_executable,
+            live_peek=live_peek,
+            peek_interval_sec=peek_interval_sec,
+            capture_limit_chars=capture_limit_chars,
+        )
         return
 
     try:
@@ -664,7 +591,131 @@ def collect_artifacts(
             "sky rsync is unavailable in this SkyPilot version; falling back to scp",
             level="WARN",
         )
-    copy_with_scp()
+    _copy_artifacts_with_scp(
+        cluster=cluster,
+        target=target,
+        logs_dir=logs_dir,
+        sky_executable=sky_executable,
+        live_peek=live_peek,
+        peek_interval_sec=peek_interval_sec,
+        capture_limit_chars=capture_limit_chars,
+    )
+
+
+def _normalize_nested_results_dir(target: Path) -> None:
+    """Flatten `target/results/*` into `target/*` when scp adds an extra level."""
+    nested_root = target / "results"
+    if not nested_root.is_dir():
+        return
+    _status(
+        "Normalizing nested artifact layout produced by scp (results/results -> results)",
+        level="WARN",
+    )
+    for child in list(nested_root.iterdir()):
+        destination = target / child.name
+        if child.is_dir():
+            shutil.copytree(child, destination, dirs_exist_ok=True)
+            shutil.rmtree(child)
+        else:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(child, destination)
+            child.unlink()
+    shutil.rmtree(nested_root, ignore_errors=True)
+
+
+def _scp_artifact_command(cluster: str, remote_path: str, *, legacy_protocol: bool) -> list[str]:
+    """Build one scp artifact download command."""
+    command = [
+        "scp",
+        "-r",
+        "-q",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+    ]
+    if legacy_protocol:
+        command.append("-O")
+    return [*command, f"{cluster}:{remote_path}"]
+
+
+def _copy_artifacts_with_scp(
+    *,
+    cluster: str,
+    target: Path,
+    logs_dir: Path,
+    sky_executable: str,
+    live_peek: bool,
+    peek_interval_sec: int,
+    capture_limit_chars: int | None,
+) -> None:
+    """Copy artifacts via scp for SkyPilot versions without rsync support."""
+    _run_logged_command(
+        [sky_executable, "status", cluster],
+        logs_dir / "sky_status_for_scp.log",
+        check=False,
+        live_peek=False,
+        capture_limit_chars=capture_limit_chars,
+    )
+    failures = _attempt_scp_artifact_copies(
+        cluster=cluster,
+        target=target,
+        logs_dir=logs_dir,
+        live_peek=live_peek,
+        peek_interval_sec=peek_interval_sec,
+        capture_limit_chars=capture_limit_chars,
+    )
+    if not failures:
+        return
+    raise OrchestrationError(
+        "All scp artifact copy attempts failed.\n" + "\n".join(failures[-4:]),
+    )
+
+
+def _attempt_scp_artifact_copies(
+    *,
+    cluster: str,
+    target: Path,
+    logs_dir: Path,
+    live_peek: bool,
+    peek_interval_sec: int,
+    capture_limit_chars: int | None,
+) -> list[str]:
+    attempts = [
+        ("~/results", False),
+        ("/root/results", False),
+        ("~/results/.", False),
+        ("~/results", True),
+    ]
+    failures: list[str] = []
+    for idx, (remote_path, legacy_protocol) in enumerate(attempts):
+        log_name = "scp_results.log" if idx == 0 else f"scp_results_retry_{idx}.log"
+        scp_cmd = [
+            *_scp_artifact_command(cluster, remote_path, legacy_protocol=legacy_protocol),
+            str(target),
+        ]
+        try:
+            _run_logged_command(
+                scp_cmd,
+                logs_dir / log_name,
+                check=True,
+                timeout_sec=600,
+                live_peek=live_peek,
+                peek_interval_sec=peek_interval_sec,
+                capture_limit_chars=capture_limit_chars,
+            )
+            _normalize_nested_results_dir(target)
+            return []
+        except OrchestrationError as exc:
+            failures.append(
+                f"attempt={idx + 1} source={cluster}:{remote_path} "
+                f"legacy_protocol={legacy_protocol} error={exc}",
+            )
+            _status(
+                f"SCP artifact copy attempt {idx + 1}/{len(attempts)} failed; retrying",
+                level="WARN",
+            )
+    return failures
 
 
 def validate_results(
@@ -675,57 +726,24 @@ def validate_results(
 ) -> dict[str, Any]:
     """Validate manifest/result backend truth for one benchmark stage."""
     errors: list[str] = []
-    samples_checked: list[str] = []
 
     manifest_path = stage_results_dir / "manifest.json"
     if not manifest_path.exists():
-        report = {
-            "stage": stage,
-            "ok": False,
-            "errors": [f"Missing manifest: {manifest_path}"],
-            "samples_checked": [],
-        }
-        report_path.write_text(json.dumps(report, indent=2))
-        return report
+        return _write_missing_manifest_report(stage, manifest_path, report_path)
 
     manifest = json.loads(manifest_path.read_text())
-    if "requested_platform" not in manifest:
-        errors.append("manifest missing required field: requested_platform")
-    if "active_backend" not in manifest:
-        errors.append("manifest missing required field: active_backend")
-
+    _validate_manifest_required_fields(manifest, errors)
     requested_platform = manifest.get("requested_platform")
     active_backend = manifest.get("active_backend")
     devices = manifest.get("environment", {}).get("platform", {}).get("devices", [])
+    _validate_manifest_gpu_fields(requested_platform, active_backend, devices, errors)
 
-    if requested_platform != "gpu":
-        errors.append(f"requested_platform must be 'gpu', got {requested_platform!r}")
-    if active_backend != "gpu":
-        errors.append(f"active_backend must be 'gpu', got {active_backend!r}")
-    if not any("cuda" in str(device).lower() for device in devices):
-        errors.append(f"manifest devices missing CUDA: {devices!r}")
-
-    adapter_files: list[str] = []
-    for files in manifest.get("adapters", {}).values():
-        adapter_files.extend(files)
+    adapter_files = _manifest_adapter_files(manifest)
     if not adapter_files:
         errors.append(
             "Manifest contains no result files; benchmark stage produced no adapter outputs.",
         )
-    for fname in adapter_files[:3]:
-        result_path = stage_results_dir / fname
-        if not result_path.exists():
-            errors.append(f"Missing result file listed in manifest: {fname}")
-            continue
-        data = json.loads(result_path.read_text())
-        env = data.get("metadata", {}).get("environment", {})
-        backend = env.get("platform", {}).get("backend")
-        rdevices = env.get("platform", {}).get("devices", [])
-        samples_checked.append(fname)
-        if backend != "gpu":
-            errors.append(f"{fname}: metadata backend={backend!r}, expected 'gpu'")
-        if not any("cuda" in str(device).lower() for device in rdevices):
-            errors.append(f"{fname}: metadata devices missing CUDA: {rdevices!r}")
+    samples_checked = _validate_sample_result_files(stage_results_dir, adapter_files, errors)
 
     report = {
         "stage": stage,
@@ -741,61 +759,137 @@ def validate_results(
     return report
 
 
-def run_stage(
-    *,
-    cluster: str,
-    run_root: Path,
-    logs_dir: Path,
+def _write_missing_manifest_report(
     stage: str,
-    repetitions: int,
-    scenarios: list[str] | None,
-    sky_executable: str = "sky",
-    live_peek: bool = True,
-    peek_interval_sec: int = 5,
-    artifact_transfer_method: str = "auto",
-    sky_upgrade_hint: str | None = None,
-    gpu_resource: str = "A100:1",
-    use_wandb: bool = True,
-    capture_limit_chars: int | None = DEFAULT_CAPTURE_LIMIT_CHARS,
+    manifest_path: Path,
+    report_path: Path,
+) -> dict[str, Any]:
+    report = {
+        "stage": stage,
+        "ok": False,
+        "errors": [f"Missing manifest: {manifest_path}"],
+        "samples_checked": [],
+    }
+    report_path.write_text(json.dumps(report, indent=2))
+    return report
+
+
+def _validate_manifest_required_fields(manifest: dict[str, Any], errors: list[str]) -> None:
+    if "requested_platform" not in manifest:
+        errors.append("manifest missing required field: requested_platform")
+    if "active_backend" not in manifest:
+        errors.append("manifest missing required field: active_backend")
+
+
+def _validate_manifest_gpu_fields(
+    requested_platform: Any,
+    active_backend: Any,
+    devices: list[Any],
+    errors: list[str],
+) -> None:
+    if requested_platform != "gpu":
+        errors.append(f"requested_platform must be 'gpu', got {requested_platform!r}")
+    if active_backend != "gpu":
+        errors.append(f"active_backend must be 'gpu', got {active_backend!r}")
+    if not any("cuda" in str(device).lower() for device in devices):
+        errors.append(f"manifest devices missing CUDA: {devices!r}")
+
+
+def _manifest_adapter_files(manifest: dict[str, Any]) -> list[str]:
+    adapter_files: list[str] = []
+    for files in manifest.get("adapters", {}).values():
+        adapter_files.extend(files)
+    return adapter_files
+
+
+def _validate_sample_result_files(
+    stage_results_dir: Path,
+    adapter_files: list[str],
+    errors: list[str],
+) -> list[str]:
+    samples_checked: list[str] = []
+    for filename in adapter_files[:3]:
+        result_path = stage_results_dir / filename
+        if not result_path.exists():
+            errors.append(f"Missing result file listed in manifest: {filename}")
+            continue
+        _validate_result_backend(filename, result_path, errors)
+        samples_checked.append(filename)
+    return samples_checked
+
+
+def _validate_result_backend(filename: str, result_path: Path, errors: list[str]) -> None:
+    data = json.loads(result_path.read_text())
+    env = data.get("metadata", {}).get("environment", {})
+    backend = env.get("platform", {}).get("backend")
+    devices = env.get("platform", {}).get("devices", [])
+    if backend != "gpu":
+        errors.append(f"{filename}: metadata backend={backend!r}, expected 'gpu'")
+    if not any("cuda" in str(device).lower() for device in devices):
+        errors.append(f"{filename}: metadata devices missing CUDA: {devices!r}")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StageRunConfig:
+    """Configuration for one remote benchmark stage."""
+
+    cluster: str
+    run_root: Path
+    logs_dir: Path
+    stage: str
+    repetitions: int
+    scenarios: list[str] | None
+    sky_executable: str = "sky"
+    live_peek: bool = True
+    peek_interval_sec: int = 5
+    artifact_transfer_method: str = "auto"
+    sky_upgrade_hint: str | None = None
+    gpu_resource: str = "A100:1"
+    use_wandb: bool = True
+    capture_limit_chars: int | None = DEFAULT_CAPTURE_LIMIT_CHARS
+
+
+def run_stage(
+    config: StageRunConfig,
 ) -> dict[str, Any]:
     """Execute one remote benchmark stage and validate downloaded artifacts."""
     command = _build_remote_bench_command(
-        stage=stage,
-        repetitions=repetitions,
-        scenarios=scenarios,
-        use_wandb=use_wandb,
+        stage=config.stage,
+        repetitions=config.repetitions,
+        scenarios=config.scenarios,
+        use_wandb=config.use_wandb,
     )
     secret_env_vars: list[str] = []
-    if use_wandb:
+    if config.use_wandb:
         secret_env_vars.append("WANDB_API_KEY")
     exec_remote(
-        cluster=cluster,
+        cluster=config.cluster,
         command=command,
-        logs_dir=logs_dir,
-        log_name=f"run_{stage}.log",
-        sky_executable=sky_executable,
-        live_peek=live_peek,
-        peek_interval_sec=peek_interval_sec,
-        gpus=gpu_resource,
+        logs_dir=config.logs_dir,
+        log_name=f"run_{config.stage}.log",
+        sky_executable=config.sky_executable,
+        live_peek=config.live_peek,
+        peek_interval_sec=config.peek_interval_sec,
+        gpus=config.gpu_resource,
         secret_env_vars=secret_env_vars,
-        capture_limit_chars=capture_limit_chars,
+        capture_limit_chars=config.capture_limit_chars,
     )
 
     collect_artifacts(
-        cluster=cluster,
-        run_root=run_root,
-        logs_dir=logs_dir,
-        sky_executable=sky_executable,
-        live_peek=live_peek,
-        peek_interval_sec=peek_interval_sec,
-        transfer_method=artifact_transfer_method,
-        sky_upgrade_hint=sky_upgrade_hint,
-        capture_limit_chars=capture_limit_chars,
+        cluster=config.cluster,
+        run_root=config.run_root,
+        logs_dir=config.logs_dir,
+        sky_executable=config.sky_executable,
+        live_peek=config.live_peek,
+        peek_interval_sec=config.peek_interval_sec,
+        transfer_method=config.artifact_transfer_method,
+        sky_upgrade_hint=config.sky_upgrade_hint,
+        capture_limit_chars=config.capture_limit_chars,
     )
     return validate_results(
-        stage=stage,
-        stage_results_dir=run_root / "results" / stage,
-        report_path=run_root / f"validation_report_{stage}.json",
+        stage=config.stage,
+        stage_results_dir=config.run_root / "results" / config.stage,
+        report_path=config.run_root / f"validation_report_{config.stage}.json",
     )
 
 
@@ -1114,20 +1208,22 @@ def _run_benchmark_stages(
         current_step = "subset"
         mark_step("subset", "Running subset stage")
         reports["subset"] = run_stage(
-            cluster=ctx.args.cluster,
-            run_root=ctx.run_root,
-            logs_dir=ctx.logs_dir,
-            stage="subset",
-            repetitions=ctx.args.subset_repetitions,
-            scenarios=DEFAULT_SUBSET_SCENARIOS,
-            sky_executable=sky_executable,
-            live_peek=ctx.args.live_peek,
-            peek_interval_sec=ctx.args.peek_interval_sec,
-            artifact_transfer_method=artifact_transfer_method,
-            sky_upgrade_hint=preflight.get("sky_upgrade_hint"),
-            gpu_resource=_primary_gpu_resource(ctx.allowed_gpu_tokens),
-            use_wandb=use_remote_wandb,
-            capture_limit_chars=ctx.capture_limit_chars,
+            StageRunConfig(
+                cluster=ctx.args.cluster,
+                run_root=ctx.run_root,
+                logs_dir=ctx.logs_dir,
+                stage="subset",
+                repetitions=ctx.args.subset_repetitions,
+                scenarios=DEFAULT_SUBSET_SCENARIOS,
+                sky_executable=sky_executable,
+                live_peek=ctx.args.live_peek,
+                peek_interval_sec=ctx.args.peek_interval_sec,
+                artifact_transfer_method=artifact_transfer_method,
+                sky_upgrade_hint=preflight.get("sky_upgrade_hint"),
+                gpu_resource=_primary_gpu_resource(ctx.allowed_gpu_tokens),
+                use_wandb=use_remote_wandb,
+                capture_limit_chars=ctx.capture_limit_chars,
+            ),
         )
         stages_to_analyze.append("subset")
         _status(
@@ -1143,20 +1239,22 @@ def _run_benchmark_stages(
         current_step = "full"
         mark_step("full", "Running full stage")
         reports["full"] = run_stage(
-            cluster=ctx.args.cluster,
-            run_root=ctx.run_root,
-            logs_dir=ctx.logs_dir,
-            stage="full",
-            repetitions=ctx.args.full_repetitions,
-            scenarios=None,
-            sky_executable=sky_executable,
-            live_peek=ctx.args.live_peek,
-            peek_interval_sec=ctx.args.peek_interval_sec,
-            artifact_transfer_method=artifact_transfer_method,
-            sky_upgrade_hint=preflight.get("sky_upgrade_hint"),
-            gpu_resource=_primary_gpu_resource(ctx.allowed_gpu_tokens),
-            use_wandb=use_remote_wandb,
-            capture_limit_chars=ctx.capture_limit_chars,
+            StageRunConfig(
+                cluster=ctx.args.cluster,
+                run_root=ctx.run_root,
+                logs_dir=ctx.logs_dir,
+                stage="full",
+                repetitions=ctx.args.full_repetitions,
+                scenarios=None,
+                sky_executable=sky_executable,
+                live_peek=ctx.args.live_peek,
+                peek_interval_sec=ctx.args.peek_interval_sec,
+                artifact_transfer_method=artifact_transfer_method,
+                sky_upgrade_hint=preflight.get("sky_upgrade_hint"),
+                gpu_resource=_primary_gpu_resource(ctx.allowed_gpu_tokens),
+                use_wandb=use_remote_wandb,
+                capture_limit_chars=ctx.capture_limit_chars,
+            ),
         )
         stages_to_analyze.append("full")
         _status(

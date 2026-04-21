@@ -69,7 +69,7 @@ import numpy as np
 from flax import nnx
 
 # Datarax imports
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
@@ -230,13 +230,13 @@ First, let's verify each pipeline works independently.
 
 # %%
 # MNIST pipeline
-mnist_pipeline = from_source(mnist_source, batch_size=BATCH_SIZE).add(
+mnist_pipeline = build_source_pipeline(mnist_source, batch_size=BATCH_SIZE).add(
     OperatorNode(mnist_preprocessor)
 )
 
 # Fashion pipeline (need fresh source)
 fashion_source2 = TFDSEagerSource(fashion_config, rngs=nnx.Rngs(43))
-fashion_pipeline = from_source(fashion_source2, batch_size=BATCH_SIZE).add(
+fashion_pipeline = build_source_pipeline(fashion_source2, batch_size=BATCH_SIZE).add(
     OperatorNode(fashion_preprocessor)
 )
 
@@ -339,8 +339,12 @@ def create_interleaved_pipelines():
         rngs=nnx.Rngs(0),
     )
 
-    mnist_pipe = from_source(mnist_src, batch_size=BATCH_SIZE).add(OperatorNode(mnist_prep))
-    fashion_pipe = from_source(fashion_src, batch_size=BATCH_SIZE).add(OperatorNode(fashion_prep))
+    mnist_pipe = build_source_pipeline(mnist_src, batch_size=BATCH_SIZE).add(
+        OperatorNode(mnist_prep)
+    )
+    fashion_pipe = build_source_pipeline(fashion_src, batch_size=BATCH_SIZE).add(
+        OperatorNode(fashion_prep)
+    )
 
     return [mnist_pipe, fashion_pipe]
 
@@ -499,7 +503,7 @@ mnist_prep = ElementOperator(
     fn=preprocess_mnist,
     rngs=nnx.Rngs(0),
 )
-single_pipeline = from_source(mnist_src, batch_size=64).add(OperatorNode(mnist_prep))
+single_pipeline = build_source_pipeline(mnist_src, batch_size=64).add(OperatorNode(mnist_prep))
 
 start = time.time()
 single_count = 0

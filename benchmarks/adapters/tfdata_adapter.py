@@ -22,183 +22,218 @@ from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 # ---------------------------------------------------------------------------
 
 
-def _get_tf_transform(name: str) -> Any:
-    """Map a transform name to a TF-compatible map function."""
+def _tf_normalize(x: Any) -> Any:
+    """Normalize uint8 tensors to float32."""
     import tensorflow as tf
 
-    def _normalize(x: Any) -> Any:
-        if isinstance(x, dict):
-            return {
-                k: tf.cast(v, tf.float32) / 255.0 if v.dtype == tf.uint8 else v
-                for k, v in x.items()
-            }
-        return tf.cast(x, tf.float32) / 255.0 if x.dtype == tf.uint8 else x
+    if isinstance(x, dict):
+        return {
+            k: tf.cast(v, tf.float32) / 255.0 if v.dtype == tf.uint8 else v for k, v in x.items()
+        }
+    return tf.cast(x, tf.float32) / 255.0 if x.dtype == tf.uint8 else x
 
-    def _cast_to_float32(x: Any) -> Any:
-        if isinstance(x, dict):
-            return {k: tf.cast(v, tf.float32) for k, v in x.items()}
-        return tf.cast(x, tf.float32)
 
-    def _gaussian_noise(x: Any) -> Any:
-        if isinstance(x, dict):
-            return {
-                k: v + tf.random.normal(tf.shape(v), stddev=0.05, dtype=v.dtype)
-                for k, v in x.items()
-            }
-        return x + tf.random.normal(tf.shape(x), stddev=0.05, dtype=x.dtype)
+def _tf_cast_to_float32(x: Any) -> Any:
+    """Cast tensors to float32."""
+    import tensorflow as tf
 
-    def _random_brightness(x: Any) -> Any:
-        delta = tf.random.uniform([], minval=-0.2, maxval=0.2)  # type: ignore[reportArgumentType]
-        if isinstance(x, dict):
-            return {k: v + delta for k, v in x.items()}
-        return x + delta
+    if isinstance(x, dict):
+        return {k: tf.cast(v, tf.float32) for k, v in x.items()}
+    return tf.cast(x, tf.float32)
 
-    def _random_scale(x: Any) -> Any:
-        factor = tf.random.uniform([], minval=0.8, maxval=1.2)  # type: ignore[reportArgumentType]
-        if isinstance(x, dict):
-            return {k: v * factor for k, v in x.items()}
-        return x * factor
 
-    # --- Heavy transforms using native tf.image ops (best practice) ---
+def _tf_gaussian_noise(x: Any) -> Any:
+    """Add Gaussian noise with native TensorFlow ops."""
+    import tensorflow as tf
 
-    def _random_resized_crop(x: Any) -> Any:
-        """Random crop + resize using tf.image (native TF, graph-optimized)."""
+    if isinstance(x, dict):
+        return {
+            k: v + tf.random.normal(tf.shape(v), stddev=0.05, dtype=v.dtype) for k, v in x.items()
+        }
+    return x + tf.random.normal(tf.shape(x), stddev=0.05, dtype=x.dtype)
 
-        def _crop_single(img: Any) -> Any:
-            bbox = tf.image.sample_distorted_bounding_box(
-                tf.shape(img),
-                bounding_boxes=tf.zeros([1, 0, 4]),
-                min_object_covered=0.0,
-                area_range=(0.08, 1.0),
-                aspect_ratio_range=(3.0 / 4.0, 4.0 / 3.0),
-                use_image_if_no_bounding_boxes=True,
-            )
-            offset_y, offset_x, _ = tf.unstack(bbox[0])  # type: ignore[reportIndexIssue]
-            target_h, target_w, _ = tf.unstack(bbox[1])  # type: ignore[reportIndexIssue]
-            cropped = tf.slice(img, [offset_y, offset_x, 0], [target_h, target_w, -1])
-            return tf.image.resize(cropped, [224, 224])
 
-        if isinstance(x, dict):
-            return {k: _crop_single(v) if len(v.shape) == 3 else v for k, v in x.items()}
-        return _crop_single(x)
+def _tf_random_brightness(x: Any) -> Any:
+    """Apply random brightness."""
+    import tensorflow as tf
 
-    def _random_horizontal_flip(x: Any) -> Any:
-        if isinstance(x, dict):
-            return {
-                k: tf.image.random_flip_left_right(v) if len(v.shape) == 3 else v
-                for k, v in x.items()
-            }
-        return tf.image.random_flip_left_right(x)
+    delta = tf.random.uniform([], minval=-0.2, maxval=0.2)  # type: ignore[reportArgumentType]
+    if isinstance(x, dict):
+        return {k: v + delta for k, v in x.items()}
+    return x + delta
 
-    def _color_jitter(x: Any) -> Any:
-        """Brightness + contrast + saturation jitter using tf.image."""
 
-        def _jitter(img: Any) -> Any:
-            img = tf.image.random_brightness(img, max_delta=0.4)
-            img = tf.image.random_contrast(img, lower=0.6, upper=1.4)
-            img = tf.image.random_saturation(img, lower=0.6, upper=1.4)
-            return img
+def _tf_random_scale(x: Any) -> Any:
+    """Apply random multiplicative scale."""
+    import tensorflow as tf
 
-        if isinstance(x, dict):
-            return {k: _jitter(v) if len(v.shape) == 3 else v for k, v in x.items()}
-        return _jitter(x)
+    factor = tf.random.uniform([], minval=0.8, maxval=1.2)  # type: ignore[reportArgumentType]
+    if isinstance(x, dict):
+        return {k: v * factor for k, v in x.items()}
+    return x * factor
 
-    def _gaussian_blur_tf(x: Any) -> Any:
-        """Gaussian blur via depthwise convolution (native TF)."""
 
-        def _blur(img: Any) -> Any:
-            # 5x5 Gaussian kernel
-            kernel_1d = tf.constant([1, 4, 6, 4, 1], dtype=tf.float32)
-            kernel_1d = kernel_1d / tf.reduce_sum(kernel_1d)
-            kernel_2d = tf.tensordot(kernel_1d, kernel_1d, axes=0)
-            kernel_2d = kernel_2d[:, :, tf.newaxis, tf.newaxis]  # type: ignore[reportIndexIssue]
-            channels = tf.shape(img)[-1]  # type: ignore[reportIndexIssue]
-            kernel = tf.tile(kernel_2d, [1, 1, channels, 1])
-            img_4d = img[tf.newaxis]
-            blurred = tf.nn.depthwise_conv2d(
-                tf.cast(img_4d, tf.float32), kernel, strides=[1, 1, 1, 1], padding="SAME"
-            )
-            return tf.cast(blurred[0], img.dtype)
+def _tf_random_resized_crop(x: Any) -> Any:
+    """Random crop + resize using tf.image."""
+    import tensorflow as tf
 
-        if isinstance(x, dict):
-            return {k: _blur(v) if len(v.shape) == 3 else v for k, v in x.items()}
-        return _blur(x)
+    def crop_single(img: Any) -> Any:
+        bbox = tf.image.sample_distorted_bounding_box(
+            tf.shape(img),
+            bounding_boxes=tf.zeros([1, 0, 4]),
+            min_object_covered=0.0,
+            area_range=(0.08, 1.0),
+            aspect_ratio_range=(3.0 / 4.0, 4.0 / 3.0),
+            use_image_if_no_bounding_boxes=True,
+        )
+        offset_y, offset_x, _ = tf.unstack(bbox[0])  # type: ignore[reportIndexIssue]
+        target_h, target_w, _ = tf.unstack(bbox[1])  # type: ignore[reportIndexIssue]
+        cropped = tf.slice(img, [offset_y, offset_x, 0], [target_h, target_w, -1])
+        return tf.image.resize(cropped, [224, 224])
 
-    def _random_solarize_tf(x: Any) -> Any:
-        """Invert pixels above threshold with 50% probability."""
+    if isinstance(x, dict):
+        return {k: crop_single(v) if len(v.shape) == 3 else v for k, v in x.items()}
+    return crop_single(x)
 
-        def _solarize(img: Any) -> Any:
-            should_solarize = tf.random.uniform([]) < 0.5
-            return tf.cond(
-                should_solarize,
-                lambda: tf.where(img >= 128, 255 - img, img),
-                lambda: img,
-            )
 
-        if isinstance(x, dict):
-            return {k: _solarize(v) if len(v.shape) == 3 else v for k, v in x.items()}
-        return _solarize(x)
+def _tf_random_horizontal_flip(x: Any) -> Any:
+    """Randomly flip image tensors left-to-right."""
+    import tensorflow as tf
 
-    def _random_grayscale_tf(x: Any) -> Any:
-        """Convert to grayscale with 20% probability."""
+    if isinstance(x, dict):
+        return {
+            k: tf.image.random_flip_left_right(v) if len(v.shape) == 3 else v for k, v in x.items()
+        }
+    return tf.image.random_flip_left_right(x)
 
-        def _grayscale(img: Any) -> Any:
-            should_gray = tf.random.uniform([]) < 0.2
-            gray = tf.image.rgb_to_grayscale(img)
-            gray_3ch = tf.tile(gray, [1, 1, 3])
-            return tf.cond(should_gray, lambda: gray_3ch, lambda: img)
 
-        if isinstance(x, dict):
-            return {
-                k: _grayscale(v) if len(v.shape) == 3 and v.shape[-1] == 3 else v
-                for k, v in x.items()
-            }
-        return _grayscale(x)
+def _tf_color_jitter(x: Any) -> Any:
+    """Brightness + contrast + saturation jitter using tf.image."""
+    import tensorflow as tf
 
-    def _log_transform_tf(x: Any) -> Any:
-        """Element-wise log1p for dense features."""
-        if isinstance(x, dict):
-            return {k: tf.math.log1p(tf.abs(tf.cast(v, tf.float32))) for k, v in x.items()}
-        return tf.math.log1p(tf.abs(tf.cast(x, tf.float32)))
+    def jitter(img: Any) -> Any:
+        img = tf.image.random_brightness(img, max_delta=0.4)
+        img = tf.image.random_contrast(img, lower=0.6, upper=1.4)
+        return tf.image.random_saturation(img, lower=0.6, upper=1.4)
 
-    def _create_attention_mask_tf(x: Any) -> Any:
-        """Binary attention mask: 1 for real tokens, 0 for padding."""
-        if isinstance(x, dict):
-            return {k: tf.cast(tf.not_equal(v, 0), tf.float32) for k, v in x.items()}
-        return tf.cast(tf.not_equal(x, 0), tf.float32)
+    if isinstance(x, dict):
+        return {k: jitter(v) if len(v.shape) == 3 else v for k, v in x.items()}
+    return jitter(x)
 
-    def _create_causal_mask_tf(x: Any) -> Any:
-        """Lower-triangular causal attention mask."""
-        if isinstance(x, dict):
-            return {
-                k: tf.linalg.band_part(
-                    tf.ones((tf.shape(v)[-1], tf.shape(v)[-1]), dtype=tf.float32),  # type: ignore[reportIndexIssue]
-                    -1,
-                    0,
-                )
-                for k, v in x.items()
-            }
-        seq_len = tf.shape(x)[-1]  # type: ignore[reportIndexIssue]
-        return tf.linalg.band_part(tf.ones((seq_len, seq_len), dtype=tf.float32), -1, 0)
 
-    _TRANSFORMS = {
-        "Normalize": _normalize,
-        "CastToFloat32": _cast_to_float32,
-        "GaussianNoise": _gaussian_noise,
-        "RandomBrightness": _random_brightness,
-        "RandomScale": _random_scale,
-        "RandomResizedCrop": _random_resized_crop,
-        "RandomHorizontalFlip": _random_horizontal_flip,
-        "ColorJitter": _color_jitter,
-        "GaussianBlur": _gaussian_blur_tf,
-        "RandomSolarize": _random_solarize_tf,
-        "RandomGrayscale": _random_grayscale_tf,
-        "LogTransform": _log_transform_tf,
-        "CreateAttentionMask": _create_attention_mask_tf,
-        "CausalMaskGeneration": _create_causal_mask_tf,
-    }
+def _tf_gaussian_blur(x: Any) -> Any:
+    """Gaussian blur via depthwise convolution."""
+    import tensorflow as tf
 
-    return _TRANSFORMS.get(name)
+    def blur(img: Any) -> Any:
+        kernel_1d = tf.constant([1, 4, 6, 4, 1], dtype=tf.float32)
+        kernel_1d = kernel_1d / tf.reduce_sum(kernel_1d)
+        kernel_2d = tf.tensordot(kernel_1d, kernel_1d, axes=0)
+        kernel_2d = kernel_2d[:, :, tf.newaxis, tf.newaxis]  # type: ignore[reportIndexIssue]
+        channels = tf.shape(img)[-1]  # type: ignore[reportIndexIssue]
+        kernel = tf.tile(kernel_2d, [1, 1, channels, 1])
+        img_4d = img[tf.newaxis]
+        blurred = tf.nn.depthwise_conv2d(
+            tf.cast(img_4d, tf.float32),
+            kernel,
+            strides=[1, 1, 1, 1],
+            padding="SAME",
+        )
+        return tf.cast(blurred[0], img.dtype)
+
+    if isinstance(x, dict):
+        return {k: blur(v) if len(v.shape) == 3 else v for k, v in x.items()}
+    return blur(x)
+
+
+def _tf_random_solarize(x: Any) -> Any:
+    """Invert pixels above threshold with 50% probability."""
+    import tensorflow as tf
+
+    def solarize(img: Any) -> Any:
+        should_solarize = tf.random.uniform([]) < 0.5
+        return tf.cond(
+            should_solarize,
+            lambda: tf.where(img >= 128, 255 - img, img),
+            lambda: img,
+        )
+
+    if isinstance(x, dict):
+        return {k: solarize(v) if len(v.shape) == 3 else v for k, v in x.items()}
+    return solarize(x)
+
+
+def _tf_random_grayscale(x: Any) -> Any:
+    """Convert to grayscale with 20% probability."""
+    import tensorflow as tf
+
+    def grayscale(img: Any) -> Any:
+        should_gray = tf.random.uniform([]) < 0.2
+        gray = tf.image.rgb_to_grayscale(img)
+        gray_3ch = tf.tile(gray, [1, 1, 3])
+        return tf.cond(should_gray, lambda: gray_3ch, lambda: img)
+
+    if isinstance(x, dict):
+        return {
+            k: grayscale(v) if len(v.shape) == 3 and v.shape[-1] == 3 else v for k, v in x.items()
+        }
+    return grayscale(x)
+
+
+def _tf_log_transform(x: Any) -> Any:
+    """Element-wise log1p for dense features."""
+    import tensorflow as tf
+
+    if isinstance(x, dict):
+        return {k: tf.math.log1p(tf.abs(tf.cast(v, tf.float32))) for k, v in x.items()}
+    return tf.math.log1p(tf.abs(tf.cast(x, tf.float32)))
+
+
+def _tf_create_attention_mask(x: Any) -> Any:
+    """Binary attention mask: 1 for real tokens, 0 for padding."""
+    import tensorflow as tf
+
+    if isinstance(x, dict):
+        return {k: tf.cast(tf.not_equal(v, 0), tf.float32) for k, v in x.items()}
+    return tf.cast(tf.not_equal(x, 0), tf.float32)
+
+
+def _causal_mask_for_tensor(x: Any) -> Any:
+    """Build a lower-triangular causal mask for one tensor."""
+    import tensorflow as tf
+
+    seq_len = tf.shape(x)[-1]  # type: ignore[reportIndexIssue]
+    return tf.linalg.band_part(tf.ones((seq_len, seq_len), dtype=tf.float32), -1, 0)
+
+
+def _tf_create_causal_mask(x: Any) -> Any:
+    """Lower-triangular causal attention mask."""
+    if isinstance(x, dict):
+        return {k: _causal_mask_for_tensor(v) for k, v in x.items()}
+    return _causal_mask_for_tensor(x)
+
+
+_TF_TRANSFORMS = {
+    "Normalize": _tf_normalize,
+    "CastToFloat32": _tf_cast_to_float32,
+    "GaussianNoise": _tf_gaussian_noise,
+    "RandomBrightness": _tf_random_brightness,
+    "RandomScale": _tf_random_scale,
+    "RandomResizedCrop": _tf_random_resized_crop,
+    "RandomHorizontalFlip": _tf_random_horizontal_flip,
+    "ColorJitter": _tf_color_jitter,
+    "GaussianBlur": _tf_gaussian_blur,
+    "RandomSolarize": _tf_random_solarize,
+    "RandomGrayscale": _tf_random_grayscale,
+    "LogTransform": _tf_log_transform,
+    "CreateAttentionMask": _tf_create_attention_mask,
+    "CausalMaskGeneration": _tf_create_causal_mask,
+}
+
+
+def _get_tf_transform(name: str) -> Any:
+    """Map a transform name to a TF-compatible map function."""
+    return _TF_TRANSFORMS.get(name)
 
 
 @register

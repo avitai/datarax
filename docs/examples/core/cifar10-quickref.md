@@ -27,7 +27,7 @@ This quick reference demonstrates loading and processing CIFAR-10 from TensorFlo
 | `datasets.CIFAR10(root, train=True)` | `TFDSEagerSource(TFDSEagerConfig(name="cifar10", split="train"))` |
 | `transforms.ToTensor()` | Automatic conversion to JAX arrays |
 | `transforms.Normalize(mean, std)` | `ElementOperator` with custom normalization fn |
-| `DataLoader(dataset, batch_size=32, shuffle=True)` | `from_source(source, batch_size=32)` with shuffle config |
+| `DataLoader(dataset, batch_size=32, shuffle=True)` | `build_source_pipeline(source, batch_size=32)` with shuffle config |
 
 **Key difference:** Datarax uses TFDS for dataset access and JAX arrays natively. Normalization constants are identical to PyTorch's standard values.
 
@@ -36,7 +36,7 @@ This quick reference demonstrates loading and processing CIFAR-10 from TensorFlo
 | TensorFlow | Datarax |
 |------------|---------|
 | `tfds.load("cifar10", split="train")` | `TFDSEagerSource(TFDSEagerConfig(name="cifar10", split="train"))` |
-| `dataset.batch(32).prefetch(2)` | `from_source(source, batch_size=32)` |
+| `dataset.batch(32).prefetch(2)` | `build_source_pipeline(source, batch_size=32)` |
 | `tf.keras.layers.Rescaling(1./255)` | `ElementOperator` with division by 255 |
 | `tf.keras.layers.Normalization()` | `ElementOperator` with mean/std normalization |
 
@@ -185,7 +185,7 @@ flowchart LR
     end
 
     subgraph Pipeline["Pipeline"]
-        FS[from_source<br/>batch_size=32]
+        FS[build_source_pipeline<br/>batch_size=32]
         N[Normalizer<br/>(x - mean) / std]
     end
 
@@ -197,12 +197,12 @@ flowchart LR
 ```
 
 ```python
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 
 # Build the training pipeline
 batch_size = 32
-pipeline = from_source(source, batch_size=batch_size).add(OperatorNode(normalizer))
+pipeline = build_source_pipeline(source, batch_size=batch_size).add(OperatorNode(normalizer))
 
 print("Pipeline: TFDSEagerSource(CIFAR-10) -> Normalize -> Output")
 print(f"Batch size: {batch_size}")

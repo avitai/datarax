@@ -147,7 +147,7 @@ def create_train_pipeline(batch_size=128, mixup_alpha=0.2):
     )
 
     return (
-        from_source(source, batch_size=batch_size)
+        build_source_pipeline(source, batch_size=batch_size)
         .add(OperatorNode(preprocessor))
         .add(OperatorNode(brightness))
         .add(OperatorNode(mixup))

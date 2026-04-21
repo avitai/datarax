@@ -12,6 +12,7 @@ from datarax import DAGExecutor
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import MemorySource
 from datarax.sources.memory_source import MemorySourceConfig
+from datarax.utils.console import emit
 
 
 # Use mark.benchmark to indicate these are performance tests
@@ -78,6 +79,7 @@ def measure_iteration_time(data_stream, batch_size, num_batches=100) -> tuple[fl
 
 def test_memory_source_iteration_benchmark(memory_source, large_sample_data):
     """Benchmark memory source iteration with different batch sizes."""
+    del memory_source
     batch_sizes = [1, 8, 16, 32, 64, 128, 256]
 
     results = {}
@@ -96,7 +98,7 @@ def test_memory_source_iteration_benchmark(memory_source, large_sample_data):
 
         # Skip if no batches were produced (e.g., batch_size > data_size)
         if avg_batch_time == 0:
-            print(f"\nBatch size: {batch_size} - Skipped (insufficient data)")
+            emit(f"\nBatch size: {batch_size} - Skipped (insufficient data)")
             continue
 
         # Record results for reporting
@@ -107,10 +109,10 @@ def test_memory_source_iteration_benchmark(memory_source, large_sample_data):
         }
 
         # Log results
-        print("\nBatch size: " + str(batch_size))
-        print("Total time for 100 batches: " + str(total_time) + "s")
-        print("Average batch processing time: " + str(avg_batch_time) + "s")
-        print("Examples per second: " + str(batch_size / avg_batch_time))
+        emit("\nBatch size: " + str(batch_size))
+        emit("Total time for 100 batches: " + str(total_time) + "s")
+        emit("Average batch processing time: " + str(avg_batch_time) + "s")
+        emit("Examples per second: " + str(batch_size / avg_batch_time))
 
     # Verify performance is within acceptable range
     # This is an example threshold - adjust based on actual performance
@@ -124,6 +126,7 @@ def test_transform_performance(data_stream):
 
     # Simple normalize transform - Element API: fn(element, key) -> element
     def normalize(element: Element, key: jax.Array) -> Element:
+        del key
         new_data = {
             "image": element.data["image"] / 255.0,
             "label": jnp.asarray(element.data["label"]),
@@ -152,9 +155,9 @@ def test_transform_performance(data_stream):
     total_time = end_time - start_time
     examples_per_second = batches_processed * 32 / total_time
 
-    print("\nTransform Pipeline:")
-    print("Total time for " + str(batches_processed) + " batches: " + str(total_time) + "s")
-    print("Examples per second: " + str(examples_per_second))
+    emit("\nTransform Pipeline:")
+    emit("Total time for " + str(batches_processed) + " batches: " + str(total_time) + "s")
+    emit("Examples per second: " + str(examples_per_second))
 
     # Verify performance is within acceptable range
     assert examples_per_second > 100, "Transform performance below threshold"
@@ -163,6 +166,7 @@ def test_transform_performance(data_stream):
 @pytest.mark.integration
 def test_augment_performance(data_stream, rng_key):
     """Benchmark performance of augmentation operations."""
+    del rng_key
     from datarax.core.element_batch import Element
 
     # Simple augmentation (horizontal flip with 50% probability)
@@ -198,9 +202,9 @@ def test_augment_performance(data_stream, rng_key):
     total_time = end_time - start_time
     examples_per_second = batches_processed * 32 / total_time
 
-    print("\nAugmentation Pipeline:")
-    print("Total time for " + str(batches_processed) + " batches: " + str(total_time) + "s")
-    print("Examples per second: " + str(examples_per_second))
+    emit("\nAugmentation Pipeline:")
+    emit("Total time for " + str(batches_processed) + " batches: " + str(total_time) + "s")
+    emit("Examples per second: " + str(examples_per_second))
 
     # Verify performance is within acceptable range
     assert examples_per_second > 50, "Augmentation performance below threshold"
@@ -209,10 +213,12 @@ def test_augment_performance(data_stream, rng_key):
 @pytest.mark.end_to_end
 def test_end_to_end_pipeline_benchmark(data_stream, rng_key):
     """Benchmark end-to-end pipeline with operators and batch."""
+    del rng_key
     from datarax.core.element_batch import Element
 
     # Define transformations - Element API: fn(element, key) -> element
     def normalize(element: Element, key: jax.Array) -> Element:
+        del key
         new_data = {"image": element.data["image"] / 255.0, "label": element.data["label"]}
         return element.replace(data=new_data)
 
@@ -253,9 +259,9 @@ def test_end_to_end_pipeline_benchmark(data_stream, rng_key):
     total_time = end_time - start_time
     examples_per_second = batches_processed * 32 / total_time
 
-    print("\nEnd-to-End Pipeline:")
-    print("Total time for " + str(batches_processed) + " batches: " + str(total_time) + "s")
-    print("Examples per second: " + str(examples_per_second))
+    emit("\nEnd-to-End Pipeline:")
+    emit("Total time for " + str(batches_processed) + " batches: " + str(total_time) + "s")
+    emit("Examples per second: " + str(examples_per_second))
 
     # Verify performance is within acceptable range
     assert examples_per_second > 30, "End-to-end performance below threshold"

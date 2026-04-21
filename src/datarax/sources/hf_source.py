@@ -37,9 +37,9 @@ import numpy as np
 from datarax.sources._config_base import SourceConfigBase
 from datarax.sources._conversion import hf_to_jax
 from datarax.sources._eager_source_ops import (
-    convert_and_filter_element,
-    validate_shared_eager_source_config,
-    validate_shared_streaming_source_config,
+    converted_filtered_record,
+    validate_eager_source_settings,
+    validate_streaming_source_settings,
 )
 from datarax.sources._source_base import EagerSourceBase, StreamingSourceBase
 
@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-def _prepare_hf_download_kwargs(download_kwargs: dict[str, Any] | None) -> dict[str, Any]:
+def _resolve_hf_download_options(download_kwargs: dict[str, Any] | None) -> dict[str, Any]:
     """Prepare HF kwargs with security-pinned revision."""
     resolved = dict(download_kwargs or {})
     resolved.setdefault("revision", "main")
@@ -70,7 +70,7 @@ def _append_hf_converted_value(arrays: dict[str, list[Any]], key: str, value: An
         arrays.setdefault(key, []).append(converted)
 
 
-def _finalize_hf_arrays(arrays: dict[str, list[Any]]) -> dict[str, Any]:
+def _stack_hf_array_columns(arrays: dict[str, list[Any]]) -> dict[str, Any]:
     """Stack buffered HF values into batched outputs where possible."""
     result: dict[str, Any] = {}
     for key, values in arrays.items():
@@ -110,7 +110,7 @@ class HFEagerConfig(SourceConfigBase):
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
-        validate_shared_eager_source_config(
+        validate_eager_source_settings(
             self,
             "HFEagerConfig",
             seed=self.seed,
@@ -143,7 +143,7 @@ class HFStreamingConfig(SourceConfigBase):
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
-        validate_shared_streaming_source_config(self, "HFStreamingConfig")
+        validate_streaming_source_settings(self, "HFStreamingConfig")
 
 
 # =============================================================================
@@ -224,16 +224,16 @@ class HFEagerSource(EagerSourceBase):
         # Store config for feature access
         self.dataset_name = config.name
         self.split_name = config.split
-        self.shuffle = config.shuffle
+        self._is_random_order = config.shuffle
         self._seed = config.seed
         self.include_keys = config.include_keys
         self.exclude_keys = config.exclude_keys
 
         # Load dataset info BEFORE loading data
-        self._dataset_info = self._load_dataset_info(config)
+        self._dataset_info = self._load_dataset_info_from_backend(config)
 
         # Load ALL data to JAX arrays at init
-        self.data = self._load_all_to_jax(config)
+        self.data = self._load_all_from_backend_to_jax(config)
 
         # Clean up resources
         gc.collect()
@@ -244,7 +244,7 @@ class HFEagerSource(EagerSourceBase):
         self.index = nnx.Variable(0)
         self.epoch = nnx.Variable(0)
 
-    def _load_dataset_info(self, config: HFEagerConfig) -> Any:
+    def _load_dataset_info_from_backend(self, config: HFEagerConfig) -> Any:
         """Load and cache dataset info.
 
         Args:
@@ -253,7 +253,7 @@ class HFEagerSource(EagerSourceBase):
         Returns:
             HuggingFace DatasetInfo object if available
         """
-        download_kwargs = _prepare_hf_download_kwargs(config.download_kwargs)
+        download_kwargs = _resolve_hf_download_options(config.download_kwargs)
 
         # name/split validated non-None by config __post_init__
         name = config.name
@@ -273,7 +273,7 @@ class HFEagerSource(EagerSourceBase):
             return dataset.info
         return None
 
-    def _load_all_to_jax(self, config: HFEagerConfig) -> dict[str, jax.Array]:
+    def _load_all_from_backend_to_jax(self, config: HFEagerConfig) -> dict[str, jax.Array]:
         """Load entire dataset to JAX arrays.
 
         This is the core of the eager-loading strategy. All HuggingFace operations
@@ -285,7 +285,7 @@ class HFEagerSource(EagerSourceBase):
         Returns:
             Dictionary mapping keys to JAX arrays
         """
-        download_kwargs = _prepare_hf_download_kwargs(config.download_kwargs)
+        download_kwargs = _resolve_hf_download_options(config.download_kwargs)
 
         # name/split validated non-None by config __post_init__
         name = config.name
@@ -316,7 +316,7 @@ class HFEagerSource(EagerSourceBase):
                 "Check split selection and include/exclude key filters."
             )
 
-        return _finalize_hf_arrays(arrays)
+        return _stack_hf_array_columns(arrays)
 
 
 # =============================================================================
@@ -375,6 +375,7 @@ class HFStreamingSource(StreamingSourceBase):
         if name is None:
             name = f"HFStreamingSource({config.name}:{config.split})"
         super().__init__(config, rngs=rngs, name=name)
+        self._is_random_order = config.shuffle
 
         # Import datasets lazily
         try:
@@ -389,7 +390,7 @@ class HFStreamingSource(StreamingSourceBase):
             ) from e
 
         # Load the dataset
-        download_kwargs = _prepare_hf_download_kwargs(config.download_kwargs)
+        download_kwargs = _resolve_hf_download_options(config.download_kwargs)
 
         # name/split validated non-None by config __post_init__
         name = config.name
@@ -446,27 +447,22 @@ class HFStreamingSource(StreamingSourceBase):
         return self.config.split
 
     @property
-    def streaming(self) -> bool:
+    def is_iterable_mode(self) -> bool:
         """Streaming mode flag from source config."""
         return self.config.streaming
 
     @property
-    def shuffle(self) -> bool:
-        """Shuffle flag from source config."""
-        return self.config.shuffle
-
-    @property
-    def shuffle_buffer_size(self) -> int:
+    def random_order_buffer_depth(self) -> int:
         """Shuffle buffer size from source config."""
         return self.config.shuffle_buffer_size
 
     @property
-    def include_keys(self) -> set[str] | None:
+    def selected_keys(self) -> set[str] | None:
         """Optional key-include filter from source config."""
         return self.config.include_keys
 
     @property
-    def exclude_keys(self) -> set[str] | None:
+    def rejected_keys(self) -> set[str] | None:
         """Optional key-exclude filter from source config."""
         return self.config.exclude_keys
 
@@ -506,13 +502,13 @@ class HFStreamingSource(StreamingSourceBase):
             self._iterator = iterator
 
         element = next(iterator)
-        return convert_and_filter_element(
+        return converted_filtered_record(
             element,
-            self.include_keys,
-            self.exclude_keys,
+            self.selected_keys,
+            self.rejected_keys,
             hf_to_jax,
         )
 
     def _repr_extra_fields(self) -> dict[str, Any]:
         """Add source-mode details to the shared representation."""
-        return {"streaming": self.streaming}
+        return {"streaming": self.is_iterable_mode}

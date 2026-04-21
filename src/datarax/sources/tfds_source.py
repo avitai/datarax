@@ -39,10 +39,10 @@ import jax.numpy as jnp
 from datarax.sources._config_base import SourceConfigBase
 from datarax.sources._conversion import tf_to_jax
 from datarax.sources._eager_source_ops import (
-    convert_and_filter_element,
+    converted_filtered_record,
+    validate_eager_source_settings,
     validate_positive_optional_int,
-    validate_shared_eager_source_config,
-    validate_shared_streaming_source_config,
+    validate_streaming_source_settings,
 )
 from datarax.sources._source_base import EagerSourceBase, StreamingSourceBase
 
@@ -59,7 +59,7 @@ if TYPE_CHECKING:
 # =============================================================================
 
 
-def _is_read_only_builder(builder: Any) -> bool:
+def _is_read_only_tfds_source(builder: Any) -> bool:
     """Check if a TFDS builder is a ReadOnlyBuilder (from try_gcs or GCS cache).
 
     ReadOnlyBuilder reads pre-built TFRecords from GCS and needs no
@@ -102,7 +102,7 @@ def _prepare_tfds_builder(
     builder = tfds.builder(name, data_dir=data_dir, try_gcs=try_gcs)
 
     # ReadOnlyBuilder (from try_gcs when dataset is on GCS) needs no preparation
-    if not _is_read_only_builder(builder):
+    if not _is_read_only_tfds_source(builder):
         download_kwargs = download_and_prepare_kwargs or {}
 
         if beam_num_workers is not None:
@@ -158,7 +158,7 @@ class TFDSEagerConfig(SourceConfigBase):
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
-        validate_shared_eager_source_config(
+        validate_eager_source_settings(
             self,
             "TFDSEagerConfig",
             seed=self.seed,
@@ -203,7 +203,7 @@ class TFDSStreamingConfig(SourceConfigBase):
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
-        validate_shared_streaming_source_config(self, "TFDSStreamingConfig")
+        validate_streaming_source_settings(self, "TFDSStreamingConfig")
 
         if self.try_gcs and self.data_dir is not None:
             raise ValueError(
@@ -279,17 +279,17 @@ class TFDSEagerSource(EagerSourceBase):
         # Store config for feature access
         self.dataset_name = config.name
         self.split_name = config.split
-        self.shuffle = config.shuffle
+        self._is_random_order = config.shuffle
         self._seed = config.seed
         self.as_supervised = config.as_supervised
         self.include_keys = config.include_keys
         self.exclude_keys = config.exclude_keys
 
         # Load dataset info BEFORE loading data (for get_dataset_info)
-        self._dataset_info = self._load_dataset_info(config)
+        self._dataset_info = self._load_dataset_info_from_backend(config)
 
         # Load ALL data to JAX arrays at init
-        self.data = self._load_all_to_jax(config)
+        self.data = self._load_all_from_backend_to_jax(config)
 
         # Clean up TF resources completely
         self._cleanup_tf()
@@ -300,7 +300,7 @@ class TFDSEagerSource(EagerSourceBase):
         self.index = nnx.Variable(0)
         self.epoch = nnx.Variable(0)
 
-    def _load_dataset_info(self, config: TFDSEagerConfig) -> tfds.core.DatasetInfo:
+    def _load_dataset_info_from_backend(self, config: TFDSEagerConfig) -> tfds.core.DatasetInfo:
         """Load and cache dataset info before cleanup.
 
         Args:
@@ -321,7 +321,7 @@ class TFDSEagerSource(EagerSourceBase):
         )
         return builder.info
 
-    def _load_all_to_jax(self, config: TFDSEagerConfig) -> dict[str, jax.Array]:
+    def _load_all_from_backend_to_jax(self, config: TFDSEagerConfig) -> dict[str, jax.Array]:
         """Load entire dataset to JAX arrays using DLPack.
 
         This is the core of the eager-loading strategy. All TF operations
@@ -438,7 +438,7 @@ class TFDSStreamingSource(StreamingSourceBase):
 
         self.dataset_name = config.name
         self.split_name = config.split
-        self.shuffle = config.shuffle
+        self._is_random_order = config.shuffle
         self.as_supervised = config.as_supervised
         self.include_keys = config.include_keys
         self.exclude_keys = config.exclude_keys
@@ -521,7 +521,7 @@ class TFDSStreamingSource(StreamingSourceBase):
         if self.as_supervised and isinstance(tf_element, tuple):
             tf_element = {"image": tf_element[0], "label": tf_element[1]}
 
-        return convert_and_filter_element(
+        return converted_filtered_record(
             tf_element,
             self.include_keys,
             self.exclude_keys,

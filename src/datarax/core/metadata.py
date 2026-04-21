@@ -92,10 +92,10 @@ class Metadata:
     def __post_init__(self, key: str | None) -> None:
         """Initialize encoded key from string if provided."""
         if self._encoded_key is None and key is not None:
-            object.__setattr__(self, "_encoded_key", _encode_key(key))
+            object.__setattr__(self, "_encoded_key", _encode_metadata_key_bytes(key))
 
     @property
-    def record_key(self) -> str | None:
+    def entry_key(self) -> str | None:
         """Get record key as string (decodes on demand)."""
         return _decode_key(self._encoded_key)
 
@@ -106,7 +106,7 @@ class Metadata:
         encoded_key_arg = kwargs.pop("_encoded_key", self._encoded_key)
 
         if key_arg is not None:
-            encoded_key_arg = _encode_key(key_arg)
+            encoded_key_arg = _encode_metadata_key_bytes(key_arg)
 
         current = {
             "index": self.index,
@@ -162,14 +162,14 @@ class Metadata:
             "batch_idx": self.batch_idx,
             "shard_id": self.shard_id,
             "rng_key": self.rng_key,
-            "record_key": self.record_key,
+            "record_key": self.entry_key,
             "source_info": self.source_info,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Metadata:
         """Create from dictionary."""
-        # Map 'record_key' from dict to 'key' arg
+        # Map serialized record key to constructor key argument.
         key = data.pop("record_key", data.pop("key", None))
         return cls(**data, key=key)
 
@@ -197,7 +197,7 @@ MAX_KEY_LENGTH = 128  # Fixed length for JIT compatibility
 NULL_BYTE = 0
 
 
-def _encode_key(key: str | None) -> jax.Array | None:
+def _encode_metadata_key_bytes(key: str | None) -> jax.Array | None:
     """Encode string key to fixed-length uint8 array."""
     if key is None:
         return None
@@ -361,7 +361,7 @@ def batch_metadata(metadata_list: list[Metadata]) -> Metadata:
         batch_idx=batch_idx,
         shard_id=shard_id,
         rng_key=first.rng_key,
-        key=first.record_key,
+        key=first.entry_key,
         source_info=first.source_info,
     )
 

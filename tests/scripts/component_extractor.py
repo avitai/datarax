@@ -6,10 +6,11 @@ This script extracts components from test files based on imports and
 provides a way to reorganize them along component lines.
 """
 
-import os
 import re
 import shutil
 from pathlib import Path
+
+from datarax.utils.console import emit
 
 
 # Mapping of source modules to their components
@@ -32,13 +33,13 @@ class ComponentExtractor:
         """Initialize with the tests directory path."""
         self.tests_dir = Path(tests_dir)
         self.backup_dir = self.tests_dir / "component_backup"
-        os.makedirs(self.backup_dir, exist_ok=True)
+        self.backup_dir.mkdir(parents=True, exist_ok=True)
 
     def _backup_file(self, file_path: Path) -> None:
         """Create a backup of the file."""
         backup_path = self.backup_dir / file_path.name
         shutil.copy2(file_path, backup_path)
-        print(f"Backed up {file_path.name} to {backup_path}")
+        emit(f"Backed up {file_path.name} to {backup_path}")
 
     def _analyze_file(self, file_path: Path) -> dict[str, set[str]]:
         """Analyze a file to determine which components it tests."""
@@ -122,11 +123,11 @@ class ComponentExtractor:
         """Reorganize integration tests into component-specific files."""
         integration_dir = self.tests_dir / "integration"
         if not integration_dir.exists():
-            print("Integration directory not found")
+            emit("Integration directory not found")
             return
 
         for file_path in integration_dir.glob("test_*.py"):
-            print(f"Analyzing {file_path}")
+            emit(f"Analyzing {file_path}")
             self._backup_file(file_path)
 
             # Extract component tests
@@ -136,7 +137,7 @@ class ComponentExtractor:
             for new_path, content in new_files.items():
                 # Ensure the directory exists
                 new_file_path = Path(new_path)
-                os.makedirs(new_file_path.parent, exist_ok=True)
+                new_file_path.parent.mkdir(parents=True, exist_ok=True)
 
                 # Ensure __init__.py exists in directory
                 init_path = new_file_path.parent / "__init__.py"
@@ -144,17 +145,17 @@ class ComponentExtractor:
                     init_path.touch()
 
                 # Create the new file
-                print(f"Creating {new_file_path}")
+                emit(f"Creating {new_file_path}")
                 new_file_path.write_text("\n".join(content))
 
-            print(f"Processed {file_path}")
+            emit(f"Processed {file_path}")
 
     def run(self) -> None:
         """Run the complete component extraction process."""
-        print("Starting component extraction...")
+        emit("Starting component extraction...")
         self.reorganize_integration_tests()
-        print("\nComponent extraction completed!")
-        print(f"Original files have been backed up to {self.backup_dir}")
+        emit("\nComponent extraction completed!")
+        emit(f"Original files have been backed up to {self.backup_dir}")
 
 
 if __name__ == "__main__":

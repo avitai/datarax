@@ -4,6 +4,7 @@ import jax.numpy as jnp
 
 from datarax import DAGExecutor
 from datarax.dag import DAGConfig
+from datarax.utils.console import emit
 
 
 class TestDAGIntegration:
@@ -19,6 +20,7 @@ class TestDAGIntegration:
 
         # Simple normalize function as Element operator
         def normalize(element, key):
+            del key
             new_data = dict(element.data)
             if "image" in new_data:
                 new_data["image"] = (new_data["image"] - 0.5) / 0.5
@@ -62,7 +64,7 @@ class TestDAGIntegration:
         executor = DAGConfig.from_dict(config)
 
         assert executor.name == "test_pipeline"
-        assert executor.enforce_batch is True
+        assert executor.is_batch_enforced is True
 
         # Separately test MemorySource with proper config-first API
         data = [1, 2, 3, 4, 5]
@@ -97,8 +99,8 @@ class TestDAGIntegration:
             warnings.simplefilter("ignore", UserWarning)
             new_executor.set_state(state)
 
-        # Continue from saved state - _iteration_count is now a plain int (not Variable)
-        assert new_executor._iteration_count == executor._iteration_count
+        # Continue from saved state - _iteration_total is now a plain int (not Variable)
+        assert new_executor._iteration_total == executor._iteration_total
 
     def test_performance(self):
         """Test pipeline performance."""
@@ -125,8 +127,8 @@ class TestDAGIntegration:
         assert batch_count == 100
         assert elapsed < 10.0  # Should be reasonably fast (allowing for JIT compilation)
 
-        print(f"Processed {len(data)} items in {elapsed:.2f}s")
-        print(f"Throughput: {len(data) / elapsed:.0f} items/s")
+        emit(f"Processed {len(data)} items in {elapsed:.2f}s")
+        emit(f"Throughput: {len(data) / elapsed:.0f} items/s")
 
 
 if __name__ == "__main__":
@@ -135,4 +137,4 @@ if __name__ == "__main__":
     test.test_config_loading()
     test.test_checkpointing()
     test.test_performance()
-    print("✓ All integration tests passed!")
+    emit("✓ All integration tests passed!")

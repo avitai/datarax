@@ -7,6 +7,7 @@ to various outputs like console, files, or external systems.
 import logging
 import sys
 import time
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, cast, TextIO
 
@@ -49,7 +50,7 @@ class ConsoleReporter(MetricsObserver):
         self.last_report_time = 0.0
         self.aggregated = AggregatedMetrics()
 
-    def should_include(self, metric: MetricRecord) -> bool:
+    def is_record_reportable(self, metric: MetricRecord) -> bool:
         """Check if a metric should be included in reports.
 
         Args:
@@ -71,7 +72,7 @@ class ConsoleReporter(MetricsObserver):
             metrics: List of new metric records.
         """
         # Filter metrics
-        filtered_metrics = [m for m in metrics if self.should_include(m)]
+        filtered_metrics = [m for m in metrics if self.is_record_reportable(m)]
         if not filtered_metrics:
             return
 
@@ -203,7 +204,9 @@ class FileReporter(ConsoleReporter):
         # Ensure the directory exists
         Path(filename).parent.mkdir(parents=True, exist_ok=True)
 
-        self.file = Path(filename).open(mode)
+        self._exit_stack = ExitStack()
+        open_file = Path(filename).open
+        self.file = self._exit_stack.enter_context(open_file(mode))
         # Cast file to TextIO to satisfy type checker
         file_output = cast(TextIO, self.file)
         super().__init__(
@@ -214,14 +217,14 @@ class FileReporter(ConsoleReporter):
 
     def close(self) -> None:
         """Close the file handle. Idempotent."""
-        if hasattr(self, "file") and self.file and not self.file.closed:
-            self.file.close()
+        if hasattr(self, "_exit_stack"):
+            self._exit_stack.close()
 
     def __enter__(self) -> "FileReporter":
         """Enter context manager."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self, _exc_type, _exc_val, _exc_tb) -> None:
         """Exit context manager and release resources."""
         self.close()
 

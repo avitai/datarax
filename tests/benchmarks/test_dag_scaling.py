@@ -9,6 +9,7 @@ from calibrax.profiling import TimingCollector
 
 from datarax.core.element_batch import Batch
 from datarax.dag.dag_executor import DAGExecutor
+from datarax.utils.console import emit
 from tests.benchmarks.complex_dag_builder import ComplexDAGBuilder
 
 
@@ -31,7 +32,9 @@ class TestDAGScaling:
             for _ in range(iterations):
                 yield workload_fn()
 
-        sync_fn = lambda _result: jnp.array(0.0).block_until_ready()
+        def sync_fn(_result):
+            return jnp.array(0.0).block_until_ready()
+
         collector = TimingCollector(sync_fn=sync_fn)
         return collector.measure_iteration(workload_iter(), num_batches=iterations)
 
@@ -46,7 +49,7 @@ class TestDAGScaling:
         steps_per_sec = (
             sample.num_batches / sample.wall_clock_sec if sample.wall_clock_sec > 0 else 0
         )
-        print(f"Depth {depth}: {steps_per_sec:.1f} steps/s")
+        emit(f"Depth {depth}: {steps_per_sec:.1f} steps/s")
 
     @pytest.mark.parametrize("width", [1, 4, 8, 16])
     def test_dag_width_scaling(self, width):
@@ -59,7 +62,7 @@ class TestDAGScaling:
         steps_per_sec = (
             sample.num_batches / sample.wall_clock_sec if sample.wall_clock_sec > 0 else 0
         )
-        print(f"Width {width}: {steps_per_sec:.1f} steps/s")
+        emit(f"Width {width}: {steps_per_sec:.1f} steps/s")
 
     def test_dag_mixed_topology(self):
         """Benchmarks a complex mixed topology."""
@@ -72,4 +75,4 @@ class TestDAGScaling:
         steps_per_sec = (
             sample.num_batches / sample.wall_clock_sec if sample.wall_clock_sec > 0 else 0
         )
-        print(f"Mixed (D={depth}, W={width}): {steps_per_sec:.1f} steps/s")
+        emit(f"Mixed (D={depth}, W={width}): {steps_per_sec:.1f} steps/s")

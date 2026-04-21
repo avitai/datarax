@@ -244,6 +244,7 @@ class PatchDropoutOperator(ModalityOperator):
             CRITICAL: Always check config.stochastic flag, not whether random_params is None.
             apply_batch() always passes random_params even in deterministic mode.
         """
+        del stats
         # Extract the field to transform using base class helper
         value = self._extract_field(data, self.config.field_key)
 

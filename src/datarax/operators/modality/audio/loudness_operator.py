@@ -139,6 +139,7 @@ class LoudnessOperator(OperatorModule):
             (data_with_loudness, state, metadata) where data_with_loudness
             has original keys plus "loudness" with shape (n_frames,).
         """
+        del random_params, stats
         audio = data["audio"]
         loudness = self._compute_loudness(audio)
         out_data = {**data, "loudness": loudness}

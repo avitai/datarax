@@ -32,11 +32,14 @@ def __getattr__(name: str) -> Any:
         )
 
         return {"CrepeF0Operator": CrepeF0Operator, "CrepeF0Config": CrepeF0Config}[name]
-    if name in ("CrepeModel", "load_crepe_weights"):
+    if name in ("CrepeModel", "load_crepe_weights_from_path"):
         from datarax.operators.modality.audio.crepe_model import (
             CrepeModel,
-            load_crepe_weights,
+            load_crepe_weights_from_path,
         )
 
-        return {"CrepeModel": CrepeModel, "load_crepe_weights": load_crepe_weights}[name]
+        return {
+            "CrepeModel": CrepeModel,
+            "load_crepe_weights_from_path": load_crepe_weights_from_path,
+        }[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

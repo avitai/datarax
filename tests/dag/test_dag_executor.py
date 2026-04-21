@@ -117,6 +117,7 @@ class MockOperator(OperatorModule):
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, jax.Array], dict[str, Any], Any]:
         """Apply transformation to data."""
+        del random_params, stats
         if isinstance(data, dict):
             result = {k: v * self.multiplier for k, v in data.items()}
         else:
@@ -188,6 +189,7 @@ class RandomOperator(OperatorModule):
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, jax.Array], dict[str, Any], Any]:
         """Apply random noise to data."""
+        del stats
         if random_params is not None:
 
             def add_noise(x):
@@ -210,11 +212,11 @@ class TestDAGExecutorInitialization:
         assert isinstance(executor.graph, Identity)
         # rngs is lazy - None for deterministic pipelines (no stochastic ops)
         assert executor.rngs is None  # No stochastic ops = no RNG needed
-        assert executor.enable_caching is True
-        assert executor.jit_compile is False
-        assert executor._iteration_count == 0
-        assert executor._cache == {}
-        assert executor._jit_execute is None
+        assert executor.is_caching_enabled is True
+        assert executor.is_jit_compilation_enabled is False
+        assert executor._iteration_total == 0
+        assert executor._memo == {}
+        assert executor._compiled_fn is None
 
     def test_initialization_with_graph(self, mock_operator):
         """Test initialization with initial graph."""
@@ -241,15 +243,15 @@ class TestDAGExecutorInitialization:
         """Test initialization with caching disabled."""
         executor = DAGExecutor(enable_caching=False, enforce_batch=False)
 
-        assert executor.enable_caching is False
-        assert executor._cache is None
+        assert executor.is_caching_enabled is False
+        assert executor._memo is None
 
     def test_initialization_with_jit_enabled(self):
         """Test initialization with JIT compilation enabled."""
         executor = DAGExecutor(jit_compile=True, enforce_batch=False)
 
-        assert executor.jit_compile is True
-        assert executor._jit_execute is not None
+        assert executor.is_jit_compilation_enabled is True
+        assert executor._compiled_fn is not None
 
     def test_initialization_all_options(self, mock_operator):
         """Test initialization with all options specified."""
@@ -264,8 +266,8 @@ class TestDAGExecutorInitialization:
 
         assert isinstance(executor.graph, OperatorNode)
         assert executor.rngs is rngs
-        assert executor.enable_caching is False
-        assert executor.jit_compile is True
+        assert executor.is_caching_enabled is False
+        assert executor.is_jit_compilation_enabled is True
 
 
 class TestDAGExecutorPipelineConstruction:
@@ -320,7 +322,7 @@ class TestDAGExecutorPipelineConstruction:
         # Add BatchNode first, then transform
         executor.add(BatchNode(batch_size=4)).add(OperatorNode(MockOperator()))
 
-        assert executor._jit_execute is None
+        assert executor._compiled_fn is None
 
     def test_parallel_construction(self):
         """Test parallel pipeline construction."""
@@ -348,8 +350,11 @@ class TestDAGExecutorPipelineConstruction:
         from datarax.dag.nodes import BatchNode
 
         executor = DAGExecutor(enforce_batch=False)
+
         # Condition must access Batch data: x.data.get_value()["_array"].shape[0]
-        condition = lambda x: x.data.get_value()["_array"].shape[0] > 2
+        def condition(x):
+            return x.data.get_value()["_array"].shape[0] > 2
+
         true_path = MockOperator(multiplier=2.0, name="true")
         false_path = MockOperator(multiplier=0.5, name="false")
 
@@ -418,14 +423,14 @@ class TestDAGExecutorPipelineConstruction:
         """Test pipeline construction using >> operator."""
         from datarax.dag.nodes import BatchNode
 
-        # Test: from_source(source) >> op1 >> op2
-        # Note: from_source returns a DAGExecutor. We verify DAGExecutor >> Node behavior.
+        # Test: build_source_pipeline(source) >> op1 >> op2
+        # Note: build_source_pipeline returns a DAGExecutor. We verify DAGExecutor >> Node behavior.
 
         executor = DAGExecutor(enforce_batch=False)
         t1 = MockOperator(multiplier=2.0, name="t1")
         t2 = MockOperator(multiplier=3.0, name="t2")
 
-        # Initial setup: DAGExecutor with just BatchNode (simulating from_source)
+        # Initial setup: DAGExecutor with just BatchNode (simulating build_source_pipeline)
         executor.add(BatchNode(batch_size=4))
 
         # Use >> operator to add nodes
@@ -495,8 +500,11 @@ class TestDAGExecutorExecution:
     def test_branch_execution_true_path(self, sample_dict_data):
         """Test branch execution taking true path."""
         executor = DAGExecutor(enforce_batch=False)
+
         # Condition checks the batch size of the image field (access via Batch API)
-        condition = lambda x: x.data.get_value()["image"].shape[0] >= 4  # True for our sample data
+        def condition(x):
+            return x.data.get_value()["image"].shape[0] >= 4  # True for our sample data
+
         true_path = MockOperator(multiplier=2.0, name="true")
         false_path = MockOperator(multiplier=0.5, name="false")
 
@@ -509,8 +517,11 @@ class TestDAGExecutorExecution:
     def test_branch_execution_false_path(self, sample_dict_data):
         """Test branch execution taking false path."""
         executor = DAGExecutor(enforce_batch=False)
+
         # Condition checks the batch size of the image field (access via Batch API)
-        condition = lambda x: x.data.get_value()["image"].shape[0] > 10  # False for our sample data
+        def condition(x):
+            return x.data.get_value()["image"].shape[0] > 10  # False for our sample data
+
         true_path = MockOperator(multiplier=2.0, name="true")
         false_path = MockOperator(multiplier=0.5, name="false")
 
@@ -540,13 +551,13 @@ class TestDAGExecutorExecution:
         executor = DAGExecutor(enforce_batch=False)
         executor.add(OperatorNode(MockOperator()))
 
-        assert executor._iteration_count == 0
+        assert executor._iteration_total == 0
 
         executor(sample_dict_data)
-        assert executor._iteration_count == 1
+        assert executor._iteration_total == 1
 
         executor(sample_dict_data)
-        assert executor._iteration_count == 2
+        assert executor._iteration_total == 2
 
     def test_empty_pipeline_execution(self, sample_data):
         """Test execution of empty pipeline (Identity)."""
@@ -718,7 +729,7 @@ class TestDAGExecutorLazyRNG:
         executor.graph = inner_seq
 
         # Reset detection cache to force redetection
-        executor._needs_rng = None
+        executor._runtime_state.needs_rng = None
 
         # Should detect stochastic op in nested structure
         assert executor.rngs is not None
@@ -756,14 +767,14 @@ class TestDAGExecutorCaching:
     def test_caching_enabled_by_default(self):
         """Test that caching is enabled by default."""
         executor = DAGExecutor(enforce_batch=False)
-        assert executor.enable_caching is True
-        assert executor._cache is not None
+        assert executor.is_caching_enabled is True
+        assert executor._memo is not None
 
     def test_caching_disabled(self):
         """Test caching disabled."""
         executor = DAGExecutor(enable_caching=False, enforce_batch=False)
-        assert executor.enable_caching is False
-        assert executor._cache is None
+        assert executor.is_caching_enabled is False
+        assert executor._memo is None
 
     def test_cache_with_deterministic_pipeline(self, sample_data):
         """Test caching works for deterministic pipelines (no stochastic ops).
@@ -794,13 +805,13 @@ class TestDAGExecutorCaching:
 
         # Populate cache - no key will be generated since rngs is None
         executor(sample_data)
-        assert executor._cache is not None
-        assert len(executor._cache) > 0
+        assert executor._memo is not None
+        assert len(executor._memo) > 0
 
         # Clear cache
         executor.clear_cache()
-        assert executor._cache is not None
-        assert len(executor._cache) == 0
+        assert executor._memo is not None
+        assert len(executor._memo) == 0
 
     def test_cache_with_cached_node(self, sample_data):
         """Test interaction with Cache node."""
@@ -825,14 +836,14 @@ class TestDAGExecutorJITCompilation:
     def test_jit_compilation_disabled_by_default(self):
         """Test JIT compilation is disabled by default."""
         executor = DAGExecutor(enforce_batch=False)
-        assert executor.jit_compile is False
-        assert executor._jit_execute is None
+        assert executor.is_jit_compilation_enabled is False
+        assert executor._compiled_fn is None
 
     def test_jit_compilation_enabled(self):
         """Test JIT compilation enabled."""
         executor = DAGExecutor(jit_compile=True, enforce_batch=False)
-        assert executor.jit_compile is True
-        assert executor._jit_execute is not None
+        assert executor.is_jit_compilation_enabled is True
+        assert executor._compiled_fn is not None
 
     def test_jit_execution(self, sample_data):
         """Test JIT-compiled execution."""
@@ -853,7 +864,7 @@ class TestDAGExecutorJITCompilation:
 
         executor.add(OperatorNode(MockOperator()))
 
-        assert executor._jit_execute is None
+        assert executor._compiled_fn is None
 
     @pytest.mark.skip(reason="JIT compilation with complex graphs needs more testing")
     def test_jit_with_complex_graph(self, sample_data):
@@ -924,7 +935,7 @@ class TestDAGExecutorStateManagement:
 
         executor2.set_state(state)
 
-        assert executor2._iteration_count == 2
+        assert executor2._iteration_total == 2
 
     @pytest.mark.skip(reason="Cache serialization with JAX arrays needs separate fix")
     def test_state_with_cache(self, sample_data):
@@ -943,7 +954,7 @@ class TestDAGExecutorStateManagement:
         new_executor.add(OperatorNode(MockOperator(multiplier=2.0)))
         new_executor.set_state(state)
 
-        assert new_executor._cache is not None
+        assert new_executor._memo is not None
 
     def test_state_without_cache(self):
         """Test state management without cache."""
@@ -955,7 +966,7 @@ class TestDAGExecutorStateManagement:
         new_executor = DAGExecutor(enable_caching=False, enforce_batch=False)
         new_executor.set_state(state)
 
-        assert new_executor._cache is None
+        assert new_executor._memo is None
 
 
 class TestOperatorNode:
@@ -1175,6 +1186,7 @@ class TestDAGExecutorComplexScenarios:
 
         # Transform that works with dict data
         def dict_transform(data, *, key=None):
+            del key
             return {
                 "image": data["image"] * 2.0,
                 "label": data["label"] + 1,
@@ -1187,6 +1199,7 @@ class TestDAGExecutorComplexScenarios:
                 super().__init__(config, name="dict_transform")
 
             def apply(self, data, state, metadata, random_params=None, stats=None):
+                del random_params, stats
                 result = dict_transform(data, key=None)
                 return result, state, metadata
 
@@ -1266,6 +1279,7 @@ class TestDAGExecutorErrorHandling:
 
             def apply(self, data, state, metadata, random_params=None, stats=None):
                 # Return zeros of same shape
+                del random_params, stats
                 result = jax.tree.map(jnp.zeros_like, data)
                 return result, state, metadata
 
@@ -1297,6 +1311,7 @@ class TestDAGExecutorErrorHandling:
                 super().__init__(config, name="reshape1")
 
             def apply(self, data, state, metadata, random_params=None, stats=None):
+                del random_params, stats
                 result = {"_array": data["_array"].reshape(-1)}  # Flatten to 1D
                 return result, state, metadata
 
@@ -1306,6 +1321,7 @@ class TestDAGExecutorErrorHandling:
                 super().__init__(config, name="reshape2")
 
             def apply(self, data, state, metadata, random_params=None, stats=None):
+                del random_params, stats
                 return data, state, metadata  # Keep original shape
 
         executor.parallel([OperatorNode(ReshapeOperator1()), OperatorNode(ReshapeOperator2())])
@@ -1439,8 +1455,11 @@ class TestConvenienceFunctions:
 
     def test_branch_function(self, sample_data):
         """Test creating and using Branch node directly."""
+
         # Condition must access Batch data: x.data.get_value()["_array"].shape[0]
-        condition = lambda x: x.data.get_value()["_array"].shape[0] > 2
+        def condition(x):
+            return x.data.get_value()["_array"].shape[0] > 2
+
         true_path = MockOperator(multiplier=2.0, name="true")
         false_path = MockOperator(multiplier=0.5, name="false")
 
@@ -1490,6 +1509,7 @@ class TestDAGExecutorIntegration:
 
             def apply(self, data, state, metadata, random_params=None, stats=None):
                 # data is a dict with "_array" key
+                del random_params, stats
                 arr = data["_array"]
                 # Apply linear transformation to last dimension
                 original_shape = arr.shape
@@ -1601,11 +1621,11 @@ class TestDAGExecutorBasics:
         assert isinstance(executor.graph, Identity)
         # rngs is lazy - None for deterministic pipelines (no stochastic ops)
         assert executor.rngs is None  # No stochastic ops = no RNG needed
-        assert executor.enable_caching is True
-        assert executor.jit_compile is False
-        assert executor._iteration_count == 0
-        assert executor._cache == {}
-        assert executor._jit_execute is None
+        assert executor.is_caching_enabled is True
+        assert executor.is_jit_compilation_enabled is False
+        assert executor._iteration_total == 0
+        assert executor._memo == {}
+        assert executor._compiled_fn is None
 
     def test_initialization_with_transform(self):
         """Test initialization with initial transform."""
@@ -1630,8 +1650,8 @@ class TestDAGExecutorBasics:
         executor = DAGExecutor(rngs=rngs, enable_caching=False, jit_compile=False)
 
         assert executor.rngs is rngs
-        assert executor.enable_caching is False
-        assert executor._cache is None
+        assert executor.is_caching_enabled is False
+        assert executor._memo is None
 
     def test_add_transform_to_empty(self):
         """Test adding transform to empty executor."""
@@ -1704,8 +1724,11 @@ class TestDAGExecutorExecutionExtended:
         """Test branch execution taking true path."""
         # Disable batch enforcement for direct execution tests
         executor = DAGExecutor(enforce_batch=False)
+
         # Condition must access Batch data: x.data.get_value()["_array"].shape[0]
-        condition = lambda x: x.data.get_value()["_array"].shape[0] >= 4  # True for our sample data
+        def condition(x):
+            return x.data.get_value()["_array"].shape[0] >= 4  # True for our sample data
+
         true_path = MockOperator(multiplier=2.0, name="true")
         false_path = MockOperator(multiplier=0.5, name="false")
 
@@ -1719,10 +1742,11 @@ class TestDAGExecutorExecutionExtended:
         """Test branch execution taking false path."""
         # Disable batch enforcement for direct execution tests
         executor = DAGExecutor(enforce_batch=False)
+
         # Condition must access Batch data: x.data.get_value()["_array"].shape[0]
-        condition = lambda x: (
-            x.data.get_value()["_array"].shape[0] > 10
-        )  # False for our sample data
+        def condition(x):
+            return x.data.get_value()["_array"].shape[0] > 10  # False for our sample data
+
         true_path = MockOperator(multiplier=2.0, name="true")
         false_path = MockOperator(multiplier=0.5, name="false")
 
@@ -1753,13 +1777,13 @@ class TestDAGExecutorExecutionExtended:
         executor = DAGExecutor(enforce_batch=False)
         executor.add(OperatorNode(MockOperator()))
 
-        assert executor._iteration_count == 0
+        assert executor._iteration_total == 0
 
         executor(sample_data)
-        assert executor._iteration_count == 1
+        assert executor._iteration_total == 1
 
         executor(sample_data)
-        assert executor._iteration_count == 2
+        assert executor._iteration_total == 2
 
     def test_empty_pipeline_execution(self, sample_data):
         """Test execution of empty pipeline (Identity)."""
@@ -1788,8 +1812,11 @@ class TestDAGExecutorPipelineConstructionExtended:
     def test_branch_construction(self):
         """Test branch construction."""
         executor = DAGExecutor()
+
         # Condition must access Batch data: x.data.get_value()["_array"].shape[0]
-        condition = lambda x: x.data.get_value()["_array"].shape[0] > 2
+        def condition(x):
+            return x.data.get_value()["_array"].shape[0] > 2
+
         true_path = MockOperator(multiplier=2.0, name="true")
         false_path = MockOperator(multiplier=0.5, name="false")
 
@@ -1851,14 +1878,14 @@ class TestDAGExecutorCachingExtended:
     def test_caching_enabled_by_default(self):
         """Test that caching is enabled by default."""
         executor = DAGExecutor()
-        assert executor.enable_caching is True
-        assert executor._cache is not None
+        assert executor.is_caching_enabled is True
+        assert executor._memo is not None
 
     def test_caching_disabled(self):
         """Test caching disabled."""
         executor = DAGExecutor(enable_caching=False)
-        assert executor.enable_caching is False
-        assert executor._cache is None
+        assert executor.is_caching_enabled is False
+        assert executor._memo is None
 
     def test_clear_cache(self, sample_data):
         """Test cache clearing."""
@@ -1872,8 +1899,8 @@ class TestDAGExecutorCachingExtended:
 
         # Clear cache
         executor.clear_cache()
-        assert executor._cache is not None
-        assert len(executor._cache) == 0
+        assert executor._memo is not None
+        assert len(executor._memo) == 0
 
 
 class TestOperatorNodeExtended:
@@ -1969,13 +1996,13 @@ class TestDAGExecutorStateManagementExtended:
         executor2.set_state(state)
 
         # Check that basic state values were restored
-        assert executor2._iteration_count == 2
-        assert executor2._epoch_count == 0
+        assert executor2._iteration_total == 2
+        assert executor2._epoch_total == 0
 
         # Verify the restored executor can still execute
         result = executor2(sample_data)
         assert batch_allclose(result, sample_data)  # Identity transform
-        assert executor2._iteration_count == 3  # Incremented
+        assert executor2._iteration_total == 3  # Incremented
 
 
 class TestConvenienceFunctionsExtended:
@@ -1984,6 +2011,7 @@ class TestConvenienceFunctionsExtended:
     def test_pipeline_function(self, sample_data):
         """Test pipeline() convenience function with DataLoader first."""
         # Create a DataLoader as required by new API
+        del sample_data
         source = MockDataSource(size=5)
         loader = DataLoader(source, batch_size=2)
 
@@ -2027,8 +2055,11 @@ class TestConvenienceFunctionsExtended:
 
     def test_branch_function(self, sample_data):
         """Test branch() convenience function."""
+
         # Condition must access Batch data: x.data.get_value()["_array"].shape[0]
-        condition = lambda x: x.data.get_value()["_array"].shape[0] > 2
+        def condition(x):
+            return x.data.get_value()["_array"].shape[0] > 2
+
         true_path = MockOperator(multiplier=2.0, name="true")
         false_path = MockOperator(multiplier=0.5, name="false")
 
@@ -2086,6 +2117,7 @@ class TestDAGExecutorComplexScenariosExtended:
                 super().__init__(config, name="dict_operator")
 
             def apply(self, data, state, metadata, random_params=None, stats=None):
+                del random_params, stats
                 result = {
                     "image": data["image"] * 2.0,
                     "label": data["label"] + 1,
@@ -2165,9 +2197,9 @@ class TestDAGExecutorModuleConversions:
         executor.add(source)
 
         # Verify it was converted to DataSourceNode
-        assert executor._source_node is not None
-        assert isinstance(executor._source_node, DataSourceNode)
-        assert executor._source_node.source is source
+        assert executor._input_node is not None
+        assert isinstance(executor._input_node, DataSourceNode)
+        assert executor._input_node.source is source
 
     def test_operator_module_conversion(self):
         """Test OperatorModule is converted to OperatorNode."""
@@ -2381,10 +2413,10 @@ class TestCollectToArray:
 
     def test_collect_single_key(self, mock_source_with_get_batch):
         """Test collecting single key to array."""
-        from datarax.dag.dag_executor import from_source
+        from datarax.dag.dag_executor import build_source_pipeline
 
         source = mock_source_with_get_batch(size=50, feature_dim=8)
-        pipeline = from_source(source, batch_size=10)
+        pipeline = build_source_pipeline(source, batch_size=10)
 
         result = pipeline._collect_to_array(key="image")
 
@@ -2394,10 +2426,10 @@ class TestCollectToArray:
 
     def test_collect_default_key(self, mock_source_with_get_batch):
         """Test collecting with default key='image'."""
-        from datarax.dag.dag_executor import from_source
+        from datarax.dag.dag_executor import build_source_pipeline
 
         source = mock_source_with_get_batch(size=20, feature_dim=4)
-        pipeline = from_source(source, batch_size=5)
+        pipeline = build_source_pipeline(source, batch_size=5)
 
         result = pipeline._collect_to_array()  # Uses default key="image"
 
@@ -2406,10 +2438,10 @@ class TestCollectToArray:
 
     def test_collect_to_specific_device(self, mock_source_with_get_batch):
         """Test collecting to specific device."""
-        from datarax.dag.dag_executor import from_source
+        from datarax.dag.dag_executor import build_source_pipeline
 
         source = mock_source_with_get_batch(size=10, feature_dim=4)
-        pipeline = from_source(source, batch_size=5)
+        pipeline = build_source_pipeline(source, batch_size=5)
 
         device = jax.devices()[0]
         result = pipeline._collect_to_array(key="image", device=device)
@@ -2420,17 +2452,17 @@ class TestCollectToArray:
 
     def test_collect_missing_key_raises(self, mock_source_with_get_batch):
         """Test KeyError for missing key."""
-        from datarax.dag.dag_executor import from_source
+        from datarax.dag.dag_executor import build_source_pipeline
 
         source = mock_source_with_get_batch(size=10, feature_dim=4)
-        pipeline = from_source(source, batch_size=5)
+        pipeline = build_source_pipeline(source, batch_size=5)
 
         with pytest.raises(KeyError, match="Key 'nonexistent' not found"):
             pipeline._collect_to_array(key="nonexistent")
 
     def test_collect_empty_pipeline_raises(self):
         """Test ValueError for empty pipeline."""
-        from datarax.dag.dag_executor import from_source
+        from datarax.dag.dag_executor import build_source_pipeline
 
         class EmptySource(DataSourceModule):
             """A source that yields no elements."""
@@ -2455,20 +2487,22 @@ class TestCollectToArray:
                 raise StopIteration
 
             def get_batch(self, batch_size: int) -> list:
+                del batch_size
                 return []
 
             def reset(self):
                 self.index = 0
 
         source = EmptySource()
-        pipeline = from_source(source, batch_size=5)
+        pipeline = build_source_pipeline(source, batch_size=5)
 
         with pytest.raises(ValueError, match="no batches"):
             pipeline._collect_to_array()
 
     def test_collect_preserves_dtype(self, mock_source_with_get_batch):
         """Test dtype preservation during collection."""
-        from datarax.dag.dag_executor import from_source
+        del mock_source_with_get_batch
+        from datarax.dag.dag_executor import build_source_pipeline
 
         class Float16Source(DataSourceModule):
             """Source with float16 data."""
@@ -2508,7 +2542,7 @@ class TestCollectToArray:
                 self.index = 0
 
         source = Float16Source(size=10)
-        pipeline = from_source(source, batch_size=5)
+        pipeline = build_source_pipeline(source, batch_size=5)
 
         result = pipeline._collect_to_array(key="image")
 
@@ -2516,10 +2550,10 @@ class TestCollectToArray:
 
     def test_collect_with_label_key(self, mock_source_with_get_batch):
         """Test collecting a different key (label)."""
-        from datarax.dag.dag_executor import from_source
+        from datarax.dag.dag_executor import build_source_pipeline
 
         source = mock_source_with_get_batch(size=30, feature_dim=4)
-        pipeline = from_source(source, batch_size=10)
+        pipeline = build_source_pipeline(source, batch_size=10)
 
         result = pipeline._collect_to_array(key="label")
 
@@ -2528,10 +2562,10 @@ class TestCollectToArray:
 
     def test_collect_values_correctness(self, mock_source_with_get_batch):
         """Test that collected values are correct."""
-        from datarax.dag.dag_executor import from_source
+        from datarax.dag.dag_executor import build_source_pipeline
 
         source = mock_source_with_get_batch(size=5, feature_dim=3)
-        pipeline = from_source(source, batch_size=2)
+        pipeline = build_source_pipeline(source, batch_size=2)
 
         result = pipeline._collect_to_array(key="image")
 

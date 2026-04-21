@@ -239,6 +239,7 @@ class RangeSampler(SamplerModule):
         Args:
             seed: Optional seed (unused for range sampler but kept for API consistency).
         """
+        del seed
         self._current_position.set_value(self.start)
 
     def get_current_position(self) -> int:

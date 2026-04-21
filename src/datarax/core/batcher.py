@@ -87,4 +87,5 @@ class BatcherModule(StructuralModule):
             raise ValueError("batch_size must be positive")
 
         # Subclasses implement the actual batching logic
+        del elements, args, drop_remainder, kwargs
         raise NotImplementedError(f"{self.__class__.__name__} must implement process() method")

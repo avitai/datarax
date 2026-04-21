@@ -30,8 +30,12 @@ class StrategyContext:
 class CompositionStrategyImpl(abc.ABC):
     """Abstract base class for composition strategies."""
 
+    def describe(self) -> dict[str, Any]:
+        """Return a serializable description of this strategy."""
+        return {"strategy": type(self).__name__}
+
     @staticmethod
-    def _extract_operator_random_params(
+    def _random_params_for_operator(
         random_params: dict[str, Any] | None, operator_index: int
     ) -> Any | None:
         """Extract random params payload for one operator index."""
@@ -96,7 +100,7 @@ class CompositionStrategyImpl(abc.ABC):
         """
         outputs, states, metadatas = [], [], []
         for i, operator in enumerate(operators):
-            op_random_params = self._extract_operator_random_params(context.random_params, i)
+            op_random_params = self._random_params_for_operator(context.random_params, i)
             out_data, out_state, out_metadata = operator.apply(
                 context.data, context.state, context.metadata, op_random_params
             )

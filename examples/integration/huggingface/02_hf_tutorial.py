@@ -54,7 +54,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.composite_operator import (
@@ -121,7 +121,7 @@ filtered_config = HFEagerConfig(
 filtered_source = HFEagerSource(filtered_config, rngs=nnx.Rngs(1))
 
 # Check what fields are available
-pipeline = from_source(filtered_source, batch_size=1)
+pipeline = build_source_pipeline(filtered_source, batch_size=1)
 batch = next(iter(pipeline))
 data = batch.get_data()
 
@@ -287,7 +287,9 @@ train_config = HFEagerConfig(
 train_source = HFEagerSource(train_config, rngs=nnx.Rngs(0))
 
 # Chain: Source -> Augmentation -> Output
-training_pipeline = from_source(train_source, batch_size=64).add(OperatorNode(augmentation))
+training_pipeline = build_source_pipeline(train_source, batch_size=64).add(
+    OperatorNode(augmentation)
+)
 
 print("Training pipeline:")
 print("  HFEagerSource(mnist) -> Normalize -> RandomFlip -> Output")
@@ -421,7 +423,7 @@ def main():
         rngs=nnx.Rngs(0),
     )
 
-    pipeline = from_source(source, batch_size=64).add(OperatorNode(normalizer))
+    pipeline = build_source_pipeline(source, batch_size=64).add(OperatorNode(normalizer))
 
     # Process
     total = 0

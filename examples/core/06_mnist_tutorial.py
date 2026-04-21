@@ -73,7 +73,7 @@ import optax
 from flax import nnx
 
 # Datarax imports
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.modality.image import (
@@ -248,7 +248,7 @@ Training pipeline with augmentation, test pipeline without.
 # %%
 # Training pipeline with augmentation
 train_pipeline = (
-    from_source(train_source, batch_size=BATCH_SIZE)
+    build_source_pipeline(train_source, batch_size=BATCH_SIZE)
     .add(OperatorNode(preprocessor))
     .add(OperatorNode(brightness_aug))
     .add(OperatorNode(noise_aug))
@@ -261,7 +261,9 @@ test_preprocessor = ElementOperator(
     rngs=nnx.Rngs(0),
 )
 
-test_pipeline = from_source(test_source, batch_size=BATCH_SIZE).add(OperatorNode(test_preprocessor))
+test_pipeline = build_source_pipeline(test_source, batch_size=BATCH_SIZE).add(
+    OperatorNode(test_preprocessor)
+)
 
 print("Pipelines created:")
 print("  Train: Source -> Preprocess -> Brightness -> Noise")
@@ -464,7 +466,7 @@ def create_train_pipeline():
     )
 
     return (
-        from_source(source, batch_size=BATCH_SIZE)
+        build_source_pipeline(source, batch_size=BATCH_SIZE)
         .add(OperatorNode(preprocessor))
         .add(OperatorNode(brightness))
         .add(OperatorNode(noise))
@@ -481,7 +483,7 @@ def create_test_pipeline():
         rngs=nnx.Rngs(0),
     )
 
-    return from_source(source, batch_size=BATCH_SIZE).add(OperatorNode(preprocessor))
+    return build_source_pipeline(source, batch_size=BATCH_SIZE).add(OperatorNode(preprocessor))
 
 
 # Training loop
@@ -599,7 +601,9 @@ plain_preprocessor = ElementOperator(
     rngs=nnx.Rngs(0),
 )
 
-plain_pipeline = from_source(plain_source, batch_size=128).add(OperatorNode(plain_preprocessor))
+plain_pipeline = build_source_pipeline(plain_source, batch_size=128).add(
+    OperatorNode(plain_preprocessor)
+)
 plain_batch = next(iter(plain_pipeline))
 
 # Get augmented samples
@@ -653,7 +657,7 @@ print(f"Saved: {output_dir / 'cv-mnist-augmentation-samples.png'}")
 2. **Fresh Pipelines**: Create new pipeline instances for each epoch to reset iteration
 3. **Augmentation**: Light augmentation (brightness, noise) improves generalization
 4. **Preprocessing**: Always normalize with dataset-specific statistics
-5. **Batching**: `from_source(batch_size=N)` handles batching automatically
+5. **Batching**: `build_source_pipeline(batch_size=N)` handles batching automatically
 
 ### Pipeline Architecture
 

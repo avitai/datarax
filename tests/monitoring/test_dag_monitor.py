@@ -18,6 +18,7 @@ from datarax.dag.nodes import BatchNode, DataSourceNode, OperatorNode
 from datarax.monitoring.callbacks import MetricsObserver
 from datarax.monitoring.dag_monitor import monitored_pipeline, MonitoredDAGExecutor
 from datarax.monitoring.metrics import MetricRecord
+from datarax.utils.console import emit
 
 
 class MockDataSource(DataSourceModule):
@@ -71,6 +72,7 @@ class MockOperator(OperatorModule):
         random_params: Any = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, jax.Array], dict[str, Any], Any]:
+        del random_params, stats
         result_data = jax.tree.map(lambda x: x * self.factor, data)
         return result_data, state, metadata
 
@@ -225,7 +227,7 @@ class TestMonitoredDAGExecutor:
         list(executor)
 
         # Reset source and process again
-        executor._source_node = DataSourceNode(MockDataSource(data))
+        executor._input_node = DataSourceNode(MockDataSource(data))
         list(executor)
 
         # Get report with cache stats
@@ -407,4 +409,4 @@ if __name__ == "__main__":
     test_integration.test_compatibility_with_reporters()
     test_integration.test_performance_comparison()
 
-    print("✓ All MonitoredDAGExecutor tests passed!")
+    emit("✓ All MonitoredDAGExecutor tests passed!")

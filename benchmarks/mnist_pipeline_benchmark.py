@@ -20,12 +20,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 from flax import nnx
 
+from datarax.utils.console import emit
+
 
 matplotlib.use("Agg")
 
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.performance.synchronization import block_until_ready_tree
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -67,7 +70,7 @@ def create_pipeline(
         rngs=nnx.Rngs(0),
     )
 
-    pipeline = from_source(source, batch_size=batch_size).add(OperatorNode(normalizer))
+    pipeline = build_source_pipeline(source, batch_size=batch_size).add(OperatorNode(normalizer))
 
     if with_augmentation:
 
@@ -101,7 +104,7 @@ def benchmark_throughput(
 
     # Warmup
     for i, batch in enumerate(pipeline):
-        _ = batch["image"].block_until_ready()
+        block_until_ready_tree(batch["image"])
         if i >= warmup_batches:
             break
 
@@ -113,7 +116,7 @@ def benchmark_throughput(
         pipeline = create_pipeline(data, batch_size, with_augmentation, seed=epoch)
         for batch in pipeline:
             t0 = time.perf_counter()
-            _ = batch["image"].block_until_ready()
+            block_until_ready_tree(batch["image"])
             batch_times.append(time.perf_counter() - t0)
             total_samples += batch["image"].shape[0]
 
@@ -138,22 +141,22 @@ def run_batch_size_sweep(data: dict, batch_sizes: list[int], num_epochs: int = 1
     """Sweep over batch sizes and measure throughput for each."""
     results = []
     for bs in batch_sizes:
-        print(f"  Batch size {bs:>4d}...", end=" ", flush=True)
+        emit(f"  Batch size {bs:>4d}...", end=" ", flush=True)
         result = benchmark_throughput(data, bs, num_epochs)
-        print(f"{result['samples_per_second']:>10.0f} samples/s")
+        emit(f"{result['samples_per_second']:>10.0f} samples/s")
         results.append(result)
     return results
 
 
 def run_augmentation_comparison(data: dict, batch_size: int = 64, num_epochs: int = 1) -> dict:
     """Compare throughput with and without augmentation."""
-    print("  Without augmentation...", end=" ", flush=True)
+    emit("  Without augmentation...", end=" ", flush=True)
     base = benchmark_throughput(data, batch_size, num_epochs, with_augmentation=False)
-    print(f"{base['samples_per_second']:>10.0f} samples/s")
+    emit(f"{base['samples_per_second']:>10.0f} samples/s")
 
-    print("  With augmentation...   ", end=" ", flush=True)
+    emit("  With augmentation...   ", end=" ", flush=True)
     aug = benchmark_throughput(data, batch_size, num_epochs, with_augmentation=True)
-    print(f"{aug['samples_per_second']:>10.0f} samples/s")
+    emit(f"{aug['samples_per_second']:>10.0f} samples/s")
 
     overhead_pct = (
         (base["samples_per_second"] - aug["samples_per_second"]) / base["samples_per_second"] * 100
@@ -213,7 +216,7 @@ def plot_results(results: dict, output_dir: Path) -> None:
     path = output_dir / "mnist-throughput-and-latency.png"
     plt.savefig(path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close()
-    print(f"  Saved: {path}")
+    emit(f"  Saved: {path}")
 
     # 3. Augmentation comparison: grouped bar
     aug = results["augmentation_comparison"]
@@ -263,7 +266,7 @@ def plot_results(results: dict, output_dir: Path) -> None:
     path = output_dir / "mnist-augmentation-comparison.png"
     plt.savefig(path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close()
-    print(f"  Saved: {path}")
+    emit(f"  Saved: {path}")
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -277,27 +280,27 @@ def main():
     parser.add_argument("--output", type=str, default=None, help="Output JSON path")
     args = parser.parse_args()
 
-    print("MNIST Pipeline Benchmark")
-    print("=" * 60)
-    print(f"JAX backend: {jax.default_backend()}")
-    print(f"JAX devices: {jax.devices()}")
-    print(f"Samples: {args.samples}")
-    print()
+    emit("MNIST Pipeline Benchmark")
+    emit("=" * 60)
+    emit(f"JAX backend: {jax.default_backend()}")
+    emit(f"JAX devices: {jax.devices()}")
+    emit(f"Samples: {args.samples}")
+    emit()
 
     data = generate_mnist_like_data(num_samples=args.samples)
 
     # Batch size sweep
-    print("Batch Size Sweep")
-    print("-" * 60)
+    emit("Batch Size Sweep")
+    emit("-" * 60)
     batch_sizes = [8, 16, 32, 64, 128, 256]
     sweep_results = run_batch_size_sweep(data, batch_sizes, args.epochs)
 
     # Augmentation comparison
-    print()
-    print("Augmentation Overhead")
-    print("-" * 60)
+    emit()
+    emit("Augmentation Overhead")
+    emit("-" * 60)
     aug_results = run_augmentation_comparison(data, batch_size=64, num_epochs=args.epochs)
-    print(f"  Overhead: {aug_results['augmentation_overhead_pct']:.1f}%")
+    emit(f"  Overhead: {aug_results['augmentation_overhead_pct']:.1f}%")
 
     # Collect results
     all_results = {
@@ -316,13 +319,13 @@ def main():
     # Save results
     output_path = Path(args.output or "temp/mnist_benchmark_results.json")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w") as f:
+    with output_path.open("w") as f:
         json.dump(all_results, f, indent=2)
-    print(f"\nResults saved to {output_path}")
+    emit(f"\nResults saved to {output_path}")
 
     # Generate plots in same directory as JSON output
-    print()
-    print("Generating plots...")
+    emit()
+    emit("Generating plots...")
     plot_results(all_results, output_path.parent)
 
 

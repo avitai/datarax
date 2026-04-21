@@ -14,7 +14,7 @@ from calibrax.core import Metric, MetricDef, MetricDirection, Point, Run
 from calibrax.profiling import TimingCollector, TimingSample
 from flax import nnx
 
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.core.nodes import OperatorNode
 from datarax.dag import DAGExecutor
 from datarax.operators import ElementOperator, ElementOperatorConfig
@@ -63,7 +63,7 @@ def create_basic_pipeline(batch_size: int = 32) -> DAGExecutor:
     source = MemorySource(source_config, data=data, rngs=nnx.Rngs(0))
     normalizer_config = ElementOperatorConfig(stochastic=False)
     normalizer = ElementOperator(normalizer_config, fn=normalize_transform, rngs=nnx.Rngs(0))
-    pipeline = from_source(source, batch_size=batch_size).add(OperatorNode(normalizer))
+    pipeline = build_source_pipeline(source, batch_size=batch_size).add(OperatorNode(normalizer))
     return pipeline
 
 
@@ -81,7 +81,7 @@ def create_advanced_pipeline(batch_size: int = 32) -> DAGExecutor:
         heavy_config, fn=simulated_heavy_transform, rngs=nnx.Rngs(heavy=43)
     )
     pipeline = (
-        from_source(source, batch_size=batch_size)
+        build_source_pipeline(source, batch_size=batch_size)
         .add(OperatorNode(normalizer))
         .add(OperatorNode(flip_augmenter))
         .add(OperatorNode(heavy_transform))

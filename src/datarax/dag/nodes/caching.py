@@ -131,6 +131,7 @@ class CacheNode(Node):
         self.inner_node = inner_node
         self.cache_size = cache_size
         self.cache = nnx.Variable(OrderedDict())
+        self.cache_inputs = nnx.Variable(OrderedDict())
         self.hits = nnx.Variable(0)
         self.misses = nnx.Variable(0)
 
@@ -154,13 +155,16 @@ class CacheNode(Node):
 
         # Get cache dict copy (NNX Variables return copies, not references)
         cache_dict = self.cache.get_value()
+        cache_inputs = self.cache_inputs.get_value()
 
         # Check cache
         if cache_key in cache_dict:
             self.hits.set_value(self.hits.get_value() + 1)
             # Move to end (LRU) and persist
             cache_dict.move_to_end(cache_key)
+            cache_inputs.move_to_end(cache_key)
             self.cache.set_value(cache_dict)
+            self.cache_inputs.set_value(cache_inputs)
             return cache_dict[cache_key]
 
         # Compute and cache
@@ -169,14 +173,18 @@ class CacheNode(Node):
 
         # Add to cache
         cache_dict[cache_key] = result
+        cache_inputs[cache_key] = data
         cache_dict.move_to_end(cache_key)
+        cache_inputs.move_to_end(cache_key)
 
         # Enforce size limit
         while len(cache_dict) > self.cache_size:
-            cache_dict.popitem(last=False)
+            oldest_key, _ = cache_dict.popitem(last=False)
+            cache_inputs.pop(oldest_key, None)
 
         # Persist cache updates
         self.cache.set_value(cache_dict)
+        self.cache_inputs.set_value(cache_inputs)
 
         return result
 
@@ -186,24 +194,37 @@ class CacheNode(Node):
         Uses shape/dtype metadata and object identity — no device-to-host
         transfers. This avoids blocking Python on GPU/TPU reductions.
         """
-        if isinstance(data, dict):
-            key_parts = []
-            for k, v in sorted(data.items()):
-                if hasattr(v, "shape"):
-                    key_parts.append(f"{k}:{v.shape}:{v.dtype}:{id(v)}")
-                else:
-                    key_parts.append(f"{k}:{hash(v)}")
-            key_str = "|".join(key_parts)
-        elif hasattr(data, "shape"):
-            key_str = f"{data.shape}:{data.dtype}:{id(data)}"
-        else:
-            key_str = str(hash(data))
+        key_str = repr(self._metadata_fingerprint(data))
 
         return hashlib.md5(key_str.encode(), usedforsecurity=False).hexdigest()
+
+    def _metadata_fingerprint(self, value: Any) -> Any:
+        """Build a non-blocking fingerprint from host-visible metadata."""
+        if isinstance(value, Batch):
+            return (
+                "Batch",
+                value.batch_size,
+                self._metadata_fingerprint(value.data.get_value()),
+                self._metadata_fingerprint(value.states.get_value()),
+                self._metadata_fingerprint(value.batch_state.get_value()),
+            )
+        if isinstance(value, dict):
+            return tuple(
+                (key, self._metadata_fingerprint(item))
+                for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            )
+        if isinstance(value, tuple):
+            return tuple(self._metadata_fingerprint(item) for item in value)
+        if isinstance(value, list):
+            return tuple(self._metadata_fingerprint(item) for item in value)
+        if hasattr(value, "shape"):
+            return ("array", value.shape, getattr(value, "dtype", None), id(value))
+        return ("object", type(value).__qualname__, id(value))
 
     def clear_cache(self) -> None:
         """Clear the cache."""
         self.cache.set_value(OrderedDict())
+        self.cache_inputs.set_value(OrderedDict())
 
     def get_stats(self) -> dict[str, int | float]:
         """Get cache statistics."""

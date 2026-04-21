@@ -12,7 +12,7 @@ from jaxtyping import PyTree
 logger = logging.getLogger(__name__)
 
 
-def merge_outputs(
+def merge_output_sequence(
     outputs: list[PyTree],
     merge_strategy: str | None,
     merge_axis: int = 0,
@@ -112,7 +112,7 @@ def merge_outputs_conditional(
 
     if merge_strategy == "dict":
         # Dict: include all operators (even False conditions)
-        return merge_outputs(outputs, merge_strategy, merge_axis, merge_fn)
+        return merge_output_sequence(outputs, merge_strategy, merge_axis, merge_fn)
 
     raise ValueError(f"Unknown merge_strategy: {merge_strategy}")
 

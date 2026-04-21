@@ -43,6 +43,7 @@ class SimpleBatcher(StructuralModule):
 
     def process(self, elements: list, *args, **kwargs) -> list:
         """Group elements into batches of fixed size."""
+        del args, kwargs
         batch_size = self.config.batch_size
         batches = []
 
@@ -71,6 +72,7 @@ class SimpleSampler(StructuralModule):
 
     def process(self, dataset_size: int, *args, **kwargs) -> list[int]:
         """Generate sampling indices."""
+        del args, kwargs
         num_samples = self.config.num_samples
 
         if self.config.stochastic:

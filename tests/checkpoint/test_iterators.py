@@ -1,9 +1,9 @@
 """Tests for the iterator checkpoint functionality."""
 
-import os
 import shutil
 import tempfile
 import unittest
+from pathlib import Path
 from typing import Any
 
 import jax.numpy as jnp
@@ -125,10 +125,10 @@ class TestIteratorCheckpoint(unittest.TestCase):
             next(self.iterator)
 
         # Save the iterator state
-        path = self.checkpoint.save(self.iterator, step=1)
+        path = self.checkpoint.save_to_directory(self.iterator, step=1)
 
         # Check that the path exists
-        self.assertTrue(os.path.exists(path))
+        self.assertTrue(Path(path).exists())
 
         # Create a new iterator
         new_iterator = SimpleIterator(self.test_data)
@@ -156,7 +156,7 @@ class TestIteratorCheckpoint(unittest.TestCase):
                 next(self.iterator)
 
             # Save the iterator state with a high keep value to preserve all checkpoints
-            self.checkpoint.save(self.iterator, step=i + 1, keep=10)
+            self.checkpoint.save_to_directory(self.iterator, step=i + 1, keep=10)
 
         # Test restoring from step 2
         new_iterator = SimpleIterator(self.test_data)
@@ -200,19 +200,19 @@ class TestPipelineCheckpoint(unittest.TestCase):
     def test_save_at_step(self):
         """Test saving at specified steps."""
         # Should save at step 1000
-        result = self.checkpoint.save_at_step(self.iterator, step=1000)
+        result = self.checkpoint.save_to_step(self.iterator, step=1000)
         self.assertIsNotNone(result)
 
         # Should not save at step 1001
-        result = self.checkpoint.save_at_step(self.iterator, step=1001)
+        result = self.checkpoint.save_to_step(self.iterator, step=1001)
         self.assertIsNone(result)
 
         # Should save at step 2000
-        result = self.checkpoint.save_at_step(self.iterator, step=2000)
+        result = self.checkpoint.save_to_step(self.iterator, step=2000)
         self.assertIsNotNone(result)
 
         # Should save at step 500 with custom interval
-        result = self.checkpoint.save_at_step(self.iterator, step=500, interval=500)
+        result = self.checkpoint.save_to_step(self.iterator, step=500, interval=500)
         self.assertIsNotNone(result)
 
     def test_restore_latest(self):
@@ -222,9 +222,9 @@ class TestPipelineCheckpoint(unittest.TestCase):
             next(self.iterator)
 
         # Save the checkpoint - use an explicit step to ensure it's saved
-        checkpoint_path = self.checkpoint.save(self.iterator, step=1)
+        checkpoint_path = self.checkpoint.save_to_directory(self.iterator, step=1)
         # Verify the checkpoint was created
-        self.assertTrue(os.path.exists(checkpoint_path))
+        self.assertTrue(Path(checkpoint_path).exists())
 
         # Create a new iterator
         new_iterator = SimpleIterator(self.test_data)

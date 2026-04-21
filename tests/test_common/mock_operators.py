@@ -22,9 +22,11 @@ class ConstantMockOperator(OperatorModule):
         self.statistics = {f"{name}_stat": 1.0}
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
+        del random_params, stats
         return jnp.full_like(data, self.value), state, metadata
 
     def generate_random_params(self, rng, data_shapes):
+        del data_shapes, rng
         return {}
 
 
@@ -41,6 +43,7 @@ class MultiplierMockOperator(OperatorModule):
         self.statistics = {f"{name}_stat": 1.0}
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
+        del random_params, stats
         new_data = jax.tree.map(lambda x: x * self.multiplier, data)
 
         new_state = state.copy() if state else {}
@@ -53,4 +56,5 @@ class MultiplierMockOperator(OperatorModule):
         return new_data, new_state, new_metadata
 
     def generate_random_params(self, rng, data_shapes):
+        del data_shapes, rng
         return {}

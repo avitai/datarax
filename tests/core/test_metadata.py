@@ -26,7 +26,7 @@ class TestMetadataBasics:
         assert meta.batch_idx is None
         assert meta.shard_id is None
         assert meta.rng_key is None
-        assert meta.record_key is None
+        assert meta.entry_key is None
         assert meta.source_info is None
 
     def test_creation_with_values(self):
@@ -46,7 +46,7 @@ class TestMetadataBasics:
         assert metadata.global_step == 100
         assert metadata.batch_idx == 2
         assert metadata.shard_id == 1
-        assert metadata.record_key == "record_123"
+        assert metadata.entry_key == "record_123"
         assert metadata.source_info == {"path": "/tmp/data"}
 
     def test_replace_method(self):
@@ -56,11 +56,11 @@ class TestMetadataBasics:
 
         # Original unchanged
         assert metadata.index == 1
-        assert metadata.record_key == "k1"
+        assert metadata.entry_key == "k1"
 
         # New updated
         assert new_meta.index == 2
-        assert new_meta.record_key == "k2"
+        assert new_meta.entry_key == "k2"
 
     def test_increment_methods(self):
         """Test helper methods for incrementing counters."""
@@ -112,7 +112,7 @@ class TestMetadataBasics:
         # Note: from_dict handles mapping 'record_key' -> 'key'
         reconstructed = Metadata.from_dict(data)
         assert reconstructed.index == 10
-        assert reconstructed.record_key == "rec1"
+        assert reconstructed.entry_key == "rec1"
         assert reconstructed.source_info == {"a": 1}
 
     def test_merge(self):
@@ -216,7 +216,7 @@ class TestMetadataPytree:
         # Reconstruct
         reconstructed = jax.tree_util.tree_unflatten(treedef, leaves)
         assert reconstructed.index == 1
-        assert reconstructed.record_key == "k1"
+        assert reconstructed.entry_key == "k1"
 
     def test_tree_map(self):
         """Test working with tree_map."""
@@ -394,6 +394,6 @@ class TestCreateMetadata:
         assert meta.global_step == 100
         assert meta.batch_idx == 5
         assert meta.shard_id == 0
-        assert meta.record_key == "test"
+        assert meta.entry_key == "test"
         assert meta.source_info == {"data": "value"}
         assert meta.rng_key is not None

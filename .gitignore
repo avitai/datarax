@@ -130,6 +130,9 @@ celerybeat.pid
 
 # Environments
 .env
+.datarax.env
+.env.local
+.venv
 .venv*
 env/
 venv/
@@ -196,6 +199,7 @@ ocdbt.process_*/
 array_metadatas/
 
 # Test artifacts
+artifacts/
 test_debug*.py
 test_*.tmp
 **/test_checkpoint*/

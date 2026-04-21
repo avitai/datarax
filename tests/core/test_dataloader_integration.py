@@ -33,6 +33,7 @@ class MockDataSource(DataSourceModule):
 
     def __call__(self, key=None):
         """Return next data element."""
+        del key
         if self.index.get_value() >= self.data_size:
             return None
 
@@ -85,14 +86,13 @@ class TestDataLoaderIteration:
             assert batch.data.get_value()["value"].shape[0] <= 4  # batch_size or smaller
 
     def test_dataloader_with_shuffling_iteration(self, mock_source):
-        """Test DataLoader with shuffling iteration."""
-        dataloader = DataLoader(mock_source, batch_size=3, shuffle_buffer_size=10, shuffle_seed=42)
+        """Datarax DataLoader iteration remains finite without source-level shuffle."""
+        dataloader = DataLoader(mock_source, batch_size=3, backend="datarax")
 
         # Should be able to iterate
         batches = list(dataloader)
 
-        # Should have some batches
-        assert len(batches) >= 0  # May be empty due to shuffling buffer
+        assert len(batches) > 0
 
     def test_dataloader_drop_remainder(self, mock_source):
         """Test DataLoader with drop_remainder functionality."""
@@ -212,24 +212,21 @@ class TestDataLoaderConfiguration:
 
     def test_dataloader_properties(self, mock_source):
         """Test DataLoader configuration property exposure."""
-        dataloader = DataLoader(
-            mock_source, batch_size=8, shuffle_buffer_size=16, drop_remainder=True, shuffle_seed=123
-        )
+        dataloader = DataLoader(mock_source, batch_size=8, drop_remainder=True)
 
         # Should expose configuration
         assert dataloader.batch_size == 8
-        assert dataloader.shuffle_buffer_size == 16
         assert dataloader.drop_remainder
-        assert dataloader.shuffle_seed == 123
+        assert dataloader.shuffle is False
 
     def test_dataloader_repr(self, mock_source):
         """Test DataLoader string representation."""
-        dataloader = DataLoader(mock_source, batch_size=4, shuffle_buffer_size=8)
+        dataloader = DataLoader(mock_source, batch_size=4)
 
         repr_str = repr(dataloader)
         assert "DataLoader" in repr_str
         assert "batch_size=4" in repr_str
-        assert "shuffle=8" in repr_str
+        assert "backend=datarax" in repr_str
 
 
 class TestNNXModuleIteratorStateRegression:

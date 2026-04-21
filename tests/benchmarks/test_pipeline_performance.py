@@ -103,12 +103,14 @@ def _build_pipeline_for_benchmark(
 
     det_config = ElementOperatorConfig(stochastic=False)
     for _ in range(num_transforms):
-        pipeline = pipeline.operate(ElementOperator(det_config, fn=lambda e, k: e))
+        pipeline = pipeline.operate(ElementOperator(det_config, fn=lambda e, _k: e))
 
     if num_augmenters > 0:
         stoch_config = ElementOperatorConfig(stochastic=True, stream_name="augment")
         for _ in range(num_augmenters):
-            pipeline = pipeline.operate(ElementOperator(stoch_config, fn=lambda e, k: e, rngs=rngs))
+            pipeline = pipeline.operate(
+                ElementOperator(stoch_config, fn=lambda e, _k: e, rngs=rngs),
+            )
 
     if prefetch_size is not None:
         pipeline = pipeline.add(PrefetchNode(buffer_size=prefetch_size))
@@ -248,7 +250,7 @@ def test_transform_count_impact(benchmark, benchmark_image_data, transform_count
         # Add transforms (deterministic operators) - Element API: fn(element, key) -> element
         det_config = ElementOperatorConfig(stochastic=False)
         for i in range(transform_count):
-            identity_op = ElementOperator(det_config, fn=lambda e, k: e)
+            identity_op = ElementOperator(det_config, fn=lambda e, _k: e)
             pipeline = pipeline.operate(identity_op)
 
         # Process limited batches
@@ -354,7 +356,7 @@ def test_augmentation_impact(benchmark, benchmark_image_data, augmenter_count):
         # Add augmenters (stochastic operators) - Element API: fn(element, key) -> element
         stoch_config = ElementOperatorConfig(stochastic=True, stream_name="augment")
         for i in range(augmenter_count):
-            augmenter = ElementOperator(stoch_config, fn=lambda e, k: e, rngs=rngs)
+            augmenter = ElementOperator(stoch_config, fn=lambda e, _k: e, rngs=rngs)
             pipeline = pipeline.operate(augmenter)
 
         # Process limited batches
@@ -384,13 +386,13 @@ def test_end_to_end_optimal_configuration(benchmark, benchmark_image_data):
         det_config = ElementOperatorConfig(stochastic=False)
         normalizer = ElementOperator(
             det_config,
-            fn=lambda e, k: e.replace(
+            fn=lambda e, _k: e.replace(
                 data={"image": e.data["image"] / 255.0, "label": e.data["label"]}
             ),
         )
         scaler = ElementOperator(
             det_config,
-            fn=lambda e, k: e.replace(
+            fn=lambda e, _k: e.replace(
                 data={"image": e.data["image"] * 2 - 1, "label": e.data["label"]}
             ),
         )
@@ -469,7 +471,7 @@ def test_parallel_processing_performance(benchmark, benchmark_image_data, num_pa
         transforms = [
             ElementOperator(
                 det_config,
-                fn=lambda e, k, i=i: e.replace(
+                fn=lambda e, _k, i=i: e.replace(
                     data={"image": e.data["image"] * (1.0 + i * 0.1), "label": e.data["label"]}
                 ),
             )
@@ -524,7 +526,7 @@ def test_caching_performance_impact(benchmark, benchmark_image_data, enable_cach
         det_config = ElementOperatorConfig(stochastic=False)
         expensive_transform = ElementOperator(
             det_config,
-            fn=lambda e, k: e.replace(
+            fn=lambda e, _k: e.replace(
                 data={
                     "image": jnp.fft.fft2(e.data["image"], axes=(1, 2)).real,
                     "label": e.data["label"],
@@ -570,14 +572,14 @@ def test_branching_performance(benchmark, benchmark_text_data):
         det_config = ElementOperatorConfig(stochastic=False)
         short_path = ElementOperator(
             det_config,
-            fn=lambda e, k: e.replace(
+            fn=lambda e, _k: e.replace(
                 data={**e.data, "tokens": e.data["tokens"] * 2}
             ),  # Simple doubling
         )
 
         long_path = ElementOperator(
             det_config,
-            fn=lambda e, k: e.replace(
+            fn=lambda e, _k: e.replace(
                 data={**e.data, "tokens": jnp.clip(e.data["tokens"], 0, 100)}
             ),  # Clipping
         )
@@ -631,7 +633,7 @@ def test_jit_compilation_impact(benchmark, benchmark_image_data, jit_compile):
         det_config = ElementOperatorConfig(stochastic=False)
         jit_transform = ElementOperator(
             det_config,
-            fn=lambda e, k: e.replace(
+            fn=lambda e, _k: e.replace(
                 data={
                     "image": jnp.tanh(jnp.sin(e.data["image"]) + jnp.cos(e.data["image"])),
                     "label": e.data["label"],
@@ -678,13 +680,13 @@ def test_complex_dag_topology_performance(benchmark, benchmark_image_data):
         preprocess_transforms = [
             ElementOperator(
                 det_config,
-                fn=lambda e, k: e.replace(
+                fn=lambda e, _k: e.replace(
                     data={"image": e.data["image"] / 255.0, "label": e.data["label"]}
                 ),
             ),
             ElementOperator(
                 det_config,
-                fn=lambda e, k: e.replace(
+                fn=lambda e, _k: e.replace(
                     data={"image": (e.data["image"] - 0.5) * 2, "label": e.data["label"]}
                 ),
             ),
@@ -695,7 +697,7 @@ def test_complex_dag_topology_performance(benchmark, benchmark_image_data):
         # Stage 2: Sequential processing - Element API
         clip_transform = ElementOperator(
             det_config,
-            fn=lambda e, k: e.replace(
+            fn=lambda e, _k: e.replace(
                 data={"image": jnp.clip(e.data["image"], -1, 1), "label": e.data["label"]}
             ),
         )
@@ -705,19 +707,19 @@ def test_complex_dag_topology_performance(benchmark, benchmark_image_data):
         feature_transforms = [
             ElementOperator(
                 det_config,
-                fn=lambda e, k: e.replace(
+                fn=lambda e, _k: e.replace(
                     data={"image": e.data["image"] ** 2, "label": e.data["label"]}
                 ),
             ),
             ElementOperator(
                 det_config,
-                fn=lambda e, k: e.replace(
+                fn=lambda e, _k: e.replace(
                     data={"image": jnp.abs(e.data["image"]), "label": e.data["label"]}
                 ),
             ),
             ElementOperator(
                 det_config,
-                fn=lambda e, k: e.replace(
+                fn=lambda e, _k: e.replace(
                     data={"image": jnp.sqrt(jnp.abs(e.data["image"])), "label": e.data["label"]}
                 ),
             ),
@@ -757,7 +759,7 @@ def test_memory_efficiency(benchmark_image_data):
     # Add multiple identity transforms (should not increase memory) - Element API
     det_config = ElementOperatorConfig(stochastic=False)
     for i in range(10):
-        identity_op = ElementOperator(det_config, fn=lambda e, k: e)
+        identity_op = ElementOperator(det_config, fn=lambda e, _k: e)
         pipeline = pipeline.operate(identity_op)
 
     # Process one batch
@@ -783,7 +785,7 @@ def test_reset_performance(benchmark, benchmark_image_data):
         pipeline = DAGExecutor(rngs=rngs)
         pipeline = pipeline.add(source).batch(batch_size=32)
         det_config = ElementOperatorConfig(stochastic=False)
-        identity_op = ElementOperator(det_config, fn=lambda e, k: e)
+        identity_op = ElementOperator(det_config, fn=lambda e, _k: e)
         pipeline = pipeline.operate(identity_op)
 
         reset_count = 0
@@ -817,8 +819,8 @@ def test_dag_executor_state_tracking(benchmark_image_data):
     pipeline = pipeline.add(source).batch(batch_size=10)
 
     # Verify initial state - now plain integers, not Variables
-    assert pipeline._iteration_count == 0
-    assert pipeline._epoch_count == 0
+    assert pipeline._iteration_total == 0
+    assert pipeline._epoch_total == 0
 
     # Process some batches
     iterator = iter(pipeline)
@@ -827,13 +829,13 @@ def test_dag_executor_state_tracking(benchmark_image_data):
             break
 
     # Check iteration count increased
-    assert pipeline._iteration_count > 0
+    assert pipeline._iteration_total > 0
 
     # Reset and check state
     pipeline.reset()
-    assert pipeline._iteration_count == 0
+    assert pipeline._iteration_total == 0
     # After reset, epoch count should be back to 0
-    assert pipeline._epoch_count == 0
+    assert pipeline._epoch_total == 0
 
 
 if __name__ == "__main__":

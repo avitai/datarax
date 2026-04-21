@@ -20,6 +20,7 @@ Usage::
             result = transform(data)
         with tracker.time_transfer():
             device_data = jax.device_put(result)
+            block_until_ready_tree(device_data)
         tracker.end_batch()
 
     print(tracker.summary())

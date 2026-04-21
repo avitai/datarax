@@ -180,7 +180,7 @@ def _initialize_nnx_variables(instance: nnx.Module, config: dict[str, Any]) -> N
             raise ValueError(f"Variable '{final_attr}' not found in module")
 
 
-def _load_state_from_file(instance: nnx.Module, config: dict[str, Any]) -> None:
+def _load_state_from_file(_instance: nnx.Module, config: dict[str, Any]) -> None:
     """Load state from file if specified in configuration.
 
     Args:

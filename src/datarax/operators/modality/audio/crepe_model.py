@@ -333,7 +333,7 @@ def _load_from_h5(model: CrepeModel, h5_path: pathlib.Path) -> None:
         model.classifier.bias[...] = jnp.array(dense_group["bias:0"][:])  # pyright: ignore[reportIndexIssue, reportOptionalSubscript]
 
 
-def load_crepe_weights(
+def load_crepe_weights_from_path(
     model: CrepeModel,
     weights_path: str | pathlib.Path | None = None,
     capacity: str = "full",

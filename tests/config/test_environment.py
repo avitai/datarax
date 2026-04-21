@@ -214,6 +214,22 @@ class TestApplyEnvironmentOverrides:
         result = apply_environment_overrides(config)
         assert result == {}
 
+    def test_apply_ignores_managed_activation_variables(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test activation metadata is not treated as config."""
+        monkeypatch.setenv(
+            "DATARAX_MANAGED_ENV_VARS",
+            "DATARAX_BACKEND DATARAX_ENV_ROOT",
+        )
+        monkeypatch.setenv("DATARAX_BACKEND", "cuda12")
+        monkeypatch.setenv("DATARAX_ENV_ROOT", "/tmp/datarax")
+        monkeypatch.setenv("DATARAX_USER_SETTING", "enabled")
+
+        result = apply_environment_overrides({})
+
+        assert result == {"user_setting": "enabled"}
+
     def test_apply_case_insensitive_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test that keys are converted to lowercase for case insensitivity."""
         monkeypatch.setenv("DATARAX_DATABASE__HOST", "db.com")

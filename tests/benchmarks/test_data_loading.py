@@ -13,6 +13,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from datarax.utils.console import emit
+
 
 # Detect macOS - TensorFlow crashes on macOS ARM64 due to Metal/GPU detection issues
 # https://github.com/tensorflow/tensorflow/issues/52138
@@ -122,10 +124,10 @@ def test_inmemory_source_benchmark(benchmark, benchmark_image_data):
     result = benchmark(setup_and_run)
 
     # Print results for debugging
-    print("\nMemorySource Performance:")
-    print(f"  Duration: {result['duration_seconds']:.4f}s")
-    print(f"  Examples/second: {result['examples_per_second']:.2f}")
-    print(f"  Batches/second: {result['batches_per_second']:.2f}")
+    emit("\nMemorySource Performance:")
+    emit(f"  Duration: {result['duration_seconds']:.4f}s")
+    emit(f"  Examples/second: {result['examples_per_second']:.2f}")
+    emit(f"  Batches/second: {result['batches_per_second']:.2f}")
 
     # Verify performance is reasonable
     assert result["examples_per_second"] > 1000, "InMemory source performance below threshold"
@@ -153,10 +155,10 @@ def test_tfds_source_benchmark(benchmark):
     result = benchmark(setup_and_run)
 
     # Print results for debugging
-    print("\nTFDSEagerSource Performance:")
-    print(f"  Duration: {result['duration_seconds']:.4f}s")
-    print(f"  Examples/second: {result['examples_per_second']:.2f}")
-    print(f"  Batches/second: {result['batches_per_second']:.2f}")
+    emit("\nTFDSEagerSource Performance:")
+    emit(f"  Duration: {result['duration_seconds']:.4f}s")
+    emit(f"  Examples/second: {result['examples_per_second']:.2f}")
+    emit(f"  Batches/second: {result['batches_per_second']:.2f}")
 
     # Verify performance is reasonable
     assert result["examples_per_second"] > 100, "TFDS source performance below threshold"
@@ -188,10 +190,10 @@ def test_hf_source_benchmark(benchmark):
     result = benchmark(setup_and_run)
 
     # Print results for debugging
-    print("\nHFEagerSource Performance:")
-    print(f"  Duration: {result['duration_seconds']:.4f}s")
-    print(f"  Examples/second: {result['examples_per_second']:.2f}")
-    print(f"  Batches/second: {result['batches_per_second']:.2f}")
+    emit("\nHFEagerSource Performance:")
+    emit(f"  Duration: {result['duration_seconds']:.4f}s")
+    emit(f"  Examples/second: {result['examples_per_second']:.2f}")
+    emit(f"  Batches/second: {result['batches_per_second']:.2f}")
 
     # Verify performance is reasonable
     assert result["examples_per_second"] > 100, "HF source performance below threshold"
@@ -222,11 +224,11 @@ def test_comparison_benchmark(benchmark, benchmark_image_data):
     results = benchmark(run_benchmark)
 
     # Print comparison
-    print("\nData Source Performance Comparison:")
+    emit("\nData Source Performance Comparison:")
     for source_name, metrics in results.items():
-        print(f"  {source_name.upper()}:")
-        print(f"    Examples/second: {metrics['examples_per_second']:.2f}")
-        print(f"    Batches/second: {metrics['batches_per_second']:.2f}")
+        emit(f"  {source_name.upper()}:")
+        emit(f"    Examples/second: {metrics['examples_per_second']:.2f}")
+        emit(f"    Batches/second: {metrics['batches_per_second']:.2f}")
 
     # Verify results exist
     assert "inmemory" in results
@@ -387,6 +389,7 @@ class TestDataSourceIntegration:
         # Simple transform function - adapted to Element-based API
         def normalize(element, key):
             """Normalize image values to [0, 1] range."""
+            del key
             new_data = dict(element.data)
             if "image" in new_data:
                 new_data["image"] = new_data["image"] / 255.0
@@ -430,11 +433,11 @@ class TestDataSourceIntegration:
 
         # Test with caching disabled
         executor = DAGExecutor(enable_caching=False).add(source).batch(2)
-        assert executor.enable_caching is False
+        assert executor.is_caching_enabled is False
 
         # Test with JIT compilation (even if not fully implemented)
         executor = DAGExecutor(jit_compile=True).add(source).batch(2)
-        assert executor.jit_compile is True
+        assert executor.is_jit_compilation_enabled is True
 
         # Test with batch enforcement disabled (should fail)
         with pytest.raises(ValueError, match="Batch-first enforcement"):

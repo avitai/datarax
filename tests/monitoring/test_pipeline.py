@@ -63,6 +63,7 @@ class TestMonitoredPipeline:
         # Add a transformer
         def double(element, key):
             """Double the value in element data."""
+            del key
             new_data = {"value": element.data["value"] * 2}
             return element.replace(data=new_data)
 
@@ -92,6 +93,7 @@ class TestMonitoredPipeline:
             """Mark even numbers to keep."""
             # Mark even numbers to keep (no conditional return for JAX compatibility)
             # Pre-allocated _keep field ensures PyTree structure doesn't change
+            del key
             is_even = element.data["value"] % 2 == 0
             new_data = {"value": element.data["value"], "_keep": is_even}
             return element.replace(data=new_data)
@@ -157,6 +159,7 @@ def test_end_to_end_monitored_pipeline():
     # Add a simple transformer to the pipeline to generate metrics
     def double_values(element, key):
         """Double the values in element data."""
+        del key
         new_data = {"value": element.data["value"] * 2}
         return element.replace(data=new_data)
 

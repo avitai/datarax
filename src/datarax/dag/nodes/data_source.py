@@ -57,6 +57,7 @@ class DataSourceNode(Node):
         Returns:
             Next element from source, or None if exhausted
         """
+        del data, key
         if self._iterator is None:
             object.__setattr__(self, "_iterator", iter(self.source))
 
@@ -145,6 +146,7 @@ class BatchNode(Node):
         Returns:
             Batch when buffer is full, None otherwise
         """
+        del key
 
         # Handle Batch input: unbatch into individual elements
         if isinstance(data, Batch):
@@ -299,6 +301,7 @@ class OperatorNode(Node):
         Raises:
             TypeError: If data is not a Batch object
         """
+        del key
         # DAG nodes always work with Batch objects
         if not isinstance(data, Batch):
             raise TypeError(
@@ -350,7 +353,7 @@ class ShuffleNode(Node):
         return self._buffer
 
     @property
-    def buffer_full(self) -> bool:
+    def is_buffer_full(self) -> bool:
         """Check if buffer is full."""
         return len(self._buffer) >= self.buffer_size
 
@@ -364,6 +367,12 @@ class ShuffleNode(Node):
         Returns:
             Random batch from buffer if full, None otherwise
         """
+        if not isinstance(data, Batch):
+            raise TypeError(
+                f"{self.name} expects Batch object, got {type(data).__name__}. "
+                "Use source-level Grain shuffling before batching."
+            )
+
         # Use provided key or generate new one
         if key is None:
             current_iteration = self.iteration.get_value() + 1
@@ -452,6 +461,7 @@ class PrefetchNode(Node):
         Returns:
             Input data unchanged
         """
+        del key
         return data
 
     def wrap_iterator(self, iterator: Iterator[Any]) -> Iterator[Any]:
@@ -580,6 +590,7 @@ class SharderNode(Node):
         Returns:
             Sharded batch
         """
+        del key
         # Sharders distribute data across devices
         # They typically work on batched data
         return self.sharder(data)

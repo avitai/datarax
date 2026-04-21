@@ -69,7 +69,7 @@ import numpy as np
 from flax import nnx
 
 # Datarax imports
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.modality.image import (
@@ -218,7 +218,7 @@ def create_memory_pipeline(data, batch_size):
     """Create pipeline from memory data."""
     source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
     prep = ElementOperator(ElementOperatorConfig(stochastic=False), fn=preprocess, rngs=nnx.Rngs(0))
-    return from_source(source, batch_size=batch_size).add(OperatorNode(prep))
+    return build_source_pipeline(source, batch_size=batch_size).add(OperatorNode(prep))
 
 
 # %%
@@ -314,7 +314,7 @@ def create_operator_pipeline(data, operator, batch_size=64):
     source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
     prep = ElementOperator(ElementOperatorConfig(stochastic=False), fn=preprocess, rngs=nnx.Rngs(0))
 
-    pipeline = from_source(source, batch_size=batch_size).add(OperatorNode(prep))
+    pipeline = build_source_pipeline(source, batch_size=batch_size).add(OperatorNode(prep))
 
     if operator is not None:
         pipeline = pipeline.add(OperatorNode(operator))

@@ -107,6 +107,7 @@ def capture_jax_trace(
     Returns:
         TraceArtifact with metadata, or None if profiling unavailable.
     """
+    del duration_ms
     try:
         import jax
     except ImportError:
@@ -124,7 +125,7 @@ def capture_jax_trace(
     try:
         with jax.profiler.trace(str(trace_dir)):
             run_fn()
-    except Exception as exc:
+    except (RuntimeError, OSError, ValueError) as exc:
         _logger.warning("Trace capture failed: %s", exc)
         return None
     duration = time.perf_counter() - start

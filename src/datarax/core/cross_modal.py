@@ -214,7 +214,7 @@ class CrossModalOperator(OperatorModule):
                 inputs = self._extract_inputs(data)
 
                 # Fuse with learnable weights
-                fused = sum(w * emb for w, emb in zip(self.fusion_weights.get_value(), inputs))
+                fused = sum(w * emb for w, emb in zip(self.fusion_weights[...], inputs))
 
                 # Store outputs
                 outputs = [fused]

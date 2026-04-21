@@ -6,7 +6,7 @@ directed acyclic graph (DAG) pipelines for data processing.
 """
 
 from datarax.dag.dag_config import DAGConfig
-from datarax.dag.dag_executor import DAGExecutor, from_source, pipeline
+from datarax.dag.dag_executor import build_source_pipeline, DAGExecutor, pipeline
 
 # Import node types from dag.nodes
 from datarax.dag.nodes import (
@@ -31,7 +31,7 @@ from datarax.dag.nodes import (
 __all__ = [
     "DAGConfig",
     "DAGExecutor",
-    "from_source",
+    "build_source_pipeline",
     "pipeline",
     # Node types
     "Node",

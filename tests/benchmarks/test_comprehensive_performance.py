@@ -23,10 +23,11 @@ import pytest
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
 from datarax.core.element_batch import Batch, Element
-from datarax.dag import from_source
+from datarax.dag import build_source_pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import MemorySource
 from datarax.sources.memory_source import MemorySourceConfig
+from datarax.utils.console import emit
 
 
 # =============================================================================
@@ -144,8 +145,8 @@ class TestElementBatchPerformance:
 
         rate = num_elements / elapsed
         elapsed_ms = elapsed * 1000
-        print(f"\nElement creation: {rate:.0f} elements/sec ({elapsed_ms:.1f}ms)")
-        print(f"  Total elements: {num_elements}")
+        emit(f"\nElement creation: {rate:.0f} elements/sec ({elapsed_ms:.1f}ms)")
+        emit(f"  Total elements: {num_elements}")
 
         # Target: At least 50,000 elements/sec (Grain sampler target)
         assert rate > 10000, f"Element creation too slow: {rate:.0f} elements/sec < 10000"
@@ -179,7 +180,7 @@ class TestElementBatchPerformance:
         elapsed = time.perf_counter() - start
 
         ms_per_batch = elapsed / num_iterations * 1000
-        print(f"\nBatch creation (bs={batch_size}): {ms_per_batch:.2f}ms/batch")
+        emit(f"\nBatch creation (bs={batch_size}): {ms_per_batch:.2f}ms/batch")
 
         # Target: <10ms per batch creation
         assert ms_per_batch < 50, f"Batch creation too slow: {ms_per_batch:.2f}ms > 50ms"
@@ -209,7 +210,7 @@ class TestElementBatchPerformance:
         elapsed = time.perf_counter() - start
 
         ms_per_batch = elapsed / num_iterations * 1000
-        print(f"\nBatch.from_parts (bs={batch_size}): {ms_per_batch:.2f}ms/batch")
+        emit(f"\nBatch.from_parts (bs={batch_size}): {ms_per_batch:.2f}ms/batch")
 
         # Target: <2ms per batch (should be much faster than Element-based)
         assert ms_per_batch < 10, f"Batch.from_parts too slow: {ms_per_batch:.2f}ms > 10ms"
@@ -239,7 +240,7 @@ class TestElementBatchPerformance:
         elapsed = time.perf_counter() - start
 
         ms_per_stack = elapsed / num_iterations * 1000
-        print(f"\nDirect jnp.stack (bs={batch_size}): {ms_per_stack:.2f}ms/batch (baseline)")
+        emit(f"\nDirect jnp.stack (bs={batch_size}): {ms_per_stack:.2f}ms/batch (baseline)")
 
         # This establishes the baseline - no assertion needed
 
@@ -262,17 +263,17 @@ class TestPipelineThroughput:
 
         config = BenchmarkDataSourceConfig(size=5000, shape=(32, 32, 3))
         source = BenchmarkDataSource(config)
-        pipeline = from_source(source, batch_size=32)
+        pipeline = build_source_pipeline(source, batch_size=32)
 
         metrics = benchmark_iteration(pipeline, max_items=100, warmup=5)
 
         batches_per_sec = metrics["items_per_sec"]
         elements_per_sec = batches_per_sec * 32
 
-        print("\nBasic pipeline throughput:")
-        print(f"  Batches/sec: {batches_per_sec:.1f}")
-        print(f"  Elements/sec: {elements_per_sec:.0f}")
-        print(f"  ms/batch: {metrics['ms_per_item']:.2f}")
+        emit("\nBasic pipeline throughput:")
+        emit(f"  Batches/sec: {batches_per_sec:.1f}")
+        emit(f"  Elements/sec: {elements_per_sec:.0f}")
+        emit(f"  ms/batch: {metrics['ms_per_item']:.2f}")
 
         # Target: >30 batches/sec (relaxed from 100 due to current baseline)
         # Will increase after optimizations
@@ -288,20 +289,20 @@ class TestPipelineThroughput:
 
         config = BenchmarkDataSourceConfig(size=5000, shape=(32, 32, 3))
         source = BenchmarkDataSource(config)
-        pipeline = from_source(source, batch_size=32)
+        pipeline = build_source_pipeline(source, batch_size=32)
 
         # Add identity transforms (minimal overhead)
         det_config = ElementOperatorConfig(stochastic=False)
-        identity_op1 = ElementOperator(det_config, fn=lambda e, k: e)
-        identity_op2 = ElementOperator(det_config, fn=lambda e, k: e)
+        identity_op1 = ElementOperator(det_config, fn=lambda e, _k: e)
+        identity_op2 = ElementOperator(det_config, fn=lambda e, _k: e)
         pipeline = pipeline.operate(identity_op1).operate(identity_op2)
 
         metrics = benchmark_iteration(pipeline, max_items=100, warmup=5)
 
         batches_per_sec = metrics["items_per_sec"]
-        print("\nPipeline with 2 transforms:")
-        print(f"  Batches/sec: {batches_per_sec:.1f}")
-        print(f"  ms/batch: {metrics['ms_per_item']:.2f}")
+        emit("\nPipeline with 2 transforms:")
+        emit(f"  Batches/sec: {batches_per_sec:.1f}")
+        emit(f"  ms/batch: {metrics['ms_per_item']:.2f}")
 
         # Target: >20 batches/sec (relaxed due to current baseline)
         assert batches_per_sec > 5, f"Pipeline with transforms too slow: {batches_per_sec:.1f} < 5"
@@ -318,7 +319,7 @@ class TestPipelineThroughput:
 
         config = BenchmarkDataSourceConfig(size=5000, shape=(32, 32, 3))
         source = BenchmarkDataSource(config)
-        pipeline = from_source(source, batch_size=batch_size)
+        pipeline = build_source_pipeline(source, batch_size=batch_size)
 
         # Adjust max_items based on batch size
         max_batches = min(100, 3000 // batch_size)
@@ -327,8 +328,8 @@ class TestPipelineThroughput:
         batches_per_sec = metrics["items_per_sec"]
         elements_per_sec = batches_per_sec * batch_size
 
-        print(f"\nBatch size {batch_size}:")
-        print(f"  {batches_per_sec:.1f} batches/sec, {elements_per_sec:.0f} elements/sec")
+        emit(f"\nBatch size {batch_size}:")
+        emit(f"  {batches_per_sec:.1f} batches/sec, {elements_per_sec:.0f} elements/sec")
 
         # Basic sanity check - should process at least some data
         assert metrics["count"] > 0, "No batches processed"
@@ -374,7 +375,7 @@ class TestOverheadAnalysis:
         # Benchmark pipeline
         config = MemorySourceConfig()
         source = MemorySource(config, all_data)
-        pipeline = from_source(source, batch_size=batch_size)
+        pipeline = build_source_pipeline(source, batch_size=batch_size)
 
         pipeline_start = time.perf_counter()
         count = 0
@@ -386,12 +387,12 @@ class TestOverheadAnalysis:
 
         overhead_ratio = pipeline_time / direct_time if direct_time > 0 else float("inf")
 
-        print(f"\nOverhead Analysis ({num_batches} batches, bs={batch_size}):")
+        emit(f"\nOverhead Analysis ({num_batches} batches, bs={batch_size}):")
         direct_ms = direct_time * 1000
         direct_bps = num_batches / direct_time
-        print(f"  Direct stacking: {direct_ms:.1f}ms ({direct_bps:.1f} batches/sec)")
-        print(f"  Pipeline: {pipeline_time * 1000:.1f}ms ({count / pipeline_time:.1f} batches/sec)")
-        print(f"  Overhead ratio: {overhead_ratio:.2f}x")
+        emit(f"  Direct stacking: {direct_ms:.1f}ms ({direct_bps:.1f} batches/sec)")
+        emit(f"  Pipeline: {pipeline_time * 1000:.1f}ms ({count / pipeline_time:.1f} batches/sec)")
+        emit(f"  Overhead ratio: {overhead_ratio:.2f}x")
 
         # Target: <10x overhead (relaxed from 5x due to current baseline)
         # Will tighten after optimizations
@@ -434,7 +435,7 @@ class TestMemorySourcePerformance:
         elapsed = time.perf_counter() - start
 
         rate = count / elapsed
-        print(f"\nMemorySource iteration: {rate:.0f} elements/sec")
+        emit(f"\nMemorySource iteration: {rate:.0f} elements/sec")
 
         # Target: >1000 elements/sec (relaxed from 5000)
         assert rate > 500, f"MemorySource too slow: {rate:.0f} elements/sec < 500"
@@ -458,7 +459,7 @@ class TestPerformanceRegression:
 
         config = BenchmarkDataSourceConfig(size=3000, shape=(32, 32, 3))
         source = BenchmarkDataSource(config)
-        pipeline = from_source(source, batch_size=32)
+        pipeline = build_source_pipeline(source, batch_size=32)
 
         metrics = benchmark_iteration(pipeline, max_items=50, warmup=5)
 

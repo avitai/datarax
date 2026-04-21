@@ -74,7 +74,7 @@ from flax import nnx
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 # Datarax imports
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
@@ -234,7 +234,7 @@ def create_pipeline(batch_size=BATCH_SIZE, num_samples=NUM_SAMPLES, seed=42):
         rngs=nnx.Rngs(0),
     )
 
-    return from_source(source, batch_size=batch_size).add(OperatorNode(preprocessor))
+    return build_source_pipeline(source, batch_size=batch_size).add(OperatorNode(preprocessor))
 
 
 # Create pipeline

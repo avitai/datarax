@@ -196,7 +196,7 @@ Or run a simple test pipeline:
 
 ```python
 import jax.numpy as jnp
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 # Create sample data
@@ -205,7 +205,7 @@ data = [{"image": jnp.ones((28, 28)), "label": i % 10} for i in range(10)]
 # Create a simple pipeline using the DAG-based API
 config = MemorySourceConfig()
 source = MemorySource(config, data)
-pipeline = from_source(source, batch_size=2)
+pipeline = build_source_pipeline(source, batch_size=2)
 
 # Iterate through the pipeline
 for i, batch in enumerate(pipeline):

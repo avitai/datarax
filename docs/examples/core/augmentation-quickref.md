@@ -253,7 +253,7 @@ flowchart LR
     end
 
     subgraph Pipeline["Augmentation Pipeline"]
-        FS["from_source<br/>batch_size=16"]
+        FS["build_source_pipeline<br/>batch_size=16"]
         B["BrightnessOperator"]
         C["ContrastOperator"]
         N["NoiseOperator"]
@@ -267,7 +267,7 @@ flowchart LR
 ```
 
 ```python
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 
 # Create fresh source for chained pipeline
@@ -307,7 +307,7 @@ noise = NoiseOperator(
 
 # Chain with >> operator
 augmented_pipeline = (
-    from_source(source2, batch_size=16)
+    build_source_pipeline(source2, batch_size=16)
     >> OperatorNode(brightness)
     >> OperatorNode(contrast)
     >> OperatorNode(noise)
@@ -398,7 +398,7 @@ brightness2 = BrightnessOperator(
 )
 
 clipped_pipeline = (
-    from_source(source3, batch_size=16)
+    build_source_pipeline(source3, batch_size=16)
     >> OperatorNode(brightness2)
     >> OperatorNode(clipper)
 )
@@ -463,10 +463,10 @@ Deterministic BrightnessOperator:
 
 ```python
 # Method 1: >> operator (fluent, recommended)
-pipeline = from_source(source, batch_size=32) >> OperatorNode(op1) >> OperatorNode(op2)
+pipeline = build_source_pipeline(source, batch_size=32) >> OperatorNode(op1) >> OperatorNode(op2)
 
 # Method 2: .add() method (explicit)
-pipeline = from_source(source, batch_size=32).add(OperatorNode(op1)).add(OperatorNode(op2))
+pipeline = build_source_pipeline(source, batch_size=32).add(OperatorNode(op1)).add(OperatorNode(op2))
 
 # Both are equivalent!
 ```

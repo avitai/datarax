@@ -155,6 +155,7 @@ class ExternalLibraryAdapter(OperatorModule):
         Returns:
             Tuple of (transformed_data, state, metadata)
         """
+        del stats
         if random_params is None:
             raise ValueError("ExternalLibraryAdapter requires random_params (RNG key)")
 
@@ -205,7 +206,7 @@ class PureJaxAdapter(OperatorModule):
         data_shapes: PyTree,
     ) -> None:
         """No random params for pure functions."""
-        return None
+        del rng, data_shapes
 
     def apply(
         self,
@@ -216,6 +217,7 @@ class PureJaxAdapter(OperatorModule):
         stats: dict[str, Any] | None = None,
     ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
         """Apply pure function."""
+        del random_params, stats
         transformed_data = self.fn(data)
         return transformed_data, state, metadata
 

@@ -6,7 +6,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def validate_num_records_and_epochs(num_records: int | None, num_epochs: int) -> None:
+def validate_sampler_bounds(num_records: int | None, num_epochs: int) -> None:
     """Validate common sampler config bounds for record and epoch counts."""
     if num_records is None:
         raise ValueError("num_records is required")

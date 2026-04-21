@@ -10,6 +10,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from datarax.utils.console import emit
+
 
 # Type variables for generics
 T = TypeVar("T")
@@ -114,7 +116,7 @@ def time_execution(func: F) -> F:
         start_time = time.time()
         result = func(*args, **kwargs)
         end_time = time.time()
-        print(f"{func.__name__} executed in {end_time - start_time:.4f} seconds")
+        emit(f"{func.__name__} executed in {end_time - start_time:.4f} seconds")
         return result
 
     return wrapper  # type: ignore[return-value]
@@ -200,6 +202,8 @@ def create_test_nnx_module(rng_seed: int = 0) -> nnx.Module:
         An initialized NNX module.
     """
 
+    del rng_seed
+
     class TestModule(nnx.Module):
         def __init__(self):
             super().__init__()
@@ -207,6 +211,7 @@ def create_test_nnx_module(rng_seed: int = 0) -> nnx.Module:
             self.dense2 = nnx.Linear(in_features=32, out_features=10, rngs=nnx.Rngs(1))
 
         def __call__(self, x, training: bool = False):
+            del training
             x = self.dense1(x)
             x = jax.nn.relu(x)
             x = self.dense2(x)

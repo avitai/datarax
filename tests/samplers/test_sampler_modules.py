@@ -73,7 +73,7 @@ def test_range_sampler_serialization():
 def test_shuffle_sampler_basic():
     """Test the basic functionality of ShuffleSamplerModule."""
     # Create a shuffle sampler module with a dataset size
-    config = ShuffleSamplerConfig(buffer_size=5, dataset_size=10)
+    config = ShuffleSamplerConfig(dataset_size=10)
     sampler = ShuffleSampler(config, rngs=nnx.Rngs(0))
 
     # Check that all indices are yielded
@@ -88,11 +88,11 @@ def test_shuffle_sampler_with_rngs():
     rngs = create_rngs(seed=42)
 
     # Create two samplers with the same RNGs
-    config1 = ShuffleSamplerConfig(buffer_size=5, dataset_size=10)
+    config1 = ShuffleSamplerConfig(dataset_size=10)
     sampler1 = ShuffleSampler(config1, rngs=rngs)
 
     # We'll create a second sampler with a duplicate of the RNGs
-    config2 = ShuffleSamplerConfig(buffer_size=5, dataset_size=10)
+    config2 = ShuffleSamplerConfig(dataset_size=10)
     sampler2 = ShuffleSampler(config2, rngs=create_rngs(seed=42))
 
     # The samplers should produce identifiable sequences
@@ -113,20 +113,19 @@ def test_shuffle_sampler_serialization():
     """Test serialization and deserialization of ShuffleSamplerModule."""
     # Create a sampler with some state
     rngs = create_rngs(seed=42)
-    original_config = ShuffleSamplerConfig(buffer_size=3, dataset_size=10)
+    original_config = ShuffleSamplerConfig(dataset_size=10)
     original = ShuffleSampler(original_config, rngs=rngs)
 
     # Get the state before iteration
     state = original.get_state()
 
     # Create a new sampler and restore the state
-    restored_config = ShuffleSamplerConfig(buffer_size=5, dataset_size=20)
+    restored_config = ShuffleSamplerConfig(dataset_size=20)
     # Use the same stream schema for strict checkpoint compatibility.
     restored = ShuffleSampler(restored_config, rngs=create_rngs(seed=0))
     restored.set_state(state)
 
     # Check that the parameters were restored
-    assert restored.buffer_size == original.buffer_size
     assert restored.dataset_size == original.dataset_size
 
     # Both samplers should now yield the same dataset_size items
@@ -137,7 +136,7 @@ def test_shuffle_sampler_serialization():
 def test_shuffle_sampler_reset():
     """Test the reset functionality of ShuffleSamplerModule."""
     # Create a sampler with deterministic randomness
-    config = ShuffleSamplerConfig(buffer_size=5, dataset_size=10)
+    config = ShuffleSamplerConfig(dataset_size=10)
     sampler = ShuffleSampler(config, rngs=nnx.Rngs(0))
 
     # Get the first sequence and verify it has the expected properties

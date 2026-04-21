@@ -12,6 +12,8 @@ import platform
 
 import pytest
 
+from datarax.utils.console import emit
+
 
 # Skip entire module on macOS ARM64 - TensorFlow import hangs during pytest collection
 # due to Metal/GPU device detection issues. This is a known upstream issue:
@@ -23,7 +25,6 @@ if platform.system() == "Darwin":
         allow_module_level=True,
     )
 
-import os
 import tempfile
 import time
 import warnings
@@ -169,6 +170,7 @@ class PreprocessOperator(OperatorModule):
         random_params: Any = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], Any]:
+        del random_params, stats
         return preprocess_mnist(data), state, metadata
 
 
@@ -199,6 +201,7 @@ class AugmentationOperator(OperatorModule):
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], Any]:
         # Get RNG key from random_params or generate one
+        del stats
         if random_params is not None:
             rng = random_params
         else:
@@ -246,7 +249,7 @@ def setup_data_pipeline(batch_size: int = 32):
 def create_checkpoint_handler(checkpoint_dir):
     """Create checkpoint handler for saving and loading state."""
     # Ensure checkpoint directory exists
-    os.makedirs(checkpoint_dir, exist_ok=True)
+    Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
 
     # Create checkpoint handler with the correct parameters
     # The API has changed - OrbaxCheckpointHandler no longer uses checkpoint_dir parameter
@@ -321,7 +324,7 @@ def train_epoch(
 
         # Checkpoint periodically
         if checkpoint_handler and step % checkpoint_every == 0 and checkpoint_dir:
-            print(f"Saving checkpoint at step {step}")
+            emit(f"Saving checkpoint at step {step}")
             # Save training state
             state = TrainingState(
                 optimizer=optimizer,
@@ -334,13 +337,13 @@ def train_epoch(
                 },
             )
             # Update to use the correct save method with directory
-            checkpoint_handler.save(
-                directory=os.path.join(checkpoint_dir, "training_state"), target=state
+            checkpoint_handler.save_to_directory(
+                directory=Path(checkpoint_dir) / "training_state", target=state
             )
 
             # Save data stream state if provided
             if data_checkpoint_handler:
-                data_checkpoint_handler.save(train_stream)  # type: ignore[reportArgumentType]
+                data_checkpoint_handler.save_to_directory(train_stream)  # type: ignore[reportArgumentType]
 
         # Limit steps per epoch for testing
         if batch_idx + 1 >= max_steps_per_epoch:
@@ -357,7 +360,7 @@ def train_epoch(
         "step_time": float(avg_step_time),
     }
 
-    print(
+    emit(
         f"Epoch {epoch}: Loss = {avg_loss:.4f}, "
         f"Accuracy = {avg_accuracy:.4f}, "
         f"Avg Step Time = {avg_step_time:.4f}s"
@@ -405,7 +408,7 @@ def evaluate(model: nnx.Module, test_stream: DAGExecutor, max_steps: int = 5) ->
     test_loss = np.mean(losses)
     test_accuracy = np.mean(accuracies)
 
-    print(f"Test: Loss = {test_loss:.4f}, Accuracy = {test_accuracy:.4f}")
+    emit(f"Test: Loss = {test_loss:.4f}, Accuracy = {test_accuracy:.4f}")
 
     return {
         "test_loss": float(test_loss),
@@ -472,16 +475,16 @@ def _save_step_checkpoint(
     _, model_state = nnx.split(model)
     _, optimizer_state = nnx.split(optimizer)
     _, metrics_state = nnx.split(metrics)
-    checkpoint_handler.save(
-        directory=os.path.join(checkpoint_dir, f"model_step_{step}"),
+    checkpoint_handler.save_to_directory(
+        directory=Path(checkpoint_dir) / f"model_step_{step}",
         target=model_state,
     )
-    checkpoint_handler.save(
-        directory=os.path.join(checkpoint_dir, f"optimizer_step_{step}"),
+    checkpoint_handler.save_to_directory(
+        directory=Path(checkpoint_dir) / f"optimizer_step_{step}",
         target=optimizer_state,
     )
-    checkpoint_handler.save(
-        directory=os.path.join(checkpoint_dir, f"metrics_step_{step}"),
+    checkpoint_handler.save_to_directory(
+        directory=Path(checkpoint_dir) / f"metrics_step_{step}",
         target=metrics_state,
     )
 
@@ -509,12 +512,12 @@ def _run_training_loop(
         step += 1
 
         if step % checkpoint_every == 0:
-            print(f"Saving checkpoint at step {step}")
+            emit(f"Saving checkpoint at step {step}")
             _save_step_checkpoint(
                 checkpoint_handler, checkpoint_dir, step, model, optimizer, metrics
             )
             if data_checkpoint is not None:
-                data_checkpoint.save(train_stream, step=step, overwrite=True)  # type: ignore[reportArgumentType]
+                data_checkpoint.save_to_directory(train_stream, step=step, overwrite=True)  # type: ignore[reportArgumentType]
 
         if batch_idx + 1 >= max_steps:
             break
@@ -548,15 +551,15 @@ def _restore_from_checkpoint(
     metrics_graphdef, metrics_abstract_state = nnx.split(metrics)
 
     restored_model_state = checkpoint_handler.restore(
-        directory=os.path.join(checkpoint_dir, f"model_step_{step}"),
+        directory=Path(checkpoint_dir) / f"model_step_{step}",
         target=model_abstract_state,
     )
     restored_optimizer_state = checkpoint_handler.restore(
-        directory=os.path.join(checkpoint_dir, f"optimizer_step_{step}"),
+        directory=Path(checkpoint_dir) / f"optimizer_step_{step}",
         target=optimizer_abstract_state,
     )
     restored_metrics_state = checkpoint_handler.restore(
-        directory=os.path.join(checkpoint_dir, f"metrics_step_{step}"),
+        directory=Path(checkpoint_dir) / f"metrics_step_{step}",
         target=metrics_abstract_state,
     )
     return (
@@ -582,7 +585,7 @@ def test_training_with_checkpointing():
     # Create temporary checkpoint directory
     with tempfile.TemporaryDirectory() as temp_dir:
         checkpoint_dir = Path(temp_dir) / "checkpoints"
-        os.makedirs(checkpoint_dir, exist_ok=True)
+        Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
 
         # Setup data pipelines
         train_stream, test_stream = setup_data_pipeline(batch_size)
@@ -602,10 +605,10 @@ def test_training_with_checkpointing():
         # Create checkpoint handlers
         checkpoint_handler = OrbaxCheckpointHandler()
         data_checkpoint = PipelineCheckpoint(
-            os.path.join(checkpoint_dir, "data_stream"), checkpoint_handler
+            Path(checkpoint_dir) / "data_stream", checkpoint_handler
         )
         # Save initial data stream state with step=0
-        data_checkpoint.save(train_stream, step=0, overwrite=True)  # type: ignore[reportArgumentType]
+        data_checkpoint.save_to_directory(train_stream, step=0, overwrite=True)  # type: ignore[reportArgumentType]
 
         train_step, eval_step = _create_train_eval_steps()
 
@@ -628,7 +631,7 @@ def test_training_with_checkpointing():
 
             # Print metrics at the end of epoch
             epoch_metrics = metrics.compute()
-            print(
+            emit(
                 f"Epoch {epoch}: Loss = {epoch_metrics['loss']:.4f}, "
                 f"Accuracy = {epoch_metrics['accuracy']:.4f}"
             )
@@ -636,7 +639,7 @@ def test_training_with_checkpointing():
 
         # Evaluate after version 1.0
         phase1_metrics = _evaluate_loop(test_stream, eval_step, model, metrics)
-        print(
+        emit(
             f"Version 1.0 Evaluation: Loss = {phase1_metrics['loss']:.4f}, "
             f"Accuracy = {phase1_metrics['accuracy']:.4f}"
         )
@@ -650,7 +653,7 @@ def test_training_with_checkpointing():
         )
 
         # Load checkpoints
-        print("Loading checkpoint and resuming training...")
+        emit("Loading checkpoint and resuming training...")
         latest_step = step  # Use the current step as the latest
         restored_model, restored_optimizer, restored_metrics = _restore_from_checkpoint(
             checkpoint_handler,
@@ -681,7 +684,7 @@ def test_training_with_checkpointing():
 
         # Print metrics for the additional epoch
         continuation_metrics = restored_metrics.compute()
-        print(
+        emit(
             f"Continuation: Loss = {continuation_metrics['loss']:.4f}, "
             f"Accuracy = {continuation_metrics['accuracy']:.4f}"
         )
@@ -689,14 +692,14 @@ def test_training_with_checkpointing():
 
         # Final evaluation
         final_metrics = _evaluate_loop(new_test_stream, eval_step, restored_model, restored_metrics)
-        print(
+        emit(
             f"Final Evaluation: Loss = {final_metrics['loss']:.4f}, "
             f"Accuracy = {final_metrics['accuracy']:.4f}"
         )
 
         # Debug: Print all metrics
-        print(f"Version 1.0 metrics: {phase1_metrics}")
-        print(f"Final metrics: {final_metrics}")
+        emit(f"Version 1.0 metrics: {phase1_metrics}")
+        emit(f"Final metrics: {final_metrics}")
 
         # Verify training results (for a minimal test, just check that accuracy is reasonable)
         assert final_metrics["accuracy"] > 0.1, (
@@ -710,9 +713,9 @@ def test_training_with_checkpointing():
 
         # The following section uses undefined variables, so removing it
         # and replacing with simplified metrics reporting
-        print("Performance metrics:")
-        print(f"- Final accuracy: {final_metrics['accuracy']:.4f}")
-        print(f"- Final loss: {final_metrics['loss']:.4f}")
+        emit("Performance metrics:")
+        emit(f"- Final accuracy: {final_metrics['accuracy']:.4f}")
+        emit(f"- Final loss: {final_metrics['loss']:.4f}")
 
         # Verify metrics
         assert final_metrics["accuracy"] > 0, "Accuracy should be positive"

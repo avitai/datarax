@@ -30,6 +30,7 @@ from benchmarks.core.result_model import (
 from benchmarks.runners.benchmark_runner import BenchmarkRunner
 from benchmarks.scenarios import discover_scenarios
 from benchmarks.scenarios.base import run_scenario
+from datarax.utils.console import emit
 
 
 @dataclass
@@ -225,7 +226,7 @@ class FullRunner:
         all_results: dict[str, list[BenchmarkResult]] = {}
 
         for adapter_name, adapter_cls in available.items():
-            print(f"--- {adapter_name} ---", file=sys.stderr)
+            emit(f"--- {adapter_name} ---", file=sys.stderr)
             adapter = adapter_cls()
             adapter_results: list[BenchmarkResult] = []
 
@@ -238,7 +239,7 @@ class FullRunner:
 
                 variant = mod.get_variant(variant_name)
                 if not can_run_scenario(variant, backend=self.active_backend):
-                    print(
+                    emit(
                         f"  SKIP {scenario_id}: exceeds memory",
                         file=sys.stderr,
                     )
@@ -254,12 +255,12 @@ class FullRunner:
                     )
                     adapter_results.append(result)
                     throughput = throughput_elements_per_sec(result)
-                    print(
+                    emit(
                         f"  {scenario_id}/{variant_name}: {throughput:.0f} elem/s",
                         file=sys.stderr,
                     )
                 except Exception as exc:  # noqa: BLE001 — benchmark resilience: skip failing scenarios
-                    print(
+                    emit(
                         f"  FAIL {scenario_id}: {exc}",
                         file=sys.stderr,
                     )
@@ -393,11 +394,11 @@ def main() -> None:
         num_repetitions=args.repetitions,
     )
 
-    print(
+    emit(
         f"\nCompleted: {len(comparative.results)} adapters, "
         f"{len(comparative.all_scenario_ids)} scenarios"
     )
-    print(f"Results saved to: {runner.output_dir}")
+    emit(f"Results saved to: {runner.output_dir}")
 
 
 if __name__ == "__main__":

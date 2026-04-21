@@ -46,7 +46,7 @@ class TestBoundaryConditions:
 
         # Create single operator
         config = MapOperatorConfig(stochastic=False)
-        op = MapOperator(config, fn=lambda x, key: x * 2, rngs=rngs)
+        op = MapOperator(config, fn=lambda x, _key: x * 2, rngs=rngs)
 
         # Create composite with single operator (trivial composition)
         composite_config = CompositeOperatorConfig(
@@ -72,7 +72,7 @@ class TestBoundaryConditions:
         operators = []
         for _ in range(100):
             config = MapOperatorConfig(stochastic=False)
-            op = MapOperator(config, fn=lambda x, key: x + 1, rngs=rngs)
+            op = MapOperator(config, fn=lambda x, _key: x + 1, rngs=rngs)
             operators.append(op)
 
         # Create composite
@@ -97,11 +97,11 @@ class TestBoundaryConditions:
 
         # Operator 1 returns array with shape (1,)
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x, rngs=rngs)
 
         # Operator 2 returns array with shape (2,) - DIFFERENT shape
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: jnp.array([x[0], x[0] * 2]), rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: jnp.array([x[0], x[0] * 2]), rngs=rngs)
 
         # Create parallel composite with concat merge
         composite_config = CompositeOperatorConfig(
@@ -132,11 +132,11 @@ class TestNumericalEdgeCases:
 
         # Operator 1 returns normal value
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         # Operator 2 returns NaN (multiply by NaN to get NaN result)
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * jnp.nan, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * jnp.nan, rngs=rngs)
 
         # Create ensemble with mean reduction
         composite_config = CompositeOperatorConfig(
@@ -160,11 +160,11 @@ class TestNumericalEdgeCases:
 
         # Operator 1 returns normal value
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         # Operator 2 returns Inf (multiply by inf to get inf result)
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * jnp.inf, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * jnp.inf, rngs=rngs)
 
         # Create parallel with sum merge
         composite_config = CompositeOperatorConfig(
@@ -193,8 +193,8 @@ class TestWeightingEdgeCases:
 
         # Create operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
-        op2 = MapOperator(config1, fn=lambda x, key: x * 3, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
+        op2 = MapOperator(config1, fn=lambda x, _key: x * 3, rngs=rngs)
 
         # Zero weights should produce zero output (not an error, just degenerate)
         composite_config = CompositeOperatorConfig(
@@ -218,8 +218,8 @@ class TestWeightingEdgeCases:
 
         # Create operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
-        op2 = MapOperator(config1, fn=lambda x, key: x * 3, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
+        op2 = MapOperator(config1, fn=lambda x, _key: x * 3, rngs=rngs)
 
         # Negative weights should work (for subtraction/cancellation effects)
         composite_config = CompositeOperatorConfig(
@@ -249,8 +249,8 @@ class TestBranchingEdgeCases:
 
         # Create operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
-        op2 = MapOperator(config1, fn=lambda x, key: x * 3, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
+        op2 = MapOperator(config1, fn=lambda x, _key: x * 3, rngs=rngs)
 
         # Router returns valid indices (0 or 1)
         def router(data):
@@ -285,10 +285,11 @@ class TestConditionalEdgeCases:
 
         # Create operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         # Condition that raises exception
         def bad_condition(data):
+            del data
             raise RuntimeError("Condition evaluation failed!")
 
         composite_config = CompositeOperatorConfig(

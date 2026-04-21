@@ -276,12 +276,12 @@ class TestCrepeF0PitchAccuracy:
     @pytest.fixture
     def pretrained_op(self):
         """Create F0 operator with pretrained weights."""
-        from datarax.operators.modality.audio.crepe_model import load_crepe_weights
+        from datarax.operators.modality.audio.crepe_model import load_crepe_weights_from_path
 
         cfg = CrepeF0Config(capacity="full")
         op = CrepeF0Operator(cfg, rngs=nnx.Rngs(0))
         try:
-            load_crepe_weights(op.crepe_model)
+            load_crepe_weights_from_path(op.crepe_model)
         except FileNotFoundError:
             pytest.skip("CREPE weights not available")
         op.eval()
@@ -320,13 +320,13 @@ class TestCrepeF0PitchAccuracy:
     @pytest.mark.slow
     def test_silence_low_confidence(self):
         """Silence → low confidence (using local decode for interpretable confidence)."""
-        from datarax.operators.modality.audio.crepe_model import load_crepe_weights
+        from datarax.operators.modality.audio.crepe_model import load_crepe_weights_from_path
 
         # Use non-differentiable mode — confidence = max probability (interpretable)
         cfg = CrepeF0Config(capacity="full", differentiable=False)
         op = CrepeF0Operator(cfg, rngs=nnx.Rngs(0))
         try:
-            load_crepe_weights(op.crepe_model)
+            load_crepe_weights_from_path(op.crepe_model)
         except FileNotFoundError:
             pytest.skip("CREPE weights not available")
         op.eval()

@@ -124,7 +124,7 @@ import numpy as np
 from flax import nnx
 
 # Datarax imports
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.core.config import BatchMixOperatorConfig
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
@@ -197,7 +197,7 @@ def create_base_pipeline(seed=42, num_samples=256):
         rngs=nnx.Rngs(0),
     )
 
-    return from_source(source, batch_size=BATCH_SIZE).add(OperatorNode(prep))
+    return build_source_pipeline(source, batch_size=BATCH_SIZE).add(OperatorNode(prep))
 ```
 
 **Terminal Output:**
@@ -278,7 +278,7 @@ def create_mixup_pipeline(alpha=0.4, seed=42):
     )
 
     return (
-        from_source(source, batch_size=BATCH_SIZE)
+        build_source_pipeline(source, batch_size=BATCH_SIZE)
         .add(OperatorNode(prep))
         .add(OperatorNode(mixup))
     )
@@ -429,7 +429,7 @@ def create_cutmix_pipeline(alpha=1.0, seed=42):
     )
 
     return (
-        from_source(source, batch_size=BATCH_SIZE)
+        build_source_pipeline(source, batch_size=BATCH_SIZE)
         .add(OperatorNode(prep))
         .add(OperatorNode(cutmix))
     )
@@ -709,7 +709,7 @@ def create_training_pipeline():
     )
 
     return (
-        from_source(source, batch_size=128)
+        build_source_pipeline(source, batch_size=128)
         .add(OperatorNode(preprocessor))
         .add(OperatorNode(mixup))  # After preprocessing, before training
     )

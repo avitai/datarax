@@ -27,7 +27,7 @@ Load and process datasets from [HuggingFace Hub](https://huggingface.co/datasets
 | `dataset["train"]` | `HFEagerConfig(split="train")` |
 | `IterableDataset` + `DataLoader` | `HFEagerSource` with `streaming=True` |
 | `dataset.map(transform)` | `pipeline.add(OperatorNode(operator))` |
-| Manual batching in DataLoader | `from_source(source, batch_size=32)` |
+| Manual batching in DataLoader | `build_source_pipeline(source, batch_size=32)` |
 
 **Key difference:** Datarax integrates HuggingFace datasets directly into JAX pipelines with automatic array conversion.
 
@@ -37,7 +37,7 @@ Load and process datasets from [HuggingFace Hub](https://huggingface.co/datasets
 |------------|---------|
 | `tfds.load("mnist")` | `HFEagerSource(HFEagerConfig(name="mnist"))` |
 | `dataset.take(1000)` | Use split syntax: `split="train[:1000]"` |
-| `dataset.batch(32).prefetch(2)` | `from_source(source, batch_size=32)` |
+| `dataset.batch(32).prefetch(2)` | `build_source_pipeline(source, batch_size=32)` |
 | `dataset.map(preprocess)` | `pipeline.add(OperatorNode(operator))` |
 
 **Key difference:** HuggingFace Hub has a larger dataset catalog (100,000+) compared to TFDS, and Datarax provides unified access.
@@ -122,7 +122,7 @@ flowchart LR
     end
 
     subgraph Pipeline["Pipeline"]
-        FS[from_source<br/>batch_size=32]
+        FS[build_source_pipeline<br/>batch_size=32]
         OPS[Operators<br/>Transformations]
     end
 
@@ -134,10 +134,10 @@ flowchart LR
 ```
 
 ```python
-from datarax import from_source
+from datarax import build_source_pipeline
 
 # Create pipeline with batch_size=1 for inspection
-pipeline = from_source(source, batch_size=1)
+pipeline = build_source_pipeline(source, batch_size=1)
 
 # Get first few examples
 print("First 3 examples:")
@@ -208,7 +208,7 @@ normalizer = ElementOperator(
 
 # Build transformed pipeline (need fresh source for new iteration)
 source2 = HFEagerSource(config, rngs=nnx.Rngs(1))
-transformed_pipeline = from_source(source2, batch_size=32).add(OperatorNode(normalizer))
+transformed_pipeline = build_source_pipeline(source2, batch_size=32).add(OperatorNode(normalizer))
 
 # Process a batch
 batch = next(iter(transformed_pipeline))

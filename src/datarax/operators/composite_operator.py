@@ -170,7 +170,7 @@ class CompositeOperatorConfig(OperatorConfig):
         self._validate_conditional_strategies()
         self._validate_weighted_parallel_strategy()
         self._validate_branching_strategy()
-        object.__setattr__(self, "stochastic", self._infer_child_stochastic())
+        object.__setattr__(self, "stochastic", self._has_stochastic_child())
 
     def _validate_required_fields(self) -> None:
         """Validate required fields and operator container basics."""
@@ -219,7 +219,7 @@ class CompositeOperatorConfig(OperatorConfig):
         if self.strategy == CompositionStrategy.BRANCHING and self.router is None:
             raise ValueError("BRANCHING strategy requires router function")
 
-    def _infer_child_stochastic(self) -> bool:
+    def _has_stochastic_child(self) -> bool:
         """Infer whether any child operator is stochastic."""
         if self.operators is None:
             return False
@@ -379,6 +379,7 @@ class CompositeOperatorModule(OperatorModule):
         ``data[weight_key]``, strips the key from data, and passes clean data
         to the strategy. Raises ``ValueError`` if the key is missing from data.
         """
+        del stats
         from datarax.operators.strategies.base import StrategyContext
 
         # Prepare context
@@ -397,7 +398,7 @@ class CompositeOperatorModule(OperatorModule):
                 # Strip weight_key so child operators don't receive it
                 clean_data = {k: v for k, v in data.items() if k != self.config.weight_key}
             elif self.config.learnable_weights:
-                extra_params["weights"] = self.weights.get_value()
+                extra_params["weights"] = self.weights[...]
             else:
                 extra_params["weights"] = jnp.array(self.config.weights)
 

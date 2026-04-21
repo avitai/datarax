@@ -55,7 +55,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import (
     ElementOperator,
@@ -270,7 +270,7 @@ Chain everything together using the DAG API.
 # %%
 # Build the full pipeline
 pipeline = (
-    from_source(source, batch_size=32)
+    build_source_pipeline(source, batch_size=32)
     .add(OperatorNode(normalizer))  # Step 1: Normalize
     .add(OperatorNode(augmentation_pipeline))  # Step 2: Flip + Noise
     .add(OperatorNode(brightness_op))  # Step 3: Brightness adjustment
@@ -342,7 +342,7 @@ def create_pipeline_with_seed(seed: int):
         rngs=nnx.Rngs(flip=seed),
     )
 
-    return from_source(src, batch_size=8).add(OperatorNode(norm)).add(OperatorNode(flip))
+    return build_source_pipeline(src, batch_size=8).add(OperatorNode(norm)).add(OperatorNode(flip))
 
 
 # Create two pipelines with same seed
@@ -416,7 +416,9 @@ def main():
 
     # Build pipeline
     pipeline = (
-        from_source(source, batch_size=32).add(OperatorNode(normalizer)).add(OperatorNode(flipper))
+        build_source_pipeline(source, batch_size=32)
+        .add(OperatorNode(normalizer))
+        .add(OperatorNode(flipper))
     )
 
     # Process all data

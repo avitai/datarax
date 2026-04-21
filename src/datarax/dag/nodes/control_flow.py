@@ -25,6 +25,7 @@ class Identity(Node):
 
     def __call__(self, data: Any, *, key: jax.Array | None = None) -> Any:
         """Pass data through unchanged."""
+        del key
         return data
 
 
@@ -213,8 +214,8 @@ class Branch(Node):
         if isinstance(self.true_path, nnx.Module):
             return nnx.cond(
                 condition_result,
-                lambda tp, fp, d, k: tp(d, key=k),
-                lambda tp, fp, d, k: fp(d, key=k),
+                lambda tp, _fp, d, k: tp(d, key=k),
+                lambda _tp, fp, d, k: fp(d, key=k),
                 self.true_path,
                 self.false_path,
                 data,
@@ -287,6 +288,7 @@ class Merge(Node):
         Returns:
             Merged output
         """
+        del key
         # Handle single input (pass through)
         if not isinstance(inputs, list):
             return inputs
@@ -347,6 +349,7 @@ class MergeBatchNode(Node):
 
     def __call__(self, data: Any, *, key: jax.Array | None = None) -> Any:
         """Merge multiple branch outputs into a single batch using the configured strategy."""
+        del key
         if not isinstance(data, list):
             return data
         if len(data) == 1:
@@ -406,6 +409,7 @@ class FusedOperatorNode(Node):
         On first call, compiles the chain with nnx.jit. Subsequent calls
         reuse the compiled function.
         """
+        del key
         if self._jit_fn is None:
 
             @nnx.jit

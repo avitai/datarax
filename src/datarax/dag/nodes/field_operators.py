@@ -137,6 +137,7 @@ class SplitField(Node):
         Returns:
             Dictionary with only specified fields
         """
+        del key
         if not isinstance(data, dict):
             raise ValueError("SplitField requires dictionary input")
 

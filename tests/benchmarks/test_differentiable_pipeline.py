@@ -11,6 +11,7 @@ from calibrax.profiling import TimingCollector
 
 from datarax.core.element_batch import Batch
 from datarax.dag.dag_executor import DAGExecutor
+from datarax.utils.console import emit
 from tests.benchmarks.complex_dag_builder import ComplexDAGBuilder
 
 
@@ -52,7 +53,7 @@ class TestDifferentiablePipeline:
         assert len(grad_leaves) > 0
         assert any(jnp.sum(jnp.abs(g)) > 0 for g in grad_leaves)
 
-        print(f"Initial Loss: {loss}")
+        emit(f"Initial Loss: {loss}")
 
         # Warmup
         for _ in range(5):
@@ -63,11 +64,13 @@ class TestDifferentiablePipeline:
             for _ in range(20):
                 yield train_step_manual(executor, batch, target)
 
-        sync_fn = lambda _result: jnp.array(0.0).block_until_ready()
+        def sync_fn(_result):
+            return jnp.array(0.0).block_until_ready()
+
         collector = TimingCollector(sync_fn=sync_fn)
         sample = collector.measure_iteration(workload_iter(), num_batches=20)
 
         steps_per_sec = (
             sample.num_batches / sample.wall_clock_sec if sample.wall_clock_sec > 0 else 0
         )
-        print(f"Training Step: {steps_per_sec:.1f} steps/s")
+        emit(f"Training Step: {steps_per_sec:.1f} steps/s")

@@ -56,11 +56,11 @@ local_batch = sharder.shard(global_batch)
 ## With Pipelines
 
 ```python
-from datarax.dag import from_source
+from datarax.dag import build_source_pipeline
 from datarax.dag.nodes import SharderNode
 
 pipeline = (
-    from_source(source, batch_size=256)
+    build_source_pipeline(source, batch_size=256)
     >> SharderNode(ArraySharder(jax.devices()))
     >> transform
 )

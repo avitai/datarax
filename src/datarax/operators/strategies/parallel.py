@@ -10,7 +10,7 @@ from jaxtyping import PyTree
 
 from datarax.core.operator import OperatorModule
 from datarax.operators.strategies.base import CompositionStrategyImpl, StrategyContext
-from datarax.operators.strategies.merging import merge_outputs, merge_outputs_conditional
+from datarax.operators.strategies.merging import merge_output_sequence, merge_outputs_conditional
 
 
 logger = logging.getLogger(__name__)
@@ -76,7 +76,7 @@ class ParallelStrategy(CompositionStrategyImpl):
         outputs, states, metadatas = self._execute_operators(operators, context)
 
         # Merge outputs
-        merged_data = merge_outputs(
+        merged_data = merge_output_sequence(
             outputs,
             self.merge_strategy,
             self.merge_axis,
@@ -183,7 +183,7 @@ class ConditionalParallelStrategy(CompositionStrategyImpl):
 
         # Second pass: apply operators with jax.lax.cond
         for i, (operator, cond_result) in enumerate(zip(operators, condition_results)):
-            op_random_params = self._extract_operator_random_params(context.random_params, i)
+            op_random_params = self._random_params_for_operator(context.random_params, i)
             out_data, out_state, out_metadata = self._apply_operator_conditionally(
                 operator,
                 cond_result,

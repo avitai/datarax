@@ -12,7 +12,7 @@ import pytest
 from datarax.sources._conversion import (
     convert_batch_to_jax,
     hf_to_jax,
-    stack_batches,
+    stack_batch_sequence,
     tf_to_jax,
 )
 
@@ -243,7 +243,7 @@ class TestConvertBatchToJax:
 
 
 # =============================================================================
-# Tests for stack_batches
+# Tests for stack_batch_sequence
 # =============================================================================
 
 
@@ -256,7 +256,7 @@ class TestStackBatches:
         batch1 = {"image": jnp.ones((32, 28, 28)), "label": jnp.arange(32)}
         batch2 = {"image": jnp.zeros((32, 28, 28)), "label": jnp.arange(32, 64)}
 
-        combined = stack_batches([batch1, batch2])
+        combined = stack_batch_sequence([batch1, batch2])
 
         assert combined["image"].shape == (64, 28, 28)
         assert combined["label"].shape == (64,)
@@ -265,7 +265,7 @@ class TestStackBatches:
     def test_stack_single_batch(self):
         """Test stacking a single batch (should work like identity)."""
         batch = {"data": jnp.array([1, 2, 3])}
-        combined = stack_batches([batch])
+        combined = stack_batch_sequence([batch])
 
         assert combined["data"].shape == (3,)
         np.testing.assert_array_equal(np.array(combined["data"]), [1, 2, 3])
@@ -274,7 +274,7 @@ class TestStackBatches:
     def test_stack_empty_raises_error(self):
         """Test that stacking empty list raises ValueError."""
         with pytest.raises(ValueError, match="Cannot stack empty"):
-            stack_batches([])
+            stack_batch_sequence([])
 
     @pytest.mark.unit
     def test_stack_multiple_keys(self):
@@ -285,7 +285,7 @@ class TestStackBatches:
             {"a": jnp.array([[5]]), "b": jnp.array([[6]])},
         ]
 
-        combined = stack_batches(batches)
+        combined = stack_batch_sequence(batches)
 
         assert combined["a"].shape == (3, 1)
         assert combined["b"].shape == (3, 1)

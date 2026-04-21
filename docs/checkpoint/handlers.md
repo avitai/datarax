@@ -135,9 +135,9 @@ print(f"Epoch: {metadata['epoch']}")
 ### Pipeline Checkpointing
 
 ```python
-from datarax.dag import from_source
+from datarax.dag import build_source_pipeline
 
-pipeline = from_source(source, batch_size=32)
+pipeline = build_source_pipeline(source, batch_size=32)
 
 # Train for a while...
 for step, batch in enumerate(pipeline):

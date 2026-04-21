@@ -35,10 +35,10 @@ class TestDynamicSequential:
 
         # Start with 2 operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 10, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 10, rngs=rngs)
 
         # Create dynamic sequential
         composite_config = CompositeOperatorConfig(
@@ -56,7 +56,7 @@ class TestDynamicSequential:
 
         # Add a third operator
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x * 3, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x * 3, rngs=rngs)
         composite.add_operator(op3)
 
         # Test after adding: ((x * 2) + 10) * 3
@@ -71,13 +71,13 @@ class TestDynamicSequential:
 
         # Start with 3 operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 100, rngs=rngs)  # Will remove this
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 100, rngs=rngs)  # Will remove this
 
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x * 3, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x * 3, rngs=rngs)
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.DYNAMIC_SEQUENTIAL,
@@ -108,13 +108,13 @@ class TestDynamicSequential:
 
         # Start with 3 operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 10, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 10, rngs=rngs)
 
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x * 3, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x * 3, rngs=rngs)
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.DYNAMIC_SEQUENTIAL,
@@ -141,13 +141,13 @@ class TestDynamicSequential:
 
         # Create 3 operators with different effects: [A, B, C]
         config_a = MapOperatorConfig(stochastic=False)
-        op_a = MapOperator(config_a, fn=lambda x, key: x + 1, rngs=rngs)
+        op_a = MapOperator(config_a, fn=lambda x, _key: x + 1, rngs=rngs)
 
         config_b = MapOperatorConfig(stochastic=False)
-        op_b = MapOperator(config_b, fn=lambda x, key: x * 10, rngs=rngs)
+        op_b = MapOperator(config_b, fn=lambda x, _key: x * 10, rngs=rngs)
 
         config_c = MapOperatorConfig(stochastic=False)
-        op_c = MapOperator(config_c, fn=lambda x, key: x + 100, rngs=rngs)
+        op_c = MapOperator(config_c, fn=lambda x, _key: x + 100, rngs=rngs)
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.DYNAMIC_SEQUENTIAL,
@@ -178,10 +178,10 @@ class TestDynamicSequential:
         rngs = nnx.Rngs(0)
 
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 10, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 10, rngs=rngs)
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.DYNAMIC_SEQUENTIAL,
@@ -194,7 +194,7 @@ class TestDynamicSequential:
 
         # Add operator
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x * 3, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x * 3, rngs=rngs)
         composite.add_operator(op3)
         assert len(composite.operators) == 3
 
@@ -207,10 +207,10 @@ class TestDynamicSequential:
         rngs = nnx.Rngs(0)
 
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 10, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 10, rngs=rngs)
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.DYNAMIC_SEQUENTIAL,
@@ -227,7 +227,7 @@ class TestDynamicSequential:
 
         # Modify operators
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x * 3, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x * 3, rngs=rngs)
         composite.add_operator(op3)
 
         # Verify statistics still exist after modification

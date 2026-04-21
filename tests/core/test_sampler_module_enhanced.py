@@ -291,6 +291,7 @@ class TestSamplerModuleErrorHandling:
         """Test handling of statistics computation errors."""
 
         def failing_stats(indices):
+            del indices
             raise ValueError("Statistics computation failed")
 
         config = SimpleTestSamplerConfig(dataset_size=5, batch_stats_fn=failing_stats)

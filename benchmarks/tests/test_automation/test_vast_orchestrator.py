@@ -217,6 +217,7 @@ class TestPreflight:
 class TestSkyProbe:
     def test_probe_skypilot_capabilities_detects_rsync(self):
         def _fake_run(args, check, capture_output, text):  # noqa: ANN001
+            del capture_output, check, text
             if "--help" in args:
                 return subprocess.CompletedProcess(  # type: ignore[name-defined]
                     args=args,
@@ -573,6 +574,7 @@ class TestArtifactCollection:
         local_target = run_root / "results"
 
         def _run_cmd(args, *cmd_args, **cmd_kwargs):  # noqa: ANN001
+            del cmd_args, cmd_kwargs
             if args and args[0] == "scp":
                 nested_subset = local_target / "results" / "subset"
                 nested_subset.mkdir(parents=True, exist_ok=True)
@@ -605,15 +607,17 @@ class TestStageExecution:
             ),
         ):
             vo.run_stage(
-                cluster="datarax-vast-a100",
-                run_root=tmp_path / "run",
-                logs_dir=tmp_path / "logs",
-                stage="subset",
-                repetitions=3,
-                scenarios=["CV-1"],
-                sky_executable="sky",
-                live_peek=False,
-                gpu_resource="A100:1",
+                vo.StageRunConfig(
+                    cluster="datarax-vast-a100",
+                    run_root=tmp_path / "run",
+                    logs_dir=tmp_path / "logs",
+                    stage="subset",
+                    repetitions=3,
+                    scenarios=["CV-1"],
+                    sky_executable="sky",
+                    live_peek=False,
+                    gpu_resource="A100:1",
+                ),
             )
 
         kwargs = exec_mock.call_args.kwargs
@@ -631,16 +635,18 @@ class TestStageExecution:
             ),
         ):
             vo.run_stage(
-                cluster="datarax-vast-a100",
-                run_root=tmp_path / "run",
-                logs_dir=tmp_path / "logs",
-                stage="subset",
-                repetitions=3,
-                scenarios=["CV-1"],
-                sky_executable="sky",
-                live_peek=False,
-                gpu_resource="A100:1",
-                use_wandb=False,
+                vo.StageRunConfig(
+                    cluster="datarax-vast-a100",
+                    run_root=tmp_path / "run",
+                    logs_dir=tmp_path / "logs",
+                    stage="subset",
+                    repetitions=3,
+                    scenarios=["CV-1"],
+                    sky_executable="sky",
+                    live_peek=False,
+                    gpu_resource="A100:1",
+                    use_wandb=False,
+                ),
             )
 
         command = exec_mock.call_args.kwargs["command"]
@@ -743,7 +749,7 @@ class TestOrchestrate:
             rc = vo.orchestrate(args)
 
         assert rc == 0
-        assert run_stage.call_args.kwargs["use_wandb"] is False
+        assert run_stage.call_args.args[0].use_wandb is False
 
     def test_timeout_retries_same_cluster_before_fallback(self, tmp_path: Path):
         args = _args(tmp_path, mode="subset", yes=True, allow_spot_fallback=True)
@@ -1004,7 +1010,7 @@ class TestCommandExecution:
         monkeypatch.setattr(
             vo_utils.shutil,
             "get_terminal_size",
-            lambda fallback: os.terminal_size((60, 24)),
+            lambda fallback: (fallback, os.terminal_size((60, 24)))[1],
         )
 
         vo._status(  # noqa: SLF001
@@ -1045,7 +1051,7 @@ class TestCommandExecution:
         monkeypatch.setattr(
             vo_utils.shutil,
             "get_terminal_size",
-            lambda fallback: os.terminal_size((100, 24)),
+            lambda fallback: (fallback, os.terminal_size((100, 24)))[1],
         )
 
         vo._status("progress-line", transient=True)  # noqa: SLF001

@@ -23,7 +23,6 @@ from datarax.dag.nodes import (
     dataloader,
     DataSourceNode,
     DifferentiableRebatchImpl,
-    FastRebatchImpl,
     GradientTransparentRebatchImpl,
     Node,
     OperatorNode,
@@ -32,6 +31,7 @@ from datarax.dag.nodes import (
     Sequential,
     ShuffleNode,
 )
+from datarax.dag.nodes.loaders import DataLoaderRestoreError
 from datarax.typing import Batch, Element
 
 
@@ -313,59 +313,50 @@ class TestShuffleNode:
         node = ShuffleNode(buffer_size=100, seed=42)
 
         assert node.buffer_size == 100
-        assert len(node.buffer) == 0  # buffer is now nnx.data([]), returns plain list
+        assert len(node.buffer) == 0
         assert node.rng_key is not None
 
     def test_buffer_filling(self):
-        """Test shuffle buffer filling."""
+        """Test shuffle buffer filling with batches."""
         node = ShuffleNode(buffer_size=5, seed=42)
 
-        # Add elements to fill buffer
         for i in range(5):
-            result = node({"id": i})
-            assert result is None  # Buffer filling
+            result = node(create_batch_from_arrays({"id": jnp.array([i])}))
+            assert result is None
 
-        assert len(node.buffer) == 5  # buffer is now nnx.data([]), returns plain list
+        assert len(node.buffer) == 5
 
-        # Next element should trigger output
-        result = node({"id": 5})
+        result = node(create_batch_from_arrays({"id": jnp.array([5])}))
         assert result is not None
         assert "id" in result
 
     def test_shuffling(self):
-        """Test that shuffling actually occurs."""
+        """Test that batch-level shuffling actually occurs."""
         node = ShuffleNode(buffer_size=10, seed=42)
 
-        # Fill buffer and collect outputs
         outputs = []
         for i in range(20):
-            result = node({"id": i})
+            result = node(create_batch_from_arrays({"id": jnp.array([i])}))
             if result is not None:
-                outputs.append(result["id"])
+                outputs.append(int(result.data.get_value()["id"][0]))
 
-        # Flush remaining
         while True:
             result = node.flush()
             if result is None:
                 break
-            outputs.append(result["id"])
+            outputs.append(int(result.data.get_value()["id"][0]))
 
-        # Check that we got all elements
         assert len(outputs) == 20
         assert set(outputs) == set(range(20))
-
-        # Check that order is different (with high probability)
-        original = list(range(20))
-        assert outputs != original  # Should be shuffled
+        assert outputs != list(range(20))
 
     def test_deterministic_shuffle(self):
         """Test deterministic shuffling with same seed."""
         node1 = ShuffleNode(buffer_size=5, seed=123)
         node2 = ShuffleNode(buffer_size=5, seed=123)
 
-        data = [{"id": i} for i in range(10)]
+        data = [create_batch_from_arrays({"id": jnp.array([i])}) for i in range(10)]
 
-        # Process through both nodes
         outputs1 = []
         outputs2 = []
 
@@ -374,20 +365,18 @@ class TestShuffleNode:
             result2 = node2(item)
 
             if result1 is not None:
-                outputs1.append(result1["id"])
+                outputs1.append(int(result1.data.get_value()["id"][0]))
             if result2 is not None:
-                outputs2.append(result2["id"])
+                outputs2.append(int(result2.data.get_value()["id"][0]))
 
-        # Flush both
         for _ in range(5):
             flushed1 = node1.flush()
             flushed2 = node2.flush()
             assert flushed1 is not None
             assert flushed2 is not None
-            outputs1.append(flushed1["id"])
-            outputs2.append(flushed2["id"])
+            outputs1.append(int(flushed1.data.get_value()["id"][0]))
+            outputs2.append(int(flushed2.data.get_value()["id"][0]))
 
-        # Should produce same order
         assert outputs1 == outputs2
 
 
@@ -558,24 +547,12 @@ class TestImplementationClasses:
         assert impl.buffer.get_value() is None  # Not initialized until first batch
         assert impl.buffer_size.get_value() == 0
 
-    def test_fast_impl_initialization(self) -> None:
-        """Test FastRebatchImpl initialization."""
-        impl = FastRebatchImpl(target_batch_size=8, max_buffer_size=256)
-
-        assert impl.target_batch_size == 8
-        assert impl.max_buffer_size == 256
-        assert impl.buffer.get_value() is None  # Not initialized until first batch
-        assert impl.write_index.get_value() == 0
-        assert impl.read_index.get_value() == 0
-        assert impl.count.get_value() == 0
-
     def test_gradient_transparent_impl_initialization(self) -> None:
         """Test GradientTransparentRebatchImpl initialization."""
         impl = GradientTransparentRebatchImpl(target_batch_size=5)
 
         assert impl.target_batch_size == 5
         assert len(impl.buffer) == 0
-        assert len(impl.gradient_tape) == 0
 
     def test_differentiable_impl_basic_operation(self, simple_batch: Batch) -> None:
         """Test basic operation of DifferentiableRebatchImpl."""
@@ -596,29 +573,6 @@ class TestImplementationClasses:
         assert remainder["data"].shape == (1, 1)
         assert remainder["labels"][0] == 2
 
-    def test_fast_impl_circular_buffer(self) -> None:
-        """Test FastRebatchImpl circular buffer behavior."""
-        impl = FastRebatchImpl(target_batch_size=3, max_buffer_size=5)
-
-        # Add batches that would overflow a linear buffer
-        for i in range(3):
-            batch = {"data": jnp.array([[i], [i + 1]])}
-            output, is_valid = impl(batch)
-
-            if i == 0:
-                assert not is_valid  # 2 < 3
-            elif i == 1:
-                assert is_valid  # 4 >= 3
-                assert output is not None
-                assert output["data"].shape == (3, 1)
-            elif i == 2:
-                # After emitting 3, we had 1 left, now adding 2 more = 3
-                assert is_valid  # 3 >= 3
-                assert output is not None
-
-        # After two emissions, buffer should be empty or have remainder
-        assert impl.count.get_value() >= 0  # Valid state
-
     def test_gradient_transparent_impl_preserves_structure(self, simple_batch: Batch) -> None:
         """Test GradientTransparentRebatchImpl preserves gradient structure."""
         impl = GradientTransparentRebatchImpl(target_batch_size=2)
@@ -630,13 +584,11 @@ class TestImplementationClasses:
         assert output is not None
         assert output["data"].shape == (2, 1)
 
-        # Check that gradient tape is maintained
-        assert len(impl.gradient_tape) == 1  # Remainder stored
+        assert len(impl.buffer) == 1  # Remainder stored
 
-        # Flush should use gradient tape
         remainder = impl.flush()
         assert remainder is not None
-        assert len(impl.gradient_tape) == 0  # Cleared after flush
+        assert len(impl.buffer) == 0
 
 
 class TestRebatchNodeIntegration:
@@ -669,16 +621,11 @@ class TestRebatchNodeIntegration:
         assert isinstance(node_diff.impl, DifferentiableRebatchImpl)
         assert node_diff.impl.target_batch_size == 4
 
-        node_fast = RebatchNode(target_batch_size=8, mode="fast")
-        assert isinstance(node_fast.impl, FastRebatchImpl)
-        assert node_fast.impl.target_batch_size == 8
-
-        # gradient_transparent uses DifferentiableRebatchImpl (DRY consolidation)
         node_grad = RebatchNode(target_batch_size=6, mode="gradient_transparent")
-        assert isinstance(node_grad.impl, DifferentiableRebatchImpl)
+        assert isinstance(node_grad.impl, GradientTransparentRebatchImpl)
         assert node_grad.impl.target_batch_size == 6
 
-    @pytest.mark.parametrize("mode", ["differentiable", "fast", "gradient_transparent"])
+    @pytest.mark.parametrize("mode", ["differentiable", "gradient_transparent"])
     def test_basic_accumulation_and_emission(self, mode: str) -> None:
         """Test that node accumulates elements and emits when target size reached."""
         node = RebatchNode(target_batch_size=3, mode=mode)
@@ -709,7 +656,7 @@ class TestRebatchNodeIntegration:
         assert final["data"].shape == (1, 1)
         assert final["label"][0] == 6
 
-    @pytest.mark.parametrize("mode", ["differentiable", "fast", "gradient_transparent"])
+    @pytest.mark.parametrize("mode", ["differentiable", "gradient_transparent"])
     def test_exact_batch_size_input(self, mode: str, simple_batch: Batch) -> None:
         """Test when input batch exactly matches target size."""
         node = RebatchNode(target_batch_size=5, mode=mode)
@@ -720,7 +667,7 @@ class TestRebatchNodeIntegration:
         assert jnp.array_equal(result["data"], simple_batch["data"])
         assert jnp.array_equal(result["labels"], simple_batch["labels"])
 
-    @pytest.mark.parametrize("mode", ["differentiable", "fast", "gradient_transparent"])
+    @pytest.mark.parametrize("mode", ["differentiable", "gradient_transparent"])
     def test_larger_input_batch(self, mode: str, complex_batch: Batch) -> None:
         """Test when input batch is larger than target size."""
         node = RebatchNode(target_batch_size=3, mode=mode)
@@ -744,7 +691,7 @@ class TestRebatchNodeIntegration:
         assert final is not None
         assert final["images"].shape[0] == 2  # Remaining 2 elements
 
-    @pytest.mark.parametrize("mode", ["differentiable", "fast", "gradient_transparent"])
+    @pytest.mark.parametrize("mode", ["differentiable", "gradient_transparent"])
     def test_empty_flush(self, mode: str) -> None:
         """Test flush when buffer is empty."""
         node = RebatchNode(target_batch_size=5, mode=mode)
@@ -816,26 +763,10 @@ class TestDifferentiability:
         # Should have non-zero gradients
         assert not jnp.allclose(grad, 0.0)
 
-    def test_fast_mode_with_jit(self) -> None:
-        """Test that fast mode works with JIT compilation."""
-        node = RebatchNode(target_batch_size=4, mode="fast")
-
-        @nnx.jit
-        def process_batch(batch: Batch) -> Batch:
-            return node(batch)
-
-        # Test with multiple calls to ensure JIT works
-        batch1 = {"data": jnp.ones((3, 2))}
-        batch2 = {"data": jnp.ones((3, 2)) * 2}
-
-        # First call compiles
-        result1 = process_batch(batch1)
-
-        # Second call uses compiled version
-        result2 = process_batch(batch2)
-
-        # At least one should produce output
-        assert result1 is not None or result2 is not None
+    def test_fast_mode_is_removed(self) -> None:
+        """Ordinary non-differentiable rebatching is handled outside the DAG."""
+        with pytest.raises(ValueError, match="fast rebatching moved outside RebatchNode"):
+            RebatchNode(target_batch_size=4, mode="fast")
 
 
 class TestPyTreeHandling:
@@ -932,7 +863,7 @@ class TestStateManagement:
 
     def test_statistics_tracking(self) -> None:
         """Test that statistics are properly tracked."""
-        node = RebatchNode(target_batch_size=2, mode="fast")
+        node = RebatchNode(target_batch_size=2, mode="gradient_transparent")
 
         # Process batches
         for i in range(5):
@@ -953,17 +884,13 @@ class TestEdgeCases:
 
     def test_very_large_input_batch(self) -> None:
         """Test handling of input batch much larger than target."""
-        node = RebatchNode(target_batch_size=2, mode="fast", max_buffer_size=10)
+        node = RebatchNode(target_batch_size=2, mode="gradient_transparent", max_buffer_size=10)
 
         # Input batch of 20, but buffer max is 10
         large_batch = {"data": jnp.ones((20, 3))}
 
         results = []
-        import warnings
-
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", "Circular buffer overflow", UserWarning)
-            result = node(large_batch)
+        result = node(large_batch)
 
         # Should handle this gracefully
         while result is not None:
@@ -1006,7 +933,7 @@ class TestEdgeCases:
 
     def test_none_input(self) -> None:
         """Test handling of None input for buffer continuation."""
-        node = RebatchNode(target_batch_size=5, mode="fast")
+        node = RebatchNode(target_batch_size=5, mode="gradient_transparent")
 
         # None input when buffer is empty
         result = node(None)
@@ -1068,7 +995,7 @@ class TestIntegrationScenarios:
         """Test in pipeline with varying batch sizes."""
         # Simulate a pipeline that processes batches of different sizes
         sizes = [3, 5, 2, 7, 4]
-        node = RebatchNode(target_batch_size=8, mode="fast")
+        node = RebatchNode(target_batch_size=8, mode="gradient_transparent")
 
         all_results = []
         for i, size in enumerate(sizes):
@@ -1109,32 +1036,19 @@ class TestImplementationSpecificFeatures:
         assert isinstance(impl.buffer.get_value()["data"], jax.Array)
         assert isinstance(impl.buffer_mask.get_value(), jax.Array)
 
-    def test_fast_impl_circular_buffer_wrapping(self) -> None:
-        """Test FastRebatchImpl circular buffer wrapping."""
-        impl = FastRebatchImpl(target_batch_size=2, max_buffer_size=3)
-
-        # Fill buffer beyond capacity to test wrapping
-        for i in range(5):
-            batch = {"data": jnp.array([[float(i)]])}
-            impl(batch)
-
-        # Check that indices wrapped correctly
-        assert impl.write_index.get_value() < impl.max_buffer_size
-        assert impl.read_index.get_value() < impl.max_buffer_size
-
-    def test_gradient_transparent_impl_tape(self) -> None:
-        """Test GradientTransparentRebatchImpl maintains gradient tape."""
+    def test_gradient_transparent_impl_keeps_remainder_in_buffer(self) -> None:
+        """Test GradientTransparentRebatchImpl tracks only pending elements."""
         impl = GradientTransparentRebatchImpl(target_batch_size=4)
 
         batch1 = {"data": jnp.array([[1.0], [2.0]])}
         batch2 = {"data": jnp.array([[3.0], [4.0]])}
 
         impl(batch1)
-        assert len(impl.gradient_tape) == 2
+        assert len(impl.buffer) == 2
 
         output, _ = impl(batch2)
         assert output is not None
-        assert len(impl.gradient_tape) == 0  # Cleared after emission
+        assert len(impl.buffer) == 0
 
 
 # Convenience test
@@ -1142,7 +1056,6 @@ def test_module_imports() -> None:
     """Test that all expected exports are available."""
     from datarax.dag.nodes import (
         DifferentiableRebatchImpl,
-        FastRebatchImpl,
         GradientTransparentRebatchImpl,
         rebatch,
         RebatchNode,
@@ -1150,7 +1063,6 @@ def test_module_imports() -> None:
 
     assert RebatchNode is not None
     assert DifferentiableRebatchImpl is not None
-    assert FastRebatchImpl is not None
     assert GradientTransparentRebatchImpl is not None
     assert callable(rebatch)
 
@@ -1169,9 +1081,8 @@ class TestDataLoaderClass:
         loader = DataLoader(source, batch_size=2)
 
         assert loader.batch_size == 2
-        assert loader.shuffle_buffer_size is None
         assert loader.drop_remainder is False
-        assert loader.shuffle_seed is None
+        assert loader.shuffle is False
         assert isinstance(loader.source, DataSourceNode)
         assert loader.source.source is source
 
@@ -1184,27 +1095,17 @@ class TestDataLoaderClass:
         assert loader.batch_size == 3
         assert loader.source is source_node
 
-    def test_dataloader_initialization_with_shuffling(self):
-        """Test DataLoader initialization with shuffling enabled."""
+    def test_dataloader_rejects_datarax_source_shuffle(self):
+        """Source-level DataLoader shuffling belongs to the Grain backend."""
         source = MockDataSourceV2(StructuralConfig(), size=10)
-        loader = DataLoader(source, batch_size=4, shuffle_buffer_size=5, shuffle_seed=42)
 
-        assert loader.batch_size == 4
-        assert loader.shuffle_buffer_size == 5
-        assert loader.shuffle_seed == 42
-
-        # Check that nodes are properly configured
-        assert len(loader.nodes) == 3  # DataSource + Shuffle + Batch
-        assert isinstance(loader.nodes[0], DataSourceNode)
-        assert isinstance(loader.nodes[1], ShuffleNode)
-        assert isinstance(loader.nodes[2], BatchNode)
+        with pytest.raises(ValueError, match="Grain backend"):
+            DataLoader(source, batch_size=4, shuffle=True, seed=42)
 
     def test_dataloader_initialization_without_shuffling(self):
         """Test DataLoader initialization without shuffling."""
         source = MockDataSourceV2(StructuralConfig(), size=10)
-        loader = DataLoader(source, batch_size=4, shuffle_buffer_size=None)
-
-        assert loader.shuffle_buffer_size is None
+        loader = DataLoader(source, batch_size=4)
 
         # Check that only DataSource + Batch nodes exist
         assert len(loader.nodes) == 2  # DataSource + Batch
@@ -1233,12 +1134,12 @@ class TestDataLoaderClass:
         # Without shuffling
         loader1 = DataLoader(source, batch_size=4)
         repr1 = repr(loader1)
-        assert "DataLoader(batch_size=4)" in repr1
+        assert "DataLoader(batch_size=4, backend=datarax)" in repr1
 
-        # With shuffling
-        loader2 = DataLoader(source, batch_size=2, shuffle_buffer_size=10)
+        # Explicit backend is represented.
+        loader2 = DataLoader(source, batch_size=2, backend="datarax")
         repr2 = repr(loader2)
-        assert "DataLoader(batch_size=2, shuffle=10)" in repr2
+        assert "DataLoader(batch_size=2, backend=datarax)" in repr2
 
     def test_dataloader_custom_name(self):
         """Test DataLoader with custom name."""
@@ -1258,7 +1159,7 @@ class TestDataLoaderConvenienceFunction:
 
         assert isinstance(loader, DataLoader)
         assert loader.batch_size == 3
-        assert loader.shuffle_buffer_size is None
+        assert loader.shuffle is False
 
     def test_dataloader_function_with_all_options(self):
         """Test dataloader function with all options."""
@@ -1266,16 +1167,14 @@ class TestDataLoaderConvenienceFunction:
         loader = dataloader(
             source=source,
             batch_size=4,
-            shuffle_buffer_size=8,
             drop_remainder=True,
-            shuffle_seed=123,
+            backend="datarax",
         )
 
         assert isinstance(loader, DataLoader)
         assert loader.batch_size == 4
-        assert loader.shuffle_buffer_size == 8
         assert loader.drop_remainder is True
-        assert loader.shuffle_seed == 123
+        assert loader.backend == "datarax"
 
 
 class TestDataLoaderExecution:
@@ -1318,42 +1217,21 @@ class TestDataLoaderExecution:
         # Should have some batches
         assert len(batches) > 0
 
-    def test_dataloader_with_shuffling_execution(self, sample_source: MockDataSourceV2):
-        """Test DataLoader execution with shuffling."""
-        loader = DataLoader(sample_source, batch_size=2, shuffle_buffer_size=4, shuffle_seed=42)
-
-        # Execute a few times to test shuffling
-        results = []
-        for i in range(5):
-            result = loader(None)
-            if result is not None:
-                results.append(result)
-
-        # Should have some results
-        assert len(results) >= 0  # May be empty due to buffering
-
     def test_dataloader_state_management(self, sample_source: MockDataSourceV2):
-        """Test DataLoader state management."""
+        """DataLoader restores fail fast when node state does not match strict schema."""
         loader = DataLoader(sample_source, batch_size=2)
 
-        # Get initial state
         initial_state = loader.get_state()
         assert isinstance(initial_state, dict)
 
-        # Execute some operations
         loader(None)
         loader(None)
 
-        # Get state after operations
         after_state = loader.get_state()
         assert isinstance(after_state, dict)
 
-        # Restore initial state
-        loader.set_state(initial_state)
-
-        # State should be restored (this is a basic check)
-        restored_state = loader.get_state()
-        assert isinstance(restored_state, dict)
+        with pytest.raises(DataLoaderRestoreError, match="Failed to restore DataLoader state"):
+            loader.set_state(initial_state)
 
 
 class TestDataLoaderIntegration:
@@ -1381,6 +1259,7 @@ class TestDataLoaderIntegration:
                 super().__init__(DataraxModuleConfig(), name="simple_transform")
 
             def __call__(self, data, *, key=None):
+                del key
                 if data is None:
                     return None
                 return data * 2
@@ -1420,31 +1299,21 @@ class TestDataLoaderEdgeCases:
         loader(None)
         # May return None due to insufficient data for batch
 
-    def test_dataloader_zero_shuffle_buffer(self):
-        """Test DataLoader with zero shuffle buffer size."""
-        source = MockDataSourceV2(StructuralConfig(), size=5)
-        loader = DataLoader(source, batch_size=2, shuffle_buffer_size=0)
-
-        # Should disable shuffling
-        assert len(loader.nodes) == 2  # Only DataSource + Batch
-
     def test_dataloader_configuration_inspection(self):
         """Test DataLoader configuration can be inspected."""
         source = MockDataSourceV2(StructuralConfig(), size=10)
         loader = DataLoader(
             source,
             batch_size=3,
-            shuffle_buffer_size=7,
             drop_remainder=True,
-            shuffle_seed=456,
+            backend="datarax",
             name="TestLoader",
         )
 
         # All configuration should be accessible
         assert loader.batch_size == 3
-        assert loader.shuffle_buffer_size == 7
         assert loader.drop_remainder is True
-        assert loader.shuffle_seed == 456
+        assert loader.backend == "datarax"
         assert loader.name == "TestLoader"
         assert isinstance(loader.source, DataSourceNode)
 
@@ -1461,9 +1330,11 @@ class TestBranchGradientFlow:
             return data["value"] > 0.0
 
         def true_path(data, *, key=None):
+            del key
             return {"result": data["value"] * 2.0}
 
         def false_path(data, *, key=None):
+            del key
             return {"result": data["value"] * -1.0}
 
         branch = Branch(condition_fn, true_path, false_path)
@@ -1492,9 +1363,11 @@ class TestBranchGradientFlow:
             return jnp.sum(data["features"]) > 5.0
 
         def scale_up(data, *, key=None):
+            del key
             return {"output": data["features"] * 3.0}
 
         def scale_down(data, *, key=None):
+            del key
             return {"output": data["features"] * 0.5}
 
         branch = Branch(condition_fn, scale_up, scale_down)
@@ -1527,9 +1400,11 @@ class TestBranchGradientFlow:
             return data["x"] > 0.0
 
         def positive_path(data, *, key=None):
+            del key
             return {"y": jnp.sqrt(data["x"])}
 
         def negative_path(data, *, key=None):
+            del key
             return {"y": jnp.abs(data["x"])}
 
         branch = Branch(condition_fn, positive_path, negative_path)
@@ -1556,9 +1431,11 @@ class TestBranchGradientFlow:
             return data["values"] > 2.0
 
         def double_path(data, *, key=None):
+            del key
             return {"result": data["values"] * 2.0}
 
         def square_path(data, *, key=None):
+            del key
             return {"result": data["values"] ** 2}
 
         branch = Branch(condition_fn, double_path, square_path)
@@ -1586,10 +1463,12 @@ class TestBranchGradientFlow:
             return jnp.mean(data["input"]) > 0.0
 
         def complex_true_path(data, *, key=None):
+            del key
             x = data["input"]
             return {"output": jnp.sin(x) + jnp.cos(x**2)}
 
         def complex_false_path(data, *, key=None):
+            del key
             x = data["input"]
             return {"output": jnp.tanh(x) * jnp.exp(-(x**2))}
 
@@ -1626,9 +1505,11 @@ class TestBranchGradientFlow:
             return data["x"] > 1.0
 
         def inner_true(data, *, key=None):
+            del key
             return {"x": data["x"] * 2.0}
 
         def inner_false(data, *, key=None):
+            del key
             return {"x": data["x"] + 1.0}
 
         inner_branch = Branch(inner_condition, inner_true, inner_false)
@@ -1639,10 +1520,12 @@ class TestBranchGradientFlow:
 
         def outer_true(data, *, key=None):
             # Use inner branch
+            del key
             result = inner_branch(data)
             return {"y": result["x"] ** 2}
 
         def outer_false(data, *, key=None):
+            del key
             return {"y": data["x"] * 3.0}
 
         outer_branch = Branch(outer_condition, outer_true, outer_false)

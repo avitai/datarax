@@ -52,7 +52,7 @@ class TestP5CheckpointSpeed:
         }
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            handler.save(tmpdir, state)
+            handler.save_to_directory(tmpdir, state)
             restored = handler.restore(tmpdir)
 
             assert jnp.allclose(restored["params"]["kernel"], state["params"]["kernel"])
@@ -66,7 +66,7 @@ class TestP5CheckpointSpeed:
             def save_cycle():
                 counter[0] += 1
                 path = Path(tmpdir) / f"ckpt_{counter[0]}"
-                handler.save(str(path), model_state)
+                handler.save_to_directory(str(path), model_state)
 
             latency = measure_latency(save_cycle, repetitions=3)
             assert latency < 5.0, f"Save latency {latency:.2f}s exceeds 5s target"
@@ -87,7 +87,7 @@ class TestP5CheckpointSpeed:
             def datarax_cycle():
                 datarax_counter[0] += 1
                 ckpt_path = Path(tmpdir) / f"datarax_{datarax_counter[0]}"
-                handler.save(str(ckpt_path), model_state)
+                handler.save_to_directory(str(ckpt_path), model_state)
                 handler.restore(str(ckpt_path))
 
             datarax_latency = measure_latency(datarax_cycle, repetitions=3)
@@ -125,7 +125,7 @@ class TestP5AsyncCheckpointing:
     def test_async_save_restore_cycle(self, async_handler, model_state):
         """Verify async save + wait + restore produces correct state."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            async_handler.save(tmpdir, model_state)
+            async_handler.save_to_directory(tmpdir, model_state)
             async_handler.wait_until_finished()
             restored = async_handler.restore(tmpdir)
 

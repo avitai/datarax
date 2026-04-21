@@ -41,7 +41,7 @@ empirical data, and explain why certain design choices were made.
        for batch in pipeline:                    # (S) sequential
            images = device_put(batch, sharding)  # (S) shard overhead
            result = _workload(images)            # (P) parallel across N devices
-           result.block_until_ready()            # (S) sync barrier
+           synchronize result tree               # (S) sync barrier
 
    Amdahl's law: Speedup = 1 / (s + (1-s)/N), where s = sequential fraction.
 
@@ -54,7 +54,7 @@ empirical data, and explain why certain design choices were made.
    The sequential fraction comes from:
      - Pipeline iteration (Python host loop, Datarax DAG executor)
      - `jax.device_put(..., sharding)` — splits + copies data
-     - `block_until_ready()` — synchronization barrier after each batch
+     - result synchronization — barrier after each batch
 
    With 32×32 images and 3 light iterations (original design), per-batch
    compute was ~2.5 ms while shard overhead was ~5-10 ms.  This made s > 0.7,
@@ -128,6 +128,8 @@ References
 import argparse
 import os
 
+from datarax.utils.console import emit
+
 
 _pre_parser = argparse.ArgumentParser(add_help=False)
 _pre_parser.add_argument("--platform", type=str, default="cpu")
@@ -158,9 +160,10 @@ from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 matplotlib.use("Agg")
 
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.performance.synchronization import block_until_ready_tree
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -193,7 +196,7 @@ def create_pipeline(data: dict, batch_size: int = 64, seed: int = 0):
     normalizer = ElementOperator(
         ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0)
     )
-    return from_source(source, batch_size=batch_size).add(OperatorNode(normalizer))
+    return build_source_pipeline(source, batch_size=batch_size).add(OperatorNode(normalizer))
 
 
 # ── Simulated workload ──────────────────────────────────────────────────────
@@ -238,7 +241,7 @@ def benchmark_single_device(data: dict, batch_size: int = 64) -> dict:
 
     # Warmup
     for i, batch in enumerate(pipeline):
-        _ = _workload(batch["image"]).block_until_ready()
+        block_until_ready_tree(_workload(batch["image"]))
         if i >= 5:
             break
 
@@ -247,7 +250,7 @@ def benchmark_single_device(data: dict, batch_size: int = 64) -> dict:
     total_samples = 0
     t0 = time.perf_counter()
     for batch in pipeline:
-        _ = _workload(batch["image"]).block_until_ready()
+        block_until_ready_tree(_workload(batch["image"]))
         total_samples += batch["image"].shape[0]
     elapsed = time.perf_counter() - t0
 
@@ -288,11 +291,11 @@ def benchmark_sharded(data: dict, num_devices: int, batch_size: int = 64) -> dic
     with mesh:
         for i, batch in enumerate(pipeline):
             images = jax.device_put(batch["image"], sharding)
-            _ = _workload(images).block_until_ready()
+            block_until_ready_tree(_workload(images))
             if i >= 5:
                 break
 
-    # Timed run.  block_until_ready() is mandatory for accurate timing because
+    # Timed run.  Result synchronization is mandatory for accurate timing because
     # JAX uses async dispatch — without it we'd only measure dispatch overhead
     # (~269 µs) not actual compute time.  Ref: JAX docs/benchmarking.md
     pipeline = create_pipeline(data, effective_bs)
@@ -301,7 +304,7 @@ def benchmark_sharded(data: dict, num_devices: int, batch_size: int = 64) -> dic
     with mesh:
         for batch in pipeline:
             images = jax.device_put(batch["image"], sharding)
-            _ = _workload(images).block_until_ready()
+            block_until_ready_tree(_workload(images))
             total_samples += batch["image"].shape[0]
     elapsed = time.perf_counter() - t0
 
@@ -329,20 +332,20 @@ def run_scaling_benchmark(data: dict, batch_size: int = 64) -> list[dict]:
     results = []
 
     # Single device baseline
-    print("  1 device (baseline)...", end=" ", flush=True)
+    emit("  1 device (baseline)...", end=" ", flush=True)
     base = benchmark_single_device(data, batch_size)
-    print(f"{base['samples_per_second']:>10.0f} samples/s")
+    emit(f"{base['samples_per_second']:>10.0f} samples/s")
     results.append(base)
 
     # Sharded configurations
     for nd in device_counts:
-        print(f"  {nd} device(s) (sharded)...", end=" ", flush=True)
+        emit(f"  {nd} device(s) (sharded)...", end=" ", flush=True)
         result = benchmark_sharded(data, nd, batch_size)
         scaling_efficiency = (
             result["samples_per_second"] / (base["samples_per_second"] * nd)
         ) * 100
         result["scaling_efficiency_pct"] = round(scaling_efficiency, 2)
-        print(
+        emit(
             f"{result['samples_per_second']:>10.0f} samples/s  "
             f"({scaling_efficiency:.1f}% efficiency)"
         )
@@ -364,14 +367,14 @@ def run_batch_size_vs_devices(data: dict, batch_sizes: list[int]) -> dict[str, l
     for nd in device_counts:
         key = f"{nd}_devices"
         results[key] = []
-        print(f"\n  {nd} device(s):")
+        emit(f"\n  {nd} device(s):")
         for bs in batch_sizes:
             effective_bs = (bs // nd) * nd
             if effective_bs < nd:
                 continue
-            print(f"    batch_size={effective_bs:>4d}...", end=" ", flush=True)
+            emit(f"    batch_size={effective_bs:>4d}...", end=" ", flush=True)
             r = benchmark_sharded(data, nd, bs)
-            print(f"{r['samples_per_second']:>10.0f} samples/s")
+            emit(f"{r['samples_per_second']:>10.0f} samples/s")
             results[key].append(r)
 
     return results
@@ -441,7 +444,7 @@ def plot_results(results: dict, output_dir: Path) -> None:
         path = output_dir / "distributed-scaling-throughput.png"
         plt.savefig(path, dpi=150, bbox_inches="tight", facecolor="white")
         plt.close()
-        print(f"  Saved: {path}")
+        emit(f"  Saved: {path}")
 
     # 2. Batch size vs device count matrix
     if "batch_size_vs_devices" in results:
@@ -491,7 +494,7 @@ def plot_results(results: dict, output_dir: Path) -> None:
         path = output_dir / "distributed-batch-vs-devices.png"
         plt.savefig(path, dpi=150, bbox_inches="tight", facecolor="white")
         plt.close()
-        print(f"  Saved: {path}")
+        emit(f"  Saved: {path}")
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -518,25 +521,25 @@ def main():
     parser.add_argument("--output", type=str, default=None)
     args = parser.parse_args()
 
-    print("Distributed Scaling Benchmark")
-    print("=" * 60)
-    print(f"Platform:  {args.platform}")
-    print(f"Backend:   {jax.default_backend()}")
-    print(f"Devices:   {len(jax.devices())} ({jax.devices()})")
-    print(f"Samples:   {args.samples}")
-    print()
+    emit("Distributed Scaling Benchmark")
+    emit("=" * 60)
+    emit(f"Platform:  {args.platform}")
+    emit(f"Backend:   {jax.default_backend()}")
+    emit(f"Devices:   {len(jax.devices())} ({jax.devices()})")
+    emit(f"Samples:   {args.samples}")
+    emit()
 
     data = generate_image_data(num_samples=args.samples)
 
     # Device scaling
-    print("Device Scaling")
-    print("-" * 60)
+    emit("Device Scaling")
+    emit("-" * 60)
     scaling_results = run_scaling_benchmark(data, args.batch_size)
 
     # Batch size x device count matrix
-    print()
-    print("Batch Size vs Device Count")
-    print("-" * 60)
+    emit()
+    emit("Batch Size vs Device Count")
+    emit("-" * 60)
     matrix_results = run_batch_size_vs_devices(data, [32, 64, 128, 256])
 
     # Collect results
@@ -557,13 +560,13 @@ def main():
     # Save results
     output_path = Path(args.output or "temp/distributed_scaling_results.json")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w") as f:
+    with output_path.open("w") as f:
         json.dump(all_results, f, indent=2)
-    print(f"\nResults saved to {output_path}")
+    emit(f"\nResults saved to {output_path}")
 
     # Generate plots in same directory as JSON output
-    print()
-    print("Generating plots...")
+    emit()
+    emit("Generating plots...")
     plot_results(all_results, output_path.parent)
 
 

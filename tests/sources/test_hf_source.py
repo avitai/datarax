@@ -58,6 +58,7 @@ def test_hf_eager_source_initialization(mock_numeric_dataset, monkeypatch):
     """Test basic HFEagerSource initialization with config-based API."""
 
     def mock_load_dataset(name, split=None, **kwargs):
+        del kwargs, name, split
         return mock_numeric_dataset
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -75,6 +76,7 @@ def test_hf_eager_source_iteration(mock_numeric_dataset, monkeypatch):
     """Test HFEagerSource iteration functionality."""
 
     def mock_load_dataset(name, split=None, **kwargs):
+        del kwargs, name, split
         return mock_numeric_dataset
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -98,6 +100,7 @@ def test_hf_eager_source_batch_method(mock_numeric_dataset, monkeypatch):
     """Test HFEagerSource's get_batch method."""
 
     def mock_load_dataset(name, split=None, **kwargs):
+        del kwargs, name, split
         return mock_numeric_dataset
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -121,6 +124,7 @@ def test_hf_eager_source_random_access(mock_numeric_dataset, monkeypatch):
     """Test HFEagerSource's random access capability."""
 
     def mock_load_dataset(name, split=None, **kwargs):
+        del kwargs, name, split
         return mock_numeric_dataset
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -144,6 +148,7 @@ def test_hf_eager_source_with_filters(mock_dataset, monkeypatch):
     """Test HFEagerSource with include/exclude key filters."""
 
     def mock_load_dataset(name, split=None, **kwargs):
+        del kwargs, name, split
         return mock_dataset
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -170,6 +175,7 @@ def test_hf_eager_source_shuffling(mock_numeric_dataset, monkeypatch):
     """Test HFEagerSource with shuffling enabled."""
 
     def mock_load_dataset(name, split=None, **kwargs):
+        del kwargs, name, split
         return mock_numeric_dataset
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -203,6 +209,7 @@ def test_hf_eager_source_length(mock_numeric_dataset, monkeypatch):
     """Test HFEagerSource's length functionality."""
 
     def mock_load_dataset(name, split=None, **kwargs):
+        del kwargs, name, split
         return mock_numeric_dataset
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -223,6 +230,7 @@ def test_hf_streaming_source_initialization(mock_dataset, monkeypatch):
     """Test HFStreamingSource initialization."""
 
     def mock_load_dataset(name, split=None, streaming=False, **kwargs):
+        del kwargs, name, split
         if streaming:
             return mock_dataset.to_iterable_dataset()
         return mock_dataset
@@ -240,6 +248,7 @@ def test_hf_streaming_source_iteration(mock_numeric_dataset, monkeypatch):
     """Test HFStreamingSource iteration."""
 
     def mock_load_dataset(name, split=None, streaming=False, **kwargs):
+        del kwargs, name, split, streaming
         return mock_numeric_dataset
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -257,6 +266,7 @@ def test_hf_streaming_source_streaming_mode(mock_dataset, monkeypatch):
     """Test HFStreamingSource with streaming=True."""
 
     def mock_load_dataset(name, split=None, streaming=False, **kwargs):
+        del kwargs, name, split
         if streaming:
             return mock_dataset.to_iterable_dataset()
         return mock_dataset
@@ -267,7 +277,7 @@ def test_hf_streaming_source_streaming_mode(mock_dataset, monkeypatch):
     config = HFStreamingConfig(name="mock_dataset", split="train", streaming=True)
     source = HFStreamingSource(config, rngs=nnx.Rngs(42))
 
-    assert source.streaming is True
+    assert source.is_iterable_mode is True
 
 
 # =============================================================================
@@ -282,6 +292,7 @@ def test_hf_eager_source_empty_dataset(monkeypatch):
     empty_dataset = datasets.Dataset.from_dict({"label": []})
 
     def mock_load_dataset(name, split=None, **kwargs):
+        del kwargs, name, split
         return empty_dataset
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -311,6 +322,7 @@ def test_hf_streaming_source_no_random_access(mock_dataset, monkeypatch):
     """Test that streaming HFStreamingSource doesn't support random access."""
 
     def mock_load_dataset(name, split=None, streaming=False, **kwargs):
+        del kwargs, name, split
         if streaming:
             return mock_dataset.to_iterable_dataset()
         return mock_dataset
@@ -360,6 +372,7 @@ def test_from_hf_creates_eager_by_default(mock_numeric_dataset, monkeypatch):
     """Test that from_hf creates eager source by default."""
 
     def mock_load_dataset(name, split=None, **kwargs):
+        del kwargs, name, split
         return mock_numeric_dataset
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -376,6 +389,7 @@ def test_from_hf_with_streaming_flag(mock_dataset, monkeypatch):
     """Test that from_hf with streaming=True creates streaming source."""
 
     def mock_load_dataset(name, split=None, streaming=False, **kwargs):
+        del kwargs, name, split
         if streaming:
             return mock_dataset.to_iterable_dataset()
         return mock_dataset
@@ -386,7 +400,7 @@ def test_from_hf_with_streaming_flag(mock_dataset, monkeypatch):
 
     # Should be streaming source
     assert isinstance(source, HFStreamingSource)
-    assert source.streaming is True
+    assert source.is_iterable_mode is True
 
 
 @pytest.mark.unit
@@ -394,6 +408,7 @@ def test_from_hf_force_eager(mock_numeric_dataset, monkeypatch):
     """Test that from_hf with eager=True creates eager source."""
 
     def mock_load_dataset(name, split=None, **kwargs):
+        del kwargs, name, split
         return mock_numeric_dataset
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -407,6 +422,7 @@ def test_from_hf_force_streaming(mock_dataset, monkeypatch):
     """Test that from_hf with eager=False creates streaming source."""
 
     def mock_load_dataset(name, split=None, streaming=False, **kwargs):
+        del kwargs, name, split, streaming
         return mock_dataset
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -420,6 +436,7 @@ def test_from_hf_with_shuffling(mock_numeric_dataset, monkeypatch):
     """Test that from_hf passes shuffle parameter correctly."""
 
     def mock_load_dataset(name, split=None, **kwargs):
+        del kwargs, name, split
         return mock_numeric_dataset
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -427,4 +444,4 @@ def test_from_hf_with_shuffling(mock_numeric_dataset, monkeypatch):
     source = from_hf("mock", "train", shuffle=True, seed=42, rngs=nnx.Rngs(0))
 
     # Should have shuffling enabled
-    assert source.shuffle is True  # type: ignore[reportAttributeAccessIssue]
+    assert source.is_random_order is True  # type: ignore[reportAttributeAccessIssue]

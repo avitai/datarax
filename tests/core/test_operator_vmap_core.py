@@ -39,6 +39,7 @@ class ScaleOperator(OperatorModule):
     """Deterministic operator: multiplies data by a factor."""
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
+        del random_params, stats
         new_data = jax.tree.map(lambda x: x * self.config.factor, data)  # type: ignore[reportAttributeAccessIssue]
         return new_data, state, metadata
 
@@ -66,6 +67,7 @@ class StochasticNoiseOperator(OperatorModule):
         return jax.random.normal(rng, shape=(batch_size,)) * self.config.noise_scale  # type: ignore[reportAttributeAccessIssue]
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
+        del stats
         noise = random_params if random_params is not None else 0.0
         new_data = jax.tree.map(lambda x: x + noise, data)
         return new_data, state, metadata

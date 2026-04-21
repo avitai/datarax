@@ -73,9 +73,11 @@ class TestConditionalSequentialStrategy:
                 self.statistics = {}
 
             def apply(self, data, state, meta, rp=None, stats=None):
+                del rp, stats
                 return data + self.value, state, meta
 
             def generate_random_params(self, rng, shapes):
+                del rng, shapes
                 return {}
 
         op1 = AddOperator(10.0)
@@ -89,7 +91,7 @@ class TestConditionalSequentialStrategy:
         # Input: -20.0 -> Op1 -> -10.0 -> (-10 > 5 is False) -> Op2 skipped -> -10.0
 
         conditions = [
-            lambda x: jnp.array(True),  # Always run op1
+            lambda _x: jnp.array(True),  # Always run op1
             lambda x: jnp.sum(x) > 5.0,  # Run op2 if sum(x) > 5
         ]
 

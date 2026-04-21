@@ -480,7 +480,7 @@ class TestBatchOps:
         batch = Batch(elements)
 
         mask = jnp.array([True, False, True, False, True])
-        filtered = BatchOps.filter_batch(batch, mask)
+        filtered = BatchOps.select_batch_rows(batch, mask)
 
         assert filtered.batch_size == 3
         assert jnp.array_equal(filtered.get_data()["x"], jnp.array([[0], [2], [4]]))
@@ -491,7 +491,7 @@ class TestBatchOps:
         batch = Batch(elements)
 
         mask = jnp.array([False, False, False])
-        filtered = BatchOps.filter_batch(batch, mask)
+        filtered = BatchOps.select_batch_rows(batch, mask)
 
         assert filtered.batch_size == 0
         # Empty batch preserves structure with zero-length arrays
@@ -504,27 +504,27 @@ class TestBatchOps:
         mask = jnp.array([True, False])
 
         with pytest.raises(ValueError):
-            BatchOps.filter_batch(batch, mask)
+            BatchOps.select_batch_rows(batch, mask)
 
     def test_concatenate_batches(self):
         """Test concatenating multiple batches."""
         batch1 = Batch([Element(data={"x": jnp.array([i])}) for i in range(3)])
         batch2 = Batch([Element(data={"x": jnp.array([i + 3])}) for i in range(2)])
 
-        concatenated = BatchOps.concatenate_batches([batch1, batch2])
+        concatenated = BatchOps.concatenate_batch_sequence([batch1, batch2])
 
         assert concatenated.batch_size == 5
         assert jnp.array_equal(concatenated.get_data()["x"], jnp.array([[0], [1], [2], [3], [4]]))
 
     def test_concatenate_empty(self):
         """Test concatenating empty list."""
-        result = BatchOps.concatenate_batches([])
+        result = BatchOps.concatenate_batch_sequence([])
         assert result.batch_size == 0
 
     def test_concatenate_single(self):
         """Test concatenating single batch."""
         batch = Batch([Element(data={"x": jnp.ones(2)})])
-        result = BatchOps.concatenate_batches([batch])
+        result = BatchOps.concatenate_batch_sequence([batch])
 
         assert result.batch_size == batch.batch_size
         assert jnp.array_equal(result.get_data()["x"], batch.get_data()["x"])
@@ -744,7 +744,7 @@ class TestPerformance:
         mask = jnp.array([i % 2 == 0 for i in range(1000)])
 
         def filter_op():
-            return BatchOps.filter_batch(batch, mask)
+            return BatchOps.select_batch_rows(batch, mask)
 
         result = benchmark(filter_op)
         assert result.batch_size == 500

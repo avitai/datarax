@@ -21,6 +21,7 @@ class TestFieldOperations:
         """Test basic initialization for deterministic field operation."""
 
         def simple_fn(data, key):
+            del key
             return data
 
         config = MapOperatorConfig(
@@ -39,6 +40,7 @@ class TestFieldOperations:
         """Test initialization for stochastic field operation."""
 
         def simple_fn(data, key):
+            del key
             return data
 
         rngs = nnx.Rngs({"custom": 42})
@@ -59,6 +61,7 @@ class TestFieldOperations:
         """Test transformation of existing field."""
 
         def add_one(data, key):
+            del key
             return data + 1
 
         config = MapOperatorConfig(
@@ -81,6 +84,7 @@ class TestFieldOperations:
         """Test transformation of multiple fields simultaneously."""
 
         def multiply_by_two(data, key):
+            del key
             return data * 2
 
         config = MapOperatorConfig(
@@ -103,6 +107,7 @@ class TestFieldOperations:
         """Test transformation when field doesn't exist (passes through)."""
 
         def add_one(data, key):
+            del key
             return data + 1
 
         config = MapOperatorConfig(
@@ -147,6 +152,7 @@ class TestFieldOperations:
         """Test that deterministic operations are reproducible."""
 
         def scale(data, key):
+            del key
             return data * 1.5
 
         config = MapOperatorConfig(
@@ -167,6 +173,7 @@ class TestFieldOperations:
         """Test operator with batch dimension."""
 
         def augment_fn(data, key):
+            del key
             return data + 1
 
         config = MapOperatorConfig(
@@ -206,6 +213,7 @@ class TestFieldOperations:
         """Test that subtree mode filters by field name correctly."""
 
         def transform_fn(data, key):
+            del key
             return data * 3
 
         config = MapOperatorConfig(

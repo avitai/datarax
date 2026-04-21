@@ -150,6 +150,7 @@ def gaussian_blur_np(
     sigma: float = 1.0,
 ) -> np.ndarray:
     """5x5 Gaussian blur via separable convolution (numpy CPU)."""
+    del kernel_size
     from scipy.ndimage import gaussian_filter
 
     if arr.ndim == 3:

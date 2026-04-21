@@ -60,7 +60,7 @@ flowchart TB
     end
 
     subgraph Pipeline["Pipeline"]
-        P[from_source<br/>batch_size=128]
+        P[build_source_pipeline<br/>batch_size=128]
     end
 
     subgraph Mesh["Device Mesh"]
@@ -100,7 +100,7 @@ Device count: 2
 Standard pipeline setup - sharding is applied at the mesh level:
 
 ```python
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 data = {
@@ -109,7 +109,7 @@ data = {
 }
 
 source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
-pipeline = from_source(source, batch_size=128)
+pipeline = build_source_pipeline(source, batch_size=128)
 
 print(f"Pipeline: {len(source)} samples, batch_size=128")
 ```

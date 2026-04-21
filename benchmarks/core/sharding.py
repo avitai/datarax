@@ -30,7 +30,7 @@ def create_device_mesh(
     return Mesh(device_array, axis_names)
 
 
-def shard_batch(mesh: Mesh, axis_name: str = "data") -> NamedSharding:
+def place_batch_on_shards(mesh: Mesh, axis_name: str = "data") -> NamedSharding:
     """Create a NamedSharding that shards along the batch dimension.
 
     Args:

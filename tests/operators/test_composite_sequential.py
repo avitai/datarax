@@ -37,10 +37,10 @@ class TestSequentialBasics:
 
         # Create 2 map operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 10, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 10, rngs=rngs)
 
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
@@ -73,13 +73,13 @@ class TestSequentialBasics:
 
         # Create 3 map operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x + 1, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x + 1, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 2, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x + 3, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x + 3, rngs=rngs)
 
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
@@ -105,10 +105,10 @@ class TestSequentialBasics:
 
         # Create deterministic operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 5, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 5, rngs=rngs)
 
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
@@ -176,10 +176,10 @@ class TestSequentialDataFlow:
 
         # Create operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 10, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 10, rngs=rngs)
 
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
@@ -205,10 +205,10 @@ class TestSequentialDataFlow:
 
         # Create operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 5, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 5, rngs=rngs)
 
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
@@ -235,13 +235,13 @@ class TestSequentialDataFlow:
 
         # Create transformation chain: +1, *2, +3
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x + 1, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x + 1, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 2, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x + 3, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x + 3, rngs=rngs)
 
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
@@ -271,10 +271,10 @@ class TestSequentialJIT:
 
         # Create operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 10, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 10, rngs=rngs)
 
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
@@ -311,10 +311,10 @@ class TestSequentialJIT:
 
         # Create operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 5, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 5, rngs=rngs)
 
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
@@ -350,10 +350,10 @@ class TestSequentialAdvanced:
 
         # Create MapOperators (Operators)
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 3, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 3, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 7, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 7, rngs=rngs)
 
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
@@ -379,10 +379,10 @@ class TestSequentialAdvanced:
 
         # Create operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 10, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 10, rngs=rngs)
 
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
@@ -407,10 +407,10 @@ class TestSequentialAdvanced:
 
         # Create inner sequential composite (2 operators)
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x + 1, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x + 1, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 2, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 2, rngs=rngs)
 
         inner_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
@@ -420,7 +420,7 @@ class TestSequentialAdvanced:
 
         # Create outer sequential composite (inner + one more operator)
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x + 3, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x + 3, rngs=rngs)
 
         outer_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,

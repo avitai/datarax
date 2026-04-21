@@ -84,7 +84,7 @@ with OrbaxCheckpointHandler() as handler:
 Datarax modules implement the `get_state()` method for checkpointing:
 
 ```python
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 from datarax.checkpoint import OrbaxCheckpointHandler
 from flax import nnx
@@ -93,7 +93,7 @@ from flax import nnx
 data = [{"value": i} for i in range(100)]
 config = MemorySourceConfig()
 source = MemorySource(config, data=data, rngs=nnx.Rngs(0))
-pipeline = from_source(source, batch_size=10)
+pipeline = build_source_pipeline(source, batch_size=10)
 
 # Process some batches
 iterator = iter(pipeline)

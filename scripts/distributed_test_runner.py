@@ -25,7 +25,7 @@ def load_cloud_env():
     if os.path.exists(env_path):
         logger.info(f"Loading environment from {env_path}")
         try:
-            with open(env_path, "r") as f:
+            with open(env_path) as f:
                 for line in f:
                     line = line.strip()
                     if not line or line.startswith("#"):

@@ -10,7 +10,12 @@ import numpy as np
 
 from datarax.core.config import StructuralConfig
 from datarax.core.sampler import SamplerModule
-from datarax.samplers._validation import validate_num_records_and_epochs
+from datarax.samplers._iteration import (
+    read_epoch_step,
+    require_record_count,
+    total_epoch_length,
+)
+from datarax.samplers._validation import validate_sampler_bounds
 
 
 logger = logging.getLogger(__name__)
@@ -45,7 +50,7 @@ class EpochAwareSamplerConfig(StructuralConfig):
 
         # Call parent validation
         super().__post_init__()
-        validate_num_records_and_epochs(self.num_records, self.num_epochs)
+        validate_sampler_bounds(self.num_records, self.num_epochs)
 
 
 class EpochAwareSamplerModule(SamplerModule):
@@ -85,9 +90,7 @@ class EpochAwareSamplerModule(SamplerModule):
 
     def _generate_epoch_indices(self) -> None:
         """Generate indices for current epoch."""
-        num_records = self.num_records.get_value()
-        if num_records is None:
-            raise ValueError("num_records must be set before generating indices")
+        num_records = require_record_count(self.num_records.get_value())
         indices = np.arange(num_records)
 
         if self.shuffle.get_value():
@@ -107,33 +110,25 @@ class EpochAwareSamplerModule(SamplerModule):
 
     def __next__(self) -> int:
         """Get next index with epoch management."""
-        current_epoch = self.current_epoch.get_value()
-        num_epochs = self.num_epochs.get_value()
-        if current_epoch >= num_epochs and num_epochs != -1:
-            raise StopIteration
-
-        current_index = self.current_index.get_value()
-        num_records = self.num_records.get_value()
-        if num_records is None:
-            raise ValueError("num_records must be set")
-        if current_index >= num_records:
-            # Epoch complete
+        epoch_step = read_epoch_step(
+            current_epoch=self.current_epoch.get_value,
+            num_epochs=self.num_epochs.get_value,
+            current_index=self.current_index.get_value,
+            num_records=self.num_records.get_value,
+        )
+        if epoch_step.started_new_epoch:
             self._on_epoch_complete()
-
-            current_epoch += 1
-            self.current_epoch.set_value(current_epoch)
-            if current_epoch >= num_epochs and num_epochs != -1:
+            self.current_epoch.set_value(epoch_step.current_epoch)
+            if epoch_step.exhausted:
                 raise StopIteration
-
             self._generate_epoch_indices()
-            current_index = 0
 
         epoch_indices = self.epoch_indices.get_value()
         if epoch_indices is None:
             raise ValueError("Epoch indices are not generated yet")
 
-        idx = epoch_indices[current_index]
-        self.current_index.set_value(current_index + 1)
+        idx = epoch_indices[epoch_step.current_index]
+        self.current_index.set_value(epoch_step.current_index + 1)
 
         return idx
 
@@ -168,13 +163,10 @@ class EpochAwareSamplerModule(SamplerModule):
 
     def __len__(self) -> int:
         """Return total number of indices across all epochs."""
-        num_epochs = self.num_epochs.get_value()
-        if num_epochs == -1:
-            raise ValueError("Cannot determine length for infinite epochs")
-        num_records = self.num_records.get_value()
-        if num_records is None:
-            raise ValueError("num_records must be set")
-        return num_records * num_epochs
+        return total_epoch_length(
+            self.num_records.get_value(),
+            self.num_epochs.get_value(),
+        )
 
     def reset(self, seed: int | None = None) -> None:
         """Reset the sampler to initial state.

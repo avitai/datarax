@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from typing import Any
 
 import flax.nnx as nnx
 import jax
+import jax.numpy as jnp
 
 from datarax.core.data_source import DataSourceModule
 from datarax.sources._eager_source_ops import (
@@ -15,10 +16,12 @@ from datarax.sources._eager_source_ops import (
     eager_iter_default,
     eager_reset,
     format_source_repr,
+    gather_eager_batch,
     get_eager_item,
     reset_streaming_state,
     streaming_apply_batch,
 )
+from datarax.sources._grain_bridge import records_from_batched_mapping, validate_index_batch
 
 
 logger = logging.getLogger(__name__)
@@ -34,7 +37,7 @@ class EagerSourceBase(DataSourceModule):
     - ``index`` (``nnx.Variable``): Current iteration index.
     - ``epoch`` (``nnx.Variable``): Current epoch counter.
     - ``_seed`` (``int``): Base integer seed for Grain index_shuffle.
-    - ``shuffle`` (``bool``): Whether to shuffle during iteration.
+    - ``_is_random_order`` (``bool``): Whether to randomize iteration order.
     - ``dataset_name`` (``str | None``): Human-readable dataset name.
     - ``split_name`` (``str | None``): Dataset split identifier.
     - ``_dataset_info`` (``Any``): Cached backend-specific dataset metadata.
@@ -46,7 +49,7 @@ class EagerSourceBase(DataSourceModule):
     index: nnx.Variable[int]  # pyright: ignore[reportGeneralTypeIssues]
     epoch: nnx.Variable[int]  # pyright: ignore[reportGeneralTypeIssues]
     _seed: int
-    shuffle: bool
+    _is_random_order: bool
     dataset_name: str | None
     split_name: str | None
     _dataset_info: Any
@@ -62,13 +65,19 @@ class EagerSourceBase(DataSourceModule):
             self.length,
             self.index,
             self.epoch,
-            self.shuffle,
+            self.is_random_order,
             self._seed,
         )
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         """Retrieve one eager element by index."""
         return get_eager_item(self.data, self.length, index)
+
+    def _getitems(self, indices: Sequence[int]) -> list[dict[str, Any]]:
+        """Retrieve multiple eager elements with vectorized array-leaf indexing."""
+        resolved = validate_index_batch(indices, self.length)
+        batch = gather_eager_batch(self.data, jnp.asarray(resolved))
+        return records_from_batched_mapping(batch, len(resolved))
 
     def get_batch(self, batch_size: int, key: jax.Array | None = None) -> dict[str, Any]:
         """Get one eager batch in stateful or stateless mode."""
@@ -77,7 +86,7 @@ class EagerSourceBase(DataSourceModule):
             self.length,
             self.index,
             self.epoch,
-            self.shuffle,
+            self.is_random_order,
             self._seed,
             batch_size,
             key,
@@ -92,9 +101,14 @@ class EagerSourceBase(DataSourceModule):
         del seed
         eager_reset(self.index, self.epoch, self._cache)
 
-    def set_shuffle(self, shuffle: bool) -> None:
-        """Update runtime shuffle behavior."""
-        self.shuffle = shuffle
+    @property
+    def is_random_order(self) -> bool:
+        """Whether iteration order is randomized."""
+        return self._is_random_order
+
+    def set_random_order(self, enabled: bool) -> None:
+        """Update runtime random-order behavior."""
+        self._is_random_order = enabled
 
     def _repr_extra_fields(self) -> dict[str, Any]:
         """Optional additional repr fields for subclasses."""
@@ -107,7 +121,7 @@ class EagerSourceBase(DataSourceModule):
             self.dataset_name,
             self.split_name,
             self.length,
-            self.shuffle,
+            self.is_random_order,
             self.epoch.get_value(),
             self._repr_extra_fields(),
         )
@@ -123,7 +137,7 @@ class StreamingSourceBase(DataSourceModule):
     - ``dataset_name`` (``str | None``): Human-readable dataset name.
     - ``split_name`` (``str | None``): Dataset split identifier.
     - ``length`` (``int | None``): Total number of elements (None if unknown).
-    - ``shuffle`` (``bool``): Whether to shuffle during iteration.
+    - ``_is_random_order`` (``bool``): Whether to randomize iteration order.
     - ``_dataset_info`` (``Any``): Cached backend-specific dataset metadata.
     """
 
@@ -133,8 +147,13 @@ class StreamingSourceBase(DataSourceModule):
     dataset_name: str | None
     split_name: str | None
     length: int | None
-    shuffle: bool
+    _is_random_order: bool
     _dataset_info: Any
+
+    @property
+    def is_random_order(self) -> bool:
+        """Whether iteration order is randomized."""
+        return self._is_random_order
 
     def get_dataset_info(self) -> Any:
         """Return cached backend-specific dataset metadata."""
@@ -161,7 +180,7 @@ class StreamingSourceBase(DataSourceModule):
             self.dataset_name,
             self.split_name,
             self.length,
-            self.shuffle,
+            self.is_random_order,
             self.epoch.get_value(),
             self._repr_extra_fields(),
         )

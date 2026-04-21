@@ -67,7 +67,7 @@ python examples/advanced/performance/01_optimization_guide.py
 ```python
 import time
 import numpy as np
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 def measure_throughput(pipeline, num_batches=100, warmup=10):
@@ -121,7 +121,7 @@ def batch_size_sweep(source, batch_sizes, num_batches=50):
         fresh_source = MemorySource(
             MemorySourceConfig(), data=data, rngs=nnx.Rngs(0)
         )
-        pipeline = from_source(fresh_source, batch_size=bs)
+        pipeline = build_source_pipeline(fresh_source, batch_size=bs)
 
         metrics = measure_throughput(pipeline, num_batches)
         metrics["batch_size"] = bs
@@ -163,7 +163,7 @@ def profile_operators(source, operators, batch_size=64):
             MemorySourceConfig(), data=data, rngs=nnx.Rngs(0)
         )
         pipeline = (
-            from_source(fresh_source, batch_size=batch_size)
+            build_source_pipeline(fresh_source, batch_size=batch_size)
             .add(OperatorNode(op))
         )
 
@@ -202,7 +202,7 @@ noise: 28,901 samples/sec
 ```python
 # Inefficient: Many small operators
 pipeline_slow = (
-    from_source(source, batch_size=64)
+    build_source_pipeline(source, batch_size=64)
     .add(OperatorNode(normalize))
     .add(OperatorNode(scale))
     .add(OperatorNode(shift))
@@ -215,7 +215,7 @@ def combined_transform(element, key=None):
     return element.update_data({"image": image})
 
 pipeline_fast = (
-    from_source(source, batch_size=64)
+    build_source_pipeline(source, batch_size=64)
     .add(OperatorNode(ElementOperator(
         ElementOperatorConfig(stochastic=False),
         fn=combined_transform, rngs=nnx.Rngs(0)

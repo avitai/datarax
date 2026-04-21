@@ -17,6 +17,7 @@ class ConcreteFusionOperator(CrossModalOperator):
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
         """Simple fusion - concatenate inputs."""
+        del random_params, stats
         inputs = self._extract_inputs(data)
         # Simple concatenation fusion
         fused = jnp.concatenate(inputs, axis=-1)
@@ -30,6 +31,7 @@ class StochasticContrastiveOperator(CrossModalOperator):
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
         """Compute similarity with optional noise."""
+        del stats
         inputs = self._extract_inputs(data)
         noise = random_params if random_params is not None else 0.0
 
@@ -132,6 +134,7 @@ class TestCrossModalOperatorAbstractMethods:
             """Missing generate_random_params implementation."""
 
             def apply(self, data, state, metadata, random_params=None, stats=None):
+                del random_params, stats
                 return data, state, metadata
 
         config = CrossModalOperatorConfig(

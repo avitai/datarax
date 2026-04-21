@@ -233,7 +233,7 @@ class TestCrossModalOperatorConfigInheritedValidation:
             CrossModalOperatorConfig(
                 input_fields=["input"],
                 output_fields=["output"],
-                batch_stats_fn=lambda x: {"mean": 0.5},
+                batch_stats_fn=lambda _x: {"mean": 0.5},
                 precomputed_stats={"mean": 0.5},
             )
 

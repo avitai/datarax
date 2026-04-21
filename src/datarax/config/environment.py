@@ -46,8 +46,15 @@ def apply_environment_overrides(
     """
     result = config.copy()
 
-    # Get all environment variables with the given prefix
-    env_vars = {k: v for k, v in os.environ.items() if k.startswith(prefix)}
+    managed_env_vars = set(os.environ.get("DATARAX_MANAGED_ENV_VARS", "").split())
+    managed_env_vars.add("DATARAX_MANAGED_ENV_VARS")
+
+    # Get all configuration environment variables with the given prefix. The
+    # activation script also exports managed DATARAX_* process metadata; those
+    # variables are runtime setup state, not configuration overrides.
+    env_vars = {
+        k: v for k, v in os.environ.items() if k.startswith(prefix) and k not in managed_env_vars
+    }
 
     for env_name, env_value in env_vars.items():
         # Remove prefix
@@ -64,12 +71,12 @@ def apply_environment_overrides(
         keys = [k.lower() for k in keys]
 
         # Apply the override
-        _set_nested_value(result, keys, _convert_value(env_value))
+        _set_nested_value(result, keys, _parse_env_scalar(env_value))
 
     return result
 
 
-def _convert_value(value: str) -> Any:
+def _parse_env_scalar(value: str) -> Any:
     """Convert a string value to an appropriate type.
 
     This function attempts to convert string values from environment variables

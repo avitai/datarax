@@ -10,9 +10,10 @@ import pytest
 
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
-from datarax.dag import from_source
+from datarax.dag import build_source_pipeline
 from datarax.memory.shared_memory_manager import SharedMemoryManager
 from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.utils.console import emit
 
 
 @dataclass(frozen=True)
@@ -60,8 +61,8 @@ class TestPerformanceBenchmarks:
         results = {}
 
         for batch_size in batch_sizes:
-            # Create pipeline using from_source
-            dag_pipeline = from_source(source, batch_size=batch_size)
+            # Create pipeline using build_source_pipeline
+            dag_pipeline = build_source_pipeline(source, batch_size=batch_size)
 
             start = time.time()
             count = 0
@@ -74,7 +75,7 @@ class TestPerformanceBenchmarks:
             throughput = count / elapsed
             results[batch_size] = throughput
 
-            print(f"Batch size: {batch_size}, Throughput: {throughput:.2f} batches/sec")
+            emit(f"Batch size: {batch_size}, Throughput: {throughput:.2f} batches/sec")
 
         # Verify that Pipeline is processing data at reasonable speeds
         # CI runners are significantly slower than local hardware
@@ -102,7 +103,7 @@ class TestPerformanceBenchmarks:
             retrieved = manager.get_shared(f"test_{size}")
             get_time = time.time() - start
 
-            print(f"Size: {size}, Make: {make_time:.4f}s, Get: {get_time:.4f}s")
+            emit(f"Size: {size}, Make: {make_time:.4f}s, Get: {get_time:.4f}s")
 
             # Verify correctness (allow small floating point differences)
             assert retrieved is not None
@@ -117,20 +118,20 @@ class TestPerformanceBenchmarks:
         # Create mock source using proper DataSourceModule
         source = MockDataSource(MockDataSourceConfig(size=10000))
 
-        dataset = from_source(source, batch_size=1)
+        dataset = build_source_pipeline(source, batch_size=1)
 
         # Add operators (transforms) - deterministic, Element API: fn(element, key) -> element
         config = ElementOperatorConfig(stochastic=False)
         multiply_op = ElementOperator(
             config,
-            fn=lambda e, k: e.replace(
+            fn=lambda e, _k: e.replace(
                 data={"data": e.data["data"], "value": jnp.asarray(e.data["value"]) * 2}
             ),
             name="multiply_by_2",
         )
         add_op = ElementOperator(
             config,
-            fn=lambda e, k: e.replace(
+            fn=lambda e, _k: e.replace(
                 data={"data": e.data["data"], "value": jnp.asarray(e.data["value"]) + 1}
             ),
             name="add_1",
@@ -147,7 +148,7 @@ class TestPerformanceBenchmarks:
         elapsed = time.time() - start
 
         throughput = count / elapsed
-        print(f"Dataset iteration: {throughput:.2f} elements/sec")
+        emit(f"Dataset iteration: {throughput:.2f} elements/sec")
 
         # CI runners may be significantly slower than local hardware
         # Relaxed threshold to avoid flaky failures on shared CI infrastructure

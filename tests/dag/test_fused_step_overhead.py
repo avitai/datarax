@@ -21,6 +21,7 @@ from datarax.operators.element_operator import ElementOperator
 
 def _identity_fn(element, key):
     """Deterministic identity transform."""
+    del key
     return element
 
 

@@ -10,11 +10,11 @@ import pytest
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 from datarax.distributed.sharding import (
-    apply_sharding_rules,
     create_named_sharding,
     data_parallel_rules,
     fsdp_rules,
     MeshRules,
+    partition_spec_for_names,
 )
 
 
@@ -125,22 +125,22 @@ class TestCreateNamedSharding:
 
 
 class TestApplyShardingRules:
-    """Tests for apply_sharding_rules function."""
+    """Tests for partition_spec_for_names function."""
 
     def test_basic_application(self):
         """Test applying MeshRules to create a PartitionSpec."""
         rules = MeshRules(data="dp", embed="mp")
-        spec = apply_sharding_rules(rules, "data", "embed")
+        spec = partition_spec_for_names(rules, "data", "embed")
         assert spec == PartitionSpec("dp", "mp")
 
     def test_unmapped_dimensions(self):
         """Test that unmapped dimensions produce None in PartitionSpec."""
         rules = MeshRules(data="dp")
-        spec = apply_sharding_rules(rules, "data", "heads")
+        spec = partition_spec_for_names(rules, "data", "heads")
         assert spec == PartitionSpec("dp", None)
 
     def test_empty_rules(self):
         """Test applying empty rules produces all-None PartitionSpec."""
         rules = MeshRules()
-        spec = apply_sharding_rules(rules, "data", "embed")
+        spec = partition_spec_for_names(rules, "data", "embed")
         assert spec == PartitionSpec(None, None)

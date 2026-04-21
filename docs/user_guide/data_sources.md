@@ -17,7 +17,7 @@ Datarax includes several built-in data sources for common use cases.
 The simplest data source is `MemorySource`, which works with data already loaded in memory:
 
 ```python
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 import jax.numpy as jnp
 
@@ -29,7 +29,7 @@ config = MemorySourceConfig()
 source = MemorySource(config, data)
 
 # Use in a pipeline
-pipeline = from_source(source, batch_size=10)
+pipeline = build_source_pipeline(source, batch_size=10)
 
 # Iterate through batches
 for i, batch in enumerate(pipeline):
@@ -45,7 +45,7 @@ for i, batch in enumerate(pipeline):
 For data from TensorFlow Datasets, use `TFDSEagerSource`:
 
 ```python
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.sources import TFDSEagerSource, TFDSEagerConfig
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.dag.nodes import OperatorNode
@@ -67,7 +67,7 @@ normalizer = ElementOperator(
 
 # Create training pipeline
 train_pipeline = (
-    from_source(train_source, batch_size=32)
+    build_source_pipeline(train_source, batch_size=32)
     >> OperatorNode(normalizer)
 )
 
@@ -88,7 +88,7 @@ for i, batch in enumerate(train_pipeline):
 For data from Hugging Face datasets, use `HFEagerSource`:
 
 ```python
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.sources import HFEagerSource, HFEagerConfig
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.dag.nodes import OperatorNode
@@ -116,7 +116,7 @@ extractor = ElementOperator(
 
 # Create pipeline
 pipeline = (
-    from_source(train_source, batch_size=16)
+    build_source_pipeline(train_source, batch_size=16)
     >> OperatorNode(extractor)
 )
 
@@ -137,14 +137,14 @@ for i, batch in enumerate(pipeline):
 For array record format data (commonly used in large-scale ML training), use `ArrayRecordSourceModule`:
 
 ```python
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.sources import ArrayRecordSourceModule
 
 # Create source from array record file
 source = ArrayRecordSourceModule("path/to/arrayrecord/file")
 
 # Use in pipeline
-pipeline = from_source(source, batch_size=32)
+pipeline = build_source_pipeline(source, batch_size=32)
 ```
 
 ## Creating Custom Data Sources
@@ -210,10 +210,10 @@ When creating custom data sources, ensure:
 
 Data sources can be used with the DAG API in two ways:
 
-### Method 1: Using from_source (Recommended)
+### Method 1: Using build_source_pipeline (Recommended)
 
 ```python
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.dag.nodes import OperatorNode
@@ -231,7 +231,7 @@ op = ElementOperator(ElementOperatorConfig(stochastic=False), fn=identity)
 
 # Build pipeline
 pipeline = (
-    from_source(source, batch_size=32)
+    build_source_pipeline(source, batch_size=32)
     >> OperatorNode(op)
 )
 ```
@@ -239,7 +239,7 @@ pipeline = (
 ### Method 2: Using the >> operator
 
 ```python
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
@@ -257,7 +257,7 @@ op = ElementOperator(ElementOperatorConfig(stochastic=False), fn=double)
 
 # Build pipeline using >> operator
 pipeline = (
-    from_source(source, batch_size=32)
+    build_source_pipeline(source, batch_size=32)
     >> OperatorNode(op)
 )
 ```
@@ -314,7 +314,7 @@ When working with data sources:
 
 1. **Use appropriate source types**: Choose the right data source for your data to optimize loading and processing
 2. **Leverage shuffling**: For training, use `.shuffle(buffer_size)` with a sufficiently large buffer
-3. **Batch appropriately**: Use `.batch(batch_size)` or `from_source(source, batch_size=N)` for efficient processing
+3. **Batch appropriately**: Use `.batch(batch_size)` or `build_source_pipeline(source, batch_size=N)` for efficient processing
 4. **Handle state properly**: Ensure your custom data sources properly manage their state
 5. **Monitor performance**: Watch for bottlenecks in data loading, especially with large datasets
 6. **Use JAX arrays**: Convert to JAX arrays early in the pipeline for better performance

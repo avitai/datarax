@@ -7,7 +7,7 @@ As per requirements, ShuffleNode and BatchNode must be tested independently, eve
 they should not be used directly in data pipelines (DataLoader should be used instead).
 """
 
-from typing import Any
+from typing import Any, cast
 
 import flax.nnx as nnx
 import jax
@@ -16,7 +16,7 @@ import pytest
 
 from datarax.core.config import OperatorConfig, StructuralConfig
 from datarax.core.data_source import DataSourceModule
-from datarax.core.element_batch import Batch, Element
+from datarax.core.element_batch import Batch, create_batch_from_arrays, Element
 from datarax.core.operator import OperatorModule
 from datarax.dag.nodes import BatchNode, DataSourceNode, OperatorNode, ShuffleNode
 
@@ -38,6 +38,7 @@ class MockDataSource(DataSourceModule):
 
     def __call__(self, key=None):
         """Return next data element."""
+        del key
         if self.index.get_value() >= self.data_size:
             return None
 
@@ -74,6 +75,7 @@ class SimpleOperator(OperatorModule):
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, jax.Array], dict[str, Any], Any]:
         """Apply the transformation."""
+        del random_params, stats
         if "value" in data:
             result_data = {"value": data["value"] * self.multiplier, "index": data["index"]}
         else:
@@ -119,109 +121,104 @@ class TestShuffleNodeIndependent:
 
         # Buffer should start empty (buffer is now a plain list, not nnx.List)
         assert len(shuffle_node.buffer) == 0
-        assert shuffle_node.buffer_full is False
+        assert shuffle_node.is_buffer_full is False
 
-    def test_shuffle_node_single_element_processing(self):
-        """Test ShuffleNode processes individual elements correctly."""
+    def test_shuffle_node_rejects_single_element_processing(self):
+        """ShuffleNode only accepts Batch input."""
         shuffle_node = ShuffleNode(buffer_size=3, seed=42)
 
-        # First few elements should return None (filling buffer)
-        element1 = {"value": jnp.array(1), "index": 1}
-        result1 = shuffle_node(element1)
-        assert result1 is None  # Buffer not full yet
+        with pytest.raises(TypeError, match="expects Batch object"):
+            shuffle_node(cast(Any, {"value": jnp.array(1), "index": 1}))
 
-        element2 = {"value": jnp.array(2), "index": 2}
-        result2 = shuffle_node(element2)
-        assert result2 is None  # Buffer not full yet
+    def test_shuffle_node_batch_processing(self):
+        """Test ShuffleNode processes batches only."""
+        shuffle_node = ShuffleNode(buffer_size=3, seed=42)
 
-        element3 = {"value": jnp.array(3), "index": 3}
-        result3 = shuffle_node(element3)
-        assert result3 is None  # Buffer just became full
+        for index in range(3):
+            batch = create_batch_from_arrays(
+                {"value": jnp.array([index]), "index": jnp.array([index])}
+            )
+            assert shuffle_node(batch) is None
 
-        # Fourth element should return a shuffled element
-        element4 = {"value": jnp.array(4), "index": 4}
-        result4 = shuffle_node(element4)
+        batch = create_batch_from_arrays({"value": jnp.array([4]), "index": jnp.array([4])})
+        result4 = shuffle_node(batch)
         assert result4 is not None
-        assert isinstance(result4, dict)
+        assert isinstance(result4, Batch)
         assert "value" in result4
         assert "index" in result4
 
     def test_shuffle_node_deterministic_with_seed(self):
         """Test ShuffleNode produces deterministic results with same seed."""
-        # Create two identical shuffle nodes with same seed
         shuffle_node1 = ShuffleNode(buffer_size=3, seed=42)
         shuffle_node2 = ShuffleNode(buffer_size=3, seed=42)
 
-        # Feed same data to both
-        elements = [{"value": jnp.array(i), "index": i} for i in range(10)]
+        batches = [
+            create_batch_from_arrays({"value": jnp.array([i]), "index": jnp.array([i])})
+            for i in range(10)
+        ]
 
         results1 = []
         results2 = []
 
-        for element in elements:
-            result1 = shuffle_node1(element)
-            result2 = shuffle_node2(element)
+        for batch in batches:
+            result1 = shuffle_node1(batch)
+            result2 = shuffle_node2(batch)
 
             if result1 is not None:
-                results1.append(result1)
+                results1.append(int(result1.data.get_value()["index"][0]))
             if result2 is not None:
-                results2.append(result2)
+                results2.append(int(result2.data.get_value()["index"][0]))
 
-        # Results should be identical (deterministic)
-        assert len(results1) == len(results2)
-        for r1, r2 in zip(results1, results2):
-            assert r1["index"] == r2["index"]
+        assert results1 == results2
 
     def test_shuffle_node_different_seeds_different_results(self):
         """Test ShuffleNode produces different results with different seeds."""
         shuffle_node1 = ShuffleNode(buffer_size=5, seed=42)
         shuffle_node2 = ShuffleNode(buffer_size=5, seed=123)
 
-        # Feed same data to both
-        elements = [{"value": jnp.array(i), "index": i} for i in range(20)]
+        batches = [
+            create_batch_from_arrays({"value": jnp.array([i]), "index": jnp.array([i])})
+            for i in range(20)
+        ]
 
         results1 = []
         results2 = []
 
-        for element in elements:
-            result1 = shuffle_node1(element)
-            result2 = shuffle_node2(element)
+        for batch in batches:
+            result1 = shuffle_node1(batch)
+            result2 = shuffle_node2(batch)
 
             if result1 is not None:
-                results1.append(result1["index"])
+                results1.append(int(result1.data.get_value()["index"][0]))
             if result2 is not None:
-                results2.append(result2["index"])
+                results2.append(int(result2.data.get_value()["index"][0]))
 
-        # Results should be different (different shuffling)
-        assert len(results1) > 5  # Should have some results
-        assert len(results2) > 5  # Should have some results
-        assert results1 != results2  # Should be different sequences
+        assert len(results1) > 5
+        assert len(results2) > 5
+        assert results1 != results2
 
     def test_shuffle_node_state_management(self):
         """Test ShuffleNode state can be saved and restored."""
         shuffle_node = ShuffleNode(buffer_size=3, seed=42)
 
-        # Process some elements
         for i in range(5):
-            element = {"value": jnp.array(i), "index": i}
-            shuffle_node(element)
+            batch = create_batch_from_arrays({"value": jnp.array([i]), "index": jnp.array([i])})
+            shuffle_node(batch)
 
-        # Get state
         state = shuffle_node.get_state()
         assert isinstance(state, dict)
 
-        # Create new node and set state
         new_shuffle_node = ShuffleNode(buffer_size=3, seed=42)
         new_shuffle_node.set_state(state)
 
-        # Both nodes should behave identically from this point
-        test_element = {"value": jnp.array(10), "index": 10}
-        result1 = shuffle_node(test_element)
-        result2 = new_shuffle_node(test_element)
+        test_batch = create_batch_from_arrays({"value": jnp.array([10]), "index": jnp.array([10])})
+        result1 = shuffle_node(test_batch)
+        result2 = new_shuffle_node(test_batch)
 
-        # Results should be the same
         if result1 is not None and result2 is not None:
-            assert result1["index"] == result2["index"]
+            assert int(result1.data.get_value()["index"][0]) == int(
+                result2.data.get_value()["index"][0]
+            )
 
     def test_shuffle_node_repr(self):
         """Test ShuffleNode string representation."""

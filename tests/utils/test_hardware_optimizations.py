@@ -15,8 +15,9 @@ import pytest
 # OptimizedRNGModule has been removed - using nnx.Rngs directly
 from datarax.operators.modality.image.functional import (
     normalize,
-    resize_image,
+    resize_image_to_shape,
 )
+from datarax.utils.console import emit
 
 
 @pytest.fixture
@@ -49,11 +50,11 @@ def test_device_detection():
     gpu_devices = [d for d in all_devices if d.platform.lower() in ["cuda", "gpu", "rocm"]]
 
     # Print device information
-    print("\nAvailable devices:")
-    print(f"  CPU devices: {len(cpu_devices)}")
-    print(f"  GPU devices: {len(gpu_devices)}")
-    print(f"  JAX version: {jax.__version__}")
-    print(f"  Primary device: {jax.devices()[0].platform.upper()}")
+    emit("\nAvailable devices:")
+    emit(f"  CPU devices: {len(cpu_devices)}")
+    emit(f"  GPU devices: {len(gpu_devices)}")
+    emit(f"  JAX version: {jax.__version__}")
+    emit(f"  Primary device: {jax.devices()[0].platform.upper()}")
 
     # Ensure at least one device is available
     assert len(all_devices) > 0, "No compute devices detected"
@@ -96,7 +97,7 @@ def test_nnx_rngs_performance():
     end_time = time.time()
 
     device_type = jax.devices()[0].platform.upper()
-    print(
+    emit(
         f"\nTime to generate 1024x1024 random matrix on {device_type}: "
         f"{(end_time - start_time) * 1000:.2f} ms"
     )
@@ -114,7 +115,7 @@ def test_batch_image_operations_performance():
 
     # Create transformation functions without individual jit
     def resize_fn(x):
-        return resize_image(x, (192, 192))
+        return resize_image_to_shape(x, (192, 192))
 
     def normalize_fn(x):
         return normalize(x, mean=0.5, std=0.5)
@@ -137,10 +138,10 @@ def test_batch_image_operations_performance():
     normalized = batch_normalize(resized).block_until_ready()
     normalize_time = time.time() - start_time
 
-    print(f"\nBatch size: {batch_size}")
-    print(f"Resize time: {resize_time * 1000:.2f} ms")
-    print(f"Normalize time: {normalize_time * 1000:.2f} ms")
-    print(f"Total time: {(resize_time + normalize_time) * 1000:.2f} ms")
+    emit(f"\nBatch size: {batch_size}")
+    emit(f"Resize time: {resize_time * 1000:.2f} ms")
+    emit(f"Normalize time: {normalize_time * 1000:.2f} ms")
+    emit(f"Total time: {(resize_time + normalize_time) * 1000:.2f} ms")
 
     assert resized.shape == (batch_size, 192, 192, 3)
     assert normalized.shape == (batch_size, 192, 192, 3)
@@ -151,6 +152,8 @@ def test_transformer_pipeline(large_rgb_batch, gpu_rng):
 
     # Following guidelines: avoid potential GPU issues with image operations
     # Use simpler operations that are known to work well on GPU
+
+    del gpu_rng
 
     def transform_image(image):
         # Use JAX's image resize which is more GPU-friendly
@@ -180,9 +183,9 @@ def test_transformer_pipeline(large_rgb_batch, gpu_rng):
     processing_time = (end_time - start_time) * 1000  # ms
     per_image_time = processing_time / batch_size
 
-    print(f"\nBatch size: {batch_size}")
-    print(f"Pipeline processing time: {processing_time:.2f} ms")
-    print(f"Time per image: {per_image_time:.2f} ms")
+    emit(f"\nBatch size: {batch_size}")
+    emit(f"Pipeline processing time: {processing_time:.2f} ms")
+    emit(f"Time per image: {per_image_time:.2f} ms")
 
     assert result.shape == (large_rgb_batch.shape[0], 192, 192, 3)
 
@@ -223,21 +226,21 @@ def test_memory_efficiency():
     result = jitted_op(large_batch).block_until_ready()
     end_time = time.time()
 
-    print(f"\nProcessed batch of {batch_size} images of size {image_size}x{image_size}")
-    print(f"Processing time: {(end_time - start_time) * 1000:.2f} ms")
+    emit(f"\nProcessed batch of {batch_size} images of size {image_size}x{image_size}")
+    emit(f"Processing time: {(end_time - start_time) * 1000:.2f} ms")
 
     assert result.shape == (batch_size, image_size // 2, image_size // 2, 3)
 
 
 if __name__ == "__main__":
     # Run the tests individually to better measure performance
-    print("Testing device detection...")
+    emit("Testing device detection...")
     test_device_detection()
 
-    print("\nTesting nnx.Rngs performance...")
+    emit("\nTesting nnx.Rngs performance...")
     test_nnx_rngs_performance()
 
-    print("\nTesting batch image operations performance...")
+    emit("\nTesting batch image operations performance...")
     test_batch_image_operations_performance()
 
     # Create test fixtures for running the pipeline test
@@ -245,11 +248,11 @@ if __name__ == "__main__":
     rgb_batch = jnp.ones((bs, 224, 224, 3), dtype=jnp.float32)
     test_rng = nnx.Rngs({"augment": jax.random.key(42)})
 
-    print("\nTesting transformer pipeline...")
+    emit("\nTesting transformer pipeline...")
     test_transformer_pipeline(rgb_batch, test_rng)
 
-    print("\nTesting memory efficiency...")
+    emit("\nTesting memory efficiency...")
     test_memory_efficiency()
 
     device_type = jax.devices()[0].platform.upper()
-    print(f"\nAll tests passed on {device_type}!")
+    emit(f"\nAll tests passed on {device_type}!")

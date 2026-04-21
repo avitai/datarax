@@ -3,38 +3,38 @@
 import jax.numpy as jnp
 import pytest
 
-from datarax.operators.strategies.merging import merge_outputs, merge_outputs_conditional
+from datarax.operators.strategies.merging import merge_output_sequence, merge_outputs_conditional
 
 
 class TestMergeOutputs:
     def test_merge_empty_outputs_raises(self):
         with pytest.raises(ValueError, match="outputs must not be empty"):
-            merge_outputs([], "sum")
+            merge_output_sequence([], "sum")
 
     def test_merge_concat(self):
         outputs = [jnp.array([1, 2]), jnp.array([3, 4])]
-        merged = merge_outputs(outputs, "concat", merge_axis=0)
+        merged = merge_output_sequence(outputs, "concat", merge_axis=0)
         assert jnp.array_equal(merged, jnp.array([1, 2, 3, 4]))
 
     def test_merge_stack(self):
         outputs = [jnp.array([1, 2]), jnp.array([3, 4])]
-        merged = merge_outputs(outputs, "stack", merge_axis=0)
+        merged = merge_output_sequence(outputs, "stack", merge_axis=0)
         expected = jnp.array([[1, 2], [3, 4]])
         assert jnp.array_equal(merged, expected)
 
     def test_merge_sum(self):
         outputs = [jnp.array([1, 2]), jnp.array([3, 4])]
-        merged = merge_outputs(outputs, "sum")
+        merged = merge_output_sequence(outputs, "sum")
         assert jnp.array_equal(merged, jnp.array([4, 6]))
 
     def test_merge_mean(self):
         outputs = [jnp.array([1.0, 2.0]), jnp.array([3.0, 4.0])]
-        merged = merge_outputs(outputs, "mean")
+        merged = merge_output_sequence(outputs, "mean")
         assert jnp.array_equal(merged, jnp.array([2.0, 3.0]))
 
     def test_merge_dict(self):
         outputs = [jnp.array([1]), jnp.array([2])]
-        merged = merge_outputs(outputs, "dict")
+        merged = merge_output_sequence(outputs, "dict")
         assert isinstance(merged, dict)
         assert jnp.array_equal(merged["operator_0"], jnp.array([1]))
         assert jnp.array_equal(merged["operator_1"], jnp.array([2]))
@@ -45,7 +45,7 @@ class TestMergeOutputs:
             {"a": jnp.array([1]), "b": jnp.array([10])},
             {"a": jnp.array([2]), "b": jnp.array([20])},
         ]
-        merged = merge_outputs(outputs, "dict")
+        merged = merge_output_sequence(outputs, "dict")
 
         # Structure should be preserved (keys 'a' and 'b')
         assert "a" in merged
@@ -66,7 +66,7 @@ class TestMergeOutputs:
         def custom_fn(outs):
             return outs[0] * 10 + outs[1]
 
-        merged = merge_outputs(outputs, None, merge_fn=custom_fn)
+        merged = merge_output_sequence(outputs, None, merge_fn=custom_fn)
         assert jnp.array_equal(merged, jnp.array([12]))
 
 

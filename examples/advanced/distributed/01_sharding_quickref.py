@@ -55,7 +55,7 @@ import numpy as np
 from flax import nnx
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import MemorySource, MemorySourceConfig
@@ -121,7 +121,7 @@ normalizer = ElementOperator(
 )
 
 # Build pipeline
-pipeline = from_source(source, batch_size=128).add(OperatorNode(normalizer))
+pipeline = build_source_pipeline(source, batch_size=128).add(OperatorNode(normalizer))
 
 print("Pipeline created with batch_size=128")
 
@@ -247,7 +247,7 @@ def main():
     normalizer = ElementOperator(
         ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0)
     )
-    pipeline = from_source(source, batch_size=128).add(OperatorNode(normalizer))
+    pipeline = build_source_pipeline(source, batch_size=128).add(OperatorNode(normalizer))
 
     # Process batches
     total_samples = 0

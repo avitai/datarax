@@ -13,6 +13,7 @@ import math
 
 # Controlled local system introspection commands (nvidia-smi).
 import subprocess  # nosec B404
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import jax
@@ -85,7 +86,7 @@ def _get_system_ram_mb() -> float:
     """Query available system RAM in MB via /proc/meminfo or psutil."""
     # Try /proc/meminfo first (Linux, no deps)
     try:
-        with open("/proc/meminfo") as f:
+        with Path("/proc/meminfo").open() as f:
             for line in f:
                 if line.startswith("MemAvailable:"):
                     return float(line.split()[1]) / 1024  # kB → MB

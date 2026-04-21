@@ -52,7 +52,7 @@ By the end of this tutorial, you will be able to:
 | TensorFlow tf.data | Datarax |
 |--------------------|---------|
 | Default order | `SequentialSamplerModule` |
-| `.shuffle(buffer_size)` | `ShuffleSampler(buffer_size)` |
+| `.shuffle(seed)` | `ShuffleSampler(dataset_size, seed)` |
 | `.take(n)` | `RangeSampler(stop=n)` |
 | Epoch callbacks | `EpochAwareSamplerModule` |
 """
@@ -101,7 +101,7 @@ All Datarax samplers inherit from `SamplerModule`, which provides:
 ```
 SamplerModule (base)
 ├── SequentialSamplerModule  - Sequential indices
-├── ShuffleSampler           - Buffered shuffle
+├── ShuffleSampler           - Grain-backed index shuffle
 ├── RangeSampler             - Range-based iteration
 └── EpochAwareSamplerModule  - Epoch tracking + callbacks
 ```
@@ -111,7 +111,7 @@ SamplerModule (base)
 print("Sampler Types:")
 print()
 print("  SequentialSamplerModule - Sequential indices [0, 1, 2, ...]")
-print("  ShuffleSampler          - Randomized order with buffer")
+print("  ShuffleSampler          - Randomized order from Grain IndexSampler")
 print("  RangeSampler            - Custom range like Python range()")
 print("  EpochAwareSamplerModule - Epoch tracking with callbacks")
 
@@ -154,29 +154,27 @@ print(f"  Total length: {len(sequential_sampler)} (2 epochs × 100 records)")
 """
 ## Part 3: ShuffleSampler
 
-Randomizes data access order using a buffer-based approach.
+Randomizes data access order with Grain's deterministic `IndexSampler`.
 Essential for training to prevent learning from data order.
 
 ### Configuration
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `buffer_size` | int | Required | Size of shuffle buffer |
-| `dataset_size` | int | None | Optional dataset size |
+| `dataset_size` | int | Required | Number of records to shuffle |
 | `seed` | int | None | Seed for reproducibility |
 
 ### How It Works
 
-1. Fill buffer with indices
-2. Shuffle buffer randomly
-3. Yield indices from buffer
-4. Refill and reshuffle as needed
+1. Create a Grain `IndexSampler` for the dataset size
+2. Generate a deterministic one-epoch shuffled order
+3. Yield indices in that order
+4. Replay from checkpointed position when restored
 """
 
 # %%
 # Create shuffle sampler with reproducible seed
 shuffle_config = ShuffleSamplerConfig(
-    buffer_size=50,  # Shuffle buffer size
     dataset_size=100,  # Dataset has 100 samples
     seed=42,  # For reproducibility
 )
@@ -187,7 +185,7 @@ shuffled_indices = list(shuffle_sampler)[:10]
 
 print()
 print("ShuffleSampler:")
-print("  Buffer size: 50")
+print("  Dataset size: 100")
 print(f"  First 10 shuffled indices: {shuffled_indices}")
 print("  Indices are randomized, not [0, 1, 2, ...]")
 
@@ -411,7 +409,7 @@ print("  Subset/Slice:    RangeSampler (range-based)")
 | Sampler | Stochastic | Checkpointable | Key Feature |
 |---------|------------|----------------|-------------|
 | `SequentialSamplerModule` | No | Yes | Deterministic order |
-| `ShuffleSampler` | Yes | Yes | Buffered shuffle |
+| `ShuffleSampler` | Yes | Yes | Deterministic index shuffle |
 | `RangeSampler` | No | Yes | Custom ranges |
 | `EpochAwareSamplerModule` | Configurable | Yes | Epoch callbacks |
 
@@ -420,7 +418,7 @@ print("  Subset/Slice:    RangeSampler (range-based)")
 ```python
 # Training: shuffle with reproducibility
 shuffle_sampler = ShuffleSampler(
-    ShuffleSamplerConfig(buffer_size=1000, seed=42),
+    ShuffleSamplerConfig(dataset_size=len(dataset), seed=42),
     rngs=nnx.Rngs(shuffle=42),
 )
 
@@ -470,7 +468,7 @@ def main():
     print()
     print("2. ShuffleSampler:")
     shuf = ShuffleSampler(
-        ShuffleSamplerConfig(buffer_size=50, seed=42),
+        ShuffleSamplerConfig(dataset_size=100, seed=42),
         rngs=nnx.Rngs(shuffle=42),
     )
     shuffled = list(shuf)[:5]

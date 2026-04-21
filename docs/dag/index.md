@@ -22,12 +22,12 @@ Directed Acyclic Graph (DAG) based pipeline execution system. The DAG module pro
 ## Quick Start
 
 ```python
-from datarax.dag import from_source, DAGExecutor
+from datarax.dag import build_source_pipeline, DAGExecutor
 from datarax.dag.nodes import OperatorNode
 
 # Build pipeline with fluent API
 pipeline = (
-    from_source(my_source, batch_size=32)
+    build_source_pipeline(my_source, batch_size=32)
     >> OperatorNode(normalize)
     >> OperatorNode(augment)
 )

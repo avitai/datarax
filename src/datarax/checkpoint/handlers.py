@@ -137,7 +137,7 @@ class OrbaxCheckpointHandler:
             return tuple(self._restore(item) for item in target)
         return target
 
-    def save(
+    def save_to_directory(
         self,
         directory: str | Path,
         target: Any,
@@ -146,7 +146,7 @@ class OrbaxCheckpointHandler:
         overwrite: bool = False,
         metadata: dict[str, Any] | None = None,
     ) -> str:
-        """Save a checkpoint.
+        """Save a checkpoint to a directory.
 
         Args:
             directory: Directory to save to.
@@ -199,7 +199,7 @@ class OrbaxCheckpointHandler:
         target: Any | None = None,
         step: int | None = None,
         metadata_only: bool = False,
-        restore_args: Any | None = None,  # noqa: ARG002
+        _restore_args: Any | None = None,
     ) -> Any:
         """Restore from a checkpoint.
 
@@ -208,7 +208,7 @@ class OrbaxCheckpointHandler:
             target: Optional target to restore into.
             step: Optional step to restore from (None = latest).
             metadata_only: If True, only return metadata.
-            restore_args: Reserved for Orbax interoperability.
+            _restore_args: Reserved for Orbax interoperability.
 
         Returns:
             The restored object, state, or metadata.
@@ -224,7 +224,7 @@ class OrbaxCheckpointHandler:
         restore_target = self._build_restore_target(target)
         state = self._orbax_restore(str(actual_path), item=restore_target)
         state = self._decode_restored_state(state, restore_target)
-        state, metadata = self._extract_state_and_metadata(state)
+        state, metadata = self._extract_state_metadata(state)
 
         if metadata_only:
             return metadata
@@ -258,7 +258,7 @@ class OrbaxCheckpointHandler:
             return nnx.restore_int_paths(decoded_state)
         return decoded_state
 
-    def _extract_state_and_metadata(self, state: Any) -> tuple[Any, Any | None]:
+    def _extract_state_metadata(self, state: Any) -> tuple[Any, Any | None]:
         """Split payload into state and optional metadata envelope."""
         metadata: Any | None = None
         if isinstance(state, dict) and "__metadata__" in state:
@@ -363,6 +363,6 @@ class OrbaxCheckpointHandler:
         """Enter context manager."""
         return self
 
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+    def __exit__(self, _exc_type: Any, _exc_val: Any, _exc_tb: Any) -> None:
         """Exit context manager and close handler."""
         self.close()

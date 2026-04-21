@@ -102,6 +102,7 @@ class TestElementOperatorInit:
         """Deterministic mode initialization."""
 
         def identity(element, key):
+            del key
             return element
 
         config = ElementOperatorConfig(stochastic=False)
@@ -116,6 +117,7 @@ class TestElementOperatorInit:
         """Stochastic mode initialization."""
 
         def add_noise(element, key):
+            del key
             return element
 
         config = ElementOperatorConfig(stochastic=True, stream_name="augment")
@@ -130,6 +132,7 @@ class TestElementOperatorInit:
         """Stochastic mode requires rngs parameter."""
 
         def add_noise(element, key):
+            del key
             return element
 
         config = ElementOperatorConfig(stochastic=True, stream_name="augment")
@@ -141,6 +144,7 @@ class TestElementOperatorInit:
         """Custom name is stored."""
 
         def identity(element, key):
+            del key
             return element
 
         config = ElementOperatorConfig(stochastic=False)
@@ -162,6 +166,7 @@ class TestElementOperatorBasicTransformations:
         """Identity function passes data through unchanged."""
 
         def identity(element, key):
+            del key
             return element
 
         config = ElementOperatorConfig(stochastic=False)
@@ -179,6 +184,7 @@ class TestElementOperatorBasicTransformations:
         """Function can multiply data fields."""
 
         def double_data(element, key):
+            del key
             new_data = jax.tree.map(lambda x: x * 2.0, element.data)
             return element.replace(data=new_data)
 
@@ -198,6 +204,7 @@ class TestElementOperatorBasicTransformations:
         """Function can add constants to data."""
 
         def add_one(element, key):
+            del key
             new_data = {"value": element.data["value"] + 1.0}
             return element.replace(data=new_data)
 
@@ -217,6 +224,7 @@ class TestElementOperatorBasicTransformations:
         """Function can transform multiple fields."""
 
         def normalize_all(element, key):
+            del key
             new_data = {
                 "image": element.data["image"] / 255.0,
                 "mask": element.data["mask"] * 2.0,
@@ -243,6 +251,7 @@ class TestElementOperatorBasicTransformations:
         """Works correctly with batch of multiple elements."""
 
         def triple(element, key):
+            del key
             new_data = jax.tree.map(lambda x: x * 3.0, element.data)
             return element.replace(data=new_data)
 
@@ -272,6 +281,7 @@ class TestElementOperatorStateMetadata:
         """State passes through when not modified."""
 
         def data_only(element, key):
+            del key
             new_data = {"value": element.data["value"] + 1.0}
             return element.replace(data=new_data)
 
@@ -293,6 +303,7 @@ class TestElementOperatorStateMetadata:
         """Function can modify state."""
 
         def increment_counter(element, key):
+            del key
             new_state = {"counter": element.state["counter"] + 1.0}
             return element.replace(state=new_state)
 
@@ -314,6 +325,7 @@ class TestElementOperatorStateMetadata:
         """Metadata passes through unchanged (not vmapped)."""
 
         def identity(element, key):
+            del key
             return element
 
         config = ElementOperatorConfig(stochastic=False)
@@ -334,6 +346,7 @@ class TestElementOperatorStateMetadata:
 
         def flip_and_track(element, key):
             # Flip data
+            del key
             new_data = {"image": -element.data["image"]}
             # Track in state that we flipped
             new_state = {"flipped": jnp.array(1.0)}
@@ -444,6 +457,7 @@ class TestElementOperatorStochastic:
 
         def multiply(element, key):
             # Ignores key - deterministic operation
+            del key
             new_data = {"value": element.data["value"] * 2.0}
             return element.replace(data=new_data)
 
@@ -480,6 +494,7 @@ class TestElementOperatorEdgeCases:
         """Handles empty data dict."""
 
         def identity(element, key):
+            del key
             return element
 
         config = ElementOperatorConfig(stochastic=False)
@@ -498,6 +513,7 @@ class TestElementOperatorEdgeCases:
 
         def transform_nested(element, key):
             # Transform nested data while preserving structure
+            del key
             image = element.data["features"]["image"] * 2.0
             depth = element.data["features"]["depth"] + 1.0
             new_data = {"features": {"image": image, "depth": depth}}
@@ -525,6 +541,7 @@ class TestElementOperatorEdgeCases:
         """Works with single-element batch."""
 
         def negate(element, key):
+            del key
             new_data = jax.tree.map(lambda x: -x, element.data)
             return element.replace(data=new_data)
 
@@ -543,6 +560,7 @@ class TestElementOperatorEdgeCases:
         """Works with large batch."""
 
         def add_ten(element, key):
+            del key
             new_data = {"value": element.data["value"] + 10.0}
             return element.replace(data=new_data)
 
@@ -570,6 +588,7 @@ class TestElementOperatorJAXCompatibility:
         """JIT compilation works in deterministic mode."""
 
         def normalize(element, key):
+            del key
             new_data = {"value": (element.data["value"] - 0.5) / 0.5}
             return element.replace(data=new_data)
 
@@ -620,6 +639,7 @@ class TestElementOperatorJAXCompatibility:
 
         def pure_transform(element, key):
             # Pure function - no external state access
+            del key
             return element.replace(data={"value": element.data["value"] ** 2})
 
         config = ElementOperatorConfig(stochastic=False)
@@ -674,10 +694,12 @@ class TestElementOperatorIntegration:
         """Can chain multiple ElementOperators."""
 
         def normalize(element, key):
+            del key
             new_data = {"value": element.data["value"] / 255.0}
             return element.replace(data=new_data)
 
         def center(element, key):
+            del key
             new_data = {"value": element.data["value"] - 0.5}
             return element.replace(data=new_data)
 
@@ -702,6 +724,7 @@ class TestElementOperatorIntegration:
 
         def augment_image_and_mask(element, key):
             # Flip both image and mask together
+            del key
             image = element.data["image"]
             mask = element.data["mask"]
 

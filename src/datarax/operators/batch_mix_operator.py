@@ -104,6 +104,7 @@ class BatchMixOperator(OperatorModule):
         Returns:
             The input rng unchanged (not used)
         """
+        del data_shapes
         return rng
 
     def apply(
@@ -130,6 +131,7 @@ class BatchMixOperator(OperatorModule):
         Returns:
             Input unchanged (not used in practice)
         """
+        del random_params, stats
         return data, state, metadata
 
     def apply_batch(
@@ -150,6 +152,7 @@ class BatchMixOperator(OperatorModule):
         Returns:
             Mixed batch with same structure
         """
+        del stats
         # Handle edge cases: empty or single-element batch
         if batch.batch_size < 2:
             return batch

@@ -21,7 +21,7 @@ from flax import nnx
 from datarax.core.config import ElementOperatorConfig, OperatorConfig
 from datarax.core.element_batch import Batch, BatchView
 from datarax.core.operator import OperatorModule
-from datarax.dag.dag_executor import from_source
+from datarax.dag.dag_executor import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 from datarax.operators.element_operator import ElementOperator
 from datarax.sources import MemorySource, MemorySourceConfig
@@ -43,6 +43,7 @@ class ScaleOperator(OperatorModule):
     """Deterministic operator: multiplies data by a factor."""
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
+        del random_params, stats
         new_data = jax.tree.map(lambda x: x * self.config.factor, data)  # type: ignore[reportAttributeAccessIssue]
         return new_data, state, metadata
 
@@ -58,6 +59,7 @@ class AddOperator(OperatorModule):
     """Deterministic operator: adds offset to data."""
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
+        del random_params, stats
         new_data = jax.tree.map(lambda x: x + self.config.offset, data)  # type: ignore[reportAttributeAccessIssue]
         return new_data, state, metadata
 
@@ -83,6 +85,7 @@ class StochasticNoiseOperator(OperatorModule):
         return jax.random.normal(rng, shape=(batch_size,)) * self.config.noise_scale  # type: ignore[reportAttributeAccessIssue]
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
+        del stats
         noise = random_params if random_params is not None else 0.0
         new_data = jax.tree.map(lambda x: x + noise, data)
         return new_data, state, metadata
@@ -179,7 +182,7 @@ class TestFusedPipelineIteration:
 
     def test_pipeline_with_two_operators(self, source, scale_op, add_op):
         """Pipeline iterates correctly with two operators."""
-        pipeline = from_source(source, batch_size=8)
+        pipeline = build_source_pipeline(source, batch_size=8)
         pipeline = pipeline >> OperatorNode(scale_op) >> OperatorNode(add_op)
 
         batches = list(pipeline)
@@ -191,14 +194,14 @@ class TestFusedPipelineIteration:
 
     def test_pipeline_no_operators(self, source):
         """Pipeline without operators still works."""
-        pipeline = from_source(source, batch_size=8)
+        pipeline = build_source_pipeline(source, batch_size=8)
 
         batches = list(pipeline)
         assert len(batches) == 4
 
     def test_pipeline_single_operator(self, source, scale_op):
         """Pipeline with one operator works correctly."""
-        pipeline = from_source(source, batch_size=8)
+        pipeline = build_source_pipeline(source, batch_size=8)
         pipeline = pipeline >> OperatorNode(scale_op)
 
         batches = list(pipeline)
@@ -217,10 +220,12 @@ class TestFusedPipelineIteration:
         source = MemorySource(config=config, data=raw, rngs=nnx.Rngs(0))
 
         def normalize_fn(element, key):
+            del key
             new_data = jax.tree.map(lambda x: x / 255.0, element.data)
             return element.replace(data=new_data)
 
         def cast_fn(element, key):
+            del key
             new_data = jax.tree.map(lambda x: x.astype(jnp.float32), element.data)
             return element.replace(data=new_data)
 
@@ -230,7 +235,7 @@ class TestFusedPipelineIteration:
         )
         cast_op = ElementOperator(ElementOperatorConfig(stochastic=False), fn=cast_fn, rngs=rngs)
 
-        pipeline = from_source(source, batch_size=8)
+        pipeline = build_source_pipeline(source, batch_size=8)
         pipeline = pipeline >> OperatorNode(normalize_op) >> OperatorNode(cast_op)
 
         batches = list(pipeline)
@@ -249,7 +254,7 @@ class TestFusedPipelineIteration:
 
         scale_op = ScaleOperator(ScaleConfig(stochastic=False, factor=3.0))
 
-        pipeline = from_source(source, batch_size=4)
+        pipeline = build_source_pipeline(source, batch_size=4)
         pipeline = pipeline >> OperatorNode(scale_op)
 
         batches = list(pipeline)
@@ -277,7 +282,7 @@ class TestJitFusedChain:
         source1 = MemorySource(config=config, data=raw, rngs=nnx.Rngs(0))
         scale1 = ScaleOperator(ScaleConfig(stochastic=False, factor=2.0))
         add1 = AddOperator(AddConfig(stochastic=False, offset=0.5))
-        pipe1 = from_source(source1, batch_size=4)
+        pipe1 = build_source_pipeline(source1, batch_size=4)
         pipe1 = pipe1 >> OperatorNode(scale1) >> OperatorNode(add1)
         eager_batches = list(pipe1)
 
@@ -285,7 +290,7 @@ class TestJitFusedChain:
         source2 = MemorySource(config=config, data=raw, rngs=nnx.Rngs(0))
         scale2 = ScaleOperator(ScaleConfig(stochastic=False, factor=2.0))
         add2 = AddOperator(AddConfig(stochastic=False, offset=0.5))
-        pipe2 = from_source(source2, batch_size=4)
+        pipe2 = build_source_pipeline(source2, batch_size=4)
         pipe2 = pipe2 >> OperatorNode(scale2) >> OperatorNode(add2)
         jit_batches = list(pipe2)
 
@@ -301,7 +306,7 @@ class TestJitFusedChain:
         source = MemorySource(config=config, data=raw, rngs=nnx.Rngs(0))
 
         scale_op = ScaleOperator(ScaleConfig(stochastic=False, factor=5.0))
-        pipeline = from_source(source, batch_size=4)
+        pipeline = build_source_pipeline(source, batch_size=4)
         pipeline = pipeline >> OperatorNode(scale_op)
 
         # Epoch 1
@@ -326,7 +331,7 @@ class TestJitFusedChain:
         source = MemorySource(config=config, data=raw, rngs=nnx.Rngs(0))
 
         scale_op = ScaleOperator(ScaleConfig(stochastic=False, factor=2.0))
-        pipeline = from_source(source, batch_size=32)
+        pipeline = build_source_pipeline(source, batch_size=32)
         pipeline = pipeline >> OperatorNode(scale_op)
 
         # First epoch: includes JIT compilation time
@@ -355,7 +360,7 @@ class TestJitFusedChain:
             StochasticNoiseConfig(noise_scale=0.1),
             rngs=nnx.Rngs(noise=42),
         )
-        pipeline = from_source(source, batch_size=4)
+        pipeline = build_source_pipeline(source, batch_size=4)
         pipeline = pipeline >> OperatorNode(noise_op)
 
         batches = list(pipeline)
@@ -377,7 +382,7 @@ class TestJitFusedChain:
             StochasticNoiseConfig(noise_scale=0.1),
             rngs=nnx.Rngs(noise=42),
         )
-        pipeline = from_source(source, batch_size=4)
+        pipeline = build_source_pipeline(source, batch_size=4)
         pipeline = pipeline >> OperatorNode(scale_op) >> OperatorNode(noise_op)
 
         batches = list(pipeline)
@@ -398,7 +403,7 @@ class TestJitFusedChain:
             StochasticNoiseConfig(noise_scale=0.5),
             rngs=nnx.Rngs(noise=42),
         )
-        pipeline = from_source(source, batch_size=4)
+        pipeline = build_source_pipeline(source, batch_size=4)
         pipeline = pipeline >> OperatorNode(noise_op)
 
         # Epoch 1
@@ -420,7 +425,7 @@ class TestJitFusedChain:
         raw = [{"val": np.ones((4,), dtype=np.float32) * i} for i in range(16)]
         source = MemorySource(MemorySourceConfig(shuffle=False), data=raw, rngs=nnx.Rngs(0))
         scale_op = ScaleOperator(ScaleConfig(stochastic=False, factor=2.0))
-        pipeline = from_source(source, batch_size=4)
+        pipeline = build_source_pipeline(source, batch_size=4)
         pipeline = pipeline >> OperatorNode(scale_op)
 
         original_make_fused_step = pipeline._make_fused_step
@@ -443,7 +448,7 @@ class TestJitFusedChain:
         source = MemorySource(MemorySourceConfig(shuffle=False), data=raw, rngs=nnx.Rngs(0))
         scale_op = ScaleOperator(ScaleConfig(stochastic=False, factor=2.0))
         add_op = AddOperator(AddConfig(stochastic=False, offset=1.0))
-        pipeline = from_source(source, batch_size=4)
+        pipeline = build_source_pipeline(source, batch_size=4)
         pipeline = pipeline >> OperatorNode(scale_op)
 
         original_make_fused_step = pipeline._make_fused_step
@@ -481,14 +486,14 @@ class TestPrefetchIntegration:
         # With prefetch (default: prefetch_size=2)
         source1 = MemorySource(config=config, data=raw, rngs=nnx.Rngs(0))
         scale1 = ScaleOperator(ScaleConfig(stochastic=False, factor=2.0))
-        pipe1 = from_source(source1, batch_size=4, prefetch_size=2)
+        pipe1 = build_source_pipeline(source1, batch_size=4, prefetch_size=2)
         pipe1 = pipe1 >> OperatorNode(scale1)
         prefetched = list(pipe1)
 
         # Without prefetch
         source2 = MemorySource(config=config, data=raw, rngs=nnx.Rngs(0))
         scale2 = ScaleOperator(ScaleConfig(stochastic=False, factor=2.0))
-        pipe2 = from_source(source2, batch_size=4, prefetch_size=0)
+        pipe2 = build_source_pipeline(source2, batch_size=4, prefetch_size=0)
         pipe2 = pipe2 >> OperatorNode(scale2)
         no_prefetch = list(pipe2)
 
@@ -503,8 +508,8 @@ class TestPrefetchIntegration:
         config = MemorySourceConfig(shuffle=False)
         source = MemorySource(config=config, data=raw, rngs=nnx.Rngs(0))
 
-        pipeline = from_source(source, batch_size=4, prefetch_size=0)
-        assert pipeline.prefetch_size == 0
+        pipeline = build_source_pipeline(source, batch_size=4, prefetch_size=0)
+        assert pipeline.buffer_depth == 0
 
         batches = list(pipeline)
         assert len(batches) == 2
@@ -515,8 +520,8 @@ class TestPrefetchIntegration:
         config = MemorySourceConfig(shuffle=False)
         source = MemorySource(config=config, data=raw, rngs=nnx.Rngs(0))
 
-        pipeline = from_source(source, batch_size=4)
-        assert pipeline.prefetch_size == 2
+        pipeline = build_source_pipeline(source, batch_size=4)
+        assert pipeline.buffer_depth == 2
 
         batches = list(pipeline)
         assert len(batches) == 2
@@ -528,7 +533,7 @@ class TestBatchFirstReturnsBatchView:
     def test_batch_first_path_returns_batch_view(self):
         raw = [{"val": np.ones((4,), dtype=np.float32)} for _ in range(8)]
         source = MemorySource(MemorySourceConfig(shuffle=False), data=raw, rngs=nnx.Rngs(0))
-        pipeline = from_source(source, batch_size=4)
+        pipeline = build_source_pipeline(source, batch_size=4)
 
         first_batch = next(iter(pipeline))
 
@@ -539,7 +544,7 @@ class TestBatchFirstReturnsBatchView:
     def test_batch_view_can_materialize_full_batch(self):
         raw = [{"val": np.ones((4,), dtype=np.float32)} for _ in range(8)]
         source = MemorySource(MemorySourceConfig(shuffle=False), data=raw, rngs=nnx.Rngs(0))
-        pipeline = from_source(source, batch_size=4)
+        pipeline = build_source_pipeline(source, batch_size=4)
 
         batch_view = next(iter(pipeline))
         materialized = batch_view.to_batch()

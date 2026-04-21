@@ -53,7 +53,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import HFEagerConfig, HFEagerSource
@@ -99,7 +99,7 @@ Build a pipeline and examine what data the dataset provides.
 
 # %%
 # Create pipeline with batch_size=1 for inspection
-pipeline = from_source(source, batch_size=1)
+pipeline = build_source_pipeline(source, batch_size=1)
 
 # Get first few examples
 print("First 3 examples:")
@@ -156,7 +156,7 @@ normalizer = ElementOperator(
 
 # Build transformed pipeline (need fresh source for new iteration)
 source2 = HFEagerSource(config, rngs=nnx.Rngs(1))
-transformed_pipeline = from_source(source2, batch_size=32).add(OperatorNode(normalizer))
+transformed_pipeline = build_source_pipeline(source2, batch_size=32).add(OperatorNode(normalizer))
 
 # Process a batch
 batch = next(iter(transformed_pipeline))
@@ -226,7 +226,7 @@ def main():
         ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0)
     )
 
-    pipeline = from_source(source, batch_size=32).add(OperatorNode(normalizer))
+    pipeline = build_source_pipeline(source, batch_size=32).add(OperatorNode(normalizer))
 
     # Process batches
     total_samples = 0

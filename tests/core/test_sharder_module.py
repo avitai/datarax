@@ -320,6 +320,7 @@ class TestShardingOperation:
 
     def test_shard_with_named_sharding(self, single_device_mesh, sample_batch):
         """Test sharding with NamedSharding."""
+        del sample_batch
         sharder = ConcreteSharderModule()
         named_sharding = NamedSharding(single_device_mesh, PartitionSpec("data", None))
 

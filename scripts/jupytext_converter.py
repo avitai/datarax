@@ -87,7 +87,7 @@ def validate_python_for_jupytext(py_file: Path) -> tuple[bool, list[str]]:
     issues = []
 
     try:
-        with open(py_file, "r", encoding="utf-8") as f:
+        with open(py_file, encoding="utf-8") as f:
             lines = f.readlines()
 
         # Pattern 1: print() with "\n" or other escape sequences in string concatenation
@@ -209,7 +209,7 @@ def convert_py_to_nb(py_file: Path, verbose: bool = False) -> bool:
         import json
 
         try:
-            with open(nb_file, "r") as f:
+            with open(nb_file) as f:
                 notebook = json.load(f)
 
             # Remove cell IDs
@@ -415,7 +415,7 @@ def validate_sync(directory: Path, verbose: bool = False) -> tuple[int, int, int
         try:
             import json
 
-            with open(nb_file, "r") as f:
+            with open(nb_file) as f:
                 notebook = json.load(f)
 
             # Check if notebook has jupytext metadata with formats

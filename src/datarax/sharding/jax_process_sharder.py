@@ -55,26 +55,8 @@ class JaxProcessSharderModule(SharderModule):
 
     def shard_data(self, data: Any) -> Any:
         """Shard data for current process."""
-        process_count = self.process_count.get_value()
-        process_index = self.process_index.get_value()
-
         if isinstance(data, list | tuple):
-            total_size = len(data)
-            shard_size = total_size // process_count
-
-            if self.config.drop_remainder:
-                # Ensure equal shards
-                shard_size = total_size // process_count
-                start_idx = process_index * shard_size
-                end_idx = start_idx + shard_size
-            else:
-                # Allow unequal shards
-                start_idx = process_index * shard_size
-                if process_index == process_count - 1:
-                    end_idx = total_size
-                else:
-                    end_idx = start_idx + shard_size
-
+            start_idx, end_idx = self._shard_bounds(len(data))
             return data[start_idx:end_idx]
 
         elif isinstance(data, jax.Array | np.ndarray):
@@ -85,21 +67,21 @@ class JaxProcessSharderModule(SharderModule):
 
     def _shard_array(self, array: jax.Array | np.ndarray) -> jax.Array | np.ndarray:
         """Shard array across first dimension."""
+        start_idx, end_idx = self._shard_bounds(array.shape[0])
+        return array[start_idx:end_idx]
+
+    def _shard_bounds(self, total_size: int) -> tuple[int, int]:
+        """Return Grain-style process shard bounds."""
         process_count = self.process_count.get_value()
         process_index = self.process_index.get_value()
-
-        total_size = array.shape[0]
-        shard_size = total_size // process_count
 
         if self.config.drop_remainder:
             shard_size = total_size // process_count
             start_idx = process_index * shard_size
-            end_idx = start_idx + shard_size
-        else:
-            start_idx = process_index * shard_size
-            if process_index == process_count - 1:
-                end_idx = total_size
-            else:
-                end_idx = start_idx + shard_size
+            return start_idx, start_idx + shard_size
 
-        return array[start_idx:end_idx]
+        base_size = total_size // process_count
+        remainder = total_size % process_count
+        start_idx = process_index * base_size + min(process_index, remainder)
+        shard_size = base_size + int(process_index < remainder)
+        return start_idx, start_idx + shard_size

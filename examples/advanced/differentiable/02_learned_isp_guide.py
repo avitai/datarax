@@ -88,7 +88,7 @@ import numpy as np
 import optax
 from flax import nnx
 
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.core.element_batch import Batch
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 from datarax.dag.dag_executor import DAGExecutor
@@ -642,7 +642,7 @@ def create_isp_pipeline(
 
     # Inference demo: DAG pipeline using >> operator (shares same operator instances)
     pipeline = (
-        from_source(source, batch_size=batch_size)
+        build_source_pipeline(source, batch_size=batch_size)
         >> OperatorNode(ccm)
         >> OperatorNode(desat)
         >> OperatorNode(tonemap)
@@ -870,7 +870,7 @@ def train_epoch(
     Returns:
         Average loss and accuracy for the epoch
     """
-    pipeline = from_source(source, batch_size=batch_size)
+    pipeline = build_source_pipeline(source, batch_size=batch_size)
 
     total_loss = 0.0
     total_acc = 0.0
@@ -1088,7 +1088,7 @@ back through ALL 5 ISP operators.
 # Step 7: Gradient flow verification
 print("\n=== Gradient Flow Verification ===")
 
-verify_pipeline = from_source(test_source, batch_size=8)
+verify_pipeline = build_source_pipeline(test_source, batch_size=8)
 verify_batch = next(iter(verify_pipeline))
 images = verify_batch["image"]
 labels = verify_batch["label"]
@@ -1259,7 +1259,7 @@ def evaluate_detector(
 ) -> tuple[float, float]:
     """Evaluate detector accuracy with optional ISP preprocessing."""
     detector.eval()  # Use running stats for evaluation
-    pipeline = from_source(source, batch_size=batch_size)
+    pipeline = build_source_pipeline(source, batch_size=batch_size)
     total_loss = 0.0
     total_acc = 0.0
     num_batches = 0
@@ -1298,7 +1298,7 @@ print(f"\nImprovement: +{improvement:.1f}% accuracy")
 fig, axes = plt.subplots(3, 8, figsize=(16, 6))
 
 # Get a batch of test images
-vis_pipeline = from_source(test_source, batch_size=8)
+vis_pipeline = build_source_pipeline(test_source, batch_size=8)
 vis_batch = next(iter(vis_pipeline))
 dark_images = vis_batch["image"]
 labels = vis_batch["label"]
@@ -1449,7 +1449,7 @@ def main():
 
     # Gradient verification
     print("\n[4/5] Verifying gradient flow...")
-    verify_pipeline = from_source(test_source, batch_size=8)
+    verify_pipeline = build_source_pipeline(test_source, batch_size=8)
     verify_batch = next(iter(verify_pipeline))
 
     def loss_fn(isp_composite: CompositeOperatorModule) -> jax.Array:

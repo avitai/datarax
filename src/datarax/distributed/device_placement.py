@@ -40,6 +40,8 @@ from typing import Any
 import jax
 from jax.sharding import Mesh, NamedSharding, PartitionSpec, Sharding, SingleDeviceSharding
 
+from datarax.control.prefetcher import create_prefetch_stream
+
 
 logger = logging.getLogger(__name__)
 
@@ -350,14 +352,12 @@ class DevicePlacement:
         buffer_size: int = 2,
         cpu_buffer_size: int | None = None,
     ) -> Any:
-        """Create a two-stage prefetching wrapper for optimal throughput.
+        """Create a prefetching wrapper for host-to-device transfer.
 
-        This implements the two-stage prefetch pattern from Grain:
-        - Stage 1: CPU-side buffer prepares data (cpu_buffer_size batches)
-        - Stage 2: Device-side buffer for already-transferred data (buffer_size batches)
-
-        The two-stage pattern separates data preparation from device transfer,
-        maximizing throughput by overlapping these operations.
+        Generic Python iterators use Datarax's closeable device-put thread
+        wrapper. Grain-backed datasets should use
+        ``datarax.control.prefetcher.create_prefetch_stream(..., mode="grain")``
+        directly when they need Grain's dataset-level ``device_put`` behavior.
 
         Args:
             data_iterator: Iterator yielding PyTrees of data.
@@ -369,13 +369,12 @@ class DevicePlacement:
             Iterator that yields device-placed data.
 
         Note:
-            This pattern from grain/_src/python/experimental/device_put/device_put.py
-            achieves ~20-50% throughput increase over single-stage prefetching by
-            overlapping CPU data preparation with device transfer.
+            Throughput depends on workload, host/device balance, and hardware.
+            Add benchmark artifacts before making numeric performance claims.
         """
+        del cpu_buffer_size
         device = device or self.default_device
-        cpu_buffer = cpu_buffer_size if cpu_buffer_size is not None else buffer_size * 2
-        return self._two_stage_prefetch_generator(data_iterator, device, buffer_size, cpu_buffer)
+        return create_prefetch_stream(data_iterator, mode="thread", size=buffer_size, device=device)
 
     def _two_stage_prefetch_generator(
         self,
@@ -594,14 +593,7 @@ def prefetch_to_device(
     device: jax.Device | None = None,  # type: ignore[name-defined]
     cpu_buffer_size: int | None = None,
 ) -> Any:
-    """Two-stage prefetch for overlapping data preparation and device transfer.
-
-    This implements Grain's two-stage prefetch pattern for optimal throughput:
-    - Stage 1: CPU-side buffer prepares data in background thread
-    - Stage 2: Device-side buffer for already-transferred data
-
-    This pattern achieves ~20-50% throughput increase over simple prefetching
-    by fully overlapping data preparation with device transfer.
+    """Prefetch iterator outputs to device memory.
 
     Args:
         data_iterator: Iterator yielding PyTrees of data (e.g., from a pipeline).
@@ -614,9 +606,9 @@ def prefetch_to_device(
 
     Example:
         ```python
-        from datarax import from_source, prefetch_to_device
+        from datarax import build_source_pipeline, prefetch_to_device
 
-        pipeline = from_source(source, batch_size=32)
+        pipeline = build_source_pipeline(source, batch_size=32)
         prefetched = prefetch_to_device(pipeline, size=3)
 
         for batch in prefetched:
@@ -625,10 +617,8 @@ def prefetch_to_device(
         ```
 
     Note:
-        The two-stage pattern from Grain separates concerns:
-        - CPU buffer handles data iteration and preparation
-        - Device buffer handles transfer to accelerator
-        This overlapping maximizes throughput in streaming scenarios.
+        Numeric throughput claims must be backed by benchmark artifacts for
+        the target workload and hardware.
     """
     placement = DevicePlacement(default_device=device)
     return placement.prefetch_to_device(

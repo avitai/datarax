@@ -273,6 +273,8 @@ def sample_data():
 def test_integration_with_nnx_module(sample_data):
     """Test integration with NNX modules."""
 
+    del sample_data
+
     class OptimizedModule(nnx.Module):
         def __init__(self, input_features: int, output_features: int, *, rngs: nnx.Rngs):
             super().__init__()

@@ -11,25 +11,26 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from datarax.cli.benchmark import (
+    _make_sync_fn,
     main,
     run_pipeline_benchmark,
-    save_benchmark_results,
+    save_benchmark_results_to_path,
 )
 
 
 class TestSaveBenchmarkResults:
-    """Test the save_benchmark_results utility function."""
+    """Test the save_benchmark_results_to_path utility function."""
 
     def test_save_valid_dict_creates_file(self, tmp_path: Path) -> None:
         """Test saving a valid dictionary creates a JSON file."""
         output_path = tmp_path / "results.json"
         results = {"metric": "throughput", "value": 123.45}
 
-        save_benchmark_results(results, str(output_path))
+        save_benchmark_results_to_path(results, str(output_path))
 
         assert output_path.exists()
 
-        with open(output_path) as f:
+        with output_path.open() as f:
             loaded = json.load(f)
 
         assert loaded["metric"] == "throughput"
@@ -41,7 +42,7 @@ class TestSaveBenchmarkResults:
         output_path = tmp_path / "nested" / "dir" / "results.json"
         results = {"test": "data"}
 
-        save_benchmark_results(results, str(output_path))
+        save_benchmark_results_to_path(results, str(output_path))
 
         assert output_path.exists()
         assert output_path.parent.exists()
@@ -51,9 +52,9 @@ class TestSaveBenchmarkResults:
         output_path = tmp_path / "results.json"
         results = {"metric": "latency"}
 
-        save_benchmark_results(results, str(output_path))
+        save_benchmark_results_to_path(results, str(output_path))
 
-        with open(output_path) as f:
+        with output_path.open() as f:
             loaded = json.load(f)
 
         assert "timestamp" in loaded
@@ -77,9 +78,9 @@ class TestSaveBenchmarkResults:
             "nested": {"obj": CustomObject()},
         }
 
-        save_benchmark_results(results, str(output_path))
+        save_benchmark_results_to_path(results, str(output_path))
 
-        with open(output_path) as f:
+        with output_path.open() as f:
             loaded = json.load(f)
 
         assert loaded["normal"] == 42
@@ -95,9 +96,9 @@ class TestSaveBenchmarkResults:
             "nested": [[1, 2], [3, 4]],
         }
 
-        save_benchmark_results(results, str(output_path))
+        save_benchmark_results_to_path(results, str(output_path))
 
-        with open(output_path) as f:
+        with output_path.open() as f:
             loaded = json.load(f)
 
         assert loaded["list"] == [1, 2, 3]
@@ -109,9 +110,9 @@ class TestSaveBenchmarkResults:
         output_path = tmp_path / "results.json"
         results = [1, 2, 3]  # Not a dict
 
-        save_benchmark_results(results, str(output_path))  # type: ignore[reportArgumentType]
+        save_benchmark_results_to_path(results, str(output_path))  # type: ignore[reportArgumentType]
 
-        with open(output_path) as f:
+        with output_path.open() as f:
             loaded = json.load(f)
 
         assert "results" in loaded
@@ -161,6 +162,14 @@ class TestCLIArgumentParsing:
 
 class TestRunPipelineBenchmark:
     """Test the run_pipeline_benchmark function."""
+
+    def test_sync_fn_uses_shared_tree_synchronization_helper(self) -> None:
+        """CLI timing should use the production tree sync helper."""
+        payload = {"result": object()}
+        with patch("datarax.cli.benchmark.block_until_ready_tree") as sync_tree:
+            _make_sync_fn()(payload)
+
+        sync_tree.assert_called_once_with(payload)
 
     def test_run_pipeline_benchmark_with_valid_module(self, tmp_path: Path) -> None:
         """Test running pipeline benchmark with a valid module."""

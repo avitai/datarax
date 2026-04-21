@@ -16,6 +16,8 @@ from typing import Any
 import jax
 import numpy as np
 
+from datarax.performance.synchronization import block_until_ready_tree
+
 
 logger = logging.getLogger(__name__)
 
@@ -217,10 +219,9 @@ class SmartCompilation:
         Returns:
             Decorator for the function
         """
-        from jax.experimental.shard_map import shard_map
 
         def decorator(func: Callable) -> Any:
-            return shard_map(func, mesh=mesh, in_specs=in_specs, out_specs=out_specs)
+            return jax.shard_map(func, mesh=mesh, in_specs=in_specs, out_specs=out_specs)
 
         return decorator
 
@@ -357,6 +358,8 @@ class CompilationProfiler:
     def __init__(self) -> None:
         """Initialize compilation profiler."""
         self.compilation_times: dict[Any, float] = {}
+        self.execution_times: dict[Any, list[float]] = {}
+        self.cache_status: dict[Any, list[bool]] = {}
         self.cache_hits: int = 0
         self.cache_misses: int = 0
         self.shape_profiles: dict[Any, dict] = {}
@@ -378,35 +381,48 @@ class CompilationProfiler:
                 jax.config.update("jax_log_compiles", True)
                 jax.config.update("jax_explain_cache_misses", True)
 
+            jitted = jax.jit(func)
+            compiled_by_signature: dict[Any, Callable] = {}
+
             def profiled_wrapper(*args: Any, **kwargs: Any) -> Any:
                 # Create signature for caching analysis
-                signature = self._create_shape_signature(args)
+                signature = self._create_shape_signature(args, kwargs)
 
-                if signature in self.compilation_times:
+                cache_hit = signature in compiled_by_signature
+                if cache_hit:
                     self.cache_hits += 1
                 else:
                     self.cache_misses += 1
+                    compile_start = time.perf_counter()
+                    compiled_by_signature[signature] = jitted.lower(*args, **kwargs).compile()
+                    self.compilation_times[signature] = time.perf_counter() - compile_start
 
-                # Measure compilation time
-                start_time = time.time()
+                execution_start = time.perf_counter()
+                result = compiled_by_signature[signature](*args, **kwargs)
+                block_until_ready_tree(result)
+                execution_time = time.perf_counter() - execution_start
 
-                # First call triggers compilation
-                compiled_func = jax.jit(func)
-                result = compiled_func(*args, **kwargs)
-                if hasattr(result, "block_until_ready"):
-                    result.block_until_ready()
-
-                compile_time = time.time() - start_time
-                self.compilation_times[signature] = compile_time
+                compile_time = self.compilation_times[signature]
+                self.execution_times.setdefault(signature, []).append(execution_time)
+                self.cache_status.setdefault(signature, []).append(cache_hit)
 
                 # Store shape profile
                 self.shape_profiles[signature] = {
                     "input_shapes": [getattr(arg, "shape", None) for arg in args],
                     "input_dtypes": [getattr(arg, "dtype", None) for arg in args],
                     "compile_time": compile_time,
+                    "execution_time": execution_time,
+                    "cache_hit": cache_hit,
                 }
 
-                logger.info(f"Compiled {func_name} for signature {signature}: {compile_time:.3f}s")
+                logger.info(
+                    "Profiled %s for signature %s: compile %.3fs, execute %.3fs, cache_hit=%s",
+                    func_name,
+                    signature,
+                    compile_time,
+                    execution_time,
+                    cache_hit,
+                )
 
                 return result
 
@@ -414,21 +430,32 @@ class CompilationProfiler:
 
         return decorator
 
-    def _create_shape_signature(self, args: tuple) -> tuple:
+    def _create_shape_signature(self, args: tuple, kwargs: dict[str, Any] | None = None) -> tuple:
         """Create a signature from argument shapes for cache analysis.
 
         Args:
             args: Function arguments
+            kwargs: Keyword arguments
 
         Returns:
             Shape signature tuple
         """
-        shapes = []
+        shapes: list[Any] = []
         for arg in args:
             if hasattr(arg, "shape"):
                 shapes.append(arg.shape)
             else:
                 shapes.append(type(arg))
+        if kwargs:
+            shapes.append(
+                (
+                    "kwargs",
+                    tuple(
+                        (key, getattr(value, "shape", type(value)))
+                        for key, value in sorted(kwargs.items())
+                    ),
+                )
+            )
         return tuple(shapes)
 
     def generate_report(self) -> dict[str, Any]:

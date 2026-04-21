@@ -50,7 +50,7 @@ def build_state_with_iteration_fields(
     return merged
 
 
-def restore_iteration_and_fields(
+def restore_iteration_fields(
     state: dict[str, Any],
     *,
     current_index: Any,

@@ -86,7 +86,7 @@ import numpy as np
 import optax
 from flax import nnx
 
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import Batch
 from datarax.core.operator import OperatorModule
@@ -114,7 +114,7 @@ import warnings
 
 import matplotlib
 
-from datarax.operators.modality.audio.crepe_model import load_crepe_weights
+from datarax.operators.modality.audio.crepe_model import load_crepe_weights_from_path
 from datarax.operators.modality.audio.f0_operator import CrepeF0Config, CrepeF0Operator
 
 
@@ -426,7 +426,7 @@ def load_nsynth(
             CrepeF0Config(differentiable=False, batch_strategy="scan"),
             rngs=rngs,
         )
-        load_crepe_weights(f0_op.crepe_model)
+        load_crepe_weights_from_path(f0_op.crepe_model)
         f0_op.eval()
 
         print(f"  Extracting features with datarax operators for {len(audio_arr)} samples...")
@@ -1236,7 +1236,7 @@ def evaluate_spectral_loss(
     batch_size: int = 4,
 ) -> float:
     """Compute average spectral loss over a dataset."""
-    pipeline = from_source(source, batch_size=batch_size)
+    pipeline = build_source_pipeline(source, batch_size=batch_size)
     total_loss = 0.0
     num_batches = 0
     for batch in pipeline:
@@ -1342,7 +1342,7 @@ def train_ddsp(
     print(f"Training DDSP: {num_epochs} epochs, batch_size={batch_size}, peak_lr={peak_lr}")
 
     for epoch in range(num_epochs):
-        pipeline = from_source(train_source, batch_size=batch_size)
+        pipeline = build_source_pipeline(train_source, batch_size=batch_size)
         epoch_loss = 0.0
         num_steps = 0
 
@@ -1435,7 +1435,7 @@ noise synth, harmonic synth, and into the decoder.
 print("\n=== Gradient Flow Verification ===")
 
 # Get a test batch
-verify_pipeline = from_source(test_source, batch_size=4)
+verify_pipeline = build_source_pipeline(test_source, batch_size=4)
 verify_batch = next(iter(verify_pipeline))
 target = verify_batch["audio"]
 f0 = verify_batch["f0"]
@@ -1567,7 +1567,7 @@ print(f"  Improvement:         {improvement:.1f}% lower spectral loss")
 
 # %%
 # Visualize resynthesis quality: target vs. synthesized waveforms and spectrograms
-vis_pipeline = from_source(test_source, batch_size=4)
+vis_pipeline = build_source_pipeline(test_source, batch_size=4)
 vis_batch = next(iter(vis_pipeline))
 vis_pred = synthesize_batch(
     decoder,

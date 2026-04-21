@@ -70,7 +70,7 @@ This produces nearly-black images that are extremely hard for a classifier — t
 
 ```python
 pipeline = (
-    from_source(source, batch_size=32)
+    build_source_pipeline(source, batch_size=32)
     >> OperatorNode(ccm_op)
     >> OperatorNode(desaturation_op)
     >> OperatorNode(tonemap_op)

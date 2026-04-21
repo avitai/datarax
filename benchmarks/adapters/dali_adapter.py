@@ -8,7 +8,7 @@ Design ref: Section 14.2 of the benchmark report.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import numpy as np
@@ -100,6 +100,74 @@ class DaliAdapter(PipelineAdapter):
         }
         return _DTYPE_MAP.get(np_dtype, types.FLOAT)
 
+    @staticmethod
+    def _dali_transform_fns(fn: Any, types: Any) -> dict[str, Callable[[Any], Any]]:
+        """Build DALI transform functions keyed by scenario transform name."""
+
+        def color_jitter(images: Any) -> Any:
+            images = fn.brightness_contrast(
+                images,
+                brightness=fn.random.uniform(range=(0.6, 1.4)),
+                contrast=fn.random.uniform(range=(0.6, 1.4)),
+            )
+            return fn.saturation(images, saturation=fn.random.uniform(range=(0.6, 1.4)))
+
+        def random_solarize(images: Any) -> Any:
+            should_solarize = fn.random.coin_flip(probability=0.5)
+            solarized = types.Constant(255) - images
+            mask = images >= types.Constant(128)
+            inverted = mask * solarized + (1 - mask) * images
+            return should_solarize * inverted + (1 - should_solarize) * images
+
+        def random_grayscale(images: Any) -> Any:
+            should_gray = fn.random.coin_flip(probability=0.2)
+            gray = fn.color_space_conversion(
+                images,
+                image_type=types.RGB,
+                output_type=types.GRAY,
+            )
+            gray_3ch = fn.cat(gray, gray, gray, axis=2)
+            return should_gray * gray_3ch + (1 - should_gray) * images
+
+        return {
+            "Normalize": fn.normalize,
+            "CastToFloat32": lambda images: fn.cast(images, dtype=types.FLOAT),
+            "GaussianNoise": lambda images: images + fn.random.normal(images, stddev=0.05),
+            "RandomBrightness": lambda images: fn.brightness(
+                images,
+                brightness=fn.random.uniform(range=(-0.2, 0.2)),
+            ),
+            "RandomScale": lambda images: images * fn.random.uniform(range=(0.8, 1.2)),
+            "RandomResizedCrop": lambda images: fn.random_resized_crop(
+                images,
+                size=(224, 224),
+                random_area=(0.08, 1.0),
+                random_aspect_ratio=(3.0 / 4.0, 4.0 / 3.0),
+            ),
+            "RandomHorizontalFlip": lambda images: fn.flip(
+                images,
+                horizontal=fn.random.coin_flip(),
+            ),
+            "ColorJitter": color_jitter,
+            "GaussianBlur": lambda images: fn.gaussian_blur(
+                images,
+                sigma=(0.1, 2.0),
+                window_size=5,
+            ),
+            "RandomSolarize": random_solarize,
+            "RandomGrayscale": random_grayscale,
+        }
+
+    @classmethod
+    def _apply_dali_transforms(cls, images: Any, transforms: list[str], fn: Any, types: Any) -> Any:
+        """Apply supported DALI transforms in scenario order."""
+        transform_fns = cls._dali_transform_fns(fn, types)
+        for transform_name in transforms:
+            transform = transform_fns.get(transform_name)
+            if transform is not None:
+                images = transform(images)
+        return images
+
     def setup(self, config: ScenarioConfig, data: Any) -> None:
         """Set up the DALI pipeline for the given scenario configuration."""
         from nvidia.dali import fn, pipeline_def, types
@@ -115,54 +183,7 @@ class DaliAdapter(PipelineAdapter):
         )
         def pipe():
             images = fn.external_source(source=source_iter, dtype=dali_dtype)
-            for t_name in config.transforms:
-                if t_name == "Normalize":
-                    images = fn.normalize(images)
-                elif t_name == "CastToFloat32":
-                    images = fn.cast(images, dtype=types.FLOAT)
-                elif t_name == "GaussianNoise":
-                    noise = fn.random.normal(images, stddev=0.05)
-                    images = images + noise
-                elif t_name == "RandomBrightness":
-                    images = fn.brightness(images, brightness=fn.random.uniform(range=(-0.2, 0.2)))
-                elif t_name == "RandomScale":
-                    images = images * fn.random.uniform(range=(0.8, 1.2))
-                # --- Heavy transforms (native DALI GPU ops for HCV-1/HPC-1) ---
-                elif t_name == "RandomResizedCrop":
-                    images = fn.random_resized_crop(
-                        images,
-                        size=(224, 224),
-                        random_area=(0.08, 1.0),
-                        random_aspect_ratio=(3.0 / 4.0, 4.0 / 3.0),
-                    )
-                elif t_name == "RandomHorizontalFlip":
-                    images = fn.flip(images, horizontal=fn.random.coin_flip())
-                elif t_name == "ColorJitter":
-                    images = fn.brightness_contrast(
-                        images,
-                        brightness=fn.random.uniform(range=(0.6, 1.4)),
-                        contrast=fn.random.uniform(range=(0.6, 1.4)),
-                    )
-                    images = fn.saturation(images, saturation=fn.random.uniform(range=(0.6, 1.4)))
-                elif t_name == "GaussianBlur":
-                    images = fn.gaussian_blur(images, sigma=(0.1, 2.0), window_size=5)
-                elif t_name == "RandomSolarize":
-                    # DALI: invert pixels above threshold with 50% probability
-                    should_solarize = fn.random.coin_flip(probability=0.5)
-                    solarized = types.Constant(255) - images
-                    mask = images >= types.Constant(128)
-                    inverted = mask * solarized + (1 - mask) * images
-                    images = should_solarize * inverted + (1 - should_solarize) * images
-                elif t_name == "RandomGrayscale":
-                    should_gray = fn.random.coin_flip(probability=0.2)
-                    gray = fn.color_space_conversion(
-                        images,
-                        image_type=types.RGB,
-                        output_type=types.GRAY,
-                    )
-                    gray_3ch = fn.cat(gray, gray, gray, axis=2)
-                    images = should_gray * gray_3ch + (1 - should_gray) * images
-            return images
+            return self._apply_dali_transforms(images, config.transforms, fn, types)
 
         self._pipe = pipe()
         self._pipe.build()

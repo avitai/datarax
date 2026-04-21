@@ -196,9 +196,9 @@ maybe_noise = ProbabilisticOperator(
 ## Using Operators in Pipelines
 
 ```python
-from datarax.dag import from_source, OperatorNode
+from datarax.dag import build_source_pipeline, OperatorNode
 
-pipeline = from_source(source, batch_size=32)
+pipeline = build_source_pipeline(source, batch_size=32)
 pipeline.add(OperatorNode(brightness))
 pipeline.add(OperatorNode(contrast))
 

@@ -33,7 +33,7 @@ class TestProbabilisticOperatorConfig:
         """Test that valid probability values are accepted."""
         # Create a simple child operator config
         child_config = MapOperatorConfig(stochastic=False)
-        child_op = MapOperator(child_config, fn=lambda x, key: x * 2, rngs=nnx.Rngs(0))
+        child_op = MapOperator(child_config, fn=lambda x, _key: x * 2, rngs=nnx.Rngs(0))
 
         # Test boundary values
         config_zero = ProbabilisticOperatorConfig(operator=child_op, probability=0.0)
@@ -48,7 +48,7 @@ class TestProbabilisticOperatorConfig:
     def test_invalid_probability_too_high(self):
         """Test that probability > 1.0 raises ValueError."""
         child_config = MapOperatorConfig(stochastic=False)
-        child_op = MapOperator(child_config, fn=lambda x, key: x * 2, rngs=nnx.Rngs(0))
+        child_op = MapOperator(child_config, fn=lambda x, _key: x * 2, rngs=nnx.Rngs(0))
 
         with pytest.raises(ValueError, match="probability must be in \\[0.0, 1.0\\]"):
             ProbabilisticOperatorConfig(operator=child_op, probability=1.5)
@@ -56,7 +56,7 @@ class TestProbabilisticOperatorConfig:
     def test_invalid_probability_negative(self):
         """Test that probability < 0.0 raises ValueError."""
         child_config = MapOperatorConfig(stochastic=False)
-        child_op = MapOperator(child_config, fn=lambda x, key: x * 2, rngs=nnx.Rngs(0))
+        child_op = MapOperator(child_config, fn=lambda x, _key: x * 2, rngs=nnx.Rngs(0))
 
         with pytest.raises(ValueError, match="probability must be in \\[0.0, 1.0\\]"):
             ProbabilisticOperatorConfig(operator=child_op, probability=-0.1)
@@ -64,7 +64,7 @@ class TestProbabilisticOperatorConfig:
     def test_stochastic_inferred_from_probability(self):
         """Test that stochastic=True when probability is not 0.0 or 1.0."""
         child_config = MapOperatorConfig(stochastic=False)
-        child_op = MapOperator(child_config, fn=lambda x, key: x * 2, rngs=nnx.Rngs(0))
+        child_op = MapOperator(child_config, fn=lambda x, _key: x * 2, rngs=nnx.Rngs(0))
 
         # Stochastic when 0 < p < 1
         config_stochastic = ProbabilisticOperatorConfig(operator=child_op, probability=0.5)
@@ -88,7 +88,7 @@ class TestProbabilisticOperatorApplication:
 
         # Child operator that multiplies by 10
         child_config = MapOperatorConfig(stochastic=False)
-        child_op = MapOperator(child_config, fn=lambda x, key: x * 10, rngs=rngs)
+        child_op = MapOperator(child_config, fn=lambda x, _key: x * 10, rngs=rngs)
 
         # Probabilistic wrapper with p=0.0
         prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=0.0)
@@ -117,7 +117,7 @@ class TestProbabilisticOperatorApplication:
 
         # Child operator that multiplies by 10
         child_config = MapOperatorConfig(stochastic=False)
-        child_op = MapOperator(child_config, fn=lambda x, key: x * 10, rngs=rngs)
+        child_op = MapOperator(child_config, fn=lambda x, _key: x * 10, rngs=rngs)
 
         # Probabilistic wrapper with p=1.0
         prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=1.0)
@@ -146,7 +146,7 @@ class TestProbabilisticOperatorApplication:
 
         # Child operator that adds 100
         child_config = MapOperatorConfig(stochastic=False)
-        child_op = MapOperator(child_config, fn=lambda x, key: x + 100, rngs=rngs)
+        child_op = MapOperator(child_config, fn=lambda x, _key: x + 100, rngs=rngs)
 
         # Probabilistic wrapper with p=0.5
         prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=0.5)
@@ -181,7 +181,7 @@ class TestProbabilisticOperatorStochastic:
 
         # Child operator
         child_config = MapOperatorConfig(stochastic=False)
-        child_op = MapOperator(child_config, fn=lambda x, key: x * 2, rngs=rngs)
+        child_op = MapOperator(child_config, fn=lambda x, _key: x * 2, rngs=rngs)
 
         # Probabilistic wrapper with p=0.5
         prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=0.5)
@@ -204,7 +204,7 @@ class TestProbabilisticOperatorStochastic:
 
         # Child operator
         child_config = MapOperatorConfig(stochastic=False)
-        child_op = MapOperator(child_config, fn=lambda x, key: x * 2, rngs=rngs)
+        child_op = MapOperator(child_config, fn=lambda x, _key: x * 2, rngs=rngs)
 
         # Probabilistic wrapper with p=0.3
         prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=0.3)
@@ -236,7 +236,7 @@ class TestProbabilisticOperatorJAXCompatibility:
 
         # Child operator
         child_config = MapOperatorConfig(stochastic=False)
-        child_op = MapOperator(child_config, fn=lambda x, key: x * 2, rngs=rngs)
+        child_op = MapOperator(child_config, fn=lambda x, _key: x * 2, rngs=rngs)
 
         # Probabilistic wrapper
         prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=1.0)
@@ -262,7 +262,7 @@ class TestProbabilisticOperatorJAXCompatibility:
 
         # Child operator that adds 10
         child_config = MapOperatorConfig(stochastic=False)
-        child_op = MapOperator(child_config, fn=lambda x, key: x + 10, rngs=rngs)
+        child_op = MapOperator(child_config, fn=lambda x, _key: x + 10, rngs=rngs)
 
         # Probabilistic wrapper with p=1.0 (always apply for deterministic test)
         prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=1.0)
@@ -293,7 +293,7 @@ class TestProbabilisticOperatorDifferentiability:
         """p=1 path should preserve child-operator differentiability."""
         rngs = nnx.Rngs(0)
         child_config = MapOperatorConfig(stochastic=False)
-        child_op = MapOperator(child_config, fn=lambda x, key: 4.0 * x, rngs=rngs)
+        child_op = MapOperator(child_config, fn=lambda x, _key: 4.0 * x, rngs=rngs)
 
         prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=1.0)
         prob_op = ProbabilisticOperator(prob_config, rngs=rngs)
@@ -317,7 +317,7 @@ class TestProbabilisticOperatorEdgeCases:
 
         # Child operator (state passthrough)
         child_config = MapOperatorConfig(stochastic=False)
-        child_op = MapOperator(child_config, fn=lambda x, key: x * 2, rngs=rngs)
+        child_op = MapOperator(child_config, fn=lambda x, _key: x * 2, rngs=rngs)
 
         # Probabilistic wrapper
         prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=1.0)
@@ -344,7 +344,7 @@ class TestProbabilisticOperatorEdgeCases:
 
         # Child operator
         child_config = MapOperatorConfig(stochastic=False)
-        child_op = MapOperator(child_config, fn=lambda x, key: x * 2, rngs=rngs)
+        child_op = MapOperator(child_config, fn=lambda x, _key: x * 2, rngs=rngs)
 
         # Probabilistic wrapper
         prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=1.0)

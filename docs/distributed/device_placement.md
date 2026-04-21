@@ -216,7 +216,7 @@ Based on JAX performance guidelines:
 ## Integration with Datarax Pipelines
 
 ```python
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 from datarax.distributed.device_placement import DevicePlacement, get_batch_size_recommendation
 import jax.numpy as jnp
@@ -228,7 +228,7 @@ batch_size = rec.optimal_batch_size
 # Create pipeline with optimal batch size
 data = [{"image": jnp.ones((28, 28, 3))} for _ in range(1000)]
 source = MemorySource(MemorySourceConfig(), data)
-pipeline = from_source(source, batch_size=batch_size)
+pipeline = build_source_pipeline(source, batch_size=batch_size)
 
 # Use device placement for explicit placement
 placement = DevicePlacement()

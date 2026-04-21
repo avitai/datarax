@@ -158,6 +158,7 @@ class OperatorModule(DataraxModule):
         Raises:
             NotImplementedError: If stochastic=True but not implemented
         """
+        del rng, data_shapes
         if self.stochastic:
             raise NotImplementedError(
                 f"{self.__class__.__name__} is stochastic but does not implement "

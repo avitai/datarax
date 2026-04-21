@@ -81,6 +81,7 @@ class TestMemoryOptimizer:
 
         def simple_function(data):
             """Simple function for testing."""
+            del data
             return jnp.ones((10, 10))
 
         analysis = optimizer.analyze_pipeline_memory(simple_function, {})
@@ -97,6 +98,7 @@ class TestMemoryOptimizer:
 
         def memory_intensive_function(data):
             """Memory-intensive function for testing."""
+            del data
             large_array = jnp.ones((500, 500))
             return jnp.sum(large_array)
 

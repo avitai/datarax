@@ -21,7 +21,7 @@ import threading
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import cast, TypeVar
+from typing import Any, cast, Literal, TypeVar
 
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ class _PrefetchIterator(Iterator[T]):
         self._thread = threading.Thread(target=self._producer, daemon=True)
         self._thread.start()
 
-    def _put_with_stop_awareness(self, item: object) -> bool:
+    def _is_item_enqueued_with_stop_awareness(self, item: object) -> bool:
         """Try to enqueue item while reacting quickly to close requests."""
         while not self._stop_event.is_set():
             try:
@@ -75,12 +75,12 @@ class _PrefetchIterator(Iterator[T]):
             for item in self._source_iterator:
                 if self._stop_event.is_set():
                     return
-                if not self._put_with_stop_awareness(item):
+                if not self._is_item_enqueued_with_stop_awareness(item):
                     return
         except Exception as exc:  # noqa: BLE001 - propagate arbitrary iterator errors
-            self._put_with_stop_awareness(_ErrorWrapper(exc))
+            self._is_item_enqueued_with_stop_awareness(_ErrorWrapper(exc))
         finally:
-            self._put_with_stop_awareness(_END)
+            self._is_item_enqueued_with_stop_awareness(_END)
 
     def __iter__(self) -> _PrefetchIterator[T]:
         return self
@@ -143,6 +143,7 @@ class _PrefetchIterator(Iterator[T]):
             self.close()
 
 
+@dataclass
 class Prefetcher:
     """A prefetcher that uses threads to load data in the background.
 
@@ -150,13 +151,7 @@ class Prefetcher:
     not lazily on the first __next__() call.
     """
 
-    def __init__(self, buffer_size: int = 2) -> None:
-        """Initialize the prefetcher.
-
-        Args:
-            buffer_size: Number of items to prefetch ahead.
-        """
-        self.buffer_size = buffer_size
+    buffer_size: int = 2
 
     def prefetch(self, iterator: Iterator[T]) -> _PrefetchIterator[T]:
         """Prefetch items from the iterator in a background thread.
@@ -173,6 +168,46 @@ class Prefetcher:
         return _PrefetchIterator(iterator=iterator, buffer_size=self.buffer_size)
 
 
+def create_prefetch_stream(
+    iterator: Iterator[T],
+    *,
+    mode: Literal["none", "grain", "flax", "thread"],
+    size: int,
+    device: object | None = None,
+) -> Iterator[T] | object:
+    """Prefetch an iterator through the requested upstream-backed adapter.
+
+    ``grain`` mode delegates to ``grain.experimental.device_put`` for Grain
+    datasets, ``flax`` mode delegates to ``flax.jax_utils.prefetch_to_device``,
+    and ``thread`` mode keeps Datarax's closeable thread wrapper for custom
+    iterator lifecycle behavior.
+    """
+    if size < 1:
+        raise ValueError(f"size must be >= 1, got {size}")
+
+    if mode == "none":
+        return iterator
+    if mode == "grain":
+        import grain
+
+        return grain.experimental.device_put(
+            cast(Any, iterator),
+            device,
+            cpu_buffer_size=size * 2,
+            device_buffer_size=size,
+        )
+    if mode == "flax":
+        from flax import jax_utils
+
+        devices = [device] if device is not None else None
+        return jax_utils.prefetch_to_device(iterator, size=size, devices=devices)
+    if mode == "thread":
+        if device is not None:
+            return DevicePrefetcher(buffer_size=size, device=device).prefetch(iterator)
+        return Prefetcher(buffer_size=size).prefetch(iterator)
+    raise ValueError("mode must be one of 'none', 'grain', 'flax', or 'thread'")
+
+
 class _DevicePutIterator(Iterator[T]):
     """Background thread that transfers CPU data to device via jax.device_put.
 
@@ -181,9 +216,10 @@ class _DevicePutIterator(Iterator[T]):
     Uses the same sentinel/condition pattern as _PrefetchIterator.
     """
 
-    def __init__(self, iterator: Iterator[T], buffer_size: int) -> None:
+    def __init__(self, iterator: Iterator[T], buffer_size: int, device: object | None) -> None:
         self._source_iterator = iterator
         self._buffer: queue.Queue[object] = queue.Queue(maxsize=buffer_size)
+        self._device = device
         self._stop_event = threading.Event()
         self._data_available = threading.Condition()
         self._is_closed = False
@@ -194,9 +230,9 @@ class _DevicePutIterator(Iterator[T]):
         """Transfer a single item to device. Handles dicts, arrays, and pytrees."""
         import jax
 
-        return jax.device_put(item)
+        return jax.device_put(item, self._device)
 
-    def _put_with_stop_awareness(self, item: object) -> bool:
+    def _is_item_enqueued_with_stop_awareness(self, item: object) -> bool:
         """Try to enqueue item while reacting quickly to close requests."""
         while not self._stop_event.is_set():
             try:
@@ -214,12 +250,12 @@ class _DevicePutIterator(Iterator[T]):
                 if self._stop_event.is_set():
                     return
                 device_item = self._device_put(item)
-                if not self._put_with_stop_awareness(device_item):
+                if not self._is_item_enqueued_with_stop_awareness(device_item):
                     return
         except Exception as exc:  # noqa: BLE001 - propagate arbitrary iterator errors
-            self._put_with_stop_awareness(_ErrorWrapper(exc))
+            self._is_item_enqueued_with_stop_awareness(_ErrorWrapper(exc))
         finally:
-            self._put_with_stop_awareness(_END)
+            self._is_item_enqueued_with_stop_awareness(_END)
 
     def __iter__(self) -> _DevicePutIterator[T]:
         return self
@@ -293,13 +329,15 @@ class DevicePrefetcher:
     H2D transfer with computation on the previous batch.
     """
 
-    def __init__(self, buffer_size: int = 2) -> None:
+    def __init__(self, buffer_size: int = 2, device: object | None = None) -> None:
         """Initialize the device prefetcher.
 
         Args:
             buffer_size: Number of device-side batches to buffer ahead.
+            device: Optional target device.
         """
         self.buffer_size = buffer_size
+        self.device = device
 
     def prefetch(self, iterator: Iterator[T]) -> _DevicePutIterator[T]:
         """Begin async device transfer from the given iterator.
@@ -314,7 +352,11 @@ class DevicePrefetcher:
         Returns:
             A closeable iterator yielding device-resident data.
         """
-        return _DevicePutIterator(iterator=iterator, buffer_size=self.buffer_size)
+        return _DevicePutIterator(
+            iterator=iterator,
+            buffer_size=self.buffer_size,
+            device=self.device,
+        )
 
     def start_prefetch(self, iterator: Iterator[T]) -> _DevicePutIterator[T]:
         """Begin prefetching immediately (warm-start API, P2.3).

@@ -87,7 +87,9 @@ def __dir__() -> list[str]:
     return list(__all__)
 
 
-def _infer_tfds_eager_mode(name: str, split: str, data_dir: str | None, try_gcs: bool) -> bool:
+def _is_tfds_eager_mode_required(
+    name: str, split: str, data_dir: str | None, try_gcs: bool
+) -> bool:
     """Infer eager mode for TFDS sources based on split size."""
     import tensorflow_datasets as tfds
 
@@ -178,7 +180,7 @@ def from_tfds(
     # Auto-detect based on dataset size if not specified
     if eager is None:
         try:
-            eager = _infer_tfds_eager_mode(name, split, data_dir, try_gcs)
+            eager = _is_tfds_eager_mode_required(name, split, data_dir, try_gcs)
         except _TFDS_AUTO_DETECT_ERRORS:
             eager = True  # Default to eager on inference errors
 

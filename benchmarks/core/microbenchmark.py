@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
+from datarax.performance.synchronization import block_until_ready_tree
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,7 +140,7 @@ def run_microbenchmark(
             per_batch_transform.append(t2 - t1)
 
             # Transfer phase: ensure data is on device
-            _block_until_ready(arrays)
+            block_until_ready_tree(arrays)
             t3 = time.perf_counter()
             per_batch_transfer.append(t3 - t2)
 
@@ -172,10 +173,3 @@ def run_microbenchmark(
         per_batch_transform=per_batch_transform,
         per_batch_transfer=per_batch_transfer,
     )
-
-
-def _block_until_ready(arrays: list[Any]) -> None:
-    """Block until all JAX arrays are materialized on device."""
-    for arr in arrays:
-        if hasattr(arr, "block_until_ready"):
-            arr.block_until_ready()

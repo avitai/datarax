@@ -104,7 +104,7 @@ Here's a simple example of using Datarax's DAG-based architecture:
 import jax
 import jax.numpy as jnp
 from flax import nnx
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import MemorySource, MemorySourceConfig
@@ -126,7 +126,7 @@ normalizer = ElementOperator(
 
 # 4. Build pipeline
 pipeline = (
-    from_source(source, batch_size=32)
+    build_source_pipeline(source, batch_size=32)
     >> OperatorNode(normalizer)
 )
 

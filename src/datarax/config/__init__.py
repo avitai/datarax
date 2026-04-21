@@ -8,7 +8,7 @@ from datarax.config.environment import (
     apply_environment_overrides,
     get_env_value,
 )
-from datarax.config.loaders import load_toml, save_toml
+from datarax.config.loaders import load_toml_from_path, save_toml_to_path
 from datarax.config.registry import (
     create_component_from_config,
     get_component_constructor,
@@ -16,16 +16,16 @@ from datarax.config.registry import (
     list_registered_components,
     register_component,
 )
-from datarax.config.schema import ConfigSchema, SchemaValidator
+from datarax.config.schema import ConfigSchema, is_schema_type_valid
 
 
 __all__ = [
     # Loaders
-    "load_toml",
-    "save_toml",
+    "load_toml_from_path",
+    "save_toml_to_path",
     # Schema
     "ConfigSchema",
-    "SchemaValidator",
+    "is_schema_type_valid",
     # Environment
     "apply_environment_overrides",
     "get_env_value",

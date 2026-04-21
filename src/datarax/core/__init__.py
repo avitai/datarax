@@ -21,19 +21,6 @@ from datarax.core.structural import StructuralModule
 # Import typing exports
 from datarax.typing import Batch, Element
 
-# Import utility functions from pytree_utils
-from datarax.utils.pytree_utils import (
-    add_batch_dimension,
-    apply_to_batch_dimension,
-    concatenate_batches,
-    get_batch_size,
-    get_pytree_structure_info,
-    is_single_element,
-    remove_batch_dimension,
-    split_batch,
-    validate_batch_consistency,
-)
-
 
 __all__ = [
     # ===== Type aliases =====
@@ -57,14 +44,4 @@ __all__ = [
     "BatcherModule",
     # ===== Sharder Modules =====
     "SharderModule",
-    # ===== Utility Functions =====
-    "is_single_element",
-    "add_batch_dimension",
-    "remove_batch_dimension",
-    "get_batch_size",
-    "split_batch",
-    "concatenate_batches",
-    "apply_to_batch_dimension",
-    "validate_batch_consistency",
-    "get_pytree_structure_info",
 ]

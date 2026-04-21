@@ -11,6 +11,7 @@ from unittest.mock import patch
 import jax.numpy as jnp
 import pytest
 
+from datarax.core.element_batch import create_batch_from_arrays
 from datarax.dag.nodes import Identity
 from datarax.dag.nodes.caching import Cache, CacheNode
 
@@ -86,6 +87,18 @@ class TestCachingNodeCacheKey:
         with patch("jax.device_get", side_effect=AssertionError("device_get called!")):
             key = node._compute_cache_key(data)
             assert isinstance(key, str)
+
+    def test_cache_node_batch_keys_are_unique_without_device_transfer(self):
+        """Different Batch array leaves produce different non-blocking keys."""
+        node = CacheNode(Identity(), cache_size=10)
+        batch1 = create_batch_from_arrays({"data": jnp.array([[0.0]])})
+        batch2 = create_batch_from_arrays({"data": jnp.array([[1.0]])})
+
+        with patch("jax.device_get", side_effect=AssertionError("device_get called!")):
+            key1 = node._compute_cache_key(batch1)
+            key2 = node._compute_cache_key(batch2)
+
+        assert key1 != key2
 
     def test_cache_class_no_device_transfer(self):
         """Cache._compute_cache_key should not trigger device transfer."""

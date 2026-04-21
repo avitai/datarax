@@ -36,10 +36,10 @@ class TestBranchingBasics:
 
         # Create 2 branch operators
         config_a = MapOperatorConfig(stochastic=False)
-        branch_a = MapOperator(config_a, fn=lambda x, key: x * 2, rngs=rngs)
+        branch_a = MapOperator(config_a, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config_b = MapOperatorConfig(stochastic=False)
-        branch_b = MapOperator(config_b, fn=lambda x, key: x * 10, rngs=rngs)
+        branch_b = MapOperator(config_b, fn=lambda x, _key: x * 10, rngs=rngs)
 
         # Create branching composite with router that returns integer index
         def router(data):
@@ -72,13 +72,13 @@ class TestBranchingBasics:
 
         # Create 3 branch operators
         config_small = MapOperatorConfig(stochastic=False)
-        branch_small = MapOperator(config_small, fn=lambda x, key: x + 1, rngs=rngs)
+        branch_small = MapOperator(config_small, fn=lambda x, _key: x + 1, rngs=rngs)
 
         config_medium = MapOperatorConfig(stochastic=False)
-        branch_medium = MapOperator(config_medium, fn=lambda x, key: x + 10, rngs=rngs)
+        branch_medium = MapOperator(config_medium, fn=lambda x, _key: x + 10, rngs=rngs)
 
         config_large = MapOperatorConfig(stochastic=False)
-        branch_large = MapOperator(config_large, fn=lambda x, key: x + 100, rngs=rngs)
+        branch_large = MapOperator(config_large, fn=lambda x, _key: x + 100, rngs=rngs)
 
         # Create branching composite with 3-way router
         def router(data):
@@ -122,10 +122,10 @@ class TestBranchingRouters:
 
         # Create branch operators for different shapes
         config_small = MapOperatorConfig(stochastic=False)
-        branch_small = MapOperator(config_small, fn=lambda x, key: x + 1, rngs=rngs)
+        branch_small = MapOperator(config_small, fn=lambda x, _key: x + 1, rngs=rngs)
 
         config_large = MapOperatorConfig(stochastic=False)
-        branch_large = MapOperator(config_large, fn=lambda x, key: x + 100, rngs=rngs)
+        branch_large = MapOperator(config_large, fn=lambda x, _key: x + 100, rngs=rngs)
 
         # Create branching composite with shape-based router
         def router(data):
@@ -158,13 +158,13 @@ class TestBranchingRouters:
 
         # Create branch operators for different value ranges
         config_low = MapOperatorConfig(stochastic=False)
-        branch_low = MapOperator(config_low, fn=lambda x, key: x * 2, rngs=rngs)
+        branch_low = MapOperator(config_low, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config_medium = MapOperatorConfig(stochastic=False)
-        branch_medium = MapOperator(config_medium, fn=lambda x, key: x * 5, rngs=rngs)
+        branch_medium = MapOperator(config_medium, fn=lambda x, _key: x * 5, rngs=rngs)
 
         config_high = MapOperatorConfig(stochastic=False)
-        branch_high = MapOperator(config_high, fn=lambda x, key: x * 10, rngs=rngs)
+        branch_high = MapOperator(config_high, fn=lambda x, _key: x * 10, rngs=rngs)
 
         # Create branching composite with value-based router
         def router(data):
@@ -208,10 +208,10 @@ class TestBranchingAdvanced:
 
         # Create branch operators
         config_a = MapOperatorConfig(stochastic=False)
-        branch_a = MapOperator(config_a, fn=lambda x, key: x * 2, rngs=rngs)
+        branch_a = MapOperator(config_a, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config_b = MapOperatorConfig(stochastic=False)
-        branch_b = MapOperator(config_b, fn=lambda x, key: x * 10, rngs=rngs)
+        branch_b = MapOperator(config_b, fn=lambda x, _key: x * 10, rngs=rngs)
 
         # Create branching composite
         def router(data):
@@ -247,14 +247,14 @@ class TestBranchingAdvanced:
 
         # Branch A: Simple MapOperator
         config_a = MapOperatorConfig(stochastic=False)
-        branch_a = MapOperator(config_a, fn=lambda x, key: x * 2, rngs=rngs)
+        branch_a = MapOperator(config_a, fn=lambda x, _key: x * 2, rngs=rngs)
 
         # Branch B: Sequential composite of two MapOperators
         config_b1 = MapOperatorConfig(stochastic=False)
-        op_b1 = MapOperator(config_b1, fn=lambda x, key: x + 10, rngs=rngs)
+        op_b1 = MapOperator(config_b1, fn=lambda x, _key: x + 10, rngs=rngs)
 
         config_b2 = MapOperatorConfig(stochastic=False)
-        op_b2 = MapOperator(config_b2, fn=lambda x, key: x * 3, rngs=rngs)
+        op_b2 = MapOperator(config_b2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         config_seq = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,

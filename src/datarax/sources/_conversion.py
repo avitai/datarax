@@ -176,7 +176,7 @@ def convert_batch_to_jax(
     return {k: converter(v) for k, v in batch.items()}
 
 
-def stack_batches(batches: list[dict[str, jax.Array]]) -> dict[str, jax.Array]:
+def stack_batch_sequence(batches: list[dict[str, jax.Array]]) -> dict[str, jax.Array]:
     """Stack a list of batch dictionaries into a single batch.
 
     This utility concatenates batches along the first (batch) dimension,
@@ -194,7 +194,7 @@ def stack_batches(batches: list[dict[str, jax.Array]]) -> dict[str, jax.Array]:
     Example:
         >>> batch1 = {"image": jnp.ones((32, 28, 28))}
         >>> batch2 = {"image": jnp.ones((32, 28, 28))}
-        >>> combined = stack_batches([batch1, batch2])
+        >>> combined = stack_batch_sequence([batch1, batch2])
         >>> print(combined["image"].shape)
         (64, 28, 28)
     """

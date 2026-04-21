@@ -58,6 +58,7 @@ class RandomOperatorModule(OperatorModule):
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
         """Apply random scaling to the input data."""
+        del random_params, stats
         scale = jax.random.uniform(self.rngs.transform(), minval=0.5, maxval=1.5)
         new_data = {k: v * scale for k, v in data.items()}
         return new_data, state, metadata

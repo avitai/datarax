@@ -419,7 +419,7 @@ class DataraxModule(nnx.Module):
         - Array leaves must match shape and dtype.
         - Scalar/object leaves may change value/type (for flexible Variable payloads).
         """
-        location = self._format_state_path(path)
+        location = self._format_state_location(path)
         if isinstance(target, nnx.Variable):
             self._validate_array_leaf(current, saved, location)
             return
@@ -435,7 +435,7 @@ class DataraxModule(nnx.Module):
         self._validate_array_leaf(current, saved, location)
 
     @staticmethod
-    def _format_state_path(path: tuple[str | int, ...]) -> str:
+    def _format_state_location(path: tuple[str | int, ...]) -> str:
         """Format state path tuple for readable error messages."""
         return ".".join(str(part) for part in path) if path else "<root>"
 

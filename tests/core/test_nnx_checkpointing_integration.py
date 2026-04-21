@@ -125,7 +125,7 @@ class TestNNXCheckpointingIntegration:
         # Save checkpoint
         handler = OrbaxCheckpointHandler()
         with tempfile.TemporaryDirectory() as temp_dir:
-            checkpoint_path = handler.save(temp_dir, module)
+            checkpoint_path = handler.save_to_directory(temp_dir, module)
             assert checkpoint_path is not None
 
             # Create new module
@@ -158,9 +158,7 @@ class TestNNXCheckpointingIntegration:
         # Create different module types (all with config-first pattern)
         source_module = MemorySource(MemorySourceConfig(), [1, 2, 3, 4, 5], rngs=rngs)
         range_sampler = RangeSampler(RangeSamplerConfig(start=0, stop=5, step=1), rngs=rngs)
-        shuffle_sampler = ShuffleSampler(
-            ShuffleSamplerConfig(buffer_size=3, dataset_size=5), rngs=rngs
-        )
+        shuffle_sampler = ShuffleSampler(ShuffleSamplerConfig(dataset_size=5), rngs=rngs)
         batcher = DefaultBatcher(DefaultBatcherConfig(), rngs=rngs)
         sharder = ArraySharder(rngs=rngs)  # ArraySharder takes optional sharding_rules first
 
@@ -184,7 +182,7 @@ class TestNNXCheckpointingIntegration:
         # Test individual checkpointing
         for name, module in modules.items():
             with tempfile.TemporaryDirectory() as temp_dir:
-                checkpoint_path = handler.save(temp_dir, module)
+                checkpoint_path = handler.save_to_directory(temp_dir, module)
                 assert checkpoint_path is not None
 
                 # Restore and verify
@@ -206,7 +204,7 @@ class TestNNXCheckpointingIntegration:
                     )
                 elif name == "shuffle_sampler":
                     fresh_module = ShuffleSampler(
-                        ShuffleSamplerConfig(buffer_size=3, dataset_size=5), rngs=nnx.Rngs(999)
+                        ShuffleSamplerConfig(dataset_size=5), rngs=nnx.Rngs(999)
                     )
                 elif name == "batcher":
                     fresh_module = DefaultBatcher(DefaultBatcherConfig(), rngs=nnx.Rngs(999))
@@ -241,7 +239,7 @@ class TestNNXCheckpointingIntegration:
         # Save state
         handler = OrbaxCheckpointHandler()
         with tempfile.TemporaryDirectory() as temp_dir:
-            checkpoint_path = handler.save(temp_dir, stream)
+            checkpoint_path = handler.save_to_directory(temp_dir, stream)
             assert checkpoint_path is not None
 
             # Restore state without target (let handler create new instance)
@@ -274,7 +272,7 @@ class TestNNXCheckpointingIntegration:
         # Save and restore
         handler = OrbaxCheckpointHandler()
         with tempfile.TemporaryDirectory() as temp_dir:
-            handler.save(temp_dir, module)
+            handler.save_to_directory(temp_dir, module)
 
             # Create fresh module
             fresh_module = ComplexModule(
@@ -324,7 +322,7 @@ class TestNNXCheckpointingIntegration:
             for i, module in enumerate(modules):
                 temp_dir = tempfile.mkdtemp()
                 temp_dirs.append(temp_dir)
-                checkpoint_path = handler.save(temp_dir, module, step=i)
+                checkpoint_path = handler.save_to_directory(temp_dir, module, step=i)
                 checkpoint_paths.append(checkpoint_path)
 
             # Restore and verify each
@@ -364,7 +362,7 @@ class TestNNXCheckpointingIntegration:
         for cycle in range(3):
             with tempfile.TemporaryDirectory() as temp_dir:
                 # Save current state
-                handler.save(temp_dir, module)
+                handler.save_to_directory(temp_dir, module)
 
                 # Record current state
                 current_epoch = module.epoch.get_value()
@@ -404,7 +402,7 @@ class TestNNXCheckpointingIntegration:
         # Save and restore
         handler = OrbaxCheckpointHandler()
         with tempfile.TemporaryDirectory() as temp_dir:
-            handler.save(temp_dir, module)
+            handler.save_to_directory(temp_dir, module)
 
             # Create fresh module
             fresh_module = LargeStateModule(
@@ -461,7 +459,7 @@ class TestCheckpointingErrorHandling:
         handler = OrbaxCheckpointHandler()
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            handler.save(temp_dir, original_module)
+            handler.save_to_directory(temp_dir, original_module)
 
             # Try to restore to incompatible module (different features)
             incompatible_module = ComplexModule(

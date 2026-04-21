@@ -30,7 +30,7 @@ and iterate through batched data - the core workflow for any Datarax pipeline.
 By the end of this example, you will be able to:
 
 1. Create a `MemorySource` from dictionary data
-2. Build a pipeline using the DAG-based `from_source()` API
+2. Build a pipeline using the DAG-based `build_source_pipeline()` API
 3. Apply deterministic and stochastic operators to data
 4. Iterate through batched pipeline output
 """
@@ -52,7 +52,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import MemorySource, MemorySourceConfig
@@ -145,13 +145,15 @@ augmenter = ElementOperator(augmenter_config, fn=apply_augmentation, rngs=nnx.Rn
 ## Step 4: Build Pipeline
 
 Chain the source and operators using the DAG-based API.
-`from_source()` creates a batched pipeline, then `.add()` appends operators.
+`build_source_pipeline()` creates a batched pipeline, then `.add()` appends operators.
 """
 
 # %%
 # Build the pipeline DAG
 pipeline = (
-    from_source(source, batch_size=32).add(OperatorNode(normalizer)).add(OperatorNode(augmenter))
+    build_source_pipeline(source, batch_size=32)
+    .add(OperatorNode(normalizer))
+    .add(OperatorNode(augmenter))
 )
 
 print("Pipeline created with batch_size=32")
@@ -239,7 +241,7 @@ def main():
 
     # Build and run pipeline
     pipeline = (
-        from_source(source, batch_size=32)
+        build_source_pipeline(source, batch_size=32)
         .add(OperatorNode(normalizer))
         .add(OperatorNode(augmenter))
     )

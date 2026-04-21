@@ -31,9 +31,9 @@ from datarax.dag.nodes.field_operators import SplitField, SplitFields
 from datarax.dag.nodes.loaders import DataLoader, dataloader
 from datarax.dag.nodes.rebatch import (
     DifferentiableRebatchImpl,
-    FastRebatchImpl,
     GradientTransparentRebatchImpl,
     rebatch,
+    rebatch_iterable,
     RebatchNode,
 )
 
@@ -62,9 +62,9 @@ __all__ = [
     "SplitField",
     "RebatchNode",
     "DifferentiableRebatchImpl",
-    "FastRebatchImpl",
     "GradientTransparentRebatchImpl",
     "rebatch",
+    "rebatch_iterable",
     "branch",
     "parallel",
 ]

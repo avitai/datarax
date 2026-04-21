@@ -34,22 +34,22 @@ class TestConditionalSequential:
 
         # Create 3 map operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 10, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 10, rngs=rngs)
 
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x * 3, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x * 3, rngs=rngs)
 
         # Create conditional sequential with always-true conditions
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.CONDITIONAL_SEQUENTIAL,
             operators=[op1, op2, op3],
             conditions=[
-                lambda data: jnp.array(True),  # Always execute op1
-                lambda data: jnp.array(True),  # Always execute op2
-                lambda data: jnp.array(True),  # Always execute op3
+                lambda _data: jnp.array(True),  # Always execute op1
+                lambda _data: jnp.array(True),  # Always execute op2
+                lambda _data: jnp.array(True),  # Always execute op3
             ],
         )
         composite = CompositeOperatorModule(composite_config)
@@ -77,22 +77,22 @@ class TestConditionalSequential:
 
         # Create 3 map operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 100, rngs=rngs)  # Won't execute
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 100, rngs=rngs)  # Won't execute
 
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x + 10, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x + 10, rngs=rngs)
 
         # Create conditional sequential with [True, False, True] conditions
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.CONDITIONAL_SEQUENTIAL,
             operators=[op1, op2, op3],
             conditions=[
-                lambda data: jnp.array(True),  # Execute op1
-                lambda data: jnp.array(False),  # Skip op2
-                lambda data: jnp.array(True),  # Execute op3
+                lambda _data: jnp.array(True),  # Execute op1
+                lambda _data: jnp.array(False),  # Skip op2
+                lambda _data: jnp.array(True),  # Execute op3
             ],
         )
         composite = CompositeOperatorModule(composite_config)
@@ -120,22 +120,22 @@ class TestConditionalSequential:
 
         # Create 3 map operators (none will execute)
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 100, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 100, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 100, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 100, rngs=rngs)
 
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x * 100, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x * 100, rngs=rngs)
 
         # Create conditional sequential with all-false conditions
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.CONDITIONAL_SEQUENTIAL,
             operators=[op1, op2, op3],
             conditions=[
-                lambda data: jnp.array(False),  # Skip op1
-                lambda data: jnp.array(False),  # Skip op2
-                lambda data: jnp.array(False),  # Skip op3
+                lambda _data: jnp.array(False),  # Skip op1
+                lambda _data: jnp.array(False),  # Skip op2
+                lambda _data: jnp.array(False),  # Skip op3
             ],
         )
         composite = CompositeOperatorModule(composite_config)
@@ -163,10 +163,10 @@ class TestConditionalSequential:
 
         # Create operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 10, rngs=rngs)  # Transforms data
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 10, rngs=rngs)  # Transforms data
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 1000, rngs=rngs)  # Only if condition met
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 1000, rngs=rngs)  # Only if condition met
 
         # Create conditional sequential
         # op2's condition checks transformed data (after op1)
@@ -174,7 +174,7 @@ class TestConditionalSequential:
             strategy=CompositionStrategy.CONDITIONAL_SEQUENTIAL,
             operators=[op1, op2],
             conditions=[
-                lambda data: jnp.array(True),  # Always execute op1
+                lambda _data: jnp.array(True),  # Always execute op1
                 lambda data: (
                     data["value"] > 5.0
                 ).all(),  # Execute op2 if transformed value > 5 (JAX comparison, no indexing)
@@ -212,22 +212,22 @@ class TestConditionalParallel:
 
         # Create 3 map operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x * 4, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x * 4, rngs=rngs)
 
         # Create conditional parallel with always-true conditions
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.CONDITIONAL_PARALLEL,
             operators=[op1, op2, op3],
             conditions=[
-                lambda data: jnp.array(True),  # Always execute op1
-                lambda data: jnp.array(True),  # Always execute op2
-                lambda data: jnp.array(True),  # Always execute op3
+                lambda _data: jnp.array(True),  # Always execute op1
+                lambda _data: jnp.array(True),  # Always execute op2
+                lambda _data: jnp.array(True),  # Always execute op3
             ],
             merge_strategy="concat",  # Concatenate outputs
         )
@@ -257,22 +257,22 @@ class TestConditionalParallel:
 
         # Create 3 map operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 100, rngs=rngs)  # Won't execute
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 100, rngs=rngs)  # Won't execute
 
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x * 4, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x * 4, rngs=rngs)
 
         # Create conditional parallel with [True, False, True] conditions
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.CONDITIONAL_PARALLEL,
             operators=[op1, op2, op3],
             conditions=[
-                lambda data: jnp.array(True),  # Execute op1
-                lambda data: jnp.array(False),  # Skip op2
-                lambda data: jnp.array(True),  # Execute op3
+                lambda _data: jnp.array(True),  # Execute op1
+                lambda _data: jnp.array(False),  # Skip op2
+                lambda _data: jnp.array(True),  # Execute op3
             ],
             merge_strategy="concat",
         )
@@ -302,23 +302,23 @@ class TestConditionalParallel:
 
         # Create 3 map operators (none will execute)
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 100, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 100, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 100, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 100, rngs=rngs)
 
         config3 = MapOperatorConfig(stochastic=False)
         op3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x * 100, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x * 100, rngs=rngs)
 
         # Create conditional parallel with all-false conditions
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.CONDITIONAL_PARALLEL,
             operators=[op1, op2, op3],
             conditions=[
-                lambda data: jnp.array(False),  # Skip op1
-                lambda data: jnp.array(False),  # Skip op2
-                lambda data: jnp.array(False),  # Skip op3
+                lambda _data: jnp.array(False),  # Skip op1
+                lambda _data: jnp.array(False),  # Skip op2
+                lambda _data: jnp.array(False),  # Skip op3
             ],
             merge_strategy="concat",
         )
@@ -353,10 +353,10 @@ class TestConditionalAdvanced:
 
         # Create 2 map operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 100, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 100, rngs=rngs)
 
         # Create conditional sequential
         # Note: MapOperator doesn't use state, so we pass it through for testing
@@ -364,8 +364,8 @@ class TestConditionalAdvanced:
             strategy=CompositionStrategy.CONDITIONAL_SEQUENTIAL,
             operators=[op1, op2],
             conditions=[
-                lambda data: jnp.array(True),  # Always execute op1
-                lambda data: jnp.array(
+                lambda _data: jnp.array(True),  # Always execute op1
+                lambda _data: jnp.array(
                     True
                 ),  # Always execute op2 (state doesn't affect data-based conditions)
             ],
@@ -398,10 +398,10 @@ class TestConditionalAdvanced:
 
         # Create 2 map operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 100, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 100, rngs=rngs)
 
         # Create conditional sequential
         # Note: MapOperator doesn't modify metadata, so we test pass-through
@@ -409,8 +409,8 @@ class TestConditionalAdvanced:
             strategy=CompositionStrategy.CONDITIONAL_SEQUENTIAL,
             operators=[op1, op2],
             conditions=[
-                lambda data: jnp.array(True),  # Always execute op1
-                lambda data: jnp.array(True),  # Always execute op2
+                lambda _data: jnp.array(True),  # Always execute op1
+                lambda _data: jnp.array(True),  # Always execute op2
             ],
         )
         composite = CompositeOperatorModule(composite_config)

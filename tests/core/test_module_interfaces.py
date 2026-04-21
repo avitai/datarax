@@ -81,6 +81,7 @@ def test_operator_interface():
 
         def apply(self, data, state, metadata, random_params=None, stats=None):
             # Double the values in the data
+            del random_params, stats
             new_data = {k: v * 2 for k, v in data.items()}
             return new_data, state, metadata
 
@@ -181,6 +182,7 @@ def test_operator_extensibility():
             self.factor = nnx.Param(factor)
 
         def apply(self, data, state, metadata, random_params=None, stats=None):
+            del random_params, stats
             new_data = {k: v * self.factor.get_value() for k, v in data.items()}
             return new_data, state, metadata
 
@@ -274,6 +276,7 @@ def test_nnx_module_integration():
             super().__init__(config, rngs=rngs)
 
         def apply(self, data, state, metadata, random_params=None, stats=None):
+            del random_params, stats
             new_data = {k: v * 2 for k, v in data.items()}
             return new_data, state, metadata
 

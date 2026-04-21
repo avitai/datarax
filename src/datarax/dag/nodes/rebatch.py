@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import logging
 import warnings
+from collections.abc import Sequence
 from typing import Any, Literal
 
 import flax.nnx as nnx
+import grain
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from datarax.dag.nodes.base import Node
+from datarax.sources._grain_streaming import ensure_iter_dataset
 from datarax.typing import Batch
 from datarax.utils.pytree_utils import get_batch_size, is_non_jax_leaf
 
@@ -18,12 +22,9 @@ logger = logging.getLogger(__name__)
 
 """RebatchNode implementation for Datarax.
 
-This module provides rebatching capabilities for handling variable batch sizes
-in data pipelines, particularly useful for augmentations that change the number
-of samples (e.g., multi-crop augmentations).
-
-Clean architecture with separate implementation classes for each mode.
-Implemented following TDD principles - tests define behavior.
+This module keeps differentiable in-DAG rebatching for JAX/NNX operator
+pipelines. Ordinary iterator rebatching belongs to Grain and is exposed through
+``rebatch_iterable``.
 """
 
 
@@ -119,7 +120,7 @@ class DifferentiableRebatchImpl(nnx.Module):
                 return
 
         # Update buffer with dynamic_update_slice for differentiability
-        def update_buffer_leaf(buffer_leaf: Any, batch_leaf: Any) -> Any:
+        def write_leaf_to_buffer(buffer_leaf: Any, batch_leaf: Any) -> Any:
             if isinstance(batch_leaf, jax.Array) and isinstance(buffer_leaf, jax.Array):
                 # Ensure batch_leaf has correct size
                 if batch_leaf.shape[0] > batch_size:
@@ -142,7 +143,7 @@ class DifferentiableRebatchImpl(nnx.Module):
         # Use is_leaf to prevent tree_map from traversing non-JAX lists
         buffer_val = self.buffer.get_value()
         new_buffer = jax.tree.map(
-            update_buffer_leaf,
+            write_leaf_to_buffer,
             buffer_val,
             batch,
             is_leaf=is_non_jax_leaf,
@@ -238,192 +239,6 @@ class DifferentiableRebatchImpl(nnx.Module):
             self.buffer_size.set_value(state["buffer_size"])
 
 
-class FastRebatchImpl(nnx.Module):
-    """JIT-optimized rebatching using circular buffer.
-
-    Optimized for performance with minimal Python operations,
-    using a circular buffer for efficient memory usage.
-    """
-
-    def __init__(self, target_batch_size: int, max_buffer_size: int = 512) -> None:
-        """Initialize fast rebatch implementation.
-
-        Args:
-            target_batch_size: Target size for output batches
-            max_buffer_size: Maximum buffer size for accumulation
-        """
-        super().__init__()
-        self.target_batch_size = target_batch_size
-        self.max_buffer_size = max_buffer_size
-
-        # Circular buffer state
-        self.buffer: nnx.Variable[list[Any] | None] = nnx.Variable(None)
-        self.write_index = nnx.Variable(0)
-        self.read_index = nnx.Variable(0)
-        self.count = nnx.Variable(0)
-
-    def __call__(self, batch: Batch | None) -> tuple[Batch | None, bool]:
-        """Process batch with circular buffer operations.
-
-        Args:
-            batch: Input batch or None
-
-        Returns:
-            Tuple of (output_batch, is_valid)
-        """
-        if batch is None:
-            # Try to emit from existing buffer
-            return self._try_emit()
-
-        batch_size = get_batch_size(batch)
-        if batch_size is None or batch_size == 0:
-            return None, False
-
-        # Initialize buffer on first call
-        if self.buffer.get_value() is None:
-            try:
-                self._initialize_buffer(batch)
-            except Exception:  # noqa: BLE001 - JAX tracing can raise multiple runtime errors
-                # Inside JAX transformation, cannot mutate state
-                return batch, True
-
-        # Add to circular buffer
-        try:
-            self._add_to_circular_buffer(batch, batch_size)
-            # Try to emit
-            return self._try_emit()
-        except Exception:  # noqa: BLE001 - JAX tracing can raise multiple runtime errors
-            # Inside JAX transformation, cannot mutate state
-            return batch, True
-
-    def _initialize_buffer(self, example_batch: Batch) -> None:
-        """Initialize circular buffer as list of PyTrees."""
-        # Store individual elements as PyTrees
-        self.buffer.set_value([None] * self.max_buffer_size)
-
-    def _add_to_circular_buffer(self, batch: Batch, batch_size: int) -> None:
-        """Add batch elements to circular buffer."""
-        write_idx = self.write_index.get_value()
-        current_count = self.count.get_value()
-
-        # Check for overflow
-        if current_count + batch_size > self.max_buffer_size:
-            warnings.warn("Circular buffer overflow, dropping oldest elements")
-            # Advance read pointer to make space
-            overflow = (current_count + batch_size) - self.max_buffer_size
-            read_idx = self.read_index.get_value()
-            self.read_index.set_value((read_idx + overflow) % self.max_buffer_size)
-            self.count.set_value(self.max_buffer_size - batch_size)
-            current_count = self.count.get_value()
-
-        # Get buffer copy for modification
-        buffer_list = self.buffer.get_value()
-        if buffer_list is None:
-            return
-
-        # Add each element from batch
-        for i in range(batch_size):
-            element = self._extract_element(batch, i)
-            buffer_idx = (write_idx + i) % self.max_buffer_size
-            buffer_list[buffer_idx] = element
-
-        # Persist buffer changes
-        self.buffer.set_value(buffer_list)
-
-        # Update indices
-        self.write_index.set_value((write_idx + batch_size) % self.max_buffer_size)
-        self.count.set_value(min(current_count + batch_size, self.max_buffer_size))
-
-    def _try_emit(self) -> tuple[Batch | None, bool]:
-        """Try to emit a batch from circular buffer."""
-        current_count = self.count.get_value()
-        if current_count >= self.target_batch_size:
-            # Extract elements
-            elements = []
-            read_idx = self.read_index.get_value()
-            buffer_list = self.buffer.get_value()
-            if buffer_list is None:
-                return None, False
-
-            for i in range(self.target_batch_size):
-                buffer_idx = (read_idx + i) % self.max_buffer_size
-                elements.append(buffer_list[buffer_idx])
-
-            # Update indices
-            self.read_index.set_value((read_idx + self.target_batch_size) % self.max_buffer_size)
-            self.count.set_value(current_count - self.target_batch_size)
-
-            # Stack elements into batch
-            output = self._stack_elements(elements)
-            return output, True
-
-        return None, False
-
-    def _extract_element(self, batch: Batch, index: int) -> Any:
-        """Extract single element from batch."""
-
-        def get_item(x: Any) -> Any:
-            if isinstance(x, jax.Array):
-                return x[index]
-            elif hasattr(x, "__getitem__"):
-                return x[index]
-            return x
-
-        return jax.tree.map(get_item, batch)
-
-    def _stack_elements(self, elements: list[Any]) -> Batch | None:
-        """Stack list of elements into batch."""
-        if not elements:
-            return None
-
-        def stack_fn(*xs: Any) -> Any:
-            if all(isinstance(x, jax.Array) for x in xs):
-                return jnp.stack(xs, axis=0)
-            return list(xs)
-
-        return jax.tree.map(stack_fn, *elements)
-
-    def flush(self) -> Batch | None:
-        """Flush remaining buffered data."""
-        current_count = self.count.get_value()
-        if current_count > 0:
-            # Extract all remaining elements
-            elements = []
-            read_idx = self.read_index.get_value()
-            remaining = int(current_count)
-            buffer_list = self.buffer.get_value()
-            if buffer_list is None:
-                return None
-
-            for i in range(remaining):
-                buffer_idx = (read_idx + i) % self.max_buffer_size
-                elements.append(buffer_list[buffer_idx])
-
-            self.count.set_value(0)
-            return self._stack_elements(elements)
-        return None
-
-    def get_state(self) -> dict[str, Any]:
-        """Get implementation state."""
-        return {
-            "buffer": self.buffer.get_value(),
-            "write_index": int(self.write_index.get_value()),
-            "read_index": int(self.read_index.get_value()),
-            "count": int(self.count.get_value()),
-        }
-
-    def set_state(self, state: dict[str, Any]) -> None:
-        """Restore implementation state."""
-        if "buffer" in state:
-            self.buffer.set_value(state["buffer"])
-        if "write_index" in state:
-            self.write_index.set_value(state["write_index"])
-        if "read_index" in state:
-            self.read_index.set_value(state["read_index"])
-        if "count" in state:
-            self.count.set_value(state["count"])
-
-
 class GradientTransparentRebatchImpl(nnx.Module):
     """Gradient-transparent rebatching that preserves gradient flow.
 
@@ -431,20 +246,20 @@ class GradientTransparentRebatchImpl(nnx.Module):
     maintaining gradient connectivity through the data values.
     """
 
+    buffer: list[Any] = nnx.data()
+
     def __init__(self, target_batch_size: int, max_buffer_size: int = 512) -> None:
         """Initialize gradient-transparent implementation.
 
         Args:
             target_batch_size: Target size for output batches
-            max_buffer_size: Maximum buffer size (unused but kept for API consistency)
+            max_buffer_size: Maximum buffer size for validation symmetry
         """
         super().__init__()
         self.target_batch_size = target_batch_size
         self.max_buffer_size = max_buffer_size
 
-        # Use nnx.List for NNX-compatible state management
-        self.buffer = nnx.List([])
-        self.gradient_tape = nnx.List([])  # Keep for state compatibility
+        self.buffer = []
 
     def __call__(self, batch: Batch | None) -> tuple[Batch | None, bool]:
         """Process batch while preserving gradient flow.
@@ -463,14 +278,12 @@ class GradientTransparentRebatchImpl(nnx.Module):
         if batch_size is None or batch_size == 0:
             return None, False
 
-        # Split batch into individual elements and add to buffer
-        for i in range(batch_size):
-            element = self._extract_element(batch, i)
-            self.buffer.append(element)
-            self.gradient_tape.append(element)  # Keep same ref for gradient flow
-
-        # Try to emit
-        return self._try_emit()
+        try:
+            for i in range(batch_size):
+                self.buffer.append(self._extract_element(batch, i))
+            return self._try_emit()
+        except Exception:  # noqa: BLE001 - JAX tracing can raise multiple runtime errors
+            return batch, True
 
     def _try_emit(self) -> tuple[Batch | None, bool]:
         """Try to emit a batch from buffer."""
@@ -480,13 +293,9 @@ class GradientTransparentRebatchImpl(nnx.Module):
 
             # Update buffers - clear and extend with remaining elements
             remaining_buffer = list(self.buffer[self.target_batch_size :])
-            remaining_tape = list(self.gradient_tape[self.target_batch_size :])
             self.buffer.clear()
             self.buffer.extend(remaining_buffer)
-            self.gradient_tape.clear()
-            self.gradient_tape.extend(remaining_tape)
 
-            # Stack elements (gradients flow through naturally)
             output = self._stack_elements(elements)
             return output, True
 
@@ -521,37 +330,28 @@ class GradientTransparentRebatchImpl(nnx.Module):
         """Flush remaining buffered data."""
         if self.buffer:
             elements = list(self.buffer)  # Convert to plain list for processing
-            self.buffer = nnx.List([])
-            self.gradient_tape = nnx.List([])
+            self.buffer = []
             return self._stack_elements(elements)
         return None
 
     def get_state(self) -> dict[str, Any]:
         """Get implementation state."""
-        return {
-            "buffer": self.buffer,
-            "gradient_tape": self.gradient_tape,
-        }
+        return {"buffer": self.buffer}
 
     def set_state(self, state: dict[str, Any]) -> None:
         """Restore implementation state."""
-        # Restore by clearing and extending the nnx.List objects
-        self.buffer.clear()
-        self.buffer.extend(state.get("buffer", []))
-        self.gradient_tape.clear()
-        self.gradient_tape.extend(state.get("gradient_tape", []))
+        self.buffer = list(state.get("buffer", []))
 
 
 class RebatchNode(Node):
     """Rebatch node for handling batch size changes in pipelines.
 
     This node accumulates input batches and emits new batches of a target size.
-    It delegates to one of three implementation strategies based on the mode.
+    It delegates to one of two differentiable implementation strategies.
 
     Modes:
 
         - 'differentiable': Maintains full differentiability for training
-        - 'fast': JIT-optimized for maximum performance
         - 'gradient_transparent': Preserves gradient flow through values
 
     Examples:
@@ -566,7 +366,7 @@ class RebatchNode(Node):
     def __init__(
         self,
         target_batch_size: int,
-        mode: Literal["differentiable", "fast", "gradient_transparent"] = "gradient_transparent",
+        mode: Literal["differentiable", "gradient_transparent"] = "gradient_transparent",
         max_buffer_size: int = 512,
         name: str | None = None,
     ) -> None:
@@ -583,23 +383,24 @@ class RebatchNode(Node):
         """
         super().__init__(name=name or f"RebatchNode({target_batch_size})")
 
-        if mode not in ["differentiable", "fast", "gradient_transparent"]:
+        if mode == "fast":
             raise ValueError(
-                f"Unknown mode: {mode}. Must be 'differentiable', 'fast', or 'gradient_transparent'"
+                "fast rebatching moved outside RebatchNode; use rebatch_iterable() "
+                "for ordinary iterator rebatching"
+            )
+        if mode not in ["differentiable", "gradient_transparent"]:
+            raise ValueError(
+                f"Unknown mode: {mode}. Must be 'differentiable' or 'gradient_transparent'"
             )
 
         self.target_batch_size = target_batch_size
         self.mode = mode
         self.max_buffer_size = max_buffer_size
 
-        # Create appropriate implementation
-        # Note: Both 'differentiable' and 'gradient_transparent' use the same
-        # implementation (DRY principle) since both need gradient compatibility.
-        # The distinction is kept for API clarity and future optimization.
-        if mode == "differentiable" or mode == "gradient_transparent":
+        if mode == "differentiable":
             self.impl = DifferentiableRebatchImpl(target_batch_size, max_buffer_size)
-        else:  # fast
-            self.impl = FastRebatchImpl(target_batch_size, max_buffer_size)
+        else:
+            self.impl = GradientTransparentRebatchImpl(target_batch_size, max_buffer_size)
 
         # Statistics tracking
         self.elements_processed = nnx.Variable(0)
@@ -616,6 +417,7 @@ class RebatchNode(Node):
         Returns:
             Rebatched output of target_batch_size or None if accumulating
         """
+        del key
         # Track input statistics (only if not inside JAX transformation)
         if batch is not None:
             batch_size = get_batch_size(batch)
@@ -717,7 +519,7 @@ class RebatchNode(Node):
 
 def rebatch(
     target_batch_size: int,
-    mode: Literal["differentiable", "fast", "gradient_transparent"] = "gradient_transparent",
+    mode: Literal["differentiable", "gradient_transparent"] = "gradient_transparent",
     max_buffer_size: int = 512,
 ) -> RebatchNode:
     """Create a rebatch node.
@@ -737,7 +539,66 @@ def rebatch(
 
         ```python
         from datarax.dag.nodes import rebatch
-        node = rebatch(32, mode='fast')
+        node = rebatch(32, mode='gradient_transparent')
         ```
     """
     return RebatchNode(target_batch_size, mode, max_buffer_size)
+
+
+def rebatch_iterable(
+    iterator: Any,
+    target_batch_size: int,
+    *,
+    drop_remainder: bool = False,
+    pad: bool = False,
+    pad_value: Any = 0,
+) -> grain.IterDataset:
+    """Rebatch an explicit Grain/sequence iterator with Grain primitives."""
+    if target_batch_size <= 0:
+        raise ValueError("target_batch_size must be positive")
+    if drop_remainder and pad:
+        raise ValueError("drop_remainder and pad are mutually exclusive")
+
+    dataset = ensure_iter_dataset(iterator)
+    rebatched = grain.experimental.RebatchIterDataset(
+        dataset,
+        batch_size=target_batch_size,
+        drop_remainder=drop_remainder,
+    )
+    if not pad:
+        return rebatched
+    return rebatched.map(lambda batch: _pad_rebatched_payload(batch, target_batch_size, pad_value))
+
+
+def _pad_rebatched_payload(batch: Any, target_batch_size: int, pad_value: Any) -> Any:
+    batch_size = get_batch_size(batch)
+    if batch_size is None or batch_size >= target_batch_size:
+        return batch
+    return grain.experimental.batch_and_pad(
+        _batch_to_records(batch, batch_size),
+        batch_size=target_batch_size,
+        pad_value=pad_value,
+    )
+
+
+def _batch_to_records(batch: Any, batch_size: int) -> Sequence[Any]:
+    return [
+        jax.tree.map(
+            lambda leaf, index=index: _slice_leaf_from_batch(leaf, index, batch_size),
+            batch,
+            is_leaf=is_non_jax_leaf,
+        )
+        for index in range(batch_size)
+    ]
+
+
+def _slice_leaf_from_batch(leaf: Any, index: int, batch_size: int) -> Any:
+    if isinstance(leaf, jax.Array | np.ndarray):
+        return leaf[index]
+    if (
+        isinstance(leaf, Sequence)
+        and not isinstance(leaf, str | bytes | bytearray)
+        and len(leaf) == batch_size
+    ):
+        return leaf[index]
+    return leaf

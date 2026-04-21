@@ -30,6 +30,7 @@ from benchmarks.core.result_model import (
 from benchmarks.runners.benchmark_runner import BenchmarkRunner
 from benchmarks.scenarios import discover_scenarios
 from benchmarks.scenarios.base import run_scenario
+from datarax.utils.console import emit
 
 
 # Default paths
@@ -72,7 +73,7 @@ def run_tier1_gate(
         try:
             variant = mod.get_variant(tier1_variant)
             if not can_run_scenario(variant):
-                print(f"SKIP {scenario_id}/{tier1_variant}: exceeds memory", file=sys.stderr)
+                emit(f"SKIP {scenario_id}/{tier1_variant}: exceeds memory", file=sys.stderr)
                 continue
             result = run_scenario(
                 adapter,
@@ -83,7 +84,7 @@ def run_tier1_gate(
             )
             results.append(result)
         except Exception as exc:  # noqa: BLE001 — CI resilience: report and continue
-            print(f"ERROR running {scenario_id}: {exc}", file=sys.stderr)
+            emit(f"ERROR running {scenario_id}: {exc}", file=sys.stderr)
 
     # Compare against baselines
     verdicts: list[dict[str, Any] | None] = []
@@ -189,7 +190,7 @@ def main() -> None:
     )
 
     report = generate_ci_report(results, verdicts)
-    print(report)
+    emit(report)
 
     # Save results
     out = Path(args.output_dir)

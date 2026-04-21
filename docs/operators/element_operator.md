@@ -90,12 +90,12 @@ flip_op = ElementOperator(config, fn=flip_both, rngs=nnx.Rngs(0))
 ElementOperator integrates seamlessly with Datarax's DAG execution:
 
 ```python
-from datarax.dag import from_source
+from datarax.dag import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 
 # Build a pipeline with ElementOperator
 pipeline = (
-    from_source(my_source, batch_size=32)
+    build_source_pipeline(my_source, batch_size=32)
     >> OperatorNode(normalize_op)
     >> OperatorNode(flip_op)
 )

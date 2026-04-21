@@ -74,7 +74,7 @@ except ImportError as e:
         "This example requires TensorFlow Datasets. Install with: uv pip install datarax[tfds]"
     ) from e
 
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 
@@ -131,12 +131,12 @@ print("Created normalizer operator")
 """
 ## Step 3: Build Pipeline
 
-Chain source and operators using the DAG-based `from_source()` API.
+Chain source and operators using the DAG-based `build_source_pipeline()` API.
 """
 
 # %%
 # Build the pipeline
-pipeline = from_source(source, batch_size=32).add(OperatorNode(normalizer))
+pipeline = build_source_pipeline(source, batch_size=32).add(OperatorNode(normalizer))
 
 print("Pipeline: TFDSEagerSource(MNIST) -> Normalize -> Output")
 print("Batch size: 32")
@@ -215,7 +215,7 @@ def main():
     )
 
     # Build and run pipeline
-    pipeline = from_source(source, batch_size=32).add(OperatorNode(normalizer))
+    pipeline = build_source_pipeline(source, batch_size=32).add(OperatorNode(normalizer))
 
     total_samples = 0
     for batch in pipeline:

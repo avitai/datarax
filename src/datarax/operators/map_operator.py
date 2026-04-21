@@ -24,7 +24,8 @@ from flax import nnx
 from jaxtyping import PyTree
 
 from datarax.core.config import MapOperatorConfig
-from datarax.core.operator import extract_batch_size, OperatorModule
+from datarax.core.operator import OperatorModule
+from datarax.operators._random_params import get_optional_batch_size
 
 
 logger = logging.getLogger(__name__)
@@ -107,7 +108,7 @@ class MapOperator(OperatorModule):
         self._is_subtree_mode = hasattr(config, "subtree") and config.subtree is not None
 
     @staticmethod
-    def _path_in_subtree(keypath: tuple, subtree_mask: PyTree) -> bool:
+    def _is_path_in_subtree_mask(keypath: tuple, subtree_mask: PyTree) -> bool:
         """Check if keypath exists in subtree mask and points to None.
 
         Navigates through nested dict structure following keypath.
@@ -126,10 +127,10 @@ class MapOperator(OperatorModule):
         Examples:
             mask = {"image": None, "features": {"depth": None}}
             keypath = (DictKey(key='image'),)
-            MapOperator._path_in_subtree(keypath, mask)
+            MapOperator._is_path_in_subtree_mask(keypath, mask)
             True
             keypath = (DictKey(key='label'),)
-            MapOperator._path_in_subtree(keypath, mask)
+            MapOperator._is_path_in_subtree_mask(keypath, mask)
             False
         """
         current = subtree_mask
@@ -182,11 +183,8 @@ class MapOperator(OperatorModule):
         if not self.stochastic:
             return None
 
-        # Extract batch size from shape tuples (JAX gotcha: tuples are nodes, not leaves)
-        try:
-            batch_size = extract_batch_size(data_shapes)
-        except ValueError:
-            # Empty tree - return empty structure
+        batch_size = get_optional_batch_size(data_shapes)
+        if batch_size is None:
             _, tree_def = jax.tree.flatten(data_shapes)
             return jax.tree.unflatten(tree_def, [])
 
@@ -238,6 +236,7 @@ class MapOperator(OperatorModule):
             Tuple of (transformed_data, state, metadata)
             where state and metadata are unchanged
         """
+        del stats
         # Get keys (real for stochastic, dummy/None for deterministic)
         # If random_params is None, create dummy keys matching data structure
         # This is needed for jax.eval_shape in get_output_structure()
@@ -251,7 +250,7 @@ class MapOperator(OperatorModule):
             """Transform leaf if it should be transformed."""
             # Check subtree filter (full-tree mode: always transform)
             if self._is_subtree_mode:
-                if not self._path_in_subtree(keypath, self.config.subtree):
+                if not self._is_path_in_subtree_mask(keypath, self.config.subtree):
                     return leaf  # Pass through unchanged
 
             # Apply user function (always with key parameter)

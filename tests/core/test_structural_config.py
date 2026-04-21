@@ -139,7 +139,7 @@ class TestStructuralConfigValidation:
 
         # Should enforce mutual exclusivity of statistics
         with pytest.raises(ValueError) as exc_info:
-            StructuralConfig(batch_stats_fn=lambda x: {}, precomputed_stats={})
+            StructuralConfig(batch_stats_fn=lambda _x: {}, precomputed_stats={})
 
         error_msg = str(exc_info.value).lower()
         assert "both" in error_msg

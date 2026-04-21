@@ -97,11 +97,11 @@ class TestMixDataSourcesConfig:
         with pytest.raises(ValueError):
             MixDataSourcesConfig(num_sources=0, weights=())
 
-    def test_config_is_stochastic(self):
-        """Mixing requires RNG, so config.stochastic must be True."""
+    def test_config_is_deterministic(self):
+        """Mixing delegates to Grain and does not require a Datarax RNG stream."""
         config = MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5))
-        assert config.stochastic is True
-        assert config.stream_name == "mix"
+        assert config.stochastic is False
+        assert config.stream_name is None
 
 
 # ============================================================================
@@ -207,18 +207,13 @@ class TestMixDataSourcesEdgeCases:
         # All elements come from source_a
         assert all(e["label"] == "a" for e in elements)
 
-    def test_source_exhaustion(self, source_a, source_small):
-        """When one source is shorter, continues sampling from the other.
-
-        source_a has 10 elements, source_small has 3. Total = 13.
-        Even if the RNG keeps trying source_small after its 3 elements are used,
-        the implementation falls back to source_a.
-        """
+    def test_source_exhaustion_uses_grain_mix_semantics(self, source_a, source_small):
+        """Grain mix stops when the weighted schedule reaches an exhausted source."""
         config = MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5))
         mixed = MixDataSourcesNode(config, [source_a, source_small], rngs=nnx.Rngs(42))
 
         elements = list(mixed)
-        assert len(elements) == 13  # 10 + 3
+        assert len(elements) == 7
 
     def test_getitem_returns_none(self, source_a, source_b):
         """Random access is not supported — __getitem__ returns None."""

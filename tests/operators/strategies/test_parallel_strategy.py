@@ -81,8 +81,8 @@ class TestConditionalParallelStrategy:
         op2 = MockOperator(20.0)
 
         conditions = [
-            lambda x: jnp.array(True),
-            lambda x: jnp.array(False),  # Should be masked
+            lambda _x: jnp.array(True),
+            lambda _x: jnp.array(False),  # Should be masked
         ]
 
         # Merge strategy sum

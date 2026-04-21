@@ -62,7 +62,7 @@ class ArraySharder(SharderModule):
         return jax.tree.map(
             lambda x: self._shard_array(x, sharding),
             batch,
-            is_leaf=lambda x: isinstance(x, jax.Array | jax.Array),
+            is_leaf=lambda x: isinstance(x, jax.Array),
         )
 
     @staticmethod
@@ -79,7 +79,7 @@ class ArraySharder(SharderModule):
         return jax.tree.map(
             lambda x: ArraySharder._shard_array_static(x, sharding),
             batch,
-            is_leaf=lambda x: isinstance(x, jax.Array | jax.Array),
+            is_leaf=lambda x: isinstance(x, jax.Array),
         )
 
     def _shard_array(self, array: Any, sharding: Sharding) -> jax.Array:
@@ -105,16 +105,9 @@ class ArraySharder(SharderModule):
         Returns:
             A sharded jax.Array.
         """
-        # If the array is already a jax.Array with the correct sharding, return it
-        if hasattr(array, "sharding") and array.sharding == sharding:
-            return array
-
-        # Convert to a JAX array if it's not already
-        if not isinstance(array, jax.Array):
-            array = jnp.asarray(array)
-
-        # Use device_put to move the array to the correct devices with the specified sharding
-        return jax.device_put(array, sharding)
+        if isinstance(array, jax.Array):
+            return jax.reshard(array, sharding)
+        return jax.device_put(jnp.asarray(array), sharding)
 
     def shard_with_info(
         self, batch: Batch, sharding: Sharding, info: dict[str, Any] | None = None
@@ -153,9 +146,7 @@ class ArraySharder(SharderModule):
         info["batch_pre_sharding"] = {
             "structure": jax.tree_util.tree_structure(batch),
             "shapes": jax.tree.map(
-                lambda x: (
-                    getattr(x, "shape", None) if isinstance(x, jax.Array | jax.Array) else None
-                ),
+                lambda x: getattr(x, "shape", None) if isinstance(x, jax.Array) else None,
                 batch,
             ),
         }
@@ -167,9 +158,7 @@ class ArraySharder(SharderModule):
         info["batch_post_sharding"] = {
             "structure": jax.tree_util.tree_structure(sharded_batch),
             "shapes": jax.tree.map(
-                lambda x: (
-                    getattr(x, "shape", None) if isinstance(x, jax.Array | jax.Array) else None
-                ),
+                lambda x: getattr(x, "shape", None) if isinstance(x, jax.Array) else None,
                 sharded_batch,
             ),
             "shardings": jax.tree.map(

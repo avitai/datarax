@@ -26,6 +26,8 @@ class MatMulOperator(OperatorModule):
         random_params: Any = None,
         stats: Any = None,
     ) -> tuple[Any, Any, Any]:
+        del random_params, stats
+
         def transform(x):
             y = x @ self.w.get_value()
             for _ in range(self.compute_intensity):
@@ -61,6 +63,8 @@ class ConvOperator(OperatorModule):
         random_params: Any = None,
         stats: Any = None,
     ) -> tuple[Any, Any, Any]:
+        del random_params, stats
+
         def transform(x):
             # Expect x to be (Batch, H, W, C) or similar.
             # If 2D (Batch, Dim), reshape to fake image
@@ -112,6 +116,7 @@ class ActivationOperator(OperatorModule):
         random_params: Any = None,
         stats: Any = None,
     ) -> tuple[Any, Any, Any]:
+        del random_params, stats
         new_data = jax.tree.map(self.func, data)
         return new_data, state, metadata
 

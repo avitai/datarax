@@ -16,43 +16,45 @@ from datarax.sources._eager_source_ops import (
     eager_iter,
     eager_reset,
     filter_keys,
-    get_shuffled_index,
+    shuffled_index_for_position,
     validate_eager_config,
 )
 
 
 class TestGetShuffledIndex(unittest.TestCase):
-    """Tests for get_shuffled_index."""
+    """Tests for shuffled_index_for_position."""
 
     def test_no_shuffle_returns_original(self):
         """When shuffle=False, index is returned unchanged."""
         for i in range(5):
-            self.assertEqual(get_shuffled_index(i, shuffle=False, seed=42, epoch=0, length=10), i)
+            self.assertEqual(
+                shuffled_index_for_position(i, shuffle=False, seed=42, epoch=0, length=10), i
+            )
 
     def test_shuffle_returns_valid_index(self):
         """Shuffled index is within [0, length)."""
         for i in range(10):
-            idx = get_shuffled_index(i, shuffle=True, seed=42, epoch=0, length=10)
+            idx = shuffled_index_for_position(i, shuffle=True, seed=42, epoch=0, length=10)
             self.assertGreaterEqual(idx, 0)
             self.assertLess(idx, 10)
 
     def test_shuffle_is_deterministic(self):
         """Same seed+epoch+index always produces same result."""
-        idx1 = get_shuffled_index(3, shuffle=True, seed=42, epoch=1, length=100)
-        idx2 = get_shuffled_index(3, shuffle=True, seed=42, epoch=1, length=100)
+        idx1 = shuffled_index_for_position(3, shuffle=True, seed=42, epoch=1, length=100)
+        idx2 = shuffled_index_for_position(3, shuffle=True, seed=42, epoch=1, length=100)
         self.assertEqual(idx1, idx2)
 
     def test_different_epochs_produce_different_shuffles(self):
         """Different epochs should (usually) produce different permutations."""
-        indices_e0 = [get_shuffled_index(i, True, 42, 0, 20) for i in range(20)]
-        indices_e1 = [get_shuffled_index(i, True, 42, 1, 20) for i in range(20)]
+        indices_e0 = [shuffled_index_for_position(i, True, 42, 0, 20) for i in range(20)]
+        indices_e1 = [shuffled_index_for_position(i, True, 42, 1, 20) for i in range(20)]
         # Very unlikely to be identical for 20 elements
         self.assertNotEqual(indices_e0, indices_e1)
 
     def test_shuffle_is_permutation(self):
         """All indices should be unique (bijective mapping)."""
         length = 15
-        indices = [get_shuffled_index(i, True, 99, 0, length) for i in range(length)]
+        indices = [shuffled_index_for_position(i, True, 99, 0, length) for i in range(length)]
         self.assertEqual(len(set(indices)), length)
 
 

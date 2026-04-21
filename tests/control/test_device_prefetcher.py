@@ -5,11 +5,14 @@ Validates that DevicePrefetcher asynchronously transfers data to device
 while the consumer processes previous batches.
 """
 
+from collections.abc import Iterator
+from typing import Any, cast
+
 import jax
 import numpy as np
 import pytest
 
-from datarax.control.prefetcher import DevicePrefetcher, Prefetcher
+from datarax.control.prefetcher import create_prefetch_stream, DevicePrefetcher, Prefetcher
 
 
 class TestDevicePrefetcherBasic:
@@ -162,3 +165,90 @@ class TestStartPrefetch:
         assert len(results) == 3
         # Source should have been consumed before we started reading
         assert all(t < start for t in call_times)
+
+
+class TestPrefetchIteratorAdapters:
+    """Tests for the unified upstream-backed prefetch adapter."""
+
+    def test_grain_mode_calls_grain_device_put(self, monkeypatch):
+        """Grain mode should delegate to grain.experimental.device_put."""
+        calls = {}
+
+        def fake_device_put(iterator, device, *, cpu_buffer_size, device_buffer_size):
+            calls.update(
+                {
+                    "iterator": iterator,
+                    "device": device,
+                    "cpu_buffer_size": cpu_buffer_size,
+                    "device_buffer_size": device_buffer_size,
+                }
+            )
+            return "grain-prefetch"
+
+        monkeypatch.setattr("grain.experimental.device_put", fake_device_put)
+        iterator = iter([1, 2])
+
+        result = create_prefetch_stream(iterator, mode="grain", size=3, device="device0")
+
+        assert result == "grain-prefetch"
+        assert calls == {
+            "iterator": iterator,
+            "device": "device0",
+            "cpu_buffer_size": 6,
+            "device_buffer_size": 3,
+        }
+
+    def test_flax_mode_calls_flax_prefetch_to_device(self, monkeypatch):
+        """Flax mode should delegate to flax.jax_utils.prefetch_to_device."""
+        calls = {}
+
+        def fake_prefetch(iterator, size, devices=None):
+            calls.update({"iterator": iterator, "size": size, "devices": devices})
+            return "flax-prefetch"
+
+        monkeypatch.setattr("flax.jax_utils.prefetch_to_device", fake_prefetch)
+        iterator = iter([1, 2])
+
+        result = create_prefetch_stream(iterator, mode="flax", size=2, device="device0")
+
+        assert result == "flax-prefetch"
+        assert calls == {"iterator": iterator, "size": 2, "devices": ["device0"]}
+
+    def test_thread_mode_propagates_exceptions_and_closes_source(self):
+        """Thread mode should keep Datarax close/error behavior."""
+        closed = False
+
+        class FailingIterator:
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                raise RuntimeError("boom")
+
+            def close(self):
+                nonlocal closed
+                closed = True
+
+        iterator = cast(
+            Iterator[Any], create_prefetch_stream(FailingIterator(), mode="thread", size=1)
+        )
+
+        with pytest.raises(RuntimeError, match="boom"):
+            next(iterator)
+
+        assert closed
+
+    def test_no_numeric_throughput_claims_remain(self):
+        """Performance docs should not claim benchmark numbers without artifacts."""
+        import inspect
+
+        import datarax.control.prefetcher as prefetcher_module
+        import datarax.distributed.device_placement as device_placement_module
+
+        combined = "\n".join(
+            [
+                inspect.getsource(prefetcher_module),
+                inspect.getsource(device_placement_module),
+            ]
+        )
+        assert "20-50%" not in combined

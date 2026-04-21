@@ -17,14 +17,13 @@ from datarax.core.sharder import SharderModule
 from datarax.dag.dag_config import DAGConfig
 
 # DAG components
-from datarax.dag.dag_executor import DAGExecutor, from_source, pipeline
+from datarax.dag.dag_executor import build_source_pipeline, DAGExecutor, pipeline
 from datarax.dag.nodes import (
     BatchNode,
     Branch,
     CacheNode,
     DataSourceNode,
     DifferentiableRebatchImpl,
-    FastRebatchImpl,
     GradientTransparentRebatchImpl,
     Merge,
     Node,
@@ -62,7 +61,7 @@ __all__ = [
     # DAG API
     "DAGExecutor",
     "pipeline",
-    "from_source",
+    "build_source_pipeline",
     # Nodes
     "Node",
     "DataSourceNode",
@@ -78,7 +77,6 @@ __all__ = [
     "rebatch",
     "RebatchNode",
     "DifferentiableRebatchImpl",
-    "FastRebatchImpl",
     "GradientTransparentRebatchImpl",
     # Configuration
     "DAGConfig",

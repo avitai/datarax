@@ -463,7 +463,7 @@ class BatchOps:
     """Utility operations for batches."""
 
     @staticmethod
-    def filter_batch(batch: Batch, mask: jax.Array) -> Batch:
+    def select_batch_rows(batch: Batch, mask: jax.Array) -> Batch:
         """Filter batch using boolean mask.
 
         Uses JAX indexing on PyTree structures for efficiency.
@@ -495,7 +495,7 @@ class BatchOps:
         )
 
     @staticmethod
-    def concatenate_batches(batches: list[Batch]) -> Batch:
+    def concatenate_batch_sequence(batches: list[Batch]) -> Batch:
         """Concatenate multiple batches."""
         if not batches:
             return Batch([])

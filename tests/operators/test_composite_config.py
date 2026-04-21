@@ -32,10 +32,10 @@ class TestConfigValidation:
 
         # Create two operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 10, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 10, rngs=rngs)
 
         # Create valid sequential config
         composite_config = CompositeOperatorConfig(
@@ -53,10 +53,10 @@ class TestConfigValidation:
 
         # Create two operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         # Create valid parallel config with merge strategy
         composite_config = CompositeOperatorConfig(
@@ -76,10 +76,10 @@ class TestConfigValidation:
 
         # Create two operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         # Create valid weighted parallel config
         composite_config = CompositeOperatorConfig(
@@ -99,13 +99,13 @@ class TestConfigValidation:
 
         # Create three operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x * 4, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x * 4, rngs=rngs)
 
         # Create valid ensemble mean config
         composite_config = CompositeOperatorConfig(
@@ -123,10 +123,10 @@ class TestConfigValidation:
 
         # Create three operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         # Create valid ensemble sum config
         composite_config = CompositeOperatorConfig(
@@ -144,15 +144,15 @@ class TestConfigValidation:
 
         # Create two operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 10, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 10, rngs=rngs)
 
         # Create conditions matching number of operators
         conditions = [
-            lambda data: True,  # Always apply first
-            lambda data: True,  # Always apply second
+            lambda _data: True,  # Always apply first
+            lambda _data: True,  # Always apply second
         ]
 
         # Create valid conditional sequential config
@@ -174,15 +174,15 @@ class TestConfigValidation:
 
         # Create two operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         # Create conditions
         conditions = [
-            lambda data: True,
-            lambda data: False,
+            lambda _data: True,
+            lambda _data: False,
         ]
 
         # Create valid conditional parallel config
@@ -203,13 +203,14 @@ class TestConfigValidation:
 
         # Create operators in a list (required for branching)
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         # Create router function (returns integer index)
         def router(data):
+            del data
             return 0  # Returns index 0 or 1
 
         # Create valid branching config
@@ -230,10 +231,10 @@ class TestConfigValidation:
 
         # Create two operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x + 10, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x + 10, rngs=rngs)
 
         # Create valid dynamic sequential config (same as sequential)
         composite_config = CompositeOperatorConfig(
@@ -262,16 +263,16 @@ class TestConfigValidationFailures:
         rngs = nnx.Rngs(0)
 
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         # Branching requires list with router (this should pass validation)
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.BRANCHING,
             operators=[op1, op2],  # List is required
-            router=lambda data: 0,  # Router returns integer index
+            router=lambda _data: 0,  # Router returns integer index
         )
         # Should not raise - branching with list and router is valid
         composite = CompositeOperatorModule(composite_config)
@@ -282,7 +283,7 @@ class TestConfigValidationFailures:
         rngs = nnx.Rngs(0)
 
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         # Conditional requires conditions parameter
         with pytest.raises(ValueError, match="requires conditions"):
@@ -297,17 +298,17 @@ class TestConfigValidationFailures:
         rngs = nnx.Rngs(0)
 
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         # Conditions length must match operators length
         with pytest.raises(ValueError, match="Number of conditions must match number of operators"):
             CompositeOperatorConfig(
                 strategy=CompositionStrategy.CONDITIONAL_SEQUENTIAL,
                 operators=[op1, op2],
-                conditions=[lambda data: True],  # Only 1 condition for 2 operators
+                conditions=[lambda _data: True],  # Only 1 condition for 2 operators
             )
 
     def test_weighted_parallel_mismatched_weights_fails(self):
@@ -315,10 +316,10 @@ class TestConfigValidationFailures:
         rngs = nnx.Rngs(0)
 
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         # Weights length must match operators length
         with pytest.raises(ValueError, match="Number of weights must match number of operators"):
@@ -333,10 +334,10 @@ class TestConfigValidationFailures:
         rngs = nnx.Rngs(0)
 
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         # Branching requires router function
         with pytest.raises(ValueError, match="BRANCHING strategy requires router"):
@@ -356,10 +357,10 @@ class TestConfigAutoStochasticDetection:
 
         # Create all deterministic operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         # Create composite - should auto-detect stochastic=False
         composite_config = CompositeOperatorConfig(
@@ -382,7 +383,7 @@ class TestConfigAutoStochasticDetection:
         )
 
         op2_config = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(op2_config, fn=lambda x, key: x * 2, rngs=rngs)
+        op2 = MapOperator(op2_config, fn=lambda x, _key: x * 2, rngs=rngs)
 
         # Composite should be stochastic if any child is stochastic
         composite_config = CompositeOperatorConfig(

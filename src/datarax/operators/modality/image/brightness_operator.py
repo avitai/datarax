@@ -162,6 +162,7 @@ class BrightnessOperator(ModalityOperator):
         Returns:
             Tuple of (transformed_data, state, metadata)
         """
+        del stats
         # 1. Extract field using base class helper (handles validation)
         image = self._extract_field(data, self.config.field_key)
 

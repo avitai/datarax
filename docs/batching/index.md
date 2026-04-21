@@ -44,10 +44,10 @@ final_batch = batcher.flush()
 ## With DAG Pipeline
 
 ```python
-from datarax.dag import from_source
+from datarax.dag import build_source_pipeline
 
 # Batching is built-in
-pipeline = from_source(source, batch_size=32)
+pipeline = build_source_pipeline(source, batch_size=32)
 
 # Or add explicitly
 from datarax.dag.nodes import BatchNode

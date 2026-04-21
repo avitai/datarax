@@ -29,6 +29,7 @@ class AddKeyOperator(OperatorModule):
     """Test operator that adds a single key to output."""
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
+        del random_params, stats
         out_data = {
             **data,
             "computed": data["input"] * 2,
@@ -40,6 +41,7 @@ class AddMultipleKeysOperator(OperatorModule):
     """Test operator that adds multiple keys to output."""
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
+        del random_params, stats
         out_data = {
             **data,
             "sum": data["a"] + data["b"],
@@ -62,6 +64,7 @@ class ExplicitStructureOperator(OperatorModule):
         return out_data, out_state
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
+        del random_params, stats
         out_data = {
             **data,
             "result": data["value"] ** 2,
@@ -73,6 +76,7 @@ class StructurePreservingOperator(OperatorModule):
     """Test operator that preserves input structure (existing behavior)."""
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
+        del random_params, stats
         out_data = {k: v * 2 for k, v in data.items()}
         return out_data, state, metadata
 
@@ -81,6 +85,7 @@ class StateModifyingOperator(OperatorModule):
     """Test operator that adds keys to both data and state."""
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
+        del random_params, stats
         out_data = {
             **data,
             "processed": data["input"] + 1,
@@ -311,6 +316,7 @@ class TestNestedOutputStructure:
 
         class NestedAddKeyOperator(OperatorModule):
             def apply(self, data, state, metadata, random_params=None, stats=None):
+                del random_params, stats
                 out_data = {
                     "nested": {
                         **data["nested"],
@@ -340,6 +346,7 @@ class TestNestedOutputStructure:
 
         class DeeplyNestedOperator(OperatorModule):
             def apply(self, data, state, metadata, random_params=None, stats=None):
+                del random_params, stats
                 out_data = {
                     "level1": {
                         "level2": {
@@ -382,6 +389,7 @@ class TestEdgeCases:
         class EmptyToNonEmptyOperator(OperatorModule):
             def apply(self, data, state, metadata, random_params=None, stats=None):
                 # Input is empty, but we add a key
+                del data, random_params, stats
                 out_data = {"generated": jnp.array([1.0, 2.0, 3.0])}
                 return out_data, state, metadata
 

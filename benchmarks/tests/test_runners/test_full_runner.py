@@ -61,6 +61,7 @@ def _make_mock_run_scenario(framework: str, scenario_id: str):
     """Return a function that produces a real BenchmarkResult."""
 
     def _run(adapter, variant, num_batches=50, warmup_batches=5, num_repetitions=5):
+        del adapter, num_batches, num_repetitions, variant, warmup_batches
         return _make_result(framework, scenario_id)
 
     return _run
@@ -243,6 +244,7 @@ class TestFullRunner:
             warmup_batches=5,
             num_repetitions=5,
         ):
+            del num_batches, num_repetitions, warmup_batches
             return _make_result(adapter.name, variant.config.scenario_id)
 
         with (
@@ -331,6 +333,7 @@ class TestFullRunner:
             warmup_batches=5,
             num_repetitions=5,
         ):
+            del num_batches, num_repetitions, warmup_batches
             return _make_result(adapter.name, variant.config.scenario_id)
 
         with (
@@ -371,6 +374,7 @@ class TestFullRunner:
             warmup_batches=5,
             num_repetitions=5,
         ):
+            del num_batches, num_repetitions, warmup_batches
             return _make_result(adapter.name, variant.config.scenario_id)
 
         with (

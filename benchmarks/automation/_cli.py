@@ -9,6 +9,7 @@ from benchmarks.automation._orchestrator_utils import (
     DEFAULT_CAPTURE_LIMIT_CHARS,
     OrchestrationError,
 )
+from datarax.utils.console import emit
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -143,10 +144,10 @@ def main() -> None:
     try:
         raise SystemExit(orchestrate(args))
     except OrchestrationError as exc:
-        print(f"ERROR: {exc}", flush=True)
+        emit(f"ERROR: {exc}", flush=True)
         raise SystemExit(1) from exc
     except KeyboardInterrupt:
-        print("ERROR: Interrupted by user", file=sys.stderr, flush=True)
+        emit("ERROR: Interrupted by user", file=sys.stderr, flush=True)
         raise SystemExit(130) from None
 
 

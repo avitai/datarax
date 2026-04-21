@@ -33,13 +33,13 @@ class TestEnsembleReductions:
 
         # Create 3 operators with different transformations
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x * 4, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x * 4, rngs=rngs)
 
         # Create ensemble with mean reduction
         composite_config = CompositeOperatorConfig(
@@ -72,13 +72,13 @@ class TestEnsembleReductions:
 
         # Create 3 operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x * 4, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x * 4, rngs=rngs)
 
         # Create ensemble with sum reduction
         composite_config = CompositeOperatorConfig(
@@ -111,13 +111,13 @@ class TestEnsembleReductions:
 
         # Create 3 operators with different transformations
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 5, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 5, rngs=rngs)
 
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x * 3, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x * 3, rngs=rngs)
 
         # Create ensemble with max reduction
         composite_config = CompositeOperatorConfig(
@@ -150,13 +150,13 @@ class TestEnsembleReductions:
 
         # Create 3 operators with different transformations
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 5, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 5, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 2, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x * 3, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x * 3, rngs=rngs)
 
         # Create ensemble with min reduction
         composite_config = CompositeOperatorConfig(
@@ -195,7 +195,7 @@ class TestEnsembleAdvanced:
         operators = []
         for i in range(5):
             config = MapOperatorConfig(stochastic=False)
-            op = MapOperator(config, fn=lambda x, key, i=i: x * (i + 1), rngs=rngs)
+            op = MapOperator(config, fn=lambda x, _key, i=i: x * (i + 1), rngs=rngs)
             operators.append(op)
 
         # Create ensemble with mean reduction
@@ -222,13 +222,13 @@ class TestEnsembleAdvanced:
 
         # Create 3 operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x * 4, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x * 4, rngs=rngs)
 
         # Create ensemble
         composite_config = CompositeOperatorConfig(
@@ -264,13 +264,13 @@ class TestEnsembleAdvanced:
 
         # Create 3 operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 4, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 4, rngs=rngs)
 
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x * 6, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x * 6, rngs=rngs)
 
         # Create ensemble
         composite_config = CompositeOperatorConfig(
@@ -302,13 +302,13 @@ class TestEnsembleAdvanced:
 
         # Create 3 operators
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
 
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         config3 = MapOperatorConfig(stochastic=False)
-        op3 = MapOperator(config3, fn=lambda x, key: x * 4, rngs=rngs)
+        op3 = MapOperator(config3, fn=lambda x, _key: x * 4, rngs=rngs)
 
         # Create ensemble
         composite_config = CompositeOperatorConfig(

@@ -36,9 +36,9 @@ class TestCompositeWithMapOperator:
         rngs = nnx.Rngs(0)
 
         # Create 3 MapOperators
-        op1 = MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, key: x * 2, rngs=rngs)
-        op2 = MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, key: x + 5, rngs=rngs)
-        op3 = MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, key: x * 3, rngs=rngs)
+        op1 = MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 2, rngs=rngs)
+        op2 = MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, _key: x + 5, rngs=rngs)
+        op3 = MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 3, rngs=rngs)
 
         # Compose sequentially
         config = CompositeOperatorConfig(
@@ -65,9 +65,9 @@ class TestCompositeWithMapOperator:
         rngs = nnx.Rngs(0)
 
         # Create 3 MapOperators
-        op1 = MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, key: x * 2, rngs=rngs)
-        op2 = MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, key: x * 3, rngs=rngs)
-        op3 = MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, key: x * 4, rngs=rngs)
+        op1 = MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 2, rngs=rngs)
+        op2 = MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 3, rngs=rngs)
+        op3 = MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 4, rngs=rngs)
 
         # Compose in parallel
         config = CompositeOperatorConfig(
@@ -93,16 +93,16 @@ class TestNestedComposites:
 
         # Create two sequential branches
         seq1_ops = [
-            MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, key: x * 2, rngs=rngs),
-            MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, key: x + 1, rngs=rngs),
+            MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 2, rngs=rngs),
+            MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, _key: x + 1, rngs=rngs),
         ]
         branch1 = CompositeOperatorModule(
             CompositeOperatorConfig(strategy=CompositionStrategy.SEQUENTIAL, operators=seq1_ops)
         )
 
         seq2_ops = [
-            MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, key: x * 3, rngs=rngs),
-            MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, key: x + 10, rngs=rngs),
+            MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 3, rngs=rngs),
+            MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, _key: x + 10, rngs=rngs),
         ]
         branch2 = CompositeOperatorModule(
             CompositeOperatorConfig(strategy=CompositionStrategy.SEQUENTIAL, operators=seq2_ops)
@@ -130,8 +130,8 @@ class TestNestedComposites:
 
         # Create parallel stage
         par_ops = [
-            MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, key: x * 2, rngs=rngs),
-            MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, key: x * 3, rngs=rngs),
+            MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 2, rngs=rngs),
+            MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 3, rngs=rngs),
         ]
         parallel = CompositeOperatorModule(
             CompositeOperatorConfig(
@@ -143,7 +143,7 @@ class TestNestedComposites:
 
         # Wrap in sequential with another operator
         final_op = MapOperator(
-            MapOperatorConfig(stochastic=False), fn=lambda x, key: x + 100, rngs=rngs
+            MapOperatorConfig(stochastic=False), fn=lambda x, _key: x + 100, rngs=rngs
         )
 
         seq_config = CompositeOperatorConfig(
@@ -170,10 +170,10 @@ class TestNestedComposites:
                 strategy=CompositionStrategy.SEQUENTIAL,
                 operators=[
                     MapOperator(
-                        MapOperatorConfig(stochastic=False), fn=lambda x, key: x + 1, rngs=rngs
+                        MapOperatorConfig(stochastic=False), fn=lambda x, _key: x + 1, rngs=rngs
                     ),
                     MapOperator(
-                        MapOperatorConfig(stochastic=False), fn=lambda x, key: x * 2, rngs=rngs
+                        MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 2, rngs=rngs
                     ),
                 ],
             )
@@ -186,7 +186,7 @@ class TestNestedComposites:
                 operators=[
                     inner_seq,
                     MapOperator(
-                        MapOperatorConfig(stochastic=False), fn=lambda x, key: x * 10, rngs=rngs
+                        MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 10, rngs=rngs
                     ),
                 ],
                 merge_strategy="concat",
@@ -200,7 +200,7 @@ class TestNestedComposites:
                 operators=[
                     middle_par,
                     MapOperator(
-                        MapOperatorConfig(stochastic=False), fn=lambda x, key: x + 100, rngs=rngs
+                        MapOperatorConfig(stochastic=False), fn=lambda x, _key: x + 100, rngs=rngs
                     ),
                 ],
             )
@@ -229,7 +229,7 @@ class TestMixedModes:
 
         # Deterministic operator (scales)
         det_config = MapOperatorConfig(stochastic=False)
-        det_op = MapOperator(det_config, fn=lambda x, key: x * 2, rngs=rngs)
+        det_op = MapOperator(det_config, fn=lambda x, _key: x * 2, rngs=rngs)
 
         # Build sequential pipeline
         composite_config = CompositeOperatorConfig(
@@ -264,16 +264,16 @@ class TestRealWorldUseCases:
 
         # Simulate augmentation pipeline: normalize -> crop -> brightness -> contrast
         normalize = MapOperator(
-            MapOperatorConfig(stochastic=False), fn=lambda x, key: x / 255.0, rngs=rngs
+            MapOperatorConfig(stochastic=False), fn=lambda x, _key: x / 255.0, rngs=rngs
         )
         crop = MapOperator(
-            MapOperatorConfig(stochastic=False), fn=lambda x, key: x * 0.9, rngs=rngs
+            MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 0.9, rngs=rngs
         )  # Simulate crop
         brightness = MapOperator(
-            MapOperatorConfig(stochastic=False), fn=lambda x, key: x + 0.1, rngs=rngs
+            MapOperatorConfig(stochastic=False), fn=lambda x, _key: x + 0.1, rngs=rngs
         )
         contrast = MapOperator(
-            MapOperatorConfig(stochastic=False), fn=lambda x, key: x * 1.2, rngs=rngs
+            MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 1.2, rngs=rngs
         )
 
         config = CompositeOperatorConfig(
@@ -302,13 +302,13 @@ class TestRealWorldUseCases:
 
         # Simulate 3 different model predictions
         model1 = MapOperator(
-            MapOperatorConfig(stochastic=False), fn=lambda x, key: x * 1.1, rngs=rngs
+            MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 1.1, rngs=rngs
         )
         model2 = MapOperator(
-            MapOperatorConfig(stochastic=False), fn=lambda x, key: x * 0.9, rngs=rngs
+            MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 0.9, rngs=rngs
         )
         model3 = MapOperator(
-            MapOperatorConfig(stochastic=False), fn=lambda x, key: x * 1.0, rngs=rngs
+            MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 1.0, rngs=rngs
         )
 
         config = CompositeOperatorConfig(
@@ -335,10 +335,10 @@ class TestRealWorldUseCases:
                 strategy=CompositionStrategy.SEQUENTIAL,
                 operators=[
                     MapOperator(
-                        MapOperatorConfig(stochastic=False), fn=lambda x, key: x * 1.1, rngs=rngs
+                        MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 1.1, rngs=rngs
                     ),
                     MapOperator(
-                        MapOperatorConfig(stochastic=False), fn=lambda x, key: x + 5, rngs=rngs
+                        MapOperatorConfig(stochastic=False), fn=lambda x, _key: x + 5, rngs=rngs
                     ),
                 ],
             )
@@ -350,10 +350,10 @@ class TestRealWorldUseCases:
                 strategy=CompositionStrategy.SEQUENTIAL,
                 operators=[
                     MapOperator(
-                        MapOperatorConfig(stochastic=False), fn=lambda x, key: x * 0.8, rngs=rngs
+                        MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 0.8, rngs=rngs
                     ),
                     MapOperator(
-                        MapOperatorConfig(stochastic=False), fn=lambda x, key: x + 20, rngs=rngs
+                        MapOperatorConfig(stochastic=False), fn=lambda x, _key: x + 20, rngs=rngs
                     ),
                 ],
             )
@@ -396,10 +396,10 @@ class TestBatchIntegration:
             strategy=CompositionStrategy.SEQUENTIAL,
             operators=[
                 MapOperator(
-                    MapOperatorConfig(stochastic=False), fn=lambda x, key: x * 2, rngs=rngs
+                    MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 2, rngs=rngs
                 ),
                 MapOperator(
-                    MapOperatorConfig(stochastic=False), fn=lambda x, key: x + 10, rngs=rngs
+                    MapOperatorConfig(stochastic=False), fn=lambda x, _key: x + 10, rngs=rngs
                 ),
             ],
         )

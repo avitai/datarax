@@ -50,6 +50,7 @@ def test_monitored_pipeline_with_jax_operations():
     # Define a transformer that uses the JAX operation
     def apply_jax_op(element, key):
         """Apply JAX transform to element data."""
+        del key
         new_data = {"value": jax_transform(element.data["value"])}
         return element.replace(data=new_data)
 
@@ -76,6 +77,7 @@ def test_monitored_pipeline_with_jax_operations():
 
 def _normalize_element(element, key):
     """Normalize element data to [0, 1] — gives each batch real tensor work."""
+    del key
     new_data = {k: v / (jnp.max(jnp.abs(v)) + 1e-8) for k, v in element.data.items()}
     return element.replace(data=new_data)
 

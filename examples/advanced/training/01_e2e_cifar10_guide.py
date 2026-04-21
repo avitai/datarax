@@ -71,7 +71,7 @@ import optax
 from flax import nnx
 
 # Datarax imports
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.core.config import BatchMixOperatorConfig
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
@@ -252,7 +252,7 @@ def create_train_pipeline(seed=42):
 
     # Build pipeline
     pipeline = (
-        from_source(source, batch_size=BATCH_SIZE)
+        build_source_pipeline(source, batch_size=BATCH_SIZE)
         .add(OperatorNode(prep))
         .add(OperatorNode(brightness))
         .add(OperatorNode(contrast))
@@ -295,7 +295,7 @@ def create_val_pipeline():
         rngs=nnx.Rngs(0),
     )
 
-    return from_source(source, batch_size=BATCH_SIZE).add(OperatorNode(prep))
+    return build_source_pipeline(source, batch_size=BATCH_SIZE).add(OperatorNode(prep))
 
 
 print("Pipeline factories created")

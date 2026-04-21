@@ -411,6 +411,24 @@ class TestPrefetchToDevice:
 
         assert len(prefetched) == 0
 
+    def test_prefetch_delegates_to_shared_helper(self, monkeypatch, placement):
+        """DevicePlacement should route prefetching through the shared adapter."""
+        calls = {}
+
+        def fake_prefetch_iterator(iterator, *, mode, size, device=None):
+            calls.update({"iterator": iterator, "mode": mode, "size": size, "device": device})
+            return iter(["prefetched"])
+
+        monkeypatch.setattr(
+            "datarax.distributed.device_placement.create_prefetch_stream",
+            fake_prefetch_iterator,
+        )
+        iterator = iter([1])
+        device = jax.devices()[0]
+
+        assert list(placement.prefetch_to_device(iterator, device, buffer_size=7)) == ["prefetched"]
+        assert calls == {"iterator": iterator, "mode": "thread", "size": 7, "device": device}
+
 
 class TestEdgeCases:
     """Tests for edge cases."""

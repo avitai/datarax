@@ -335,7 +335,7 @@ class TestPrepareTfdsBuilderBeamWorkers:
 
         with (
             patch("tensorflow_datasets.builder", return_value=mock_builder),
-            patch("datarax.sources.tfds_source._is_read_only_builder", return_value=False),
+            patch("datarax.sources.tfds_source._is_read_only_tfds_source", return_value=False),
             patch("tensorflow_datasets.download.DownloadConfig") as mock_dl_config,
         ):
             _prepare_tfds_builder("nsynth", None, False, None, beam_num_workers=4)
@@ -359,7 +359,7 @@ class TestPrepareTfdsBuilderBeamWorkers:
 
         with (
             patch("tensorflow_datasets.builder", return_value=mock_builder),
-            patch("datarax.sources.tfds_source._is_read_only_builder", return_value=False),
+            patch("datarax.sources.tfds_source._is_read_only_tfds_source", return_value=False),
         ):
             _prepare_tfds_builder("mnist", None, False, None, beam_num_workers=None)
 
@@ -376,7 +376,7 @@ class TestPrepareTfdsBuilderBeamWorkers:
 
         with (
             patch("tensorflow_datasets.builder", return_value=mock_builder),
-            patch("datarax.sources.tfds_source._is_read_only_builder", return_value=True),
+            patch("datarax.sources.tfds_source._is_read_only_tfds_source", return_value=True),
         ):
             _prepare_tfds_builder("nsynth", None, True, None, beam_num_workers=8)
 
@@ -428,7 +428,7 @@ class TestPrepareTfdsBuilder:
         mock_builder.__class__ = type("RegularBuilder", (), {})  # type: ignore[reportAttributeAccessIssue]
 
         with patch("tensorflow_datasets.builder", return_value=mock_builder) as mock_tfds_builder:
-            with patch("datarax.sources.tfds_source._is_read_only_builder", return_value=False):
+            with patch("datarax.sources.tfds_source._is_read_only_tfds_source", return_value=False):
                 result = _prepare_tfds_builder("mnist", None, False, None)
 
         mock_tfds_builder.assert_called_once_with("mnist", data_dir=None, try_gcs=False)
@@ -444,7 +444,7 @@ class TestPrepareTfdsBuilder:
         mock_builder = MagicMock()
 
         with patch("tensorflow_datasets.builder", return_value=mock_builder) as mock_tfds_builder:
-            with patch("datarax.sources.tfds_source._is_read_only_builder", return_value=True):
+            with patch("datarax.sources.tfds_source._is_read_only_tfds_source", return_value=True):
                 result = _prepare_tfds_builder("nsynth", None, True, None)
 
         mock_tfds_builder.assert_called_once_with("nsynth", data_dir=None, try_gcs=True)
@@ -460,7 +460,7 @@ class TestPrepareTfdsBuilder:
         mock_builder = MagicMock()
 
         with patch("tensorflow_datasets.builder", return_value=mock_builder) as mock_tfds_builder:
-            with patch("datarax.sources.tfds_source._is_read_only_builder", return_value=False):
+            with patch("datarax.sources.tfds_source._is_read_only_tfds_source", return_value=False):
                 _prepare_tfds_builder("cifar10", "/data", False, {"download_dir": "/tmp"})
 
         mock_tfds_builder.assert_called_once_with("cifar10", data_dir="/data", try_gcs=False)
@@ -476,7 +476,7 @@ class TestPrepareTfdsBuilder:
         kwargs = {"download_dir": "/tmp", "max_examples_per_split": 100}
 
         with patch("tensorflow_datasets.builder", return_value=mock_builder):
-            with patch("datarax.sources.tfds_source._is_read_only_builder", return_value=False):
+            with patch("datarax.sources.tfds_source._is_read_only_tfds_source", return_value=False):
                 _prepare_tfds_builder("mnist", None, False, kwargs)
 
         mock_builder.download_and_prepare.assert_called_once_with(
@@ -493,7 +493,7 @@ class TestEagerSourceTryGcsPassthrough:
     """Tests that TFDSEagerSource passes try_gcs through to TFDS."""
 
     def test_try_gcs_passed_to_load(self):
-        """try_gcs should be forwarded to tfds.load() in _load_all_to_jax."""
+        """try_gcs should be forwarded to tfds.load() in _load_all_from_backend_to_jax."""
         from unittest.mock import MagicMock, patch
 
         # Create a mock dataset that returns one element
@@ -678,7 +678,7 @@ def test_from_tfds_with_shuffling():
         source = from_tfds("mnist", "test[:20]", shuffle=True, seed=42, rngs=nnx.Rngs(0))
 
         # Should have shuffling enabled
-        assert source.shuffle is True  # type: ignore[reportAttributeAccessIssue]
+        assert source.is_random_order is True  # type: ignore[reportAttributeAccessIssue]
 
     except TFDS_TEST_SKIP_EXCEPTIONS as e:
         pytest.skip(f"Could not load MNIST dataset: {e}")

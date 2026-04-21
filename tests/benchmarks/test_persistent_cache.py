@@ -11,6 +11,8 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from datarax.utils.console import emit
+
 
 @pytest.mark.benchmark
 class TestPersistentCache:
@@ -26,6 +28,8 @@ class TestPersistentCache:
     def test_cache_hit_vs_miss(self, tmp_path):
         """Measures compilation time with and without cache hit."""
 
+        del tmp_path
+
         def heavy_compute(x):
             for _ in range(50):
                 x = jnp.sin(x) @ x.T
@@ -40,13 +44,13 @@ class TestPersistentCache:
         _ = heavy_jit(dummy_input).block_until_ready()
         cold_compile_time = time.perf_counter() - start_time
 
-        print(f"\nCold Compile Time: {cold_compile_time:.4f} s")
+        emit(f"\nCold Compile Time: {cold_compile_time:.4f} s")
 
         # Hot runtime (no re-compile)
         start_time = time.perf_counter()
         _ = heavy_jit(dummy_input).block_until_ready()
         hot_run_time = time.perf_counter() - start_time
-        print(f"Hot Run Time: {hot_run_time:.4f} s")
+        emit(f"Hot Run Time: {hot_run_time:.4f} s")
 
         assert hot_run_time < cold_compile_time * 0.1, "Hot run should be significantly faster"
 
@@ -55,4 +59,4 @@ class TestPersistentCache:
             p = Path(default_idx_cache)
             if p.exists():
                 cache_files = list(p.glob("*"))
-                print(f"Cache Directory ({default_idx_cache}) contains {len(cache_files)} entries.")
+                emit(f"Cache Directory ({default_idx_cache}) contains {len(cache_files)} entries.")

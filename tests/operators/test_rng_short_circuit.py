@@ -18,6 +18,7 @@ from datarax.operators.map_operator import MapOperator, MapOperatorConfig
 
 def _identity_fn(element, key):
     """Deterministic identity — ignores key."""
+    del key
     return element
 
 
@@ -30,6 +31,7 @@ def _stochastic_fn(element, key):
 
 def _map_fn(data, state, metadata, *, key=None):
     """Simple map function."""
+    del key
     return data, state, metadata
 
 

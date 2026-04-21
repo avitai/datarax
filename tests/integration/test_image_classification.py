@@ -20,6 +20,8 @@ from typing import Any
 
 import pytest
 
+from datarax.utils.console import emit
+
 
 # Skip entire module on macOS ARM64 - TensorFlow import hangs during pytest collection
 # due to Metal/GPU device detection issues. This is a known upstream issue:
@@ -169,6 +171,7 @@ def create_preprocess_operator(rngs: nnx.Rngs) -> ElementOperator:
         Returns:
             Element with normalized image data
         """
+        del key
         data = element.data
 
         # Convert images to float and normalize to [0, 1]
@@ -349,7 +352,7 @@ def _run_training_epochs(
                 break
 
         if epoch_losses:
-            print(
+            emit(
                 f"Epoch {epoch + 1}: Loss = {np.mean(epoch_losses):.4f}, "
                 f"Accuracy = {np.mean(epoch_accuracies):.4f}"
             )
@@ -468,7 +471,7 @@ def test_image_classification_end_to_end():
     if test_losses:
         final_loss = np.mean(test_losses)
         final_acc = np.mean(test_accuracies)
-        print(f"Test: Loss = {final_loss:.4f}, Accuracy = {final_acc:.4f}")
+        emit(f"Test: Loss = {final_loss:.4f}, Accuracy = {final_acc:.4f}")
 
         # Assert training improved the model
         assert final_acc > 0.0, "Model training failed to improve accuracy"

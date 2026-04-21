@@ -1,0 +1,21 @@
+[importlinter]
+root_package = datarax
+
+[importlinter:contract:layers]
+name = Datarax layered architecture
+type = layers
+layers =
+    datarax.cli
+    datarax.monitoring
+    datarax.dag
+    datarax.operators
+    datarax.sources
+    datarax.distributed
+    datarax.sharding
+    datarax.control
+    datarax.memory
+    datarax.performance
+    datarax.samplers
+    datarax.batching
+    datarax.utils
+    datarax.core

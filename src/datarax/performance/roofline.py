@@ -13,6 +13,8 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
+from datarax.performance.synchronization import block_until_ready_tree
+
 
 logger = logging.getLogger(__name__)
 
@@ -153,15 +155,13 @@ class RooflineAnalyzer:
         # Warmup
         for _ in range(3):
             result = compiled_func(*args, **kwargs)
-            if hasattr(result, "block_until_ready"):
-                result.block_until_ready()
+            block_until_ready_tree(result)
 
         # Benchmark
         start_time = time.time()
         for _ in range(10):
             result = compiled_func(*args, **kwargs)
-            if hasattr(result, "block_until_ready"):
-                result.block_until_ready()
+            block_until_ready_tree(result)
         actual_time = (time.time() - start_time) / 10
 
         # Calculate efficiency
@@ -298,6 +298,7 @@ class RooflineAnalyzer:
         Returns:
             Optimal batch size
         """
+        del sample_input
         hw_specs = (
             self.hw_specs
             if target_hardware is None

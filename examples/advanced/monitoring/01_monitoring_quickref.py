@@ -111,7 +111,7 @@ print(f"Data source: {len(data)} samples")
 """
 ## Step 2: Create Monitored Pipeline
 
-Use `MonitoredPipeline` instead of the standard `from_source()` API
+Use `MonitoredPipeline` instead of the standard `build_source_pipeline()` API
 when you need metrics collection.
 """
 

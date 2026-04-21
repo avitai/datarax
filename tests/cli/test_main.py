@@ -48,6 +48,7 @@ class TestCLIMain:
     def test_run_command_with_valid_config(self, tmp_path, capsys):
         """Test run command with valid config file."""
         # Create a temporary config file
+        del capsys
         config_file = tmp_path / "pipeline.toml"
         config_file.write_text("""
 [pipeline]
@@ -136,7 +137,7 @@ name = "test_pipeline"
 type = "memory"
         """)
 
-        with patch("datarax.cli.main.validate_config") as mock_validate:
+        with patch("datarax.cli.main.is_config_valid") as mock_validate:
             mock_validate.return_value = True
             exit_code = main(["validate", "--config-path", str(config_file)])
 
@@ -176,6 +177,7 @@ batch_size = 32
 
     def test_list_command(self, capsys):
         """Test list command to show available components."""
+        del capsys
         with patch("datarax.cli.main.list_components") as mock_list:
             mock_list.return_value = {
                 "sources": ["memory", "tfds", "huggingface"],
@@ -191,7 +193,7 @@ batch_size = 32
         """Test create command for generating pipeline templates."""
         output_file = tmp_path / "new_pipeline.toml"
 
-        with patch("datarax.cli.main.create_pipeline_template") as mock_create:
+        with patch("datarax.cli.main.is_pipeline_template_written_to_path") as mock_create:
             mock_create.return_value = True
             exit_code = main(
                 ["create", "--output", str(output_file), "--template", "image_classification"]
@@ -297,7 +299,7 @@ directory = "./checkpoints"
 save_interval = 1000
         """)
 
-        with patch("datarax.cli.main.validate_config") as mock_validate:
+        with patch("datarax.cli.main.is_config_valid") as mock_validate:
             mock_validate.return_value = True
             exit_code = main(["validate", "--config-path", str(config_file)])
 

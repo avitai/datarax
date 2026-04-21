@@ -19,6 +19,7 @@ from datarax.core.data_source import DataSourceModule
 from datarax.core.metadata import MetadataManager, RecordMetadata
 from datarax.samplers.index_shuffle import index_shuffle
 from datarax.sources._eager_source_ops import configure_stochastic_from_shuffle
+from datarax.sources._grain_bridge import records_from_batched_mapping, validate_index_batch
 
 
 logger = logging.getLogger(__name__)
@@ -145,7 +146,7 @@ class MemorySource(DataSourceModule):
 
         # Store data and config values
         self.data = data
-        self.shuffle = config.shuffle
+        self._is_random_order = config.shuffle
         self.prefetch_size = config.prefetch_size
 
         # Calculate and validate length
@@ -231,7 +232,7 @@ class MemorySource(DataSourceModule):
         num_workers = self.config.num_workers
         shard_id = self.config.shard_id or 0
 
-        if self.shuffle and self.rngs is not None:
+        if self.is_random_order and self.rngs is not None:
             # Lazy shuffle: compute each index on-the-fly via Feistel cipher
             seed = self._derive_shuffle_seed()
             if num_workers > 1:
@@ -269,6 +270,14 @@ class MemorySource(DataSourceModule):
 
         return self._get_element(index)
 
+    def _getitems(self, indices: Sequence[int]) -> list[Any]:
+        """Get multiple elements by index for Grain batched random access."""
+        resolved = validate_index_batch(indices, self.length)
+        if isinstance(self.data, dict):
+            batch = self._gather_batch(resolved)
+            return records_from_batched_mapping(batch, len(resolved))
+        return [self._get_element(index) for index in resolved]
+
     def get_batch(self, batch_size: int, key: jax.Array | None = None) -> Any:
         """Get next batch of data.
 
@@ -285,7 +294,7 @@ class MemorySource(DataSourceModule):
         # Get indices for this batch
         if key is not None:
             # Stateless mode — derive seed from the provided key
-            if self.shuffle:
+            if self.is_random_order:
                 seed = int(jax.random.bits(key))
                 batch_indices = [
                     index_shuffle(i, seed, self.length) for i in range(min(batch_size, self.length))
@@ -308,7 +317,7 @@ class MemorySource(DataSourceModule):
                 self._shuffle_seed = None
                 self._shuffled_indices.set_value(None)
 
-            if not self.shuffle:
+            if not self.is_random_order:
                 # Sequential: use slicing (zero-copy for arrays)
                 return self._gather_batch_slice(start, end)
 
@@ -351,7 +360,7 @@ class MemorySource(DataSourceModule):
         Returns:
             List of indices in iteration order.
         """
-        if self.shuffle and self.rngs is not None:
+        if self.is_random_order and self.rngs is not None:
             self.epoch.get_value()
             shuffled_indices = self._shuffled_indices.get_value()
             if shuffled_indices is None:
@@ -450,6 +459,7 @@ class MemorySource(DataSourceModule):
         Args:
             seed: Optional seed for reproducibility (ignored for MemorySource)
         """
+        del seed
         self.index.set_value(0)
         self.epoch.set_value(0)
         self._shuffle_seed = None
@@ -460,14 +470,19 @@ class MemorySource(DataSourceModule):
         if self.metadata_manager is not None:
             self.metadata_manager.reset()
 
-    def set_shuffle(self, shuffle: bool) -> None:
-        """Enable or disable shuffling.
+    @property
+    def is_random_order(self) -> bool:
+        """Whether this source randomizes iteration order."""
+        return self._is_random_order
+
+    def set_random_order(self, enabled: bool) -> None:
+        """Enable or disable random-order iteration.
 
         Args:
-            shuffle: Whether to shuffle data
+            enabled: Whether to randomize iteration order.
         """
-        self.shuffle = shuffle
-        if not shuffle:
+        self._is_random_order = enabled
+        if not enabled:
             self._shuffle_seed = None
             self._shuffled_indices.set_value(None)
 
@@ -500,7 +515,7 @@ class MemorySource(DataSourceModule):
         source_info = {
             "source": "memory",
             "index": index,
-            "shuffle_enabled": self.shuffle,
+            "random_order_enabled": self.is_random_order,
         }
         metadata = self.metadata_manager.create_metadata(
             record_key=index,
@@ -544,7 +559,7 @@ class MemorySource(DataSourceModule):
             source_info = {
                 "source": "memory",
                 "batch_position": i,
-                "shuffle_enabled": self.shuffle,
+                "random_order_enabled": self.is_random_order,
             }
             metadata = self.metadata_manager.create_metadata(
                 record_key=f"batch_{self.metadata_manager.state.get_value()['batch_idx']}_{i}",
@@ -576,7 +591,7 @@ class MemorySource(DataSourceModule):
             f"MemorySource("
             f"type={data_type}, "
             f"length={self.length}, "
-            f"shuffle={self.shuffle}, "
+            f"random_order={self.is_random_order}, "
             f"index={self.index.get_value()}/{self.length}, "
             f"epoch={self.epoch.get_value()})"
         )

@@ -5,7 +5,7 @@ and validate JAX PyTrees and Datarax Batch objects. It encompasses:
 
 - Type checking utilities (is_array, is_container, is_jax_array)
 - Batch-specific leaf predicates (is_batch_leaf, is_non_jax_leaf)
-- Batch manipulation helpers (split_batch, concatenate_batches)
+- Batch manipulation helpers (split_batch_for_devices, concatenate_batch_sequence)
 - Dimensionality transformations (add/remove batch dimensions)
 - Structure introspection and consistency validation
 """
@@ -174,7 +174,7 @@ def remove_batch_dimension(batch: Batch) -> Element:
     return batch.get_element(0)
 
 
-def split_batch(batch: Batch, num_splits: int) -> list[Batch]:
+def split_batch_for_devices(batch: Batch, num_splits: int) -> list[Batch]:
     """Split a batch into multiple smaller batches.
 
     Delegates to Batch.split_for_devices() for consistent implementation.
@@ -193,10 +193,10 @@ def split_batch(batch: Batch, num_splits: int) -> list[Batch]:
     return batch.split_for_devices(num_splits)
 
 
-def concatenate_batches(batches: list[Batch]) -> Batch:
+def concatenate_batch_sequence(batches: list[Batch]) -> Batch:
     """Concatenate multiple batches into a single batch.
 
-    Delegates to BatchOps.concatenate_batches() for consistent implementation.
+    Delegates to BatchOps.concatenate_batch_sequence() for consistent implementation.
 
     Args:
         batches: List of Batch objects with same structure
@@ -211,7 +211,7 @@ def concatenate_batches(batches: list[Batch]) -> Batch:
         raise ValueError("Cannot concatenate empty list of batches")
 
     # Delegate to existing BatchOps method (DRY principle)
-    return BatchOps.concatenate_batches(batches)
+    return BatchOps.concatenate_batch_sequence(batches)
 
 
 def apply_to_batch_dimension(
@@ -241,7 +241,7 @@ def apply_to_batch_dimension(
     return jax.tree.map(apply_fn, batch.data.get_value())
 
 
-def validate_batch_consistency(batch: Batch) -> bool:
+def is_batch_consistent(batch: Batch) -> bool:
     """Validate that all arrays in a batch have consistent batch dimensions.
 
     Args:
@@ -312,6 +312,6 @@ def get_pytree_structure_info(data: Element | Batch) -> dict[str, Any]:
             "leaf_shapes": leaf_shapes,
             "leaf_dtypes": leaf_dtypes,
             "is_single_element": False,
-            "is_batch_consistent": validate_batch_consistency(batch),
+            "is_batch_consistent": is_batch_consistent(batch),
             "num_elements": len(states_val),
         }

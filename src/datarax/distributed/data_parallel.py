@@ -1,7 +1,7 @@
 """Data parallelism utilities for Datarax.
 
 This module provides functions for data-parallel training in JAX models,
-supporting both modern SPMD (via nnx.jit + mesh) and legacy pmap patterns.
+centered on current SPMD APIs via ``nnx.jit`` and meshes.
 """
 
 import logging
@@ -34,7 +34,7 @@ def create_data_parallel_sharding(mesh: Mesh, data_axis: str = "data") -> Shardi
     return jax.sharding.NamedSharding(mesh, PartitionSpec(data_axis))
 
 
-def shard_batch(batch: Batch, sharding: Sharding) -> Batch:
+def place_batch_on_shards(batch: Batch, sharding: Sharding) -> Batch:
     """Shard a batch of data across devices.
 
     Args:
@@ -145,7 +145,7 @@ def data_parallel_train_step(
     return parallel_train_step(state, batch)
 
 
-def shard_model_state(
+def place_model_state_on_shards(
     state: Any,
     mesh: Mesh,
     param_sharding: str | dict[str, PartitionSpec] | None = None,
@@ -184,7 +184,35 @@ def shard_model_state(
     return jax.device_put(state, sharding)
 
 
-def all_reduce_gradients(
+def place_nnx_state_on_shards(
+    state: nnx.State,
+    mesh: Mesh,
+    filter_sharding: nnx.StateSharding | dict[Any, PartitionSpec | Sharding],
+) -> nnx.State:
+    """Shard a Flax NNX state tree using current NNX sharding helpers."""
+    state_sharding = (
+        filter_sharding
+        if isinstance(filter_sharding, nnx.StateSharding)
+        else nnx.StateSharding(filter_sharding)
+    )
+    sharded_flat = []
+    for path, variable in nnx.to_flat_state(state):
+        spec_or_sharding = state_sharding.map_prefix(path, variable)
+        sharding = (
+            spec_or_sharding
+            if isinstance(spec_or_sharding, Sharding)
+            else jax.sharding.NamedSharding(mesh, spec_or_sharding)
+        )
+        value = variable[...]
+        if isinstance(value, jax.Array):
+            value = jax.reshard(value, sharding)
+        else:
+            value = jax.device_put(value, sharding)
+        sharded_flat.append((path, variable.replace(value=value)))
+    return nnx.from_flat_state(sharded_flat)
+
+
+def reduce_gradients_across_devices(
     gradients: Any,
     reduce_type: str = "mean",
     axis_name: str = "batch",
@@ -213,7 +241,7 @@ def all_reduce_gradients(
     raise ValueError(f"Unsupported reduce_type: {reduce_type}")
 
 
-def reduce_gradients(gradients: Any, reduce_type: str = "mean") -> Any:
+def reduce_gradient_tree(gradients: Any, reduce_type: str = "mean") -> Any:
     """Reduce gradients using standard JAX operations on global arrays.
 
     Works in SPMD contexts (inside nnx.jit with mesh). The XLA compiler

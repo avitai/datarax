@@ -111,7 +111,7 @@ class SamplerModule(StructuralModule):
 
         return None
 
-    def __call__(self, n: int, *args, **kwargs) -> list[int]:  # type: ignore[override]
+    def __call__(self, n: int, *_args, **_kwargs) -> list[int]:  # type: ignore[override]
         """Enhanced sampling interface with caching and statistics.
 
         Args:

@@ -97,7 +97,7 @@ class ConfigSchema:
                 value = config[name]
 
                 # Validate type
-                if not SchemaValidator.validate_type(value, schema_field.type):
+                if not is_schema_type_valid(value, schema_field.type):
                     raise ValidationError(f"Field '{name}' should be of type {schema_field.type}")
 
                 # Apply custom validator if provided
@@ -138,56 +138,38 @@ class ConfigSchema:
 SchemaType = type[Any] | ConfigSchema
 
 
-class SchemaValidator:
-    """Utility class for validating configuration values against schema types."""
+def is_schema_type_valid(value: Any, expected_type: SchemaType) -> bool:
+    """Validate that a value matches an expected schema type."""
+    if expected_type in (str, int, float, bool):
+        return isinstance(value, expected_type)
 
-    @staticmethod
-    def validate_type(value: Any, expected_type: SchemaType) -> bool:
-        """Validate that a value matches an expected type.
+    if expected_type == list or expected_type == type[list]:
+        return isinstance(value, list)
 
-        Args:
-            value: The value to validate
-            expected_type: The expected type of the value
+    if expected_type == dict or expected_type == type[dict]:
+        return isinstance(value, dict)
 
-        Returns:
-            True if the value matches the expected type, False otherwise
-        """
-        # Handle primitive types
-        if expected_type in (str, int, float, bool):
-            return isinstance(value, expected_type)
+    if isinstance(expected_type, type) and issubclass(expected_type, ConfigSchema):
+        if not isinstance(value, dict):
+            return False
 
-        # Handle lists
-        if expected_type == list or expected_type == type[list]:
-            return isinstance(value, list)
+        try:
+            expected_type.validate(value)
+            return True
+        except ValidationError:
+            return False
 
-        # Handle dictionaries
-        if expected_type == dict or expected_type == type[dict]:
-            return isinstance(value, dict)
+    if isinstance(expected_type, ConfigSchema):
+        if not isinstance(value, dict):
+            return False
 
-        # Handle ConfigSchema classes
-        if isinstance(expected_type, type) and issubclass(expected_type, ConfigSchema):
-            if not isinstance(value, dict):
-                return False
+        try:
+            expected_type.validate(value)
+            return True
+        except ValidationError:
+            return False
 
-            try:
-                expected_type.validate(value)
-                return True
-            except ValidationError:
-                return False
-
-        # Handle ConfigSchema instances
-        if isinstance(expected_type, ConfigSchema):
-            if not isinstance(value, dict):
-                return False
-
-            try:
-                expected_type.validate(value)
-                return True
-            except ValidationError:
-                return False
-
-        # Unknown type
-        return False
+    return False
 
 
 @dataclass

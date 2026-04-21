@@ -48,6 +48,7 @@ class TestRayDataAdapterLifecycle:
     """
 
     def test_setup_teardown(self, ray_shutdown, cv1_small_config, small_image_data):
+        del ray_shutdown
         from benchmarks.adapters.ray_data_adapter import RayDataAdapter
 
         adapter = RayDataAdapter()
@@ -55,6 +56,7 @@ class TestRayDataAdapterLifecycle:
         adapter.teardown()
 
     def test_warmup(self, ray_shutdown, cv1_small_config, small_image_data):
+        del ray_shutdown
         from benchmarks.adapters.ray_data_adapter import RayDataAdapter
 
         adapter = RayDataAdapter()
@@ -68,6 +70,7 @@ class TestRayDataAdapterLifecycle:
         cv1_small_config,
         small_image_data,
     ):
+        del ray_shutdown
         from benchmarks.adapters.ray_data_adapter import RayDataAdapter
 
         adapter = RayDataAdapter()
@@ -84,6 +87,7 @@ class TestRayDataAdapterLifecycle:
         cv1_small_config,
         small_image_data,
     ):
+        del ray_shutdown
         from benchmarks.adapters.ray_data_adapter import RayDataAdapter
 
         adapter = RayDataAdapter()
@@ -99,6 +103,7 @@ class TestRayDataAdapterLifecycle:
         cv1_small_config,
         small_image_data,
     ):
+        del ray_shutdown
         from benchmarks.adapters.ray_data_adapter import RayDataAdapter
 
         adapter = RayDataAdapter()

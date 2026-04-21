@@ -225,49 +225,29 @@ class DAGExecutor(nnx.Module):
         self._validate_graph()
 
     @property
-    def enable_caching(self) -> bool:
+    def is_caching_enabled(self) -> bool:
         """Whether executor caching is enabled."""
         return self._config_state.enable_caching
 
-    @enable_caching.setter
-    def enable_caching(self, value: bool) -> None:
-        self._config_state.enable_caching = value
-
     @property
-    def jit_compile(self) -> bool:
+    def is_jit_compilation_enabled(self) -> bool:
         """Whether executor uses JIT compilation."""
         return self._config_state.jit_compile
 
-    @jit_compile.setter
-    def jit_compile(self, value: bool) -> None:
-        self._config_state.jit_compile = value
-
     @property
-    def enforce_batch(self) -> bool:
+    def is_batch_enforced(self) -> bool:
         """Whether batch-first ordering is enforced."""
         return self._config_state.enforce_batch
 
-    @enforce_batch.setter
-    def enforce_batch(self, value: bool) -> None:
-        self._config_state.enforce_batch = value
-
     @property
-    def prefetch_size(self) -> int:
-        """Configured prefetch size."""
+    def buffer_depth(self) -> int:
+        """Configured host buffer depth."""
         return self._config_state.prefetch_size
 
-    @prefetch_size.setter
-    def prefetch_size(self, value: int) -> None:
-        self._config_state.prefetch_size = value
-
     @property
-    def device_prefetch(self) -> bool:
+    def is_device_queue_enabled(self) -> bool:
         """Whether two-stage device prefetch is enabled."""
         return self._config_state.device_prefetch
-
-    @device_prefetch.setter
-    def device_prefetch(self, value: bool) -> None:
-        self._config_state.device_prefetch = value
 
     @property
     def name(self) -> str:
@@ -279,11 +259,11 @@ class DAGExecutor(nnx.Module):
         self._config_state.name = value
 
     @property
-    def _rngs_seed(self) -> nnx.Rngs | None:
+    def _rngs_root(self) -> nnx.Rngs | None:
         return self._runtime_state.rngs_seed
 
-    @_rngs_seed.setter
-    def _rngs_seed(self, value: nnx.Rngs | None) -> None:
+    @_rngs_root.setter
+    def _rngs_root(self, value: nnx.Rngs | None) -> None:
         self._runtime_state.rngs_seed = value
 
     @property
@@ -295,43 +275,27 @@ class DAGExecutor(nnx.Module):
         self._runtime_state.rngs = value
 
     @property
-    def _needs_rng(self) -> bool | None:
-        return self._runtime_state.needs_rng
-
-    @_needs_rng.setter
-    def _needs_rng(self, value: bool | None) -> None:
-        self._runtime_state.needs_rng = value
-
-    @property
-    def _has_stateful_ops(self) -> bool | None:
-        return self._runtime_state.has_stateful_ops
-
-    @_has_stateful_ops.setter
-    def _has_stateful_ops(self, value: bool | None) -> None:
-        self._runtime_state.has_stateful_ops = value
-
-    @property
-    def _iteration_count(self) -> int:
+    def _iteration_total(self) -> int:
         return self._runtime_state.iteration_count
 
-    @_iteration_count.setter
-    def _iteration_count(self, value: int) -> None:
+    @_iteration_total.setter
+    def _iteration_total(self, value: int) -> None:
         self._runtime_state.iteration_count = value
 
     @property
-    def _epoch_count(self) -> int:
+    def _epoch_total(self) -> int:
         return self._runtime_state.epoch_count
 
-    @_epoch_count.setter
-    def _epoch_count(self, value: int) -> None:
+    @_epoch_total.setter
+    def _epoch_total(self, value: int) -> None:
         self._runtime_state.epoch_count = value
 
     @property
-    def _source_node(self) -> DataSourceNode | None:
+    def _input_node(self) -> DataSourceNode | None:
         return self._runtime_state.source_node
 
-    @_source_node.setter
-    def _source_node(self, value: DataSourceNode | None) -> None:
+    @_input_node.setter
+    def _input_node(self, value: DataSourceNode | None) -> None:
         self._runtime_state.source_node = value
 
     @property
@@ -351,15 +315,15 @@ class DAGExecutor(nnx.Module):
         self._runtime_state.iterator = value
 
     @property
-    def _cache(self) -> dict[int, Any] | None:
+    def _memo(self) -> dict[int, Any] | None:
         return self._runtime_state.cache
 
-    @_cache.setter
-    def _cache(self, value: dict[int, Any] | None) -> None:
+    @_memo.setter
+    def _memo(self, value: dict[int, Any] | None) -> None:
         self._runtime_state.cache = value
 
     @property
-    def _jit_execute(self) -> JitFn | JitWrapped | partial | None:
+    def _compiled_fn(self) -> JitFn | JitWrapped | partial | None:
         """JIT-compiled execute function cached in runtime state."""
         return self._runtime_state.jit_execute
 
@@ -379,16 +343,16 @@ class DAGExecutor(nnx.Module):
             return self._rngs
 
         # If user provided explicit rngs, always use them
-        if self._rngs_seed is not None:
-            self._rngs = self._rngs_seed
+        if self._rngs_root is not None:
+            self._rngs = self._rngs_root
             return self._rngs
 
         # Check if pipeline needs RNG (cache result)
-        if self._needs_rng is None:
-            self._needs_rng = self._detect_stochastic_ops()
+        if self._runtime_state.needs_rng is None:
+            self._runtime_state.needs_rng = self._has_stochastic_ops()
 
         # Only create default RNG if pipeline has stochastic ops
-        if self._needs_rng:
+        if self._runtime_state.needs_rng:
             new_rngs = nnx.Rngs(0)
             self._rngs = new_rngs
             return self._rngs
@@ -396,7 +360,7 @@ class DAGExecutor(nnx.Module):
         # Pipeline is deterministic and user didn't provide rngs - return None
         return None
 
-    def _any_node_matches(self, predicate: Callable[[Node], bool]) -> bool:
+    def _has_matching_node(self, predicate: Callable[[Node], bool]) -> bool:
         """Walk the DAG and return True if any leaf node satisfies predicate.
 
         Handles recursion into composite nodes (Sequential, Parallel, Branch)
@@ -409,18 +373,18 @@ class DAGExecutor(nnx.Module):
             True if any node in the graph satisfies the predicate.
         """
 
-        def walk(node: Node) -> bool:
+        def has_match(node: Node) -> bool:
             if isinstance(node, Sequential):
-                return any(walk(n) for n in node.nodes)
+                return any(has_match(n) for n in node.nodes)
             if isinstance(node, Parallel):
-                return any(walk(n) for n in node.nodes)
+                return any(has_match(n) for n in node.nodes)
             if isinstance(node, Branch):
-                return walk(node.true_path) or walk(node.false_path)
+                return has_match(node.true_path) or has_match(node.false_path)
             return predicate(node)
 
-        return walk(self.graph)
+        return has_match(self.graph)
 
-    def _detect_stochastic_ops(self) -> bool:
+    def _has_stochastic_ops(self) -> bool:
         """Detect if pipeline contains any stochastic operations.
 
         Traverses the DAG to check for stochastic nodes/operators.
@@ -442,17 +406,17 @@ class DAGExecutor(nnx.Module):
                     return True
             return False
 
-        return self._any_node_matches(is_stochastic)
+        return self._has_matching_node(is_stochastic)
 
-    def _detect_stateful_ops(self) -> bool:
+    def _has_stateful_ops(self) -> bool:
         """Detect if pipeline contains stateful operators that affect output.
 
         Checks for operators with config.stateful=True. This is an explicit
         marker for operators whose output depends on internal mutable state
-        (not just diagnostic counters like _iteration_count).
+        (not just diagnostic counters like _iteration_total).
 
         Note: This check is deliberately conservative. Most operators with
-        _iteration_count use it for diagnostics only, not to affect output.
+        _iteration_total use it for diagnostics only, not to affect output.
         Only operators explicitly marked as stateful=True will disable caching.
 
         Returns:
@@ -466,7 +430,7 @@ class DAGExecutor(nnx.Module):
                     return getattr(operator.config, "stateful", False)
             return False
 
-        return self._any_node_matches(is_stateful)
+        return self._has_matching_node(is_stateful)
 
     def _topological_sort(self) -> list[Node]:
         """Flatten the graph tree into a topological execution order.
@@ -617,11 +581,11 @@ class DAGExecutor(nnx.Module):
 
     def _set_source_node(self, node: DataSourceNode) -> None:
         """Set source node outside the graph execution chain."""
-        self._source_node = nnx.data(node)
+        self._input_node = nnx.data(node)
 
     def _enforce_batch_order(self, node: Node) -> None:
         """Enforce batch-first operator ordering when configured."""
-        if not self.enforce_batch:
+        if not self.is_batch_enforced:
             return
         if isinstance(node, BatchNode):
             self._batch_node = nnx.data(node)
@@ -643,8 +607,8 @@ class DAGExecutor(nnx.Module):
         """Invalidate derived execution caches after graph mutation."""
         self._runtime_state.jit_execute = None
         self._runtime_state.fused_step_cache.clear()
-        self._needs_rng = None
-        self._has_stateful_ops = None
+        self._runtime_state.needs_rng = None
+        self._runtime_state.has_stateful_ops = None
 
     def parallel(self, nodes: list[Node]) -> "DAGExecutor":
         """Add parallel branches to the pipeline.
@@ -766,7 +730,7 @@ class DAGExecutor(nnx.Module):
             Basic piping:
 
             ```python
-            pipeline = from_source(source) >> normalize >> augment
+            pipeline = build_source_pipeline(source) >> normalize >> augment
             ```
         """
         # _normalize_added_node handles OperatorModule → OperatorNode conversion
@@ -783,7 +747,7 @@ class DAGExecutor(nnx.Module):
             Processed data
         """
         # Increment iteration count for each pipeline execution
-        self._iteration_count += 1
+        self._iteration_total += 1
 
         # If no RNG provided, create one if we have rngs
         if key is None and hasattr(self, "rngs") and self.rngs is not None:
@@ -797,17 +761,17 @@ class DAGExecutor(nnx.Module):
         Returns:
             Iterator that yields batches
         """
-        if self._source_node is None:
+        if self._input_node is None:
             raise ValueError("No data source in pipeline. Add a DataSourceNode first.")
 
-        if self.enforce_batch and self._batch_node is None:
+        if self.is_batch_enforced and self._batch_node is None:
             raise ValueError(
                 "Batch-first enforcement: No BatchNode in pipeline. "
                 "Add batch(batch_size) to the pipeline."
             )
 
         self._iterator = nnx.data(self._create_iterator())
-        self._epoch_count += 1
+        self._epoch_total += 1
         return self
 
     def __next__(self) -> Any:
@@ -843,11 +807,11 @@ class DAGExecutor(nnx.Module):
         Returns:
             True if batch-first path is available.
         """
-        if self._source_node is None or self._batch_node is None:
+        if self._input_node is None or self._batch_node is None:
             return False
 
         # Check if source has get_batch method
-        source = self._source_node.source
+        source = self._input_node.source
         if not hasattr(source, "get_batch"):
             return False
 
@@ -1039,7 +1003,7 @@ class DAGExecutor(nnx.Module):
                     data, states = op._apply_on_raw(data, states)
         else:
             # No operators — keep as numpy for zero-copy memory efficiency.
-            data = self._normalize_batch_data(batch_data)
+            data = self._normalize_batch_payload(batch_data)
             states = {}
 
         if data:
@@ -1050,7 +1014,7 @@ class DAGExecutor(nnx.Module):
         return BatchView(data=data, states=states, batch_size=batch_size)
 
     @staticmethod
-    def _normalize_batch_data(batch_data: Any) -> dict:
+    def _normalize_batch_payload(batch_data: Any) -> dict:
         """Normalize batch data to dict format without JAX conversion.
 
         Unlike _convert_to_jax_arrays, this keeps numpy arrays as numpy
@@ -1092,9 +1056,9 @@ class DAGExecutor(nnx.Module):
         Yields:
             Batches created directly from source data.
         """
-        assert self._source_node is not None, "No source node configured"
+        assert self._input_node is not None, "No source node configured"
         assert self._batch_node is not None, "No batch node configured"
-        source = self._source_node.source
+        source = self._input_node.source
         batch_size = self._batch_node.batch_size
         drop_remainder = self._batch_node.drop_remainder
         total_samples = len(source)
@@ -1126,14 +1090,14 @@ class DAGExecutor(nnx.Module):
             The original iterator if prefetch is disabled, otherwise a
             prefetch-wrapped iterator (optionally with device prefetch).
         """
-        if self.prefetch_size <= 0:
+        if self.buffer_depth <= 0:
             return raw_iter
 
         from datarax.control.prefetcher import DevicePrefetcher, Prefetcher
 
-        source_iter = Prefetcher(buffer_size=self.prefetch_size).prefetch(raw_iter)
-        if self.device_prefetch:
-            source_iter = DevicePrefetcher(buffer_size=max(self.prefetch_size // 2, 1)).prefetch(
+        source_iter = Prefetcher(buffer_size=self.buffer_depth).prefetch(raw_iter)
+        if self.is_device_queue_enabled:
+            source_iter = DevicePrefetcher(buffer_size=max(self.buffer_depth // 2, 1)).prefetch(
                 source_iter
             )
         return source_iter
@@ -1159,11 +1123,11 @@ class DAGExecutor(nnx.Module):
         raw_iter = self._create_batch_first_iterator()
         source_iter = self._wrap_with_prefetch(raw_iter)
         try:
-            # Increment _iteration_count on the consumer side (not in
+            # Increment _iteration_total on the consumer side (not in
             # _process_batch_from_source) so prefetcher background thread
             # doesn't race ahead of the actual consumption count.
             for batch in source_iter:
-                self._iteration_count += 1
+                self._iteration_total += 1
                 yield batch
         finally:
             close_fn = getattr(source_iter, "close", None)
@@ -1172,40 +1136,42 @@ class DAGExecutor(nnx.Module):
 
     def _iterate_element_by_element(self) -> Iterator[Any]:
         """Element-by-element fallback for complex pipelines."""
-        if self._source_node is None:
+        if self._input_node is None:
             raise RuntimeError("No data source node found in DAG")
-        source_iter = iter(self._source_node)
-
-        # Temporarily disable caching for iteration
-        # Caching during iteration can cause issues with buffering nodes
-        saved_cache = self._cache
-        self._cache = None
+        source_iter = iter(self._input_node)
 
         try:
             for element in source_iter:
                 key = None
                 if self.rngs is not None:
-                    self._iteration_count += 1
+                    self._iteration_total += 1
                     key = self.rngs()
 
-                result = self._execute(self.graph, element, key)
+                result = self._execute(self.graph, element, key, use_cache=False)
                 if result is not None:
                     yield result
 
-            yield from self._flush_all_buffers()
+            yield from self._flush_all_buffers(use_cache=False)
         finally:
-            self._cache = saved_cache
             close_fn = getattr(source_iter, "close", None)
             if callable(close_fn):
                 close_fn()
 
-    def _execute(self, node: Node, data: Any, key: jax.Array | None = None) -> Any:
+    def _execute(
+        self,
+        node: Node,
+        data: Any,
+        key: jax.Array | None = None,
+        *,
+        use_cache: bool = True,
+    ) -> Any:
         """Execute a node in the graph.
 
         Args:
             node: Node to execute
             data: Input data
             key: Optional RNG key
+            use_cache: Whether this execution is allowed to read/write executor cache.
 
         Returns:
             Processed data or None
@@ -1215,18 +1181,18 @@ class DAGExecutor(nnx.Module):
         # 1. Stochastic ops (use RNG key)
         # 2. Stateful ops (NNX modules with mutable state that affects output)
         cache_key = None
-        can_cache = self._cache is not None and key is None
+        can_cache = use_cache and self._memo is not None and key is None
 
         if can_cache:
             # Lazy detection of stateful ops
-            if self._has_stateful_ops is None:
-                self._has_stateful_ops = self._detect_stateful_ops()
-            can_cache = not self._has_stateful_ops
+            if self._runtime_state.has_stateful_ops is None:
+                self._runtime_state.has_stateful_ops = self._has_stateful_ops()
+            can_cache = not self._runtime_state.has_stateful_ops
 
-        if can_cache and self._cache is not None:
+        if can_cache and self._memo is not None:
             cache_key = self._compute_cache_key(node, data)
-            if cache_key in self._cache:
-                return self._cache[cache_key]
+            if cache_key in self._memo:
+                return self._memo[cache_key]
 
         # Execute node
         if self._runtime_state.jit_execute is not None:
@@ -1235,16 +1201,19 @@ class DAGExecutor(nnx.Module):
             result = node(data, key=key)
 
         # Cache result if deterministic and stateless
-        if can_cache and result is not None and cache_key is not None and self._cache is not None:
-            self._cache[cache_key] = result
+        if can_cache and result is not None and cache_key is not None and self._memo is not None:
+            self._memo[cache_key] = result
 
         return result
 
-    def _flush_all_buffers(self) -> Iterator[Batch]:
+    def _flush_all_buffers(self, *, use_cache: bool = True) -> Iterator[Batch]:
         """Flush all buffered nodes in the pipeline.
 
         This method properly drains all buffering nodes (BatchNode, ShuffleNode, etc.)
         by flushing them in order and passing results through the rest of the pipeline.
+
+        Args:
+            use_cache: Whether flushed batches may read/write executor cache.
 
         Yields:
             Batches from flushed buffers
@@ -1261,7 +1230,7 @@ class DAGExecutor(nnx.Module):
                 if post_batch_graph is not None:
                     # Execute the flushed batch through the rest of the pipeline
                     key = self.rngs() if self.rngs is not None else None
-                    result = self._execute(post_batch_graph, batch_flush, key)
+                    result = self._execute(post_batch_graph, batch_flush, key, use_cache=use_cache)
                     if result is not None:
                         yield result
                 else:
@@ -1353,17 +1322,17 @@ class DAGExecutor(nnx.Module):
         - Iterator state
         """
         # Reset counters
-        self._iteration_count = 0
-        self._epoch_count = 0
+        self._iteration_total = 0
+        self._epoch_total = 0
 
         # Clear cache
-        if self._cache is not None:
-            self._cache.clear()
+        if self._memo is not None:
+            self._memo.clear()
 
         # Reset the source if it exists
-        if self._source_node is not None:
-            if hasattr(self._source_node.source, "reset"):
-                self._source_node.source.reset()  # type: ignore[attr-defined]
+        if self._input_node is not None:
+            if hasattr(self._input_node.source, "reset"):
+                self._input_node.source.reset()  # type: ignore[attr-defined]
             # Iterator will be recreated on next iteration
 
         # Reset stateful nodes in the graph
@@ -1487,9 +1456,9 @@ class DAGExecutor(nnx.Module):
         return {
             "nnx_state": nnx.to_pure_dict(nnx_state),
             "graph_state": graph_state,
-            "iteration_count": self._iteration_count,
-            "epoch_count": self._epoch_count,
-            "cache": self._cache,
+            "iteration_count": self._iteration_total,
+            "epoch_count": self._epoch_total,
+            "cache": self._memo,
         }
 
     def set_state(self, state: dict[str, Any]) -> None:
@@ -1501,7 +1470,7 @@ class DAGExecutor(nnx.Module):
         if "nnx_state" in state:
             self._restore_nnx_state(state["nnx_state"])
         self._restore_graph_state(state.get("graph_state"))
-        self._restore_counters_and_cache(state)
+        self._restore_counters_with_memo(state)
 
     def _restore_nnx_state(self, saved_state: Any) -> None:
         """Restore NNX state strictly.
@@ -1523,14 +1492,14 @@ class DAGExecutor(nnx.Module):
         if hasattr(self.graph, "set_state"):
             self.graph.set_state(graph_state)  # type: ignore[attr-defined]
 
-    def _restore_counters_and_cache(self, state: dict[str, Any]) -> None:
+    def _restore_counters_with_memo(self, state: dict[str, Any]) -> None:
         """Restore iteration counters and cache payload from checkpoint."""
         if "iteration_count" in state:
-            self._iteration_count = state["iteration_count"]
+            self._iteration_total = state["iteration_count"]
         if "epoch_count" in state:
-            self._epoch_count = state["epoch_count"]
+            self._epoch_total = state["epoch_count"]
         if "cache" in state and state["cache"] is not None:
-            self._cache = state["cache"]
+            self._memo = state["cache"]
 
     def _collect_to_array(
         self,
@@ -1566,9 +1535,9 @@ class DAGExecutor(nnx.Module):
 
         Example:
             ```python
-            from datarax import from_source
+            from datarax import build_source_pipeline
 
-            pipeline = from_source(mnist_source, batch_size=64)
+            pipeline = build_source_pipeline(mnist_source, batch_size=64)
             images = pipeline._collect_to_array(key="image")
             labels = pipeline._collect_to_array(key="label")
 
@@ -1605,8 +1574,8 @@ class DAGExecutor(nnx.Module):
 
     def clear_cache(self) -> None:
         """Clear all caches in the pipeline."""
-        if self._cache is not None:
-            self._cache.clear()
+        if self._memo is not None:
+            self._memo.clear()
 
         # Clear node caches
         def clear_node_cache(node: Any) -> None:
@@ -1625,37 +1594,37 @@ class DAGExecutor(nnx.Module):
             String representation of the graph
         """
 
-        def visualize_node(node: Node, indent: int = 0) -> str:
+        def render_node_tree(node: Node, indent: int = 0) -> str:
             prefix = "  " * indent
 
             if isinstance(node, Sequential):
                 parts = [f"{prefix}Sequential("]
                 for n in node.nodes:
-                    parts.append(visualize_node(n, indent + 1))
+                    parts.append(render_node_tree(n, indent + 1))
                 parts.append(f"{prefix})")
                 return "\n".join(parts)
 
             elif isinstance(node, Parallel):
                 parts = [f"{prefix}Parallel("]
                 for n in node.nodes:
-                    parts.append(visualize_node(n, indent + 1))
+                    parts.append(render_node_tree(n, indent + 1))
                 parts.append(f"{prefix})")
                 return "\n".join(parts)
 
             else:
                 return f"{prefix}{node}"
 
-        return f"DAGExecutor(\n{visualize_node(self.graph, 1)}\n)"
+        return f"DAGExecutor(\n{render_node_tree(self.graph, 1)}\n)"
 
     def __repr__(self) -> str:
         """String representation."""
         return (
             f"DAGExecutor("
             f"name={self.name}, "
-            f"iterations={self._iteration_count}, "
-            f"epochs={self._epoch_count}, "
-            f"cached={self.enable_caching}, "
-            f"jit={self.jit_compile})"
+            f"iterations={self._iteration_total}, "
+            f"epochs={self._epoch_total}, "
+            f"cached={self.is_caching_enabled}, "
+            f"jit={self.is_jit_compilation_enabled})"
         )
 
 
@@ -1691,7 +1660,7 @@ def pipeline(*nodes: Node) -> DAGExecutor:
     return executor
 
 
-def from_source(
+def build_source_pipeline(
     source: DataSourceModule,
     batch_size: int = 32,
     enforce_batch: bool = True,

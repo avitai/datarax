@@ -11,26 +11,25 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-import jax.numpy as jnp
 from calibrax.profiling import TimingCollector, TimingSample
+
+from datarax.performance.synchronization import block_until_ready_tree
 
 
 JSONValue = dict[str, "JSONValue"] | list["JSONValue"] | str | int | float | bool | None
+
+
+def _emit(message: str = "", *, error: bool = False) -> None:
+    """Write CLI output without bypassing the command output boundary."""
+    stream = sys.stderr if error else sys.stdout
+    stream.write(f"{message}\n")
 
 
 def _make_sync_fn() -> Callable[[Any], None]:
     """Create a JAX device sync function for accurate GPU timing."""
 
     def _sync(result: Any) -> None:
-        if hasattr(result, "block_until_ready"):
-            result.block_until_ready()
-            return
-        if isinstance(result, tuple | list):
-            for item in result:
-                if hasattr(item, "block_until_ready"):
-                    item.block_until_ready()
-            return
-        jnp.array(0.0).block_until_ready()
+        block_until_ready_tree(result)
 
     return _sync
 
@@ -51,19 +50,19 @@ def _sample_to_dict(sample: TimingSample) -> dict[str, Any]:
     }
 
 
-def _print_sample(sample: TimingSample) -> None:
+def _emit_timing_summary(sample: TimingSample) -> None:
     """Print a TimingSample in a readable format."""
     bps = sample.num_batches / sample.wall_clock_sec if sample.wall_clock_sec > 0 else 0
     eps = sample.num_elements / sample.wall_clock_sec if sample.wall_clock_sec > 0 else 0
-    print(f"  Wall clock:     {sample.wall_clock_sec:.4f} s")
-    print(f"  Batches:        {sample.num_batches}")
-    print(f"  Elements:       {sample.num_elements}")
-    print(f"  First batch:    {sample.first_batch_time * 1000:.2f} ms")
-    print(f"  Batches/sec:    {bps:.2f}")
-    print(f"  Elements/sec:   {eps:.2f}")
+    _emit(f"  Wall clock:     {sample.wall_clock_sec:.4f} s")
+    _emit(f"  Batches:        {sample.num_batches}")
+    _emit(f"  Elements:       {sample.num_elements}")
+    _emit(f"  First batch:    {sample.first_batch_time * 1000:.2f} ms")
+    _emit(f"  Batches/sec:    {bps:.2f}")
+    _emit(f"  Elements/sec:   {eps:.2f}")
 
 
-def save_benchmark_results(results: dict, output_path: str) -> None:
+def save_benchmark_results_to_path(results: dict, output_path: str) -> None:
     """Save benchmark results to a JSON file."""
     Path(output_path).resolve().parent.mkdir(parents=True, exist_ok=True)
 
@@ -86,7 +85,7 @@ def save_benchmark_results(results: dict, output_path: str) -> None:
     with Path(output_path).open("w") as f:
         json.dump(serializable_results, f, indent=2)
 
-    print(f"Results saved to {output_path}")
+    _emit(f"Results saved to {output_path}")
 
 
 def run_pipeline_benchmark(args: argparse.Namespace) -> None:
@@ -95,32 +94,33 @@ def run_pipeline_benchmark(args: argparse.Namespace) -> None:
 
     spec = importlib.util.spec_from_file_location("benchmark_module", args.module_path)
     if spec is None or spec.loader is None:
-        print(f"Error: Could not load module from {args.module_path}")
+        _emit(f"Error: Could not load module from {args.module_path}", error=True)
         sys.exit(1)
 
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
     if not hasattr(module, args.setup_function):
-        print(f"Error: Function '{args.setup_function}' not found in module")
+        _emit(f"Error: Function '{args.setup_function}' not found in module", error=True)
         sys.exit(1)
 
     setup_function = getattr(module, args.setup_function)
     pipeline = setup_function()
 
     # Warmup
-    print(f"Warming up with {args.warmup_batches} batches...")
+    _emit(f"Warming up with {args.warmup_batches} batches...")
     for i, _ in enumerate(pipeline):
         if i >= args.warmup_batches - 1:
             break
 
     # Measure
-    print(f"Measuring {args.num_batches} batches...")
+    _emit(f"Measuring {args.num_batches} batches...")
     collector = TimingCollector(sync_fn=_make_sync_fn())
     sample = collector.measure_iteration(iter(pipeline), num_batches=args.num_batches)
 
-    print("\nResults:")
-    _print_sample(sample)
+    _emit()
+    _emit("Results:")
+    _emit_timing_summary(sample)
 
     # Save results
     output_path = args.output
@@ -129,7 +129,7 @@ def run_pipeline_benchmark(args: argparse.Namespace) -> None:
         Path("temp/benchmarks").mkdir(parents=True, exist_ok=True)
         output_path = f"temp/benchmarks/pipeline_benchmark_{timestamp}.json"
 
-    save_benchmark_results(
+    save_benchmark_results_to_path(
         {
             "type": "pipeline_benchmark",
             "module": args.module_path,

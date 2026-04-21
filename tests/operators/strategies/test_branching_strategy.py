@@ -39,6 +39,7 @@ class TestBranchingStrategy:
         op2 = MockOperator(2.0)
 
         def router_invalid(data):
+            del data
             return 10  # Out of bounds
 
         strategy = BranchingStrategy(router=router_invalid)

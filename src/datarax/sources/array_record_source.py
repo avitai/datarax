@@ -1,6 +1,7 @@
 """Data source for reading from ArrayRecord format files."""
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Self
 
@@ -11,7 +12,8 @@ import numpy as np
 
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
-from datarax.utils.state import build_state_with_iteration_fields, restore_iteration_and_fields
+from datarax.sources._grain_bridge import validate_index_batch
+from datarax.utils.state import build_state_with_iteration_fields, restore_iteration_fields
 
 
 logger = logging.getLogger(__name__)
@@ -168,7 +170,7 @@ class ArrayRecordSourceModule(DataSourceModule):
     def set_state(self, state: dict[str, Any]) -> None:
         """Restore state from checkpoint."""
         super().set_state(state)
-        restore_iteration_and_fields(
+        restore_iteration_fields(
             state,
             current_index=self.current_index,
             current_epoch=self.current_epoch,
@@ -204,3 +206,19 @@ class ArrayRecordSourceModule(DataSourceModule):
 
         # Get from Grain source
         return self.grain_source[int(actual_idx)]
+
+    def _getitems(self, indices: Sequence[int]) -> list[Any]:
+        """Get multiple records using Grain's batched random-access protocol."""
+        total_records = self.total_records.get_value()
+        resolved = validate_index_batch(indices, total_records)
+        shuffled_indices = self.shuffled_indices.get_value()
+        actual_indices = (
+            [int(shuffled_indices[index]) for index in resolved]
+            if shuffled_indices is not None
+            else resolved
+        )
+
+        getitems = getattr(self.grain_source, "_getitems", None)
+        if getitems is not None:
+            return list(getitems(actual_indices))
+        return [self.grain_source[index] for index in actual_indices]

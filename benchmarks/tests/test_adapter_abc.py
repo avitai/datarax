@@ -190,6 +190,7 @@ class UnavailableAdapter(PipelineAdapter):
         return False
 
     def setup(self, config: ScenarioConfig, data: Any) -> None:
+        del data
         self._config = config
 
     def teardown(self) -> None:
@@ -202,6 +203,7 @@ class UnavailableAdapter(PipelineAdapter):
         return iter([])
 
     def _materialize_batch(self, batch: Any) -> list[Any]:
+        del batch
         return []
 
 

@@ -12,11 +12,11 @@ import optax
 import pytest
 
 from datarax.distributed.data_parallel import (
-    all_reduce_gradients,
     create_data_parallel_sharding,
-    reduce_gradients,
-    shard_batch,
-    shard_model_state,
+    place_batch_on_shards,
+    place_model_state_on_shards,
+    reduce_gradient_tree,
+    reduce_gradients_across_devices,
     spmd_train_step,
 )
 from datarax.distributed.device_mesh import DeviceMeshManager
@@ -46,7 +46,7 @@ class TestCreateDataParallelSharding:
 
 
 class TestShardBatch:
-    """Tests for shard_batch function."""
+    """Tests for place_batch_on_shards function."""
 
     def test_shards_array_values(self):
         """Test that jax.Array values are sharded."""
@@ -54,7 +54,7 @@ class TestShardBatch:
         sharding = create_data_parallel_sharding(mesh)
         batch = {"inputs": jnp.ones((4, 2)), "targets": jnp.zeros((4,))}
 
-        result = shard_batch(batch, sharding)  # type: ignore[reportArgumentType]
+        result = place_batch_on_shards(batch, sharding)  # type: ignore[reportArgumentType]
 
         assert result["inputs"].shape == (4, 2)
         assert result["targets"].shape == (4,)
@@ -65,7 +65,7 @@ class TestShardBatch:
         sharding = create_data_parallel_sharding(mesh)
         batch = {"data": jnp.ones((4, 2)), "label": "test_string"}
 
-        result = shard_batch(batch, sharding)  # type: ignore[reportArgumentType]
+        result = place_batch_on_shards(batch, sharding)  # type: ignore[reportArgumentType]
 
         assert result["label"] == "test_string"
 
@@ -76,21 +76,21 @@ class TestShardBatch:
         sharding = create_data_parallel_sharding(mesh)
         batch = {"inputs": jnp.ones((4, 2)), "targets": jnp.zeros((4,))}
 
-        result = shard_batch(batch, sharding)  # type: ignore[reportArgumentType]
+        result = place_batch_on_shards(batch, sharding)  # type: ignore[reportArgumentType]
 
         assert result["inputs"].shape == (4, 2)
         assert result["targets"].shape == (4,)
 
 
 class TestShardModelState:
-    """Tests for shard_model_state function."""
+    """Tests for place_model_state_on_shards function."""
 
     def test_replicate_mode(self):
         """Test replication sharding mode."""
         mesh = DeviceMeshManager.create_data_parallel_mesh(num_devices=1)
         state = {"params": jnp.ones((4, 2))}
 
-        result = shard_model_state(state, mesh, param_sharding="replicate")
+        result = place_model_state_on_shards(state, mesh, param_sharding="replicate")
 
         assert isinstance(result, dict)
         assert result["params"].shape == (4, 2)
@@ -100,53 +100,53 @@ class TestShardModelState:
         mesh = DeviceMeshManager.create_data_parallel_mesh(num_devices=1)
         state = {"params": jnp.ones((4, 2))}
 
-        result = shard_model_state(state, mesh)
+        result = place_model_state_on_shards(state, mesh)
 
         assert isinstance(result, dict)
         assert result["params"].shape == (4, 2)
 
 
 class TestAllReduceGradients:
-    """Tests for all_reduce_gradients function."""
+    """Tests for reduce_gradients_across_devices function."""
 
     def test_mean_reduction(self):
         """Test mean reduction of gradients."""
         with mock.patch("jax.lax.pmean", return_value=jnp.array(2.0)):
-            result = all_reduce_gradients(jnp.array(4.0), "mean")
+            result = reduce_gradients_across_devices(jnp.array(4.0), "mean")
             assert float(result) == 2.0
 
     def test_sum_reduction(self):
         """Test sum reduction of gradients."""
         with mock.patch("jax.lax.psum", return_value=jnp.array(8.0)):
-            result = all_reduce_gradients(jnp.array(4.0), "sum")
+            result = reduce_gradients_across_devices(jnp.array(4.0), "sum")
             assert float(result) == 8.0
 
     def test_unsupported_reduction_raises(self):
         """Test that unsupported reduce_type raises ValueError."""
         with pytest.raises(ValueError, match="Unsupported reduce_type"):
-            all_reduce_gradients(jnp.array(4.0), "invalid")
+            reduce_gradients_across_devices(jnp.array(4.0), "invalid")
 
 
 class TestReduceGradients:
-    """Tests for reduce_gradients (SPMD-compatible)."""
+    """Tests for reduce_gradient_tree (SPMD-compatible)."""
 
     def test_mean_reduction(self):
         """Test mean reduction on a gradient pytree."""
         grads = {"w": jnp.array([1.0, 2.0, 3.0]), "b": jnp.array([4.0, 6.0])}
-        result = reduce_gradients(grads, "mean")
+        result = reduce_gradient_tree(grads, "mean")
         assert float(result["w"]) == 2.0
         assert float(result["b"]) == 5.0
 
     def test_sum_reduction(self):
         """Test sum reduction on a gradient pytree."""
         grads = {"w": jnp.array([1.0, 2.0, 3.0])}
-        result = reduce_gradients(grads, "sum")
+        result = reduce_gradient_tree(grads, "sum")
         assert float(result["w"]) == 6.0
 
     def test_unsupported_reduction_raises(self):
         """Test that unsupported reduce_type raises ValueError."""
         with pytest.raises(ValueError, match="Unsupported reduce_type"):
-            reduce_gradients({"w": jnp.array([1.0])}, "invalid")
+            reduce_gradient_tree({"w": jnp.array([1.0])}, "invalid")
 
 
 class TestSpmdTrainStep:

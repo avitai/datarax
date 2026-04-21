@@ -1,6 +1,5 @@
 """Tests for the checkpoint handlers module."""
 
-import os
 import shutil
 import tempfile
 import unittest
@@ -123,10 +122,10 @@ class TestOrbaxCheckpointHandler(unittest.TestCase):
         state = {"a": jnp.ones((5, 5)), "b": 10}
 
         # Save the dictionary
-        path = self.handler.save(self.temp_dir, state)
+        path = self.handler.save_to_directory(self.temp_dir, state)
 
         # Check that the path exists
-        self.assertTrue(os.path.exists(path))
+        self.assertTrue(Path(path).exists())
 
         # Restore the simple dictionary
         # In modern Orbax, sharding is specified through the target structure,
@@ -146,10 +145,10 @@ class TestOrbaxCheckpointHandler(unittest.TestCase):
         self.checkpointable.increment_step()
 
         # Save the checkpointable
-        path = self.handler.save(self.temp_dir, self.checkpointable)
+        path = self.handler.save_to_directory(self.temp_dir, self.checkpointable)
 
         # Check that the path exists
-        self.assertTrue(os.path.exists(path))
+        self.assertTrue(Path(path).exists())
 
         # Create a new checkpointable for restoration
         new_checkpointable = SimpleCheckpointable(jnp.zeros((5, 5)))
@@ -173,10 +172,10 @@ class TestOrbaxCheckpointHandler(unittest.TestCase):
         """Test saving and restoring a module with parameters (RNG keys excluded)."""
         # Save the module state (RNG keys are automatically excluded)
         module_state = self.module.get_state()
-        path = self.handler.save(self.temp_dir, module_state)
+        path = self.handler.save_to_directory(self.temp_dir, module_state)
 
         # Check that the path exists
-        self.assertTrue(os.path.exists(path))
+        self.assertTrue(Path(path).exists())
 
         # Create a new module with fresh RNG
         new_rng_key = jax.random.key(1)
@@ -207,11 +206,11 @@ class TestOrbaxCheckpointHandler(unittest.TestCase):
         """Test checkpoint versioning support."""
         # Save checkpoint at step 1
         state1 = {"value": 1}
-        self.handler.save(self.temp_dir, state1, step=1, keep=10)
+        self.handler.save_to_directory(self.temp_dir, state1, step=1, keep=10)
 
         # Save checkpoint at step 2
         state2 = {"value": 2}
-        self.handler.save(self.temp_dir, state2, step=2, keep=10)
+        self.handler.save_to_directory(self.temp_dir, state2, step=2, keep=10)
 
         try:
             # Restore specific step
@@ -247,7 +246,7 @@ class TestOrbaxCheckpointHandler(unittest.TestCase):
             mock.patch.object(handler.checkpointer, "save") as save_mock,
             mock.patch.object(handler.checkpointer, "wait_until_finished") as wait_mock,
         ):
-            handler.save(self.temp_dir, {"value": 1}, step=1)
+            handler.save_to_directory(self.temp_dir, {"value": 1}, step=1)
         save_mock.assert_called_once()
         wait_mock.assert_called_once()
 

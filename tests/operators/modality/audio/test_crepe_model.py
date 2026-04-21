@@ -21,7 +21,7 @@ from datarax.operators.modality.audio.crepe_model import (
     CrepeModel,
     decode_pitch_differentiable,
     decode_pitch_local,
-    load_crepe_weights,
+    load_crepe_weights_from_path,
     max_pool_1d,
 )
 
@@ -303,7 +303,7 @@ class TestWeightLoading:
         model = CrepeModel(capacity="full", rngs=nnx.Rngs(0))
         # Try to load weights (requires downloaded .h5 file)
         try:
-            load_crepe_weights(model)
+            load_crepe_weights_from_path(model)
         except FileNotFoundError:
             pytest.skip("CREPE weights not downloaded yet")
 
@@ -339,7 +339,7 @@ class TestCrepeReference:
         """Create and load CREPE model with pretrained weights."""
         model = CrepeModel(capacity="full", rngs=nnx.Rngs(0))
         try:
-            load_crepe_weights(model)
+            load_crepe_weights_from_path(model)
         except FileNotFoundError:
             pytest.skip("CREPE weights not downloaded yet")
         model.eval()

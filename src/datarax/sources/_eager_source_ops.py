@@ -77,7 +77,7 @@ def validate_positive_optional_int(value: int | None, field_name: str) -> None:
         raise ValueError(f"{field_name} must be a positive integer")
 
 
-def get_shuffled_index(
+def shuffled_index_for_position(
     index: int,
     shuffle: bool,
     seed: int,
@@ -140,7 +140,7 @@ def eager_iter(
     epoch = epoch_var.get_value()
 
     for i in range(length):
-        idx = get_shuffled_index(i, shuffle, seed, epoch, length)
+        idx = shuffled_index_for_position(i, shuffle, seed, epoch, length)
         yield build_element(data, idx)
 
 
@@ -186,7 +186,7 @@ def eager_get_batch(
     epoch = epoch_var.get_value()
 
     shuffled_indices = [
-        get_shuffled_index(i, shuffle, seed, epoch, length) for i in range(start, end)
+        shuffled_index_for_position(i, shuffle, seed, epoch, length) for i in range(start, end)
     ]
 
     index_var.set_value(end % length)
@@ -401,7 +401,7 @@ def _get_super_post_init(config: Any) -> Callable[[], None]:
     return parent_post_init
 
 
-def validate_shared_eager_source_config(
+def validate_eager_source_settings(
     config: Any,
     config_class_name: str,
     *,
@@ -424,7 +424,7 @@ def validate_shared_eager_source_config(
     )
 
 
-def validate_shared_streaming_source_config(
+def validate_streaming_source_settings(
     config: Any,
     config_class_name: str,
 ) -> None:
@@ -467,7 +467,7 @@ def filter_keys(
 # =============================================================================
 
 
-def convert_and_filter_element(
+def converted_filtered_record(
     element: dict[str, Any],
     include_keys: set[str] | None,
     exclude_keys: set[str] | None,

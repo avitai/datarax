@@ -156,6 +156,7 @@ class MonitoredPipeline(DAGExecutor):
         Returns:
             The updated pipeline.
         """
+        del kwargs
         # Record the node type
         if self.metrics.enabled:
             self.metrics.record_metric(

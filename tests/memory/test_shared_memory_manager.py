@@ -1,6 +1,8 @@
 # File: tests/unit/memory/test_shared_memory_manager.py
 
 
+from multiprocessing import shared_memory
+
 import flax.nnx as nnx
 import numpy as np
 import pytest
@@ -75,6 +77,7 @@ class TestSharedMemoryManager:
         """Test cleanup of shared memory."""
         array = np.ones((1024, 1024))
         manager.make_shared("test", array)
+        shm_name = manager.array_metadata.get_value()["test"]["name"]
 
         assert len(manager.shared_blocks.get_value()) == 1
 
@@ -82,6 +85,8 @@ class TestSharedMemoryManager:
 
         assert len(manager.shared_blocks.get_value()) == 0
         assert len(manager.array_metadata.get_value()) == 0
+        with pytest.raises(FileNotFoundError):
+            shared_memory.SharedMemory(name=shm_name)
 
     def test_multiple_arrays(self, manager):
         """Test managing multiple shared arrays."""

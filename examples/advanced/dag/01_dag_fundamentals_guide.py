@@ -43,7 +43,7 @@ By the end of this guide, you will be able to:
 
 | PyTorch | Datarax DAG |
 |---------|-------------|
-| `DataLoader(dataset)` | `from_source(source)` or `DataSourceNode(source)` |
+| `DataLoader(dataset)` | `build_source_pipeline(source)` or `DataSourceNode(source)` |
 | `transforms.Compose` | `Sequential([...])` or `node1 >> node2` |
 | Multiple dataloaders | `Parallel([...])` or `node1 \\| node2` |
 | `collate_fn` | `BatchNode` with custom logic |
@@ -64,7 +64,7 @@ By the end of this guide, you will be able to:
 
 | Grain | Datarax DAG |
 |-------|-------------|
-| `grain.DataLoader` | `DAGExecutor` or `from_source()` |
+| `grain.DataLoader` | `DAGExecutor` or `build_source_pipeline()` |
 | `grain.MapTransform` | `OperatorNode(ElementOperator(...))` |
 | `grain.Batch` | `BatchNode(batch_size)` |
 | N/A | `Cache`, `Sequential`, `Parallel`, `Branch` |
@@ -86,7 +86,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax import DAGExecutor, from_source
+from datarax import build_source_pipeline, DAGExecutor
 from datarax.dag.nodes import (
     BatchNode,
     Cache,
@@ -145,20 +145,20 @@ print(f"  label: {data['label'].shape}")
 
 # %% [markdown]
 """
-## Part 2: Simple Pipeline with from_source()
+## Part 2: Simple Pipeline with build_source_pipeline()
 
-The easiest way to build a pipeline is using the `from_source()` helper.
+The easiest way to build a pipeline is using the `build_source_pipeline()` helper.
 It automatically creates the necessary nodes.
 """
 
 # %%
-# Method 1: Using from_source() helper (recommended for simple cases)
+# Method 1: Using build_source_pipeline() helper (recommended for simple cases)
 source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
 
-pipeline = from_source(source, batch_size=32)
+pipeline = build_source_pipeline(source, batch_size=32)
 batch = next(iter(pipeline))
 
-print("Pipeline with from_source():")
+print("Pipeline with build_source_pipeline():")
 print(f"  Batch shape: {batch['image'].shape}")
 print(f"  Labels: {batch['label'][:8]}...")
 
@@ -372,7 +372,7 @@ source4 = MemorySource(
 
 # Build training pipeline
 training_pipeline = (
-    from_source(source4, batch_size=32)
+    build_source_pipeline(source4, batch_size=32)
     .add(normalize_node)  # Normalize
     .add(brightness_node)  # Augment
 )
@@ -435,7 +435,7 @@ def build_production_pipeline(data, batch_size=32, shuffle=True):
 
     # Build pipeline
     pipeline = (
-        from_source(source, batch_size=batch_size)
+        build_source_pipeline(source, batch_size=batch_size)
         .add(OperatorNode(norm_op, name="Normalize"))
         .add(OperatorNode(augment_op, name="Augment"))
     )
@@ -545,7 +545,7 @@ print(f"  NodeB calls: {tracked_b.call_count.value}")
 
 ### Best Practices
 
-1. **Use `from_source()`** for simple pipelines
+1. **Use `build_source_pipeline()`** for simple pipelines
 2. **Explicit construction** for complex DAGs
 3. **Cache deterministic** expensive operations
 4. **Batch early** for vmap efficiency
@@ -578,9 +578,9 @@ def main():
 
     # Demo 1: Simple pipeline
     print()
-    print("1. Simple Pipeline (from_source):")
+    print("1. Simple Pipeline (build_source_pipeline):")
     source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
-    pipeline = from_source(source, batch_size=16)
+    pipeline = build_source_pipeline(source, batch_size=16)
     batch = next(iter(pipeline))
     print(f"   Batch shape: {batch['image'].shape}")
 

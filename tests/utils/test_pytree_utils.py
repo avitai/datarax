@@ -13,16 +13,16 @@ from datarax.typing import Batch, Element
 from datarax.utils.pytree_utils import (
     add_batch_dimension,
     apply_to_batch_dimension,
-    concatenate_batches,
+    concatenate_batch_sequence,
     get_batch_size,
     get_pytree_structure_info,
+    is_batch_consistent,
     is_batch_leaf,
     is_jax_array,
     is_non_jax_leaf,
     is_single_element,
     remove_batch_dimension,
-    split_batch,
-    validate_batch_consistency,
+    split_batch_for_devices,
 )
 
 
@@ -210,13 +210,13 @@ class TestBatchDimensionOps:
 
 
 class TestSplitBatch:
-    """Tests for split_batch function."""
+    """Tests for split_batch_for_devices function."""
 
     def test_split_even(self):
         """Test splitting batch evenly."""
         elements = [Element(data={"x": jnp.arange(3) + i * 3}) for i in range(4)]
         batch = Batch(elements)
-        splits = split_batch(batch, 2)
+        splits = split_batch_for_devices(batch, 2)
 
         assert len(splits) == 2
         assert splits[0].batch_size == 2
@@ -230,7 +230,7 @@ class TestSplitBatch:
         batch = Batch(elements)
 
         with pytest.raises(ValueError, match="not divisible"):
-            split_batch(batch, 2)
+            split_batch_for_devices(batch, 2)
 
     def test_split_non_batched(self):
         """Test error with single element batch."""
@@ -238,12 +238,12 @@ class TestSplitBatch:
         batch = Batch([element])
 
         with pytest.raises(ValueError, match="not divisible"):
-            split_batch(batch, 2)
+            split_batch_for_devices(batch, 2)
 
     def test_split_identity(self):
         """Test split with num_splits=1."""
         batch = Batch([Element(data={"x": jnp.array(1)})])
-        splits = split_batch(batch, 1)
+        splits = split_batch_for_devices(batch, 1)
         assert len(splits) == 1
         # Check value equality, not identity since split creates new views/objects
         assert splits[0].batch_size == batch.batch_size
@@ -253,7 +253,7 @@ class TestSplitBatch:
         """Test split where num_splits equals batch size."""
         elements = [Element(data={"x": jnp.array([i])}) for i in range(3)]
         batch = Batch(elements)
-        splits = split_batch(batch, 3)
+        splits = split_batch_for_devices(batch, 3)
 
         assert len(splits) == 3
         for i, s in enumerate(splits):
@@ -262,7 +262,7 @@ class TestSplitBatch:
 
 
 class TestConcatenateBatches:
-    """Tests for concatenate_batches function."""
+    """Tests for concatenate_batch_sequence function."""
 
     def test_concatenate_simple(self):
         """Test concatenating simple batches."""
@@ -274,7 +274,7 @@ class TestConcatenateBatches:
         elements2[1] = Element(data={"x": jnp.array([7, 8])})
         batch2 = Batch(elements2)
 
-        result = concatenate_batches([batch1, batch2])
+        result = concatenate_batch_sequence([batch1, batch2])
         expected = jnp.array([[1, 2], [3, 4], [5, 6], [7, 8]])
 
         assert result.batch_size == 4
@@ -284,14 +284,14 @@ class TestConcatenateBatches:
         """Test concatenating single batch."""
         elements = [Element(data={"x": jnp.ones((2,))}) for _ in range(3)]
         batch = Batch(elements)
-        result = concatenate_batches([batch])
+        result = concatenate_batch_sequence([batch])
 
         assert jnp.array_equal(result["x"], batch["x"])  # type: ignore
 
     def test_concatenate_empty_error(self):
         """Test error with empty list."""
         with pytest.raises(ValueError, match="empty list"):
-            concatenate_batches([])
+            concatenate_batch_sequence([])
 
     def test_concatenate_nested(self):
         """Test concatenating nested batch structures."""
@@ -302,7 +302,7 @@ class TestConcatenateBatches:
         e2 = [Element(data={"nest": {"x": jnp.array([2])}})]
         b2 = Batch(e2)
 
-        result = concatenate_batches([b1, b2])
+        result = concatenate_batch_sequence([b1, b2])
         assert result.batch_size == 2
         assert jnp.array_equal(result.data["nest"]["x"], jnp.array([[1], [2]]))
 
@@ -313,7 +313,7 @@ class TestConcatenateBatches:
 
         # JAX tree_map will fail when structures don't match or stack will fail.
         # Actually Element/Batch stacking logic relies on stacking lists of leaves.
-        # But BatchOps.concatenate_batches implementation:
+        # But BatchOps.concatenate_batch_sequence implementation:
         # It iterates elements of all batches and creates a new Batch(all_elements)
         # (which re-stacks).
         # Batch constructor creates elements list, then re-stacks.
@@ -327,7 +327,7 @@ class TestConcatenateBatches:
         # If keys differ, jax.tree.map might error depending on how strict it is,
         # or if dicts match. For dicts, keys must match.
         with pytest.raises((ValueError, TypeError)):
-            concatenate_batches([b1, b2])
+            concatenate_batch_sequence([b1, b2])
 
 
 class TestApplyToBatchDimension:
@@ -378,7 +378,7 @@ class TestApplyToBatchDimension:
 
 
 class TestValidateBatchConsistency:
-    """Tests for validate_batch_consistency function."""
+    """Tests for is_batch_consistent function."""
 
     def test_consistent_batch(self):
         """Test with consistent batch."""
@@ -387,7 +387,7 @@ class TestValidateBatchConsistency:
             for _ in range(32)
         ]
         batch = Batch(elements)
-        assert validate_batch_consistency(batch) is True
+        assert is_batch_consistent(batch) is True
 
     def test_inconsistent_batch(self):
         """Test with inconsistent batch."""
@@ -399,13 +399,13 @@ class TestValidateBatchConsistency:
         data_dict = batch.data.get_value()
         data_dict["x"] = jnp.ones((4, 10))  # Different batch size
         batch.data.set_value(data_dict)
-        assert validate_batch_consistency(batch) is False
+        assert is_batch_consistent(batch) is False
 
     def test_empty_batch(self):
         """Test with empty batch."""
         empty_batch = Batch([])
         # Empty batch is consistent (no data to be inconsistent)
-        assert validate_batch_consistency(empty_batch) is True
+        assert is_batch_consistent(empty_batch) is True
 
 
 class TestGetPytreeStructureInfo:
@@ -517,6 +517,7 @@ class TestTransformBatchSemantics:
         """Test operator on single element (wrapped in batch)."""
 
         def double_fn(element: Element, key: jax.Array) -> Element:
+            del key
             new_data = jax.tree.map(lambda x: x * 2, element.data)
             return element.replace(data=new_data)
 
@@ -536,6 +537,7 @@ class TestTransformBatchSemantics:
         """Test operator batch processing using vmap."""
 
         def add_one_fn(element: Element, key: jax.Array) -> Element:
+            del key
             new_data = jax.tree.map(lambda x: x + 1, element.data)
             return element.replace(data=new_data)
 
@@ -555,6 +557,7 @@ class TestTransformBatchSemantics:
         """Test __call__ handles single element via batch wrapping."""
 
         def scale_fn(element: Element, key: jax.Array) -> Element:
+            del key
             new_data = jax.tree.map(lambda x: x * 0.5, element.data)
             return element.replace(data=new_data)
 
@@ -574,6 +577,7 @@ class TestTransformBatchSemantics:
         """Test __call__ handles batches correctly."""
 
         def scale_fn(element: Element, key: jax.Array) -> Element:
+            del key
             new_data = jax.tree.map(lambda x: x * 0.5, element.data)
             return element.replace(data=new_data)
 
@@ -603,6 +607,8 @@ class TestBatchStatistics:
 
         def normalize_fn(element: Element, key: jax.Array) -> Element:
             """Normalize using stats captured in closure."""
+
+            del key
 
             def normalize_leaf(x: jax.Array, mean: jax.Array, std: jax.Array) -> jax.Array:
                 return (x - mean) / (std + 1e-8)
@@ -756,6 +762,7 @@ class TestEdgeCases:
         """Test handling of empty batches."""
 
         def identity_fn(element: Element, key: jax.Array) -> Element:
+            del key
             return element
 
         config = ElementOperatorConfig(stochastic=False)
@@ -772,6 +779,7 @@ class TestEdgeCases:
         """Test handling of scalar values."""
 
         def add_one_fn(element: Element, key: jax.Array) -> Element:
+            del key
             new_data = jax.tree.map(lambda x: x + 1, element.data)
             return element.replace(data=new_data)
 
@@ -796,6 +804,8 @@ class TestEdgeCases:
         """Test PyTrees with mixed data types."""
 
         def type_preserving_fn(element: Element, key: jax.Array) -> Element:
+            del key
+
             def process_leaf(x: Any):
                 if jnp.issubdtype(x.dtype, jnp.integer):
                     return x + 1

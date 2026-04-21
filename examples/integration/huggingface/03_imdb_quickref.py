@@ -54,7 +54,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import HFEagerConfig, HFEagerSource
@@ -185,7 +185,7 @@ source2 = HFEagerSource(
 )
 
 # Build pipeline
-pipeline = from_source(source2, batch_size=8).add(OperatorNode(text_stats_op))
+pipeline = build_source_pipeline(source2, batch_size=8).add(OperatorNode(text_stats_op))
 
 print("Pipeline: HFEagerSource(IMDB) -> TextStats -> Output")
 
@@ -297,7 +297,7 @@ def main():
     source = HFEagerSource(config, rngs=nnx.Rngs(0))
 
     # Create pipeline with label normalization
-    pipeline = from_source(source, batch_size=8).add(OperatorNode(text_stats_op))
+    pipeline = build_source_pipeline(source, batch_size=8).add(OperatorNode(text_stats_op))
 
     # Process batches
     total_reviews = 0

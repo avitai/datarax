@@ -16,7 +16,7 @@ and iterate through batched data - the core workflow for any Datarax pipeline.
 ## What You'll Learn
 
 1. Create a `MemorySource` from dictionary data
-2. Build a pipeline using the DAG-based `from_source()` API
+2. Build a pipeline using the DAG-based `build_source_pipeline()` API
 3. Apply deterministic and stochastic operators to data
 4. Iterate through batched pipeline output
 
@@ -26,7 +26,7 @@ If you're familiar with PyTorch DataLoader, here's how Datarax compares:
 
 | PyTorch | Datarax |
 |---------|---------|
-| `DataLoader(dataset, batch_size=32)` | `from_source(source, batch_size=32)` |
+| `DataLoader(dataset, batch_size=32)` | `build_source_pipeline(source, batch_size=32)` |
 | `transforms.Compose([T1, T2])` | `pipeline.add(OperatorNode(op1)).add(OperatorNode(op2))` |
 | `for images, labels in loader:` | `for batch in pipeline:` (dict-based) |
 | `TensorDataset(images, labels)` | `MemorySource(config, data={"image": ..., "label": ...})` |
@@ -38,7 +38,7 @@ If you're familiar with PyTorch DataLoader, here's how Datarax compares:
 | TensorFlow tf.data | Datarax |
 |--------------------|---------|
 | `tf.data.Dataset.from_tensor_slices(data)` | `MemorySource(config, data=data)` |
-| `dataset.batch(32).prefetch(2)` | `from_source(source, batch_size=32)` |
+| `dataset.batch(32).prefetch(2)` | `build_source_pipeline(source, batch_size=32)` |
 | `dataset.map(transform_fn)` | `pipeline.add(OperatorNode(operator))` |
 | `for batch in dataset:` | `for batch in pipeline:` |
 
@@ -130,11 +130,11 @@ normalizer = ElementOperator(
 Chain the source and operators using the DAG-based API.
 
 ```python
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 
 pipeline = (
-    from_source(source, batch_size=32)
+    build_source_pipeline(source, batch_size=32)
     .add(OperatorNode(normalizer))
 )
 print("Pipeline created with batch_size=32")
@@ -174,7 +174,7 @@ flowchart LR
     end
 
     subgraph Pipeline["Pipeline DAG"]
-        FS[from_source<br/>batch_size=32]
+        FS[build_source_pipeline<br/>batch_size=32]
         ON1[OperatorNode<br/>normalizer]
         ON2[OperatorNode<br/>augmenter]
     end

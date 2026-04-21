@@ -29,7 +29,7 @@ def load_scenarios(config_path: Path | None = None) -> dict[str, Any]:
         Dictionary keyed by scenario ID.
     """
     path = config_path or (_CONFIG_DIR / "scenarios.toml")
-    with open(path, "rb") as f:
+    with path.open("rb") as f:
         data = tomllib.load(f)
     return data.get("scenario", {})
 
@@ -45,5 +45,5 @@ def load_hardware_profile(profile_name: str) -> dict[str, Any]:
         Hardware profile configuration dictionary.
     """
     path = _CONFIG_DIR / "hardware_profiles" / f"{profile_name}.toml"
-    with open(path, "rb") as f:
+    with path.open("rb") as f:
         return tomllib.load(f)

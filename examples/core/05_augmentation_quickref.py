@@ -52,7 +52,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.modality.image import (
@@ -242,7 +242,7 @@ noise = NoiseOperator(
 
 # Chain with >> operator
 augmented_pipeline = (
-    from_source(source2, batch_size=16)
+    build_source_pipeline(source2, batch_size=16)
     >> OperatorNode(brightness)
     >> OperatorNode(contrast)
     >> OperatorNode(noise)
@@ -317,7 +317,9 @@ brightness2 = BrightnessOperator(
 )
 
 clipped_pipeline = (
-    from_source(source3, batch_size=16) >> OperatorNode(brightness2) >> OperatorNode(clipper)
+    build_source_pipeline(source3, batch_size=16)
+    >> OperatorNode(brightness2)
+    >> OperatorNode(clipper)
 )
 
 # Verify clipping
@@ -427,7 +429,7 @@ def main():
 
     # Build pipeline
     pipeline = (
-        from_source(source, batch_size=16)
+        build_source_pipeline(source, batch_size=16)
         >> OperatorNode(brightness)
         >> OperatorNode(contrast)
         >> OperatorNode(noise)

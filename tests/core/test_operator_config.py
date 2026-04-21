@@ -41,6 +41,7 @@ class TestOperatorConfigStochasticConstruction:
         """Test stochastic config with statistics function."""
 
         def compute_stats(batch: Any) -> dict[str, Any]:
+            del batch
             return {"mean": 0.5}
 
         config = OperatorConfig(
@@ -124,7 +125,7 @@ class TestOperatorConfigValidationRules:
             OperatorConfig(
                 stochastic=True,
                 stream_name="augment",
-                batch_stats_fn=lambda x: {},
+                batch_stats_fn=lambda _x: {},
                 precomputed_stats={},
             )
 
@@ -234,7 +235,7 @@ class TestOperatorConfigChildInheritance:
 
         # Should enforce statistics mutual exclusivity
         with pytest.raises(ValueError):
-            ChildConfig(batch_stats_fn=lambda x: {}, precomputed_stats={})
+            ChildConfig(batch_stats_fn=lambda _x: {}, precomputed_stats={})
 
     def test_child_config_custom_validation(self):
         """Test child config can add its own validation."""

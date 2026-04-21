@@ -34,7 +34,7 @@ class TestMetadataElementIntegration:
 
         assert element.metadata is not None
         assert element.metadata.index == 100
-        assert element.metadata.record_key == "file_05_rec_100"
+        assert element.metadata.entry_key == "file_05_rec_100"
         assert element.metadata.rng_key is not None
 
         # Test transformation preserves metadata (except specific updates if any)
@@ -139,7 +139,7 @@ class TestMetadataBatchIntegration:
         retrieved = batch.get_batch_metadata()
         assert retrieved is not None
         assert retrieved.index == 5
-        assert retrieved.record_key == "batch_05"
+        assert retrieved.entry_key == "batch_05"
         elem0_meta = batch.get_element(0).metadata
         assert elem0_meta is not None
         assert elem0_meta.index == 0
@@ -263,7 +263,7 @@ class TestDataPipelineScenarios:
 
         # Filter for valid elements
         mask = jnp.array([e.state.get("valid", False) for e in elements])
-        filtered = BatchOps.filter_batch(batch, mask)
+        filtered = BatchOps.select_batch_rows(batch, mask)
 
         # Check metadata preserved correctly
         assert filtered.batch_size == 3

@@ -27,6 +27,7 @@ class IncrementCountOperator(OperatorModule):
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
         # Increment count in state
+        del random_params, stats
         new_state = {"count": state["count"] + 1}
         return data, new_state, metadata
 
@@ -40,6 +41,7 @@ class RandomScaleWithStateOperator(OperatorModule):
         return jax.random.uniform(rng, (batch_size,), minval=0.5, maxval=1.5)
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
+        del stats
         scale_factor = random_params if random_params is not None else 1.0
         scaled_data = {"x": data["x"] * scale_factor}
 
@@ -57,6 +59,7 @@ class NestedStatOperator(OperatorModule):
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
         # Update nested state structure
+        del random_params, stats
         new_state = {
             "counters": {
                 "augment": state["counters"]["augment"] + 1,
@@ -176,6 +179,7 @@ class TestOperatorWithNestedPyTreeStates:
 
         class DeepNestedOperator(OperatorModule):
             def apply(self, data, state, metadata, random_params=None, stats=None):
+                del random_params, stats
                 new_state = {
                     "level1": {
                         "level2": {
@@ -210,6 +214,7 @@ class TestOperatorStatePreservation:
         class IdentityStateOperator(OperatorModule):
             def apply(self, data, state, metadata, random_params=None, stats=None):
                 # Don't modify state at all
+                del random_params, stats
                 return data, state, metadata
 
         config = OperatorConfig(stochastic=False)
@@ -238,6 +243,7 @@ class TestOperatorEdgeCases:
 
         class NoOpOperator(OperatorModule):
             def apply(self, data, state, metadata, random_params=None, stats=None):
+                del random_params, stats
                 return data, state, metadata
 
         config = OperatorConfig(stochastic=False)
@@ -258,6 +264,7 @@ class TestOperatorEdgeCases:
 
         class MixedStateOperator(OperatorModule):
             def apply(self, data, state, metadata, random_params=None, stats=None):
+                del random_params, stats
                 new_state = {
                     "jax_array": state["jax_array"] + 1,
                     "python_int": state["python_int"] + 1,
@@ -353,6 +360,7 @@ class TestOperatorBatchStateVsBatchedStates:
         class BatchStateOperator(OperatorModule):
             def apply(self, data, state, metadata, random_params=None, stats=None):
                 # Only modify element state
+                del random_params, stats
                 new_state = {"count": state["count"] + 1}
                 return data, new_state, metadata
 

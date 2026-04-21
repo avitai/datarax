@@ -84,7 +84,7 @@ import numpy as np
 import optax
 from flax import nnx
 
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.core.element_batch import Batch, Element
 from datarax.operators import (
     CompositeOperatorConfig,
@@ -1148,8 +1148,8 @@ def run_dada_search(
         temperature = temp_start + (temp_end - temp_start) * progress
 
         # Create pipelines for this epoch
-        train_pipeline = from_source(train_source, batch_size=batch_size)
-        val_pipeline = from_source(val_source, batch_size=batch_size)
+        train_pipeline = build_source_pipeline(train_source, batch_size=batch_size)
+        val_pipeline = build_source_pipeline(val_source, batch_size=batch_size)
 
         epoch_loss = 0.0
         epoch_acc = 0.0
@@ -1181,7 +1181,7 @@ def run_dada_search(
             try:
                 val_batch = next(val_iter)
             except StopIteration:
-                val_iter = iter(from_source(val_source, batch_size=batch_size))
+                val_iter = iter(build_source_pipeline(val_source, batch_size=batch_size))
                 val_batch = next(val_iter)
 
             val_images = val_batch["image"]
@@ -1306,7 +1306,7 @@ def evaluate(
     batch_size: int = 128,
 ) -> tuple[float, float]:
     """Evaluate model on test set."""
-    pipeline = from_source(test_source, batch_size=batch_size)
+    pipeline = build_source_pipeline(test_source, batch_size=batch_size)
     total_loss = 0.0
     total_acc = 0.0
     num_batches = 0
@@ -1341,7 +1341,7 @@ way back to the policy parameters. Let's verify this explicitly.
 print("\n=== Gradient Flow Verification ===")
 
 # Create a small batch for verification
-verify_pipeline = from_source(test_source, batch_size=16)
+verify_pipeline = build_source_pipeline(test_source, batch_size=16)
 verify_batch = next(iter(verify_pipeline))
 verify_images = verify_batch["image"]
 verify_labels = verify_batch["label"]
@@ -1594,7 +1594,7 @@ def main():
 
     # Verify gradient flow
     print("\n[4/5] Verifying gradient flow...")
-    verify_pipeline = from_source(test_source, batch_size=16)
+    verify_pipeline = build_source_pipeline(test_source, batch_size=16)
     verify_batch = next(iter(verify_pipeline))
     key = jax.random.key(999)
 

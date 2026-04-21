@@ -8,7 +8,7 @@ A minimal Datarax pipeline consists of a **Data Source** and a **Pipeline Defini
 
 ```python
 import jax.numpy as jnp
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 # 1. Prepare Data
@@ -22,8 +22,8 @@ config = MemorySourceConfig(shuffle=False)
 source = MemorySource(config, data)
 
 # 3. Build Pipeline
-# from_source creates a pipeline starting with a DataSourceNode and a BatchNode
-pipeline = from_source(source, batch_size=10)
+# build_source_pipeline creates a pipeline starting with a DataSourceNode and a BatchNode
+pipeline = build_source_pipeline(source, batch_size=10)
 
 # 4. Iterate
 # The pipeline yields Batches (which behave like dicts of arrays)
@@ -57,7 +57,7 @@ normalize_op = ElementOperator(config, fn=normalize)
 
 # Add to pipeline using the >> operator
 pipeline = (
-    from_source(source, batch_size=10)
+    build_source_pipeline(source, batch_size=10)
     >> OperatorNode(normalize_op)
 )
 ```
@@ -102,7 +102,7 @@ rngs = nnx.Rngs(augment=42)  # Seed the stream
 augment_op = ElementOperator(config, fn=random_augment, rngs=rngs)
 
 pipeline = (
-    from_source(source, batch_size=10)
+    build_source_pipeline(source, batch_size=10)
     >> OperatorNode(normalize_op) # Normalize first
     >> OperatorNode(augment_op)   # Then augment
 )
@@ -134,7 +134,7 @@ brighten_op = ElementOperator(ElementOperatorConfig(stochastic=False), fn=bright
 #         \-> Invert    ->/
 
 pipeline_nodes = (
-    from_source(source, batch_size=10)
+    build_source_pipeline(source, batch_size=10)
     >> Parallel([
         OperatorNode(normalize_op),
         OperatorNode(invert_op)
@@ -157,7 +157,7 @@ def is_dark_image(element):
 
 # Graph: If dark -> Brighten, Else -> Identity
 pipeline_nodes = (
-    from_source(source, batch_size=10)
+    build_source_pipeline(source, batch_size=10)
     >> Branch(
         condition=is_dark_image,
         true_path=OperatorNode(brighten_op), # Assume brighten_op exists
@@ -171,7 +171,7 @@ pipeline_nodes = (
 Putting it all together into a robust pipeline:
 
 ```python
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.dag.nodes import OperatorNode
@@ -198,7 +198,7 @@ source = MemorySource(config, data)
 
 # Pipeline using the >> operator
 pipeline = (
-    from_source(source, batch_size=32)
+    build_source_pipeline(source, batch_size=32)
     >> OperatorNode(normalize_op)
     >> OperatorNode(augment_op)
 )

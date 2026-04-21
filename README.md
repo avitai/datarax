@@ -99,7 +99,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import MemorySource, MemorySourceConfig
@@ -137,7 +137,7 @@ augmenter = ElementOperator(
 )
 
 pipeline = (
-    from_source(source, batch_size=32)
+    build_source_pipeline(source, batch_size=32)
     >> OperatorNode(normalizer)
     >> OperatorNode(augmenter)
 )
@@ -171,7 +171,7 @@ def is_high_contrast(element):
 # 3. Merge: average the two branches
 # 4. Branch: conditional path based on image variance
 complex_pipeline = (
-    from_source(source, batch_size=32)
+    build_source_pipeline(source, batch_size=32)
     >> (OperatorNode(normalizer) | OperatorNode(inverter))
     >> Merge("mean")
     >> Branch(

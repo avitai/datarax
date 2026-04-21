@@ -57,7 +57,7 @@ uv pip install "datarax[data]"
 import numpy as np
 from flax import nnx
 
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -133,7 +133,7 @@ print(f"Source length: {len(source)}")
 
 # %%
 # Step 3: Create pipeline
-pipeline = from_source(source, batch_size=32)
+pipeline = build_source_pipeline(source, batch_size=32)
 
 # Iterate and process
 for i, batch in enumerate(pipeline):
@@ -205,7 +205,7 @@ def main():
     data = create_sample_data()
     source_config = MemorySourceConfig()
     source = MemorySource(source_config, data=data, rngs=nnx.Rngs(0))
-    pipeline = from_source(source, batch_size=32)
+    pipeline = build_source_pipeline(source, batch_size=32)
 
     total_samples = 0
     for batch in pipeline:

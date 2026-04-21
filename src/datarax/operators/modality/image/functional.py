@@ -14,7 +14,7 @@ import jax.numpy as jnp
 logger = logging.getLogger(__name__)
 
 
-def resize_image(
+def resize_image_to_shape(
     image: jax.Array,
     output_size: tuple[int, int],
     method: str = "bilinear",
@@ -558,7 +558,7 @@ def _adjust_hsv(
     return hsv_to_rgb(hsv)
 
 
-def _validate_color_jitter_image(image: jax.Array) -> None:
+def _validate_color_jitter_input(image: jax.Array) -> None:
     """Validate that color jitter input is an RGB image."""
     if len(image.shape) != 3 or image.shape[2] != 3:
         raise ValueError("Color jittering requires RGB images with shape [H, W, 3]")
@@ -571,7 +571,7 @@ def _has_color_jitter_adjustment(
     return any(value != 0.0 for value in (brightness, contrast, saturation, hue))
 
 
-def _apply_saturation_and_hue_static(image: jax.Array, saturation: float, hue: float) -> jax.Array:
+def _apply_static_hsv_adjustment(image: jax.Array, saturation: float, hue: float) -> jax.Array:
     """Apply saturation and hue adjustments with deterministic factors."""
     if saturation != 0.0 and hue != 0.0:
         return _adjust_hsv(image, saturation_factor=1.0 + saturation, hue_delta=hue)
@@ -582,13 +582,13 @@ def _apply_saturation_and_hue_static(image: jax.Array, saturation: float, hue: f
     return image
 
 
-def _advance_key(key: jax.Array) -> jax.Array:
+def _advance_rng_state(key: jax.Array) -> jax.Array:
     """Advance RNG key deterministically using split semantics."""
     key, _ = jax.random.split(key)
     return key
 
 
-def _apply_saturation_and_hue_random(
+def _apply_random_hsv_adjustment(
     image: jax.Array, saturation: float, hue: float, key: jax.Array
 ) -> tuple[jax.Array, jax.Array]:
     """Apply random saturation/hue adjustments and return updated key."""
@@ -597,19 +597,19 @@ def _apply_saturation_and_hue_random(
 
     if has_saturation and has_hue:
         sat_factor = 1.0 + jax.random.uniform(key, (), minval=-saturation, maxval=saturation)
-        key = _advance_key(key)
+        key = _advance_rng_state(key)
         h_delta = jax.random.uniform(key, (), minval=-hue, maxval=hue)
-        key = _advance_key(key)
+        key = _advance_rng_state(key)
         return _adjust_hsv(image, saturation_factor=sat_factor, hue_delta=h_delta), key
 
     if has_saturation:
         sat_factor = 1.0 + jax.random.uniform(key, (), minval=-saturation, maxval=saturation)
-        key = _advance_key(key)
+        key = _advance_rng_state(key)
         return adjust_saturation(image, sat_factor), key
 
     if has_hue:
         h_delta = jax.random.uniform(key, (), minval=-hue, maxval=hue)
-        key = _advance_key(key)
+        key = _advance_rng_state(key)
         return adjust_hue(image, h_delta), key
 
     return image, key
@@ -624,7 +624,7 @@ def _apply_color_jitter_static(
         result = adjust_brightness(result, 1.0 + brightness)
     if contrast != 0.0:
         result = adjust_contrast(result, 1.0 + contrast)
-    result = _apply_saturation_and_hue_static(result, saturation, hue)
+    result = _apply_static_hsv_adjustment(result, saturation, hue)
     return result
 
 
@@ -640,13 +640,13 @@ def _apply_color_jitter_random(
     result = image
     if brightness != 0.0:
         brightness_factor = 1.0 + jax.random.uniform(key, (), minval=-brightness, maxval=brightness)
-        key = _advance_key(key)
+        key = _advance_rng_state(key)
         result = adjust_brightness(result, brightness_factor)
     if contrast != 0.0:
         contrast_factor = 1.0 + jax.random.uniform(key, (), minval=-contrast, maxval=contrast)
-        key = _advance_key(key)
+        key = _advance_rng_state(key)
         result = adjust_contrast(result, contrast_factor)
-    result, _ = _apply_saturation_and_hue_random(result, saturation, hue, key)
+    result, _ = _apply_random_hsv_adjustment(result, saturation, hue, key)
     return result
 
 
@@ -671,7 +671,7 @@ def color_jitter(
     Returns:
         Color-jittered image, clipped to [0, 1].
     """
-    _validate_color_jitter_image(image)
+    _validate_color_jitter_input(image)
     if not _has_color_jitter_adjustment(brightness, contrast, saturation, hue):
         return image
 

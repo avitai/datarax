@@ -110,4 +110,5 @@ class MockDataSourceModule(DataSourceModule):
         Args:
             seed: Optional seed for randomness (not used in this implementation).
         """
+        del seed
         self._current_position.set_value(0)

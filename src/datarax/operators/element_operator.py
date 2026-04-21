@@ -28,7 +28,8 @@ from jaxtyping import PyTree
 from datarax.core.config import ElementOperatorConfig
 from datarax.core.element_batch import Element
 from datarax.core.metadata import Metadata
-from datarax.core.operator import extract_batch_size, OperatorModule
+from datarax.core.operator import OperatorModule
+from datarax.operators._random_params import get_optional_batch_size
 from datarax.typing import PRNGKey
 
 
@@ -131,14 +132,10 @@ class ElementOperator(OperatorModule):
         if not self.stochastic:
             return None
 
-        # Extract batch size from any array shape in the data
-        try:
-            batch_size = extract_batch_size(data_shapes)
-        except ValueError:
-            # Empty tree - return single key (edge case)
+        batch_size = get_optional_batch_size(data_shapes)
+        if batch_size is None:
             return jax.random.split(rng, 1)
 
-        # Generate one key per batch element
         return jax.random.split(rng, batch_size)
 
     def apply(
@@ -164,6 +161,7 @@ class ElementOperator(OperatorModule):
         Returns:
             Tuple of (transformed_data, transformed_state, transformed_metadata)
         """
+        del stats
         # Construct Element for user function
         # Cast metadata to Metadata | None for Element constructor
         element = Element(data=data, state=state, metadata=cast(Metadata | None, metadata))

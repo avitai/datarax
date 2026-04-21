@@ -122,6 +122,7 @@ def mock_hf_source(mock_dataset, monkeypatch):
     """
 
     def mock_load_dataset(name: str, split: str | None = None, **kwargs: Any):
+        del kwargs, name, split
         return mock_dataset
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -186,6 +187,7 @@ MAX_TOKEN_LEN = 5
 
 def tokenize_element(element: Element, key: jax.Array) -> Element:
     """Tokenize a single element (for use before batching)."""
+    del key
     text = element.data.get("text", "")
     label = element.data.get("label", 0)
 
@@ -241,6 +243,7 @@ def test_hf_source_with_transformations(mock_hf_source):
             stats: dict[str, Any] | None = None,
         ) -> tuple[dict[str, Any], dict[str, Any], Any]:
             """Handle mixed types without vmap for non-JAX data."""
+            del random_params, stats
             for key, value in data.items():
                 if isinstance(value, list) and value and isinstance(value[0], str):
                     break
@@ -296,6 +299,7 @@ def test_hf_source_with_augmentation(mock_hf_source):
             stats: dict[str, Any] | None = None,
         ) -> tuple[dict[str, Any], dict[str, Any], Any]:
             """Apply random noise to features."""
+            del stats
             result = {}
             for key, value in data.items():
                 if key == "feature" and isinstance(value, jax.Array):
@@ -415,6 +419,7 @@ def test_hf_source_with_multiple_transforms(mock_hf_source):
             random_params: Any = None,
             stats: dict[str, Any] | None = None,
         ) -> tuple[dict[str, Any], dict[str, Any], Any]:
+            del random_params, stats
             result = dict(data)
             if "feature" in data:
                 result["feature"] = data["feature"] * 2.0
@@ -435,6 +440,7 @@ def test_hf_source_with_multiple_transforms(mock_hf_source):
             random_params: Any = None,
             stats: dict[str, Any] | None = None,
         ) -> tuple[dict[str, Any], dict[str, Any], Any]:
+            del random_params, stats
             result = dict(data)
             if "feature" in data:
                 result["feature"] = data["feature"] + 1.0
@@ -467,6 +473,7 @@ def test_hf_source_with_key_filtering_in_pipeline(mock_dataset, monkeypatch):
     """Test HFEagerSource with key filtering in a pipeline."""
 
     def mock_load_dataset(name, split=None, **kwargs):
+        del kwargs, name, split
         return mock_dataset
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -536,6 +543,7 @@ def test_hf_source_epoch_handling(monkeypatch):
     small_dataset = datasets.Dataset.from_dict({"value": [1, 2, 3]})
 
     def mock_load_dataset(name, split=None, **kwargs):
+        del kwargs, name, split
         return small_dataset
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -574,6 +582,7 @@ def test_hf_source_with_stateful_iteration(monkeypatch):
     )
 
     def mock_load_dataset(name, split=None, **kwargs):
+        del kwargs, name, split
         return numeric_dataset
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -616,6 +625,7 @@ def test_pipeline_with_empty_dataset(monkeypatch):
     empty_dataset = datasets.Dataset.from_dict({"value": []})
 
     def mock_load_dataset(name, split=None, **kwargs):
+        del kwargs, name, split
         return empty_dataset
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -641,6 +651,7 @@ def test_pipeline_with_streaming_dataset(monkeypatch):
     )
 
     def mock_load_dataset(name, split=None, streaming=False, **kwargs):
+        del kwargs, name, split
         if streaming:
             return numeric_dataset.to_iterable_dataset()
         return numeric_dataset

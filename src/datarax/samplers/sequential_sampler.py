@@ -9,7 +9,12 @@ import flax.nnx as nnx
 
 from datarax.core.config import StructuralConfig
 from datarax.core.sampler import SamplerModule
-from datarax.samplers._validation import validate_num_records_and_epochs
+from datarax.samplers._iteration import (
+    consume_epoch_step_index,
+    read_epoch_step,
+    total_epoch_length,
+)
+from datarax.samplers._validation import validate_sampler_bounds
 from datarax.utils.state import (
     build_state_with_iteration_fields,
     restore_iteration_variables,
@@ -36,7 +41,7 @@ class SequentialSamplerConfig(StructuralConfig):
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
         super().__post_init__()
-        validate_num_records_and_epochs(self.num_records, self.num_epochs)
+        validate_sampler_bounds(self.num_records, self.num_epochs)
 
 
 class SequentialSamplerModule(SamplerModule):
@@ -84,46 +89,23 @@ class SequentialSamplerModule(SamplerModule):
 
     def __next__(self) -> int:
         """Get next index in sequence."""
-        num_epochs = self.num_epochs.get_value()
-        current_epoch = self.current_epoch.get_value()
-
-        # Check if we've completed all epochs
-        if num_epochs != -1:
-            if current_epoch >= num_epochs:
-                raise StopIteration
-
-        current_index = self.current_index.get_value()
-        num_records = self.num_records.get_value()
-        if num_records is None:
-            raise ValueError("num_records must be set")
-
-        # Check if we need to start a new epoch
-        if current_index >= num_records:
-            current_epoch += 1
-            self.current_epoch.set_value(current_epoch)
-            current_index = 0
-            self.current_index.set_value(0)
-
-            # Check epoch limit again
-            if num_epochs != -1:
-                if current_epoch >= num_epochs:
-                    raise StopIteration
-
-        # Return current index and increment
-        idx = current_index
-        self.current_index.set_value(current_index + 1)
-
-        return idx
+        return consume_epoch_step_index(
+            epoch_step=read_epoch_step(
+                current_epoch=self.current_epoch.get_value,
+                num_epochs=self.num_epochs.get_value,
+                current_index=self.current_index.get_value,
+                num_records=self.num_records.get_value,
+            ),
+            current_epoch=self.current_epoch.set_value,
+            current_index=self.current_index.set_value,
+        )
 
     def __len__(self) -> int:
         """Return total number of indices across all epochs."""
-        num_epochs = self.num_epochs.get_value()
-        if num_epochs == -1:
-            raise ValueError("Cannot determine length for infinite epochs")
-        num_records = self.num_records.get_value()
-        if num_records is None:
-            raise ValueError("num_records must be set")
-        return num_records * num_epochs
+        return total_epoch_length(
+            self.num_records.get_value(),
+            self.num_epochs.get_value(),
+        )
 
     def get_state(self) -> dict[str, Any]:
         """Get state for checkpointing."""

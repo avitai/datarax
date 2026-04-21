@@ -18,12 +18,13 @@ Device Placement Guidelines (per JAX performance guide):
 """
 
 from datarax.distributed.data_parallel import (
-    all_reduce_gradients,
     create_data_parallel_sharding,
     data_parallel_train_step,
-    reduce_gradients,
-    shard_batch,
-    shard_model_state,
+    place_batch_on_shards,
+    place_model_state_on_shards,
+    place_nnx_state_on_shards,
+    reduce_gradient_tree,
+    reduce_gradients_across_devices,
     spmd_train_step,
 )
 from datarax.distributed.device_mesh import DeviceMeshManager
@@ -48,11 +49,11 @@ from datarax.distributed.metrics import (
     reduce_sum_collective,
 )
 from datarax.distributed.sharding import (
-    apply_sharding_rules,
     create_named_sharding,
     data_parallel_rules,
     fsdp_rules,
     MeshRules,
+    partition_spec_for_names,
 )
 
 
@@ -69,12 +70,13 @@ __all__ = [
     "prefetch_to_device",
     # Data parallel functions
     "create_data_parallel_sharding",
-    "shard_batch",
+    "place_batch_on_shards",
     "spmd_train_step",
     "data_parallel_train_step",
-    "shard_model_state",
-    "all_reduce_gradients",
-    "reduce_gradients",
+    "place_model_state_on_shards",
+    "place_nnx_state_on_shards",
+    "reduce_gradients_across_devices",
+    "reduce_gradient_tree",
     # SPMD metrics (jnp.* on global arrays)
     "reduce_mean",
     "reduce_sum",
@@ -91,5 +93,5 @@ __all__ = [
     "data_parallel_rules",
     "fsdp_rules",
     "create_named_sharding",
-    "apply_sharding_rules",
+    "partition_spec_for_names",
 ]

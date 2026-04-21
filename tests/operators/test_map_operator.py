@@ -82,6 +82,7 @@ class TestMapOperatorConfig:
         config = MapOperatorConfig(stochastic=True, stream_name="augment")
 
         def fn(x, key):
+            del key
             return x
 
         rngs = nnx.Rngs(0, augment=1)
@@ -98,7 +99,7 @@ class TestMapOperatorConfig:
 
 
 class TestPathInSubtree:
-    """Test _path_in_subtree static method independently."""
+    """Test _is_path_in_subtree_mask static method independently."""
 
     def test_simple_path_match(self):
         """Path matches single-level dict with None leaf."""
@@ -107,7 +108,7 @@ class TestPathInSubtree:
         subtree_mask = {"image": None}
         keypath = (DictKey(key="image"),)
 
-        result = MapOperator._path_in_subtree(keypath, subtree_mask)
+        result = MapOperator._is_path_in_subtree_mask(keypath, subtree_mask)
         assert result is True
 
     def test_simple_path_mismatch(self):
@@ -117,7 +118,7 @@ class TestPathInSubtree:
         subtree_mask = {"image": None}
         keypath = (DictKey(key="label"),)
 
-        result = MapOperator._path_in_subtree(keypath, subtree_mask)
+        result = MapOperator._is_path_in_subtree_mask(keypath, subtree_mask)
         assert result is False
 
     def test_nested_path_match(self):
@@ -127,7 +128,7 @@ class TestPathInSubtree:
         subtree_mask = {"features": {"image": None, "depth": None}}
         keypath = (DictKey(key="features"), DictKey(key="image"))
 
-        result = MapOperator._path_in_subtree(keypath, subtree_mask)
+        result = MapOperator._is_path_in_subtree_mask(keypath, subtree_mask)
         assert result is True
 
     def test_nested_path_partial_match(self):
@@ -137,7 +138,7 @@ class TestPathInSubtree:
         subtree_mask = {"features": {"image": None}}
         keypath = (DictKey(key="features"), DictKey(key="depth"))
 
-        result = MapOperator._path_in_subtree(keypath, subtree_mask)
+        result = MapOperator._is_path_in_subtree_mask(keypath, subtree_mask)
         assert result is False
 
     def test_path_too_short(self):
@@ -148,7 +149,7 @@ class TestPathInSubtree:
         keypath = (DictKey(key="features"),)
 
         # Path ends at dict, not None leaf
-        result = MapOperator._path_in_subtree(keypath, subtree_mask)
+        result = MapOperator._is_path_in_subtree_mask(keypath, subtree_mask)
         assert result is False
 
     def test_path_too_long(self):
@@ -159,7 +160,7 @@ class TestPathInSubtree:
         keypath = (DictKey(key="image"), DictKey(key="extra"))
 
         # Can't navigate past None leaf
-        result = MapOperator._path_in_subtree(keypath, subtree_mask)
+        result = MapOperator._is_path_in_subtree_mask(keypath, subtree_mask)
         assert result is False
 
     def test_empty_keypath(self):
@@ -167,11 +168,11 @@ class TestPathInSubtree:
         keypath = ()
 
         # Root is None - matches
-        result = MapOperator._path_in_subtree(keypath, None)
+        result = MapOperator._is_path_in_subtree_mask(keypath, None)
         assert result is True
 
         # Root is dict - doesn't match
-        result = MapOperator._path_in_subtree(keypath, {"image": None})
+        result = MapOperator._is_path_in_subtree_mask(keypath, {"image": None})
         assert result is False
 
     def test_multiple_fields_in_mask(self):
@@ -182,15 +183,15 @@ class TestPathInSubtree:
 
         # image matches
         keypath_image = (DictKey(key="image"),)
-        assert MapOperator._path_in_subtree(keypath_image, subtree_mask) is True
+        assert MapOperator._is_path_in_subtree_mask(keypath_image, subtree_mask) is True
 
         # mask matches
         keypath_mask = (DictKey(key="mask"),)
-        assert MapOperator._path_in_subtree(keypath_mask, subtree_mask) is True
+        assert MapOperator._is_path_in_subtree_mask(keypath_mask, subtree_mask) is True
 
         # label doesn't match
         keypath_label = (DictKey(key="label"),)
-        assert MapOperator._path_in_subtree(keypath_label, subtree_mask) is False
+        assert MapOperator._is_path_in_subtree_mask(keypath_label, subtree_mask) is False
 
     def test_deeply_nested_structure(self):
         """Deep nesting works correctly."""
@@ -204,7 +205,7 @@ class TestPathInSubtree:
             DictKey(key="d"),
         )
 
-        result = MapOperator._path_in_subtree(keypath, subtree_mask)
+        result = MapOperator._is_path_in_subtree_mask(keypath, subtree_mask)
         assert result is True
 
     def test_mixed_nested_structure(self):
@@ -214,17 +215,17 @@ class TestPathInSubtree:
         subtree_mask = {"image": None, "features": {"depth": None, "normals": None}}
 
         # Direct field matches
-        assert MapOperator._path_in_subtree((DictKey(key="image"),), subtree_mask) is True
+        assert MapOperator._is_path_in_subtree_mask((DictKey(key="image"),), subtree_mask) is True
 
         # Nested field matches
         assert (
-            MapOperator._path_in_subtree(
+            MapOperator._is_path_in_subtree_mask(
                 (DictKey(key="features"), DictKey(key="depth")), subtree_mask
             )
             is True
         )
         assert (
-            MapOperator._path_in_subtree(
+            MapOperator._is_path_in_subtree_mask(
                 (DictKey(key="features"), DictKey(key="normals")), subtree_mask
             )
             is True
@@ -232,14 +233,14 @@ class TestPathInSubtree:
 
         # Non-existent nested field doesn't match
         assert (
-            MapOperator._path_in_subtree(
+            MapOperator._is_path_in_subtree_mask(
                 (DictKey(key="features"), DictKey(key="albedo")), subtree_mask
             )
             is False
         )
 
         # Non-existent top-level field doesn't match
-        assert MapOperator._path_in_subtree((DictKey(key="label"),), subtree_mask) is False
+        assert MapOperator._is_path_in_subtree_mask((DictKey(key="label"),), subtree_mask) is False
 
 
 # ========================================================================
@@ -254,6 +255,7 @@ class TestMapOperatorFullTree:
         """Full-tree mode applies fn to single field."""
 
         def double(x, key):
+            del key
             return x * 2.0
 
         config = MapOperatorConfig(subtree=None, stochastic=False)
@@ -276,6 +278,7 @@ class TestMapOperatorFullTree:
         """Full-tree mode applies fn to all fields."""
 
         def add_one(x, key):
+            del key
             return x + 1.0
 
         config = MapOperatorConfig(subtree=None, stochastic=False)
@@ -295,6 +298,7 @@ class TestMapOperatorFullTree:
         """Full-tree mode applies fn to nested structures."""
 
         def negate(x, key):
+            del key
             return -x
 
         config = MapOperatorConfig(subtree=None, stochastic=False)
@@ -316,6 +320,7 @@ class TestMapOperatorFullTree:
         """Full-tree mode works with batch processing."""
 
         def normalize(x, key):
+            del key
             return (x - 0.5) / 0.5
 
         config = MapOperatorConfig(subtree=None, stochastic=False)
@@ -344,6 +349,7 @@ class TestMapOperatorSubtree:
         """Subtree mode applies fn only to specified field."""
 
         def double(x, key):
+            del key
             return x * 2.0
 
         config = MapOperatorConfig(subtree={"image": None}, stochastic=False)
@@ -365,6 +371,7 @@ class TestMapOperatorSubtree:
         """Subtree mode applies fn to multiple specified fields."""
 
         def add_ten(x, key):
+            del key
             return x + 10.0
 
         config = MapOperatorConfig(subtree={"image": None, "mask": None}, stochastic=False)
@@ -391,6 +398,7 @@ class TestMapOperatorSubtree:
         """Subtree mode works with nested structures."""
 
         def square(x, key):
+            del key
             return x**2
 
         config = MapOperatorConfig(subtree={"features": {"image": None}}, stochastic=False)
@@ -417,6 +425,7 @@ class TestMapOperatorSubtree:
         """Subtree mode preserves overall PyTree structure."""
 
         def identity(x, key):
+            del key
             return x
 
         config = MapOperatorConfig(subtree={"a": None}, stochastic=False)
@@ -475,6 +484,7 @@ class TestMapOperatorStochastic:
         rngs = nnx.Rngs(0, augment=1)
 
         def fn(x, key):
+            del key
             return x
 
         op = MapOperator(config, fn=fn, rngs=rngs)
@@ -593,6 +603,7 @@ class TestMapOperatorStochastic:
 
         def multiply_by_two(x, key):
             # Ignore key - deterministic
+            del key
             return x * 2.0
 
         # Create operators with different seeds (shouldn't matter)
@@ -627,6 +638,7 @@ class TestMapOperatorEdgeCases:
         """Handles empty data dict."""
 
         def double(x, key):
+            del key
             return x * 2.0
 
         config = MapOperatorConfig(subtree=None, stochastic=False)
@@ -646,6 +658,7 @@ class TestMapOperatorEdgeCases:
         """State PyTree is never modified."""
 
         def double(x, key):
+            del key
             return x * 2.0
 
         config = MapOperatorConfig(subtree=None, stochastic=False)
@@ -666,6 +679,7 @@ class TestMapOperatorEdgeCases:
         """Metadata dict is never modified."""
 
         def double(x, key):
+            del key
             return x * 2.0
 
         config = MapOperatorConfig(subtree=None, stochastic=False)
@@ -685,6 +699,7 @@ class TestMapOperatorEdgeCases:
         """Handles arrays of different shapes."""
 
         def add_one(x, key):
+            del key
             return x + 1.0
 
         config = MapOperatorConfig(subtree=None, stochastic=False)
@@ -718,6 +733,7 @@ class TestMapOperatorJIT:
         """JIT compilation works in full-tree mode."""
 
         def normalize(x, key):
+            del key
             return (x - 0.5) / 0.5
 
         config = MapOperatorConfig(subtree=None, stochastic=False)
@@ -743,6 +759,7 @@ class TestMapOperatorJIT:
         """JIT compilation works in subtree mode."""
 
         def double(x, key):
+            del key
             return x * 2.0
 
         config = MapOperatorConfig(subtree={"image": None}, stochastic=False)
@@ -801,6 +818,7 @@ class TestMapOperatorJIT:
         """JIT compilation handles empty PyTree edge case."""
 
         def double(x, key):
+            del key
             return x * 2.0
 
         config = MapOperatorConfig(subtree=None, stochastic=False)
@@ -826,6 +844,7 @@ class TestMapOperatorJIT:
         """JIT compilation of apply_batch method directly."""
 
         def normalize(x, key):
+            del key
             return (x - 0.5) / 0.5
 
         config = MapOperatorConfig(subtree=None, stochastic=False)
@@ -881,9 +900,11 @@ class TestMapOperatorIntegration:
         """Can chain multiple MapOperators."""
 
         def normalize(x, key):
+            del key
             return (x - 0.5) / 0.5
 
         def clip(x, key):
+            del key
             return jnp.clip(x, -1.0, 1.0)
 
         config1 = MapOperatorConfig(subtree=None, stochastic=False)
@@ -909,9 +930,11 @@ class TestMapOperatorIntegration:
         """Can apply different functions to different fields using multiple operators."""
 
         def double(x, key):
+            del key
             return x * 2.0
 
         def square(x, key):
+            del key
             return x**2
 
         config_image = MapOperatorConfig(subtree={"image": None}, stochastic=False)

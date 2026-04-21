@@ -27,11 +27,11 @@ The `DAGExecutor` is the core execution engine for Datarax pipelines. It execute
 ### Linear Pipeline
 
 ```python
-from datarax.dag import DAGExecutor, from_source
+from datarax.dag import DAGExecutor, build_source_pipeline
 from datarax.dag.nodes import BatchNode, OperatorNode
 
-# Method 1: Using from_source helper
-pipeline = from_source(my_source, batch_size=32)
+# Method 1: Using build_source_pipeline helper
+pipeline = build_source_pipeline(my_source, batch_size=32)
 
 # Method 2: Using DAGExecutor directly
 executor = DAGExecutor()
@@ -43,11 +43,11 @@ executor.add(OperatorNode(normalize_op))
 ### Fluent API with >>
 
 ```python
-from datarax.dag import from_source
+from datarax.dag import build_source_pipeline
 
 # Build pipeline with >> operator
 pipeline = (
-    from_source(my_source, batch_size=64)
+    build_source_pipeline(my_source, batch_size=64)
     >> OperatorNode(normalize_op)
     >> OperatorNode(augment_op)
 )
@@ -93,7 +93,7 @@ executor.branch(
 
 ```python
 # Create pipeline
-pipeline = from_source(source, batch_size=32) >> transform
+pipeline = build_source_pipeline(source, batch_size=32) >> transform
 
 # Iterate (automatically creates iterator)
 for batch in pipeline:
@@ -201,14 +201,14 @@ executor = DAGExecutor(enforce_batch=False)
 
 ## Helper Functions
 
-### from_source
+### build_source_pipeline
 
 Create a pipeline from a data source:
 
 ```python
-from datarax.dag import from_source
+from datarax.dag import build_source_pipeline
 
-pipeline = from_source(
+pipeline = build_source_pipeline(
     source,
     batch_size=32,
     enforce_batch=True,

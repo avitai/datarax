@@ -70,13 +70,13 @@ class TestJITCompatibility:
         # Test needs static argnum for string method?
         # jax.image.resize allows method to be string.
         # But we need to check if our wrapper handles it.
-        # functional.resize_image has 'method' as string.
+        # functional.resize_image_to_shape has 'method' as string.
         # Strings typically need to be static in JIT.
         # Let's wrap it to make sure.
 
         @jax.jit
         def op(img):
-            return functional.resize_image(img, output_size, method="bilinear")
+            return functional.resize_image_to_shape(img, output_size, method="bilinear")
 
         res = op(image)
         assert res.shape == (16, 16, 3)

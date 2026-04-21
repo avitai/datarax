@@ -7,6 +7,10 @@ optimization patterns.
 
 from datarax.performance.goodput import GoodputMetrics, GoodputTracker
 from datarax.performance.roofline import HardwareSpecs, RooflineAnalyzer
+from datarax.performance.synchronization import (
+    block_until_ready_tree,
+    copy_to_host_async_tree,
+)
 from datarax.performance.xla_optimization import (
     apply_xla_flags,
     CompilationProfiler,
@@ -28,4 +32,6 @@ __all__ = [
     "GoodputMetrics",
     "get_xla_flags",
     "apply_xla_flags",
+    "block_until_ready_tree",
+    "copy_to_host_async_tree",
 ]

@@ -195,9 +195,9 @@ br = branch(
 Control flow nodes integrate seamlessly with DAGExecutor:
 
 ```python
-from datarax.dag import from_source
+from datarax.dag import build_source_pipeline
 
-pipeline = from_source(source, batch_size=32)
+pipeline = build_source_pipeline(source, batch_size=32)
 pipeline.parallel([transform_a, transform_b])
 pipeline.merge("concat")
 pipeline.branch(

@@ -331,6 +331,7 @@ class TestHFEagerSource:
         from datarax.sources import HFEagerConfig, HFEagerSource
 
         def mock_load_dataset(name, split=None, **kwargs):
+            del kwargs, name, split
             return mock_dataset
 
         monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -350,6 +351,7 @@ class TestHFEagerSource:
         from datarax.sources import HFEagerConfig, HFEagerSource
 
         def mock_load_dataset(name, split=None, **kwargs):
+            del kwargs, name, split
             return mock_dataset
 
         monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -368,6 +370,7 @@ class TestHFEagerSource:
         from datarax.sources import HFEagerConfig, HFEagerSource
 
         def mock_load_dataset(name, split=None, **kwargs):
+            del kwargs, name, split
             return mock_dataset
 
         monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -399,6 +402,7 @@ class TestFactoryFunctions:
         mock_dataset = datasets.Dataset.from_dict(mock_data)
 
         def mock_load_dataset(name, split=None, **kwargs):
+            del kwargs, name, split
             return mock_dataset
 
         monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
@@ -420,6 +424,7 @@ class TestFactoryFunctions:
         mock_dataset = datasets.Dataset.from_dict(mock_data)
 
         def mock_load_dataset(name, split=None, streaming=False, **kwargs):
+            del kwargs, name, split
             if streaming:
                 return mock_dataset.to_iterable_dataset()
             return mock_dataset
@@ -428,9 +433,9 @@ class TestFactoryFunctions:
 
         source = from_hf("mock", "train", streaming=True, rngs=nnx.Rngs(0))
 
-        # Should be streaming source (has .streaming attribute set to True)
-        assert hasattr(source, "streaming")
-        assert source.streaming is True  # type: ignore[reportAttributeAccessIssue]
+        # Should be streaming source (has .is_iterable_mode attribute set to True)
+        assert hasattr(source, "is_iterable_mode")
+        assert source.is_iterable_mode is True  # type: ignore[reportAttributeAccessIssue]
 
 
 # =============================================================================

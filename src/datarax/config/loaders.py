@@ -19,7 +19,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-def load_toml(config_path: str | Path, encoding: str = "utf-8") -> dict[str, Any]:
+def load_toml_from_path(config_path: str | Path, encoding: str = "utf-8") -> dict[str, Any]:
     """Load a TOML configuration file.
 
     Args:
@@ -38,11 +38,13 @@ def load_toml(config_path: str | Path, encoding: str = "utf-8") -> dict[str, Any
     if not config_path.exists():
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
 
-    with config_path.open("rb") as f:
-        return tomllib.load(f)
+    with config_path.open("r", encoding=encoding) as f:
+        return tomllib.loads(f.read())
 
 
-def save_toml(config: dict[str, Any], config_path: str | Path, encoding: str = "utf-8") -> None:
+def save_toml_to_path(
+    config: dict[str, Any], config_path: str | Path, encoding: str = "utf-8"
+) -> None:
     """Save a configuration dictionary to a TOML file.
 
     Args:
@@ -58,8 +60,8 @@ def save_toml(config: dict[str, Any], config_path: str | Path, encoding: str = "
     # Create parent directories if they don't exist
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with config_path.open("wb") as f:
-        tomli_w.dump(config, f)
+    with config_path.open("w", encoding=encoding) as f:
+        f.write(tomli_w.dumps(config))
 
 
 def deep_merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -88,7 +90,7 @@ def deep_merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str,
     return result
 
 
-def load_config_with_includes(
+def load_config_from_path_with_includes(
     config_path: str | Path,
     encoding: str = "utf-8",
     include_key: str = "include",
@@ -125,7 +127,7 @@ def load_config_with_includes(
     processed_paths.add(config_path)
 
     # Load the base configuration
-    config = load_toml(config_path, encoding)
+    config = load_toml_from_path(config_path, encoding)
 
     # Process includes if present
     includes = config.pop(include_key, [])
@@ -142,7 +144,7 @@ def load_config_with_includes(
         include_full_path = (base_dir / include_path).resolve()
 
         # Load and merge the included config (recursive)
-        included_config = load_config_with_includes(
+        included_config = load_config_from_path_with_includes(
             include_full_path,
             encoding=encoding,
             include_key=include_key,

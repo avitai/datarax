@@ -32,9 +32,9 @@ class TestWeightKeyConfig:
         """weight_key alone creates valid WEIGHTED_PARALLEL config."""
         rngs = nnx.Rngs(0)
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         # Should not raise — weight_key is a valid way to supply weights
         config = CompositeOperatorConfig(
@@ -50,9 +50,9 @@ class TestWeightKeyConfig:
         """weight_key + learnable_weights is mutually exclusive."""
         rngs = nnx.Rngs(0)
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         with pytest.raises(ValueError, match="weight_key.*learnable_weights"):
             CompositeOperatorConfig(
@@ -66,9 +66,9 @@ class TestWeightKeyConfig:
         """weight_key + explicit weights is mutually exclusive."""
         rngs = nnx.Rngs(0)
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         with pytest.raises(ValueError, match="weight_key.*explicit weights"):
             CompositeOperatorConfig(
@@ -91,9 +91,9 @@ class TestWeightKeyBasic:
         """
         rngs = nnx.Rngs(0)
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
@@ -126,9 +126,9 @@ class TestWeightKeyBasic:
 
         rngs = nnx.Rngs(0)
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = RecordingOperator(config1, fn=lambda x, key: x, rngs=rngs)
+        op1 = RecordingOperator(config1, fn=lambda x, _key: x, rngs=rngs)
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = RecordingOperator(config2, fn=lambda x, key: x, rngs=rngs)
+        op2 = RecordingOperator(config2, fn=lambda x, _key: x, rngs=rngs)
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
@@ -153,9 +153,9 @@ class TestWeightKeyBasic:
         """Missing weight_key in data -> clear ValueError."""
         rngs = nnx.Rngs(0)
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
@@ -178,9 +178,9 @@ class TestWeightKeyAdvanced:
         """weight_key works inside @nnx.jit."""
         rngs = nnx.Rngs(0)
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
@@ -209,9 +209,9 @@ class TestWeightKeyAdvanced:
         """
         rngs = nnx.Rngs(0)
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
@@ -247,9 +247,9 @@ class TestWeightKeyAdvanced:
         """weight_key works through __call__ -> apply_batch -> vmap path."""
         rngs = nnx.Rngs(0)
         config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, key: x * 2, rngs=rngs)
+        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
         config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, key: x * 3, rngs=rngs)
+        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,

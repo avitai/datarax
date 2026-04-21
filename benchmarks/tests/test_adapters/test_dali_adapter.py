@@ -21,7 +21,7 @@ try:
     import nvidia.dali.fn as fn  # noqa: F401
 
     _has_cuda = True
-except Exception:
+except (ImportError, RuntimeError):
     _has_cuda = False
 
 if not _has_cuda:

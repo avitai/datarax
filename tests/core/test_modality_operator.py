@@ -17,6 +17,7 @@ class ConcreteModalityOperator(ModalityOperator):
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
         """Simple test implementation - multiply image by factor."""
+        del stats
         factor = random_params if random_params is not None else 1.0
         field = self._extract_field(data, self.config.field_key)
         transformed = field * factor
@@ -30,6 +31,7 @@ class StochasticModalityOperator(ModalityOperator):
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
         """Apply random brightness adjustment."""
+        del stats
         brightness_factor = random_params if random_params is not None else 1.0
         field = self._extract_field(data, self.config.field_key)
         transformed = field * brightness_factor
@@ -112,6 +114,7 @@ class TestModalityOperatorAbstractMethods:
             """Missing generate_random_params implementation."""
 
             def apply(self, data, state, metadata, random_params=None, stats=None):
+                del random_params, stats
                 return data, state, metadata
 
         config = ModalityOperatorConfig(

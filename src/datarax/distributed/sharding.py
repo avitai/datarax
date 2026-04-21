@@ -10,7 +10,7 @@ create standard configurations for data-parallel and FSDP training.
 Example:
     mesh = jax.make_mesh((4, 2), ("data", "model"))
     rules = fsdp_rules(data_axis="data", model_axis="model")
-    spec = apply_sharding_rules(rules, "data", "embed")
+    spec = partition_spec_for_names(rules, "data", "embed")
     # => PartitionSpec("data", "model")
 """
 
@@ -110,7 +110,7 @@ def create_named_sharding(
     return NamedSharding(mesh, PartitionSpec(*axis_names))
 
 
-def apply_sharding_rules(
+def partition_spec_for_names(
     rules: MeshRules,
     *logical_names: str,
 ) -> PartitionSpec:

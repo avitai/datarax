@@ -7,21 +7,21 @@ import pytest
 
 from datarax.config.loaders import (
     deep_merge_dict,
-    load_config_with_includes,
-    load_toml,
-    save_toml,
+    load_config_from_path_with_includes,
+    load_toml_from_path,
+    save_toml_to_path,
 )
 
 
 class TestLoadToml:
-    """Tests for load_toml function."""
+    """Tests for load_toml_from_path function."""
 
     def test_load_valid_toml(self, tmp_path: Path):
         """Test loading a valid TOML file."""
         config_file = tmp_path / "config.toml"
         config_file.write_text('[section]\nkey = "value"\nnumber = 42\n')
 
-        result = load_toml(config_file)
+        result = load_toml_from_path(config_file)
 
         assert result == {"section": {"key": "value", "number": 42}}
 
@@ -30,7 +30,7 @@ class TestLoadToml:
         config_file = tmp_path / "config.toml"
         config_file.write_text('[test]\nvalue = "hello"\n')
 
-        result = load_toml(str(config_file))
+        result = load_toml_from_path(str(config_file))
 
         assert result == {"test": {"value": "hello"}}
 
@@ -39,7 +39,7 @@ class TestLoadToml:
         nonexistent = tmp_path / "missing.toml"
 
         with pytest.raises(FileNotFoundError) as exc_info:
-            load_toml(nonexistent)
+            load_toml_from_path(nonexistent)
 
         assert "Configuration file not found" in str(exc_info.value)
         assert str(nonexistent) in str(exc_info.value)
@@ -50,14 +50,14 @@ class TestLoadToml:
         config_file.write_text("[section\nkey = value")  # Malformed TOML
 
         with pytest.raises(tomllib.TOMLDecodeError):
-            load_toml(config_file)
+            load_toml_from_path(config_file)
 
     def test_load_empty_toml(self, tmp_path: Path):
         """Test loading empty TOML file."""
         config_file = tmp_path / "empty.toml"
         config_file.write_text("")
 
-        result = load_toml(config_file)
+        result = load_toml_from_path(config_file)
 
         assert result == {}
 
@@ -83,7 +83,7 @@ ip = "192.168.1.2"
 """
         config_file.write_text(config_content)
 
-        result = load_toml(config_file)
+        result = load_toml_from_path(config_file)
 
         assert result["database"]["host"] == "localhost"
         assert result["database"]["credentials"]["username"] == "admin"
@@ -92,17 +92,17 @@ ip = "192.168.1.2"
 
 
 class TestSaveToml:
-    """Tests for save_toml function."""
+    """Tests for save_toml_to_path function."""
 
     def test_save_simple_config(self, tmp_path: Path):
         """Test saving a simple configuration."""
         config = {"key": "value", "number": 42}
         config_file = tmp_path / "output.toml"
 
-        save_toml(config, config_file)
+        save_toml_to_path(config, config_file)
 
         assert config_file.exists()
-        loaded = load_toml(config_file)
+        loaded = load_toml_from_path(config_file)
         assert loaded == config
 
     def test_save_with_str_path(self, tmp_path: Path):
@@ -110,22 +110,22 @@ class TestSaveToml:
         config = {"test": "data"}
         config_file = tmp_path / "output.toml"
 
-        save_toml(config, str(config_file))
+        save_toml_to_path(config, str(config_file))
 
         assert config_file.exists()
-        loaded = load_toml(config_file)
+        loaded = load_toml_from_path(config_file)
         assert loaded == config
 
     def test_save_creates_parent_directories(self, tmp_path: Path):
-        """Test that save_toml creates parent directories if they don't exist."""
+        """Test that save_toml_to_path creates parent directories if they don't exist."""
         config = {"data": "value"}
         config_file = tmp_path / "nested" / "deep" / "config.toml"
 
-        save_toml(config, config_file)
+        save_toml_to_path(config, config_file)
 
         assert config_file.exists()
         assert config_file.parent.exists()
-        loaded = load_toml(config_file)
+        loaded = load_toml_from_path(config_file)
         assert loaded == config
 
     def test_save_nested_config(self, tmp_path: Path):
@@ -136,20 +136,20 @@ class TestSaveToml:
         }
         config_file = tmp_path / "nested.toml"
 
-        save_toml(config, config_file)
+        save_toml_to_path(config, config_file)
 
-        loaded = load_toml(config_file)
+        loaded = load_toml_from_path(config_file)
         assert loaded == config
 
     def test_save_overwrites_existing(self, tmp_path: Path):
-        """Test that save_toml overwrites existing files."""
+        """Test that save_toml_to_path overwrites existing files."""
         config_file = tmp_path / "existing.toml"
         config_file.write_text("old = 'data'\n")
 
         new_config = {"new": "data"}
-        save_toml(new_config, config_file)
+        save_toml_to_path(new_config, config_file)
 
-        loaded = load_toml(config_file)
+        loaded = load_toml_from_path(config_file)
         assert loaded == new_config
         assert "old" not in loaded
 
@@ -227,14 +227,14 @@ class TestDeepMergeDict:
 
 
 class TestLoadConfigWithIncludes:
-    """Tests for load_config_with_includes function."""
+    """Tests for load_config_from_path_with_includes function."""
 
     def test_load_without_includes(self, tmp_path: Path):
         """Test loading config without include directives."""
         config_file = tmp_path / "config.toml"
         config_file.write_text('[section]\nkey = "value"\n')
 
-        result = load_config_with_includes(config_file)
+        result = load_config_from_path_with_includes(config_file)
 
         assert result == {"section": {"key": "value"}}
 
@@ -248,7 +248,7 @@ class TestLoadConfigWithIncludes:
         main_file = tmp_path / "config.toml"
         main_file.write_text('include = "base.toml"\n[app]\nname = "test"\n')
 
-        result = load_config_with_includes(main_file)
+        result = load_config_from_path_with_includes(main_file)
 
         assert result == {"defaults": {"port": 8080}, "app": {"name": "test"}}
 
@@ -265,7 +265,7 @@ class TestLoadConfigWithIncludes:
         main_file = tmp_path / "config.toml"
         main_file.write_text('include = ["base1.toml", "base2.toml"]\n[app]\nname = "test"\n')
 
-        result = load_config_with_includes(main_file)
+        result = load_config_from_path_with_includes(main_file)
 
         assert result["config1"]["value1"] == 1
         assert result["config2"]["value2"] == 2
@@ -279,7 +279,7 @@ class TestLoadConfigWithIncludes:
         main = tmp_path / "config.toml"
         main.write_text('include = "base.toml"\n[section]\nkey = "from_main"\n')
 
-        result = load_config_with_includes(main)
+        result = load_config_from_path_with_includes(main)
 
         assert result["section"]["key"] == "from_main"
 
@@ -297,7 +297,7 @@ class TestLoadConfigWithIncludes:
         main = tmp_path / "main.toml"
         main.write_text('include = "level1.toml"\n[main]\nvalue = 0\n')
 
-        result = load_config_with_includes(main)
+        result = load_config_from_path_with_includes(main)
 
         assert result["level2"]["value"] == 2
         assert result["level1"]["value"] == 1
@@ -313,7 +313,7 @@ class TestLoadConfigWithIncludes:
         config2.write_text('include = "config1.toml"\n[c2]\nvalue = 2\n')
 
         with pytest.raises(RecursionError) as exc_info:
-            load_config_with_includes(config1)
+            load_config_from_path_with_includes(config1)
 
         assert "Circular include detected" in str(exc_info.value)
 
@@ -325,7 +325,7 @@ class TestLoadConfigWithIncludes:
         main = tmp_path / "config.toml"
         main.write_text('imports = "base.toml"\n[main]\nvalue = 2\n')
 
-        result = load_config_with_includes(main, include_key="imports")
+        result = load_config_from_path_with_includes(main, include_key="imports")
 
         assert result["base"]["value"] == 1
         assert result["main"]["value"] == 2
@@ -338,7 +338,7 @@ class TestLoadConfigWithIncludes:
         main = tmp_path / "config.toml"
         main.write_text('include = "base.toml"\n[main]\nvalue = 2\n')
 
-        result = load_config_with_includes(main)
+        result = load_config_from_path_with_includes(main)
 
         assert "include" not in result
         assert result["base"]["value"] == 1
@@ -349,4 +349,4 @@ class TestLoadConfigWithIncludes:
         main.write_text('include = "missing.toml"\n')
 
         with pytest.raises(FileNotFoundError):
-            load_config_with_includes(main)
+            load_config_from_path_with_includes(main)

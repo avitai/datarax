@@ -53,10 +53,10 @@ With prefetching:
 ## Integration with DAG
 
 ```python
-from datarax.dag import from_source
+from datarax.dag import build_source_pipeline
 
 # Prefetching is built into DAGExecutor
-pipeline = from_source(
+pipeline = build_source_pipeline(
     source,
     batch_size=32,
     prefetch=2,  # Prefetch 2 batches

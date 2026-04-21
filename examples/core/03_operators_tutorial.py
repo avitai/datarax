@@ -53,7 +53,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.composite_operator import (
@@ -136,7 +136,7 @@ normalizer = ElementOperator(
 )
 
 # Test it
-pipeline = from_source(source, batch_size=16).add(OperatorNode(normalizer))
+pipeline = build_source_pipeline(source, batch_size=16).add(OperatorNode(normalizer))
 batch = next(iter(pipeline))
 
 print("Normalization result:")
@@ -242,7 +242,7 @@ field_filter = ElementOperator(
 
 # Test field filtering
 source2 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(1))
-pipeline = from_source(source2, batch_size=8).add(OperatorNode(field_filter))
+pipeline = build_source_pipeline(source2, batch_size=8).add(OperatorNode(field_filter))
 batch = next(iter(pipeline))
 
 print("After field filtering:")
@@ -295,7 +295,7 @@ print("Created SEQUENTIAL composite: normalize → flip")
 # %%
 # Test the composite operator
 source3 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(2))
-pipeline = from_source(source3, batch_size=16).add(OperatorNode(sequential_augment))
+pipeline = build_source_pipeline(source3, batch_size=16).add(OperatorNode(sequential_augment))
 batch = next(iter(pipeline))
 
 print("Sequential composite result:")
@@ -336,7 +336,7 @@ brightness = BrightnessOperator(
 # Build pipeline with chained operators
 source4 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(3))
 full_pipeline = (
-    from_source(source4, batch_size=32)
+    build_source_pipeline(source4, batch_size=32)
     .add(OperatorNode(normalizer))
     .add(OperatorNode(flipper))
     .add(OperatorNode(brightness))
@@ -479,7 +479,7 @@ def main():
 
     # Build and run pipeline
     pipeline = (
-        from_source(source, batch_size=32)
+        build_source_pipeline(source, batch_size=32)
         .add(OperatorNode(normalizer))
         .add(OperatorNode(brightness))
     )

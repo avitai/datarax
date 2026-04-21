@@ -9,6 +9,8 @@ import numpy as np
 import pytest
 from calibrax.profiling import TimingCollector
 
+from datarax.utils.console import emit
+
 
 @pytest.mark.benchmark
 @pytest.mark.gpu
@@ -30,7 +32,9 @@ class TestBatchAlignment:
             for _ in range(iterations):
                 yield workload_fn()
 
-        sync_fn = lambda _result: jnp.array(0.0).block_until_ready()
+        def sync_fn(_result):
+            return jnp.array(0.0).block_until_ready()
+
         collector = TimingCollector(sync_fn=sync_fn)
         return collector.measure_iteration(workload_iter(), num_batches=iterations)
 
@@ -52,7 +56,7 @@ class TestBatchAlignment:
         def workload():
             return matmul_op(A, B).block_until_ready()
 
-        print(f"\nBenchmarking MatMul Batch Size: {batch_size}")
+        emit(f"\nBenchmarking MatMul Batch Size: {batch_size}")
         sample = self._measure_workload(workload)
 
         steps_per_sec = (
@@ -61,9 +65,7 @@ class TestBatchAlignment:
         latency = (
             (sample.wall_clock_sec / sample.num_batches * 1000) if sample.num_batches > 0 else 0
         )
-        print(
-            f"Batch Size {batch_size}: {steps_per_sec:.1f} steps/s, Avg Latency: {latency:.4f} ms"
-        )
+        emit(f"Batch Size {batch_size}: {steps_per_sec:.1f} steps/s, Avg Latency: {latency:.4f} ms")
 
     @pytest.mark.parametrize("batch_size", [127, 128])
     def test_data_transfer_alignment(self, batch_size):
@@ -76,7 +78,7 @@ class TestBatchAlignment:
             device_array = jax.device_put(host_array)
             device_array.block_until_ready()
 
-        print(f"\nBenchmarking Transfer Batch Size: {batch_size}")
+        emit(f"\nBenchmarking Transfer Batch Size: {batch_size}")
         sample = self._measure_workload(transfer_workload)
 
         dataset_size_mb = (batch_size * feature_dim * 4) / 1e6
@@ -84,4 +86,4 @@ class TestBatchAlignment:
             sample.num_batches / sample.wall_clock_sec if sample.wall_clock_sec > 0 else 0
         )
         bandwidth = dataset_size_mb * steps_per_sec
-        print(f"Batch Size {batch_size}: {bandwidth:.2f} MB/s")
+        emit(f"Batch Size {batch_size}: {bandwidth:.2f} MB/s")

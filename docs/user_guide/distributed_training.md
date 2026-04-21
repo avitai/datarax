@@ -60,13 +60,13 @@ mesh = mesh_module.create_data_parallel_mesh()
 sharding = dp_module.create_data_parallel_sharding(mesh)
 
 # Shard a batch across devices
-sharded_batch = dp_module.shard_batch(batch, sharding)
+sharded_batch = dp_module.place_batch_on_shards(batch, sharding)
 
 # Shard model state across devices
-sharded_state = dp_module.shard_model_state(state, mesh)
+sharded_state = dp_module.place_model_state_on_shards(state, mesh)
 
 # Reduce gradients across devices
-reduced_grads = dp_module.all_reduce_gradients(gradients, reduce_type="mean")
+reduced_grads = dp_module.reduce_gradients_across_devices(gradients, reduce_type="mean")
 ```
 
 ### DistributedMetricsModule
@@ -132,7 +132,7 @@ state = TrainingState(model=model, optimizer=optimizer)
 
 # Load data and shard it
 batch = load_data_batch()
-sharded_batch = dp_module.shard_batch(batch, sharding)
+sharded_batch = dp_module.place_batch_on_shards(batch, sharding)
 
 # Define a pmapped training step
 @jax.pmap(axis_name="batch")
@@ -186,7 +186,7 @@ mesh = mesh_module.create_data_parallel_mesh()
 sharding = dp_module.create_data_parallel_sharding(mesh)
 
 batch = load_data_batch()
-sharded_batch = dp_module.shard_batch(batch, sharding)
+sharded_batch = dp_module.place_batch_on_shards(batch, sharding)
 
 # Run forward pass across devices
 outputs = pmapped_forward(sharded_batch["inputs"])
@@ -217,7 +217,7 @@ When using Datarax's distributed training components:
    ```python
    mesh = mesh_module.create_data_parallel_mesh()
    sharding = dp_module.create_data_parallel_sharding(mesh)
-   sharded_batch = dp_module.shard_batch(batch, sharding)
+   sharded_batch = dp_module.place_batch_on_shards(batch, sharding)
    ```
 
 5. **Use DistributedMetricsModule for accuracy** when reporting metrics:

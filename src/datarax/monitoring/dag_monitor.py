@@ -133,15 +133,15 @@ class MonitoredDAGExecutor(DAGExecutor):
                 1.0,
                 component="pipeline",
                 metadata={
-                    "enforce_batch": self.enforce_batch,
-                    "enable_caching": self.enable_caching,
-                    "jit_compile": self.jit_compile,
+                    "enforce_batch": self.is_batch_enforced,
+                    "enable_caching": self.is_caching_enabled,
+                    "jit_compile": self.is_jit_compilation_enabled,
                     "graph_type": type(self.graph).__name__,
                 },
             )
 
             # Track DataSourceNode metrics since it's not in the execution graph
-            if self._source_node is not None:
+            if self._input_node is not None:
                 node_name = "DataSource"
                 if node_name not in self._mon.node_timers:
                     self._mon.node_timers[node_name] = []
@@ -182,7 +182,7 @@ class MonitoredDAGExecutor(DAGExecutor):
 
     def _start_source_timer(self) -> float | None:
         """Start timer for DataSource pseudo-node metrics."""
-        if self.metrics.enabled and self._source_node is not None:
+        if self.metrics.enabled and self._input_node is not None:
             return time.time()
         return None
 
@@ -250,29 +250,37 @@ class MonitoredDAGExecutor(DAGExecutor):
             self._notify_observers()
             self._mon.notify_counter = 0
 
-    def _execute(self, node: Node, data: Any, key: jax.Array | None = None) -> Any:
+    def _execute(
+        self,
+        node: Node,
+        data: Any,
+        key: jax.Array | None = None,
+        *,
+        use_cache: bool = True,
+    ) -> Any:
         """Execute node with metrics collection.
 
         Args:
             node: Node to execute
             data: Input data
             key: Optional RNG key
+            use_cache: Whether to allow DAGExecutor node-result caching
 
         Returns:
             Processed data
         """
         if not self.metrics.enabled:
-            return super()._execute(node, data, key)
+            return super()._execute(node, data, key, use_cache=use_cache)
 
         # Import node types
         from datarax.dag.nodes import BatchNode, OperatorNode, Parallel, Sequential
 
         if isinstance(node, Sequential | Parallel):
             node_name, result = self._execute_composite_node(
-                node, data, key, BatchNode, OperatorNode
+                node, data, key, use_cache, BatchNode, OperatorNode
             )
         else:
-            node_name, result = self._execute_standard_node(node, data, key)
+            node_name, result = self._execute_standard_node(node, data, key, use_cache=use_cache)
         self._record_data_flow_metrics(node_name, result)
         return result
 
@@ -281,6 +289,7 @@ class MonitoredDAGExecutor(DAGExecutor):
         node: Node,
         data: Any,
         key: jax.Array | None,
+        use_cache: bool,
         batch_node_type: type,
         operator_node_type: type,
     ) -> tuple[str, Any]:
@@ -289,7 +298,7 @@ class MonitoredDAGExecutor(DAGExecutor):
 
         node_name = type(node).__name__
         start_time = time.time()
-        result = super()._execute(node, data, key)
+        result = super()._execute(node, data, key, use_cache=use_cache)
         self._record_node_execution_metric(node_name, node, time.time() - start_time)
 
         if isinstance(node, Sequential):
@@ -299,12 +308,12 @@ class MonitoredDAGExecutor(DAGExecutor):
         return node_name, result
 
     def _execute_standard_node(
-        self, node: Node, data: Any, key: jax.Array | None
+        self, node: Node, data: Any, key: jax.Array | None, *, use_cache: bool
     ) -> tuple[str, Any]:
         """Execute a regular node and record execution metric."""
         node_name = node.name if hasattr(node, "name") else type(node).__name__
         start_time = time.time()
-        result = super()._execute(node, data, key)
+        result = super()._execute(node, data, key, use_cache=use_cache)
         self._record_node_execution_metric(node_name, node, time.time() - start_time)
         return node_name, result
 
@@ -461,8 +470,8 @@ class MonitoredDAGExecutor(DAGExecutor):
                 stats[f"node_{node_name}_count"] = self._mon.node_counts[node_name]
 
         # Cache statistics
-        if self.enable_caching and self._cache is not None:
-            stats["cache_size"] = len(self._cache)
+        if self.is_caching_enabled and self._memo is not None:
+            stats["cache_size"] = len(self._memo)
 
             # Check for cache nodes in graph
             cache_stats = self._get_cache_node_stats(self.graph)
@@ -531,9 +540,9 @@ class MonitoredDAGExecutor(DAGExecutor):
             "total_elements": int(self.total_elements_processed.get_value()),
             "total_time": float(self.total_processing_time.get_value()),
             "configuration": {
-                "enforce_batch": self.enforce_batch,
-                "enable_caching": self.enable_caching,
-                "jit_compile": self.jit_compile,
+                "enforce_batch": self.is_batch_enforced,
+                "enable_caching": self.is_caching_enabled,
+                "jit_compile": self.is_jit_compilation_enabled,
                 "metrics_enabled": self.metrics.enabled,
                 "track_memory": self.track_memory,
             },

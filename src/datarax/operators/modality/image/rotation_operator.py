@@ -172,6 +172,7 @@ class RotationOperator(ModalityOperator):
         Returns:
             Tuple of (transformed_data, state, metadata).
         """
+        del stats
         # Extract image from data
         value = self._extract_field(data, self.config.field_key)
 

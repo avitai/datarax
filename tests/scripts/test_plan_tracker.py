@@ -7,11 +7,12 @@ progress of the complete test plan.
 """
 
 import argparse
-import os
 import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from datarax.utils.console import emit
 
 
 # ANSI color codes for terminal output
@@ -114,7 +115,7 @@ def find_test_files(tests_dir: Path) -> list[Path]:
 
 def extract_test_names(file_path: Path) -> tuple[set[str], set[str]]:
     """Extract test names and skipped tests from a file."""
-    with open(file_path, "r") as f:
+    with file_path.open() as f:
         content = f.read()
 
     function_implemented, function_skipped = _extract_function_tests(content)
@@ -183,7 +184,7 @@ def analyze_test_coverage(
     for file_path in test_files:
         # Determine which module this test file belongs to
         relative_path = file_path.relative_to(tests_dir)
-        module = str(relative_path).split(os.sep)[0]
+        module = relative_path.parts[0]
 
         # Skip if module is not in our test plan
         if module not in module_status:
@@ -243,24 +244,24 @@ def print_terminal_report(module_status: dict[str, ModuleStatus]) -> None:
     if total_planned > 0:
         overall_percentage = (total_implemented / total_planned) * 100
 
-    print(f"{BOLD}Datarax Test Plan Implementation Progress{ENDC}\n")
+    emit(f"{BOLD}Datarax Test Plan Implementation Progress{ENDC}\n")
 
-    print(f"{BOLD}Overall Progress:{ENDC}")
-    print(
+    emit(f"{BOLD}Overall Progress:{ENDC}")
+    emit(
         f"- Implemented Tests: {GREEN}{total_implemented}{ENDC} / {total_planned} "
         f"({CYAN}{overall_percentage:.1f}%{ENDC})"
     )
-    print(f"- Skipped Tests: {YELLOW}{total_skipped}{ENDC}\n")
+    emit(f"- Skipped Tests: {YELLOW}{total_skipped}{ENDC}\n")
 
-    print(f"{BOLD}Module-specific Progress:{ENDC}")
-    print(f"{'Module':<15} {'Implemented':<15} {'Skipped':<10} {'Total':<10} {'Progress':<10}")
-    print("-" * 60)
+    emit(f"{BOLD}Module-specific Progress:{ENDC}")
+    emit(f"{'Module':<15} {'Implemented':<15} {'Skipped':<10} {'Total':<10} {'Progress':<10}")
+    emit("-" * 60)
 
     for module, status in sorted(module_status.items()):
         progress = status.implementation_percentage
         progress_color = GREEN if progress >= 80 else (YELLOW if progress >= 40 else RED)
 
-        print(
+        emit(
             f"{BLUE}{module:<15}{ENDC} "
             f"{GREEN}{len(status.implemented):<15}{ENDC} "
             f"{YELLOW}{len(status.skipped):<10}{ENDC} "
@@ -278,7 +279,7 @@ def main():
 
     tests_dir = Path(args.tests_dir)
     if not tests_dir.exists():
-        print(f"Error: Tests directory '{tests_dir}' does not exist", file=sys.stderr)
+        emit(f"Error: Tests directory '{tests_dir}' does not exist", file=sys.stderr)
         return 1
 
     # Load test plan and analyze coverage
@@ -291,9 +292,9 @@ def main():
     # Generate and save Markdown report if requested
     if args.output:
         report = generate_progress_report(module_status)
-        with open(args.output, "w") as f:
+        with Path(args.output).open("w") as f:
             f.write(report)
-        print(f"\nMarkdown report saved to {args.output}")
+        emit(f"\nMarkdown report saved to {args.output}")
 
     return 0
 

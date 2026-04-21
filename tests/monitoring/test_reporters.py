@@ -5,9 +5,9 @@ monitoring system, such as console and file reporters.
 """
 
 import io
-import os
 import tempfile
 import time
+from pathlib import Path
 from unittest.mock import patch
 
 import flax.nnx as nnx
@@ -107,15 +107,15 @@ def test_file_reporter():
             list(pipeline)
 
             # Verify the report file was created and contains data
-            with open(temp_filename, "r") as f:
+            with Path(temp_filename).open() as f:
                 content = f.read()
                 assert "Datarax Metrics Report" in content
                 assert "pipeline" in content
 
         finally:
             # Clean up
-            if os.path.exists(temp_filename):
-                os.unlink(temp_filename)
+            if Path(temp_filename).exists():
+                Path(temp_filename).unlink()
 
 
 def test_file_reporter_context_manager():
@@ -128,7 +128,7 @@ def test_file_reporter_context_manager():
         # File should be closed after context exit
         assert reporter.file.closed
     finally:
-        os.unlink(path)
+        Path(path).unlink()
 
 
 def test_file_reporter_context_manager_on_exception():
@@ -142,7 +142,7 @@ def test_file_reporter_context_manager_on_exception():
                 raise RuntimeError("test error")
         assert reporter.file.closed
     finally:
-        os.unlink(path)
+        Path(path).unlink()
 
 
 def test_end_to_end_monitoring_with_console_reporter():

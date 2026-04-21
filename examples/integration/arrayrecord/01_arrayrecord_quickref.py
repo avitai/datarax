@@ -42,7 +42,7 @@ By the end of this quick reference, you will be able to:
 | Grain | Datarax |
 |-------|---------|
 | `grain.ArrayRecordDataSource(paths)` | `ArrayRecordSourceModule(config, paths)` |
-| `grain.DataLoader(source)` | `from_source(source)` |
+| `grain.DataLoader(source)` | `build_source_pipeline(source)` |
 | Manual iteration | Automatic stateful iteration |
 | Manual checkpointing | Built-in `get_state()` / `set_state()` |
 
@@ -72,7 +72,7 @@ Note: ArrayRecord is primarily available on Linux. Check compatibility for your 
 # Note: These imports would be used with actual ArrayRecord files:
 # import numpy as np
 # from flax import nnx
-# from datarax import from_source
+# from datarax import build_source_pipeline
 # from datarax.sources import ArrayRecordSourceModule, ArrayRecordSourceConfig
 
 print("ArrayRecord Source Quick Reference")
@@ -166,11 +166,11 @@ print("  )")
 ### Using with Datarax Pipelines
 
 ```python
-from datarax import from_source
+from datarax import build_source_pipeline
 from datarax.dag.nodes import OperatorNode
 
 # Create pipeline from ArrayRecord source
-pipeline = from_source(source, batch_size=32)
+pipeline = build_source_pipeline(source, batch_size=32)
 
 # Add transformations
 pipeline = pipeline.add(OperatorNode(normalize_op))
@@ -187,7 +187,7 @@ print()
 print("Pipeline Integration Pattern:")
 print()
 print("  # Create pipeline")
-print("  pipeline = from_source(source, batch_size=32)")
+print("  pipeline = build_source_pipeline(source, batch_size=32)")
 print()
 print("  # Add operators")
 print("  pipeline = pipeline.add(OperatorNode(my_operator))")
@@ -250,7 +250,7 @@ config = ArrayRecordSourceConfig(num_epochs=10)
 source = ArrayRecordSourceModule(config, paths=paths, rngs=nnx.Rngs(0))
 
 for epoch in range(10):
-    for batch in from_source(source, batch_size=32):
+    for batch in build_source_pipeline(source, batch_size=32):
         train_step(batch)
 # Automatically stops after 10 epochs
 ```
@@ -263,7 +263,7 @@ config = ArrayRecordSourceConfig(num_epochs=-1)
 source = ArrayRecordSourceModule(config, paths=paths, rngs=nnx.Rngs(0))
 
 step = 0
-for batch in from_source(source, batch_size=32):
+for batch in build_source_pipeline(source, batch_size=32):
     train_step(batch)
     step += 1
     if step >= max_steps:
@@ -379,7 +379,7 @@ def main():
     print("     )")
     print()
     print("  3. Pipeline Integration:")
-    print("     pipeline = from_source(source, batch_size=32)")
+    print("     pipeline = build_source_pipeline(source, batch_size=32)")
     print()
     print("  4. Checkpointing:")
     print("     state = source.get_state()")
