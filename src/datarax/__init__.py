@@ -46,7 +46,7 @@ from datarax.monitoring.dag_monitor import monitored_pipeline, MonitoredDAGExecu
 from datarax.typing import Batch, Element
 
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 __all__ = [
     # Type aliases
