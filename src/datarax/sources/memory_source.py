@@ -108,7 +108,7 @@ class MemorySource(DataSourceModule):
     config: MemorySourceConfig  # pyright: ignore[reportIncompatibleVariableOverride]
 
     # Static data container (not trainable parameters)
-    data: dict[str, Any] | list[Any] | Sequence[Any] = nnx.data()
+    data: dict[str, Any] | list[Any] | Sequence[Any]
 
     def __init__(
         self,
@@ -145,7 +145,7 @@ class MemorySource(DataSourceModule):
             )
 
         # Store data and config values
-        self.data = data
+        self.data = nnx.data(data)
         self._is_random_order = config.shuffle
         self.prefetch_size = config.prefetch_size
 

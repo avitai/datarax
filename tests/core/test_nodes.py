@@ -38,12 +38,12 @@ from datarax.typing import Batch, Element
 class MockDataSource(DataSourceModule):
     """Mock data source for testing."""
 
-    # REQUIRED: Annotate data attribute with nnx.data() to prevent NNX container errors
-    data: list = nnx.data()
+    # REQUIRED: Wrap assigned data with nnx.data() to prevent NNX container errors.
+    data: list
 
     def __init__(self, config: StructuralConfig, data: list, *, rngs: nnx.Rngs | None = None):
         super().__init__(config, rngs=rngs)
-        self.data = data
+        self.data = nnx.data(data)
         self.index = nnx.Variable(0)
 
     def __iter__(self) -> Iterator[Element]:
@@ -76,15 +76,15 @@ class MockDataSource(DataSourceModule):
 class MockDataSourceV2(DataSourceModule):
     """Mock data source for testing."""
 
-    # REQUIRED: Annotate data attribute with nnx.data() to prevent NNX container errors
-    data: list = nnx.data()
+    # REQUIRED: Wrap assigned data with nnx.data() to prevent NNX container errors.
+    data: list
 
     def __init__(
         self, config: StructuralConfig, size=10, *, rngs: nnx.Rngs | None = None, name="mock_source"
     ):
         super().__init__(config, rngs=rngs, name=name)
         self.size = size
-        self.data = [{"data": jnp.array([i, i + 1, i + 2])} for i in range(size)]
+        self.data = nnx.data([{"data": jnp.array([i, i + 1, i + 2])} for i in range(size)])
         self.index = 0
 
     def __iter__(self) -> Iterator[Element]:

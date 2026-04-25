@@ -27,7 +27,8 @@ class DataSourceModule(StructuralModule):
     JAX arrays or Python primitives.
 
     **Important**: When subclassing, if you store data containing JAX Arrays in
-    an attribute (like `self.data`), you MUST annotate it with `nnx.Param` or `nnx.data()`:
+    an attribute (like `self.data`), wrap the assigned value with `nnx.Param`
+    or assignment-time `nnx.data(value)`:
 
     Examples:
         ```python
@@ -39,11 +40,11 @@ class DataSourceModule(StructuralModule):
                 if self.required_param is None:
                     raise ValueError("required_param is required")
         class MyDataSource(DataSourceModule):
-            data: list[dict] = nnx.data()  # REQUIRED: Annotate data attribute with nnx.data()
+            data: list[dict]
             def __init__(self, config: MyDataSourceConfig, data: list[dict], *,
                          rngs: nnx.Rngs | None = None, name: str | None = None):
                 super().__init__(config, rngs=rngs, name=name)
-                self.data = data  # Safe with nnx.Param/nnx.data() annotation
+                self.data = nnx.data(data)  # Mark as pytree data, not parameters.
         ```
 
     This prevents NNX from trying to track individual JAX Arrays within the data

@@ -186,7 +186,7 @@ class HFEagerSource(EagerSourceBase):
     """
 
     # Store data as JAX arrays (annotated for NNX to prevent parameter tracking)
-    data: dict[str, jax.Array] = nnx.data()
+    data: dict[str, jax.Array]
 
     def __init__(
         self,
@@ -233,7 +233,7 @@ class HFEagerSource(EagerSourceBase):
         self._dataset_info = self._load_dataset_info_from_backend(config)
 
         # Load ALL data to JAX arrays at init
-        self.data = self._load_all_from_backend_to_jax(config)
+        self.data = nnx.data(self._load_all_from_backend_to_jax(config))
 
         # Clean up resources
         gc.collect()

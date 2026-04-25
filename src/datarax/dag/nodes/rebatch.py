@@ -246,7 +246,7 @@ class GradientTransparentRebatchImpl(nnx.Module):
     maintaining gradient connectivity through the data values.
     """
 
-    buffer: list[Any] = nnx.data()
+    buffer: list[Any]
 
     def __init__(self, target_batch_size: int, max_buffer_size: int = 512) -> None:
         """Initialize gradient-transparent implementation.
@@ -259,7 +259,7 @@ class GradientTransparentRebatchImpl(nnx.Module):
         self.target_batch_size = target_batch_size
         self.max_buffer_size = max_buffer_size
 
-        self.buffer = []
+        self.buffer = nnx.data([])
 
     def __call__(self, batch: Batch | None) -> tuple[Batch | None, bool]:
         """Process batch while preserving gradient flow.

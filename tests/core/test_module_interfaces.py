@@ -22,12 +22,12 @@ def test_data_source_interface():
 
     # Create a minimal implementation
     class MinimalDataSource(DataSourceModule):
-        # REQUIRED: Annotate data with nnx.data()
-        data: list = nnx.data()
+        # REQUIRED: Wrap assigned data with nnx.data().
+        data: list
 
         def __init__(self, config: StructuralConfig, data, *, rngs=None, name=None):
             super().__init__(config, rngs=rngs, name=name)
-            self.data = data
+            self.data = nnx.data(data)
             self.index = nnx.Variable(0)
 
         def __iter__(self):
@@ -125,12 +125,12 @@ def test_data_source_extensibility():
 
     # Define a custom source with additional methods
     class CustomDataSource(DataSourceModule):
-        # REQUIRED: Annotate data with nnx.data()
-        data: list = nnx.data()
+        # REQUIRED: Wrap assigned data with nnx.data().
+        data: list
 
         def __init__(self, config: StructuralConfig, data, *, rngs=None, name=None):
             super().__init__(config, rngs=rngs, name=name)
-            self.data = data
+            self.data = nnx.data(data)
             self.index = nnx.Variable(0)
 
         def __iter__(self):
@@ -251,12 +251,12 @@ def test_nnx_module_integration():
 
     # Define minimal source and operator
     class SimpleSource(DataSourceModule):
-        # REQUIRED: Annotate data with nnx.data()
-        data: list = nnx.data()
+        # REQUIRED: Wrap assigned data with nnx.data().
+        data: list
 
         def __init__(self, config: StructuralConfig, data, *, rngs=None, name=None):
             super().__init__(config, rngs=rngs, name=name)
-            self.data = data
+            self.data = nnx.data(data)
             self.index = nnx.Variable(0)
 
         def __iter__(self):

@@ -24,8 +24,8 @@ from datarax.utils.console import emit
 class MockDataSource(DataSourceModule):
     """Mock data source for testing."""
 
-    # REQUIRED: Annotate data attribute with nnx.data() to prevent NNX container errors
-    data: list = nnx.data()
+    # REQUIRED: Wrap assigned data with nnx.data() to prevent NNX container errors.
+    data: list
 
     def __init__(
         self,
@@ -35,7 +35,7 @@ class MockDataSource(DataSourceModule):
         rngs: nnx.Rngs | None = None,
     ):
         super().__init__(config or StructuralConfig(), rngs=rngs)
-        self.data = data
+        self.data = nnx.data(data)
         self.index = nnx.Variable(0)
 
     def __iter__(self):

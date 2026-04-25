@@ -75,14 +75,14 @@ def batch_add(batch1: Batch, batch2: Batch) -> Batch:
 class MockDataSource(DataSourceModule):
     """Mock data source for testing."""
 
-    # REQUIRED: Annotate data attribute with nnx.data() to prevent NNX container errors
-    data: list = nnx.data()
+    # REQUIRED: Wrap assigned data with nnx.data() to prevent NNX container errors.
+    data: list
 
     def __init__(self, size=10, name="mock_source"):
         config = StructuralConfig(stochastic=False)
         super().__init__(config, name=name)
         self.size = size
-        self.data = [jnp.array([i, i + 1, i + 2]) for i in range(size)]
+        self.data = nnx.data([jnp.array([i, i + 1, i + 2]) for i in range(size)])
         self.index = 0
 
     def __iter__(self) -> Iterator[Element]:
@@ -1403,13 +1403,13 @@ class TestConvenienceFunctions:
 
         # Create a simple data source
         class SimpleSource(DataSourceModule):
-            # REQUIRED: Annotate data with nnx.data()
-            data: list = nnx.data()
+            # REQUIRED: Wrap assigned data with nnx.data().
+            data: list
 
             def __init__(self):
                 config = StructuralConfig(stochastic=False)
                 super().__init__(config, name="simple_source")
-                self.data = [sample_data]
+                self.data = nnx.data([sample_data])
                 self.index = 0
 
             def __iter__(self):
@@ -2365,8 +2365,8 @@ class TestCollectToArray:
         class BatchableSource(DataSourceModule):
             """Mock source with get_batch support for batch-first execution."""
 
-            data: list = nnx.data()
-            index: int = nnx.data()
+            data: list
+            index: int
 
             def __init__(self, size: int = 100, feature_dim: int = 10):
                 config = StructuralConfig(stochastic=False)
@@ -2374,14 +2374,16 @@ class TestCollectToArray:
                 self.size = size
                 self.feature_dim = feature_dim
                 # Create data with predictable values for testing
-                self.data = [
-                    {
-                        "image": jnp.ones((feature_dim,)) * i,
-                        "label": jnp.array(i % 10),
-                    }
-                    for i in range(size)
-                ]
-                self.index = 0
+                self.data = nnx.data(
+                    [
+                        {
+                            "image": jnp.ones((feature_dim,)) * i,
+                            "label": jnp.array(i % 10),
+                        }
+                        for i in range(size)
+                    ]
+                )
+                self.index = nnx.data(0)
 
             def __len__(self) -> int:
                 return self.size
@@ -2467,14 +2469,14 @@ class TestCollectToArray:
         class EmptySource(DataSourceModule):
             """A source that yields no elements."""
 
-            data: list = nnx.data()
-            index: int = nnx.data()
+            data: list
+            index: int
 
             def __init__(self):
                 config = StructuralConfig(stochastic=False)
                 super().__init__(config, name="empty_source")
-                self.data = []
-                self.index = 0
+                self.data = nnx.data([])
+                self.index = nnx.data(0)
 
             def __len__(self) -> int:
                 return 0
@@ -2507,15 +2509,17 @@ class TestCollectToArray:
         class Float16Source(DataSourceModule):
             """Source with float16 data."""
 
-            data: list = nnx.data()
-            index: int = nnx.data()
+            data: list
+            index: int
 
             def __init__(self, size: int = 20):
                 config = StructuralConfig(stochastic=False)
                 super().__init__(config, name="float16_source")
                 self.size = size
-                self.data = [{"image": jnp.ones((4,), dtype=jnp.float16) * i} for i in range(size)]
-                self.index = 0
+                self.data = nnx.data(
+                    [{"image": jnp.ones((4,), dtype=jnp.float16) * i} for i in range(size)]
+                )
+                self.index = nnx.data(0)
 
             def __len__(self) -> int:
                 return self.size

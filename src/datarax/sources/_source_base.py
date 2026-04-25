@@ -44,7 +44,7 @@ class EagerSourceBase(DataSourceModule):
     """
 
     # -- Abstract attribute declarations (set by concrete subclasses) --
-    data: dict[str, Any] = nnx.data()
+    data: dict[str, Any]
     length: int
     index: nnx.Variable[int]  # pyright: ignore[reportGeneralTypeIssues]
     epoch: nnx.Variable[int]  # pyright: ignore[reportGeneralTypeIssues]

@@ -59,6 +59,7 @@ classifiers = [
 ]
 dependencies = [
   "array-record>=0.4",
+  "calibrax>=0.1.0",
   "flax>=0.12.0",
   "grain-nightly>=0.2.16.dev20260112",
   "jax>=0.6.1",
@@ -525,3 +526,6 @@ python-preference = "only-managed"
 # Configure for GPU package installation
 [tool.uv.pip]
 find-links = ["https://storage.googleapis.com/jax-releases/jax_cuda_releases.html"]
+
+[tool.uv.sources]
+calibrax = {git = "https://github.com/avitai/calibrax.git", tag = "v0.1.0"}
