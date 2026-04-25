@@ -59,7 +59,6 @@ classifiers = [
 ]
 dependencies = [
   "array-record>=0.4",
-  "calibrax @ git+https://github.com/avitai/calibrax.git",
   "flax>=0.12.0",
   "grain-nightly>=0.2.16.dev20260112",
   "jax>=0.6.1",

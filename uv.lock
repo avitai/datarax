@@ -634,21 +634,6 @@ wheels = [
 ]
 
 [[package]]
-name = "calibrax"
-version = "0.1.0"
-source = { git = "https://github.com/avitai/calibrax.git#339ced8ed2761839163dd17e9a5e8335d6383ac9" }
-dependencies = [
-    { name = "click" },
-    { name = "flax" },
-    { name = "jax" },
-    { name = "jaxlib" },
-    { name = "jaxtyping" },
-    { name = "numpy" },
-    { name = "psutil" },
-    { name = "typing-extensions" },
-]
-
-[[package]]
 name = "casbin"
 version = "1.43.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1144,7 +1129,6 @@ name = "datarax"
 source = { editable = "." }
 dependencies = [
     { name = "array-record" },
-    { name = "calibrax" },
     { name = "flax" },
     { name = "grain-nightly" },
     { name = "jax" },
@@ -1526,7 +1510,6 @@ requires-dist = [
     { name = "build", marker = "extra == 'all-macos'", specifier = ">=1.0.3" },
     { name = "build", marker = "extra == 'cuda-dev'", specifier = ">=1.0.3" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0.3" },
-    { name = "calibrax", git = "https://github.com/avitai/calibrax.git" },
     { name = "click", marker = "extra == 'automation'", specifier = "<8.3" },
     { name = "coverage", marker = "extra == 'all'", specifier = ">=7" },
     { name = "coverage", marker = "extra == 'all-cpu'", specifier = ">=7" },
