@@ -341,8 +341,8 @@ uv run python -m build
 
 # Build outputs go to dist/
 ls dist/
-# datarax-0.1.2.tar.gz
-# datarax-0.1.2-py3-none-any.whl
+# datarax-0.1.2.post1.tar.gz
+# datarax-0.1.2.post1-py3-none-any.whl
 ```
 
 ### Package Configuration
