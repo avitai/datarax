@@ -1,4 +1,4 @@
-"""CalibraX-native benchmark result helpers for the Datarax benchmark suite."""
+"""calibrax-native benchmark result helpers for the Datarax benchmark suite."""
 
 from __future__ import annotations
 
@@ -93,7 +93,7 @@ def build_benchmark_result(
     domain: str = _DEFAULT_DOMAIN,
     timestamp: float | None = None,
 ) -> BenchmarkResult:
-    """Construct a CalibraX BenchmarkResult with standardized datarax tags/metrics."""
+    """Construct a calibrax BenchmarkResult with standardized datarax tags/metrics."""
     latencies = _latency_percentiles_from_timing(timing)
     throughput = 0.0
     if timing.wall_clock_sec > 0:

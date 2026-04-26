@@ -1,4 +1,4 @@
-"""Unit tests for CalibraX monitoring integration used by benchmark tooling."""
+"""Unit tests for calibrax monitoring integration used by benchmark tooling."""
 
 from __future__ import annotations
 

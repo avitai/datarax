@@ -85,25 +85,23 @@ from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import HFEagerConfig, HFEagerSource
 
-# Load IMDB in streaming mode
+# Load IMDB eagerly into JAX-compatible arrays
 config = HFEagerConfig(
     name="stanfordnlp/imdb",  # Use full dataset path for reliability
     split="train",
-    streaming=True,  # Stream to avoid downloading 84MB
-    download_kwargs={"trust_remote_code": True},
 )
 
 source = HFEagerSource(config, rngs=nnx.Rngs(0))
 print(f"Loaded HuggingFace dataset: {config.name}")
 print(f"Split: {config.split}")
-print("Mode: Streaming (no full download)")
+print("Mode: Eager load with local HuggingFace cache")
 ```
 
 **Terminal Output:**
 ```
 Loaded HuggingFace dataset: stanfordnlp/imdb
 Split: train
-Mode: Streaming (no full download)
+Mode: Eager load with local HuggingFace cache
 ```
 
 ## Step 2: Inspect Data Structure
@@ -201,8 +199,6 @@ source_batched = HFEagerSource(
     HFEagerConfig(
         name="stanfordnlp/imdb",
         split="train",
-        streaming=True,
-        download_kwargs={"trust_remote_code": True},
         exclude_keys={"text"},  # Exclude text field - can't batch strings
     ),
     rngs=nnx.Rngs(1),
@@ -338,7 +334,7 @@ flowchart LR
 |-----------|-------------|
 | **Dataset** | IMDB (25k train reviews) |
 | **Format** | Text + binary label |
-| **Mode** | Streaming (no full download) |
+| **Mode** | Eager load with local HuggingFace cache |
 | **Preprocessing** | Label normalization (text excluded for batching) |
 | **Batching** | Labels only (8 samples/batch) |
 

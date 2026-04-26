@@ -11,7 +11,8 @@ DDSP's key insight: classical DSP operations (oscillators, filters, reverb) can 
 - Creating custom `OperatorModule` subclasses for non-image domains
 - Implementing differentiable DSP primitives (harmonic synth, noise filter, reverb)
 - Composing parallel + sequential pipelines using `CompositeOperatorModule`
-- Training with multi-scale spectral loss on real audio
+- Training with multi-scale spectral loss on procedural smoke data by default,
+  with the full NSynth path available for real audio runs
 - The pattern for extending datarax to any domain
 
 ## Datarax Feature: Extensibility
@@ -25,20 +26,34 @@ This example showcases datarax's **extensibility** — three custom operators ex
 ## Quick Start
 
 ```bash
-# Install datarax with data dependencies (includes tensorflow-datasets for NSynth)
+# Install datarax with data dependencies (needed for full NSynth mode)
 uv pip install "datarax[data]"
 
-# Run the example (GPU recommended, downloads ~1 GB NSynth on first run)
+# Run the quick example path (self-contained procedural audio)
 python examples/advanced/differentiable/03_ddsp_audio_synthesis_guide.py
 ```
 
-## Dataset: NSynth (Real Instrument Recordings)
+The checked example defaults to `QUICK_MODE = True` (8 training samples,
+4 test samples, 1 epoch, batch size 2) and uses deterministic procedural
+audio so CI and local smoke runs do not download NSynth. Set `QUICK_MODE =
+False` in the script for the full 10K-sample, 100-epoch NSynth training run
+described below.
 
-We load real instrument recordings from the **NSynth** dataset's GANSynth subset via raw TFRecords and extract features using **datarax's own audio operators** — `CrepeF0Operator` (Flax NNX CREPE port) for pitch and `LoudnessOperator` (pure JAX A-weighted STFT) for loudness. Each sample provides 4 seconds of audio at 16 kHz with 1000 feature frames at 250 Hz.
+## Dataset: Procedural Smoke Data, or NSynth for Full Runs
+
+Quick mode generates a tiny deterministic NSynth-like dataset with harmonic
+waveforms, per-frame f0, and loudness controls. Full mode loads real
+instrument recordings from the **NSynth** dataset's GANSynth subset via raw
+TFRecords and extracts features using **datarax's own audio operators** —
+`CrepeF0Operator` (Flax NNX CREPE port) for pitch and `LoudnessOperator`
+(pure JAX A-weighted STFT) for loudness. Each sample provides 4 seconds of
+audio at 16 kHz with 1000 feature frames at 250 Hz.
 
 ![Audio Dataset Samples](../../../assets/images/examples/cv-ddsp-dataset-samples.png)
 
-*Top: audio waveforms for 3 NSynth instrument samples at different pitches. Bottom: spectrograms showing real harmonic structure from acoustic instruments.*
+*Top: audio waveforms for 3 quick-mode samples at different pitches. Bottom:
+spectrograms showing harmonic structure. Full mode produces the same plots from
+real NSynth recordings.*
 
 ## Key Concepts
 
@@ -142,7 +157,9 @@ synth_composite = SEQUENTIAL([
 
 ### Multi-Scale Spectral Loss
 
-Compares frequency content across 6 FFT scales [64, 128, 256, 512, 1024, 2048] using L1 for both linear and log-magnitude terms (matching the DDSP reference):
+Compares frequency content across one FFT scale in quick mode and across 6 FFT
+scales [64, 128, 256, 512, 1024, 2048] in full mode, using L1 for both linear
+and log-magnitude terms (matching the DDSP reference):
 
 $$\mathcal{L} = \sum_{s} \left( \|\hat{S}_s - S_s\|_1 + \alpha \|\log \hat{S}_s - \log S_s\|_1 \right)$$
 
@@ -150,13 +167,17 @@ $$\mathcal{L} = \sum_{s} \left( \|\hat{S}_s - S_s\|_1 + \alpha \|\log \hat{S}_s 
 
 ![DDSP Training Curve](../../../assets/images/examples/perf-ddsp-training-curve.png)
 
-*Multi-scale spectral loss decreasing from ~20 to ~12 over 100 epochs on NSynth, with gradient clipping (global norm 3.0) and exponential LR decay matching the DDSP reference.*
+*Multi-scale spectral loss from the checked quick run. Full mode uses 100
+epochs on NSynth with gradient clipping (global norm 3.0) and exponential LR
+decay matching the DDSP reference.*
 
 ## Resynthesis Quality
 
 ![Resynthesis Comparison](../../../assets/images/examples/cv-ddsp-resynthesis-comparison.png)
 
-*Target vs. synthesized audio for 2 NSynth test samples. Top rows: waveform comparison. Bottom rows: spectrogram comparison showing harmonic structure matching real instruments.*
+*Target vs. synthesized audio for 2 quick-mode test samples. Top rows:
+waveform comparison. Bottom rows: spectrogram comparison showing harmonic
+structure. Full mode uses real NSynth test samples.*
 
 ## Learned Parameters
 

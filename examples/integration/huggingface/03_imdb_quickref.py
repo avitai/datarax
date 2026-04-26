@@ -79,17 +79,16 @@ Each sample contains:
 """
 
 # %%
-# Load IMDB in streaming mode
+# Load IMDB eagerly into JAX-compatible arrays
 config = HFEagerConfig(
     name="stanfordnlp/imdb",  # Use full dataset path for reliability
     split="train",
-    download_kwargs={"trust_remote_code": True},
 )
 
 source = HFEagerSource(config, rngs=nnx.Rngs(0))
 print(f"Loaded HuggingFace dataset: {config.name}")
 print(f"Split: {config.split}")
-print("Mode: Streaming (no full download)")
+print("Mode: Eager load with local HuggingFace cache")
 
 # %% [markdown]
 """
@@ -178,7 +177,6 @@ source2 = HFEagerSource(
     HFEagerConfig(
         name="stanfordnlp/imdb",
         split="train",
-        download_kwargs={"trust_remote_code": True},
         exclude_keys={"text"},  # Exclude text field - can't batch strings
     ),
     rngs=nnx.Rngs(1),
@@ -291,7 +289,6 @@ def main():
     config = HFEagerConfig(
         name="stanfordnlp/imdb",
         split="train",
-        download_kwargs={"trust_remote_code": True},
         exclude_keys={"text"},
     )
     source = HFEagerSource(config, rngs=nnx.Rngs(0))

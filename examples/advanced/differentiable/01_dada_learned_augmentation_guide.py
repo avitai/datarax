@@ -106,6 +106,15 @@ import matplotlib.pyplot as plt
 OUTPUT_DIR = Path("docs/assets/images/examples")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+# Keep the script entry point bounded for CI and local documentation builds.
+# Set QUICK_MODE=False for the full CIFAR-10 DADA search.
+QUICK_MODE = True
+DADA_TRAIN_SAMPLES = 1024 if QUICK_MODE else 40000
+DADA_VAL_SAMPLES = 256 if QUICK_MODE else 10000
+DADA_TEST_SAMPLES = 256 if QUICK_MODE else 10000
+DADA_SEARCH_EPOCHS = 1 if QUICK_MODE else 20
+DADA_BATCH_SIZE = 128
+
 # %% [markdown]
 r"""
 ## Core Concepts
@@ -205,7 +214,7 @@ datarax's `MemorySource` for pipeline integration.
 def load_cifar10() -> tuple[dict, dict, dict]:
     """Load CIFAR-10 and split into train/val/test sets.
 
-    Returns train (40k), validation (10k), test (10k) as dicts with
+    Returns train, validation, and test dicts with
     'image' (float32, [0,1]) and 'label' (int32) keys.
     """
     try:
@@ -223,11 +232,15 @@ def load_cifar10() -> tuple[dict, dict, dict]:
     y_train_full = y_train_full.squeeze().astype(np.int32)
     y_test = y_test.squeeze().astype(np.int32)
 
-    # Split train into train (40k) + validation (10k) for bi-level optimization
-    x_train = x_train_full[:40000]
-    y_train = y_train_full[:40000]
-    x_val = x_train_full[40000:]
-    y_val = y_train_full[40000:]
+    # Split train into train + validation for bi-level optimization.
+    train_end = DADA_TRAIN_SAMPLES
+    val_end = train_end + DADA_VAL_SAMPLES
+    x_train = x_train_full[:train_end]
+    y_train = y_train_full[:train_end]
+    x_val = x_train_full[train_end:val_end]
+    y_val = y_train_full[train_end:val_end]
+    x_test = x_test[:DADA_TEST_SAMPLES]
+    y_test = y_test[:DADA_TEST_SAMPLES]
 
     train_data = {"image": x_train, "label": y_train}
     val_data = {"image": x_val, "label": y_val}
@@ -256,8 +269,8 @@ print(
     f"Val: {val_data['image'].shape}, "
     f"Test: {test_data['image'].shape}"
 )
-# Expected output:
-# Train: (40000, 32, 32, 3), Val: (10000, 32, 32, 3), Test: (10000, 32, 32, 3)
+# Expected output in quick mode:
+# Train: (1024, 32, 32, 3), Val: (256, 32, 32, 3), Test: (256, 32, 32, 3)
 
 # %%
 # Visualize CIFAR-10 samples
@@ -1216,16 +1229,12 @@ def run_dada_search(
     return model, policy, history
 
 
-# Run search (reduce epochs for quick demonstration)
-QUICK_MODE = True  # Set to False for full DADA search
-search_epochs = 3 if QUICK_MODE else 20
-
 print("\n=== DADA Augmentation Policy Search ===")
 model, policy, search_history = run_dada_search(
     train_source,
     val_source,
-    num_epochs=search_epochs,
-    batch_size=128,
+    num_epochs=DADA_SEARCH_EPOCHS,
+    batch_size=DADA_BATCH_SIZE,
 )
 
 # %%
@@ -1582,8 +1591,8 @@ def main():
     model, policy, _ = run_dada_search(
         train_source,
         val_source,
-        num_epochs=20,
-        batch_size=128,
+        num_epochs=DADA_SEARCH_EPOCHS,
+        batch_size=DADA_BATCH_SIZE,
     )
 
     # Evaluate

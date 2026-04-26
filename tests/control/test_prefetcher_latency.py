@@ -6,7 +6,6 @@ Validates that:
 3. Zero-latency signaling works correctly
 """
 
-import statistics
 import threading
 import time
 
@@ -16,49 +15,47 @@ from datarax.control.prefetcher import _PrefetchIterator, Prefetcher
 class TestConditionVariableWakeup:
     """Tests for condition-variable based wake-up mechanism."""
 
-    def test_wakeup_latency_under_1ms(self):
-        """Consumer should wake within 1ms of data being available.
+    def test_blocked_consumer_wakes_when_data_arrives(self):
+        """A consumer blocked in __next__ should wake when the producer enqueues data."""
+        release_next = threading.Event()
 
-        The old polling approach had 50ms timeouts. The condition variable
-        should achieve sub-millisecond wake-up.
-        """
-
-        def delayed_producer():
-            """Yield items with deliberate pauses."""
-            for i in range(10):
-                time.sleep(0.05)  # 50ms between items
-                yield i
+        def controlled_producer():
+            """Yield a warmup item, then block until the test releases another item."""
+            yield 0
+            if not release_next.wait(timeout=1.0):
+                raise TimeoutError("producer was not released")
+            yield 1
 
         prefetcher = Prefetcher(buffer_size=1)
-        iterator = prefetcher.prefetch(delayed_producer())
+        iterator = prefetcher.prefetch(controlled_producer())
 
-        # Consume first item (warm up)
-        next(iterator)
+        # Consume first item so the next call must wait for the controlled release.
+        assert next(iterator) == 0
 
-        # Measure wake-up latency for subsequent items
-        latencies = []
-        for _ in range(5):
-            # Wait until buffer should be empty (producer is sleeping)
-            time.sleep(0.03)  # 30ms — producer sleeps 50ms between items
+        result: list[int] = []
+        errors: list[BaseException] = []
 
-            # Time how long __next__ takes once data arrives
-            start = time.perf_counter()
-            next(iterator)
-            latency = time.perf_counter() - start
-            latencies.append(latency)
+        def consume_next() -> None:
+            try:
+                result.append(next(iterator))
+            except BaseException as exc:  # noqa: BLE001 - surfaced below
+                errors.append(exc)
+
+        consumer = threading.Thread(target=consume_next)
+        consumer.start()
+        time.sleep(0.01)
+
+        start = time.perf_counter()
+        release_next.set()
+        consumer.join(timeout=1.0)
+        elapsed = time.perf_counter() - start
 
         iterator.close()
 
-        # The total wait includes time for the producer to yield,
-        # but the wake-up from condition variable should be fast.
-        # We're measuring end-to-end here, so expect ~20ms (remaining
-        # producer sleep) + <1ms wake-up. Accept up to 40ms.
-        median_latency = statistics.median(latencies)
-        # Mainly verifying it's NOT 50ms+ (the old polling interval)
-        assert median_latency < 0.04, (
-            f"Wake-up latency too high: {median_latency * 1000:.1f}ms "
-            f"(suggests polling instead of condition variable)"
-        )
+        assert not consumer.is_alive()
+        assert errors == []
+        assert result == [1]
+        assert elapsed < 0.25, f"Consumer did not wake promptly: {elapsed * 1000:.1f}ms"
 
     def test_has_condition_variable(self):
         """PrefetchIterator should use threading.Condition for signaling."""

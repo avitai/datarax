@@ -3,7 +3,7 @@
 | Metadata | Value |
 |----------|-------|
 | **Level** | Advanced |
-| **Runtime** | ~30 min (GPU) / ~3 hrs (CPU) |
+| **Runtime** | Quick mode: a few minutes on CPU; full run: ~30 min GPU / ~3 hrs CPU |
 | **Prerequisites** | JAX, Flax NNX, DAG pipelines, image processing basics |
 | **Memory** | ~4 GB VRAM (GPU) / ~8 GB RAM (CPU) |
 | **Devices** | GPU recommended, CPU supported |
@@ -48,8 +48,9 @@ python examples/advanced/differentiable/02_learned_isp_guide.py
 ```
 
 !!! note "QUICK_MODE"
-    The example includes a `QUICK_MODE` flag (2+3 epochs on 2000 samples) for
-    fast verification. Set `QUICK_MODE = False` for full training.
+    The checked example defaults to `QUICK_MODE = True` (1+1 epochs on
+    512 train / 128 test samples) for fast verification. Set
+    `QUICK_MODE = False` for the longer 2,000 train / 500 test run.
 
 ## Dataset: CIFAR-10 with Low-Light Simulation
 

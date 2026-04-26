@@ -170,7 +170,10 @@ class CompositeOperatorConfig(OperatorConfig):
         self._validate_conditional_strategies()
         self._validate_weighted_parallel_strategy()
         self._validate_branching_strategy()
-        object.__setattr__(self, "stochastic", self._has_stochastic_child())
+        has_stochastic_child = self._has_stochastic_child()
+        if has_stochastic_child and self.stream_name is None:
+            object.__setattr__(self, "stream_name", "composite")
+        object.__setattr__(self, "stochastic", has_stochastic_child)
 
     def _validate_required_fields(self) -> None:
         """Validate required fields and operator container basics."""

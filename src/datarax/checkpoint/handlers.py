@@ -72,7 +72,16 @@ class OrbaxCheckpointHandler:
             return self.checkpointer.restore(checkpoint_path, item=item)  # type: ignore[reportCallIssue]
         except TypeError:
             # Older Orbax accepted positional target only.
-            return self.checkpointer.restore(checkpoint_path, item)
+            try:
+                return self.checkpointer.restore(checkpoint_path, item)
+            except ValueError as exc:
+                if "__metadata__" not in str(exc):
+                    raise
+                return self.checkpointer.restore(checkpoint_path)
+        except ValueError as exc:
+            if "__metadata__" not in str(exc):
+                raise
+            return self.checkpointer.restore(checkpoint_path)
 
     def _state_for_checkpoint(self, target: Any) -> Any:
         """Normalize a checkpoint target into a serializable state tree."""

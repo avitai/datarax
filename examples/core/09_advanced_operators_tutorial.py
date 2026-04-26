@@ -428,12 +428,12 @@ def create_autoaugment_pipeline():
 
     # Wrap with probabilistic application
     prob_bright = ProbabilisticOperator(
-        ProbabilisticOperatorConfig(operator=bright, probability=0.6),
+        ProbabilisticOperatorConfig(operator=bright, probability=0.6, stream_name="augment"),
         rngs=nnx.Rngs(augment=100),
     )
 
     prob_contrast = ProbabilisticOperator(
-        ProbabilisticOperatorConfig(operator=contrast, probability=0.6),
+        ProbabilisticOperatorConfig(operator=contrast, probability=0.6, stream_name="augment"),
         rngs=nnx.Rngs(augment=200),
     )
 
@@ -502,21 +502,20 @@ All advanced operators use specific patterns for JAX compatibility:
 
 
 # %%
-# Demonstrate JIT compatibility
-@jax.jit
-def jit_apply(op, source):
-    """JIT-compiled application of operator."""
-    pipeline = build_source_pipeline(source, batch_size=16).add(OperatorNode(op))
-    batch = next(iter(pipeline))
-    return batch["image"].mean()
-
-
-# This works because operators use JAX-compatible patterns
+# Demonstrate JIT compatibility through the DAG executor.
+# Source iteration stays outside JIT; the operator transformation is compiled.
 source_jit = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(4))
-result = jit_apply(prob_bright, source_jit)
+jit_pipeline = build_source_pipeline(
+    source_jit,
+    batch_size=16,
+    jit_compile=True,
+    prefetch_size=0,
+).add(OperatorNode(prob_bright))
+jit_batch = next(iter(jit_pipeline))
+result = jit_batch["image"].mean()
 
 print("JIT Compilation:")
-print("  jit_apply() executed successfully")
+print("  jit_compile=True pipeline executed successfully")
 print(f"  Result: {result:.4f}")
 
 # %% [markdown]

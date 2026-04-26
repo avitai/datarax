@@ -158,6 +158,9 @@ batch_node = BatchNode(batch_size=32, name="Batcher")
 
 # Compose using >> operator
 pipeline = data_node >> batch_node
+
+# Execute the chained graph directly
+executor = DAGExecutor(pipeline)
 ```
 
 **Terminal Output:**

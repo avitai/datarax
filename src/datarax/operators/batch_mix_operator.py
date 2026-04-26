@@ -211,6 +211,54 @@ class BatchMixOperator(OperatorModule):
             validate=False,
         )
 
+    def _apply_on_raw(
+        self,
+        batch_data: PyTree,
+        batch_states: PyTree,
+        stats: dict[str, Any] | None = None,
+    ) -> tuple[PyTree, PyTree]:
+        """Apply batch-level mixing in the DAG fused raw-batch path."""
+        del stats
+
+        batch_size = self._batch_size_from_raw_data(batch_data)
+        if batch_size < 2:
+            return batch_data, batch_states
+
+        assert self.rngs is not None, "BatchMixOperator requires rngs"
+        assert self.stream_name is not None, "BatchMixOperator requires stream_name"
+        key = self.rngs[self.stream_name]()
+
+        if self.config.mode == "mixup":
+            return self._apply_mixup_raw(batch_data, batch_states, key)
+        return self._apply_cutmix_raw(batch_data, batch_states, key)
+
+    def _batch_size_from_raw_data(self, batch_data: PyTree) -> int:
+        """Infer batch size from the configured data field or first array leaf."""
+        if isinstance(batch_data, dict) and self.config.data_field in batch_data:
+            return int(batch_data[self.config.data_field].shape[0])
+        first_leaf = jax.tree.leaves(batch_data)[0]
+        return int(first_leaf.shape[0])
+
+    def _apply_mixup_raw(
+        self,
+        batch_data: PyTree,
+        batch_states: PyTree,
+        key: jax.Array,
+    ) -> tuple[PyTree, PyTree]:
+        """Apply MixUp to raw batched arrays."""
+        batch_size = self._batch_size_from_raw_data(batch_data)
+        key1, key2 = jax.random.split(key)
+        lam = jax.random.beta(key1, self.config.alpha, self.config.alpha)
+        perm = jax.random.permutation(key2, jnp.arange(batch_size, dtype=jnp.int32))
+
+        def mix_array(arr: jax.Array) -> jax.Array:
+            if not hasattr(arr, "shape") or len(arr.shape) == 0 or arr.shape[0] != batch_size:
+                return arr
+            arr_perm = arr[perm]
+            return arr_perm + lam * (arr - arr_perm)
+
+        return jax.tree.map(mix_array, batch_data), batch_states
+
     def _apply_cutmix(self, batch: Batch, key: jax.Array) -> Batch:
         """Apply CutMix augmentation to batch.
 
@@ -304,3 +352,60 @@ class BatchMixOperator(OperatorModule):
             batch_state=batch.batch_state.get_value(),
             validate=False,
         )
+
+    def _apply_cutmix_raw(
+        self,
+        batch_data: PyTree,
+        batch_states: PyTree,
+        key: jax.Array,
+    ) -> tuple[PyTree, PyTree]:
+        """Apply CutMix to raw batched arrays."""
+        if not isinstance(batch_data, dict):
+            return batch_data, batch_states
+
+        data_field = self.config.data_field
+        label_field = self.config.label_field
+        if data_field not in batch_data:
+            return batch_data, batch_states
+
+        images = batch_data[data_field]
+        if len(images.shape) < 4:
+            return batch_data, batch_states
+
+        batch_size, height, width = images.shape[:3]
+
+        key1, key2, key3, key4 = jax.random.split(key, 4)
+        lam = jax.random.beta(key1, self.config.alpha, self.config.alpha)
+        perm = jax.random.permutation(key2, batch_size)
+
+        cut_ratio = jnp.sqrt(1.0 - lam)
+        cut_h = height * cut_ratio
+        cut_w = width * cut_ratio
+
+        cx = jax.random.randint(key3, (), 0, width).astype(jnp.float32)
+        cy = jax.random.randint(key4, (), 0, height).astype(jnp.float32)
+
+        x1 = jnp.clip(cx - cut_w / 2, 0, width)
+        x2 = jnp.clip(cx + cut_w / 2, 0, width)
+        y1 = jnp.clip(cy - cut_h / 2, 0, height)
+        y2 = jnp.clip(cy + cut_h / 2, 0, height)
+
+        y_coords = jnp.arange(height, dtype=jnp.float32)
+        x_coords = jnp.arange(width, dtype=jnp.float32)
+        yy, xx = jnp.meshgrid(y_coords, x_coords, indexing="ij")
+        inside_box = (yy >= y1) & (yy < y2) & (xx >= x1) & (xx < x2)
+        mask = jnp.where(inside_box, 0.0, 1.0)[None, :, :, None]
+
+        result_data = dict(batch_data)
+        images_perm = images[perm]
+        result_data[data_field] = mask * images + (1 - mask) * images_perm
+
+        if label_field in batch_data:
+            labels = batch_data[label_field]
+            labels_perm = labels[perm]
+            box_area = (x2 - x1) * (y2 - y1)
+            total_area = height * width
+            lam_adjusted = 1 - (box_area / total_area)
+            result_data[label_field] = labels_perm + lam_adjusted * (labels - labels_perm)
+
+        return result_data, batch_states

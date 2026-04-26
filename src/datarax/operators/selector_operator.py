@@ -138,7 +138,7 @@ class SelectorOperator(OperatorModule):
 
         # Store operators in NNX List for proper state management
         self.operators = nnx.List(config.operators)
-        self.weights = config.normalized_weights
+        self.weights = nnx.static(tuple(float(w) for w in config.normalized_weights.tolist()))
 
     def get_output_structure(
         self,
@@ -200,7 +200,7 @@ class SelectorOperator(OperatorModule):
             rng_select,
             len(self.operators),
             shape=(batch_size,),
-            p=self.weights,
+            p=jnp.asarray(self.weights),
         )
 
         # Generate random params for ALL child operators

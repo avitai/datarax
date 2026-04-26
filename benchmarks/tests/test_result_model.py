@@ -1,4 +1,4 @@
-"""Tests for CalibraX-native benchmark result helpers."""
+"""Tests for calibrax-native benchmark result helpers."""
 
 from __future__ import annotations
 

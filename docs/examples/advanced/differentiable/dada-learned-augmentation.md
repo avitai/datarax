@@ -3,7 +3,7 @@
 | Metadata | Value |
 |----------|-------|
 | **Level** | Advanced |
-| **Runtime** | ~60 min (GPU) / ~4 hrs (CPU) |
+| **Runtime** | Quick mode: a few minutes on CPU; full search: ~60 min GPU / ~4 hrs CPU |
 | **Prerequisites** | [Operators Tutorial](../../core/operators-tutorial.md), [Composition Strategies](../../core/composition-strategies-tutorial.md), JAX grad/vmap |
 | **Format** | Python + Jupyter |
 | **Memory** | ~4 GB VRAM (GPU) / ~8 GB RAM (CPU) |
@@ -55,8 +55,10 @@ jupyter lab examples/advanced/differentiable/01_dada_learned_augmentation_guide.
 ```
 
 !!! note "GPU Recommended"
-    The full DADA search (20 epochs) takes ~60 min on GPU. The example includes a
-    `QUICK_MODE` flag (3 epochs) for quick verification.
+    The checked example defaults to `QUICK_MODE = True` (1 epoch on
+    1,024 train / 256 validation / 256 test samples) for quick verification.
+    Set `QUICK_MODE = False` in the script for the full 40k/10k/10k,
+    20-epoch DADA search.
 
 ## Architecture Overview
 
@@ -123,7 +125,7 @@ flowchart LR
 
 ## Dataset: CIFAR-10
 
-CIFAR-10 is loaded via `keras.datasets` and split into train (40k), validation (10k), and test (10k).
+CIFAR-10 is loaded via `keras.datasets`. Quick mode uses 1,024 train, 256 validation, and 256 test samples; full mode uses the standard train (40k), validation (10k), and test (10k) split.
 
 ![CIFAR-10 Training Samples](../../../assets/images/examples/cv-dada-cifar10-samples.png)
 

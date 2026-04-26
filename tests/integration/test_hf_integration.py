@@ -504,8 +504,8 @@ def test_hf_with_real_dataset():
     """Test with a real small dataset from HuggingFace Hub.
 
     Uses HFStreamingSource to avoid downloading full dataset.
-    Note: This test uses HuggingFace streaming mode which doesn't convert
-    text to JAX arrays (since JAX doesn't support strings).
+    This test requests numeric labels only because raw text must be tokenized
+    or excluded before entering batch-first JAX pipelines.
     """
 
     try:
@@ -514,6 +514,7 @@ def test_hf_with_real_dataset():
             name="rotten_tomatoes",
             split="test",
             streaming=True,
+            include_keys={"label"},
         )
         source = HFStreamingSource(config, rngs=nnx.Rngs(0))
 

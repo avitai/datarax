@@ -189,14 +189,34 @@ def pytest_addoption(parser):
     )
 
 
-def _mark_unselected_test_types(
+def _deselect_items(config: Any, items: list[Any], deselected: list[Any]) -> None:
+    """Remove deselected items from collection and notify pytest."""
+    if not deselected:
+        return
+
+    unique_deselected: list[Any] = []
+    seen_ids: set[int] = set()
+    for item in deselected:
+        item_id = id(item)
+        if item_id in seen_ids:
+            continue
+        seen_ids.add(item_id)
+        unique_deselected.append(item)
+
+    deselected_ids = {id(item) for item in unique_deselected}
+    items[:] = [item for item in items if id(item) not in deselected_ids]
+    config.hook.pytest_deselected(items=unique_deselected)
+
+
+def _deselect_unselected_test_types(
+    config: Any,
     items: list[Any],
     *,
     run_integration: bool,
     run_end_to_end: bool,
     run_benchmark: bool,
 ) -> None:
-    """Skip tests outside explicitly requested test categories."""
+    """Deselect tests outside explicitly requested test categories."""
     requested_markers: set[str] = set()
     if run_integration:
         requested_markers.add("integration")
@@ -208,26 +228,24 @@ def _mark_unselected_test_types(
     if not requested_markers:
         return
 
-    for item in items:
-        if not any(marker in item.keywords for marker in requested_markers):
-            item.add_marker(pytest.mark.skip(reason="test type not selected"))
+    deselected = [
+        item for item in items if not any(marker in item.keywords for marker in requested_markers)
+    ]
+    _deselect_items(config, items, deselected)
 
 
-def _apply_explicit_skip_flags(
-    items: list[Any], *, skip_integration: bool, skip_end_to_end: bool
+def _apply_explicit_deselect_flags(
+    config: Any, items: list[Any], *, skip_integration: bool, skip_end_to_end: bool
 ) -> None:
-    """Apply explicit command-line skip flags."""
+    """Apply explicit command-line deselect flags."""
+    deselected: list[Any] = []
     if skip_integration:
-        skip_int = pytest.mark.skip(reason="integration test not selected")
-        for item in items:
-            if "integration" in item.keywords:
-                item.add_marker(skip_int)
+        deselected.extend(item for item in items if "integration" in item.keywords)
 
     if skip_end_to_end:
-        skip_e2e = pytest.mark.skip(reason="end-to-end test not selected")
-        for item in items:
-            if "end_to_end" in item.keywords:
-                item.add_marker(skip_e2e)
+        deselected.extend(item for item in items if "end_to_end" in item.keywords)
+
+    _deselect_items(config, items, deselected)
 
 
 def _apply_device_filter(items: list[Any], *, device_option: str) -> None:
@@ -265,14 +283,18 @@ def pytest_collection_modifyitems(config, items):
     skip_end_to_end = config.getoption("--no-end-to-end")
     device_option = config.getoption("--device")
 
-    _mark_unselected_test_types(
+    _deselect_unselected_test_types(
+        config,
         items,
         run_integration=run_integration,
         run_end_to_end=run_end_to_end,
         run_benchmark=run_benchmark,
     )
-    _apply_explicit_skip_flags(
-        items, skip_integration=skip_integration, skip_end_to_end=skip_end_to_end
+    _apply_explicit_deselect_flags(
+        config,
+        items,
+        skip_integration=skip_integration,
+        skip_end_to_end=skip_end_to_end,
     )
 
     # Note: Benchmarks are now run by default to ensure complete testing

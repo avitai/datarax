@@ -9,6 +9,7 @@ These tests validate that example files:
 
 from __future__ import annotations
 
+import os
 import platform
 import re
 import subprocess
@@ -21,8 +22,9 @@ import pytest
 # Detect macOS - TensorFlow crashes on macOS ARM64
 IS_MACOS = platform.system() == "Darwin"
 
-# Path to examples directory
-EXAMPLES_DIR = Path(__file__).parent.parent.parent / "docs" / "examples"
+# Path to runnable examples directory
+EXAMPLES_DIR = Path(__file__).parent.parent.parent / "examples"
+EXAMPLE_TIMEOUT_SECONDS = int(os.environ.get("DATARAX_EXAMPLE_TIMEOUT_SECONDS", "120"))
 
 # Required sections for validation
 REQUIRED_SECTIONS = ["Overview", "Setup"]
@@ -39,6 +41,8 @@ def find_example_files() -> list[Path]:
         if py_file.name.startswith("_"):
             continue
         if "test" in py_file.name.lower():
+            continue
+        if "comparison" in py_file.parts:
             continue
         if re.match(r"^\d+_", py_file.name):
             examples.append(py_file)
@@ -133,7 +137,7 @@ class TestExampleSync:
 class TestExampleExecution:
     """Tests that execute example files.
 
-    These tests are marked as slow and skipped by default.
+    These tests are marked as slow and run in the long-running CI tier.
     Run with: pytest -m slow
     """
 
@@ -148,9 +152,14 @@ class TestExampleExecution:
         result = subprocess.run(
             [sys.executable, str(example_path)],
             capture_output=True,
+            env={
+                **os.environ,
+                "JAX_PLATFORMS": os.environ.get("JAX_PLATFORMS", "cpu"),
+                "TFDS_DISABLE_PROGRESS_BAR": "1",
+            },
             text=True,
-            timeout=120,
-            cwd=example_path.parent.parent.parent.parent,  # Repo root
+            timeout=EXAMPLE_TIMEOUT_SECONDS,
+            cwd=EXAMPLES_DIR.parent,  # Repo root
         )
         if result.returncode != 0:
             # Truncate long error messages

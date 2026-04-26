@@ -96,6 +96,25 @@ def test_hf_eager_source_iteration(mock_numeric_dataset, monkeypatch):
 
 
 @pytest.mark.unit
+def test_hf_eager_source_preserves_text_columns(mock_dataset, monkeypatch):
+    """Test HFEagerSource can inspect unbatched text columns."""
+
+    def mock_load_dataset(name, split=None, **kwargs):
+        del kwargs, name, split
+        return mock_dataset
+
+    monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
+
+    config = HFEagerConfig(name="mock_dataset", split="train")
+    source = HFEagerSource(config, rngs=nnx.Rngs(42))
+    item = next(iter(source))
+
+    assert len(source) == 10
+    assert item["text"] == "This is text 0"
+    assert isinstance(item["label"], jax.Array)
+
+
+@pytest.mark.unit
 def test_hf_eager_source_batch_method(mock_numeric_dataset, monkeypatch):
     """Test HFEagerSource's get_batch method."""
 

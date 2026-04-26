@@ -325,10 +325,13 @@ TRAIN_SAMPLES = 2000
 
 
 @nnx.jit
-def train_step(model: SimpleCNN, optimizer: nnx.Optimizer, batch: dict) -> jax.Array:
+def train_step(
+    model: SimpleCNN,
+    optimizer: nnx.Optimizer,
+    images: jax.Array,
+    labels: jax.Array,
+) -> jax.Array:
     """Single training step."""
-    images = batch["image"]
-    labels = batch["label"]
 
     def loss_fn(model):
         logits = model(images)
@@ -392,7 +395,7 @@ def run_training(
             break
 
         # Training step
-        loss = train_step(model, optimizer, batch)
+        loss = train_step(model, optimizer, batch["image"], batch["label"])
 
         # Record metrics
         metrics["train_losses"].append(float(loss))

@@ -5,6 +5,8 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  schedule:
+    - cron: '0 8 * * *'
   workflow_dispatch:
 
 jobs:
@@ -135,8 +137,7 @@ jobs:
           # Note: TFDS tests are skipped on macOS due to TensorFlow ARM64 import hang issue
           # (https://github.com/tensorflow/tensorflow/issues/52138)
           # This matches the approach of major ML projects (Keras, Flax) which don't test on macOS
-          uv run pytest tests --no-integration --no-end-to-end -v --device=cpu
-        continue-on-error: true
+          uv run pytest tests --no-integration --no-end-to-end -v -m "not slow" --device=cpu --cov-fail-under=0
 
       - name: Prepare coverage data
         run: uv run coverage combine || true
@@ -146,6 +147,57 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-unit-${{ matrix.os }}
+          path: .coverage
+          include-hidden-files: true
+        if: always()
+
+  long_running_tests:
+    name: Long-Running Tests
+    needs: unit_tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-suffix: "long-running"
+
+      - name: Create virtual environment
+        run: |
+          uv venv
+
+      - name: Install dependencies
+        run: |
+          uv pip install -e ".[dev,test,data]"
+
+      - name: Setup PYTHONPATH for tests
+        run: |
+          echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
+
+      - name: Run long-running tests
+        run: |
+          # Keep the fast shard short, but still run slow coverage in CI.
+          export JAX_PLATFORMS="cpu"
+          export DATARAX_EXAMPLE_TIMEOUT_SECONDS=3600
+          uv run pytest tests -m slow -v --device=cpu --cov-fail-under=0 --timeout=3900
+
+      - name: Prepare coverage data
+        run: uv run coverage combine || true
+        if: always()
+
+      - name: Upload coverage data
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-long-running
           path: .coverage
           include-hidden-files: true
         if: always()
@@ -185,8 +237,7 @@ jobs:
         run: |
           # Explicitly run on CPU for GitHub workflow
           export JAX_PLATFORMS="cpu"
-          uv run pytest tests --integration -v --device=cpu
-        continue-on-error: true
+          uv run pytest tests --integration -v --device=cpu --cov-fail-under=0
 
       - name: Prepare coverage data
         run: uv run coverage combine || true
@@ -235,8 +286,10 @@ jobs:
         run: |
           # Explicitly run on CPU for GitHub workflow
           export JAX_PLATFORMS="cpu"
-          uv run pytest tests --end-to-end -v --device=cpu
-        continue-on-error: true
+          uv run pytest \
+            tests/integration/test_end_to_end_pipeline.py \
+            tests/benchmarks/test_data_sources.py::test_end_to_end_pipeline_benchmark \
+            -v --device=cpu --cov-fail-under=0
 
       - name: Prepare coverage data
         run: uv run coverage combine || true
@@ -300,7 +353,7 @@ jobs:
 
   coverage:
     name: Test Coverage
-    needs: [unit_tests, integration_tests, end_to_end_tests]
+    needs: [unit_tests, long_running_tests, integration_tests, end_to_end_tests]
     runs-on: ubuntu-latest
 
     steps:

@@ -114,7 +114,7 @@ class TestSelectorOperatorInit:
         selector_config = SelectorOperatorConfig(operators=[op1, op2], weights=[0.9, 0.1])
         selector = SelectorOperator(selector_config, rngs=rngs)
 
-        assert jnp.allclose(selector.weights, jnp.array([0.9, 0.1]))
+        assert jnp.allclose(jnp.asarray(selector.weights), jnp.array([0.9, 0.1]))
 
 
 class TestSelectorOperatorBasic:

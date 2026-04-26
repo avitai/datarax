@@ -163,13 +163,13 @@ Combine operators to build sophisticated augmentation pipelines:
 ```python
 # 1. Probabilistically apply brightness (60%)
 prob_bright = ProbabilisticOperator(
-    ProbabilisticOperatorConfig(operator=bright, probability=0.6),
+    ProbabilisticOperatorConfig(operator=bright, probability=0.6, stream_name="augment"),
     rngs=nnx.Rngs(augment=100),
 )
 
 # 2. Probabilistically apply contrast (60%)
 prob_contrast = ProbabilisticOperator(
-    ProbabilisticOperatorConfig(operator=contrast, probability=0.6),
+    ProbabilisticOperatorConfig(operator=contrast, probability=0.6, stream_name="augment"),
     rngs=nnx.Rngs(augment=200),
 )
 

@@ -15,11 +15,11 @@
 | Metadata | Value |
 |----------|-------|
 | **Level** | Advanced |
-| **Runtime** | ~3 hrs (GPU, full) / ~15 min (GPU, quick) |
+| **Runtime** | ~3 hrs (GPU, full NSynth) / ~2 min (quick smoke) |
 | **Prerequisites** | JAX, Flax NNX, audio/DSP basics, custom operator patterns |
 | **Memory** | ~6 GB VRAM (GPU, full) / ~4 GB VRAM (GPU, quick) |
 | **Devices** | GPU recommended, CPU supported |
-| **Dataset** | NSynth gansynth_subset (~1 GB, auto-downloaded via TFDS) |
+| **Dataset** | Procedural audio in quick mode; NSynth gansynth_subset in full mode |
 | **Format** | Python + Jupyter |
 
 ## Overview
@@ -43,7 +43,7 @@ By the end of this example, you will be able to:
 1. **Create** custom `OperatorModule` subclasses for non-image domains (audio)
 2. **Implement** differentiable DSP primitives (harmonic synth, noise filter, reverb)
 3. **Compose** parallel + sequential pipelines using `CompositeOperatorModule`
-4. **Train** an audio synthesis model using multi-scale spectral loss on real data
+4. **Train** an audio synthesis model using multi-scale spectral loss on audio data
 5. **Understand** how datarax's extensibility enables any-domain differentiable pipelines
 
 ## Reference
@@ -72,7 +72,7 @@ uv pip install "datarax[data]"
 # No additional audio libraries needed — all DSP is in pure JAX
 ```
 
-**Estimated Time:** ~3 hrs on GPU (full, 10K samples) / ~15 min on GPU (quick mode)
+**Estimated Time:** ~3 hrs on GPU (full, 10K NSynth samples) / ~2 min (quick smoke)
 """
 
 # %%
@@ -231,11 +231,13 @@ $$
 """
 ## Implementation
 
-### Step 1: Load NSynth Dataset + Extract Features via Datarax Operators
+### Step 1: Load Audio Data + Extract Features via Datarax Operators
 
-We load raw instrument recordings from the NSynth dataset and extract
-audio features **using datarax's own audio operators** — the same
-`OperatorModule` pattern used for synthesis later in this guide:
+Quick mode generates a tiny deterministic NSynth-like smoke dataset so this
+guide runs in CI without downloading external archives. Full mode loads raw
+instrument recordings from NSynth and extracts audio features **using datarax's
+own audio operators** — the same `OperatorModule` pattern used for synthesis
+later in this guide:
 
 1. **`LoudnessOperator`** (pure JAX, learnable weights):
    STFT → power spectrum → A-weighted loudness in dB.
@@ -258,7 +260,7 @@ Each sample produces:
 
 
 # %%
-# Step 1: Load NSynth dataset
+# Step 1: Load audio dataset
 SAMPLE_RATE = 16000
 AUDIO_LENGTH = 64000  # 4 seconds at 16 kHz
 N_FRAMES = 1000  # Feature frames at 250 Hz frame rate
@@ -280,16 +282,18 @@ class TrainConfig:
     num_epochs: int
     batch_size: int
     loss_fft_sizes: tuple[int, ...]
+    use_synthetic_data: bool
 
 
 QUICK_CONFIG = TrainConfig(
-    n_train=500,
-    n_test=100,
-    num_epochs=5,
-    batch_size=8,
+    n_train=8,
+    n_test=4,
+    num_epochs=1,
+    batch_size=2,
     # Fewer FFT scales reduces XLA compilation time significantly
     # (each scale adds a separate STFT + gradient computation to the XLA graph)
-    loss_fft_sizes=(256, 1024, 2048),
+    loss_fft_sizes=(512,),
+    use_synthetic_data=True,
 )
 
 FULL_CONFIG = TrainConfig(
@@ -298,15 +302,85 @@ FULL_CONFIG = TrainConfig(
     num_epochs=100,
     batch_size=32,
     loss_fft_sizes=(64, 128, 256, 512, 1024, 2048),
+    use_synthetic_data=False,
 )
 
-QUICK_MODE = False
+QUICK_MODE = True
 cfg = QUICK_CONFIG if QUICK_MODE else FULL_CONFIG
+_DDSP_EXAMPLE_COMPLETED = False
+
+
+def generate_synthetic_ddsp_data(
+    n_train: int,
+    n_test: int,
+    *,
+    seed: int = 42,
+) -> tuple[dict, dict]:
+    """Generate a tiny deterministic NSynth-like dataset for quick smoke runs.
+
+    Full mode still uses real NSynth recordings. Quick mode keeps CI and local
+    examples self-contained while exercising the same datarax source, operator,
+    synthesis, loss, and training paths.
+    """
+    rng = np.random.default_rng(seed)
+    n_total = n_train + n_test
+    frame_axis = np.linspace(0.0, 1.0, N_FRAMES, dtype=np.float32)
+    sample_axis = np.linspace(0.0, 1.0, AUDIO_LENGTH, dtype=np.float32)
+
+    audio_all = np.empty((n_total, AUDIO_LENGTH), dtype=np.float32)
+    f0_all = np.empty((n_total, N_FRAMES), dtype=np.float32)
+    loudness_all = np.empty((n_total, N_FRAMES), dtype=np.float32)
+
+    for idx in range(n_total):
+        base_f0 = rng.uniform(110.0, 660.0)
+        vibrato_rate = rng.uniform(3.0, 6.0)
+        vibrato_phase = rng.uniform(0.0, 2.0 * np.pi)
+        f0_hz = base_f0 * (
+            1.0 + 0.015 * np.sin(2.0 * np.pi * vibrato_rate * frame_axis + vibrato_phase)
+        )
+
+        attack = np.minimum(frame_axis / 0.08, 1.0)
+        decay = np.exp(-2.0 * frame_axis)
+        loudness = 0.25 + 0.65 * attack * decay
+
+        sample_f0 = np.interp(sample_axis, frame_axis, f0_hz).astype(np.float32)
+        sample_amp = np.interp(sample_axis, frame_axis, loudness).astype(np.float32)
+        phase = np.cumsum(2.0 * np.pi * sample_f0 / SAMPLE_RATE).astype(np.float32)
+
+        waveform = np.zeros(AUDIO_LENGTH, dtype=np.float32)
+        for harmonic in range(1, 6):
+            waveform += (1.0 / harmonic) * np.sin(harmonic * phase).astype(np.float32)
+        waveform *= sample_amp
+        waveform += rng.normal(0.0, 0.002, size=AUDIO_LENGTH).astype(np.float32)
+        waveform /= max(float(np.max(np.abs(waveform))), 1e-8)
+
+        audio_all[idx] = waveform.astype(np.float32)
+        f0_all[idx] = f0_hz.astype(np.float32)
+        loudness_all[idx] = loudness.astype(np.float32)
+
+    f0_midi = 12.0 * np.log2(np.maximum(f0_all, 1e-5) / 440.0) + 69.0
+    f0_scaled = np.clip(f0_midi / 127.0, 0.0, 1.0).astype(np.float32)
+
+    train_data = {
+        "audio": audio_all[:n_train],
+        "f0": f0_scaled[:n_train],
+        "loudness": loudness_all[:n_train],
+        "f0_hz": f0_all[:n_train],
+    }
+    test_data = {
+        "audio": audio_all[n_train:],
+        "f0": f0_scaled[n_train:],
+        "loudness": loudness_all[n_train:],
+        "f0_hz": f0_all[n_train:],
+    }
+    return train_data, test_data
 
 
 def load_nsynth(
     n_train: int = 10000,
     n_test: int = 500,
+    *,
+    synthetic: bool = False,
 ) -> tuple[dict, dict]:
     """Load NSynth gansynth_subset and extract features with datarax operators.
 
@@ -325,6 +399,9 @@ def load_nsynth(
             loudness: (N, 1000) float32 — dB-range normalized loudness in [0,1]
             f0_hz: (N, 1000) float32 — raw f0 in Hz
     """
+    if synthetic:
+        return generate_synthetic_ddsp_data(n_train=n_train, n_test=n_test)
+
     import csv
     import glob
     import os as _os
@@ -496,9 +573,14 @@ def load_nsynth(
     return train_data, test_data
 
 
-# Load NSynth data
-print(f"Loading NSynth dataset ({cfg.n_train} train, {cfg.n_test} test)...")
-train_data, test_data = load_nsynth(n_train=cfg.n_train, n_test=cfg.n_test)
+# Load data
+dataset_label = "procedural DDSP smoke dataset" if cfg.use_synthetic_data else "NSynth dataset"
+print(f"Loading {dataset_label} ({cfg.n_train} train, {cfg.n_test} test)...")
+train_data, test_data = load_nsynth(
+    n_train=cfg.n_train,
+    n_test=cfg.n_test,
+    synthetic=cfg.use_synthetic_data,
+)
 
 # Wrap in MemorySource
 train_source = MemorySource(MemorySourceConfig(), data=train_data, rngs=nnx.Rngs(0))
@@ -514,8 +596,8 @@ print(
     f"({AUDIO_LENGTH / SAMPLE_RATE:.1f}s)"
 )
 print(f"Feature frames: {N_FRAMES} @ {FRAME_RATE} Hz frame rate")
-# Expected output (QUICK_MODE=False):
-# Train: audio=(10000, 64000), f0=(10000, 1000), loudness=(10000, 1000)
+# Expected output (QUICK_MODE=True):
+# Train: audio=(8, 64000), f0=(8, 1000), loudness=(8, 1000)
 # Sample rate: 16000 Hz, Audio length: 64000 samples (4.0s)
 # Feature frames: 1000 @ 250 Hz frame rate
 
@@ -545,8 +627,8 @@ for i in range(3):
     axes[1, i].set_title("Spectrogram (harmonics visible)")
 
 fig.suptitle(
-    "NSynth Dataset — Real Instrument Waveforms and Spectrograms\n"
-    "Each sample is a 4-second recording with pre-computed f0 and loudness",
+    f"{dataset_label.title()} — Waveforms and Spectrograms\n"
+    "Each sample is a 4-second signal with f0 and loudness controls",
     fontsize=12,
 )
 plt.tight_layout()
@@ -1236,7 +1318,7 @@ def evaluate_spectral_loss(
     batch_size: int = 4,
 ) -> float:
     """Compute average spectral loss over a dataset."""
-    pipeline = build_source_pipeline(source, batch_size=batch_size)
+    pipeline = build_source_pipeline(source, batch_size=batch_size, prefetch_size=0)
     total_loss = 0.0
     num_batches = 0
     for batch in pipeline:
@@ -1342,7 +1424,7 @@ def train_ddsp(
     print(f"Training DDSP: {num_epochs} epochs, batch_size={batch_size}, peak_lr={peak_lr}")
 
     for epoch in range(num_epochs):
-        pipeline = build_source_pipeline(train_source, batch_size=batch_size)
+        pipeline = build_source_pipeline(train_source, batch_size=batch_size, prefetch_size=0)
         epoch_loss = 0.0
         num_steps = 0
 
@@ -1389,7 +1471,7 @@ ax.plot(
 )
 ax.set_xlabel("Epoch")
 ax.set_ylabel("Multi-Scale Spectral Loss")
-ax.set_title("DDSP Training: Spectral Loss Over Epochs (NSynth)")
+ax.set_title(f"DDSP Training: Spectral Loss Over Epochs ({dataset_label})")
 ax.grid(True, alpha=0.3)
 
 # Annotate start and end values
@@ -1435,7 +1517,7 @@ noise synth, harmonic synth, and into the decoder.
 print("\n=== Gradient Flow Verification ===")
 
 # Get a test batch
-verify_pipeline = build_source_pipeline(test_source, batch_size=4)
+verify_pipeline = build_source_pipeline(test_source, batch_size=4, prefetch_size=0)
 verify_batch = next(iter(verify_pipeline))
 target = verify_batch["audio"]
 f0 = verify_batch["f0"]
@@ -1449,7 +1531,7 @@ def verify_loss(params: tuple) -> jax.Array:
     """Compute multi-scale spectral loss for gradient verification."""
     dec, synth_comp = params
     pred = synthesize_batch(dec, synth_comp, f0, loudness, f0_hz)
-    return multi_scale_spectral_loss(pred, target)
+    return multi_scale_spectral_loss(pred, target, fft_sizes=cfg.loss_fft_sizes)
 
 
 loss, grads = nnx.value_and_grad(verify_loss)(all_params)
@@ -1567,7 +1649,7 @@ print(f"  Improvement:         {improvement:.1f}% lower spectral loss")
 
 # %%
 # Visualize resynthesis quality: target vs. synthesized waveforms and spectrograms
-vis_pipeline = build_source_pipeline(test_source, batch_size=4)
+vis_pipeline = build_source_pipeline(test_source, batch_size=4, prefetch_size=0)
 vis_batch = next(iter(vis_pipeline))
 vis_pred = synthesize_batch(
     decoder,
@@ -1618,7 +1700,7 @@ for ax in axes[-1]:
     ax.set_xlabel("Time (s)")
 
 fig.suptitle(
-    f"DDSP Resynthesis: Target vs. Synthesized Audio (NSynth)\n"
+    f"DDSP Resynthesis: Target vs. Synthesized Audio ({dataset_label})\n"
     f"Spectral Loss: {avg_test_loss:.4f} (trained) vs {rand_loss:.4f} (random) — "
     f"{improvement:.1f}% improvement",
     fontsize=12,
@@ -1763,45 +1845,19 @@ def analyze_ddsp(
 
 
 analyze_ddsp(decoder, synth_composite)
+_DDSP_EXAMPLE_COMPLETED = True
 
 # %% [markdown]
 """
 ## Troubleshooting
 
-### Out of Memory during training
-
-**Symptom**: `XlaRuntimeError: RESOURCE_EXHAUSTED` during `train_ddsp()`.
-
-**Cause**: Audio batches are large — each sample is 64,000 floats, and the
-spectral loss computes multiple FFTs per sample. With `batch_size=32`, a single
-batch uses ~8 MB of audio data, plus intermediate FFT buffers. Loading 10K
-samples also requires ~2.5 GB RAM for the dataset arrays.
-
-**Solution**: Reduce `batch_size` in `train_ddsp()` to 16 or 8, reduce the
-number of FFT scales in `cfg.loss_fft_sizes`, or use `QUICK_MODE = True` (500
-samples, 5 epochs).
-
-### NSynth dataset download fails or is slow
-
-**Symptom**: `load_nsynth()` hangs or fails with network errors.
-
-**Cause**: The NSynth TFRecord archive is ~1 GB. Downloads may fail on slow
-or unstable connections.
-
-**Solution**: Set `TFDS_DATA_DIR` to a directory with sufficient space on a
-fast drive: `export TFDS_DATA_DIR=/path/to/data`. If the download was partially
-completed, delete the `downloads/` subdirectory and retry.
-
-### Training is very slow on CPU
-
-**Symptom**: Each epoch takes 10+ minutes.
-
-**Cause**: The harmonic synthesizer uses phase accumulation with 100 harmonics
-per frame — heavy on FLOPs. XLA compilation also takes longer on CPU.
-
-**Solution**: Set `QUICK_MODE = True` to use fewer FFT scales, fewer samples
-(500 vs 10K), and fewer epochs (5 vs 100). GPU is strongly recommended for
-full training (10K samples, ~3 hrs).
+- **Out of memory**: Reduce `batch_size`, reduce `cfg.loss_fft_sizes`, or keep
+  `QUICK_MODE = True` (8 training samples, 1 epoch, one FFT scale).
+- **NSynth download is slow**: Full mode downloads the ~1 GB NSynth TFRecord
+  archive. Set `TFDS_DATA_DIR` to a fast drive with enough free space.
+- **CPU is slow**: Full training is compute-heavy because synthesis uses 100
+  harmonics per frame. Quick mode is the checked CPU path; use GPU for full
+  NSynth training.
 """
 
 # %% [markdown]
@@ -1813,7 +1869,8 @@ full training (10K samples, ~3 hrs).
 This example demonstrates datarax's **extensibility** to non-image domains.
 Three custom `OperatorModule` subclasses for audio DSP — with no changes to
 datarax's core library — enable a complete differentiable audio synthesis system
-trained on real NSynth instrument recordings.
+trained on quick procedural audio by default, with the same code path available
+for real NSynth instrument recordings in full mode.
 
 ### Observed Results (Full Training, 10K samples, 100 epochs, ~31K steps)
 
@@ -1842,9 +1899,9 @@ is primarily due to using 10K samples (vs. 290K) and fixed CREPE features
    expresses DDSP's architecture: `WEIGHTED_PARALLEL` mixes harmonic + noise,
    then `SEQUENTIAL` chains the mix into reverb — no manual `.apply()` calls.
 
-4. **Real data, real results**: Training on NSynth instrument recordings
-   produces recognizable instrument timbres, validating that the architecture
-   works on real audio (not just synthetic sine waves).
+4. **Quick smoke, full data path**: Quick mode validates the full differentiable
+   training path without external downloads; full mode trains on NSynth
+   instrument recordings for real-audio results.
 
 5. **Paper-accurate architecture**: The DDSPDecoder uses GRU + MLP (nnx.List
    pattern) with per-frame synthesis and phase accumulation in the harmonic
@@ -1879,13 +1936,6 @@ is primarily due to using 10K samples (vs. 290K) and fixed CREPE features
 - [Operators Tutorial](../../core/02_operators_tutorial.py) — Deep dive
   into operator patterns
 
-### API Reference
-
-- [OperatorModule](../../../docs/core/operator.md) — Base class extended by custom operators
-- [OperatorConfig](../../../docs/core/config.md) — Configuration base class
-- [MergeBatchNode](../../../docs/dag/nodes.md) — Parallel merge node
-- [DAGExecutor](../../../docs/dag/dag_executor.md) — Pipeline executor
-
 ### Further Reading
 
 - [DDSP Paper (arXiv)](https://arxiv.org/abs/2001.04643) — Full paper
@@ -1898,21 +1948,34 @@ is primarily due to using 10K samples (vs. 290K) and fixed CREPE features
 # %%
 def main():
     """CLI entry point for full DDSP training pipeline."""
+    if _DDSP_EXAMPLE_COMPLETED:
+        print("\nNotebook-style DDSP example already completed; skipping duplicate main() run.")
+        return
+
     print("=" * 60)
     print("DDSP: Differentiable Digital Signal Processing")
-    print("  Dataset: NSynth (real instrument recordings)")
+    print(f"  Dataset: {'procedural smoke data' if cfg.use_synthetic_data else 'NSynth'}")
     print("=" * 60)
 
-    # Load data (full dataset for CLI training — 10K samples, ~31K training steps)
-    print("\n[1/4] Loading NSynth dataset...")
-    data_train, data_test = load_nsynth(n_train=10000, n_test=500)
+    # Load data using the same mode selected above. Set QUICK_MODE=False near
+    # the configuration block for the full 10K-sample, 100-epoch run.
+    print("\n[1/4] Loading DDSP dataset...")
+    data_train, data_test = load_nsynth(
+        n_train=cfg.n_train,
+        n_test=cfg.n_test,
+        synthetic=cfg.use_synthetic_data,
+    )
     src_train = MemorySource(MemorySourceConfig(), data=data_train, rngs=nnx.Rngs(0))
     src_test = MemorySource(MemorySourceConfig(), data=data_test, rngs=nnx.Rngs(1))
     print(f"  Train: {data_train['audio'].shape}, Test: {data_test['audio'].shape}")
 
     # Train
     print("\n[2/4] Training DDSP model...")
-    dec, synth_comp, _ = train_ddsp(src_train, num_epochs=100, batch_size=32)
+    dec, synth_comp, _ = train_ddsp(
+        src_train,
+        num_epochs=cfg.num_epochs,
+        batch_size=cfg.batch_size,
+    )
 
     # Evaluate (reuses the extracted helper — no code duplication)
     print("\n[3/4] Evaluating resynthesis quality...")

@@ -4,6 +4,7 @@ This module contains tests for the MonitoredPipeline component
 of the Datarax monitoring system.
 """
 
+import time
 from typing import Any
 
 import flax.nnx as nnx
@@ -133,6 +134,39 @@ class TestMonitoredPipeline:
         assert len(batches) == 10  # 100 elements / batch_size 10 = 10 batches
         for batch in batches:
             assert len(batch["value"]) == batch_size
+
+    def test_batch_production_timer_measures_iterator_work(self):
+        """Batch production timing should include work needed to fetch the batch."""
+
+        class SlowMemorySource(MemorySource):
+            def get_batch(self, *args: Any, **kwargs: Any) -> Any:
+                time.sleep(0.003)
+                return super().get_batch(*args, **kwargs)
+
+        class MetricsCapture(MetricsObserver):
+            def __init__(self, *args: Any, **kwargs: Any):
+                super().__init__(*args, **kwargs)
+                self.metrics: list[MetricRecord] = []
+
+            def update(self, metrics: list[MetricRecord]) -> None:
+                self.metrics.extend(metrics)
+
+        source = SlowMemorySource(
+            MemorySourceConfig(),
+            {"value": np.arange(3)},
+            rngs=nnx.Rngs(0),
+        )
+        pipeline = MonitoredPipeline(source, metrics_enabled=True).batch(1)
+        observer = MetricsCapture()
+        pipeline.callbacks.register(observer)
+
+        list(pipeline)
+
+        batch_times = [
+            metric.value for metric in observer.metrics if metric.name == "batch_production_time"
+        ]
+        assert batch_times
+        assert max(batch_times) >= 0.002
 
 
 def test_end_to_end_monitored_pipeline():

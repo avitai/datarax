@@ -55,6 +55,8 @@ logger = logging.getLogger(__name__)
 def _resolve_hf_download_options(download_kwargs: dict[str, Any] | None) -> dict[str, Any]:
     """Prepare HF kwargs with security-pinned revision."""
     resolved = dict(download_kwargs or {})
+    # datasets.load_dataset no longer accepts this transformers-only flag.
+    resolved.pop("trust_remote_code", None)
     resolved.setdefault("revision", "main")
     return resolved
 
@@ -81,6 +83,14 @@ def _stack_hf_array_columns(arrays: dict[str, list[Any]]) -> dict[str, Any]:
         else:
             result[key] = values
     return result
+
+
+def _infer_hf_column_length(data: dict[str, Any]) -> int:
+    """Infer row count from a loaded eager HF column mapping."""
+    first_value = next(iter(data.values()))
+    if hasattr(first_value, "shape"):
+        return int(first_value.shape[0])
+    return len(first_value)
 
 
 @dataclass(frozen=True)
@@ -185,8 +195,8 @@ class HFEagerSource(EagerSourceBase):
         ```
     """
 
-    # Store data as JAX arrays (annotated for NNX to prevent parameter tracking)
-    data: dict[str, jax.Array]
+    # Store loaded columns as JAX arrays or Python lists for non-array columns.
+    data: dict[str, Any]
 
     def __init__(
         self,
@@ -239,8 +249,7 @@ class HFEagerSource(EagerSourceBase):
         gc.collect()
 
         # State for iteration (like MemorySource)
-        first_key = next(iter(self.data.keys()))
-        self.length = self.data[first_key].shape[0]
+        self.length = _infer_hf_column_length(self.data)
         self.index = nnx.Variable(0)
         self.epoch = nnx.Variable(0)
 

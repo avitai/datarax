@@ -356,11 +356,13 @@ import time
 optimizer = nnx.Optimizer(model, optax.adam(LEARNING_RATE), wrt=nnx.Param)
 
 @nnx.jit
-def train_step(model: MNISTClassifier, optimizer: nnx.Optimizer, batch: dict) -> jax.Array:
+def train_step(
+    model: MNISTClassifier,
+    optimizer: nnx.Optimizer,
+    images: jax.Array,
+    labels: jax.Array,
+) -> jax.Array:
     """Single training step."""
-    images = batch["image"]
-    labels = batch["label_onehot"]
-
     def loss_fn(model):
         logits = model(images)
         loss = optax.softmax_cross_entropy(logits, labels).mean()
@@ -372,11 +374,12 @@ def train_step(model: MNISTClassifier, optimizer: nnx.Optimizer, batch: dict) ->
     return loss
 
 @nnx.jit
-def eval_step(model: MNISTClassifier, batch: dict) -> tuple[jax.Array, jax.Array]:
+def eval_step(
+    model: MNISTClassifier,
+    images: jax.Array,
+    labels: jax.Array,
+) -> tuple[jax.Array, int]:
     """Single evaluation step."""
-    images = batch["image"]
-    labels = batch["label"]
-
     logits = model(images)
     predictions = jnp.argmax(logits, axis=-1)
     correct = (predictions == labels).sum()
@@ -402,7 +405,7 @@ for epoch in range(NUM_EPOCHS):
         batch_start = time.time()
 
         # Training step
-        loss = train_step(model, optimizer, batch)
+        loss = train_step(model, optimizer, batch["image"], batch["label_onehot"])
         epoch_losses.append(float(loss))
 
         # Track throughput
@@ -425,7 +428,7 @@ for epoch in range(NUM_EPOCHS):
     total_samples = 0
 
     for batch in test_pipeline:
-        correct, n = eval_step(model, batch)
+        correct, n = eval_step(model, batch["image"], batch["label"])
         total_correct += int(correct)
         total_samples += int(n)
 

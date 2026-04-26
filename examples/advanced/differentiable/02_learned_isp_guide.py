@@ -111,6 +111,15 @@ import matplotlib.pyplot as plt
 OUTPUT_DIR = Path("docs/assets/images/examples")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+# Keep the script entry point bounded for CI and local documentation builds.
+# Set QUICK_MODE=False for the longer learned-ISP run.
+QUICK_MODE = True
+ISP_TRAIN_SPLIT = "train[:512]" if QUICK_MODE else "train[:2000]"
+ISP_TEST_SPLIT = "test[:128]" if QUICK_MODE else "test[:500]"
+ISP_PHASE1_EPOCHS = 1 if QUICK_MODE else 5
+ISP_PHASE2_EPOCHS = 1 if QUICK_MODE else 10
+ISP_BATCH_SIZE = 32
+
 # %% [markdown]
 """
 ## Core Concepts
@@ -232,8 +241,8 @@ def load_cifar10_lowlight(
 
 # Load CIFAR-10 train/test with low-light simulation
 print("Loading CIFAR-10 with low-light simulation...")
-train_data, train_source = load_cifar10_lowlight(split="train[:2000]", seed=42)
-test_data, test_source = load_cifar10_lowlight(split="test[:500]", seed=99)
+train_data, train_source = load_cifar10_lowlight(split=ISP_TRAIN_SPLIT, seed=42)
+test_data, test_source = load_cifar10_lowlight(split=ISP_TEST_SPLIT, seed=99)
 
 print(
     f"Train images: {train_data['image'].shape}, range: "
@@ -241,8 +250,8 @@ print(
 )
 print(f"Test images:  {test_data['image'].shape}")
 # Expected output:
-# Train images: (2000, 32, 32, 3), range: [0.000, ~0.300]
-# Test images:  (500, 32, 32, 3)
+# Train images: (512, 32, 32, 3), range: [0.000, ~0.300]
+# Test images:  (128, 32, 32, 3)
 
 # %%
 # Visualize clean vs. dark CIFAR-10 samples
@@ -1013,18 +1022,13 @@ def run_training(
     return isp_composite, detector, history
 
 
-# Run training (reduced epochs and data for demonstration)
-QUICK_MODE = True
-p1_epochs = 2 if QUICK_MODE else 5
-p2_epochs = 3 if QUICK_MODE else 10
-
 print("\n=== Learned ISP Training (CIFAR-10) ===\n")
 isp_composite, detector, train_history = run_training(
     train_source,
     test_source,
-    phase1_epochs=p1_epochs,
-    phase2_epochs=p2_epochs,
-    batch_size=32,
+    phase1_epochs=ISP_PHASE1_EPOCHS,
+    phase2_epochs=ISP_PHASE2_EPOCHS,
+    batch_size=ISP_BATCH_SIZE,
 )
 
 # %%
@@ -1427,16 +1431,17 @@ def main():
 
     # Load CIFAR-10 with low-light simulation
     print("\n[1/5] Loading CIFAR-10 low-light dataset...")
-    _, train_source = load_cifar10_lowlight(split="train", seed=42)
-    _, test_source = load_cifar10_lowlight(split="test", seed=99)
+    _, train_source = load_cifar10_lowlight(split=ISP_TRAIN_SPLIT, seed=42)
+    _, test_source = load_cifar10_lowlight(split=ISP_TEST_SPLIT, seed=99)
 
     # Train
     print("\n[2/5] Training ISP + Detector...")
     isp_composite, detector, _ = run_training(
         train_source,
         test_source,
-        phase1_epochs=5,
-        phase2_epochs=10,
+        phase1_epochs=ISP_PHASE1_EPOCHS,
+        phase2_epochs=ISP_PHASE2_EPOCHS,
+        batch_size=ISP_BATCH_SIZE,
     )
 
     # Evaluate

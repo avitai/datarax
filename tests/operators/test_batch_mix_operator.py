@@ -171,6 +171,23 @@ class TestBatchMixOperatorMixUp:
         assert result_data["x"].shape == (2, 1)
         assert result_data["y"].shape == (2, 1)
 
+    def test_mixup_raw_path_preserves_batch_shape(self):
+        """Verify DAG fused raw-batch path uses batch-level MixUp."""
+        rngs = nnx.Rngs({"batch_mix": 42})
+        config = BatchMixOperatorConfig(mode="mixup")
+        op = BatchMixOperator(config, rngs=rngs)
+
+        batch_data = {
+            "image": jnp.arange(4 * 2, dtype=jnp.float32).reshape(4, 2),
+            "label": jax.nn.one_hot(jnp.arange(4), 4),
+        }
+
+        result_data, result_states = op._apply_on_raw(batch_data, {})
+
+        assert result_states == {}
+        assert result_data["image"].shape == batch_data["image"].shape
+        assert result_data["label"].shape == batch_data["label"].shape
+
     def test_mixup_single_element_unchanged(self):
         """Verify mixup with single element returns unchanged."""
         rngs = nnx.Rngs({"batch_mix": 42})
@@ -224,6 +241,23 @@ class TestBatchMixOperatorCutMix:
 
         result = op(batch)
         assert result.get_data()["image"].shape == (2, 64, 64, 3)
+
+    def test_cutmix_raw_path_preserves_batch_shape(self):
+        """Verify DAG fused raw-batch path uses batch-level CutMix."""
+        rngs = nnx.Rngs({"batch_mix": 42})
+        config = BatchMixOperatorConfig(mode="cutmix", data_field="image")
+        op = BatchMixOperator(config, rngs=rngs)
+
+        batch_data = {
+            "image": jnp.ones((4, 8, 8, 3), dtype=jnp.float32),
+            "label": jax.nn.one_hot(jnp.arange(4), 4),
+        }
+
+        result_data, result_states = op._apply_on_raw(batch_data, {})
+
+        assert result_states == {}
+        assert result_data["image"].shape == batch_data["image"].shape
+        assert result_data["label"].shape == batch_data["label"].shape
 
     def test_cutmix_mixes_labels_when_present(self):
         """Verify cutmix mixes labels proportionally to cut area."""

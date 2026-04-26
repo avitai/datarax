@@ -6,6 +6,7 @@ with the Datarax pipeline.
 
 import logging
 from collections.abc import Callable, Generator, Iterator
+from time import perf_counter
 from typing import Any, Self
 
 import flax.nnx as nnx
@@ -101,18 +102,30 @@ class MonitoredPipeline(DAGExecutor):
                 # Time each batch production
                 batch_count = 0
 
-                for batch in iterator:
+                while True:
+                    batch_start = perf_counter()
+                    try:
+                        batch = next(iterator)
+                    except StopIteration:
+                        break
+                    batch_elapsed = perf_counter() - batch_start
+
                     # Record batch production
                     batch_count += 1
+                    batch_size = getattr(batch, "batch_size", None)
                     self.metrics.record_metric(
                         "batch_produced",
                         1,
                         "pipeline",
-                        {"batch_size": getattr(batch, "batch_size", None)},
+                        {"batch_size": batch_size},
                     )
 
-                    # Time batch production
-                    self.metrics.start_timer("batch_production", "pipeline")
+                    self.metrics.record_metric(
+                        "batch_production_time",
+                        batch_elapsed,
+                        "pipeline",
+                        {"batch_num": batch_count, "batch_size": batch_size},
+                    )
 
                     # Notify observers periodically
                     self._notify_counter += 1
@@ -120,9 +133,6 @@ class MonitoredPipeline(DAGExecutor):
                         self.callbacks.notify(self.metrics.get_metrics())
                         self.metrics.clear()
                         self._notify_counter = 0
-
-                    # Stop timing the previous batch production
-                    self.metrics.stop_timer("batch_production", "pipeline")
 
                     # Yield the batch
                     yield batch

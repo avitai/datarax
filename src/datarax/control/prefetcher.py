@@ -14,11 +14,13 @@ Design follows Grain's prefetch pattern:
 
 from __future__ import annotations
 
+import atexit
 import contextlib
 import logging
 import queue
 import threading
 import time
+import weakref
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, cast, Literal, TypeVar
@@ -32,6 +34,17 @@ T = TypeVar("T")
 # Using a unique object avoids the Grain anti-pattern of putting Exception
 # instances in the queue (which breaks if data items are Exception subclasses).
 _END = object()
+_LIVE_ITERATORS: weakref.WeakSet[Any] = weakref.WeakSet()
+
+
+def _close_live_iterators() -> None:
+    """Close any background prefetch threads that survived to process exit."""
+    for iterator in list(_LIVE_ITERATORS):
+        with contextlib.suppress(Exception):
+            iterator.close()
+
+
+atexit.register(_close_live_iterators)
 
 
 @dataclass(frozen=True)
@@ -56,6 +69,7 @@ class _PrefetchIterator(Iterator[T]):
         self._data_available = threading.Condition()
         self._is_closed = False
         self._thread = threading.Thread(target=self._producer, daemon=True)
+        _LIVE_ITERATORS.add(self)
         self._thread.start()
 
     def _is_item_enqueued_with_stop_awareness(self, item: object) -> bool:
@@ -98,9 +112,13 @@ class _PrefetchIterator(Iterator[T]):
                 if not self._thread.is_alive():
                     self.close()
                     raise StopIteration from None
-                # Wait for producer to signal data availability
+                # Close the missed-notify window between the failed queue read
+                # and the condition wait. The producer notifies while holding
+                # this condition, so either we see the queued item here or the
+                # producer wakes this wait directly.
                 with self._data_available:
-                    self._data_available.wait(timeout=0.1)
+                    if self._buffer.empty() and self._thread.is_alive():
+                        self._data_available.wait(timeout=0.1)
                 continue
 
             if item is _END:
@@ -137,6 +155,7 @@ class _PrefetchIterator(Iterator[T]):
                 self._thread.join(timeout=0.01)
 
         self._drain_buffer()
+        _LIVE_ITERATORS.discard(self)
 
     def __del__(self) -> None:
         with contextlib.suppress(Exception):
@@ -224,6 +243,7 @@ class _DevicePutIterator(Iterator[T]):
         self._data_available = threading.Condition()
         self._is_closed = False
         self._thread = threading.Thread(target=self._producer, daemon=True)
+        _LIVE_ITERATORS.add(self)
         self._thread.start()
 
     def _device_put(self, item: T) -> T:
@@ -274,7 +294,8 @@ class _DevicePutIterator(Iterator[T]):
                     self.close()
                     raise StopIteration from None
                 with self._data_available:
-                    self._data_available.wait(timeout=0.1)
+                    if self._buffer.empty() and self._thread.is_alive():
+                        self._data_available.wait(timeout=0.1)
                 continue
 
             if item is _END:
@@ -311,6 +332,7 @@ class _DevicePutIterator(Iterator[T]):
                 self._thread.join(timeout=0.01)
 
         self._drain_buffer()
+        _LIVE_ITERATORS.discard(self)
 
     def __del__(self) -> None:
         with contextlib.suppress(Exception):

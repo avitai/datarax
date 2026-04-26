@@ -232,6 +232,22 @@ class TestDAGExecutorInitialization:
 
         assert executor.graph is identity
 
+    def test_initialization_with_chained_source_graph(self):
+        """Constructor adopts source and batch nodes from a >> graph."""
+        from datarax.dag.nodes import BatchNode
+
+        source = MockDataSource(size=10)
+        source_node = DataSourceNode(source)
+        batch_node = BatchNode(batch_size=4)
+        operator_node = OperatorNode(MockOperator())
+
+        executor = DAGExecutor(source_node >> batch_node >> operator_node)
+
+        assert executor._input_node is source_node
+        assert executor._batch_node is batch_node
+        assert isinstance(executor.graph, Sequential)
+        assert list(executor.graph.nodes) == [batch_node, operator_node]
+
     def test_initialization_with_rngs(self):
         """Test initialization with custom RNGs."""
         rngs = nnx.Rngs(42)

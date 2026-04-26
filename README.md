@@ -1,7 +1,6 @@
 # Datarax: A Data Pipeline Framework for JAX
 
 [![CI](https://github.com/avitai/datarax/actions/workflows/ci.yml/badge.svg)](https://github.com/avitai/datarax/actions/workflows/ci.yml)
-[![Test Coverage](https://github.com/avitai/datarax/actions/workflows/test-coverage.yml/badge.svg)](https://github.com/avitai/datarax/actions/workflows/test-coverage.yml)
 [![codecov](https://codecov.io/gh/avitai/datarax/branch/main/graph/badge.svg)](https://codecov.io/gh/avitai/datarax)
 [![Build](https://github.com/avitai/datarax/actions/workflows/build-verification.yml/badge.svg)](https://github.com/avitai/datarax/actions/workflows/build-verification.yml)
 [![Summary](https://github.com/avitai/datarax/actions/workflows/summary.yml/badge.svg)](https://github.com/avitai/datarax/actions/workflows/summary.yml)
@@ -28,7 +27,7 @@
 - **Scalability:** Multi-device and multi-host data distribution with device mesh sharding
 - **Determinism:** Reproducible pipelines by default using Grain's Feistel cipher shuffling (O(1) memory)
 - **Extensibility:** Custom data sources, operators, and augmentation strategies via composable NNX modules
-- **Benchmarking Suite:** Comparative benchmarks against 12+ frameworks with Calibrax-powered analysis and regression checks
+- **Benchmarking Suite:** Comparative benchmarks against 12+ frameworks with calibrax-powered analysis and regression checks
 - **Ecosystem Integration:** Works with Flax, Optax, Orbax, HuggingFace Datasets, and TensorFlow Datasets
 
 ## Why Datarax?
@@ -59,7 +58,7 @@ Shuffling uses Grain's Feistel cipher permutation, which generates a full-epoch 
 
 ### Built-in Competitive Benchmarking
 
-The benchmarking suite profiles datarax against 12+ frameworks (Grain, tf.data, PyTorch DataLoader, DALI, Ray Data, and others) across standardized scenarios. Results are converted to CalibraX runs for direction-aware metrics, regression gating, and W&B export. This benchmark-driven loop is how datarax tracks progress toward competitive throughput — current results and optimization status are tracked in the [benchmarking documentation](docs/benchmarks/index.md).
+The benchmarking suite profiles datarax against 12+ frameworks (Grain, tf.data, PyTorch DataLoader, DALI, Ray Data, and others) across standardized scenarios. Results are converted to calibrax runs for direction-aware metrics, regression gating, and W&B export. This benchmark-driven loop is how datarax tracks progress toward competitive throughput — current results and optimization status are tracked in the [benchmarking documentation](docs/benchmarks/index.md).
 
 ## Installation
 
@@ -213,7 +212,7 @@ Datarax includes a benchmarking suite for comparison against 12+ data loading fr
 # Install benchmark dependencies (adds PyTorch, DALI, Ray, etc.)
 uv sync --extra benchmark
 
-# Optional: install CalibraX with W&B support explicitly
+# Optional: install calibrax with W&B support explicitly
 uv pip install "calibrax[wandb] @ git+https://github.com/avitai/calibrax.git"
 
 # Run benchmarks locally

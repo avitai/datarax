@@ -114,6 +114,14 @@ class TestHfToJax:
         # Strings can't be converted to JAX arrays, should be returned as-is
         assert result == string_list
 
+    @pytest.mark.unit
+    def test_string_passthrough(self):
+        """Test that scalar strings are passed through unchanged."""
+        result = hf_to_jax("hello")
+
+        # JAX does not support string arrays, so raw text stays as Python text
+        assert result == "hello"
+
 
 # =============================================================================
 # Tests for tf_to_jax (requires TensorFlow)

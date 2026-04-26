@@ -54,6 +54,9 @@ By the end of this tutorial, you will be able to:
 python examples/core/08_composition_strategies_tutorial.py
 ```
 
+The script disables background prefetching for its short one-batch demonstrations so
+each iterator is cleaned up immediately between composition examples.
+
 ### Run the Jupyter Notebook
 
 ```bash

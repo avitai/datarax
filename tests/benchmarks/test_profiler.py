@@ -108,5 +108,5 @@ class TestMemoryOptimizer:
         # peak_usage_mb can be slightly negative on CI due to GC or container
         # memory accounting; allow a small tolerance.
         assert analysis.peak_usage_mb >= -10.0
-        # CalibraX efficiency can be negative when retained memory > peak delta.
+        # calibrax efficiency can be negative when retained memory > peak delta.
         assert analysis.memory_efficiency <= 1

@@ -11,7 +11,7 @@ Compare performance across configurations or versions.
 
 ## Overview
 
-Calibrax provides comparative analysis through `Run` objects containing multiple `Point` entries (one per framework/configuration). The `rank_table()` function ranks entries by any metric with direction-aware sorting, while `compare_configurations()` produces a full comparison report between two runs.
+calibrax provides comparative analysis through `Run` objects containing multiple `Point` entries (one per framework/configuration). The `rank_table()` function ranks entries by any metric with direction-aware sorting, while `compare_configurations()` produces a full comparison report between two runs.
 
 ## Quick Start
 

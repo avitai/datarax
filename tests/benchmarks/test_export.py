@@ -76,7 +76,7 @@ def sample_comparative() -> ComparativeResults:
     )
 
 
-class TestExportToCalibraX:
+class TestExportToCalibrax:
     def test_returns_run(self, sample_comparative: ComparativeResults):
         run = export_to_calibrax(sample_comparative)
         assert isinstance(run, Run)

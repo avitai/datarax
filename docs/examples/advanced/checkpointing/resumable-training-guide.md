@@ -166,7 +166,7 @@ def train_with_checkpointing(
 
         for batch in pipeline:
             # Training step
-            loss = train_step(model, optimizer, batch)
+            loss = train_step(model, optimizer, batch["image"], batch["label"])
             step += 1
 
             # Periodic checkpoint

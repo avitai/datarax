@@ -217,6 +217,7 @@ class DAGExecutor(nnx.Module):
             rngs_seed=rngs,
             cache={} if enable_caching else None,
         )
+        self.graph = self._adopt_initial_graph_entry_nodes(self.graph)
 
         if jit_compile:
             self._compile()
@@ -559,6 +560,44 @@ class DAGExecutor(nnx.Module):
         self._invalidate_execution_caches()
         return self
 
+    def _adopt_initial_graph_entry_nodes(self, graph: Node) -> Node:
+        """Register source/batch nodes from a constructor-supplied graph.
+
+        ``add()`` stores the source outside the executable graph and keeps the
+        graph rooted at the first batch/processing node. A graph built with
+        ``DataSourceNode(...) >> BatchNode(...)`` should get the same runtime
+        shape when passed directly to ``DAGExecutor(graph)``.
+        """
+        if isinstance(graph, DataSourceNode):
+            self._set_source_node(graph)
+            return Identity()
+
+        if isinstance(graph, BatchNode):
+            self._batch_node = nnx.data(graph)
+            return graph
+
+        if not isinstance(graph, Sequential):
+            return graph
+
+        remaining_nodes: list[Node] = []
+        for node in graph.nodes:
+            if (
+                isinstance(node, DataSourceNode)
+                and self._input_node is None
+                and not remaining_nodes
+            ):
+                self._set_source_node(node)
+                continue
+            if isinstance(node, BatchNode) and self._batch_node is None:
+                self._batch_node = nnx.data(node)
+            remaining_nodes.append(node)
+
+        if not remaining_nodes:
+            return Identity()
+        if len(remaining_nodes) == 1:
+            return remaining_nodes[0]
+        return Sequential(remaining_nodes)
+
     def _normalize_added_node(self, node: Any) -> Node | None:
         """Normalize supported module/container types to a DAG node."""
         if isinstance(node, DataSourceModule):
@@ -896,7 +935,7 @@ class DAGExecutor(nnx.Module):
     ) -> Callable[[dict, dict], tuple[dict, dict]]:
         """Create a fused step function for the operator chain.
 
-        Chains all operators' _vmap_apply calls into a single nnx.jit-compiled
+        Chains all operators' raw-batch calls into a single nnx.jit-compiled
         function. Uses two strategies based on operator types:
 
         Deterministic chains: operators are closure-captured so they become
@@ -925,7 +964,7 @@ class DAGExecutor(nnx.Module):
             @nnx.jit
             def fused_step_stochastic(operators_tuple: Any, data: Any, states: Any) -> Any:
                 for op in operators_tuple:
-                    data, states = op._vmap_apply(data, states)
+                    data, states = op._apply_on_raw(data, states)
                 return data, states
 
             return nnx.cached_partial(fused_step_stochastic, ops)
@@ -936,7 +975,7 @@ class DAGExecutor(nnx.Module):
             @nnx.jit
             def fused_step_deterministic(data: Any, states: Any) -> Any:
                 for op in ops:
-                    data, states = op._vmap_apply(data, states)
+                    data, states = op._apply_on_raw(data, states)
                 return data, states
 
             return fused_step_deterministic

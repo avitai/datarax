@@ -135,6 +135,12 @@ def hf_to_jax(value: Any) -> jax.Array:
     if isinstance(value, np.ndarray):
         return jnp.array(value)
 
+    # JAX arrays do not support string dtype. Keep raw text columns available
+    # for element-wise inspection; callers should tokenize or exclude them
+    # before building numeric training batches.
+    if isinstance(value, str):
+        return value  # type: ignore[return-value]
+
     # Handle objects with __array__ protocol (e.g., torch tensors)
     if hasattr(value, "__array__"):
         return jnp.array(value)

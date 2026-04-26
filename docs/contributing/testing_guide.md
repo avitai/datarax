@@ -107,8 +107,8 @@ All GitHub workflow tests run exclusively on CPU regardless of the availability 
 
 The following workflows are configured to run tests on CPU:
 
-- `ci.yml`: Main CI workflow
-- `test-coverage.yml`: Test coverage reporting
+- `ci.yml`: Main CI workflow, including unit, integration, end-to-end,
+  performance, and combined coverage jobs
 
 ## Writing Device-Specific Tests
 
