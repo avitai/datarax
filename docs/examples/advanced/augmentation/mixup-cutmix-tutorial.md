@@ -124,9 +124,9 @@ import numpy as np
 from flax import nnx
 
 # Datarax imports
-from datarax import build_source_pipeline
+from datarax.pipeline import Pipeline
 from datarax.core.config import BatchMixOperatorConfig
-from datarax.dag.nodes import OperatorNode
+from datarax.pipeline import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.batch_mix_operator import BatchMixOperator
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
@@ -197,7 +197,7 @@ def create_base_pipeline(seed=42, num_samples=256):
         rngs=nnx.Rngs(0),
     )
 
-    return build_source_pipeline(source, batch_size=BATCH_SIZE).add(OperatorNode(prep))
+    return Pipeline(source=source, stages=[prep], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
 ```
 
 **Terminal Output:**
@@ -278,9 +278,7 @@ def create_mixup_pipeline(alpha=0.4, seed=42):
     )
 
     return (
-        build_source_pipeline(source, batch_size=BATCH_SIZE)
-        .add(OperatorNode(prep))
-        .add(OperatorNode(mixup))
+        Pipeline(source=source, stages=[prep, mixup], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
     )
 
 # Get MixUp batch
@@ -429,9 +427,7 @@ def create_cutmix_pipeline(alpha=1.0, seed=42):
     )
 
     return (
-        build_source_pipeline(source, batch_size=BATCH_SIZE)
-        .add(OperatorNode(prep))
-        .add(OperatorNode(cutmix))
+        Pipeline(source=source, stages=[prep, cutmix], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
     )
 
 # Get CutMix batch
@@ -709,9 +705,7 @@ def create_training_pipeline():
     )
 
     return (
-        build_source_pipeline(source, batch_size=128)
-        .add(OperatorNode(preprocessor))
-        .add(OperatorNode(mixup))  # After preprocessing, before training
+        Pipeline(source=source, stages=[preprocessor, mixup], batch_size=128, rngs=nnx.Rngs(0))  # After preprocessing, before training
     )
 
 # Use soft labels in loss function

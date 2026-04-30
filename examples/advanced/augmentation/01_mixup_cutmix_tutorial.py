@@ -67,12 +67,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 from flax import nnx
 
-# Datarax imports
-from datarax import build_source_pipeline
 from datarax.core.config import BatchMixOperatorConfig
-from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.batch_mix_operator import BatchMixOperator
+
+# Datarax imports
+from datarax.pipeline import Pipeline
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 
 
@@ -194,7 +194,7 @@ def create_base_pipeline(seed=42, num_samples=256):
         rngs=nnx.Rngs(0),
     )
 
-    return build_source_pipeline(source, batch_size=BATCH_SIZE).add(OperatorNode(prep))
+    return Pipeline(source=source, stages=[prep], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
 
 
 print("Base pipeline factory created")
@@ -259,11 +259,7 @@ def create_mixup_pipeline(alpha=0.4, seed=42):
         rngs=nnx.Rngs(mixup=100 + seed),
     )
 
-    return (
-        build_source_pipeline(source, batch_size=BATCH_SIZE)
-        .add(OperatorNode(prep))
-        .add(OperatorNode(mixup))
-    )
+    return Pipeline(source=source, stages=[prep, mixup], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
 
 
 # Get MixUp batch
@@ -388,11 +384,7 @@ def create_cutmix_pipeline(alpha=1.0, seed=42):
         rngs=nnx.Rngs(cutmix=200 + seed),
     )
 
-    return (
-        build_source_pipeline(source, batch_size=BATCH_SIZE)
-        .add(OperatorNode(prep))
-        .add(OperatorNode(cutmix))
-    )
+    return Pipeline(source=source, stages=[prep, cutmix], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
 
 
 # Get CutMix batch

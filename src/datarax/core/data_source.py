@@ -6,13 +6,60 @@ compatibility.
 """
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
+from pathlib import Path
+from typing import Any
 
 from datarax.core.structural import StructuralModule
 from datarax.typing import Element
 
 
 logger = logging.getLogger(__name__)
+
+
+class LocalFilesOnlyMixin:
+    """Adds a uniform ``local_files_only`` flag to data sources.
+
+    Sources that download external archives (HuggingFace, TFDS, ArrayRecord,
+    etc.) compose this mixin and call ``_check_local_cache`` before any
+    network attempt. The check enforces the air-gapped contract: when
+    ``local_files_only=True`` and the cache is missing, the source raises a
+    ``FileNotFoundError`` whose message names the dataset and the exact paths
+    the user must populate, instead of a generic "file not found".
+
+    Subclasses must define ``self.local_files_only: bool`` (typically wired
+    through their config dataclass).
+    """
+
+    local_files_only: bool
+
+    def _check_local_cache(
+        self,
+        expected_paths: Sequence[Path],
+        *,
+        dataset_name: str,
+    ) -> None:
+        """Raise if ``local_files_only`` is set but the cache is missing.
+
+        Args:
+            expected_paths: Files whose presence indicates a populated cache.
+            dataset_name: Human-readable name of the dataset (included in the
+                error message so users know which source raised).
+
+        Raises:
+            FileNotFoundError: If ``local_files_only`` is True and any
+                ``expected_paths`` entry does not exist.
+        """
+        if not self.local_files_only:
+            return
+        missing = [str(p.resolve()) for p in expected_paths if not p.exists()]
+        if missing:
+            raise FileNotFoundError(
+                f"{dataset_name}: local_files_only=True but the local cache is "
+                f"incomplete. Expected the following file(s) to exist: {missing}. "
+                "Populate the cache offline or set local_files_only=False to "
+                "allow the source to download."
+            )
 
 
 class DataSourceModule(StructuralModule):
@@ -98,3 +145,57 @@ class DataSourceModule(StructuralModule):
             The data element at the given index, or None if not implemented.
         """
         return None
+
+    def get_batch_at(
+        self,
+        start: int | Any,
+        size: int,
+        key: Any | None = None,
+    ) -> Any:
+        """Stateless indexed batch access for ``Pipeline``-driven iteration.
+
+        Returns ``size`` records starting at ``start``. Implementations must
+        be stateless (no mutation of internal counters) and JAX-traceable
+        (must accept tracer values for ``start``) so the call composes with
+        ``nnx.scan``.
+
+        Args:
+            start: Starting index. Sources that support indexed access
+                accept a Python int or a traced ``jax.Array``.
+            size: Number of records to return (Python int — JAX shapes are
+                static).
+            key: Optional PRNG key for shuffled or stochastic sampling.
+
+        Returns:
+            A batch dict (or PyTree) with leading dim ``size``.
+
+        Raises:
+            NotImplementedError: If the source does not support indexed
+                access (e.g. forward-only streams). Pipeline falls back to
+                its ``__iter__`` debug path in that case.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support indexed batch access. "
+            f"Implement get_batch_at(start, size, key) or use the Pipeline "
+            f"iterator path (for batch in pipeline)."
+        )
+
+    def element_spec(self) -> Any:
+        """Return a PyTree of ``jax.ShapeDtypeStruct`` describing per-element output.
+
+        Downstream consumers (operators, batchers, models) use this contract to
+        pre-allocate buffers, auto-size learnable layers, and statically validate
+        operator chains. Subclasses MUST override this method.
+
+        Returns:
+            A PyTree (typically a dict) whose leaves are ``jax.ShapeDtypeStruct``
+            instances describing one emitted element.
+
+        Raises:
+            NotImplementedError: Always, on the base class. Subclasses must
+                override.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement element_spec(). "
+            "Return a PyTree of jax.ShapeDtypeStruct describing one emitted element."
+        )

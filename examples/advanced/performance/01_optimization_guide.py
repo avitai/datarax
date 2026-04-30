@@ -68,9 +68,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from flax import nnx
 
-# Datarax imports
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.modality.image import (
     BrightnessOperator,
@@ -82,6 +79,9 @@ from datarax.operators.modality.image import (
     RotationOperator,
     RotationOperatorConfig,
 )
+
+# Datarax imports
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -218,7 +218,7 @@ def create_memory_pipeline(data, batch_size):
     """Create pipeline from memory data."""
     source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
     prep = ElementOperator(ElementOperatorConfig(stochastic=False), fn=preprocess, rngs=nnx.Rngs(0))
-    return build_source_pipeline(source, batch_size=batch_size).add(OperatorNode(prep))
+    return Pipeline(source=source, stages=[prep], batch_size=batch_size, rngs=nnx.Rngs(0))
 
 
 # %%
@@ -314,12 +314,11 @@ def create_operator_pipeline(data, operator, batch_size=64):
     source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
     prep = ElementOperator(ElementOperatorConfig(stochastic=False), fn=preprocess, rngs=nnx.Rngs(0))
 
-    pipeline = build_source_pipeline(source, batch_size=batch_size).add(OperatorNode(prep))
-
+    stages = [prep]
     if operator is not None:
-        pipeline = pipeline.add(OperatorNode(operator))
+        stages.append(operator)
 
-    return pipeline
+    return Pipeline(source=source, stages=stages, batch_size=batch_size, rngs=nnx.Rngs(0))
 
 
 def benchmark_operator(name, operator, data, num_batches=30):

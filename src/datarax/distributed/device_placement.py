@@ -606,9 +606,11 @@ def prefetch_to_device(
 
     Example:
         ```python
-        from datarax import build_source_pipeline, prefetch_to_device
+        from flax import nnx
 
-        pipeline = build_source_pipeline(source, batch_size=32)
+        from datarax import Pipeline, prefetch_to_device
+
+        pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
         prefetched = prefetch_to_device(pipeline, size=3)
 
         for batch in prefetched:

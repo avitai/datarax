@@ -29,11 +29,16 @@ class ArrayRecordSourceConfig(StructuralConfig):
         seed: Random seed for shuffling (used internally, not by Grain).
         num_epochs: Number of epochs (-1 for infinite).
         shuffle_files: Whether to shuffle file order (handled internally).
+        local_files_only: If True, validate every path exists at construction
+            time and raise ``FileNotFoundError`` with path context if any are
+            missing. ArrayRecord sources never download, so this flag is
+            primarily a UX improvement over Grain's lower-level errors.
     """
 
     seed: int = 42
     num_epochs: int = -1
     shuffle_files: bool = False
+    local_files_only: bool = False
 
 
 class ArrayRecordSourceModule(DataSourceModule):
@@ -67,6 +72,21 @@ class ArrayRecordSourceModule(DataSourceModule):
             name: Optional name for the module.
         """
         super().__init__(config, rngs=rngs, name=name)
+
+        # When local_files_only is set, fail fast with a clear message instead
+        # of letting Grain raise its lower-level error on a missing file.
+        if config.local_files_only:
+            from pathlib import Path  # noqa: PLC0415
+
+            path_list = [paths] if isinstance(paths, str) else list(paths)
+            missing = [p for p in path_list if not Path(p).exists()]
+            if missing:
+                raise FileNotFoundError(
+                    f"ArrayRecordSourceModule: local_files_only=True but the "
+                    f"following path(s) do not exist: {missing}. Either populate "
+                    "the paths or set local_files_only=False to defer the error "
+                    "to Grain."
+                )
 
         # Initialize Grain data source (doesn't take seed parameter)
         self.grain_source = grain.sources.ArrayRecordDataSource(paths=paths)
@@ -206,6 +226,59 @@ class ArrayRecordSourceModule(DataSourceModule):
 
         # Get from Grain source
         return self.grain_source[int(actual_idx)]
+
+    def get_batch_at(
+        self,
+        start: int,
+        size: int,
+        key: Any | None = None,
+    ) -> list[Any]:
+        """Stateless indexed batch access for ``Pipeline``-driven iteration.
+
+        Returns ``size`` records starting at logical position ``start``,
+        wrapping at the end of the dataset and applying any active
+        shuffle permutation. Does not advance ``self.current_index`` or
+        any other internal state.
+
+        ArrayRecord records are loaded host-side (Grain is a Python
+        library), so this method requires a concrete Python ``int`` for
+        ``start``. Driving an ArrayRecord source under ``nnx.scan``
+        (Tier C of the pipeline integration story) currently requires
+        wrapping the host-side fetch in ``jax.experimental.io_callback``
+        — left as a future enhancement. Tier A (Python iteration) and
+        Tier B (single ``step()``) work today.
+
+        Args:
+            start: Concrete starting index (Python int).
+            size: Number of records to return.
+            key: Reserved for future shuffled-mode support; currently
+                ignored (shuffle uses ``self.shuffled_indices``).
+
+        Returns:
+            List of ``size`` records as returned by the underlying
+            Grain source. Records are typically Python dicts; callers
+            (typically a parse / decode operator) handle structure.
+
+        Raises:
+            TypeError: If ``start`` is a JAX tracer (not host-side
+                concrete). ArrayRecord cannot be traced through
+                ``nnx.scan`` without an io_callback wrapper.
+        """
+        del key  # ArrayRecord uses self.shuffled_indices for shuffle, not key
+
+        if hasattr(start, "shape"):
+            raise TypeError(
+                "ArrayRecordSourceModule.get_batch_at requires a concrete "
+                "Python int for `start`. ArrayRecord records are loaded "
+                "host-side and cannot be traced through nnx.scan in this "
+                "form. Use the Pipeline iterator (`for batch in pipeline:`) "
+                "for ArrayRecord, or wrap fetches via jax.experimental."
+                "io_callback if scan compatibility is needed."
+            )
+
+        total = self.total_records.get_value()
+        indices = [(int(start) + i) % total for i in range(size)]
+        return self._getitems(indices)
 
     def _getitems(self, indices: Sequence[int]) -> list[Any]:
         """Get multiple records using Grain's batched random-access protocol."""

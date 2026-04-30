@@ -92,6 +92,59 @@ class EagerSourceBase(DataSourceModule):
             key,
         )
 
+    def get_batch_at(
+        self,
+        start: int | jax.Array,
+        size: int,
+        key: jax.Array | None = None,
+    ) -> dict[str, Any]:
+        """Stateless indexed batch access; JIT-traceable for scan-based iteration.
+
+        Returns ``size`` records starting at logical position ``start``.
+        Does not advance ``self.index`` or any other internal state, so
+        callers (typically ``Pipeline``) can drive iteration via their
+        own position counter and trace ``get_batch_at`` under
+        ``nnx.scan`` / ``nnx.jit``.
+
+        Two modes:
+
+        - **Sequential** (``self.is_random_order == False``): returns the
+          contiguous slice ``data[start : start + size]`` with
+          wrap-around at the end of the source.
+        - **Shuffled** (``self.is_random_order == True``): applies a
+          deterministic permutation derived from ``key`` and returns the
+          slice of that permutation. Same ``(start, size, key)`` always
+          returns the same output. The permutation is materialized via
+          ``jax.random.permutation(key, length)`` per call — O(length)
+          per batch.
+
+        Args:
+            start: Starting logical index; accepts concrete int or
+                traced ``jax.Array``.
+            size: Number of records to return (Python int — JAX shapes
+                are static).
+            key: PRNG key for shuffled mode. Required when
+                ``is_random_order=True``; ignored otherwise.
+
+        Returns:
+            Dict mapping each data key to a JAX array with leading
+            dimension ``size``.
+        """
+        start_arr = jnp.asarray(start, dtype=jnp.int32)
+        offsets = jnp.arange(size, dtype=jnp.int32)
+        base_indices = (start_arr + offsets) % jnp.int32(self.length)
+
+        if self.is_random_order and key is not None:
+            permutation = jax.random.permutation(key, self.length)
+            indices = permutation[base_indices]
+        else:
+            indices = base_indices
+
+        return {
+            data_key: jnp.take(jnp.asarray(value), indices, axis=0, mode="wrap")
+            for data_key, value in self.data.items()
+        }
+
     def get_dataset_info(self) -> Any:
         """Return cached backend-specific dataset metadata."""
         return self._dataset_info
@@ -125,6 +178,29 @@ class EagerSourceBase(DataSourceModule):
             self.epoch.get_value(),
             self._repr_extra_fields(),
         )
+
+    def element_spec(self) -> Any:
+        """Derive per-element spec from the eager dict-of-arrays storage.
+
+        EagerSourceBase subclasses store data as a dict mapping keys to arrays
+        whose leading axis is the dataset size. This default implementation
+        strips that leading axis from every leaf to produce one
+        ``jax.ShapeDtypeStruct`` per key.
+
+        Subclasses with non-dict storage should override.
+
+        Raises:
+            ValueError: If the source is empty.
+        """
+        # Imported lazily to avoid a top-level dependency on utils.spec.
+        from datarax.utils.spec import array_to_spec_strip_leading  # noqa: PLC0415
+
+        if self.length == 0:
+            raise ValueError(
+                f"{type(self).__name__} has zero elements; element_spec() "
+                "cannot be inferred from an empty dataset."
+            )
+        return {key: array_to_spec_strip_leading(value) for key, value in self.data.items()}
 
 
 class StreamingSourceBase(DataSourceModule):

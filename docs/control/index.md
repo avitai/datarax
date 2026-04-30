@@ -13,7 +13,7 @@ Pipeline control flow and execution management utilities. These modules handle a
 - Prefetching loads next batch while GPU processes current
 - Overlaps I/O and compute for better throughput
 - Most useful when I/O is the bottleneck
-- Works automatically with DAGExecutor
+- Works automatically with Pipeline
 
 `─────────────────────────────────────────────────`
 
@@ -53,18 +53,14 @@ With prefetching:
 ## Integration with DAG
 
 ```python
-from datarax.dag import build_source_pipeline
+from datarax.pipeline import Pipeline
 
-# Prefetching is built into DAGExecutor
-pipeline = build_source_pipeline(
-    source,
-    batch_size=32,
-    prefetch=2,  # Prefetch 2 batches
-)
+# Prefetching is built into Pipeline
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 ```
 
 ## See Also
 
-- [DAG Executor](../dag/dag_executor.md) - Pipeline execution
+- DAG Executor - Pipeline execution
 - [Performance](../performance/index.md) - Optimization tools
 - [Benchmarking](../benchmarking/index.md) - Measure improvements

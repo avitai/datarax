@@ -69,9 +69,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from flax import nnx
 
-# Datarax imports
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.modality.image import (
     BrightnessOperator,
@@ -87,6 +84,9 @@ from datarax.operators.modality.image import (
     RotationOperator,
     RotationOperatorConfig,
 )
+
+# Datarax imports
+from datarax.pipeline import Pipeline
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 
 
@@ -301,11 +301,7 @@ def create_single_aug_pipeline(operator, seed=0):
         rngs=nnx.Rngs(0),
     )
 
-    return (
-        build_source_pipeline(source, batch_size=64)
-        .add(OperatorNode(prep))
-        .add(OperatorNode(operator))
-    )
+    return Pipeline(source=source, stages=[prep, operator], batch_size=64, rngs=nnx.Rngs(0))
 
 
 # Get baseline (no augmentation)
@@ -313,14 +309,15 @@ baseline_source = TFDSEagerSource(
     TFDSEagerConfig(name="fashion_mnist", split="train[:64]", shuffle=False),
     rngs=nnx.Rngs(0),
 )
-baseline_pipeline = build_source_pipeline(baseline_source, batch_size=64).add(
-    OperatorNode(
+baseline_pipeline = Pipeline(
+    source=baseline_source,
+    stages=[
         ElementOperator(
-            ElementOperatorConfig(stochastic=False),
-            fn=preprocess_fashion,
-            rngs=nnx.Rngs(0),
+            ElementOperatorConfig(stochastic=False), fn=preprocess_fashion, rngs=nnx.Rngs(0)
         )
-    )
+    ],
+    batch_size=64,
+    rngs=nnx.Rngs(0),
 )
 
 baseline_batch = next(iter(baseline_pipeline))
@@ -517,14 +514,11 @@ def create_full_augmentation_pipeline(seed=42):
     )
 
     # Build pipeline
-    return (
-        build_source_pipeline(source, batch_size=BATCH_SIZE)
-        .add(OperatorNode(prep))
-        .add(OperatorNode(brightness))
-        .add(OperatorNode(contrast))
-        .add(OperatorNode(rotation))
-        .add(OperatorNode(noise))
-        .add(OperatorNode(patch_dropout))
+    return Pipeline(
+        source=source,
+        stages=[prep, brightness, contrast, rotation, noise, patch_dropout],
+        batch_size=BATCH_SIZE,
+        rngs=nnx.Rngs(0),
     )
 
 

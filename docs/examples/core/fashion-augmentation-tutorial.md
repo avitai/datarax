@@ -30,7 +30,7 @@ If you're familiar with torchvision transforms, here's how Datarax compares:
 | `transforms.RandomRotation(10)` | `RotationOperator(angle_range=(-10.0, 10.0))` |
 | `transforms.GaussianNoise(std=0.1)` | `NoiseOperator(mode="gaussian", noise_std=0.1)` |
 | `transforms.RandomErasing()` | `PatchDropoutOperator(patch_size=(6,6), num_patches=2)` |
-| `transforms.Compose([T1, T2, T3])` | Chain with `.add(OperatorNode(op1)).add(OperatorNode(op2))` |
+| `transforms.Compose([T1, T2, T3])` | Chain with `stages=[op1, op2]` |
 
 **Key difference:** Each Datarax operator has explicit RNG stream management for reproducibility.
 
@@ -99,8 +99,8 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
+from datarax.pipeline import Pipeline
+from datarax.pipeline import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.modality.image import (
     BrightnessOperator, BrightnessOperatorConfig,
@@ -298,14 +298,14 @@ def create_single_aug_pipeline(operator, seed=0):
         rngs=nnx.Rngs(0),
     )
 
-    return build_source_pipeline(source, batch_size=64).add(OperatorNode(prep)).add(OperatorNode(operator))
+    return Pipeline(source=source, stages=[prep, operator], batch_size=64, rngs=nnx.Rngs(0))
 
 # Get baseline (no augmentation)
 baseline_source = TFDSEagerSource(
     TFDSEagerConfig(name="fashion_mnist", split="train[:64]", shuffle=False),
     rngs=nnx.Rngs(0),
 )
-baseline_pipeline = build_source_pipeline(baseline_source, batch_size=64).add(OperatorNode(preprocessor))
+baseline_pipeline = Pipeline(source=baseline_source, stages=[preprocessor], batch_size=64, rngs=nnx.Rngs(0))
 baseline_batch = next(iter(baseline_pipeline))
 baseline_images = np.array(baseline_batch["image"])
 baseline_labels = np.array(baseline_batch["label"])
@@ -438,13 +438,7 @@ def create_full_augmentation_pipeline(seed=42):
 
     # Build pipeline
     return (
-        build_source_pipeline(source, batch_size=BATCH_SIZE)
-        .add(OperatorNode(prep))
-        .add(OperatorNode(brightness))
-        .add(OperatorNode(contrast))
-        .add(OperatorNode(rotation))
-        .add(OperatorNode(noise))
-        .add(OperatorNode(patch_dropout))
+        Pipeline(source=source, stages=[prep, brightness, contrast, rotation, noise, patch_dropout], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
     )
 ```
 

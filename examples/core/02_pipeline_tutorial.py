@@ -55,8 +55,6 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
 from datarax.operators import (
     ElementOperator,
     ElementOperatorConfig,
@@ -66,6 +64,7 @@ from datarax.operators.composite_operator import (
     CompositeOperatorModule,
     CompositionStrategy,
 )
+from datarax.pipeline import Pipeline
 
 # Note: ProbabilisticOperator available for conditional augmentation
 # See advanced examples for probabilistic operator usage
@@ -269,11 +268,12 @@ Chain everything together using the DAG API.
 
 # %%
 # Build the full pipeline
-pipeline = (
-    build_source_pipeline(source, batch_size=32)
-    .add(OperatorNode(normalizer))  # Step 1: Normalize
-    .add(OperatorNode(augmentation_pipeline))  # Step 2: Flip + Noise
-    .add(OperatorNode(brightness_op))  # Step 3: Brightness adjustment
+pipeline = Pipeline(
+    source=source,
+    # 1. normalize → 2. flip+noise → 3. brightness
+    stages=[normalizer, augmentation_pipeline, brightness_op],
+    batch_size=32,
+    rngs=nnx.Rngs(0),
 )
 
 print("Pipeline structure:")
@@ -342,7 +342,7 @@ def create_pipeline_with_seed(seed: int):
         rngs=nnx.Rngs(flip=seed),
     )
 
-    return build_source_pipeline(src, batch_size=8).add(OperatorNode(norm)).add(OperatorNode(flip))
+    return Pipeline(source=src, stages=[norm, flip], batch_size=8, rngs=nnx.Rngs(0))
 
 
 # Create two pipelines with same seed
@@ -415,10 +415,8 @@ def main():
     )
 
     # Build pipeline
-    pipeline = (
-        build_source_pipeline(source, batch_size=32)
-        .add(OperatorNode(normalizer))
-        .add(OperatorNode(flipper))
+    pipeline = Pipeline(
+        source=source, stages=[normalizer, flipper], batch_size=32, rngs=nnx.Rngs(0)
     )
 
     # Process all data

@@ -193,6 +193,5 @@ After restore: position=300
 ## Next Steps
 
 - [Resumable Training Guide](resumable-training-guide.md) - Complete training with checkpointing
-- [Monitoring](../monitoring/monitoring-quickref.md) - Track pipeline metrics
 - [Distributed Checkpointing](../distributed/sharding-guide.md) - Multi-device checkpoints
 - [API Reference: Checkpoint](../../../checkpoint/handlers.md) - Complete API

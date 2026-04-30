@@ -12,6 +12,7 @@ import pytest
 
 from datarax.sources import MemorySource, MemorySourceConfig
 from tests.benchmarks.performance_targets import (
+    classify_rss_comparison,
     measure_adapter_throughput,
     measure_peak_rss_delta_mb,
 )
@@ -49,7 +50,15 @@ class TestP3MemoryEfficiency:
         assert len(batch["x"]) == 32
 
     def test_peak_rss_within_1_5x_spdl(self, cv1_large_image_data):
-        """Compare peak RSS against SPDL (requires spdl package)."""
+        """Compare peak RSS against SPDL (requires spdl package).
+
+        The CV-1 scenario uses 10K x 224x224x3 uint8 images = ~1.5 GB raw.
+        Comparison logic (ratio target, skip conditions, absolute cap)
+        is delegated to ``classify_rss_comparison`` so each branch is
+        independently unit-tested in ``test_performance_targets``. This
+        test only orchestrates the actual measurements and dispatches
+        on the classifier verdict.
+        """
         pytest.importorskip("spdl")
 
         from benchmarks.adapters.base import ScenarioConfig
@@ -72,9 +81,13 @@ class TestP3MemoryEfficiency:
             lambda: measure_adapter_throughput(SPDLAdapter(), config, cv1_large_image_data)
         )
 
-        if spdl_rss > 0:
-            ratio = datarax_rss / spdl_rss
-            assert ratio <= 1.5, (
-                f"Datarax peak RSS ({datarax_rss:.0f} MB) is {ratio:.1f}x "
-                f"SPDL ({spdl_rss:.0f} MB), exceeds 1.5x target"
-            )
+        verdict, message = classify_rss_comparison(
+            datarax_rss=datarax_rss,
+            spdl_rss=spdl_rss,
+            max_ratio=1.5,
+        )
+        if verdict == "skip":
+            pytest.skip(message)
+        if verdict == "fail":
+            pytest.fail(message)
+        assert verdict == "pass", message

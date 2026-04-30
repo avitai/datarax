@@ -12,6 +12,7 @@ from typing import Any
 
 import flax.nnx as nnx
 import jax
+import jax.numpy as jnp
 
 from datarax.config.registry import register_component
 from datarax.core.config import StructuralConfig
@@ -325,6 +326,66 @@ class MemorySource(DataSourceModule):
             indices = self._get_indices()
             return self._gather_batch(indices[start:end])
 
+    def get_batch_at(
+        self,
+        start: int | jax.Array,
+        size: int,
+        key: jax.Array | None = None,
+    ) -> Any:
+        """Stateless indexed batch access; JIT-traceable for scan-based iteration.
+
+        Returns ``size`` records starting at logical position ``start``.
+        Does not advance ``self.index`` or any other internal state, so
+        callers can drive iteration via their own ``nnx.Variable`` position
+        counter and trace ``get_batch_at`` under ``nnx.scan`` / ``nnx.jit``.
+
+        Two modes:
+
+        - **Sequential** (``MemorySourceConfig(shuffle=False)``): returns
+          the contiguous slice ``data[start : start + size]`` with
+          wrap-around at the end of the source.
+        - **Shuffled** (``MemorySourceConfig(shuffle=True)``): applies a
+          deterministic permutation derived from ``key`` and returns the
+          slice of that permutation. Same ``(start, size, key)`` always
+          returns the same output; different ``key`` yields a different
+          permutation. The permutation is materialized via
+          ``jax.random.permutation(key, length)`` per call — O(length)
+          per batch. Future optimization: switch to a Feistel-network
+          PRP for O(1) per-element shuffled lookup at large dataset sizes.
+
+        Args:
+            start: Starting logical index (inclusive); accepts concrete
+                int or traced ``jax.Array``.
+            size: Number of records to return (must be a Python int —
+                JAX shapes are static).
+            key: PRNG key for shuffled mode. Required when the source is
+                configured with ``shuffle=True``; ignored otherwise.
+
+        Returns:
+            Batch dict with leading dim ``size``.
+        """
+        start_arr = jnp.asarray(start, dtype=jnp.int32)
+        offsets = jnp.arange(size, dtype=jnp.int32)
+        base_indices = (start_arr + offsets) % jnp.int32(self.length)
+
+        if self.is_random_order and key is not None:
+            # Materialize the full permutation derived from `key` and index
+            # into it. Same key always produces the same permutation, so
+            # repeated calls with the same `(start, size, key)` are
+            # deterministic.
+            permutation = jax.random.permutation(key, self.length)
+            indices = permutation[base_indices]
+        else:
+            indices = base_indices
+
+        data = self.data
+        if isinstance(data, dict):
+            return {
+                key_name: jnp.take(jnp.asarray(value), indices, axis=0, mode="wrap")
+                for key_name, value in data.items()
+            }
+        return jnp.take(jnp.asarray(data), indices, axis=0, mode="wrap")
+
     def _derive_shuffle_seed(self) -> int:
         """Derive an integer seed from the JAX RNG stream for the current epoch.
 
@@ -595,3 +656,34 @@ class MemorySource(DataSourceModule):
             f"index={self.index.get_value()}/{self.length}, "
             f"epoch={self.epoch.get_value()})"
         )
+
+    def element_spec(self) -> Any:
+        """Return per-element shape/dtype derived from the in-memory data.
+
+        Dict-mode sources strip the leading dataset-size dimension from every
+        array to produce one ``jax.ShapeDtypeStruct`` per key. List-mode
+        sources introspect element 0 and apply ``jax.tree.map`` to produce a
+        matching PyTree of ``ShapeDtypeStruct`` leaves.
+
+        Returns:
+            ``jax.ShapeDtypeStruct`` PyTree describing one emitted element.
+
+        Raises:
+            ValueError: If the source is empty (no element to introspect).
+        """
+        # Imported lazily to keep memory_source's import surface stable.
+        from datarax.utils.spec import array_to_spec, array_to_spec_strip_leading  # noqa: PLC0415
+
+        if self.length == 0:
+            raise ValueError(
+                "MemorySource has zero elements; element_spec() cannot be "
+                "inferred from an empty dataset."
+            )
+
+        data = self.data
+        if isinstance(data, dict):
+            return {key: array_to_spec_strip_leading(value) for key, value in data.items()}
+
+        # List/sequence mode: introspect element 0.
+        first_element = data[0]
+        return jax.tree.map(array_to_spec, first_element)

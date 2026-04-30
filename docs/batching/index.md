@@ -13,7 +13,7 @@ Batch creation and management for data pipelines. Batching groups individual sam
 - Batching is required before most operators (batch-first)
 - Use `drop_remainder=True` for consistent batch sizes
 - Padding handles variable-length sequences
-- DAGExecutor enforces batching by default
+- Pipeline enforces batching by default
 
 `─────────────────────────────────────────────────`
 
@@ -44,17 +44,15 @@ final_batch = batcher.flush()
 ## With DAG Pipeline
 
 ```python
-from datarax.dag import build_source_pipeline
+from datarax.pipeline import Pipeline
 
 # Batching is built-in
-pipeline = build_source_pipeline(source, batch_size=32)
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 
 # Or add explicitly
-from datarax.dag.nodes import BatchNode
-
 pipeline = (
     source_node
-    >> BatchNode(batch_size=32, drop_remainder=True)
+    # (Pipeline(batch_size=32) handles batching; drop_remainder via partial-batch handling)
     >> transform_node
 )
 ```
@@ -72,6 +70,6 @@ pipeline = (
 
 ## See Also
 
-- [DAG Executor](../dag/dag_executor.md) - Batch-first enforcement
+- DAG Executor - Batch-first enforcement
 - [Core Batcher](../core/batcher.md) - Batcher protocol
-- [DAG Rebatch](../dag/rebatch.md) - Reshape batches
+- DAG Rebatch - Reshape batches

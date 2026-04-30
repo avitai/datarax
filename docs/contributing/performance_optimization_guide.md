@@ -84,8 +84,8 @@ prefetched_iterator = placement.prefetch_to_device(
 Build optimized pipelines by composing operators and using proper batch sizes:
 
 ```python
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
+from datarax.pipeline import Pipeline
+from datarax.pipeline import Pipeline
 from datarax.distributed.device_placement import get_batch_size_recommendation
 
 # Get hardware-optimized batch size
@@ -94,10 +94,7 @@ optimal_batch = rec.optimal_batch_size
 
 # Build an optimized pipeline with proper batch sizing
 pipeline = (
-    build_source_pipeline(source, batch_size=optimal_batch)
-    >> OperatorNode(normalize_op)
-    >> OperatorNode(augment_op)
-)
+    Pipeline(source=source, stages=[normalize_op, augment_op], batch_size=optimal_batch, rngs=nnx.Rngs(0)))
 ```
 
 ## Benchmarking Guidelines

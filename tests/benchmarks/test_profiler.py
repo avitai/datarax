@@ -4,7 +4,10 @@ Tests for AdaptiveOperation are in test_mega_profiler.py.
 Tests for BenchmarkResult (replacing ProfileResult) are in tests/benchmarking/test_results.py.
 """
 
+from typing import Any
+
 import jax.numpy as jnp
+import numpy as np
 from calibrax.profiling import (
     GPUMemoryProfiler,
     MemoryAnalysis,
@@ -93,20 +96,47 @@ class TestMemoryOptimizer:
         assert isinstance(analysis.suggestions, tuple)
 
     def test_analyze_memory_intensive_function(self):
-        """Test memory analysis of memory-intensive function."""
+        """Test memory analysis of memory-intensive function.
+
+        ``calibrax.MemoryOptimizer.analyze_pipeline_memory`` measures
+        baseline RSS, then end-of-call RSS as "peak". On macOS the
+        kernel can compress or release pages between the two readings,
+        producing negative or below-floor deltas even when a 200 MB
+        array is held alive across the call. The retry loop accepts
+        the first reading that clears the floor; if every attempt
+        falls below it the test fails with the best-case value so a
+        real regression in the optimizer still surfaces.
+        """
         optimizer = MemoryOptimizer()
+
+        # 5000 x 5000 float64 = 200 MB, dominates noise on typical hosts.
+        side = 5000
+        ref_holder: list[Any] = []
 
         def memory_intensive_function(data):
             """Memory-intensive function for testing."""
             del data
-            large_array = jnp.ones((500, 500))
-            return jnp.sum(large_array)
+            large_array = np.ones((side, side), dtype=np.float64)
+            ref_holder.append(large_array)  # keep alive across analyze step
+            return float(large_array.sum())
 
-        analysis = optimizer.analyze_pipeline_memory(memory_intensive_function, {})
+        analyses: list[MemoryAnalysis] = []
+        try:
+            for _ in range(3):
+                ref_holder.clear()
+                analysis = optimizer.analyze_pipeline_memory(memory_intensive_function, {})
+                assert analysis is not None
+                analyses.append(analysis)
+                if analysis.peak_usage_mb >= 50.0:
+                    break
+        finally:
+            ref_holder.clear()
 
-        assert isinstance(analysis, MemoryAnalysis)
-        # peak_usage_mb can be slightly negative on CI due to GC or container
-        # memory accounting; allow a small tolerance.
-        assert analysis.peak_usage_mb >= -10.0
-        # calibrax efficiency can be negative when retained memory > peak delta.
-        assert analysis.memory_efficiency <= 1
+        best = max(analyses, key=lambda a: a.peak_usage_mb)
+        assert isinstance(best, MemoryAnalysis)
+        # 200 MB allocation; require at least 50 MB peak delta in the best of 3 attempts.
+        assert best.peak_usage_mb >= 50.0, (
+            f"Expected peak_usage_mb >= 50 MB for a 200 MB allocation in "
+            f"{len(analyses)} attempts, best was {best.peak_usage_mb:.1f} MB"
+        )
+        assert best.memory_efficiency <= 1

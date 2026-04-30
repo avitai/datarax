@@ -168,13 +168,11 @@ def create_fashion_preprocessor():
 ```python
 # Create individual pipelines
 mnist_pipeline = (
-    build_source_pipeline(mnist_source, batch_size=16)
-    .add(OperatorNode(create_mnist_preprocessor()))
+    Pipeline(source=mnist_source, stages=[create_mnist_preprocessor(], batch_size=16, rngs=nnx.Rngs(0)))
 )
 
 fashion_pipeline = (
-    build_source_pipeline(fashion_source, batch_size=16)
-    .add(OperatorNode(create_fashion_preprocessor()))
+    Pipeline(source=fashion_source, stages=[create_fashion_preprocessor(], batch_size=16, rngs=nnx.Rngs(0)))
 )
 
 # Interleave by alternating batches

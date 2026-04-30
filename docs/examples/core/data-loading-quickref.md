@@ -121,12 +121,12 @@ source = from_hf("allenai/c4", "train", streaming=True, rngs=nnx.Rngs(0))
 
 ## Using Sources in Pipelines
 
-All sources plug into `build_source_pipeline()` to create iterable pipelines:
+All sources plug into `Pipeline(source=..., stages=[...], batch_size=N, rngs=...)` to create iterable pipelines:
 
 ```python
-from datarax.dag import build_source_pipeline
+from datarax.pipeline import Pipeline
 
-pipeline = build_source_pipeline(source, batch_size=32)
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 
 for batch in pipeline:
     images = batch["image"]   # shape: (32, 32, 32, 3)

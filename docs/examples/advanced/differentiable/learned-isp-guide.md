@@ -20,7 +20,7 @@ Traditional camera ISPs are hand-tuned for human perception. By making the ISP d
 
 ## What You'll Learn
 
-- Building multi-stage ISP pipelines using datarax's `>>` operator
+- Building multi-stage ISP pipelines using datarax's the `stages=[...]` argument
 - Creating custom `ModalityOperator` subclasses with `nnx.Param` parameters
 - End-to-end optimization via `nnx.value_and_grad` through the DAG
 - Two-phase training: freeze detector → joint optimization
@@ -71,13 +71,7 @@ This produces nearly-black images that are extremely hard for a classifier — t
 
 ```python
 pipeline = (
-    build_source_pipeline(source, batch_size=32)
-    >> OperatorNode(ccm_op)
-    >> OperatorNode(desaturation_op)
-    >> OperatorNode(tonemap_op)
-    >> OperatorNode(gamma_op)
-    >> OperatorNode(sharpen_op)
-)
+    Pipeline(source=source, stages=[ccm_op, desaturation_op, tonemap_op, gamma_op, sharpen_op], batch_size=32, rngs=nnx.Rngs(0)))
 ```
 
 ### Architecture Diagram

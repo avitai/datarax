@@ -5,6 +5,7 @@ access.
 """
 
 # Re-export specific samplers
+from datarax.samplers.buffer_sampler import BufferSampler, BufferSamplerConfig
 from datarax.samplers.epoch_aware_sampler import (
     EpochAwareSamplerConfig,
     EpochAwareSamplerModule,
@@ -17,10 +18,16 @@ from datarax.samplers.sequential_sampler import (
     SequentialSamplerModule,
 )
 from datarax.samplers.shuffle_sampler import ShuffleSampler, ShuffleSamplerConfig
+from datarax.samplers.sliding_window_sampler import (
+    SlidingWindowSampler,
+    SlidingWindowSamplerConfig,
+)
 
 
 __all__ = [
     # NNX-based samplers
+    "BufferSampler",
+    "BufferSamplerConfig",
     "EpochAwareSamplerConfig",
     "EpochAwareSamplerModule",
     "RangeSampler",
@@ -29,4 +36,6 @@ __all__ = [
     "SequentialSamplerModule",
     "ShuffleSampler",
     "ShuffleSamplerConfig",
+    "SlidingWindowSampler",
+    "SlidingWindowSamplerConfig",
 ]

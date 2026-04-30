@@ -37,7 +37,7 @@ If you're familiar with PyTorch's torchvision datasets, here's how Datarax + TFD
 | TensorFlow tf.data | Datarax |
 |--------------------|---------|
 | `tfds.load('mnist', split='train')` | `TFDSEagerSource(TFDSEagerConfig(name='mnist', split='train'))` |
-| `dataset.map(normalize).batch(32)` | `build_source_pipeline(source, batch_size=32).add(OperatorNode(normalizer))` |
+| `dataset.map(normalize).batch(32)` | `Pipeline(source=source, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0))` |
 | `dataset.shuffle(buffer_size=1000)` | `shuffle=True` in config |
 | TensorFlow tensors | JAX arrays |
 
@@ -88,8 +88,8 @@ except ImportError as e:
         "This example requires TensorFlow Datasets. Install with: uv pip install datarax[tfds]"
     ) from e
 
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
+from datarax.pipeline import Pipeline
+from datarax.pipeline import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
 ```
 
@@ -171,11 +171,11 @@ Created normalizer operator
 
 ## Step 3: Build Pipeline
 
-Chain source and operators using the DAG-based `build_source_pipeline()` API.
+Chain source and operators using the `Pipeline()` constructor API.
 
 ```python
 # Build the pipeline
-pipeline = build_source_pipeline(source, batch_size=32).add(OperatorNode(normalizer))
+pipeline = Pipeline(source=source, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0))
 
 print("Pipeline: TFDSEagerSource(MNIST) -> Normalize -> Output")
 print("Batch size: 32")
@@ -348,7 +348,7 @@ train_config = TFDSEagerConfig(
 )
 
 train_source = TFDSEagerSource(train_config, rngs=nnx.Rngs(42))
-train_pipeline = build_source_pipeline(train_source, batch_size=128).add(OperatorNode(normalizer))
+train_pipeline = Pipeline(source=train_source, stages=[normalizer], batch_size=128, rngs=nnx.Rngs(0))
 ```
 
 ### Pattern 2: Evaluation Pipeline
@@ -362,7 +362,7 @@ test_config = TFDSEagerConfig(
 )
 
 test_source = TFDSEagerSource(test_config, rngs=nnx.Rngs(0))
-test_pipeline = build_source_pipeline(test_source, batch_size=128).add(OperatorNode(normalizer))
+test_pipeline = Pipeline(source=test_source, stages=[normalizer], batch_size=128, rngs=nnx.Rngs(0))
 ```
 
 ### Pattern 3: Development/Debug
@@ -376,7 +376,7 @@ dev_config = TFDSEagerConfig(
 )
 
 dev_source = TFDSEagerSource(dev_config, rngs=nnx.Rngs(0))
-dev_pipeline = build_source_pipeline(dev_source, batch_size=32).add(OperatorNode(normalizer))
+dev_pipeline = Pipeline(source=dev_source, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0))
 ```
 
 ## Split Syntax

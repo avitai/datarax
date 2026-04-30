@@ -65,9 +65,8 @@ tf.config.set_visible_devices([], "GPU")
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.pipeline import Pipeline
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 
 
@@ -178,7 +177,7 @@ Batch size of 32 is standard for CIFAR-10 training.
 # %%
 # Build the training pipeline
 batch_size = 32
-pipeline = build_source_pipeline(source, batch_size=batch_size).add(OperatorNode(normalizer))
+pipeline = Pipeline(source=source, stages=[normalizer], batch_size=batch_size, rngs=nnx.Rngs(0))
 
 print("Pipeline: TFDSEagerSource(CIFAR-10) -> Normalize -> Output")
 print(f"Batch size: {batch_size}")
@@ -305,7 +304,7 @@ def main():
     )
 
     # Build and run pipeline
-    pipeline = build_source_pipeline(source, batch_size=32).add(OperatorNode(normalizer))
+    pipeline = Pipeline(source=source, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0))
 
     total_samples = 0
     for batch in pipeline:

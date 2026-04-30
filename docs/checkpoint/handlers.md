@@ -135,9 +135,9 @@ print(f"Epoch: {metadata['epoch']}")
 ### Pipeline Checkpointing
 
 ```python
-from datarax.dag import build_source_pipeline
+from datarax.pipeline import Pipeline
 
-pipeline = build_source_pipeline(source, batch_size=32)
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 
 # Train for a while...
 for step, batch in enumerate(pipeline):
@@ -242,7 +242,7 @@ assert restored["model_name"] == "my_model_v2"
 
 - [Checkpointing Guide](../user_guide/checkpointing_guide.md) - Complete checkpointing tutorial
 - [Checkpoint Quick Reference](../examples/advanced/checkpointing/checkpoint-quickref.md)
-- [DAG Executor](../dag/dag_executor.md) - Pipeline checkpointing
+- DAG Executor - Pipeline checkpointing
 - [Orbax Documentation](https://orbax.readthedocs.io/)
 
 ---

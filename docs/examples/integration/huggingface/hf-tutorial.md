@@ -42,7 +42,7 @@ If you're familiar with PyTorch's dataset ecosystem, here's how Datarax + Huggin
 | `dataset.shuffle(buffer_size=1000)` | `shuffle=True, shuffle_buffer_size=1000` in config |
 | `dataset.take(1000)` | `split='train[:1000]'` syntax |
 | `dataset.skip(1000)` | `split='train[1000:]'` syntax |
-| `dataset.map(fn).filter(pred)` | Chain operators with `.add(OperatorNode(op))` |
+| `dataset.map(fn).filter(pred)` | Chain operators by passing them in the `stages=[...]` list |
 
 ## Files
 
@@ -86,8 +86,8 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
+from datarax.pipeline import Pipeline
+from datarax.pipeline import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import HFEagerConfig, HFEagerSource
 
@@ -131,7 +131,7 @@ filtered_config = HFEagerConfig(
 filtered_source = HFEagerSource(filtered_config, rngs=nnx.Rngs(1))
 
 # Check what fields are available
-pipeline = build_source_pipeline(filtered_source, batch_size=1)
+pipeline = Pipeline(source=filtered_source, stages=[], batch_size=1, rngs=nnx.Rngs(0))
 batch = next(iter(pipeline))
 
 print("Filtered fields:")
@@ -217,8 +217,8 @@ source1 = HFEagerSource(shuffle_config, rngs=nnx.Rngs(42))
 source2 = HFEagerSource(shuffle_config, rngs=nnx.Rngs(42))
 
 # Get first batch from each
-batch1 = next(iter(build_source_pipeline(source1, batch_size=8)))
-batch2 = next(iter(build_source_pipeline(source2, batch_size=8)))
+batch1 = next(iter(Pipeline(source=source1, stages=[], batch_size=8, rngs=nnx.Rngs(0))))
+batch2 = next(iter(Pipeline(source=source2, stages=[], batch_size=8, rngs=nnx.Rngs(0))))
 
 # Verify identical batches
 print(f"Same seed produces identical batches: {jnp.allclose(batch1['image'], batch2['image'])}")
@@ -381,7 +381,7 @@ train_config = HFEagerConfig(
 train_source = HFEagerSource(train_config, rngs=nnx.Rngs(0))
 
 # Chain: Source -> Augmentation -> Output
-training_pipeline = build_source_pipeline(train_source, batch_size=64).add(OperatorNode(augmentation))
+training_pipeline = Pipeline(source=train_source, stages=[augmentation], batch_size=64, rngs=nnx.Rngs(0))
 
 print("Training pipeline:")
 print("  HFEagerSource(mnist) -> Normalize -> RandomFlip -> Output")

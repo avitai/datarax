@@ -87,19 +87,17 @@ add operators, sharding, checkpointing, and monitoring as they understand each c
 
 ```python
 # Level 1: Minimal viable pipeline (3 lines)
-from datarax import build_source_pipeline
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
-pipeline = build_source_pipeline(MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0)))
+pipeline = Pipeline(source=MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0)), stages=[], batch_size=32, rngs=nnx.Rngs(0))
 
 # Level 2: Add operators
-pipeline = build_source_pipeline(source, batch_size=32).add(OperatorNode(normalizer))
+pipeline = Pipeline(source=source, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0))
 
 # Level 3: Add monitoring
 pipeline = (
-    build_source_pipeline(source, batch_size=32)
-    .add(OperatorNode(normalizer))
-    .add(OperatorNode(augmenter))
+    Pipeline(source=source, stages=[normalizer, augmenter], batch_size=32, rngs=nnx.Rngs(0))
 )
 # Then add callbacks for metrics collection
 
@@ -142,7 +140,7 @@ data = {
 }
 
 # After batching, first dimension becomes batch
-pipeline = build_source_pipeline(source, batch_size=32)
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 for batch in pipeline:
     print(f"Batch dimension: {batch['image'].shape[0]}")  # 32
     break
@@ -766,9 +764,9 @@ If you're familiar with PyTorch DataLoader, here's how Datarax compares:
 
 | PyTorch | Datarax |
 |---------|---------|
-| `DataLoader(dataset, batch_size=32)` | `build_source_pipeline(source, batch_size=32)` |
+| `DataLoader(dataset, batch_size=32)` | `Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))` |
 | `TensorDataset(data)` | `MemorySource(config, data=data)` |
-| `transforms.Compose([T1, T2])` | `pipeline.add(OperatorNode(op1)).add(OperatorNode(op2))` |
+| `transforms.Compose([T1, T2])` | `Pipeline(source=source, stages=[op1, op2], ...)` |
 | `transforms.RandomHorizontalFlip(p=0.5)` | `ProbabilisticOperator(config, fn=flip, p=0.5)` |
 | `for images, labels in loader:` | `for batch in pipeline:` (dict-based) |
 
@@ -783,8 +781,8 @@ If you're familiar with PyTorch DataLoader, here's how Datarax compares:
 | TensorFlow tf.data | Datarax |
 |--------------------|---------|
 | `tf.data.Dataset.from_tensor_slices(data)` | `MemorySource(config, data=data)` |
-| `dataset.batch(32).prefetch(2)` | `build_source_pipeline(source, batch_size=32)` |
-| `dataset.map(transform_fn)` | `pipeline.add(OperatorNode(operator))` |
+| `dataset.batch(32).prefetch(2)` | `Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))` |
+| `dataset.map(transform_fn)` | `Pipeline(source=..., stages=[operator], ...)` |
 | `dataset.shuffle(buffer_size)` | `ShuffleSampler(config)` |
 | `dataset.cache()` | `CachingNode()` in DAG |
 
@@ -793,8 +791,8 @@ If you're familiar with PyTorch DataLoader, here's how Datarax compares:
 | Grain | Datarax |
 |-------|---------|
 | `grain.ArrayRecordDataSource(paths)` | `ArrayRecordSourceModule(config, paths)` |
-| `grain.MapDataset(source, transforms)` | `build_source_pipeline(source).add(operators)` |
-| `grain.DataLoader(dataset)` | `build_source_pipeline(source, batch_size=N)` |
+| `grain.MapDataset(source, transforms)` | `Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0)).add(operators)` |
+| `grain.DataLoader(dataset)` | `Pipeline(source=source, stages=[], batch_size=N, rngs=nnx.Rngs(0))` |
 | Manual checkpointing | Built-in `get_state()` / `set_state()` |
 ````
 
@@ -919,7 +917,7 @@ and iterate through batched data—the core workflow for any Datarax pipeline.
 By the end of this example, you will be able to:
 
 1. Create a `MemorySource` from dictionary data
-2. Build a pipeline using the DAG-based `build_source_pipeline()` API
+2. Build a pipeline using the `Pipeline` constructor API
 3. Apply deterministic and stochastic operators to data
 4. Iterate through batched pipeline output
 ```
@@ -952,7 +950,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax import build_source_pipeline
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 from datarax.operators import ElementOperator, ElementOperatorConfig
 ```
@@ -970,14 +968,14 @@ For tutorials and advanced guides, include theoretical background:
 Datarax pipelines are represented as Directed Acyclic Graphs (DAGs). Each node
 in the graph is either:
 
-- **DataSourceNode**: Entry point that yields raw data elements
-- **OperatorNode**: Transforms data (normalization, augmentation, etc.)
+- **Source**: Entry point that yields raw data elements (passed to `Pipeline(source=...)`)
+- **Stage** (`nnx.Module`): Transforms data (normalization, augmentation, etc.)
 - **BatcherNode**: Groups elements into batches for efficient processing
 
 ```mermaid
 graph LR
-    A[DataSourceNode] --> B[OperatorNode: Normalize]
-    B --> C[OperatorNode: Augment]
+    A[Source] --> B[Stage: Normalize]
+    B --> C[Stage: Augment]
     C --> D[BatcherNode]
     D --> E[Output Batches]
 ```
@@ -1055,15 +1053,15 @@ This memory-efficient approach is essential for large-scale datasets.
 
 ### Related Examples
 
-- [Operators Tutorial](operators-tutorial.md) - Deep dive into all operator types
-- [HuggingFace Integration](../integration/huggingface/hf-quickref.md) - Load real datasets
-- [Sharding](../advanced/distributed/sharding-quickref.md) - Multi-device distribution
+- [Operators Tutorial](../examples/core/operators-tutorial.md) - Deep dive into all operator types
+- [HuggingFace Integration](../examples/integration/huggingface/hf-quickref.md) - Load real datasets
+- [Sharding](../examples/advanced/distributed/sharding-quickref.md) - Multi-device distribution
 
 ### API Reference
 
 - [`MemorySource`](../../sources/memory_source.md) - In-memory data wrapper
 - [`ElementOperator`](../../operators/element_operator.md) - Per-element transformations
-- [`build_source_pipeline()`](../../core/module.md) - Pipeline builder function
+- [`Pipeline`](../../user_guide/dag_construction.md) - Pipeline class
 ```
 
 ---
@@ -1094,7 +1092,7 @@ Use cards for navigation and feature highlights:
 
     Build your first data pipeline in 5 minutes
 
-    [:octicons-arrow-right-24: Quick Reference](core/simple-pipeline.md)
+    [:octicons-arrow-right-24: Quick Reference](../examples/core/simple-pipeline.md)
 
 -   :material-database:{ .lg .middle } **HuggingFace Integration**
 
@@ -1102,7 +1100,7 @@ Use cards for navigation and feature highlights:
 
     Load datasets from HuggingFace Hub
 
-    [:octicons-arrow-right-24: Quick Reference](integration/huggingface/hf-quickref.md)
+    [:octicons-arrow-right-24: Quick Reference](../examples/integration/huggingface/hf-quickref.md)
 
 </div>
 ````
@@ -1123,7 +1121,7 @@ Use admonitions for different information types:
     Consider using `HuggingFaceSource` for streaming.
 
 !!! danger "Breaking Change"
-    In v0.2.0, `build_source_pipeline()` requires explicit `batch_size` parameter.
+    `Pipeline` requires explicit `batch_size` and `rngs` arguments.
 
 !!! example "Try It"
     Modify the `batch_size` parameter and observe throughput changes.
@@ -1138,11 +1136,11 @@ Always use syntax highlighting and copy buttons:
 
 ````markdown
 ```python title="Creating a Pipeline" linenums="1"
-from datarax import build_source_pipeline
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 # Create pipeline with custom batch size
-pipeline = build_source_pipeline(source, batch_size=32)
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 ```
 ````
 
@@ -1150,7 +1148,7 @@ For code with annotations:
 
 ````markdown
 ```python
-pipeline = build_source_pipeline(source, batch_size=32)  # (1)!
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))  # (1)!
 ```
 
 1. The `batch_size` parameter controls how many samples are grouped together.
@@ -1207,8 +1205,8 @@ flowchart TD
     end
 
     subgraph DAG["Pipeline DAG"]
-        OP1[OperatorNode: Normalize]
-        OP2[OperatorNode: Augment]
+        OP1[Stage: Normalize]
+        OP2[Stage: Augment]
         B[BatcherNode]
     end
 
@@ -1287,7 +1285,7 @@ uv pip install datarax
 
 # %%
 # Imports
-from datarax import build_source_pipeline
+from datarax.pipeline import Pipeline
 # ... minimal imports
 
 # %% [markdown]
@@ -1426,7 +1424,7 @@ import numpy as np
 from flax import nnx
 
 # Datarax imports
-from datarax import build_source_pipeline
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 from datarax.operators import ElementOperator, ElementOperatorConfig
 
@@ -1803,10 +1801,10 @@ from flax import nnx
 
 # Datarax
 
-from datarax import build_source_pipeline
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.dag.nodes import OperatorNode
+from datarax.pipeline import Pipeline
 
 # Verify setup
 
@@ -1881,7 +1879,7 @@ or oversized batch configuration.
 **Solution**:
 ```python
 # Reduce batch size
-pipeline = build_source_pipeline(source, batch_size=16)  # Was 64
+pipeline = Pipeline(source=source, stages=[], batch_size=16, rngs=nnx.Rngs(0))  # Was 64
 
 # Or enable explicit garbage collection
 import gc
@@ -1969,7 +1967,7 @@ def normalize(element, key=None):
 
 ### API Reference
 
-- [`build_source_pipeline()`](../../core/module.md) - Pipeline builder
+- [`Pipeline`](../../user_guide/dag_construction.md) - Pipeline class
 - [`MemorySource`](../../sources/memory_source.md) - In-memory data
 - [`ElementOperator`](../../operators/element_operator.md) - Transformations
 
@@ -2049,7 +2047,7 @@ Batches are processed lazily by the pipeline.
 | Rule | Example |
 |------|---------|
 | Capitalize proper nouns | "Datarax", "JAX", "NumPy" |
-| Use code formatting for code | "`build_source_pipeline()`", "`MemorySource`" |
+| Use code formatting for code | "`Pipeline`", "`MemorySource`" |
 | Use present tense | "The operator transforms" not "will transform" |
 
 ### Technical Terms
@@ -2058,7 +2056,7 @@ Batches are processed lazily by the pipeline.
 
 | Term | Definition | Usage |
 |------|------------|-------|
-| Pipeline | Complete data processing graph | "Build a pipeline with `build_source_pipeline()`" |
+| Pipeline | Complete data processing graph | "Build a pipeline with `Pipeline(source=..., stages=[...], ...)`" |
 | DAG | Directed Acyclic Graph of operations | "The pipeline DAG executes lazily" |
 | Source | Data origin (MemorySource, HuggingFaceSource) | "Create a source from your data" |
 | Operator | Data transformation node | "Add operators to transform batches" |
@@ -2112,11 +2110,11 @@ import numpy as np
 from flax import nnx
 
 # Datarax core
-from datarax import build_source_pipeline
+from datarax.pipeline import Pipeline
 from datarax.core import DataSource, Operator
 
 # Datarax submodules (alphabetical)
-from datarax.dag.nodes import OperatorNode
+from datarax.pipeline import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import MemorySource, MemorySourceConfig
 ```
@@ -2402,13 +2400,15 @@ This shows how to structure information from simple to complex:
 
 # %%
 # Just 3 lines to get started
-from datarax import build_source_pipeline
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 data = {"x": np.random.rand(100, 10).astype(np.float32)}
-pipeline = build_source_pipeline(
-    MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0)),
+pipeline = Pipeline(
+    source=MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0)),
+    stages=[],
     batch_size=32,
+    rngs=nnx.Rngs(0),
 )
 
 for batch in pipeline:
@@ -2431,7 +2431,7 @@ normalizer = ElementOperator(
     rngs=nnx.Rngs(0),
 )
 
-pipeline = build_source_pipeline(source, batch_size=32).add(OperatorNode(normalizer))
+pipeline = Pipeline(source=source, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0))
 
 # %% [markdown]
 """
@@ -2473,8 +2473,8 @@ config = ElementOperatorConfig(stochastic=True, stream_name="flip")
 flipper = ElementOperator(config, fn=random_flip, rngs=nnx.Rngs(flip=42))
 
 # Test reproducibility
-pipeline1 = build_source_pipeline(source, batch_size=8).add(OperatorNode(flipper))
-pipeline2 = build_source_pipeline(source, batch_size=8).add(OperatorNode(flipper))
+pipeline1 = Pipeline(source=source, stages=[flipper], batch_size=8, rngs=nnx.Rngs(0))
+pipeline2 = Pipeline(source=source, stages=[flipper], batch_size=8, rngs=nnx.Rngs(0))
 
 batch1 = next(iter(pipeline1))
 batch2 = next(iter(pipeline2))
@@ -2491,7 +2491,7 @@ All code shows what users will see:
 ```python
 # %%
 # Create pipeline
-pipeline = build_source_pipeline(source, batch_size=32)
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 
 # Show iteration
 print("Iterating through pipeline:")
@@ -2552,16 +2552,16 @@ When Datarax APIs change:
 
 ```markdown
 !!! warning "API Change in v0.2.0"
-    The `build_source_pipeline()` function now requires an explicit `batch_size` parameter.
+    The `Pipeline` class requires explicit `batch_size` and `rngs` arguments.
 
     **Before (v0.1.x)**:
     ```python
-    pipeline = build_source_pipeline(source)  # Default batch_size=1
+    pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))  # Default batch_size=1
     ```
 
     **After (v0.2.0+)**:
     ```python
-    pipeline = build_source_pipeline(source, batch_size=32)  # Explicit required
+    pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))  # Explicit required
     ```
 ```
 

@@ -6,7 +6,7 @@ Core protocol for batch creation.
 
 - [Core Overview](index.md) - All core protocols
 - [Batching](../batching/index.md) - Batcher implementations
-- [DAG Executor](../dag/dag_executor.md) - Batching in pipelines
+- DAG Executor - Batching in pipelines
 - [Simple Pipeline Example](../examples/core/simple-pipeline.md)
 
 ---

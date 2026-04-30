@@ -89,3 +89,33 @@ class BatcherModule(StructuralModule):
         # Subclasses implement the actual batching logic
         del elements, args, drop_remainder, kwargs
         raise NotImplementedError(f"{self.__class__.__name__} must implement process() method")
+
+    def batch_spec(self, element_spec: Any, *, batch_size: int) -> dict[str, Any]:
+        """Return the batched-output spec given a per-element spec and ``batch_size``.
+
+        The default implementation prepends a leading ``(batch_size,)`` dimension
+        to every ``jax.ShapeDtypeStruct`` leaf of ``element_spec`` and adds a
+        top-level ``valid_mask`` leaf of shape ``(batch_size,)`` and dtype bool.
+        The mask flags valid positions so end-of-epoch padding does not
+        contribute to mask-weighted loss.
+
+        Subclasses (e.g., ``MultiRateBatcher``) override only when the batch
+        layout requires more than a simple leading-dim prepend.
+
+        Args:
+            element_spec: PyTree of ``jax.ShapeDtypeStruct`` describing one
+                element (typically the output of the upstream operator's
+                ``output_spec`` or the source's ``element_spec``).
+            batch_size: Number of elements per emitted batch.
+
+        Returns:
+            A dict containing the batched element spec under the original keys
+            plus a ``"valid_mask"`` key of shape ``(batch_size,)`` and bool dtype.
+
+        Raises:
+            ValueError: If ``batch_size`` is not positive.
+        """
+        # Imported lazily to keep core/batcher import lightweight.
+        from datarax.utils.spec import batched_spec
+
+        return batched_spec(element_spec, batch_size=batch_size)

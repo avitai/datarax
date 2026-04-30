@@ -84,7 +84,6 @@ import numpy as np
 import optax
 from flax import nnx
 
-from datarax import build_source_pipeline
 from datarax.core.element_batch import Batch, Element
 from datarax.operators import (
     CompositeOperatorConfig,
@@ -93,6 +92,7 @@ from datarax.operators import (
     ElementOperator,
     ElementOperatorConfig,
 )
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -1161,8 +1161,12 @@ def run_dada_search(
         temperature = temp_start + (temp_end - temp_start) * progress
 
         # Create pipelines for this epoch
-        train_pipeline = build_source_pipeline(train_source, batch_size=batch_size)
-        val_pipeline = build_source_pipeline(val_source, batch_size=batch_size)
+        train_pipeline = Pipeline(
+            source=train_source, stages=[], batch_size=batch_size, rngs=nnx.Rngs(epoch)
+        )
+        val_pipeline = Pipeline(
+            source=val_source, stages=[], batch_size=batch_size, rngs=nnx.Rngs(epoch + 1000)
+        )
 
         epoch_loss = 0.0
         epoch_acc = 0.0
@@ -1194,7 +1198,8 @@ def run_dada_search(
             try:
                 val_batch = next(val_iter)
             except StopIteration:
-                val_iter = iter(build_source_pipeline(val_source, batch_size=batch_size))
+                val_pipeline._position.value = jnp.int32(0)
+                val_iter = iter(val_pipeline)
                 val_batch = next(val_iter)
 
             val_images = val_batch["image"]
@@ -1315,7 +1320,7 @@ def evaluate(
     batch_size: int = 128,
 ) -> tuple[float, float]:
     """Evaluate model on test set."""
-    pipeline = build_source_pipeline(test_source, batch_size=batch_size)
+    pipeline = Pipeline(source=test_source, stages=[], batch_size=batch_size, rngs=nnx.Rngs(0))
     total_loss = 0.0
     total_acc = 0.0
     num_batches = 0
@@ -1350,7 +1355,7 @@ way back to the policy parameters. Let's verify this explicitly.
 print("\n=== Gradient Flow Verification ===")
 
 # Create a small batch for verification
-verify_pipeline = build_source_pipeline(test_source, batch_size=16)
+verify_pipeline = Pipeline(source=test_source, stages=[], batch_size=16, rngs=nnx.Rngs(0))
 verify_batch = next(iter(verify_pipeline))
 verify_images = verify_batch["image"]
 verify_labels = verify_batch["label"]
@@ -1560,7 +1565,7 @@ are usually assigned lower magnitudes and probabilities.
 
 - [OperatorModule](../../../docs/core/operator.md) — Base operator class
 - [ElementOperator](../../../docs/operators/element_operator.md) — Function wrapping
-- [DAGExecutor](../../../docs/dag/dag_executor.md) — Pipeline executor
+- [Pipeline](../../../docs/migration/dagexecutor_to_pipeline.md) — JAX-native data pipeline
 
 ### Further Reading
 
@@ -1603,7 +1608,7 @@ def main():
 
     # Verify gradient flow
     print("\n[4/5] Verifying gradient flow...")
-    verify_pipeline = build_source_pipeline(test_source, batch_size=16)
+    verify_pipeline = Pipeline(source=test_source, stages=[], batch_size=16, rngs=nnx.Rngs(0))
     verify_batch = next(iter(verify_pipeline))
     key = jax.random.key(999)
 

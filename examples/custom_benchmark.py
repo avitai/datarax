@@ -14,10 +14,8 @@ from calibrax.core import Metric, MetricDef, MetricDirection, Point, Run
 from calibrax.profiling import TimingCollector, TimingSample
 from flax import nnx
 
-from datarax import build_source_pipeline
-from datarax.core.nodes import OperatorNode
-from datarax.dag import DAGExecutor
 from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -56,18 +54,18 @@ def simulated_heavy_transform(element, key):
     return element.update_data({"image": image})
 
 
-def create_basic_pipeline(batch_size: int = 32) -> DAGExecutor:
+def create_basic_pipeline(batch_size: int = 32) -> Pipeline:
     """Create a basic image pipeline with minimal processing."""
     data = generate_sample_image_data()
     source_config = MemorySourceConfig()
     source = MemorySource(source_config, data=data, rngs=nnx.Rngs(0))
     normalizer_config = ElementOperatorConfig(stochastic=False)
     normalizer = ElementOperator(normalizer_config, fn=normalize_transform, rngs=nnx.Rngs(0))
-    pipeline = build_source_pipeline(source, batch_size=batch_size).add(OperatorNode(normalizer))
+    pipeline = Pipeline(source=source, stages=[normalizer], batch_size=batch_size, rngs=nnx.Rngs(0))
     return pipeline
 
 
-def create_advanced_pipeline(batch_size: int = 32) -> DAGExecutor:
+def create_advanced_pipeline(batch_size: int = 32) -> Pipeline:
     """Create a more complex image pipeline with augmentation."""
     data = generate_sample_image_data()
     source_config = MemorySourceConfig()
@@ -80,11 +78,11 @@ def create_advanced_pipeline(batch_size: int = 32) -> DAGExecutor:
     heavy_transform = ElementOperator(
         heavy_config, fn=simulated_heavy_transform, rngs=nnx.Rngs(heavy=43)
     )
-    pipeline = (
-        build_source_pipeline(source, batch_size=batch_size)
-        .add(OperatorNode(normalizer))
-        .add(OperatorNode(flip_augmenter))
-        .add(OperatorNode(heavy_transform))
+    pipeline = Pipeline(
+        source=source,
+        stages=[normalizer, flip_augmenter, heavy_transform],
+        batch_size=batch_size,
+        rngs=nnx.Rngs(0),
     )
     return pipeline
 

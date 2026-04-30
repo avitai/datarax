@@ -9,34 +9,31 @@ Metrics collection and observability for data pipelines. Track throughput, laten
 | **Metrics** | Collect measurements | Throughput, latency, custom |
 | **Callbacks** | Event hooks | Log on batch/epoch end |
 | **Reporters** | Output backends | Console, file, TensorBoard |
-| **DAG Monitor** | Pipeline visualization | Debug DAG execution |
 
 `★ Insight ─────────────────────────────────────`
 
 - Metrics are lightweight - minimal overhead
 - Use callbacks for automated logging
 - Reporters support multiple backends simultaneously
-- DAG monitor helps debug pipeline structure
 
 `─────────────────────────────────────────────────`
 
 ## Quick Start
 
 ```python
-from datarax.monitoring import MetricsCollector, ConsoleReporter
+from datarax.monitoring import MetricsCollector
 
-# Create collector with reporter
 collector = MetricsCollector()
-collector.add_reporter(ConsoleReporter())
 
 # Track metrics during training
 for step, batch in enumerate(pipeline):
     loss = train_step(batch)
-    collector.record("loss", loss)
-    collector.record("throughput", batch_size / elapsed)
+    collector.record_metric("loss", float(loss))
+    collector.record_metric("throughput", batch_size / elapsed)
 
-# Print summary
-collector.summary()
+# Inspect collected records
+for record in collector.get_metrics():
+    print(record.name, record.value)
 ```
 
 ## Modules
@@ -44,25 +41,38 @@ collector.summary()
 - [metrics](metrics.md) - Core metrics collection and storage
 - [callbacks](callbacks.md) - Event-driven monitoring callbacks
 - [reporters](reporters.md) - Output backends (console, file, etc.)
-- [dag_monitor](dag_monitor.md) - DAG-specific monitoring and visualization
-- [pipeline](pipeline.md) - Pipeline-level monitoring integration
 
 ## Callback Example
 
 ```python
-from datarax.monitoring import LoggingCallback
-
-callback = LoggingCallback(
-    log_every=100,  # Log every 100 batches
-    metrics=["loss", "accuracy"],
+from datarax.monitoring import (
+    CallbackRegistry,
+    ConsoleReporter,
+    MetricsCollector,
+    MetricsObserver,
 )
+from datarax.monitoring.metrics import MetricRecord
+
+collector = MetricsCollector()
+registry = CallbackRegistry()
+registry.register(ConsoleReporter(report_interval=1.0))
+
+
+class LossPrinter(MetricsObserver):
+    def update(self, metrics: list[MetricRecord]) -> None:
+        for record in metrics:
+            if record.name == "loss":
+                print(f"step {record.metadata.get('step')}: loss = {record.value:.4f}")
+
+
+registry.register(LossPrinter())
 
 for step, batch in enumerate(pipeline):
     loss = train_step(batch)
-    callback.on_batch_end(step, {"loss": loss})
+    collector.record_metric("loss", float(loss), metadata={"step": step})
+    registry.notify(collector.get_metrics())
 ```
 
 ## See Also
 
 - [Benchmarking](../benchmarking/index.md) - Performance measurement
-- [Monitoring Tutorial](../examples/advanced/monitoring/monitoring-quickref.md)

@@ -88,16 +88,14 @@ import numpy as np
 import optax
 from flax import nnx
 
-from datarax import build_source_pipeline
 from datarax.core.element_batch import Batch
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
-from datarax.dag.dag_executor import DAGExecutor
-from datarax.dag.nodes import OperatorNode
 from datarax.operators import (
     CompositeOperatorConfig,
     CompositeOperatorModule,
     CompositionStrategy,
 )
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -625,12 +623,12 @@ that can be passed directly to `nnx.Optimizer` and `nnx.value_and_grad`.
 def create_isp_pipeline(
     source: MemorySource,
     batch_size: int = 32,
-) -> tuple[CompositeOperatorModule, DAGExecutor]:
+) -> tuple[CompositeOperatorModule, Pipeline]:
     """Create the 5-stage ISP pipeline in two forms.
 
     Returns:
         isp_composite: CompositeOperatorModule(SEQUENTIAL) for training
-        pipeline: DAGExecutor for data loading demos
+        pipeline: Pipeline for data loading demos
     """
     rngs = nnx.Rngs(0)
 
@@ -649,14 +647,12 @@ def create_isp_pipeline(
         )
     )
 
-    # Inference demo: DAG pipeline using >> operator (shares same operator instances)
-    pipeline = (
-        build_source_pipeline(source, batch_size=batch_size)
-        >> OperatorNode(ccm)
-        >> OperatorNode(desat)
-        >> OperatorNode(tonemap)
-        >> OperatorNode(gamma)
-        >> OperatorNode(sharpen)
+    # Inference demo: Pipeline with the chained ISP stages.
+    pipeline = Pipeline(
+        source=source,
+        stages=[ccm, desat, tonemap, gamma, sharpen],
+        batch_size=batch_size,
+        rngs=nnx.Rngs(0),
     )
 
     return isp_composite, pipeline
@@ -879,7 +875,7 @@ def train_epoch(
     Returns:
         Average loss and accuracy for the epoch
     """
-    pipeline = build_source_pipeline(source, batch_size=batch_size)
+    pipeline = Pipeline(source=source, stages=[], batch_size=batch_size, rngs=nnx.Rngs(0))
 
     total_loss = 0.0
     total_acc = 0.0
@@ -1092,7 +1088,7 @@ back through ALL 5 ISP operators.
 # Step 7: Gradient flow verification
 print("\n=== Gradient Flow Verification ===")
 
-verify_pipeline = build_source_pipeline(test_source, batch_size=8)
+verify_pipeline = Pipeline(source=test_source, stages=[], batch_size=8, rngs=nnx.Rngs(0))
 verify_batch = next(iter(verify_pipeline))
 images = verify_batch["image"]
 labels = verify_batch["label"]
@@ -1263,7 +1259,7 @@ def evaluate_detector(
 ) -> tuple[float, float]:
     """Evaluate detector accuracy with optional ISP preprocessing."""
     detector.eval()  # Use running stats for evaluation
-    pipeline = build_source_pipeline(source, batch_size=batch_size)
+    pipeline = Pipeline(source=source, stages=[], batch_size=batch_size, rngs=nnx.Rngs(0))
     total_loss = 0.0
     total_acc = 0.0
     num_batches = 0
@@ -1302,7 +1298,7 @@ print(f"\nImprovement: +{improvement:.1f}% accuracy")
 fig, axes = plt.subplots(3, 8, figsize=(16, 6))
 
 # Get a batch of test images
-vis_pipeline = build_source_pipeline(test_source, batch_size=8)
+vis_pipeline = Pipeline(source=test_source, stages=[], batch_size=8, rngs=nnx.Rngs(0))
 vis_batch = next(iter(vis_pipeline))
 dark_images = vis_batch["image"]
 labels = vis_batch["label"]
@@ -1411,7 +1407,8 @@ training with `nnx.value_and_grad`.
 ### API Reference
 
 - [ModalityOperator](../../../docs/core/modality.md) — Base class for ISP operators
-- [DAGExecutor](../../../docs/dag/dag_executor.md) — Pipeline executor with `>>` operator
+- [Pipeline](../../../docs/migration/dagexecutor_to_pipeline.md) — JAX-native
+  data pipeline with stages
 - [OperatorNode](../../../docs/dag/nodes.md) — Wrapping operators for DAG
 
 ### Further Reading
@@ -1454,7 +1451,7 @@ def main():
 
     # Gradient verification
     print("\n[4/5] Verifying gradient flow...")
-    verify_pipeline = build_source_pipeline(test_source, batch_size=8)
+    verify_pipeline = Pipeline(source=test_source, stages=[], batch_size=8, rngs=nnx.Rngs(0))
     verify_batch = next(iter(verify_pipeline))
 
     def loss_fn(isp_composite: CompositeOperatorModule) -> jax.Array:

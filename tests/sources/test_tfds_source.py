@@ -542,7 +542,9 @@ class TestStreamingSourceTryGcsPassthrough:
             except TFDS_TEST_SKIP_EXCEPTIONS:
                 pass
 
-            mock_prepare.assert_called_once_with("mnist", None, True, None, beam_num_workers=None)
+            mock_prepare.assert_called_once_with(
+                "mnist", None, True, None, beam_num_workers=None, local_files_only=False
+            )
 
 
 # =============================================================================
@@ -579,7 +581,7 @@ def test_tfds_streaming_source_with_shuffling():
         config = TFDSStreamingConfig(
             name="mnist", split="test[:50]", shuffle=True, shuffle_buffer_size=50
         )
-        source = TFDSStreamingSource(config)
+        source = TFDSStreamingSource(config, rngs=nnx.Rngs(shuffle=42))
 
         # Get some data
         items = []

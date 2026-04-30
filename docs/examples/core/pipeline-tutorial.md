@@ -38,7 +38,7 @@ handle different data modalities, and build production-ready pipelines.
 
 | TensorFlow tf.data | Datarax |
 |--------------------|---------|
-| `dataset.map(fn1).map(fn2)` | `pipeline.add(OperatorNode(op1)).add(OperatorNode(op2))` |
+| `dataset.map(fn1).map(fn2)` | `Pipeline(source=source, stages=[op1, op2], ...)` |
 | `tf.function` compiled transforms | JAX JIT compilation with `jax.jit` |
 | `dataset.shuffle(buffer_size)` | Sampler-based shuffling in source |
 | `tf.random.Generator` | `nnx.Rngs` with stream-based key management |
@@ -69,10 +69,10 @@ flowchart LR
     end
 
     subgraph Pipeline["Pipeline DAG"]
-        FS[build_source_pipeline<br/>batch_size]
-        ON1[OperatorNode 1<br/>Normalizer]
-        ON2[OperatorNode 2<br/>Composite]
-        ON3[OperatorNode 3<br/>Brightness]
+        FS[Pipeline<br/>batch_size]
+        SNormalizer[Stage<br/>Normalizer]
+        SComposite[Stage<br/>Composite]
+        SBrightness[Stage<br/>Brightness]
     end
 
     subgraph Output["Output"]
@@ -87,7 +87,7 @@ flowchart LR
 | Concept | Role |
 |---------|------|
 | **Source** | Produces raw data elements |
-| **OperatorNode** | Wraps an operator for the pipeline DAG |
+| **Stage** | Any `nnx.Module` placed in `Pipeline(stages=[...])` |
 | **Operator** | Transforms data elements |
 | **Pipeline** | Connects source and operators, handles batching |
 
@@ -211,14 +211,11 @@ Created composite operator with SEQUENTIAL strategy (2 operators)
 Chain everything together using the DAG API.
 
 ```python
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
+from datarax.pipeline import Pipeline
+from datarax.pipeline import Pipeline
 
 pipeline = (
-    build_source_pipeline(source, batch_size=32)
-    .add(OperatorNode(normalizer))
-    .add(OperatorNode(augmentation_pipeline))
-    .add(OperatorNode(brightness_op))
+    Pipeline(source=source, stages=[normalizer, augmentation_pipeline, brightness_op], batch_size=32, rngs=nnx.Rngs(0))
 )
 ```
 
@@ -271,7 +268,7 @@ def create_pipeline_with_seed(seed: int):
         fn=random_flip,
         rngs=nnx.Rngs(flip=seed),
     )
-    return build_source_pipeline(src, batch_size=8).add(OperatorNode(norm)).add(OperatorNode(flip))
+    return Pipeline(source=src, stages=[norm, flip], batch_size=8, rngs=nnx.Rngs(0))
 
 # Create two pipelines with same seed
 p1 = create_pipeline_with_seed(42)
@@ -295,7 +292,7 @@ Same seed produces identical results: True
 | MemorySource | Source | In-memory data storage |
 | ElementOperator | Operator | Element-wise transforms |
 | CompositeOperator | Operator | Chain multiple operators |
-| OperatorNode | DAG Node | Wrap operators for pipeline |
+| Pipeline stage | nnx.Module | Transform a batch |
 
 **Pipeline features:**
 

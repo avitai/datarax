@@ -1,6 +1,6 @@
 """Tests for the Datarax CLI main module."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -165,15 +165,13 @@ name = "test"
 batch_size = 32
         """)
 
-        # The run_pipeline function should catch exceptions internally
-        # So we mock at a deeper level
-        with patch("datarax.cli.main.DAGConfig") as mock_config:
-            mock_config.from_dict.side_effect = RuntimeError("Pipeline failed")
-            exit_code = main(["run", "--config-path", str(config_file)])
+        # The config-driven runner is removed; main exits with 1 and emits
+        # a clear message pointing at the new Pipeline construction path.
+        exit_code = main(["run", "--config-path", str(config_file)])
 
         assert exit_code == 1
         captured = capsys.readouterr()
-        assert "error" in captured.err.lower() or "error" in captured.out.lower()
+        assert "no longer available" in captured.err.lower()
 
     def test_list_command(self, capsys):
         """Test list command to show available components."""
@@ -249,16 +247,11 @@ function = "lambda x: x / 255.0"
 inputs = ["source"]
         """)
 
-        # This should work with the actual implementation
-        with patch("datarax.cli.main.DAGConfig") as mock_config:
-            mock_instance = MagicMock()
-            mock_instance.__iter__ = MagicMock(return_value=iter([]))
-            mock_config.from_dict.return_value = mock_instance
+        # The config-driven runner is removed; the run command now exits
+        # with 1 and emits a redirect to Pipeline construction.
+        exit_code = main(["run", "--config-path", str(config_file)])
 
-            exit_code = main(["run", "--config-path", str(config_file)])
-
-        assert exit_code == 0
-        mock_config.from_dict.assert_called_once()
+        assert exit_code == 1
 
     def test_validate_complex_config(self, tmp_path):
         """Test validation of a complex pipeline configuration."""

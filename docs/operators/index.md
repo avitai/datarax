@@ -15,7 +15,7 @@ Data transformation operators for building processing pipelines. Operators are t
 
 - **Deterministic** operators are pure functions (same input → same output)
 - **Stochastic** operators use RNG and require `stream_name` in config
-- Use `>>` operator to chain: `op1 >> op2 >> op3`
+- Use the `stages=[...]` argument to chain: `op1 >> op2 >> op3`
 - All operators work inside `jax.jit` for performance
 
 `─────────────────────────────────────────────────`
@@ -80,5 +80,5 @@ Strategies for combining operators in `CompositeOperatorModule`:
 
 - [Element Operator Guide](element_operator.md) - Detailed element operator docs
 - [Composite Operator Guide](composite_operator.md) - Composition strategies
-- [DAG Executor](../dag/dag_executor.md) - Using operators in pipelines
+- DAG Executor - Using operators in pipelines
 - [Operators Tutorial](../examples/core/operators-tutorial.md)

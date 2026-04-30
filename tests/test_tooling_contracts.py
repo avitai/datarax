@@ -106,7 +106,7 @@ def test_importlinter_contract_exists_for_datarax_layers() -> None:
     for layer in (
         "datarax.cli",
         "datarax.monitoring",
-        "datarax.dag",
+        "datarax.pipeline",
         "datarax.operators",
         "datarax.sources",
         "datarax.distributed",

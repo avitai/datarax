@@ -38,7 +38,7 @@ If you're familiar with PyTorch's torchtext or HuggingFace datasets, here's how 
 |------------|---------|
 | `tfds.load('imdb_reviews')` | `HFEagerSource(HFEagerConfig(name='stanfordnlp/imdb'))` |
 | `dataset.map(tokenizer)` | `ElementOperator` with tokenization function |
-| `dataset.batch(32)` | `build_source_pipeline(source, batch_size=32)` with numeric fields only |
+| `dataset.batch(32)` | `Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))` with numeric fields only |
 
 ## Files
 
@@ -80,8 +80,8 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
+from datarax.pipeline import Pipeline
+from datarax.pipeline import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import HFEagerConfig, HFEagerSource
 
@@ -205,7 +205,7 @@ source_batched = HFEagerSource(
 )
 
 # Build pipeline
-pipeline = build_source_pipeline(source_batched, batch_size=8).add(OperatorNode(label_normalizer))
+pipeline = Pipeline(source=source_batched, stages=[label_normalizer], batch_size=8, rngs=nnx.Rngs(0))
 
 print("Pipeline: HFEagerSource(IMDB) -> LabelNormalizer -> Output")
 print("Note: Text field excluded for batching")
@@ -402,8 +402,7 @@ tokenize_op = ElementOperator(
 
 # Now we can batch because all fields are numeric
 text_pipeline = (
-    build_source_pipeline(source, batch_size=8)
-    .add(OperatorNode(tokenize_op))
+    Pipeline(source=source, stages=[tokenize_op], batch_size=8, rngs=nnx.Rngs(0))
 )
 ```
 

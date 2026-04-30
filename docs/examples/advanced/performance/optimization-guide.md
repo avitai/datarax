@@ -67,7 +67,7 @@ python examples/advanced/performance/01_optimization_guide.py
 ```python
 import time
 import numpy as np
-from datarax import build_source_pipeline
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 def measure_throughput(pipeline, num_batches=100, warmup=10):
@@ -121,7 +121,7 @@ def batch_size_sweep(source, batch_sizes, num_batches=50):
         fresh_source = MemorySource(
             MemorySourceConfig(), data=data, rngs=nnx.Rngs(0)
         )
-        pipeline = build_source_pipeline(fresh_source, batch_size=bs)
+        pipeline = Pipeline(source=fresh_source, stages=[], batch_size=bs, rngs=nnx.Rngs(0))
 
         metrics = measure_throughput(pipeline, num_batches)
         metrics["batch_size"] = bs
@@ -163,8 +163,7 @@ def profile_operators(source, operators, batch_size=64):
             MemorySourceConfig(), data=data, rngs=nnx.Rngs(0)
         )
         pipeline = (
-            build_source_pipeline(fresh_source, batch_size=batch_size)
-            .add(OperatorNode(op))
+            Pipeline(source=fresh_source, stages=[op], batch_size=batch_size, rngs=nnx.Rngs(0))
         )
 
         metrics = measure_throughput(pipeline, num_batches=50)
@@ -202,10 +201,7 @@ noise: 28,901 samples/sec
 ```python
 # Inefficient: Many small operators
 pipeline_slow = (
-    build_source_pipeline(source, batch_size=64)
-    .add(OperatorNode(normalize))
-    .add(OperatorNode(scale))
-    .add(OperatorNode(shift))
+    Pipeline(source=source, stages=[normalize, scale, shift], batch_size=64, rngs=nnx.Rngs(0))
 )
 
 # Efficient: Combined operator
@@ -214,12 +210,16 @@ def combined_transform(element, key=None):
     image = (image / 255.0 - 0.5) * 2.0  # Combined
     return element.update_data({"image": image})
 
-pipeline_fast = (
-    build_source_pipeline(source, batch_size=64)
-    .add(OperatorNode(ElementOperator(
-        ElementOperatorConfig(stochastic=False),
-        fn=combined_transform, rngs=nnx.Rngs(0)
-    )))
+combined_op = ElementOperator(
+    ElementOperatorConfig(stochastic=False),
+    fn=combined_transform,
+    rngs=nnx.Rngs(0),
+)
+pipeline_fast = Pipeline(
+    source=source,
+    stages=[combined_op],
+    batch_size=64,
+    rngs=nnx.Rngs(0),
 )
 ```
 
@@ -300,6 +300,5 @@ plt.savefig("docs/assets/images/examples/perf-batch-size-sweep.png", dpi=150)
 ## Next Steps
 
 - [Distributed Training](../distributed/sharding-guide.md) - Scale across devices
-- [Monitoring](../monitoring/monitoring-quickref.md) - Track metrics in production
 - [End-to-End Training](../training/e2e-cifar10-guide.md) - Apply optimizations
 - [API Reference: Benchmarking](../../../benchmarking/index.md) - Built-in tools

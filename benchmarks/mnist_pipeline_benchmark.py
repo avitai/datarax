@@ -25,8 +25,7 @@ from datarax.utils.console import emit
 
 matplotlib.use("Agg")
 
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
+from datarax import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.performance.synchronization import block_until_ready_tree
 from datarax.sources import MemorySource, MemorySourceConfig
@@ -70,8 +69,7 @@ def create_pipeline(
         rngs=nnx.Rngs(0),
     )
 
-    pipeline = build_source_pipeline(source, batch_size=batch_size).add(OperatorNode(normalizer))
-
+    stages: list[nnx.Module] = [normalizer]
     if with_augmentation:
 
         def add_noise(element, key):
@@ -79,14 +77,15 @@ def create_pipeline(
             noise = jax.random.normal(key, image.shape) * 0.1
             return element.update_data({"image": image + noise})
 
-        noise_op = ElementOperator(
-            ElementOperatorConfig(stochastic=True, stream_name="noise"),
-            fn=add_noise,
-            rngs=nnx.Rngs(noise=seed + 100),
+        stages.append(
+            ElementOperator(
+                ElementOperatorConfig(stochastic=True, stream_name="noise"),
+                fn=add_noise,
+                rngs=nnx.Rngs(noise=seed + 100),
+            )
         )
-        pipeline = pipeline.add(OperatorNode(noise_op))
 
-    return pipeline
+    return Pipeline(source=source, stages=stages, batch_size=batch_size, rngs=nnx.Rngs(0))
 
 
 # ── Benchmark routines ───────────────────────────────────────────────────────

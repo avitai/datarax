@@ -17,6 +17,7 @@ from datarax.core.operator import OperatorModule
 from datarax.core.sampler import SamplerModule
 from datarax.core.sharder import SharderModule
 from datarax.core.structural import StructuralModule
+from datarax.core.temporal import TimeSeriesSpec
 
 # Import typing exports
 from datarax.typing import Batch, Element
@@ -44,4 +45,6 @@ __all__ = [
     "BatcherModule",
     # ===== Sharder Modules =====
     "SharderModule",
+    # ===== Time-series contracts =====
+    "TimeSeriesSpec",
 ]

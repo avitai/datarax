@@ -32,17 +32,33 @@ pip install "skypilot[vast,lambda,gcp]"
 pip install "skypilot[all]"
 ```
 
-Known compatibility pitfall:
+Known compatibility pitfalls:
 
 - `skypilot 0.11.x` + `click >= 8.3` can break `sky launch` with:
   `ValueError: False backend is not supported.`
-- Fix by either upgrading SkyPilot or pinning Click:
+- `skypilot 0.11.x` + `vastai-sdk >= 1.0` can break Vast.ai
+  provisioning with: `'VastAI' object has no attribute 'api_key_access'`.
+  The 1.0 SDK removed the attribute that SkyPilot's adapter at
+  `sky/adaptors/vast.py` uses; pin to the 0.2.x line until the
+  next SkyPilot upgrades the adapter.
+- After changing any SkyPilot dependency, restart the SkyPilot API
+  daemon so the new packages are reloaded — `pip install` updates
+  packages on disk but the running daemon keeps in-memory copies:
 
 ```bash
+# fix click compatibility
 ./.venv/bin/pip install -U "skypilot[vast]"
 # or
 ./.venv/bin/pip install "click<8.3"
+
+# fix vastai-sdk compatibility (and bounce the daemon)
+./.venv/bin/pip install "vastai-sdk<0.3"
+./.venv/bin/sky api stop
 ```
+
+The `automation` extra in `pyproject.toml` already pins both
+`click<8.3` and `vastai-sdk<0.3`, so a fresh
+`uv sync --extra automation` picks up the working combination.
 
 ### 2. Configure cloud credentials
 

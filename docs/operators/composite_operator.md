@@ -147,7 +147,7 @@ def router(x): return "path_a" if condition else "path_b"
 
 - [Element Operator](element_operator.md) - Single-element transformations
 - [Operator Strategies](sequential.md) - Strategy implementations
-- [DAG Control Flow](../dag/control_flow.md) - DAG-level branching
+- DAG Control Flow - DAG-level branching
 - [Operators Tutorial](../examples/core/operators-tutorial.md)
 
 ---

@@ -80,6 +80,7 @@ def _prepare_tfds_builder(
     try_gcs: bool,
     download_and_prepare_kwargs: dict[str, Any] | None,
     beam_num_workers: int | None = None,
+    local_files_only: bool = False,
 ) -> Any:
     """Create and prepare a TFDS builder, handling ReadOnlyBuilder from GCS.
 
@@ -92,6 +93,10 @@ def _prepare_tfds_builder(
             When set, enables multi-processing mode for parallel dataset
             generation. Useful for large datasets that use Apache Beam
             (e.g., NSynth). None means single-threaded (Beam default).
+        local_files_only: If True, skip ``download_and_prepare`` entirely and
+            assume the dataset is already prepared in ``data_dir``. The user
+            is responsible for ensuring the cache is populated; otherwise
+            ``tfds.load`` will surface its own error downstream.
 
     Returns:
         A prepared TFDS builder with dataset info available.
@@ -101,8 +106,10 @@ def _prepare_tfds_builder(
 
     builder = tfds.builder(name, data_dir=data_dir, try_gcs=try_gcs)
 
-    # ReadOnlyBuilder (from try_gcs when dataset is on GCS) needs no preparation
-    if not _is_read_only_tfds_source(builder):
+    # In local_files_only mode the user guarantees the cache is populated;
+    # ReadOnlyBuilder (from try_gcs when dataset is on GCS) also needs no
+    # preparation.
+    if not local_files_only and not _is_read_only_tfds_source(builder):
         download_kwargs = download_and_prepare_kwargs or {}
 
         if beam_num_workers is not None:
@@ -155,6 +162,7 @@ class TFDSEagerConfig(SourceConfigBase):
     as_supervised: bool = False
     download_and_prepare_kwargs: dict[str, Any] | None = None
     beam_num_workers: int | None = None
+    local_files_only: bool = False
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
@@ -200,6 +208,7 @@ class TFDSStreamingConfig(SourceConfigBase):
     download_and_prepare_kwargs: dict[str, Any] | None = None
     beam_num_workers: int | None = None
     prefetch_buffer: int = 2  # Fixed, NOT AUTOTUNE
+    local_files_only: bool = False
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
@@ -318,6 +327,7 @@ class TFDSEagerSource(EagerSourceBase):
             config.try_gcs,
             config.download_and_prepare_kwargs,
             beam_num_workers=config.beam_num_workers,
+            local_files_only=config.local_files_only,
         )
         return builder.info
 
@@ -454,6 +464,7 @@ class TFDSStreamingSource(StreamingSourceBase):
             config.try_gcs,
             config.download_and_prepare_kwargs,
             beam_num_workers=config.beam_num_workers,
+            local_files_only=config.local_files_only,
         )
         self._dataset_info = builder.info
 
@@ -527,3 +538,23 @@ class TFDSStreamingSource(StreamingSourceBase):
             self.exclude_keys,
             tf_to_jax,
         )
+
+    def element_spec(self) -> Any:
+        """Return per-element shape/dtype derived by peeking the TFDS stream.
+
+        TFDS streams yield single-element dicts (or tuples in
+        ``as_supervised`` mode). The spec is derived by peeking the first
+        element from a fresh iterator on the cached ``self._tf_dataset``
+        (which has already been built in ``__init__``) so it does not
+        re-trigger downloads. Top-level dict values are treated as single
+        leaves so vector features become 1-D ``ShapeDtypeStruct`` instead of
+        per-scalar leaves.
+        """
+        from datarax.utils.spec import array_to_spec  # noqa: PLC0415
+
+        first = next(iter(self._tf_dataset))
+        if self.as_supervised and isinstance(first, tuple):
+            first = {"image": first[0], "label": first[1]}
+        if not isinstance(first, dict):
+            return array_to_spec(first)
+        return {key: array_to_spec(value) for key, value in first.items()}

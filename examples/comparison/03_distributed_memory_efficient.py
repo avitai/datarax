@@ -213,27 +213,27 @@ class SharedMemoryPool(nnx.Module):
     def get_or_create(self, key: str, creator_fn: Callable[[], Any]) -> Any:
         """Get from cache or create with automatic tracking."""
         if key in self._cache:
-            self.cache_hits.value += 1
+            self.cache_hits[...] += 1
             self._access_times[key] = self._access_counter
             self._access_counter += 1
             return self._cache[key]
 
-        self.cache_misses.value += 1
+        self.cache_misses[...] += 1
 
         # Create new data
         data = creator_fn()
         data_size_mb = data.nbytes / (1024 * 1024) if hasattr(data, "nbytes") else 0
 
         # Check capacity and evict if needed
-        while self.allocated_mb.value + data_size_mb > self.capacity_mb and len(self._cache) > 0:
+        while self.allocated_mb[...] + data_size_mb > self.capacity_mb and len(self._cache) > 0:
             self._evict_lru()
 
         # Add to cache
-        if self.allocated_mb.value + data_size_mb <= self.capacity_mb:
+        if self.allocated_mb[...] + data_size_mb <= self.capacity_mb:
             self._cache[key] = data
             self._access_times[key] = self._access_counter
             self._access_counter += 1
-            self.allocated_mb.value += data_size_mb
+            self.allocated_mb[...] += data_size_mb
 
         return data
 
@@ -247,23 +247,23 @@ class SharedMemoryPool(nnx.Module):
         del self._access_times[lru_key]
 
         data_size_mb = data.nbytes / (1024 * 1024) if hasattr(data, "nbytes") else 0
-        self.allocated_mb.value -= data_size_mb
-        self.evictions.value += 1
+        self.allocated_mb[...] -= data_size_mb
+        self.evictions[...] += 1
 
     @property
     def stats(self) -> dict:
         """Get memory pool statistics."""
-        total_requests = self.cache_hits.value + self.cache_misses.value
-        hit_rate = self.cache_hits.value / max(total_requests, 1)
+        total_requests = self.cache_hits[...] + self.cache_misses[...]
+        hit_rate = self.cache_hits[...] / max(total_requests, 1)
 
         return {
-            "allocated_mb": float(self.allocated_mb.value),
+            "allocated_mb": float(self.allocated_mb[...]),
             "capacity_mb": self.capacity_mb,
-            "utilization": float(self.allocated_mb.value / self.capacity_mb),
+            "utilization": float(self.allocated_mb[...] / self.capacity_mb),
             "hit_rate": float(hit_rate),
-            "cache_hits": int(self.cache_hits.value),
-            "cache_misses": int(self.cache_misses.value),
-            "evictions": int(self.evictions.value),
+            "cache_hits": int(self.cache_hits[...]),
+            "cache_misses": int(self.cache_misses[...]),
+            "evictions": int(self.evictions[...]),
         }
 
 
@@ -314,11 +314,11 @@ class StatefulDistributedLoader(nnx.Module):
 
     def _worker_task(self, worker_id: int):
         """Worker task with automatic state management."""
-        self.worker_active[worker_id].value = True
+        self.worker_active[worker_id][...] = True
 
         # Calculate worker's indices (strided access)
-        start_idx = self.shard_start.value + worker_id
-        end_idx = self.shard_end.value
+        start_idx = self.shard_start[...] + worker_id
+        end_idx = self.shard_end[...]
 
         current = start_idx
         while current < end_idx and not self._stop_event.is_set():
@@ -328,7 +328,7 @@ class StatefulDistributedLoader(nnx.Module):
                 sample = self.memory_pool.get_or_create(key, lambda: self.data[current])
 
                 # Update worker statistics
-                self.worker_samples[worker_id].value += 1
+                self.worker_samples[worker_id][...] += 1
 
                 # Put in queue
                 self._queue.put((sample, worker_id), timeout=1.0)
@@ -336,9 +336,9 @@ class StatefulDistributedLoader(nnx.Module):
                 current += self.num_workers
 
             except Exception:
-                self.worker_errors[worker_id].value += 1
+                self.worker_errors[worker_id][...] += 1
 
-        self.worker_active[worker_id].value = False
+        self.worker_active[worker_id][...] = False
 
     def start(self):
         """Start distributed processing."""
@@ -367,17 +367,17 @@ class StatefulDistributedLoader(nnx.Module):
                 worker_ids.append(worker_id)
 
             except queue.Empty:
-                if not any(self.worker_active[i].value for i in range(self.num_workers)):
+                if not any(self.worker_active[i][...] for i in range(self.num_workers)):
                     break
 
-        self.coordination_time.value += time.time() - coord_start
+        self.coordination_time[...] += time.time() - coord_start
 
         if not batch:
             return None
 
         # Update statistics
-        self.total_samples.value += len(batch)
-        self.total_batches.value += 1
+        self.total_samples[...] += len(batch)
+        self.total_batches[...] += 1
 
         return jnp.stack(batch)
 
@@ -389,15 +389,15 @@ class StatefulDistributedLoader(nnx.Module):
     @property
     def stats(self) -> dict:
         """Get detailed statistics."""
-        active_workers = sum(w.value for w in self.worker_active)
-        total_worker_samples = sum(w.value for w in self.worker_samples)
-        total_errors = sum(e.value for e in self.worker_errors)
+        active_workers = sum(w[...] for w in self.worker_active)
+        total_worker_samples = sum(w[...] for w in self.worker_samples)
+        total_errors = sum(e[...] for e in self.worker_errors)
 
         return {
             "shard": {
-                "id": int(self.shard_id.value),
-                "total": int(self.num_shards.value),
-                "range": (int(self.shard_start.value), int(self.shard_end.value)),
+                "id": int(self.shard_id[...]),
+                "total": int(self.num_shards[...]),
+                "range": (int(self.shard_start[...]), int(self.shard_end[...])),
             },
             "workers": {
                 "active": active_workers,
@@ -407,10 +407,10 @@ class StatefulDistributedLoader(nnx.Module):
             },
             "memory": self.memory_pool.stats,
             "coordination": {
-                "total_samples": int(self.total_samples.value),
-                "total_batches": int(self.total_batches.value),
+                "total_samples": int(self.total_samples[...]),
+                "total_batches": int(self.total_batches[...]),
                 "avg_coord_time": float(
-                    self.coordination_time.value / max(self.total_batches.value, 1)
+                    self.coordination_time[...] / max(self.total_batches[...], 1)
                 ),
             },
         }
@@ -441,15 +441,15 @@ class JAXShardedLoader(nnx.Module):
 
         # Calculate local shard
         samples_per_device = len(data) // len(devices)
-        self.local_start = nnx.Variable(self.device_id.value * samples_per_device)
+        self.local_start = nnx.Variable(self.device_id[...] * samples_per_device)
         self.local_end = nnx.Variable(
             len(data)
-            if self.device_id.value == len(devices) - 1
-            else (self.device_id.value + 1) * samples_per_device
+            if self.device_id[...] == len(devices) - 1
+            else (self.device_id[...] + 1) * samples_per_device
         )
 
         # Iteration state
-        self.current_idx = nnx.Variable(self.local_start.value)
+        self.current_idx = nnx.Variable(self.local_start[...])
         self.epoch = nnx.Variable(0)
         self.total_batches = nnx.Variable(0)
 
@@ -458,17 +458,17 @@ class JAXShardedLoader(nnx.Module):
         batch_indices = []
 
         for i in range(self.batch_size):
-            if self.current_idx.value >= self.local_end.value:
+            if self.current_idx[...] >= self.local_end[...]:
                 # Wrap around
-                self.current_idx.value = self.local_start.value
-                self.epoch.value += 1
+                self.current_idx[...] = self.local_start[...]
+                self.epoch[...] += 1
 
-            batch_indices.append(self.current_idx.value)
-            self.current_idx.value += 1
+            batch_indices.append(self.current_idx[...])
+            self.current_idx[...] += 1
 
         # Get batch data
         batch = self.data[batch_indices]
-        self.total_batches.value += 1
+        self.total_batches[...] += 1
 
         # Apply sharding if configured
         if self.sharding is not None:
@@ -480,13 +480,13 @@ class JAXShardedLoader(nnx.Module):
     def shard_info(self) -> dict:
         """Get sharding information."""
         return {
-            "num_devices": int(self.num_devices.value),
-            "device_id": int(self.device_id.value),
-            "local_range": (int(self.local_start.value), int(self.local_end.value)),
-            "local_samples": int(self.local_end.value - self.local_start.value),
-            "current_position": int(self.current_idx.value),
-            "epoch": int(self.epoch.value),
-            "total_batches": int(self.total_batches.value),
+            "num_devices": int(self.num_devices[...]),
+            "device_id": int(self.device_id[...]),
+            "local_range": (int(self.local_start[...]), int(self.local_end[...])),
+            "local_samples": int(self.local_end[...] - self.local_start[...]),
+            "current_position": int(self.current_idx[...]),
+            "epoch": int(self.epoch[...]),
+            "total_batches": int(self.total_batches[...]),
         }
 
 

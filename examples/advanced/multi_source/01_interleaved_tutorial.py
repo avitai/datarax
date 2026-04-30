@@ -68,10 +68,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 from flax import nnx
 
-# Datarax imports
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
+
+# Datarax imports
+from datarax.pipeline import Pipeline
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 
 
@@ -230,14 +230,14 @@ First, let's verify each pipeline works independently.
 
 # %%
 # MNIST pipeline
-mnist_pipeline = build_source_pipeline(mnist_source, batch_size=BATCH_SIZE).add(
-    OperatorNode(mnist_preprocessor)
+mnist_pipeline = Pipeline(
+    source=mnist_source, stages=[mnist_preprocessor], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0)
 )
 
 # Fashion pipeline (need fresh source)
 fashion_source2 = TFDSEagerSource(fashion_config, rngs=nnx.Rngs(43))
-fashion_pipeline = build_source_pipeline(fashion_source2, batch_size=BATCH_SIZE).add(
-    OperatorNode(fashion_preprocessor)
+fashion_pipeline = Pipeline(
+    source=fashion_source2, stages=[fashion_preprocessor], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0)
 )
 
 # Test individual pipelines
@@ -339,11 +339,11 @@ def create_interleaved_pipelines():
         rngs=nnx.Rngs(0),
     )
 
-    mnist_pipe = build_source_pipeline(mnist_src, batch_size=BATCH_SIZE).add(
-        OperatorNode(mnist_prep)
+    mnist_pipe = Pipeline(
+        source=mnist_src, stages=[mnist_prep], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0)
     )
-    fashion_pipe = build_source_pipeline(fashion_src, batch_size=BATCH_SIZE).add(
-        OperatorNode(fashion_prep)
+    fashion_pipe = Pipeline(
+        source=fashion_src, stages=[fashion_prep], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0)
     )
 
     return [mnist_pipe, fashion_pipe]
@@ -503,7 +503,7 @@ mnist_prep = ElementOperator(
     fn=preprocess_mnist,
     rngs=nnx.Rngs(0),
 )
-single_pipeline = build_source_pipeline(mnist_src, batch_size=64).add(OperatorNode(mnist_prep))
+single_pipeline = Pipeline(source=mnist_src, stages=[mnist_prep], batch_size=64, rngs=nnx.Rngs(0))
 
 start = time.time()
 single_count = 0

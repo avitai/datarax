@@ -5,7 +5,7 @@ Cross-process shared memory for multi-worker data loading.
 ## See Also
 
 - [Memory Overview](index.md) - Memory tools
-- [Data Loaders](../dag/loaders.md) - Multi-worker loading
+- Data Loaders - Multi-worker loading
 - [Performance](../performance/index.md) - Optimization
 - [Distributed](../distributed/index.md) - Multi-process training
 

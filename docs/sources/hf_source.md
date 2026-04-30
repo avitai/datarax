@@ -122,18 +122,15 @@ config = HFEagerConfig(
 ## Integration with DAG Pipelines
 
 ```python
-from datarax.dag import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
+from datarax.pipeline import Pipeline
+from datarax.pipeline import Pipeline
 
 # Build a pipeline
 config = HFEagerConfig(name="mnist", split="train")
 source = HFEagerSource(config)
 
 pipeline = (
-    build_source_pipeline(source, batch_size=64)
-    >> OperatorNode(normalize_op)
-    >> OperatorNode(augment_op)
-)
+    Pipeline(source=source, stages=[normalize_op, augment_op], batch_size=64, rngs=nnx.Rngs(0)))
 
 for batch in pipeline:
     train_step(batch)

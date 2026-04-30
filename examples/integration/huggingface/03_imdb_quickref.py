@@ -54,9 +54,8 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.pipeline import Pipeline
 from datarax.sources import HFEagerConfig, HFEagerSource
 
 
@@ -183,7 +182,7 @@ source2 = HFEagerSource(
 )
 
 # Build pipeline
-pipeline = build_source_pipeline(source2, batch_size=8).add(OperatorNode(text_stats_op))
+pipeline = Pipeline(source=source2, stages=[text_stats_op], batch_size=8, rngs=nnx.Rngs(0))
 
 print("Pipeline: HFEagerSource(IMDB) -> TextStats -> Output")
 
@@ -207,7 +206,7 @@ for i, batch in enumerate(pipeline):
     if i >= num_batches:
         break
 
-    data = batch.get_data()
+    data = batch
 
     batch_size = len(data["label"]) if hasattr(data["label"], "__len__") else 1
     total_reviews += batch_size
@@ -294,7 +293,7 @@ def main():
     source = HFEagerSource(config, rngs=nnx.Rngs(0))
 
     # Create pipeline with label normalization
-    pipeline = build_source_pipeline(source, batch_size=8).add(OperatorNode(text_stats_op))
+    pipeline = Pipeline(source=source, stages=[text_stats_op], batch_size=8, rngs=nnx.Rngs(0))
 
     # Process batches
     total_reviews = 0
@@ -304,7 +303,7 @@ def main():
         if i >= 10:  # Process 10 batches
             break
 
-        data = batch.get_data()
+        data = batch
         batch_size = len(data["label"]) if hasattr(data["label"], "__len__") else 1
         total_reviews += batch_size
 

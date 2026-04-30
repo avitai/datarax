@@ -86,7 +86,6 @@ import numpy as np
 import optax
 from flax import nnx
 
-from datarax import build_source_pipeline
 from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import Batch
 from datarax.core.operator import OperatorModule
@@ -96,6 +95,7 @@ from datarax.operators import (
     CompositionStrategy,
 )
 from datarax.operators.modality.audio import LoudnessConfig, LoudnessOperator
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -1318,7 +1318,7 @@ def evaluate_spectral_loss(
     batch_size: int = 4,
 ) -> float:
     """Compute average spectral loss over a dataset."""
-    pipeline = build_source_pipeline(source, batch_size=batch_size, prefetch_size=0)
+    pipeline = Pipeline(source=source, stages=[], batch_size=batch_size, rngs=nnx.Rngs(0))
     total_loss = 0.0
     num_batches = 0
     for batch in pipeline:
@@ -1424,7 +1424,7 @@ def train_ddsp(
     print(f"Training DDSP: {num_epochs} epochs, batch_size={batch_size}, peak_lr={peak_lr}")
 
     for epoch in range(num_epochs):
-        pipeline = build_source_pipeline(train_source, batch_size=batch_size, prefetch_size=0)
+        pipeline = Pipeline(source=train_source, stages=[], batch_size=batch_size, rngs=nnx.Rngs(0))
         epoch_loss = 0.0
         num_steps = 0
 
@@ -1517,7 +1517,7 @@ noise synth, harmonic synth, and into the decoder.
 print("\n=== Gradient Flow Verification ===")
 
 # Get a test batch
-verify_pipeline = build_source_pipeline(test_source, batch_size=4, prefetch_size=0)
+verify_pipeline = Pipeline(source=test_source, stages=[], batch_size=4, rngs=nnx.Rngs(0))
 verify_batch = next(iter(verify_pipeline))
 target = verify_batch["audio"]
 f0 = verify_batch["f0"]
@@ -1649,7 +1649,7 @@ print(f"  Improvement:         {improvement:.1f}% lower spectral loss")
 
 # %%
 # Visualize resynthesis quality: target vs. synthesized waveforms and spectrograms
-vis_pipeline = build_source_pipeline(test_source, batch_size=4, prefetch_size=0)
+vis_pipeline = Pipeline(source=test_source, stages=[], batch_size=4, rngs=nnx.Rngs(0))
 vis_batch = next(iter(vis_pipeline))
 vis_pred = synthesize_batch(
     decoder,

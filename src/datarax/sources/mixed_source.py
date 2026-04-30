@@ -12,6 +12,8 @@ from typing import Any
 
 import flax.nnx as nnx
 import grain
+import jax
+import jax.numpy as jnp
 
 from datarax.config.registry import register_component
 from datarax.core.config import StructuralConfig
@@ -20,6 +22,59 @@ from datarax.sources._grain_streaming import data_source_to_iter_dataset, mix_st
 
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_compatible_element_specs(sources: list[DataSourceModule]) -> None:
+    """Verify that every source produces records with the same element_spec.
+
+    Required so that the per-position ``lax.switch`` dispatch in
+    ``get_batch_at`` has branches with matching output shapes — JAX
+    rejects ``lax.switch`` calls whose branches return differently-
+    shaped pytrees.
+
+    Args:
+        sources: Sources to check.
+
+    Raises:
+        ValueError: If any two sources produce records with different
+            ``element_spec`` structure (different keys, shapes, or dtypes).
+    """
+    if not sources:
+        return
+
+    # Only validate sources that can produce a numeric element_spec. Sources
+    # holding non-JAX data (string labels, Python objects) bypass this check
+    # — they still flow through the iterator/__next__ path; ``get_batch_at``
+    # is the only path that requires matching specs (because of lax.switch).
+    try:
+        reference = sources[0].element_spec()
+    except Exception:  # noqa: BLE001 — opportunistic compatibility check
+        return
+
+    for index, source in enumerate(sources[1:], start=1):
+        try:
+            other = source.element_spec()
+        except Exception:  # noqa: BLE001 — opportunistic compatibility check  # nosec B112
+            continue
+        if jax.tree.structure(reference) != jax.tree.structure(other):
+            raise ValueError(
+                f"MixDataSourcesNode requires every source to produce records "
+                f"with the same element_spec; source 0 and source {index} have "
+                f"different structure. Mixing under lax.switch needs matching "
+                f"output shapes across all branches."
+            )
+        ref_leaves = jax.tree.leaves(reference)
+        other_leaves = jax.tree.leaves(other)
+        for leaf_a, leaf_b in zip(ref_leaves, other_leaves):
+            if not (hasattr(leaf_a, "shape") and hasattr(leaf_b, "shape")):
+                continue
+            if leaf_a.shape != leaf_b.shape or leaf_a.dtype != leaf_b.dtype:
+                raise ValueError(
+                    f"MixDataSourcesNode requires every source to produce records "
+                    f"with the same element_spec; source 0 leaf has shape="
+                    f"{leaf_a.shape} dtype={leaf_a.dtype} but source {index} leaf "
+                    f"has shape={leaf_b.shape} dtype={leaf_b.dtype}."
+                )
 
 
 @dataclass(frozen=True)
@@ -105,6 +160,11 @@ class MixDataSourcesNode(DataSourceModule):
         if weights is None:
             raise ValueError("weights is required")
 
+        # Validate that every source produces records with the same element_spec.
+        # This is the constraint that lets get_batch_at use lax.switch — every
+        # branch must produce identically-shaped records.
+        _validate_compatible_element_specs(sources)
+
         self._sources = nnx.List(sources)
         self._weights = tuple(weights)
         self.index = nnx.Variable(0)
@@ -150,3 +210,74 @@ class MixDataSourcesNode(DataSourceModule):
             reset_fn = getattr(s, "reset", None)
             if reset_fn is not None:
                 reset_fn()
+
+    def get_batch_at(
+        self,
+        start: int | jax.Array,
+        size: int,
+        key: jax.Array | None = None,
+    ) -> dict[str, jax.Array]:
+        """Stateless weighted-interleave batch access for ``Pipeline``-driven iteration.
+
+        Each output position deterministically chooses a source via
+        weighted categorical sampling derived from ``key`` and the
+        absolute position, picks a local index uniformly within that
+        source, and dispatches to that source's own ``get_batch_at``.
+
+        Algorithm (per output position ``p``):
+
+        1. ``pos_key = jax.random.fold_in(key, start + p)`` — deterministic.
+        2. Split ``pos_key`` into ``(src_key, idx_key, fetch_key)``.
+        3. ``chosen_src = jax.random.categorical(src_key, log_weights)``.
+        4. ``local_idx = jax.random.randint(idx_key, 0, len(sources[chosen_src]))``.
+        5. ``record = lax.switch(chosen_src, [s.get_batch_at(li, 1, fk) for s in sources])``.
+
+        The same ``(start, size, key)`` always returns the same output
+        — no internal counters are mutated. ``vmap`` over positions
+        builds the full batch in one trace.
+
+        Args:
+            start: Starting logical position (int or traced ``jax.Array``).
+            size: Number of records to return.
+            key: PRNG key for deterministic source / index selection.
+                Required — mixing without a key has no defined semantics.
+
+        Returns:
+            Dict mapping each data key to a JAX array with leading dim
+            ``size``, drawn from the underlying sources in proportion
+            to ``self._weights``.
+
+        Raises:
+            ValueError: If ``key is None``.
+        """
+        if key is None:
+            raise ValueError(
+                "MixDataSourcesNode.get_batch_at requires a PRNG key for "
+                "deterministic mixing. Pass `key=jax.random.key(seed)` or "
+                "drive iteration via Pipeline (which threads its own rngs)."
+            )
+
+        log_weights = jnp.log(jnp.asarray(self._weights, dtype=jnp.float32))
+        source_lengths = jnp.asarray([len(s) for s in self._sources], dtype=jnp.int32)
+        sources = list(self._sources)
+
+        start_arr = jnp.asarray(start, dtype=jnp.int32)
+        positions = start_arr + jnp.arange(size, dtype=jnp.int32)
+
+        def _fetch_one(position: jax.Array) -> dict[str, jax.Array]:
+            pos_key = jax.random.fold_in(key, position)
+            src_key, idx_key, fetch_key = jax.random.split(pos_key, 3)
+
+            chosen_src = jax.random.categorical(src_key, log_weights)
+            chosen_length = source_lengths[chosen_src]
+            local_idx = jax.random.randint(idx_key, (), 0, chosen_length)
+
+            # Each branch fetches a single record from one source.
+            # All branches share the same output shape (validated at
+            # construction by _validate_compatible_element_specs).
+            branches = [lambda li, fk, src=src: src.get_batch_at(li, 1, fk) for src in sources]
+            record = jax.lax.switch(chosen_src, branches, local_idx, fetch_key)
+            # Each source returned a batch of size 1; squeeze the leading axis.
+            return jax.tree.map(lambda x: x[0], record)
+
+        return jax.vmap(_fetch_one)(positions)

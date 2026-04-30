@@ -86,4 +86,4 @@ new_element = element.replace(
 
 - [Types & Protocols](../root/index.md) - Type definitions
 - [Configuration Guide](config.md) - Detailed config documentation
-- [DAG Executor](../dag/dag_executor.md) - Using core components in pipelines
+- DAG Executor - Using core components in pipelines

@@ -52,12 +52,30 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-def _resolve_hf_download_options(download_kwargs: dict[str, Any] | None) -> dict[str, Any]:
-    """Prepare HF kwargs with security-pinned revision."""
+def _resolve_hf_download_options(
+    download_kwargs: dict[str, Any] | None,
+    *,
+    local_files_only: bool = False,
+) -> dict[str, Any]:
+    """Prepare kwargs for ``datasets.load_dataset``.
+
+    The ``datasets`` 4.x API no longer accepts ``local_files_only`` as a
+    top-level kwarg (it is forwarded to ``BuilderConfig`` and rejected).
+    The flag now lives on ``DownloadConfig`` and is passed via
+    ``download_config=``.
+    """
     resolved = dict(download_kwargs or {})
     # datasets.load_dataset no longer accepts this transformers-only flag.
     resolved.pop("trust_remote_code", None)
     resolved.setdefault("revision", "main")
+    if local_files_only:
+        from datasets import DownloadConfig  # noqa: PLC0415  (lazy: optional dep)
+
+        existing = resolved.get("download_config")
+        if isinstance(existing, DownloadConfig):
+            existing.local_files_only = True
+        else:
+            resolved["download_config"] = DownloadConfig(local_files_only=True)
     return resolved
 
 
@@ -117,6 +135,7 @@ class HFEagerConfig(SourceConfigBase):
     shuffle: bool = False
     seed: int = 42  # Integer seed for Grain's index_shuffle
     download_kwargs: dict[str, Any] | None = None
+    local_files_only: bool = False
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
@@ -150,6 +169,7 @@ class HFStreamingConfig(SourceConfigBase):
     shuffle: bool = False
     shuffle_buffer_size: int = 1000
     download_kwargs: dict[str, Any] | None = None
+    local_files_only: bool = False
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
@@ -262,7 +282,9 @@ class HFEagerSource(EagerSourceBase):
         Returns:
             HuggingFace DatasetInfo object if available
         """
-        download_kwargs = _resolve_hf_download_options(config.download_kwargs)
+        download_kwargs = _resolve_hf_download_options(
+            config.download_kwargs, local_files_only=config.local_files_only
+        )
 
         # name/split validated non-None by config __post_init__
         name = config.name
@@ -294,7 +316,9 @@ class HFEagerSource(EagerSourceBase):
         Returns:
             Dictionary mapping keys to JAX arrays
         """
-        download_kwargs = _resolve_hf_download_options(config.download_kwargs)
+        download_kwargs = _resolve_hf_download_options(
+            config.download_kwargs, local_files_only=config.local_files_only
+        )
 
         # name/split validated non-None by config __post_init__
         name = config.name
@@ -399,7 +423,9 @@ class HFStreamingSource(StreamingSourceBase):
             ) from e
 
         # Load the dataset
-        download_kwargs = _resolve_hf_download_options(config.download_kwargs)
+        download_kwargs = _resolve_hf_download_options(
+            config.download_kwargs, local_files_only=config.local_files_only
+        )
 
         # name/split validated non-None by config __post_init__
         name = config.name
@@ -521,3 +547,27 @@ class HFStreamingSource(StreamingSourceBase):
     def _repr_extra_fields(self) -> dict[str, Any]:
         """Add source-mode details to the shared representation."""
         return {"streaming": self.is_iterable_mode}
+
+    def element_spec(self) -> Any:
+        """Return per-element shape/dtype derived by peeking the backend.
+
+        Streaming sources cannot strip a leading dataset-size dimension because
+        each iteration yields one element. The spec is derived by peeking the
+        first element from the underlying HuggingFace dataset (without
+        consuming the iterator state for normal training) and converting each
+        top-level value into a single ``ShapeDtypeStruct``.
+
+        Top-level dict values are treated as single arrays (HuggingFace
+        commonly emits Python lists for vector features; those become 1-D
+        arrays, not nested per-element scalars).
+
+        The peek operates on the cached ``self._hf_dataset`` (already loaded
+        in ``__init__``) so it does not re-trigger downloads and is safe to
+        call repeatedly.
+        """
+        from datarax.utils.spec import array_to_spec  # noqa: PLC0415
+
+        first = next(iter(self._hf_dataset))
+        if not isinstance(first, dict):
+            return array_to_spec(first)
+        return {key: array_to_spec(value) for key, value in first.items()}

@@ -66,6 +66,6 @@ for batch_key in manager.keys():
 
 ## See Also
 
-- [DAG Loaders](../dag/loaders.md) - DataLoader with workers
+- DAG Loaders - DataLoader with workers
 - [Control](../control/index.md) - Prefetching
 - [Performance](../performance/index.md) - Optimization

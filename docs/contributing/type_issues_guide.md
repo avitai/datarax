@@ -326,49 +326,40 @@ modern_key = jax.random.wrap_key_data(
 
 ## Datarax-Specific Issues
 
-### 5. DAG Node Type Requirements
+### 5. Pipeline Construction
 
-**Issue**: Passing raw modules to DAG executor instead of wrapped nodes.
+**Issue**: Constructing `Pipeline` with positional args or wrong kinds of stages.
 
-The DAG system requires specific node wrapper types:
-
-```python
-from datarax.sources import MemorySource
-from datarax.dag import DAGExecutor
-
-# ❌ Error: MemorySource is not assignable to Node
-executor = DAGExecutor()
-executor.add(MemorySource(data))  # Type error
-```
-
-**Solution**: Wrap modules in appropriate Node classes:
+`Pipeline.__init__` is keyword-only and validates stage types:
 
 ```python
-from datarax.dag.nodes import (
-    DataSourceNode, OperatorNode, BatchNode,
-    SamplerNode, SharderNode, CacheNode,
-    PrefetchNode, ShuffleNode
+from flax import nnx
+
+from datarax.sources import MemorySource, MemorySourceConfig
+from datarax.pipeline import Pipeline
+
+source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+
+# ✅ Correct: keyword arguments, stages are nnx.Module instances
+pipeline = Pipeline(
+    source=source,
+    stages=[normalize_op, augment_op],
+    batch_size=32,
+    rngs=nnx.Rngs(0),
 )
-
-# ✅ Correct: Use node wrappers
-executor = DAGExecutor()
-executor.add(DataSourceNode(MemorySource(data)))
-executor.add(OperatorNode(MyTransform(config)))
-executor.add(BatchNode(batcher))
 ```
 
-**Node Class Reference**:
+**Argument Reference**:
 
-| Module Type | Node Wrapper | Purpose |
-|-------------|--------------|---------|
-| `DataSourceModule` | `DataSourceNode` | Data sources (Memory, TFDS, HF) |
-| `OperatorModule` | `OperatorNode` | Transformations |
-| `BatcherModule` | `BatchNode` | Batching operations |
-| `SamplerModule` | `SamplerNode` | Index sampling |
-| `SharderModule` | `SharderNode` | Data sharding |
-| N/A (built-in) | `CacheNode` | Result caching |
-| N/A (built-in) | `PrefetchNode` | Async prefetching |
-| N/A (built-in) | `ShuffleNode` | Shuffling |
+| Parameter | Type | Purpose |
+|-----------|------|---------|
+| `source` | `DataSourceModule` | Data source (Memory, TFDS, HF, ArrayRecord) |
+| `stages` | `list[nnx.Module]` | Transformation stages applied in order |
+| `batch_size` | `int` | Records per batch |
+| `rngs` | `nnx.Rngs` | RNG seed management for stochastic stages |
+
+For branching/merging topologies, use `Pipeline.from_dag(...)` —
+see the [DAG construction guide](../user_guide/dag_construction.md).
 
 ### 6. Batch Dimension Requirements
 

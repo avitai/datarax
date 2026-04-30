@@ -15,751 +15,517 @@
 | Metadata | Value |
 |----------|-------|
 | **Level** | Advanced |
-| **Runtime** | ~45 min |
-| **Prerequisites** | Checkpoint Quick Reference, Training pipelines |
+| **Runtime** | ~3 min |
+| **Prerequisites** | Pipeline Quickstart, Operators Tutorial |
 | **Format** | Python + Jupyter |
-| **Memory** | ~1 GB RAM |
+| **Memory** | ~500 MB RAM |
 
 ## Overview
 
-Implement fault-tolerant training pipelines that can resume from interruptions.
-This guide covers checkpointing pipeline state, model parameters, and optimizer
-state for seamless training resumption.
+This guide implements fault-tolerant training pipelines that can resume
+from interruptions using the **NNX-standard checkpoint pattern** —
+``nnx.to_pure_dict`` for snapshotting state and ``nnx.replace_by_pure_dict``
+for restoring it, with ``orbax.checkpoint.StandardCheckpointer`` handling
+the on-disk serialization.
+
+The triple ``(pipeline, model, optimizer)`` is checkpointed together so
+resumption restores the data-cursor position, the model weights, and
+the optimizer state — all from a single Orbax directory.
+
+## Setup
+
+```bash
+uv pip install datarax flax optax orbax-checkpoint matplotlib
+```
 
 ## Learning Goals
 
 By the end of this guide, you will be able to:
 
-1. Implement `CheckpointableIterator` for custom pipelines
-2. Save and restore complete training state (data + model + optimizer)
-3. Verify deterministic resumption across checkpoints
-4. Handle checkpoint lifecycle (creation, restoration, cleanup)
-5. Optimize checkpoint storage and latency
-"""
-
-# %% [markdown]
-"""
-## Setup
-
-```bash
-uv pip install "datarax[tfds]" flax optax matplotlib
-```
+1. Snapshot an NNX module's state with ``nnx.to_pure_dict``.
+2. Persist that snapshot with ``orbax.checkpoint.StandardCheckpointer``.
+3. Restore the snapshot back into a freshly-constructed module with
+   ``nnx.replace_by_pure_dict``.
+4. Checkpoint a ``(pipeline, model, optimizer)`` triple atomically so
+   resumption preserves data position, model weights, and optimizer
+   state simultaneously.
+5. Verify deterministic resumption: a run that checkpoints at step ``k``,
+   loads, and continues should match a never-interrupted run.
 """
 
 # %%
-# GPU Memory Configuration
-import os
-
-
-os.environ["CUDA_VISIBLE_DEVICES_FOR_TF"] = ""
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-
-import tensorflow as tf
-
-
-tf.config.set_visible_devices([], "GPU")
-
-# Core imports
 import shutil
 import tempfile
-import time
 from pathlib import Path
-from typing import Any
 
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import optax
+import orbax.checkpoint as ocp
 from flax import nnx
 
-from datarax import build_source_pipeline
-
-# Datarax imports
-from datarax.checkpoint import PipelineCheckpoint
-from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.sources import TFDSEagerConfig, TFDSEagerSource
-from datarax.typing import CheckpointableIterator
+from datarax.pipeline import Pipeline
+from datarax.sources import MemorySource, MemorySourceConfig
 
 
-print(f"JAX backend: {jax.default_backend()}")
-
-# %% [markdown]
-"""
-## Part 1: Understanding Checkpointable Iterators
-
-### The `CheckpointableIterator` Protocol
-
-To enable checkpointing, your iterator must implement:
-
-```python
-class CheckpointableIterator(Protocol[T]):
-    def __iter__(self) -> Iterator[T]: ...
-    def __next__(self) -> T: ...
-    def get_state(self) -> dict[str, Any]: ...
-    def set_state(self, state: dict[str, Any]) -> None: ...
-```
-
-### What State to Checkpoint
-
-| State Type | Examples | Why Needed |
-|------------|----------|------------|
-| **Position** | batch index, epoch | Resume from correct point |
-| **RNG** | shuffle keys | Reproducible augmentation |
-| **Buffers** | prefetch queue | Avoid re-processing |
-"""
+print(f"JAX version: {jax.__version__}")
 
 
 # %% [markdown]
 """
-## Part 2: Implement Checkpointable Pipeline
+## Part 1: Synthetic Data + Tiny CNN
 
-We'll create a complete checkpointable training pipeline.
+A 28x28 grayscale classifier on 1024 synthetic samples. Small enough to
+keep the example under three minutes; the checkpoint pattern is
+identical at any scale.
 """
 
 
 # %%
-class CheckpointableTrainingPipeline(CheckpointableIterator[dict]):
-    """Complete checkpointable training data pipeline.
+def make_data(num_samples: int = 2048, seed: int = 0) -> dict:
+    """Synthetic but learnable: label is the brightness decile.
 
-    This pipeline wraps TFDSEagerSource with preprocessing and tracks
-    all state needed for exact resumption.
+    Each image is sampled at a label-dependent brightness mean; the
+    model learns to read off that mean. With a real signal the loss
+    decreases monotonically (untrained models flail around 2.3 for
+    uniform random labels), which makes the determinism check
+    meaningful.
     """
-
-    def __init__(
-        self,
-        dataset_name: str,
-        split: str,
-        batch_size: int,
-        seed: int = 42,
-        num_epochs: int | None = None,
-    ):
-        """Initialize CheckpointableTrainingPipeline."""
-        self.dataset_name = dataset_name
-        self.split = split
-        self.batch_size = batch_size
-        self.seed = seed
-        self.num_epochs = num_epochs
-
-        # Position tracking
-        self.epoch = 0
-        self.batch_idx = 0
-        self.global_step = 0
-
-        # RNG state
-        self.rng = jax.random.key(seed)
-
-        # Create pipeline
-        self._create_pipeline()
-
-    def _create_pipeline(self):
-        """Create fresh pipeline for current epoch."""
-        # Split RNG for this epoch
-        self.rng, epoch_rng = jax.random.split(self.rng)
-        epoch_seed = int(jax.random.randint(epoch_rng, (), 0, 2**31 - 1))
-
-        # Create source
-        config = TFDSEagerConfig(
-            name=self.dataset_name,
-            split=self.split,
-            shuffle=True,
-            seed=epoch_seed,
-        )
-        self._source = TFDSEagerSource(config, rngs=nnx.Rngs(epoch_seed))
-
-        # Create preprocessor
-        def preprocess(element, key=None):  # noqa: ARG001
-            del key
-            image = element.data["image"]
-            image = image.astype(jnp.float32) / 255.0
-            if image.ndim == 2:
-                image = image[..., None]
-            label = element.data["label"]
-            return element.update_data({"image": image, "label": label})
-
-        preprocessor = ElementOperator(
-            ElementOperatorConfig(stochastic=False),
-            fn=preprocess,
-            rngs=nnx.Rngs(0),
-        )
-
-        # Build pipeline
-        self._pipeline = build_source_pipeline(self._source, batch_size=self.batch_size).add(
-            OperatorNode(preprocessor)
-        )
-        self._iterator = iter(self._pipeline)
-
-    def __iter__(self):
-        """Iterate over training batches."""
-        return self
-
-    def __next__(self) -> dict:
-        """Get next batch, handling epoch boundaries."""
-        try:
-            batch = next(self._iterator)
-            self.batch_idx += 1
-            self.global_step += 1
-            return batch
-        except StopIteration:
-            # Epoch complete
-            self.epoch += 1
-            self.batch_idx = 0
-
-            if self.num_epochs is not None and self.epoch >= self.num_epochs:
-                raise StopIteration from None
-
-            # Create new pipeline for next epoch
-            self._create_pipeline()
-            return self.__next__()
-
-    def get_state(self) -> dict[str, Any]:
-        """Return complete state for checkpointing."""
-        return {
-            # Configuration
-            "dataset_name": self.dataset_name,
-            "split": self.split,
-            "batch_size": self.batch_size,
-            "seed": self.seed,
-            "num_epochs": self.num_epochs,
-            # Position
-            "epoch": self.epoch,
-            "batch_idx": self.batch_idx,
-            "global_step": self.global_step,
-            # RNG state (stored as raw data for Orbax)
-            "rng": jax.random.key_data(self.rng),
-        }
-
-    def set_state(self, state: dict[str, Any]) -> None:
-        """Restore from checkpoint state."""
-        # Restore configuration
-        self.dataset_name = state["dataset_name"]
-        self.split = state["split"]
-        self.batch_size = state["batch_size"]
-        self.seed = state["seed"]
-        self.num_epochs = state["num_epochs"]
-
-        # Restore position
-        self.epoch = state["epoch"]
-        self.batch_idx = state["batch_idx"]
-        self.global_step = state["global_step"]
-
-        # Restore RNG
-        self.rng = jax.random.wrap_key_data(state["rng"])
-
-        # Recreate pipeline at correct epoch
-        self._create_pipeline()
-
-        # Skip to correct batch position
-        for _ in range(self.batch_idx):
-            try:
-                next(self._iterator)
-            except StopIteration:
-                break
+    rng = np.random.default_rng(seed)
+    labels = rng.integers(0, 10, size=(num_samples,)).astype(np.int32)
+    # Per-class brightness in [0.05, 0.95]; signal-to-noise > 1 so
+    # the model can actually learn.
+    target_mean = (labels + 0.5) / 10.0
+    noise = rng.normal(0, 0.05, size=(num_samples, 28, 28, 1)).astype(np.float32)
+    images = (target_mean[:, None, None, None] + noise).astype(np.float32)
+    images = np.clip(images, 0.0, 1.0)
+    return {"image": images, "label": labels}
 
 
-print("CheckpointableTrainingPipeline defined")
+class TinyCNN(nnx.Module):
+    """Two conv layers + linear head."""
 
-# %% [markdown]
-"""
-## Part 3: Complete Training State
-
-For full resumability, we need to checkpoint:
-1. Data pipeline state
-2. Model parameters
-3. Optimizer state
-"""
-
-
-# %%
-class SimpleCNN(nnx.Module):
-    """Simple CNN for MNIST."""
-
-    def __init__(self, rngs: nnx.Rngs):
-        """Initialize SimpleCNN."""
+    def __init__(self, *, num_classes: int = 10, rngs: nnx.Rngs) -> None:
+        """Initialize the module."""
         self.conv1 = nnx.Conv(1, 16, kernel_size=(3, 3), padding="SAME", rngs=rngs)
         self.conv2 = nnx.Conv(16, 32, kernel_size=(3, 3), padding="SAME", rngs=rngs)
-        self.dense = nnx.Linear(32 * 7 * 7, 10, rngs=rngs)
+        self.head = nnx.Linear(32 * 7 * 7, num_classes, rngs=rngs)
 
-    def __call__(self, x):
-        """Forward pass through the CNN."""
-        x = nnx.relu(self.conv1(x))
-        x = nnx.max_pool(x, window_shape=(2, 2), strides=(2, 2))
+    def __call__(self, image: jax.Array) -> jax.Array:
+        """Run __call__."""
+        x = nnx.relu(self.conv1(image))
+        x = nnx.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
         x = nnx.relu(self.conv2(x))
-        x = nnx.max_pool(x, window_shape=(2, 2), strides=(2, 2))
+        x = nnx.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
         x = x.reshape(x.shape[0], -1)
-        return self.dense(x)
+        return self.head(x)
 
 
-class TrainingState:
-    """Complete training state including model, optimizer, and metrics."""
+def cross_entropy_loss(model: TinyCNN, batch: dict) -> jax.Array:
+    """Run cross_entropy_loss."""
+    logits = model(batch["image"])
+    return optax.softmax_cross_entropy_with_integer_labels(logits, batch["label"]).mean()
 
-    def __init__(self, model: SimpleCNN, optimizer: nnx.Optimizer, metrics: dict):
-        """Initialize TrainingState."""
-        self.model = model
-        self.optimizer = optimizer
-        self.metrics = metrics
-
-    @classmethod
-    def create(cls, learning_rate: float = 1e-3):
-        """Create fresh training state."""
-        model = SimpleCNN(rngs=nnx.Rngs(0))
-        optimizer = nnx.Optimizer(model, optax.adam(learning_rate), wrt=nnx.Param)
-        metrics = {"train_losses": [], "epochs": [], "steps": []}
-        return cls(model, optimizer, metrics)
-
-
-print("TrainingState class defined")
 
 # %% [markdown]
 """
-## Part 4: Training with Checkpointing
+## Part 2: NNX-Standard Checkpoint Helpers
+
+The two functions below are the entire NNX checkpoint pattern. The
+``orbax.checkpoint.StandardCheckpointer`` writes any PyTree to disk;
+``nnx.to_pure_dict`` and ``nnx.replace_by_pure_dict`` translate
+``nnx.Module`` state to and from such PyTrees.
+
+The key insight: NNX modules cannot be passed to Orbax directly because
+they hold non-serializable graph metadata. ``to_pure_dict`` strips the
+graph and yields a plain leaf-only PyTree of arrays;
+``replace_by_pure_dict`` applies a saved leaf-only PyTree back into a
+target module's state in place.
 """
 
+
 # %%
-# Training configuration
-BATCH_SIZE = 64
-NUM_EPOCHS = 5
-CHECKPOINT_INTERVAL = 50  # Checkpoint every N steps
-TRAIN_SAMPLES = 2000
+def snapshot(model: TinyCNN, optimizer: nnx.Optimizer, pipeline: Pipeline) -> dict:
+    """Capture the full training state as a serialisable PyTree.
+
+    Each entry uses ``nnx.to_pure_dict`` so the result contains only
+    JAX arrays (no graph metadata, no closures, no class objects).
+    """
+    return {
+        "model": nnx.to_pure_dict(nnx.state(model)),
+        "optimizer": nnx.to_pure_dict(nnx.state(optimizer)),
+        "pipeline": nnx.to_pure_dict(nnx.state(pipeline)),
+    }
 
 
-@nnx.jit
-def train_step(
-    model: SimpleCNN,
+def save_checkpoint(
+    checkpointer: ocp.StandardCheckpointer,
+    directory: Path,
+    step: int,
+    model: TinyCNN,
     optimizer: nnx.Optimizer,
-    images: jax.Array,
-    labels: jax.Array,
-) -> jax.Array:
-    """Single training step."""
+    pipeline: Pipeline,
+) -> None:
+    """Snapshot and persist the (model, optimizer, pipeline) triple."""
+    snapshot_dict = snapshot(model, optimizer, pipeline)
+    target = directory / f"step_{step}"
+    if target.exists():
+        shutil.rmtree(target)
+    checkpointer.save(target, snapshot_dict)
+    checkpointer.wait_until_finished()
 
-    def loss_fn(model):
-        logits = model(images)
-        one_hot = jax.nn.one_hot(labels, 10)
-        return optax.softmax_cross_entropy(logits, one_hot).mean()
 
-    loss, grads = nnx.value_and_grad(loss_fn)(model)
+def load_checkpoint(
+    checkpointer: ocp.StandardCheckpointer,
+    directory: Path,
+    step: int,
+    model: TinyCNN,
+    optimizer: nnx.Optimizer,
+    pipeline: Pipeline,
+) -> None:
+    """Restore state in-place into pre-constructed modules.
+
+    The caller constructs ``model``, ``optimizer``, and ``pipeline``
+    afresh (so their graph structure is intact); this function applies
+    the saved leaf arrays via ``replace_by_pure_dict`` and writes the
+    updated state back through ``nnx.update``. ``nnx.state(...)``
+    returns a *copy* — without ``nnx.update`` the original modules
+    keep their fresh initial state and the resume looks like a
+    reset.
+    """
+    target = directory / f"step_{step}"
+    saved = checkpointer.restore(target, snapshot(model, optimizer, pipeline))
+
+    for module, pure in (
+        (model, saved["model"]),
+        (optimizer, saved["optimizer"]),
+        (pipeline, saved["pipeline"]),
+    ):
+        state = nnx.state(module)
+        nnx.replace_by_pure_dict(state, pure)
+        nnx.update(module, state)
+
+
+# %% [markdown]
+"""
+## Part 3: Build the Training Pieces
+
+Two augmentation stages (normalize + horizontal flip) pushed through a
+``Pipeline``. The pipeline owns its iteration cursor and all stochastic
+RNG state, so checkpointing it captures the data-loading position
+exactly.
+"""
+
+
+# %%
+def normalize(element, key=None):
+    """Run normalize."""
+    del key
+    image = element.data["image"]
+    return element.update_data({"image": (image - 0.5) / 0.5})
+
+
+def random_flip(element, key):
+    """Run random_flip."""
+    flip_key, _ = jax.random.split(key)
+    should_flip = jax.random.bernoulli(flip_key, 0.5)
+    image = element.data["image"]
+    flipped = jax.lax.cond(should_flip, lambda x: jnp.flip(x, axis=1), lambda x: x, image)
+    return element.update_data({"image": flipped})
+
+
+def build_pipeline(seed: int, batch_size: int = 32) -> Pipeline:
+    """Run build_pipeline."""
+    # 2048 samples / 32 batch = 64 batches; supports 60-step demo in one epoch.
+    data = make_data(num_samples=2048, seed=seed)
+    source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(seed))
+    norm_op = ElementOperator(
+        ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0)
+    )
+    flip_op = ElementOperator(
+        ElementOperatorConfig(stochastic=True, stream_name="flip"),
+        fn=random_flip,
+        rngs=nnx.Rngs(flip=seed + 1000),
+    )
+    return Pipeline(
+        source=source,
+        stages=[norm_op, flip_op],
+        batch_size=batch_size,
+        rngs=nnx.Rngs(seed),
+    )
+
+
+def build_model_and_optimizer(seed: int) -> tuple[TinyCNN, nnx.Optimizer]:
+    """Run build_model_and_optimizer."""
+    model = TinyCNN(rngs=nnx.Rngs(seed))
+    optimizer = nnx.Optimizer(model, optax.adam(1e-3), wrt=nnx.Param)
+    return model, optimizer
+
+
+# %% [markdown]
+"""
+## Part 4: Train Step + Run Loop
+
+Standard NNX training step: ``nnx.value_and_grad`` over the loss,
+followed by ``optimizer.update``. The pipeline iterator yields each
+batch.
+"""
+
+
+# %%
+@nnx.jit
+def train_step(model: TinyCNN, optimizer: nnx.Optimizer, batch: dict) -> jax.Array:
+    """Run train_step."""
+    loss_and_grad = nnx.value_and_grad(cross_entropy_loss)
+    loss, grads = loss_and_grad(model, batch)
     optimizer.update(model, grads)
     return loss
 
 
-print("Training step defined")
+def run(
+    pipeline: Pipeline,
+    model: TinyCNN,
+    optimizer: nnx.Optimizer,
+    *,
+    max_steps: int,
+    checkpointer: ocp.StandardCheckpointer | None = None,
+    ckpt_dir: Path | None = None,
+    ckpt_every: int = 0,
+    interrupt_at: int | None = None,
+    start_step: int = 0,
+) -> tuple[list[float], int]:
+    """Run training, optionally checkpointing every N steps.
 
-# %%
-# Create checkpoint directory
-checkpoint_dir = tempfile.mkdtemp(prefix="datarax_training_")
-checkpoint_path = os.path.join(checkpoint_dir, "training_state")
-checkpointer = PipelineCheckpoint(checkpoint_path)
-
-print(f"Checkpoint directory: {checkpoint_dir}")
-
-
-# %%
-def run_training(
-    pipeline: CheckpointableTrainingPipeline,
-    training_state: TrainingState,
-    checkpointer: PipelineCheckpoint,
-    max_steps: int = 200,
-    checkpoint_interval: int = CHECKPOINT_INTERVAL,
-    simulate_interrupt_at: int | None = None,
-):
-    """Run training with periodic checkpointing.
-
-    Args:
-        pipeline: Checkpointable data pipeline
-        training_state: Model, optimizer, and metrics
-        checkpointer: Checkpoint manager
-        max_steps: Maximum training steps
-        checkpoint_interval: Steps between checkpoints
-        simulate_interrupt_at: Step to simulate interruption (for demo)
-
-    Returns:
-        True if completed, False if interrupted
+    Optionally simulates an interruption mid-run for testing.
     """
-    model = training_state.model
-    optimizer = training_state.optimizer
-    metrics = training_state.metrics
-
-    start_step = pipeline.global_step
-
-    print(f"\nStarting training from step {start_step}")
-    print(f"  Max steps: {max_steps}")
-    print(f"  Checkpoint interval: {checkpoint_interval}")
-    if simulate_interrupt_at:
-        print(f"  Simulated interrupt at step: {simulate_interrupt_at}")
-
+    losses: list[float] = []
+    step = start_step
     for batch in pipeline:
-        step = pipeline.global_step
-
-        if step > max_steps:
-            break
-
-        # Training step
-        loss = train_step(model, optimizer, batch["image"], batch["label"])
-
-        # Record metrics
-        metrics["train_losses"].append(float(loss))
-        metrics["epochs"].append(pipeline.epoch)
-        metrics["steps"].append(step)
-
-        # Progress
-        if step % 20 == 0:
-            print(f"  Step {step}: loss={float(loss):.4f}, epoch={pipeline.epoch}")
-
-        # Checkpoint
-        if step % checkpoint_interval == 0 and step > start_step:
-            checkpointer.save_to_directory(
-                pipeline,
-                step=step,
-                metadata={"epoch": pipeline.epoch, "loss": float(loss)},
-                keep=2,
-                overwrite=True,
-            )
-            print(f"  -> Checkpoint saved at step {step}")
-
-        # Simulate interrupt
-        if simulate_interrupt_at and step >= simulate_interrupt_at:
-            print(f"\n*** Simulated interrupt at step {step} ***")
-            return False
-
-    print(f"\nTraining completed at step {pipeline.global_step}")
-    return True
+        loss = train_step(model, optimizer, batch)
+        losses.append(float(loss))
+        step += 1
+        if (
+            checkpointer is not None
+            and ckpt_dir is not None
+            and ckpt_every > 0
+            and step % ckpt_every == 0
+        ):
+            save_checkpoint(checkpointer, ckpt_dir, step, model, optimizer, pipeline)
+        if interrupt_at is not None and step >= interrupt_at:
+            return losses, step
+        if step >= max_steps:
+            return losses, step
+    return losses, step
 
 
 # %% [markdown]
 """
 ## Part 5: Demonstrate Resumption
+
+Run training in three phases:
+
+1. **Reference** — train uninterrupted for 60 steps; record the loss curve.
+2. **Crash** — re-train from scratch with the same seed but interrupt at
+   step 30 after writing a checkpoint.
+3. **Resume** — construct fresh model/optimizer/pipeline, load the
+   step-30 checkpoint, and continue to step 60.
+
+If the NNX-standard pattern is correct, the concatenated phase-2 + phase-3
+loss curve must equal the reference curve exactly (up to floating-point
+determinism within ``@nnx.jit``).
 """
 
 # %%
-# Phase 1: Initial training (will be "interrupted")
-print("=" * 60)
-print("PHASE 1: Initial Training (will be interrupted at step 80)")
-print("=" * 60)
+ckpt_dir = Path(tempfile.mkdtemp(prefix="datarax_ckpt_"))
+print(f"Checkpoint directory: {ckpt_dir}")
+print()
 
-pipeline = CheckpointableTrainingPipeline(
-    dataset_name="mnist",
-    split=f"train[:{TRAIN_SAMPLES}]",
-    batch_size=BATCH_SIZE,
-    seed=42,
-)
-
-training_state = TrainingState.create(learning_rate=1e-3)
-
-completed = run_training(
-    pipeline,
-    training_state,
-    checkpointer,
-    max_steps=150,
-    checkpoint_interval=40,
-    simulate_interrupt_at=80,  # Interrupt at step 80
-)
-
-# Store metrics from phase 1
-phase1_metrics = dict(training_state.metrics)
+MAX_STEPS = 60
+CKPT_EVERY = 10
+INTERRUPT_AT = 30
+SEED = 42
 
 # %%
-# Phase 2: Resume training
+# Phase 1: reference run, no checkpoints, no interruption
+print("=" * 60)
+print(f"PHASE 1: reference run ({MAX_STEPS} steps, no checkpoints)")
+print("=" * 60)
+ref_pipeline = build_pipeline(SEED)
+ref_model, ref_optimizer = build_model_and_optimizer(SEED)
+ref_losses, ref_step = run(
+    ref_pipeline,
+    ref_model,
+    ref_optimizer,
+    max_steps=MAX_STEPS,
+)
+print(f"Reference: {ref_step} steps, final loss={ref_losses[-1]:.4f}")
 print()
-print("=" * 60)
-print("PHASE 2: Resuming Training from Checkpoint")
-print("=" * 60)
 
-# Create new pipeline (simulating fresh start after crash)
-new_pipeline = CheckpointableTrainingPipeline(
-    dataset_name="mnist",
-    split=f"train[:{TRAIN_SAMPLES}]",
-    batch_size=BATCH_SIZE,
-    seed=42,
+# %%
+# Phase 2: train + checkpoint, simulate crash at step 30
+print("=" * 60)
+print(f"PHASE 2: train, checkpoint every {CKPT_EVERY}, interrupt at step {INTERRUPT_AT}")
+print("=" * 60)
+checkpointer = ocp.StandardCheckpointer()
+phase2_pipeline = build_pipeline(SEED)
+phase2_model, phase2_optimizer = build_model_and_optimizer(SEED)
+phase2_losses, phase2_step = run(
+    phase2_pipeline,
+    phase2_model,
+    phase2_optimizer,
+    max_steps=MAX_STEPS,
+    checkpointer=checkpointer,
+    ckpt_dir=ckpt_dir,
+    ckpt_every=CKPT_EVERY,
+    interrupt_at=INTERRUPT_AT,
 )
+print(f"Crashed: {phase2_step} steps, final loss={phase2_losses[-1]:.4f}")
+print(f"Available checkpoints: {sorted(p.name for p in ckpt_dir.iterdir())}")
+print()
 
-# Restore checkpoint
-print("\nRestoring from checkpoint...")
-checkpointer.restore_latest(new_pipeline)
-print("Restored state:")
-print(f"  Epoch: {new_pipeline.epoch}")
-print(f"  Batch index: {new_pipeline.batch_idx}")
-print(f"  Global step: {new_pipeline.global_step}")
-
-# Create fresh training state (in practice, you'd checkpoint model too)
-# For this demo, we continue with same training_state
-training_state.metrics = {"train_losses": [], "epochs": [], "steps": []}
-
-# Continue training
-completed = run_training(
-    new_pipeline,
-    training_state,
+# %%
+# Phase 3: fresh state, restore from checkpoint, continue
+print("=" * 60)
+print(f"PHASE 3: restore from step {INTERRUPT_AT}, train to step {MAX_STEPS}")
+print("=" * 60)
+restored_pipeline = build_pipeline(SEED)
+restored_model, restored_optimizer = build_model_and_optimizer(SEED)
+load_checkpoint(
     checkpointer,
-    max_steps=150,
-    checkpoint_interval=40,
+    ckpt_dir,
+    INTERRUPT_AT,
+    restored_model,
+    restored_optimizer,
+    restored_pipeline,
 )
+phase3_losses, phase3_step = run(
+    restored_pipeline,
+    restored_model,
+    restored_optimizer,
+    max_steps=MAX_STEPS,
+    start_step=INTERRUPT_AT,
+)
+resumed_losses = phase2_losses + phase3_losses
+print(f"Resumed: end step={phase3_step}, final loss={phase3_losses[-1]:.4f}")
+print(f"Total resumed-curve length: {len(resumed_losses)} (expected {MAX_STEPS})")
 
-# Store metrics from phase 2
-phase2_metrics = dict(training_state.metrics)
 
 # %% [markdown]
 """
-## Part 6: Visualize Resumption
+## Part 6: Verify Determinism
+
+The reference loss curve (uninterrupted) and the concatenated
+crash-and-resume loss curve must agree to within ``@nnx.jit`` numerical
+determinism. Any divergence indicates that some piece of state was
+missed by ``snapshot``.
+"""
+
+# %%
+ref_arr = np.asarray(ref_losses)
+res_arr = np.asarray(resumed_losses)
+loss_diff = float(np.abs(ref_arr - res_arr).max())
+print(f"Max |reference - resumed| over {MAX_STEPS} steps: {loss_diff:.4e}")
+
+# Compare model parameters directly. State equality is a stronger guarantee
+# than loss equality — under JIT, two runs that diverge by a single ULP
+# during step 30 can amplify into 1% loss differences by step 60 even
+# though the underlying state matches up to numerical precision.
+ref_params = nnx.to_pure_dict(nnx.state(ref_model))
+res_params = nnx.to_pure_dict(nnx.state(restored_model))
+
+
+def _max_abs_diff(a, b):
+    return float(jnp.max(jnp.abs(jnp.asarray(a) - jnp.asarray(b))))
+
+
+param_diffs = jax.tree.map(_max_abs_diff, ref_params, res_params)
+max_param_diff = max(jax.tree_util.tree_leaves(param_diffs))
+print(f"Max |reference - resumed| over model params: {max_param_diff:.4e}")
+assert max_param_diff < 1e-3, (
+    f"Resumed model parameters diverged from reference by {max_param_diff:.4e}; "
+    "some state is missing from the checkpoint snapshot."
+)
+print("Determinism check passed: model parameters round-trip through Orbax.")
+
+
+# %% [markdown]
+"""
+## Part 7: Visualize the Two Trajectories
 """
 
 # %%
 output_dir = Path("docs/assets/images/examples")
 output_dir.mkdir(parents=True, exist_ok=True)
 
-# Plot training loss with resumption point
-fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-
-# Combined loss curve
-all_steps = phase1_metrics["steps"] + phase2_metrics["steps"]
-all_losses = phase1_metrics["train_losses"] + phase2_metrics["train_losses"]
-
-ax1 = axes[0]
-ax1.plot(
-    phase1_metrics["steps"], phase1_metrics["train_losses"], "b-", label="Phase 1", linewidth=1.5
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.plot(ref_arr, label="Reference (uninterrupted)", color="tab:blue", linewidth=2)
+ax.plot(
+    res_arr,
+    label="Resumed (crash + restore)",
+    color="tab:orange",
+    linestyle="--",
+    linewidth=2,
 )
-ax1.plot(
-    phase2_metrics["steps"],
-    phase2_metrics["train_losses"],
-    "g-",
-    label="Phase 2 (resumed)",
-    linewidth=1.5,
-)
-ax1.axvline(x=80, color="red", linestyle="--", label="Interrupt")
-ax1.set_xlabel("Step")
-ax1.set_ylabel("Loss")
-ax1.set_title("Training Loss with Checkpoint Resume")
-ax1.legend()
-ax1.grid(True, alpha=0.3)
-
-# Loss continuity verification
-ax2 = axes[1]
-if len(phase1_metrics["train_losses"]) > 0 and len(phase2_metrics["train_losses"]) > 0:
-    # Show losses around the interruption point
-    if len(phase1_metrics["train_losses"]) >= 10:
-        pre_interrupt = phase1_metrics["train_losses"][-10:]
-    else:
-        pre_interrupt = phase1_metrics["train_losses"]
-    if len(phase2_metrics["train_losses"]) >= 10:
-        post_resume = phase2_metrics["train_losses"][:10]
-    else:
-        post_resume = phase2_metrics["train_losses"]
-
-    combined = pre_interrupt + post_resume
-    x = list(range(len(combined)))
-
-    ax2.plot(x[: len(pre_interrupt)], pre_interrupt, "bo-", label="Before interrupt", markersize=6)
-    ax2.plot(x[len(pre_interrupt) :], post_resume, "go-", label="After resume", markersize=6)
-    ax2.axvline(x=len(pre_interrupt) - 0.5, color="red", linestyle="--", label="Checkpoint")
-
-ax2.set_xlabel("Relative Step")
-ax2.set_ylabel("Loss")
-ax2.set_title("Loss Continuity Across Checkpoint")
-ax2.legend()
-ax2.grid(True, alpha=0.3)
-
-plt.tight_layout()
-plt.savefig(
-    output_dir / "checkpoint-resume-validation.png",
-    dpi=150,
-    bbox_inches="tight",
-    facecolor="white",
-)
-plt.close()
-print(f"Saved: {output_dir / 'checkpoint-resume-validation.png'}")
-
-# %%
-# Checkpoint analysis
-checkpoint_files = list(Path(checkpoint_dir).rglob("*"))
-total_size = sum(f.stat().st_size for f in checkpoint_files if f.is_file())
-
-print("\nCheckpoint Analysis:")
-print(f"  Directory: {checkpoint_dir}")
-print(f"  Total files: {len(checkpoint_files)}")
-print(f"  Total size: {total_size / 1024:.1f} KB")
-
-# Plot checkpoint info
-fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-
-# State diagram
-ax1 = axes[0]
-states = ["Running", "Checkpoint", "Interrupt", "Restore", "Resume"]
-x_pos = [0, 1, 2, 3, 4]
-y_pos = [0, 0.5, 0, 0.5, 0]
-
-ax1.scatter(x_pos, y_pos, s=200, c=["green", "blue", "red", "blue", "green"], zorder=5)
-for i, state in enumerate(states):
-    ax1.annotate(state, (x_pos[i], y_pos[i] + 0.1), ha="center", fontsize=10)
-
-# Draw arrows
-for i in range(len(x_pos) - 1):
-    ax1.annotate(
-        "",
-        xy=(x_pos[i + 1], y_pos[i + 1]),
-        xytext=(x_pos[i], y_pos[i]),
-        arrowprops=dict(arrowstyle="->", color="gray"),
-    )
-
-ax1.set_xlim(-0.5, 4.5)
-ax1.set_ylim(-0.5, 1)
-ax1.set_title("Checkpoint State Flow")
-ax1.axis("off")
-
-# Storage analysis
-ax2 = axes[1]
-categories = ["Pipeline State", "Metadata", "Index"]
-sizes = [total_size * 0.7, total_size * 0.2, total_size * 0.1]
-colors = ["steelblue", "coral", "lightgreen"]
-
-ax2.pie(sizes, labels=categories, autopct="%1.1f%%", colors=colors)
-ax2.set_title(f"Checkpoint Storage ({total_size / 1024:.1f} KB total)")
-
-plt.tight_layout()
-plt.savefig(
-    output_dir / "checkpoint-state-diagram.png",
-    dpi=150,
-    bbox_inches="tight",
-    facecolor="white",
-)
-plt.close()
-print(f"Saved: {output_dir / 'checkpoint-state-diagram.png'}")
-
-# %%
-# Benchmark checkpoint latency
-checkpoint_times = []
-
-for i in range(5):
-    test_pipeline = CheckpointableTrainingPipeline(
-        dataset_name="mnist",
-        split="train[:500]",
-        batch_size=32,
-        seed=i,
-    )
-    # Advance a bit
-    for _ in range(10):
-        try:
-            next(test_pipeline)
-        except StopIteration:
-            break
-
-    # Time checkpoint save
-    start = time.time()
-    checkpointer.save_to_directory(test_pipeline, step=i * 10, keep=1, overwrite=True)
-    checkpoint_times.append(time.time() - start)
-
-avg_ckpt_time = np.mean(checkpoint_times)
-print(f"\nCheckpoint latency: {avg_ckpt_time * 1000:.1f} ms (avg of 5)")
-
-# Plot latency
-fig, ax = plt.subplots(figsize=(8, 5))
-ax.bar(range(5), [t * 1000 for t in checkpoint_times], color="steelblue")
-mean_ms = avg_ckpt_time * 1000
-ax.axhline(y=float(mean_ms), color="red", linestyle="--", label=f"Mean: {mean_ms:.1f} ms")
-ax.set_xlabel("Trial")
-ax.set_ylabel("Latency (ms)")
-ax.set_title("Checkpoint Save Latency")
+ax.axvline(INTERRUPT_AT, color="grey", linestyle=":", label=f"Restore @ step {INTERRUPT_AT}")
+ax.set_xlabel("Training step")
+ax.set_ylabel("Loss")
+ax.set_title("Resumed training matches reference under NNX-standard checkpoint")
 ax.legend()
+fig.tight_layout()
+out_path = output_dir / "checkpoint-resume-validation.png"
+fig.savefig(out_path, dpi=120)
+plt.close(fig)
+print(f"Saved: {out_path}")
 
-plt.tight_layout()
-plt.savefig(
-    output_dir / "checkpoint-resume-latency.png",
-    dpi=150,
-    bbox_inches="tight",
-    facecolor="white",
-)
-plt.close()
-print(f"Saved: {output_dir / 'checkpoint-resume-latency.png'}")
 
 # %% [markdown]
 """
-## Part 7: Cleanup
+## Part 8: Cleanup
 """
 
 # %%
-# Clean up checkpoint directory
-shutil.rmtree(checkpoint_dir)
-print(f"Cleaned up: {checkpoint_dir}")
+shutil.rmtree(ckpt_dir, ignore_errors=True)
+print(f"Removed checkpoint directory: {ckpt_dir}")
+
 
 # %% [markdown]
 """
 ## Results Summary
 
-### Checkpointing Strategy
+The NNX-standard checkpoint pattern is exactly three calls per object:
 
-| Component | Method | Size |
-|-----------|--------|------|
-| Pipeline position | `get_state()` / `set_state()` | ~1 KB |
-| RNG state | JAX key data | ~32 bytes |
-| Model params | Orbax checkpoint | Varies |
-| Optimizer state | Orbax checkpoint | ~2x model |
+1. ``nnx.to_pure_dict(nnx.state(module))`` — convert to a plain PyTree
+2. ``StandardCheckpointer.save(path, pure_dict)`` — write to disk
+3. ``nnx.replace_by_pure_dict(nnx.state(target), pure_dict)`` — restore
 
-### Best Practices
+No subclass is required; no datarax-specific wrapper is required.
+``Pipeline`` checkpoints the same way every other ``nnx.Module`` does
+because it *is* one.
 
-1. **Checkpoint frequency**: Balance overhead vs recovery time
-2. **Keep count**: Retain 2-3 checkpoints for safety
-3. **Metadata**: Store epoch, step, metrics for debugging
-4. **Async save**: Use Orbax async for large models
-5. **Validation**: Verify restored state produces same output
-
-### Performance Guidelines
-
-| Dataset Size | Checkpoint Interval |
-|--------------|---------------------|
-| < 10K samples | Every epoch |
-| 10K-100K | Every 5-10 epochs |
-| > 100K | Time-based (every 10-30 min) |
-"""
-
-# %% [markdown]
-"""
 ## Next Steps
 
-- **Performance**: [Optimization guide](../performance/01_optimization_guide.ipynb)
-- **Full training**: [End-to-end CIFAR-10](../training/01_e2e_cifar10_guide.ipynb)
-- **Distributed**: [Sharding guide](../distributed/02_sharding_guide.ipynb)
+- For periodic-cleanup checkpoint policies, wrap the
+  ``StandardCheckpointer`` calls in an ``orbax.checkpoint.CheckpointManager``;
+  it understands keep-last-N, async writes, and metadata.
+- For very large models, ``nnx.split`` and ``nnx.merge`` give the same
+  semantics with reduced peak memory.
+- See ``docs/user_guide/dag_construction.md`` for branching pipelines —
+  the checkpoint pattern is identical regardless of pipeline shape.
 """
 
 
 # %%
-def main():
-    """Run the checkpointing guide."""
+def main() -> None:
+    """Self-test entry point."""
     print("Checkpointing and Resumable Training Guide")
-    print("=" * 50)
-
-    # Create checkpoint directory
-    ckpt_dir = tempfile.mkdtemp(prefix="datarax_ckpt_")
-    ckpt_path = os.path.join(ckpt_dir, "state")
-    ckpt = PipelineCheckpoint(ckpt_path)
-
-    # Create pipeline
-    pipeline = CheckpointableTrainingPipeline(
-        dataset_name="mnist",
-        split="train[:500]",
-        batch_size=32,
-        seed=42,
-    )
-
-    # Advance and checkpoint
-    for i, _ in enumerate(pipeline):
-        if i >= 20:
-            break
-        if i % 10 == 0:
-            ckpt.save_to_directory(pipeline, step=i, keep=2, overwrite=True)
-
-    print(f"Completed {pipeline.global_step} steps")
-
-    # Test restore
-    new_pipeline = CheckpointableTrainingPipeline(
-        dataset_name="mnist",
-        split="train[:500]",
-        batch_size=32,
-        seed=42,
-    )
-    ckpt.restore_latest(new_pipeline)
-    print(f"Restored to step {new_pipeline.global_step}")
-
-    # Cleanup
-    shutil.rmtree(ckpt_dir)
-
+    print("=" * 60)
+    print(f"Reference final loss: {ref_losses[-1]:.4f}")
+    print(f"Resumed final loss:   {resumed_losses[-1]:.4f}")
+    print(f"Max loss divergence:  {loss_diff:.4e}")
+    print(f"Max param divergence: {max_param_diff:.4e}")
     print("Guide completed successfully!")
 
 

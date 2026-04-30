@@ -26,8 +26,7 @@ from datarax.utils.console import emit
 
 matplotlib.use("Agg")
 
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
+from datarax import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.modality.image import (
     BrightnessOperator,
@@ -83,46 +82,46 @@ def create_pipeline(
         ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0)
     )
 
-    pipeline = build_source_pipeline(source, batch_size=batch_size).add(OperatorNode(normalizer))
-
+    stages: list[nnx.Module] = [normalizer]
     if num_operators >= 2:
-        brightness = BrightnessOperator(
-            BrightnessOperatorConfig(
-                field_key="image",
-                brightness_range=(-0.1, 0.1),
-                stochastic=True,
-                stream_name="brightness",
-            ),
-            rngs=nnx.Rngs(brightness=seed + 100),
+        stages.append(
+            BrightnessOperator(
+                BrightnessOperatorConfig(
+                    field_key="image",
+                    brightness_range=(-0.1, 0.1),
+                    stochastic=True,
+                    stream_name="brightness",
+                ),
+                rngs=nnx.Rngs(brightness=seed + 100),
+            )
         )
-        pipeline = pipeline.add(OperatorNode(brightness))
-
     if num_operators >= 3:
-        contrast = ContrastOperator(
-            ContrastOperatorConfig(
-                field_key="image",
-                contrast_range=(0.9, 1.1),
-                stochastic=True,
-                stream_name="contrast",
-            ),
-            rngs=nnx.Rngs(contrast=seed + 200),
+        stages.append(
+            ContrastOperator(
+                ContrastOperatorConfig(
+                    field_key="image",
+                    contrast_range=(0.9, 1.1),
+                    stochastic=True,
+                    stream_name="contrast",
+                ),
+                rngs=nnx.Rngs(contrast=seed + 200),
+            )
         )
-        pipeline = pipeline.add(OperatorNode(contrast))
-
     if num_operators >= 4:
-        noise = NoiseOperator(
-            NoiseOperatorConfig(
-                field_key="image",
-                mode="gaussian",
-                noise_std=0.05,
-                stochastic=True,
-                stream_name="noise",
-            ),
-            rngs=nnx.Rngs(noise=seed + 300),
+        stages.append(
+            NoiseOperator(
+                NoiseOperatorConfig(
+                    field_key="image",
+                    mode="gaussian",
+                    noise_std=0.05,
+                    stochastic=True,
+                    stream_name="noise",
+                ),
+                rngs=nnx.Rngs(noise=seed + 300),
+            )
         )
-        pipeline = pipeline.add(OperatorNode(noise))
 
-    return pipeline
+    return Pipeline(source=source, stages=stages, batch_size=batch_size, rngs=nnx.Rngs(0))
 
 
 # ── Core measurement ─────────────────────────────────────────────────────────

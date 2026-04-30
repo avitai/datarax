@@ -28,7 +28,7 @@ A `Batch` is a Flax NNX Module that holds a collection of data samples stacked a
 
 ```python
 from datarax.sources import MemorySource, MemorySourceConfig
-from datarax.dag import build_source_pipeline
+from datarax.pipeline import Pipeline
 import numpy as np
 from flax import nnx
 
@@ -38,8 +38,8 @@ data = {
 }
 source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
 
-# build_source_pipeline auto-batches with the specified batch_size
-pipeline = build_source_pipeline(source, batch_size=16)
+# Pipeline auto-batches with the specified batch_size
+pipeline = Pipeline(source=source, stages=[], batch_size=16, rngs=nnx.Rngs(0))
 
 for batch in pipeline:
     print(batch["image"].shape)  # (16, 32, 32, 3)
@@ -81,7 +81,7 @@ n = batch.batch_size              # int
 ### Full epoch (iterate all data once)
 
 ```python
-pipeline = build_source_pipeline(source, batch_size=32)
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 
 for batch in pipeline:
     loss = train_step(batch["image"], batch["label"])
@@ -91,7 +91,7 @@ for batch in pipeline:
 
 ```python
 for epoch in range(num_epochs):
-    pipeline = build_source_pipeline(source, batch_size=32)
+    pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
     for batch in pipeline:
         loss = train_step(batch["image"], batch["label"])
 ```
@@ -101,17 +101,17 @@ for epoch in range(num_epochs):
 ```python
 import itertools
 
-pipeline = build_source_pipeline(source, batch_size=32)
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 for batch in itertools.islice(pipeline, 10):  # First 10 batches
     loss = train_step(batch["image"], batch["label"])
 ```
 
 ## How batch_size Works
 
-The `build_source_pipeline()` function adds a batching node to the pipeline:
+The `Pipeline` constructor auto-batches via the `batch_size` argument:
 
 ```
-Source (yields elements) --> BatchNode (groups into batches) --> You iterate
+Source (yields elements) --> Pipeline (groups into batches via batch_size) --> You iterate
 ```
 
 - `batch_size=32` groups 32 elements into each `Batch`
@@ -120,13 +120,13 @@ Source (yields elements) --> BatchNode (groups into batches) --> You iterate
 
 ```python
 # Standard batching
-pipeline = build_source_pipeline(source, batch_size=32)
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 
 # No auto-batching (elements yielded individually)
-pipeline = build_source_pipeline(source, batch_size=32, enforce_batch=False)
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))  # enforce_batch=False
 
 # With prefetching (default: 2 batches ahead)
-pipeline = build_source_pipeline(source, batch_size=32, prefetch_size=4)
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))  # prefetch_size=4
 ```
 
 ## Next Steps

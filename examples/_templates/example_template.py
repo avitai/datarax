@@ -57,7 +57,7 @@ uv pip install "datarax[data]"
 import numpy as np
 from flax import nnx
 
-from datarax import build_source_pipeline
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -132,10 +132,19 @@ print(f"Source length: {len(source)}")
 """
 
 # %%
-# Step 3: Create pipeline
-pipeline = build_source_pipeline(source, batch_size=32)
+# Step 3: Build the pipeline
+#
+# Pipeline takes a source, an ordered list of stages (any nnx.Module
+# whose __call__ transforms a batch — leave [] for a pass-through
+# pipeline), the batch size, and an nnx.Rngs.
+pipeline = Pipeline(
+    source=source,
+    stages=[],
+    batch_size=32,
+    rngs=nnx.Rngs(0),
+)
 
-# Iterate and process
+# Iterate (Tier A): works with any training framework, lowest barrier to entry.
 for i, batch in enumerate(pipeline):
     if i >= 2:  # Only show first 2 batches
         break
@@ -144,6 +153,18 @@ for i, batch in enumerate(pipeline):
 # Expected output:
 # Batch 0: image=(32, 28, 28, 1), label=(32,)
 # Batch 1: image=(32, 28, 28, 1), label=(32,)
+
+# For training, prefer Tier C (whole-epoch JIT):
+#
+#   def step_fn(model, optimizer, batch):
+#       loss, grads = nnx.value_and_grad(loss_fn)(model, batch)
+#       optimizer.update(model, grads)
+#       return loss
+#
+#   losses = pipeline.scan(step_fn, modules=(model, optimizer), length=N)
+#
+# See examples/integration/01_ml_classification.py for a full training-loop
+# walkthrough comparing Tier A and Tier C.
 
 # %% [markdown]
 """
@@ -205,7 +226,7 @@ def main():
     data = create_sample_data()
     source_config = MemorySourceConfig()
     source = MemorySource(source_config, data=data, rngs=nnx.Rngs(0))
-    pipeline = build_source_pipeline(source, batch_size=32)
+    pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 
     total_samples = 0
     for batch in pipeline:

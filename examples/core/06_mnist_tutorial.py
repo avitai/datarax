@@ -72,9 +72,6 @@ import numpy as np
 import optax
 from flax import nnx
 
-# Datarax imports
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.modality.image import (
     BrightnessOperator,
@@ -82,6 +79,9 @@ from datarax.operators.modality.image import (
     NoiseOperator,
     NoiseOperatorConfig,
 )
+
+# Datarax imports
+from datarax.pipeline import Pipeline
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 
 
@@ -247,11 +247,11 @@ Training pipeline with augmentation, test pipeline without.
 
 # %%
 # Training pipeline with augmentation
-train_pipeline = (
-    build_source_pipeline(train_source, batch_size=BATCH_SIZE)
-    .add(OperatorNode(preprocessor))
-    .add(OperatorNode(brightness_aug))
-    .add(OperatorNode(noise_aug))
+train_pipeline = Pipeline(
+    source=train_source,
+    stages=[preprocessor, brightness_aug, noise_aug],
+    batch_size=BATCH_SIZE,
+    rngs=nnx.Rngs(0),
 )
 
 # Test pipeline without augmentation (create fresh sources for actual use)
@@ -261,8 +261,8 @@ test_preprocessor = ElementOperator(
     rngs=nnx.Rngs(0),
 )
 
-test_pipeline = build_source_pipeline(test_source, batch_size=BATCH_SIZE).add(
-    OperatorNode(test_preprocessor)
+test_pipeline = Pipeline(
+    source=test_source, stages=[test_preprocessor], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0)
 )
 
 print("Pipelines created:")
@@ -469,11 +469,11 @@ def create_train_pipeline():
         rngs=nnx.Rngs(noise=200),
     )
 
-    return (
-        build_source_pipeline(source, batch_size=BATCH_SIZE)
-        .add(OperatorNode(preprocessor))
-        .add(OperatorNode(brightness))
-        .add(OperatorNode(noise))
+    return Pipeline(
+        source=source,
+        stages=[preprocessor, brightness, noise],
+        batch_size=BATCH_SIZE,
+        rngs=nnx.Rngs(0),
     )
 
 
@@ -487,7 +487,7 @@ def create_test_pipeline():
         rngs=nnx.Rngs(0),
     )
 
-    return build_source_pipeline(source, batch_size=BATCH_SIZE).add(OperatorNode(preprocessor))
+    return Pipeline(source=source, stages=[preprocessor], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
 
 
 # Training loop
@@ -605,8 +605,8 @@ plain_preprocessor = ElementOperator(
     rngs=nnx.Rngs(0),
 )
 
-plain_pipeline = build_source_pipeline(plain_source, batch_size=128).add(
-    OperatorNode(plain_preprocessor)
+plain_pipeline = Pipeline(
+    source=plain_source, stages=[plain_preprocessor], batch_size=128, rngs=nnx.Rngs(0)
 )
 plain_batch = next(iter(plain_pipeline))
 
@@ -661,7 +661,7 @@ print(f"Saved: {output_dir / 'cv-mnist-augmentation-samples.png'}")
 2. **Fresh Pipelines**: Create new pipeline instances for each epoch to reset iteration
 3. **Augmentation**: Light augmentation (brightness, noise) improves generalization
 4. **Preprocessing**: Always normalize with dataset-specific statistics
-5. **Batching**: `build_source_pipeline(batch_size=N)` handles batching automatically
+5. **Batching**: `Pipeline(batch_size=N)` handles batching automatically
 
 ### Pipeline Architecture
 

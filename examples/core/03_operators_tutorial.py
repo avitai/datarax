@@ -53,8 +53,6 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.composite_operator import (
     CompositeOperatorConfig,
@@ -69,6 +67,7 @@ from datarax.operators.modality.image import (
     NoiseOperator,
     NoiseOperatorConfig,
 )
+from datarax.pipeline import Pipeline
 
 # SelectorOperator randomly selects one operator from a list
 # It's different from field filtering (see Part 4 for field filtering)
@@ -136,7 +135,7 @@ normalizer = ElementOperator(
 )
 
 # Test it
-pipeline = build_source_pipeline(source, batch_size=16).add(OperatorNode(normalizer))
+pipeline = Pipeline(source=source, stages=[normalizer], batch_size=16, rngs=nnx.Rngs(0))
 batch = next(iter(pipeline))
 
 print("Normalization result:")
@@ -242,7 +241,7 @@ field_filter = ElementOperator(
 
 # Test field filtering
 source2 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(1))
-pipeline = build_source_pipeline(source2, batch_size=8).add(OperatorNode(field_filter))
+pipeline = Pipeline(source=source2, stages=[field_filter], batch_size=8, rngs=nnx.Rngs(0))
 batch = next(iter(pipeline))
 
 print("After field filtering:")
@@ -295,7 +294,7 @@ print("Created SEQUENTIAL composite: normalize → flip")
 # %%
 # Test the composite operator
 source3 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(2))
-pipeline = build_source_pipeline(source3, batch_size=16).add(OperatorNode(sequential_augment))
+pipeline = Pipeline(source=source3, stages=[sequential_augment], batch_size=16, rngs=nnx.Rngs(0))
 batch = next(iter(pipeline))
 
 print("Sequential composite result:")
@@ -335,11 +334,8 @@ brightness = BrightnessOperator(
 
 # Build pipeline with chained operators
 source4 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(3))
-full_pipeline = (
-    build_source_pipeline(source4, batch_size=32)
-    .add(OperatorNode(normalizer))
-    .add(OperatorNode(flipper))
-    .add(OperatorNode(brightness))
+full_pipeline = Pipeline(
+    source=source4, stages=[normalizer, flipper, brightness], batch_size=32, rngs=nnx.Rngs(0)
 )
 
 print("Full augmentation pipeline:")
@@ -478,10 +474,8 @@ def main():
     )
 
     # Build and run pipeline
-    pipeline = (
-        build_source_pipeline(source, batch_size=32)
-        .add(OperatorNode(normalizer))
-        .add(OperatorNode(brightness))
+    pipeline = Pipeline(
+        source=source, stages=[normalizer, brightness], batch_size=32, rngs=nnx.Rngs(0)
     )
 
     total = 0

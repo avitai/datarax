@@ -16,7 +16,6 @@ from datarax.batching.default_batcher import DefaultBatcher, DefaultBatcherConfi
 from datarax.checkpoint.handlers import OrbaxCheckpointHandler
 from datarax.core.config import DataraxModuleConfig
 from datarax.core.module import DataraxModule
-from datarax.dag import DAGExecutor
 from datarax.samplers.range_sampler import RangeSampler, RangeSamplerConfig
 from datarax.samplers.shuffle_sampler import ShuffleSampler, ShuffleSamplerConfig
 from datarax.sharding.array_sharder import ArraySharder
@@ -218,39 +217,6 @@ class TestNNXCheckpointingIntegration:
                 # Basic verification that state was restored
                 restored_state_after = fresh_module.get_state()
                 assert isinstance(restored_state_after, dict)
-
-    def test_datastream_module_checkpointing(self):
-        """Test complete Pipeline checkpointing."""
-        rngs = nnx.Rngs(42)
-
-        # Create Pipeline following batch-first principle
-        source = MemorySource(MemorySourceConfig(), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], rngs=rngs)
-
-        # Correct order: source -> batch -> sampler (batch-first enforcement)
-        stream = DAGExecutor().add(source).batch(batch_size=2)
-
-        # For now, skip sampler as it would need to operate on batches
-        # This test focuses on checkpointing the core pipeline
-
-        # Modify state by iterating
-        stream_iter = iter(stream)
-        [next(stream_iter) for _ in range(3)]
-
-        # Save state
-        handler = OrbaxCheckpointHandler()
-        with tempfile.TemporaryDirectory() as temp_dir:
-            checkpoint_path = handler.save_to_directory(temp_dir, stream)
-            assert checkpoint_path is not None
-
-            # Restore state without target (let handler create new instance)
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore", "Sharding info not provided when restoring", UserWarning
-                )
-                restored_stream = handler.restore(temp_dir, target=None)
-            # Verify some aspects of state restoration
-            assert restored_stream is not None
-            # The restored stream should have the same structure as the original
 
     def test_nested_module_checkpointing(self):
         """Test checkpointing of modules with nested components."""

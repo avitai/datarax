@@ -26,8 +26,8 @@ Load and process datasets from [HuggingFace Hub](https://huggingface.co/datasets
 | `datasets.load_dataset("mnist")` | `HFEagerSource(HFEagerConfig(name="mnist"))` |
 | `dataset["train"]` | `HFEagerConfig(split="train")` |
 | `IterableDataset` + `DataLoader` | `HFEagerSource` with `streaming=True` |
-| `dataset.map(transform)` | `pipeline.add(OperatorNode(operator))` |
-| Manual batching in DataLoader | `build_source_pipeline(source, batch_size=32)` |
+| `dataset.map(transform)` | `Pipeline(source=..., stages=[operator], ...)` |
+| Manual batching in DataLoader | `Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))` |
 
 **Key difference:** Datarax integrates HuggingFace datasets directly into JAX pipelines with automatic array conversion.
 
@@ -37,8 +37,8 @@ Load and process datasets from [HuggingFace Hub](https://huggingface.co/datasets
 |------------|---------|
 | `tfds.load("mnist")` | `HFEagerSource(HFEagerConfig(name="mnist"))` |
 | `dataset.take(1000)` | Use split syntax: `split="train[:1000]"` |
-| `dataset.batch(32).prefetch(2)` | `build_source_pipeline(source, batch_size=32)` |
-| `dataset.map(preprocess)` | `pipeline.add(OperatorNode(operator))` |
+| `dataset.batch(32).prefetch(2)` | `Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))` |
+| `dataset.map(preprocess)` | `Pipeline(source=..., stages=[operator], ...)` |
 
 **Key difference:** HuggingFace Hub has a larger dataset catalog (100,000+) compared to TFDS, and Datarax provides unified access.
 
@@ -122,7 +122,7 @@ flowchart LR
     end
 
     subgraph Pipeline["Pipeline"]
-        FS[build_source_pipeline<br/>batch_size=32]
+        FS[Pipeline<br/>batch_size=32]
         OPS[Operators<br/>Transformations]
     end
 
@@ -134,10 +134,10 @@ flowchart LR
 ```
 
 ```python
-from datarax import build_source_pipeline
+from datarax.pipeline import Pipeline
 
 # Create pipeline with batch_size=1 for inspection
-pipeline = build_source_pipeline(source, batch_size=1)
+pipeline = Pipeline(source=source, stages=[], batch_size=1, rngs=nnx.Rngs(0))
 
 # Get first few examples
 print("First 3 examples:")
@@ -183,7 +183,7 @@ Add operators to transform the HuggingFace data.
 
 ```python
 import jax.numpy as jnp
-from datarax.dag.nodes import OperatorNode
+from datarax.pipeline import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
 
 # Define a normalization transform
@@ -208,7 +208,7 @@ normalizer = ElementOperator(
 
 # Build transformed pipeline (need fresh source for new iteration)
 source2 = HFEagerSource(config, rngs=nnx.Rngs(1))
-transformed_pipeline = build_source_pipeline(source2, batch_size=32).add(OperatorNode(normalizer))
+transformed_pipeline = Pipeline(source=source2, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0))
 
 # Process a batch
 batch = next(iter(transformed_pipeline))

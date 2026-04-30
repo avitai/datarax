@@ -201,7 +201,7 @@ class BatchMixOperator(OperatorModule):
 
         mixed_data = jax.tree.map(mix_array, batch_data)
 
-        # Reconstruct batch with mixed data
+        # Reconstruct batch with mixed data (preserve valid_mask through the mix)
         return Batch.from_parts(
             data=mixed_data,
             states=batch.states.get_value(),
@@ -209,6 +209,7 @@ class BatchMixOperator(OperatorModule):
             batch_metadata=batch._batch_metadata.get_value(),
             batch_state=batch.batch_state.get_value(),
             validate=False,
+            valid_mask=batch.valid_mask[...],
         )
 
     def _apply_on_raw(
@@ -343,7 +344,7 @@ class BatchMixOperator(OperatorModule):
             # Use stable form: labels_perm + lam * (labels - labels_perm)
             result_data[label_field] = labels_perm + lam_adjusted * (labels - labels_perm)
 
-        # Reconstruct batch with mixed data
+        # Reconstruct batch with mixed data (preserve valid_mask through the mix)
         return Batch.from_parts(
             data=result_data,
             states=batch.states.get_value(),
@@ -351,6 +352,7 @@ class BatchMixOperator(OperatorModule):
             batch_metadata=batch._batch_metadata.get_value(),
             batch_state=batch.batch_state.get_value(),
             validate=False,
+            valid_mask=batch.valid_mask[...],
         )
 
     def _apply_cutmix_raw(

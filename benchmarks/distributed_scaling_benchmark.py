@@ -160,8 +160,7 @@ from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 matplotlib.use("Agg")
 
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
+from datarax import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.performance.synchronization import block_until_ready_tree
 from datarax.sources import MemorySource, MemorySourceConfig
@@ -196,7 +195,7 @@ def create_pipeline(data: dict, batch_size: int = 64, seed: int = 0):
     normalizer = ElementOperator(
         ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0)
     )
-    return build_source_pipeline(source, batch_size=batch_size).add(OperatorNode(normalizer))
+    return Pipeline(source=source, stages=[normalizer], batch_size=batch_size, rngs=nnx.Rngs(0))
 
 
 # ── Simulated workload ──────────────────────────────────────────────────────

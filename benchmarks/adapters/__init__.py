@@ -72,6 +72,9 @@ def _try_import(module_path: str) -> None:
 # Import triggers @register on DataraxAdapter
 from benchmarks.adapters.datarax_adapter import DataraxAdapter  # noqa: F401, E402
 
+# Scan-epoch variant of the same pipeline — second measurement dimension
+from benchmarks.adapters.datarax_scan_adapter import DataraxScanAdapter  # noqa: F401, E402
+
 
 # Peer framework adapters — import triggers @register
 _PEER_MODULES = [

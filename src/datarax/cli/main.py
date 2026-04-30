@@ -13,7 +13,6 @@ from typing import Any
 import jax
 
 from datarax import __version__
-from datarax.dag import DAGConfig
 
 
 _CONFIG_LOAD_ERRORS = (OSError, tomllib.TOMLDecodeError)
@@ -99,37 +98,15 @@ def run_pipeline(config_path: str, overrides: dict[str, str] | None = None) -> i
     Returns:
         Exit code (0 for success).
     """
-    try:
-        config = _load_config_from_toml(config_path)
-
-        # Apply overrides
-        if overrides:
-            _apply_overrides(config, overrides)
-
-        _emit(f"Loading pipeline: {config['pipeline']['name']}")
-
-        # Create and run pipeline using DAGExecutor
-        if "dag" in config:
-            # Modern DAG-based pipeline
-            executor = DAGConfig.from_dict(config["dag"])
-            _emit("Starting pipeline execution...")
-
-            # Run the pipeline
-            for batch_num, batch in enumerate(executor):
-                if batch_num % 100 == 0:
-                    _emit(f"Processed batch {batch_num}")
-                # In real implementation, we'd process the batch
-
-        else:
-            _emit("Non-DAG pipeline format not supported. Please use DAG format.")
-            return 1
-
-        _emit("Pipeline execution completed successfully")
-        return 0
-
-    except _PIPELINE_ERRORS as e:
-        _emit(f"Error running pipeline: {e}", error=True)
-        return 1
+    del overrides  # config-driven runner removed; overrides no-op
+    _emit(
+        f"Config-driven pipeline runner is no longer available. "
+        f"Construct a Pipeline directly in Python — see "
+        f"docs/user_guide/dag_construction.md. "
+        f"(Requested config: {config_path})",
+        error=True,
+    )
+    return 1
 
 
 def run_benchmark(dataset: str, **kwargs: Any) -> int:
@@ -273,48 +250,15 @@ def profile_pipeline(config_path: str, num_iterations: int = 100) -> dict[str, f
     Returns:
         Performance metrics.
     """
-    import time
-
-    try:
-        config = _load_config_from_toml(config_path)
-        if num_iterations <= 0:
-            raise ValueError("num_iterations must be greater than zero")
-
-        if "dag" in config:
-            executor = DAGConfig.from_dict(config["dag"])
-
-            # Warmup
-            for _ in range(10):
-                next(iter(executor))
-
-            # Profile
-            start_time = time.time()
-            for i, batch in enumerate(executor):
-                if i >= num_iterations:
-                    break
-
-            elapsed = time.time() - start_time
-            throughput = num_iterations / elapsed
-            latency = elapsed / num_iterations
-
-            metrics = {
-                "throughput": throughput,
-                "latency": latency,
-                "batches_per_second": throughput,
-                "ms_per_batch": latency * 1000,
-            }
-
-            _emit("Performance Metrics:")
-            _emit(f"  Throughput: {throughput:.2f} batches/sec")
-            _emit(f"  Latency: {latency * 1000:.2f} ms/batch")
-
-            return metrics
-
-        return {}
-
-    except _PIPELINE_ERRORS as e:
-        _emit(f"Error profiling pipeline: {e}", error=True)
-        return {}
+    del num_iterations  # config-driven profiler removed
+    _emit(
+        f"Config-driven pipeline profiler is no longer available. "
+        f"Profile a Pipeline directly in Python — see "
+        f"benchmarks/migrated_examples_comparison.py for an example. "
+        f"(Requested config: {config_path})",
+        error=True,
+    )
+    return {}
 
 
 def _handle_run(args: argparse.Namespace) -> int:

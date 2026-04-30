@@ -197,16 +197,6 @@ class TestBatcherModuleEnhanced:
 class TestBatcherModuleIntegration:
     """Integration tests for BatcherModule with other components."""
 
-    def test_pipeline_integration(self):
-        """Test integration with pipeline infrastructure."""
-        from datarax.dag import BatchNode, DAGExecutor
-
-        batcher = SimpleTestBatcher(SimpleTestBatcherConfig())
-
-        # DAGExecutor requires BatchNode first for batch-first enforcement
-        pipeline = DAGExecutor().add(BatchNode(batch_size=32)).add(batcher)
-        assert pipeline is not None
-
 
 class TestBatcherModuleErrorHandling:
     """Test error handling and edge cases."""

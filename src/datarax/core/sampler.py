@@ -273,3 +273,20 @@ class SamplerModule(StructuralModule):
                 previously set seed.
         """
         pass
+
+    def index_spec(self) -> Any:
+        """Return a ``jax.ShapeDtypeStruct`` (or PyTree thereof) describing emitted indices.
+
+        The default implementation returns a scalar int32 spec, matching the
+        common case of one-index-per-call samplers (sequential, shuffle, range).
+        Specialized samplers (``SlidingWindowSampler``, ``BufferSampler``)
+        override this to declare windowed or vectorized index shapes.
+
+        Returns:
+            A ``jax.ShapeDtypeStruct`` (or PyTree thereof) describing the
+            shape and dtype of one emitted index.
+        """
+        # Imported lazily to keep core/sampler import lightweight.
+        from datarax.utils.spec import scalar_index_spec
+
+        return scalar_index_spec()

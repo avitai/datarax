@@ -71,8 +71,6 @@ import jax
 import numpy as np
 from flax import nnx
 
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
 from datarax.operators.modality.image import (
     BrightnessOperator,
     BrightnessOperatorConfig,
@@ -93,6 +91,7 @@ from datarax.operators.selector_operator import (
     SelectorOperator,
     SelectorOperatorConfig,
 )
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -169,7 +168,7 @@ print(f"  Stochastic: {prob_brightness.config.stochastic}")
 # %%
 # Test the probabilistic operator
 source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
-pipeline = build_source_pipeline(source, batch_size=32).add(OperatorNode(prob_brightness))
+pipeline = Pipeline(source=source, stages=[prob_brightness], batch_size=32, rngs=nnx.Rngs(0))
 
 batch = next(iter(pipeline))
 original_mean = data["image"][:32].mean()
@@ -198,7 +197,7 @@ for p in [0.0, 0.25, 0.5, 0.75, 1.0]:
 
     # Apply to batch
     source_p = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
-    pipeline_p = build_source_pipeline(source_p, batch_size=100).add(OperatorNode(prob_op))
+    pipeline_p = Pipeline(source=source_p, stages=[prob_op], batch_size=100, rngs=nnx.Rngs(0))
     batch_p = next(iter(pipeline_p))
 
     # Compare means
@@ -269,7 +268,7 @@ print(f"  Always stochastic: {selector.config.stochastic}")
 # %%
 # Apply selector and observe which operators were chosen
 source2 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(1))
-pipeline2 = build_source_pipeline(source2, batch_size=50).add(OperatorNode(selector))
+pipeline2 = Pipeline(source=source2, stages=[selector], batch_size=50, rngs=nnx.Rngs(0))
 
 batch2 = next(iter(pipeline2))
 
@@ -332,7 +331,7 @@ print(f"  Stochastic: {patch_dropout.config.stochastic}")
 # %%
 # Apply patch dropout
 source3 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(2))
-pipeline3 = build_source_pipeline(source3, batch_size=16).add(OperatorNode(patch_dropout))
+pipeline3 = Pipeline(source=source3, stages=[patch_dropout], batch_size=16, rngs=nnx.Rngs(0))
 
 batch3 = next(iter(pipeline3))
 
@@ -461,11 +460,11 @@ print("  3. Selector: Noise (70%) or PatchDropout (30%)")
 # Apply the AutoAugment-style pipeline
 source4 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(3))
 
-pipeline4 = (
-    build_source_pipeline(source4, batch_size=32)
-    .add(OperatorNode(prob_bright))
-    .add(OperatorNode(prob_contrast))
-    .add(OperatorNode(final_selector))
+pipeline4 = Pipeline(
+    source=source4,
+    stages=[prob_bright, prob_contrast, final_selector],
+    batch_size=32,
+    rngs=nnx.Rngs(0),
 )
 
 # Process and collect statistics
@@ -505,12 +504,7 @@ All advanced operators use specific patterns for JAX compatibility:
 # Demonstrate JIT compatibility through the DAG executor.
 # Source iteration stays outside JIT; the operator transformation is compiled.
 source_jit = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(4))
-jit_pipeline = build_source_pipeline(
-    source_jit,
-    batch_size=16,
-    jit_compile=True,
-    prefetch_size=0,
-).add(OperatorNode(prob_bright))
+jit_pipeline = Pipeline(source=source_jit, stages=[prob_bright], batch_size=16, rngs=nnx.Rngs(0))
 jit_batch = next(iter(jit_pipeline))
 result = jit_batch["image"].mean()
 
@@ -576,7 +570,7 @@ def main():
         rngs=nnx.Rngs(augment=0),
     )
     source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
-    pipeline = build_source_pipeline(source, batch_size=50).add(OperatorNode(prob))
+    pipeline = Pipeline(source=source, stages=[prob], batch_size=50, rngs=nnx.Rngs(0))
     batch = next(iter(pipeline))
     print(f"   Output mean: {batch['image'].mean():.4f}")
 
@@ -596,7 +590,7 @@ def main():
         rngs=nnx.Rngs(augment=10),
     )
     source2 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(1))
-    pipeline2 = build_source_pipeline(source2, batch_size=50).add(OperatorNode(selector))
+    pipeline2 = Pipeline(source=source2, stages=[selector], batch_size=50, rngs=nnx.Rngs(0))
     batch2 = next(iter(pipeline2))
     print(f"   Output mean: {batch2['image'].mean():.4f}")
 
@@ -614,7 +608,7 @@ def main():
         rngs=nnx.Rngs(patch=20),
     )
     source3 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(2))
-    pipeline3 = build_source_pipeline(source3, batch_size=50).add(OperatorNode(patch))
+    pipeline3 = Pipeline(source=source3, stages=[patch], batch_size=50, rngs=nnx.Rngs(0))
     batch3 = next(iter(pipeline3))
     print(f"   Output mean: {batch3['image'].mean():.4f} (lower due to black patches)")
 

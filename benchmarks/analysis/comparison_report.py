@@ -54,6 +54,7 @@ class ComparisonReportGenerator:
             self._strengths_section(),
             self._parity_section(),
             self._gaps_section(),
+            self._interpretation_notes(),
             self._positioning_summary(),
         ]
 
@@ -225,6 +226,40 @@ class ComparisonReportGenerator:
             )
             if total > 0
             else "## Positioning Summary\n\nNo scenarios to summarize."
+        )
+
+    def _interpretation_notes(self) -> str:
+        """Append guidance for reading the gap numbers above.
+
+        The gap classifier compares raw elem/s without accounting for
+        cross-framework asymmetries. The notes below summarise the
+        three categories readers should distinguish; see
+        ``docs/benchmarks/interpretation.md`` for the full reference.
+        """
+        return (
+            "## Interpretation Notes\n\n"
+            "Raw elem/s ratios above do not account for cross-framework "
+            "asymmetries. Read alongside these caveats:\n\n"
+            "1. **Some adapters iterate on CPU regardless of JAX backend.** "
+            "``jax-dataloader``'s ``DataLoaderJAX`` calls "
+            "``dataset.asnumpy()`` at setup and iterates ``data[indices]`` "
+            "via host-side numpy — no GPU dispatch happens during "
+            "iteration. Compare against it as a numpy-host baseline, not "
+            "as a peer GPU loader.\n"
+            "2. **Adapter transform-set asymmetry.** Adapters limited "
+            "to ``BASIC_TRANSFORMS`` (Normalize, CastToFloat32) silently "
+            "skip transforms outside that set. PC-1, CV-1, DIST-1 etc. "
+            "may show the alternative running 1–2 stages while datarax "
+            "runs the full requested chain — per-batch work is unequal.\n"
+            "3. **Iter-mode vs scan-mode for Datarax.** The benchmark "
+            "ships two Datarax adapters: ``Datarax`` (Python iterator "
+            "via ``Pipeline.step``, pays NNX module marshalling per "
+            "batch) and ``Datarax-scan`` (whole-epoch ``Pipeline.scan`` "
+            "under ``nnx.scan``, amortizes marshalling across the "
+            "epoch). Compare both against alternative frameworks to "
+            "isolate iterator overhead from device cost.\n\n"
+            "See ``docs/benchmarks/interpretation.md`` for the full "
+            "category breakdown and worked examples."
         )
 
     def _chart_references(self, chart_dir: str) -> str:

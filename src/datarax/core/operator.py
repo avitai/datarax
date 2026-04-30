@@ -403,7 +403,10 @@ class OperatorModule(DataraxModule):
         # Delegate to shared vmap core
         transformed_data, transformed_states = self._vmap_apply(batch_data, batch_states, stats)
 
-        # Reconstruct batch (preserves batch-level data)
+        # Reconstruct batch (preserves batch-level data, including valid_mask).
+        # Without explicit valid_mask propagation, a partial last batch's
+        # padding mask would reset to all-True here and silently corrupt
+        # mask-weighted loss downstream.
         return Batch.from_parts(
             data=transformed_data,
             states=transformed_states,
@@ -411,6 +414,7 @@ class OperatorModule(DataraxModule):
             batch_metadata=batch._batch_metadata.get_value(),
             batch_state=batch.batch_state.get_value(),
             validate=False,
+            valid_mask=batch.valid_mask[...],
         )
 
     @final
@@ -430,3 +434,22 @@ class OperatorModule(DataraxModule):
 
         # Delegate to apply_batch
         return self.apply_batch(batch)
+
+    def output_spec(self, input_spec: PyTree) -> PyTree:
+        """Return the operator's output spec given an input spec.
+
+        Most operators (normalization, additive noise, simple element-wise
+        transforms) do not change shape; the default returns ``input_spec``
+        unchanged. Shape-changing operators (Resize, Crop, Reshape) MUST
+        override this method.
+
+        Args:
+            input_spec: PyTree of ``jax.ShapeDtypeStruct`` describing the input
+                element (matching the upstream ``DataSourceModule.element_spec()``
+                or another operator's ``output_spec``).
+
+        Returns:
+            PyTree of ``jax.ShapeDtypeStruct`` describing the operator's output.
+            By default, equal to ``input_spec``.
+        """
+        return input_spec

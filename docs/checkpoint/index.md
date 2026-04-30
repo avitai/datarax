@@ -74,4 +74,4 @@ handler.restore("/checkpoints", pipeline, step=3000)
 - [Handlers Guide](handlers.md) - Complete handler documentation
 - [Checkpointing User Guide](../user_guide/checkpointing_guide.md)
 - [Checkpoint Tutorial](../examples/advanced/checkpointing/checkpoint-quickref.md)
-- [DAG Executor](../dag/dag_executor.md) - Pipeline checkpointing
+- DAG Executor - Pipeline checkpointing

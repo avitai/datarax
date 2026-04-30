@@ -95,7 +95,16 @@ all-macos = ["datarax[data,dev,docs,metal,test]"]
 automation = [
   # Local cloud orchestration dependencies (benchmarks/automation/vast_orchestrator.py)
   "skypilot[vast]>=0.11,<0.12",
-  "click<8.3" # SkyPilot 0.11.x launch incompatibility with click>=8.3
+  "click<8.3", # SkyPilot 0.11.x launch incompatibility with click>=8.3
+  # vastai-sdk 1.0+ removed VastAI.api_key_access which sky/adaptors/vast.py
+  # uses for credential validation; pin to the 0.2.x line until SkyPilot
+  # 0.12 upgrades its adapter. Bounce the SkyPilot API daemon
+  # (`sky api stop`) after upgrading these so the new adapter is loaded.
+  "vastai-sdk>=0.2.6,<0.3",
+  # Required by benchmarks.export when the orchestrator's --analyze step
+  # imports benchmarks.cli locally (the remote VM gets matplotlib via the
+  # benchmark extra; the local box only installs `automation`).
+  "matplotlib>=3.8"
 ]
 # benchmark extra is separate — it pulls in 12 Linux-only frameworks (DALI, PyTorch, Ray, etc.)
 # Install explicitly: pip install datarax[benchmark]
@@ -107,8 +116,9 @@ benchmark = [
   # Tier 2: High-performance leaders
   "nvidia-dali-cuda120>=1.0; sys_platform == 'linux'", # NVIDIA DALI — GPU-native data loading + augmentation (Linux/CUDA only)
   "spdl>=0.1", # Meta SPDL — thread-based data loading
-  "torch>=2.0", # PyTorch DataLoader baseline
-  "torchvision>=0.15", # torchvision transforms + batch JPEG decode
+  "torch>=2.0,<2.11", # PyTorch DataLoader baseline (<2.11 for CUDA 12 wheels; 2.11+ pulls libcudart.so.13)
+  "torchvision>=0.15,<0.26", # torchvision transforms + batch JPEG decode (paired with torch <2.11)
+  "torchaudio>=2.0,<2.11", # paired with torch (avoid the 2.11 CUDA-13 transitive dep)
   # Tier 2: Cloud/streaming
   "mosaicml-streaming>=0.7", # MosaicML StreamingDataset — MDS format
   "webdataset>=0.2", # WebDataset — TAR-based streaming
@@ -116,6 +126,7 @@ benchmark = [
   "litdata>=0.2", # Lightning LitData — cloud streaming
   "ray[data]>=2.9", # Ray Data — distributed actor-based
   "datasets>=2.21", # Hugging Face Datasets (>=2.21 for pyarrow 15+ compat)
+  "pyarrow>=21", # >=21 for pa.json_ (datasets 4+) and macOS-14 arm64 wheel stability
   "deeplake>=4.0", # Deep Lake — AI database
   # Benchmark infrastructure
   "matplotlib>=3.8", # Plotting for benchmark reports
@@ -136,9 +147,13 @@ data = [
   "importlib_resources>=5.0", # Backport required by grain/etils on some Python versions
   "tensorflow-datasets>=4.9.2", # For TFDS integration
   "datasets>=2.21", # For HuggingFace datasets (>=2.21 for pyarrow 15+ compat)
+  "pyarrow>=21", # >=21 for pa.json_ (datasets 4+) and macOS-14 arm64 wheel stability
   "pillow>=10.0.0", # For image processing
   "soundfile>=0.12.1", # For audio processing
-  "librosa>=0.10.0" # For advanced audio processing
+  "librosa>=0.10.0", # For advanced audio processing
+  "torch>=2.0,<2.11", # Capped <2.11 — 2.11 wheels link against libcudart.so.13 (CUDA 13)
+  "torchaudio>=2.0,<2.11", # Pulled in by torchcrepe; same CUDA-13 cap as torch
+  "torchcrepe>=0.0.24" # CREPE pitch detection weights for audio.f0_operator
 ]
 dev = [
   # calibrax: install via `uv pip install "calibrax[wandb,stats] @ git+https://github.com/avitai/calibrax.git"`
@@ -220,7 +235,10 @@ test = [
   "pytest-cov>=6.1.1",
   "pytest-env>=1.0.1",
   "pytest-timeout>=2.1",
-  "pytest-xdist>=3.6"
+  "pytest-xdist>=3.6",
+  # Optional comparison/benchmark dependencies that are CPU-compatible.
+  # spdl: Linux-only; comparison adapter for memory-efficiency benchmarks.
+  "spdl>=0.1; sys_platform == 'linux'"
 ]
 
 [project.scripts]

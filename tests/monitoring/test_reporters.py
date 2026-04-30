@@ -10,15 +10,10 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
-import flax.nnx as nnx
-import numpy as np
 import pytest
 
 from datarax.monitoring.metrics import MetricRecord
-from datarax.monitoring.pipeline import MonitoredPipeline
 from datarax.monitoring.reporters import ConsoleReporter, FileReporter
-from datarax.sources import MemorySource
-from datarax.sources.memory_source import MemorySourceConfig
 
 
 class TestConsoleReporter:
@@ -82,42 +77,6 @@ class TestConsoleReporter:
         assert "throughput" in report
 
 
-def test_file_reporter():
-    """Test the FileReporter."""
-    # Create test data
-    data = {"value": np.arange(50)}
-    source = MemorySource(MemorySourceConfig(), data, rngs=nnx.Rngs(0))
-
-    # Create a monitored pipeline
-    pipeline = MonitoredPipeline(source).batch(1)
-
-    # Create a temporary file for the reporter
-    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-        temp_filename = temp_file.name
-
-        try:
-            # Create and register the file reporter
-            reporter = FileReporter(
-                filename=temp_filename,
-                report_interval=0.0,  # Report immediately
-            )
-            pipeline.callbacks.register(reporter)
-
-            # Process all data
-            list(pipeline)
-
-            # Verify the report file was created and contains data
-            with Path(temp_filename).open() as f:
-                content = f.read()
-                assert "Datarax Metrics Report" in content
-                assert "pipeline" in content
-
-        finally:
-            # Clean up
-            if Path(temp_filename).exists():
-                Path(temp_filename).unlink()
-
-
 def test_file_reporter_context_manager():
     """Test that FileReporter works as a context manager and closes file on exit."""
     with tempfile.NamedTemporaryFile(delete=False) as tf:
@@ -143,33 +102,3 @@ def test_file_reporter_context_manager_on_exception():
         assert reporter.file.closed
     finally:
         Path(path).unlink()
-
-
-def test_end_to_end_monitoring_with_console_reporter():
-    """Test end-to-end monitoring with console reporting."""
-    # Create test data
-    data = {"value": np.arange(100)}
-    source = MemorySource(MemorySourceConfig(), data, rngs=nnx.Rngs(0))
-
-    # Create a monitored pipeline
-    pipeline = MonitoredPipeline(source).batch(1)
-
-    # Create a string buffer to capture console output
-    import io
-
-    output = io.StringIO()
-
-    # Create and register the console reporter
-    reporter = ConsoleReporter(
-        report_interval=0.0,  # Report immediately
-        output=output,
-    )
-    pipeline.callbacks.register(reporter)
-
-    # Process data directly from the monitored pipeline
-    list(pipeline)
-
-    # Verify that the console report was generated
-    console_output = output.getvalue()
-    assert "Datarax Metrics Report" in console_output
-    assert "pipeline" in console_output

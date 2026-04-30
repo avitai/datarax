@@ -30,7 +30,7 @@ and iterate through batched data - the core workflow for any Datarax pipeline.
 By the end of this example, you will be able to:
 
 1. Create a `MemorySource` from dictionary data
-2. Build a pipeline using the DAG-based `build_source_pipeline()` API
+2. Build a pipeline with the `Pipeline` constructor (source + stages list)
 3. Apply deterministic and stochastic operators to data
 4. Iterate through batched pipeline output
 """
@@ -52,9 +52,8 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -144,16 +143,21 @@ augmenter = ElementOperator(augmenter_config, fn=apply_augmentation, rngs=nnx.Rn
 """
 ## Step 4: Build Pipeline
 
-Chain the source and operators using the DAG-based API.
-`build_source_pipeline()` creates a batched pipeline, then `.add()` appends operators.
+`Pipeline` takes the source, an ordered list of stages, the batch
+size, and `nnx.Rngs` for the source's own stochasticity. Each stage
+is any `nnx.Module` whose `__call__(batch) -> batch` transforms the
+batch — `OperatorModule` subclasses (like `ElementOperator`) satisfy
+this contract directly, so they drop into `stages=[...]` without any
+extra wrapper.
 """
 
 # %%
-# Build the pipeline DAG
-pipeline = (
-    build_source_pipeline(source, batch_size=32)
-    .add(OperatorNode(normalizer))
-    .add(OperatorNode(augmenter))
+# Build the pipeline
+pipeline = Pipeline(
+    source=source,
+    stages=[normalizer, augmenter],
+    batch_size=32,
+    rngs=nnx.Rngs(0),
 )
 
 print("Pipeline created with batch_size=32")
@@ -240,10 +244,11 @@ def main():
     )
 
     # Build and run pipeline
-    pipeline = (
-        build_source_pipeline(source, batch_size=32)
-        .add(OperatorNode(normalizer))
-        .add(OperatorNode(augmenter))
+    pipeline = Pipeline(
+        source=source,
+        stages=[normalizer, augmenter],
+        batch_size=32,
+        rngs=nnx.Rngs(0),
     )
 
     total_samples = 0

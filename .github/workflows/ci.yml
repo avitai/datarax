@@ -287,8 +287,9 @@ jobs:
           # Explicitly run on CPU for GitHub workflow
           export JAX_PLATFORMS="cpu"
           uv run pytest \
-            tests/integration/test_end_to_end_pipeline.py \
-            tests/benchmarks/test_data_sources.py::test_end_to_end_pipeline_benchmark \
+            tests/pipeline/test_pipeline_integration.py \
+            tests/pipeline/test_pipeline_scan.py \
+            tests/pipeline/test_pipeline_dag.py \
             -v --device=cpu --cov-fail-under=0
 
       - name: Prepare coverage data

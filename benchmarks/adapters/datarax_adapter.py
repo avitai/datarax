@@ -1,10 +1,10 @@
 """Datarax adapter -- reference implementation for the benchmark framework.
 
-Wraps Datarax's public API (build_source_pipeline, MemorySource, DAGExecutor)
+Wraps Datarax's public API (Pipeline, MemorySource)
 using the PipelineAdapter lifecycle: setup -> warmup -> iterate -> teardown.
 
 Supports all 25 scenarios with transform chaining via
-OperatorNode and topology dispatch for DAG-based scenarios. External
+Pipeline composition for sequential and DAG scenarios. External
 backends (TFDS, HuggingFace) are created via config.extra["backend"].
 
 Design ref: Section 7.2 of the benchmark report.
@@ -23,7 +23,7 @@ from flax import nnx
 from benchmarks.adapters import register
 from benchmarks.adapters._utils import cast_to_float32, normalize_uint8
 from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
-from datarax import build_source_pipeline, OperatorNode
+from datarax import Pipeline
 from datarax.core.config import ElementOperatorConfig
 from datarax.core.element_batch import Element
 from datarax.operators.element_operator import ElementOperator
@@ -330,7 +330,7 @@ class DataraxAdapter(PipelineAdapter):
     """PipelineAdapter implementation for Datarax.
 
     Supports all 25 benchmark scenarios. For standard sequential pipelines,
-    chains OperatorNode wrappers for each transform in config.transforms.
+    composes stages from each transform in config.transforms.
     """
 
     def __init__(self) -> None:
@@ -437,25 +437,26 @@ class DataraxAdapter(PipelineAdapter):
         rngs = nnx.Rngs(config.seed, augment=config.seed + 1)
 
         source = self._create_source(config, data, rngs)
-        prefetch_size = int(config.extra.get("prefetch_size", 2)) if config.extra else 2
-        pipeline = build_source_pipeline(
-            source,
-            batch_size=config.batch_size,
-            prefetch_size=prefetch_size,
+        del config  # prefetch_size is no longer wired (Pipeline auto-batches)
+
+        stages = [
+            self._create_operator(name, rngs)
+            for name in self._config.transforms
+            if name in _ALL_TRANSFORM_FNS
+        ]
+        self._pipeline = Pipeline(
+            source=source,
+            stages=stages,
+            batch_size=self._config.batch_size,
+            rngs=nnx.Rngs(self._config.seed),
         )
-
-        for transform_name in config.transforms:
-            if transform_name in _ALL_TRANSFORM_FNS:
-                op = self._create_operator(transform_name, rngs)
-                pipeline = pipeline >> OperatorNode(op)
-
-        self._pipeline = pipeline
 
     def _iterate_batches(self) -> Iterator[Any]:
         yield from self._pipeline
 
     def _materialize_batch(self, batch: Any) -> list[Any]:
-        data = batch.get_data()  # Works with both Batch and BatchView
+        # Pipeline yields plain dicts; legacy Batch/BatchView yields a wrapper.
+        data = batch.get_data() if hasattr(batch, "get_data") else batch
         block_until_ready_tree(data)
         return jax.tree.leaves(data)
 

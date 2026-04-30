@@ -27,7 +27,7 @@ augmentation, batch mixing, and metrics collection with a Flax NNX model.
 | PyTorch | Datarax |
 |---------|---------|
 | `torchvision.datasets.CIFAR10` | `TFDSEagerSource("cifar10")` |
-| `transforms.Compose([...])` | Chained `OperatorNode` instances |
+| `transforms.Compose([...])` | Operators in `stages=[...]` |
 | `torch.nn.Module` | `nnx.Module` |
 | `torch.optim.Adam` | `optax.adam()` |
 | Training loop with `loss.backward()` | `nnx.value_and_grad()` |
@@ -147,10 +147,7 @@ def create_train_pipeline(batch_size=128, mixup_alpha=0.2):
     )
 
     return (
-        build_source_pipeline(source, batch_size=batch_size)
-        .add(OperatorNode(preprocessor))
-        .add(OperatorNode(brightness))
-        .add(OperatorNode(mixup))
+        Pipeline(source=source, stages=[preprocessor, brightness, mixup], batch_size=batch_size, rngs=nnx.Rngs(0))
     )
 ```
 

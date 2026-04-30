@@ -34,6 +34,35 @@ elif IS_LINUX:
     os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 
 
+def _configure_test_jax_multi_device_emulation() -> None:
+    """Enable JAX CPU multi-device emulation for tests that need it.
+
+    Multi-device tests (data-parallel sharding, mesh transforms) call
+    ``jax.device_count()`` at collection time and skip when fewer than 2
+    devices exist. On a single-GPU or CPU host we get one device by
+    default. JAX exposes ``--xla_force_host_platform_device_count=N`` to
+    fan out a single CPU into N logical devices for emulation.
+
+    The flag only affects the CPU backend, so when emulation is active
+    we also force ``JAX_PLATFORMS=cpu`` (overriding any earlier CUDA
+    selection) — otherwise CUDA would be picked first and expose its
+    actual one-or-zero device count.
+
+    Tests can override the device count via ``DATARAX_TEST_DEVICE_COUNT``
+    or disable emulation entirely with ``DATARAX_TEST_DEVICE_COUNT=0``.
+    """
+    requested = os.environ.get("DATARAX_TEST_DEVICE_COUNT", "8")
+    if requested == "0":
+        return
+    flag = f"--xla_force_host_platform_device_count={requested}"
+    existing = os.environ.get("XLA_FLAGS", "")
+    if "xla_force_host_platform_device_count" not in existing:
+        os.environ["XLA_FLAGS"] = (f"{existing} {flag}").strip()
+    # Multi-device emulation lives on the CPU backend; force CPU so it
+    # is exposed even when a CUDA plugin is available.
+    os.environ["JAX_PLATFORMS"] = "cpu"
+
+
 def _configure_test_jax_platforms() -> None:
     """Set a safe JAX backend default for test runs.
 
@@ -72,6 +101,7 @@ def _module_exists(module_name: str) -> bool:
 
 
 _configure_test_jax_platforms()
+_configure_test_jax_multi_device_emulation()
 
 import jax
 import jax.numpy as jnp

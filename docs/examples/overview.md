@@ -98,9 +98,9 @@ Production-ready patterns and optimization techniques.
 | [Checkpoint Quick Reference](advanced/checkpointing/checkpoint-quickref.md) | Intermediate | Save and restore pipeline state |
 | [Resumable Training Guide](advanced/checkpointing/resumable-training-guide.md) | Advanced | Full checkpointing workflow |
 | [DAG Fundamentals Guide](advanced/dag/dag-fundamentals-guide.md) | Advanced | Deep dive into DAG pipeline architecture |
+| [Branching DAG Cookbook](advanced/dag/branching-dag-cookbook.md) | Intermediate | Branch / Merge / Parallel recipes via `Pipeline.from_dag` |
 | [Sharding Quick Reference](advanced/distributed/sharding-quickref.md) | Intermediate | Multi-device data distribution |
 | [Sharding Guide](advanced/distributed/sharding-guide.md) | Advanced | Advanced distributed training patterns |
-| [Monitoring Quick Reference](advanced/monitoring/monitoring-quickref.md) | Beginner | Pipeline metrics and reporting |
 | [Interleaved Tutorial](advanced/multi_source/interleaved-tutorial.md) | Intermediate | Multiple data source mixing |
 | [Optimization Guide](advanced/performance/optimization-guide.md) | Advanced | Performance tuning and profiling |
 | [Sampling Tutorial](advanced/sampling/sampling-tutorial.md) | Intermediate | Sequential, shuffle, range, and epoch-aware samplers |
@@ -142,9 +142,9 @@ The examples cover all major Datarax features:
 |--------------|----------|----------|
 | Data Sources | Memory, HuggingFace, TFDS, ArrayRecord | Complete |
 | Operators | Element, Batch, Probabilistic, Selector, Patch Dropout | Complete |
-| Composition | All 11 strategies (Sequential, Parallel, Ensemble, Branching) | Complete |
+| Composition | Linear stages and branching DAGs via `Pipeline` and `Pipeline.from_dag` | Complete |
 | Samplers | Sequential, Shuffle, Range, EpochAware | Complete |
-| DAG Pipeline | Nodes, Caching, Control Flow, Composition Operators | Complete |
+| DAG Pipeline | Linear `stages=[...]` and `Pipeline.from_dag` topologies | Complete |
 | Distributed | Sharding, Multi-device | Complete |
 | Checkpointing | State save/restore, Resumable training | Complete |
 | Monitoring | Metrics, Reporters, Callbacks | Complete |

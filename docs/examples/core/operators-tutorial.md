@@ -126,10 +126,10 @@ normalizer = ElementOperator(
 )
 
 # Test it
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
+from datarax.pipeline import Pipeline
+from datarax.pipeline import Pipeline
 
-pipeline = build_source_pipeline(source, batch_size=16).add(OperatorNode(normalizer))
+pipeline = Pipeline(source=source, stages=[normalizer], batch_size=16, rngs=nnx.Rngs(0))
 batch = next(iter(pipeline))
 
 print(f"Range: [{batch['image'].min():.3f}, {batch['image'].max():.3f}]")
@@ -284,7 +284,7 @@ field_filter = ElementOperator(
 
 # Test field filtering
 source2 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(1))
-pipeline = build_source_pipeline(source2, batch_size=8).add(OperatorNode(field_filter))
+pipeline = Pipeline(source=source2, stages=[field_filter], batch_size=8, rngs=nnx.Rngs(0))
 batch = next(iter(pipeline))
 
 print(f"Image present: {batch['image'].shape}")
@@ -353,7 +353,7 @@ Test the composite operator:
 
 ```python
 source3 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(2))
-pipeline = build_source_pipeline(source3, batch_size=16).add(OperatorNode(sequential_augment))
+pipeline = Pipeline(source=source3, stages=[sequential_augment], batch_size=16, rngs=nnx.Rngs(0))
 batch = next(iter(pipeline))
 
 print(f"Image shape: {batch['image'].shape}")
@@ -378,7 +378,7 @@ flowchart LR
     end
 
     subgraph Pipeline["Augmentation Pipeline"]
-        FS[build_source_pipeline<br/>batch_size=32]
+        FS[Pipeline<br/>batch_size=32]
         N[Normalizer<br/>deterministic]
         F[Flipper<br/>stochastic]
         B[Brightness<br/>stochastic]
@@ -418,10 +418,7 @@ brightness = BrightnessOperator(
 # Build pipeline with chained operators
 source4 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(3))
 full_pipeline = (
-    build_source_pipeline(source4, batch_size=32)
-    .add(OperatorNode(normalizer))
-    .add(OperatorNode(flipper))
-    .add(OperatorNode(brightness))
+    Pipeline(source=source4, stages=[normalizer, flipper, brightness], batch_size=32, rngs=nnx.Rngs(0))
 )
 
 print("Full augmentation pipeline:")

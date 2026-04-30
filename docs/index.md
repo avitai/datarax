@@ -46,7 +46,7 @@ Datarax's differentiable pipeline architecture enables optimization paradigms th
 
     ---
 
-    End-to-end differentiable image processing pipeline using the DAG `>>` operator
+    End-to-end differentiable image processing pipeline using the DAG the `stages=[...]` argument
 
     [:octicons-arrow-right-24: Advanced Guide](examples/advanced/differentiable/learned-isp-guide.md)
 
@@ -103,8 +103,8 @@ Here's a simple example of using Datarax's DAG-based architecture:
 import jax
 import jax.numpy as jnp
 from flax import nnx
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
+from datarax.pipeline import Pipeline
+from datarax.pipeline import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import MemorySource, MemorySourceConfig
 
@@ -125,9 +125,7 @@ normalizer = ElementOperator(
 
 # 4. Build pipeline
 pipeline = (
-    build_source_pipeline(source, batch_size=32)
-    >> OperatorNode(normalizer)
-)
+    Pipeline(source=source, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0)))
 
 # 5. Run pipeline
 for batch in pipeline:

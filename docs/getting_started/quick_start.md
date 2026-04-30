@@ -7,29 +7,30 @@ This guide will help you get started with Datarax by walking through the core co
 A minimal Datarax pipeline consists of a **Data Source** and a **Pipeline Definition**.
 
 ```python
-import jax.numpy as jnp
-from datarax import build_source_pipeline
+import numpy as np
+from flax import nnx
+
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
-# 1. Prepare Data
-# Data is typically a list of dictionaries (elements)
-data = [{"image": jnp.ones((28, 28, 3)), "label": i % 10} for i in range(100)]
+# 1. Prepare data — a dict of arrays sharing the leading sample dimension.
+data = {
+    "image": np.ones((100, 28, 28, 3), dtype=np.float32),
+    "label": (np.arange(100) % 10).astype(np.int32),
+}
 
-# 2. Create Source
-# Sources are StructuralModules that handle data ingest
-# We must provide a configuration object
+# 2. Create the source.
 config = MemorySourceConfig(shuffle=False)
-source = MemorySource(config, data)
+source = MemorySource(config, data=data, rngs=nnx.Rngs(0))
 
-# 3. Build Pipeline
-# build_source_pipeline creates a pipeline starting with a DataSourceNode and a BatchNode
-pipeline = build_source_pipeline(source, batch_size=10)
+# 3. Build the pipeline. Pipeline auto-batches via batch_size.
+pipeline = Pipeline(source=source, stages=[], batch_size=10, rngs=nnx.Rngs(0))
 
-# 4. Iterate
-# The pipeline yields Batches (which behave like dicts of arrays)
+# 4. Iterate. Pipeline yields plain dicts of jax.Array.
 for i, batch in enumerate(pipeline):
-    print(f"Batch {i}: shape = {batch['image'].shape}")
-    if i >= 2: break
+    print(f"Batch {i}: image shape = {batch['image'].shape}")
+    if i >= 2:
+        break
 ```
 
 ## 2. Deterministic Operators & Immutability
@@ -40,25 +41,29 @@ We use the `element.update_data()` method for clean, immutable updates.
 
 ```python
 from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.dag.nodes import OperatorNode
+from datarax.pipeline import Pipeline
 
-def normalize(element, key):
-    """Normalize image to [0, 1]. Key is ignored for deterministic ops."""
 
-    # element.data is a dict-like PyTree of the actual values
+def normalize(element, key=None):
+    """Normalize image to [0, 1]. Key is unused for deterministic ops."""
+    del key
     img = element.data["image"]
-
     # Return a NEW element with updated data
     return element.update_data({"image": img / 255.0})
 
-# stochastic=False indicates this operator doesn't need a random key
-config = ElementOperatorConfig(stochastic=False)
-normalize_op = ElementOperator(config, fn=normalize)
 
-# Add to pipeline using the >> operator
-pipeline = (
-    build_source_pipeline(source, batch_size=10)
-    >> OperatorNode(normalize_op)
+# stochastic=False indicates this operator doesn't need a random key
+normalize_op = ElementOperator(
+    ElementOperatorConfig(stochastic=False),
+    fn=normalize,
+    rngs=nnx.Rngs(0),
+)
+
+pipeline = Pipeline(
+    source=source,
+    stages=[normalize_op],
+    batch_size=10,
+    rngs=nnx.Rngs(0),
 )
 ```
 
@@ -96,118 +101,109 @@ def random_augment(element, key):
     return element.update_data({"image": img})
 
 # Configure as stochastic and provide a stream name
-config = ElementOperatorConfig(stochastic=True, stream_name="augment")
-rngs = nnx.Rngs(augment=42)  # Seed the stream
+augment_op = ElementOperator(
+    ElementOperatorConfig(stochastic=True, stream_name="augment"),
+    fn=random_augment,
+    rngs=nnx.Rngs(augment=42),
+)
 
-augment_op = ElementOperator(config, fn=random_augment, rngs=rngs)
-
-pipeline = (
-    build_source_pipeline(source, batch_size=10)
-    >> OperatorNode(normalize_op) # Normalize first
-    >> OperatorNode(augment_op)   # Then augment
+pipeline = Pipeline(
+    source=source,
+    stages=[normalize_op, augment_op],
+    batch_size=10,
+    rngs=nnx.Rngs(0),
 )
 ```
 
-## 4. Advanced Graph Topologies
+## 4. Branching DAGs with `Pipeline.from_dag`
 
-Datarax pipelines are DAGs (Directed Acyclic Graphs). You aren't limited to sequential chains; you can split, process in parallel, and merge.
-
-### Parallel Execution & Merging
-
-Use `Parallel` to run multiple paths and `Merge` to combine them.
+Sequential ``stages=[...]`` covers most pipelines. When you need a
+branching topology — one stage feeding two downstream stages, or a
+merge that consumes both — switch to ``Pipeline.from_dag``.
 
 ```python
-from datarax.dag.nodes import Parallel, Merge
+import jax.numpy as jnp
 
-# Example: Create an original and an inverted version of the image
-def invert(element, key):
+
+def invert(element, key=None):
+    del key
     return element.update_data({"image": 1.0 - element.data["image"]})
-invert_op = ElementOperator(ElementOperatorConfig(stochastic=False), fn=invert)
 
-def brighten(element, key):
-    return element.update_data({"image": jnp.minimum(element.data["image"] + 0.2, 1.0)})
-brighten_op = ElementOperator(ElementOperatorConfig(stochastic=False), fn=brighten)
 
-# Graph:
-#         /-> Normalize ->\
-# Source -                 -> Merge (Stack)
-#         \-> Invert    ->/
-
-pipeline_nodes = (
-    build_source_pipeline(source, batch_size=10)
-    >> Parallel([
-        OperatorNode(normalize_op),
-        OperatorNode(invert_op)
-    ])
-    # Stack results along a new axis
-    >> Merge(strategy="stack", axis=1)
+invert_op = ElementOperator(
+    ElementOperatorConfig(stochastic=False), fn=invert, rngs=nnx.Rngs(0)
 )
-```
 
-### Conditional Branching
 
-Use `Branch` to route data based on a condition function.
+class StackBranches(nnx.Module):
+    """Merge the normalized and inverted streams along a new axis."""
 
-```python
-from datarax.dag.nodes import Branch
+    def __call__(self, normalized, inverted):
+        return {
+            "image": jnp.stack([normalized["image"], inverted["image"]], axis=1),
+            "label": normalized["label"],
+        }
 
-def is_dark_image(element):
-    """Predicate function returning a boolean scalar."""
-    return jnp.mean(element.data["image"]) < 0.3
 
-# Graph: If dark -> Brighten, Else -> Identity
-pipeline_nodes = (
-    build_source_pipeline(source, batch_size=10)
-    >> Branch(
-        condition=is_dark_image,
-        true_path=OperatorNode(brighten_op), # Assume brighten_op exists
-        false_path=OperatorNode(normalize_op)
-    )
+pipeline_dag = Pipeline.from_dag(
+    source=source,
+    nodes={"normalize": normalize_op, "invert": invert_op, "merge": StackBranches()},
+    edges={"normalize": [], "invert": [], "merge": ["normalize", "invert"]},
+    sink="merge",
+    batch_size=10,
+    rngs=nnx.Rngs(0),
 )
 ```
 
 ## 5. Complete Example
 
-Putting it all together into a robust pipeline:
+Putting it all together — data, source, two stages, iteration:
 
 ```python
-from datarax import build_source_pipeline
-from datarax.sources import MemorySource, MemorySourceConfig
-from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.dag.nodes import OperatorNode
-import flax.nnx as nnx
-import jax.numpy as jnp
+import numpy as np
+from flax import nnx
 
-# Define operators
-def normalize(element, key):
-    """Normalize image to [0, 1]."""
+from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.pipeline import Pipeline
+from datarax.sources import MemorySource, MemorySourceConfig
+
+
+def normalize(element, key=None):
+    del key
     img = element.data["image"]
     return element.update_data({"image": img / 255.0})
 
-def augment(element, key):
-    """Simple passthrough augmentation."""
+
+def passthrough(element, key=None):
+    del key
     return element
 
-normalize_op = ElementOperator(ElementOperatorConfig(stochastic=False), fn=normalize)
-augment_op = ElementOperator(ElementOperatorConfig(stochastic=False), fn=augment)
 
-# Setup data
-data = [{"image": jnp.ones((28, 28, 3)) * 128, "label": i % 10} for i in range(100)]
-config = MemorySourceConfig(shuffle=False)
-source = MemorySource(config, data)
+normalize_op = ElementOperator(
+    ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0)
+)
+augment_op = ElementOperator(
+    ElementOperatorConfig(stochastic=False), fn=passthrough, rngs=nnx.Rngs(0)
+)
 
-# Pipeline using the >> operator
-pipeline = (
-    build_source_pipeline(source, batch_size=32)
-    >> OperatorNode(normalize_op)
-    >> OperatorNode(augment_op)
+data = {
+    "image": (np.ones((100, 28, 28, 3), dtype=np.float32) * 128.0),
+    "label": (np.arange(100) % 10).astype(np.int32),
+}
+source = MemorySource(MemorySourceConfig(shuffle=False), data=data, rngs=nnx.Rngs(0))
+
+pipeline = Pipeline(
+    source=source,
+    stages=[normalize_op, augment_op],
+    batch_size=32,
+    rngs=nnx.Rngs(0),
 )
 
 print("Pipeline configured. Starting iteration...")
 for i, batch in enumerate(pipeline):
-    if i >= 2:  # Only process a few batches for demo
+    if i >= 2:
         break
-    print(f"Batch {i}: shape = {batch['image'].shape}")
+    print(f"Batch {i}: image shape = {batch['image'].shape}")
 ```
 
 ## Next Steps

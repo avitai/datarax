@@ -156,8 +156,8 @@ batcher = SimpleBatcher(
 
 Datarax pipelines are constructed as a Directed Acyclic Graph (DAG) of these modules, wrapped in `Node` containers.
 
--   **`OperatorNode`**: Wraps an `OperatorModule`.
--   **`DataSourceNode`**: Wraps a `DataSourceModule`.
--   **`BatchNode`**: Wraps a `BatcherModule`.
+-   **Stage**: Any `nnx.Module` placed in `Pipeline(stages=[...])`. `OperatorModule` subclasses get an optimized fast path; plain `nnx.Module`s receive the dict batch directly.
+-   **Source**: A `DataSourceModule` passed to `Pipeline(source=...)`. No wrapper class needed.
+-   **Batching**: Configured via the `batch_size` argument on `Pipeline(...)`. No wrapper node.
 
 Data flows through these nodes, with `DataraxModule` ensuring that state is correctly propagated and managed at every step.

@@ -7,7 +7,7 @@ type = layers
 layers =
     datarax.cli
     datarax.monitoring
-    datarax.dag
+    datarax.pipeline
     datarax.operators
     datarax.sources
     datarax.distributed

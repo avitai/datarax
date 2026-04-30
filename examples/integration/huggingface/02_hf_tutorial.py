@@ -54,14 +54,13 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.composite_operator import (
     CompositeOperatorConfig,
     CompositeOperatorModule,
     CompositionStrategy,
 )
+from datarax.pipeline import Pipeline
 from datarax.sources import HFEagerConfig, HFEagerSource
 
 
@@ -121,9 +120,9 @@ filtered_config = HFEagerConfig(
 filtered_source = HFEagerSource(filtered_config, rngs=nnx.Rngs(1))
 
 # Check what fields are available
-pipeline = build_source_pipeline(filtered_source, batch_size=1)
+pipeline = Pipeline(source=filtered_source, stages=[], batch_size=1, rngs=nnx.Rngs(0))
 batch = next(iter(pipeline))
-data = batch.get_data()
+data = batch
 
 print("Filtered fields:")
 for key in data.keys():
@@ -287,8 +286,8 @@ train_config = HFEagerConfig(
 train_source = HFEagerSource(train_config, rngs=nnx.Rngs(0))
 
 # Chain: Source -> Augmentation -> Output
-training_pipeline = build_source_pipeline(train_source, batch_size=64).add(
-    OperatorNode(augmentation)
+training_pipeline = Pipeline(
+    source=train_source, stages=[augmentation], batch_size=64, rngs=nnx.Rngs(0)
 )
 
 print("Training pipeline:")
@@ -423,7 +422,7 @@ def main():
         rngs=nnx.Rngs(0),
     )
 
-    pipeline = build_source_pipeline(source, batch_size=64).add(OperatorNode(normalizer))
+    pipeline = Pipeline(source=source, stages=[normalizer], batch_size=64, rngs=nnx.Rngs(0))
 
     # Process
     total = 0

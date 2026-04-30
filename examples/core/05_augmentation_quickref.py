@@ -52,8 +52,6 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.modality.image import (
     BrightnessOperator,
@@ -65,6 +63,7 @@ from datarax.operators.modality.image import (
     RotationOperator,
     RotationOperatorConfig,
 )
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -198,7 +197,7 @@ print("  - Effect: Simulates sensor noise")
 
 # %% [markdown]
 """
-## Step 2: Chain Operators with >>
+## Step 2: Chain Operators in Pipeline.stages
 
 Use the `>>` operator for fluent pipeline composition.
 Operators are applied left-to-right.
@@ -240,12 +239,9 @@ noise = NoiseOperator(
     rngs=nnx.Rngs(noise=30),
 )
 
-# Chain with >> operator
-augmented_pipeline = (
-    build_source_pipeline(source2, batch_size=16)
-    >> OperatorNode(brightness)
-    >> OperatorNode(contrast)
-    >> OperatorNode(noise)
+# Chain stages directly in the Pipeline constructor
+augmented_pipeline = Pipeline(
+    source=source2, stages=[brightness, contrast, noise], batch_size=16, rngs=nnx.Rngs(0)
 )
 
 print("Augmentation Pipeline:")
@@ -316,10 +312,8 @@ brightness2 = BrightnessOperator(
     rngs=nnx.Rngs(brightness=10),
 )
 
-clipped_pipeline = (
-    build_source_pipeline(source3, batch_size=16)
-    >> OperatorNode(brightness2)
-    >> OperatorNode(clipper)
+clipped_pipeline = Pipeline(
+    source=source3, stages=[brightness2, clipper], batch_size=16, rngs=nnx.Rngs(0)
 )
 
 # Verify clipping
@@ -428,11 +422,8 @@ def main():
     )
 
     # Build pipeline
-    pipeline = (
-        build_source_pipeline(source, batch_size=16)
-        >> OperatorNode(brightness)
-        >> OperatorNode(contrast)
-        >> OperatorNode(noise)
+    pipeline = Pipeline(
+        source=source, stages=[brightness, contrast, noise], batch_size=16, rngs=nnx.Rngs(0)
     )
 
     # Process all batches

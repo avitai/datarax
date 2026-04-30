@@ -6,7 +6,7 @@ Split data flow into multiple processing branches.
 
 - [Operators Overview](index.md) - All operator types
 - [Merging Strategy](merging.md) - Merge branches
-- [Control Flow](../dag/control_flow.md) - DAG branch nodes
+- Control Flow - DAG branch nodes
 - [Parallel Strategy](parallel.md) - Parallel execution
 
 ---

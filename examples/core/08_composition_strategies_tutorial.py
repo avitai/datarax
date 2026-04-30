@@ -73,8 +73,6 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.composite_operator import (
     CompositeOperatorConfig,
@@ -89,6 +87,7 @@ from datarax.operators.modality.image import (
     NoiseOperator,
     NoiseOperatorConfig,
 )
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -116,9 +115,9 @@ source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
 print(f"Dataset: {num_samples} samples, shape {data['image'].shape}")
 
 
-def example_pipeline(source, batch_size: int):
+def example_pipeline(source, batch_size: int, stages=()):
     """Build tutorial pipelines without background prefetch threads."""
-    return build_source_pipeline(source, batch_size=batch_size, prefetch_size=0)
+    return Pipeline(source=source, stages=list(stages), batch_size=batch_size, rngs=nnx.Rngs(0))
 
 
 # %%
@@ -195,7 +194,7 @@ sequential_composite = CompositeOperatorModule(
 
 # Test it
 source1 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(10))
-pipeline = example_pipeline(source1, batch_size=16).add(OperatorNode(sequential_composite))
+pipeline = example_pipeline(source1, batch_size=16, stages=[sequential_composite])
 batch = next(iter(pipeline))
 
 print("SEQUENTIAL Strategy:")
@@ -271,7 +270,7 @@ parallel_mean = CompositeOperatorModule(
 )
 
 source2 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(20))
-pipeline = example_pipeline(source2, batch_size=16).add(OperatorNode(parallel_mean))
+pipeline = example_pipeline(source2, batch_size=16, stages=[parallel_mean])
 batch = next(iter(pipeline))
 
 print("PARALLEL Strategy (merge='mean'):")
@@ -291,7 +290,7 @@ parallel_dict = CompositeOperatorModule(
 )
 
 source3 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(30))
-pipeline = example_pipeline(source3, batch_size=8).add(OperatorNode(parallel_dict))
+pipeline = example_pipeline(source3, batch_size=8, stages=[parallel_dict])
 batch = next(iter(pipeline))
 
 print()
@@ -324,7 +323,7 @@ weighted_parallel = CompositeOperatorModule(
 )
 
 source4 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(40))
-pipeline = example_pipeline(source4, batch_size=16).add(OperatorNode(weighted_parallel))
+pipeline = example_pipeline(source4, batch_size=16, stages=[weighted_parallel])
 batch = next(iter(pipeline))
 
 print("WEIGHTED_PARALLEL Strategy:")
@@ -366,7 +365,7 @@ ensemble_mean = CompositeOperatorModule(
 )
 
 source5 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(50))
-pipeline = example_pipeline(source5, batch_size=16).add(OperatorNode(ensemble_mean))
+pipeline = example_pipeline(source5, batch_size=16, stages=[ensemble_mean])
 batch = next(iter(pipeline))
 
 print("ENSEMBLE_MEAN Strategy:")
@@ -388,7 +387,7 @@ ensemble_max = CompositeOperatorModule(
 )
 
 source6 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(60))
-pipeline = example_pipeline(source6, batch_size=16).add(OperatorNode(ensemble_max))
+pipeline = example_pipeline(source6, batch_size=16, stages=[ensemble_max])
 batch = next(iter(pipeline))
 
 print()
@@ -447,7 +446,7 @@ branching = CompositeOperatorModule(
 )
 
 source7 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(70))
-pipeline = example_pipeline(source7, batch_size=16).add(OperatorNode(branching))
+pipeline = example_pipeline(source7, batch_size=16, stages=[branching])
 batch = next(iter(pipeline))
 
 print("BRANCHING Strategy:")
@@ -546,7 +545,7 @@ full_pipeline_op = CompositeOperatorModule(
 )
 
 source8 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(90))
-pipeline = example_pipeline(source8, batch_size=32).add(OperatorNode(full_pipeline_op))
+pipeline = example_pipeline(source8, batch_size=32, stages=[full_pipeline_op])
 
 # Process all data
 total_samples = 0
@@ -624,7 +623,7 @@ def main():
         ),
         rngs=nnx.Rngs(0),
     )
-    pipeline = example_pipeline(source, batch_size=16).add(OperatorNode(seq))
+    pipeline = example_pipeline(source, batch_size=16, stages=[seq])
     batch = next(iter(pipeline))
     print(f"   Output shape: {batch['image'].shape}")
 
@@ -642,7 +641,7 @@ def main():
         ),
         rngs=nnx.Rngs(0),
     )
-    pipeline = example_pipeline(source2, batch_size=16).add(OperatorNode(ens))
+    pipeline = example_pipeline(source2, batch_size=16, stages=[ens])
     batch = next(iter(pipeline))
     print(f"   Output range: [{batch['image'].min():.3f}, {batch['image'].max():.3f}]")
 
@@ -662,7 +661,7 @@ def main():
         ),
         rngs=nnx.Rngs(0),
     )
-    pipeline = example_pipeline(source3, batch_size=16).add(OperatorNode(branch))
+    pipeline = example_pipeline(source3, batch_size=16, stages=[branch])
     batch = next(iter(pipeline))
     print(f"   Labels: {batch['label'][:5]}... → routed to different branches")
 

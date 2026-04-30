@@ -201,11 +201,10 @@ nav:
               - Resumable Training: examples/advanced/checkpointing/resumable-training-guide.md
           - DAG Pipelines:
               - Fundamentals Guide: examples/advanced/dag/dag-fundamentals-guide.md
+              - Branching DAG Cookbook: examples/advanced/dag/branching-dag-cookbook.md
           - Distributed:
               - Sharding Quick Reference: examples/advanced/distributed/sharding-quickref.md
               - Sharding Guide: examples/advanced/distributed/sharding-guide.md
-          - Monitoring:
-              - Quick Reference: examples/advanced/monitoring/monitoring-quickref.md
           - Multi-Source:
               - Interleaved Tutorial: examples/advanced/multi_source/interleaved-tutorial.md
           - Performance:
@@ -269,18 +268,7 @@ nav:
       - Control:
           - Overview: control/index.md
           - prefetcher: control/prefetcher.md
-      - Dag:
-          - Overview: dag/index.md
-          - dag_config: dag/dag_config.md
-          - dag_executor: dag/dag_executor.md
-          - Nodes:
-              - base: dag/base.md
-              - caching: dag/caching.md
-              - control_flow: dag/control_flow.md
-              - data_source: dag/data_source.md
-              - field_operators: dag/field_operators.md
-              - loaders: dag/loaders.md
-              - rebatch: dag/rebatch.md
+      - DAG: dag/index.md
       - Distributed:
           - Overview: distributed/index.md
           - data_parallel: distributed/data_parallel.md
@@ -293,9 +281,7 @@ nav:
       - Monitoring:
           - Overview: monitoring/index.md
           - callbacks: monitoring/callbacks.md
-          - dag_monitor: monitoring/dag_monitor.md
           - metrics: monitoring/metrics.md
-          - pipeline: monitoring/pipeline.md
           - reporters: monitoring/reporters.md
       - Operators:
           - Overview: operators/index.md
@@ -348,6 +334,7 @@ nav:
       - Overview: benchmarks/index.md
       - Methodology: benchmarks/methodology.md
       - Framework Comparison: benchmarks/comparison.md
+      - Interpreting Results: benchmarks/interpretation.md
       - Cloud Benchmarking: benchmarks/cloud.md
       - Dashboard & calibrax: benchmarks/dashboard.md
   - Contributing:

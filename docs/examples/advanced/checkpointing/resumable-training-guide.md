@@ -3,44 +3,53 @@
 | Metadata | Value |
 |----------|-------|
 | **Level** | Advanced |
-| **Runtime** | ~45 min |
-| **Prerequisites** | Checkpoint Quick Reference, Training pipelines |
+| **Runtime** | ~3 min |
+| **Prerequisites** | Pipeline Quickstart, Operators Tutorial |
 | **Format** | Python + Jupyter |
-| **Memory** | ~1 GB RAM |
+| **Memory** | ~500 MB RAM |
 
 ## Overview
 
-Implement fault-tolerant training pipelines that can resume from interruptions.
-This guide covers checkpointing pipeline state, model parameters, and optimizer
-state for seamless training resumption.
+Implement fault-tolerant training pipelines that can resume from
+interruptions using the **NNX-standard checkpoint pattern** —
+`nnx.to_pure_dict` for snapshotting state, `orbax.checkpoint.StandardCheckpointer`
+for persistence, and `nnx.replace_by_pure_dict` + `nnx.update` for
+restoration. The triple `(pipeline, model, optimizer)` is checkpointed
+together so resumption restores data-cursor position, model weights,
+and optimizer state from a single Orbax directory.
 
-## What You'll Learn
+## Learning Goals
 
-1. Implement `CheckpointableIterator` for custom pipelines
-2. Save and restore complete training state (data + model + optimizer)
-3. Verify deterministic resumption across checkpoints
-4. Handle checkpoint lifecycle (creation, restoration, cleanup)
-5. Optimize checkpoint storage and latency
+1. Snapshot an `nnx.Module`'s state with `nnx.to_pure_dict`.
+2. Persist that snapshot with `orbax.checkpoint.StandardCheckpointer`.
+3. Restore the snapshot back into a freshly-constructed module with
+   `nnx.replace_by_pure_dict` followed by `nnx.update`.
+4. Checkpoint a `(pipeline, model, optimizer)` triple atomically so
+   resumption preserves data position, model weights, and optimizer
+   state simultaneously.
+5. Verify deterministic resumption: a run that checkpoints at step `k`,
+   loads, and continues should match a never-interrupted run exactly.
 
 ## Coming from PyTorch?
 
 | PyTorch | Datarax |
 |---------|---------|
-| `torch.save({'model': model.state_dict(), 'optimizer': opt.state_dict()})` | `checkpointer.save(pipeline, model_state, optimizer_state)` |
-| `torch.load(path)` | `checkpointer.restore_latest(pipeline)` |
-| `checkpoint['epoch']` | Metadata stored with checkpoint |
-| DataLoader state not saved | Full iterator state preserved |
+| `torch.save({'model': model.state_dict(), 'optimizer': opt.state_dict()})` | `checkpointer.save(path, {'model': nnx.to_pure_dict(nnx.state(model)), ...})` |
+| `model.load_state_dict(torch.load(path)['model'])` | `nnx.replace_by_pure_dict(nnx.state(model), saved)` then `nnx.update(model, state)` |
+| DataLoader state not saved | `Pipeline` is itself an `nnx.Module` — same checkpoint API includes its state |
 
-**Key difference:** Datarax checkpoints include complete pipeline state (RNG, position, indices) enabling exact reproducibility.
+**Key difference:** Datarax `Pipeline` is an `nnx.Module`, so the
+data-cursor position, sampler state, and stochastic-stage RNGs
+checkpoint with the exact same three-call pattern as the model.
 
 ## Coming from TensorFlow?
 
 | TensorFlow | Datarax |
 |------------|---------|
-| `tf.train.Checkpoint(model=model, optimizer=opt)` | Separate pipeline + model checkpointing |
-| `ckpt_manager.save()` | `checkpointer.save(pipeline, step=N)` |
-| `ckpt.restore(ckpt_manager.latest_checkpoint)` | `checkpointer.restore_latest(pipeline)` |
-| `tf.train.CheckpointManager(max_to_keep=3)` | `keep=3` parameter |
+| `tf.train.Checkpoint(model=model, optimizer=opt)` | `nnx.to_pure_dict(nnx.state(...))` per object |
+| `ckpt_manager.save()` | `StandardCheckpointer.save(path, snapshot_dict)` |
+| `ckpt.restore(...)` | `StandardCheckpointer.restore(path, template)` then `nnx.update` |
+| `tf.train.CheckpointManager(max_to_keep=3)` | `orbax.checkpoint.CheckpointManager(max_to_keep=3)` |
 
 ## Files
 
@@ -53,210 +62,170 @@ state for seamless training resumption.
 python examples/advanced/checkpointing/02_resumable_training_guide.py
 ```
 
-## Architecture
-
-```mermaid
-flowchart TB
-    subgraph Training["Training Loop"]
-        T[Train Step] --> C{Checkpoint?}
-        C -->|Yes| S[Save State]
-        C -->|No| T
-    end
-
-    subgraph State["Complete State"]
-        PS[Pipeline State<br/>RNG, position, indices]
-        MS[Model State<br/>Parameters]
-        OS[Optimizer State<br/>Momentum, etc.]
-    end
-
-    subgraph Storage["Orbax Storage"]
-        F[checkpoint/step_N/]
-    end
-
-    S --> PS & MS & OS --> F
-
-    subgraph Resume["Resume Flow"]
-        R[Load Checkpoint] --> PS2[Restore Pipeline]
-        R --> MS2[Restore Model]
-        R --> OS2[Restore Optimizer]
-    end
-
-    F --> R
+```bash
+jupyter lab examples/advanced/checkpointing/02_resumable_training_guide.ipynb
 ```
 
-## Part 1: The CheckpointableIterator Protocol
+## Key Concepts
+
+### The Three-Call NNX Checkpoint Pattern
 
 ```python
-from datarax.typing import CheckpointableIterator
+import orbax.checkpoint as ocp
+from flax import nnx
 
-class TrainingPipeline(CheckpointableIterator[dict]):
-    def __init__(self, source, batch_size, seed):
-        self.source = source
-        self.batch_size = batch_size
-        self.rng = jax.random.key(seed)
-        self.epoch = 0
-        self.step = 0
+# Save
+checkpointer = ocp.StandardCheckpointer()
+checkpointer.save(path, {
+    "model": nnx.to_pure_dict(nnx.state(model)),
+    "optimizer": nnx.to_pure_dict(nnx.state(optimizer)),
+    "pipeline": nnx.to_pure_dict(nnx.state(pipeline)),
+})
+checkpointer.wait_until_finished()
 
-    def get_state(self) -> dict:
-        """Return complete state for checkpointing."""
-        return {
-            "rng": jax.random.key_data(self.rng),
-            "epoch": self.epoch,
-            "step": self.step,
-            "position": self.position,
-        }
+# Restore — into freshly-constructed objects
+template = {
+    "model": nnx.to_pure_dict(nnx.state(model)),
+    "optimizer": nnx.to_pure_dict(nnx.state(optimizer)),
+    "pipeline": nnx.to_pure_dict(nnx.state(pipeline)),
+}
+saved = checkpointer.restore(path, template)
 
-    def set_state(self, state: dict) -> None:
-        """Restore from checkpoint state."""
-        self.rng = jax.random.wrap_key_data(state["rng"])
-        self.epoch = state["epoch"]
-        self.step = state["step"]
-        self.position = state["position"]
-```
-
-## Part 2: Complete Training State
-
-```python
-from datarax.checkpoint import PipelineCheckpoint
-
-# Create checkpointers for different components
-pipeline_ckpt = PipelineCheckpoint("checkpoints/pipeline")
-model_ckpt = orbax.checkpoint.PyTreeCheckpointer()
-
-def save_training_state(step, pipeline, model, optimizer):
-    """Save complete training state."""
-    # Save pipeline state
-    pipeline_ckpt.save(
-        pipeline,
-        step=step,
-        metadata={"epoch": pipeline.epoch},
-        keep=3,
-    )
-
-    # Save model and optimizer (using Orbax)
-    model_state = nnx.state(model)
-    opt_state = nnx.state(optimizer)
-
-    # Save to orbax
-    save_args = orbax.checkpoint.args.StandardSave(model_state)
-    model_ckpt.save(f"checkpoints/model/step_{step}", model_state, save_args)
-
-    print(f"Saved checkpoint at step {step}")
-```
-
-**Terminal Output:**
-```
-Saved checkpoint at step 1000
-Saved checkpoint at step 2000
-Saved checkpoint at step 3000
-```
-
-## Part 3: Resumable Training Loop
-
-```python
-def train_with_checkpointing(
-    pipeline, model, optimizer, num_epochs,
-    checkpoint_every=100
+for module, pure in (
+    (model, saved["model"]),
+    (optimizer, saved["optimizer"]),
+    (pipeline, saved["pipeline"]),
 ):
-    """Training loop with periodic checkpointing."""
-    step = 0
-
-    for epoch in range(num_epochs):
-        pipeline.epoch = epoch
-
-        for batch in pipeline:
-            # Training step
-            loss = train_step(model, optimizer, batch["image"], batch["label"])
-            step += 1
-
-            # Periodic checkpoint
-            if step % checkpoint_every == 0:
-                save_training_state(step, pipeline, model, optimizer)
-
-            # Log progress
-            if step % 50 == 0:
-                print(f"Step {step}: loss={loss:.4f}")
-
-    return step
+    state = nnx.state(module)
+    nnx.replace_by_pure_dict(state, pure)
+    nnx.update(module, state)
 ```
 
-## Part 4: Resuming Training
+### Why `nnx.update`?
+
+`nnx.state(module)` returns a *copy* of the module's state. Calling
+`nnx.replace_by_pure_dict` on that copy mutates the local object but
+not the module. `nnx.update(module, state)` writes the updated state
+back into the module — without it, the resume looks like a reset.
+
+### Three-Phase Verification
+
+The example runs:
+
+1. **Reference** — train uninterrupted for `N` steps; record loss curve.
+2. **Crash** — re-train with the same seed but interrupt at step `k`,
+   writing a checkpoint just before.
+3. **Resume** — construct fresh model/optimizer/pipeline, load the
+   step-`k` checkpoint, continue to step `N`.
+
+Both the loss curve and the final model parameters must match the
+reference exactly. The example asserts:
 
 ```python
-def resume_training(checkpoint_dir):
-    """Resume training from latest checkpoint."""
-    # Create fresh instances
-    pipeline = create_training_pipeline()
-    model = create_model()
-    optimizer = create_optimizer(model)
-
-    # Restore pipeline state
-    pipeline_ckpt = PipelineCheckpoint(f"{checkpoint_dir}/pipeline")
-    restored_step = pipeline_ckpt.restore_latest(pipeline)
-
-    if restored_step:
-        print(f"Resumed from step {restored_step}")
-        print(f"  Epoch: {pipeline.epoch}")
-        print(f"  Position: {pipeline.position}")
-    else:
-        print("No checkpoint found, starting fresh")
-
-    return pipeline, model, optimizer, restored_step or 0
+max_param_diff = max(
+    jax.tree_util.tree_leaves(
+        jax.tree.map(_max_abs_diff, ref_params, restored_params)
+    )
+)
+assert max_param_diff < 1e-3
 ```
 
-**Terminal Output:**
+## Pipeline State Captured
+
+The `Pipeline` `nnx.Module` includes:
+
+- `_position` — current iteration index (advances by `batch_size` per step).
+- `rngs` — the Pipeline's own `nnx.Rngs`, used to generate per-step keys.
+- `source` — the data source as a child module (its index, RNGs, cached
+  state are all part of the tree).
+- Each stage in `stages=[...]` — including any stochastic operator's
+  `nnx.Rngs`.
+
+`nnx.to_pure_dict(nnx.state(pipeline))` captures all of these in a
+single call.
+
+## Results
+
+Running the guide produces:
+
 ```
-Resumed from step 2000
-  Epoch: 3
-  Position: 256
+PHASE 1: reference run (60 steps, no checkpoints)
+============================================================
+Reference: 60 steps, final loss=1.0196
+
+PHASE 2: train, checkpoint every 10, interrupt at step 30
+============================================================
+Crashed: 30 steps, final loss=1.5023
+Available checkpoints: ['step_10', 'step_20', 'step_30']
+
+PHASE 3: restore from step 30, train to step 60
+============================================================
+Resumed: end step=60, final loss=1.0196
+Total resumed-curve length: 60 (expected 60)
+
+Max |reference - resumed| over 60 steps: 0.0000e+00
+Max |reference - resumed| over model params: 0.0000e+00
+Determinism check passed: model parameters round-trip through Orbax.
 ```
 
-## Part 5: Verification
+## Visualization
+
+![Resumed training matches reference under NNX-standard checkpoint](../../../assets/images/examples/checkpoint-resume-validation.png)
+
+The reference curve (uninterrupted) and the resumed curve (crash +
+restore) coincide exactly — every step before and after the
+checkpoint produces the same loss in both runs.
+
+## Best Practices
+
+### Snapshot Everything That Mutates
+
+If you forget to checkpoint a piece of state that the training step
+mutates, the resumed run will diverge silently. The state-equality
+assertion in this example surfaces such bugs immediately. The
+canonical "everything that mutates" set is `(model, optimizer,
+pipeline)` — Pipeline being an `nnx.Module` is what makes the data
+position checkpointable on equal footing with model weights.
+
+### Use `CheckpointManager` for Production
+
+For periodic-cleanup, async writes, and atomic step-N labeling, wrap
+the `StandardCheckpointer` calls in
+`orbax.checkpoint.CheckpointManager`:
 
 ```python
-def verify_determinism():
-    """Verify checkpoint produces identical results."""
-    # Train and checkpoint
-    pipeline1 = create_pipeline(seed=42)
-    for i, batch in enumerate(pipeline1):
-        if i == 50:
-            pipeline1_ckpt.save(pipeline1, step=50)
-            batch_at_50 = batch
-            break
-
-    # Restore and verify
-    pipeline2 = create_pipeline(seed=42)
-    pipeline1_ckpt.restore_latest(pipeline2)
-    batch_restored = next(iter(pipeline2))
-
-    match = jnp.allclose(batch_at_50["image"], batch_restored["image"])
-    print(f"Deterministic restoration: {match}")
+manager = ocp.CheckpointManager(
+    directory=ckpt_dir,
+    options=ocp.CheckpointManagerOptions(max_to_keep=3),
+)
+manager.save(step, snapshot)
+manager.wait_until_finished()
 ```
 
-**Terminal Output:**
-```
-Deterministic restoration: True
-```
+### Restore Templates Must Match
 
-## Results Summary
+`StandardCheckpointer.restore(path, template)` requires the template
+to have the same PyTree structure as the saved data. Build the
+template by snapshotting the freshly-constructed modules — that
+guarantees the structures match.
 
-| Component | Checkpointed Data |
-|-----------|-------------------|
-| Pipeline | RNG, epoch, position, indices |
-| Model | All parameters |
-| Optimizer | Momentum, learning rate state |
-| Metadata | Step, timestamp, config |
+## Common Pitfalls
 
-**Best Practices:**
-
-1. **Checkpoint frequency**: Balance between safety and I/O overhead
-2. **Keep parameter**: Retain last N checkpoints to save disk space
-3. **Async checkpointing**: Use Orbax async saves for large models
-4. **Verification**: Test restoration produces identical results
+| Pitfall | Symptom | Fix |
+|---------|---------|-----|
+| Forgot `nnx.update` after `replace_by_pure_dict` | Resumed run produces same losses as a fresh run, ignoring restore | Add `nnx.update(module, state)` |
+| Missing pipeline in snapshot | Resumed run sees the same data again from step 0 | Include pipeline in the snapshot dict |
+| Saving `nnx.Module` directly to Orbax | `TypeError: cannot serialize <Module>` | Always wrap in `nnx.to_pure_dict(nnx.state(...))` |
+| Template mismatch on restore | Orbax raises a structure-mismatch error | Build template by snapshotting freshly-constructed objects |
 
 ## Next Steps
 
-- [Performance Guide](../performance/optimization-guide.md) - Optimize checkpoint I/O
-- [Distributed Checkpointing](../distributed/sharding-guide.md) - Multi-device checkpoints
-- [Monitoring](../monitoring/monitoring-quickref.md) - Track checkpoint events
-- [API Reference: Checkpoint](../../../checkpoint/index.md) - Complete API
+- [Checkpoint Quick Reference](checkpoint-quickref.md) — single-pipeline checkpoint basics
+- [DAG Construction Guide](../../../user_guide/dag_construction.md) — branching pipelines (the checkpoint pattern is identical)
+- [Sharding Guide](../distributed/sharding-guide.md) — checkpointing under multi-device sharding
+
+## API Reference
+
+- [`Pipeline`](../../../user_guide/dag_construction.md) — Pipeline class as an `nnx.Module`
+- [Orbax Checkpoint Documentation](https://orbax.readthedocs.io/) — `StandardCheckpointer`, `CheckpointManager`
+- [Flax NNX Checkpointing Guide](https://flax.readthedocs.io/en/latest/nnx_basics.html#checkpointing) — `nnx.to_pure_dict`, `nnx.replace_by_pure_dict`, `nnx.update`

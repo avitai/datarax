@@ -98,8 +98,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
+from datarax import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import MemorySource, MemorySourceConfig
 from datarax.typing import Element
@@ -136,9 +135,7 @@ augmenter = ElementOperator(
 )
 
 pipeline = (
-    build_source_pipeline(source, batch_size=32)
-    >> OperatorNode(normalizer)
-    >> OperatorNode(augmenter)
+    Pipeline(source=source, stages=[normalizer, augmenter], batch_size=32, rngs=nnx.Rngs(0))
 )
 
 # Process batches
@@ -151,7 +148,6 @@ for i, batch in enumerate(pipeline):
 ### Advanced: Branching and Parallel DAGs
 
 ```python
-from datarax.dag.nodes import OperatorNode, Merge, Branch
 
 # Define additional operators
 def invert(element: Element, key=None) -> Element:
@@ -161,23 +157,23 @@ inverter = ElementOperator(
     ElementOperatorConfig(stochastic=False), fn=invert, rngs=nnx.Rngs(0),
 )
 
-def is_high_contrast(element):
-    return jnp.var(element.data["image"]) > 0.1
+# Build a branching DAG:
+# - augment and normalize each consume the source independently
+# - merge takes both outputs and averages them
+class Merge(nnx.Module):
+    def __call__(self, augmented, clean):
+        return {
+            "image": (augmented["image"] + clean["image"]) / 2,
+            "label": clean["label"],
+        }
 
-# Build a complex DAG:
-# 1. Source -> Batching
-# 2. Parallel: normalizer AND inverter (| creates a Parallel node)
-# 3. Merge: average the two branches
-# 4. Branch: conditional path based on image variance
-complex_pipeline = (
-    build_source_pipeline(source, batch_size=32)
-    >> (OperatorNode(normalizer) | OperatorNode(inverter))
-    >> Merge("mean")
-    >> Branch(
-           condition=is_high_contrast,
-           true_path=OperatorNode(augmenter),
-           false_path=OperatorNode(normalizer),
-       )
+complex_pipeline = Pipeline.from_dag(
+    source=source,
+    nodes={"augment": augmenter, "normalize": normalizer, "merge": Merge()},
+    edges={"augment": [], "normalize": [], "merge": ["augment", "normalize"]},
+    sink="merge",
+    batch_size=32,
+    rngs=nnx.Rngs(0),
 )
 ```
 
@@ -186,19 +182,20 @@ complex_pipeline = (
 ```text
 src/datarax/
   core/         # Base modules: DataSourceModule, OperatorModule, Element, Batcher, Sampler, Sharder
-  dag/          # DAG executor and node system (source, operator, batch, cache, control flow)
-  sources/      # MemorySource, TFDS (eager/streaming), HuggingFace (eager/streaming), ArrayRecord, MixedSource
-  operators/    # ElementOperator, MapOperator, CompositeOperator, modality-specific (image, text)
-    strategies/ # Sequential, Parallel, Branching, Ensemble, Merging execution strategies
-  samplers/     # Sequential, Shuffle (Feistel cipher), Range, EpochAware samplers
+  pipeline/     # Pipeline (nnx.Module): linear stages and Pipeline.from_dag for branching
+  sources/      # MemorySource, TFDS (eager/streaming), HuggingFace (eager/streaming), ArrayRecord, MixedSource, StreamingDiskSource
+  operators/    # ElementOperator, MapOperator, CompositeOperator, modality-specific (image, audio)
+    strategies/ # Sequential, Parallel, Branching, Ensemble, Merging composition strategies
+  samplers/     # Sequential, Shuffle (Feistel cipher), Range, EpochAware, SlidingWindow, BufferSampler
+  batching/     # DefaultBatcher with buffer state management
   sharding/     # ArraySharder, JaxProcessSharder for multi-device distribution
   distributed/  # DeviceMesh, DataParallel for multi-host training
-  batching/     # DefaultBatcher with buffer state management
-  checkpoint/   # NNXCheckpointHandler with Orbax integration
-  monitoring/   # Pipeline monitor, DAG monitor, reporters
+  checkpoint/   # Orbax integration (NNX-standard checkpoint pattern)
+  monitoring/   # MetricsCollector, callbacks, reporters (console/file)
   performance/  # Roofline analysis, XLA optimization utilities
   control/      # Prefetcher for asynchronous data loading
   memory/       # Shared memory manager for multi-process data sharing
+  workers/      # Reserved namespace for the planned multiprocessing backend
   config/       # TOML-based configuration system with schema validation
   cli/          # datarax CLI entry point
   utils/        # PyTree utilities, external integration helpers

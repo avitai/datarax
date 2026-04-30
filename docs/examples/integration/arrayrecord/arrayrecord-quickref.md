@@ -27,7 +27,7 @@ By the end of this quick reference, you will be able to:
 | Grain | Datarax |
 |-------|---------|
 | `grain.ArrayRecordDataSource(paths)` | `ArrayRecordSourceModule(config, paths)` |
-| `grain.DataLoader(source)` | `build_source_pipeline(source)` |
+| `grain.DataLoader(source)` | `Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))` |
 | Manual iteration | Automatic stateful iteration |
 | Manual checkpointing | Built-in `get_state()` / `set_state()` |
 
@@ -118,15 +118,14 @@ source = ArrayRecordSourceModule(
 ### Pipeline Integration
 
 ```python
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
+from datarax.pipeline import Pipeline
+from datarax.pipeline import Pipeline
 
 # Create pipeline from ArrayRecord source
-pipeline = build_source_pipeline(source, batch_size=32)
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 
 # Add transformations
-pipeline = pipeline.add(OperatorNode(normalize_op))
-
+# Add normalize_op to the stages list when constructing the Pipeline.
 # Iterate
 for batch in pipeline:
     print(f"Batch shape: {batch['data'].shape}")
@@ -163,7 +162,7 @@ source.set_state(state)
 config = ArrayRecordSourceConfig(num_epochs=10)
 source = ArrayRecordSourceModule(config, paths=paths, rngs=nnx.Rngs(0))
 
-for batch in build_source_pipeline(source, batch_size=32):
+for batch in Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0)):
     train_step(batch)
 # Automatically stops after 10 epochs
 ```
@@ -175,7 +174,7 @@ config = ArrayRecordSourceConfig(num_epochs=-1)
 source = ArrayRecordSourceModule(config, paths=paths, rngs=nnx.Rngs(0))
 
 step = 0
-for batch in build_source_pipeline(source, batch_size=32):
+for batch in Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0)):
     train_step(batch)
     step += 1
     if step >= max_steps:
@@ -229,7 +228,7 @@ Key API Summary:
      )
 
   3. Pipeline Integration:
-     pipeline = build_source_pipeline(source, batch_size=32)
+     pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 
   4. Checkpointing:
      state = source.get_state()

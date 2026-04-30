@@ -230,17 +230,6 @@ class TestSamplerModuleEnhanced:
 class TestSamplerModuleIntegration:
     """Test SamplerModule integration with other components."""
 
-    def test_dag_composition_support(self):
-        """Test that enhanced SamplerModule works with DAG composition."""
-        from datarax.dag import OperatorNode
-
-        sampler = SimpleTestSampler(dataset_size=5)
-
-        # Should be able to create OperatorNode with sampler
-        # This tests basic compatibility with DAG infrastructure
-        node = OperatorNode(sampler)
-        assert node.operator == sampler
-
     def test_pipeline_integration(self):
         """Test integration with pipeline infrastructure."""
         config = SimpleTestSamplerConfig(dataset_size=5, cacheable=True)

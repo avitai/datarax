@@ -15,7 +15,7 @@ This quick reference demonstrates Datarax's built-in image augmentation operator
 ## What You'll Learn
 
 1. Use built-in image operators (Brightness, Contrast, Rotation, Noise)
-2. Chain operators with the `>>` operator syntax or `.add()` method
+2. Chain operators with the the `stages=[...]` argument syntax or `.add()` method
 3. Understand stochastic vs deterministic modes
 4. Configure operator parameters for different augmentation strengths
 5. Add clipping to keep values in valid ranges
@@ -28,7 +28,7 @@ This quick reference demonstrates Datarax's built-in image augmentation operator
 | `transforms.ColorJitter(contrast=(0.8, 1.2))` | `ContrastOperator(contrast_range=(0.8, 1.2))` |
 | `transforms.RandomRotation(15)` | `RotationOperator(angle_range=(-15, 15))` |
 | `transforms.GaussianBlur(kernel_size)` | Custom `ElementOperator` with blur logic |
-| `transforms.Compose([T1, T2, T3])` | `pipeline.add(OperatorNode(op1)).add(OperatorNode(op2))...` |
+| `transforms.Compose([T1, T2, T3])` | `Pipeline(source=..., stages=[op1, op2, ...], ...)` |
 
 **Key difference:** Datarax operators use explicit RNG streams for reproducibility and are JAX-first with automatic JIT compilation.
 
@@ -40,7 +40,7 @@ This quick reference demonstrates Datarax's built-in image augmentation operator
 | `tf.image.random_contrast(image, 0.8, 1.2)` | `ContrastOperator(contrast_range=(0.8, 1.2))` |
 | `tfa.image.rotate(image, angles)` | `RotationOperator(angle_range=(-180, 180))` |
 | `tf.image.random_noise(...)` | `NoiseOperator(mode="gaussian", noise_std=0.05)` |
-| Sequential preprocessing layers | Chain with `.add()` or `>>` operator |
+| Sequential preprocessing layers | Chain with `.add()` or the `stages=[...]` argument |
 
 **Key difference:** Datarax operators work with Element objects and provide named RNG streams for fine-grained control.
 
@@ -244,7 +244,7 @@ NoiseOperator (Gaussian mode):
 
 ## Step 2: Chain Operators with >>
 
-Use the `>>` operator for fluent pipeline composition. Operators are applied left-to-right.
+Use the the `stages=[...]` argument for fluent pipeline composition. Operators are applied left-to-right.
 
 ```mermaid
 flowchart LR
@@ -253,7 +253,7 @@ flowchart LR
     end
 
     subgraph Pipeline["Augmentation Pipeline"]
-        FS["build_source_pipeline<br/>batch_size=16"]
+        FS["Pipeline<br/>batch_size=16"]
         B["BrightnessOperator"]
         C["ContrastOperator"]
         N["NoiseOperator"]
@@ -267,8 +267,8 @@ flowchart LR
 ```
 
 ```python
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
+from datarax.pipeline import Pipeline
+from datarax.pipeline import Pipeline
 
 # Create fresh source for chained pipeline
 source2 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(1))
@@ -307,11 +307,7 @@ noise = NoiseOperator(
 
 # Chain with >> operator
 augmented_pipeline = (
-    build_source_pipeline(source2, batch_size=16)
-    >> OperatorNode(brightness)
-    >> OperatorNode(contrast)
-    >> OperatorNode(noise)
-)
+    Pipeline(source=source2, stages=[brightness, contrast, noise], batch_size=16, rngs=nnx.Rngs(0)))
 
 print("Augmentation Pipeline:")
 print("  Source -> Brightness -> Contrast -> Noise -> Output")
@@ -398,10 +394,7 @@ brightness2 = BrightnessOperator(
 )
 
 clipped_pipeline = (
-    build_source_pipeline(source3, batch_size=16)
-    >> OperatorNode(brightness2)
-    >> OperatorNode(clipper)
-)
+    Pipeline(source=source3, stages=[brightness2, clipper], batch_size=16, rngs=nnx.Rngs(0)))
 
 # Verify clipping
 batch = next(iter(clipped_pipeline))
@@ -463,10 +456,8 @@ Deterministic BrightnessOperator:
 
 ```python
 # Method 1: >> operator (fluent, recommended)
-pipeline = build_source_pipeline(source, batch_size=32) >> OperatorNode(op1) >> OperatorNode(op2)
-
-# Method 2: .add() method (explicit)
-pipeline = build_source_pipeline(source, batch_size=32).add(OperatorNode(op1)).add(OperatorNode(op2))
+pipeline = Pipeline(source=source, stages=[op1, op2], batch_size=32, rngs=nnx.Rngs(0))# Method 2: .add() method (explicit)
+pipeline = Pipeline(source=source, stages=[op1, op2], batch_size=32, rngs=nnx.Rngs(0))
 
 # Both are equivalent!
 ```

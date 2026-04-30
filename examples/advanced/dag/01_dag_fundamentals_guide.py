@@ -14,603 +14,259 @@
 
 | Metadata | Value |
 |----------|-------|
-| **Level** | Advanced |
-| **Runtime** | ~45 min |
-| **Prerequisites** | Pipeline Tutorial, Operators Tutorial |
+| **Level** | Intermediate |
+| **Runtime** | ~3 min |
+| **Prerequisites** | Pipeline Quickstart, Operators Tutorial |
 | **Format** | Python + Jupyter |
 
 ## Overview
 
-Master the Directed Acyclic Graph (DAG) pipeline architecture in Datarax.
-This guide covers explicit node construction, control flow, caching strategies,
-and building production-ready data pipelines with maximum performance.
+The `Pipeline` class supports two composition modes:
+
+- **Linear**: a list of stages applied in order via
+  `Pipeline(source=..., stages=[...])`.
+- **DAG**: an explicit graph of named nodes with edges via
+  `Pipeline.from_dag(source=..., nodes={...}, edges={...}, sink=...)`.
+
+The DAG mode supports branching (one node consumes the source, two
+downstream nodes consume it independently) and merging (a node
+consumes the outputs of multiple predecessors). Both modes share the
+same `step`, `scan`, and iterator semantics.
+
+## Setup
+
+```bash
+uv pip install datarax
+```
+
+Activate the project virtualenv:
+
+```bash
+source activate.sh
+```
 
 ## Learning Goals
 
 By the end of this guide, you will be able to:
 
-1. Construct explicit DAG pipelines with node types
-2. Use operator-based composition (`>>` and `|` operators)
-3. Implement control flow patterns (Sequential, Parallel, Branch, Merge)
-4. Add caching for expensive transformations
-5. Build rebatch strategies for dynamic batch sizing
-6. Understand DAG execution and optimization
-"""
-
-# %% [markdown]
-"""
-## Coming from PyTorch?
-
-| PyTorch | Datarax DAG |
-|---------|-------------|
-| `DataLoader(dataset)` | `build_source_pipeline(source)` or `DataSourceNode(source)` |
-| `transforms.Compose` | `Sequential([...])` or `node1 >> node2` |
-| Multiple dataloaders | `Parallel([...])` or `node1 \\| node2` |
-| `collate_fn` | `BatchNode` with custom logic |
-| N/A (manual caching) | `Cache(node, cache_size=100)` |
-
-## Coming from TensorFlow?
-
-| TensorFlow tf.data | Datarax DAG |
-|--------------------|-------------|
-| `tf.data.Dataset` | `DataSourceNode` |
-| `dataset.map()` | `OperatorNode(operator)` |
-| `dataset.batch()` | `BatchNode(batch_size)` |
-| `dataset.cache()` | `Cache(node)` |
-| `dataset.prefetch()` | `PrefetchNode(buffer_size)` |
-| `dataset.shuffle()` | `ShuffleNode(source)` |
-
-## Coming from Google Grain?
-
-| Grain | Datarax DAG |
-|-------|-------------|
-| `grain.DataLoader` | `DAGExecutor` or `build_source_pipeline()` |
-| `grain.MapTransform` | `OperatorNode(ElementOperator(...))` |
-| `grain.Batch` | `BatchNode(batch_size)` |
-| N/A | `Cache`, `Sequential`, `Parallel`, `Branch` |
-"""
-
-# %% [markdown]
-"""
-## Setup
-
-```bash
-uv pip install "datarax[data]"
-```
+1. Build a linear pipeline with `Pipeline(stages=[...])`.
+2. Build a branching DAG with `Pipeline.from_dag(...)`.
+3. Reason about topological execution order.
+4. Choose between linear and DAG composition modes.
 """
 
 # %%
-# Imports
 import jax
 import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax import build_source_pipeline, DAGExecutor
-from datarax.dag.nodes import (
-    BatchNode,
-    Cache,
-    DataSourceNode,
-    Identity,
-    Node,
-    OperatorNode,
-)
 from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.operators.modality.image import (
-    BrightnessOperator,
-    BrightnessOperatorConfig,
-)
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
 print(f"JAX version: {jax.__version__}")
-print(f"Devices: {jax.devices()}")
+
 
 # %% [markdown]
 """
-## Part 1: DAG Node Hierarchy
+## Part 1: Sample Data
 
-Datarax DAG nodes form a hierarchy with specific responsibilities:
-
-```
-Node (base)
-├── DataSourceNode     - Entry point, wraps data sources
-├── BatchNode          - Creates batches from elements
-├── OperatorNode       - Applies transformations
-├── ShuffleNode        - Shuffles data ordering
-├── PrefetchNode       - Background data loading
-├── SamplerNode        - Custom sampling strategies
-├── SharderNode        - Distributed sharding
-├── Cache              - LRU caching for expensive ops
-├── Sequential         - Chain nodes: out₁ → in₂
-├── Parallel           - Apply multiple nodes to same input
-├── Branch             - Route data conditionally
-├── Merge              - Combine parallel branches
-└── Identity           - Pass-through (useful for composition)
-```
+We build a small memory source so the rest of the guide can focus on
+composition.
 """
 
 # %%
-# Create sample data for demonstrations
 np.random.seed(42)
-num_samples = 200
 data = {
-    "image": np.random.rand(num_samples, 32, 32, 3).astype(np.float32),
-    "label": np.random.randint(0, 10, (num_samples,)).astype(np.int32),
+    "image": np.random.rand(64, 32, 32, 3).astype(np.float32),
+    "label": np.random.randint(0, 10, (64,)).astype(np.int32),
 }
-
-print(f"Created dataset: {num_samples} samples")
-print(f"  image: {data['image'].shape}")
-print(f"  label: {data['label'].shape}")
-
-# %% [markdown]
-"""
-## Part 2: Simple Pipeline with build_source_pipeline()
-
-The easiest way to build a pipeline is using the `build_source_pipeline()` helper.
-It automatically creates the necessary nodes.
-"""
-
-# %%
-# Method 1: Using build_source_pipeline() helper (recommended for simple cases)
 source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+print(f"Source: {len(source)} samples")
 
-pipeline = build_source_pipeline(source, batch_size=32)
-batch = next(iter(pipeline))
-
-print("Pipeline with build_source_pipeline():")
-print(f"  Batch shape: {batch['image'].shape}")
-print(f"  Labels: {batch['label'][:8]}...")
 
 # %% [markdown]
 """
-## Part 3: Explicit DAG Construction
+## Part 2: Linear Pipeline
 
-For more control, construct nodes explicitly. This allows custom
-configurations and advanced patterns.
-"""
-
-# %%
-# Method 2: Explicit node construction
-source2 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(1))
-
-# Create nodes explicitly
-data_node = DataSourceNode(source2, name="ImageSource")
-batch_node = BatchNode(batch_size=32, drop_remainder=False, name="Batcher")
-
-# Compose using >> operator (creates Sequential)
-explicit_pipeline = data_node >> batch_node
-
-print("Explicit DAG construction:")
-print(f"  Pipeline: {explicit_pipeline}")
-print(f"  Type: {type(explicit_pipeline).__name__}")
-
-# %%
-# Execute the explicit pipeline
-executor = DAGExecutor(explicit_pipeline)
-
-batch_count = 0
-sample_count = 0
-for batch in executor:
-    batch_count += 1
-    sample_count += batch["image"].shape[0]
-
-print(f"  Processed {batch_count} batches, {sample_count} samples")
-
-# %% [markdown]
-"""
-## Part 4: Adding Operators to the Pipeline
-
-Use `OperatorNode` to wrap operators and add them to the DAG.
+The simplest composition mode is a linear chain of stages. Each stage
+receives the previous stage's output and returns the next.
 """
 
 
 # %%
-# Define a normalization operator
-def normalize_fn(element, key=None):
-    """Normalize images to [0, 1] range."""
-    del key  # Unused - deterministic
+def normalize(element, key=None):
+    """Run normalize."""
+    del key
     image = element.data["image"]
-    normalized = (image - jnp.min(image)) / (jnp.max(image) - jnp.min(image) + 1e-8)
-    return element.update_data({"image": normalized})
+    return element.update_data({"image": (image - 0.5) / 0.5})
+
+
+def add_brightness(element, key=None):
+    """Run add_brightness."""
+    del key
+    image = element.data["image"]
+    return element.update_data({"image": image + 0.1})
 
 
 normalize_op = ElementOperator(
-    ElementOperatorConfig(stochastic=False),
-    fn=normalize_fn,
+    ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0)
+)
+brighten_op = ElementOperator(
+    ElementOperatorConfig(stochastic=False), fn=add_brightness, rngs=nnx.Rngs(0)
+)
+
+linear_pipeline = Pipeline(
+    source=source,
+    stages=[normalize_op, brighten_op],
+    batch_size=16,
     rngs=nnx.Rngs(0),
 )
 
-# Create brightness operator
-brightness_op = BrightnessOperator(
-    BrightnessOperatorConfig(
-        field_key="image",
-        brightness_range=(-0.1, 0.1),
-        stochastic=True,
-        stream_name="brightness",
-    ),
-    rngs=nnx.Rngs(brightness=100),
-)
+batch = next(iter(linear_pipeline))
+print(f"Linear pipeline output: image shape={batch['image'].shape}")
 
-# Wrap in OperatorNodes
-normalize_node = OperatorNode(normalize_op, name="Normalize")
-brightness_node = OperatorNode(brightness_op, name="Brightness")
-
-print("Created operator nodes:")
-print(f"  - {normalize_node}")
-print(f"  - {brightness_node}")
-
-# %%
-# Build pipeline with operators using >> operator
-source3 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(2))
-data_node3 = DataSourceNode(source3, name="Source")
-batch_node3 = BatchNode(batch_size=32, name="Batch")
-
-# Chain: Source >> Batch >> Normalize >> Brightness
-pipeline_with_ops = data_node3 >> batch_node3 >> normalize_node >> brightness_node
-
-print()
-print("Pipeline with operators:")
-print(f"  {pipeline_with_ops}")
-
-# Execute
-executor = DAGExecutor(pipeline_with_ops)
-batch = next(iter(executor))
-
-print(f"  Output range: [{batch['image'].min():.4f}, {batch['image'].max():.4f}]")
 
 # %% [markdown]
 """
-## Part 5: Sequential and Parallel Composition
+## Part 3: Branching DAG
 
-DAG nodes support operator-based composition:
-
-- `>>` creates `Sequential`: `node1 >> node2 >> node3`
-- `|` creates `Parallel`: `node1 | node2 | node3`
-"""
-
-# %%
-# Sequential composition - chain operators
-op1 = Identity(name="Op1")
-op2 = Identity(name="Op2")
-op3 = Identity(name="Op3")
-
-# Using >> operator
-sequential = op1 >> op2 >> op3
-print("Sequential composition:")
-print(f"  {sequential}")
-
-# %%
-# Parallel composition - multiple branches
-branch_a = Identity(name="BranchA")
-branch_b = Identity(name="BranchB")
-
-# Using | operator
-parallel = branch_a | branch_b
-print()
-print("Parallel composition:")
-print(f"  {parallel}")
-print("  Returns list of outputs from each branch")
-
-# %%
-# Combined composition pattern: branch then merge
-# Useful for multi-view augmentation
-
-
-def create_augment_branch(name: str, delta: float, seed: int):
-    """Create an augmentation branch."""
-    op = BrightnessOperator(
-        BrightnessOperatorConfig(
-            field_key="image",
-            brightness_range=(delta, delta),
-            stochastic=False,
-        ),
-        rngs=nnx.Rngs(seed),
-    )
-    return OperatorNode(op, name=name)
-
-
-# Create parallel augmentation branches
-bright_branch = create_augment_branch("Brighten", 0.2, 1)
-dark_branch = create_augment_branch("Darken", -0.2, 2)
-
-# Parallel branches
-multi_view = bright_branch | dark_branch
-
-print()
-print("Multi-view augmentation:")
-print(f"  {multi_view}")
-
-# %% [markdown]
-"""
-## Part 6: Caching Expensive Operations
-
-Use `Cache` to store results of expensive transformations.
-Particularly useful for deterministic operations.
+When two downstream stages need to consume the source independently
+(for example, an augmentation branch and a clean-reference branch
+running side by side), use `Pipeline.from_dag`. Each node declares its
+predecessors via the `edges` mapping.
 """
 
 
 # %%
-# Simulate expensive operation
-def expensive_transform(element, key=None):
-    """Simulate expensive transformation (e.g., feature extraction)."""
-    del key
-    image = element.data["image"]
-    # Simulate computation with multiple operations
-    features = jnp.mean(image, axis=(0, 1))  # Simple pooling
-    features = jnp.sqrt(jnp.abs(features) + 1e-8)  # Non-linear transform
-    return element.update_data({"features": features, "image": image})
+class _Augment(nnx.Module):
+    """Multiplicative brightness jitter."""
+
+    def __init__(self, factor: float = 1.2) -> None:
+        self.factor = jnp.float32(factor)
+
+    def __call__(self, batch):
+        return {**batch, "image": batch["image"] * self.factor}
 
 
-expensive_op = ElementOperator(
-    ElementOperatorConfig(stochastic=False),
-    fn=expensive_transform,
+class _Normalize(nnx.Module):
+    """Standardise to zero-mean unit-variance."""
+
+    def __call__(self, batch):
+        return {**batch, "image": (batch["image"] - 0.5) / 0.5}
+
+
+class _StackBranches(nnx.Module):
+    """Merge two batches by stacking the image fields along a new axis."""
+
+    def __call__(self, augmented, clean):
+        return {
+            "image": jnp.stack([augmented["image"], clean["image"]], axis=1),
+            "label": augmented["label"],
+        }
+
+
+# Build a branching DAG:
+#   source -> augment   \
+#                        -> stack -> sink
+#   source -> normalize /
+nodes = {
+    "augment": _Augment(),
+    "normalize": _Normalize(),
+    "stack": _StackBranches(),
+}
+edges = {
+    "augment": [],  # consumes source directly
+    "normalize": [],  # consumes source directly
+    "stack": ["augment", "normalize"],  # merges both branches
+}
+
+dag_pipeline = Pipeline.from_dag(
+    source=source,
+    nodes=nodes,
+    edges=edges,
+    sink="stack",
+    batch_size=16,
     rngs=nnx.Rngs(0),
 )
 
-# Wrap with caching
-cached_op = Cache(OperatorNode(expensive_op, name="ExpensiveOp"), cache_size=100)
+batch = next(iter(dag_pipeline))
+print(f"DAG pipeline output: image shape={batch['image'].shape}")
+# Expected: (16, 2, 32, 32, 3) — two branches stacked along axis=1
 
-print("Caching setup:")
-print(f"  Wrapped: {cached_op.node}")
-print(f"  Cache size: {cached_op.cache_size}")
 
 # %% [markdown]
 """
-## Part 7: Shuffle and Prefetch Nodes
+## Part 4: Topological Execution Order
 
-Add shuffling and prefetching for training pipelines.
+The DAG executor topologically sorts the nodes so each node runs after
+all its predecessors. You do not need to specify execution order
+manually — only the dependency edges. Cycles raise `ValueError` at
+construction time.
+
+The `pipeline.stages` property returns the resolved modules in
+topological order — useful for inspection or partial replacement.
 """
 
 # %%
-# Create a training-ready pipeline with shuffle and prefetch
-source4 = MemorySource(
-    MemorySourceConfig(shuffle=True),  # Shuffled source
-    data=data,
-    rngs=nnx.Rngs(3),
-)
+print(f"Linear pipeline: {len(linear_pipeline.stages)} stages")
+print(f"DAG pipeline:    {len(dag_pipeline.stages)} stages")
 
-# Build training pipeline
-training_pipeline = (
-    build_source_pipeline(source4, batch_size=32)
-    .add(normalize_node)  # Normalize
-    .add(brightness_node)  # Augment
-)
-
-print("Training pipeline with shuffling:")
-print("  Source → Shuffle → Batch → Normalize → Brightness")
-
-# Process a few batches
-for i, batch in enumerate(training_pipeline):
-    if i >= 3:
-        break
-    print(f"  Batch {i}: mean={batch['image'].mean():.4f}, std={batch['image'].std():.4f}")
 
 # %% [markdown]
 """
-## Part 8: Building Production Pipelines
+## Part 5: When To Use Each Mode
 
-Combine all concepts for a production-ready pipeline.
-"""
+- **Linear (`stages=[...]`)** — when each stage produces input for the
+  next stage and there is no branching. Most augmentation pipelines
+  fit this shape.
+- **DAG (`from_dag(...)`)** — when you need branching (one input,
+  multiple downstream consumers), merging (one node consumes multiple
+  predecessors), or named nodes for inspection or partial replacement.
 
-
-# %%
-def build_production_pipeline(data, batch_size=32, shuffle=True):
-    """Build a complete production pipeline.
-
-    Pipeline structure:
-        Source → Shuffle? → Batch → Normalize → Augment → Output
-
-    Args:
-        data: Dictionary of arrays
-        batch_size: Batch size
-        shuffle: Whether to shuffle
-
-    Returns:
-        Configured pipeline
-    """
-    # Create source
-    source = MemorySource(
-        MemorySourceConfig(shuffle=shuffle),
-        data=data,
-        rngs=nnx.Rngs(0),
-    )
-
-    # Create operators
-    norm_op = ElementOperator(
-        ElementOperatorConfig(stochastic=False),
-        fn=normalize_fn,
-        rngs=nnx.Rngs(0),
-    )
-
-    augment_op = BrightnessOperator(
-        BrightnessOperatorConfig(
-            field_key="image",
-            brightness_range=(-0.15, 0.15),
-            stochastic=True,
-            stream_name="aug",
-        ),
-        rngs=nnx.Rngs(aug=100),
-    )
-
-    # Build pipeline
-    pipeline = (
-        build_source_pipeline(source, batch_size=batch_size)
-        .add(OperatorNode(norm_op, name="Normalize"))
-        .add(OperatorNode(augment_op, name="Augment"))
-    )
-
-    return pipeline
-
-
-# Create and run production pipeline
-prod_pipeline = build_production_pipeline(data, batch_size=64)
-
-print("Production pipeline:")
-total_batches = 0
-total_samples = 0
-for batch in prod_pipeline:
-    total_batches += 1
-    total_samples += batch["image"].shape[0]
-
-print(f"  Batches: {total_batches}")
-print(f"  Samples: {total_samples}")
-print("  Batch size: 64")
-
-# %% [markdown]
-"""
-## Part 9: DAG Execution Patterns
-
-Understanding how DAG execution works helps optimize pipelines.
-
-### Execution Model
-
-1. **Pull-based**: Data is pulled through the graph on iteration
-2. **Lazy evaluation**: Nodes only execute when outputs are needed
-3. **State tracking**: NNX modules maintain state across iterations
-
-### Key Optimization Points
-
-| Optimization | Pattern |
-|--------------|---------|
-| Caching | Use `Cache` for deterministic expensive ops |
-| Batching | Batch early in the pipeline for vmap efficiency |
-| Operator fusion | Combine multiple light ops into single function |
-| Memory reuse | Use `drop_remainder=True` for fixed batch shapes |
-"""
-
-# %%
-# Demonstrate lazy evaluation
-print("DAG Execution Demonstration:")
-print()
-
-
-class TrackedNode(Node):
-    """Node that tracks when it's executed."""
-
-    def __init__(self, name: str):
-        """Initialize TrackedNode."""
-        super().__init__(name=name)
-        self.call_count = nnx.Variable(0)
-
-    def __call__(self, data, *, key=None):
-        """Forward pass that increments the call counter."""
-        del key  # Unused
-        self.call_count.value += 1
-        return data
-
-
-# Create tracked pipeline
-tracked_a = TrackedNode("NodeA")
-tracked_b = TrackedNode("NodeB")
-tracked_seq = tracked_a >> tracked_b
-
-# Execute once
-_ = tracked_seq({"test": 1})
-
-print("After 1 execution:")
-print(f"  NodeA calls: {tracked_a.call_count.value}")
-print(f"  NodeB calls: {tracked_b.call_count.value}")
-
-# Execute again
-_ = tracked_seq({"test": 2})
-_ = tracked_seq({"test": 3})
-
-print("After 3 executions:")
-print(f"  NodeA calls: {tracked_a.call_count.value}")
-print(f"  NodeB calls: {tracked_b.call_count.value}")
-
-# %% [markdown]
-"""
-## Results Summary
-
-### DAG Node Types
-
-| Node | Purpose | Example |
-|------|---------|---------|
-| `DataSourceNode` | Pipeline entry point | `DataSourceNode(source)` |
-| `BatchNode` | Create batches | `BatchNode(batch_size=32)` |
-| `OperatorNode` | Apply transforms | `OperatorNode(operator)` |
-| `ShuffleNode` | Randomize order | Via `MemorySourceConfig(shuffle=True)` |
-| `Cache` | Store results | `Cache(node, cache_size=100)` |
-| `Sequential` | Chain operations | `node1 >> node2` |
-| `Parallel` | Multiple branches | `node1 \\| node2` |
-
-### Composition Operators
-
-| Operator | Creates | Usage |
-|----------|---------|-------|
-| `>>` | Sequential | `a >> b >> c` |
-| `\\|` | Parallel | `a \\| b \\| c` |
-
-### Best Practices
-
-1. **Use `build_source_pipeline()`** for simple pipelines
-2. **Explicit construction** for complex DAGs
-3. **Cache deterministic** expensive operations
-4. **Batch early** for vmap efficiency
-5. **Shuffle at source** level for memory efficiency
-"""
-
-# %% [markdown]
-"""
-## Next Steps
-
-- [Composition Strategies](../../core/08_composition_strategies_tutorial.ipynb) - Composition
-- [Sharding Guide](../distributed/02_sharding_guide.ipynb) - Distributed pipelines
-- [Performance Guide](../performance/01_optimization_guide.ipynb) - Optimization tips
+Both modes share `pipeline.step`, `pipeline.scan`, the iterator
+protocol, and JIT semantics. There is no performance difference for
+identical topologies.
 """
 
 
 # %%
 def main():
     """Run the DAG fundamentals guide."""
-    print("=" * 60)
     print("DAG Pipeline Fundamentals Guide")
-    print("=" * 60)
+    print("=" * 50)
 
-    # Create data
     np.random.seed(42)
-    data = {
-        "image": np.random.rand(100, 32, 32, 3).astype(np.float32),
-        "label": np.random.randint(0, 10, (100,)).astype(np.int32),
+    data_main = {
+        "image": np.random.rand(64, 16, 16, 3).astype(np.float32),
+        "label": np.random.randint(0, 10, (64,)).astype(np.int32),
     }
+    src = MemorySource(MemorySourceConfig(), data=data_main, rngs=nnx.Rngs(0))
 
-    # Demo 1: Simple pipeline
-    print()
-    print("1. Simple Pipeline (build_source_pipeline):")
-    source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
-    pipeline = build_source_pipeline(source, batch_size=16)
-    batch = next(iter(pipeline))
-    print(f"   Batch shape: {batch['image'].shape}")
+    norm = ElementOperator(ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0))
+    bright = ElementOperator(
+        ElementOperatorConfig(stochastic=False), fn=add_brightness, rngs=nnx.Rngs(0)
+    )
 
-    # Demo 2: Operator composition
-    print()
-    print("2. Sequential Composition (>> operator):")
-    op1 = Identity(name="A")
-    op2 = Identity(name="B")
-    seq = op1 >> op2
-    print(f"   Pipeline: {seq}")
+    # Linear
+    linear = Pipeline(source=src, stages=[norm, bright], batch_size=8, rngs=nnx.Rngs(0))
+    total = sum(b["image"].shape[0] for b in linear)
+    print(f"Linear: processed {total} samples")
 
-    # Demo 3: Parallel composition
-    print()
-    print("3. Parallel Composition (| operator):")
-    branch_a = Identity(name="Left")
-    branch_b = Identity(name="Right")
-    par = branch_a | branch_b
-    print(f"   Pipeline: {par}")
-
-    # Demo 4: Production pipeline
-    print()
-    print("4. Production Pipeline:")
-    prod = build_production_pipeline(data, batch_size=32)
-    count = sum(1 for _ in prod)
-    print(f"   Processed {count} batches")
-
-    print()
-    print("=" * 60)
+    # DAG
+    dag = Pipeline.from_dag(
+        source=src,
+        nodes={"a": _Augment(), "n": _Normalize(), "s": _StackBranches()},
+        edges={"a": [], "n": [], "s": ["a", "n"]},
+        sink="s",
+        batch_size=8,
+        rngs=nnx.Rngs(0),
+    )
+    total = sum(b["image"].shape[0] for b in dag)
+    print(f"DAG: processed {total} samples")
     print("Guide completed successfully!")
-    print("=" * 60)
 
 
 if __name__ == "__main__":

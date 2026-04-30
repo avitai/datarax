@@ -70,10 +70,7 @@ import numpy as np
 import optax
 from flax import nnx
 
-# Datarax imports
-from datarax import build_source_pipeline
 from datarax.core.config import BatchMixOperatorConfig
-from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.batch_mix_operator import BatchMixOperator
 from datarax.operators.modality.image import (
@@ -84,6 +81,9 @@ from datarax.operators.modality.image import (
     NoiseOperator,
     NoiseOperatorConfig,
 )
+
+# Datarax imports
+from datarax.pipeline import Pipeline
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 
 
@@ -119,12 +119,15 @@ CIFAR10_MEAN = jnp.array([0.4914, 0.4822, 0.4465])
 CIFAR10_STD = jnp.array([0.2470, 0.2435, 0.2616])
 
 # Training
+# Set QUICK_MODE=False to run the full demo configuration (5 epochs / 5000 samples).
+# QUICK_MODE keeps the test suite under the per-example timeout.
+QUICK_MODE = True
 BATCH_SIZE = 64
 LEARNING_RATE = 3e-4
 WEIGHT_DECAY = 1e-4
-NUM_EPOCHS = 5  # Reduced for demo
-TRAIN_SAMPLES = 5000  # Subset for faster demo
-TEST_SAMPLES = 1000
+NUM_EPOCHS = 2 if QUICK_MODE else 5
+TRAIN_SAMPLES = 1024 if QUICK_MODE else 5000
+TEST_SAMPLES = 256 if QUICK_MODE else 1000
 
 # Augmentation
 USE_MIXUP = True
@@ -250,16 +253,8 @@ def create_train_pipeline(seed=42):
         rngs=nnx.Rngs(noise=seed + 300),
     )
 
-    # Build pipeline
-    pipeline = (
-        build_source_pipeline(source, batch_size=BATCH_SIZE)
-        .add(OperatorNode(prep))
-        .add(OperatorNode(brightness))
-        .add(OperatorNode(contrast))
-        .add(OperatorNode(noise))
-    )
-
-    # Add MixUp if enabled
+    # Build stages list (conditionally include MixUp)
+    stages = [prep, brightness, contrast, noise]
     if USE_MIXUP:
         mixup = BatchMixOperator(
             BatchMixOperatorConfig(
@@ -272,9 +267,9 @@ def create_train_pipeline(seed=42):
             ),
             rngs=nnx.Rngs(mixup=seed + 400),
         )
-        pipeline = pipeline.add(OperatorNode(mixup))
+        stages.append(mixup)
 
-    return pipeline
+    return Pipeline(source=source, stages=stages, batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
 
 
 def create_val_pipeline():
@@ -295,7 +290,7 @@ def create_val_pipeline():
         rngs=nnx.Rngs(0),
     )
 
-    return build_source_pipeline(source, batch_size=BATCH_SIZE).add(OperatorNode(prep))
+    return Pipeline(source=source, stages=[prep], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
 
 
 print("Pipeline factories created")

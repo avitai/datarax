@@ -27,7 +27,7 @@ If you're familiar with PyTorch + torchvision, here's how Datarax compares:
 | PyTorch | Datarax |
 |---------|---------|
 | `torchvision.datasets.MNIST(train=True)` | `TFDSEagerSource(TFDSEagerConfig(name="mnist", split="train"))` |
-| `DataLoader(dataset, batch_size=128, shuffle=True)` | `build_source_pipeline(source, batch_size=128)` with shuffled source |
+| `DataLoader(dataset, batch_size=128, shuffle=True)` | `Pipeline(source=source, stages=[], batch_size=128, rngs=nnx.Rngs(0))` with shuffled source |
 | `transforms.Normalize(mean, std)` | Custom `ElementOperator` with JAX operations |
 | `for images, labels in loader:` | `for batch in pipeline:` (dict-based batches) |
 | `model.train()` / `model.eval()` | Separate train/test pipelines (with/without augmentation) |
@@ -39,7 +39,7 @@ If you're familiar with PyTorch + torchvision, here's how Datarax compares:
 | TensorFlow tf.data | Datarax |
 |--------------------|---------|
 | `tfds.load('mnist', split='train')` | `TFDSEagerSource(TFDSEagerConfig(name='mnist', split='train'))` |
-| `dataset.map(normalize).batch(128)` | `build_source_pipeline(source, batch_size=128).add(OperatorNode(normalizer))` |
+| `dataset.map(normalize).batch(128)` | `Pipeline(source=source, stages=[normalizer], batch_size=128, rngs=nnx.Rngs(0))` |
 | `dataset.shuffle(buffer_size=10000)` | Source-level shuffling with `shuffle=True` |
 | `dataset.repeat(epochs)` | Create fresh pipeline per epoch |
 | `@tf.function` JIT compilation | `@nnx.jit` for JAX compilation |
@@ -232,8 +232,8 @@ Created augmentation operators:
 ## Part 4: Build Training Pipeline
 
 ```python
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
+from datarax.pipeline import Pipeline
+from datarax.pipeline import Pipeline
 
 def create_train_pipeline():
     """Create a fresh training pipeline for each epoch."""
@@ -267,10 +267,7 @@ def create_train_pipeline():
     )
 
     return (
-        build_source_pipeline(source, batch_size=BATCH_SIZE)
-        .add(OperatorNode(preprocessor))
-        .add(OperatorNode(brightness))
-        .add(OperatorNode(noise))
+        Pipeline(source=source, stages=[preprocessor, brightness, noise], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
     )
 
 # Test pipeline without augmentation
@@ -284,7 +281,7 @@ def create_test_pipeline():
         rngs=nnx.Rngs(0),
     )
 
-    return build_source_pipeline(source, batch_size=BATCH_SIZE).add(OperatorNode(preprocessor))
+    return Pipeline(source=source, stages=[preprocessor], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
 ```
 
 **Terminal Output:**
@@ -637,7 +634,7 @@ Saved: docs/assets/images/examples/cv-mnist-throughput.png
 2. **Fresh Pipelines**: Create new pipeline instances for each epoch to reset iteration state
 3. **Light Augmentation**: Brightness and noise improve generalization on MNIST
 4. **Preprocessing**: Always normalize with dataset-specific statistics (mean/std)
-5. **Batching**: `build_source_pipeline(batch_size=N)` handles batching automatically
+5. **Batching**: the `Pipeline(batch_size=N)` argument handles batching automatically
 6. **One-Hot Labels**: Required for cross-entropy loss with soft labels
 
 ### Pipeline Architecture Summary

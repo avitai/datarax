@@ -132,7 +132,7 @@ def create_sharded_pipeline(source, mesh, batch_size_per_device=64):
     """Create pipeline with per-device batch size."""
     total_batch_size = batch_size_per_device * mesh.shape["data"]
 
-    pipeline = build_source_pipeline(source, batch_size=total_batch_size)
+    pipeline = Pipeline(source=source, stages=[], batch_size=total_batch_size, rngs=nnx.Rngs(0))
 
     # Define shardings
     image_sharding = NamedSharding(
@@ -230,7 +230,7 @@ def create_pipeline_with_fallback(source, batch_size):
         mesh = None
         use_sharding = False
 
-    pipeline = build_source_pipeline(source, batch_size=batch_size)
+    pipeline = Pipeline(source=source, stages=[], batch_size=batch_size, rngs=nnx.Rngs(0))
 
     return pipeline, mesh, use_sharding
 ```

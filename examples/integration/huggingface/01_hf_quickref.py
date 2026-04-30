@@ -53,9 +53,8 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax import build_source_pipeline
-from datarax.dag.nodes import OperatorNode
 from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.pipeline import Pipeline
 from datarax.sources import HFEagerConfig, HFEagerSource
 
 
@@ -99,7 +98,7 @@ Build a pipeline and examine what data the dataset provides.
 
 # %%
 # Create pipeline with batch_size=1 for inspection
-pipeline = build_source_pipeline(source, batch_size=1)
+pipeline = Pipeline(source=source, stages=[], batch_size=1, rngs=nnx.Rngs(0))
 
 # Get first few examples
 print("First 3 examples:")
@@ -107,7 +106,7 @@ example_iter = iter(pipeline)
 
 for i in range(3):
     batch = next(example_iter)
-    data = batch.get_data()
+    data = batch
 
     print(f"\nExample {i + 1}:")
     print(f"  Keys: {list(data.keys())}")
@@ -156,7 +155,9 @@ normalizer = ElementOperator(
 
 # Build transformed pipeline (need fresh source for new iteration)
 source2 = HFEagerSource(config, rngs=nnx.Rngs(1))
-transformed_pipeline = build_source_pipeline(source2, batch_size=32).add(OperatorNode(normalizer))
+transformed_pipeline = Pipeline(
+    source=source2, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0)
+)
 
 # Process a batch
 batch = next(iter(transformed_pipeline))
@@ -226,7 +227,7 @@ def main():
         ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0)
     )
 
-    pipeline = build_source_pipeline(source, batch_size=32).add(OperatorNode(normalizer))
+    pipeline = Pipeline(source=source, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0))
 
     # Process batches
     total_samples = 0
