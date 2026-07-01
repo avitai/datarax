@@ -28,6 +28,29 @@ EXAMPLE_TIMEOUT_SECONDS = int(os.environ.get("DATARAX_EXAMPLE_TIMEOUT_SECONDS", 
 
 # Required sections for validation
 REQUIRED_SECTIONS = ["Overview", "Setup"]
+
+# Substrings that identify a transient dataset-download / network failure (e.g.
+# HuggingFace Hub rate-limiting unauthenticated CI runners). Examples that hit
+# these are skipped rather than failed: they exercise external services, not
+# Datarax code. Real code errors (AttributeError, shape mismatch, …) do not
+# match and still fail the test.
+_NETWORK_FAILURE_SIGNATURES = (
+    "couldn't reach",
+    "connectionerror",
+    "connectionreseterror",
+    "max retries exceeded",
+    "too many requests",
+    "429 client error",
+    "hfhubhttperror",
+    "readtimeout",
+    "temporary failure in name resolution",
+    "network is unreachable",
+    "failed to resolve",
+    "name or service not known",
+    "sslerror",
+    "rate limit",
+    "no such file or directory: '/home/",  # missing local dataset cache dir
+)
 RECOMMENDED_SECTIONS = ["Learning Goals", "Next Steps"]
 
 
@@ -162,6 +185,15 @@ class TestExampleExecution:
             cwd=EXAMPLES_DIR.parent,  # Repo root
         )
         if result.returncode != 0:
-            # Truncate long error messages
-            stderr = result.stderr[:1000] if len(result.stderr) > 1000 else result.stderr
+            # A transient dataset-download/network failure exercises an external
+            # service, not Datarax — skip rather than fail so CI is not flaky.
+            lowered = result.stderr.lower()
+            if any(sig in lowered for sig in _NETWORK_FAILURE_SIGNATURES):
+                pytest.skip(
+                    f"Example needs an external dataset/network which was unavailable "
+                    f"(exit {result.returncode})."
+                )
+            # Keep enough stderr to diagnose real failures (the tail holds the
+            # actual exception, which a small head-truncation would hide).
+            stderr = result.stderr if len(result.stderr) <= 3000 else result.stderr[-3000:]
             pytest.fail(f"Example failed with exit code {result.returncode}:\n{stderr}")

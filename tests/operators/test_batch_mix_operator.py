@@ -539,3 +539,37 @@ class TestBatchMixOperatorEdgeCases:
 
         result = op(batch)
         assert result.get_data()["image"].shape == (2, 32, 32, 1)
+
+
+class TestBatchMixOperatorPipelineRawPath:
+    """Regression: BatchMixOperator must work through the Pipeline fused raw path.
+
+    The Pipeline calls ``_apply_on_raw(data, states, stats, global_indices)``; a
+    stale override signature previously broke mixup/cutmix pipelines (caught only
+    by example execution). These tests exercise that path directly.
+    """
+
+    def test_batch_mix_runs_through_pipeline_step(self):
+        from datarax.pipeline import Pipeline
+        from datarax.sources.memory_source import MemorySource, MemorySourceConfig
+
+        data = {"image": jnp.arange(8 * 4, dtype=jnp.float32).reshape(8, 4)}
+        source = MemorySource(MemorySourceConfig(shuffle=False), data)
+        mixer = BatchMixOperator(
+            BatchMixOperatorConfig(mode="mixup", data_field="image"),
+            rngs=nnx.Rngs(batch_mix=0),
+        )
+        pipeline = Pipeline(source=source, stages=[mixer], batch_size=4, rngs=nnx.Rngs(0))
+
+        batch = pipeline.step()  # type: ignore[reportCallIssue]
+        assert batch["image"].shape == (4, 4)
+
+    def test_apply_on_raw_accepts_global_indices(self):
+        """The raw path accepts the Pipeline's 4th positional (global_indices)."""
+        mixer = BatchMixOperator(
+            BatchMixOperatorConfig(mode="cutmix", data_field="image"),
+            rngs=nnx.Rngs(batch_mix=0),
+        )
+        data = {"image": jnp.ones((4, 8, 8, 3), dtype=jnp.float32)}
+        out_data, _ = mixer._apply_on_raw(data, {}, None, jnp.arange(4, dtype=jnp.int32))
+        assert out_data["image"].shape == (4, 8, 8, 3)

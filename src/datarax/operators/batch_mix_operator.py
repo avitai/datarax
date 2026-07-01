@@ -32,7 +32,7 @@ from jaxtyping import PyTree
 
 from datarax.core.config import BatchMixOperatorConfig
 from datarax.core.element_batch import Batch
-from datarax.core.operator import OperatorModule
+from datarax.core.operator import _global_indices_from_metadata, OperatorModule
 
 
 logger = logging.getLogger(__name__)
@@ -157,16 +157,30 @@ class BatchMixOperator(OperatorModule):
         if batch.batch_size < 2:
             return batch
 
-        # Get RNG key from configured stream
-        assert self.rngs is not None, "BatchMixOperator requires rngs"
-        assert self.stream_name is not None, "BatchMixOperator requires stream_name"
-        key = self.rngs[self.stream_name]()
+        # Batch-level mix key, keyed on the batch's global record indices when
+        # available (from metadata) for reproducibility across resume/host count.
+        key = self._mix_key(_global_indices_from_metadata(batch._metadata_list.get_value()))
 
         # Dispatch to appropriate mixing method
         if self.config.mode == "mixup":
             return self._apply_mixup(batch, key)
         else:  # cutmix
             return self._apply_cutmix(batch, key)
+
+    def _mix_key(self, global_indices: jax.Array | None) -> jax.Array:
+        """Return the batch-level mixing key.
+
+        Batch mixing is inherently batch-level (it permutes across the batch), so
+        it uses a single key. When the batch's global record indices are known,
+        the key is derived from the operator's stable base key and the batch's
+        first global index — making the mix reproducible across batch composition,
+        host count, and resume. Otherwise it falls back to the RNG stream.
+        """
+        assert self.rngs is not None, "BatchMixOperator requires rngs"
+        assert self.stream_name is not None, "BatchMixOperator requires stream_name"
+        if global_indices is not None:
+            return jax.random.fold_in(self._base_key[...], global_indices[0])
+        return self.rngs[self.stream_name]()
 
     def _apply_mixup(self, batch: Batch, key: jax.Array) -> Batch:
         """Apply MixUp augmentation to batch.
@@ -217,18 +231,20 @@ class BatchMixOperator(OperatorModule):
         batch_data: PyTree,
         batch_states: PyTree,
         stats: dict[str, Any] | None = None,
+        global_indices: jax.Array | None = None,
     ) -> tuple[PyTree, PyTree]:
-        """Apply batch-level mixing in the DAG fused raw-batch path."""
+        """Apply batch-level mixing in the DAG fused raw-batch path.
+
+        Accepts ``global_indices`` (threaded by the Pipeline) so the batch-mix
+        key is reproducible from the batch's global start index.
+        """
         del stats
 
         batch_size = self._batch_size_from_raw_data(batch_data)
         if batch_size < 2:
             return batch_data, batch_states
 
-        assert self.rngs is not None, "BatchMixOperator requires rngs"
-        assert self.stream_name is not None, "BatchMixOperator requires stream_name"
-        key = self.rngs[self.stream_name]()
-
+        key = self._mix_key(global_indices)
         if self.config.mode == "mixup":
             return self._apply_mixup_raw(batch_data, batch_states, key)
         return self._apply_cutmix_raw(batch_data, batch_states, key)
