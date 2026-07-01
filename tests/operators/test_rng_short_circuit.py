@@ -43,10 +43,10 @@ class TestElementOperatorRNGShortCircuit:
         config = ElementOperatorConfig(stochastic=False)
         op = ElementOperator(config, fn=_identity_fn)
 
-        rng = jax.random.key(0)
+        element_keys = jax.random.split(jax.random.key(0), 32)  # one key per record
         data_shapes = {"value": (32, 8)}
 
-        result = op.generate_random_params(rng, data_shapes)
+        result = op.generate_random_params(element_keys, data_shapes)
         assert result is None
 
     def test_stochastic_returns_keys(self):
@@ -54,10 +54,10 @@ class TestElementOperatorRNGShortCircuit:
         config = ElementOperatorConfig(stochastic=True, stream_name="params")
         op = ElementOperator(config, fn=_stochastic_fn, rngs=nnx.Rngs(params=42))
 
-        rng = jax.random.key(0)
+        element_keys = jax.random.split(jax.random.key(0), 32)  # one key per record
         data_shapes = {"value": (32, 8)}
 
-        result = op.generate_random_params(rng, data_shapes)
+        result = op.generate_random_params(element_keys, data_shapes)
         assert result is not None
         # Should be an array of keys, one per batch element
         assert hasattr(result, "shape")
@@ -72,10 +72,10 @@ class TestMapOperatorRNGShortCircuit:
         config = MapOperatorConfig(stochastic=False)
         op = MapOperator(config, fn=_map_fn)  # type: ignore[reportArgumentType]
 
-        rng = jax.random.key(0)
+        element_keys = jax.random.split(jax.random.key(0), 32)  # one key per record
         data_shapes = {"value": (32, 8)}
 
-        result = op.generate_random_params(rng, data_shapes)
+        result = op.generate_random_params(element_keys, data_shapes)
         assert result is None
 
     def test_stochastic_returns_keys(self):
@@ -83,10 +83,10 @@ class TestMapOperatorRNGShortCircuit:
         config = MapOperatorConfig(stochastic=True, stream_name="params")
         op = MapOperator(config, fn=_map_fn, rngs=nnx.Rngs(params=42))  # type: ignore[reportArgumentType]
 
-        rng = jax.random.key(0)
+        element_keys = jax.random.split(jax.random.key(0), 32)  # one key per record
         data_shapes = {"value": (32, 8)}
 
-        result = op.generate_random_params(rng, data_shapes)
+        result = op.generate_random_params(element_keys, data_shapes)
         assert result is not None
 
 

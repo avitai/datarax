@@ -31,6 +31,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
+from datarax.operators._random_params import per_element_params
 
 
 logger = logging.getLogger(__name__)
@@ -136,25 +137,26 @@ class DropoutOperator(ModalityOperator):
 
     def generate_random_params(
         self,
-        rng: jax.Array,
+        element_keys: jax.Array,
         data_shapes: dict[str, tuple[int, ...]],
     ) -> dict[str, jax.Array]:
-        """Generate random dropout masks for stochastic mode.
+        """Generate per-record dropout masks from per-record PRNG keys.
 
-        In stochastic mode, this pre-generates the dropout masks for the entire batch.
-        This approach avoids RNG state mutations inside vmapped apply().
+        Each record's mask is drawn from its own key
+        (``fold_in(base_key, global_index)``), so dropout is reproducible per
+        record regardless of batch composition, shuffle, host count, or resume.
 
         Args:
-            rng: JAX random key
-            data_shapes: Dictionary mapping field keys to their shapes.
-                        Used to determine batch size and element shapes.
+            element_keys: ``(batch_size,)`` per-record PRNG keys.
+            data_shapes: Dictionary mapping field keys to their shapes (used for
+                per-record element shape).
 
         Returns:
             Dictionary with:
 
                 - "keep_mask": Boolean array indicating which values to keep
                               Shape: (batch_size, H, W, C) for pixel mode
-                              Shape: (batch_size, C) for channel mode (will be broadcast)
+                              Shape: (batch_size, 1, 1, C) for channel mode (broadcast)
 
         Raises:
             KeyError: If field_key not in data_shapes
@@ -165,29 +167,31 @@ class DropoutOperator(ModalityOperator):
                 f"Available keys: {list(data_shapes.keys())}"
             )
 
-        # Get full shape including batch dimension
+        # Full shape includes the batch dim; per-record draws use the element shape.
         full_shape = data_shapes[self.config.field_key]  # e.g., (batch_size, H, W, C)
+        element_shape = tuple(full_shape[1:])
+        keep_prob = 1.0 - self.config.dropout_rate
 
-        # Generate keep masks based on mode
         if self.config.mode == "pixel":
-            # Pixel-wise dropout: generate mask for all pixels
-            keep_mask = jax.random.bernoulli(rng, 1.0 - self.config.dropout_rate, shape=full_shape)
+            # Per-record pixel-wise dropout mask.
+            keep_mask = per_element_params(
+                element_keys, lambda key: jax.random.bernoulli(key, keep_prob, shape=element_shape)
+            )
+        elif self.config.mode == "channel" and len(full_shape) == 4:
+            # Per-record channel mask (num_channels,), expanded to (1, 1, C) so the
+            # vmapped result is (batch, 1, 1, C) for broadcasting in apply().
+            num_channels = full_shape[3]
+            keep_mask = per_element_params(
+                element_keys,
+                lambda key: jax.random.bernoulli(key, keep_prob, shape=(num_channels,))[
+                    jnp.newaxis, jnp.newaxis, :
+                ],
+            )
         elif self.config.mode == "channel":
-            # Channel-wise dropout: generate mask per channel, will be broadcast in apply()
-            batch_size = full_shape[0]
-            if len(full_shape) == 4:  # (batch, H, W, C)
-                num_channels = full_shape[3]
-                # Generate channel masks: (batch_size, num_channels)
-                channel_mask = jax.random.bernoulli(
-                    rng, 1.0 - self.config.dropout_rate, shape=(batch_size, num_channels)
-                )
-                # Expand to (batch, 1, 1, C) for broadcasting in apply()
-                keep_mask = channel_mask[:, jnp.newaxis, jnp.newaxis, :]
-            else:
-                # Fallback to pixel-wise for non-4D tensors
-                keep_mask = jax.random.bernoulli(
-                    rng, 1.0 - self.config.dropout_rate, shape=full_shape
-                )
+            # Fallback to pixel-wise for non-4D tensors.
+            keep_mask = per_element_params(
+                element_keys, lambda key: jax.random.bernoulli(key, keep_prob, shape=element_shape)
+            )
         else:
             raise ValueError(f"Unknown dropout mode: {self.config.mode}")
 

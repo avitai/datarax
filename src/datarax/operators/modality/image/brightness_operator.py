@@ -28,6 +28,7 @@ import jax
 from flax import nnx
 
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
+from datarax.operators._random_params import per_element_params
 from datarax.operators.modality.image import functional
 
 
@@ -189,32 +190,27 @@ class BrightnessOperator(ModalityOperator):
         return result, state, metadata
 
     def generate_random_params(
-        self, rng: jax.Array, data_shapes: dict[str, tuple[int, ...]]
+        self, element_keys: jax.Array, data_shapes: dict[str, tuple[int, ...]]
     ) -> dict[str, Any]:
-        """Generate random parameters for stochastic mode.
+        """Generate per-record brightness deltas from per-record PRNG keys.
 
-        Creates random brightness values within the configured range,
-        one value per batch item. These arrays are later distributed
-        by apply_batch() via vmap, so each apply() call receives a scalar value.
+        Each record's brightness is drawn from its own key
+        (``fold_in(base_key, global_index)``), so the same record gets the same
+        delta regardless of batch composition, shuffle, host count, or resume.
 
         Args:
-            rng: JAX random number generator key
-            data_shapes: Dictionary mapping field keys to their shapes.
-                        Used to determine batch size.
+            element_keys: ``(batch_size,)`` per-record PRNG keys.
+            data_shapes: Unused (batch size comes from ``element_keys``).
 
         Returns:
             Dictionary containing:
 
-                - 'brightness': Array of shape (batch_size,) with per-element brightness deltas
+                - 'brightness': Array of shape (batch_size,) with per-record brightness deltas
         """
-        # Get batch size from data shapes
-        image_shape = data_shapes[self.config.field_key]
-        batch_size = image_shape[0]
-
-        # Generate random brightness deltas
+        del data_shapes
         min_bright, max_bright = self.config.brightness_range
-        brightness = jax.random.uniform(
-            rng, shape=(batch_size,), minval=min_bright, maxval=max_bright
+        brightness = per_element_params(
+            element_keys,
+            lambda key: jax.random.uniform(key, shape=(), minval=min_bright, maxval=max_bright),
         )
-
         return {"brightness": brightness}

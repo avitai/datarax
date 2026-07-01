@@ -141,7 +141,13 @@ class TestProbabilisticOperatorApplication:
         assert jnp.allclose(result_data["value"], expected)
 
     def test_probabilistic_application_p_half(self):
-        """Test that p=0.5 applies operator ~50% of the time."""
+        """p=0.5 applies the operator to ~half the records.
+
+        Randomness is per-record deterministic (keyed on each record's global
+        index), so the test uses ONE batch of many distinct records rather than
+        repeating a single-record batch — repeating the same record would (by
+        design) always make the identical apply/skip decision.
+        """
         rngs = nnx.Rngs(42)  # Fixed seed for reproducibility
 
         # Child operator that adds 100
@@ -152,24 +158,17 @@ class TestProbabilisticOperatorApplication:
         prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=0.5)
         prob_op = ProbabilisticOperator(prob_config, rngs=nnx.Rngs(42))
 
-        # Run 100 trials
-        n_trials = 100
-        applied_count = 0
+        # One batch of 100 distinct records (global indices 0..99 via the
+        # positional fallback), each starting at value 1.0.
+        n_records = 100
+        batch = Batch([Element(data={"value": jnp.array([1.0])}) for _ in range(n_records)])
 
-        for i in range(n_trials):
-            # Create single element batch
-            batch = Batch([Element(data={"value": jnp.array([1.0])})])
+        result_batch = prob_op(batch)
+        values = result_batch.get_data()["value"][:, 0]
+        applied_count = int(jnp.sum(jnp.isclose(values, 101.0)))
 
-            # Apply probabilistic operator
-            result_batch = prob_op(batch)
-            result_value = float(result_batch.get_data()["value"][0, 0])
-
-            # Check if operator was applied (value == 101.0) or not (value == 1.0)
-            if jnp.isclose(result_value, 101.0):
-                applied_count += 1
-
-        # Should be roughly 50% (allow 40-60% range for randomness)
-        assert 30 < applied_count < 70, f"Applied {applied_count}/{n_trials} times (expected ~50)"
+        # Should be roughly 50% (allow 30-70% range for randomness)
+        assert 30 < applied_count < 70, f"Applied {applied_count}/{n_records} (expected ~50)"
 
 
 class TestProbabilisticOperatorStochastic:
@@ -187,11 +186,11 @@ class TestProbabilisticOperatorStochastic:
         prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=0.5)
         prob_op = ProbabilisticOperator(prob_config, rngs=rngs)
 
-        # Generate random params for batch of 3
-        rng = jax.random.key(0)
+        # Generate random params for batch of 3 (one per-record key each)
+        element_keys = jax.random.split(jax.random.key(0), 3)
         data_shapes = {"value": (3, 1)}  # 3 elements, shape (1,)
 
-        random_params = prob_op.generate_random_params(rng, data_shapes)
+        random_params = prob_op.generate_random_params(element_keys, data_shapes)
 
         # Should contain boolean array of shape (3,)
         assert "apply_mask" in random_params
@@ -210,20 +209,16 @@ class TestProbabilisticOperatorStochastic:
         prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=0.3)
         prob_op = ProbabilisticOperator(prob_config, rngs=rngs)
 
-        # Generate many random params
+        # Per-record determinism: draw one mask per record across many distinct
+        # records in a single call, and check the empirical apply ratio.
         n_samples = 1000
-        true_count = 0
+        element_keys = jax.random.split(jax.random.key(42), n_samples)
+        data_shapes = {"value": (n_samples, 1)}
 
-        for i in range(n_samples):
-            rng = jax.random.key(i)
-            data_shapes = {"value": (1, 1)}  # Single element
-
-            random_params = prob_op.generate_random_params(rng, data_shapes)
-            if random_params["apply_mask"][0]:
-                true_count += 1
+        random_params = prob_op.generate_random_params(element_keys, data_shapes)
+        ratio = float(jnp.mean(random_params["apply_mask"]))
 
         # Should be roughly 30% (allow 25-35% range)
-        ratio = true_count / n_samples
         assert 0.25 < ratio < 0.35, f"Apply ratio: {ratio} (expected ~0.3)"
 
 

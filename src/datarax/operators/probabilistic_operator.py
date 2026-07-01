@@ -140,51 +140,40 @@ class ProbabilisticOperator(OperatorModule):
 
     def generate_random_params(
         self,
-        rng: jax.Array,
+        element_keys: jax.Array,
         data_shapes: PyTree,
     ) -> dict[str, Any] | PyTree:
-        """Generate random application decisions for each batch element.
+        """Generate per-record application decisions and child params.
 
-        Creates boolean mask determining which elements get the operator applied.
+        Derives two independent per-record key sets from ``element_keys`` (via
+        ``fold_in``): one for the per-record apply mask, one delegated to the
+        wrapped operator. Keying on the per-record key keeps the apply/skip
+        decision reproducible per record regardless of batch composition.
 
         Args:
-            rng: JAX random key
-            data_shapes: PyTree with same structure as batch.data, containing shapes
-                        Examples: {"image": (batch_size, H, W, C)}
+            element_keys: ``(batch_size,)`` per-record PRNG keys.
+            data_shapes: PyTree with same structure as batch.data, containing shapes.
 
         Returns:
             - If probabilistic (0 < p < 1): Dict with "apply_mask" and "child_params"
             - If deterministic (p=0 or p=1): Child's random params (or None if child deterministic)
-
-        Note:
-            The base class ALWAYS calls generate_random_params, so we must always
-            delegate to child to get its params (even for deterministic ProbabilisticOperator).
         """
-        # Always generate child's random params (child might be stochastic)
-        # Split RNG for our use and child's use
-        rng_mask, rng_child = jax.random.split(rng)
+        # Independent per-record keys for the mask and the wrapped operator.
+        mask_keys = jax.vmap(lambda key: jax.random.fold_in(key, 0))(element_keys)
+        child_keys = jax.vmap(lambda key: jax.random.fold_in(key, 1))(element_keys)
 
         child_params = None
         if hasattr(self.operator, "generate_random_params"):
-            child_params = self.operator.generate_random_params(rng_child, data_shapes)
+            child_params = self.operator.generate_random_params(child_keys, data_shapes)
 
-        # Deterministic cases (p=0 or p=1): just return child's params
+        # Deterministic cases (p=0 or p=1): just return child's params.
         if self.probability == 0.0 or self.probability == 1.0:
             return child_params
 
-        # Stochastic case (0 < p < 1): generate mask + child params
-        # Extract batch size from shape tuples (same pattern as MapOperator)
-        # Use is_leaf to treat tuples as atomic values
-        batch_sizes = jax.tree.map(
-            lambda shape: shape[0], data_shapes, is_leaf=lambda x: isinstance(x, tuple)
+        # Stochastic case (0 < p < 1): per-record apply mask.
+        apply_mask = jax.vmap(lambda key: jax.random.uniform(key, shape=()) < self.probability)(
+            mask_keys
         )
-        batch_size_leaves = jax.tree.leaves(batch_sizes)
-        batch_size = batch_size_leaves[0] if batch_size_leaves else 1
-
-        # Generate boolean mask based on probability
-        # Each element independently sampled
-        random_values = jax.random.uniform(rng_mask, shape=(batch_size,))
-        apply_mask = random_values < self.probability
 
         return {
             "apply_mask": apply_mask,

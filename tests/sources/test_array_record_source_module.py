@@ -226,3 +226,82 @@ class TestArrayRecordSourceModule:
 
             assert source.rngs is not None
             assert "shuffle" in source.rngs
+
+
+class TestArrayRecordSourceCleanup:
+    """S4: explicit ArrayRecord C++ file-handle cleanup via close()/context manager."""
+
+    @staticmethod
+    def _build(grain_instance):
+        with patch("grain.sources.ArrayRecordDataSource", return_value=grain_instance):
+            return ArrayRecordSourceModule(ArrayRecordSourceConfig(), paths="d.array_record")
+
+    def test_close_calls_grain_close_when_available(self):
+        """On grain >= 0.2.19 the source exposes close(); delegate to it."""
+        grain_instance = MagicMock()
+        grain_instance.__len__.return_value = 10
+        source = self._build(grain_instance)
+
+        source.close()
+
+        grain_instance.close.assert_called_once()
+
+    def test_close_falls_back_to_exit_on_older_grain(self):
+        """On grain 0.2.18 there is no close(); fall back to context-manager __exit__."""
+
+        class _NoCloseSource:
+            def __init__(self) -> None:
+                self.exited = False
+
+            def __len__(self) -> int:
+                return 10
+
+            def __exit__(self, *exc: object) -> None:
+                self.exited = True
+
+        grain_instance = _NoCloseSource()
+        source = self._build(grain_instance)
+
+        source.close()
+
+        assert grain_instance.exited is True
+
+    def test_context_manager_closes_on_exit(self):
+        """Using the module as a context manager releases handles on exit."""
+        grain_instance = MagicMock()
+        grain_instance.__len__.return_value = 10
+        with patch("grain.sources.ArrayRecordDataSource", return_value=grain_instance):
+            with ArrayRecordSourceModule(
+                ArrayRecordSourceConfig(), paths="d.array_record"
+            ) as source:
+                assert source is not None
+        grain_instance.close.assert_called_once()
+
+    def test_close_is_idempotent(self):
+        """Calling close() repeatedly must not raise."""
+        grain_instance = MagicMock()
+        grain_instance.__len__.return_value = 10
+        source = self._build(grain_instance)
+
+        source.close()
+        source.close()  # second call must be safe
+
+
+class TestArrayRecordSourceRepr:
+    """S2: config-identifying __repr__ for checkpoint validation."""
+
+    def test_repr_identifies_source_config(self):
+        grain_instance = MagicMock()
+        grain_instance.__len__.return_value = 42
+        grain_instance.paths = ["a.array_record", "b.array_record"]
+        with patch("grain.sources.ArrayRecordDataSource", return_value=grain_instance):
+            config = ArrayRecordSourceConfig(seed=7, num_epochs=3, shuffle_files=True)
+            source = ArrayRecordSourceModule(config, paths=["a.array_record", "b.array_record"])
+
+        r = repr(source)
+        assert "ArrayRecordSourceModule" in r
+        assert "a.array_record" in r
+        assert "num_records=42" in r
+        assert "shuffle_files=True" in r
+        assert "seed=7" in r
+        assert "num_epochs=3" in r

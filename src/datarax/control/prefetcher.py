@@ -10,6 +10,18 @@ Design follows Grain's prefetch pattern:
 - Warm start: background loading begins immediately on construction
 - Sentinel-based StopIteration: uses _END sentinel, not isinstance(Exception)
 - Clean shutdown: stop_event + thread join with timeout
+
+Why not delegate to ``grain.experimental`` prefetch?
+    Grain's ``ThreadPrefetchIterDataset``, ``multithread_prefetch`` and
+    ``device_put`` all operate on a ``grain.IterDataset``. Datarax prefetches
+    arbitrary Python iterables — most importantly the *output stream* of a
+    ``Pipeline`` (post-operator batches) and ``DataSourceModule`` iterators,
+    which are computed/one-shot and therefore not representable as a
+    random-access ``grain`` dataset. The thread-based iterators below are the
+    adapter for that input type; they are intentionally retained rather than
+    replaced. When a caller genuinely holds a ``grain.IterDataset``,
+    ``create_prefetch_stream(..., mode="grain")`` delegates to
+    ``grain.experimental.device_put`` instead.
 """
 
 from __future__ import annotations

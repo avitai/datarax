@@ -60,11 +60,11 @@ class StochasticNoiseConfig(OperatorConfig):  # type: ignore[reportGeneralTypeIs
 class StochasticNoiseOperator(OperatorModule):
     """Stochastic operator: adds random noise to data."""
 
-    def generate_random_params(self, rng, data_shapes):
-        # data_shapes is a PyTree of shape tuples; use is_leaf to treat tuples as atoms
-        shapes = jax.tree.leaves(data_shapes, is_leaf=lambda x: isinstance(x, tuple))
-        batch_size = shapes[0][0]
-        return jax.random.normal(rng, shape=(batch_size,)) * self.config.noise_scale  # type: ignore[reportAttributeAccessIssue]
+    def generate_random_params(self, element_keys, data_shapes):
+        del data_shapes
+        # One noise sample per record, drawn from that record's key.
+        scale = self.config.noise_scale  # type: ignore[reportAttributeAccessIssue]
+        return jax.vmap(lambda key: jax.random.normal(key, shape=()) * scale)(element_keys)
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
         del stats
@@ -187,17 +187,31 @@ class TestVmapApplyRng:
                 "Deterministic op produced different results across calls"
             )
 
-    def test_stochastic_produces_different_results(self, stochastic_op, sample_batch):
-        """Stochastic ops should produce different results on each call."""
+    def test_stochastic_is_deterministic_per_record(self, stochastic_op, sample_batch):
+        """Stochastic ops are per-record deterministic.
+
+        Randomness keys on the record's global index, so the same indices always
+        produce the same output (invariant to call order / resume), while
+        different indices produce different augmentation.
+        """
         batch_data = sample_batch.data.get_value()
         batch_states = sample_batch.states.get_value()
+        batch_size = jax.tree.leaves(batch_data)[0].shape[0]
 
-        result1_data, _ = stochastic_op._vmap_apply(batch_data, batch_states)
-        result2_data, _ = stochastic_op._vmap_apply(batch_data, batch_states)
+        indices_a = jnp.arange(batch_size)
+        indices_b = jnp.arange(batch_size) + 1000  # different global records
 
-        # With advancing RNG, results should differ
-        assert not jnp.allclose(result1_data["image"], result2_data["image"]), (
-            "Stochastic op produced identical results on successive calls"
+        result1, _ = stochastic_op._vmap_apply(batch_data, batch_states, None, indices_a)
+        result2, _ = stochastic_op._vmap_apply(batch_data, batch_states, None, indices_a)
+        result3, _ = stochastic_op._vmap_apply(batch_data, batch_states, None, indices_b)
+
+        # Same global indices -> identical output (per-record determinism).
+        assert jnp.allclose(result1["image"], result2["image"]), (
+            "Same global indices must yield identical augmentation"
+        )
+        # Different global indices -> different augmentation.
+        assert not jnp.allclose(result1["image"], result3["image"]), (
+            "Different global indices must yield different augmentation"
         )
 
 

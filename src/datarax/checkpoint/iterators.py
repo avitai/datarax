@@ -6,7 +6,7 @@ supporting save and restore of iterator state for resumable iteration.
 
 import logging
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from datarax.checkpoint.handlers import OrbaxCheckpointHandler
 from datarax.typing import CheckpointableIterator
@@ -17,6 +17,59 @@ logger = logging.getLogger(__name__)
 
 # Define covariant type parameter for iterators
 T_co = TypeVar("T_co", covariant=True)
+
+# Grain-style identity fields that must stay compatible across a checkpoint
+# restore. Following Grain's checkpoint validation: sampler / data-source
+# representations must match exactly, ``shard_count`` must match (``shard_index``
+# may differ), and ``worker_count`` must match. Only fields present in BOTH the
+# saved checkpoint and the current iterator state are compared, so iterators
+# that do not expose identity fields are simply not validated (no regression).
+_RESTORE_IDENTITY_FIELDS: tuple[str, ...] = (
+    "sampler_repr",
+    "data_source_repr",
+    "shard_count",
+    "worker_count",
+)
+
+
+def validate_restore_compatibility(
+    current_state: dict[str, Any],
+    saved_state: dict[str, Any],
+) -> None:
+    """Raise if a checkpoint's identity fields are incompatible with the iterator.
+
+    Compares the Grain-style identity fields in ``_RESTORE_IDENTITY_FIELDS`` that
+    appear in both ``current_state`` (from the live iterator) and ``saved_state``
+    (from the checkpoint). A mismatch means the checkpoint was produced with a
+    different sampler / data-source configuration or a different shard/worker
+    topology, which would silently corrupt resumed iteration order or the
+    per-host data distribution.
+
+    Args:
+        current_state: ``get_state()`` of the iterator being restored into.
+        saved_state: The state dict loaded from the checkpoint.
+
+    Raises:
+        ValueError: If any shared identity field differs between the two states.
+    """
+    mismatches = [
+        (field, saved_state[field], current_state[field])
+        for field in _RESTORE_IDENTITY_FIELDS
+        if field in current_state
+        and field in saved_state
+        and current_state[field] != saved_state[field]
+    ]
+    if mismatches:
+        details = "; ".join(
+            f"{field}: checkpoint={saved!r} but current={current!r}"
+            for field, saved, current in mismatches
+        )
+        raise ValueError(
+            "Checkpoint is incompatible with the current iterator configuration "
+            f"({details}). Restoring would corrupt iteration order or the per-host "
+            "data distribution. Rebuild the iterator with the checkpointed "
+            "configuration, or discard this checkpoint."
+        )
 
 
 class IteratorCheckpoint:
@@ -109,10 +162,20 @@ class IteratorCheckpoint:
         if not hasattr(iterator, "get_state") or not callable(iterator.get_state):
             raise ValueError("Iterator does not implement get_state method")
 
-        restored = self.handler.restore(self.base_dir, step=step, target=iterator)
-        if restored is not iterator:
-            raise ValueError("Iterator restore failed: handler did not return the target iterator")
-        return restored
+        # Load the saved state without mutating the iterator, validate that its
+        # Grain-style identity fields (sampler/data-source repr, shard/worker
+        # counts) are compatible with the live iterator, then apply. For a
+        # Checkpointable target the handler's own apply path is exactly
+        # ``iterator.set_state(state)``, so this is behavior-preserving.
+        saved_state = self.handler.restore(self.base_dir, step=step, target=None)
+        if not isinstance(saved_state, dict):
+            raise ValueError(
+                "Iterator restore failed: checkpoint did not contain a state dict "
+                f"(got {type(saved_state).__name__})"
+            )
+        validate_restore_compatibility(iterator.get_state(), saved_state)
+        iterator.set_state(saved_state)
+        return iterator
 
     def restore_latest(
         self,

@@ -467,16 +467,16 @@ class TestMapOperatorStochastic:
             "mask": (batch_size, 32, 32, 1),
         }
 
-        # Generate random params
-        rng = jax.random.PRNGKey(42)
-        random_params = op.generate_random_params(rng, data_shapes)
+        # Generate random params from per-record keys (one key per record).
+        element_keys = jax.random.split(jax.random.key(42), batch_size)
+        random_params = op.generate_random_params(element_keys, data_shapes)
 
         # Verify structure matches
         assert random_params is not None
         assert set(random_params.keys()) == {"image", "mask"}
-        # Verify each leaf is array of keys (one per batch element)
-        assert random_params["image"].shape == (batch_size, 2)  # PRNGKey shape is (2,)
-        assert random_params["mask"].shape == (batch_size, 2)
+        # Each leaf holds one per-record key (leading dim == batch_size).
+        assert random_params["image"].shape[0] == batch_size
+        assert random_params["mask"].shape[0] == batch_size
 
     def test_generate_random_params_batch_size_extraction(self):
         """generate_random_params correctly extracts batch size from shapes."""
@@ -492,10 +492,10 @@ class TestMapOperatorStochastic:
         # Different batch sizes
         for batch_size in [1, 2, 8, 16]:
             data_shapes = {"data": (batch_size, 10)}
-            rng = jax.random.PRNGKey(0)
-            random_params = op.generate_random_params(rng, data_shapes)
+            element_keys = jax.random.split(jax.random.key(0), batch_size)
+            random_params = op.generate_random_params(element_keys, data_shapes)
             assert random_params is not None
-            assert random_params["data"].shape == (batch_size, 2)
+            assert random_params["data"].shape[0] == batch_size
 
     def test_stochastic_full_tree_adds_noise(self):
         """Stochastic mode adds randomness in full-tree mode."""

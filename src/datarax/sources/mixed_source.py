@@ -176,6 +176,19 @@ class MixDataSourcesNode(DataSourceModule):
         """Return total elements across all child sources."""
         return self._total_len
 
+    def __repr__(self) -> str:
+        """Config-identifying representation for checkpoint validation.
+
+        Enumerates the child-source reprs and mixing weights so a restore can
+        detect a change in the mixture composition or proportions.
+        """
+        child_reprs = ", ".join(repr(source) for source in self._sources)
+        return (
+            f"MixDataSourcesNode(sources=[{child_reprs}], "
+            f"weights={list(self._weights)!r}, "
+            f"length={self._total_len})"
+        )
+
     def __iter__(self) -> "MixDataSourcesNode":
         """Reset iterators and start a new epoch."""
         self.index.set_value(0)

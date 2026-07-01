@@ -219,9 +219,17 @@ class Pipeline(nnx.Module):
         - Plain ``nnx.Module`` stages with ``__call__(batch) -> batch``
           are called directly. This is the recommended shape for new
           pipelines.
+
+        Per-record RNG: stochastic operators are keyed on the batch's global
+        record positions ``self._position + arange(batch_size)`` (the Pipeline
+        owns the position counter; during ``step()`` it equals the batch's start
+        index), so augmentation is invariant to batch composition, host count,
+        and resume point. Traceable under ``nnx.jit``/``nnx.scan``.
         """
         if not self._exec_order or self._sink is None:
             return batch
+
+        global_indices = self._global_indices_for(batch, self._position[...])
 
         outputs: dict[str, Any] = {}
         states: dict[str, Any] = {}
@@ -235,11 +243,27 @@ class Pipeline(nnx.Module):
             apply_on_raw = getattr(stage, "_apply_on_raw", None)
             if callable(apply_on_raw) and len(inputs) == 1:
                 # OperatorModule fast path: dict + states threading.
-                data, states = apply_on_raw(inputs[0], states)  # type: ignore[reportGeneralTypeIssues]
+                data, states = apply_on_raw(inputs[0], states, None, global_indices)  # type: ignore[reportGeneralTypeIssues]
                 outputs[name] = data
             else:
                 outputs[name] = stage(*inputs)
         return outputs[self._sink]
+
+    @staticmethod
+    def _global_indices_for(batch: dict, start_index: jax.Array | int | None) -> jax.Array | None:
+        """Per-record global indices for ``batch``, or None for the arange fallback.
+
+        ``batch_size`` comes from the leading axis of the first array leaf (static
+        under tracing); ``start_index`` may be a traced scalar. The result is
+        ``start_index + arange(batch_size)``.
+        """
+        if start_index is None:
+            return None
+        leaves = jax.tree.leaves(batch)
+        if not leaves:
+            return None
+        batch_size = leaves[0].shape[0]
+        return jnp.asarray(start_index, dtype=jnp.int32) + jnp.arange(batch_size, dtype=jnp.int32)
 
     @nnx.jit
     def step(self) -> dict:
@@ -254,6 +278,8 @@ class Pipeline(nnx.Module):
         idx = self._position[...]
         key = self.rngs()
         batch = self.source.get_batch_at(idx, self.batch_size, key)
+        # __call__ reads self._position (== idx here) to key per-record RNG on
+        # stable global indices (idx + arange); advance only afterwards.
         batch = self(batch)
         self._position[...] = idx + jnp.int32(self.batch_size)
         return batch

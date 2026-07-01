@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import flax.nnx as nnx
+import grain
 import jax
 import numpy as np
 
@@ -49,8 +50,13 @@ class JaxProcessSharderModule(SharderModule):
             config = JaxProcessSharderConfig()
         super().__init__(config, rngs=rngs, name=name)
         self.config: JaxProcessSharderConfig = config
-        self.process_index = nnx.Variable(jax.process_index())
-        self.process_count = nnx.Variable(jax.process_count())
+        # Source the shard topology from Grain's public ShardByJaxProcess so the
+        # "which shard am I" derivation stays consistent with Grain's samplers.
+        # (Grain's even-split interval math is private, so _shard_bounds below
+        # reimplements it; a parity test pins the two algorithms together.)
+        shard_options = grain.sharding.ShardByJaxProcess(drop_remainder=config.drop_remainder)
+        self.process_index = nnx.Variable(shard_options.shard_index)
+        self.process_count = nnx.Variable(shard_options.shard_count)
         self.local_device_count = nnx.Variable(jax.local_device_count())
 
     def shard_data(self, data: Any) -> Any:

@@ -27,7 +27,7 @@ import gc
 import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import flax.nnx as nnx
 import jax
@@ -300,9 +300,10 @@ class HFEagerSource(EagerSourceBase):
             **download_kwargs,
         )
 
-        if hasattr(dataset, "info"):
-            return dataset.info
-        return None
+        # ``load_dataset`` is typed as a union of Dataset / DatasetDict variants;
+        # only the (single-split) Dataset variants carry ``info``. ``getattr``
+        # stays correct for every variant without a type-narrowing dance.
+        return getattr(dataset, "info", None)
 
     def _load_all_from_backend_to_jax(self, config: HFEagerConfig) -> dict[str, jax.Array]:
         """Load entire dataset to JAX arrays.
@@ -334,8 +335,10 @@ class HFEagerSource(EagerSourceBase):
         )
 
         arrays: dict[str, list[Any]] = {}
+        # A single-split load yields dict rows; the datasets stubs type the
+        # iterator loosely, so cast each row at this library boundary.
         for element in dataset:
-            for k, v in element.items():
+            for k, v in cast(dict[str, Any], element).items():
                 # Apply key filtering
                 if config.include_keys and k not in config.include_keys:
                     continue
@@ -453,11 +456,9 @@ class HFStreamingSource(StreamingSourceBase):
             else:
                 self._hf_dataset = self._hf_dataset.shuffle(seed=42)
 
-        # Get dataset info and length
-        if hasattr(self._hf_dataset, "info"):
-            self._dataset_info = self._hf_dataset.info
-        else:
-            self._dataset_info = None
+        # Get dataset info and length. Only the Dataset variants carry ``info``;
+        # getattr stays correct across the load_dataset return union.
+        self._dataset_info = getattr(self._hf_dataset, "info", None)
 
         # Try to get length (non-streaming Dataset supports __len__)
         if not config.streaming:

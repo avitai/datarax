@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Any, Self
 
 import flax.nnx as nnx
-import numpy as np
 
 from datarax.core.config import StructuralConfig
 from datarax.core.sampler import SamplerModule
@@ -15,7 +14,8 @@ from datarax.samplers._iteration import (
     require_record_count,
     total_epoch_length,
 )
-from datarax.samplers._validation import validate_sampler_bounds
+from datarax.samplers._validation import validate_sampler_bounds, validate_seed
+from datarax.samplers.index_shuffle import index_shuffle
 
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,8 @@ class EpochAwareSamplerConfig(StructuralConfig):
         # Call parent validation
         super().__post_init__()
         validate_sampler_bounds(self.num_records, self.num_epochs)
+        if self.shuffle:
+            validate_seed(self.seed)
 
 
 class EpochAwareSamplerModule(SamplerModule):
@@ -85,27 +87,27 @@ class EpochAwareSamplerModule(SamplerModule):
         # Epoch state
         self.current_epoch = nnx.Variable(0)
         self.current_index = nnx.Variable(0)
-        self.epoch_indices: nnx.Variable[list[int] | None] = nnx.Variable(None)
         self.epoch_complete_callbacks: nnx.Variable[list[Callable[[int], None]]] = nnx.Variable([])
 
-    def _generate_epoch_indices(self) -> None:
-        """Generate indices for current epoch."""
+    def _shuffled_index(self, local_index: int) -> int:
+        """Map a within-epoch position to a record index for the current epoch.
+
+        When shuffling, delegates to Grain's O(1) Feistel ``index_shuffle`` with a
+        per-epoch seed ``(base_seed + epoch) % 2**32`` — the exact formula Grain
+        uses in ``ShuffleMapDataset`` — so each epoch is a different, deterministic,
+        worker-invariant permutation with no materialized index array. When not
+        shuffling, positions map to themselves (sequential order).
+        """
+        if not self.shuffle.get_value():
+            return local_index
         num_records = require_record_count(self.num_records.get_value())
-        indices = np.arange(num_records)
-
-        if self.shuffle.get_value():
-            # Different shuffle per epoch
-            epoch_seed = self.base_seed.get_value() + self.current_epoch.get_value()
-            rng = np.random.RandomState(epoch_seed)
-            rng.shuffle(indices)
-
-        self.epoch_indices.set_value(indices.tolist())
-        self.current_index.set_value(0)
+        epoch_seed = (self.base_seed.get_value() + self.current_epoch.get_value()) % (2**32)
+        return index_shuffle(local_index, epoch_seed, num_records)
 
     def __iter__(self) -> Self:
         """Initialize iteration."""
         self.current_epoch.set_value(0)
-        self._generate_epoch_indices()
+        self.current_index.set_value(0)
         return self
 
     def __next__(self) -> int:
@@ -121,13 +123,9 @@ class EpochAwareSamplerModule(SamplerModule):
             self.current_epoch.set_value(epoch_step.current_epoch)
             if epoch_step.exhausted:
                 raise StopIteration
-            self._generate_epoch_indices()
+            self.current_index.set_value(0)
 
-        epoch_indices = self.epoch_indices.get_value()
-        if epoch_indices is None:
-            raise ValueError("Epoch indices are not generated yet")
-
-        idx = epoch_indices[epoch_step.current_index]
+        idx = self._shuffled_index(epoch_step.current_index)
         self.current_index.set_value(epoch_step.current_index + 1)
 
         return idx
@@ -177,6 +175,5 @@ class EpochAwareSamplerModule(SamplerModule):
         """
         self.current_epoch.set_value(0)
         self.current_index.set_value(0)
-        self.epoch_indices.set_value(None)
         if seed is not None:
             self.base_seed.set_value(seed)

@@ -113,27 +113,24 @@ class ExternalLibraryAdapter(OperatorModule):
 
     def generate_random_params(
         self,
-        rng: jax.Array,
+        element_keys: jax.Array,
         data_shapes: PyTree,
     ) -> jax.Array:
-        """Generate random key for batch - one key per element.
+        """Return the per-record PRNG keys for the wrapped external function.
+
+        ``element_keys`` already holds one stable per-record key
+        (``fold_in(base_key, global_index)``), which is exactly what the external
+        ``fn(data, key)`` expects, so this passes them through unchanged.
 
         Args:
-            rng: JAX random key
-            data_shapes: PyTree with data shapes (used to determine batch size)
+            element_keys: ``(batch_size,)`` per-record PRNG keys.
+            data_shapes: Unused (batch size comes from ``element_keys``).
 
         Returns:
-            Array of random keys, one per batch element
+            The per-record keys, one per record.
         """
-        # Get batch size from the first leaf shape
-        # Get batch size from the first leaf shape
-        # We treat tuple as a leaf to preserve the shape tuple
-        leaves = jax.tree_util.tree_leaves(data_shapes, is_leaf=lambda x: isinstance(x, tuple))
-        first_shape = leaves[0]
-        batch_size = first_shape[0] if len(first_shape) > 0 else 1
-
-        # Generate one key per batch element
-        return jax.random.split(rng, batch_size)
+        del data_shapes
+        return element_keys
 
     def apply(
         self,
@@ -156,11 +153,11 @@ class ExternalLibraryAdapter(OperatorModule):
             Tuple of (transformed_data, state, metadata)
         """
         del stats
-        if random_params is None:
-            raise ValueError("ExternalLibraryAdapter requires random_params (RNG key)")
-
-        # Apply the external function
-        transformed_data = self.fn(data, random_params)
+        # Stochastic operators receive a per-record key; deterministic ones get
+        # no key, so fall back to a fixed key for reproducible "deterministic
+        # noise" (the external fn always requires a key argument).
+        key = random_params if random_params is not None else jax.random.key(0)
+        transformed_data = self.fn(data, key)
         return transformed_data, state, metadata
 
 

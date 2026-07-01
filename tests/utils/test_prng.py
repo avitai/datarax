@@ -4,7 +4,36 @@ import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
 
-from datarax.utils.prng import create_rngs, DEFAULT_RNG_STREAMS
+from datarax.utils.prng import create_rngs, DEFAULT_RNG_STREAMS, per_record_keys
+
+
+class TestPerRecordKeys:
+    """Per-record key derivation: randomness keyed on stable global index."""
+
+    def test_shape_and_one_key_per_record(self):
+        base = jax.random.key(0)
+        keys = per_record_keys(base, jnp.arange(8))
+        assert keys.shape[0] == 8
+
+    def test_same_index_same_key_regardless_of_position(self):
+        """A record's key depends only on its global index, not its batch slot."""
+        base = jax.random.key(0)
+        # Global index 5 appears at different positions in two different "batches".
+        batch_a = per_record_keys(base, jnp.array([3, 4, 5, 6]))
+        batch_b = per_record_keys(base, jnp.array([5, 9, 10, 11]))
+        # index 5 -> position 2 in batch_a, position 0 in batch_b; keys must match.
+        assert jnp.array_equal(jax.random.key_data(batch_a[2]), jax.random.key_data(batch_b[0]))
+
+    def test_distinct_indices_give_distinct_keys(self):
+        base = jax.random.key(0)
+        keys = per_record_keys(base, jnp.array([0, 1, 2]))
+        data = [tuple(jax.random.key_data(keys[i]).tolist()) for i in range(3)]
+        assert len(set(data)) == 3
+
+    def test_different_base_key_changes_keys(self):
+        keys0 = per_record_keys(jax.random.key(0), jnp.array([7]))
+        keys1 = per_record_keys(jax.random.key(1), jnp.array([7]))
+        assert not jnp.array_equal(jax.random.key_data(keys0[0]), jax.random.key_data(keys1[0]))
 
 
 class TestCreateRngs:

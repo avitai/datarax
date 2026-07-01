@@ -244,3 +244,93 @@ class TestPipelineCheckpoint(unittest.TestCase):
             empty_checkpoint = PipelineCheckpoint(empty_dir)
             with self.assertRaises(ValueError):
                 empty_checkpoint.restore_latest(new_iterator)
+
+
+class IdentityIterator(CheckpointableIterator):
+    """Iterator exposing Grain-style identity fields for restore validation (CK2-CK4)."""
+
+    def __init__(self, *, data_source_repr, sampler_repr, shard_count, worker_count):
+        self.position = 0
+        self.data_source_repr = data_source_repr
+        self.sampler_repr = sampler_repr
+        self.shard_count = shard_count
+        self.worker_count = worker_count
+
+    def __next__(self):
+        self.position += 1
+        return self.position
+
+    def __iter__(self):
+        return self
+
+    def get_state(self) -> dict[str, Any]:
+        return {
+            "position": self.position,
+            "data_source_repr": self.data_source_repr,
+            "sampler_repr": self.sampler_repr,
+            "shard_count": self.shard_count,
+            "worker_count": self.worker_count,
+        }
+
+    def set_state(self, state: dict[str, Any]) -> None:
+        self.position = state["position"]
+        self.data_source_repr = state["data_source_repr"]
+        self.sampler_repr = state["sampler_repr"]
+        self.shard_count = state["shard_count"]
+        self.worker_count = state["worker_count"]
+
+
+class TestRestoreValidation(unittest.TestCase):
+    """CK2-CK4: restore-time validation of sampler/source repr and shard/worker counts."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.checkpoint = IteratorCheckpoint(self.temp_dir)
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+
+    @staticmethod
+    def _iterator(**overrides):
+        base = {
+            "data_source_repr": "ArrayRecordSourceModule(paths=['a'])",
+            "sampler_repr": "IndexSampler(seed=0)",
+            "shard_count": 4,
+            "worker_count": 2,
+        }
+        base.update(overrides)
+        return IdentityIterator(**base)
+
+    def _save_reference(self):
+        source = self._iterator()
+        for _ in range(3):
+            next(source)
+        self.checkpoint.save_to_directory(source, step=1)
+
+    def test_restore_succeeds_when_identity_matches(self):
+        self._save_reference()
+        restored = self.checkpoint.restore(self._iterator(), step=1)
+        self.assertEqual(restored.position, 3)  # type: ignore[reportAttributeAccessIssue]
+
+    def test_restore_rejects_mismatched_data_source_repr(self):
+        self._save_reference()
+        with self.assertRaisesRegex(ValueError, "data_source_repr"):
+            self.checkpoint.restore(
+                self._iterator(data_source_repr="ArrayRecordSourceModule(paths=['b'])"),
+                step=1,
+            )
+
+    def test_restore_rejects_mismatched_sampler_repr(self):
+        self._save_reference()
+        with self.assertRaisesRegex(ValueError, "sampler_repr"):
+            self.checkpoint.restore(self._iterator(sampler_repr="IndexSampler(seed=99)"), step=1)
+
+    def test_restore_rejects_mismatched_shard_count(self):
+        self._save_reference()
+        with self.assertRaisesRegex(ValueError, "shard_count"):
+            self.checkpoint.restore(self._iterator(shard_count=8), step=1)
+
+    def test_restore_rejects_mismatched_worker_count(self):
+        self._save_reference()
+        with self.assertRaisesRegex(ValueError, "worker_count"):
+            self.checkpoint.restore(self._iterator(worker_count=16), step=1)

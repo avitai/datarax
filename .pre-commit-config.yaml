@@ -119,7 +119,7 @@ repos:
             typing_extensions,
             optax,
             chex,
-            grain-nightly,
+            grain,
             orbax-checkpoint,
 
             # Standard scientific libraries

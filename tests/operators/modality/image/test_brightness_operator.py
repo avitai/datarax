@@ -284,10 +284,10 @@ class TestBrightnessOperatorStochasticMode:
         )
         operator = BrightnessOperator(config, rngs=nnx.Rngs(42, augment=1))
 
-        rng = jax.random.key(42)
+        element_keys = jax.random.split(jax.random.key(42), 4)  # one key per record
         data_shapes = {"image": (4, 32, 32, 3)}  # Batch size 4
 
-        random_params = operator.generate_random_params(rng, data_shapes)
+        random_params = operator.generate_random_params(element_keys, data_shapes)
 
         assert "brightness" in random_params
         assert random_params["brightness"].shape == (4,)
@@ -302,10 +302,10 @@ class TestBrightnessOperatorStochasticMode:
         )
         operator = BrightnessOperator(config, rngs=nnx.Rngs(42, augment=1))
 
-        rng = jax.random.key(42)
+        element_keys = jax.random.split(jax.random.key(42), 100)  # one key per record
         data_shapes = {"image": (100, 32, 32, 3)}  # Large batch for statistics
 
-        random_params = operator.generate_random_params(rng, data_shapes)
+        random_params = operator.generate_random_params(element_keys, data_shapes)
 
         # All values should be within range
         assert jnp.all(random_params["brightness"] >= -0.3)
@@ -420,10 +420,10 @@ class TestBrightnessOperatorCommonPatterns:
         operator = BrightnessOperator(config, rngs=nnx.Rngs(42, augment=1))
 
         # Generate many samples to check distribution
-        rng = jax.random.key(42)
+        element_keys = jax.random.split(jax.random.key(42), 1000)  # one key per record
         data_shapes = {"image": (1000, 32, 32, 3)}
 
-        random_params = operator.generate_random_params(rng, data_shapes)
+        random_params = operator.generate_random_params(element_keys, data_shapes)
         brightness_values = random_params["brightness"]
 
         # Mean should be near 0, values should span the range

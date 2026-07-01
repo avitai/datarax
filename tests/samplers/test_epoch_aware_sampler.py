@@ -15,6 +15,17 @@ from datarax.samplers.epoch_aware_sampler import (
 )
 
 
+def _drain(sampler: EpochAwareSamplerModule) -> list[int]:
+    """Consume a sampler via ``next()`` until exhaustion, without re-``iter()``ing."""
+    collected: list[int] = []
+    while True:
+        try:
+            collected.append(next(sampler))
+        except StopIteration:
+            break
+    return collected
+
+
 class TestEpochAwareSamplerInitialization:
     """Tests for EpochAwareSamplerModule initialization and state."""
 
@@ -29,7 +40,6 @@ class TestEpochAwareSamplerInitialization:
         assert sampler.base_seed.get_value() == 42
         assert sampler.current_epoch.get_value() == 0
         assert sampler.current_index.get_value() == 0
-        assert sampler.epoch_indices.get_value() is None
         assert sampler.epoch_complete_callbacks.get_value() == []
 
     def test_initialization_custom_params(self):
@@ -413,8 +423,9 @@ class TestEpochAwareSamplerCheckpointing:
         assert state["num_epochs"] == 3
         assert state["shuffle"] is True
         assert state["base_seed"] == 42
-        assert "epoch_indices" in state
-        assert len(state["epoch_indices"]) == 10
+        # No materialized epoch_indices: the per-epoch permutation is recomputed
+        # on demand from (base_seed, epoch), so it is not part of the checkpoint.
+        assert "epoch_indices" not in state
 
     def test_set_state_restores_mid_epoch(self):
         """set_state() can resume from mid-epoch position."""
@@ -438,57 +449,32 @@ class TestEpochAwareSamplerCheckpointing:
         assert sampler2.current_epoch.get_value() == 0
 
     def test_checkpoint_round_trip(self):
-        """get_state -> set_state produces identical subsequent indices."""
+        """get_state -> set_state resumes the identical remaining sequence.
+
+        Uses the public ``next()`` contract only: the per-epoch permutation is
+        recomputed on demand from ``(base_seed, epoch)``, so no materialized
+        index array needs to be checkpointed for a faithful resume.
+        """
         config = EpochAwareSamplerConfig(num_records=6, num_epochs=2, shuffle=True, seed=42)
         sampler = EpochAwareSamplerModule(config, rngs=nnx.Rngs(0))
 
-        # Advance partway
+        # Advance partway, then snapshot state.
         iterator = iter(sampler)
         for _ in range(4):
             next(iterator)
-
         state = sampler.get_state()
 
-        # Collect remaining indices from original
-        remaining_original = []
-        try:
-            while True:
-                remaining_original.append(next(iterator))
-        except StopIteration:
-            pass
+        # Remaining from the original (continue via next(); do NOT re-iter()).
+        remaining_original = _drain(iterator)
 
-        # Restore into a new sampler and collect remaining
+        # Restore into a fresh sampler and resume WITHOUT calling iter() (resets).
         config2 = EpochAwareSamplerConfig(num_records=6, num_epochs=2, shuffle=True, seed=42)
         sampler2 = EpochAwareSamplerModule(config2, rngs=nnx.Rngs(0))
         sampler2.set_state(state)
-
-        remaining_restored = []
-        idx = sampler2.current_index.get_value()
-        epoch = sampler2.current_epoch.get_value()
-        num_epochs = sampler2.num_epochs.get_value()
-        num_records = sampler2.num_records.get_value()
-        assert num_records is not None
-        epoch_indices = sampler2.epoch_indices.get_value()
-        assert epoch_indices is not None
-
-        # Manually iterate without calling __iter__ (which resets state)
-        while True:
-            if epoch >= num_epochs and num_epochs != -1:
-                break
-            if idx >= num_records:
-                epoch += 1
-                if epoch >= num_epochs and num_epochs != -1:
-                    break
-                sampler2.current_epoch.set_value(epoch)
-                sampler2._generate_epoch_indices()
-                epoch_indices = sampler2.epoch_indices.get_value()
-                assert epoch_indices is not None
-                idx = 0
-            remaining_restored.append(epoch_indices[idx])
-            idx += 1
-            sampler2.current_index.set_value(idx)
+        remaining_restored = _drain(sampler2)
 
         assert remaining_original == remaining_restored
+        assert len(remaining_original) == 6 * 2 - 4  # total indices minus the 4 consumed
 
 
 class TestEpochAwareSamplerLen:
@@ -546,3 +532,44 @@ class TestEpochAwareSamplerReset:
         assert sorted(indices2) == list(range(10))
         # But in different order
         assert indices1 != indices2
+
+
+class TestEpochAwareGrainDelegation:
+    """SP6: per-epoch shuffle delegates to Grain's O(1) Feistel index_shuffle."""
+
+    def test_shuffle_order_matches_grain_index_shuffle_per_epoch(self):
+        """Epoch-0 order must equal index_shuffle(i, seed, N) — no materialized list."""
+        from datarax.samplers.index_shuffle import index_shuffle
+
+        num_records, seed = 64, 123
+        config = EpochAwareSamplerConfig(
+            num_records=num_records, num_epochs=1, shuffle=True, seed=seed
+        )
+        sampler = EpochAwareSamplerModule(config, rngs=nnx.Rngs(0))
+
+        order = list(sampler)
+        expected = [index_shuffle(i, seed, num_records) for i in range(num_records)]
+
+        assert order == expected
+        assert sorted(order) == list(range(num_records))
+
+    def test_each_epoch_uses_a_different_permutation(self):
+        """Per-epoch seed (base_seed + epoch) yields a different order each epoch."""
+        num_records = 32
+        config = EpochAwareSamplerConfig(
+            num_records=num_records, num_epochs=2, shuffle=True, seed=7
+        )
+        sampler = EpochAwareSamplerModule(config, rngs=nnx.Rngs(0))
+
+        all_indices = list(sampler)
+        epoch0, epoch1 = all_indices[:num_records], all_indices[num_records:]
+
+        assert sorted(epoch0) == list(range(num_records))
+        assert sorted(epoch1) == list(range(num_records))
+        assert epoch0 != epoch1  # reshuffled across epochs
+
+    def test_no_longer_materializes_epoch_index_list(self):
+        """SP6/N3: the O(N) epoch_indices nnx.Variable list is gone."""
+        config = EpochAwareSamplerConfig(num_records=8, shuffle=True, seed=1)
+        sampler = EpochAwareSamplerModule(config, rngs=nnx.Rngs(0))
+        assert not hasattr(sampler, "epoch_indices")

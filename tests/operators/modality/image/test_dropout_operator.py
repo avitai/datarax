@@ -362,10 +362,10 @@ class TestDropoutOperatorStochasticMode:
         )
         operator = DropoutOperator(config, rngs=nnx.Rngs(42, augment=1))
 
-        rng = jax.random.key(42)
+        element_keys = jax.random.split(jax.random.key(42), 4)  # one key per record
         data_shapes = {"image": (4, 32, 32, 3)}  # Batch size 4
 
-        random_params = operator.generate_random_params(rng, data_shapes)
+        random_params = operator.generate_random_params(element_keys, data_shapes)
 
         assert "keep_mask" in random_params
         # Pixel mode: full shape mask
@@ -382,10 +382,10 @@ class TestDropoutOperatorStochasticMode:
         )
         operator = DropoutOperator(config, rngs=nnx.Rngs(42, augment=1))
 
-        rng = jax.random.key(42)
+        element_keys = jax.random.split(jax.random.key(42), 4)  # one key per record
         data_shapes = {"image": (4, 32, 32, 3)}  # Batch size 4
 
-        random_params = operator.generate_random_params(rng, data_shapes)
+        random_params = operator.generate_random_params(element_keys, data_shapes)
 
         assert "keep_mask" in random_params
         # Channel mode: broadcasted shape (batch, 1, 1, C)

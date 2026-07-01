@@ -110,3 +110,18 @@ def test_streaming_disk_source_rejects_missing_path(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError):
         StreamingDiskSource(config, rngs=nnx.Rngs(0))
+
+
+def test_streaming_disk_source_repr_identifies_config(tmp_path: Path) -> None:
+    """S2: repr enumerates path/feature_key/length so checkpoint restore can validate."""
+    array = np.zeros((12, 3), dtype=np.float32)
+    path = _write_npy(tmp_path / "data.npy", array)
+
+    config = StreamingDiskSourceConfig(path=str(path), feature_key="feat")
+    source = StreamingDiskSource(config, rngs=nnx.Rngs(0))
+
+    r = repr(source)
+    assert "StreamingDiskSource" in r
+    assert str(path) in r
+    assert "feature_key='feat'" in r
+    assert "length=12" in r

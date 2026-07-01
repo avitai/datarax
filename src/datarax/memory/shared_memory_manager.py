@@ -3,133 +3,114 @@
 import logging
 from contextlib import suppress
 from multiprocessing import shared_memory
+from typing import Any
 
-import flax.nnx as nnx
 import jax
+import jax.numpy as jnp
+import numpy as np
 
 
 logger = logging.getLogger(__name__)
 
+# Arrays at least this large (bytes) are placed in shared memory; smaller arrays
+# are kept inline to avoid the shared-memory block overhead.
+_SHARED_MEMORY_MIN_BYTES = 1024 * 1024
 
-class SharedMemoryManager(nnx.Module):
+
+class SharedMemoryManager:
     """Manage shared memory arrays for multi-worker scenarios.
 
-    Automatically converts large numpy arrays to shared memory
-    to avoid duplication across workers.
+    Automatically converts large numpy arrays to shared memory to avoid
+    duplication across worker processes.
+
+    This is a plain resource manager, **not** a Flax NNX module: it owns
+    ``multiprocessing.shared_memory`` blocks and plain metadata, none of which
+    are traced JAX state. (An earlier version subclassed ``nnx.Module`` and
+    stored numpy arrays / Python dicts inside ``nnx.Variable``; that broke
+    ``nnx.split``/checkpointing and is deliberately avoided here.) Use it as a
+    context manager, or call ``cleanup()`` explicitly, to release blocks.
     """
 
     def __init__(self) -> None:
-        """Initialize SharedMemoryManager with empty block and metadata tracking."""
-        super().__init__()
-        self.shared_blocks = nnx.Variable({})
-        self.array_metadata = nnx.Variable({})
+        """Initialize with empty block and metadata tracking."""
+        self.shared_blocks: dict[str, shared_memory.SharedMemory] = {}
+        self.array_metadata: dict[str, dict[str, Any]] = {}
 
     def make_shared(self, name: str, array: jax.Array, force: bool = False) -> jax.Array:
         """Convert array to shared memory.
 
         Args:
-            name: Name for the shared memory block
-            array: Array to store in shared memory
-            force: If True, always use shared memory regardless of size
+            name: Name for the shared memory block.
+            array: Array to store in shared memory.
+            force: If True, always use shared memory regardless of size.
 
         Returns:
-            The original array (shared memory is accessed via get_shared)
+            The original array (shared memory is accessed via ``get_shared``).
         """
-        import numpy as np
+        # Convert to numpy if it's a JAX array.
+        np_array = np.array(array) if hasattr(array, "__array__") else array
 
-        # Convert to numpy if it's a JAX array
-        if hasattr(array, "__array__"):
-            np_array = np.array(array)
-        else:
-            np_array = array
-
-        # Get current dict values using new NNX API (get_value for non-array Variables)
-        metadata_dict = self.array_metadata.get_value()
-        blocks_dict = self.shared_blocks.get_value()
-
-        # Check size threshold (arrays > 1MB) unless forced
-        if not force and np_array.nbytes < 1024 * 1024:
-            # For small arrays, just store in metadata without shared memory
-            metadata_dict[name] = {
+        # Small arrays are kept inline (no shared-memory block) unless forced.
+        if not force and np_array.nbytes < _SHARED_MEMORY_MIN_BYTES:
+            self.array_metadata[name] = {
                 "shape": np_array.shape,
                 "dtype": np_array.dtype,
                 "name": None,
                 "data": np_array,
             }
-            self.array_metadata.set_value(metadata_dict)
             return array
 
-        # Create shared memory block
+        # Create shared memory block and copy data into it.
         shm = shared_memory.SharedMemory(create=True, size=np_array.nbytes)
-        blocks_dict[name] = shm
-        self.shared_blocks.set_value(blocks_dict)
-
-        # Store metadata
-        metadata_dict[name] = {
+        self.shared_blocks[name] = shm
+        self.array_metadata[name] = {
             "shape": np_array.shape,
             "dtype": np_array.dtype,
             "name": shm.name,
             "data": None,
         }
-        self.array_metadata.set_value(metadata_dict)
-
-        # Create numpy array from shared memory and copy data
         shared_np_array = np.ndarray(np_array.shape, dtype=np_array.dtype, buffer=shm.buf)
         shared_np_array[:] = np_array[:]
 
-        return array  # Return original for now, get_shared will retrieve from shared memory
+        return array
 
     def get_shared(self, name: str) -> jax.Array | None:
-        """Get shared array by name."""
-        import numpy as np
-
-        # Use get_value() for non-array Variables (new NNX API)
-        metadata_dict = self.array_metadata.get_value()
-
-        if name not in metadata_dict:
+        """Get shared array by name, or None if it was never stored."""
+        metadata = self.array_metadata.get(name)
+        if metadata is None:
             return None
 
-        metadata = metadata_dict[name]
-
-        # Check if it's stored in shared memory or directly
+        # Small arrays are stored inline.
         if metadata["name"] is None:
-            # Small array stored directly
-            return jax.numpy.array(metadata["data"])
-        else:
-            # Large array in shared memory
-            shm = shared_memory.SharedMemory(name=metadata["name"])
-            try:
-                shared_np_array = np.ndarray(
-                    metadata["shape"], dtype=metadata["dtype"], buffer=shm.buf
-                )
-                return jax.numpy.array(np.array(shared_np_array, copy=True))
-            finally:
-                shm.close()
+            return jnp.array(metadata["data"])
+
+        # Large arrays live in a shared-memory block.
+        shm = shared_memory.SharedMemory(name=metadata["name"])
+        try:
+            shared_np_array = np.ndarray(metadata["shape"], dtype=metadata["dtype"], buffer=shm.buf)
+            return jnp.array(np.array(shared_np_array, copy=True))
+        finally:
+            shm.close()
 
     def cleanup(self) -> None:
-        """Clean up shared memory blocks."""
-        # Use get_value() for non-array Variables (new NNX API)
-        blocks_dict = self.shared_blocks.get_value()
-        for shm in blocks_dict.values():
+        """Close and unlink all shared memory blocks, then clear tracking."""
+        for shm in self.shared_blocks.values():
             with suppress(FileNotFoundError, OSError):
                 shm.close()
             with suppress(FileNotFoundError, OSError):
                 shm.unlink()
-        # Set empty dicts to clear
-        self.shared_blocks.set_value({})
-        self.array_metadata.set_value({})
+        self.shared_blocks = {}
+        self.array_metadata = {}
 
     def __enter__(self) -> "SharedMemoryManager":
         """Enter context manager."""
         return self
 
-    def __exit__(self, _exc_type, _exc_val, _exc_tb) -> None:
+    def __exit__(self, _exc_type: object, _exc_val: object, _exc_tb: object) -> None:
         """Exit context manager and release resources."""
         self.cleanup()
 
     def __del__(self) -> None:
-        """Safety net — prefer using as context manager."""
-        try:
+        """Safety net — prefer using as a context manager."""
+        with suppress(AttributeError, FileNotFoundError, OSError):
             self.cleanup()
-        except (AttributeError, FileNotFoundError, OSError):
-            pass

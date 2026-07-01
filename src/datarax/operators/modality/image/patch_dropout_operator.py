@@ -33,6 +33,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
+from datarax.operators._random_params import per_element_params
 from datarax.operators.modality.image._validation import validate_field_key_shape
 
 
@@ -152,18 +153,18 @@ class PatchDropoutOperator(ModalityOperator):
 
     def generate_random_params(
         self,
-        rng: jax.Array,
+        element_keys: jax.Array,
         data_shapes: dict[str, tuple[int, ...]],
     ) -> dict[str, jax.Array]:
-        """Generate random patch positions for stochastic mode.
+        """Generate per-record patch positions from per-record PRNG keys.
 
-        In stochastic mode, this pre-generates random patch positions for the entire batch.
-        This approach avoids RNG state mutations inside vmapped apply().
+        Each record's patch positions are drawn from its own key
+        (``fold_in(base_key, global_index)``), so they are reproducible per
+        record regardless of batch composition, shuffle, host count, or resume.
 
         Args:
-            rng: JAX random key
-            data_shapes: Dictionary mapping field keys to their shapes.
-                        Used to determine batch size and image dimensions.
+            element_keys: ``(batch_size,)`` per-record PRNG keys.
+            data_shapes: Dictionary mapping field keys to their shapes (image dims).
 
         Returns:
             Dictionary with:
@@ -181,35 +182,27 @@ class PatchDropoutOperator(ModalityOperator):
         image_width = full_shape[2]
 
         patch_h, patch_w = self.config.patch_size
+        num_patches = self.config.num_patches
 
         # Check if patches can fit (will be checked again in apply for safety)
         if image_height < patch_h or image_width < patch_w:
             # Return zero positions - apply() will skip processing
-            return {
-                "patch_positions": jnp.zeros(
-                    (batch_size, self.config.num_patches, 2), dtype=jnp.int32
-                )
-            }
-
-        # Generate random patch positions for entire batch
-        # Split RNG for x and y coordinates
-        rng_x, rng_y = jax.random.split(rng)
+            return {"patch_positions": jnp.zeros((batch_size, num_patches, 2), dtype=jnp.int32)}
 
         # Maximum valid positions (top-left corner of patch)
         max_x = image_width - patch_w
         max_y = image_height - patch_h
 
-        # Generate positions: (batch_size, num_patches)
-        x_positions = jax.random.randint(
-            rng_x, shape=(batch_size, self.config.num_patches), minval=0, maxval=max_x + 1
-        )
-        y_positions = jax.random.randint(
-            rng_y, shape=(batch_size, self.config.num_patches), minval=0, maxval=max_y + 1
-        )
+        def _draw_positions(key: jax.Array) -> jax.Array:
+            # Per-record patch positions: split for x/y, one (num_patches,) draw each.
+            rng_x, rng_y = jax.random.split(key)
+            shape = (num_patches,)
+            x_positions = jax.random.randint(rng_x, shape=shape, minval=0, maxval=max_x + 1)
+            y_positions = jax.random.randint(rng_y, shape=shape, minval=0, maxval=max_y + 1)
+            # (num_patches, 2) where last dim is (y, x)
+            return jnp.stack([y_positions, x_positions], axis=-1)
 
-        # Stack into (batch_size, num_patches, 2) where last dim is (y, x)
-        patch_positions = jnp.stack([y_positions, x_positions], axis=-1)
-
+        patch_positions = per_element_params(element_keys, _draw_positions)
         return {"patch_positions": patch_positions}
 
     def apply(

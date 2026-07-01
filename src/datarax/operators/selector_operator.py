@@ -165,54 +165,46 @@ class SelectorOperator(OperatorModule):
 
     def generate_random_params(
         self,
-        rng: jax.Array,
+        element_keys: jax.Array,
         data_shapes: PyTree,
     ) -> dict[str, Any]:
-        """Generate random operator selection indices for each batch element.
+        """Generate per-record operator selection indices and child params.
 
-        Creates integer indices determining which operator to apply per element,
-        plus delegates to all child operators for their random params.
+        Each record independently selects an operator from its own key
+        (``fold_in``), and each child receives its own per-record key set, so
+        both the selection and each child's randomness are reproducible per
+        record regardless of batch composition, shuffle, host count, or resume.
 
         Args:
-            rng: JAX random key
-            data_shapes: PyTree with same structure as batch.data, containing shapes
-                        Examples: {"image": (batch_size, H, W, C)}
+            element_keys: ``(batch_size,)`` per-record PRNG keys.
+            data_shapes: PyTree with same structure as batch.data, containing shapes.
 
         Returns:
             Dict with:
 
-                - "selected_indices": Array of operator indices per batch element
+                - "selected_indices": Array of operator indices per record
                 - "child_params": Dict mapping operator index to its random params
         """
-        # Split RNG: one for selection, one for children
-        rng_select, rng_children = jax.random.split(rng)
-
-        # Extract batch size from shape tuples (same pattern as MapOperator)
-        batch_sizes = jax.tree.map(
-            lambda shape: shape[0], data_shapes, is_leaf=lambda x: isinstance(x, tuple)
-        )
-        batch_size_leaves = jax.tree.leaves(batch_sizes)
-        batch_size = batch_size_leaves[0] if batch_size_leaves else 1
-
-        # Generate operator selection indices for each batch element
-        # jax.random.choice samples from [0, n_operators) with given weights
-        selected_indices = jax.random.choice(
-            rng_select,
-            len(self.operators),
-            shape=(batch_size,),
-            p=jnp.asarray(self.weights),
-        )
-
-        # Generate random params for ALL child operators
-        # (we need them all because selection happens per-element at apply time)
-        child_params = {}
         n_children = len(self.operators)
-        child_rngs = jax.random.split(rng_children, n_children)
+        weights = jnp.asarray(self.weights)
 
+        # Per-record operator selection (fold index 0 reserved for selection).
+        select_keys = jax.vmap(lambda key: jax.random.fold_in(key, 0))(element_keys)
+        selected_indices = jax.vmap(
+            lambda key: jax.random.choice(key, n_children, shape=(), p=weights)
+        )(select_keys)
+
+        # Per-child per-record keys (fold index i+1 for child i), delegated to
+        # each child. All children's params are generated because selection is
+        # resolved per record at apply time.
+        child_params: dict[str, Any] = {}
         for i, operator in enumerate(self.operators):
             if hasattr(operator, "generate_random_params"):
+                child_keys = jax.vmap(lambda key, offset=i + 1: jax.random.fold_in(key, offset))(
+                    element_keys
+                )
                 child_params[f"operator_{i}"] = operator.generate_random_params(
-                    child_rngs[i], data_shapes
+                    child_keys, data_shapes
                 )
             else:
                 child_params[f"operator_{i}"] = None

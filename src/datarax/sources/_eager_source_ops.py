@@ -25,6 +25,8 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
+from datarax.samplers.index_shuffle import index_shuffle
+
 
 logger = logging.getLogger(__name__)
 
@@ -99,15 +101,8 @@ def shuffled_index_for_position(
     if not shuffle:
         return index
 
-    try:
-        from grain.experimental import index_shuffle
-
-        per_epoch_seed = (seed + epoch) % (2**32)
-        return index_shuffle(index=index, max_index=length - 1, seed=per_epoch_seed, rounds=4)
-    except ImportError:
-        key = jax.random.key(seed + epoch)
-        perm = jax.random.permutation(key, length)
-        return int(perm[index])
+    per_epoch_seed = (seed + epoch) % (2**32)
+    return index_shuffle(index=index, seed=per_epoch_seed, num_elements=length)
 
 
 def eager_iter(

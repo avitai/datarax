@@ -8,10 +8,11 @@ from dataclasses import dataclass
 from typing import Any
 
 import flax.nnx as nnx
-import grain
 
 from datarax.core.config import StructuralConfig
 from datarax.core.sampler import SamplerModule
+from datarax.samplers._validation import validate_seed
+from datarax.samplers.index_shuffle import index_shuffle
 
 
 logger = logging.getLogger(__name__)
@@ -31,8 +32,7 @@ class ShuffleSamplerConfig(StructuralConfig):
         super().__post_init__()
         if self.dataset_size < 0:
             raise ValueError(f"dataset_size must be non-negative, got {self.dataset_size}")
-        if self.seed < 0 or self.seed >= 2**32:
-            raise ValueError("seed must be in [0, 2**32)")
+        validate_seed(self.seed)
 
 
 class ShuffleSampler(SamplerModule):
@@ -54,35 +54,26 @@ class ShuffleSampler(SamplerModule):
         self.position = nnx.Variable(0)
         self._resume_next_iter = nnx.Variable(False)
 
-    @staticmethod
-    def create_static_iterator(dataset_size: int, seed: int = 0) -> Iterator[int]:
-        """Create a one-epoch Grain ``IndexSampler`` iterator."""
-        sampler = grain.samplers.IndexSampler(
-            num_records=dataset_size,
-            shard_options=grain.sharding.NoSharding(),
-            shuffle=True,
-            seed=seed,
-            num_epochs=1,
-        )
-        for metadata in sampler:
-            if metadata.record_key is None:
-                raise ValueError("Grain IndexSampler emitted metadata without a record key")
-            yield int(metadata.record_key)
-
     def __len__(self) -> int:
         """Return the number of indices in one epoch."""
         return self.dataset_size
 
     def __iter__(self) -> Iterator[int]:
-        """Yield shuffled dataset indices, resuming after restored checkpoints."""
+        """Yield shuffled dataset indices, resuming after restored checkpoints.
+
+        Each position is mapped through Grain's Feistel-cipher ``index_shuffle``
+        on demand, so a full epoch never materializes a permutation array
+        (O(1) memory). For a single epoch this reproduces exactly the order of
+        ``grain.samplers.IndexSampler(shuffle=True, seed=seed, num_epochs=1)``,
+        preserving determinism and checkpoint compatibility.
+        """
         start = self.position.get_value() if self._resume_next_iter.get_value() else 0
         if not self._resume_next_iter.get_value():
             self.position.set_value(0)
 
-        order = list(self.create_static_iterator(self.dataset_size, self.seed))
         for cursor in range(start, self.dataset_size):
             self.position.set_value(cursor + 1)
-            yield order[cursor]
+            yield index_shuffle(cursor, self.seed, self.dataset_size)
 
         self._resume_next_iter.set_value(False)
 
@@ -111,8 +102,7 @@ class ShuffleSampler(SamplerModule):
     def reset(self, seed: int | None = None) -> None:
         """Reset the sampler to the beginning of an epoch."""
         if seed is not None:
-            if seed < 0 or seed >= 2**32:
-                raise ValueError("seed must be in [0, 2**32)")
+            validate_seed(seed)
             self.seed = seed
         self.position.set_value(0)
         self._resume_next_iter.set_value(False)

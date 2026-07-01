@@ -36,6 +36,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
+from datarax.operators._random_params import per_element_params
 from datarax.operators.modality.image._validation import validate_field_key_shape
 
 
@@ -213,13 +214,14 @@ class NoiseOperator(ModalityOperator):
 
     def generate_random_params(
         self,
-        rng: jax.Array,
+        element_keys: jax.Array,
         data_shapes: dict[str, tuple[int, ...]],
     ) -> dict[str, jax.Array]:
-        """Generate random noise for stochastic mode.
+        """Generate per-record noise from per-record PRNG keys.
 
-        In stochastic mode, this pre-generates random noise for the entire batch.
-        This approach avoids RNG state mutations inside vmapped apply().
+        Each record's noise is drawn from its own key
+        (``fold_in(base_key, global_index)``), so noise is reproducible per
+        record regardless of batch composition, shuffle, host count, or resume.
 
         Args:
             rng: JAX random key
@@ -236,28 +238,30 @@ class NoiseOperator(ModalityOperator):
         Raises:
             KeyError: If field_key not in data_shapes
         """
-        # Get full shape including batch dimension
+        # Full shape includes the batch dim; per-record draws use the element shape.
         full_shape = validate_field_key_shape(data_shapes, self.config.field_key)
+        element_shape = tuple(full_shape[1:])
 
         if self.config.mode == "gaussian":
-            # Generate Gaussian noise for entire batch
-            noise = (
-                jax.random.normal(rng, shape=full_shape) * self.config.noise_std
-                + self.config.noise_mean
+            # Per-record Gaussian noise: each record drawn from its own key.
+            noise = per_element_params(
+                element_keys,
+                lambda key: jax.random.normal(key, shape=element_shape) * self.config.noise_std
+                + self.config.noise_mean,
             )
             return {"noise": noise}
 
         elif self.config.mode == "salt_pepper":
-            # Generate uniform random values for salt & pepper selection
-            noise_mask = jax.random.uniform(rng, shape=full_shape)
+            # Per-record uniform values for salt & pepper selection.
+            noise_mask = per_element_params(
+                element_keys, lambda key: jax.random.uniform(key, shape=element_shape)
+            )
             return {"noise_mask": noise_mask}
 
         elif self.config.mode == "poisson":
-            # For Poisson, we need the image values, so we'll generate keys instead
-            # Split RNG for each sample in batch
-            batch_size = full_shape[0]
-            rngs = jax.random.split(rng, batch_size)
-            return {"poisson_rngs": rngs}
+            # Poisson needs the image values, applied per record; the per-record
+            # keys are exactly what apply() consumes.
+            return {"poisson_rngs": element_keys}
 
         else:
             raise ValueError(f"Unknown noise mode: {self.config.mode}")

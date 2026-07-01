@@ -17,11 +17,13 @@ import logging
 from typing import Any, final
 
 import jax
+import jax.numpy as jnp
 from flax import nnx
 from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import Batch
+from datarax.core.metadata import Metadata
 from datarax.core.module import DataraxModule
 
 
@@ -62,6 +64,42 @@ def extract_batch_size(data_shapes: PyTree) -> int:
 # Key: (unique_operator_id, PyTreeDef of input)
 # Value: (out_data_struct, out_state_struct)
 _OUTPUT_STRUCT_CACHE: dict[tuple[int, Any], tuple[PyTree, PyTree]] = {}
+
+# Upper bound on cache entries. Each unique (operator, input-structure) pair adds
+# one entry; without a bound a long-running process that builds many operators or
+# feeds many distinct input structures would grow this dict without limit. When
+# full, the oldest entry is evicted (FIFO) — dicts preserve insertion order.
+_OUTPUT_STRUCT_CACHE_MAXSIZE = 1024
+
+
+def _global_indices_from_metadata(metadata_list: Any) -> jax.Array | None:
+    """Extract per-record global indices from a batch's metadata list.
+
+    Returns a ``(batch_size,)`` array of ``Metadata.index`` values, or ``None``
+    when the metadata is absent or not a list of ``Metadata`` (in which case the
+    caller falls back to a positional ``arange``). Requiring genuine ``Metadata``
+    instances avoids mistaking unrelated objects for records — e.g. a plain
+    ``str`` has a built-in ``.index`` *method*, which must not be treated as a
+    record index. Safe under tracing: ``Metadata.index`` may be a JAX tracer.
+    """
+    if not metadata_list or not all(isinstance(meta, Metadata) for meta in metadata_list):
+        return None
+    return jnp.asarray([meta.index for meta in metadata_list], dtype=jnp.uint32)
+
+
+def _store_output_struct(
+    cache_key: tuple[int, Any],
+    value: tuple[PyTree, PyTree],
+) -> None:
+    """Insert into the output-structure cache with bounded FIFO eviction."""
+    if cache_key not in _OUTPUT_STRUCT_CACHE and (
+        len(_OUTPUT_STRUCT_CACHE) >= _OUTPUT_STRUCT_CACHE_MAXSIZE
+    ):
+        # Evict the oldest inserted entry to keep the cache bounded.
+        oldest_key = next(iter(_OUTPUT_STRUCT_CACHE))
+        del _OUTPUT_STRUCT_CACHE[oldest_key]
+    _OUTPUT_STRUCT_CACHE[cache_key] = value
+
 
 # Monotonically increasing ID counter for unique operator identification.
 # Using id(self) is unsafe because Python reuses memory addresses after GC.
@@ -130,35 +168,55 @@ class OperatorModule(DataraxModule):
         self.stochastic = nnx.static(config.stochastic)
         self.stream_name = nnx.static(config.stream_name)
 
+        # Stable per-operator base key, drawn ONCE (not per batch). Per-record
+        # keys are derived as fold_in(base_key, global_record_index), so a
+        # record's randomness depends only on (base_key, its global index) —
+        # invariant to batch composition, shuffle order, host count, and resume.
+        # Stored as NNX state so it round-trips through checkpoints.
+        if config.stochastic:
+            assert rngs is not None  # guaranteed by the check above
+            if config.stream_name is None:
+                raise ValueError("Stochastic operators require config.stream_name to be set.")
+            self._base_key = nnx.Variable(rngs[config.stream_name]())
+
     # ========================================================================
     # Abstract Methods (must be implemented by subclasses)
     # ========================================================================
 
     def generate_random_params(
         self,
-        rng: jax.Array,
+        element_keys: jax.Array | None,
         data_shapes: PyTree,
     ) -> PyTree:
-        """Generate random parameters for batch transformation.
+        """Generate per-record random parameters from per-record PRNG keys.
 
-        This method generates batch-level random parameters (one per batch element).
-        It is impure (uses RNG) and should be called once per batch.
+        ``element_keys`` is a ``(batch_size, ...)`` array of stateless keys, one
+        per record, each derived as ``fold_in(base_key, global_index)`` (see
+        ``_vmap_apply``). Implementations should produce one parameter per record
+        by mapping over the keys, e.g.::
 
-        Required for stochastic operators. Deterministic operators can leave default.
+            factors = jax.vmap(lambda k: jax.random.uniform(k, ()))(element_keys)
+            return {"factor": factors}
+
+        Keying on the per-record key (not a single per-batch draw) is what makes
+        augmentation reproducible across batch composition, shuffle order, host
+        count, and resume. Required for stochastic operators; deterministic
+        operators leave the default (``element_keys`` is ``None``).
 
         Args:
-            rng: JAX random key
+            element_keys: ``(batch_size, ...)`` array of per-record PRNG keys, or
+                ``None`` for deterministic operators.
             data_shapes: PyTree with same structure as batch.data, containing shapes
                         Examples: {"image": (batch_size, H, W, C)}
 
         Returns:
-            PyTree of random parameters matching batch structure.
-            Can be any structure (scalars, arrays, dicts, etc.)
+            PyTree of per-record random parameters (leading dim ``batch_size``),
+            or ``None`` for deterministic operators.
 
         Raises:
             NotImplementedError: If stochastic=True but not implemented
         """
-        del rng, data_shapes
+        del element_keys, data_shapes
         if self.stochastic:
             raise NotImplementedError(
                 f"{self.__class__.__name__} is stochastic but does not implement "
@@ -257,6 +315,7 @@ class OperatorModule(DataraxModule):
         batch_data: PyTree,
         batch_states: PyTree,
         stats: dict[str, Any] | None = None,
+        global_indices: jax.Array | None = None,
     ) -> tuple[PyTree, PyTree]:
         """Apply operator over batch via vmap (parallel) or scan (sequential).
 
@@ -267,10 +326,19 @@ class OperatorModule(DataraxModule):
         This is the computational heart shared by apply_batch(), _apply_on_raw(),
         and the DAG executor's fused chain.
 
+        Randomness is keyed per record: each element's PRNG key is
+        ``fold_in(self._base_key, global_index)`` (see ``generate_random_params``),
+        so augmentation is invariant to batch composition, shuffle order, host
+        count, and resume point.
+
         Args:
             batch_data: PyTree with arrays having batch dimension as axis 0.
             batch_states: PyTree with arrays having batch dimension as axis 0.
             stats: Optional statistics (if None, uses get_statistics()).
+            global_indices: Optional int array ``(batch_size,)`` of stable global
+                record indices for per-record RNG. When ``None`` (no positional
+                information available), falls back to ``arange(batch_size)``,
+                which is deterministic per batch layout but not globally unique.
 
         Returns:
             Tuple of (transformed_data, transformed_states) as raw PyTrees.
@@ -279,18 +347,25 @@ class OperatorModule(DataraxModule):
             stats = self.get_statistics()
         _stats = stats
 
-        # === RNG + RANDOM PARAMS ===
-        if self.stochastic:
-            assert self.stream_name is not None, "stochastic=True requires stream_name"
-            assert self.rngs is not None, "stochastic=True requires rngs"
-            stream_name: str = self.stream_name
-            rngs: nnx.Rngs = self.rngs
-            rng = rngs[stream_name]()
-        else:
-            rng = jax.random.key(0)
-
         data_shapes = jax.tree.map(lambda x: x.shape, batch_data)
-        random_params_batch = self.generate_random_params(rng, data_shapes)
+
+        # === PER-RECORD RNG KEYS ===
+        # Derive one stateless key per record from the operator's stable base key
+        # and the record's global index — never from a per-batch stream draw.
+        if self.stochastic:
+            # Local import: importing datarax.utils.prng at module load would
+            # cycle (utils/__init__ -> external -> core.operator). Python caches
+            # the module, so this is a cheap dict lookup at trace time.
+            from datarax.utils.prng import per_record_keys  # noqa: PLC0415
+
+            batch_size = extract_batch_size(data_shapes)
+            if global_indices is None:
+                global_indices = jnp.arange(batch_size, dtype=jnp.uint32)
+            element_keys = per_record_keys(self._base_key[...], global_indices)
+            random_params_batch = self.generate_random_params(element_keys, data_shapes)
+        else:
+            # Deterministic operators receive no random parameters.
+            random_params_batch = None
 
         # === PER-ELEMENT FUNCTION + INPUTS (unified — DRY) ===
         has_rp = random_params_batch is not None
@@ -322,7 +397,7 @@ class OperatorModule(DataraxModule):
         if cache_key not in _OUTPUT_STRUCT_CACHE:
             sample_data = jax.tree.map(lambda x: x[0], batch_data)
             sample_state = jax.tree.map(lambda x: x[0], batch_states)
-            _OUTPUT_STRUCT_CACHE[cache_key] = self.get_output_structure(sample_data, sample_state)
+            _store_output_struct(cache_key, self.get_output_structure(sample_data, sample_state))
         out_data_axes, out_state_axes = _OUTPUT_STRUCT_CACHE[cache_key]
 
         in_data_axes = jax.tree.map(lambda _: 0, batch_data)
@@ -343,6 +418,7 @@ class OperatorModule(DataraxModule):
         batch_data: PyTree,
         batch_states: PyTree,
         stats: dict[str, Any] | None = None,
+        global_indices: jax.Array | None = None,
     ) -> tuple[PyTree, PyTree]:
         """Apply operator on raw dicts without Batch object creation.
 
@@ -354,11 +430,14 @@ class OperatorModule(DataraxModule):
             batch_data: Dict of batched arrays (axis 0 is batch).
             batch_states: Dict of batched state arrays.
             stats: Optional statistics.
+            global_indices: Optional ``(batch_size,)`` global record indices for
+                per-record RNG (see ``_vmap_apply``). The Pipeline threads the
+                batch start position here so augmentation is position-keyed.
 
         Returns:
             Tuple of (transformed_data, transformed_states) as raw dicts.
         """
-        return self._vmap_apply(batch_data, batch_states, stats)
+        return self._vmap_apply(batch_data, batch_states, stats, global_indices)
 
     def apply_batch(
         self,
@@ -400,8 +479,14 @@ class OperatorModule(DataraxModule):
         if batch.batch_size == 0:
             return batch
 
+        # Per-record RNG: use the batch's stable global record indices when the
+        # metadata carries them; otherwise _vmap_apply falls back to arange.
+        global_indices = _global_indices_from_metadata(batch_metadata.get_value())
+
         # Delegate to shared vmap core
-        transformed_data, transformed_states = self._vmap_apply(batch_data, batch_states, stats)
+        transformed_data, transformed_states = self._vmap_apply(
+            batch_data, batch_states, stats, global_indices
+        )
 
         # Reconstruct batch (preserves batch-level data, including valid_mask).
         # Without explicit valid_mask propagation, a partial last batch's

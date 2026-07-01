@@ -49,15 +49,17 @@ class RandomBrightnessConfig(OperatorConfig):  # type: ignore[reportGeneralTypeI
 class RandomBrightnessOperator(OperatorModule):
     """Stochastic operator that adjusts brightness randomly."""
 
-    def generate_random_params(self, rng, data_shapes):
-        batch_size = data_shapes["image"][0]
-        # Generate one brightness factor per batch element
-        return jax.random.uniform(
-            rng,
-            shape=(batch_size,),
-            minval=self.config.min_factor,  # type: ignore[reportAttributeAccessIssue]
-            maxval=self.config.max_factor,  # type: ignore[reportAttributeAccessIssue]
-        )
+    def generate_random_params(self, element_keys, data_shapes):
+        del data_shapes
+        # One brightness factor per record, drawn from that record's key.
+        return jax.vmap(
+            lambda key: jax.random.uniform(
+                key,
+                shape=(),
+                minval=self.config.min_factor,  # type: ignore[reportAttributeAccessIssue]
+                maxval=self.config.max_factor,  # type: ignore[reportAttributeAccessIssue]
+            )
+        )(element_keys)
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
         del stats
@@ -238,9 +240,9 @@ class TestOperatorModuleStochasticMode:
 
         # Mock data shapes
         data_shapes = {"image": (32, 224, 224, 3)}
-        rng = jax.random.key(0)
+        element_keys = jax.random.split(jax.random.key(0), 32)  # one key per record
 
-        random_params = operator.generate_random_params(rng, data_shapes)
+        random_params = operator.generate_random_params(element_keys, data_shapes)
 
         # Should be (batch_size,) for brightness factors
         assert random_params.shape == (32,)
@@ -257,9 +259,9 @@ class TestOperatorModuleStochasticMode:
         operator = RandomBrightnessOperator(config, rngs=rngs)
 
         data_shapes = {"image": (100, 64, 64, 3)}
-        rng = jax.random.key(0)
+        element_keys = jax.random.split(jax.random.key(0), 100)  # one key per record
 
-        random_params = operator.generate_random_params(rng, data_shapes)
+        random_params = operator.generate_random_params(element_keys, data_shapes)
 
         # All values should be in [min_factor, max_factor]
         assert jnp.all(random_params >= 0.5)
@@ -298,9 +300,9 @@ class TestOperatorModuleStochasticMode:
         operator = RandomBrightnessOperator(config, rngs=rngs)
 
         data_shapes = {"image": (10, 64, 64, 3)}
-        rng = jax.random.key(0)
+        element_keys = jax.random.split(jax.random.key(0), 10)  # one key per record
 
-        random_params = operator.generate_random_params(rng, data_shapes)
+        random_params = operator.generate_random_params(element_keys, data_shapes)
 
         # All 10 values should be different (with high probability)
         unique_values = jnp.unique(random_params)
@@ -316,11 +318,11 @@ class TestOperatorModuleStochasticMode:
         operator = RandomBrightnessOperator(config, rngs=rngs)
 
         data_shapes = {"image": (32, 64, 64, 3)}
-        rng = jax.random.key(12345)
+        element_keys = jax.random.split(jax.random.key(12345), 32)  # one key per record
 
-        # Generate twice with same key
-        params1 = operator.generate_random_params(rng, data_shapes)
-        params2 = operator.generate_random_params(rng, data_shapes)
+        # Generate twice with same per-record keys
+        params1 = operator.generate_random_params(element_keys, data_shapes)
+        params2 = operator.generate_random_params(element_keys, data_shapes)
 
         assert jnp.array_equal(params1, params2)
 
@@ -335,8 +337,10 @@ class TestOperatorModuleStochasticMode:
 
         data_shapes = {"image": (32, 64, 64, 3)}
 
-        params1 = operator.generate_random_params(jax.random.key(0), data_shapes)
-        params2 = operator.generate_random_params(jax.random.key(1), data_shapes)
+        keys1 = jax.random.split(jax.random.key(0), 32)
+        keys2 = jax.random.split(jax.random.key(1), 32)
+        params1 = operator.generate_random_params(keys1, data_shapes)
+        params2 = operator.generate_random_params(keys2, data_shapes)
 
         # Should be different
         assert not jnp.array_equal(params1, params2)
@@ -669,9 +673,9 @@ class TestOperatorModuleRandomParams:
 
         for batch_size in [1, 8, 32, 128]:
             data_shapes = {"image": (batch_size, 64, 64, 3)}
-            rng = jax.random.key(0)
+            element_keys = jax.random.split(jax.random.key(0), batch_size)  # one key per record
 
-            params = operator.generate_random_params(rng, data_shapes)
+            params = operator.generate_random_params(element_keys, data_shapes)
 
             # Should have batch_size as first dimension
             assert params.shape[0] == batch_size

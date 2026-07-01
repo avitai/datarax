@@ -455,3 +455,24 @@ class TestEdgeCases:
         # Note: We can only test with same-structure inputs here because
         # AddKeyOperator specifically expects "input" key. Different structures
         # would require different operators.
+
+
+def test_output_struct_cache_evicts_oldest_when_full(monkeypatch):
+    """N4: the module-level output-structure cache is bounded via FIFO eviction."""
+    from datarax.core import operator as op_mod
+
+    monkeypatch.setattr(op_mod, "_OUTPUT_STRUCT_CACHE", {})
+    monkeypatch.setattr(op_mod, "_OUTPUT_STRUCT_CACHE_MAXSIZE", 3)
+
+    for i in range(5):
+        op_mod._store_output_struct((i, "struct"), (None, None))
+
+    cache = op_mod._OUTPUT_STRUCT_CACHE
+    assert len(cache) == 3  # bounded
+    assert (0, "struct") not in cache  # oldest evicted
+    assert (1, "struct") not in cache
+    assert (4, "struct") in cache  # newest retained
+
+    # Re-inserting an existing key must not evict (no growth).
+    op_mod._store_output_struct((4, "struct"), (None, None))
+    assert len(cache) == 3

@@ -4,6 +4,7 @@ This module contains tests for the NNX-based sampler module implementations.
 """
 
 import flax.nnx as nnx
+import pytest
 
 from datarax.samplers import (
     RangeSampler,
@@ -12,6 +13,15 @@ from datarax.samplers import (
     ShuffleSamplerConfig,
 )
 from datarax.utils.prng import create_rngs
+
+
+def test_shuffle_sampler_seed_range_validation():
+    """SP3: seeds must fall in Grain's accepted range [0, 2**32)."""
+    ShuffleSamplerConfig(dataset_size=10, seed=2**32 - 1)  # upper bound OK
+    with pytest.raises(ValueError, match=r"seed must be in \[0, 2\*\*32\)"):
+        ShuffleSamplerConfig(dataset_size=10, seed=2**32)
+    with pytest.raises(ValueError, match=r"seed must be in \[0, 2\*\*32\)"):
+        ShuffleSamplerConfig(dataset_size=10, seed=-1)
 
 
 def test_range_sampler_basic():
@@ -159,3 +169,43 @@ def test_shuffle_sampler_reset():
     # Verify the third sequence is properly generated
     assert len(third_sequence) == 10
     assert sorted(third_sequence) == list(range(10))
+
+
+def test_shuffle_sampler_order_matches_index_shuffle():
+    """SP2: order must equal Grain's per-position ``index_shuffle`` (O(1) memory).
+
+    This pins the exact permutation so the O(1) refactor cannot change observable
+    order (checkpoint/determinism continuity) and proves the sampler delegates to
+    Grain's Feistel shuffle rather than materializing a full permutation.
+    """
+    from datarax.samplers.index_shuffle import index_shuffle
+
+    dataset_size, seed = 1000, 123
+    config = ShuffleSamplerConfig(dataset_size=dataset_size, seed=seed)
+    sampler = ShuffleSampler(config, rngs=nnx.Rngs(0))
+
+    order = list(sampler)
+    expected = [index_shuffle(i, seed, dataset_size) for i in range(dataset_size)]
+
+    assert order == expected
+    assert sorted(order) == list(range(dataset_size))  # still a valid permutation
+
+
+def test_shuffle_sampler_resumes_from_checkpoint_position():
+    """SP2: restoring mid-epoch resumes at the saved position on the same permutation."""
+    dataset_size, seed = 50, 7
+    config = ShuffleSamplerConfig(dataset_size=dataset_size, seed=seed)
+
+    full_order = list(ShuffleSampler(config, rngs=nnx.Rngs(0)))
+
+    resumed = ShuffleSampler(config, rngs=nnx.Rngs(0))
+    iterator = iter(resumed)
+    consumed = [next(iterator) for _ in range(20)]
+    state = resumed.get_state()
+
+    restored = ShuffleSampler(config, rngs=nnx.Rngs(0))
+    restored.set_state(state)
+    tail = list(restored)
+
+    assert consumed == full_order[:20]
+    assert tail == full_order[20:]

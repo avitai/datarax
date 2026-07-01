@@ -50,12 +50,12 @@ class TestExternalLibraryAdapter:
         rngs = nnx.Rngs(augment=42)
         adapter = ExternalLibraryAdapter(config, mock_external_fn, rngs=rngs)
 
-        master_key = jax.random.key(0)
         batch_size = 5
+        element_keys = jax.random.split(jax.random.key(0), batch_size)  # one key per record
         # Simulate data_shapes for a batch of 5 images of shape (32, 32, 3)
         data_shapes = {"x": (batch_size, 32, 32, 3)}
 
-        keys = adapter.generate_random_params(master_key, data_shapes)
+        keys = adapter.generate_random_params(element_keys, data_shapes)
 
         # JAX keys can be (N, 2) or (N,) depending on implementation/version
         assert keys.shape[0] == batch_size
@@ -86,13 +86,18 @@ class TestExternalLibraryAdapter:
         assert new_state == state
         assert new_metadata == metadata
 
-    def test_apply_raises_without_params(self, mock_external_fn):
+    def test_apply_falls_back_to_fixed_key_without_params(self, mock_external_fn):
+        """Without a per-record key (deterministic mode), apply uses a fixed key.
+
+        The wrapped external fn always needs a key, so instead of raising, apply
+        falls back to a fixed key — producing reproducible "deterministic noise".
+        """
         config = ExternalAdapterConfig()
         rngs = nnx.Rngs(augment=42)
         adapter = ExternalLibraryAdapter(config, mock_external_fn, rngs=rngs)
 
-        with pytest.raises(ValueError, match="requires random_params"):
-            adapter.apply({"x": jnp.zeros(1)}, {}, None, random_params=None)
+        out_data, _, _ = adapter.apply({"x": jnp.zeros(1)}, {}, None, random_params=None)
+        assert out_data is not None
 
     def test_integration_with_batch(self, mock_external_fn):
         """Test full pipeline execution via __call__ with a Batch object."""

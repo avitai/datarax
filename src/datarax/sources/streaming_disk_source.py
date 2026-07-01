@@ -92,6 +92,20 @@ class StreamingDiskSource(DataSourceModule):
         """Total number of records on disk."""
         return self._length
 
+    def __repr__(self) -> str:
+        """Config-identifying representation for checkpoint validation.
+
+        Includes the on-disk path, feature key, record count, and element
+        shape/dtype so a restore can detect a source pointed at different data.
+        """
+        return (
+            f"StreamingDiskSource(path={self.config.path!r}, "
+            f"feature_key={self._feature_key!r}, "
+            f"length={self._length}, "
+            f"element_shape={self._element_shape}, "
+            f"element_dtype={self._element_dtype!s})"
+        )
+
     def element_spec(self) -> Any:
         """Return per-element spec — leading dataset axis stripped."""
         leaf = jax.ShapeDtypeStruct(shape=self._element_shape, dtype=self._element_dtype)

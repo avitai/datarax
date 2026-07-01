@@ -28,6 +28,7 @@ import jax
 from flax import nnx
 
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
+from datarax.operators._random_params import per_element_params
 from datarax.operators.modality.image import functional
 
 
@@ -150,25 +151,21 @@ class ContrastOperator(ModalityOperator):
         return result, state, metadata
 
     def generate_random_params(
-        self, rng: jax.Array, data_shapes: dict[str, tuple[int, ...]]
+        self, element_keys: jax.Array, data_shapes: dict[str, tuple[int, ...]]
     ) -> dict[str, Any]:
-        """Generate random parameters for stochastic mode.
+        """Generate per-record contrast factors from per-record PRNG keys.
 
         Args:
-            rng: JAX random number generator key
-            data_shapes: Dictionary mapping field keys to their shapes.
+            element_keys: ``(batch_size,)`` per-record PRNG keys.
+            data_shapes: Unused (batch size comes from ``element_keys``).
 
         Returns:
             Dictionary containing 'contrast' array of shape (batch_size,)
         """
-        # Get batch size from data shapes
-        image_shape = data_shapes[self.config.field_key]
-        batch_size = image_shape[0]
-
-        # Generate random contrast factors
+        del data_shapes
         min_contrast, max_contrast = self.config.contrast_range
-        contrast = jax.random.uniform(
-            rng, shape=(batch_size,), minval=min_contrast, maxval=max_contrast
+        contrast = per_element_params(
+            element_keys,
+            lambda key: jax.random.uniform(key, shape=(), minval=min_contrast, maxval=max_contrast),
         )
-
         return {"contrast": contrast}

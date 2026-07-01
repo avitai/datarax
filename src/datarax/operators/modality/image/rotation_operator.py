@@ -17,6 +17,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
+from datarax.operators._random_params import per_element_params
 from datarax.operators.modality.image import functional
 
 
@@ -124,32 +125,24 @@ class RotationOperator(ModalityOperator):
 
     def generate_random_params(
         self,
-        rng: jax.Array,
+        element_keys: jax.Array,
         data_shapes: dict[str, tuple[int, ...]],
     ) -> dict[str, Any]:
-        """Generate random rotation angle for stochastic mode.
+        """Generate per-record rotation angles from per-record PRNG keys.
 
         Args:
-            rng: JAX random key.
-            data_shapes: Dictionary mapping field names to their shapes.
+            element_keys: ``(batch_size,)`` per-record PRNG keys.
+            data_shapes: Unused (batch size comes from ``element_keys``).
 
         Returns:
-            Dictionary with "angle" key containing random angles (one per batch element).
+            Dictionary with "angle" key containing random angles (one per record).
         """
-        # Get batch size from data shapes
-        image_shape = data_shapes[self.config.field_key]
-        batch_size = image_shape[0]
-
+        del data_shapes
         min_angle, max_angle = self.config.angle_range
-
-        # Sample random angles in degrees (one per batch element)
-        angle = jax.random.uniform(
-            rng,
-            shape=(batch_size,),
-            minval=min_angle,
-            maxval=max_angle,
+        angle = per_element_params(
+            element_keys,
+            lambda key: jax.random.uniform(key, shape=(), minval=min_angle, maxval=max_angle),
         )
-
         return {"angle": angle}
 
     def apply(

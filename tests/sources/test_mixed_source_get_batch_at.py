@@ -166,3 +166,18 @@ def test_mixed_get_batch_at_accepts_traced_start() -> None:
 
     out = mix.get_batch_at(start=jnp.int32(2), size=4, key=jax.random.key(0))
     assert out["x"].shape == (4,)
+
+
+def test_mixed_source_repr_lists_children_and_weights() -> None:
+    """S2: repr enumerates child-source reprs and mixing weights for checkpoint validation."""
+    src_a, src_b = _disjoint_pair()
+    mix = MixDataSourcesNode(
+        MixDataSourcesConfig(num_sources=2, weights=(0.25, 0.75)),
+        [src_a, src_b],
+    )
+
+    r = repr(mix)
+    assert "MixDataSourcesNode" in r
+    assert "MemorySource" in r  # child reprs are embedded
+    assert "0.25" in r and "0.75" in r
+    assert "length=8" in r

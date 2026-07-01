@@ -395,10 +395,10 @@ class TestPatchDropoutOperatorStochasticMode:
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(42, augment=1))
 
-        rng = jax.random.key(42)
+        element_keys = jax.random.split(jax.random.key(42), 3)  # one key per record
         data_shapes = {"image": (3, 32, 32, 3)}  # Batch size 3
 
-        random_params = operator.generate_random_params(rng, data_shapes)
+        random_params = operator.generate_random_params(element_keys, data_shapes)
 
         assert "patch_positions" in random_params
         # Shape: (batch_size, num_patches, 2) where last dim is (y, x)
@@ -415,10 +415,10 @@ class TestPatchDropoutOperatorStochasticMode:
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(42, augment=1))
 
-        rng = jax.random.key(42)
+        element_keys = jax.random.split(jax.random.key(42), 10)  # one key per record
         data_shapes = {"image": (10, 32, 32, 3)}
 
-        random_params = operator.generate_random_params(rng, data_shapes)
+        random_params = operator.generate_random_params(element_keys, data_shapes)
 
         positions = random_params["patch_positions"]
         # All positions should be within valid range

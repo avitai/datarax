@@ -40,9 +40,9 @@ def test_grain_dependency_declares_single_package_with_current_api() -> None:
 
     dependency_names = _dependency_names(all_dependencies)
 
-    assert "grain-nightly>=0.2.16.dev20260112" in base_dependencies
-    assert "grain" not in dependency_names
-    assert _dependency_names(base_dependencies).count("grain-nightly") == 1
+    assert "grain>=0.2.18" in base_dependencies
+    assert "grain-nightly" not in dependency_names
+    assert _dependency_names(base_dependencies).count("grain") == 1
 
 
 def test_tfds_dependency_set_is_warning_clean() -> None:

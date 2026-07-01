@@ -327,15 +327,18 @@ class CompositeOperatorModule(OperatorModule):
 
     def generate_random_params(
         self,
-        rng: jax.Array,
+        element_keys: jax.Array,
         data_shapes: PyTree,
     ) -> dict[str, Any]:
-        """Generate random parameters for all child operators.
+        """Generate per-record random parameters for all child operators.
+
+        Each child receives its own per-record key set derived from
+        ``element_keys`` via ``fold_in`` (child index as the fold offset), so
+        every child's randomness is independent yet reproducible per record.
 
         When ``weight_key`` is configured, strips that key from ``data_shapes``
-        before delegating to children. This ensures children's random param trees
-        match the clean data they receive (without the weight key), preventing
-        PyTree structure mismatches during vmap.
+        before delegating to children so their random-param trees match the clean
+        data they receive (without the weight key), avoiding PyTree mismatches.
         """
         # Strip weight_key from data_shapes so children's random params
         # match the clean data they actually receive (without the weight key)
@@ -349,22 +352,16 @@ class CompositeOperatorModule(OperatorModule):
                 k: v for k, v in data_shapes.items() if k != self.config.weight_key
             }
 
-        # Split RNG into n_operators keys (one per child)
+        # Per-child per-record keys: fold the child index into each record's key.
         operators = self._get_operators_list()
-        n_operators = len(operators)
-        child_rngs = jax.random.split(rng, n_operators)
-
-        # Generate random params for each child operator
         random_params = {}
         for i, operator in enumerate(operators):
-            # Each child gets its own RNG slice
-            child_rng = child_rngs[i]
-
-            # Call child's generate_random_params
-            child_params = operator.generate_random_params(child_rng, child_data_shapes)
-
-            # Store under operator index key
-            random_params[f"operator_{i}"] = child_params
+            child_keys = jax.vmap(lambda key, offset=i: jax.random.fold_in(key, offset))(
+                element_keys
+            )
+            random_params[f"operator_{i}"] = operator.generate_random_params(
+                child_keys, child_data_shapes
+            )
 
         return random_params
 

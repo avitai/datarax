@@ -803,10 +803,10 @@ class TestNoiseOperatorStochasticMode:
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
-        rng = jax.random.key(42)
+        element_keys = jax.random.split(jax.random.key(42), 4)  # one key per record
         data_shapes = {"image": (4, 32, 32, 3)}
 
-        random_params = operator.generate_random_params(rng, data_shapes)
+        random_params = operator.generate_random_params(element_keys, data_shapes)
 
         assert "noise" in random_params
         assert random_params["noise"].shape == (4, 32, 32, 3)
@@ -823,10 +823,10 @@ class TestNoiseOperatorStochasticMode:
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
-        rng = jax.random.key(42)
+        element_keys = jax.random.split(jax.random.key(42), 4)  # one key per record
         data_shapes = {"image": (4, 32, 32, 3)}
 
-        random_params = operator.generate_random_params(rng, data_shapes)
+        random_params = operator.generate_random_params(element_keys, data_shapes)
 
         assert "noise_mask" in random_params
         assert random_params["noise_mask"].shape == (4, 32, 32, 3)
@@ -842,10 +842,10 @@ class TestNoiseOperatorStochasticMode:
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
-        rng = jax.random.key(42)
+        element_keys = jax.random.split(jax.random.key(42), 4)  # one key per record
         data_shapes = {"image": (4, 32, 32, 3)}
 
-        random_params = operator.generate_random_params(rng, data_shapes)
+        random_params = operator.generate_random_params(element_keys, data_shapes)
 
         assert "poisson_rngs" in random_params
         assert random_params["poisson_rngs"].shape == (4,)

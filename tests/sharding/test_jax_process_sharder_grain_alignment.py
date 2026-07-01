@@ -77,3 +77,41 @@ def test_jax_process_sharder_array_even_split_matches_list_boundaries() -> None:
         np.asarray(_shard_for_process(jax_array, process_index=2, drop_remainder=False)),
         np.array([8, 9, 10]),
     )
+
+
+def test_shard_bounds_match_grain_even_split_exactly() -> None:
+    """SH1: datarax shard bounds must equal Grain's even_split for all topologies.
+
+    The interval math (`even_split`) is private in Grain, so datarax keeps its
+    own implementation; this test pins it to Grain's real algorithm across many
+    (num_examples, shard_count, shard_index, drop_remainder) combinations,
+    including drop_remainder=False (the case Grain 0.2.18 fixed).
+    """
+    from grain._src.core.sharding import even_split, ShardOptions
+
+    for num_examples in (0, 1, 7, 10, 11, 100, 101):
+        for shard_count in (1, 2, 3, 4):
+            for shard_index in range(shard_count):
+                for drop_remainder in (True, False):
+                    options = ShardOptions(
+                        shard_index=shard_index,
+                        shard_count=shard_count,
+                        drop_remainder=drop_remainder,
+                    )
+                    expected = even_split(num_examples, options)
+
+                    with (
+                        patch("jax.process_count", return_value=shard_count),
+                        patch("jax.process_index", return_value=shard_index),
+                        patch("jax.local_device_count", return_value=1),
+                    ):
+                        sharder = JaxProcessSharderModule(
+                            JaxProcessSharderConfig(drop_remainder=drop_remainder)
+                        )
+                        actual = sharder._shard_bounds(num_examples)
+
+                    assert actual == expected, (
+                        f"mismatch for num={num_examples} count={shard_count} "
+                        f"index={shard_index} drop={drop_remainder}: "
+                        f"{actual} != {expected}"
+                    )

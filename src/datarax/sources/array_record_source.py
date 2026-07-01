@@ -50,6 +50,11 @@ class ArrayRecordSourceModule(DataSourceModule):
 
     Note: Grain's ArrayRecordDataSource doesn't accept a seed parameter directly.
     Shuffling is handled at the sampler level or through file ordering.
+
+    Resource management: the underlying ArrayRecord readers hold C++ file handles
+    that are not reliably freed by garbage collection. Use the module as a context
+    manager (``with ArrayRecordSourceModule(...) as source:``) or call ``close()``
+    explicitly between phases to avoid "Too many open files" on long-running jobs.
     """
 
     # Narrow config type for pyright (base stores via nnx.static)
@@ -121,6 +126,22 @@ class ArrayRecordSourceModule(DataSourceModule):
     def __len__(self) -> int:
         """Return total number of records."""
         return self.total_records.get_value()
+
+    def __repr__(self) -> str:
+        """Config-identifying representation for checkpoint validation.
+
+        Enumerates every parameter that affects which records are read and in
+        what order (paths, record count, shuffle/seed/epoch settings) so a
+        checkpoint restore can detect an incompatible source configuration.
+        """
+        paths = getattr(self.grain_source, "paths", None)
+        return (
+            f"ArrayRecordSourceModule(paths={paths!r}, "
+            f"num_records={self.total_records.get_value()}, "
+            f"shuffle_files={self.config.shuffle_files}, "
+            f"seed={self.config.seed}, "
+            f"num_epochs={self.config.num_epochs})"
+        )
 
     def __iter__(self) -> Self:
         """Initialize iteration with state tracking."""
@@ -295,3 +316,35 @@ class ArrayRecordSourceModule(DataSourceModule):
         if getitems is not None:
             return list(getitems(actual_indices))
         return [self.grain_source[index] for index in actual_indices]
+
+    def close(self) -> None:
+        """Release the underlying ArrayRecord C++ file handles.
+
+        ArrayRecord readers hold C++ file handles that Python garbage collection
+        does **not** reliably release; long-running pipelines that repeatedly
+        create sources can exhaust the file-descriptor limit ("Too many open
+        files"). Call ``close()`` — or use the source as a context manager —
+        between phases that open new sources.
+
+        Delegates to Grain's own cleanup: ``ArrayRecordDataSource.close()`` on
+        grain >= 0.2.19, falling back to its context-manager ``__exit__`` on
+        grain 0.2.18. Idempotent and safe to call multiple times.
+        """
+        source = getattr(self, "grain_source", None)
+        if source is None:
+            return
+        closer = getattr(source, "close", None)
+        if callable(closer):
+            closer()
+            return
+        exiter = getattr(source, "__exit__", None)
+        if callable(exiter):
+            exiter(None, None, None)
+
+    def __enter__(self) -> Self:
+        """Enter a context that guarantees ``close()`` on exit."""
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Release ArrayRecord file handles on context exit."""
+        self.close()

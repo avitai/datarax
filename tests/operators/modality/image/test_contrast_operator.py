@@ -134,9 +134,9 @@ class TestContrastOperatorStochastic:
 
         batch_size = 10
         data_shapes = {"image": (batch_size, 32, 32, 3)}
-        rng = jax.random.PRNGKey(0)
+        element_keys = jax.random.split(jax.random.key(0), batch_size)  # one key per record
 
-        params = operator.generate_random_params(rng, data_shapes)
+        params = operator.generate_random_params(element_keys, data_shapes)
         assert params["contrast"].shape == (batch_size,)
         assert jnp.all(params["contrast"] >= 0.5)
         assert jnp.all(params["contrast"] <= 1.5)

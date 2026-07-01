@@ -388,9 +388,9 @@ class TestRotationOperatorStochasticMode:
         batch_size = 4
         data_shapes = {"image": (batch_size, 16, 16, 3)}
 
-        # Generate different random params using different RNG keys
-        key1 = jax.random.key(42)
-        key2 = jax.random.key(43)
+        # Generate different random params using different per-record key sets
+        key1 = jax.random.split(jax.random.key(42), batch_size)
+        key2 = jax.random.split(jax.random.key(43), batch_size)
 
         random_params1 = operator.generate_random_params(key1, data_shapes)
         random_params2 = operator.generate_random_params(key2, data_shapes)

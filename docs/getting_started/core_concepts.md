@@ -93,6 +93,17 @@ augment_op = RandomFlipOperator(
     rngs=nnx.Rngs(augment=42)
 )
 
+### Per-Record Determinism
+
+Stochastic operators key their randomness on each record's **stable global
+index**, not on batch position or how many batches have been consumed. Each
+operator draws one base key at construction and derives a per-record key as
+`fold_in(base_key, global_index)` (the JAX-native analogue of Grain's
+`Philox(seed + index)`). Consequently a given record is augmented **identically**
+regardless of batch size, shard/host count, shuffle order, or resume point —
+while gradients still flow through the transformation. The `Pipeline` supplies
+the global index automatically from its position counter.
+
 ---
 
 ## Tier 2B: StructuralModule (Data Organization)

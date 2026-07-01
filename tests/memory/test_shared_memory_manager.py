@@ -23,9 +23,11 @@ class TestSharedMemoryManager:
 
     def test_initialization(self, manager):
         """Test SharedMemoryManager initialization."""
-        assert isinstance(manager, nnx.Module)
-        assert isinstance(manager.shared_blocks.get_value(), dict)  # type: ignore[reportAttributeAccessIssue]
-        assert isinstance(manager.array_metadata.get_value(), dict)  # type: ignore[reportAttributeAccessIssue]
+        # Deliberately NOT an nnx.Module: it manages OS shared-memory blocks and
+        # plain metadata, not traced JAX state (avoids the nnx.Variable anti-pattern).
+        assert not isinstance(manager, nnx.Module)
+        assert isinstance(manager.shared_blocks, dict)
+        assert isinstance(manager.array_metadata, dict)
 
     def test_make_shared_small_array(self, manager):
         """Test that small arrays are not made shared."""
@@ -35,7 +37,7 @@ class TestSharedMemoryManager:
 
         # Should return original array (not shared)
         assert result is small_array
-        assert "small" not in manager.shared_blocks.get_value()
+        assert "small" not in manager.shared_blocks
 
     def test_make_shared_large_array(self, manager):
         """Test making large array shared."""
@@ -44,11 +46,11 @@ class TestSharedMemoryManager:
         result = manager.make_shared("large", large_array)
 
         # Should create shared memory
-        assert "large" in manager.shared_blocks.get_value()
-        assert "large" in manager.array_metadata.get_value()
+        assert "large" in manager.shared_blocks
+        assert "large" in manager.array_metadata
 
         # Verify metadata
-        metadata = manager.array_metadata.get_value()["large"]
+        metadata = manager.array_metadata["large"]
         assert metadata["shape"] == (1024, 1024)
         assert metadata["dtype"] == np.float64
 
@@ -77,14 +79,14 @@ class TestSharedMemoryManager:
         """Test cleanup of shared memory."""
         array = np.ones((1024, 1024))
         manager.make_shared("test", array)
-        shm_name = manager.array_metadata.get_value()["test"]["name"]
+        shm_name = manager.array_metadata["test"]["name"]
 
-        assert len(manager.shared_blocks.get_value()) == 1
+        assert len(manager.shared_blocks) == 1
 
         manager.cleanup()
 
-        assert len(manager.shared_blocks.get_value()) == 0
-        assert len(manager.array_metadata.get_value()) == 0
+        assert len(manager.shared_blocks) == 0
+        assert len(manager.array_metadata) == 0
         with pytest.raises(FileNotFoundError):
             shared_memory.SharedMemory(name=shm_name)
 
@@ -98,7 +100,7 @@ class TestSharedMemoryManager:
         manager.make_shared("array2", array2)
         manager.make_shared("array3", array3)
 
-        assert len(manager.shared_blocks.get_value()) == 3
+        assert len(manager.shared_blocks) == 3
 
         # Verify all can be retrieved
         np.testing.assert_array_equal(manager.get_shared("array1"), array1)
@@ -123,9 +125,9 @@ class TestSharedMemoryManager:
         """Test that context manager cleans up shared memory on exit."""
         with SharedMemoryManager() as manager:
             manager.make_shared("test", np.ones((1024, 1024)))  # type: ignore[reportArgumentType]
-            assert len(manager.shared_blocks.get_value()) == 1  # type: ignore[reportAttributeAccessIssue]
+            assert len(manager.shared_blocks) == 1
         # After exit, blocks should be cleaned
-        assert len(manager.shared_blocks.get_value()) == 0  # type: ignore[reportAttributeAccessIssue]
+        assert len(manager.shared_blocks) == 0
 
     def test_context_manager_cleanup_on_exception(self):
         """Test that context manager cleans up even when exception occurs."""
@@ -133,4 +135,4 @@ class TestSharedMemoryManager:
             with SharedMemoryManager() as manager:
                 manager.make_shared("test", np.ones((1024, 1024)))  # type: ignore[reportArgumentType]
                 raise RuntimeError("test error")
-        assert len(manager.shared_blocks.get_value()) == 0
+        assert len(manager.shared_blocks) == 0

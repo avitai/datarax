@@ -29,7 +29,6 @@ from datarax.core.config import ElementOperatorConfig
 from datarax.core.element_batch import Element
 from datarax.core.metadata import Metadata
 from datarax.core.operator import OperatorModule
-from datarax.operators._random_params import get_optional_batch_size
 from datarax.typing import PRNGKey
 
 
@@ -111,32 +110,28 @@ class ElementOperator(OperatorModule):
 
     def generate_random_params(
         self,
-        rng: PRNGKey,
+        element_keys: PRNGKey | None,
         data_shapes: PyTree,
     ) -> PRNGKey | None:
-        """Generate random parameters for batch transformation.
+        """Return the per-record PRNG keys for the user function.
 
-        For ElementOperator, generates one RNG key per batch element.
-        The user function receives a single key and can split it internally
-        if multiple random operations are needed.
+        ``element_keys`` already holds one stateless key per record (derived by
+        the base class as ``fold_in(base_key, global_index)``), which is exactly
+        what the user function's ``fn(element, key)`` signature expects — so this
+        just passes them through. Each ``apply()`` receives its element's key.
 
         Args:
-            rng: JAX random key (single key for entire batch)
-            data_shapes: PyTree with same structure as batch.data, containing shapes
-                        Examples: {"image": (batch_size, H, W, C)}
+            element_keys: ``(batch_size,)`` per-record PRNG keys, or ``None`` for
+                deterministic operators.
+            data_shapes: Unused (kept for signature compatibility).
 
         Returns:
-            Array of shape (batch_size, 2) - one PRNGKey per element,
-            or None for deterministic operators.
+            The per-record keys, or ``None`` for deterministic operators.
         """
+        del data_shapes
         if not self.stochastic:
             return None
-
-        batch_size = get_optional_batch_size(data_shapes)
-        if batch_size is None:
-            return jax.random.split(rng, 1)
-
-        return jax.random.split(rng, batch_size)
+        return element_keys
 
     def apply(
         self,

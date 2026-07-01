@@ -25,7 +25,6 @@ from jaxtyping import PyTree
 
 from datarax.core.config import MapOperatorConfig
 from datarax.core.operator import OperatorModule
-from datarax.operators._random_params import get_optional_batch_size
 
 
 logger = logging.getLogger(__name__)
@@ -155,55 +154,41 @@ class MapOperator(OperatorModule):
 
     def generate_random_params(
         self,
-        rng: jax.Array,
+        element_keys: jax.Array,
         data_shapes: PyTree,
     ) -> PyTree | None:
-        """Generate random parameters for batch transformation.
+        """Generate a PyTree of per-leaf, per-record PRNG keys.
 
-        Generates PyTree of RNG keys matching data structure, with one key per
-        batch element for each leaf. This enables per-leaf, per-element randomness.
+        ``element_keys`` holds one stable per-record key
+        (``fold_in(base_key, global_index)``). Each data leaf gets its own
+        per-record key derived by folding the leaf index into ``element_keys``,
+        so per-leaf randomness stays independent while remaining reproducible per
+        record (invariant to batch composition, shuffle, host count, resume).
 
         Args:
-            rng: JAX random key (single key for entire batch)
-            data_shapes: PyTree with same structure as batch.data, containing shapes
-                        Examples: {"image": (batch_size, H, W, C)}
+            element_keys: ``(batch_size,)`` per-record PRNG keys.
+            data_shapes: PyTree with same structure as batch.data, containing shapes.
 
         Returns:
-            PyTree of keys matching data structure, each leaf is Array[batch_size, 2]
-            Examples: {"image": Array[batch_size, 2]} where 2 is PRNGKey shape,
-            or None for deterministic operators.
-
-        Implementation:
-            1. Flatten data_shapes to get list of shapes
-            2. Extract batch_size from first shape
-            3. Split rng into n_leaves keys (one per leaf type)
-            4. For each leaf key, split into batch_size keys
-            5. Unflatten into PyTree matching original structure
+            PyTree of keys matching data structure, each leaf ``(batch_size,)``
+            per-record keys; or ``None`` for deterministic operators.
         """
         if not self.stochastic:
             return None
 
-        batch_size = get_optional_batch_size(data_shapes)
-        if batch_size is None:
-            _, tree_def = jax.tree.flatten(data_shapes)
-            return jax.tree.unflatten(tree_def, [])
-
-        # Flatten to get list of shapes and tree structure
+        # Flatten to get tree structure (tuples are atomic shape leaves).
         shape_leaves, tree_def = jax.tree.flatten(
             data_shapes, is_leaf=lambda x: isinstance(x, tuple)
         )
-
-        # Number of leaves in data PyTree
         n_leaves = len(shape_leaves)
+        if n_leaves == 0:
+            return jax.tree.unflatten(tree_def, [])
 
-        # Split rng into n_leaves keys (one per leaf type)
-        leaf_rngs = jax.random.split(rng, n_leaves)
-
-        # For each leaf, split into batch_size keys
-        # Result: list of Array[batch_size, 2] keys
-        batched_keys = [jax.random.split(leaf_rng, batch_size) for leaf_rng in leaf_rngs]
-
-        # Unflatten back into PyTree matching data structure
+        # Per-leaf, per-record keys: fold the leaf index into each record's key.
+        batched_keys = [
+            jax.vmap(lambda key, leaf=leaf: jax.random.fold_in(key, leaf))(element_keys)
+            for leaf in range(n_leaves)
+        ]
         return jax.tree.unflatten(tree_def, batched_keys)
 
     def apply(

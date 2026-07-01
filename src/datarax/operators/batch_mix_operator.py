@@ -89,7 +89,7 @@ class BatchMixOperator(OperatorModule):
 
     def generate_random_params(
         self,
-        rng: jax.Array,
+        element_keys: jax.Array,
         data_shapes: PyTree,
     ) -> jax.Array:
         """Generate random parameters - not used for batch-level ops.
@@ -98,14 +98,14 @@ class BatchMixOperator(OperatorModule):
         is not called. Implemented to satisfy the interface.
 
         Args:
-            rng: JAX random key
-            data_shapes: PyTree with shapes
+            element_keys: Per-record PRNG keys (unused).
+            data_shapes: PyTree with shapes (unused).
 
         Returns:
-            The input rng unchanged (not used)
+            The per-record keys unchanged (not used).
         """
         del data_shapes
-        return rng
+        return element_keys
 
     def apply(
         self,
