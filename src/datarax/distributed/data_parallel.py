@@ -8,10 +8,10 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
 import optax
+from flax import nnx
 from jax import lax
 from jax.sharding import Mesh, PartitionSpec, Sharding
 

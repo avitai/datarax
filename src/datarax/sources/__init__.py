@@ -33,7 +33,7 @@ _TFDS_AUTO_DETECT_ERRORS = (ImportError, AttributeError, KeyError, TypeError, Va
 
 # Type-checking imports for static analysis (not executed at runtime)
 if TYPE_CHECKING:
-    import flax.nnx as nnx
+    from flax import nnx
 
     from datarax.core.data_source import DataSourceModule
     from datarax.sources.array_record_source import (
@@ -199,20 +199,19 @@ def from_tfds(
             exclude_keys=exclude_keys,
         )
         return TFDSEagerSource(config, rngs=rngs)
-    else:
-        config = TFDSStreamingConfig(
-            name=name,
-            split=split,
-            shuffle=shuffle,
-            data_dir=data_dir,
-            try_gcs=try_gcs,
-            as_supervised=as_supervised,
-            download_and_prepare_kwargs=download_and_prepare_kwargs,
-            beam_num_workers=beam_num_workers,
-            include_keys=include_keys,
-            exclude_keys=exclude_keys,
-        )
-        return TFDSStreamingSource(config, rngs=rngs)
+    config = TFDSStreamingConfig(
+        name=name,
+        split=split,
+        shuffle=shuffle,
+        data_dir=data_dir,
+        try_gcs=try_gcs,
+        as_supervised=as_supervised,
+        download_and_prepare_kwargs=download_and_prepare_kwargs,
+        beam_num_workers=beam_num_workers,
+        include_keys=include_keys,
+        exclude_keys=exclude_keys,
+    )
+    return TFDSStreamingSource(config, rngs=rngs)
 
 
 def from_hf(
@@ -292,19 +291,18 @@ def from_hf(
             download_kwargs=download_kwargs,
         )
         return HFEagerSource(config, rngs=rngs)
-    else:
-        hf_streaming = streaming if streaming is not None else False
-        config = HFStreamingConfig(
-            name=name,
-            split=split,
-            streaming=hf_streaming,
-            shuffle=shuffle,
-            data_dir=data_dir,
-            include_keys=include_keys,
-            exclude_keys=exclude_keys,
-            download_kwargs=download_kwargs,
-        )
-        return HFStreamingSource(config, rngs=rngs)
+    hf_streaming = streaming if streaming is not None else False
+    config = HFStreamingConfig(
+        name=name,
+        split=split,
+        streaming=hf_streaming,
+        shuffle=shuffle,
+        data_dir=data_dir,
+        include_keys=include_keys,
+        exclude_keys=exclude_keys,
+        download_kwargs=download_kwargs,
+    )
+    return HFStreamingSource(config, rngs=rngs)
 
 
 __all__ = [

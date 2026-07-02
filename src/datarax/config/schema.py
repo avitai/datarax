@@ -67,7 +67,7 @@ class ConfigSchema:
         """
         fields = {}
 
-        for name, field_type in cls.__annotations__.items():
+        for name, _field_type in cls.__annotations__.items():
             if hasattr(cls, name):
                 attr = getattr(cls, name)
                 if isinstance(attr, SchemaField):
@@ -138,6 +138,25 @@ class ConfigSchema:
 SchemaType = type[Any] | ConfigSchema
 
 
+def _validates_as_config_schema(schema: "ConfigSchema | type[ConfigSchema]", value: Any) -> bool:
+    """Return whether ``value`` is a dict that passes ``schema.validate``.
+
+    Args:
+        schema: A :class:`ConfigSchema` instance or subclass to validate against.
+        value: Candidate value; only ``dict`` values can validate.
+
+    Returns:
+        ``True`` if ``value`` is a dict and ``schema.validate`` accepts it.
+    """
+    if not isinstance(value, dict):
+        return False
+    try:
+        schema.validate(value)
+        return True
+    except ValidationError:
+        return False
+
+
 def is_schema_type_valid(value: Any, expected_type: SchemaType) -> bool:
     """Validate that a value matches an expected schema type."""
     if expected_type in (str, int, float, bool):
@@ -150,24 +169,10 @@ def is_schema_type_valid(value: Any, expected_type: SchemaType) -> bool:
         return isinstance(value, dict)
 
     if isinstance(expected_type, type) and issubclass(expected_type, ConfigSchema):
-        if not isinstance(value, dict):
-            return False
-
-        try:
-            expected_type.validate(value)
-            return True
-        except ValidationError:
-            return False
+        return _validates_as_config_schema(expected_type, value)
 
     if isinstance(expected_type, ConfigSchema):
-        if not isinstance(value, dict):
-            return False
-
-        try:
-            expected_type.validate(value)
-            return True
-        except ValidationError:
-            return False
+        return _validates_as_config_schema(expected_type, value)
 
     return False
 

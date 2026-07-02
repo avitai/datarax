@@ -93,25 +93,9 @@ class Pipeline(nnx.Module):
         super().__init__()
 
         # Resolve the construction shape into the unified DAG representation.
-        if stages is not None and nodes is not None:
-            raise ValueError(
-                "Provide either stages= (linear) or nodes=+edges=+sink= (DAG); not both."
-            )
-        if stages is None and nodes is None:
-            raise ValueError("Provide either stages= (linear) or nodes=+edges=+sink= (DAG).")
-
-        if stages is not None:
-            # Linear chain: stage_0 reads the source, stage_i reads stage_{i-1}.
-            resolved_nodes: dict[str, nnx.Module] = {f"stage_{i}": s for i, s in enumerate(stages)}
-            resolved_edges: dict[str, list[str]] = {}
-            for i in range(len(stages)):
-                resolved_edges[f"stage_{i}"] = [f"stage_{i - 1}"] if i > 0 else []
-            resolved_sink = f"stage_{len(stages) - 1}" if stages else None
-        else:
-            assert nodes is not None and edges is not None and sink is not None
-            resolved_nodes = dict(nodes)
-            resolved_edges = {name: list(preds) for name, preds in edges.items()}
-            resolved_sink = sink
+        resolved_nodes, resolved_edges, resolved_sink = self._resolve_dag_shape(
+            stages, nodes, edges, sink
+        )
 
         if resolved_sink is not None:
             validate_dag(resolved_nodes, resolved_edges, resolved_sink)
@@ -138,6 +122,67 @@ class Pipeline(nnx.Module):
         # under nnx.split/merge — it lives on the Python side of the
         # module boundary alongside _exec_order and _predecessors.
         self._scan_body_cache: dict[Any, Any] = {}
+
+    @staticmethod
+    def _linear_shape(
+        stages: Sequence[nnx.Module],
+    ) -> tuple[dict[str, nnx.Module], dict[str, list[str]], str | None]:
+        """Expand a linear stage sequence into (nodes, edges, sink).
+
+        Stage ``i`` reads the source when ``i == 0`` and stage ``i - 1`` otherwise;
+        the sink is the final stage (``None`` for an empty sequence).
+
+        Args:
+            stages: Ordered stages of the linear pipeline.
+
+        Returns:
+            Tuple of (node map, predecessor-edge map, sink name).
+        """
+        resolved_nodes: dict[str, nnx.Module] = {f"stage_{i}": s for i, s in enumerate(stages)}
+        resolved_edges: dict[str, list[str]] = {
+            f"stage_{i}": ([f"stage_{i - 1}"] if i > 0 else []) for i in range(len(stages))
+        }
+        resolved_sink = f"stage_{len(stages) - 1}" if stages else None
+        return resolved_nodes, resolved_edges, resolved_sink
+
+    @staticmethod
+    def _resolve_dag_shape(
+        stages: Sequence[nnx.Module] | None,
+        nodes: Mapping[str, nnx.Module] | None,
+        edges: Mapping[str, Sequence[str]] | None,
+        sink: str | None,
+    ) -> tuple[dict[str, nnx.Module], dict[str, list[str]], str | None]:
+        """Normalize the two mutually exclusive construction shapes into one DAG.
+
+        Accepts either ``stages=`` (linear) or ``nodes=+edges=+sink=`` (explicit DAG)
+        and returns the unified representation used internally.
+
+        Args:
+            stages: Linear stage sequence, or ``None`` for the DAG shape.
+            nodes: Explicit node map, or ``None`` for the linear shape.
+            edges: Explicit predecessor-edge map (required with ``nodes``).
+            sink: Explicit sink node name (required with ``nodes``).
+
+        Returns:
+            Tuple of (node map, predecessor-edge map, sink name).
+
+        Raises:
+            ValueError: If neither shape or both shapes are supplied.
+        """
+        if stages is not None and nodes is not None:
+            raise ValueError(
+                "Provide either stages= (linear) or nodes=+edges=+sink= (DAG); not both."
+            )
+        if stages is None and nodes is None:
+            raise ValueError("Provide either stages= (linear) or nodes=+edges=+sink= (DAG).")
+
+        if stages is not None:
+            return Pipeline._linear_shape(stages)
+
+        assert nodes is not None and edges is not None and sink is not None  # noqa: S101
+        resolved_nodes = dict(nodes)
+        resolved_edges = {name: list(preds) for name, preds in edges.items()}
+        return resolved_nodes, resolved_edges, sink
 
     @classmethod
     def from_dag(

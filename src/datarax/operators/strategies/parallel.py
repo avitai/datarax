@@ -182,7 +182,9 @@ class ConditionalParallelStrategy(CompositionStrategyImpl):
             condition_results.append(condition(context.data))
 
         # Second pass: apply operators with jax.lax.cond
-        for i, (operator, cond_result) in enumerate(zip(operators, condition_results)):
+        for i, (operator, cond_result) in enumerate(
+            zip(operators, condition_results, strict=False)
+        ):
             op_random_params = self._random_params_for_operator(context.random_params, i)
             out_data, out_state, out_metadata = self._apply_operator_conditionally(
                 operator,

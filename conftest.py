@@ -12,8 +12,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 
-def pytest_addoption(parser):
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register the ``--all-suites`` command-line flag."""
     parser.addoption(
         "--all-suites",
         action="store_true",
@@ -22,7 +25,8 @@ def pytest_addoption(parser):
     )
 
 
-def pytest_configure(config):
+def pytest_configure(config: pytest.Config) -> None:
+    """Append extra suite directories to collection when ``--all-suites`` is set."""
     if not config.getoption("--all-suites", default=False):
         return
 

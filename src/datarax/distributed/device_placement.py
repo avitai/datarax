@@ -497,13 +497,12 @@ class DevicePlacement:
                 f"for {self.hardware_type.value}. Performance will be significantly degraded.",
             )
 
-        if batch_size < rec.critical_batch_size:
-            if warn_suboptimal:
-                return (
-                    True,
-                    f"Batch size {batch_size} is below critical size {rec.critical_batch_size} "
-                    f"for {self.hardware_type.value}. Consider increasing for optimal throughput.",
-                )
+        if batch_size < rec.critical_batch_size and warn_suboptimal:
+            return (
+                True,
+                f"Batch size {batch_size} is below critical size {rec.critical_batch_size} "
+                f"for {self.hardware_type.value}. Consider increasing for optimal throughput.",
+            )
 
         if batch_size >= rec.optimal_batch_size:
             return True, f"Batch size {batch_size} is optimal for {self.hardware_type.value}."

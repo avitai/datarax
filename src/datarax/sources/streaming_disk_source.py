@@ -23,10 +23,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from flax import nnx
 from jax.experimental import io_callback
 
 from datarax.core.config import StructuralConfig

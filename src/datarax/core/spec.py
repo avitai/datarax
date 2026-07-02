@@ -9,8 +9,11 @@ manipulations so each tier doesn't reinvent them.
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
+from jax.typing import ArrayLike, DTypeLike
 
 
 _VALID_MASK_KEY = "valid_mask"
@@ -24,7 +27,7 @@ def add_leading_dim(spec_leaf: jax.ShapeDtypeStruct, size: int) -> jax.ShapeDtyp
     return jax.ShapeDtypeStruct(shape=(size, *spec_leaf.shape), dtype=spec_leaf.dtype)
 
 
-def batched_spec(element_spec, batch_size: int) -> dict[str, object]:
+def batched_spec(element_spec: Any, batch_size: int) -> dict[str, object]:
     """Lift a per-element spec PyTree into a batch-level spec dict with ``valid_mask``.
 
     The returned dict has the same structure as ``element_spec`` (a leading
@@ -65,7 +68,7 @@ def batched_spec(element_spec, batch_size: int) -> dict[str, object]:
     return {"data": batched, _VALID_MASK_KEY: valid_mask_leaf}
 
 
-def scalar_index_spec(dtype=jnp.int32) -> jax.ShapeDtypeStruct:
+def scalar_index_spec(dtype: DTypeLike = jnp.int32) -> jax.ShapeDtypeStruct:
     """Return the default ``ShapeDtypeStruct`` for a scalar sampler index.
 
     Most samplers emit a single integer index per call; specialized samplers
@@ -75,7 +78,7 @@ def scalar_index_spec(dtype=jnp.int32) -> jax.ShapeDtypeStruct:
     return jax.ShapeDtypeStruct(shape=(), dtype=dtype)
 
 
-def array_to_spec(value) -> jax.ShapeDtypeStruct:
+def array_to_spec(value: ArrayLike) -> jax.ShapeDtypeStruct:
     """Return a ``ShapeDtypeStruct`` matching the shape and JAX dtype of ``value``.
 
     Used by sources to derive element specs from sample data. Canonicalizes
@@ -86,7 +89,7 @@ def array_to_spec(value) -> jax.ShapeDtypeStruct:
     return jax.ShapeDtypeStruct(shape=arr.shape, dtype=arr.dtype)
 
 
-def array_to_spec_strip_leading(value) -> jax.ShapeDtypeStruct:
+def array_to_spec_strip_leading(value: ArrayLike) -> jax.ShapeDtypeStruct:
     """Return a ``ShapeDtypeStruct`` for a single element of a leading-batched array.
 
     Used by sources whose stored data has a leading dataset-size dimension

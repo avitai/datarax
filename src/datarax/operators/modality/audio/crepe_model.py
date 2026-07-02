@@ -172,7 +172,7 @@ class CrepeModel(nnx.Module):
         Returns:
             Pitch probability distribution shape (batch, 360), values in [0, 1].
         """
-        for i, (conv, bn) in enumerate(zip(self.conv_layers, self.batch_norms)):
+        for i, (conv, bn) in enumerate(zip(self.conv_layers, self.batch_norms, strict=False)):
             # Explicit padding matching torchcrepe F.pad
             pad_left, pad_right = _LAYER_PADDINGS[i]
             x = jnp.pad(x, ((0, 0), (pad_left, pad_right), (0, 0)))

@@ -1,5 +1,4 @@
-"""
-In-memory data source implementation for Datarax.
+"""In-memory data source implementation for Datarax.
 
 This module provides a data source that serves data from in-memory collections
 with support for both stateless and stateful operation modes.
@@ -10,9 +9,9 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
+from flax import nnx
 
 from datarax.config.registry import register_component
 from datarax.core.config import StructuralConfig
@@ -21,6 +20,7 @@ from datarax.core.metadata import MetadataManager, RecordMetadata
 from datarax.samplers.index_shuffle import index_shuffle
 from datarax.sources._eager_source_ops import configure_stochastic_from_shuffle
 from datarax.sources._grain_bridge import records_from_batched_mapping, validate_index_batch
+from datarax.sources._source_base import resolve_wrapped_indices
 
 
 logger = logging.getLogger(__name__)
@@ -154,7 +154,7 @@ class MemorySource(DataSourceModule):
         if isinstance(data, dict):
             # Verify all arrays have the same first dimension size
             lengths = []
-            for key, value in data.items():
+            for _key, value in data.items():
                 if hasattr(value, "__len__"):
                     lengths.append(len(value))
 
@@ -163,7 +163,7 @@ class MemorySource(DataSourceModule):
             if not all(length == lengths[0] for length in lengths):
                 raise ValueError(
                     f"All arrays in data dictionary must have the same length. "
-                    f"Got lengths: {dict(zip(data.keys(), lengths))}"
+                    f"Got lengths: {dict(zip(data.keys(), lengths, strict=False))}"
                 )
             self.length = lengths[0]
         else:
@@ -243,13 +243,12 @@ class MemorySource(DataSourceModule):
             else:
                 for i in range(self.length):
                     yield self._get_element(index_shuffle(i, seed, self.length))
+        elif num_workers > 1:
+            for i in range(shard_id, self.length, num_workers):
+                yield self._get_element(i)
         else:
-            if num_workers > 1:
-                for i in range(shard_id, self.length, num_workers):
-                    yield self._get_element(i)
-            else:
-                for i in range(self.length):
-                    yield self._get_element(i)
+            for i in range(self.length):
+                yield self._get_element(i)
 
     def __getitem__(self, index: int) -> Any:
         """Get element at specific index.
@@ -282,12 +281,19 @@ class MemorySource(DataSourceModule):
     def get_batch(self, batch_size: int, key: jax.Array | None = None) -> Any:
         """Get next batch of data.
 
-        This method supports both stateless (with explicit key) and
-        stateful (with internal index tracking) operation.
+        This method supports both stateless (with explicit key) and stateful
+        (with internal index tracking) operation. The stateful mode follows the
+        iterator ``next()`` idiom — it returns a batch *and* advances internal
+        position — a deliberate, documented exception to command-query separation.
+        For side-effect-free indexed access, use :meth:`get_batch_at`.
 
         Args:
             batch_size: Number of elements in the batch
-            key: Optional RNG key for shuffling (stateless mode)
+            key: Optional RNG key. When provided, selects **stateless** mode: the
+                batch is derived purely from ``key`` with no internal state read
+                or mutated. When ``None``, selects **stateful** mode: the batch
+                begins at ``self.index`` and this call advances ``self.index``
+                (rolling ``self.epoch`` and forcing a reshuffle at wrap-around).
 
         Returns:
             Batch of data with shape (batch_size, ...)
@@ -301,30 +307,28 @@ class MemorySource(DataSourceModule):
                     index_shuffle(i, seed, self.length) for i in range(min(batch_size, self.length))
                 ]
                 return self._gather_batch(batch_indices)
-            else:
-                # Sequential: use slicing (zero-copy for arrays)
-                return self._gather_batch_slice(0, min(batch_size, self.length))
-        else:
-            # Stateful mode - use internal index
-            start = self.index.get_value()
-            end = min(start + batch_size, self.length)
+            # Sequential: use slicing (zero-copy for arrays)
+            return self._gather_batch_slice(0, min(batch_size, self.length))
+        # Stateful mode - use internal index
+        start = self.index.get_value()
+        end = min(start + batch_size, self.length)
 
-            # Update index for next call
-            new_index = end % self.length
-            self.index.set_value(new_index)
-            if new_index == 0:
-                self.epoch.set_value(self.epoch.get_value() + 1)
-                # Force reshuffle on next epoch
-                self._shuffle_seed = None
-                self._shuffled_indices.set_value(None)
+        # Update index for next call
+        new_index = end % self.length
+        self.index.set_value(new_index)
+        if new_index == 0:
+            self.epoch.set_value(self.epoch.get_value() + 1)
+            # Force reshuffle on next epoch
+            self._shuffle_seed = None
+            self._shuffled_indices.set_value(None)
 
-            if not self.is_random_order:
-                # Sequential: use slicing (zero-copy for arrays)
-                return self._gather_batch_slice(start, end)
+        if not self.is_random_order:
+            # Sequential: use slicing (zero-copy for arrays)
+            return self._gather_batch_slice(start, end)
 
-            # Shuffled: gather by the shuffled indices for this range
-            indices = self._get_indices()
-            return self._gather_batch(indices[start:end])
+        # Shuffled: gather by the shuffled indices for this range
+        indices = self._get_indices()
+        return self._gather_batch(indices[start:end])
 
     def get_batch_at(
         self,
@@ -364,19 +368,7 @@ class MemorySource(DataSourceModule):
         Returns:
             Batch dict with leading dim ``size``.
         """
-        start_arr = jnp.asarray(start, dtype=jnp.int32)
-        offsets = jnp.arange(size, dtype=jnp.int32)
-        base_indices = (start_arr + offsets) % jnp.int32(self.length)
-
-        if self.is_random_order and key is not None:
-            # Materialize the full permutation derived from `key` and index
-            # into it. Same key always produces the same permutation, so
-            # repeated calls with the same `(start, size, key)` are
-            # deterministic.
-            permutation = jax.random.permutation(key, self.length)
-            indices = permutation[base_indices]
-        else:
-            indices = base_indices
+        indices = resolve_wrapped_indices(start, size, self.length, self.is_random_order, key)
 
         data = self.data
         if isinstance(data, dict):
@@ -429,8 +421,7 @@ class MemorySource(DataSourceModule):
                 shuffled_indices = [index_shuffle(i, seed, self.length) for i in range(self.length)]
                 self._shuffled_indices.set_value(shuffled_indices)
             return shuffled_indices
-        else:
-            return list(range(self.length))
+        return list(range(self.length))
 
     def _get_element(self, index: int) -> Any:
         """Get single element at index.
@@ -451,9 +442,8 @@ class MemorySource(DataSourceModule):
                 else:
                     element[key] = value
             return element
-        else:
-            # Return list/sequence element
-            return data[index]
+        # Return list/sequence element
+        return data[index]
 
     def _gather_batch_slice(self, start: int, end: int) -> Any:
         """Gather a contiguous batch using slice-based access.
@@ -474,8 +464,7 @@ class MemorySource(DataSourceModule):
                 key: value[start:end] if hasattr(value, "__getitem__") else [value] * (end - start)
                 for key, value in data.items()
             }
-        else:
-            return data[start:end]
+        return data[start:end]
 
     def _gather_batch(self, indices: list[int]) -> Any:
         """Gather batch of elements at arbitrary indices.
@@ -508,11 +497,10 @@ class MemorySource(DataSourceModule):
                 else:
                     batch[key] = [value] * len(indices)
             return batch
-        else:
-            if isinstance(data, list | tuple):
-                return [data[i] for i in indices]
-            # Array-like (numpy/JAX): supports fancy indexing
-            return data[idx_array]  # type: ignore[index]
+        if isinstance(data, list | tuple):
+            return [data[i] for i in indices]
+        # Array-like (numpy/JAX): supports fancy indexing
+        return data[idx_array]  # type: ignore[index]
 
     def reset(self, seed: int | None = None) -> None:
         """Reset the source to the beginning.
@@ -672,7 +660,7 @@ class MemorySource(DataSourceModule):
             ValueError: If the source is empty (no element to introspect).
         """
         # Imported lazily to keep memory_source's import surface stable.
-        from datarax.utils.spec import array_to_spec, array_to_spec_strip_leading  # noqa: PLC0415
+        from datarax.core.spec import array_to_spec, array_to_spec_strip_leading  # noqa: PLC0415
 
         if self.length == 0:
             raise ValueError(

@@ -40,12 +40,48 @@ jobs:
         run: |
           echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
 
-      - name: Run pre-commit (Ruff-only hooks)
+      - name: Run pre-commit (lint, types, complexity, dead-code gates)
         env:
           PRE_COMMIT_HOME: /tmp/pre-commit-cache
           UV_CACHE_DIR: /tmp/uv-cache
         run: |
           uv run pre-commit run --all-files --show-diff-on-failure --color=always
+
+  security_audit:
+    name: Dependency Security Audit
+    needs: lint
+    runs-on: ubuntu-latest
+    # Advisory-only: surfaces new dependency CVEs in the CI log without blocking
+    # merges. The known aiohttp advisory is an accepted transitive pin (vastai-sdk
+    # in the `automation` extra, held until SkyPilot 0.12 upgrades its adapter), so
+    # this job must not hard-fail the pipeline on it.
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-suffix: "audit"
+
+      - name: Create virtual environment
+        run: |
+          uv venv
+
+      - name: Install dependencies
+        run: |
+          uv pip install -e ".[dev,test,data]"
+
+      - name: Run pip-audit
+        run: |
+          uv run pip-audit --desc
 
   examples:
     name: Validate Examples

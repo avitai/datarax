@@ -45,7 +45,7 @@ def _a_weighting_jax(frequencies: jax.Array) -> jax.Array:
     # Numerically safe frequency (avoid log(0))
     f_safe = jnp.maximum(frequencies, 1e-20)
 
-    weights = 2.0 + 20.0 * (
+    return 2.0 + 20.0 * (
         jnp.log10(c1)
         + 4.0 * jnp.log10(f_safe)
         - jnp.log10(f_sq + c1)
@@ -53,7 +53,6 @@ def _a_weighting_jax(frequencies: jax.Array) -> jax.Array:
         - 0.5 * jnp.log10(f_sq + c3)
         - 0.5 * jnp.log10(f_sq + c4)
     )
-    return weights
 
 
 @dataclass(frozen=True)
@@ -183,9 +182,7 @@ class LoudnessOperator(OperatorModule):
         loudness_per_frame = jnp.mean(weighted_db, axis=-1) - self.ref_db[...]
 
         # Floor at -range_db
-        loudness_per_frame = jnp.maximum(loudness_per_frame, -self.config.range_db)
-
-        return loudness_per_frame
+        return jnp.maximum(loudness_per_frame, -self.config.range_db)
 
     def get_output_structure(
         self,

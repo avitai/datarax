@@ -32,9 +32,9 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
 
-import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
+from flax import nnx
 
 from datarax.sources._config_base import SourceConfigBase
 from datarax.sources._conversion import tf_to_jax
@@ -361,23 +361,44 @@ class TFDSEagerSource(EagerSourceBase):
         # Collect all data
         arrays: dict[str, list[Any]] = {}
         for tf_element in ds:  # type: ignore[union-attr]
-            # Handle as_supervised tuple format
-            if config.as_supervised and isinstance(tf_element, tuple):
-                tf_element = {"image": tf_element[0], "label": tf_element[1]}
-
-            for k, v in tf_element.items():
-                # Apply key filtering
-                if config.include_keys and k not in config.include_keys:
-                    continue
-                if config.exclude_keys and k in config.exclude_keys:
-                    continue
-
-                if k not in arrays:
-                    arrays[k] = []
-                arrays[k].append(tf_to_jax(v))
+            self._accumulate_tf_element(arrays, tf_element, config)
 
         # Stack to single arrays
         return {k: jnp.stack(v) for k, v in arrays.items()}
+
+    @staticmethod
+    def _is_key_excluded(key: str, config: TFDSEagerConfig) -> bool:
+        """Return whether ``key`` should be dropped per include/exclude filters.
+
+        Args:
+            key: Feature key from a TFDS element.
+            config: Source configuration carrying ``include_keys``/``exclude_keys``.
+
+        Returns:
+            ``True`` if the key is filtered out and should not be collected.
+        """
+        if config.include_keys and key not in config.include_keys:
+            return True
+        return bool(config.exclude_keys and key in config.exclude_keys)
+
+    def _accumulate_tf_element(
+        self, arrays: dict[str, list[Any]], tf_element: Any, config: TFDSEagerConfig
+    ) -> None:
+        """Convert one TF element's kept fields to JAX arrays, appending into ``arrays``.
+
+        Args:
+            arrays: Accumulator mapping feature key to a list of per-record JAX arrays.
+            tf_element: A single element yielded by the TFDS dataset.
+            config: Source configuration (supervised format + key filters).
+        """
+        # Handle as_supervised tuple format
+        if config.as_supervised and isinstance(tf_element, tuple):
+            tf_element = {"image": tf_element[0], "label": tf_element[1]}
+
+        for k, v in tf_element.items():
+            if self._is_key_excluded(k, config):
+                continue
+            arrays.setdefault(k, []).append(tf_to_jax(v))
 
     def _cleanup_tf(self) -> None:
         """Release all TensorFlow resources.
@@ -550,7 +571,7 @@ class TFDSStreamingSource(StreamingSourceBase):
         leaves so vector features become 1-D ``ShapeDtypeStruct`` instead of
         per-scalar leaves.
         """
-        from datarax.utils.spec import array_to_spec  # noqa: PLC0415
+        from datarax.core.spec import array_to_spec  # noqa: PLC0415
 
         first = next(iter(self._tf_dataset))
         if self.as_supervised and isinstance(first, tuple):

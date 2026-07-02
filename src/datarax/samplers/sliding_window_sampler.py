@@ -15,9 +15,9 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
-import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
+from flax import nnx
 
 from datarax.core.config import StructuralConfig
 from datarax.core.sampler import SamplerModule

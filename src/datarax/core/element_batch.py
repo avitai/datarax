@@ -13,10 +13,9 @@ import logging
 from collections.abc import Callable, Iterator
 from typing import Any
 
-import flax.nnx as nnx
-import flax.struct as struct
 import jax
 import jax.numpy as jnp
+from flax import nnx, struct
 from jaxtyping import PyTree
 
 from .metadata import Metadata
@@ -244,6 +243,8 @@ class Batch(nnx.Module):
             batch_metadata: Optional batch-level metadata (immutable)
             batch_state: Optional batch-level state PyTree (no batch dimension)
             validate: If True, validates batch axis consistency and lengths
+            valid_mask: Optional boolean array of shape ``(batch_size,)`` marking
+                real vs padded records; defaults to all-True when omitted
 
         Returns:
             New Batch instance
@@ -472,7 +473,7 @@ def _scan_batch_elements(batch: Batch, fn: Callable[[Element], Element]) -> Batc
         # Extract transformed element data
         if hasattr(transformed_elements, "data"):
             # If scan preserved structure
-            elem_data = jax.tree.map(lambda x: x[i], transformed_elements.data)
+            elem_data = jax.tree.map(lambda x, i=i: x[i], transformed_elements.data)
             # Scan returns batched state/metadata; index with int
             raw_state = getattr(transformed_elements, "state", None)
             raw_metadata = getattr(transformed_elements, "metadata", None)

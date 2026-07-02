@@ -9,8 +9,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
-import flax.nnx as nnx
 import jax
+from flax import nnx
 from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
@@ -251,12 +251,11 @@ def to_datarax_operator(
     if stochastic:
         config = ExternalAdapterConfig(stochastic=True, stream_name=stream_name)
         return ExternalLibraryAdapter(config, fn, rngs=rngs, name=name)
-    else:
-        # If stochastic is False, stream_name must be None.
-        # If user passed a stream_name (or default "augment"), we override it to None
-        # to ensure valid config.
-        config = ExternalAdapterConfig(stochastic=False, stream_name=None)
-        return PureJaxAdapter(config, fn, name=name)
+    # If stochastic is False, stream_name must be None.
+    # If user passed a stream_name (or default "augment"), we override it to None
+    # to ensure valid config.
+    config = ExternalAdapterConfig(stochastic=False, stream_name=None)
+    return PureJaxAdapter(config, fn, name=name)
 
 
 def with_jax_key_wrapper(

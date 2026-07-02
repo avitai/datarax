@@ -164,8 +164,8 @@ class BatchMixOperator(OperatorModule):
         # Dispatch to appropriate mixing method
         if self.config.mode == "mixup":
             return self._apply_mixup(batch, key)
-        else:  # cutmix
-            return self._apply_cutmix(batch, key)
+        # cutmix
+        return self._apply_cutmix(batch, key)
 
     def _mix_key(self, global_indices: jax.Array | None) -> jax.Array:
         """Return the batch-level mixing key.

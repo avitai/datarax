@@ -25,6 +25,7 @@ from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import Batch
 from datarax.core.metadata import Metadata
 from datarax.core.module import DataraxModule
+from datarax.core.prng import per_record_keys
 
 
 logger = logging.getLogger(__name__)
@@ -353,11 +354,6 @@ class OperatorModule(DataraxModule):
         # Derive one stateless key per record from the operator's stable base key
         # and the record's global index — never from a per-batch stream draw.
         if self.stochastic:
-            # Local import: importing datarax.utils.prng at module load would
-            # cycle (utils/__init__ -> external -> core.operator). Python caches
-            # the module, so this is a cheap dict lookup at trace time.
-            from datarax.utils.prng import per_record_keys  # noqa: PLC0415
-
             batch_size = extract_batch_size(data_shapes)
             if global_indices is None:
                 global_indices = jnp.arange(batch_size, dtype=jnp.uint32)
@@ -402,10 +398,7 @@ class OperatorModule(DataraxModule):
 
         in_data_axes = jax.tree.map(lambda _: 0, batch_data)
         in_state_axes = jax.tree.map(lambda _: 0, batch_states)
-        if has_rp:
-            in_axes = (in_data_axes, in_state_axes, 0)
-        else:
-            in_axes = (in_data_axes, in_state_axes)
+        in_axes = (in_data_axes, in_state_axes, 0) if has_rp else (in_data_axes, in_state_axes)
 
         return jax.vmap(
             apply_one,

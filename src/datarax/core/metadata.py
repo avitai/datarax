@@ -11,9 +11,9 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-import flax.nnx as nnx
 import jax
 import jax.core
+from flax import nnx
 from jax.tree_util import register_pytree_node
 
 
@@ -99,7 +99,7 @@ class Metadata:
         """Get record key as string (decodes on demand)."""
         return _decode_key(self._encoded_key)
 
-    def replace(self, **kwargs) -> Metadata:
+    def replace(self, **kwargs: Any) -> Metadata:
         """Create a new Metadata instance with updated fields."""
         # Handle key/record_key specifically to ensure it updates _encoded_key
         key_arg = kwargs.pop("key", kwargs.pop("record_key", None))
@@ -216,8 +216,7 @@ def _encode_metadata_key_bytes(key: str | None) -> jax.Array | None:
     # Update with key bytes (eagerly)
     byte_list = list(key_bytes)
     # Use index update
-    arr = arr.at[: len(byte_list)].set(jnp.array(byte_list, dtype=jnp.uint8))
-    return arr
+    return arr.at[: len(byte_list)].set(jnp.array(byte_list, dtype=jnp.uint8))
 
 
 def _decode_key(arr: jax.Array | None) -> str | None:
@@ -232,10 +231,7 @@ def _decode_key(arr: jax.Array | None) -> str | None:
 
         # Extract bytes until null (0)
         # Convert to numpy/list for byte processing
-        if hasattr(arr, "tolist"):
-            bytes_list = arr.tolist()
-        else:
-            bytes_list = arr
+        bytes_list = arr.tolist() if hasattr(arr, "tolist") else arr
 
         # Find first null byte or take all
         valid_bytes = []

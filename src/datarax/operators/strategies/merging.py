@@ -42,16 +42,16 @@ def merge_output_sequence(
             lambda *args: jnp.concatenate(args, axis=merge_axis),
             *outputs,
         )
-    elif merge_strategy == "stack":
+    if merge_strategy == "stack":
         # Stack along merge_axis
         return jax.tree.map(lambda *args: jnp.stack(args, axis=merge_axis), *outputs)
-    elif merge_strategy == "sum":
+    if merge_strategy == "sum":
         # Element-wise sum with pure JAX reduction (trace/JIT friendly)
         return jax.tree.map(lambda *args: jnp.sum(jnp.stack(args, axis=0), axis=0), *outputs)
-    elif merge_strategy == "mean":
+    if merge_strategy == "mean":
         # Element-wise mean
         return jax.tree.map(lambda *args: jnp.mean(jnp.stack(args), axis=0), *outputs)
-    elif merge_strategy == "dict":
+    if merge_strategy == "dict":
         # Return dict with operator outputs separated by key
         # CRITICAL for vmap compatibility: Preserve input PyTree structure
         # Implementation: Use jax.tree.map to transform each leaf into operator dict
@@ -62,8 +62,7 @@ def merge_output_sequence(
 
         # Apply to all leaves in the PyTree, preserving structure
         return jax.tree.map(make_operator_dict, *outputs)
-    else:
-        raise ValueError(f"Unknown merge_strategy: {merge_strategy}")
+    raise ValueError(f"Unknown merge_strategy: {merge_strategy}")
 
 
 def merge_outputs_conditional(

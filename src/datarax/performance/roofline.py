@@ -107,18 +107,17 @@ class RooflineAnalyzer:
                 return "tpu_v5e"
             return "tpu_v5e"  # Default TPU
 
-        elif backend == "gpu":
+        if backend == "gpu":
             # Try to detect GPU type
             device = jax.devices()[0]
             device_kind = str(device).lower()
             if "h100" in device_kind:
                 return "h100"
-            elif "a100" in device_kind:
+            if "a100" in device_kind:
                 return "a100"
             return "h100"  # Default to newer GPU
 
-        else:
-            return "cpu"
+        return "cpu"
 
     def analyze_operation(
         self, func: Callable, *args: Any, output_shape: tuple | None = None, **kwargs: Any
@@ -168,7 +167,7 @@ class RooflineAnalyzer:
         efficiency = min(theoretical_time / actual_time, 1.0) if actual_time > 0 else 0.0
         utilization = min((flops / actual_time) / self.hw_specs.peak_flops_bf16, 1.0)
 
-        analysis = {
+        return {
             "arithmetic_intensity": arithmetic_intensity,
             "critical_intensity": self.hw_specs.critical_intensity,
             "bottleneck": "compute" if is_compute_bound else "memory",
@@ -181,31 +180,45 @@ class RooflineAnalyzer:
             ),
         }
 
-        return analysis
-
     def _estimate_flops(self, func: Callable, args: tuple) -> float:
         """Estimate FLOPs for common operations."""
-        # Check for matrix multiplication
-        if hasattr(func, "__name__"):
-            if "matmul" in func.__name__ or "@" in str(func):
-                if len(args) >= 2:
-                    a, b = args[0], args[1]
-                    if hasattr(a, "shape") and hasattr(b, "shape"):
-                        # Standard matrix multiplication FLOPs
-                        if len(a.shape) >= 2 and len(b.shape) >= 2:
-                            m = a.shape[-2]
-                            k = a.shape[-1]
-                            n = b.shape[-1] if len(b.shape) >= 2 else b.shape[0]
-                            batch_size = 1
-                            for dim in a.shape[:-2]:
-                                batch_size *= dim
-                            return 2 * batch_size * m * k * n
+        matmul_flops = self._matmul_flops(func, args)
+        if matmul_flops is not None:
+            return matmul_flops
 
         # Default estimation based on tensor operations
         total_elements = sum(x.size for x in args if hasattr(x, "size"))
         return total_elements * 2  # Rough estimate
 
-    def _estimate_memory_access(self, args, output_shape: tuple | None = None) -> float:
+    @staticmethod
+    def _matmul_flops(func: Callable, args: tuple) -> float | None:
+        """Return matrix-multiplication FLOPs, or ``None`` if ``func`` is not a matmul.
+
+        Args:
+            func: Callable being profiled.
+            args: Positional arguments the callable was invoked with.
+
+        Returns:
+            Standard batched matmul FLOP count, or ``None`` when the operation is
+            not a recognizable 2-D+ matrix multiplication.
+        """
+        is_matmul = hasattr(func, "__name__") and ("matmul" in func.__name__ or "@" in str(func))
+        if not is_matmul or len(args) < 2:
+            return None
+
+        a, b = args[0], args[1]
+        if not (hasattr(a, "shape") and hasattr(b, "shape")):
+            return None
+        if len(a.shape) < 2 or len(b.shape) < 2:
+            return None
+
+        m, k, n = a.shape[-2], a.shape[-1], b.shape[-1]
+        batch_size = 1
+        for dim in a.shape[:-2]:
+            batch_size *= dim
+        return 2 * batch_size * m * k * n
+
+    def _estimate_memory_access(self, args: Any, output_shape: tuple | None = None) -> float:
         """Estimate memory access in bytes."""
         input_bytes = sum(
             x.size * x.dtype.itemsize for x in args if hasattr(x, "size") and hasattr(x, "dtype")
@@ -359,53 +372,39 @@ class RooflineAnalyzer:
         Returns:
             List of optimized tensors
         """
-        optimized = []
         target_multiple = self.hw_specs.preferred_tile_size
+        return [self._optimize_tensor_shape(tensor, target_multiple) for tensor in tensors]
 
-        for tensor in tensors:
-            if not hasattr(tensor, "shape"):
-                optimized.append(tensor)
-                continue
+    @staticmethod
+    def _round_up_to_multiple(value: int, multiple: int) -> int:
+        """Round ``value`` up to the nearest multiple of ``multiple``."""
+        return ((value + multiple - 1) // multiple) * multiple
 
-            shape = list(tensor.shape)
-            new_shape = shape.copy()
-            padding_needed = False
+    def _optimize_tensor_shape(self, tensor: jax.Array, target_multiple: int) -> jax.Array:
+        """Pad a single tensor so every dimension is a multiple of ``target_multiple``.
 
-            # Optimize dimensions based on hardware preferences
-            # For TPU: pad all dimensions to 128
-            # For GPU: pad to 16 multiples
-            for i in range(len(shape)):
-                dim = shape[i]
-                # Don't pad dimensions that are already multiples of smaller units
-                # e.g., 64 is already a good size for many operations
-                if self.hardware_name == "tpu_v5e":
-                    # For TPU, be aggressive with padding for matrix ops
-                    if dim % target_multiple != 0 and dim < target_multiple:
-                        new_dim = target_multiple
-                        new_shape[i] = new_dim
-                        padding_needed = True
-                    elif dim % target_multiple != 0 and dim > target_multiple:
-                        new_dim = ((dim + target_multiple - 1) // target_multiple) * target_multiple
-                        new_shape[i] = new_dim
-                        padding_needed = True
-                elif dim % target_multiple != 0:
-                    # For GPU/other, pad to nearest multiple
-                    new_dim = ((dim + target_multiple - 1) // target_multiple) * target_multiple
-                    new_shape[i] = new_dim
-                    padding_needed = True
+        Any dimension already aligned is left untouched; a tensor without a ``shape``
+        attribute is returned unchanged.
 
-            if padding_needed:
-                # Apply padding
-                pad_widths = []
-                for old_dim, new_dim in zip(shape, new_shape):
-                    pad_widths.append((0, new_dim - old_dim))
+        Args:
+            tensor: Tensor to align.
+            target_multiple: Hardware-preferred tile size to align dimensions to.
 
-                padded_tensor = jnp.pad(tensor, pad_widths, mode="constant", constant_values=0)
-                optimized.append(padded_tensor)
-            else:
-                optimized.append(tensor)
+        Returns:
+            The padded tensor, or the original when no padding is required.
+        """
+        if not hasattr(tensor, "shape"):
+            return tensor
 
-        return optimized
+        shape = list(tensor.shape)
+        # Rounding up already covers the "pad small dims up to one tile" case, so TPU
+        # and GPU share identical logic once the tile size is chosen.
+        new_shape = [self._round_up_to_multiple(dim, target_multiple) for dim in shape]
+        if new_shape == shape:
+            return tensor
+
+        pad_widths = [(0, new - old) for old, new in zip(shape, new_shape, strict=False)]
+        return jnp.pad(tensor, pad_widths, mode="constant", constant_values=0)
 
     def cast_to_optimal_precision(self, tensors: list[jax.Array]) -> list[jax.Array]:
         """Cast tensors to optimal precision for hardware.

@@ -103,6 +103,41 @@ repos:
         types: [python]
         exclude: ^(documents|custom_modes|notebooks|example_data|tests/)
 
+      - id: lint-imports
+        name: lint-imports (layered architecture — Rule 3 DIP)
+        entry: uv run --no-sync lint-imports
+        language: system
+        pass_filenames: false
+        files: ^(src/datarax/|\.importlinter$|pyproject\.toml$)
+
+      - id: interrogate
+        name: interrogate (docstring coverage — Rule 11)
+        entry: uv run --no-sync interrogate src/ -f 80
+        language: system
+        pass_filenames: false
+        files: ^src/datarax/.*\.py$
+
+      - id: xenon
+        name: xenon (cyclomatic complexity gate — Rule 2 SRP/KISS)
+        entry: uv run --no-sync xenon --max-absolute B --max-modules B --max-average A src/
+        language: system
+        pass_filenames: false
+        files: ^src/datarax/.*\.py$
+
+      - id: pylint-duplicate-code
+        name: pylint-duplicate-code (DRY — Rule 1)
+        entry: uv run --no-sync pylint --disable=all --enable=duplicate-code src/
+        language: system
+        pass_filenames: false
+        files: ^src/datarax/.*\.py$
+
+      - id: vulture
+        name: vulture (dead-code detection — Rule 0 zero tech debt)
+        entry: uv run --no-sync vulture src/ --min-confidence 80
+        language: system
+        pass_filenames: false
+        files: ^src/datarax/.*\.py$
+
   # Workshop-inspired type checking with JAX ecosystem support
   - repo: https://github.com/RobertCraigie/pyright-python
     rev: v1.1.403

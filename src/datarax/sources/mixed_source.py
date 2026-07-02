@@ -10,10 +10,10 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
-import flax.nnx as nnx
 import grain
 import jax
 import jax.numpy as jnp
+from flax import nnx
 
 from datarax.config.registry import register_component
 from datarax.core.config import StructuralConfig
@@ -56,25 +56,37 @@ def _validate_compatible_element_specs(sources: list[DataSourceModule]) -> None:
             other = source.element_spec()
         except Exception:  # noqa: BLE001 — opportunistic compatibility check  # nosec B112
             continue
-        if jax.tree.structure(reference) != jax.tree.structure(other):
+        _assert_specs_match(reference, other, index)
+
+
+def _assert_specs_match(reference: Any, other: Any, index: int) -> None:
+    """Raise if ``other``'s element_spec differs from ``reference`` in structure or leaves.
+
+    Args:
+        reference: Element spec of source 0 (the comparison baseline).
+        other: Element spec of the source at position ``index``.
+        index: Position of ``other`` among the sources, for error messages.
+
+    Raises:
+        ValueError: If pytree structure differs, or any leaf differs in shape/dtype.
+    """
+    if jax.tree.structure(reference) != jax.tree.structure(other):
+        raise ValueError(
+            f"MixDataSourcesNode requires every source to produce records "
+            f"with the same element_spec; source 0 and source {index} have "
+            f"different structure. Mixing under lax.switch needs matching "
+            f"output shapes across all branches."
+        )
+    for leaf_a, leaf_b in zip(jax.tree.leaves(reference), jax.tree.leaves(other), strict=False):
+        if not (hasattr(leaf_a, "shape") and hasattr(leaf_b, "shape")):
+            continue
+        if leaf_a.shape != leaf_b.shape or leaf_a.dtype != leaf_b.dtype:
             raise ValueError(
                 f"MixDataSourcesNode requires every source to produce records "
-                f"with the same element_spec; source 0 and source {index} have "
-                f"different structure. Mixing under lax.switch needs matching "
-                f"output shapes across all branches."
+                f"with the same element_spec; source 0 leaf has shape="
+                f"{leaf_a.shape} dtype={leaf_a.dtype} but source {index} leaf "
+                f"has shape={leaf_b.shape} dtype={leaf_b.dtype}."
             )
-        ref_leaves = jax.tree.leaves(reference)
-        other_leaves = jax.tree.leaves(other)
-        for leaf_a, leaf_b in zip(ref_leaves, other_leaves):
-            if not (hasattr(leaf_a, "shape") and hasattr(leaf_b, "shape")):
-                continue
-            if leaf_a.shape != leaf_b.shape or leaf_a.dtype != leaf_b.dtype:
-                raise ValueError(
-                    f"MixDataSourcesNode requires every source to produce records "
-                    f"with the same element_spec; source 0 leaf has shape="
-                    f"{leaf_a.shape} dtype={leaf_a.dtype} but source {index} leaf "
-                    f"has shape={leaf_b.shape} dtype={leaf_b.dtype}."
-                )
 
 
 @dataclass(frozen=True)

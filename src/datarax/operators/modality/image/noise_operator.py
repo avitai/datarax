@@ -76,7 +76,6 @@ class NoiseOperatorConfig(ModalityOperatorConfig):
                    Set to None for no clipping.
 
     Note:
-
         Different noise types use different parameters:
 
         - mode="gaussian": Uses noise_std and noise_mean
@@ -224,7 +223,7 @@ class NoiseOperator(ModalityOperator):
         record regardless of batch composition, shuffle, host count, or resume.
 
         Args:
-            rng: JAX random key
+            element_keys: Per-record PRNG keys, one per element in the batch.
             data_shapes: Dictionary mapping field keys to their shapes.
                         Used to determine batch size and element shapes.
 
@@ -246,25 +245,26 @@ class NoiseOperator(ModalityOperator):
             # Per-record Gaussian noise: each record drawn from its own key.
             noise = per_element_params(
                 element_keys,
-                lambda key: jax.random.normal(key, shape=element_shape) * self.config.noise_std
-                + self.config.noise_mean,
+                lambda key: (
+                    jax.random.normal(key, shape=element_shape) * self.config.noise_std
+                    + self.config.noise_mean
+                ),
             )
             return {"noise": noise}
 
-        elif self.config.mode == "salt_pepper":
+        if self.config.mode == "salt_pepper":
             # Per-record uniform values for salt & pepper selection.
             noise_mask = per_element_params(
                 element_keys, lambda key: jax.random.uniform(key, shape=element_shape)
             )
             return {"noise_mask": noise_mask}
 
-        elif self.config.mode == "poisson":
+        if self.config.mode == "poisson":
             # Poisson needs the image values, applied per record; the per-record
             # keys are exactly what apply() consumes.
             return {"poisson_rngs": element_keys}
 
-        else:
-            raise ValueError(f"Unknown noise mode: {self.config.mode}")
+        raise ValueError(f"Unknown noise mode: {self.config.mode}")
 
     def apply(
         self,
@@ -370,10 +370,7 @@ class NoiseOperator(ModalityOperator):
         else:
             salt_val = self.config.salt_value
 
-        if self.config.pepper_value is None:
-            pepper_val = 0.0
-        else:
-            pepper_val = self.config.pepper_value
+        pepper_val = 0.0 if self.config.pepper_value is None else self.config.pepper_value
 
         # Get or generate random mask
         if self.config.stochastic and random_params is not None:
@@ -389,15 +386,13 @@ class NoiseOperator(ModalityOperator):
             random_vals = jax.random.uniform(rng_key, shape=value.shape)
 
         # Apply salt and pepper
-        noisy_image = jnp.where(
+        return jnp.where(
             random_vals < self.config.salt_prob,
             salt_val,
             jnp.where(
                 random_vals < self.config.salt_prob + self.config.pepper_prob, pepper_val, value
             ),
         )
-
-        return noisy_image
 
     def _apply_poisson_noise(
         self,
@@ -420,24 +415,18 @@ class NoiseOperator(ModalityOperator):
             poisson_rng = jax.random.key(0)
 
         # Apply Poisson noise based on image range
-        noisy_image = jax.lax.cond(
+        return jax.lax.cond(
             jnp.max(value) > 1.5,
             lambda: self._poisson_255_range(value, poisson_rng),
             lambda: self._poisson_01_range(value, poisson_rng),
         )
 
-        return noisy_image
-
     def _poisson_255_range(self, image: jax.Array, rng: jax.Array) -> jax.Array:
         """Apply Poisson noise to [0, 255] range image."""
         lam = image * self.config.lam_scale / 255.0
-        noisy_image = (
-            jax.random.poisson(rng, lam=lam, shape=image.shape) * 255.0 / self.config.lam_scale
-        )
-        return noisy_image
+        return jax.random.poisson(rng, lam=lam, shape=image.shape) * 255.0 / self.config.lam_scale
 
     def _poisson_01_range(self, image: jax.Array, rng: jax.Array) -> jax.Array:
         """Apply Poisson noise to [0, 1] range image."""
         lam = image * self.config.lam_scale
-        noisy_image = jax.random.poisson(rng, lam=lam, shape=image.shape) / self.config.lam_scale
-        return noisy_image
+        return jax.random.poisson(rng, lam=lam, shape=image.shape) / self.config.lam_scale

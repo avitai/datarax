@@ -61,7 +61,7 @@ def test_memory_source_element_spec_uses_jax_dtypes() -> None:
 
 def test_memory_source_element_spec_preserves_pipeline_chain() -> None:
     """A MemorySource's spec composes with the default operator/batcher chain."""
-    from datarax.utils.spec import batched_spec  # noqa: PLC0415
+    from datarax.core.spec import batched_spec  # noqa: PLC0415
 
     data = {"image": jnp.ones((50, 4), dtype=jnp.float32)}
     source = MemorySource(MemorySourceConfig(), data, rngs=nnx.Rngs(0))

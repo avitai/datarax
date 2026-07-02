@@ -5,10 +5,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Self
 
-import flax.nnx as nnx
 import grain
 import grain.sources
 import numpy as np
+from flax import nnx
 
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
@@ -240,10 +240,7 @@ class ArrayRecordSourceModule(DataSourceModule):
 
         # Apply shuffling if enabled
         shuffled_indices = self.shuffled_indices.get_value()
-        if shuffled_indices is not None:
-            actual_idx = shuffled_indices[idx]
-        else:
-            actual_idx = idx
+        actual_idx = shuffled_indices[idx] if shuffled_indices is not None else idx
 
         # Get from Grain source
         return self.grain_source[int(actual_idx)]
@@ -345,6 +342,6 @@ class ArrayRecordSourceModule(DataSourceModule):
         """Enter a context that guarantees ``close()`` on exit."""
         return self
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(self, *_exc_info: object) -> None:
         """Release ArrayRecord file handles on context exit."""
         self.close()

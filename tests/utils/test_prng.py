@@ -4,7 +4,8 @@ import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
 
-from datarax.utils.prng import create_rngs, DEFAULT_RNG_STREAMS, per_record_keys
+from datarax.core.prng import per_record_keys
+from datarax.utils.prng import create_rngs, DEFAULT_RNG_STREAMS
 
 
 class TestPerRecordKeys:

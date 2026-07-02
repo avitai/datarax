@@ -69,12 +69,11 @@ def save_benchmark_results_to_path(results: dict, output_path: str) -> None:
     def make_serializable(obj: Any) -> JSONValue:
         if isinstance(obj, int | float | str | bool | type(None)):
             return obj
-        elif isinstance(obj, list | tuple):
+        if isinstance(obj, list | tuple):
             return [make_serializable(x) for x in obj]
-        elif isinstance(obj, dict):
+        if isinstance(obj, dict):
             return {k: make_serializable(v) for k, v in obj.items()}
-        else:
-            return str(obj)
+        return str(obj)
 
     serializable_results = make_serializable(results)
     if not isinstance(serializable_results, dict):

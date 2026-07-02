@@ -116,6 +116,6 @@ class BatcherModule(StructuralModule):
             ValueError: If ``batch_size`` is not positive.
         """
         # Imported lazily to keep core/batcher import lightweight.
-        from datarax.utils.spec import batched_spec
+        from datarax.core.spec import batched_spec
 
         return batched_spec(element_spec, batch_size=batch_size)

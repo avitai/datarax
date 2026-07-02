@@ -131,19 +131,11 @@ def hf_to_jax(value: Any) -> jax.Array:
         # Convert PIL Image to numpy, then to JAX
         return jnp.array(np.array(value))
 
-    # Handle numpy arrays
-    if isinstance(value, np.ndarray):
-        return jnp.array(value)
-
     # JAX arrays do not support string dtype. Keep raw text columns available
     # for element-wise inspection; callers should tokenize or exclude them
     # before building numeric training batches.
     if isinstance(value, str):
         return value  # type: ignore[return-value]
-
-    # Handle objects with __array__ protocol (e.g., torch tensors)
-    if hasattr(value, "__array__"):
-        return jnp.array(value)
 
     # Handle sequences (lists, tuples)
     if isinstance(value, list | tuple):
@@ -154,7 +146,8 @@ def hf_to_jax(value: Any) -> jax.Array:
             # Return as-is, caller must handle
             return value  # type: ignore[return-value]
 
-    # Handle scalars and everything else
+    # numpy arrays, __array__-protocol objects (e.g. torch tensors), scalars, and
+    # everything else all convert through jnp.array directly.
     return jnp.array(value)
 
 

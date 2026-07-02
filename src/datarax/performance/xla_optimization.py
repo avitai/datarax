@@ -177,8 +177,7 @@ class SmartCompilation:
             # Use JIT for large computations
             if total_size > static_threshold:
                 return compiled_version(*args, **kwargs)
-            else:
-                return func(*args, **kwargs)
+            return func(*args, **kwargs)
 
         return adaptive_wrapper
 
@@ -248,8 +247,7 @@ class MemoryEfficientCompilation:
 
         if donate_args is not None:
             # Static donate args: compile once upfront
-            compiled = partial(jax.jit, donate_argnums=donate_args)(func)
-            return compiled
+            return partial(jax.jit, donate_argnums=donate_args)(func)
 
         def optimized_func(*args: Any, **kwargs: Any) -> Any:
             auto_donate: list[int] = []
@@ -491,7 +489,7 @@ class CompilationProfiler:
 
         # Analyze shape patterns
         shape_groups: dict[tuple, list] = {}
-        for sig, profile in self.shape_profiles.items():
+        for _sig, profile in self.shape_profiles.items():
             shape_key = tuple(profile["input_shapes"])
             if shape_key not in shape_groups:
                 shape_groups[shape_key] = []

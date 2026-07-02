@@ -4,10 +4,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-import flax.nnx as nnx
 import grain
 import jax
 import numpy as np
+from flax import nnx
 
 from datarax.core.sharder import SharderModule, SharderModuleConfig
 
@@ -65,11 +65,10 @@ class JaxProcessSharderModule(SharderModule):
             start_idx, end_idx = self._shard_bounds(len(data))
             return data[start_idx:end_idx]
 
-        elif isinstance(data, jax.Array | np.ndarray):
+        if isinstance(data, jax.Array | np.ndarray):
             return self._shard_array(data)
 
-        else:
-            raise ValueError(f"Cannot shard data of type {type(data)}")
+        raise ValueError(f"Cannot shard data of type {type(data)}")
 
     def _shard_array(self, array: jax.Array | np.ndarray) -> jax.Array | np.ndarray:
         """Shard array across first dimension."""

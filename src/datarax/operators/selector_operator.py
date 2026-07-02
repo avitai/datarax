@@ -52,7 +52,6 @@ class SelectorOperatorConfig(OperatorConfig):
                  Will be normalized to sum to 1.0
 
     Note:
-
         - stochastic is always True (always makes random choice)
         - stream_name defaults to "augment" for random selection
     """

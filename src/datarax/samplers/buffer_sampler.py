@@ -17,9 +17,9 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Literal
 
-import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
+from flax import nnx
 
 from datarax.core.config import StructuralConfig
 from datarax.core.sampler import SamplerModule
@@ -242,9 +242,9 @@ class BufferSampler(SamplerModule):
 
         def _passthrough(_: None):
             chunk = jax.tree.map(
-                lambda leaf, val: jnp.zeros((self._sample_size, *leaf.shape), dtype=leaf.dtype)
-                .at[0]
-                .set(val),
+                lambda leaf, val: (
+                    jnp.zeros((self._sample_size, *leaf.shape), dtype=leaf.dtype).at[0].set(val)
+                ),
                 self._element_spec,
                 value,
             )

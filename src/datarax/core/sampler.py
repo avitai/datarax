@@ -111,7 +111,7 @@ class SamplerModule(StructuralModule):
 
         return None
 
-    def __call__(self, n: int, *_args, **_kwargs) -> list[int]:  # type: ignore[override]
+    def __call__(self, n: int, *_args: Any, **_kwargs: Any) -> list[int]:  # type: ignore[override]
         """Enhanced sampling interface with caching and statistics.
 
         Args:
@@ -130,26 +130,39 @@ class SamplerModule(StructuralModule):
         if n == 0:
             return []
 
-        # Compute cache key once if caching is enabled
-        cache_key: int | None = None
-        if self.config.cacheable and self._cache is not None:
-            cache_key = self._compute_cache_key(n)
-            if cache_key in self._cache:
-                return self._cache[cache_key]
+        cache_key, cached = self._cache_lookup(n)
+        if cached is not None:
+            return cached
 
-        # Perform sampling
         result = self._sample_impl(n)
+        self._maybe_update_statistics(result)
+        self._maybe_store_in_cache(cache_key, result)
+        return result
 
-        # Compute statistics if enabled
+    def _cache_lookup(self, n: int) -> tuple[int | None, list[int] | None]:
+        """Compute the cache key for ``n`` and look up any cached result.
+
+        Args:
+            n: Number of indices being sampled.
+
+        Returns:
+            Tuple of (cache_key, cached_result). Both are ``None`` when caching is
+            disabled; ``cached_result`` is ``None`` on a cache miss.
+        """
+        if not (self.config.cacheable and self._cache is not None):
+            return None, None
+        cache_key = self._compute_cache_key(n)
+        return cache_key, self._cache.get(cache_key)
+
+    def _maybe_update_statistics(self, result: list[int]) -> None:
+        """Recompute and store sampling statistics when a stats source is configured."""
         if self.config.batch_stats_fn is not None or self.config.precomputed_stats is not None:
-            stats = self._compute_statistics(result)
-            self._last_computed_stats = stats
+            self._last_computed_stats = self._compute_statistics(result)
 
-        # Cache result if enabled
+    def _maybe_store_in_cache(self, cache_key: int | None, result: list[int]) -> None:
+        """Store ``result`` under ``cache_key`` when caching is enabled and keyed."""
         if self.config.cacheable and self._cache is not None and cache_key is not None:
             self._cache[cache_key] = result
-
-        return result
 
     def _sample_impl(self, n: int) -> list[int]:
         """Implementation method for sampling.
@@ -202,7 +215,7 @@ class SamplerModule(StructuralModule):
         """
         # Set dataset_size if the sampler needs it
         if hasattr(self, "dataset_size") and getattr(self, "dataset_size", None) is None:
-            setattr(self, "dataset_size", n)
+            self.dataset_size = n
 
         # Collect all indices from the iterator
         return list(self)
@@ -287,6 +300,6 @@ class SamplerModule(StructuralModule):
             shape and dtype of one emitted index.
         """
         # Imported lazily to keep core/sampler import lightweight.
-        from datarax.utils.spec import scalar_index_spec
+        from datarax.core.spec import scalar_index_spec
 
         return scalar_index_spec()

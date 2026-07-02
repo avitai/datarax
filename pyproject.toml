@@ -16,6 +16,7 @@ dev = [
   "ipykernel>=6.29.5",
   "jupytext>=1.16.0",
   "nbqa>=1.9.1",
+  "pip-audit>=2.7",
   "pre-commit>=4.3.0",
   "pylint>=3.0",
   "pyright>=1.1.336",
@@ -73,7 +74,6 @@ dependencies = [
   "numpy>=1.26",
   "psutil>=5.9.0",
   "PyYAML>=6",
-  "toml>=0.10.2",
   "grain>=0.2.18"
 ]
 description = "Datarax: A high-performance, NNX-based data pipeline framework for JAX"
@@ -169,6 +169,7 @@ dev = [
   "import-linter>=2.0",
   "interrogate>=1.5",
   "ipykernel>=6.29.5",
+  "pip-audit>=2.7",
   "pydeps>=1.12.17",
   "pylint>=3.0",
   "pyright>=1.1.336",
@@ -518,9 +519,19 @@ ignore = [
   "W391", # Blank line at end of file
   "E203", # Whitespace before ':'
   # UP035 — fixed: imports now use collections.abc
-  "RUF005" # Consider using unpacked tuple instead of concatenation
+  "RUF005", # Consider using unpacked tuple instead of concatenation
+  # --- Documented exemptions from the adopted rule set ---
+  "ANN401", # `Any` is legitimate for JAX pytree leaves and dynamic data payloads
+  "TRY003", # inline exception messages are the established, readable style here
+  "TRY300", # return-in-`else` restructuring adds no safety to guard-heavy flow
+  "TRY004", # state/checkpoint validation intentionally raises ValueError for structural incompatibility
+  "PLR2004", # magic-value comparisons pervade numeric/array/scientific code
+  "SIM102", # collapsing nested `if`s reduces readability in guard-heavy validation
+  "SIM108" # ternary-over-if is not always clearer in these branches
 ]
-select = ["E", "F", "I", "UP", "W"]
+# Adopt the shared SWE guide's rule set. C90 (mccabe, max-complexity=10) is active:
+# every library function is at or below rank B. ANN401/TRY003/etc. exemptions above.
+select = ["E", "F", "I", "UP", "W", "ANN", "ARG", "B", "C90", "D", "PLR", "PTH", "RET", "SIM", "T20", "TRY"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
@@ -528,6 +539,23 @@ extra-standard-library = []
 known-first-party = ["datarax"]
 lines-after-imports = 2
 order-by-type = false
+
+[tool.ruff.lint.mccabe]
+# Rule 2 (SRP/KISS): cyclomatic complexity ceiling. Functions above this must be
+# decomposed; matches the radon rank-B boundary and the xenon --max-absolute B gate.
+max-complexity = 10
+
+[tool.ruff.lint.per-file-ignores]
+"benchmarks/**" = ["ANN", "C90", "D", "T20", "PLR", "B", "SIM", "TRY", "ARG", "RET", "PTH", "E501"]
+"examples/**" = ["ANN", "C90", "D", "T20", "PLR", "B", "SIM", "TRY", "ARG", "RET", "PTH", "E501"]
+"scripts/**" = ["ANN", "C90", "D", "T20", "PLR", "B", "SIM", "TRY", "ARG", "RET", "PTH", "E501"]
+# buffer_sampler's nested jax.lax.cond branch closures have structurally-enforced,
+# pyright-inferred return types; per-closure annotations add noise, not safety.
+"src/datarax/samplers/buffer_sampler.py" = ["ANN202", "ANN001"]
+# Tests, examples, benchmarks, and scripts keep baseline correctness rules
+# (E/F/I/W/UP) but are exempt from production-only strictness — examples and
+# benchmarks legitimately use print(), and none ship as library API.
+"tests/**" = ["ANN", "C90", "D", "PLR", "B", "SIM", "TRY", "ARG", "RET", "PTH"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

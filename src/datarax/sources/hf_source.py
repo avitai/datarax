@@ -29,10 +29,10 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, cast
 
-import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from flax import nnx
 
 from datarax.sources._config_base import SourceConfigBase
 from datarax.sources._conversion import hf_to_jax
@@ -566,7 +566,7 @@ class HFStreamingSource(StreamingSourceBase):
         in ``__init__``) so it does not re-trigger downloads and is safe to
         call repeatedly.
         """
-        from datarax.utils.spec import array_to_spec  # noqa: PLC0415
+        from datarax.core.spec import array_to_spec  # noqa: PLC0415
 
         first = next(iter(self._hf_dataset))
         if not isinstance(first, dict):

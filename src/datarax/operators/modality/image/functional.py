@@ -61,14 +61,13 @@ def resize_image_to_shape(
             method=interpolation,
             antialias=antialias,
         )
-    else:
-        # For grayscale images (2D)
-        return jax.image.resize(
-            image,
-            shape=(output_h, output_w),
-            method=interpolation,
-            antialias=antialias,
-        )
+    # For grayscale images (2D)
+    return jax.image.resize(
+        image,
+        shape=(output_h, output_w),
+        method=interpolation,
+        antialias=antialias,
+    )
 
 
 def center_crop(
@@ -100,8 +99,7 @@ def center_crop(
     # Perform the crop
     if len(input_shape) == 3:
         return image[y_start : y_start + actual_h, x_start : x_start + actual_w, :]
-    else:
-        return image[y_start : y_start + actual_h, x_start : x_start + actual_w]
+    return image[y_start : y_start + actual_h, x_start : x_start + actual_w]
 
 
 def random_crop(
@@ -147,8 +145,7 @@ def random_crop(
         return jax.lax.dynamic_slice(
             image, (y_start, x_start, 0), (output_h, output_w, input_shape[2])
         )
-    else:
-        return jax.lax.dynamic_slice(image, (y_start, x_start), (output_h, output_w))
+    return jax.lax.dynamic_slice(image, (y_start, x_start), (output_h, output_w))
 
 
 def normalize(
@@ -382,12 +379,11 @@ def rgb_to_hsv(rgb: jax.Array) -> jax.Array:
     if len(shape) == 0:
         # Single pixel
         return convert_pixel(rgb)
-    else:
-        # Reshape to (-1, 3), apply vmap, then reshape back
-        # Use -1 to let JAX infer the dimension size statically
-        rgb_flat = rgb.reshape((-1, 3))
-        hsv_flat = convert_vmap(rgb_flat)
-        return hsv_flat.reshape((*shape, 3))
+    # Reshape to (-1, 3), apply vmap, then reshape back
+    # Use -1 to let JAX infer the dimension size statically
+    rgb_flat = rgb.reshape((-1, 3))
+    hsv_flat = convert_vmap(rgb_flat)
+    return hsv_flat.reshape((*shape, 3))
 
 
 def hsv_to_rgb(hsv: jax.Array) -> jax.Array:
@@ -624,8 +620,7 @@ def _apply_color_jitter_static(
         result = adjust_brightness(result, 1.0 + brightness)
     if contrast != 0.0:
         result = adjust_contrast(result, 1.0 + contrast)
-    result = _apply_static_hsv_adjustment(result, saturation, hue)
-    return result
+    return _apply_static_hsv_adjustment(result, saturation, hue)
 
 
 def _apply_color_jitter_random(

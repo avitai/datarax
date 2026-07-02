@@ -14,10 +14,10 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
 import orbax.checkpoint as ocp
+from flax import nnx
 
 from datarax.typing import Checkpointable
 
@@ -105,7 +105,7 @@ class OrbaxCheckpointHandler:
         """
         # Strings must be checked before dicts (strings are iterable)
         if isinstance(target, str):
-            return {"__string__": True, "char_codes": [ord(c) for c in target]}
+            return self._string_to_marker(target)
         if isinstance(target, dict):
             return {k: self._preprocess(v) for k, v in target.items()}
         if isinstance(target, list):
@@ -113,12 +113,23 @@ class OrbaxCheckpointHandler:
         if isinstance(target, tuple):
             return tuple(self._preprocess(item) for item in target)
         if isinstance(target, jax.Array):
-            # jax.dtypes.issubdtype exists at runtime (used by Orbax) but missing from stubs
-            if jax.dtypes.issubdtype(target.dtype, jax.dtypes.prng_key):  # type: ignore[attr-defined]
-                return {
-                    "__prng_key__": True,
-                    "key_data": jax.random.key_data(target).tolist(),
-                }
+            return self._prng_key_to_marker(target)
+        return target
+
+    @staticmethod
+    def _string_to_marker(target: str) -> dict[str, Any]:
+        """Encode a string as a char-code marker dict for Orbax serialization."""
+        return {"__string__": True, "char_codes": [ord(c) for c in target]}
+
+    @staticmethod
+    def _prng_key_to_marker(target: jax.Array) -> Any:
+        """Encode a PRNG-key array as a marker dict; pass other arrays through unchanged."""
+        # jax.dtypes.issubdtype exists at runtime (used by Orbax) but missing from stubs
+        if jax.dtypes.issubdtype(target.dtype, jax.dtypes.prng_key):  # type: ignore[attr-defined]
+            return {
+                "__prng_key__": True,
+                "key_data": jax.random.key_data(target).tolist(),
+            }
         return target
 
     def _restore(self, target: Any) -> Any:

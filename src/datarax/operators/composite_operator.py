@@ -277,6 +277,23 @@ class CompositeOperatorModule(OperatorModule):
 
     def _init_strategy(self) -> None:
         """Initialize the composition strategy implementation."""
+        strategy = self.config.strategy
+        builder = self._strategy_builders().get(strategy) if strategy is not None else None
+        if builder is None:
+            raise ValueError(f"Unknown strategy: {strategy}")
+        self.strategy_impl = builder()
+
+    def _strategy_builders(self) -> dict[CompositionStrategy, Callable[[], Any]]:
+        """Map each composition strategy to a zero-arg factory for its implementation.
+
+        ``conditions``/``router`` are guaranteed non-``None`` by the config's
+        ``__post_init__`` for the strategies that require them, so they are narrowed
+        with ``cast`` rather than re-validated here. The four ``ENSEMBLE_*`` strategies
+        share one factory that reads the reduction mode from the enum name.
+
+        Returns:
+            Mapping from strategy enum to a callable building its ``CompositionStrategyImpl``.
+        """
         from datarax.operators.strategies import (
             BranchingStrategy,
             ConditionalParallelStrategy,
@@ -287,43 +304,40 @@ class CompositeOperatorModule(OperatorModule):
             WeightedParallelStrategy,
         )
 
-        if self.config.strategy == CompositionStrategy.SEQUENTIAL:
-            self.strategy_impl = SequentialStrategy()
-        elif self.config.strategy == CompositionStrategy.CONDITIONAL_SEQUENTIAL:
-            assert self.config.conditions is not None  # validated in config
-            self.strategy_impl = ConditionalSequentialStrategy(self.config.conditions)
-        elif self.config.strategy == CompositionStrategy.DYNAMIC_SEQUENTIAL:
-            self.strategy_impl = SequentialStrategy()
-        elif self.config.strategy == CompositionStrategy.PARALLEL:
-            self.strategy_impl = ParallelStrategy(
-                merge_strategy=self.config.merge_strategy,
-                merge_axis=self.config.merge_axis,
-                merge_fn=self.config.merge_fn,
-            )
-        elif self.config.strategy == CompositionStrategy.WEIGHTED_PARALLEL:
-            self.strategy_impl = WeightedParallelStrategy()
-        elif self.config.strategy == CompositionStrategy.CONDITIONAL_PARALLEL:
-            assert self.config.conditions is not None  # validated in config
-            self.strategy_impl = ConditionalParallelStrategy(
-                conditions=self.config.conditions,
-                merge_strategy=self.config.merge_strategy,
-                merge_axis=self.config.merge_axis,
-                merge_fn=self.config.merge_fn,
-            )
-        elif self.config.strategy in [
-            CompositionStrategy.ENSEMBLE_MEAN,
-            CompositionStrategy.ENSEMBLE_SUM,
-            CompositionStrategy.ENSEMBLE_MAX,
-            CompositionStrategy.ENSEMBLE_MIN,
-        ]:
-            # Extract mode from enum name
-            mode = self.config.strategy.name.split("_")[1].lower()
-            self.strategy_impl = EnsembleStrategy(mode=mode)
-        elif self.config.strategy == CompositionStrategy.BRANCHING:
-            assert self.config.router is not None  # validated in config
-            self.strategy_impl = BranchingStrategy(router=self.config.router)
-        else:
-            raise ValueError(f"Unknown strategy: {self.config.strategy}")
+        cfg = self.config
+
+        def build_ensemble() -> Any:
+            # Only reached for ENSEMBLE_* keys, so strategy is a concrete enum here.
+            # Extract mode from enum name, e.g. ENSEMBLE_MEAN -> "mean".
+            strategy = cast(CompositionStrategy, cfg.strategy)
+            return EnsembleStrategy(mode=strategy.name.split("_")[1].lower())
+
+        return {
+            CompositionStrategy.SEQUENTIAL: SequentialStrategy,
+            CompositionStrategy.DYNAMIC_SEQUENTIAL: SequentialStrategy,
+            CompositionStrategy.CONDITIONAL_SEQUENTIAL: lambda: ConditionalSequentialStrategy(
+                cast(Sequence[Callable], cfg.conditions)
+            ),
+            CompositionStrategy.PARALLEL: lambda: ParallelStrategy(
+                merge_strategy=cfg.merge_strategy,
+                merge_axis=cfg.merge_axis,
+                merge_fn=cfg.merge_fn,
+            ),
+            CompositionStrategy.WEIGHTED_PARALLEL: WeightedParallelStrategy,
+            CompositionStrategy.CONDITIONAL_PARALLEL: lambda: ConditionalParallelStrategy(
+                conditions=cast(Sequence[Callable], cfg.conditions),
+                merge_strategy=cfg.merge_strategy,
+                merge_axis=cfg.merge_axis,
+                merge_fn=cfg.merge_fn,
+            ),
+            CompositionStrategy.ENSEMBLE_MEAN: build_ensemble,
+            CompositionStrategy.ENSEMBLE_SUM: build_ensemble,
+            CompositionStrategy.ENSEMBLE_MAX: build_ensemble,
+            CompositionStrategy.ENSEMBLE_MIN: build_ensemble,
+            CompositionStrategy.BRANCHING: lambda: BranchingStrategy(
+                router=cast(Callable, cfg.router)
+            ),
+        }
 
     def generate_random_params(
         self,
@@ -382,25 +396,7 @@ class CompositeOperatorModule(OperatorModule):
         del stats
         from datarax.operators.strategies.base import StrategyContext
 
-        # Prepare context
-        extra_params = {}
-        clean_data = data
-
-        if self.config.strategy == CompositionStrategy.WEIGHTED_PARALLEL:
-            if self.config.weight_key is not None:
-                # Dynamic mode: extract weights from data dict
-                if not isinstance(data, dict) or self.config.weight_key not in data:
-                    raise ValueError(
-                        f"weight_key '{self.config.weight_key}' not found in data. "
-                        f"Available keys: {list(data.keys()) if isinstance(data, dict) else 'N/A'}"
-                    )
-                extra_params["weights"] = data[self.config.weight_key]
-                # Strip weight_key so child operators don't receive it
-                clean_data = {k: v for k, v in data.items() if k != self.config.weight_key}
-            elif self.config.learnable_weights:
-                extra_params["weights"] = self.weights[...]
-            else:
-                extra_params["weights"] = jnp.array(self.config.weights)
+        extra_params, clean_data = self._resolve_weighted_params(data)
 
         # Stats callback
         def stats_callback(index: int, stats: dict[str, Any]) -> None:
@@ -419,6 +415,44 @@ class CompositeOperatorModule(OperatorModule):
         )
 
         return self.strategy_impl.apply(self._get_operators_list(), context)
+
+    def _resolve_weighted_params(self, data: PyTree) -> tuple[dict[str, Any], PyTree]:
+        """Resolve ``extra_params`` weights and strip ``weight_key`` from data.
+
+        Only ``WEIGHTED_PARALLEL`` consumes weights; every other strategy returns the
+        data unchanged with no extra params. For ``WEIGHTED_PARALLEL`` the weights come
+        from (in priority order) a dynamic ``data[weight_key]`` entry, the learnable
+        ``self.weights`` param, or the static ``config.weights``.
+
+        Args:
+            data: Input pytree passed to :meth:`apply`.
+
+        Returns:
+            Tuple of (extra_params, clean_data) where ``clean_data`` has ``weight_key``
+            removed when dynamic weights were extracted from it.
+
+        Raises:
+            ValueError: If ``weight_key`` is configured but absent from ``data``.
+        """
+        if self.config.strategy != CompositionStrategy.WEIGHTED_PARALLEL:
+            return {}, data
+
+        if self.config.weight_key is not None:
+            # Dynamic mode: extract weights from data dict.
+            if not isinstance(data, dict) or self.config.weight_key not in data:
+                available = list(data.keys()) if isinstance(data, dict) else "N/A"
+                raise ValueError(
+                    f"weight_key '{self.config.weight_key}' not found in data. "
+                    f"Available keys: {available}"
+                )
+            # Strip weight_key so child operators don't receive it.
+            clean_data = {k: v for k, v in data.items() if k != self.config.weight_key}
+            return {"weights": data[self.config.weight_key]}, clean_data
+
+        if self.config.learnable_weights:
+            return {"weights": self.weights[...]}, data
+
+        return {"weights": jnp.array(self.config.weights)}, data
 
     def _get_operators_list(self) -> list[OperatorModule]:
         """Get list of operators."""

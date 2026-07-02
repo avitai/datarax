@@ -162,7 +162,7 @@ class StructuralModule(DataraxModule):
     # Concrete Methods (final implementation)
     # ========================================================================
 
-    def __call__(self, input: Any, *args, **kwargs) -> Any:
+    def __call__(self, input: Any, *args: Any, **kwargs: Any) -> Any:
         """Main entry point for structural processing.
 
         Delegates to process() method. No caching or statistics by default

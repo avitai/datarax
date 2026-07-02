@@ -10,7 +10,7 @@ import logging
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-import flax.nnx as nnx
+from flax import nnx
 
 from datarax.core.batcher import BatcherModule
 from datarax.core.data_source import DataSourceModule
@@ -65,8 +65,7 @@ def _get_constructor_signature(constructor: ComponentConstructor) -> inspect.Sig
     """
     if inspect.isclass(constructor):
         return inspect.signature(constructor.__init__)
-    else:
-        return inspect.signature(constructor)
+    return inspect.signature(constructor)
 
 
 def _prepare_rngs_for_nnx(config: dict[str, Any]) -> nnx.Rngs:
@@ -92,16 +91,14 @@ def _prepare_rngs_for_nnx(config: dict[str, Any]) -> nnx.Rngs:
                 else:
                     rng_dict[stream_name] = seed_value
             return nnx.Rngs(rng_dict)
-        else:
-            # Use default RNGs if empty dict
-            seed = config.get("seed", None)
-            return create_rngs(seed=seed)
-    elif isinstance(rngs_config, nnx.Rngs):
-        return rngs_config
-    else:
-        # Fallback to default
-        seed = config.get("seed", None)
+        # Use default RNGs if empty dict
+        seed = config.get("seed")
         return create_rngs(seed=seed)
+    if isinstance(rngs_config, nnx.Rngs):
+        return rngs_config
+    # Fallback to default
+    seed = config.get("seed")
+    return create_rngs(seed=seed)
 
 
 def _prepare_config_for_nnx(
@@ -326,9 +323,8 @@ def create_component_from_config(component_type: str, name: str, config: dict[st
             _load_state_from_file(instance, config)
 
             return instance
-        else:
-            # Regular component creation
-            return constructor(**config)
+        # Regular component creation
+        return constructor(**config)
 
     except Exception as e:
         msg = f"Failed to create component {component_type}.{name}: {e}"

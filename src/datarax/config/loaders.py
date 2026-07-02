@@ -155,6 +155,4 @@ def load_config_from_path_with_includes(
         merged_config = deep_merge_dict(merged_config, included_config)
 
     # Finally, merge with the current config (which takes precedence)
-    merged_config = deep_merge_dict(merged_config, config)
-
-    return merged_config
+    return deep_merge_dict(merged_config, config)

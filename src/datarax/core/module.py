@@ -508,24 +508,54 @@ class DataraxModule(nnx.Module):
             return
 
         if isinstance(target, nnx.Module):
-            if not isinstance(saved, dict):
-                location = ".".join(str(p) for p in path) if path else "<root>"
-                raise ValueError(
-                    f"Invalid state node at {location}: expected dict, got {type(saved).__name__}"
-                )
-            for key, value in saved.items():
-                child = self._resolve_state_child(target, key, path)
-                self._restore_state_tree(child, value, (*path, key))
+            self._restore_module_state(target, saved, path)
             return
 
         if isinstance(target, list | tuple):
-            if not isinstance(saved, list | tuple):
-                location = ".".join(str(p) for p in path) if path else "<root>"
-                raise ValueError(
-                    f"Invalid sequence state at {location}: got {type(saved).__name__}"
-                )
-            for index, (child, value) in enumerate(zip(target, saved, strict=True)):
-                self._restore_state_tree(child, value, (*path, index))
+            self._restore_sequence_state(target, saved, path)
+
+    @staticmethod
+    def _format_path(path: tuple[str | int, ...]) -> str:
+        """Render a state-tree path tuple as a dotted location string for errors."""
+        return ".".join(str(p) for p in path) if path else "<root>"
+
+    def _restore_module_state(self, target: Any, saved: Any, path: tuple[str | int, ...]) -> None:
+        """Restore a saved dict of child state into an ``nnx.Module`` target.
+
+        Args:
+            target: Module whose children are being restored.
+            saved: Saved state; must be a dict keyed by child name.
+            path: Path to ``target`` from the tree root, for error messages.
+
+        Raises:
+            ValueError: If ``saved`` is not a dict.
+        """
+        if not isinstance(saved, dict):
+            raise ValueError(
+                f"Invalid state node at {self._format_path(path)}: "
+                f"expected dict, got {type(saved).__name__}"
+            )
+        for key, value in saved.items():
+            child = self._resolve_state_child(target, key, path)
+            self._restore_state_tree(child, value, (*path, key))
+
+    def _restore_sequence_state(self, target: Any, saved: Any, path: tuple[str | int, ...]) -> None:
+        """Restore a saved sequence of child state into a list/tuple target.
+
+        Args:
+            target: List or tuple whose elements are being restored.
+            saved: Saved state; must be a list or tuple of matching length.
+            path: Path to ``target`` from the tree root, for error messages.
+
+        Raises:
+            ValueError: If ``saved`` is not a list or tuple.
+        """
+        if not isinstance(saved, list | tuple):
+            raise ValueError(
+                f"Invalid sequence state at {self._format_path(path)}: got {type(saved).__name__}"
+            )
+        for index, (child, value) in enumerate(zip(target, saved, strict=True)):
+            self._restore_state_tree(child, value, (*path, index))
 
     def clone(self) -> "DataraxModule":
         """Create a new instance with the same state as this module.

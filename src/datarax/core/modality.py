@@ -405,11 +405,10 @@ class ModalityOperator(OperatorModule):
                     raise KeyError(f"Field '{field_key}' not found in data")
                 current = current[key]
             return current
-        else:
-            # Simple field access
-            if field_key not in data:
-                raise KeyError(f"Field '{field_key}' not found in data")
-            return data[field_key]
+        # Simple field access
+        if field_key not in data:
+            raise KeyError(f"Field '{field_key}' not found in data")
+        return data[field_key]
 
     def _apply_clip_range(self, value: jax.Array) -> jax.Array:
         """Apply value range clipping if configured.
@@ -470,23 +469,21 @@ class ModalityOperator(OperatorModule):
                 if len(key_path) == 1:
                     # Base case: set the value
                     return {**current_data, key_path[0]: value}
-                else:
-                    # Recursive case: navigate deeper
-                    key = key_path[0]
-                    rest = key_path[1:]
+                # Recursive case: navigate deeper
+                key = key_path[0]
+                rest = key_path[1:]
 
-                    # Get existing nested dict or create empty one
-                    nested = current_data.get(key, {})
-                    if not isinstance(nested, dict):
-                        raise ValueError(
-                            f"Cannot create nested path '{target_key}': '{key}' is not a dict"
-                        )
+                # Get existing nested dict or create empty one
+                nested = current_data.get(key, {})
+                if not isinstance(nested, dict):
+                    raise ValueError(
+                        f"Cannot create nested path '{target_key}': '{key}' is not a dict"
+                    )
 
-                    # Recursively update nested structure
-                    updated_nested = set_nested(nested, rest, value)
-                    return {**current_data, key: updated_nested}
+                # Recursively update nested structure
+                updated_nested = set_nested(nested, rest, value)
+                return {**current_data, key: updated_nested}
 
             return set_nested(data, keys, transformed_value)
-        else:
-            # Simple field assignment (shallow copy + update)
-            return {**data, target_key: transformed_value}
+        # Simple field assignment (shallow copy + update)
+        return {**data, target_key: transformed_value}

@@ -51,6 +51,51 @@ def validate_dag(
                 )
 
 
+def _build_successors(edges: Mapping[str, Sequence[str]]) -> dict[str, list[str]]:
+    """Invert ``edges`` (predecessor lists) into a successor adjacency map.
+
+    Args:
+        edges: Map from each node name to the list of predecessor names.
+
+    Returns:
+        Map from each node name to the list of nodes that depend on it.
+    """
+    successors: dict[str, list[str]] = {name: [] for name in edges}
+    for name, preds in edges.items():
+        for predecessor in preds:
+            if predecessor in successors:
+                successors[predecessor].append(name)
+    return successors
+
+
+def _kahn_order(in_degree: dict[str, int], successors: Mapping[str, list[str]]) -> list[str]:
+    """Drain zero-in-degree nodes in Kahn's algorithm, mutating ``in_degree``.
+
+    Ready nodes are processed in sorted order so the result is deterministic for
+    DAGs with parallel branches.
+
+    Args:
+        in_degree: Map from node name to its remaining predecessor count
+            (consumed/decremented in place).
+        successors: Successor adjacency map from :func:`_build_successors`.
+
+    Returns:
+        Node names in one valid topological order (may be shorter than the input
+        when a cycle prevents some nodes from ever becoming ready).
+    """
+    ready = sorted(name for name, deg in in_degree.items() if deg == 0)
+    order: list[str] = []
+    while ready:
+        node = ready.pop(0)
+        order.append(node)
+        for successor in successors[node]:
+            in_degree[successor] -= 1
+            if in_degree[successor] == 0:
+                ready.append(successor)
+        ready.sort()
+    return order
+
+
 def topological_sort(edges: Mapping[str, Sequence[str]]) -> list[str]:
     """Return node names in topological order via Kahn's algorithm.
 
@@ -69,25 +114,8 @@ def topological_sort(edges: Mapping[str, Sequence[str]]) -> list[str]:
             names the nodes participating in the cycle.
     """
     in_degree = {name: len(preds) for name, preds in edges.items()}
-
-    successors: dict[str, list[str]] = {name: [] for name in edges}
-    for name, preds in edges.items():
-        for predecessor in preds:
-            if predecessor in successors:
-                successors[predecessor].append(name)
-
-    ready = [name for name, deg in in_degree.items() if deg == 0]
-    ready.sort()
-    order: list[str] = []
-
-    while ready:
-        node = ready.pop(0)
-        order.append(node)
-        for successor in successors[node]:
-            in_degree[successor] -= 1
-            if in_degree[successor] == 0:
-                ready.append(successor)
-        ready.sort()
+    successors = _build_successors(edges)
+    order = _kahn_order(in_degree, successors)
 
     if len(order) != len(edges):
         unresolved = sorted(name for name in edges if name not in order)

@@ -102,9 +102,7 @@ def is_non_jax_leaf(x: Any) -> bool:
     if is_array(x):
         return True
     # Python lists/tuples are batch data payloads - treat as leaves
-    if isinstance(x, list | tuple):
-        return True
-    return False
+    return bool(isinstance(x, list | tuple))
 
 
 def get_batch_size(batch: Batch | dict) -> int | None:
@@ -290,28 +288,27 @@ def get_pytree_structure_info(data: Element | Batch) -> dict[str, Any]:
             "has_state": bool(element.state),
             "has_metadata": element.metadata is not None,
         }
-    else:
-        batch = data
-        leaf_shapes = []
-        leaf_dtypes = []
+    batch = data
+    leaf_shapes = []
+    leaf_dtypes = []
 
-        # Collect info from batch data arrays
-        data_val = batch.data.get_value()
-        for key, array in data_val.items():
-            if hasattr(array, "shape"):
-                leaf_shapes.append((key, array.shape))
-                if hasattr(array, "dtype"):
-                    leaf_dtypes.append((key, str(array.dtype)))
+    # Collect info from batch data arrays
+    data_val = batch.data.get_value()
+    for key, array in data_val.items():
+        if hasattr(array, "shape"):
+            leaf_shapes.append((key, array.shape))
+            if hasattr(array, "dtype"):
+                leaf_dtypes.append((key, str(array.dtype)))
 
-        states_val = batch.states.get_value()
-        return {
-            "type": "Batch",
-            "batch_size": batch.batch_size,
-            "num_data_fields": len(data_val),
-            "data_fields": list(data_val.keys()),
-            "leaf_shapes": leaf_shapes,
-            "leaf_dtypes": leaf_dtypes,
-            "is_single_element": False,
-            "is_batch_consistent": is_batch_consistent(batch),
-            "num_elements": len(states_val),
-        }
+    states_val = batch.states.get_value()
+    return {
+        "type": "Batch",
+        "batch_size": batch.batch_size,
+        "num_data_fields": len(data_val),
+        "data_fields": list(data_val.keys()),
+        "leaf_shapes": leaf_shapes,
+        "leaf_dtypes": leaf_dtypes,
+        "is_single_element": False,
+        "is_batch_consistent": is_batch_consistent(batch),
+        "num_elements": len(states_val),
+    }

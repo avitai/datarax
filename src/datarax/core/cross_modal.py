@@ -422,6 +422,6 @@ class CrossModalOperator(OperatorModule):
             ```
         """
         result = dict(data)
-        for field_name, value in zip(self.config.output_fields, outputs):
+        for field_name, value in zip(self.config.output_fields, outputs, strict=False):
             result[field_name] = value
         return result

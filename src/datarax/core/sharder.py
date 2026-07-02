@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-import flax.nnx as nnx
+from flax import nnx
 from jax.sharding import Mesh, NamedSharding, PartitionSpec, Sharding
 
 from datarax.core.config import DataraxModuleConfig

@@ -9,6 +9,7 @@ import sys
 import time
 from contextlib import ExitStack
 from pathlib import Path
+from types import TracebackType
 from typing import Any, cast, TextIO
 
 from datarax.monitoring.callbacks import MetricsObserver
@@ -61,9 +62,7 @@ class ConsoleReporter(MetricsObserver):
         """
         if self.filter_components and metric.component not in self.filter_components:
             return False
-        if self.filter_metrics and metric.name not in self.filter_metrics:
-            return False
-        return True
+        return not (self.filter_metrics and metric.name not in self.filter_metrics)
 
     def update(self, metrics: list[MetricRecord]) -> None:
         """Handle updated metrics.
@@ -92,6 +91,50 @@ class ConsoleReporter(MetricsObserver):
         # Update last report time
         self.last_report_time = current_time
 
+    def _sorted_components_and_metrics(self) -> tuple[list[str], list[str]]:
+        """Collect and sort the unique component and metric names for reporting.
+
+        Returns:
+            Tuple of (sorted component names, sorted metric names).
+        """
+        all_components: set[str] = set()
+        all_metrics: set[str] = set()
+        for key in self.aggregated._values:
+            component, metric = key.split(".", 1)
+            all_components.add(component)
+            all_metrics.add(metric)
+        return sorted(all_components), sorted(all_metrics)
+
+    def _format_metric_line(self, component: str, metric: str) -> str:
+        """Format a single component/metric pair's statistics into one report line.
+
+        Args:
+            component: Component name owning the metric.
+            metric: Metric name to format.
+
+        Returns:
+            Formatted metric line (milliseconds for ``*_time`` metrics, raw otherwise).
+        """
+        count = self.aggregated.get_count(metric, component)
+        avg = self.aggregated.get_average(metric, component)
+        min_val = self.aggregated.get_min(metric, component)
+        max_val = self.aggregated.get_max(metric, component)
+
+        prefix = f"{metric}: " if self.show_components else f"{component}.{metric}: "
+
+        if "_time" in metric and avg is not None:
+            # Format time metrics in milliseconds; min/max may still be None.
+            min_ms = 0.0 if min_val is None else min_val * 1000
+            max_ms = 0.0 if max_val is None else max_val * 1000
+            return prefix + (
+                f"avg={avg * 1000:.2f}ms, min={min_ms:.2f}ms, max={max_ms:.2f}ms, count={count}"
+            )
+
+        avg_val = 0.0 if avg is None else avg
+        min_v = 0.0 if min_val is None else min_val
+        max_v = 0.0 if max_val is None else max_val
+        return prefix + f"avg={avg_val:.4f}, min={min_v:.4f}, max={max_v:.4f}, count={count}"
+
     def _generate_report(self) -> str:
         """Generate a formatted report of current metrics.
 
@@ -99,65 +142,16 @@ class ConsoleReporter(MetricsObserver):
             Formatted report string.
         """
         lines = ["\n=== Datarax Metrics Report ==="]
+        sorted_components, sorted_metrics = self._sorted_components_and_metrics()
 
-        # Get all unique metric keys
-        all_metrics = set()
-        all_components = set()
-
-        for key in self.aggregated._values.keys():
-            component, metric = key.split(".", 1)
-            all_metrics.add(metric)
-            all_components.add(component)
-
-        # Sort components and metrics for consistent output
-        sorted_components = sorted(all_components)
-        sorted_metrics = sorted(all_metrics)
-
-        # Generate the report
         for component in sorted_components:
             if self.show_components:
                 lines.append(f"\n== {component} ==")
 
             for metric in sorted_metrics:
-                # Check if this component has this metric
-                key = f"{component}.{metric}"
-                if key not in self.aggregated._values:
+                if f"{component}.{metric}" not in self.aggregated._values:
                     continue
-
-                # Get statistics
-                count = self.aggregated.get_count(metric, component)
-                avg = self.aggregated.get_average(metric, component)
-                min_val = self.aggregated.get_min(metric, component)
-                max_val = self.aggregated.get_max(metric, component)
-
-                # Format the metric line
-                if self.show_components:
-                    metric_line = f"{metric}: "
-                else:
-                    metric_line = f"{component}.{metric}: "
-
-                if "_time" in metric and avg is not None:
-                    # Format time metrics in milliseconds
-                    # Ensure avg, min_val, and max_val are not None
-                    avg_ms = 0.0 if avg is None else avg * 1000
-                    min_ms = 0.0 if min_val is None else min_val * 1000
-                    max_ms = 0.0 if max_val is None else max_val * 1000
-
-                    metric_line += (
-                        f"avg={avg_ms:.2f}ms, min={min_ms:.2f}ms, max={max_ms:.2f}ms, count={count}"
-                    )
-                else:
-                    # Format regular metrics
-                    # Ensure avg, min_val, and max_val are not None
-                    avg_val = 0.0 if avg is None else avg
-                    min_v = 0.0 if min_val is None else min_val
-                    max_v = 0.0 if max_val is None else max_val
-
-                    metric_line += (
-                        f"avg={avg_val:.4f}, min={min_v:.4f}, max={max_v:.4f}, count={count}"
-                    )
-
-                lines.append(metric_line)
+                lines.append(self._format_metric_line(component, metric))
 
         lines.append("\n")
         return "\n".join(lines)
@@ -224,7 +218,12 @@ class FileReporter(ConsoleReporter):
         """Enter context manager."""
         return self
 
-    def __exit__(self, _exc_type, _exc_val, _exc_tb) -> None:
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc_val: BaseException | None,
+        _exc_tb: TracebackType | None,
+    ) -> None:
         """Exit context manager and release resources."""
         self.close()
 

@@ -137,10 +137,7 @@ class MapOperator(OperatorModule):
         # Navigate through the keypath
         for key in keypath:
             # Extract actual key from JAX KeyEntry
-            if hasattr(key, "key"):
-                k = key.key
-            else:
-                k = key
+            k = key.key if hasattr(key, "key") else key
 
             # Check if key exists in current dict level
             if isinstance(current, dict) and k in current:

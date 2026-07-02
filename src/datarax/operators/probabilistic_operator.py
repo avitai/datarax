@@ -49,7 +49,6 @@ class ProbabilisticOperatorConfig(OperatorConfig):
                     - 0 < p < 1: probabilistic (stochastic)
 
     Note:
-
         - stochastic is automatically set based on probability
         - stream_name is inherited from child operator if stochastic
     """
@@ -167,7 +166,7 @@ class ProbabilisticOperator(OperatorModule):
             child_params = self.operator.generate_random_params(child_keys, data_shapes)
 
         # Deterministic cases (p=0 or p=1): just return child's params.
-        if self.probability == 0.0 or self.probability == 1.0:
+        if self.probability in {0.0, 1.0}:
             return child_params
 
         # Stochastic case (0 < p < 1): per-record apply mask.

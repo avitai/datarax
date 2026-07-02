@@ -119,7 +119,6 @@ class DefaultBatcher(BatcherModule):
         Returns:
             A PyTree with the same structure as the input trees
         """
-
         from datarax.utils.pytree_utils import is_batch_leaf
 
         def is_prng_key(x: Any) -> bool:
@@ -135,8 +134,7 @@ class DefaultBatcher(BatcherModule):
                     processed_xs.append(x)
             return f(*processed_xs)
 
-        result = jax.tree.map(pre_process_leaf, *trees, is_leaf=is_batch_leaf)
-        return result
+        return jax.tree.map(pre_process_leaf, *trees, is_leaf=is_batch_leaf)
 
     def _collate_batch(self, elements: list[Element]) -> Batch:
         """Combine a list of elements into a batch.
