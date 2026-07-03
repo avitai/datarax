@@ -4,14 +4,12 @@ The `ElementOperator` is Datarax's most commonly used operator for element-level
 
 ## Key Concepts
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- **ElementOperator** works with entire `Element` objects, not individual arrays
-- User functions receive `fn(element, key) -> element` signature
-- Use `element.replace()` for immutable updates (Pythonic JAX pattern)
-- Supports both deterministic and stochastic modes via configuration
-
-`─────────────────────────────────────────────────`
+    - **ElementOperator** works with entire `Element` objects, not individual arrays
+    - User functions receive `fn(element, key) -> element` signature
+    - Use `element.replace()` for immutable updates (Pythonic JAX pattern)
+    - Supports both deterministic and stochastic modes via configuration
 
 ## When to Use ElementOperator
 

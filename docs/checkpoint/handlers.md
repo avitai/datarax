@@ -13,14 +13,12 @@ Datarax provides checkpoint handlers for saving and restoring pipeline state usi
 | **Metadata support** | Attach custom metadata to checkpoints |
 | **Context manager** | Proper resource cleanup |
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- Orbax only supports `int`, `float`, `np.ndarray`, and `jax.Array`
-- `OrbaxCheckpointHandler` automatically converts PRNG keys and strings
-- Use versioned checkpoints for training with `step` parameter
-- Always close handlers or use context manager protocol
-
-`─────────────────────────────────────────────────`
+    - Orbax only supports `int`, `float`, `np.ndarray`, and `jax.Array`
+    - `OrbaxCheckpointHandler` automatically converts PRNG keys and strings
+    - Use versioned checkpoints for training with `step` parameter
+    - Always close handlers or use context manager protocol
 
 ## Quick Start
 

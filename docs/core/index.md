@@ -11,14 +11,12 @@ Core abstractions and building blocks that form the foundation of Datarax pipeli
 | **Modules** | Base abstractions | `DataraxModule`, `OperatorModule` |
 | **Protocols** | Interface contracts | `DataSourceModule`, `SamplerModule` |
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- **Element** wraps a single data sample with state and metadata
-- **Batch** is a dictionary of batched JAX arrays
-- All modules inherit from `DataraxModule` for consistent behavior
-- Protocols enable duck-typing with `isinstance()` checks
-
-`─────────────────────────────────────────────────`
+    - **Element** wraps a single data sample with state and metadata
+    - **Batch** is a dictionary of batched JAX arrays
+    - All modules inherit from `DataraxModule` for consistent behavior
+    - Protocols enable duck-typing with `isinstance()` checks
 
 ## Architecture
 

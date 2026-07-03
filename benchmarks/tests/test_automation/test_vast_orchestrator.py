@@ -24,6 +24,8 @@ def _args(tmp_path: Path, **overrides) -> Namespace:
         "template": "benchmarks/sky/gpu-benchmark.yaml",
         "subset_repetitions": 3,
         "full_repetitions": 5,
+        "region": None,
+        "accelerators": "A100:1",
         "allowed_gpu": ["A100"],
         "analyze": False,
         "keep_cluster": False,
@@ -847,7 +849,9 @@ class TestOrchestrate:
             with pytest.raises(vo.OrchestrationError, match="launch failed"):
                 vo.orchestrate(args)
 
-        teardown.assert_called_once()
+        # Called at least once: once before the spot fallback (which also
+        # fails here) and once in the failure cleanup path.
+        teardown.assert_called()
 
     def test_launch_failure_writes_failure_report(self, tmp_path: Path):
         args = _args(tmp_path, analyze=False)
@@ -1415,3 +1419,161 @@ class TestParser:
 
         disabled_args = parser.parse_args(["--capture-limit-chars", "0"])
         assert vo._normalize_capture_limit_chars(disabled_args.capture_limit_chars) is None  # noqa: SLF001
+
+
+class TestParserTimeoutDefaults:
+    """Watchdog defaults must survive real provisioning and setup durations."""
+
+    def test_timeouts_cover_provisioning_and_setup(self):
+        """300s defaults killed two healthy launches; floors are now 30 min."""
+        from benchmarks.automation._cli import build_parser
+
+        args = build_parser().parse_args([])
+        assert args.launch_timeout_sec >= 1800
+        assert args.stall_timeout_sec >= 1800
+
+
+class TestSanityCheckDeadline:
+    """The remote JAX probe must fail fast on a wedged host, not hang."""
+
+    def test_generated_run_wraps_sanity_check_in_timeout(self, tmp_path: Path):
+        template = tmp_path / "template.yaml"
+        template.write_text(
+            yaml.safe_dump(
+                {"name": "t", "resources": {}, "envs": {}, "setup": "", "run": ""},
+                sort_keys=False,
+            ),
+        )
+        out = vo.generate_sky_yaml(
+            template_path=template,
+            output_root=tmp_path / "out",
+            run_id="run123",
+            mode="two-pass",
+            on_demand=True,
+            cluster_name="c",
+        )
+        run_section = yaml.safe_load(out.read_text())["run"]
+        assert "import jax" in run_section
+        sanity_line = next(line for line in run_section.splitlines() if "import jax" in line)
+        assert sanity_line.startswith("timeout ")
+
+
+class TestSpotFallbackTeardown:
+    """Spot fallback must not collide with the existing on-demand cluster."""
+
+    def test_fallback_tears_down_before_relaunching(self, tmp_path: Path, monkeypatch):
+        """sky rejects a spot launch onto an UP on-demand cluster of the same
+        name (ResourcesMismatchError), so the fallback must sky down first."""
+        calls: list[str] = []
+        monkeypatch.setattr(vo, "teardown_cluster", lambda **kwargs: calls.append("teardown"))
+        monkeypatch.setattr(vo, "generate_sky_yaml", lambda **kwargs: tmp_path / "spot.yaml")
+        monkeypatch.setattr(vo, "launch_cluster", lambda **kwargs: calls.append("launch"))
+
+        ctx = vo._OrchestrationContext(
+            args=_args(tmp_path),
+            repo_root=tmp_path,
+            run_id="run123",
+            run_root=tmp_path,
+            logs_dir=tmp_path,
+            template_path=tmp_path / "template.yaml",
+            capture_limit_chars=None,
+            allowed_gpu_tokens=["A100"],
+        )
+        vo._launch_spot_fallback(
+            ctx,
+            "sky",
+            None,
+            None,
+            vo.OrchestrationError("on-demand launch timed out"),
+        )
+        assert calls == ["teardown", "launch"]
+
+
+class TestRegionPinning:
+    """A --region flag steers placement away from known-bad host pools."""
+
+    def test_parser_accepts_region(self):
+        from benchmarks.automation._cli import build_parser
+
+        args = build_parser().parse_args(["--region", "Montana, US, NA"])
+        assert args.region == "Montana, US, NA"
+        assert build_parser().parse_args([]).region is None
+
+    def test_generate_sky_yaml_pins_region(self, tmp_path: Path):
+        template = tmp_path / "template.yaml"
+        template.write_text(
+            yaml.safe_dump(
+                {"name": "t", "resources": {}, "envs": {}, "setup": "", "run": ""},
+                sort_keys=False,
+            ),
+        )
+        out = vo.generate_sky_yaml(
+            template_path=template,
+            output_root=tmp_path / "out",
+            run_id="run123",
+            mode="two-pass",
+            on_demand=True,
+            cluster_name="c",
+            region="Montana, US, NA",
+        )
+        generated = yaml.safe_load(out.read_text())
+        assert generated["resources"]["region"] == "Montana, US, NA"
+
+    def test_generate_sky_yaml_omits_region_by_default(self, tmp_path: Path):
+        template = tmp_path / "template.yaml"
+        template.write_text(
+            yaml.safe_dump(
+                {"name": "t", "resources": {}, "envs": {}, "setup": "", "run": ""},
+                sort_keys=False,
+            ),
+        )
+        out = vo.generate_sky_yaml(
+            template_path=template,
+            output_root=tmp_path / "out",
+            run_id="run123",
+            mode="two-pass",
+            on_demand=True,
+            cluster_name="c",
+        )
+        assert "region" not in yaml.safe_load(out.read_text())["resources"]
+
+
+class TestEffectiveInfra:
+    """--region must reach sky launch: the CLI --infra flag overrides the
+    YAML infra spec entirely, so the region rides inside the --infra value."""
+
+    def test_region_folds_into_infra(self):
+        assert vo._effective_infra("vast", "Montana, US, NA") == "vast/Montana, US, NA"
+
+    def test_no_region_passes_infra_through(self):
+        assert vo._effective_infra("vast", None) == "vast"
+
+
+class TestAcceleratorSelection:
+    """Accelerator spec is parametric: Vast inventory often lacks 1-GPU offers."""
+
+    def test_parser_default_is_single_a100(self):
+        from benchmarks.automation._cli import build_parser
+
+        assert build_parser().parse_args([]).accelerators == "A100:1"
+        args = build_parser().parse_args(["--accelerators", "A100:2"])
+        assert args.accelerators == "A100:2"
+
+    def test_generate_sky_yaml_uses_requested_accelerators(self, tmp_path: Path):
+        template = tmp_path / "template.yaml"
+        template.write_text(
+            yaml.safe_dump(
+                {"name": "t", "resources": {}, "envs": {}, "setup": "", "run": ""},
+                sort_keys=False,
+            ),
+        )
+        out = vo.generate_sky_yaml(
+            template_path=template,
+            output_root=tmp_path / "out",
+            run_id="run123",
+            mode="two-pass",
+            on_demand=True,
+            cluster_name="c",
+            accelerators="A100:2",
+        )
+        assert yaml.safe_load(out.read_text())["resources"]["accelerators"] == "A100:2"

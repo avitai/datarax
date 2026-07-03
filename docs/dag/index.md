@@ -13,13 +13,11 @@ combine outputs from multiple predecessors.
 | Linear | `Pipeline(source=..., stages=[...], ...)` | Each stage's output feeds the next stage |
 | DAG | `Pipeline.from_dag(source=..., nodes={...}, edges={...}, sink=...)` | Branching, merging, or named-node inspection |
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- `Pipeline` is itself an `nnx.Module` — gradients flow through stages naturally
-- `Pipeline.step` is `@nnx.jit`-decorated; `Pipeline.scan` compiles whole epochs to one XLA graph
-- Cycles in the DAG raise `ValueError` at construction time
-
-`─────────────────────────────────────────────────`
+    - `Pipeline` is itself an `nnx.Module` — gradients flow through stages naturally
+    - `Pipeline.step` is `@nnx.jit`-decorated; `Pipeline.scan` compiles whole epochs to one XLA graph
+    - Cycles in the DAG raise `ValueError` at construction time
 
 ## Linear pipeline
 

@@ -14,14 +14,12 @@
 | **Shuffling** | TensorFlow-native shuffle with buffer |
 | **Caching** | Optional dataset caching for repeated epochs |
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- TFDS handles download and preparation automatically
-- Use `as_supervised=True` to get `{"image": ..., "label": ...}` format
-- TensorFlow's prefetching is applied automatically for performance
-- The source tracks epoch and index for stateful training loops
-
-`─────────────────────────────────────────────────`
+    - TFDS handles download and preparation automatically
+    - Use `as_supervised=True` to get `{"image": ..., "label": ...}` format
+    - TensorFlow's prefetching is applied automatically for performance
+    - The source tracks epoch and index for stateful training loops
 
 ## Installation
 

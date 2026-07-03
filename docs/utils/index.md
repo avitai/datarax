@@ -10,13 +10,11 @@ Utility modules providing common functionality across Datarax. These are low-lev
 | **PyTree Utils** | Tree operations | Flatten, unflatten, map |
 | **External** | Library adapters | Integration helpers |
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- PRNG utilities wrap JAX random for consistent seeding
-- PyTree utils handle nested data structures
-- Use these for custom operators and extensions
-
-`─────────────────────────────────────────────────`
+    - PRNG utilities wrap JAX random for consistent seeding
+    - PyTree utils handle nested data structures
+    - Use these for custom operators and extensions
 
 ## Quick Start
 

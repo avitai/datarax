@@ -146,13 +146,17 @@ def generate_sky_yaml(
     on_demand: bool,
     cluster_name: str,
     filename: str = "generated_sky_config.yaml",
+    region: str | None = None,
+    accelerators: str = "A100:1",
 ) -> Path:
     """Generate a run-specific SkyPilot config from the GPU template."""
     config = yaml.safe_load(template_path.read_text())
     config["name"] = cluster_name
     config.setdefault("resources", {})
-    config["resources"]["accelerators"] = "A100:1"
+    config["resources"]["accelerators"] = accelerators
     config["resources"]["use_spot"] = not on_demand
+    if region is not None:
+        config["resources"]["region"] = region
 
     envs = config.setdefault("envs", {})
     # SkyPilot rejects null env values; always emit a string value.
@@ -163,8 +167,10 @@ def generate_sky_yaml(
     envs["DATARAX_BENCH_RUN_ID"] = run_id
     envs["DATARAX_BENCH_MODE"] = mode
 
+    # Hard deadline: on a wedged host, JAX device initialization can hang
+    # indefinitely; failing the probe fast fails the launch fast.
     sanity_cmd = (
-        ".venv/bin/python -c "
+        "timeout 300 .venv/bin/python -c "
         '"import jax; '
         "print(f'JAX {jax.__version__}, backend: {jax.default_backend()}, "
         "devices: {jax.devices()}')\" "
@@ -187,6 +193,15 @@ def generate_sky_yaml(
     yaml_path.parent.mkdir(parents=True, exist_ok=True)
     yaml_path.write_text(yaml.safe_dump(config, sort_keys=False))
     return yaml_path
+
+
+def _effective_infra(infra: str, region: str | None) -> str:
+    """Fold the region into the sky --infra value (``cloud/region``).
+
+    The CLI ``--infra`` flag overrides the generated YAML's entire infra
+    spec, so a region pinned only in the YAML is silently dropped.
+    """
+    return f"{infra}/{region}" if region else infra
 
 
 def launch_cluster(
@@ -1061,7 +1076,7 @@ def _retry_launch_on_visible_cluster(
     try:
         launch_cluster(
             yaml_path=sky_yaml,
-            infra=ctx.args.infra,
+            infra=_effective_infra(ctx.args.infra, ctx.args.region),
             cluster_name=ctx.args.cluster,
             logs_dir=ctx.logs_dir,
             sky_executable=sky_executable,
@@ -1100,6 +1115,18 @@ def _launch_spot_fallback(
             "On-demand launch failed and spot fallback was declined.",
         ) from fallback_exc
 
+    # sky rejects a spot launch onto an existing on-demand cluster of the
+    # same name (ResourcesMismatchError); remove it before falling back.
+    _status("Tearing down the on-demand cluster before spot fallback", level="WARN")
+    teardown_cluster(
+        cluster=ctx.args.cluster,
+        logs_dir=ctx.logs_dir,
+        sky_executable=sky_executable,
+        live_peek=ctx.args.live_peek,
+        peek_interval_sec=ctx.args.peek_interval_sec,
+        capture_limit_chars=ctx.capture_limit_chars,
+    )
+
     sky_yaml = generate_sky_yaml(
         template_path=ctx.template_path,
         output_root=ctx.run_root,
@@ -1108,11 +1135,13 @@ def _launch_spot_fallback(
         on_demand=False,
         cluster_name=ctx.args.cluster,
         filename="generated_sky_config_spot_fallback.yaml",
+        region=ctx.args.region,
+        accelerators=ctx.args.accelerators,
     )
     _status(f"Generated fallback spot Sky config: {sky_yaml}", level="WARN")
     launch_cluster(
         yaml_path=sky_yaml,
-        infra=ctx.args.infra,
+        infra=_effective_infra(ctx.args.infra, ctx.args.region),
         cluster_name=ctx.args.cluster,
         logs_dir=ctx.logs_dir,
         sky_executable=sky_executable,
@@ -1142,7 +1171,7 @@ def _launch_cluster_with_fallbacks(
     try:
         launch_cluster(
             yaml_path=sky_yaml,
-            infra=ctx.args.infra,
+            infra=_effective_infra(ctx.args.infra, ctx.args.region),
             cluster_name=ctx.args.cluster,
             logs_dir=ctx.logs_dir,
             sky_executable=sky_executable,
@@ -1413,6 +1442,8 @@ def orchestrate(args: argparse.Namespace) -> int:
             mode=args.mode,
             on_demand=args.on_demand,
             cluster_name=args.cluster,
+            region=args.region,
+            accelerators=args.accelerators,
         )
         _status(f"Generated Sky config: {sky_yaml}")
         sky_executable = preflight.get("sky_executable", "sky")

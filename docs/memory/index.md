@@ -8,14 +8,12 @@ Memory management utilities for efficient data handling. These tools help manage
 |-----------|---------|----------|
 | **SharedMemoryManager** | Cross-process sharing | Multi-worker dataloading |
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- Shared memory avoids copying data between processes
-- Essential for multi-worker data loading
-- Managed automatically by DataLoader
-- Use for custom multi-process pipelines
-
-`─────────────────────────────────────────────────`
+    - Shared memory avoids copying data between processes
+    - Essential for multi-worker data loading
+    - Managed automatically by DataLoader
+    - Use for custom multi-process pipelines
 
 ## Quick Start
 

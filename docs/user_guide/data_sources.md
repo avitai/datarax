@@ -204,15 +204,12 @@ When creating custom data sources, ensure:
 
 ## Using Data Sources in Pipelines
 
-Data sources can be used with the DAG API in two ways:
-
-### Method 1: Using Pipeline (Recommended)
+Data sources plug directly into a `Pipeline`:
 
 ```python
-from datarax.pipeline import Pipeline
-from datarax.sources import MemorySource, MemorySourceConfig
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.pipeline import Pipeline
+from datarax.sources import MemorySource, MemorySourceConfig
 
 # Create data and source
 data = [{"x": i} for i in range(100)]
@@ -226,30 +223,6 @@ def identity(element, key):
 op = ElementOperator(ElementOperatorConfig(stochastic=False), fn=identity)
 
 # Build pipeline
-pipeline = (
-    Pipeline(source=source, stages=[op], batch_size=32, rngs=nnx.Rngs(0)))
-```
-
-### Method 2: Using the >> operator
-
-```python
-from datarax.pipeline import Pipeline
-from datarax.sources import MemorySource, MemorySourceConfig
-from datarax.pipeline import Pipeline
-from datarax.operators import ElementOperator, ElementOperatorConfig
-
-# Create data source
-data = [{"x": i} for i in range(100)]
-config = MemorySourceConfig()
-source = MemorySource(config, data)
-
-# Create operator
-def double(element, key):
-    return element.update_data({"x": element.data["x"] * 2})
-
-op = ElementOperator(ElementOperatorConfig(stochastic=False), fn=double)
-
-# Build pipeline using >> operator
 pipeline = (
     Pipeline(source=source, stages=[op], batch_size=32, rngs=nnx.Rngs(0)))
 ```

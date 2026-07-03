@@ -99,14 +99,14 @@ If you want benchmark results exported to Weights & Biases directly from the rem
 export WANDB_API_KEY="your-key-here"
 ```
 
-Recommended for this repository: keep the key in `secret.sh` and source it before running orchestrator/sky commands:
+Recommended for this repository: keep the key in `secrets.sh` (gitignored) and source it before running orchestrator/sky commands:
 
 ```bash
-# secret.sh
+# secrets.sh
 export WANDB_API_KEY="your-key-here"
 
 # current shell
-source secret.sh
+source secrets.sh
 ```
 
 Avoid inline one-off commands like `WANDB_API_KEY=... <command>` when possible, because the key is exposed in shell history and terminal logs.
@@ -179,6 +179,7 @@ Use the orchestrator for accuracy-first runs with backend/hardware verification,
 subset gating, and automatic artifact validation:
 
 ```bash
+source secrets.sh
 ./.venv/bin/python -m benchmarks.automation.vast_orchestrator \
     --infra vast \
     --cluster datarax-vast-a100 \
@@ -187,10 +188,11 @@ subset gating, and automatic artifact validation:
     --download-dir benchmark-data/reports/vast/latest \
     --analyze \
     --yes \
-    --no-spot-fallback \
-    --launch-timeout-sec 900 \
-    --stall-timeout-sec 300
+    --no-spot-fallback
 ```
+
+The watchdog defaults (30 minutes each) cover Vast provisioning and setup;
+pass `--region` if the cheapest offer keeps landing on a bad host.
 
 Defaults:
 
@@ -239,8 +241,9 @@ Key flags:
 - `--dry-run`: Validate and generate config without launching cloud resources.
 - `--allow-spot-fallback` (default): On on-demand failure, retry visibility checks and same-cluster launch first, then offer spot fallback.
 - `--no-spot-fallback`: Disable spot fallback for strict canonical runs.
-- `--launch-timeout-sec`: Max wait per launch attempt (default: 300; use 900 for strict on-demand canonical runs).
-- `--stall-timeout-sec`: Fail fast if no new launch output appears for N seconds (default: 300). On stall, orchestrator auto-runs `sky queue` and `sky logs --tail` diagnostics before aborting.
+- `--region`: Pin the Vast geolocation (e.g. `'Montana, US, NA'`). SkyPilot otherwise picks the cheapest offer, which can repeatedly land on a known-bad host pool.
+- `--launch-timeout-sec`: Max wait per launch attempt (default: 1800). Provisioning plus remote setup alone exceed 10 minutes on typical Vast hosts, so shorter budgets kill healthy launches.
+- `--stall-timeout-sec`: Fail fast if no new launch output appears for N seconds (default: 1800; image pulls are legitimately silent for many minutes). On stall, orchestrator auto-runs `sky queue` and `sky logs --tail` diagnostics before aborting.
 - `--live-peek` / `--no-live-peek`: Enable/disable live command output peeking (default: enabled).
 - `--peek-interval-sec`: Minimum seconds between `peek:` status lines (default: 5).
 - `--artifact-transfer {auto,sky-rsync,scp}`: Artifact download path. `auto` (default) uses preflight capability detection.
@@ -253,7 +256,13 @@ For on-demand runs, launch handling is:
 1.  Attempt on-demand launch.
 2.  If timeout/failure happens, check `sky status <cluster> --refresh`.
 3.  If cluster is already visible, retry on-demand launch on the same cluster.
-4.  If retry still fails and spot fallback is enabled, prompt/fallback to spot.
+4.  If retry still fails and spot fallback is enabled, prompt, tear the
+    on-demand cluster down (SkyPilot rejects a spot launch onto an existing
+    on-demand cluster of the same name), then launch the spot config.
+
+The generated config also wraps the remote JAX device probe in a hard
+`timeout`, so a wedged host fails the launch within minutes instead of
+hanging until the local watchdog fires.
 
 ### TPU benchmarks
 
@@ -582,8 +591,8 @@ sky down datarax-vast-a100
 
 Prevention:
 
-- Canonical runs: `--on-demand --no-spot-fallback --launch-timeout-sec 900`
-- Exploratory runs: keep fallback enabled but use a longer timeout (for example 600s) to reduce timeout races.
+- Canonical runs: `--on-demand --no-spot-fallback` (the 1800s watchdog defaults cover Vast provisioning and setup)
+- Exploratory runs: keep fallback enabled; the fallback tears the on-demand cluster down before launching spot.
 - If launch output goes silent, set `--stall-timeout-sec` to a lower threshold for faster fail-fast diagnostics during debugging.
 
 ### Vast shows A100 offers but no instance appears yet
@@ -612,9 +621,7 @@ Recommended commands:
     --download-dir benchmark-data/reports/vast/latest \
     --analyze \
     --yes \
-    --no-spot-fallback \
-    --launch-timeout-sec 900 \
-    --stall-timeout-sec 300
+    --no-spot-fallback
 ```
 
 ```bash
@@ -627,9 +634,7 @@ Recommended commands:
     --download-dir benchmark-data/reports/vast/latest \
     --analyze \
     --yes \
-    --allow-spot-fallback \
-    --launch-timeout-sec 600 \
-    --stall-timeout-sec 300
+    --allow-spot-fallback
 ```
 
 ---
@@ -702,7 +707,7 @@ SkyPilot's `setup:` approach installs from scratch each launch (~5-10 min for th
 
 | Action | Command |
 |--------|---------|
-| Automated Vast two-pass (canonical) | `./.venv/bin/python -m benchmarks.automation.vast_orchestrator --infra vast --cluster datarax-vast-a100 --mode two-pass --on-demand --download-dir benchmark-data/reports/vast/latest --analyze --yes --no-spot-fallback --launch-timeout-sec 900 --stall-timeout-sec 300` |
+| Automated Vast two-pass (canonical) | `source secrets.sh && ./.venv/bin/python -m benchmarks.automation.vast_orchestrator --infra vast --cluster datarax-vast-a100 --mode two-pass --on-demand --download-dir benchmark-data/reports/vast/latest --analyze --yes --no-spot-fallback` |
 | Orchestrator dry run | `./.venv/bin/python -m benchmarks.automation.vast_orchestrator --infra vast --cluster datarax-vast-a100 --mode two-pass --download-dir benchmark-data/reports/vast/latest --dry-run --yes` |
 | Orchestrator with forced `scp` transfer | `./.venv/bin/python -m benchmarks.automation.vast_orchestrator --infra vast --cluster datarax-vast-a100 --mode two-pass --artifact-transfer scp --download-dir benchmark-data/reports/vast/latest --analyze --yes` |
 | CPU bench (Vast.ai) | `sky launch benchmarks/sky/cpu-benchmark.yaml --infra vast --down` |

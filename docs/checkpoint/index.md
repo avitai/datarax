@@ -10,14 +10,12 @@ State persistence and recovery for pipeline checkpointing. Built on [Orbax](http
 | **Checkpointable Protocol** | Interface | `get_state()`, `set_state()` |
 | **CheckpointableIterator** | Resumable iteration | Iterator + checkpointing |
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- Orbax handles PyTree serialization automatically
-- PRNG keys and strings are converted automatically
-- Use `step` parameter for versioned checkpoints
-- Always use context manager or call `close()`
-
-`─────────────────────────────────────────────────`
+    - Orbax handles PyTree serialization automatically
+    - PRNG keys and strings are converted automatically
+    - Use `step` parameter for versioned checkpoints
+    - Always use context manager or call `close()`
 
 ## Quick Start
 

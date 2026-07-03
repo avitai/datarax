@@ -15,14 +15,12 @@ DataraxModuleConfig (base)
     └── TFDSEagerConfig
 ```
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- **OperatorConfig**: For modules with learnable parameters (mutable state)
-- **StructuralConfig**: For modules with fixed behavior (frozen after creation)
-- All configs validate on construction (`__post_init__`)
-- For shuffle configurations, use `seed=42` parameter
-
-`─────────────────────────────────────────────────`
+    - **OperatorConfig**: For modules with learnable parameters (mutable state)
+    - **StructuralConfig**: For modules with fixed behavior (frozen after creation)
+    - All configs validate on construction (`__post_init__`)
+    - For shuffle configurations, use `seed=42` parameter
 
 ## Base Configuration
 

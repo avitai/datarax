@@ -11,14 +11,12 @@ Data transformation operators for building processing pipelines. Operators are t
 | **CompositeOperator** | Compose multiple operators | Complex augmentation pipelines |
 | **BatchMixOperator** | Batch-level mixing | MixUp, CutMix augmentation |
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- **Deterministic** operators are pure functions (same input → same output)
-- **Stochastic** operators use RNG and require `stream_name` in config
-- Use the `stages=[...]` argument to chain: `op1 >> op2 >> op3`
-- All operators work inside `jax.jit` for performance
-
-`─────────────────────────────────────────────────`
+    - **Deterministic** operators are pure functions (same input → same output)
+    - **Stochastic** operators use RNG and require `stream_name` in config
+    - Chain operators sequentially with `Pipeline(stages=[op1, op2, op3], ...)`
+    - All operators work inside `jax.jit` for performance
 
 ## Quick Start
 

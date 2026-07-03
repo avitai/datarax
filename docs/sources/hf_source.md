@@ -14,14 +14,12 @@
 | **Key filtering** | Include/exclude specific dataset fields |
 | **Stateful iteration** | Track position, epoch, and support batch retrieval |
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- HFEagerSource wraps the `datasets` library for JAX-native workflows
-- PIL images are automatically converted to JAX arrays
-- Use `streaming=True` for datasets larger than your disk
-- The `get_batch()` method enables efficient batch retrieval
-
-`─────────────────────────────────────────────────`
+    - HFEagerSource wraps the `datasets` library for JAX-native workflows
+    - PIL images are automatically converted to JAX arrays
+    - Use `streaming=True` for datasets larger than your disk
+    - The `get_batch()` method enables efficient batch retrieval
 
 ## Installation
 

@@ -10,13 +10,11 @@ Metrics collection and observability for data pipelines. Track throughput, laten
 | **Callbacks** | Event hooks | Log on batch/epoch end |
 | **Reporters** | Output backends | Console, file, TensorBoard |
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- Metrics are lightweight - minimal overhead
-- Use callbacks for automated logging
-- Reporters support multiple backends simultaneously
-
-`─────────────────────────────────────────────────`
+    - Metrics are lightweight - minimal overhead
+    - Use callbacks for automated logging
+    - Reporters support multiple backends simultaneously
 
 ## Quick Start
 

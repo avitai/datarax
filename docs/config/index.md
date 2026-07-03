@@ -11,14 +11,12 @@ Configuration management and validation system. Load configurations from files, 
 | **Schema** | Validation | Type checking, constraints |
 | **Registry** | Component lookup | Config-driven instantiation |
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- Use YAML for human-readable configs
-- Environment variables override file configs
-- Schemas catch errors at load time, not runtime
-- Registry enables dynamic component creation
-
-`─────────────────────────────────────────────────`
+    - Use YAML for human-readable configs
+    - Environment variables override file configs
+    - Schemas catch errors at load time, not runtime
+    - Registry enables dynamic component creation
 
 ## Quick Start
 

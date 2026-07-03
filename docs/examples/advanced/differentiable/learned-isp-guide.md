@@ -30,7 +30,7 @@ Traditional camera ISPs are hand-tuned for human perception. By making the ISP d
 
 This example showcases two datarax composition mechanisms:
 
-- **DAG `>>` pipeline** for inference demos — chains 5 ISP operators sequentially
+- **Sequential `Pipeline(stages=[...])`** for inference demos — chains 5 ISP operators
 - **`CompositeOperatorModule(SEQUENTIAL)`** for training — wraps the same 5 operators as a single NNX module compatible with `nnx.value_and_grad`
 
 ## Files

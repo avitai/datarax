@@ -12,14 +12,12 @@ Core type definitions and protocols used throughout Datarax. These provide type 
 | **Function Types** | `ElementTransform`, `BatchTransform`, etc. | Callable signatures |
 | **Protocols** | `Checkpointable`, `CheckpointableIterator` | Interface definitions |
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- **Type aliases** provide semantic meaning (e.g., `PRNGKey` vs `jax.Array`)
-- **Protocols** use `@runtime_checkable` for `isinstance()` checks
-- Function types ensure correct signatures across the codebase
-- Import from `datarax.typing` for all public types
-
-`─────────────────────────────────────────────────`
+    - **Type aliases** provide semantic meaning (e.g., `PRNGKey` vs `jax.Array`)
+    - **Protocols** use `@runtime_checkable` for `isinstance()` checks
+    - Function types ensure correct signatures across the codebase
+    - Import from `datarax.typing` for all public types
 
 ## Quick Reference
 

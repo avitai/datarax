@@ -23,7 +23,7 @@
 
 - **JAX-Native Design:** All core components built on JAX's functional paradigm with Flax NNX module system for state management
 - **High Performance:** JIT-compiled pipelines via XLA, with built-in profiling and roofline analysis
-- **DAG Execution Engine:** Graph-based pipeline construction with branching, parallel execution, caching, and rebatching nodes
+- **DAG Pipelines:** Graph-based construction via `Pipeline.from_dag` with branching, parallel execution, caching, and differentiable rebatching nodes
 - **Scalability:** Multi-device and multi-host data distribution with device mesh sharding
 - **Determinism:** Reproducible pipelines by default using Grain's Feistel cipher shuffling (O(1) memory)
 - **Extensibility:** Custom data sources, operators, and augmentation strategies via composable NNX modules
@@ -50,7 +50,7 @@ See the [differentiable pipeline examples](docs/examples/advanced/differentiable
 
 ### DAG Execution Model
 
-Pipelines are directed acyclic graphs, not linear chains. The `>>` operator composes sequential steps, `|` creates parallel branches, and control-flow nodes (`Branch`, `Merge`, `SplitField`) handle conditional and multi-path logic. The DAG executor manages scheduling, caching, and rebatching across the graph.
+Pipelines are directed acyclic graphs, not linear chains. `Pipeline(stages=[...])` covers the sequential case; `Pipeline.from_dag(...)` builds arbitrary graphs whose nodes are NNX modules, with composition strategies (sequential, parallel, branching, merging, ensemble) handling multi-path logic. Graph nodes cover field routing (`SplitField`) and differentiable within-batch regrouping (`RebatchNode`), while `CachingIterator` memoizes at the iteration boundary.
 
 ### Deterministic Reproducibility
 

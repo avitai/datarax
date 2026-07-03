@@ -8,14 +8,12 @@ Batch creation and management for data pipelines. Batching groups individual sam
 |-----------|---------|----------|
 | **DefaultBatcher** | Standard batching | Padding, dropping remainder |
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- Batching is required before most operators (batch-first)
-- Use `drop_remainder=True` for consistent batch sizes
-- Padding handles variable-length sequences
-- Pipeline enforces batching by default
-
-`─────────────────────────────────────────────────`
+    - Batching is required before most operators (batch-first)
+    - Use `drop_remainder=True` for consistent batch sizes
+    - Padding handles variable-length sequences
+    - Pipeline enforces batching by default
 
 ## Quick Start
 
@@ -46,15 +44,11 @@ final_batch = batcher.flush()
 ```python
 from datarax.pipeline import Pipeline
 
-# Batching is built-in
+# Batching is built-in: batch_size on the Pipeline batches the source
 pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 
-# Or add explicitly
-pipeline = (
-    source_node
-    # (Pipeline(batch_size=32) handles batching; drop_remainder via partial-batch handling)
-    >> transform_node
-)
+# Stages receive already-batched data
+pipeline = Pipeline(source=source, stages=[transform], batch_size=32, rngs=nnx.Rngs(0))
 ```
 
 ## Batch Shapes

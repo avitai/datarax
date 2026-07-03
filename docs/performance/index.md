@@ -9,14 +9,12 @@ Performance analysis and optimization tools. Understand your pipeline's performa
 | **Roofline** | Performance modeling | Compute vs memory bound |
 | **XLA Optimization** | JAX/XLA tuning | Compilation hints |
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- Roofline model reveals if you're compute or memory bound
-- XLA optimizations require understanding JAX compilation
-- Profile before optimizing - measure, don't guess
-- Most pipelines are I/O bound, not compute bound
-
-`─────────────────────────────────────────────────`
+    - Roofline model reveals if you're compute or memory bound
+    - XLA optimizations require understanding JAX compilation
+    - Profile before optimizing - measure, don't guess
+    - Most pipelines are I/O bound, not compute bound
 
 ## Quick Start
 

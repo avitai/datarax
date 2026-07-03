@@ -6,6 +6,7 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANAGED_ENV_FILE=".datarax.env"
 REQUESTED_BACKEND="auto"
 PYTHON_VERSION=""
+WITH_BENCHMARKS=false
 RECREATE=false
 FORCE_CLEAN=false
 DRY_RUN=false
@@ -19,6 +20,7 @@ Usage:
 
 Options:
   --backend <auto|cpu|cuda12|metal>  Choose the backend policy. Default: auto
+  --with-benchmarks                  Also install the competitor-framework benchmark extra
   --python <version>                 Create the environment with a specific Python version
   --recreate                         Remove the existing .venv before syncing
   --force-clean                      Remove .venv, the generated .datarax.env, and repo-local test artifacts
@@ -81,6 +83,10 @@ while [[ $# -gt 0 ]]; do
             PYTHON_VERSION="$2"
             shift 2
             ;;
+        --with-benchmarks)
+            WITH_BENCHMARKS=true
+            shift
+            ;;
         --recreate)
             RECREATE=true
             shift
@@ -129,6 +135,10 @@ case "$BACKEND" in
         die "resolved unsupported backend '$BACKEND'"
         ;;
 esac
+
+if [[ "$WITH_BENCHMARKS" == true ]]; then
+    SYNC_ARGS+=(--extra benchmark)
+fi
 
 if [[ "$DRY_RUN" == true ]]; then
     echo "project root: $PROJECT_ROOT"

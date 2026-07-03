@@ -11,14 +11,12 @@ Distributed training and multi-device data processing support. This module provi
 | **Data Parallel** | Data parallelism | Replicate across devices |
 | **Metrics** | Distributed metrics | Aggregate across hosts |
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- JAX handles device placement automatically in most cases
-- Use `jax.devices()` to see available hardware
-- Device mesh enables advanced sharding patterns
-- Data parallelism is the simplest multi-device strategy
-
-`─────────────────────────────────────────────────`
+    - JAX handles device placement automatically in most cases
+    - Use `jax.devices()` to see available hardware
+    - Device mesh enables advanced sharding patterns
+    - Data parallelism is the simplest multi-device strategy
 
 ## Quick Start
 

@@ -15,14 +15,12 @@ The `CompositeOperatorModule` enables **composing multiple operators** into soph
 | **Ensemble Mean/Sum/Max/Min** | Parallel + reduction |
 | **Branching** | Route through different paths based on input |
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- CompositeOperator uses **JAX-compatible patterns** throughout
-- Integer-based branching with `jax.lax.switch` (not dict lookups)
-- Fixed-shape outputs for vmap compatibility
-- All strategies work inside `jax.jit` and `jax.vmap`
-
-`─────────────────────────────────────────────────`
+    - CompositeOperator uses **JAX-compatible patterns** throughout
+    - Integer-based branching with `jax.lax.switch` (not dict lookups)
+    - Fixed-shape outputs for vmap compatibility
+    - All strategies work inside `jax.jit` and `jax.vmap`
 
 ## Quick Start
 

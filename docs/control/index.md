@@ -8,14 +8,12 @@ Pipeline control flow and execution management utilities. These modules handle a
 |-----------|---------|---------|
 | **Prefetcher** | Async data loading | Hide I/O latency |
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- Prefetching loads next batch while GPU processes current
-- Overlaps I/O and compute for better throughput
-- Most useful when I/O is the bottleneck
-- Works automatically with Pipeline
-
-`─────────────────────────────────────────────────`
+    - Prefetching loads next batch while GPU processes current
+    - Overlaps I/O and compute for better throughput
+    - Most useful when I/O is the bottleneck
+    - Works automatically with Pipeline
 
 ## Quick Start
 

@@ -9,14 +9,12 @@ Command-line tools for running and benchmarking Datarax pipelines without writin
 | `datarax run` | Execute pipeline | `datarax run config.yaml` |
 | `datarax benchmark` | Measure performance | `datarax benchmark pipeline.yaml` |
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- CLI is useful for quick experiments and CI/CD
-- Config files define pipelines declaratively
-- Benchmark command includes warmup automatically
-- Use Python API for complex workflows
-
-`─────────────────────────────────────────────────`
+    - CLI is useful for quick experiments and CI/CD
+    - Config files define pipelines declaratively
+    - Benchmark command includes warmup automatically
+    - Use Python API for complex workflows
 
 ## Quick Start
 

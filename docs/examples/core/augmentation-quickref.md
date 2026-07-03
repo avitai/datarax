@@ -15,7 +15,7 @@ This quick reference demonstrates Datarax's built-in image augmentation operator
 ## What You'll Learn
 
 1. Use built-in image operators (Brightness, Contrast, Rotation, Noise)
-2. Chain operators with the the `stages=[...]` argument syntax or `.add()` method
+2. Chain operators with the `stages=[...]` argument
 3. Understand stochastic vs deterministic modes
 4. Configure operator parameters for different augmentation strengths
 5. Add clipping to keep values in valid ranges
@@ -40,7 +40,7 @@ This quick reference demonstrates Datarax's built-in image augmentation operator
 | `tf.image.random_contrast(image, 0.8, 1.2)` | `ContrastOperator(contrast_range=(0.8, 1.2))` |
 | `tfa.image.rotate(image, angles)` | `RotationOperator(angle_range=(-180, 180))` |
 | `tf.image.random_noise(...)` | `NoiseOperator(mode="gaussian", noise_std=0.05)` |
-| Sequential preprocessing layers | Chain with `.add()` or the `stages=[...]` argument |
+| Sequential preprocessing layers | Chain with the `stages=[...]` argument |
 
 **Key difference:** Datarax operators work with Element objects and provide named RNG streams for fine-grained control.
 
@@ -242,9 +242,9 @@ NoiseOperator (Gaussian mode):
   - Effect: Simulates sensor noise
 ```
 
-## Step 2: Chain Operators with >>
+## Step 2: Chain Operators in a Pipeline
 
-Use the the `stages=[...]` argument for fluent pipeline composition. Operators are applied left-to-right.
+Pass operators to the `stages=[...]` argument; they are applied left-to-right.
 
 ```mermaid
 flowchart LR
@@ -267,7 +267,6 @@ flowchart LR
 ```
 
 ```python
-from datarax.pipeline import Pipeline
 from datarax.pipeline import Pipeline
 
 # Create fresh source for chained pipeline
@@ -305,7 +304,7 @@ noise = NoiseOperator(
     rngs=nnx.Rngs(noise=30),
 )
 
-# Chain with >> operator
+# Chain operators via stages
 augmented_pipeline = (
     Pipeline(source=source2, stages=[brightness, contrast, noise], batch_size=16, rngs=nnx.Rngs(0)))
 
@@ -452,14 +451,10 @@ Deterministic BrightnessOperator:
 4. **Clipping**: Add if values must stay in [0, 1] (e.g., for visualization or certain models).
 5. **Seeds**: Set seeds for reproducibility during debugging or evaluation.
 
-### Chaining Methods
+### Chaining
 
 ```python
-# Method 1: >> operator (fluent, recommended)
-pipeline = Pipeline(source=source, stages=[op1, op2], batch_size=32, rngs=nnx.Rngs(0))# Method 2: .add() method (explicit)
 pipeline = Pipeline(source=source, stages=[op1, op2], batch_size=32, rngs=nnx.Rngs(0))
-
-# Both are equivalent!
 ```
 
 ## Next Steps

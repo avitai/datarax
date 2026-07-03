@@ -27,8 +27,9 @@ setup: |
     fi
   fi
   export PATH="$HOME/.local/bin:$PATH"
-  cd ~/datarax && uv venv --python 3.11 .venv
-  cd ~/datarax && uv sync --extra benchmark --extra gpu
+  # Canonical bootstrap: keep the remote environment identical to setup.sh
+  # instead of a hand-rolled dependency install that drifts from it.
+  cd ~/datarax && ./setup.sh --backend cuda12 --python 3.11 --with-benchmarks
   cd ~/datarax && uv pip install --python .venv/bin/python wandb
 
 run: |

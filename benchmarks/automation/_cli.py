@@ -36,6 +36,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--subset-repetitions", type=int, default=3)
     parser.add_argument("--full-repetitions", type=int, default=5)
     parser.add_argument(
+        "--accelerators",
+        default="A100:1",
+        help=(
+            "SkyPilot accelerator spec (e.g. 'A100:1', 'A100:2'). Vast "
+            "inventory often lacks single-GPU offers in a given region."
+        ),
+    )
+    parser.add_argument(
+        "--region",
+        default=None,
+        help=(
+            "Pin the SkyPilot region (Vast geolocation string, e.g. "
+            "'Montana, US, NA'). Use to avoid known-bad host pools."
+        ),
+    )
+    parser.add_argument(
         "--allowed-gpu",
         action="append",
         default=None,
@@ -69,16 +85,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--launch-timeout-sec",
         type=int,
-        default=300,
-        help="Timeout for cluster launch command before failing/fallback",
+        default=1800,
+        help=(
+            "Timeout for the cluster launch command before failing/fallback. "
+            "Must cover provisioning plus remote setup, which alone exceed "
+            "10 minutes on typical Vast hosts."
+        ),
     )
     parser.add_argument(
         "--stall-timeout-sec",
         type=int,
-        default=300,
+        default=1800,
         help=(
             "Fail fast if launch emits no new output for this many seconds; "
-            "runs sky queue/log diagnostics before aborting"
+            "runs sky queue/log diagnostics before aborting. Provisioning and "
+            "image pulls are legitimately silent for many minutes."
         ),
     )
     parser.add_argument(

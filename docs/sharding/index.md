@@ -9,14 +9,12 @@ Data sharding utilities for distributed processing. Shard data across devices an
 | **ArraySharder** | Single host | Multi-GPU on one machine |
 | **JaxProcessSharder** | Multi-host | TPU pods, multi-node |
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- Sharding splits data across devices for parallel processing
-- Use `ArraySharder` for single-host multi-GPU
-- Use `JaxProcessSharder` for multi-host (TPU pods)
-- JAX handles the communication automatically
-
-`─────────────────────────────────────────────────`
+    - Sharding splits data across devices for parallel processing
+    - Use `ArraySharder` for single-host multi-GPU
+    - Use `JaxProcessSharder` for multi-host (TPU pods)
+    - JAX handles the communication automatically
 
 ## Quick Start
 

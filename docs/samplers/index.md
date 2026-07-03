@@ -14,14 +14,12 @@ sampler internally to translate iteration into indexed reads.
 | **RangeSampler** | Subset range | Debugging, partial sweeps |
 | **EpochAwareSampler** | Tracks epochs | Training loops |
 
-`★ Insight ─────────────────────────────────────`
+!!! note "Key points"
 
-- Samplers generate **indices**, not data
-- `ShuffleSampler` reshuffles each epoch for better training
-- `EpochAwareSampler` tracks the epoch counter for callers that need it
-- All samplers are `nnx.Module` subclasses and integrate with `Pipeline` checkpointing
-
-`─────────────────────────────────────────────────`
+    - Samplers generate **indices**, not data
+    - `ShuffleSampler` reshuffles each epoch for better training
+    - `EpochAwareSampler` tracks the epoch counter for callers that need it
+    - All samplers are `nnx.Module` subclasses and integrate with `Pipeline` checkpointing
 
 ## Quick Start
 
