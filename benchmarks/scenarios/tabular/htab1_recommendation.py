@@ -15,6 +15,7 @@ import numpy as np
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
 from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, ScenarioVariant
+from benchmarks.scenarios.real_data_variants import criteo_recommendation_data
 
 
 SCENARIO_ID: str = "HTAB-1"
@@ -64,6 +65,21 @@ VARIANTS: dict[str, ScenarioVariant] = {
             },
         ),
         data_generator=lambda: _rec_data(10_000_000),
+    ),
+    "real_criteo": ScenarioVariant(
+        config=ScenarioConfig(
+            scenario_id=SCENARIO_ID,
+            dataset_size=1_000_000,
+            element_shape=(_TOTAL_FEATURES,),
+            batch_size=4096,
+            transforms=["LogTransform", "Normalize"],
+            extra={
+                "variant_name": "real_criteo",
+                "num_dense": _NUM_DENSE,
+                "num_sparse": _NUM_SPARSE,
+            },
+        ),
+        data_generator=criteo_recommendation_data(1_000_000),
     ),
 }
 

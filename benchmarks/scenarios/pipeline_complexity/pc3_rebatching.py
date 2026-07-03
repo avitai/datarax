@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from benchmarks.adapters.base import ScenarioConfig
+from benchmarks.adapters.base import Capability, ScenarioConfig
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
 from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, ScenarioVariant
 
@@ -70,6 +70,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
             element_shape=_ELEMENT_SHAPE,
             batch_size=_BATCH_SIZE,
             transforms=["Normalize"],
+            required_capabilities=[Capability.REBATCHING],
             seed=DEFAULT_SEED,
             extra={
                 "target_batch_size": _TARGET_BATCH_SIZE,

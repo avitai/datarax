@@ -18,7 +18,7 @@ from typing import Any
 
 from calibrax.core import BenchmarkResult
 
-from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
+from benchmarks.adapters.base import Capability, PipelineAdapter, ScenarioConfig
 from benchmarks.core.result_model import throughput_elements_per_sec
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
 from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, run_scenario, ScenarioVariant
@@ -30,7 +30,7 @@ TIER1_VARIANT: str | None = None
 _DATASET_SIZE = 5_000
 _ELEMENT_SHAPE = (64, 64, 3)
 _BATCH_SIZE = 64
-_TRANSFORMS = ["ExpensiveTransform", "Cache", "CheapTransform"]
+_TRANSFORMS = ["ExpensiveTransform", "CheapTransform"]
 _NUM_EPOCHS = 3
 
 
@@ -48,6 +48,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
             element_shape=_ELEMENT_SHAPE,
             batch_size=_BATCH_SIZE,
             transforms=_TRANSFORMS,
+            required_capabilities=[Capability.CACHING],
             seed=DEFAULT_SEED,
             extra={
                 "variant_name": "default",

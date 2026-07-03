@@ -34,7 +34,7 @@ class TestNLP1Scenario:
         """Each variant must have required ScenarioConfig fields."""
         assert self.mod.SCENARIO_ID == "NLP-1"
         assert isinstance(self.mod.VARIANTS, dict)
-        assert len(self.mod.VARIANTS) == 2  # small, medium
+        assert len(self.mod.VARIANTS) == 3  # small, medium, real_wikitext
 
         for name, variant in self.mod.VARIANTS.items():
             assert_valid_variant(variant)

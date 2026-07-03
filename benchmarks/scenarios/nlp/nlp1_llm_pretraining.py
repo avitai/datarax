@@ -14,6 +14,7 @@ from typing import Any
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
 from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, ScenarioVariant
+from benchmarks.scenarios.real_data_variants import wikitext_token_data
 
 
 SCENARIO_ID: str = "NLP-1"
@@ -71,6 +72,18 @@ def _build_variants() -> dict[str, ScenarioVariant]:
 
 
 VARIANTS: dict[str, ScenarioVariant] = _build_variants()
+
+VARIANTS["real_wikitext"] = ScenarioVariant(
+    config=ScenarioConfig(
+        scenario_id=SCENARIO_ID,
+        dataset_size=10_000,
+        element_shape=(128,),
+        batch_size=32,
+        transforms=[],
+        extra={"variant_name": "real_wikitext"},
+    ),
+    data_generator=wikitext_token_data(10_000, seq_len=128),
+)
 
 
 get_variant = make_get_variant(VARIANTS)

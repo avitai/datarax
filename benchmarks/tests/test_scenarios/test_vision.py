@@ -34,7 +34,7 @@ class TestCV1Scenario:
         """Each variant must have required ScenarioConfig fields."""
         assert self.mod.SCENARIO_ID == "CV-1"
         assert isinstance(self.mod.VARIANTS, dict)
-        assert len(self.mod.VARIANTS) == 3  # small, medium, large
+        assert len(self.mod.VARIANTS) == 4  # small, medium, large, real_cifar10
 
         for name, variant in self.mod.VARIANTS.items():
             assert_valid_variant(variant)
@@ -181,16 +181,18 @@ class TestCV3Scenario:
         self.mod = mod
 
     def test_variant_configs_are_valid(self):
-        """All variants must have valid config with MixUp transform."""
+        """All variants must declare the batch-mixing capability."""
+        from benchmarks.adapters.base import Capability
+
         assert self.mod.SCENARIO_ID == "CV-3"
         assert isinstance(self.mod.VARIANTS, dict)
-        assert len(self.mod.VARIANTS) == 2  # default, large
+        assert len(self.mod.VARIANTS) == 3  # default, large, real_cifar10
 
         for name, variant in self.mod.VARIANTS.items():
             assert_valid_variant(variant)
             assert variant.config.scenario_id == "CV-3"
             assert variant.config.extra["variant_name"] == name
-            assert "MixUp" in variant.config.transforms
+            assert Capability.BATCH_MIXING in variant.config.required_capabilities
 
     def test_data_generation_shapes(self):
         """Generated image data must have correct NHWC shape.

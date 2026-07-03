@@ -14,6 +14,7 @@ from typing import Any
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
 from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, ScenarioVariant
+from benchmarks.scenarios.real_data_variants import coco_pair_data
 
 
 SCENARIO_ID: str = "MM-1"
@@ -77,6 +78,18 @@ def _build_variants() -> dict[str, ScenarioVariant]:
 
 
 VARIANTS: dict[str, ScenarioVariant] = _build_variants()
+
+VARIANTS["real_coco"] = ScenarioVariant(
+    config=ScenarioConfig(
+        scenario_id=SCENARIO_ID,
+        dataset_size=5_000,
+        element_shape=_IMG_SHAPE,
+        batch_size=64,
+        transforms=["Normalize"],
+        extra={"variant_name": "real_coco"},
+    ),
+    data_generator=coco_pair_data(5_000, h=_IMG_SHAPE[0], w=_IMG_SHAPE[1], text_len=_TEXT_LEN),
+)
 
 
 get_variant = make_get_variant(VARIANTS)

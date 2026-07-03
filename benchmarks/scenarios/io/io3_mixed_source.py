@@ -1,19 +1,15 @@
 """IO-3: Mixed-Source Pipeline.
 
-Benchmarks a pipeline that merges two separate data sources (images and
-labels) into a single stream. This scenario exercises the MixDataSourcesNode
-topology.
-
-BLOCKED: MixDataSourcesNode is not yet implemented. The scenario module
-is fully defined so that it can be unblocked without code changes once the
-operator lands.
+Benchmarks a pipeline that mixes two separate data sources into a single
+weighted stream. This scenario exercises the MixDataSourcesNode topology via
+the MIXED_SOURCE capability.
 
 Design ref: Section 7.3 of the benchmark report.
 """
 
 from __future__ import annotations
 
-from benchmarks.adapters.base import ScenarioConfig
+from benchmarks.adapters.base import Capability, ScenarioConfig
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
 from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, ScenarioVariant
 
@@ -21,13 +17,10 @@ from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, ScenarioVa
 SCENARIO_ID: str = "IO-3"
 TIER1_VARIANT: str | None = None
 
-BLOCKED: bool = True
-BLOCKED_REASON: str = "MixDataSourcesNode not yet implemented"
-
 _DATASET_SIZE = 5_000
 _ELEMENT_SHAPE = (64, 64, 3)
 _BATCH_SIZE = 64
-_TRANSFORMS = ["Normalize", "Merge"]
+_TRANSFORMS = ["Normalize"]
 
 
 def _make_mixed_data() -> dict:
@@ -46,6 +39,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
             element_shape=_ELEMENT_SHAPE,
             batch_size=_BATCH_SIZE,
             transforms=_TRANSFORMS,
+            required_capabilities=[Capability.MIXED_SOURCE],
             seed=DEFAULT_SEED,
             extra={
                 "variant_name": "default",

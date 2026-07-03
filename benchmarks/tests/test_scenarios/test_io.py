@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from calibrax.core import BenchmarkResult
 
-from benchmarks.adapters.base import ScenarioConfig
+from benchmarks.adapters.base import Capability, ScenarioConfig
 from benchmarks.adapters.datarax_adapter import DataraxAdapter
 from benchmarks.scenarios.base import ScenarioVariant
 from benchmarks.tests.test_scenarios.conftest import assert_valid_variant, run_quick_scenario
@@ -192,7 +192,7 @@ class TestIO3Scenario:
         assert variant.config.scenario_id == "IO-3"
         assert variant.config.extra["variant_name"] == "default"
         assert "Normalize" in variant.config.transforms
-        assert "Merge" in variant.config.transforms
+        assert Capability.MIXED_SOURCE in variant.config.required_capabilities
         assert variant.config.extra["topology"] == "mixed_source"
 
     def test_data_generation_shapes(self):
@@ -216,11 +216,10 @@ class TestIO3Scenario:
         """IO-3 is not a Tier-1 scenario."""
         assert self.mod.TIER1_VARIANT is None
 
-    def test_blocked_flag(self):
-        """IO-3 must be marked as BLOCKED until MixDataSourcesNode exists."""
-        assert self.mod.BLOCKED is True
-        assert isinstance(self.mod.BLOCKED_REASON, str)
-        assert len(self.mod.BLOCKED_REASON) > 0
+    def test_is_unblocked(self):
+        """IO-3 is unblocked now that MixDataSourcesNode is available."""
+        assert not hasattr(self.mod, "BLOCKED")
+        assert Capability.MIXED_SOURCE in self.mod.VARIANTS["default"].config.required_capabilities
 
     def test_get_variant_raises_on_unknown(self):
         """get_variant must raise KeyError for unknown names."""
@@ -253,11 +252,8 @@ class TestIO4Scenario:
         assert_valid_variant(variant)
         assert variant.config.scenario_id == "IO-4"
         assert variant.config.extra["variant_name"] == "default"
-        assert variant.config.transforms == [
-            "ExpensiveTransform",
-            "Cache",
-            "CheapTransform",
-        ]
+        assert variant.config.transforms == ["ExpensiveTransform", "CheapTransform"]
+        assert Capability.CACHING in variant.config.required_capabilities
         assert variant.config.extra["num_epochs"] == 3
 
     def test_data_generation_shapes(self):

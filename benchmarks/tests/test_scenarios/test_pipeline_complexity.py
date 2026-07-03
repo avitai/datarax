@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 from calibrax.core import BenchmarkResult
 
-from benchmarks.adapters.base import ScenarioConfig
+from benchmarks.adapters.base import Capability, ScenarioConfig
 from benchmarks.adapters.datarax_adapter import DataraxAdapter
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
 from benchmarks.scenarios.base import ScenarioVariant
@@ -146,7 +146,8 @@ class TestPC2Scenario:
             assert variant.config.scenario_id == "PC-2"
             assert variant.config.extra["variant_name"] == name
             assert variant.config.extra["topology"] == "parallel_dag"
-            assert variant.config.transforms == ["BranchA", "BranchB", "Merge"]
+            assert variant.config.transforms == []
+            assert Capability.DAG_BRANCHING in variant.config.required_capabilities
 
     def test_data_generation_shapes(self):
         """Config declares NHWC images; small sample validates structure."""
@@ -284,10 +285,8 @@ class TestPC4Scenario:
             assert variant.config.scenario_id == "PC-4"
             assert variant.config.extra["variant_name"] == name
             assert variant.config.extra["probability"] == 0.5
-            assert variant.config.transforms == [
-                "ProbabilisticAugment",
-                "ConditionalSelect",
-            ]
+            assert variant.config.transforms == []
+            assert Capability.PROBABILISTIC in variant.config.required_capabilities
 
     def test_data_generation_shapes(self):
         """Config declares NHWC images; small sample validates structure."""
@@ -313,7 +312,8 @@ class TestPC4Scenario:
                 dataset_size=_TINY_N,
                 element_shape=(32, 32, 3),
                 batch_size=_TINY_BATCH,
-                transforms=["ProbabilisticAugment", "ConditionalSelect"],
+                transforms=[],
+                required_capabilities=[Capability.PROBABILISTIC],
                 extra={
                     "variant_name": "test_tiny",
                     "probability": 0.5,
@@ -357,7 +357,8 @@ class TestPC5Scenario:
             assert variant.config.scenario_id == "PC-5"
             assert variant.config.extra["variant_name"] == name
             assert variant.config.extra["differentiable"] is True
-            assert variant.config.transforms == ["LearnableAugment", "Normalize"]
+            assert variant.config.transforms == ["Normalize"]
+            assert Capability.LEARNABLE_TRANSFORM in variant.config.required_capabilities
 
     def test_data_generation_shapes(self):
         """Config declares small NHWC images; sample validates structure."""
@@ -383,7 +384,8 @@ class TestPC5Scenario:
                 dataset_size=_TINY_N,
                 element_shape=(32, 32, 3),
                 batch_size=_TINY_BATCH,
-                transforms=["LearnableAugment", "Normalize"],
+                transforms=["Normalize"],
+                required_capabilities=[Capability.LEARNABLE_TRANSFORM],
                 extra={
                     "variant_name": "test_tiny",
                     "differentiable": True,

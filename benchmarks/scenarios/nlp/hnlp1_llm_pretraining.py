@@ -12,6 +12,7 @@ from __future__ import annotations
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
 from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, ScenarioVariant
+from benchmarks.scenarios.real_data_variants import wikitext_token_data
 
 
 SCENARIO_ID: str = "HNLP-1"
@@ -47,6 +48,17 @@ VARIANTS: dict[str, ScenarioVariant] = {
                 1_000_000, 8192, vocab_size=32000
             )
         },
+    ),
+    "real_wikitext": ScenarioVariant(
+        config=ScenarioConfig(
+            scenario_id=SCENARIO_ID,
+            dataset_size=100_000,
+            element_shape=(2048,),
+            batch_size=64,
+            transforms=["CreateAttentionMask", "CausalMaskGeneration"],
+            extra={"variant_name": "real_wikitext"},
+        ),
+        data_generator=wikitext_token_data(100_000, seq_len=2048),
     ),
 }
 

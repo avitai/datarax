@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from benchmarks.adapters.base import ScenarioConfig
+from benchmarks.adapters.base import Capability, ScenarioConfig
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
 from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, ScenarioVariant
 
@@ -66,7 +66,8 @@ VARIANTS: dict[str, ScenarioVariant] = {
             dataset_size=_DATASET_SIZE,
             element_shape=_ELEMENT_SHAPE,
             batch_size=_BATCH_SIZE,
-            transforms=["BranchA", "BranchB", "Merge"],
+            transforms=[],
+            required_capabilities=[Capability.DAG_BRANCHING],
             seed=DEFAULT_SEED,
             extra={"topology": "parallel_dag", "variant_name": "default"},
         ),

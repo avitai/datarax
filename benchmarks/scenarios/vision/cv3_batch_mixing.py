@@ -9,9 +9,10 @@ Design ref: Section 7.3.3 of the benchmark report.
 
 from __future__ import annotations
 
-from benchmarks.adapters.base import ScenarioConfig
+from benchmarks.adapters.base import Capability, ScenarioConfig
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
 from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, ScenarioVariant
+from benchmarks.scenarios.real_data_variants import cifar10_image_data
 
 
 SCENARIO_ID: str = "CV-3"
@@ -24,8 +25,9 @@ VARIANTS: dict[str, ScenarioVariant] = {
             dataset_size=5_000,
             element_shape=(64, 64, 3),
             batch_size=128,
-            transforms=["Normalize", "MixUp"],
-            extra={"variant_name": "default"},
+            transforms=["Normalize"],
+            required_capabilities=[Capability.BATCH_MIXING],
+            extra={"variant_name": "default", "mix_mode": "mixup", "mix_alpha": 0.4},
         ),
         data_generator=lambda: {
             "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(
@@ -39,14 +41,27 @@ VARIANTS: dict[str, ScenarioVariant] = {
             dataset_size=50_000,
             element_shape=(224, 224, 3),
             batch_size=128,
-            transforms=["Normalize", "MixUp"],
-            extra={"variant_name": "large"},
+            transforms=["Normalize"],
+            required_capabilities=[Capability.BATCH_MIXING],
+            extra={"variant_name": "large", "mix_mode": "mixup", "mix_alpha": 0.4},
         ),
         data_generator=lambda: {
             "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(
                 50_000, 224, 224, 3, dtype="uint8"
             )
         },
+    ),
+    "real_cifar10": ScenarioVariant(
+        config=ScenarioConfig(
+            scenario_id=SCENARIO_ID,
+            dataset_size=5_000,
+            element_shape=(64, 64, 3),
+            batch_size=128,
+            transforms=["Normalize"],
+            required_capabilities=[Capability.BATCH_MIXING],
+            extra={"variant_name": "real_cifar10", "mix_mode": "mixup", "mix_alpha": 0.4},
+        ),
+        data_generator=cifar10_image_data(5_000, h=64, w=64),
     ),
 }
 

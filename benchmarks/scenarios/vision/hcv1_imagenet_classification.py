@@ -17,6 +17,7 @@ from __future__ import annotations
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
 from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, ScenarioVariant
+from benchmarks.scenarios.real_data_variants import cifar10_image_data
 
 
 SCENARIO_ID: str = "HCV-1"
@@ -64,6 +65,23 @@ VARIANTS: dict[str, ScenarioVariant] = {
                 200_000, 224, 224, 3, dtype="uint8"
             )
         },
+    ),
+    "real_cifar10": ScenarioVariant(
+        config=ScenarioConfig(
+            scenario_id=SCENARIO_ID,
+            dataset_size=50_000,
+            element_shape=(224, 224, 3),
+            batch_size=256,
+            transforms=[
+                "RandomResizedCrop",
+                "RandomHorizontalFlip",
+                "ColorJitter",
+                "Normalize",
+                "CastToFloat32",
+            ],
+            extra={"variant_name": "real_cifar10"},
+        ),
+        data_generator=cifar10_image_data(50_000, h=224, w=224),
     ),
 }
 

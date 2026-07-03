@@ -1,1 +1,1 @@
-"""Benchmark fixtures: synthetic data generation."""
+"""Benchmark fixtures: synthetic and real data providers."""

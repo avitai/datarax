@@ -16,6 +16,7 @@ import numpy as np
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
 from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, ScenarioVariant
+from benchmarks.scenarios.real_data_variants import coco_pair_data
 
 
 SCENARIO_ID: str = "HMM-1"
@@ -53,6 +54,19 @@ VARIANTS: dict[str, ScenarioVariant] = {
             extra={"variant_name": "clip_medium", "text_len": _TEXT_LEN},
         ),
         data_generator=lambda: _clip_data(500_000, 224, 224),
+    ),
+    "real_coco": ScenarioVariant(
+        config=ScenarioConfig(
+            scenario_id=SCENARIO_ID,
+            dataset_size=50_000,
+            element_shape=(224, 224, 3),
+            batch_size=256,
+            transforms=["RandomResizedCrop", "Normalize", "CastToFloat32"],
+            extra={"variant_name": "real_coco", "text_len": _TEXT_LEN},
+        ),
+        data_generator=coco_pair_data(
+            50_000, h=224, w=224, text_len=_TEXT_LEN, vocab_size=49408, image_dtype="uint8"
+        ),
     ),
 }
 

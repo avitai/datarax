@@ -14,6 +14,7 @@ from typing import Any
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
 from benchmarks.scenarios.base import DEFAULT_SEED, make_get_variant, ScenarioVariant
+from benchmarks.scenarios.real_data_variants import criteo_dense_data
 
 
 SCENARIO_ID: str = "TAB-1"
@@ -69,6 +70,19 @@ def _build_variants() -> dict[str, ScenarioVariant]:
 
 
 VARIANTS: dict[str, ScenarioVariant] = _build_variants()
+
+# Criteo's DAC format has 13 dense features (vs. 100 synthetic ones).
+VARIANTS["real_criteo"] = ScenarioVariant(
+    config=ScenarioConfig(
+        scenario_id=SCENARIO_ID,
+        dataset_size=10_000,
+        element_shape=(13,),
+        batch_size=256,
+        transforms=["Normalize"],
+        extra={"variant_name": "real_criteo"},
+    ),
+    data_generator=criteo_dense_data(10_000),
+)
 
 
 get_variant = make_get_variant(VARIANTS)

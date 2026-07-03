@@ -34,7 +34,7 @@ class TestMM1Scenario:
         """All variants must have valid config with Normalize transform."""
         assert self.mod.SCENARIO_ID == "MM-1"
         assert isinstance(self.mod.VARIANTS, dict)
-        assert len(self.mod.VARIANTS) == 2  # default, large
+        assert len(self.mod.VARIANTS) == 3  # default, large, real_coco
 
         for name, variant in self.mod.VARIANTS.items():
             assert_valid_variant(variant)
