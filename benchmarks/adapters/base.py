@@ -19,10 +19,35 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from enum import StrEnum
 from itertools import islice
 from typing import Any
 
 from calibrax.core import BenchmarkAdapter as CalibraxBenchmarkAdapter
+
+
+class Capability(StrEnum):
+    """Non-transform pipeline features a scenario may require of an adapter.
+
+    Element-wise data transforms are tracked separately via
+    ``available_transforms()``. Capabilities express *structural* features that
+    cannot be modelled as an element transform — DAG topology, batch-dimension
+    changes, cross-source mixing, caching, distributed placement, differentiable
+    parameters, and control flow. A scenario declares the capabilities it needs
+    in ``ScenarioConfig.required_capabilities``; an adapter declares the ones it
+    provides in ``available_capabilities()``.
+    """
+
+    DAG_BRANCHING = "dag_branching"
+    REBATCHING = "rebatching"
+    BATCH_MIXING = "batch_mixing"
+    MIXED_SOURCE = "mixed_source"
+    CACHING = "caching"
+    DEVICE_MESH = "device_mesh"
+    LEARNABLE_TRANSFORM = "learnable_transform"
+    PROBABILISTIC = "probabilistic"
+    DYNAMIC_PAD = "dynamic_pad"
+    FIELD_SPLIT = "field_split"
 
 
 @dataclass
@@ -34,9 +59,11 @@ class ScenarioConfig:
         dataset_size: Number of elements in the synthetic dataset.
         element_shape: Shape of each element (e.g., (256, 256, 3) for images).
         batch_size: Batch size for data loading.
-        transforms: List of transform names to apply.
+        transforms: List of element-transform names to apply.
         num_workers: Number of parallel workers (0 = single-threaded).
         seed: Random seed for reproducibility.
+        required_capabilities: Structural (non-transform) features the scenario
+            needs; see :class:`Capability`. Empty for plain element pipelines.
         extra: Additional scenario-specific parameters.
     """
 
@@ -47,6 +74,7 @@ class ScenarioConfig:
     transforms: list[str]
     num_workers: int = 0
     seed: int = 42
+    required_capabilities: list[str] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -152,25 +180,43 @@ class PipelineAdapter(CalibraxBenchmarkAdapter, ABC):
         """
         return set()
 
+    def available_capabilities(self) -> set[str]:
+        """Return the structural capability tokens this adapter provides.
+
+        Complements :meth:`available_transforms`. A scenario is supported only
+        when the adapter provides every capability the scenario declares in
+        ``ScenarioConfig.required_capabilities`` *and* every required transform.
+        See :class:`Capability` for the vocabulary.
+
+        Returns:
+            Set of capability token strings. Default empty — an adapter with no
+            declared capabilities can still run scenarios that require none.
+        """
+        return set()
+
     def supported_scenarios(self) -> set[str]:
         """Return the set of scenario IDs this adapter can run.
 
-        Default implementation derives support from ``available_transforms()``:
-        a scenario is supported if the adapter has all transforms it requires
-        (or the scenario requires no transforms). Adapters that don't use the
-        transform registry pattern should override this directly.
+        Derives support from ``available_transforms()`` and
+        ``available_capabilities()``: a scenario is supported if the adapter has
+        all element transforms *and* all structural capabilities that at least one
+        of its variants requires. Adapters that don't use the transform registry
+        pattern should override this directly.
         """
         transforms = self.available_transforms()
         if not transforms:
             return set()
+
+        capabilities = self.available_capabilities()
 
         from benchmarks.scenarios import discover_scenarios
 
         supported: set[str] = set()
         for mod in discover_scenarios():
             for variant in mod.VARIANTS.values():
-                required = set(variant.config.transforms)
-                if required <= transforms:
+                required_transforms = set(variant.config.transforms)
+                required_capabilities = set(variant.config.required_capabilities)
+                if required_transforms <= transforms and required_capabilities <= capabilities:
                     supported.add(mod.SCENARIO_ID)
                     break
         return supported

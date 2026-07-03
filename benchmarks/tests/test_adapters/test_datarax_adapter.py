@@ -73,25 +73,24 @@ class TestDataraxAdapterLifecycle:
 
         adapter.teardown()
 
-    def test_warmup_consumes_exact_num_batches(self, cv1_small_config, small_image_data):
+    def test_warmup_then_iterate_delivers_exact_batches(self, cv1_small_config, small_image_data):
         adapter = DataraxAdapter()
         adapter.setup(cv1_small_config, small_image_data)
-        assert adapter._pipeline._iteration_total == 0  # type: ignore[reportAttributeAccessIssue]
 
         adapter.warmup(num_batches=2)
+        result = adapter.iterate(num_batches=3)
 
-        assert adapter._pipeline._iteration_total == 2  # type: ignore[reportAttributeAccessIssue]
+        # Warmup does not corrupt subsequent iteration; exactly 3 batches delivered.
+        assert result.num_batches == 3
         adapter.teardown()
 
     def test_iterate_consumes_exact_num_batches(self, cv1_small_config, small_image_data):
         adapter = DataraxAdapter()
         adapter.setup(cv1_small_config, small_image_data)
-        assert adapter._pipeline._iteration_total == 0  # type: ignore[reportAttributeAccessIssue]
 
         result = adapter.iterate(num_batches=3)
 
         assert result.num_batches == 3
-        assert adapter._pipeline._iteration_total == 3  # type: ignore[reportAttributeAccessIssue]
         adapter.teardown()
 
     def test_iterate_total_bytes_positive(self, cv1_small_config, small_image_data):
@@ -132,7 +131,7 @@ class TestDataraxAdapterPrefetchPolicy:
     def test_setup_defaults_prefetch_to_two(self, cv1_small_config, small_image_data):
         adapter = DataraxAdapter()
         adapter.setup(cv1_small_config, small_image_data)
-        assert adapter._pipeline.buffer_depth == 2  # type: ignore[reportAttributeAccessIssue]
+        assert adapter._buffer_depth == 2  # type: ignore[reportAttributeAccessIssue]
         adapter.teardown()
 
     def test_setup_prefetch_override_from_extra(self, cv1_small_config, small_image_data):
@@ -148,5 +147,5 @@ class TestDataraxAdapterPrefetchPolicy:
             extra={**cv1_small_config.extra, "prefetch_size": 4},
         )
         adapter.setup(override_config, small_image_data)
-        assert adapter._pipeline.buffer_depth == 4  # type: ignore[reportAttributeAccessIssue]
+        assert adapter._buffer_depth == 4  # type: ignore[reportAttributeAccessIssue]
         adapter.teardown()

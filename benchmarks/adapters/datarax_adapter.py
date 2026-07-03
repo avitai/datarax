@@ -22,13 +22,27 @@ from flax import nnx
 
 from benchmarks.adapters import register
 from benchmarks.adapters._utils import cast_to_float32, normalize_uint8
-from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
+from benchmarks.adapters.base import Capability, PipelineAdapter, ScenarioConfig
 from datarax import Pipeline
-from datarax.core.config import ElementOperatorConfig
+from datarax.core.config import BatchMixOperatorConfig, ElementOperatorConfig
+from datarax.core.data_source import DataSourceModule
 from datarax.core.element_batch import Element
+from datarax.core.operator import OperatorModule
+from datarax.operators.batch_mix_operator import BatchMixOperator
 from datarax.operators.element_operator import ElementOperator
+from datarax.operators.probabilistic_operator import (
+    ProbabilisticOperator,
+    ProbabilisticOperatorConfig,
+)
+from datarax.operators.selector_operator import SelectorOperator, SelectorOperatorConfig
 from datarax.performance.synchronization import block_until_ready_tree
-from datarax.sources import MemorySource, MemorySourceConfig
+from datarax.pipeline.nodes import CachingIterator, RebatchNode
+from datarax.sources import (
+    MemorySource,
+    MemorySourceConfig,
+    MixDataSourcesConfig,
+    MixDataSourcesNode,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +205,7 @@ def _gaussian_blur(element: Element, key: jax.Array) -> Element:
     sigma = jax.random.uniform(key, minval=0.1, maxval=2.0)
 
     def blur(x: jax.Array) -> jax.Array:
-        h, w, c = x.shape
+        c = x.shape[2]
 
         # Build 2D Gaussian kernel (5x5)
         coords = jnp.arange(5, dtype=jnp.float32) - 2.0
@@ -248,6 +262,77 @@ def _random_grayscale(element: Element, key: jax.Array) -> Element:
     return element.replace(data=new_data)
 
 
+def _random_crop(element: Element, key: jax.Array) -> Element:
+    """Random fixed-size crop (87.5% area) then pad back to original shape. Stochastic.
+
+    Crop size is static (JIT-safe ``dynamic_slice``); the padded-back result keeps
+    the original shape so batches stay uniform. Used by PR-2, NNX-1, XFMR-1.
+    """
+
+    def crop(x: jax.Array) -> jax.Array:
+        h, w, c = x.shape[0], x.shape[1], x.shape[2]
+        crop_h, crop_w = (h * 7) // 8, (w * 7) // 8
+        top = jax.random.randint(key, (), 0, jnp.maximum(h - crop_h, 1))
+        left = jax.random.randint(key, (), 0, jnp.maximum(w - crop_w, 1))
+        cropped = jax.lax.dynamic_slice(x, (top, left, 0), (crop_h, crop_w, c))
+        # Pad back to the original shape so the batch dimension stays uniform.
+        return jnp.pad(cropped, ((0, h - crop_h), (0, w - crop_w), (0, 0)))
+
+    return element.replace(data=jax.tree.map(crop, element.data))
+
+
+def _affine_rotation(element: Element, key: jax.Array) -> Element:
+    """Random 90-degree rotation (k in 0..3). Stochastic, JIT-safe via lax.switch.
+
+    A shape-preserving affine transform used by XFMR-1 to exercise the JIT+vmap path.
+    """
+    k = jax.random.randint(key, (), 0, 4)
+
+    def rotate(x: jax.Array) -> jax.Array:
+        branches = [lambda a=a: jnp.rot90(x, k=a, axes=(0, 1)) for a in range(4)]
+        # rot90 by 1 or 3 transposes H/W; guard to square crops keeps shape uniform.
+        return jax.lax.switch(k, branches)
+
+    return element.replace(data=jax.tree.map(rotate, element.data))
+
+
+def _multi_scale_resize(element: Element, key: jax.Array) -> Element:
+    """Downsample to half resolution then bilinear-resize back. Deterministic, compute-heavy.
+
+    Simulates the multi-resolution pipeline (CV-4): the round trip through a smaller
+    scale keeps the output shape while incurring real resize FLOPs.
+    """
+    del key
+
+    def resize_roundtrip(x: jax.Array) -> jax.Array:
+        # x.shape entries are static ints; keep the resize target static (Python max),
+        # not a traced jnp.maximum, or jax.image.resize rejects it under jit.
+        h, w, c = x.shape[0], x.shape[1], x.shape[2]
+        small = jax.image.resize(x, (max(h // 2, 1), max(w // 2, 1), c), "bilinear")
+        return jax.image.resize(small, (h, w, c), "bilinear")
+
+    return element.replace(data=jax.tree.map(resize_roundtrip, element.data))
+
+
+def _dynamic_pad(element: Element, key: jax.Array) -> Element:
+    """Pad each 1-D sequence up to the next multiple of 128. Deterministic.
+
+    Models NLP-2's dynamic padding with a static pad width (JIT-safe): the padded
+    length is a static function of the input length, so shapes stay traceable.
+    """
+    del key
+
+    def pad_seq(x: jax.Array) -> jax.Array:
+        seq_len = x.shape[-1]
+        target = ((seq_len + 127) // 128) * 128
+        if target == seq_len:
+            return x
+        pad_width = [(0, 0)] * (x.ndim - 1) + [(0, target - seq_len)]
+        return jnp.pad(x, pad_width)
+
+    return element.replace(data=jax.tree.map(pad_seq, element.data))
+
+
 # ---------------------------------------------------------------------------
 # NLP / Tabular transforms for heavy scenarios (HNLP-1, HTAB-1, HMM-1)
 # ---------------------------------------------------------------------------
@@ -272,6 +357,28 @@ def _create_attention_mask(element: Element, key: jax.Array) -> Element:
     del key
     new_data = jax.tree.map(lambda x: (x != 0).astype(jnp.float32), element.data)
     return element.replace(data=new_data)
+
+
+def _expensive_transform(element: Element, key: jax.Array) -> Element:
+    """Compute-heavy deterministic transform (IO-4 cache benchmark).
+
+    A chain of transcendental ops, expensive relative to the cheap transform, so
+    caching its output produces a measurable epoch-2 speedup.
+    """
+    del key
+
+    def expensive(x: jax.Array) -> jax.Array:
+        for _ in range(8):
+            x = jnp.sin(x) + jnp.cos(x)
+        return x
+
+    return element.replace(data=jax.tree.map(expensive, element.data))
+
+
+def _cheap_transform(element: Element, key: jax.Array) -> Element:
+    """Light deterministic transform run after the cache (IO-4)."""
+    del key
+    return element.replace(data=jax.tree.map(lambda x: x + 0.1, element.data))
 
 
 def _create_causal_mask(element: Element, key: jax.Array) -> Element:
@@ -306,6 +413,10 @@ _TRANSFORM_FNS: dict[str, Any] = {
     "HashEmbeddingIndex": _hash_embedding_index,
     "CreateAttentionMask": _create_attention_mask,
     "CausalMaskGeneration": _create_causal_mask,
+    "MultiScaleResize": _multi_scale_resize,
+    "DynamicPad": _dynamic_pad,
+    "ExpensiveTransform": _expensive_transform,
+    "CheapTransform": _cheap_transform,
 }
 
 # Stochastic: transform name -> function mapping
@@ -319,10 +430,55 @@ _STOCHASTIC_TRANSFORM_FNS: dict[str, Any] = {
     "GaussianBlur": _gaussian_blur,
     "RandomSolarize": _random_solarize,
     "RandomGrayscale": _random_grayscale,
+    "RandomCrop": _random_crop,
+    "AffineRotation": _affine_rotation,
+    # RandomFlip is the generic alias scenarios use for horizontal flipping.
+    "RandomFlip": _random_horizontal_flip,
 }
 
 # Combined for setup() transform loop
 _ALL_TRANSFORM_FNS: dict[str, Any] = {**_TRANSFORM_FNS, **_STOCHASTIC_TRANSFORM_FNS}
+
+
+class _LearnableAugmentOperator(nnx.Module):
+    """Differentiable, mode-aware augment stage for the PC-5 benchmark.
+
+    Applies a per-channel learnable affine (``scale``, ``bias`` are ``nnx.Param``,
+    so ``jax.grad`` flows end-to-end through the pipeline) followed by dropout.
+    ``nnx.Dropout`` honours ``nnx.Module.train()``/``eval()`` — the jitter is active
+    while training and becomes identity in eval — so the whole stage is both
+    learnable and train/eval aware. Consumes the raw batch dict the Pipeline
+    threads between stages.
+    """
+
+    def __init__(self, num_channels: int, *, rngs: nnx.Rngs) -> None:
+        """Initialize learnable scale/bias params and a train/eval-aware dropout."""
+        self.scale = nnx.Param(jnp.ones((num_channels,), dtype=jnp.float32))
+        self.bias = nnx.Param(jnp.zeros((num_channels,), dtype=jnp.float32))
+        self.dropout = nnx.Dropout(rate=0.1, rngs=rngs)
+        self._num_channels = num_channels
+
+    def __call__(self, batch: dict[str, Any]) -> dict[str, Any]:
+        """Apply the learnable affine (where channels match) then dropout."""
+
+        def apply(x: jax.Array) -> jax.Array:
+            if x.ndim >= 1 and x.shape[-1] == self._num_channels:
+                x = x * self.scale.value + self.bias.value
+            return self.dropout(x)
+
+        return jax.tree.map(apply, batch)
+
+
+class _MergeModule(nnx.Module):
+    """DAG merge node: averages two branch outputs element-wise (PC-2).
+
+    Receives its two predecessors' batch dicts as positional args (the
+    ``Pipeline.from_dag`` multi-input path) and returns their mean.
+    """
+
+    def __call__(self, a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+        """Average the two branch outputs leaf-wise."""
+        return jax.tree.map(lambda x, y: (x + y) * 0.5, a, b)
 
 
 @register
@@ -337,6 +493,8 @@ class DataraxAdapter(PipelineAdapter):
         """Initialize the Datarax adapter."""
         super().__init__()
         self._pipeline: Any = None
+        self._cached_iter: CachingIterator[Any] | None = None
+        self._buffer_depth: int = 2
 
     @property
     def name(self) -> str:
@@ -374,6 +532,22 @@ class DataraxAdapter(PipelineAdapter):
             f"Unknown transform '{transform_name}'. Available: {sorted(_ALL_TRANSFORM_FNS)}"
         )
 
+    def _create_mixed_source(self, data: Any, rngs: nnx.Rngs) -> Any:
+        """Build a MixDataSourcesNode that mixes two halves of the data 50/50 (IO-3).
+
+        Splits each field down the leading (record) axis into two MemorySources and
+        mixes them with equal weight, exercising the weighted multi-source path.
+        """
+        first = {key: value[: len(value) // 2] for key, value in data.items()}
+        second = {key: value[len(value) // 2 :] for key, value in data.items()}
+        source_config = MemorySourceConfig(shuffle=False)
+        sub_sources: list[DataSourceModule] = [
+            MemorySource(config=source_config, data=first, rngs=rngs),
+            MemorySource(config=source_config, data=second, rngs=rngs),
+        ]
+        mix_config = MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5))
+        return MixDataSourcesNode(mix_config, sub_sources, rngs=rngs)
+
     def _create_source(
         self,
         config: ScenarioConfig,
@@ -381,6 +555,9 @@ class DataraxAdapter(PipelineAdapter):
         rngs: nnx.Rngs,
     ) -> Any:
         """Create the appropriate data source based on config."""
+        if Capability.MIXED_SOURCE in set(config.required_capabilities):
+            return self._create_mixed_source(data, rngs)
+
         backend = config.extra.get("backend") if config.extra else None
 
         if backend == "tfds_eager":
@@ -431,28 +608,129 @@ class DataraxAdapter(PipelineAdapter):
         source_config = MemorySourceConfig(shuffle=False)
         return MemorySource(config=source_config, data=data, rngs=rngs)
 
+    def _append_capability_operators(
+        self, stages: list[Any], config: ScenarioConfig, rngs: nnx.Rngs
+    ) -> None:
+        """Append the structural operators a scenario's capabilities require.
+
+        Element transforms already populate ``stages`` in order; structural
+        operators (batch mixing, ...) run after them, parameterised from
+        ``config.extra``. Extend this dispatch as more capabilities are wired.
+        """
+        caps = set(config.required_capabilities)
+        if Capability.BATCH_MIXING in caps:
+            mix_config = BatchMixOperatorConfig(
+                mode=config.extra.get("mix_mode", "mixup"),
+                alpha=config.extra.get("mix_alpha", 0.4),
+            )
+            stages.append(BatchMixOperator(mix_config, rngs=rngs))
+
+        if Capability.PROBABILISTIC in caps:
+            probability = float(config.extra.get("probability", 0.5))
+            # ProbabilisticAugment: apply a stochastic augment with probability p.
+            augment = ElementOperator(
+                ElementOperatorConfig(stochastic=True, stream_name="augment"),
+                fn=_random_brightness,
+                rngs=rngs,
+            )
+            stages.append(
+                ProbabilisticOperator(
+                    ProbabilisticOperatorConfig(operator=augment, probability=probability),
+                    rngs=rngs,
+                )
+            )
+            # ConditionalSelect: choose between candidate augments per record.
+            choices: list[OperatorModule] = [
+                ElementOperator(
+                    ElementOperatorConfig(stochastic=True, stream_name="augment"),
+                    fn=fn,
+                    rngs=rngs,
+                )
+                for fn in (_random_brightness, _gaussian_noise)
+            ]
+            stages.append(
+                SelectorOperator(
+                    SelectorOperatorConfig(operators=choices, stream_name="augment"),
+                    rngs=rngs,
+                )
+            )
+
+        if Capability.LEARNABLE_TRANSFORM in caps:
+            num_channels = config.element_shape[-1] if config.element_shape else 1
+            stages.append(_LearnableAugmentOperator(num_channels, rngs=rngs))
+
+        if Capability.REBATCHING in caps:
+            # Differentiable in-DAG rebatch from batch_size down to target_batch_size.
+            target = int(config.extra.get("target_batch_size", config.batch_size))
+            group_size = max(1, config.batch_size // target)
+            stages.append(RebatchNode(group_size))
+
+    def _build_branching_pipeline(self, source: Any, config: ScenarioConfig, rngs: nnx.Rngs) -> Any:
+        """Build a two-branch parallel DAG that merges by averaging (PC-2).
+
+        ``branch_a`` and ``branch_b`` both consume the source batch; ``merge``
+        averages their outputs. Exercises ``Pipeline.from_dag`` topology.
+        """
+        branch_a = ElementOperator(
+            ElementOperatorConfig(stochastic=True, stream_name="augment"),
+            fn=_random_brightness,
+            rngs=rngs,
+        )
+        branch_b = ElementOperator(
+            ElementOperatorConfig(stochastic=True, stream_name="augment"),
+            fn=_gaussian_noise,
+            rngs=rngs,
+        )
+        return Pipeline.from_dag(
+            source=source,
+            nodes={"branch_a": branch_a, "branch_b": branch_b, "merge": _MergeModule()},
+            edges={"branch_a": [], "branch_b": [], "merge": ["branch_a", "branch_b"]},
+            sink="merge",
+            batch_size=config.batch_size,
+            rngs=nnx.Rngs(config.seed),
+        )
+
     def setup(self, config: ScenarioConfig, data: Any) -> None:
         """Set up the Datarax pipeline for the given scenario configuration."""
         self._config = config
-        rngs = nnx.Rngs(config.seed, augment=config.seed + 1)
+        self._cached_iter = None
+        self._buffer_depth = int(config.extra.get("prefetch_size", 2)) if config.extra else 2
+        rngs = nnx.Rngs(config.seed, augment=config.seed + 1, batch_mix=config.seed + 2)
 
         source = self._create_source(config, data, rngs)
-        del config  # prefetch_size is no longer wired (Pipeline auto-batches)
 
-        stages = [
+        if Capability.DAG_BRANCHING in set(config.required_capabilities):
+            self._pipeline = self._build_branching_pipeline(source, config, rngs)
+            return
+
+        stages: list[Any] = [
             self._create_operator(name, rngs)
-            for name in self._config.transforms
+            for name in config.transforms
             if name in _ALL_TRANSFORM_FNS
         ]
+        self._append_capability_operators(stages, config, rngs)
+
         self._pipeline = Pipeline(
             source=source,
             stages=stages,
-            batch_size=self._config.batch_size,
-            rngs=nnx.Rngs(self._config.seed),
+            batch_size=config.batch_size,
+            rngs=nnx.Rngs(config.seed),
         )
 
+        if Capability.CACHING in set(config.required_capabilities):
+            # Iteration-boundary cache: the expensive pipeline runs once, later
+            # passes replay cached batches (see CachingIterator).
+            self._cached_iter = CachingIterator(iter(self._pipeline))
+
     def _iterate_batches(self) -> Iterator[Any]:
-        yield from self._pipeline
+        # The Pipeline yields device-resident JAX batches, so no separate host->device
+        # prefetch stage is needed (unlike host-loader frameworks). ``_buffer_depth``
+        # records the requested prefetch policy for parity/metadata; the pipeline keeps
+        # data on device inherently.
+        if self._cached_iter is not None:
+            yield from iter(self._cached_iter)
+        else:
+            yield from self._pipeline
 
     def _materialize_batch(self, batch: Any) -> list[Any]:
         # Pipeline yields plain dicts; legacy Batch/BatchView yields a wrapper.
@@ -463,8 +741,21 @@ class DataraxAdapter(PipelineAdapter):
     def teardown(self) -> None:
         """Release resources and reset adapter state."""
         self._pipeline = None
+        self._cached_iter = None
         super().teardown()
 
     def available_transforms(self) -> set[str]:
         """All transforms Datarax can execute (deterministic + stochastic)."""
         return set(_ALL_TRANSFORM_FNS)
+
+    def available_capabilities(self) -> set[str]:
+        """Structural pipeline features Datarax can execute (see Capability)."""
+        return {
+            Capability.BATCH_MIXING,
+            Capability.PROBABILISTIC,
+            Capability.LEARNABLE_TRANSFORM,
+            Capability.DAG_BRANCHING,
+            Capability.MIXED_SOURCE,
+            Capability.REBATCHING,
+            Capability.CACHING,
+        }

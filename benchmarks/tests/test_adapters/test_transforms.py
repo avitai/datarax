@@ -20,6 +20,7 @@ from benchmarks.adapters._utils import (
     random_resized_crop,
     random_scale,
     random_solarize,
+    STANDARD_TRANSFORMS,
 )
 
 
@@ -151,11 +152,16 @@ class TestRandomBrightness:
         assert result.dtype == np.float32
 
     def test_shifts_values(self):
-        np.random.seed(42)
         arr = np.ones((8, 8), dtype=np.float32) * 0.5
-        result = random_brightness(arr, low=-0.5, high=0.5)
+        result = random_brightness(arr, low=-0.5, high=0.5, rng=np.random.default_rng(42))
         # Result should differ from input (with overwhelming probability)
         assert not np.allclose(result, arr)
+
+    def test_deterministic_with_rng(self):
+        arr = np.ones((8, 8), dtype=np.float32) * 0.5
+        first = random_brightness(arr, rng=np.random.default_rng(7))
+        second = random_brightness(arr, rng=np.random.default_rng(7))
+        np.testing.assert_array_equal(first, second)
 
 
 class TestRandomScale:
@@ -167,7 +173,6 @@ class TestRandomScale:
         assert result.dtype == np.float32
 
     def test_scales_values(self):
-        np.random.seed(42)
         arr = np.ones((8, 8), dtype=np.float32) * 10.0
         result = random_scale(arr, low=0.5, high=0.5)  # Deterministic scale = 0.5
         np.testing.assert_allclose(result, 5.0)
@@ -201,12 +206,12 @@ class TestRandomResizedCrop:
 class TestRandomHorizontalFlip:
     """Tests for random_horizontal_flip."""
 
-    def test_deterministic_flip(self):
+    def test_both_outcomes_occur_at_half_probability(self):
         arr = np.arange(12).reshape(3, 4).astype(np.float32)
-        np.random.seed(0)  # np.random.random() = 0.548... > 0.5, no flip
-        result = random_horizontal_flip(arr, p=0.5)
-        # With seed 0, first call to random() is ~0.55, so no flip
-        np.testing.assert_array_equal(result, arr)
+        rng = np.random.default_rng(0)
+        outcomes = {random_horizontal_flip(arr, p=0.5, rng=rng).tobytes() for _ in range(32)}
+        # Over 32 draws, both the flipped and unflipped variants appear.
+        assert len(outcomes) == 2
 
     def test_forced_flip(self):
         arr = np.arange(12).reshape(3, 4).astype(np.float32)
@@ -275,11 +280,17 @@ class TestRandomSolarize:
 
     def test_forced_solarize(self):
         """With seed that triggers solarize, pixels >= 128 should be inverted."""
-        np.random.seed(1)  # random() = ~0.417 < 0.5, triggers solarize
         arr = np.array([0, 127, 128, 255], dtype=np.uint8)
-        result = random_solarize(arr, threshold=128)
+        # default_rng(2).random() = 0.26 < 0.5, so solarize triggers.
+        result = random_solarize(arr, threshold=128, rng=np.random.default_rng(2))
         # Pixels >= 128 inverted: 128->127, 255->0
         np.testing.assert_array_equal(result, [0, 127, 127, 0])
+
+    def test_no_solarize_on_high_draw(self):
+        arr = np.array([0, 127, 128, 255], dtype=np.uint8)
+        # default_rng(0).random() = 0.64 >= 0.5, so the array passes through.
+        result = random_solarize(arr, threshold=128, rng=np.random.default_rng(0))
+        np.testing.assert_array_equal(result, arr)
 
 
 class TestRandomGrayscale:
@@ -307,3 +318,83 @@ class TestRandomGrayscale:
         arr = np.random.randint(0, 255, (32, 32, 3), dtype=np.uint8)
         result = random_grayscale(arr, p=1.0)
         assert result.shape == arr.shape
+
+
+class TestGlobalRngIsolation:
+    """Stochastic transforms must not consume or mutate numpy's global RNG."""
+
+    def test_transforms_leave_global_rng_untouched(self):
+        arr = np.ones((8, 8, 3), dtype=np.uint8)
+        np.random.seed(123)
+        expected_next_draw = np.random.random()
+        np.random.seed(123)
+        gaussian_noise(arr)
+        random_brightness(arr)
+        random_scale(arr)
+        random_horizontal_flip(arr)
+        random_resized_crop(arr, target_h=4, target_w=4)
+        color_jitter(arr)
+        random_solarize(arr)
+        random_grayscale(arr)
+        assert np.random.random() == expected_next_draw
+
+
+class TestRegistryContracts:
+    """Every registry transform preserves its declared shape/dtype contract."""
+
+    # name -> (expected shape for (16, 16, 3) uint8 input, expected dtype)
+    _CONTRACTS = {
+        "Normalize": ((16, 16, 3), np.float32),
+        "CastToFloat32": ((16, 16, 3), np.float32),
+        "GaussianNoise": ((16, 16, 3), np.uint8),
+        "RandomBrightness": ((16, 16, 3), np.uint8),
+        "RandomScale": ((16, 16, 3), np.uint8),
+        "RandomResizedCrop": ((224, 224, 3), np.uint8),
+        "RandomHorizontalFlip": ((16, 16, 3), np.uint8),
+        "ColorJitter": ((16, 16, 3), np.uint8),
+        "GaussianBlur": ((16, 16, 3), np.uint8),
+        "RandomSolarize": ((16, 16, 3), np.uint8),
+        "RandomGrayscale": ((16, 16, 3), np.uint8),
+    }
+
+    def test_registry_fully_covered(self):
+        """Every image transform in the registry has a contract entry."""
+        image_transforms = set(STANDARD_TRANSFORMS) - {
+            "LogTransform",
+            "CreateAttentionMask",
+            "CausalMaskGeneration",
+        }
+        assert image_transforms == set(self._CONTRACTS)
+
+    @pytest.mark.parametrize("name", sorted(_CONTRACTS))
+    def test_image_transform_contract(self, name: str):
+        """Image transforms keep the declared output shape and dtype."""
+        expected_shape, expected_dtype = self._CONTRACTS[name]
+        arr = np.random.default_rng(0).integers(0, 256, (16, 16, 3), dtype=np.uint8)
+        result = STANDARD_TRANSFORMS[name](arr)
+        assert result.shape == expected_shape
+        assert result.dtype == expected_dtype
+
+    def test_normalize_range(self):
+        """Normalize maps uint8 into [0, 1]."""
+        arr = np.random.default_rng(0).integers(0, 256, (16, 16, 3), dtype=np.uint8)
+        result = STANDARD_TRANSFORMS["Normalize"](arr)
+        assert result.min() >= 0.0
+        assert result.max() <= 1.0
+
+    def test_token_transform_contracts(self):
+        """NLP transforms produce masks of the declared shape and dtype."""
+        tokens = np.array([5, 9, 0, 0], dtype=np.int32)
+        attention = STANDARD_TRANSFORMS["CreateAttentionMask"](tokens)
+        np.testing.assert_array_equal(attention, [1.0, 1.0, 0.0, 0.0])
+        causal = STANDARD_TRANSFORMS["CausalMaskGeneration"](tokens)
+        assert causal.shape == (4, 4)
+        np.testing.assert_array_equal(causal, np.tril(np.ones((4, 4), dtype=np.float32)))
+
+    def test_log_transform_contract(self):
+        """LogTransform preserves shape/dtype and is non-negative."""
+        arr = np.random.default_rng(0).standard_normal((32, 13)).astype(np.float32)
+        result = STANDARD_TRANSFORMS["LogTransform"](arr)
+        assert result.shape == arr.shape
+        assert result.dtype == np.float32
+        assert result.min() >= 0.0

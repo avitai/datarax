@@ -53,31 +53,49 @@ def cast_to_float32(arr: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # Stochastic array-level transforms (DRY: shared by numpy-based adapters)
 # ---------------------------------------------------------------------------
-# Used by PyTorch, SPDL, Grain adapters. Each uses numpy's global RNG
-# for per-batch randomness (idiomatic for numpy-based frameworks).
+# Used by PyTorch, SPDL, Grain adapters. Randomness comes from an injectable
+# np.random.Generator; the module-level default keeps the registry call path
+# single-argument without touching numpy's global RNG state.
+
+_transform_rng: np.random.Generator = np.random.default_rng()
 
 
-def gaussian_noise(arr: np.ndarray, std: float = 0.05) -> np.ndarray:
+def seed_transforms(seed: int) -> None:
+    """Reseed the shared transform RNG for deterministic benchmark runs."""
+    global _transform_rng
+    _transform_rng = np.random.default_rng(seed)
+
+
+def gaussian_noise(
+    arr: np.ndarray,
+    std: float = 0.05,
+    rng: np.random.Generator | None = None,
+) -> np.ndarray:
     """Add Gaussian noise with given standard deviation."""
-    return (arr + np.random.normal(0, std, arr.shape)).astype(arr.dtype)
+    rng = rng if rng is not None else _transform_rng
+    return (arr + rng.normal(0, std, arr.shape)).astype(arr.dtype)
 
 
 def random_brightness(
     arr: np.ndarray,
     low: float = -0.2,
     high: float = 0.2,
+    rng: np.random.Generator | None = None,
 ) -> np.ndarray:
     """Adjust brightness by a random uniform delta."""
-    return (arr + np.random.uniform(low, high)).astype(arr.dtype)
+    rng = rng if rng is not None else _transform_rng
+    return (arr + rng.uniform(low, high)).astype(arr.dtype)
 
 
 def random_scale(
     arr: np.ndarray,
     low: float = 0.8,
     high: float = 1.2,
+    rng: np.random.Generator | None = None,
 ) -> np.ndarray:
     """Scale values by a random uniform factor."""
-    return (arr * np.random.uniform(low, high)).astype(arr.dtype)
+    rng = rng if rng is not None else _transform_rng
+    return (arr * rng.uniform(low, high)).astype(arr.dtype)
 
 
 # ---------------------------------------------------------------------------
@@ -94,17 +112,19 @@ def random_resized_crop(
     target_w: int = 224,
     scale_low: float = 0.08,
     scale_high: float = 1.0,
+    rng: np.random.Generator | None = None,
 ) -> np.ndarray:
     """Random crop + bilinear resize to target size (numpy CPU)."""
+    rng = rng if rng is not None else _transform_rng
     h, w = arr.shape[0], arr.shape[1]
     area = h * w
-    scale = np.random.uniform(scale_low, scale_high)
+    scale = rng.uniform(scale_low, scale_high)
     crop_area = int(area * scale)
-    aspect = np.exp(np.random.uniform(-np.log(4 / 3), np.log(4 / 3)))
+    aspect = np.exp(rng.uniform(-np.log(4 / 3), np.log(4 / 3)))
     crop_w = min(int(np.sqrt(crop_area * aspect)), w)
     crop_h = min(int(np.sqrt(crop_area / aspect)), h)
-    x0 = np.random.randint(0, max(w - crop_w, 1) + 1)
-    y0 = np.random.randint(0, max(h - crop_h, 1) + 1)
+    x0 = rng.integers(0, max(w - crop_w, 1) + 1)
+    y0 = rng.integers(0, max(h - crop_h, 1) + 1)
     cropped = arr[y0 : y0 + crop_h, x0 : x0 + crop_w]
 
     # Bilinear resize via nearest-neighbor (fast numpy approximation)
@@ -115,9 +135,14 @@ def random_resized_crop(
     return cropped[np.ix_(row_idx, col_idx)].astype(arr.dtype)
 
 
-def random_horizontal_flip(arr: np.ndarray, p: float = 0.5) -> np.ndarray:
+def random_horizontal_flip(
+    arr: np.ndarray,
+    p: float = 0.5,
+    rng: np.random.Generator | None = None,
+) -> np.ndarray:
     """Flip image horizontally with probability p."""
-    if np.random.random() < p:
+    rng = rng if rng is not None else _transform_rng
+    if rng.random() < p:
         return np.ascontiguousarray(arr[:, ::-1])
     return arr
 
@@ -127,19 +152,21 @@ def color_jitter(
     brightness: float = 0.4,
     contrast: float = 0.4,
     saturation: float = 0.4,
+    rng: np.random.Generator | None = None,
 ) -> np.ndarray:
     """Per-channel brightness/contrast/saturation jitter."""
+    rng = rng if rng is not None else _transform_rng
     result = arr.astype(np.float32)
     # Brightness
-    result = result + np.random.uniform(-brightness, brightness)
+    result = result + rng.uniform(-brightness, brightness)
     # Contrast
     mean = result.mean()
-    factor = np.random.uniform(max(0, 1 - contrast), 1 + contrast)
+    factor = rng.uniform(max(0, 1 - contrast), 1 + contrast)
     result = (result - mean) * factor + mean
     # Saturation (approximate: blend with grayscale)
     if result.ndim == 3 and result.shape[-1] == 3:
         gray = result.mean(axis=-1, keepdims=True)
-        sat_factor = np.random.uniform(max(0, 1 - saturation), 1 + saturation)
+        sat_factor = rng.uniform(max(0, 1 - saturation), 1 + saturation)
         result = gray + (result - gray) * sat_factor
     return np.clip(result, 0, 255).astype(arr.dtype)
 
@@ -159,9 +186,14 @@ def gaussian_blur_np(
     return gaussian_filter(arr.astype(np.float32), sigma=sigma).astype(arr.dtype)
 
 
-def random_solarize(arr: np.ndarray, threshold: int = 128) -> np.ndarray:
+def random_solarize(
+    arr: np.ndarray,
+    threshold: int = 128,
+    rng: np.random.Generator | None = None,
+) -> np.ndarray:
     """Invert pixels above threshold."""
-    if np.random.random() < 0.5:
+    rng = rng if rng is not None else _transform_rng
+    if rng.random() < 0.5:
         mask = arr >= threshold
         result = arr.copy()
         result[mask] = 255 - result[mask]
@@ -169,9 +201,14 @@ def random_solarize(arr: np.ndarray, threshold: int = 128) -> np.ndarray:
     return arr
 
 
-def random_grayscale(arr: np.ndarray, p: float = 0.2) -> np.ndarray:
+def random_grayscale(
+    arr: np.ndarray,
+    p: float = 0.2,
+    rng: np.random.Generator | None = None,
+) -> np.ndarray:
     """Convert to grayscale with probability p (replicate across channels)."""
-    if arr.ndim == 3 and arr.shape[-1] == 3 and np.random.random() < p:
+    rng = rng if rng is not None else _transform_rng
+    if arr.ndim == 3 and arr.shape[-1] == 3 and rng.random() < p:
         gray = arr.mean(axis=-1, keepdims=True).astype(arr.dtype)
         return np.broadcast_to(gray, arr.shape).copy()
     return arr

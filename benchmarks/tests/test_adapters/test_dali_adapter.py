@@ -9,11 +9,15 @@ import pytest
 from benchmarks.tests.test_adapters.conftest import assert_valid_iteration_result
 
 
-nvidia_dali = pytest.importorskip("nvidia.dali")
+# ``nvidia.dali`` may exist only as an empty namespace stub created by the
+# nvidia-*-cu12 CUDA packages, so import a real DALI submodule to skip cleanly
+# when DALI itself is not installed.
+pytest.importorskip("nvidia.dali")
+dali_types = pytest.importorskip("nvidia.dali.types")
 
-# DALI requires CUDA — skip all tests if no GPU available
+# DALI requires CUDA — skip all tests if no GPU available.
 pytestmark = pytest.mark.skipif(
-    nvidia_dali.types.NO_GPU is not False if hasattr(nvidia_dali.types, "NO_GPU") else True,
+    not (hasattr(dali_types, "NO_GPU") and dali_types.NO_GPU is False),
     reason="DALI requires CUDA GPU",
 )
 

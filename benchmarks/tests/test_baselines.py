@@ -4,12 +4,14 @@ TDD: Write tests first, then implement.
 Design ref: Sections 9.1, 9.2 of the benchmark report.
 """
 
+import json
 from pathlib import Path
 
+import pytest
 from calibrax.core import BenchmarkResult
 from calibrax.profiling import TimingSample
 
-from benchmarks.core.baselines import BaselineStore
+from benchmarks.core.baselines import BaselineSchemaError, BaselineStore
 from benchmarks.core.result_model import build_benchmark_result
 
 
@@ -305,3 +307,46 @@ class TestBaselineStoreArchive:
         assert "baseline_a" in baselines
         assert "baseline_b" in baselines
         assert len(baselines) == 2
+
+
+class TestBaselineStoreFileHygiene:
+    """Saved baseline files satisfy repository text conventions."""
+
+    def test_saved_file_ends_with_newline(self, tmp_path: Path):
+        """save() output ends with a newline (POSIX text file)."""
+        store = BaselineStore(tmp_path)
+        filepath = store.save("CV-1_small", _make_result())
+        assert filepath.read_text().endswith("\n")
+
+
+class TestBaselineSchemaGuard:
+    """load() validates the calibrax result schema and rejects legacy files."""
+
+    def test_load_valid_schema_passes(self, tmp_path: Path):
+        """A baseline written by save() loads without error."""
+        store = BaselineStore(tmp_path)
+        store.save("CV-1_small", _make_result())
+        data = store.load("CV-1_small")
+        assert data is not None
+        assert "metrics" in data
+
+    def test_load_legacy_schema_raises(self, tmp_path: Path):
+        """A legacy pre-calibrax baseline raises with a regeneration hint."""
+        legacy = {
+            "framework": "Datarax",
+            "scenario_id": "CV-1",
+            "variant": "small",
+            "environment": {"jax_version": "0.4.20"},
+            "timing": {"wall_clock_sec": 1.0},
+        }
+        (tmp_path / "CV-1_small.json").write_text(json.dumps(legacy))
+        store = BaselineStore(tmp_path)
+        with pytest.raises(BaselineSchemaError, match="legacy"):
+            store.load("CV-1_small")
+
+    def test_load_incomplete_schema_raises(self, tmp_path: Path):
+        """A file missing required result keys is rejected, naming the keys."""
+        (tmp_path / "broken.json").write_text(json.dumps({"name": "CV-1/small"}))
+        store = BaselineStore(tmp_path)
+        with pytest.raises(BaselineSchemaError, match="metrics"):
+            store.load("broken")

@@ -21,6 +21,35 @@ from calibrax.statistics import StatisticalAnalyzer, welch_t_test
 from benchmarks.core.result_model import throughput_elements_per_sec
 
 
+_REQUIRED_SCHEMA_KEYS = frozenset({"name", "metrics", "timing"})
+_LEGACY_SCHEMA_KEYS = frozenset({"framework", "scenario_id", "variant"})
+
+
+class BaselineSchemaError(ValueError):
+    """A baseline file does not match the calibrax BenchmarkResult schema."""
+
+
+def _validate_schema(name: str, data: dict[str, Any]) -> None:
+    """Reject baseline files that predate the calibrax result schema.
+
+    Args:
+        name: Baseline name, used in the error message.
+        data: Parsed baseline JSON.
+
+    Raises:
+        BaselineSchemaError: If required result keys are missing; the message
+            flags legacy pre-calibrax files explicitly.
+    """
+    missing = _REQUIRED_SCHEMA_KEYS - data.keys()
+    if not missing:
+        return
+    legacy_hint = " (legacy pre-calibrax schema)" if _LEGACY_SCHEMA_KEYS & data.keys() else ""
+    raise BaselineSchemaError(
+        f"Baseline '{name}' is missing required keys {sorted(missing)}{legacy_hint}; "
+        f"regenerate it with --generate-baselines --force."
+    )
+
+
 class BaselineStore:
     """Manages benchmark baselines on disk.
 
@@ -46,6 +75,11 @@ class BaselineStore:
         """
         filepath = self.baselines_dir / f"{name}.json"
         result.save(filepath)
+        # calibrax writes JSON without a trailing newline; baselines are
+        # committed files, so normalize to POSIX text.
+        text = filepath.read_text()
+        if not text.endswith("\n"):
+            filepath.write_text(text + "\n")
         return filepath
 
     def load(self, name: str) -> dict[str, Any] | None:
@@ -56,12 +90,18 @@ class BaselineStore:
 
         Returns:
             Baseline data as dict, or None if not found.
+
+        Raises:
+            BaselineSchemaError: If the file exists but does not match the
+                calibrax result schema (e.g., a legacy pre-calibrax baseline).
         """
         filepath = self.baselines_dir / f"{name}.json"
         if not filepath.exists():
             return None
         with filepath.open() as f:
-            return json.load(f)
+            data = json.load(f)
+        _validate_schema(name, data)
+        return data
 
     def compare(
         self,

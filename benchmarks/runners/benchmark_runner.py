@@ -359,6 +359,11 @@ def main() -> None:
         default=None,
         help="Specific scenario IDs to run",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing baselines (required to regenerate on current code)",
+    )
 
     args = parser.parse_args()
 
@@ -375,6 +380,8 @@ def main() -> None:
             adapter,
             args.baselines_dir,
             args.repetitions,
+            tier=args.tier,
+            force=args.force,
         )
         emit(f"Generated {len(saved)} baselines.")
     else:
