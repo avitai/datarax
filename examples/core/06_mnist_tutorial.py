@@ -317,7 +317,7 @@ def plot_mnist_grid(images, labels, title, filename=None, nrows=4, ncols=4):
 
 
 # Generate sample grid
-output_dir = Path("docs/assets/images/examples")
+output_dir = Path(os.environ.get("DATARAX_EXAMPLES_OUTPUT_DIR", "docs/assets/images/examples"))
 output_dir.mkdir(parents=True, exist_ok=True)
 
 plot_mnist_grid(

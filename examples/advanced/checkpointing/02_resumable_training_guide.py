@@ -54,6 +54,7 @@ By the end of this guide, you will be able to:
 """
 
 # %%
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -457,7 +458,7 @@ print("Determinism check passed: model parameters round-trip through Orbax.")
 """
 
 # %%
-output_dir = Path("docs/assets/images/examples")
+output_dir = Path(os.environ.get("DATARAX_EXAMPLES_OUTPUT_DIR", "docs/assets/images/examples"))
 output_dir.mkdir(parents=True, exist_ok=True)
 
 fig, ax = plt.subplots(figsize=(8, 4))

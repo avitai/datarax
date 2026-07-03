@@ -248,7 +248,7 @@ for bs in batch_sizes:
     print(f"  Batch {bs:4d}: {avg_tp:,.0f} samples/s (±{np.std(throughputs):.0f})")
 
 # %%
-output_dir = Path("docs/assets/images/examples")
+output_dir = Path(os.environ.get("DATARAX_EXAMPLES_OUTPUT_DIR", "docs/assets/images/examples"))
 output_dir.mkdir(parents=True, exist_ok=True)
 
 # Plot batch size sweep

@@ -277,7 +277,7 @@ print(f"  Label is soft: {mixup_batch['label'].max() < 1.0}")  # Soft labels < 1
 """
 
 # %%
-output_dir = Path("docs/assets/images/examples")
+output_dir = Path(os.environ.get("DATARAX_EXAMPLES_OUTPUT_DIR", "docs/assets/images/examples"))
 output_dir.mkdir(parents=True, exist_ok=True)
 
 

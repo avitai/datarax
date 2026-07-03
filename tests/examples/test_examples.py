@@ -165,7 +165,7 @@ class TestExampleExecution:
     """
 
     @pytest.mark.parametrize("example_path", EXAMPLE_FILES, ids=example_id)
-    def test_example_executes(self, example_path: Path) -> None:
+    def test_example_executes(self, example_path: Path, tmp_path: Path) -> None:
         """Each example should execute without errors."""
         # Skip TFDS examples on macOS - TensorFlow hangs on ARM64
         # https://github.com/tensorflow/tensorflow/issues/52138
@@ -179,6 +179,9 @@ class TestExampleExecution:
                 **os.environ,
                 "JAX_PLATFORMS": os.environ.get("JAX_PLATFORMS", "cpu"),
                 "TFDS_DISABLE_PROGRESS_BAR": "1",
+                # Redirect example plot output so test runs never modify the
+                # committed images under docs/assets/images/examples.
+                "DATARAX_EXAMPLES_OUTPUT_DIR": str(tmp_path),
             },
             text=True,
             timeout=EXAMPLE_TIMEOUT_SECONDS,

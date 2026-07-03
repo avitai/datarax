@@ -367,7 +367,7 @@ print("(0=MNIST, 1=Fashion)")
 """
 
 # %%
-output_dir = Path("docs/assets/images/examples")
+output_dir = Path(os.environ.get("DATARAX_EXAMPLES_OUTPUT_DIR", "docs/assets/images/examples"))
 output_dir.mkdir(parents=True, exist_ok=True)
 
 # Collect samples from both sources
