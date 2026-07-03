@@ -1,0 +1,28 @@
+# GPU RTX 4090 Real-Data Profile
+#
+# Cross-framework comparison on real datasets: every adapter wraps the same
+# raw numpy bytes served by benchmarks/fixtures/real_data.py. Scenarios are
+# pinned to their real-data variants; the synthetic defaults live in the
+# main gpu_rtx4090 profile. Datasets must be cached locally (set
+# DATARAX_BENCH_DOWNLOAD=1 for the one-time materialization).
+
+[profile]
+name = "gpu_rtx4090_real"
+backend = "gpu"
+max_batch_size = 256
+num_batches = 40
+warmup_batches = 6
+timeout_seconds = 600
+
+[profile.scenarios]
+# Canonical scenarios with real-data variants that fit the 24GB card.
+# The heavy real variants (HCV-1, HNLP-1, HTAB-1, HMM-1) run on the A100
+# cloud path alongside the other H* scenarios.
+include = ["CV-1", "CV-3", "NLP-1", "TAB-1", "MM-1"]
+
+[profile.variants]
+CV-1 = "real_cifar10"
+CV-3 = "real_cifar10"
+NLP-1 = "real_wikitext"
+TAB-1 = "real_criteo"
+MM-1 = "real_coco"

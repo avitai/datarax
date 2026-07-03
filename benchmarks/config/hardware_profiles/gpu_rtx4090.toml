@@ -11,5 +11,14 @@ warmup_batches = 6
 timeout_seconds = 600
 
 [profile.scenarios]
-# Align with cloud full-profile comparison set.
-include = ["CV-1", "CV-2", "NLP-1", "NLP-2", "TAB-1", "TAB-2", "PC-1", "PC-2", "IO-1", "IO-2", "DIST-1", "PR-1", "PR-2"]
+# All non-heavy scenarios (fit the 24GB card). The ImageNet-scale H* variants
+# (HCV-1/2, HNLP-1/2, HTAB-1, HMM-1, HPC-1/2, HDIST-1) run on the A100 cloud path.
+include = [
+  "CV-1", "CV-2", "CV-3", "CV-4",
+  "NLP-1", "NLP-2", "TAB-1", "TAB-2",
+  "PC-1", "PC-2", "PC-3", "PC-4", "PC-5",
+  "IO-1", "IO-2", "IO-3", "IO-4",
+  "DIST-1", "DIST-2", "PR-1", "PR-2",
+  "MM-1", "MM-2", "NNX-1", "XFMR-1",
+  "AUG-1", "AUG-2", "AUG-3",
+]

@@ -1,46 +1,91 @@
 {
-  "framework": "Datarax",
-  "scenario_id": "CV-3",
-  "variant": "default",
+  "name": "CV-3/default",
+  "domain": "datarax_pipeline_benchmarks",
+  "tags": {
+    "framework": "Datarax",
+    "scenario_id": "CV-3",
+    "variant": "default"
+  },
   "timing": {
-    "wall_clock_sec": 0.03016971005126834,
+    "wall_clock_sec": 0.03215079999063164,
     "per_batch_times": [
-      1.0072020813822746e-05,
-      9.918003343045712e-06,
-      1.0097981430590153e-05,
-      9.606010280549526e-06,
-      1.0881922207772732e-05,
-      1.0390998795628548e-05,
-      1.0455958545207977e-05,
-      1.0558054782450199e-05,
-      1.4498014934360981e-05,
-      9.829993359744549e-06
+      7.348979124799371e-06,
+      8.626986527815461e-06,
+      8.646020432934165e-06,
+      1.2183008948341012e-05,
+      8.855975465849042e-06,
+      8.45600152388215e-06,
+      8.281000191345811e-06,
+      8.450995665043592e-06,
+      8.548988262191415e-06,
+      1.6702018911018968e-05,
+      8.944014552980661e-06,
+      1.451201387681067e-05,
+      8.903007255867124e-06,
+      9.783980203792453e-06,
+      8.795002941042185e-06,
+      9.006005711853504e-06,
+      8.791015716269612e-06,
+      8.299975888803601e-06,
+      8.884991984814405e-06,
+      8.717994205653667e-06,
+      9.657989721745253e-06,
+      9.175011655315757e-06,
+      8.934002835303545e-06,
+      8.548988262191415e-06,
+      8.79299477674067e-06,
+      8.760020136833191e-06,
+      8.892006007954478e-06,
+      8.050003089010715e-06,
+      8.264993084594607e-06,
+      8.478004019707441e-06,
+      8.840986993163824e-06,
+      1.0083982488140464e-05,
+      8.89698276296258e-06,
+      8.592993253841996e-06
     ],
-    "first_batch_time": 0.002847476047463715,
-    "num_batches": 10,
-    "num_elements": 1280
+    "first_batch_time": 0.0010564239928498864,
+    "num_batches": 34,
+    "num_elements": 4352,
+    "warmup_batches_excluded": 0
   },
   "resources": null,
-  "environment": {
-    "timestamp": "2026-02-10T01:50:29.192022+00:00",
-    "git_commit": "f82894d140bae3764dfb34cc6a501bcd637d6c68",
-    "python_version": "3.11.10 (main, Sep  9 2024, 22:11:19) [Clang 18.1.8 ]",
-    "jax_version": "0.9.0",
-    "platform": {
-      "backend": "gpu",
-      "device_count": 1,
-      "local_device_count": 1,
-      "process_count": 1,
-      "devices": [
-        "cuda:0"
-      ]
+  "metrics": {
+    "throughput": {
+      "value": 135362.1061145639
     },
-    "os": {
-      "system": "Linux",
-      "release": "6.8.0-94-generic",
-      "machine": "x86_64"
+    "latency_p50": {
+      "value": 0.008793998858891428
     },
-    "gpu": "NVIDIA GeForce RTX 4090, 24564 MiB, 575.57.08"
+    "latency_p95": {
+      "value": 0.012998160673305387
+    },
+    "latency_p99": {
+      "value": 0.015979317249730233
+    }
+  },
+  "metadata": {
+    "environment": {
+      "timestamp": "2026-07-02T20:19:18.730148+00:00",
+      "git_commit": "53b6c03740750236e64e5c6c724cb04972b72a78",
+      "python_version": "3.11.10 (main, Sep  9 2024, 22:11:19) [Clang 18.1.8 ]",
+      "jax_version": "0.10.0",
+      "platform": {
+        "backend": "gpu",
+        "device_count": 1,
+        "local_device_count": 1,
+        "process_count": 1,
+        "devices": [
+          "cuda:0"
+        ]
+      },
+      "os": {
+        "system": "Linux",
+        "release": "6.8.0-124-generic",
+        "machine": "x86_64"
+      },
+      "gpu": "NVIDIA GeForce RTX 4090, 24564 MiB, 595.71.05"
+    }
   },
   "config": {
     "batch_size": 128,
@@ -51,11 +96,9 @@
       3
     ],
     "transforms": [
-      "Normalize",
-      "MixUp"
+      "Normalize"
     ],
     "seed": 42
   },
-  "timestamp": 1770688229.208507,
-  "extra_metrics": {}
+  "timestamp": 1783023558.7478569
 }

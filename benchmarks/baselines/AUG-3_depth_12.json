@@ -1,0 +1,121 @@
+{
+  "name": "AUG-3/depth_12",
+  "domain": "datarax_pipeline_benchmarks",
+  "tags": {
+    "framework": "Datarax",
+    "scenario_id": "AUG-3",
+    "variant": "depth_12"
+  },
+  "timing": {
+    "wall_clock_sec": 0.07044023400521837,
+    "per_batch_times": [
+      0.00014205501065589488,
+      0.0002159109862986952,
+      0.00012790999608114362,
+      0.00014981901040300727,
+      2.1388987079262733e-05,
+      7.930700667202473e-05,
+      4.505598917603493e-05,
+      5.189699004404247e-05,
+      3.90250061172992e-05,
+      7.571501191705465e-05,
+      5.973601946607232e-05,
+      6.800799746997654e-05,
+      5.228401278145611e-05,
+      6.619299529120326e-05,
+      0.00010882297647185624,
+      5.6124990805983543e-05,
+      4.7748995712026954e-05,
+      1.0522984666749835e-05,
+      4.1844003135338426e-05,
+      9.384300210513175e-05,
+      4.017498577013612e-05,
+      5.9457001043483615e-05,
+      6.020700675435364e-05,
+      6.524298805743456e-05,
+      0.00010196201037615538,
+      6.309000309556723e-05,
+      5.336198955774307e-05,
+      6.167200626805425e-05,
+      5.876398063264787e-05,
+      4.6357017708942294e-05,
+      5.0358998123556376e-05,
+      8.316998719237745e-05,
+      5.1871000323444605e-05,
+      6.512698018923402e-05,
+      2.4248991394415498e-05,
+      1.8607010133564472e-05,
+      6.77370117045939e-05,
+      1.4671997632831335e-05,
+      6.159199983812869e-05,
+      3.873801324516535e-05
+    ],
+    "first_batch_time": 0.0018292010063305497,
+    "num_batches": 40,
+    "num_elements": 2560,
+    "warmup_batches_excluded": 0
+  },
+  "resources": null,
+  "metrics": {
+    "throughput": {
+      "value": 36342.86620641194
+    },
+    "latency_p50": {
+      "value": 0.05959651025477797
+    },
+    "latency_p95": {
+      "value": 0.14244321064325047
+    },
+    "latency_p99": {
+      "value": 0.19013511569937688
+    }
+  },
+  "metadata": {
+    "environment": {
+      "timestamp": "2026-07-02T20:25:01.071086+00:00",
+      "git_commit": "53b6c03740750236e64e5c6c724cb04972b72a78",
+      "python_version": "3.11.10 (main, Sep  9 2024, 22:11:19) [Clang 18.1.8 ]",
+      "jax_version": "0.10.0",
+      "platform": {
+        "backend": "gpu",
+        "device_count": 1,
+        "local_device_count": 1,
+        "process_count": 1,
+        "devices": [
+          "cuda:0"
+        ]
+      },
+      "os": {
+        "system": "Linux",
+        "release": "6.8.0-124-generic",
+        "machine": "x86_64"
+      },
+      "gpu": "NVIDIA GeForce RTX 4090, 24564 MiB, 595.71.05"
+    }
+  },
+  "config": {
+    "batch_size": 64,
+    "dataset_size": 50000,
+    "element_shape": [
+      64,
+      64
+    ],
+    "transforms": [
+      "Normalize",
+      "GaussianNoise",
+      "RandomBrightness",
+      "RandomScale",
+      "GaussianNoise",
+      "RandomBrightness",
+      "RandomScale",
+      "GaussianNoise",
+      "RandomBrightness",
+      "RandomScale",
+      "GaussianNoise",
+      "RandomBrightness",
+      "RandomScale"
+    ],
+    "seed": 42
+  },
+  "timestamp": 1783023901.0878522
+}
