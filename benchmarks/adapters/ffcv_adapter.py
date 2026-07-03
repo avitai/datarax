@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 
 from benchmarks.adapters import register
-from benchmarks.adapters._utils import BASIC_TRANSFORMS
+from benchmarks.adapters._utils import BASIC_TRANSFORMS, resolve_transforms
 from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
 
@@ -104,9 +104,7 @@ class FfcvAdapter(PipelineAdapter):
             order=OrderOption.SEQUENTIAL,
             pipelines={"image": [ToTensor()], "label": [ToTensor()]},
         )
-        self._transform_fns = [
-            _FFCV_TRANSFORMS[t] for t in config.transforms if t in _FFCV_TRANSFORMS
-        ]
+        self._transform_fns = resolve_transforms(config.transforms, _FFCV_TRANSFORMS, self.name)
         self._config = config
 
     def _iterate_batches(self) -> Iterator[Any]:

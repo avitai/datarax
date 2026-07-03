@@ -72,6 +72,32 @@ Statistical analysis uses:
 10. **Stall fail-fast diagnostics**: If launch output is silent past the configured stall threshold, automation runs `sky queue` and `sky logs --tail` and exits with a clear failure reason instead of waiting indefinitely.
 11. **Stage-level GPU reservation**: Remote verify and benchmark stage commands request GPU resources explicitly (`sky exec --gpus <class>:1`) to prevent no-device stage execution.
 12. **Artifact layout integrity**: Cloud artifact collection validates transfer method compatibility and normalizes nested `results/results/*` layouts that can occur with some `scp` variants.
+13. **Transform fidelity**: Adapter setup fails fast on any transform it does not implement (`resolve_transforms`) instead of silently skipping it, so a measured run can never execute a lighter pipeline than the scenario requested. A determinism test asserts this for every installed adapter.
+
+---
+
+## Materialization Semantics
+
+The timed loop calls each adapter's `_materialize_batch()` per batch, so a
+batch's cost is whatever its framework's real delivery path costs — and that
+differs architecturally:
+
+- **Per-record collation** (Grain, PyTorch DataLoader, SPDL): every batch
+  gathers and copies individual records. Throughput reflects real per-batch
+  assembly work.
+- **Zero-copy slicing** (jax-dataloader over preloaded arrays): batches are
+  views into memory that already exists; transform-free scenarios then measure
+  little more than slice arithmetic and can report throughput near memory
+  bandwidth (tens of millions of elements per second). This is the
+  framework's genuine behavior for in-memory data, not a measurement error,
+  but it is not comparable to per-record loaders on such scenarios.
+- **Columnar views** (HuggingFace Datasets): tabular columns convert from
+  Arrow with near-zero copies while image columns pay a per-access conversion,
+  which is why its numbers are strongly bimodal across modalities.
+
+Cross-framework comparisons should therefore lead with scenarios that include
+transforms (where every adapter does real per-batch work) and treat
+transform-free iteration numbers as an architecture probe, not a ranking.
 
 ---
 

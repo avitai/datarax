@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 
 from benchmarks.adapters import register
-from benchmarks.adapters._utils import apply_to_dict, STANDARD_TRANSFORMS
+from benchmarks.adapters._utils import apply_to_dict, resolve_transforms, STANDARD_TRANSFORMS
 from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
 
@@ -97,10 +97,8 @@ class GrainAdapter(PipelineAdapter):
 
         ds = grain.MapDataset.source(source)
 
-        for transform_name in config.transforms:
-            fn = _GRAIN_TRANSFORMS.get(transform_name)
-            if fn is not None:
-                ds = ds.map(fn)
+        for fn in resolve_transforms(config.transforms, _GRAIN_TRANSFORMS, self.name):
+            ds = ds.map(fn)
 
         ds = ds.batch(config.batch_size)
 

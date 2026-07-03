@@ -293,8 +293,12 @@ class TfDataAdapter(PipelineAdapter):
 
         for transform_name in config.transforms:
             fn = _get_tf_transform(transform_name)
-            if fn is not None:
-                ds = ds.map(fn, num_parallel_calls=tf.data.AUTOTUNE)
+            if fn is None:
+                raise ValueError(
+                    f"{self.name} does not implement transform {transform_name!r}; "
+                    f"the scenario should be reported as unsupported instead."
+                )
+            ds = ds.map(fn, num_parallel_calls=tf.data.AUTOTUNE)
 
         ds = ds.batch(config.batch_size)
         ds = ds.prefetch(tf.data.AUTOTUNE)

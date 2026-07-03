@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 
 from benchmarks.adapters import register
-from benchmarks.adapters._utils import BASIC_TRANSFORMS
+from benchmarks.adapters._utils import BASIC_TRANSFORMS, resolve_transforms
 from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
 
@@ -59,7 +59,7 @@ class HfDatasetsAdapter(PipelineAdapter):
         """Set up the HuggingFace Datasets pipeline for the given scenario."""
         from datasets import Dataset
 
-        self._transform_fns = [_HF_TRANSFORMS[t] for t in config.transforms if t in _HF_TRANSFORMS]
+        self._transform_fns = resolve_transforms(config.transforms, _HF_TRANSFORMS, self.name)
 
         hf_data = {k: [v[i] for i in range(len(v))] for k, v in data.items()}
         self._dataset = Dataset.from_dict(hf_data)

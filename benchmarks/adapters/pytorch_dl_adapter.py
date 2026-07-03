@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 
 from benchmarks.adapters import register
-from benchmarks.adapters._utils import STANDARD_TRANSFORMS
+from benchmarks.adapters._utils import resolve_transforms, STANDARD_TRANSFORMS
 from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
 
@@ -78,9 +78,7 @@ class PyTorchDataLoaderAdapter(PipelineAdapter):
         from torch.utils.data import DataLoader
 
         # Resolve transforms from config
-        self._transform_fns = [
-            _PYTORCH_TRANSFORMS[t] for t in config.transforms if t in _PYTORCH_TRANSFORMS
-        ]
+        self._transform_fns = resolve_transforms(config.transforms, _PYTORCH_TRANSFORMS, self.name)
 
         dataset = _DictDataset(data)
 

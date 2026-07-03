@@ -25,7 +25,7 @@ from typing import Any
 import numpy as np
 
 from benchmarks.adapters import register
-from benchmarks.adapters._utils import BASIC_TRANSFORMS, setup_temp_dir
+from benchmarks.adapters._utils import BASIC_TRANSFORMS, resolve_transforms, setup_temp_dir
 from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
 
@@ -96,9 +96,7 @@ class DeepLakeAdapter(PipelineAdapter):
 
         self._ds = ds
         self._columns = columns
-        self._transform_fns = [
-            _DEEPLAKE_TRANSFORMS[t] for t in config.transforms if t in _DEEPLAKE_TRANSFORMS
-        ]
+        self._transform_fns = resolve_transforms(config.transforms, _DEEPLAKE_TRANSFORMS, self.name)
         self._config = config
 
     def _iterate_batches(self) -> Iterator[dict[str, Any]]:

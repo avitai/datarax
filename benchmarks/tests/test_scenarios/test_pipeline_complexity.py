@@ -173,7 +173,8 @@ class TestPC2Scenario:
                 dataset_size=_TINY_N,
                 element_shape=(32, 32, 3),
                 batch_size=_TINY_BATCH,
-                transforms=["BranchA", "BranchB", "Merge"],
+                transforms=[],
+                required_capabilities=[Capability.DAG_BRANCHING],
                 extra={"variant_name": "test_tiny", "topology": "parallel_dag"},
             ),
             data_generator=lambda: {

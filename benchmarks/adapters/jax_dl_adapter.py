@@ -27,7 +27,7 @@ from typing import Any
 import numpy as np
 
 from benchmarks.adapters import register
-from benchmarks.adapters._utils import BASIC_TRANSFORMS
+from benchmarks.adapters._utils import BASIC_TRANSFORMS, resolve_transforms
 from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
 
@@ -105,9 +105,7 @@ class JaxDataloaderAdapter(PipelineAdapter):
             shuffle=False,
             drop_last=False,
         )
-        self._transform_fns = [
-            _JAX_DL_TRANSFORMS[t] for t in config.transforms if t in _JAX_DL_TRANSFORMS
-        ]
+        self._transform_fns = resolve_transforms(config.transforms, _JAX_DL_TRANSFORMS, self.name)
         self._config = config
 
     def _iterate_batches(self) -> Iterator[Any]:

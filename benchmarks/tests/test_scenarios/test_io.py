@@ -286,7 +286,8 @@ class TestIO4Scenario:
                 dataset_size=100,
                 element_shape=(32, 32, 3),
                 batch_size=10,
-                transforms=["ExpensiveTransform", "Cache", "CheapTransform"],
+                transforms=["ExpensiveTransform", "CheapTransform"],
+                required_capabilities=[Capability.CACHING],
                 extra={"variant_name": "test_tiny", "num_epochs": 3},
             ),
             data_generator=lambda: {

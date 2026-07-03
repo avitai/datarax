@@ -162,10 +162,14 @@ class DaliAdapter(PipelineAdapter):
     def _apply_dali_transforms(cls, images: Any, transforms: list[str], fn: Any, types: Any) -> Any:
         """Apply supported DALI transforms in scenario order."""
         transform_fns = cls._dali_transform_fns(fn, types)
+        missing = [name for name in transforms if name not in transform_fns]
+        if missing:
+            raise ValueError(
+                f"NVIDIA DALI does not implement transforms {missing}; "
+                f"the scenario should be reported as unsupported instead."
+            )
         for transform_name in transforms:
-            transform = transform_fns.get(transform_name)
-            if transform is not None:
-                images = transform(images)
+            images = transform_fns[transform_name](images)
         return images
 
     def setup(self, config: ScenarioConfig, data: Any) -> None:

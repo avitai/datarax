@@ -121,3 +121,32 @@ class TestCrossAdapterFairness:
         np.testing.assert_array_equal(
             np.asarray(batch, dtype=np.uint8).reshape(expected.shape), expected
         )
+
+
+class TestTransformFidelity:
+    """Adapters must run every requested transform or refuse the scenario.
+
+    Silently skipping unimplemented transforms would benchmark a lighter
+    pipeline than requested — unfair to adapters that run the full chain.
+    """
+
+    @pytest.mark.parametrize(
+        ("module_path", "class_name", "framework"),
+        _COMPARABLE_ADAPTERS,
+        ids=[entry[1] for entry in _COMPARABLE_ADAPTERS],
+    )
+    def test_setup_rejects_unknown_transform(
+        self, module_path: str, class_name: str, framework: str | None
+    ):
+        """setup() with a transform the adapter lacks raises, never skips."""
+        adapter = _load_adapter(module_path, class_name, framework)
+        config = ScenarioConfig(
+            scenario_id="CV-1",
+            dataset_size=_DATASET_SIZE,
+            element_shape=_ELEMENT_SHAPE,
+            batch_size=_BATCH_SIZE,
+            transforms=["NotARealTransform"],
+            extra={"variant_name": "fidelity"},
+        )
+        with pytest.raises(ValueError, match="NotARealTransform"):
+            adapter.setup(config, _image_data())

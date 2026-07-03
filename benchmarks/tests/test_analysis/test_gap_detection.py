@@ -109,3 +109,51 @@ class TestGapDetector:
 
         # No other frameworks means no gaps
         assert len(gaps) == 0
+
+
+class TestArchitectureProbeExclusion:
+    """Zero-copy view adapters must not drive the optimization backlog.
+
+    Per the methodology's materialization semantics, adapters that deliver
+    batches as views over preloaded memory (jax-dataloader) measure slice
+    arithmetic on transform-light scenarios, not loading work; ranking gaps
+    against them would fill the backlog with unactionable comparisons.
+    """
+
+    def _make_comparative(self, frameworks, scenarios):
+        from benchmarks.runners.full_runner import ComparativeResults
+
+        return ComparativeResults(
+            results=make_comparative_results(frameworks, scenarios),
+            environment={},
+            platform="cpu",
+            timestamp=time.time(),
+        )
+
+    def test_probe_adapters_excluded_by_default(self):
+        from benchmarks.analysis.gap_detection import GapDetector
+
+        frameworks = {
+            "Datarax": {"CV-1": 1000.0},
+            "jax-dataloader": {"CV-1": 50000.0},  # zero-copy view outlier
+            "PyTorch DataLoader": {"CV-1": 3000.0},
+        }
+        comparative = self._make_comparative(frameworks, ["CV-1"])
+        gaps = GapDetector(comparative).detect()
+
+        assert len(gaps) == 1
+        assert gaps[0].top_alternative == "PyTorch DataLoader"
+        assert gaps[0].gap_ratio == 3.0
+
+    def test_probe_exclusion_is_overridable(self):
+        from benchmarks.analysis.gap_detection import GapDetector
+
+        frameworks = {
+            "Datarax": {"CV-1": 1000.0},
+            "jax-dataloader": {"CV-1": 50000.0},
+        }
+        comparative = self._make_comparative(frameworks, ["CV-1"])
+        gaps = GapDetector(comparative, architecture_probes=frozenset()).detect()
+
+        assert len(gaps) == 1
+        assert gaps[0].top_alternative == "jax-dataloader"

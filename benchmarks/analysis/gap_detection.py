@@ -50,6 +50,12 @@ _PRIORITY_MAP: dict[str, str] = {
     "PR-1": "P5",
 }
 
+# Adapters whose batches are views over preloaded memory: their numbers on
+# transform-light scenarios measure slice arithmetic, not loading work (see
+# docs/benchmarks/methodology.md, Materialization Semantics). Excluded from
+# gap ranking by default.
+DEFAULT_ARCHITECTURE_PROBES: frozenset[str] = frozenset({"jax-dataloader"})
+
 # Mitigation suggestions per scenario
 _MITIGATION_MAP: dict[str, str] = {
     "CV-1": "Thread-based I/O pipeline (vs SPDL pattern)",
@@ -80,12 +86,14 @@ class GapDetector:
         warning_threshold: float = 1.5,
         action_threshold: float = 2.0,
         datarax_name: str = "Datarax",
+        architecture_probes: frozenset[str] = DEFAULT_ARCHITECTURE_PROBES,
     ) -> None:
         """Initialize the gap detector with threshold configuration."""
         self._results = results
         self._warning = warning_threshold
         self._action = action_threshold
         self._datarax_name = datarax_name
+        self._architecture_probes = architecture_probes
 
     def detect(self) -> list[PerformanceGap]:
         """Scan all scenarios for performance gaps.
@@ -143,6 +151,13 @@ class GapDetector:
             "# Performance Optimization Backlog\n",
             "Auto-generated from benchmark results. Sorted by gap severity.\n",
         ]
+        if self._architecture_probes:
+            excluded = ", ".join(sorted(self._architecture_probes))
+            lines.append(
+                f"Gaps are ranked against comparably-measured adapters; "
+                f"architecture-probe adapters ({excluded}) are excluded — "
+                f"see the benchmarking methodology's materialization semantics.\n"
+            )
 
         if not gaps:
             lines.append(
@@ -185,6 +200,8 @@ class GapDetector:
         best_tp = 0.0
         for adapter_name, adapter_results in self._results.results.items():
             if adapter_name == self._datarax_name:
+                continue
+            if adapter_name in self._architecture_probes:
                 continue
             for r in adapter_results:
                 if result_scenario_id(r) == scenario_id:

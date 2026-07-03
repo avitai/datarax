@@ -196,6 +196,19 @@ class TestRandomResizedCrop:
         result = random_resized_crop(arr)
         assert result.dtype == np.uint8
 
+    def test_full_scale_crop_never_overflows(self):
+        """A crop spanning the full image must not sample an offset past the edge.
+
+        Regression: the offset bounds used max(size - crop, 1), allowing
+        offset 1 when crop == size, slicing a short crop and overflowing the
+        resize index map.
+        """
+        arr = np.random.default_rng(0).integers(0, 256, (16, 16, 3), dtype=np.uint8)
+        # Default scale range reproduces the overflow on ~8% of seeds pre-fix.
+        for seed in range(200):
+            out = random_resized_crop(arr, target_h=8, target_w=8, rng=np.random.default_rng(seed))
+            assert out.shape == (8, 8, 3)
+
     def test_works_on_float32(self):
         arr = np.random.randn(64, 64, 3).astype(np.float32)
         result = random_resized_crop(arr, target_h=32, target_w=32)

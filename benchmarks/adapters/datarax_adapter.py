@@ -703,11 +703,13 @@ class DataraxAdapter(PipelineAdapter):
             self._pipeline = self._build_branching_pipeline(source, config, rngs)
             return
 
-        stages: list[Any] = [
-            self._create_operator(name, rngs)
-            for name in config.transforms
-            if name in _ALL_TRANSFORM_FNS
-        ]
+        missing = [name for name in config.transforms if name not in _ALL_TRANSFORM_FNS]
+        if missing:
+            raise ValueError(
+                f"{self.name} does not implement transforms {missing}; "
+                f"the scenario should be reported as unsupported instead."
+            )
+        stages: list[Any] = [self._create_operator(name, rngs) for name in config.transforms]
         self._append_capability_operators(stages, config, rngs)
 
         self._pipeline = Pipeline(

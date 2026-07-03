@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from calibrax.core import BenchmarkResult
 
-from benchmarks.adapters.base import ScenarioConfig
+from benchmarks.adapters.base import Capability, ScenarioConfig
 from benchmarks.adapters.datarax_adapter import DataraxAdapter
 from benchmarks.scenarios.base import ScenarioVariant
 from benchmarks.tests.test_scenarios.conftest import assert_valid_variant, run_quick_scenario
@@ -229,8 +229,9 @@ class TestCV3Scenario:
                 dataset_size=100,
                 element_shape=(32, 32, 3),
                 batch_size=10,
-                transforms=["Normalize", "MixUp"],
-                extra={"variant_name": "test_tiny"},
+                transforms=["Normalize"],
+                required_capabilities=[Capability.BATCH_MIXING],
+                extra={"variant_name": "test_tiny", "mix_mode": "mixup", "mix_alpha": 0.4},
             ),
             data_generator=lambda: {
                 "image": np.random.default_rng(42).integers(

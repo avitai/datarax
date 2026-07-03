@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 
 from benchmarks.adapters import register
-from benchmarks.adapters._utils import STANDARD_TRANSFORMS
+from benchmarks.adapters._utils import resolve_transforms, STANDARD_TRANSFORMS
 from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 
 
@@ -67,9 +67,7 @@ class SpdlAdapter(PipelineAdapter):
 
         self._data = data
         self._config = config
-        self._transform_fns = [
-            _SPDL_TRANSFORMS[t] for t in config.transforms if t in _SPDL_TRANSFORMS
-        ]
+        self._transform_fns = resolve_transforms(config.transforms, _SPDL_TRANSFORMS, self.name)
         self._loader = spdl.dataloader.DataLoader(
             list(range(len(data[next(iter(data))]))),
             batch_size=config.batch_size,

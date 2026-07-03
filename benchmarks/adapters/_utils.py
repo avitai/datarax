@@ -121,10 +121,12 @@ def random_resized_crop(
     scale = rng.uniform(scale_low, scale_high)
     crop_area = int(area * scale)
     aspect = np.exp(rng.uniform(-np.log(4 / 3), np.log(4 / 3)))
-    crop_w = min(int(np.sqrt(crop_area * aspect)), w)
-    crop_h = min(int(np.sqrt(crop_area / aspect)), h)
-    x0 = rng.integers(0, max(w - crop_w, 1) + 1)
-    y0 = rng.integers(0, max(h - crop_h, 1) + 1)
+    crop_w = max(1, min(int(np.sqrt(crop_area * aspect)), w))
+    crop_h = max(1, min(int(np.sqrt(crop_area / aspect)), h))
+    # Offsets range over [0, size - crop] inclusive; a floor of 1 here allowed
+    # offset 1 for full-size crops, slicing past the edge.
+    x0 = rng.integers(0, w - crop_w + 1)
+    y0 = rng.integers(0, h - crop_h + 1)
     cropped = arr[y0 : y0 + crop_h, x0 : x0 + crop_w]
 
     # Bilinear resize via nearest-neighbor (fast numpy approximation)
@@ -283,6 +285,26 @@ BASIC_TRANSFORMS: dict[str, Any] = {
     "Normalize": normalize_uint8,
     "CastToFloat32": cast_to_float32,
 }
+
+
+def resolve_transforms(
+    names: list[str],
+    registry: dict[str, Any],
+    adapter_name: str,
+) -> list[Any]:
+    """Resolve transform names against an adapter's registry, failing fast.
+
+    Silently skipping unimplemented transforms would benchmark a lighter
+    pipeline than the scenario requested; adapters must refuse instead.
+    ``supported_scenarios()`` normally prevents this from being reachable.
+    """
+    missing = [name for name in names if name not in registry]
+    if missing:
+        raise ValueError(
+            f"{adapter_name} does not implement transforms {missing}; "
+            f"the scenario should be reported as unsupported instead."
+        )
+    return [registry[name] for name in names]
 
 
 def apply_to_dict(
