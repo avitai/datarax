@@ -135,3 +135,20 @@ def test_shuffled_handles_partial_final_batch() -> None:
     batch = src.get_batch_at(start=6, size=4, key=jax.random.key(3))
     # 4 elements out of a length-8 source even though start=6
     assert batch["x"].shape == (4,)
+
+
+# ---------- C. Indexed-access capability ----------
+
+
+def test_supports_indexed_access_is_true() -> None:
+    """MemorySource is random-access, so Pipeline must take the indexed path.
+
+    A False here silently reroutes Pipeline.__iter__ through the streaming
+    path, which never terminates because MemorySource.get_batch wraps
+    around instead of returning an empty batch.
+    """
+    src = MemorySource(
+        MemorySourceConfig(shuffle=False),
+        {"x": jnp.arange(8, dtype=jnp.float32)},
+    )
+    assert src.supports_indexed_access() is True

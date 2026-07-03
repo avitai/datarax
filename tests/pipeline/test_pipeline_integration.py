@@ -26,10 +26,12 @@ C. Edge cases:
    4. ``test_pipeline_handles_batch_size_larger_than_source`` — wraps
       around the source.
    5. ``test_pipeline_handles_single_element_source``.
+   6. ``test_pipeline_iter_over_memory_source_terminates`` — ``__iter__``
+      over a random-access source ends after one pass.
 
 D. Stochastic-stage interaction:
 
-   6. ``test_pipeline_stochastic_stage_advances_across_steps`` — a
+   7. ``test_pipeline_stochastic_stage_advances_across_steps`` — a
       stage that consumes from its own rngs sees a different key on
       each step (no key reuse).
 """
@@ -161,6 +163,25 @@ def test_pipeline_handles_single_element_source() -> None:
     out = pipeline.step()  # type: ignore[reportCallIssue]
     # Source length 1 → every position wraps to index 0
     np.testing.assert_array_equal(np.asarray(out["x"]), np.array([0.0, 0.0, 0.0, 0.0]))
+
+
+def test_pipeline_iter_over_memory_source_terminates() -> None:
+    """``__iter__`` over a random-access source stops after one pass.
+
+    Regression: MemorySource must report ``supports_indexed_access() ==
+    True``; otherwise ``__iter__`` falls back to the streaming path, whose
+    only stop condition is an empty batch — which a wrapping ``get_batch``
+    never produces, so iteration never ends.
+    """
+    pipeline = Pipeline(
+        source=_source(16),
+        stages=[],
+        batch_size=4,
+        rngs=nnx.Rngs(0),
+    )
+
+    batches = list(pipeline)
+    assert len(batches) == 4
 
 
 # ---------- D. Stochastic-stage interaction ----------

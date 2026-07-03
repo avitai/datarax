@@ -180,6 +180,18 @@ class DataSourceModule(StructuralModule):
             f"iterator path (for batch in pipeline)."
         )
 
+    def supports_indexed_access(self) -> bool:
+        """Whether the source implements random-access ``get_batch_at``.
+
+        Random-access (eager) sources return ``True``; forward-only streaming
+        sources return ``False``, so the Pipeline drives them sequentially via
+        ``get_batch`` instead of the jitted, indexed ``step``.
+
+        Returns:
+            ``False`` on the base class; random-access subclasses override it.
+        """
+        return False
+
     def element_spec(self) -> Any:
         """Return a PyTree of ``jax.ShapeDtypeStruct`` describing per-element output.
 

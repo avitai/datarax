@@ -330,6 +330,10 @@ class MemorySource(DataSourceModule):
         indices = self._get_indices()
         return self._gather_batch(indices[start:end])
 
+    def supports_indexed_access(self) -> bool:
+        """In-memory data supports random-access ``get_batch_at``."""
+        return True
+
     def get_batch_at(
         self,
         start: int | jax.Array,

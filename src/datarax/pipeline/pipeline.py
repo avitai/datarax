@@ -435,16 +435,41 @@ class Pipeline(nnx.Module):
         return scan_body_with_carry
 
     def __iter__(self) -> Iterator[dict]:
-        """Python iterator wrapper over ``step()``.
+        """Python iterator wrapper over the source.
 
-        For interactive/debug use only — bounded iteration is required
-        because ``step()`` does not signal end-of-epoch (the source
-        wraps around). Stops when ``self._position`` exceeds the
-        source length.
+        For interactive/debug use only. Random-access sources use the jitted,
+        indexed ``step()`` and stop when ``self._position`` exceeds the source
+        length. Streaming sources (no ``get_batch_at``) are driven sequentially
+        via :meth:`_iter_streaming` instead.
         """
+        if not self.source.supports_indexed_access():
+            yield from self._iter_streaming()
+            return
+
         source_length = len(self.source) if hasattr(self.source, "__len__") else None
         while True:
             current = int(self._position[...])
             if source_length is not None and current >= source_length:
                 return
             yield self.step()  # type: ignore[call-arg]
+
+    def _iter_streaming(self) -> Iterator[dict]:
+        """Iterate a streaming source (sequential, no random access) through the DAG.
+
+        Streaming sources have no ``get_batch_at``, so batches are pulled
+        sequentially with ``get_batch`` and run through the DAG eagerly — outside
+        ``step``'s jit, since the final batch may be short. Iteration ends when the
+        source is exhausted (``get_batch`` returns an empty batch).
+
+        Yields:
+            One transformed batch dict per source batch, until exhaustion.
+        """
+        while True:
+            batch = self.source.get_batch(self.batch_size)  # type: ignore[attr-defined]
+            leaves = jax.tree.leaves(batch)
+            if not leaves or leaves[0].shape[0] == 0:
+                return
+            idx = self._position[...]
+            output = self(batch)
+            self._position[...] = idx + jnp.int32(leaves[0].shape[0])
+            yield output
