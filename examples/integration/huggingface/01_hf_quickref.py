@@ -76,7 +76,7 @@ Key parameters:
 # %%
 # Load MNIST dataset in streaming mode
 config = HFEagerConfig(
-    name="mnist",
+    name="ylecun/mnist",
     split="train",
 )
 
@@ -210,7 +210,7 @@ def main():
     print("=" * 50)
 
     # Load dataset
-    config = HFEagerConfig(name="mnist", split="train")
+    config = HFEagerConfig(name="ylecun/mnist", split="train")
     source = HFEagerSource(config, rngs=nnx.Rngs(0))
 
     # Create pipeline with normalization

@@ -20,28 +20,29 @@ The W&B dashboard groups these automatically using slash notation (`Throughput/t
 
 ## Scenario Coverage
 
-Each adapter supports only the scenarios where it implements the required transforms. This ensures fair comparisons — every framework performs equivalent work on each scenario.
+Each adapter supports only the scenarios where it implements the required transforms. Adapters that cannot implement a scenario's transforms are excluded from it rather than measured with less work. The checkmarks below show support on the 6 most widely covered scenarios; the **Total** column is the empirical full-catalog coverage count (of 37 scenarios) from the [Coverage Matrix](https://github.com/avitai/datarax/blob/main/benchmarks/COVERAGE_MATRIX.md).
 
 | Framework | CV-1 | NLP-1 | TAB-1 | MM-1 | DIST-1 | PR-1 | Total |
 |-----------|:----:|:-----:|:-----:|:----:|:------:|:----:|:-----:|
-| **Datarax** | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | **28** |
-| Google Grain | :white_check_mark: | :white_check_mark: | :white_check_mark: | | :white_check_mark: | :white_check_mark: | 5 |
-| tf.data | :white_check_mark: | :white_check_mark: | :white_check_mark: | | :white_check_mark: | :white_check_mark: | 5 |
-| PyTorch DataLoader | :white_check_mark: | :white_check_mark: | :white_check_mark: | | :white_check_mark: | :white_check_mark: | 5 |
-| NVIDIA DALI | :white_check_mark: | :white_check_mark: | :white_check_mark: | | :white_check_mark: | | 4 |
-| SPDL | :white_check_mark: | :white_check_mark: | :white_check_mark: | | :white_check_mark: | | 4 |
+| **Datarax (iter)** | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | **37** |
+| **Datarax (scan)** | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | **37** |
+| Google Grain | :white_check_mark: | :white_check_mark: | :white_check_mark: | | :white_check_mark: | :white_check_mark: | 25 |
+| tf.data | :white_check_mark: | :white_check_mark: | :white_check_mark: | | :white_check_mark: | :white_check_mark: | 25 |
+| PyTorch DataLoader | :white_check_mark: | :white_check_mark: | :white_check_mark: | | :white_check_mark: | :white_check_mark: | 25 |
+| SPDL | :white_check_mark: | :white_check_mark: | :white_check_mark: | | :white_check_mark: | | 25 |
+| NVIDIA DALI | :white_check_mark: | :white_check_mark: | :white_check_mark: | | :white_check_mark: | | 9 |
+| jax-dataloader | :white_check_mark: | | | | | | 13 |
+| FFCV | :white_check_mark: | | | | | | 13 |
+| Deep Lake | :white_check_mark: | | | | | | 13 |
 | MosaicML Streaming | :white_check_mark: | :white_check_mark: | | | | | 2 |
 | WebDataset | :white_check_mark: | :white_check_mark: | | | | | 2 |
-| HuggingFace Datasets | | :white_check_mark: | :white_check_mark: | | | | 2 |
+| HuggingFace Datasets | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | 13 |
 | Ray Data | | :white_check_mark: | :white_check_mark: | | | | 2 |
-| jax-dataloader | :white_check_mark: | | | | | | 1 |
-| FFCV | :white_check_mark: | | | | | | 1 |
 | LitData | :white_check_mark: | | | | | | 1 |
-| Deep Lake | :white_check_mark: | | | | | | 1 |
 | Energon | | | | :white_check_mark: | | | 1 |
 
-!!! note "Datarax supports all 28 scenarios"
-    The table above shows the 6 most widely supported scenarios. Datarax supports the full 28-scenario catalog, including AUG-1/AUG-2/AUG-3, PC-1 through PC-5, IO-1 through IO-4, and NNX-1/XFMR-1.
+!!! note "Datarax supports all 37 scenarios"
+    The table above shows the 6 most widely supported scenarios. Both Datarax adapters (iter-mode and scan-mode) support the full 37-scenario catalog, including AUG-1/AUG-2/AUG-3, PC-1 through PC-5, IO-1 through IO-4, NNX-1/XFMR-1, and the 9 heavy `H*` variants. **25 of 37 scenarios run on ≥3 frameworks** — the set with meaningful cross-framework comparison.
 
 ---
 
@@ -85,12 +86,23 @@ gen.generate_all()
 
 ## Comparative Analysis
 
+### Capability coverage (not throughput contests)
+
+Several scenarios run only on the Datarax adapters because they exercise
+capabilities the transform-based competitor adapters do not express. These are
+**capability-coverage differentiators, not head-to-head throughput wins**, and
+per the [Coverage Matrix](https://github.com/avitai/datarax/blob/main/benchmarks/COVERAGE_MATRIX.md) must not be
+presented as competitive leads:
+
+-   **Pipeline Complexity (PC-2 branching DAG, PC-3 differentiable rebatch, PC-4 probabilistic, PC-5 differentiable/learnable)**: Datarax's DAG execution engine handles complex multi-branch and gradient-flowing pipelines that other frameworks cannot express, so there is no peer to compare against.
+-   **Datarax Unique (NNX-1, XFMR-1)**: Flax NNX module integration and JIT+vmap transform acceleration are exclusive to Datarax.
+-   The full Datarax-exclusive set (12 scenarios: CV-3, CV-4, IO-3, IO-4, NLP-2, NNX-1, PC-2, PC-3, PC-4, PC-5, PR-2, XFMR-1) is enumerated in the Coverage Matrix.
+
 ### Strengths
 
-Scenarios where Datarax leads other frameworks by >1.2x. These represent areas where the JAX-native architecture provides clear advantages:
-
--   **Pipeline Complexity (PC-\*)**: Datarax's DAG execution engine handles complex multi-branch pipelines that other frameworks cannot express
--   **Datarax Unique (NNX-1, XFMR-1)**: Features like Flax NNX module integration and JIT+vmap transform acceleration are exclusive to Datarax
+Scenarios where Datarax leads other frameworks by >1.2x on the shared
+supported-scenario intersection. These represent areas where the JAX-native
+architecture provides clear advantages on directly comparable workloads.
 
 ### Comparable Performance
 

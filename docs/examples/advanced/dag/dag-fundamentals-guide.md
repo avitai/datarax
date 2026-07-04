@@ -124,16 +124,27 @@ def normalize(element, key=None):
     return element.update_data({"image": (image - 0.5) / 0.5})
 
 
+def add_brightness(element, key=None):
+    del key
+    image = element.data["image"]
+    return element.update_data({"image": image + 0.1})
+
+
 normalize_op = ElementOperator(
     ElementOperatorConfig(stochastic=False),
     fn=normalize,
+    rngs=nnx.Rngs(0),
+)
+brighten_op = ElementOperator(
+    ElementOperatorConfig(stochastic=False),
+    fn=add_brightness,
     rngs=nnx.Rngs(0),
 )
 
 source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
 linear_pipeline = Pipeline(
     source=source,
-    stages=[normalize_op],
+    stages=[normalize_op, brighten_op],
     batch_size=16,
     rngs=nnx.Rngs(0),
 )

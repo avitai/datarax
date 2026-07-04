@@ -89,7 +89,7 @@ Configuration for ArrayRecord data sources.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `seed` | int | 42 | Random seed for shuffling |
-| `num_epochs` | int | -1 | Number of epochs (-1 for infinite) |
+| `num_epochs` | int | -1 | Epoch budget for direct source iteration (-1 for unbounded) |
 | `shuffle_files` | bool | False | Whether to shuffle file order |
 """
 
@@ -102,7 +102,7 @@ print("    - Random seed for epoch-based shuffling")
 print()
 print("  num_epochs: int = -1")
 print("    - Number of epochs to iterate")
-print("    - -1 means infinite iteration")
+print("    - -1 means unbounded direct source iteration")
 print()
 print("  shuffle_files: bool = False")
 print("    - Whether to shuffle record order within epoch")
@@ -254,25 +254,26 @@ print("  # Iteration resumes from saved position")
 config = ArrayRecordSourceConfig(num_epochs=10)
 source = ArrayRecordSourceModule(config, paths=paths, rngs=nnx.Rngs(0))
 
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 for epoch in range(10):
-    for batch in Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0)):
+    for batch in pipeline:
         train_step(batch)
-# Automatically stops after 10 epochs
+# Each iter(pipeline) session covers one pass over the source.
 ```
 
-### Infinite Iteration
+### Step-Based Training
 
 ```python
-# Run indefinitely (for step-based training)
-config = ArrayRecordSourceConfig(num_epochs=-1)
-source = ArrayRecordSourceModule(config, paths=paths, rngs=nnx.Rngs(0))
+# Run until a step budget is reached, re-entering the pipeline per epoch
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 
 step = 0
-for batch in Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0)):
-    train_step(batch)
-    step += 1
-    if step >= max_steps:
-        break
+while step < max_steps:
+    for batch in pipeline:
+        train_step(batch)
+        step += 1
+        if step >= max_steps:
+            break
 ```
 """
 
@@ -334,7 +335,7 @@ print("    - Ensures varied but reproducible order")
 | **Stateful** | Tracks position via NNX Variables |
 | **Checkpointing** | Full `get_state()` / `set_state()` |
 | **Shuffling** | Per-epoch reshuffling with seed control |
-| **Epoch Control** | Finite or infinite iteration |
+| **Epoch Control** | Per-session passes; loop `iter(pipeline)` for epochs |
 | **Grain Compatible** | Wraps Grain's ArrayRecordDataSource |
 
 ### When to Use ArrayRecord

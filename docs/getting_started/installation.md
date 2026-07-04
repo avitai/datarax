@@ -6,7 +6,7 @@ This guide covers installing Datarax and its dependencies.
 
 Datarax requires:
 
-- Python 3.11 or higher
+- Python 3.11-3.13
 - JAX 0.6.1 or higher
 - Flax 0.12 or higher
 
@@ -139,9 +139,9 @@ cd datarax
 ./setup.sh
 
 # Or with specific options:
-./setup.sh --cpu-only    # Force CPU-only mode
-./setup.sh --metal       # Enable Metal (Apple Silicon only)
-./setup.sh --force       # Reinstall existing environment
+./setup.sh --backend cpu    # Force CPU-only mode
+./setup.sh --backend metal       # Enable Metal (Apple Silicon only)
+./setup.sh --recreate       # Reinstall existing environment
 ./setup.sh --help        # Show all options
 
 # Activate the environment
@@ -196,6 +196,8 @@ Or run a simple test pipeline:
 
 ```python
 import jax.numpy as jnp
+from flax import nnx
+
 from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
@@ -262,7 +264,7 @@ If Metal acceleration isn't working on Apple Silicon:
 4. If using the setup script, ensure you used the `--metal` flag:
 
    ```bash
-   ./setup.sh --metal --force
+   ./setup.sh --backend metal --recreate
    ```
 
 5. Ensure you're on macOS 12.0+ (Monterey or later)
@@ -326,12 +328,12 @@ import deeplake  # aws-c-cal finds BoringSSL, assertion fails, process dies
 ```
 
 !!! note "Handled automatically in the test suite"
-    Datarax's `tests/conftest.py` pre-imports Deep Lake before TensorFlow so that
+    The benchmark suite's adapter preload (`benchmarks/adapters/_preload.py`) imports Deep Lake before TensorFlow so that
     `uv run pytest` and `uv run pytest --all-suites` work without issues.
     If you write standalone scripts that use both libraries, ensure the import order
     is correct.
 
-This is an upstream issue between Deep Lake (v4.x, `aws-c-cal` v0.8.1) and TensorFlow (BoringSSL). No environment variable or configuration can bypass the assertion — import order is the only workaround as of February 2026.
+This is an upstream issue between Deep Lake (v4.x, `aws-c-cal` v0.8.1) and TensorFlow (BoringSSL). No environment variable or configuration can bypass the assertion — with Deep Lake 4.x and current TensorFlow releases, import order is the only workaround.
 
 ### Getting Help
 

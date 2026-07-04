@@ -1,5 +1,8 @@
 # Regression Testing
 
+!!! info "External package"
+    This page documents [calibrax](https://github.com/avitai/calibrax), the benchmarking library datarax depends on.
+
 Detect performance regressions over time.
 
 ## See Also

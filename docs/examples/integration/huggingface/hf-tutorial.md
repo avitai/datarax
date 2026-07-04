@@ -27,10 +27,10 @@ If you're familiar with PyTorch's dataset ecosystem, here's how Datarax + Huggin
 | PyTorch | Datarax |
 |---------|---------|
 | `datasets.load_dataset('mnist', split='train')` | `HFEagerSource(HFEagerConfig(name='mnist', split='train'))` |
-| `DataLoader(shuffle=True, num_workers=4)` | `HFEagerSource` with `shuffle=True, shuffle_buffer_size=N` |
+| `DataLoader(shuffle=True, num_workers=4)` | `HFEagerSource` with `shuffle=True, seed=N` |
 | `datasets.set_format('torch')` | Automatic JAX array conversion |
 | Manual field selection in `__getitem__` | `include_keys` / `exclude_keys` in config |
-| `IterableDataset` for streaming | `streaming=True` in config |
+| `IterableDataset` for streaming | `from_hf(name, split, streaming=True)` / `HFStreamingSource` |
 
 **Key difference:** Datarax uses JAX arrays and provides declarative configuration instead of imperative code.
 
@@ -39,7 +39,7 @@ If you're familiar with PyTorch's dataset ecosystem, here's how Datarax + Huggin
 | TensorFlow tf.data | Datarax |
 |--------------------|---------|
 | `tfds.load('mnist', split='train')` | `HFEagerSource(HFEagerConfig(name='mnist', split='train'))` |
-| `dataset.shuffle(buffer_size=1000)` | `shuffle=True, shuffle_buffer_size=1000` in config |
+| `dataset.shuffle(buffer_size=1000)` | `shuffle=True` in config (O(1) index shuffle, no buffer) |
 | `dataset.take(1000)` | `split='train[:1000]'` syntax |
 | `dataset.skip(1000)` | `split='train[1000:]'` syntax |
 | `dataset.map(fn).filter(pred)` | Chain operators by passing them in the `stages=[...]` list |
@@ -71,13 +71,15 @@ jupyter lab examples/integration/huggingface/02_hf_tutorial.ipynb
 |-----------|-------------|---------|---------|
 | `name` | Dataset identifier on HF Hub | Required | `"mnist"`, `"stanfordnlp/imdb"` |
 | `split` | Which split to use | Required | `"train"`, `"test[:1000]"` |
-| `streaming` | Stream data on-the-fly | `False` | `True` for large datasets |
 | `shuffle` | Enable shuffling | `False` | `True` for training |
-| `shuffle_buffer_size` | Buffer size for shuffling | `1000` | `10000` for better shuffling |
 | `include_keys` | Only include these fields | `None` | `{"image", "label"}` |
 | `exclude_keys` | Exclude these fields | `None` | `{"metadata", "id"}` |
-| `stochastic` | Enable RNG for shuffling | `False` | `True` when `shuffle=True` |
-| `stream_name` | Named RNG stream | `"default"` | `"data_shuffle"` |
+| `seed` | Integer seed for shuffling | `42` | `0`, `123` |
+
+> **Auto-derived internals:** `stochastic` and `stream_name` are not user-set knobs.
+> When `shuffle=True`, the source uses the RNG stream named `"shuffle"` (with
+> `stochastic=True`); otherwise `stream_name` defaults to `None`. Eager shuffling is
+> an O(1) Feistel index shuffle, so there is no shuffle buffer in eager mode.
 
 ### Basic Configuration Example
 
@@ -87,15 +89,13 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.pipeline import Pipeline
-from datarax.pipeline import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import HFEagerConfig, HFEagerSource
 
 # Basic configuration for MNIST
 basic_config = HFEagerConfig(
-    name="mnist",
+    name="ylecun/mnist",
     split="train[:1000]",  # Load first 1000 samples
-    streaming=False,  # Download full dataset
 )
 
 basic_source = HFEagerSource(basic_config, rngs=nnx.Rngs(0))
@@ -123,7 +123,7 @@ Use `include_keys` or `exclude_keys` to control which fields are loaded and retu
 ```python
 # Include only specific fields
 filtered_config = HFEagerConfig(
-    name="mnist",
+    name="ylecun/mnist",
     split="train[:500]",
     include_keys={"image", "label"},  # Only return these fields
 )
@@ -151,7 +151,7 @@ Filtered fields:
 ```python
 # Exclude metadata fields
 exclude_config = HFEagerConfig(
-    name="mnist",
+    name="ylecun/mnist",
     split="train[:500]",
     exclude_keys={"id"},  # Exclude ID field
 )
@@ -167,26 +167,27 @@ Remaining fields: image, label
 
 ## Part 3: Shuffling Configuration
 
-Shuffling is essential for training ML models. HFEagerSource supports both full shuffle and buffer-based shuffle.
+Shuffling is essential for training ML models. In eager mode, `HFEagerSource`
+shuffles with an O(1) Feistel index shuffle - there is no shuffle buffer, so you
+only need `shuffle=True` and an integer `seed`.
 
 ### Shuffle Modes
 
 | Mode | When to Use | Configuration |
 |------|-------------|---------------|
 | **No shuffle** | Testing, evaluation | `shuffle=False` |
-| **Full shuffle** | Downloaded datasets (small) | `shuffle=True`, downloaded mode |
-| **Buffer shuffle** | Streaming datasets (large) | `shuffle=True`, `shuffle_buffer_size=N` |
+| **Index shuffle** | Eager (downloaded) datasets | `shuffle=True`, `seed=N` |
+| **Buffer shuffle** | Streaming datasets (large) | `HFStreamingConfig(shuffle=True, shuffle_buffer_size=N)` |
 
-### Buffer-Based Shuffle Example
+### Eager Shuffle Example
 
 ```python
-# Configure shuffling with custom buffer
+# Configure shuffling with a reproducible seed
 shuffle_config = HFEagerConfig(
-    name="mnist",
+    name="ylecun/mnist",
     split="train[:2000]",
     shuffle=True,
-    shuffle_buffer_size=500,  # Shuffle in chunks of 500
-    seed=42,
+    seed=42,  # Integer seed for Grain's index_shuffle
 )
 
 # Create source with explicit RNG for reproducibility
@@ -196,57 +197,61 @@ shuffle_source = HFEagerSource(
 )
 
 print("Shuffle configuration:")
-print(f"  Buffer size: {shuffle_config.shuffle_buffer_size}")
-print(f"  Stochastic: {shuffle_config.stochastic}")
-print(f"  Stream name: {shuffle_config.stream_name}")
+print(f"  Seed: {shuffle_config.seed}")
 ```
 
 **Terminal Output:**
 ```
 Shuffle configuration:
-  Buffer size: 500
-  Stochastic: True
-  Stream name: data_shuffle
-```
-
-### Reproducibility with RNG Streams
-
-```python
-# Create two sources with same seed
-source1 = HFEagerSource(shuffle_config, rngs=nnx.Rngs(42))
-source2 = HFEagerSource(shuffle_config, rngs=nnx.Rngs(42))
-
-# Get first batch from each
-batch1 = next(iter(Pipeline(source=source1, stages=[], batch_size=8, rngs=nnx.Rngs(0))))
-batch2 = next(iter(Pipeline(source=source2, stages=[], batch_size=8, rngs=nnx.Rngs(0))))
-
-# Verify identical batches
-print(f"Same seed produces identical batches: {jnp.allclose(batch1['image'], batch2['image'])}")
-```
-
-**Terminal Output:**
-```
-Same seed produces identical batches: True
+  Seed: 42
 ```
 
 ## Part 4: Streaming vs Downloaded Mode
 
-### Streaming Mode (`streaming=True`)
+### Downloaded / Eager Mode (`HFEagerSource`)
+
+- Full dataset downloaded and cached locally
+- Random access to any sample
+- Faster iteration after initial download
+- Requires disk space
+
+```python
+# Downloaded (eager) mode
+downloaded_config = HFEagerConfig(
+    name="ylecun/mnist",
+    split="train[:1000]",
+)
+downloaded_source = HFEagerSource(downloaded_config, rngs=nnx.Rngs(0))
+
+print(f"Downloaded mode length: {len(downloaded_source)}")
+```
+
+**Terminal Output:**
+```
+Downloaded mode length: 1000
+```
+
+### Streaming Mode (`HFStreamingSource`)
 
 - Data loaded on-the-fly from HuggingFace servers
 - No disk storage required
 - Ideal for large datasets (ImageNet, Common Crawl)
 - Cannot seek to specific indices
 - Dataset length may not be available
+- Shuffling uses a buffer (`shuffle_buffer_size`) rather than an index shuffle
 
 ```python
-# Streaming mode
-streaming_config = HFEagerConfig(
-    name="mnist",
+from datarax.sources import HFStreamingConfig, HFStreamingSource
+
+# Streaming mode with buffer-based shuffle
+streaming_config = HFStreamingConfig(
+    name="ylecun/mnist",
     split="train",
     streaming=True,
+    shuffle=True,
+    shuffle_buffer_size=1000,
 )
-streaming_source = HFEagerSource(streaming_config, rngs=nnx.Rngs(0))
+streaming_source = HFStreamingSource(streaming_config, rngs=nnx.Rngs(0))
 
 try:
     print(f"Streaming mode length: {len(streaming_source)}")
@@ -259,29 +264,9 @@ except (NotImplementedError, TypeError):
 Streaming mode length: N/A (not available in streaming)
 ```
 
-### Downloaded Mode (`streaming=False`)
-
-- Full dataset downloaded and cached locally
-- Random access to any sample
-- Faster iteration after initial download
-- Requires disk space
-
-```python
-# Downloaded mode
-downloaded_config = HFEagerConfig(
-    name="mnist",
-    split="train[:1000]",
-    streaming=False,
-)
-downloaded_source = HFEagerSource(downloaded_config, rngs=nnx.Rngs(0))
-
-print(f"Downloaded mode length: {len(downloaded_source)}")
-```
-
-**Terminal Output:**
-```
-Downloaded mode length: 1000
-```
+> **Tip:** The `from_hf(name, split, ...)` factory auto-selects `HFEagerSource`
+> for datasets under ~1GB and `HFStreamingSource` for larger ones. Pass
+> `streaming=True` to force streaming regardless of size.
 
 ### Mode Comparison Table
 
@@ -370,10 +355,9 @@ augmentation = CompositeOperatorModule(
 
 # Build the complete pipeline
 train_config = HFEagerConfig(
-    name="mnist",
+    name="ylecun/mnist",
     split="train[:5000]",
     shuffle=True,
-    shuffle_buffer_size=1000,
     include_keys={"image", "label"},
     seed=42,
 )
@@ -474,10 +458,10 @@ Split syntax examples:
 
 ```python
 # List available datasets programmatically
-from datasets import list_datasets
+from huggingface_hub import list_datasets
 
-datasets_list = list_datasets()
-print(f"Total datasets available: {len(datasets_list)}")
+datasets_list = list(list_datasets(limit=100))
+print(f"Datasets fetched: {len(datasets_list)}")
 print(f"Example datasets: {datasets_list[:5]}")
 
 # Get dataset info
@@ -491,7 +475,7 @@ print(f"  Features: {builder.info.features}")
 
 **Terminal Output:**
 ```
-Total datasets available: 85432
+Datasets fetched: 100
 Example datasets: ['mnist', 'cifar10', 'imdb', 'squad', 'glue']
 
 MNIST info:
@@ -545,11 +529,11 @@ flowchart TB
 
 | Feature | Recommendation | Rationale |
 |---------|----------------|-----------|
-| **Large datasets** | `streaming=True` | Avoid memory/disk issues |
-| **Training** | `shuffle=True` | Essential for SGD convergence |
-| **Buffer size** | 10-100x batch size | Better shuffle quality |
+| **Large datasets** | `HFStreamingSource` (or `from_hf(..., streaming=True)`) | Avoid memory/disk issues |
+| **Training** | `shuffle=True` with a fixed `seed` | Essential for SGD convergence |
+| **Streaming shuffle** | `shuffle_buffer_size` on `HFStreamingConfig` | Better shuffle quality when streaming |
 | **Field filtering** | Use `include_keys` | Reduce memory overhead |
-| **RNG streams** | Named streams | Reproducibility and debugging |
+| **Reproducibility** | Fixed integer `seed` | Deterministic index shuffle |
 | **Development** | `split="train[:1000]"` | Fast iteration |
 
 ### Performance Characteristics
@@ -566,37 +550,32 @@ flowchart TB
 ```python
 # Pattern 1: Development (small subset, fast iteration)
 dev_config = HFEagerConfig(
-    name="mnist",
+    name="ylecun/mnist",
     split="train[:100]",
-    streaming=False,
     shuffle=False,
 )
 
 # Pattern 2: Training (full data, shuffled)
 train_config = HFEagerConfig(
-    name="mnist",
+    name="ylecun/mnist",
     split="train",
-    streaming=False,
     shuffle=True,
-    shuffle_buffer_size=10000,
     seed=42,
 )
 
-# Pattern 3: Large dataset streaming
-large_config = HFEagerConfig(
-    name="imagenet-1k",
-    split="train",
+# Pattern 3: Large dataset streaming (forces HFStreamingSource)
+large_source = from_hf(
+    "imagenet-1k",
+    "train",
     streaming=True,
     shuffle=True,
-    shuffle_buffer_size=10000,
-    seed=42,
+    rngs=nnx.Rngs(0),
 )
 
 # Pattern 4: Evaluation (deterministic, no shuffle)
 eval_config = HFEagerConfig(
-    name="mnist",
+    name="ylecun/mnist",
     split="test",
-    streaming=False,
     shuffle=False,
 )
 ```

@@ -100,13 +100,14 @@ from datarax.sources import MemorySource, MemorySourceConfig
 
 
 matplotlib.use("Agg")
+import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 
 
 # Output directory for saved figures
-OUTPUT_DIR = Path("docs/assets/images/examples")
+OUTPUT_DIR = Path(os.environ.get("DATARAX_EXAMPLES_OUTPUT_DIR", "docs/assets/images/examples"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Keep the script entry point bounded for CI and local documentation builds.

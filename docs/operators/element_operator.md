@@ -89,7 +89,6 @@ ElementOperator integrates seamlessly with Datarax's DAG execution:
 
 ```python
 from datarax.pipeline import Pipeline
-from datarax.pipeline import Pipeline
 
 # Build a pipeline with ElementOperator
 pipeline = (

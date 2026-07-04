@@ -10,7 +10,7 @@ This guide documents common pyright type issues encountered when developing Data
 | [Variable access patterns](#2-flax-nnx-variable-access-patterns) | Flax NNX | Use `[...]` slice notation or `.get_value()` |
 | [JAX Array vs bool](#3-jax-array-vs-python-bool) | JAX | Explicit `bool()` conversion |
 | [PRNG key creation](#4-prng-key-creation-and-type-handling) | JAX | Use `jax.random.key()` not `PRNGKey()` |
-| [Module wrapping for DAG](#5-dag-node-type-requirements) | Datarax | Wrap in appropriate Node classes |
+| [Pipeline construction](#5-pipeline-construction) | Datarax | Use keyword arguments for `Pipeline`/`from_dag` |
 | [Batch dimension requirements](#6-batch-dimension-requirements) | JAX | Ensure arrays have shape `(N, ...)` |
 | [Element/Batch PyTree access](#7-elementbatch-pytree-access) | Datarax | Type narrow after dictionary access |
 
@@ -116,8 +116,8 @@ def filter_condition(element: Element) -> bool:
     assert isinstance(score, jax.Array)
     return bool(score > 0.5)  # Safe: not inside JIT
 
-# Usage in Datarax pipeline
-pipeline.filter(filter_condition)  # Predicate called in Python loop
+# The predicate is a plain Python callable, evaluated during Python-level
+# iteration over elements (not inside a JIT-traced function), so bool() is safe.
 ```
 
 **Context 2: Inside JIT-Traced Functions**
@@ -257,7 +257,7 @@ For modules that need persistent random state, use `nnx.Rngs`:
 ```python
 # ✅ Datarax operator pattern - pass rngs to super().__init__()
 from datarax.core import OperatorModule
-from datarax.operators import OperatorConfig
+from datarax.core.operator import OperatorConfig
 
 class StochasticOperator(OperatorModule):
     def __init__(
@@ -653,9 +653,10 @@ DataraxModule (base, extends nnx.Module)
 │   ├── SamplerModule           # Index sampling
 │   └── SharderModule           # Data sharding
 └── DataSourceModule            # Data sources
-    ├── MemorySourceModule      # In-memory data
-    ├── TfdsSourceModule        # TensorFlow Datasets
-    └── HfSourceModule          # HuggingFace Datasets
+    ├── MemorySource            # In-memory data
+    ├── TFDSEagerSource         # TensorFlow Datasets (eager; also TFDSStreamingSource)
+    ├── HFEagerSource           # HuggingFace Datasets (eager; also HFStreamingSource)
+    └── ArrayRecordSourceModule # ArrayRecord files
 ```
 
 ---

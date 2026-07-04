@@ -1,6 +1,6 @@
 # Callbacks
 
-Training callbacks for logging, checkpointing, and early stopping.
+Observer registry for metrics notifications (`MetricsObserver`, `CallbackRegistry`).
 
 ## See Also
 

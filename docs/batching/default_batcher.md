@@ -1,6 +1,6 @@
 # Default Batcher
 
-Standard batching with padding and remainder handling.
+Standard batching with remainder handling (drop_remainder).
 
 ## See Also
 

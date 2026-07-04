@@ -13,11 +13,12 @@ distinct categories. Each requires a different interpretation:
 
 ### Category A — Iteration-bound, no real work
 
-Datarax pays a fixed per-batch overhead (~600 µs) for NNX module
-marshalling around its JIT'd step body. On scenarios with zero or
-trivial transforms, this overhead exceeds the actual data-movement
-cost, so a numpy-host iterator wins on raw throughput because there
-is no work to amortize against the overhead.
+On scenarios with zero or trivial transforms, per-batch dispatch and
+NNX module marshalling around the JIT'd step body dominate the cost:
+there is little data-movement work to amortize that fixed overhead
+against. On such scenarios a numpy-host iterator can report higher raw
+throughput simply because it does even less per batch, so the ratio
+reflects pipeline overhead rather than a computational disadvantage.
 
 | Scenario | Transforms | Real work? |
 |----------|-----------:|:----------:|
@@ -25,29 +26,32 @@ is no work to amortize against the overhead.
 | IO-1 / IO-2 | 0–1 | Minimal |
 | TAB-1 / TAB-2 | 1 (Normalize) | Minimal |
 
-Where readers see a 50× – 200× gap on these scenarios, the gap
-reflects pipeline overhead rather than computational disadvantage.
-Mitigation: use the **scan-mode** adapter (`Datarax-scan`), which
-amortizes NNX marshalling across whole epochs via `Pipeline.scan`.
+After the iteration-path optimization (baselines regenerated
+2026-07-03), Datarax iter-mode itself already reaches high throughput
+on these scenarios — for example, on an RTX 4090: NLP-1/small
+≈194k elem/s, TAB-1/small ≈1.44M elem/s, IO-1 (memory source)
+≈360k elem/s, IO-2/10k ≈290k elem/s (source:
+`benchmarks/baselines/*.json`). Where a numpy-host iterator still edges
+ahead, prefer the **scan-mode** adapter (`Datarax-scan`), which amortizes
+NNX marshalling across whole epochs via `Pipeline.scan`.
 
-### Category B — Asymmetric transform sets
+### Category B — Asymmetric transform sets (historical, no longer occurs)
 
-Several adapters limit themselves to a small `BASIC_TRANSFORMS`
-registry (typically `Normalize` and `CastToFloat32`) and silently
-skip any transform outside that set. When a scenario's transform list
-includes operations beyond that registry, the adapters do not perform
-equivalent work:
+!!! note "Resolved by fail-fast transform resolution"
+    This category described an older behavior and no longer applies.
+    Earlier, some adapters limited themselves to a small
+    `BASIC_TRANSFORMS` registry and silently skipped any transform
+    outside that set, so a measured run could execute a lighter
+    pipeline than the scenario requested.
 
-| Scenario | Datarax stages | Limited adapters' stages | Asymmetry |
-|----------|---------------:|-------------------------:|----------:|
-| PC-1 (depth_5) | 5 | 1 (Normalize) | 5× |
-| PC-1 (depth_10) | 10 | 2 | 5× |
-| CV-1 / CV-2 | 4–5 image ops | 1 | 4–5× |
-| DIST-1, PR-1 | 3+ ops | 1 | 3× |
-
-The throughput gap on these scenarios mixes architectural cost
-against workload mismatch. Reports should annotate which transforms
-each adapter actually executed before drawing conclusions.
+    `resolve_transforms` (`benchmarks/adapters/_utils.py`) now **raises
+    `ValueError` on any unimplemented transform**. An adapter that
+    cannot express a scenario's full transform set is **excluded from
+    that scenario** rather than measured with less work, and a
+    determinism test asserts this for every installed adapter. As a
+    result, every measured cross-framework comparison runs the identical
+    transform set on both sides — there is no asymmetric-measurement
+    situation to annotate around anymore.
 
 ### Category C — Datarax-only territory
 
@@ -57,11 +61,14 @@ that yield raw arrays without operator state cannot implement these
 scenarios and are not in the comparison.
 
 | Scenario | Datarax | Best alternative | Note |
-|----------|--------:|----------------:|:----:|
-| HPC-1 | leads | `tf.data` (limited) | 22× lead |
+|----------|--------:|-----------------:|:----:|
+| HPC-1, PC-3, PC-4, PC-5, XFMR-1 | only implementation | none (excluded) | capability-exclusive |
 
-Datarax has no peer here; the throughput value is the floor of what
-the differentiable pipeline costs, not a relative position.
+Datarax has no peer on these scenarios; the throughput value is the
+floor of what the differentiable/JIT-compiled pipeline costs, not a
+relative position. These are capability-coverage differentiators, not
+head-to-head throughput wins (see
+[Coverage Matrix](https://github.com/avitai/datarax/blob/main/benchmarks/COVERAGE_MATRIX.md)).
 
 ## What the JAX backend means for each adapter
 
@@ -115,20 +122,25 @@ the host. In scan mode an `@nnx.scan`-decorated body consumes
 `length` batches inside one XLA graph; the marshalling cost is paid
 once at compile time and amortized across all iterations.
 
-Measured GPU throughput on representative iteration-bound scenarios
-(A100-class hardware, no transforms or one trivial transform):
+Qualitatively (measured 2026-07-03; RTX 4090 for iter-mode baselines,
+A100 for the cloud profile):
 
-| Scenario | iter mode | scan mode | speedup |
-|----------|----------:|----------:|--------:|
-| NLP-1 (0 transforms) | 70 ms / 100 batches | 2.6 ms / 100 batches | ~27× |
-| TAB-1 (1 transform) | 30 ms / 100 batches | 2.7 ms / 100 batches | ~11× |
-| PC-1 depth_1 (1 MB batches) | 140 ms / 100 batches | ~140 ms / 100 batches | ~1× |
+- **Iteration-bound scenarios with zero or one trivial transform**
+  (NLP-1, TAB-1, IO-1, IO-2) are dominated by per-batch iterator
+  overhead. Scan-mode gives the largest relative gain here because it
+  pays the NNX marshalling cost once per epoch instead of once per
+  batch. For reference, current iter-mode throughput on these
+  scenarios is already high (RTX 4090: NLP-1/small ≈194k elem/s,
+  TAB-1/small ≈1.44M elem/s; source `benchmarks/baselines/*.json`).
+- **Compute- or memory-bandwidth-bound scenarios** (PC-1, CV-1) show
+  little benefit from scan-mode because the per-batch iterator
+  overhead is already a small fraction of total time — the batch cost
+  is dominated by the actual transform/data-movement work (RTX 4090:
+  PC-1 depth_1 ≈370k elem/s, CV-1/small ≈334k elem/s).
 
-Category A scenarios (NLP-1, TAB-1, IO-1, IO-2) are dominated by
-iterator-overhead and recover dramatically. Category B/C scenarios
-(PC-1, CV-1) are compute- or memory-bandwidth-bound and show little
-benefit from scan-mode because the iterator overhead is already a
-small fraction of total time.
+Use throughput ratios as positioning data, not as a fixed speedup
+figure — the exact multiplier depends on hardware, batch size, and
+transform set.
 
 ### Implementation note: cached scan bodies
 
@@ -138,14 +150,13 @@ creates a fresh closure each time and defeats caching — every call
 re-traces and re-compiles, which is slower than iter mode.
 
 `Pipeline.scan` caches its compiled body on the Pipeline instance,
-keyed on `(step_fn identity, length, n_modules, has_init_carry)`.
-Calls with the same signature reuse the cached graph; first call
-pays the trace+compile cost (~150 ms for a small workload), every
-subsequent call costs only the wall-clock dispatch (~2-5 ms for the
-same workload). User code does not need any special pattern to get
-this behaviour — calling `pipeline.scan(step_fn, length=N)` in a
-training loop hits the cache automatically as long as `step_fn` is a
-stable function reference.
+keyed on `(id(step_fn), length, n_modules, has_init_carry)`.
+Calls with the same signature reuse the cached graph; the first call
+pays the one-time trace+compile cost, and every subsequent call costs
+only the wall-clock dispatch. User code does not need any special
+pattern to get this behaviour — calling `pipeline.scan(step_fn,
+length=N)` in a training loop hits the cache automatically as long as
+`step_fn` is a stable function reference.
 
 ## Reading the comparison report
 
@@ -157,7 +168,8 @@ When reviewing the auto-generated `comparison_report.md`:
 2. **Gaps** list scenarios where another framework leads by >1.2×.
    Cross-reference each gap entry against the categories above:
    - Category A: expect substantial recovery from `Datarax-scan`.
-   - Category B: verify both adapters ran the same transform set.
+   - Category B: no longer applies — fail-fast transform resolution
+     guarantees both adapters ran the identical transform set.
    - Category C-adjacent: compare Datarax-iter against Datarax-scan
      for the same workload to confirm whether the gap is iterator
      overhead or something deeper.

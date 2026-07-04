@@ -238,6 +238,8 @@ nav:
           - external: utils/external.md
           - prng: utils/prng.md
           - pytree_utils: utils/pytree_utils.md
+          - cache: utils/cache.md
+          - multirate: utils/multirate.md
       - Command Line Interface:
           - Overview: cli/index.md
           - benchmark: cli/benchmark.md
@@ -275,6 +277,7 @@ nav:
           - device_mesh: distributed/device_mesh.md
           - device_placement: distributed/device_placement.md
           - metrics: distributed/metrics.md
+          - sharding: distributed/sharding.md
       - Memory:
           - Overview: memory/index.md
           - shared_memory_manager: memory/shared_memory_manager.md
@@ -310,6 +313,8 @@ nav:
           - Overview: performance/index.md
           - roofline: performance/roofline.md
           - xla_optimization: performance/xla_optimization.md
+          - goodput: performance/goodput.md
+          - synchronization: performance/synchronization.md
       - Types & Protocols:
           - Overview: root/index.md
           - typing: root/typing.md

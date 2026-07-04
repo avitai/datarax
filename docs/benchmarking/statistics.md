@@ -1,5 +1,8 @@
 # Statistics
 
+!!! info "External package"
+    This page documents [calibrax](https://github.com/avitai/calibrax), the benchmarking library datarax depends on.
+
 Statistical analysis for benchmark measurements, including bootstrap confidence intervals and outlier detection.
 
 ## See Also

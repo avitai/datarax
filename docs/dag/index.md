@@ -130,6 +130,13 @@ Any callable signature works — the args arrive in the order
 ``edges[sink] = [pred_1, pred_2, ...]`` declares.
 
 ```python
+class _Brighten(nnx.Module):
+    """Add a fixed brightness offset."""
+
+    def __call__(self, batch):
+        return {**batch, "image": jnp.clip(batch["image"] + 0.1, 0.0, 1.0)}
+
+
 class _Average(nnx.Module):
     """Element-wise mean of two branches."""
 
@@ -200,6 +207,31 @@ Each stage is also automatically checkpointable (it is an
 ``nnx.Module``), gradient-flowing (its parameters are leaves of
 ``nnx.state(pipeline)``), and JIT-friendly (folded into
 ``Pipeline.step`` and ``Pipeline.scan``).
+
+## Built-in DAG nodes
+
+The `datarax.pipeline.nodes` package provides ready-made nodes for common
+structural transforms:
+
+- **`RebatchNode(group_size)`** — regroups elements within a batch (for
+  example, forming windows or n-grams). Differentiable and scan-safe.
+- **`SplitField(fields)`** — selects a subset of fields from the batch,
+  routing only the named keys downstream.
+- **`CachingIterator(source)`** — wraps an iterator and memoizes its
+  elements at iteration boundaries, mirroring grain's `CacheIterDataset`.
+
+```python
+from datarax.pipeline.nodes import RebatchNode, SplitField
+
+pipeline = Pipeline.from_dag(
+    source=source,
+    nodes={"select": SplitField(["image", "label"]), "regroup": RebatchNode(4)},
+    edges={"select": [], "regroup": ["select"]},
+    sink="regroup",
+    batch_size=8,
+    rngs=nnx.Rngs(0),
+)
+```
 
 ## Whole-epoch JIT with `pipeline.scan`
 

@@ -16,7 +16,6 @@ from datarax import __version__
 
 
 _CONFIG_LOAD_ERRORS = (OSError, tomllib.TOMLDecodeError)
-_PIPELINE_ERRORS = _CONFIG_LOAD_ERRORS + (KeyError, TypeError, ValueError, RuntimeError)
 
 
 def _emit(message: str = "", *, error: bool = False) -> None:
@@ -29,28 +28,6 @@ def _load_config_from_toml(config_path: str) -> dict[str, Any]:
     """Load TOML configuration from disk."""
     with Path(config_path).open("rb") as f:
         return tomllib.load(f)
-
-
-def _coerce_override_value(raw_value: str) -> Any:
-    """Coerce override value into int/float when possible."""
-    for parser in (int, float):
-        try:
-            return parser(raw_value)
-        except ValueError:
-            continue
-    return raw_value
-
-
-def _apply_overrides(config: dict[str, Any], overrides: dict[str, str]) -> None:
-    """Apply dotted-key overrides to a nested config dictionary."""
-    for dotted_key, raw_value in overrides.items():
-        keys = dotted_key.split(".")
-        target = config
-        for key in keys[:-1]:
-            if key not in target or not isinstance(target[key], dict):
-                target[key] = {}
-            target = target[key]
-        target[keys[-1]] = _coerce_override_value(raw_value)
 
 
 def is_config_valid(config_path: str) -> bool:
@@ -74,10 +51,12 @@ def is_config_valid(config_path: str) -> bool:
             _emit("Error: Missing pipeline name", error=True)
             return False
 
-        # Check for DAG format (required)
-        if "dag" not in config and "sources" not in config:
+        # A pipeline must declare its structure in one of the supported
+        # forms: a [dag] table, a [sources] table, or a top-level [[nodes]]
+        # array (the layout produced by `datarax create`).
+        if "dag" not in config and "sources" not in config and "nodes" not in config:
             _emit(
-                "Error: Missing pipeline definition (no [dag] or [sources] section)",
+                "Error: Missing pipeline definition (no [dag], [sources], or [[nodes]] section)",
                 error=True,
             )
             return False
@@ -86,27 +65,6 @@ def is_config_valid(config_path: str) -> bool:
     except _CONFIG_LOAD_ERRORS as e:
         _emit(f"Error validating config: {e}", error=True)
         return False
-
-
-def run_pipeline(config_path: str, overrides: dict[str, str] | None = None) -> int:
-    """Run a pipeline from configuration.
-
-    Args:
-        config_path: Path to the pipeline configuration file.
-        overrides: Optional configuration overrides.
-
-    Returns:
-        Exit code (0 for success).
-    """
-    del overrides  # config-driven runner removed; overrides no-op
-    _emit(
-        f"Config-driven pipeline runner is no longer available. "
-        f"Construct a Pipeline directly in Python — see "
-        f"docs/user_guide/dag_construction.md. "
-        f"(Requested config: {config_path})",
-        error=True,
-    )
-    return 1
 
 
 def run_benchmark(dataset: str, **kwargs: Any) -> int:
@@ -240,48 +198,6 @@ to = "batch"
         return False
 
 
-def profile_pipeline(config_path: str, num_iterations: int = 100) -> dict[str, float]:
-    """Profile a pipeline's performance.
-
-    Args:
-        config_path: Path to pipeline configuration.
-        num_iterations: Number of iterations to profile.
-
-    Returns:
-        Performance metrics.
-    """
-    del num_iterations  # config-driven profiler removed
-    _emit(
-        f"Config-driven pipeline profiler is no longer available. "
-        f"Profile a Pipeline directly in Python — see "
-        f"benchmarks/migrated_examples_comparison.py for an example. "
-        f"(Requested config: {config_path})",
-        error=True,
-    )
-    return {}
-
-
-def _handle_run(args: argparse.Namespace) -> int:
-    """Handle the 'run' subcommand."""
-    if not Path(args.config_path).exists():
-        _emit(f"Error: Config file not found: {args.config_path}", error=True)
-        return 1
-
-    overrides = {}
-    if args.override:
-        for override in args.override:
-            if "=" not in override:
-                _emit(
-                    f"Error: Invalid override format: {override}. Expected format: key=value",
-                    error=True,
-                )
-                return 1
-            key, value = override.split("=", 1)
-            overrides[key] = value
-
-    return run_pipeline(args.config_path, overrides=overrides)
-
-
 def _handle_validate(args: argparse.Namespace) -> int:
     """Handle the 'validate' subcommand."""
     if not Path(args.config_path).exists():
@@ -319,16 +235,6 @@ def _handle_create(args: argparse.Namespace) -> int:
     return 0 if is_pipeline_template_written_to_path(args.output, args.template) else 1
 
 
-def _handle_profile(args: argparse.Namespace) -> int:
-    """Handle the 'profile' subcommand."""
-    if not Path(args.config_path).exists():
-        _emit(f"Error: Config file not found: {args.config_path}", error=True)
-        return 1
-
-    metrics = profile_pipeline(args.config_path, args.num_iterations)
-    return 0 if metrics else 1
-
-
 def _handle_version(args: argparse.Namespace) -> int:
     """Handle the 'version' subcommand."""
     del args  # unused
@@ -353,18 +259,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
-
-    # Command: run
-    run_parser = subparsers.add_parser("run", help="Run a pipeline defined in a configuration file")
-    run_parser.add_argument(
-        "--config-path", "-c", required=True, help="Path to the configuration file"
-    )
-    run_parser.add_argument(
-        "--override",
-        "-o",
-        action="append",
-        help="Override a configuration value (format: key=value)",
-    )
 
     # Command: validate
     validate_parser = subparsers.add_parser("validate", help="Validate a pipeline configuration")
@@ -404,15 +298,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Template type",
     )
 
-    # Command: profile
-    profile_parser = subparsers.add_parser("profile", help="Profile pipeline performance")
-    profile_parser.add_argument(
-        "--config-path", "-c", required=True, help="Path to the configuration file"
-    )
-    profile_parser.add_argument(
-        "--num-iterations", "-n", type=int, default=100, help="Number of iterations to profile"
-    )
-
     # Command: version
     subparsers.add_parser("version", help="Print the Datarax version")
 
@@ -421,12 +306,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 # Command dispatch table
 _HANDLERS: dict[str, Any] = {
-    "run": _handle_run,
     "validate": _handle_validate,
     "benchmark": _handle_benchmark,
     "list": _handle_list,
     "create": _handle_create,
-    "profile": _handle_profile,
     "version": _handle_version,
 }
 

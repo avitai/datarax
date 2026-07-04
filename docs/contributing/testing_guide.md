@@ -157,7 +157,7 @@ If GPU tests are failing but CPU tests pass:
 2. Ensure you have the correct JAX CUDA version installed
 3. Try setting `XLA_PYTHON_CLIENT_MEM_FRACTION=0.5` to limit memory usage
 4. Check for CUDA version mismatches between JAX and your system
-5. Ensure your `.env` file has correct CUDA library paths (run `./setup.sh` to configure)
+5. Regenerate the backend configuration in `.datarax.env` (run `./setup.sh --backend cuda12` to configure the CUDA 12 backend)
 
 ### Test Selection Issues
 

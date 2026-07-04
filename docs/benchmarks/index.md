@@ -1,6 +1,8 @@
 # Benchmark Results
 
-Datarax includes a benchmark catalog of 28 scenarios and a canonical cross-framework comparison set of 13 scenarios across 15 adapters (Datarax + 14 peer frameworks). Results are analyzed with [calibrax](dashboard.md) and published to a W&B dashboard.
+Datarax includes a benchmark catalog of 37 scenarios and a canonical cross-framework comparison set across 16 adapters (Datarax iter + scan + 14 peer frameworks). Results are analyzed with [calibrax](dashboard.md) and published to a W&B dashboard.
+
+Per-adapter scenario coverage is recorded empirically in the [Coverage Matrix](https://github.com/avitai/datarax/blob/main/benchmarks/COVERAGE_MATRIX.md); scenarios where a peer framework leads are tracked in the [Optimization Backlog](https://github.com/avitai/datarax/blob/main/benchmarks/OPTIMIZATION_BACKLOG.md).
 
 ## Overview
 
@@ -70,18 +72,21 @@ uv pip install "calibrax[wandb] @ git+https://github.com/avitai/calibrax.git"
 
 ### 2. Run
 
-=== "datarax-bench CLI (Recommended)"
+=== "uv run python -m benchmarks.cli CLI (Recommended)"
 
-    The `datarax-bench` CLI is the preferred entry point. It runs benchmarks, converts results, stores them, and optionally exports to W&B — all in one command.
+    The `uv run python -m benchmarks.cli` CLI is the preferred entry point. It runs benchmarks, converts results, stores them, and optionally exports to W&B — all in one command.
 
     ```bash
-    datarax-bench run --platform cpu --repetitions 5
-    datarax-bench run --platform cpu --scenarios CV-1 NLP-1 --adapters Datarax "Google Grain" --repetitions 3
-    datarax-bench run --platform cpu --wandb --charts  # With W&B export and chart generation
+    uv run python -m benchmarks.cli run --platform cpu --repetitions 3
+    uv run python -m benchmarks.cli run --platform cpu --scenarios CV-1 --scenarios NLP-1 --adapters Datarax --adapters "Google Grain" --repetitions 3
+    uv run python -m benchmarks.cli run --platform cpu --wandb --charts  # With W&B export and chart generation
     ```
 
-    !!! note "Nightly CI uses `datarax-bench`"
-        The nightly CI workflow uses `datarax-bench run` — this is the preferred entry point for all benchmark runs.
+    !!! note "Repeated flags for the `benchmarks.cli` CLI"
+        The click-based `benchmarks.cli run` command takes **repeated** `--scenarios`/`--adapters` flags (one value each), not a space-separated list. The space-separated form (`--scenarios CV-1 NLP-1`) works only for the argparse runners (`full_runner.py`, `benchmark_runner.py`).
+
+    !!! note "Nightly CI runs `benchmarks.cli run`"
+        The nightly CI workflow runs `uv run python -m benchmarks.cli run` — this is the preferred entry point for all benchmark runs.
 
 === "Shell Script"
 
@@ -157,20 +162,23 @@ Results are saved to a local `benchmark-data/` directory (not committed to versi
 
 #### Runner Options
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--platform` | `cpu` | Target platform (see [Platforms](#platforms) below) |
-| `--scenarios` | profile include list | Space-separated scenario IDs (see [Scenarios](#scenarios) below). Explicit `--scenarios` overrides profile include/exclude lists. |
-| `--adapters` | all installed | Space-separated adapter names (see [Adapters](#adapters) below) |
-| `--profile` | `ci_cpu` | Hardware profile (see [Profiles](#hardware-profiles) below) |
-| `--repetitions` | `5` | Number of repetitions per scenario (median is selected) |
-| `--output-dir` | `benchmark-data/reports/latest` | Output directory for result JSONs (local only, not committed) |
-| `--wandb/--no-wandb` | `--wandb` | Enable/disable W&B export (`datarax-bench` only) |
-| `--charts/--no-charts` | `--charts` | Enable/disable chart generation (`datarax-bench` only) |
-| `--baseline/--no-baseline` | `--baseline` | Set run as baseline for future comparisons (`datarax-bench` only) |
-| `--data` | `benchmark-data` | calibrax store directory path (`datarax-bench` only) |
-| `--project` | from config | W&B project override (`datarax-bench` only) |
-| `--entity` | from config | W&B entity override (`datarax-bench` only) |
+Defaults differ between the click CLI (`benchmarks.cli run`) and the argparse
+runner (`benchmarks.runners.full_runner`); both are shown where they diverge.
+
+| Flag | `cli run` default | `full_runner` default | Description |
+|------|-------------------|-----------------------|-------------|
+| `--platform` | `cpu` | `cpu` | Target platform (see [Platforms](#platforms) below) |
+| `--scenarios` | profile include list | profile include list | Scenario IDs (see [Scenarios](#scenarios) below). `cli run` takes **repeated** flags (`--scenarios CV-1 --scenarios NLP-1`); `full_runner` takes a space-separated list (`--scenarios CV-1 NLP-1`). Explicit values override profile include/exclude lists. |
+| `--adapters` | all installed | all installed | Adapter names (see [Adapters](#adapters) below). `cli run` takes **repeated** flags; `full_runner` takes a space-separated list. |
+| `--profile` | `ci_cpu` | `ci_cpu` | Hardware profile (see [Profiles](#hardware-profiles) below) |
+| `--repetitions` | `3` | `5` | Number of repetitions per scenario (median is selected) |
+| `--output-dir` | `benchmark-data/reports/latest` | `benchmark-data/reports/releases/v1.0` | Output directory for result JSONs (local only, not committed) |
+| `--wandb/--no-wandb` | `--wandb` | n/a | Enable/disable W&B export (`benchmarks.cli` only) |
+| `--charts/--no-charts` | `--charts` | n/a | Enable/disable chart generation (`benchmarks.cli` only) |
+| `--baseline/--no-baseline` | `--baseline` | n/a | Set run as baseline for future comparisons (`benchmarks.cli` only) |
+| `--data` | `benchmark-data` | n/a | calibrax store directory path (`benchmarks.cli` only) |
+| `--project` | from config | n/a | W&B project override (`benchmarks.cli` only) |
+| `--entity` | from config | n/a | W&B entity override (`benchmarks.cli` only) |
 
 #### Platforms
 
@@ -182,7 +190,7 @@ Results are saved to a local `benchmark-data/` directory (not committed to versi
 
 #### Scenarios
 
-28 scenarios across 10 categories. Pass any combination to `--scenarios`:
+37 scenarios across 10 categories (28 standard + 9 heavy `H*` variants). Pass any combination to `--scenarios`:
 
 | ID | Category | Description |
 |----|----------|-------------|
@@ -214,30 +222,45 @@ Results are saved to a local `benchmark-data/` directory (not committed to versi
 | `AUG-3` | Augmentation | Stochastic depth pipeline behavior |
 | `NNX-1` | Datarax Unique | Flax NNX module integration overhead |
 | `XFMR-1` | Datarax Unique | JIT + vmap transform acceleration |
+| `HCV-1` | Computer Vision (heavy) | ImageNet-scale image classification |
+| `HCV-2` | Computer Vision (heavy) | Dense prediction / segmentation pipeline |
+| `HNLP-1` | NLP (heavy) | Long-context LLM pretraining data pipeline |
+| `HNLP-2` | NLP (heavy) | Text tokenization pipeline |
+| `HTAB-1` | Tabular (heavy) | Large-scale recommendation system pipeline |
+| `HMM-1` | Multimodal (heavy) | Vision-language contrastive pipeline (CLIP-scale) |
+| `HPC-1` | Pipeline Complexity (heavy) | SSL/contrastive learning augmentation chain |
+| `HPC-2` | Pipeline Complexity (heavy) | Multi-view DAG augmentation |
+| `HDIST-1` | Distributed (heavy) | Multi-device sharded data pipeline |
+
+!!! note "Heavy (`H*`) scenarios"
+    The `H*` variants use production-realistic, ImageNet/CLIP-scale data. They run on the A100 cloud profile (`gpu_a100`); the 24 GB `gpu_rtx4090` profile runs the non-heavy set. See [Hardware Profiles](#hardware-profiles).
 
 #### Adapters
 
-15 adapters (Datarax + 14 peer frameworks). Pass any combination to `--adapters`. Only adapters whose framework is installed will run.
+16 adapters (Datarax iter + scan + 14 peer frameworks). Pass any combination to `--adapters`. Only adapters whose framework is installed will run.
 
-Each adapter supports only the scenarios where it implements the required transforms (e.g., CV-1 requires Normalize + CastToFloat32). This ensures fair comparisons — every framework performs equivalent work on each scenario.
+Each adapter supports only the scenarios where it implements the required transforms (e.g., CV-1 requires Normalize + CastToFloat32). Adapters that cannot implement a scenario's transforms are excluded from that scenario rather than measured with less work. The `Scenarios` column below is the empirical per-adapter coverage count from the [Coverage Matrix](https://github.com/avitai/datarax/blob/main/benchmarks/COVERAGE_MATRIX.md); counts for uninstalled frameworks reflect their declared support.
 
-| `--adapters` value | Tier | Framework | Supported Scenarios |
-|--------------------|------|-----------|-------------------|
-| `Datarax` | -- | Datarax (always available) | All 28 |
-| `Google Grain` | Tier 1 | Google Grain | CV-1, NLP-1, TAB-1, DIST-1, PR-1 |
-| `jax-dataloader` | Tier 1 | JAX DataLoader | CV-1 |
-| `tf.data` | Tier 2 | TensorFlow tf.data | CV-1, NLP-1, TAB-1, DIST-1, PR-1 |
-| `PyTorch DataLoader` | Tier 2 | PyTorch DataLoader | CV-1, NLP-1, TAB-1, DIST-1, PR-1 |
-| `NVIDIA DALI` | Tier 2 | NVIDIA DALI | CV-1, NLP-1, TAB-1, DIST-1 |
-| `FFCV` | Tier 2 | FFCV | CV-1 |
-| `SPDL` | Tier 2 | SPDL | CV-1, NLP-1, TAB-1, DIST-1 |
-| `MosaicML Streaming` | Tier 3 | MosaicML Streaming | CV-1, NLP-1 |
-| `WebDataset` | Tier 3 | WebDataset | CV-1, NLP-1 |
-| `HuggingFace Datasets` | Tier 3 | HuggingFace Datasets | NLP-1, TAB-1 |
-| `Ray Data` | Tier 3 | Ray Data | NLP-1, TAB-1 |
-| `LitData` | Tier 3 | LitData | CV-1 |
-| `Energon` | Tier 3 | Megatron Energon | MM-1 |
-| `Deep Lake` | Tier 3 | Deep Lake | CV-1 |
+| `--adapters` value | Tier | Framework | Scenarios |
+|--------------------|------|-----------|:---------:|
+| `Datarax` | -- | Datarax iter-mode (always available) | 37 |
+| `Datarax-scan` | -- | Datarax whole-epoch `nnx.scan` variant | 37 |
+| `Google Grain` | Tier 1 | Google Grain | 25 |
+| `jax-dataloader` | Tier 1 | JAX DataLoader | 13 |
+| `tf.data` | Tier 2 | TensorFlow tf.data | 25 |
+| `PyTorch DataLoader` | Tier 2 | PyTorch DataLoader | 25 |
+| `NVIDIA DALI` | Tier 2 | NVIDIA DALI | 9 |
+| `FFCV` | Tier 2 | FFCV | 13 |
+| `SPDL` | Tier 2 | SPDL | 25 |
+| `MosaicML Streaming` | Tier 3 | MosaicML Streaming | 2 |
+| `WebDataset` | Tier 3 | WebDataset | 2 |
+| `HuggingFace Datasets` | Tier 3 | HuggingFace Datasets | 13 |
+| `Ray Data` | Tier 3 | Ray Data | 2 |
+| `LitData` | Tier 3 | LitData | 1 |
+| `Energon` | Tier 3 | Megatron Energon | 1 |
+| `Deep Lake` | Tier 3 | Deep Lake | 13 |
+
+**25 of 37 scenarios run on ≥3 frameworks** — the set with meaningful cross-framework comparison. Best-covered are CV-1 and NLP-1 (14 frameworks each) and TAB-1 (12). See the [Coverage Matrix](https://github.com/avitai/datarax/blob/main/benchmarks/COVERAGE_MATRIX.md) for the full per-scenario breakdown.
 
 !!! warning "Names with spaces require shell quotes"
     Adapter names are exact-match. Names containing spaces must be quoted on the command line:
@@ -250,11 +273,12 @@ Profiles control warmup batches, measurement batches, and timeouts:
 | Profile | Backend | Warmup | Batches | Timeout | Default Scenario Set |
 |---------|---------|--------|---------|---------|----------------------|
 | `ci_cpu` | CPU | 3 | 20 | 5 min | 6 scenarios (CI gate set) |
-| `gpu_a100` | GPU | 8 | 50 | -- | 13 core cross-framework scenarios |
-| `gpu_rtx4090` | GPU | 6 | 40 | -- | 13 core cross-framework scenarios |
-| `tpu_v5e` | TPU | 8 | 50 | -- | 10 TPU-compatible scenarios |
+| `gpu_a100` | GPU | 8 | 50 | 10 min | 15 scenarios (includes heavy `HCV-1`, `HPC-1`) |
+| `gpu_rtx4090` | GPU | 6 | 40 | 10 min | 28 scenarios (all non-heavy; fit the 24 GB card) |
+| `gpu_rtx4090_real` | GPU | 6 | 40 | 10 min | 5 real-data scenarios (CV-1, CV-3, NLP-1, TAB-1, MM-1 pinned to `real_*` variants) |
+| `tpu_v5e` | TPU | 8 | 50 | 10 min | 10 TPU-compatible scenarios |
 
-Profile scenario include lists are enforced by default. Use `--scenarios` to run an explicit scenario subset outside the default profile list.
+Profile scenario include lists are enforced by default. Use `--scenarios` to run an explicit scenario subset outside the default profile list. The `gpu_rtx4090_real` profile serves every adapter the same raw numpy bytes from cached real datasets, pinning each scenario to its `real_*` variant (set `DATARAX_BENCH_DOWNLOAD=1` for the one-time materialization).
 
 ### 3. Analyze
 

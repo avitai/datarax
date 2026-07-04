@@ -1,77 +1,81 @@
 # Command Line Interface
 
-Command-line tools for running and benchmarking Datarax pipelines without writing Python code.
+Command-line helpers for validating configs, scaffolding templates, and
+inspecting a Datarax installation. Pipelines themselves are built in Python
+(see the [DAG Construction Guide](../user_guide/dag_construction.md)).
 
 ## Commands
 
 | Command | Purpose | Example |
 |---------|---------|---------|
-| `datarax run` | Execute pipeline | `datarax run config.yaml` |
-| `datarax benchmark` | Measure performance | `datarax benchmark pipeline.yaml` |
+| `datarax validate` | Validate a pipeline config | `datarax validate -c pipeline.toml` |
+| `datarax create` | Scaffold a config template | `datarax create -o pipeline.toml -t basic` |
+| `datarax list` | List available components | `datarax list --type sources` |
+| `datarax benchmark` | Show a calibrax store summary | `datarax benchmark --dataset synthetic` |
+| `datarax version` | Print the installed version | `datarax version` |
 
 !!! note "Key points"
 
-    - CLI is useful for quick experiments and CI/CD
-    - Config files define pipelines declaratively
-    - Benchmark command includes warmup automatically
-    - Use Python API for complex workflows
+    - Config files are TOML and are validated, not executed, by the CLI
+    - `datarax benchmark` delegates to [calibrax](https://github.com/avitai/calibrax)
+      and prints a store summary; for comparative benchmarks use
+      `uv run python -m benchmarks.cli run`
+    - Build and run pipelines with the Python API
 
 ## Quick Start
 
 ```bash
-# Run a pipeline from config
-datarax run config.yaml
+# Scaffold a template, then validate it
+datarax create --output pipeline.toml --template basic
+datarax validate --config-path pipeline.toml
 
-# Benchmark pipeline performance
-datarax benchmark config.yaml --batches 100
+# List the registered source components
+datarax list --type sources
 
-# Get help
-datarax --help
+# Print the installed version
+datarax version
 ```
 
 ## Modules
 
 - [main](main.md) - Main CLI entry point and commands
-- [benchmark](benchmark.md) - CLI benchmark tool for performance testing
+- [benchmark](benchmark.md) - `python -m datarax.cli.benchmark` timing tool
 
 ## Config File Format
 
-```yaml
-# config.yaml
-source:
-  type: hf
-  name: mnist
-  split: train
+`datarax create` writes a TOML template describing the pipeline as a list of
+nodes and edges:
 
-pipeline:
-  batch_size: 32
-  transforms:
-    - type: normalize
-    - type: augment
-      probability: 0.5
+```toml
+[pipeline]
+name = "my_pipeline"
 
-output:
-  format: tfrecord
-  path: ./output
+[[nodes]]
+id = "source"
+type = "DataSource"
+class = "MemorySource"
+
+[nodes.params]
+num_samples = 1000
+sample_shape = [28, 28, 1]
+
+[[nodes]]
+id = "batch"
+type = "BatchNode"
+
+[nodes.params]
+batch_size = 32
+
+[[edges]]
+from = "source"
+to = "batch"
 ```
 
-## Benchmark Output
-
-```bash
-$ datarax benchmark config.yaml --batches 100
-
-Pipeline Benchmark Results
-==========================
-Warmup batches: 10
-Measured batches: 100
-
-Throughput: 1234.56 samples/sec
-Latency (mean): 25.6 ms
-Latency (p99): 32.1 ms
-```
+`datarax validate` accepts this `[[nodes]]` layout as well as configs that
+declare a `[dag]` or `[sources]` section.
 
 ## See Also
 
 - [Config](../config/index.md) - Configuration system
 - [Benchmarking](../benchmarking/index.md) - Programmatic benchmarking
-- [Installation](../getting_started/installation.md) - Installing CLI
+- [Installation](../getting_started/installation.md) - Installing the CLI

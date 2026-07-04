@@ -1,6 +1,6 @@
 # Structural Types
 
-Structural type definitions for data layouts.
+StructuralModule — base class for non-parametric structural processors (batchers, samplers, sources, sharders).
 
 ## See Also
 

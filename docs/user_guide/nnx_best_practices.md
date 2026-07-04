@@ -248,7 +248,7 @@ def train_step(model, optimizer, x, y):
         return jnp.mean((y_pred - y) ** 2)
 
     loss, grads = nnx.value_and_grad(loss_fn)(model)
-    optimizer.update(grads)
+    optimizer.update(model, grads)
     return loss
 ```
 
@@ -344,7 +344,7 @@ for path, value in nnx.iter_graph(model):
 nnx.display(model)
 
 # Tabular summary
-print(nnx.tabulate(model)(jnp.ones((1, 784))))
+print(nnx.tabulate(model, jnp.ones((1, 784))))
 ```
 
 ## See Also

@@ -1,6 +1,6 @@
 # Modality
 
-Data modality definitions (image, text, audio).
+Base classes for single-modality (per-field) operators.
 
 ## See Also
 

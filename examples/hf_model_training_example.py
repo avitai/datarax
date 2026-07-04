@@ -11,8 +11,8 @@ import jax.numpy as jnp
 import optax
 from flax import nnx
 
-from datarax.core import Pipeline  # type: ignore[reportAttributeAccessIssue]
 from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.pipeline import Pipeline
 from datarax.sources import HFEagerConfig, HFEagerSource
 
 
@@ -173,7 +173,7 @@ def main():
 
     # Create data source for SST-2 dataset using config-based API
     train_config = HFEagerConfig(
-        name="glue",
+        name="nyu-mll/glue",
         split="train[:sst2]",  # SST-2 subset of GLUE
         shuffle=True,
         seed=42,
@@ -181,7 +181,7 @@ def main():
     train_source = HFEagerSource(train_config, rngs=nnx.Rngs(0))
 
     val_config = HFEagerConfig(
-        name="glue",
+        name="nyu-mll/glue",
         split="validation[:sst2]",
     )
     val_source = HFEagerSource(val_config, rngs=nnx.Rngs(1))
@@ -196,10 +196,12 @@ def main():
         rngs=nnx.Rngs(0),
     )
 
-    # Create data streams with transformations using the fluent API
-    train_stream = Pipeline(train_source).map(tokenizer).batch(batch_size=32)
+    # Create data streams with the tokenizer as a pipeline stage
+    train_stream = Pipeline(
+        source=train_source, stages=[tokenizer], batch_size=32, rngs=nnx.Rngs(2)
+    )
 
-    val_stream = Pipeline(val_source).map(tokenizer).batch(batch_size=64)
+    val_stream = Pipeline(source=val_source, stages=[tokenizer], batch_size=64, rngs=nnx.Rngs(3))
 
     print("Initializing model...")
 

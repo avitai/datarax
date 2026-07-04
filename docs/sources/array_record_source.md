@@ -1,6 +1,6 @@
 # Array Record Source
 
-Data source for ArrayRecord format (efficient columnar storage).
+Data source for ArrayRecord format (efficient record-oriented storage with parallel random access).
 
 ## See Also
 

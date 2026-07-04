@@ -211,4 +211,3 @@ for i, batch in enumerate(pipeline):
 - **[Core Concepts](core_concepts.md)**: Deep dive into the Three-Tier Architecture.
 - **[API Reference](../core/index.md)**: Full API details for Operators and Nodes.
 - **[Examples](../examples/overview.md)**: Simple pipeline tutorials.
-```

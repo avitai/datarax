@@ -22,7 +22,7 @@ handler = OrbaxCheckpointHandler()
 
 # Use as context manager for automatic cleanup
 with OrbaxCheckpointHandler() as handler:
-    handler.save("./checkpoints", state, step=1)
+    handler.save_to_directory("./checkpoints", state, step=1)
     restored = handler.restore("./checkpoints")
 ```
 
@@ -45,7 +45,7 @@ state = {
 }
 
 # Save checkpoint
-handler.save(
+handler.save_to_directory(
     directory="./checkpoints",
     target=state,
     step=100,      # Optional step number
@@ -108,8 +108,38 @@ with OrbaxCheckpointHandler() as handler:
         "pipeline_step": i,
         # Add any custom state you need to track
     }
-    handler.save("./pipeline_ckpt", state, step=i)
+    handler.save_to_directory("./pipeline_ckpt", state, step=i)
 ```
+
+## Pipeline Iterator State
+
+``iter(pipeline)`` over a random-access source returns a
+``PipelineIterator`` — a compiled iteration session with two
+checkpointing surfaces:
+
+- **Module state**: the live pipeline module (position, RNG counts) is
+  synced at every yield boundary, so checkpointing the pipeline with
+  ``nnx.split``/Orbax — inside the loop or after it — always captures
+  exactly the batches already consumed.
+- **Iterator state**: a lighter, JSON-serializable alternative for data
+  checkpoints that should live outside the module snapshot:
+
+```python
+iterator = iter(pipeline)
+for step, batch in enumerate(iterator):
+    train_step(model, batch)
+    if step % 1000 == 0:
+        data_state = iterator.get_state()  # {"position": ..., "rng_counts": [...]}
+        save_checkpoint(model, data_state)
+
+# Resume later: identical pipeline configuration, then restore.
+iterator = iter(pipeline)
+iterator.set_state(data_state)
+```
+
+``get_state()`` returns a JSON-serializable dict naming the batches the
+caller has already consumed; ``set_state()`` requires a pipeline with the
+same structure and seeds as the one that produced the state.
 
 ## Checkpointable Iterator Pattern
 
@@ -180,7 +210,7 @@ state = {
 }
 
 with OrbaxCheckpointHandler() as handler:
-    handler.save("./checkpoints", state, step=1)
+    handler.save_to_directory("./checkpoints", state, step=1)
     restored = handler.restore("./checkpoints")
 
 # Keys are properly restored
@@ -196,7 +226,7 @@ with OrbaxCheckpointHandler() as handler:
     # Save multiple checkpoints with keep=N
     for step in range(100):
         if step % 10 == 0:
-            handler.save(
+            handler.save_to_directory(
                 "./checkpoints",
                 {"step": step},
                 step=step,
@@ -213,10 +243,10 @@ with OrbaxCheckpointHandler() as handler:
 ```python
 with OrbaxCheckpointHandler() as handler:
     # First save
-    handler.save("./checkpoints", {"v": 1}, step=1)
+    handler.save_to_directory("./checkpoints", {"v": 1}, step=1)
 
     # Overwrite existing checkpoint
-    handler.save("./checkpoints", {"v": 2}, step=1, overwrite=True)
+    handler.save_to_directory("./checkpoints", {"v": 2}, step=1, overwrite=True)
 ```
 
 ## Best Practices

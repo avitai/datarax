@@ -9,16 +9,17 @@
 | Feature | Description |
 |---------|-------------|
 | **Automatic conversion** | TensorFlow tensors → JAX arrays |
-| **Built-in prefetching** | Uses `tf.data.AUTOTUNE` for performance |
+| **One-time load** | Eager source converts TF→JAX at init, then tears down TensorFlow |
 | **Supervised mode** | Optional `(image, label)` tuple unpacking |
-| **Shuffling** | TensorFlow-native shuffle with buffer |
-| **Caching** | Optional dataset caching for repeated epochs |
+| **Shuffling** | O(1)-memory Feistel index shuffle (same split as HF source) |
+| **Fixed prefetch** | Streaming source uses a fixed `prefetch_buffer=2`, deliberately not AUTOTUNE |
 
 !!! note "Key points"
 
     - TFDS handles download and preparation automatically
     - Use `as_supervised=True` to get `{"image": ..., "label": ...}` format
-    - TensorFlow's prefetching is applied automatically for performance
+    - The eager source performs a one-time TF→JAX conversion at init and tears TensorFlow down afterward; iteration is then pure JAX
+    - The streaming source uses a fixed `prefetch_buffer=2` (deliberately not `tf.data.AUTOTUNE`) to avoid thread storms
     - The source tracks epoch and index for stateful training loops
 
 ## Installation
@@ -83,28 +84,34 @@ for step in range(10000):
 
 ## Shuffling
 
-Enable shuffling with configurable buffer:
+The eager source uses the same O(1)-memory Feistel index shuffle as the HF source
+(no shuffle buffer):
 
 ```python
 config = TFDSEagerConfig(
-    name="imagenet2012",
+    name="cifar10",
     split="train",
     shuffle=True,
-    shuffle_buffer_size=10000,
-    seed=42,
+    seed=42,  # Integer seed for Grain's index shuffle
 )
 source = TFDSEagerSource(config, rngs=nnx.Rngs(42))
 ```
 
-## Caching
+For ImageNet-scale splits that do not fit in memory, use the streaming path via
+`from_tfds(name, split, ...)` (or `TFDSStreamingConfig` directly), which streams
+with a fixed prefetch buffer instead of loading everything at init.
 
-Cache the dataset for faster repeated epochs:
+## Apply Caching
+
+The `cacheable` flag is the module-level apply cache (memoizing the result of the
+processing `apply`), not a dataset cache — the eager source already holds all data
+in memory as JAX arrays, so no dataset-level caching is needed:
 
 ```python
 config = TFDSEagerConfig(
     name="mnist",
     split="train",
-    cacheable=True,  # Cache in memory after first epoch
+    cacheable=True,  # Enables the module-level apply cache
 )
 source = TFDSEagerSource(config)
 ```
@@ -144,7 +151,6 @@ config = TFDSEagerConfig(
 ## Integration with DAG Pipelines
 
 ```python
-from datarax.pipeline import Pipeline
 from datarax.pipeline import Pipeline
 
 config = TFDSEagerConfig(

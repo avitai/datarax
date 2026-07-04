@@ -1,5 +1,8 @@
 # Benchmarking
 
+!!! info "External package"
+    This page documents [calibrax](https://github.com/avitai/calibrax), the benchmarking library datarax depends on.
+
 Performance measurement and analysis tools for data pipelines. Use these tools to measure throughput, identify bottlenecks, and track performance regressions.
 
 ## Tools Overview
@@ -16,7 +19,7 @@ Performance measurement and analysis tools for data pipelines. Use these tools t
 !!! tip "Benchmarking best practices"
     - Always warm up pipelines before benchmarking (JIT compilation)
     - Use `block_until_ready()` for accurate JAX timing
-    - Comparative benchmarks control for variance automatically
+    - Attach confidence bounds via `Metric(lower=, upper=, samples=)` and use `calibrax.statistics` for significance testing
     - Profile first, optimize second
 
 ## Quick Start
@@ -60,8 +63,9 @@ print(f"GPU memory: {usage['gpu_memory_used_mb']:.1f} MB used")
 # Analyze pipeline memory patterns
 optimizer = MemoryOptimizer()
 analysis = optimizer.analyze_pipeline_memory(pipeline_fn, sample_data)
-for suggestion in analysis["suggestions"]:
-    print(f"  Suggestion: {suggestion}")
+if analysis is not None:
+    for suggestion in analysis.suggestions:
+        print(f"  Suggestion: {suggestion}")
 ```
 
 ## See Also

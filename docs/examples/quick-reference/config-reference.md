@@ -1,6 +1,6 @@
 # Configuration Reference
 
-All Datarax config dataclasses and their fields. Configs are validated at construction time via `__post_init__`.
+All Datarax config dataclasses and their fields. Configs are validated at construction time via `__post_init__`. Every config is a frozen dataclass -- once constructed it is immutable, and any attribute assignment raises `FrozenInstanceError`.
 
 ## Config Hierarchy
 
@@ -16,6 +16,7 @@ classDiagram
         +cacheable: bool = False
         +batch_stats_fn: Callable | None = None
         +precomputed_stats: dict | None = None
+        ~frozen dataclass (all subclasses inherit)~
     }
     class OperatorConfig {
         +stochastic: bool = False
@@ -25,7 +26,6 @@ classDiagram
     class StructuralConfig {
         +stochastic: bool = False
         +stream_name: str | None = None
-        ~frozen after init~
     }
 ```
 
@@ -117,7 +117,7 @@ Config for `BatchMixOperator` (MixUp/CutMix). Always stochastic.
 
 **Source**: `datarax.core.config.StructuralConfig`
 
-Config for structural modules (samplers, sources). **Frozen after initialization** -- cannot be modified at runtime.
+Config for structural modules (samplers, sources). Like every Datarax config, it is a frozen dataclass -- immutable after construction and cannot be modified at runtime.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -137,12 +137,12 @@ These configs extend the base classes for specific use cases:
 
 | Config | Extends | Module | Key Fields |
 |--------|---------|--------|------------|
-| `MemorySourceConfig` | `StructuralConfig` | `MemorySource` | `shuffle`, `seed`, `num_epochs` |
+| `MemorySourceConfig` | `StructuralConfig` | `MemorySource` | `shuffle`, `cache_size`, `prefetch_size`, `track_metadata`, `shard_id`, `num_workers` |
 | `TFDSEagerConfig` | `StructuralConfig` | `TFDSEagerSource` | `name`, `split`, `data_dir`, `try_gcs` |
 | `HFEagerConfig` | `StructuralConfig` | `HFEagerSource` | `name`, `split`, `data_dir` |
 | `EpochAwareSamplerConfig` | `StructuralConfig` | `EpochAwareSamplerModule` | `num_records`, `num_epochs`, `shuffle`, `seed` |
 | `CompositeOperatorConfig` | `OperatorConfig` | `CompositeOperatorModule` | `strategy` |
-| `ProbabilisticOperatorConfig` | `OperatorConfig` | `ProbabilisticOperator` | `probability` |
-| `SelectorOperatorConfig` | `OperatorConfig` | `SelectorOperator` | `selection_mode` |
+| `ProbabilisticOperatorConfig` | `OperatorConfig` | `ProbabilisticOperator` | `operator` (required), `probability` |
+| `SelectorOperatorConfig` | `OperatorConfig` | `SelectorOperator` | `operators` (required), `weights` |
 
 See the [API Reference](../../api_reference/index.md) for complete field documentation.

@@ -85,7 +85,6 @@ Build optimized pipelines by composing operators and using proper batch sizes:
 
 ```python
 from datarax.pipeline import Pipeline
-from datarax.pipeline import Pipeline
 from datarax.distributed.device_placement import get_batch_size_recommendation
 
 # Get hardware-optimized batch size
@@ -230,8 +229,8 @@ When submitting a PR with performance improvements:
 Datarax provides benchmark utilities for measuring performance:
 
 ```bash
-# Run full comparative benchmarks via CLI
-uv run datarax-bench run --platform cpu
+# Run full comparative benchmarks via the benchmarks CLI module
+uv run python -m benchmarks.cli run --platform cpu
 
 # Run specific benchmark tests
 JAX_PLATFORMS=cpu uv run pytest tests/benchmarks/ -v

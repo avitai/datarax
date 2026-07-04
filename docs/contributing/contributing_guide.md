@@ -70,12 +70,14 @@ All Datarax components **must** inherit from appropriate base classes:
 
 ```python
 from datarax.core import DataraxModule
+from datarax.core.config import DataraxModuleConfig
 import flax.nnx as nnx
 
 # ✅ Correct: Inherit from DataraxModule
 class MyCustomModule(DataraxModule):
-    def __init__(self, param=10, name="my_module"):
-        super().__init__(name=name)  # Always call super().__init__
+    def __init__(self, config: DataraxModuleConfig, param=10, name="my_module"):
+        # config is a required first positional argument
+        super().__init__(config, name=name)
         self.param = nnx.Variable(param)  # Use NNX Variables for state
 
 # ❌ Wrong: Direct inheritance from nnx.Module
@@ -89,8 +91,8 @@ All mutable state **must** be stored in NNX Variables:
 
 ```python
 class StatefulModule(DataraxModule):
-    def __init__(self, buffer_size=100):
-        super().__init__()
+    def __init__(self, config: DataraxModuleConfig, buffer_size=100):
+        super().__init__(config)  # config is a required first positional argument
         # ✅ Correct: Use nnx.Variable for mutable state
         self.buffer_size = nnx.Variable(buffer_size)
         self.position = nnx.Variable(0)
@@ -128,13 +130,11 @@ class CheckpointableModule(DataraxModule):
         # Restore custom state if needed
         if 'custom_field' in state:
             self.custom_value[...] = state['custom_field']
-
-    def get_serializable_state(self):
-        """Override for complex serialization."""
-        state = super().get_serializable_state()
-        # Convert non-serializable objects
-        return self._clean_state(state)
 ```
+
+The checkpoint contract is `get_state()` / `set_state()`. There is no
+separate serialization hook—return plain, serializable values directly from
+`get_state()`.
 
 ### 4. PRNG Handling
 
@@ -142,10 +142,9 @@ Random number generation **must** follow NNX patterns:
 
 ```python
 class RandomModule(DataraxModule):
-    def __init__(self, seed=0, name="random_module"):
-        super().__init__(name=name)
-        # ✅ Correct: Use nnx.Rngs
-        self.rngs = nnx.Rngs(default=seed)
+    def __init__(self, config: DataraxModuleConfig, seed=0, name="random_module"):
+        # ✅ Correct: pass config first and let the base store self.rngs
+        super().__init__(config, rngs=nnx.Rngs(default=seed), name=name)
 
     def generate_random(self):
         # ✅ Correct: Use self.rngs
@@ -202,13 +201,13 @@ class TestYourModuleNNX:
         """Test module can be checkpointed with Orbax."""
         module = YourModule()
 
-        # Test serializable state
-        serializable_state = module.get_serializable_state()
-        assert isinstance(serializable_state, dict)
+        # Test checkpoint state
+        state = module.get_state()
+        assert isinstance(state, dict)
 
         # Test state restoration
         new_module = YourModule()
-        new_module.set_state(serializable_state)
+        new_module.set_state(state)
 
     def test_variable_access_patterns(self):
         """Test correct Variable access patterns."""
@@ -243,23 +242,24 @@ Tests **must** follow the project structure (mirroring `src/datarax`):
 tests/
 ├── augment/                 # Augmentation tests
 ├── batching/                # Batch processing tests
-├── benchmarking/            # Benchmarking infrastructure tests
 ├── benchmarks/              # Performance benchmark tests
 ├── checkpoint/              # Checkpointing tests
 ├── cli/                     # CLI tool tests
 ├── config/                  # Configuration tests
 ├── control/                 # Control flow tests
 ├── core/                    # Core module tests
-├── dag/                     # DAG execution tests
 ├── data/                    # Test data and fixtures
 ├── distributed/             # Distributed processing tests
 ├── examples/                # Example validation tests
+├── fixtures/                # Shared pytest fixtures
 ├── integration/             # End-to-end integration tests
 ├── memory/                  # Memory management tests
 ├── monitoring/              # Monitoring functionality tests
 ├── operators/               # Operator tests
 ├── performance/             # Performance tests
+├── pipeline/                # Pipeline / DAG execution tests
 ├── samplers/                # Sampler tests
+├── scripts/                 # Test helper scripts
 ├── sharding/                # Sharding tests
 ├── sources/                 # Data source tests
 ├── test_common/             # Common testing utilities
@@ -366,9 +366,9 @@ def process_data(
 All classes and functions **must** have complete docstrings:
 
 ```python
-from typing import Any
 from flax import nnx
 from datarax.core import DataraxModule
+from datarax.core.config import DataraxModuleConfig
 
 class DataProcessor(DataraxModule):
     """Process data using configurable transformations.
@@ -377,23 +377,23 @@ class DataProcessor(DataraxModule):
     transformations to input data with state management.
 
     Attributes:
-        config: Processing configuration stored as NNX Variable
         stats: Running statistics for processed data
 
     Example:
-        >>> processor = DataProcessor({"normalize": True})
+        >>> processor = DataProcessor(DataraxModuleConfig())
         >>> result = processor.process(data)
     """
 
-    def __init__(self, config: dict[str, Any], name: str = "processor"):
+    def __init__(self, config: DataraxModuleConfig, name: str = "processor"):
         """Initialize the data processor.
 
         Args:
-            config: Configuration dictionary for processing
+            config: Module configuration (validated by the base class)
             name: Module name for identification
         """
-        super().__init__(name=name)
-        self.config = nnx.Variable(config)
+        # config is a required first positional argument; the base class
+        # stores it as self.config
+        super().__init__(config, name=name)
 ```
 
 ## Documentation
@@ -486,9 +486,10 @@ from datarax.core import DataSourceModule
 class NewDataSource(DataSourceModule):
     """Template for new data sources."""
 
-    def __init__(self, source_config, name="new_source"):
-        super().__init__(name=name)
-        self.config = nnx.Variable(source_config)
+    def __init__(self, config, name="new_source"):
+        # config is a required first positional argument; the base class
+        # stores it as self.config
+        super().__init__(config, name=name)
 
     def __iter__(self):
         """Implement iteration protocol."""

@@ -24,7 +24,7 @@ and need to continue from where they left off.
 
 | PyTorch | Datarax |
 |---------|---------|
-| `torch.save(state_dict, path)` | `checkpointer.save(pipeline, step=N)` |
+| `torch.save(state_dict, path)` | `checkpointer.save_to_directory(pipeline, step=N)` |
 | `model.load_state_dict(torch.load(path))` | `checkpointer.restore_latest(pipeline)` |
 | Custom `state_dict()` methods | `get_state()` / `set_state()` protocol |
 | DataLoader `sampler.set_epoch()` | State includes epoch, position, RNG |
@@ -36,7 +36,7 @@ and need to continue from where they left off.
 | TensorFlow | Datarax |
 |------------|---------|
 | `tf.train.Checkpoint` | `PipelineCheckpoint` |
-| `ckpt.save(path)` | `checkpointer.save(pipeline, step=N)` |
+| `ckpt.save(path)` | `checkpointer.save_to_directory(pipeline, step=N)` |
 | `ckpt.restore(latest)` | `checkpointer.restore_latest(pipeline)` |
 | `tf.train.CheckpointManager` | Built-in `keep` parameter |
 
@@ -64,7 +64,7 @@ flowchart LR
     end
 
     subgraph Storage["Orbax Storage"]
-        F[checkpoint/step_N]
+        F[ckpt-N]
     end
 
     P -->|save| S --> F
@@ -81,24 +81,35 @@ A `CheckpointableIterator` must implement `get_state()` and `set_state()`:
 from datarax.typing import CheckpointableIterator
 
 class SimplePipeline(CheckpointableIterator[dict[str, jax.Array]]):
-    def __init__(self, data, batch_size=10, seed=42):
+    def __init__(self, data, batch_size=10, shuffle=True, seed=42):
         self.data = data
         self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.seed = seed
         self.rng = jax.random.key(seed)
         self.epoch = 0
         self.position = 0
+        self.indices = self._create_indices()
 
     def get_state(self) -> dict:
         return {
-            "rng": jax.random.key_data(self.rng),
+            "batch_size": self.batch_size,
+            "shuffle": self.shuffle,
+            "seed": self.seed,
+            "rng": jax.random.key_data(self.rng),  # Convert key to raw data
             "epoch": self.epoch,
             "position": self.position,
+            "indices": self.indices,
         }
 
     def set_state(self, state: dict) -> None:
-        self.rng = jax.random.wrap_key_data(state["rng"])
+        self.batch_size = state["batch_size"]
+        self.shuffle = state["shuffle"]
+        self.seed = state["seed"]
+        self.rng = jax.random.wrap_key_data(state["rng"])  # Convert back to key
         self.epoch = state["epoch"]
         self.position = state["position"]
+        self.indices = state["indices"]
 ```
 
 ### Step 2: Set Up Checkpointing
@@ -125,21 +136,22 @@ for epoch in range(2):
         step += 1
         # Process batch...
 
-        if step % 100 == 0:  # Save every 100 steps
-            checkpointer.save(
+        if step % 3 == 0:  # Save every 3 steps
+            checkpointer.save_to_directory(
                 pipeline,
                 step=step,
                 metadata={"epoch": epoch},
-                keep=3,  # Keep last 3 checkpoints
+                keep=2,  # Keep last 2 checkpoints
+                overwrite=True,
             )
             print(f"Saved checkpoint at step {step}")
 ```
 
 **Terminal Output:**
 ```
-Saved checkpoint at step 100
-Saved checkpoint at step 200
-Saved checkpoint at step 300
+Saved checkpoint at step 3
+Saved checkpoint at step 6
+Saved checkpoint at step 9
 ```
 
 ### Step 4: Restore from Checkpoint
@@ -162,7 +174,7 @@ for batch in new_pipeline:
 **Terminal Output:**
 ```
 Before restore: position=0
-After restore: position=300
+After restore: position=40
 ```
 
 ## Checkpoint State Contents

@@ -43,14 +43,14 @@ config = OperatorConfig(batch_strategy="vmap")   # parallel, default
 config = OperatorConfig(batch_strategy="scan")    # sequential, low memory
 ```
 
-### `FrozenInstanceError: Cannot modify frozen StructuralConfig`
+### `FrozenInstanceError: cannot assign to field 'stochastic'`
 
-**Cause**: Attempting to modify a `StructuralConfig` after initialization. Structural configs are frozen (immutable) after `__post_init__` completes.
+**Cause**: Attempting to modify a config after construction. Every Datarax config is a frozen dataclass (not just `StructuralConfig`), so any attribute assignment raises `FrozenInstanceError` -- the field name in the message is whichever field you tried to assign.
 
 ```python
 # Wrong
 config = StructuralConfig(stochastic=True, stream_name="sample")
-config.stochastic = False  # FrozenInstanceError!
+config.stochastic = False  # FrozenInstanceError: cannot assign to field 'stochastic'
 
 # Fix: create a new config instead
 config = StructuralConfig(stochastic=False)
@@ -84,10 +84,11 @@ config = DataraxModuleConfig(precomputed_stats={"mean": 0.5})
 class MyOp(OperatorModule):
     pass  # Missing apply()
 
-# Fix: implement apply
+# Fix: implement apply with the real 5-parameter signature.
+# It is a pure per-element function returning a (data, state, metadata) tuple.
 class MyOp(OperatorModule):
-    def apply(self, element, *, rngs=None):
-        return element  # your logic here
+    def apply(self, data, state, metadata, random_params=None, stats=None):
+        return data, state, metadata  # your logic here
 ```
 
 ## Memory Errors
@@ -110,7 +111,7 @@ config = OperatorConfig(batch_strategy="scan")
     `scan` processes elements one at a time while keeping full JIT compilation
     benefits. It's slower but uses constant memory regardless of batch size.
 
-## Source Errors
+## Sampler Errors
 
 ### `ValueError: num_records is required`
 

@@ -77,11 +77,11 @@ class DefaultBatcher(BatcherModule):
 
         Args:
             elements: An iterator yielding individual data elements.
-            *args: Additional positional arguments (ignored).
+            _args: Additional positional arguments (ignored).
             batch_size: The number of elements to include in each batch.
             drop_remainder: Whether to drop the last batch if it's smaller than
                 batch_size.
-            **kwargs: Additional keyword arguments (ignored).
+            _kwargs: Additional keyword arguments (ignored).
 
         Yields:
             Batches of data elements.

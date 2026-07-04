@@ -54,9 +54,6 @@ By the end of this tutorial, you will be able to:
 python examples/core/08_composition_strategies_tutorial.py
 ```
 
-The script disables background prefetching for its short one-batch demonstrations so
-each iterator is cleaned up immediately between composition examples.
-
 ### Run the Jupyter Notebook
 
 ```bash
@@ -100,6 +97,50 @@ graph TB
 
 ## Key Concepts
 
+### Helper Factories
+
+The tutorial builds its operators through small factory functions, so each
+composition example can create fresh operators with fixed parameters:
+
+```python
+def make_brightness_op(delta: float, seed: int = 0) -> BrightnessOperator:
+    """Create a brightness operator with fixed delta."""
+    return BrightnessOperator(
+        BrightnessOperatorConfig(
+            field_key="image",
+            brightness_range=(delta, delta),  # Fixed delta
+            stochastic=False,
+        ),
+        rngs=nnx.Rngs(seed),
+    )
+
+
+def make_contrast_op(factor: float, seed: int = 0) -> ContrastOperator:
+    """Create a contrast operator with fixed factor."""
+    return ContrastOperator(
+        ContrastOperatorConfig(
+            field_key="image",
+            contrast_range=(factor, factor),  # Fixed factor
+            stochastic=False,
+        ),
+        rngs=nnx.Rngs(seed),
+    )
+
+
+def make_noise_op(std: float, seed: int = 0) -> NoiseOperator:
+    """Create a noise operator."""
+    return NoiseOperator(
+        NoiseOperatorConfig(
+            field_key="image",
+            mode="gaussian",
+            noise_std=std,
+            stochastic=True,
+            stream_name="noise",
+        ),
+        rngs=nnx.Rngs(noise=seed),
+    )
+```
+
 ### Part 1: Sequential Strategies
 
 Sequential strategies chain operators where output of one becomes input of next.
@@ -112,10 +153,13 @@ from datarax.operators.composite_operator import (
 )
 
 # SEQUENTIAL: Basic chaining
-sequential = CompositeOperatorModule(
+bright_op = make_brightness_op(0.1, seed=1)
+contrast_op = make_contrast_op(1.2, seed=2)
+
+sequential_composite = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.SEQUENTIAL,
-        operators=[brightness_op, contrast_op],
+        operators=[bright_op, contrast_op],
     ),
     rngs=nnx.Rngs(0),
 )
@@ -143,10 +187,14 @@ Apply ALL operators to the SAME input, then merge outputs.
 
 ```python
 # PARALLEL with mean merge
+op_bright = make_brightness_op(0.15, seed=10)
+op_contrast = make_contrast_op(1.3, seed=11)
+op_noise = make_noise_op(0.05, seed=12)
+
 parallel_mean = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.PARALLEL,
-        operators=[bright_op, contrast_op, noise_op],
+        operators=[op_bright, op_contrast, op_noise],
         merge_strategy="mean",
     ),
     rngs=nnx.Rngs(0),
@@ -166,12 +214,16 @@ PARALLEL Strategy (merge='mean'):
 Apply operators in parallel with learnable or fixed weights.
 
 ```python
-weighted = CompositeOperatorModule(
+op1 = make_brightness_op(0.2, seed=40)
+op2 = make_contrast_op(1.4, seed=41)
+op3 = make_noise_op(0.03, seed=42)
+
+weighted_parallel = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.WEIGHTED_PARALLEL,
         operators=[op1, op2, op3],
-        weights=[0.5, 0.3, 0.2],  # 50%, 30%, 20%
-        learnable_weights=False,  # Set True for gradient learning
+        weights=[0.5, 0.3, 0.2],  # 50% brightness, 30% contrast, 20% noise
+        learnable_weights=False,  # Set True for gradient-based learning
     ),
     rngs=nnx.Rngs(0),
 )
@@ -189,10 +241,16 @@ Parallel application with mathematical reduction.
 | `ENSEMBLE_MIN` | Minimum | `min(op₁, op₂, ..., opₙ)` |
 
 ```python
+ensemble_ops = [
+    make_brightness_op(0.1, seed=50),
+    make_brightness_op(-0.1, seed=51),
+    make_contrast_op(1.2, seed=52),
+]
+
 ensemble_mean = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.ENSEMBLE_MEAN,
-        operators=[bright_plus, bright_minus, contrast_op],
+        operators=ensemble_ops,
     ),
     rngs=nnx.Rngs(0),
 )
@@ -208,10 +266,15 @@ def label_router(data):
     label = data["label"]
     return jax.lax.cond(label > 5, lambda: 1, lambda: 0)
 
+branch_ops = [
+    make_brightness_op(0.2, seed=70),  # Branch 0: for labels 0-5
+    make_contrast_op(1.4, seed=71),  # Branch 1: for labels 6-9
+]
+
 branching = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.BRANCHING,
-        operators=[brightness_op, contrast_op],
+        operators=branch_ops,
         router=label_router,
         default_branch=0,
     ),

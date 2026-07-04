@@ -220,6 +220,7 @@ from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 from datarax.distributed.device_placement import DevicePlacement, get_batch_size_recommendation
 import jax.numpy as jnp
+from flax import nnx
 
 # Get recommended batch size
 rec = get_batch_size_recommendation()

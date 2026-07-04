@@ -183,5 +183,19 @@ class TestPrefetcher(unittest.TestCase):
         self.assertEqual(result, data)
 
 
+class TestPackageExports:
+    """The control package re-exports its public prefetch API."""
+
+    def test_public_symbols_importable_from_package(self):
+        from datarax.control import (
+            create_prefetch_stream,
+            DevicePrefetcher,
+            Prefetcher,
+        )
+
+        assert callable(create_prefetch_stream)
+        assert Prefetcher is not None and DevicePrefetcher is not None
+
+
 if __name__ == "__main__":
     unittest.main()

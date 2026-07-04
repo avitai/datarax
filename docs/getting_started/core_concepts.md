@@ -61,6 +61,7 @@ This abstraction simplifies the mental model: everything that *changes* data val
 
 ### Usage Example
 
+```python
 from datarax.core.operator import OperatorModule, OperatorConfig
 import flax.nnx as nnx
 import jax
@@ -92,6 +93,8 @@ augment_op = RandomFlipOperator(
     OperatorConfig(stochastic=True, stream_name="augment"),
     rngs=nnx.Rngs(augment=42)
 )
+```
+
 
 ### Per-Record Determinism
 
@@ -160,7 +163,7 @@ batcher = SimpleBatcher(
 | **Primary Role** | Data Transformation | Data Organization |
 | **Learnable?** | Yes | No |
 | **Differentiable?** | Yes | No |
-| **Configuration** | Mutable/Tenable parameters | Immutable constants |
+| **Configuration** | Immutable config; learnable parameters live in `nnx.Param` | Immutable constants |
 | **Examples** | Normalization, Augmentation | Batching, Sampling, Sharding |
 
 ## The DAG Execution Model

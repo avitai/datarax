@@ -1,5 +1,8 @@
 # Benchmark Monitor
 
+!!! info "External package"
+    This page documents [calibrax](https://github.com/avitai/calibrax), the benchmarking library datarax depends on.
+
 Real-time pipeline monitoring with GPU profiling and alerting.
 
 ## See Also
@@ -35,8 +38,8 @@ monitor.start_monitoring(interval=5.0)
 # Stop and check results
 monitor.stop_monitoring()
 summary = monitor.get_monitoring_summary()
-print(f"Alerts triggered: {summary['total_alerts']}")
-print(f"Critical alerts: {summary['critical_alerts']}")
+print(f"Alerts triggered: {summary['alert_count']}")
+recent = monitor.alert_manager.get_recent_alerts()
 ```
 
 ---

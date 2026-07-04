@@ -119,13 +119,14 @@ from datarax.operators.modality.audio.f0_operator import CrepeF0Config, CrepeF0O
 
 
 matplotlib.use("Agg")
+import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 
 
 # Output directory for saved figures
-OUTPUT_DIR = Path("docs/assets/images/examples")
+OUTPUT_DIR = Path(os.environ.get("DATARAX_EXAMPLES_OUTPUT_DIR", "docs/assets/images/examples"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 

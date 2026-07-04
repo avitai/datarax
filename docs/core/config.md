@@ -6,19 +6,20 @@ Datarax uses a **typed configuration system** based on Python dataclasses. All m
 
 ```
 DataraxModuleConfig (base)
-├── OperatorConfig (mutable, learnable)
+├── OperatorConfig (for parametric/learnable modules)
 │   ├── MapOperatorConfig
 │   ├── ElementOperatorConfig
 │   └── BatchMixOperatorConfig
-└── StructuralConfig (immutable, compile-time)
+└── StructuralConfig (for structural processors)
     ├── HFEagerConfig
     └── TFDSEagerConfig
 ```
 
 !!! note "Key points"
 
-    - **OperatorConfig**: For modules with learnable parameters (mutable state)
-    - **StructuralConfig**: For modules with fixed behavior (frozen after creation)
+    - **OperatorConfig**: For parametric/learnable modules
+    - **StructuralConfig**: For structural processors
+    - All configs are frozen dataclasses — module state is mutable, configs never are
     - All configs validate on construction (`__post_init__`)
     - For shuffle configurations, use `seed=42` parameter
 
@@ -68,6 +69,25 @@ config = OperatorConfig(
 | `True` | `None` | ❌ Error: stream_name required |
 | `False` | `"name"` | ❌ Error: stream_name forbidden |
 
+### Batch Strategy
+
+`OperatorConfig` also exposes `batch_strategy`, controlling how the operator maps over the batch axis:
+
+```python
+from datarax.core.config import OperatorConfig
+
+# Parallel (default): vmap over the batch axis
+config = OperatorConfig(batch_strategy="vmap")
+
+# Sequential, low-memory: scan over the batch axis
+config = OperatorConfig(batch_strategy="scan")
+```
+
+| batch_strategy | Behavior |
+|----------------|----------|
+| `"vmap"` | Parallel map over the batch axis (default) |
+| `"scan"` | Sequential map over the batch axis (lower memory) |
+
 ## Specific Operator Configs
 
 ### ElementOperatorConfig
@@ -103,6 +123,9 @@ config = MapOperatorConfig(
 )
 ```
 
+!!! note
+    `MapOperator` currently enforces `stochastic=False`.
+
 ### BatchMixOperatorConfig
 
 For batch-level mixing (MixUp/CutMix):
@@ -133,24 +156,32 @@ config = BatchMixOperatorConfig(
 For modules with frozen configuration (compile-time constants):
 
 ```python
-from datarax.core.config import StructuralConfig
+from datarax.core.config import FrozenInstanceError, StructuralConfig
 
 config = StructuralConfig(
     stochastic=False,
     stream_name=None,
 )
 
-# After creation, config is frozen
-config.stochastic = True  # Raises FrozenInstanceError!
+# Every config is frozen after construction — mutation raises.
+try:
+    config.stochastic = True
+except FrozenInstanceError:
+    print("Configs are immutable; build a new one instead")
 ```
 
 ### Why Frozen?
 
-Structural configs are frozen because:
+Every config in Datarax freezes after construction — this is not unique to
+`StructuralConfig`. What distinguishes `StructuralConfig` is *what* it configures
+(structural processors), not that it alone is frozen. Immutable configs are used
+because:
 
 1. They represent compile-time constants for JIT
 2. Changing config after construction breaks invariants
 3. Immutability prevents subtle bugs
+
+Module state remains mutable; only the config is frozen.
 
 ## Creating Custom Configs
 

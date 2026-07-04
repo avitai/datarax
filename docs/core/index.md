@@ -14,7 +14,7 @@ Core abstractions and building blocks that form the foundation of Datarax pipeli
 !!! note "Key points"
 
     - **Element** wraps a single data sample with state and metadata
-    - **Batch** is a dictionary of batched JAX arrays
+    - **Batch** wraps batched JAX arrays with dict-style access plus per-element state
     - All modules inherit from `DataraxModule` for consistent behavior
     - Protocols enable duck-typing with `isinstance()` checks
 
@@ -22,18 +22,21 @@ Core abstractions and building blocks that form the foundation of Datarax pipeli
 
 ```
 DataraxModule (base)
-├── OperatorModule      → Transformations (learnable)
-├── DataSourceModule    → Data loading
-├── BatcherModule       → Batching logic
-├── SamplerModule       → Index sampling
-└── SharderModule       → Device sharding
+├── OperatorModule          → Transformations (learnable)
+├── SharderModule           → Device sharding
+└── StructuralModule        → Non-parametric structural processors
+    ├── DataSourceModule    → Data loading
+    ├── BatcherModule       → Batching logic
+    └── SamplerModule       → Index sampling
 ```
 
 ## Quick Start
 
 ```python
+import jax.numpy as jnp
 from datarax.core import Element, Batch
 from datarax.core.config import OperatorConfig
+from datarax.core.metadata import Metadata
 
 # Create an element
 element = Element(
@@ -71,7 +74,7 @@ new_element = element.replace(
 ### Specialized
 
 - [cross_modal](cross_modal.md) - Cross-modal data handling
-- [modality](modality.md) - Data modality definitions (image, text, audio)
+- [modality](modality.md) - Base classes for single-modality (per-field) operators
 - [structural](structural.md) - Structural utilities and patterns
 
 ## Real-World Examples

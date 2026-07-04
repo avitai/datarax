@@ -13,6 +13,8 @@ sampler internally to translate iteration into indexed reads.
 | **ShuffleSampler** | Random | Training |
 | **RangeSampler** | Subset range | Debugging, partial sweeps |
 | **EpochAwareSampler** | Tracks epochs | Training loops |
+| **BufferSampler** | Replay buffer / reservoir | Streaming, replay sampling |
+| **SlidingWindowSampler** | Consecutive windows | Sequence/window models |
 
 !!! note "Key points"
 
@@ -73,7 +75,7 @@ from datarax.sources import MemorySource, MemorySourceConfig
 source = MemorySource(
     MemorySourceConfig(shuffle=True),
     data=data,
-    rngs=nnx.Rngs(seed=42),
+    rngs=nnx.Rngs(42),
 )
 
 pipeline = Pipeline(

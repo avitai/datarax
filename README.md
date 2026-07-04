@@ -25,9 +25,9 @@
 - **High Performance:** JIT-compiled pipelines via XLA, with built-in profiling and roofline analysis
 - **DAG Pipelines:** Graph-based construction via `Pipeline.from_dag` with branching, parallel execution, caching, and differentiable rebatching nodes
 - **Scalability:** Multi-device and multi-host data distribution with device mesh sharding
-- **Determinism:** Reproducible pipelines by default using Grain's Feistel cipher shuffling (O(1) memory)
+- **Determinism:** Reproducible pipelines by default using Grain's Feistel cipher shuffling (O(1) memory), with resumable mid-epoch iteration for exact checkpoint/restore
 - **Extensibility:** Custom data sources, operators, and augmentation strategies via composable NNX modules
-- **Benchmarking Suite:** Comparative benchmarks against 12+ frameworks with calibrax-powered analysis and regression checks
+- **Benchmarking Suite:** Comparative benchmarks against 14+ frameworks with calibrax-powered analysis and regression checks
 - **Ecosystem Integration:** Works with Flax, Optax, Orbax, HuggingFace Datasets, and TensorFlow Datasets
 
 ## Why Datarax?
@@ -54,11 +54,11 @@ Pipelines are directed acyclic graphs, not linear chains. `Pipeline(stages=[...]
 
 ### Deterministic Reproducibility
 
-Shuffling uses Grain's Feistel cipher permutation, which generates a full-epoch permutation in O(1) memory without materializing the index array. Combined with explicit RNG key threading through every stochastic operator, pipelines produce identical output given the same seed — across restarts, devices, and host counts.
+Shuffling uses Grain's Feistel cipher permutation, which generates a full-epoch permutation in O(1) memory without materializing the index array. Stochastic operators are keyed on global record positions, so each record augments identically regardless of batch size, shuffle order, or host count. Iterating a random-access pipeline returns a stateful iterator whose `get_state()`/`set_state()` capture position and RNG counts for exact mid-epoch resume, and the live module stays consistent at every yield boundary so Orbax checkpoints taken inside a training loop restore the exact remaining stream.
 
 ### Built-in Competitive Benchmarking
 
-The benchmarking suite profiles datarax against 12+ frameworks (Grain, tf.data, PyTorch DataLoader, DALI, Ray Data, and others) across standardized scenarios. Results are converted to calibrax runs for direction-aware metrics, regression gating, and W&B export. This benchmark-driven loop is how datarax tracks progress toward competitive throughput — current results and optimization status are tracked in the [benchmarking documentation](docs/benchmarks/index.md).
+The benchmarking suite profiles datarax against 14 peer frameworks (Grain, tf.data, PyTorch DataLoader, DALI, Ray Data, and others) across 37 standardized scenarios. Results are converted to calibrax runs for direction-aware metrics, regression gating, and W&B export. This benchmark-driven loop is how datarax tracks progress toward competitive throughput — current results and optimization status are tracked in the [benchmarking documentation](docs/benchmarks/index.md).
 
 ## Installation
 
@@ -183,13 +183,13 @@ complex_pipeline = Pipeline.from_dag(
 src/datarax/
   core/         # Base modules: DataSourceModule, OperatorModule, Element, Batcher, Sampler, Sharder
   pipeline/     # Pipeline (nnx.Module): linear stages and Pipeline.from_dag for branching
-  sources/      # MemorySource, TFDS (eager/streaming), HuggingFace (eager/streaming), ArrayRecord, MixedSource, StreamingDiskSource
+  sources/      # MemorySource, TFDS (eager/streaming), HuggingFace (eager/streaming), ArrayRecord, MixDataSourcesNode, StreamingDiskSource
   operators/    # ElementOperator, MapOperator, CompositeOperator, modality-specific (image, audio)
     strategies/ # Sequential, Parallel, Branching, Ensemble, Merging composition strategies
   samplers/     # Sequential, Shuffle (Feistel cipher), Range, EpochAware, SlidingWindow, BufferSampler
   batching/     # DefaultBatcher with buffer state management
   sharding/     # ArraySharder, JaxProcessSharder for multi-device distribution
-  distributed/  # DeviceMesh, DataParallel for multi-host training
+  distributed/  # DeviceMeshManager, data-parallel and sharding utilities
   checkpoint/   # Orbax integration (NNX-standard checkpoint pattern)
   monitoring/   # MetricsCollector, callbacks, reporters (console/file)
   performance/  # Roofline analysis, XLA optimization utilities
@@ -203,7 +203,7 @@ src/datarax/
 
 ## Benchmarking
 
-Datarax includes a benchmarking suite for comparison against 12+ data loading frameworks across a range of workload scenarios (vision, NLP, tabular, multimodal, distributed).
+Datarax includes a benchmarking suite for comparison against 14 data loading frameworks across 37 workload scenarios (vision, NLP, tabular, multimodal, distributed).
 
 ```bash
 # Install benchmark dependencies (adds PyTorch, DALI, Ray, etc.)

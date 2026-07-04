@@ -233,7 +233,6 @@ Created augmentation operators:
 
 ```python
 from datarax.pipeline import Pipeline
-from datarax.pipeline import Pipeline
 
 def create_train_pipeline():
     """Create a fresh training pipeline for each epoch."""
@@ -623,10 +622,10 @@ Saved: docs/assets/images/examples/cv-mnist-throughput.png
 
 | Metric | Value |
 |--------|-------|
-| Final Test Accuracy | ~97%+ |
+| Final Test Accuracy | ~95%+ |
 | Average Throughput | ~5000 samples/s (CPU) |
 | Training Time per Epoch | ~30s (CPU) / ~5s (GPU) |
-| Model Parameters | ~100k |
+| Model Parameters | ~421k |
 
 ### Key Takeaways
 

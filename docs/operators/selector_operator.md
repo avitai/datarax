@@ -1,6 +1,6 @@
 # Selector Operator
 
-Select specific fields or elements from data.
+Randomly route each element to one of several operators.
 
 ## See Also
 

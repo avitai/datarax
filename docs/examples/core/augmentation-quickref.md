@@ -90,7 +90,6 @@ print("Image range: [0.0, 1.0] (pre-normalized)")
 
 **Terminal Output:**
 ```
-JAX version: 0.4.23
 Created 64 sample images: (32, 32, 3)
 Image range: [0.0, 1.0] (pre-normalized)
 ```

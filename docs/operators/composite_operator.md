@@ -122,7 +122,8 @@ dynamic = CompositeOperatorModule(config)
 # Modify at runtime
 dynamic.add_operator(op_c)
 dynamic.remove_operator(1)
-dynamic.reorder_operators([1, 0, 2])
+# After add + remove, only 2 operators remain
+dynamic.reorder_operators([1, 0])
 ```
 
 ## JAX Compatibility Notes

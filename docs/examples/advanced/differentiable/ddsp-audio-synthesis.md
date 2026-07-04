@@ -132,9 +132,13 @@ class ReverbOperator(OperatorModule):
         audio = data["audio"]
         ir = self.impulse_response[...]
         # FFT-based convolution
-        audio_fft = jnp.fft.rfft(audio, n=n_fft)
-        ir_fft = jnp.fft.rfft(ir, n=n_fft)
-        reverbed = jnp.fft.irfft(audio_fft * ir_fft)[:len(audio)]
+        n_fft = audio.shape[0] + ir.shape[0] - 1
+        # Round up to next power of 2 for FFT efficiency
+        n_fft_padded = 1 << (n_fft - 1).bit_length()
+        audio_fft = jnp.fft.rfft(audio, n=n_fft_padded)
+        ir_fft = jnp.fft.rfft(ir, n=n_fft_padded)
+        convolved = jnp.fft.irfft(audio_fft * ir_fft, n=n_fft_padded)
+        reverbed = convolved[: audio.shape[0]]
         return {**data, "audio": reverbed}, state, metadata
 ```
 

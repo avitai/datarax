@@ -56,7 +56,7 @@ All metric definitions live in a `config.json` file inside the local data store:
 
 ```json
 {
-  "wandb_project": "datarax-benchmarks",
+  "wandb_project": "uv run python -m benchmarks.climarks",
   "metric_defs": {
     "throughput": {
       "unit": "elem/s",
@@ -203,7 +203,7 @@ if baseline:
 ```python
 from calibrax.exporters.wandb import WandBExporter
 
-exporter = WandBExporter(project="datarax-benchmarks")
+exporter = WandBExporter(project="uv run python -m benchmarks.climarks")
 url = exporter.export_run(run)
 exporter.export_analysis(run, baseline)
 print(f"Dashboard: {url}")

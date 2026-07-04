@@ -89,7 +89,7 @@ print(f"JAX backend: {jax.default_backend()}")
 # %%
 # Example: Basic configuration for MNIST
 basic_config = HFEagerConfig(
-    name="mnist",
+    name="ylecun/mnist",
     split="train[:1000]",  # Load first 1000 samples
 )
 
@@ -112,7 +112,7 @@ This is useful for:
 # %%
 # Include only specific fields
 filtered_config = HFEagerConfig(
-    name="mnist",
+    name="ylecun/mnist",
     split="train[:500]",
     include_keys={"image", "label"},  # Only return these fields
 )
@@ -142,7 +142,7 @@ Shuffling is essential for training ML models. HFEagerSource supports:
 # %%
 # Configure shuffling with custom buffer
 shuffle_config = HFEagerConfig(
-    name="mnist",
+    name="ylecun/mnist",
     split="train[:2000]",
     shuffle=True,
     seed=42,  # Integer seed for Grain's index_shuffle
@@ -181,7 +181,7 @@ print("Mode Comparison:")
 
 # Streaming mode
 streaming_config = HFEagerConfig(
-    name="mnist",
+    name="ylecun/mnist",
     split="train",
 )
 streaming_source = HFEagerSource(streaming_config, rngs=nnx.Rngs(0))
@@ -193,7 +193,7 @@ except (NotImplementedError, TypeError):
 
 # Downloaded mode (using subset)
 downloaded_config = HFEagerConfig(
-    name="mnist",
+    name="ylecun/mnist",
     split="train[:1000]",
 )
 downloaded_source = HFEagerSource(downloaded_config, rngs=nnx.Rngs(0))
@@ -276,7 +276,7 @@ print("Created operators: normalizer, flipper, augmentation")
 # %%
 # Build the complete pipeline
 train_config = HFEagerConfig(
-    name="mnist",
+    name="ylecun/mnist",
     split="train[:5000]",
     shuffle=True,
     seed=42,
@@ -338,8 +338,8 @@ HuggingFace Hub hosts thousands of datasets across different modalities.
 
 ```python
 # List available datasets
-from datasets import list_datasets
-datasets = list_datasets()
+from huggingface_hub import list_datasets
+datasets = list(list_datasets(limit=100))
 
 # Get dataset info
 from datasets import load_dataset_builder
@@ -397,7 +397,7 @@ def main():
 
     # Create pipeline
     config = HFEagerConfig(
-        name="mnist",
+        name="ylecun/mnist",
         split="train[:2000]",
         shuffle=True,
         seed=42,

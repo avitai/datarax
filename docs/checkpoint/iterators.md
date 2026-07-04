@@ -1,6 +1,6 @@
 # Checkpoint Iterators
 
-Iterate over checkpoints for analysis and restoration.
+Checkpoint iterator state for resumable iteration (`IteratorCheckpoint`, `PipelineCheckpoint`).
 
 ## See Also
 

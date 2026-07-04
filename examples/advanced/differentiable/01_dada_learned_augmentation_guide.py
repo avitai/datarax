@@ -97,13 +97,14 @@ from datarax.sources import MemorySource, MemorySourceConfig
 
 
 matplotlib.use("Agg")
+import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 
 
 # Output directory for saved figures
-OUTPUT_DIR = Path("docs/assets/images/examples")
+OUTPUT_DIR = Path(os.environ.get("DATARAX_EXAMPLES_OUTPUT_DIR", "docs/assets/images/examples"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Keep the script entry point bounded for CI and local documentation builds.
@@ -909,7 +910,7 @@ print(f"  - Operation logits: {policy.op_logits[...].shape}")
 print(f"  - Magnitudes: {policy.magnitudes[...].shape}")
 print(f"  - Probability logits: {policy.prob_logits[...].shape}")
 # Expected output:
-# Policy parameters: 800
+# Policy parameters: 850
 #   - Operation logits: (25, 2, 15)
 #   - Magnitudes: (25, 2)
 #   - Probability logits: (25, 2)

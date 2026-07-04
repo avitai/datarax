@@ -95,28 +95,43 @@ JAX devices: [cuda:0, cuda:1]
 Device count: 2
 ```
 
-### Step 2: Create Pipeline
+### Step 2: Create Data and Pipeline
 
-Standard pipeline setup - sharding is applied at the mesh level:
+Standard pipeline setup - sharding is applied at the mesh level, not by
+changing how you define sources or operators:
 
 ```python
+from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
+num_samples = 1024
 data = {
-    "image": np.random.rand(1024, 32, 32, 3).astype(np.float32),
-    "label": np.random.randint(0, 10, (1024,)).astype(np.int32),
+    "image": np.random.rand(num_samples, 32, 32, 3).astype(np.float32),
+    "feature": np.random.rand(num_samples, 128).astype(np.float32),
+    "label": np.random.randint(0, 10, (num_samples,)).astype(np.int32),
 }
 
 source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
-pipeline = Pipeline(source=source, stages=[], batch_size=128, rngs=nnx.Rngs(0))
 
-print(f"Pipeline: {len(source)} samples, batch_size=128")
+
+def normalize(element, key=None):
+    """Normalize image to [0, 1] range."""
+    return element.update_data({"image": element.data["image"] / 255.0})
+
+
+normalizer = ElementOperator(
+    ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0)
+)
+
+pipeline = Pipeline(source=source, stages=[normalizer], batch_size=128, rngs=nnx.Rngs(0))
+
+print("Pipeline created with batch_size=128")
 ```
 
 **Terminal Output:**
 ```
-Pipeline: 1024 samples, batch_size=128
+Pipeline created with batch_size=128
 ```
 
 ### Step 3: Create Device Mesh
@@ -134,12 +149,12 @@ mesh = Mesh(device_mesh, axis_names=("data",))
 data_sharding = NamedSharding(mesh, PartitionSpec("data", None, None, None))
 label_sharding = NamedSharding(mesh, PartitionSpec("data"))
 
-print(f"Mesh: {len(device_mesh)} devices along 'data' axis")
+print(f"Created mesh with {len(device_mesh)} devices along 'data' axis")
 ```
 
 **Terminal Output:**
 ```
-Mesh: 2 devices along 'data' axis
+Created mesh with 2 devices along 'data' axis
 ```
 
 ### Step 4: Process with Sharding
@@ -155,15 +170,17 @@ with mesh:
         label_batch = jax.device_put(batch["label"], label_sharding)
 
         print(f"Batch {i}:")
+        print(f"  Image shape: {image_batch.shape}")
         print(f"  Image sharding: {image_batch.sharding}")
+        print(f"  Label shape: {label_batch.shape}")
 ```
 
-**Terminal Output:**
+**Terminal Output (multi-GPU):**
 ```
 Batch 0:
-  Image sharding: NamedSharding(mesh=Mesh('data': 2), spec=PartitionSpec('data',))
-Batch 1:
-  Image sharding: NamedSharding(mesh=Mesh('data': 2), spec=PartitionSpec('data',))
+  Image shape: (128, 32, 32, 3)
+  Image sharding: NamedSharding(mesh=..., spec=PartitionSpec('data',))
+  Label shape: (128,)
 ```
 
 ## Mesh Configurations

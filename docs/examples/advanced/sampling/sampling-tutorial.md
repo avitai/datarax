@@ -37,7 +37,7 @@ By the end of this tutorial, you will be able to:
 | TensorFlow tf.data | Datarax |
 |--------------------|---------|
 | Default order | `SequentialSamplerModule` |
-| `.shuffle(buffer_size)` | `ShuffleSampler(buffer_size)` |
+| `.shuffle(seed)` | `ShuffleSampler(dataset_size, seed)` |
 | `.take(n)` | `RangeSampler(stop=n)` |
 | Epoch callbacks | `EpochAwareSamplerModule` |
 
@@ -70,7 +70,7 @@ graph TB
 
     subgraph Implementations["Implementations"]
         SEQ[SequentialSamplerModule<br/>Sequential indices]
-        SHUF[ShuffleSampler<br/>Buffered shuffle]
+        SHUF[ShuffleSampler<br/>Grain-backed index shuffle]
         RNG[RangeSampler<br/>Range-based]
         EPA[EpochAwareSamplerModule<br/>Epoch callbacks]
     end
@@ -110,17 +110,17 @@ Randomized data access with reproducibility:
 from datarax.samplers import ShuffleSampler, ShuffleSamplerConfig
 
 config = ShuffleSamplerConfig(
-    buffer_size=1000,  # Shuffle buffer
+    dataset_size=100,  # Number of records to shuffle
     seed=42,           # Reproducibility
 )
 sampler = ShuffleSampler(config, rngs=nnx.Rngs(shuffle=42))
 ```
 
 **How It Works:**
-1. Fill buffer with indices
-2. Shuffle buffer randomly
-3. Yield indices from buffer
-4. Refill and reshuffle as needed
+1. Build a Grain `IndexSampler` over the dataset size
+2. Each position is mapped through a Feistel `index_shuffle` permutation in O(1) — no buffer is materialized
+3. Yield the permuted index for each position in the epoch
+4. Replay from the checkpointed position when restored
 
 ### RangeSampler
 
@@ -187,7 +187,7 @@ Advanced Sampling Tutorial
    First 5 indices: [0, 1, 2, 3, 4]
 
 2. ShuffleSampler:
-   First 5 shuffled: [23, 7, 45, 12, 89]
+   First 5 shuffled: [14, 24, 97, 65, 88]
 
 3. RangeSampler:
    Range 10-20: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
@@ -216,7 +216,7 @@ Tutorial completed successfully!
 | Sampler | Stochastic | Checkpointable | Key Feature |
 |---------|------------|----------------|-------------|
 | `SequentialSamplerModule` | No | Yes | Deterministic order |
-| `ShuffleSampler` | Yes | Yes | Buffered shuffle |
+| `ShuffleSampler` | Yes | Yes | Deterministic index shuffle |
 | `RangeSampler` | No | Yes | Custom ranges |
 | `EpochAwareSamplerModule` | Configurable | Yes | Epoch callbacks |
 

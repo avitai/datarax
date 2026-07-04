@@ -1,5 +1,8 @@
 # Profiler
 
+!!! info "External package"
+    This page documents [calibrax](https://github.com/avitai/calibrax), the benchmarking library datarax depends on.
+
 GPU memory profiling, hardware-adaptive optimization, and memory analysis for Datarax pipelines.
 
 ## See Also
@@ -14,7 +17,7 @@ This module provides three components:
 
 - **GPUMemoryProfiler** — Detects GPU availability and reports memory usage (used/total/utilization). Also analyzes memory patterns across multiple measurements to detect leaks and high utilization.
 - **MemoryOptimizer** — Analyzes a pipeline function's memory footprint by measuring baseline, peak, and post-GC memory. Returns optimization suggestions.
-- **AdaptiveOperation** — Auto-detects hardware (CPU/GPU/TPU) and configures optimal tile sizes, precision, and batch sizes. Also provides Grain auto-optimization.
+- **AdaptiveOperation** — Auto-detects hardware (CPU/GPU/TPU) and configures optimal tile sizes, precision, and batch sizes. Also pads tensor shapes to hardware tile-size multiples via `optimize_shapes()`.
 
 ## Quick Start
 
@@ -36,12 +39,20 @@ from calibrax.profiling import MemoryOptimizer
 
 optimizer = MemoryOptimizer()
 analysis = optimizer.analyze_pipeline_memory(pipeline_fn, sample_data)
-print(f"Peak usage: {analysis['peak_usage_mb']:.1f} MB")
-print(f"Memory efficiency: {analysis['memory_efficiency']:.1%}")
-for suggestion in analysis["suggestions"]:
-    print(f"  - {suggestion}")
+if analysis is not None:
+    print(f"Peak usage: {analysis.peak_usage_mb:.1f} MB")
+    print(f"Memory efficiency: {analysis.memory_efficiency:.1%}")
+    for suggestion in analysis.suggestions:
+        print(f"  - {suggestion}")
 ```
 
 ---
 
 ::: calibrax.profiling
+    options:
+      filters:
+        - "!^ResourceMonitor$"
+        - "!^ResourceSample$"
+        - "!^ResourceSummary$"
+        - "!^GPUProfilerProtocol$"
+        - "!^TimingSample$"

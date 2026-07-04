@@ -198,7 +198,6 @@ flowchart LR
 
 ```python
 from datarax.pipeline import Pipeline
-from datarax.pipeline import Pipeline
 
 # Build the training pipeline
 batch_size = 32

@@ -152,7 +152,7 @@ Each slot has:
 | **Magnitude** | `(25, 2)` | Transformation strength |
 | **Probability** | `(25, 2)` | Likelihood of applying |
 
-Total: **800 learnable parameters** controlling the augmentation strategy.
+Total: **850 learnable parameters** controlling the augmentation strategy.
 
 ### Gumbel-Softmax Selection
 
@@ -244,7 +244,9 @@ def full_loss_fn(policy):
     logits = model(aug_images)
     return cross_entropy_loss(logits, labels)
 
+model.eval()  # Model in closure — prevent BatchNorm mutation
 loss, grads = nnx.value_and_grad(full_loss_fn)(policy)
+model.train()
 grad_leaves = jax.tree.leaves(grads)
 assert any(jnp.sum(jnp.abs(g)) > 0 for g in grad_leaves)
 # SUCCESS: Augmentation pipeline is fully differentiable

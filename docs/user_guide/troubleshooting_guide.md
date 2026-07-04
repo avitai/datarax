@@ -16,12 +16,12 @@ ValueError: TypeHandler lookup failed for: type=<class 'custom_module.CustomClas
 **Solution**: Implement proper serialization methods in your custom modules.
 
 ```python
-from datarax.core import DataraxModule
+from datarax.core import DataraxModule, DataraxModuleConfig
 import flax.nnx as nnx
 
 class CustomModule(DataraxModule):
     def __init__(self, custom_data, name="custom"):
-        super().__init__(name=name)
+        super().__init__(DataraxModuleConfig(), name=name)
         # Store serializable data in NNX variables
         self.serializable_data = nnx.Variable(self._to_serializable(custom_data))
 
@@ -34,9 +34,9 @@ class CustomModule(DataraxModule):
         else:
             return data
 
-    def get_serializable_state(self):
+    def get_state(self):
         """Override to handle complex state serialization."""
-        state = super().get_serializable_state()
+        state = super().get_state()
         # Ensure all state is serializable
         return self._clean_state_for_serialization(state)
 
@@ -66,9 +66,12 @@ ValueError: key in pure_dict not available in state: ('custom_state', 'nested_ke
 **Solution**: Flatten state structure or use standard NNX Variable patterns.
 
 ```python
+from datarax.core import DataraxModule, DataraxModuleConfig
+import flax.nnx as nnx
+
 class CompatibleModule(DataraxModule):
     def __init__(self, name="compatible"):
-        super().__init__(name=name)
+        super().__init__(DataraxModuleConfig(), name=name)
         # Use flat structure with NNX Variables
         self.position = nnx.Variable(0)
         self.buffer_size = nnx.Variable(100)
@@ -98,10 +101,10 @@ class CompatibleModule(DataraxModule):
 
 ```python
 # Problem: Iterator doesn't resume from correct position
-iterator = pipeline.create_iterator()
+iterator = iter(pipeline)
 # ... consume some batches ...
-state = pipeline.get_state()
-pipeline.set_state(state)
+state = iterator.get_state()
+iterator.set_state(state)
 # Iterator might restart from beginning
 ```
 
@@ -109,10 +112,12 @@ pipeline.set_state(state)
 
 ```python
 from datarax.core.module import CheckpointableIteratorModule
+from datarax.core import DataraxModuleConfig
+import flax.nnx as nnx
 
 class RobustIteratorModule(CheckpointableIteratorModule):
     def __init__(self, data, name="robust_iterator"):
-        super().__init__(name=name)
+        super().__init__(DataraxModuleConfig(), name=name)
         self.data = nnx.Variable(data)
         self.position = nnx.Variable(0)
         self.epoch = nnx.Variable(0)
@@ -186,9 +191,12 @@ if sampler.buffer_size[...] > 0:
     process_buffer()
 
 # Correct: Initialize Variables properly
+from datarax.core import DataraxModule, DataraxModuleConfig
+import flax.nnx as nnx
+
 class SamplerModule(DataraxModule):
     def __init__(self, buffer_size=100):
-        super().__init__()
+        super().__init__(DataraxModuleConfig())
         self.buffer_size = nnx.Variable(buffer_size)  # Store value in Variable
         self.current_position = nnx.Variable(0)
 ```
@@ -213,9 +221,12 @@ sampler.set_state(state)
 **Solution**: Implement proper PRNG state management.
 
 ```python
+from datarax.core import SamplerModule, StructuralConfig
+import flax.nnx as nnx
+
 class StatefulSamplerModule(SamplerModule):
     def __init__(self, seed=0, name="stateful_sampler"):
-        super().__init__(name=name)
+        super().__init__(StructuralConfig(), name=name)
         self.rngs = nnx.Rngs(default=seed)
         self.original_seed = nnx.Variable(seed)
 
@@ -254,23 +265,23 @@ ValueError: Unknown type: "<class 'custom.CustomSamplerModule'>"
 **Solution**: Ensure proper inheritance and registration.
 
 ```python
-from datarax.core import SamplerModule
+from datarax.core import SamplerModule, StructuralConfig
 import flax.nnx as nnx
 
 # Correct: Inherit from appropriate Datarax base class
 class CustomSamplerModule(SamplerModule):
     def __init__(self, custom_param=10, name="custom_sampler"):
         # Always call super().__init__
-        super().__init__(name=name)
+        super().__init__(StructuralConfig(), name=name)
 
         # Use NNX Variables for state
         self.custom_param = nnx.Variable(custom_param)
         self.internal_state = nnx.Variable({})
 
-    def sample(self, data):
-        """Implement required interface."""
-        # Custom sampling logic
-        return data[::self.custom_param[...]]
+    def sample(self, n):
+        """Return the sampled indices for a dataset of size ``n``."""
+        # Custom sampling logic: take every custom_param-th index
+        return list(range(0, n, int(self.custom_param[...])))
 ```
 
 ### Type Handler Registration
@@ -291,8 +302,7 @@ class CustomTypeHandler:
         return CustomType.from_dict(serialized['data'])
 
 # Register handler
-handler_registry = ocp.type_handlers.TypeHandlerRegistry()
-handler_registry.register(CustomType, CustomTypeHandler())
+ocp.type_handlers.register_type_handler(CustomType, CustomTypeHandler())
 ```
 
 ## Performance Issues
@@ -303,15 +313,21 @@ handler_registry.register(CustomType, CustomTypeHandler())
 
 ```python
 # Problem: Accumulating checkpoint data
+from flax import nnx
+
 checkpoints = []
 for i in range(1000):
-    state = pipeline.get_state()
+    state = nnx.state(pipeline)
     checkpoints.append(state)  # Memory leak!
 ```
 
 **Solution**: Implement checkpoint rotation and cleanup.
 
 ```python
+import time
+
+from flax import nnx
+
 class CheckpointManager:
     def __init__(self, max_checkpoints=5):
         self.max_checkpoints = max_checkpoints
@@ -319,7 +335,7 @@ class CheckpointManager:
 
     def save_checkpoint(self, pipeline):
         """Save checkpoint with automatic cleanup."""
-        state = pipeline.get_state()
+        state = nnx.state(pipeline)
         timestamp = time.time()
 
         checkpoint = {
@@ -344,7 +360,7 @@ class CheckpointManager:
             raise ValueError("No checkpoints available")
 
         checkpoint = self.checkpoints[index]
-        pipeline.set_state(checkpoint['state'])
+        nnx.update(pipeline, checkpoint['state'])
         return checkpoint['timestamp']
 ```
 
@@ -354,9 +370,13 @@ class CheckpointManager:
 
 ```python
 # Problem: Serializing large data buffers
+from datarax.core import DataraxModule, DataraxModuleConfig
+import flax.nnx as nnx
+import jax.numpy as jnp
+
 class LargeBufferModule(DataraxModule):
     def __init__(self, buffer_size=1000000):
-        super().__init__()
+        super().__init__(DataraxModuleConfig())
         self.large_buffer = nnx.Variable(jnp.zeros(buffer_size))  # Too large!
 ```
 
@@ -364,8 +384,8 @@ class LargeBufferModule(DataraxModule):
 
 ```python
 class EfficientBufferModule(DataraxModule):
-    def __init__(self, buffer_size=1000000):
-        super().__init__()
+    def __init__(self, config, buffer_size=1000000):
+        super().__init__(config)
         # Only store essential state
         self.buffer_size = nnx.Variable(buffer_size)
         self.buffer_position = nnx.Variable(0)
@@ -373,9 +393,9 @@ class EfficientBufferModule(DataraxModule):
         # Don't store actual buffer data in state
         self._buffer = None
 
-    def get_serializable_state(self):
+    def get_state(self):
         """Only serialize essential state."""
-        state = super().get_serializable_state()
+        state = super().get_state()
         # Remove large buffers from serialization
         state_copy = {}
         for key, value in state.items():
@@ -455,7 +475,7 @@ validate_checkpoint_integrity(original_pipeline, pipeline)
 
 1. **Always use NNX Variables**: Store mutable state in `nnx.Variable` objects
 2. **Access with slice notation**: Use `variable[...]` for Arrays or `variable.get_value()` for other types (`.value` is deprecated in Flax 0.12.0+)
-3. **Implement clean serialization**: Override `get_serializable_state()` for complex objects
+3. **Implement clean serialization**: Override `get_state()`/`set_state()` for complex objects
 4. **Validate after restoration**: Include validation in your restoration workflow
 5. **Manage memory**: Implement checkpoint rotation for long-running processes
 6. **Keep state flat**: Avoid deeply nested custom state structures

@@ -63,7 +63,10 @@ docker run --rm --gpus all datarax:latest \
 
 # CLI tools
 docker run --rm datarax:latest datarax --help
-docker run --rm datarax:latest datarax-bench --help
+
+# The benchmark CLI ships only in the benchmark-extra images
+# (the root datarax:latest image does not include the benchmark extra)
+docker run --rm datarax-bench:cpu python -m benchmarks.cli --help
 ```
 
 ### Benchmarking
@@ -78,7 +81,7 @@ docker run --rm --gpus all datarax-bench:gpu
 # Save results to host
 docker run --rm --gpus all -v $(pwd)/results:/app/results \
     datarax-bench:gpu python -m benchmarks.runners.full_runner \
-    --platform gpu --output /app/results/
+    --platform gpu --output-dir /app/results/
 ```
 
 ### GPU Passthrough

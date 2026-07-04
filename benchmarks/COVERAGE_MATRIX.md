@@ -15,6 +15,7 @@ capability requirements), i.e. what they would run once installed.
 | tf.data | 25 | |
 | PyTorch DataLoader | 25 | Universal baseline |
 | SPDL | 25 | Thread-based loading |
+| HuggingFace Datasets | 13 | framework not installed |
 | jax-dataloader | 13 | framework not installed |
 | FFCV | 13 | framework not installed; vision-focused |
 | Deep Lake | 13 | framework not installed |

@@ -12,7 +12,7 @@ import jax
 from flax import nnx
 from tqdm import tqdm
 
-from datarax.core import Pipeline  # type: ignore[reportAttributeAccessIssue]
+from datarax.pipeline import Pipeline
 from datarax.sources import HFEagerConfig, HFEagerSource
 
 
@@ -26,14 +26,14 @@ logger = logging.getLogger("hf_datasets_test")
 # Dataset configurations to test
 DATASET_CONFIGS = [
     # Text datasets
-    {"path": "imdb", "split": "train", "streaming": True},
-    {"path": "squad", "split": "train", "streaming": True},
+    {"path": "stanfordnlp/imdb", "split": "train", "streaming": True},
+    {"path": "rajpurkar/squad", "split": "train", "streaming": True},
     # Image datasets
-    {"path": "cifar10", "split": "train", "streaming": True},
-    {"path": "mnist", "split": "train", "streaming": True},
+    {"path": "uoft-cs/cifar10", "split": "train", "streaming": True},
+    {"path": "ylecun/mnist", "split": "train", "streaming": True},
     # Other datasets
-    {"path": "ag_news", "split": "train", "streaming": True},
-    {"path": "rotten_tomatoes", "split": "train", "streaming": True},
+    {"path": "fancyzhx/ag_news", "split": "train", "streaming": True},
+    {"path": "cornell-movie-review-data/rotten_tomatoes", "split": "train", "streaming": True},
 ]
 
 
@@ -73,7 +73,7 @@ def dataset_compatibility_test(
         source = HFEagerSource(config, rngs=nnx.Rngs(0))
 
         # Create data stream
-        stream = Pipeline(source)
+        stream = Pipeline(source=source, stages=[], batch_size=1, rngs=nnx.Rngs(0))
 
         # Check dataset size if possible
         try:
@@ -89,7 +89,7 @@ def dataset_compatibility_test(
         data_types = {}
         shapes = {}
 
-        example_iter = iter(stream.batch(batch_size=1).iterator())
+        example_iter = iter(stream)
         for _ in tqdm(range(max_examples), desc="Processing examples"):
             element = next(example_iter)
             examples_processed += 1

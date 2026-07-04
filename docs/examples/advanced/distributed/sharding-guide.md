@@ -58,22 +58,16 @@ python examples/advanced/distributed/02_sharding_guide.py
 ```mermaid
 flowchart TB
     subgraph Source["Data Pipeline"]
-        S[Source] --> P[Pipeline<br/>batch_size=256]
+        S[Source] --> P[Pipeline<br/>batch_size=128]
     end
 
-    subgraph Mesh["2D Device Mesh"]
+    subgraph Mesh["1D Device Mesh (data axis)"]
         direction LR
-        subgraph Row1["Data Axis 0"]
-            D0[GPU 0]
-            D1[GPU 1]
-        end
-        subgraph Row2["Data Axis 1"]
-            D2[GPU 2]
-            D3[GPU 3]
-        end
+        D0[GPU 0]
+        D1[GPU 1]
     end
 
-    P --> D0 & D1 & D2 & D3
+    P --> D0 & D1
 ```
 
 ## Part 1: Understanding Data Parallelism
@@ -99,162 +93,232 @@ model_sharded = P(None, None, None, "model") # Model parallelism
 
 ## Part 2: Creating the Device Mesh
 
+The guide builds a **1D mesh** for pure data parallelism — all devices along a
+single `"data"` axis. This is what the script does:
+
 ```python
 import jax
 import numpy as np
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 devices = jax.devices()
-print(f"Available devices: {len(devices)}")
+num_devices = len(devices)
+use_sharding = num_devices >= 2
 
-# 1D mesh for pure data parallelism
-mesh_1d = Mesh(np.array(devices), axis_names=("data",))
-
-# 2D mesh for data + model parallelism
-if len(devices) >= 4:
-    mesh_2d = Mesh(
-        np.array(devices).reshape(2, 2),
-        axis_names=("data", "model")
-    )
+if use_sharding:
+    # Create 1D mesh for pure data parallelism
+    device_array = np.array(devices)
+    mesh = Mesh(device_array, axis_names=("data",))
+    print(f"Created mesh: {mesh.shape} with axis 'data'")
+else:
+    mesh = None
+    print("Single device mode - will simulate sharding concepts")
 ```
 
 **Terminal Output:**
 ```
-Available devices: 4
-Created 1D mesh: (4,) along 'data'
-Created 2D mesh: (2, 2) along ('data', 'model')
+Available devices: 2
+Created mesh: (2,) with axis 'data'
 ```
+
+!!! note "Conceptual extension: 2D meshes"
+    A **2D mesh** combines data and model parallelism for large models. This
+    guide does not use it — the snippet below is shown only to illustrate the
+    pattern:
+
+    ```python
+    # Conceptual only — not exercised by this guide
+    if len(devices) >= 4:
+        mesh_2d = Mesh(
+            np.array(devices).reshape(2, 2),
+            axis_names=("data", "model"),
+        )
+    ```
 
 ## Part 3: Sharded Batch Distribution
 
+A helper builds the right `PartitionSpec` for any array shape — sharding the
+first (batch) dimension across the `"data"` axis and replicating the rest:
+
 ```python
-def create_sharded_pipeline(source, mesh, batch_size_per_device=64):
-    """Create pipeline with per-device batch size."""
-    total_batch_size = batch_size_per_device * mesh.shape["data"]
+def create_sharding_spec(shape, mesh, shard_first_dim=True):
+    """Create appropriate PartitionSpec for a given shape."""
+    if mesh is None:
+        return None
 
-    pipeline = Pipeline(source=source, stages=[], batch_size=total_batch_size, rngs=nnx.Rngs(0))
+    ndim = len(shape)
+    if shard_first_dim and ndim > 0:
+        # Shard first dim (batch), replicate rest
+        spec = ("data",) + (None,) * (ndim - 1)
+    else:
+        # Fully replicate
+        spec = (None,) * ndim
 
-    # Define shardings
-    image_sharding = NamedSharding(
-        mesh, PartitionSpec("data", None, None, None)
+    return NamedSharding(mesh, PartitionSpec(*spec))
+```
+
+The pipeline itself is a standard Datarax pipeline with a preprocessing stage:
+
+```python
+BATCH_SIZE = 128  # Total batch size across all devices
+NUM_SAMPLES = 2048
+
+
+def preprocess_image(element, key=None):
+    """Standard image preprocessing."""
+    del key
+    image = element.data["image"].astype(jnp.float32) / 255.0
+    return element.update_data({"image": image})
+
+
+def create_pipeline(batch_size=BATCH_SIZE, num_samples=NUM_SAMPLES, seed=42):
+    """Create CIFAR-10 data pipeline."""
+    config = TFDSEagerConfig(
+        name="cifar10",
+        split=f"train[:{num_samples}]",
+        shuffle=True,
+        seed=seed,
+        exclude_keys={"id"},
     )
-    label_sharding = NamedSharding(
-        mesh, PartitionSpec("data")
+    source = TFDSEagerSource(config, rngs=nnx.Rngs(seed))
+    preprocessor = ElementOperator(
+        ElementOperatorConfig(stochastic=False),
+        fn=preprocess_image,
+        rngs=nnx.Rngs(0),
     )
+    return Pipeline(source=source, stages=[preprocessor], batch_size=batch_size, rngs=nnx.Rngs(0))
+```
 
-    return pipeline, image_sharding, label_sharding
+Each batch is distributed by applying the sharding to every array it contains:
 
-# Usage
-pipeline, img_shard, lbl_shard = create_sharded_pipeline(source, mesh_1d)
+```python
+def distribute_batch(batch, mesh, shard_batch_dim=True):
+    """Distribute batch data across devices."""
+    if mesh is None:
+        return batch
 
-with mesh_1d:
-    for batch in pipeline:
-        images = jax.device_put(batch["image"], img_shard)
-        labels = jax.device_put(batch["label"], lbl_shard)
-        # Each device gets batch_size/4 samples
+    distributed = {}
+    for key, array in batch.items():
+        if hasattr(array, "shape"):
+            sharding = create_sharding_spec(array.shape, mesh, shard_batch_dim)
+            distributed[key] = jax.device_put(array, sharding)
+        else:
+            distributed[key] = array
+
+    return distributed
+
+
+# Distribute a batch within the mesh context
+pipeline = create_pipeline()
+test_batch = next(iter(pipeline))
+with mesh:
+    sharded_batch = distribute_batch(test_batch, mesh)
+    print(f"  Image shape: {sharded_batch['image'].shape}")
+    print(f"  Image sharding: {sharded_batch['image'].sharding.spec}")
 ```
 
 **Terminal Output:**
 ```
-Total batch size: 256
-Per-device batch size: 64
-Image sharding: PartitionSpec('data', None, None, None)
+Distributed batch:
+  Image shape: (128, 32, 32, 3)
+  Image sharding: PartitionSpec('data', None, None, None)
 ```
 
 ## Part 4: Optimizing Throughput
 
-```python
-def benchmark_sharding(pipeline, mesh, num_batches=50):
-    """Measure throughput with sharding."""
-    image_sharding = NamedSharding(mesh, PartitionSpec("data", None, None, None))
-
-    times = []
-    with mesh:
-        for i, batch in enumerate(pipeline):
-            if i >= num_batches:
-                break
-
-            start = time.time()
-            images = jax.device_put(batch["image"], image_sharding)
-            jax.block_until_ready(images)
-            times.append(time.time() - start)
-
-    avg_time = np.mean(times[5:])  # Skip warmup
-    throughput = batch["image"].shape[0] / avg_time
-
-    print(f"Average batch time: {avg_time*1000:.2f}ms")
-    print(f"Throughput: {throughput:.0f} samples/sec")
-
-    return throughput
-```
-
-**Terminal Output:**
-```
-Average batch time: 12.34ms
-Throughput: 20,745 samples/sec
-```
-
-## Part 5: Handling Edge Cases
-
-### Uneven Batches
+The guide benchmarks throughput across a sweep of batch sizes. Each run warms
+up once, then times how quickly sharded batches become ready:
 
 ```python
-def handle_uneven_batches(batch, mesh, target_batch_size):
-    """Pad batches to ensure even distribution."""
-    current_size = batch["image"].shape[0]
-    devices_per_axis = mesh.shape["data"]
+def benchmark_pipeline(batch_size, num_batches=20, mesh=None):
+    """Benchmark pipeline throughput."""
+    pipeline = create_pipeline(batch_size=batch_size, num_samples=batch_size * num_batches)
 
-    if current_size % devices_per_axis != 0:
-        # Pad to nearest multiple
-        pad_size = devices_per_axis - (current_size % devices_per_axis)
-        padded_images = jnp.pad(
-            batch["image"],
-            ((0, pad_size), (0, 0), (0, 0), (0, 0))
-        )
-        return {"image": padded_images, "valid_mask": current_size}
+    # Warmup
+    warmup_batch = next(iter(pipeline))
+    if mesh is not None:
+        with mesh:
+            _ = distribute_batch(warmup_batch, mesh)
 
-    return batch
-```
+    # Benchmark
+    pipeline = create_pipeline(batch_size=batch_size, num_samples=batch_size * num_batches)
 
-### Single Device Fallback
+    start = time.time()
+    samples = 0
 
-```python
-def create_pipeline_with_fallback(source, batch_size):
-    """Create pipeline that works on any device count."""
-    devices = jax.devices()
-
-    if len(devices) >= 2:
-        mesh = Mesh(np.array(devices), ("data",))
-        use_sharding = True
+    if mesh is not None:
+        with mesh:
+            for batch in pipeline:
+                sharded = distribute_batch(batch, mesh)
+                _ = sharded["image"].block_until_ready()
+                samples += batch["image"].shape[0]
     else:
-        mesh = None
-        use_sharding = False
+        for batch in pipeline:
+            _ = batch["image"].block_until_ready()
+            samples += batch["image"].shape[0]
 
-    pipeline = Pipeline(source=source, stages=[], batch_size=batch_size, rngs=nnx.Rngs(0))
+    elapsed = time.time() - start
+    return samples / elapsed
 
-    return pipeline, mesh, use_sharding
+
+# Sweep batch sizes
+batch_sizes = [32, 64, 128, 256]
+for bs in batch_sizes:
+    tp = benchmark_pipeline(bs, mesh=mesh)
+    print(f"  Batch size {bs}: {tp:.0f} samples/s")
 ```
+
+Throughput rises with batch size as the fixed per-batch distribution overhead is
+amortized across more samples:
+
+![Sharding Throughput Scaling](../../../assets/images/examples/dist-sharding-throughput-scaling.png)
+
+*Data-loading throughput across batch sizes 32, 64, 128, and 256. Absolute
+numbers depend on your device count and hardware.*
+
+## Part 5: Device Utilization
+
+The guide also simulates device utilization during sharded data loading to
+illustrate how work spreads across devices:
+
+![Device Utilization](../../../assets/images/examples/dist-sharding-device-utilization.png)
+
+*Simulated per-device utilization over the loading steps, with the mean marked.*
+
+## Part 6: Batch Distribution
+
+Finally, it visualizes how a single batch is split across devices:
+
+![Batch Distribution](../../../assets/images/examples/dist-sharding-batch-distribution.png)
+
+*Left: batch samples distributed across devices. Right: samples per device for a
+total batch of 128.*
 
 ## Results Summary
 
-| Configuration | Throughput | Memory/Device |
-|---------------|------------|---------------|
-| 1 GPU | ~5,000 samples/s | 2 GB |
-| 2 GPUs (data parallel) | ~9,500 samples/s | 1 GB |
-| 4 GPUs (data parallel) | ~18,000 samples/s | 512 MB |
+### Sharding Strategies
 
-**Key Insights:**
+| Strategy | Use Case | Mesh Shape |
+|----------|----------|------------|
+| Pure Data Parallel | Most common | (N,) "data" |
+| 2D Data + Model | Large models | (D, M) "data", "model" |
+| Pipeline Parallel | Very long sequences | (P,) "pipeline" |
 
-1. **Linear scaling**: Near-linear throughput increase with device count
-2. **Memory reduction**: Batch memory divided across devices
-3. **Communication overhead**: Minimal with data parallelism
+### Performance Guidelines
 
-## Best Practices
+| Batch Size | Recommendation |
+|------------|----------------|
+| < 32 | Overhead may exceed benefit |
+| 64-256 | Good balance |
+| > 256 | Check memory constraints |
 
-1. **Batch size**: Use `batch_size_per_device * num_devices`
-2. **Warmup**: Skip first few iterations when benchmarking
-3. **Padding**: Handle uneven batches to avoid errors
-4. **Fallback**: Always support single-device execution
+### Key Takeaways
+
+1. **Batch size**: Should be divisible by device count
+2. **Memory**: Sharding reduces per-device memory linearly
+3. **Overhead**: Distribution has fixed cost — larger batches amortize it
+4. **Mesh context**: All sharded operations must be within mesh context
+5. **Fallback**: Code should handle single-device gracefully
 
 ## Next Steps
 

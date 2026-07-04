@@ -1,5 +1,8 @@
 # Timing
 
+!!! info "External package"
+    This page documents [calibrax](https://github.com/avitai/calibrax), the benchmarking library datarax depends on.
+
 Framework-agnostic timing with GPU synchronization support for accurate JAX benchmarking.
 
 ## See Also

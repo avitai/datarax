@@ -2,6 +2,13 @@
 
 This directory contains detailed examples demonstrating the fundamental architectural differences between the `datarax` (Datarax) stateful approach and Google Grain's stateless framework.
 
+> **These scripts are architectural-pattern mock-ups.** They illustrate the
+> stateful-vs-stateless *design* using plain `flax.nnx` + `numpy` (with `jax`,
+> `optax`, and `psutil` for a few demos). They contain **no `datarax` and no
+> `grain` imports** — they do not exercise the real libraries. Treat every code
+> snippet, API name, and performance number below as an illustration of the
+> pattern, not as a runnable Datarax or Grain API reference.
+
 ## 📁 Directory Structure
 
 ```
@@ -20,7 +27,7 @@ examples/comparison/
 | Aspect | Datarax (Stateful) | Google Grain (Stateless) |
 |--------|--------------------------|--------------------------|
 | **State Management** | Internal via NNX Variables | External, passed around |
-| **Checkpointing** | Automatic via `get_state()`/`set_state()` | Manual state collection |
+| **Checkpointing** | Iterator-level `get_state()`/`set_state()` | Manual state collection |
 | **Iteration** | Natural Python `__iter__`/`__next__` | Generator with state tuples |
 | **PRNG Handling** | Internal `nnx.Rngs` management | External key passing |
 | **Code Complexity** | Clean, encapsulated | More boilerplate |
@@ -32,15 +39,17 @@ examples/comparison/
 - Natural Python iteration protocol
 - Automatic state tracking with NNX
 
-#### ✅ **Better Performance**
-- 1.5-2x faster iteration (no tuple unpacking overhead)
-- 30-50% memory savings with shared memory management
+#### ✅ **Better Performance** *(illustrative figures)*
+- ~1.5-2x faster iteration (no tuple unpacking overhead)
+- ~30-50% memory savings with shared memory management
 - Better JIT compilation due to cleaner boundaries
 
 #### ✅ **Robust Checkpointing**
-- One-line checkpoint: `state = loader.get_state()`
-- One-line restore: `loader.set_state(state)`
-- All component states automatically included
+- Checkpointing lives on the **iterator**, not the pipeline: `iter(pipeline)`
+  returns a `PipelineIterator` exposing `get_state()`, `set_state()`, and `close()`
+- One-line checkpoint: `state = iterator.get_state()`
+- One-line restore: `iterator.set_state(state)`
+- All component states captured in that iteration session
 
 #### ✅ **Learnable Components**
 - Transformations can have trainable parameters
@@ -93,11 +102,26 @@ python examples/comparison/03_distributed_memory_efficient.py
 
 **Key Insights:**
 - Automatic worker coordination
-- 30-50% memory savings with sharing
+- Illustrative 30-50% memory savings with sharing
 - Clean JAX sharding integration
 - Built-in performance monitoring
 
+### Example 4: End-to-End Pipeline
+Walks through a complete pipeline comparison from source to trained step.
+
+```bash
+python examples/comparison/04_end_to_end_pipeline.py
+```
+
+**Key Insights:**
+- Full source → transform → batch → train flow in both styles
+- Stateful vs. stateless composition across a realistic pipeline
+- Combined view of checkpointing, iteration, and state management
+
 ## 📊 Performance Comparison Summary
+
+> The figures in this section are **illustrative** of the architectural pattern
+> and are not measured Datarax vs. Grain benchmarks.
 
 | Metric | Datarax | Grain | Improvement |
 |--------|--------------|-------|-------------|
@@ -150,12 +174,21 @@ def process(data, state):
 
 **Datarax:**
 ```python
-# Save
-checkpoint = pipeline.get_state()
+# Open an iteration session (returns a PipelineIterator)
+iterator = iter(pipeline)
 
-# Restore
-pipeline.set_state(checkpoint)
+# Save
+checkpoint = iterator.get_state()
+
+# Restore into a session
+iterator.set_state(checkpoint)
+
+# Release session resources when done
+iterator.close()
 ```
+
+> There is no pipeline-level `get_state()`/`set_state()`. State is scoped to the
+> `PipelineIterator` returned by `iter(pipeline)`.
 
 **Grain:**
 ```python
@@ -187,8 +220,8 @@ transform1.set_state(checkpoint["transform1"])
 - **Datarax**: Less code, cleaner interfaces
 - **Grain**: More boilerplate, complex state flow
 
-### Performance
-- **Datarax**: 1.5-2x faster, better JIT compilation
+### Performance *(illustrative figures)*
+- **Datarax**: ~1.5-2x faster, better JIT compilation
 - **Grain**: Overhead from state passing
 
 ## 🚦 Migration Guide
@@ -197,17 +230,17 @@ If migrating from Grain to Datarax:
 
 1. **Convert stateless functions to NNX modules**
 2. **Replace external state with NNX Variables**
-3. **Use `get_state()`/`set_state()` for checkpointing**
+3. **Use the iterator's `get_state()`/`set_state()` for checkpointing**
 4. **Leverage automatic PRNG management**
 5. **Simplify worker coordination code**
 
 ## 📝 Conclusion
 
-The datarax approach with stateful NNX modules provides significant advantages over Grain's stateless design:
+The datarax approach with stateful NNX modules provides significant advantages over Grain's stateless design (figures below are **illustrative** of the pattern, not measured benchmarks):
 
-- **50% less code** for equivalent functionality
-- **2x better performance** in typical scenarios
-- **40% memory savings** with multiple workers
+- **~50% less code** for equivalent functionality
+- **~2x better performance** in typical scenarios
+- **~40% memory savings** with multiple workers
 - **Automatic everything** - state, checkpoints, statistics
 - **Production-ready** - robust, maintainable, scalable
 

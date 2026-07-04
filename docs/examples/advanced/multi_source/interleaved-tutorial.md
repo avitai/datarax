@@ -63,8 +63,8 @@ flowchart TB
     end
 
     subgraph Preprocess["Per-Source Processing"]
-        MP[MNIST Preprocess<br/>+ source_id=0]
-        FP[Fashion Preprocess<br/>+ source_id=1]
+        MP[MNIST Preprocess<br/>+ source=0]
+        FP[Fashion Preprocess<br/>+ source=1]
     end
 
     subgraph Combine["Interleaving"]
@@ -126,106 +126,172 @@ Fashion samples: 2000
 ## Part 2: Source-Specific Preprocessing
 
 ```python
-def create_mnist_preprocessor():
-    """MNIST preprocessing with source identification."""
-    def preprocess(element, key=None):
-        image = element.data["image"].astype(jnp.float32) / 255.0
-        if image.ndim == 2:
-            image = image[..., None]
-        # Normalize with MNIST stats
-        image = (image - 0.1307) / 0.3081
-        return element.update_data({
+# Normalization constants
+MNIST_MEAN, MNIST_STD = 0.1307, 0.3081
+FASHION_MEAN, FASHION_STD = 0.2860, 0.3530
+
+def preprocess_mnist(element, key=None):
+    """Preprocess MNIST with source tag."""
+    del key
+    image = element.data["image"]
+
+    # Normalize
+    image = image.astype(jnp.float32) / 255.0
+    if image.ndim == 2:
+        image = image[..., None]
+    image = (image - MNIST_MEAN) / MNIST_STD
+
+    # Add source indicator (0 = MNIST, 1 = Fashion)
+    return element.update_data(
+        {
             "image": image,
             "label": element.data["label"],
-            "source_id": 0,  # MNIST identifier
-        })
-    return ElementOperator(
-        ElementOperatorConfig(stochastic=False),
-        fn=preprocess, rngs=nnx.Rngs(0)
+            "source": jnp.array(0, dtype=jnp.int32),  # 0 = MNIST
+        }
     )
 
-def create_fashion_preprocessor():
-    """Fashion-MNIST preprocessing with source identification."""
-    def preprocess(element, key=None):
-        image = element.data["image"].astype(jnp.float32) / 255.0
-        if image.ndim == 2:
-            image = image[..., None]
-        # Normalize with Fashion-MNIST stats
-        image = (image - 0.2860) / 0.3530
-        return element.update_data({
+def preprocess_fashion(element, key=None):
+    """Preprocess Fashion-MNIST with source tag."""
+    del key
+    image = element.data["image"]
+
+    # Normalize
+    image = image.astype(jnp.float32) / 255.0
+    if image.ndim == 2:
+        image = image[..., None]
+    image = (image - FASHION_MEAN) / FASHION_STD
+
+    # Add source indicator (shift labels by 10 for unified label space)
+    return element.update_data(
+        {
             "image": image,
-            "label": element.data["label"] + 10,  # Offset labels
-            "source_id": 1,  # Fashion identifier
-        })
-    return ElementOperator(
-        ElementOperatorConfig(stochastic=False),
-        fn=preprocess, rngs=nnx.Rngs(0)
+            "label": element.data["label"] + 10,  # Offset for unified labels
+            "original_label": element.data["label"],
+            "source": jnp.array(1, dtype=jnp.int32),  # 1 = Fashion
+        }
     )
+
+mnist_preprocessor = ElementOperator(
+    ElementOperatorConfig(stochastic=False),
+    fn=preprocess_mnist,
+    rngs=nnx.Rngs(0),
+)
+
+fashion_preprocessor = ElementOperator(
+    ElementOperatorConfig(stochastic=False),
+    fn=preprocess_fashion,
+    rngs=nnx.Rngs(0),
+)
 ```
 
 ## Part 3: Build Interleaved Pipeline
 
 ```python
+BATCH_SIZE = 32
+
 # Create individual pipelines
-mnist_pipeline = (
-    Pipeline(source=mnist_source, stages=[create_mnist_preprocessor(], batch_size=16, rngs=nnx.Rngs(0)))
+mnist_pipeline = Pipeline(
+    source=mnist_source, stages=[mnist_preprocessor], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0)
 )
 
-fashion_pipeline = (
-    Pipeline(source=fashion_source, stages=[create_fashion_preprocessor(], batch_size=16, rngs=nnx.Rngs(0)))
+# Fashion pipeline (need fresh source)
+fashion_source2 = TFDSEagerSource(fashion_config, rngs=nnx.Rngs(43))
+fashion_pipeline = Pipeline(
+    source=fashion_source2, stages=[fashion_preprocessor], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0)
 )
 
-# Interleave by alternating batches
-def interleave_pipelines(pipelines):
-    """Yield batches alternating between pipelines."""
-    iterators = [iter(p) for p in pipelines]
-    while iterators:
-        for i, it in enumerate(iterators):
-            try:
-                yield next(it)
-            except StopIteration:
-                iterators.pop(i)
 
-interleaved = interleave_pipelines([mnist_pipeline, fashion_pipeline])
+# Round-robin interleaving that alternates between sources
+class InterleavedIterator:
+    """Round-robin iterator that alternates between multiple sources."""
+
+    def __init__(self, pipelines: list, weights: list[float] | None = None):
+        """Initialize with list of pipelines and optional weights."""
+        self.pipelines = pipelines
+        self.iterators = [iter(p) for p in pipelines]
+        self.weights = weights or [1.0 / len(pipelines)] * len(pipelines)
+        self.current_idx = 0
+        self.exhausted = [False] * len(pipelines)
+
+    def __iter__(self):
+        """Iterate over interleaved pipeline batches."""
+        return self
+
+    def __next__(self):
+        """Get next batch, cycling through sources."""
+        if all(self.exhausted):
+            raise StopIteration
+
+        # Find next non-exhausted source
+        attempts = 0
+        while self.exhausted[self.current_idx] and attempts < len(self.pipelines):
+            self.current_idx = (self.current_idx + 1) % len(self.pipelines)
+            attempts += 1
+
+        if attempts >= len(self.pipelines):
+            raise StopIteration
+
+        try:
+            batch = next(self.iterators[self.current_idx])
+            self.current_idx = (self.current_idx + 1) % len(self.pipelines)
+            return batch
+        except StopIteration:
+            self.exhausted[self.current_idx] = True
+            return self.__next__()
+
+
+interleaved = InterleavedIterator([mnist_pipeline, fashion_pipeline])
 ```
 
 ## Part 4: Process Mixed Batches
 
 ```python
-source_counts = {0: 0, 1: 0}  # Track samples per source
+# Create fresh pipelines for interleaving (train[:500] subset per source)
+def create_interleaved_pipelines():
+    """Create fresh pipelines for interleaving."""
+    mnist_src = TFDSEagerSource(
+        TFDSEagerConfig(name="mnist", split="train[:500]", shuffle=True, seed=42),
+        rngs=nnx.Rngs(42),
+    )
+    fashion_src = TFDSEagerSource(
+        TFDSEagerConfig(name="fashion_mnist", split="train[:500]", shuffle=True, seed=43),
+        rngs=nnx.Rngs(43),
+    )
 
-for batch_idx, batch in enumerate(interleaved):
-    if batch_idx >= 10:
+    mnist_prep = ElementOperator(
+        ElementOperatorConfig(stochastic=False), fn=preprocess_mnist, rngs=nnx.Rngs(0)
+    )
+    fashion_prep = ElementOperator(
+        ElementOperatorConfig(stochastic=False), fn=preprocess_fashion, rngs=nnx.Rngs(0)
+    )
+
+    mnist_pipe = Pipeline(
+        source=mnist_src, stages=[mnist_prep], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0)
+    )
+    fashion_pipe = Pipeline(
+        source=fashion_src, stages=[fashion_prep], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0)
+    )
+
+    return [mnist_pipe, fashion_pipe]
+
+
+# Test interleaved iteration
+interleaved = InterleavedIterator(create_interleaved_pipelines())
+
+sources_seen = []
+for i, batch in enumerate(interleaved):
+    if i >= 10:  # Sample first 10 batches
         break
+    sources_seen.append(int(batch["source"][0]))
 
-    images = batch["image"]
-    labels = batch["label"]
-    source_ids = batch["source_id"]
-
-    # Count samples from each source
-    for sid in source_ids:
-        source_counts[int(sid)] += 1
-
-    print(f"Batch {batch_idx}:")
-    print(f"  Shape: {images.shape}")
-    print(f"  Labels: {labels[:5]}...")
-    print(f"  Source: {'MNIST' if source_ids[0] == 0 else 'Fashion'}")
-
-print(f"\nSource distribution: MNIST={source_counts[0]}, Fashion={source_counts[1]}")
+print(f"Sources in first 10 batches: {sources_seen}")
+print("(0=MNIST, 1=Fashion)")
 ```
 
 **Terminal Output:**
 ```
-Batch 0:
-  Shape: (16, 28, 28, 1)
-  Labels: [5 0 4 1 9]...
-  Source: MNIST
-Batch 1:
-  Shape: (16, 28, 28, 1)
-  Labels: [19 12 10 18 17]...
-  Source: Fashion
-
-Source distribution: MNIST=80, Fashion=80
+Sources in first 10 batches: [0, 1, 0, 1, 0, 1, 0, 1, 0, 1]
+(0=MNIST, 1=Fashion)
 ```
 
 ## Part 5: Visualization
@@ -233,24 +299,59 @@ Source distribution: MNIST=80, Fashion=80
 ```python
 import matplotlib.pyplot as plt
 
-fig, axes = plt.subplots(2, 8, figsize=(16, 4))
-fig.suptitle("Multi-Source Samples: MNIST (top) vs Fashion (bottom)")
+# Collect samples from both sources
+interleaved = InterleavedIterator(create_interleaved_pipelines())
+all_images, all_sources, all_original_labels = [], [], []
 
-# Get batches from each source
-mnist_batch = next(iter(mnist_pipeline))
-fashion_batch = next(iter(fashion_pipeline))
+for batch in interleaved:
+    all_images.append(np.array(batch["image"]))
+    all_sources.append(np.array(batch["source"]))
+    if "original_label" in batch:
+        all_original_labels.append(np.array(batch["original_label"]))
+    else:
+        all_original_labels.append(np.array(batch["label"]))
+
+all_images = np.concatenate(all_images)
+all_sources = np.concatenate(all_sources)
+all_original_labels = np.concatenate(all_original_labels)
+
+# Plot mixed dataset samples (4 rows x 8 cols)
+fig, axes = plt.subplots(4, 8, figsize=(16, 8))
+fig.suptitle("Multi-Source Dataset: MNIST + Fashion-MNIST", fontsize=14)
+
+mnist_indices = np.where(all_sources == 0)[0][:16]
+fashion_indices = np.where(all_sources == 1)[0][:16]
 
 for i in range(8):
-    # MNIST samples
-    axes[0, i].imshow(mnist_batch["image"][i].squeeze(), cmap="gray")
-    axes[0, i].set_title(f"Digit: {mnist_batch['label'][i]}")
+    # MNIST row 1 (denormalize: img * STD + MEAN)
+    idx = mnist_indices[i]
+    img = all_images[idx] * MNIST_STD + MNIST_MEAN
+    axes[0, i].imshow(img.squeeze(), cmap="gray")
     axes[0, i].axis("off")
+    axes[0, i].set_title(f"MNIST: {MNIST_CLASSES[all_original_labels[idx] % 10]}", fontsize=8)
 
-    # Fashion samples
-    axes[1, i].imshow(fashion_batch["image"][i].squeeze(), cmap="gray")
-    axes[1, i].set_title(f"Fashion: {fashion_batch['label'][i]-10}")
+    # Fashion row 2
+    idx = fashion_indices[i]
+    img = all_images[idx] * FASHION_STD + FASHION_MEAN
+    axes[1, i].imshow(img.squeeze(), cmap="gray")
     axes[1, i].axis("off")
+    axes[1, i].set_title(f"Fashion: {FASHION_CLASSES[all_original_labels[idx] % 10]}", fontsize=8)
 
+    # MNIST row 3
+    idx = mnist_indices[i + 8]
+    img = all_images[idx] * MNIST_STD + MNIST_MEAN
+    axes[2, i].imshow(img.squeeze(), cmap="gray")
+    axes[2, i].axis("off")
+    axes[2, i].set_title(f"MNIST: {MNIST_CLASSES[all_original_labels[idx] % 10]}", fontsize=8)
+
+    # Fashion row 4
+    idx = fashion_indices[i + 8]
+    img = all_images[idx] * FASHION_STD + FASHION_MEAN
+    axes[3, i].imshow(img.squeeze(), cmap="gray")
+    axes[3, i].axis("off")
+    axes[3, i].set_title(f"Fashion: {FASHION_CLASSES[all_original_labels[idx] % 10]}", fontsize=8)
+
+plt.tight_layout()
 plt.savefig("docs/assets/images/examples/cv-multisource-samples.png", dpi=150)
 ```
 

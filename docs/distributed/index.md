@@ -1,6 +1,8 @@
 # Distributed
 
-Distributed training and multi-device data processing support. This module provides tools for scaling Datarax pipelines across multiple GPUs, TPUs, and hosts.
+Distributed training and multi-device data processing support. This module
+provides tools for scaling Datarax pipelines across multiple GPUs, TPUs, and
+hosts.
 
 ## Components
 
@@ -10,6 +12,7 @@ Distributed training and multi-device data processing support. This module provi
 | **Device Mesh** | Mesh configuration | Multi-device layouts |
 | **Data Parallel** | Data parallelism | Replicate across devices |
 | **Metrics** | Distributed metrics | Aggregate across hosts |
+| **Sharding** | Named-axis rules | Partition specs for a mesh |
 
 !!! note "Key points"
 
@@ -22,14 +25,14 @@ Distributed training and multi-device data processing support. This module provi
 
 ```python
 import jax
-from datarax.distributed import get_device_placement_recommendation
+from datarax.distributed import get_batch_size_recommendation
 
 # Check available devices
 print(f"Devices: {jax.devices()}")
 
-# Get placement recommendation
-recommendation = get_device_placement_recommendation()
-print(f"Recommended: {recommendation}")
+# Get a batch-size recommendation for the detected hardware
+recommendation = get_batch_size_recommendation()
+print(f"Recommended batch size: {recommendation.optimal_batch_size}")
 ```
 
 ## Modules
@@ -38,35 +41,31 @@ print(f"Recommended: {recommendation}")
 - [device_mesh](device_mesh.md) - Device mesh configuration for sharding
 - [data_parallel](data_parallel.md) - Data parallelism patterns
 - [metrics](metrics.md) - Distributed metrics collection and aggregation
+- [sharding](sharding.md) - Named-axis sharding rules and partition specs
 
 ## Device Mesh Example
 
 ```python
-from datarax.distributed import create_device_mesh
+from datarax.distributed import DeviceMeshManager
 
-# Create 2D mesh for data + model parallelism
-mesh = create_device_mesh(
-    devices=jax.devices(),
-    mesh_shape=(2, 4),  # 2 data parallel, 4 model parallel
-    axis_names=("data", "model"),
-)
+# Create a 2D mesh for data + model parallelism
+mesh = DeviceMeshManager.create_device_mesh({"data": 2, "model": 4})
 ```
 
 ## Multi-Host Training
 
-For multi-host setups:
+For multi-host setups, `JaxProcessSharderModule` derives the shard topology
+from Grain's `ShardByJaxProcess`, so each process automatically slices its
+local shard:
 
 ```python
 # Each host runs this code
-from datarax.sharding import JaxProcessSharder
+from datarax.sharding import JaxProcessSharderModule
 
-sharder = JaxProcessSharder(
-    num_processes=jax.process_count(),
-    process_index=jax.process_index(),
-)
+sharder = JaxProcessSharderModule()
 
-# Shard data across hosts
-local_batch = sharder.shard(global_batch)
+# Shard data across hosts (process index/count are auto-derived)
+local_batch = sharder.shard_data(global_batch)
 ```
 
 ## See Also

@@ -8,16 +8,19 @@ position counter so a full training epoch can be expressed as a single
 
 Three integration tiers (user picks based on speed/flexibility tradeoff):
 
-- **Tier A — ``for batch in pipeline:``** — Python iterator. Works with
-  any training framework; lowest barrier to entry; bound by per-batch
-  Python overhead.
-- **Tier B — ``Pipeline.step()``** — single JIT-traceable batch fetch.
-  For users who own their own scan/jit/grad orchestration.
+- **Tier A — ``for batch in pipeline:``** — compiled iteration session
+  (:class:`~datarax.pipeline.iteration.PipelineIterator`). The module
+  graph is split once per session and batches run through a cached
+  ``jax.jit`` step, so per-batch cost is one compiled dispatch. Works
+  with any training framework; the recommended data-loading loop.
+- **Tier B — ``Pipeline.step()``** — single JIT-traceable batch fetch
+  with live module state. For single-shot use or embedding inside your
+  own jitted train step, where the outer trace absorbs the call.
 - **Tier C — ``Pipeline.scan(step_fn, modules=(...), length=...)``** —
   the convenience wrapper. Pipeline lifts user-supplied ``nnx.Module``
   instances (typically a model and an ``nnx.Optimizer``) via
-  ``nnx.StateAxes`` so the user never writes scan boilerplate. Delivers
-  the loop-inside-JIT speedup over the iterator path.
+  ``nnx.StateAxes`` so the user never writes scan boilerplate. Fuses
+  the whole epoch (data + train step) into one XLA call.
 
 Two construction shapes (both produce identical internal execution plans):
 
@@ -42,8 +45,8 @@ Public surface:
   ``length`` steps under ``nnx.scan``, lifting pipeline + ``modules``
   state via ``StateAxes``. See method docstring for the two ``step_fn``
   signatures.
-- ``__iter__()`` — Python iterator wrapper around ``step()`` for
-  interactive/debug use; not the recommended training path.
+- ``__iter__()`` — compiled iteration session; see Tier A above and
+  ``datarax.pipeline.iteration`` for state/checkpoint semantics.
 """
 
 from __future__ import annotations
@@ -56,6 +59,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.data_source import DataSourceModule
+from datarax.pipeline.iteration import PipelineIterator
 from datarax.pipeline.topo import topological_sort, validate_dag
 
 
@@ -434,24 +438,21 @@ class Pipeline(nnx.Module):
 
         return scan_body_with_carry
 
-    def __iter__(self) -> Iterator[dict]:
-        """Python iterator wrapper over the source.
+    def __iter__(self) -> PipelineIterator | Iterator[dict]:
+        """Iterate batches through a compiled session (the Tier-A fast path).
 
-        For interactive/debug use only. Random-access sources use the jitted,
-        indexed ``step()`` and stop when ``self._position`` exceeds the source
-        length. Streaming sources (no ``get_batch_at``) are driven sequentially
-        via :meth:`_iter_streaming` instead.
+        Random-access sources return a :class:`~datarax.pipeline.iteration.
+        PipelineIterator`: the module graph is split once per session and
+        batches are driven through a cached ``jax.jit`` step, with module
+        state written back when the session ends (exhaustion, ``close()``,
+        or garbage collection after an early break). Iteration stops when
+        the position exceeds the source length; sources without ``__len__``
+        iterate indefinitely. Streaming sources (no ``get_batch_at``) are
+        driven sequentially via :meth:`_iter_streaming` instead.
         """
         if not self.source.supports_indexed_access():
-            yield from self._iter_streaming()
-            return
-
-        source_length = len(self.source) if hasattr(self.source, "__len__") else None
-        while True:
-            current = int(self._position[...])
-            if source_length is not None and current >= source_length:
-                return
-            yield self.step()  # type: ignore[call-arg]
+            return self._iter_streaming()
+        return PipelineIterator(self)
 
     def _iter_streaming(self) -> Iterator[dict]:
         """Iterate a streaming source (sequential, no random access) through the DAG.
@@ -470,6 +471,15 @@ class Pipeline(nnx.Module):
             if not leaves or leaves[0].shape[0] == 0:
                 return
             idx = self._position[...]
-            output = self(batch)
+            # Compiled DAG apply: one trace per batch shape (the final short
+            # batch retraces once) instead of eager per-batch op dispatch.
+            output = _jitted_dag_apply(self, batch)
             self._position[...] = idx + jnp.int32(leaves[0].shape[0])
             yield output
+
+
+# Compiled DAG apply for the streaming iteration path. Module-level so
+# nnx.jit's trace cache keys on a stable function identity; per-call graph
+# traversal remains (acceptable for streaming, whose per-batch cost is
+# dominated by the source pull), but the DAG body itself is compiled.
+_jitted_dag_apply = nnx.jit(Pipeline.__call__)

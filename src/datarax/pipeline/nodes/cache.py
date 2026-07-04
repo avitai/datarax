@@ -47,6 +47,17 @@ class CachingIterator(Iterator[T], Generic[T]):
         self._position = 0
         return self
 
+    def close(self) -> None:
+        """Forward close to the wrapped iterator, releasing its resources.
+
+        The wrapped iterator may hold session state (for example a
+        pipeline iteration session whose module write-back happens on
+        close); forwarding keeps that contract intact.
+        """
+        close = getattr(self._source, "close", None)
+        if callable(close):
+            close()
+
     def __next__(self) -> T:
         """Return the next element, from cache when available else from the source.
 

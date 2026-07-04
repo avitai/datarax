@@ -13,7 +13,7 @@ This quick reference demonstrates loading the IMDB movie review dataset from Hug
 
 ## What You'll Learn
 
-1. Load IMDB dataset using `HFEagerSource` with streaming mode
+1. Load IMDB dataset using `HFEagerSource` in eager mode
 2. Handle text data fields in Datarax pipelines
 3. Apply label preprocessing transformations
 4. Understand differences between text and image pipeline patterns
@@ -80,7 +80,6 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax.pipeline import Pipeline
 from datarax.pipeline import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import HFEagerConfig, HFEagerSource
@@ -171,7 +170,7 @@ def normalize_label(element, key=None):
     label = element.data.get("label", 0)
     return element.update_data({"label": jnp.array(label, dtype=jnp.int32)})
 
-label_normalizer = ElementOperator(
+text_stats_op = ElementOperator(
     ElementOperatorConfig(stochastic=False),
     fn=normalize_label,
     rngs=nnx.Rngs(0),
@@ -195,7 +194,7 @@ Chain the source with our preprocessing operator.
 # Create fresh source for the full pipeline
 # Note: We exclude 'text' field because strings can't be batched as JAX arrays.
 # For text processing, you would typically tokenize first or process element-by-element.
-source_batched = HFEagerSource(
+source2 = HFEagerSource(
     HFEagerConfig(
         name="stanfordnlp/imdb",
         split="train",
@@ -205,16 +204,14 @@ source_batched = HFEagerSource(
 )
 
 # Build pipeline
-pipeline = Pipeline(source=source_batched, stages=[label_normalizer], batch_size=8, rngs=nnx.Rngs(0))
+pipeline = Pipeline(source=source2, stages=[text_stats_op], batch_size=8, rngs=nnx.Rngs(0))
 
-print("Pipeline: HFEagerSource(IMDB) -> LabelNormalizer -> Output")
-print("Note: Text field excluded for batching")
+print("Pipeline: HFEagerSource(IMDB) -> TextStats -> Output")
 ```
 
 **Terminal Output:**
 ```
-Pipeline: HFEagerSource(IMDB) -> LabelNormalizer -> Output
-Note: Text field excluded for batching
+Pipeline: HFEagerSource(IMDB) -> TextStats -> Output
 ```
 
 ## Step 5: Process and Analyze
@@ -369,6 +366,9 @@ For full NLP pipelines, you would typically:
 
 ### Example: Complete Tokenization Pipeline
 
+> **Note:** The following is an illustrative pattern, not run by the example
+> script. It shows how you would wire a real tokenizer into the pipeline.
+
 ```python
 from transformers import AutoTokenizer
 
@@ -406,12 +406,8 @@ text_pipeline = (
 )
 ```
 
-**Terminal Output:**
-```
-Created tokenization pipeline
-  Output fields: input_ids (512,), attention_mask (512,), label ()
-  All fields are numeric JAX arrays - batching enabled
-```
+With every field reduced to numeric JAX arrays (`input_ids`, `attention_mask`,
+`label`), the pipeline can batch text the same way it batches images.
 
 ## Next Steps
 

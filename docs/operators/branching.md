@@ -1,6 +1,6 @@
 # Branching Strategy
 
-Split data flow into multiple processing branches.
+Route each input to one of several operators (via `jax.lax.switch`).
 
 ## See Also
 

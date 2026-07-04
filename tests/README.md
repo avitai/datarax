@@ -47,22 +47,22 @@ The test directory structure mirrors the `src/datarax` package structure for eas
 tests/
 ├── augment/         # Tests for augmentation functionality
 ├── batching/        # Tests for batch processing
-├── benchmarking/    # Benchmarking infrastructure tests
 ├── benchmarks/      # Performance benchmarks
 ├── checkpoint/      # Tests for checkpoint functionality
 ├── cli/             # Tests for CLI tools
 ├── config/          # Tests for configuration handling
 ├── control/         # Tests for control flow
 ├── core/            # Tests for core functionality
-├── dag/             # Tests for DAG execution
 ├── data/            # Test data and fixtures
 ├── distributed/     # Tests for distributed processing
 ├── examples/        # Tests for example code validation
+├── fixtures/        # Shared pytest fixtures
 ├── integration/     # End-to-end integration tests
 ├── memory/          # Tests for memory management
 ├── monitoring/      # Tests for monitoring functionality
 ├── operators/       # Tests for pipeline operators
 ├── performance/     # Performance testing
+├── pipeline/        # Tests for pipeline / DAG execution
 ├── samplers/        # Tests for sampling functionality
 ├── scripts/         # Utility scripts for test management
 ├── sharding/        # Tests for sharding functionality
@@ -76,7 +76,7 @@ tests/
 
 ## Test Categories
 
-Tests are organized using pytest markers defined in `conftest.py`:
+Tests are organized using pytest markers defined in `conftest.py` and `pyproject.toml`:
 
 | Marker | Description |
 |--------|-------------|

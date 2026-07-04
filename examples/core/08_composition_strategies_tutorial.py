@@ -116,7 +116,7 @@ print(f"Dataset: {num_samples} samples, shape {data['image'].shape}")
 
 
 def example_pipeline(source, batch_size: int, stages=()):
-    """Build tutorial pipelines without background prefetch threads."""
+    """Build the tutorial pipelines used throughout this example."""
     return Pipeline(source=source, stages=list(stages), batch_size=batch_size, rngs=nnx.Rngs(0))
 
 

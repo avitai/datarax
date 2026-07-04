@@ -50,8 +50,8 @@ Each scenario runs multiple repetitions. The **median** result is selected to re
 Statistical analysis uses:
 
 1.  **Coefficient of Variation (CV)**: Measurement stability check — CV < 10% required for publishable results
-2.  **Bootstrap CI**: 95% confidence intervals via 1000 bootstrap resamples (`calibrax.bootstrap_ci`)
-3.  **Threshold-based regression detection**: Direction-aware comparison against baseline (`calibrax.detect_regressions`). Default threshold is 5% — see [Dashboard & calibrax](dashboard.md#regression-detection) for details
+2.  **Bootstrap CI**: 95% confidence intervals via 1000 bootstrap resamples (`calibrax.statistics.StatisticalAnalyzer`)
+3.  **Threshold-based regression detection**: Direction-aware comparison against baseline (`calibrax.analysis.detect_regressions`). Default threshold is 5% — see [Dashboard & calibrax](dashboard.md#regression-detection) for details
 4.  **Modified Z-score**: Outlier detection using MAD-based robust statistics
 
 ---
@@ -118,6 +118,9 @@ Automated Vast two-pass runs fail fast if any of these checks do not match expec
 
 ## Scenario Categories
 
+The catalog holds **37 scenarios**: 28 standard scenarios plus 9 heavy (`H*`)
+production-realistic variants that run on the A100 cloud profile.
+
 | Category | IDs | What It Measures |
 |----------|-----|-----------------|
 | Computer Vision | CV-1, CV-2, CV-3, CV-4 | Image loading + augmentation throughput |
@@ -130,6 +133,12 @@ Automated Vast two-pass runs fail fast if any of these checks do not match expec
 | Production | PR-1, PR-2 | Checkpointing, determinism |
 | Augmentation | AUG-1, AUG-2, AUG-3 | Stochastic transform pipeline overhead |
 | Datarax Unique | NNX-1, XFMR-1 | Flax NNX integration, JIT+vmap acceleration |
+| Computer Vision (heavy) | HCV-1, HCV-2 | ImageNet-scale classification, dense prediction |
+| NLP (heavy) | HNLP-1, HNLP-2 | Long-context pretraining, tokenization at scale |
+| Tabular (heavy) | HTAB-1 | Large-scale recommendation pipeline |
+| Multimodal (heavy) | HMM-1 | CLIP-scale vision-language contrastive pipeline |
+| Pipeline Complexity (heavy) | HPC-1, HPC-2 | SSL augmentation chain, multi-view DAG |
+| Distributed (heavy) | HDIST-1 | Multi-device sharded data pipeline |
 
 ---
 

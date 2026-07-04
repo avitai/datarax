@@ -28,7 +28,7 @@ All eager sources convert data to JAX arrays at initialization, so iteration is 
 |---------|---------|
 | `torch.utils.data.TensorDataset(X, y)` | `MemorySource(config, data={"X": X, "y": y})` |
 | `torchvision.datasets.CIFAR10(root, train)` | `from_tfds("cifar10", "train")` |
-| `datasets.load_dataset("imdb")` | `from_hf("imdb", "train")` |
+| `datasets.load_dataset("stanfordnlp/imdb")` | `from_hf("stanfordnlp/imdb", "train")` |
 | `DataLoader(ds, shuffle=True)` | `MemorySourceConfig(shuffle=True)` |
 
 ## Coming from TensorFlow?
@@ -76,7 +76,7 @@ source = from_tfds("cifar10", "train", shuffle=True, rngs=nnx.Rngs(0))
 
 # Specify custom data directory
 source = from_tfds(
-    "mnist", "train",
+    "ylecun/mnist", "train",
     data_dir="/path/to/data",
     shuffle=True,
     rngs=nnx.Rngs(0),
@@ -102,7 +102,7 @@ from datarax.sources import from_hf
 import flax.nnx as nnx
 
 # Load a HuggingFace dataset
-source = from_hf("mnist", "train", shuffle=True, rngs=nnx.Rngs(0))
+source = from_hf("ylecun/mnist", "train", shuffle=True, rngs=nnx.Rngs(0))
 
 # Filter specific columns
 source = from_hf(

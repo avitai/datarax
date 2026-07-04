@@ -29,7 +29,7 @@ from datarax.checkpoint import OrbaxCheckpointHandler
 handler = OrbaxCheckpointHandler()
 
 # Save checkpoint
-handler.save("/checkpoints", my_pipeline, step=1000)
+handler.save_to_directory("/checkpoints", my_pipeline, step=1000)
 
 # Restore checkpoint
 handler.restore("/checkpoints", my_pipeline)
@@ -44,8 +44,8 @@ Recommended for proper resource cleanup:
 
 ```python
 with OrbaxCheckpointHandler() as handler:
-    handler.save("/checkpoints", pipeline, step=100)
-    handler.save("/checkpoints", pipeline, step=200)
+    handler.save_to_directory("/checkpoints", pipeline, step=100)
+    handler.save_to_directory("/checkpoints", pipeline, step=200)
     # Automatic cleanup on exit
 ```
 
@@ -57,18 +57,18 @@ with OrbaxCheckpointHandler() as handler:
 handler = OrbaxCheckpointHandler()
 
 # Save without version
-handler.save("/checkpoints", target)
+handler.save_to_directory("/checkpoints", target)
 # Creates: /checkpoints/checkpoint/
 
 # Save with version (step number)
-handler.save("/checkpoints", target, step=1000)
+handler.save_to_directory("/checkpoints", target, step=1000)
 # Creates: /checkpoints/ckpt-1000/
 ```
 
 ### With Metadata
 
 ```python
-handler.save(
+handler.save_to_directory(
     "/checkpoints",
     target,
     step=1000,
@@ -85,7 +85,7 @@ handler.save(
 Control how many checkpoints to keep:
 
 ```python
-handler.save(
+handler.save_to_directory(
     "/checkpoints",
     target,
     step=1000,
@@ -96,7 +96,7 @@ handler.save(
 ### Overwriting
 
 ```python
-handler.save(
+handler.save_to_directory(
     "/checkpoints",
     target,
     overwrite=True,  # Overwrite existing checkpoint
@@ -133,6 +133,8 @@ print(f"Epoch: {metadata['epoch']}")
 ### Pipeline Checkpointing
 
 ```python
+from flax import nnx
+
 from datarax.pipeline import Pipeline
 
 pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
@@ -142,7 +144,7 @@ for step, batch in enumerate(pipeline):
     loss = train_step(batch)
 
     if step % 1000 == 0:
-        handler.save("/checkpoints", pipeline, step=step)
+        handler.save_to_directory("/checkpoints", pipeline, step=step)
 
 # Later: restore and continue
 handler.restore("/checkpoints", pipeline)
@@ -159,7 +161,7 @@ class MyModel(nnx.Module):
 model = MyModel()
 
 # Save model state
-handler.save("/checkpoints", model, step=1000)
+handler.save_to_directory("/checkpoints", model, step=1000)
 
 # Restore into model
 handler.restore("/checkpoints", model)
@@ -180,7 +182,7 @@ class MyCheckpointable:
         self.data = state["my_data"]
 
 obj = MyCheckpointable()
-handler.save("/checkpoints", obj)
+handler.save_to_directory("/checkpoints", obj)
 ```
 
 ## Checkpoint Management
@@ -213,7 +215,7 @@ state = {
     "rng_key": jax.random.key(42),  # Automatically handled
 }
 
-handler.save("/checkpoints", state)
+handler.save_to_directory("/checkpoints", state)
 
 # Keys are restored as proper JAX PRNG keys
 restored = handler.restore("/checkpoints")
@@ -230,7 +232,7 @@ state = {
     "config_json": '{"lr": 0.001}',
 }
 
-handler.save("/checkpoints", state)
+handler.save_to_directory("/checkpoints", state)
 
 restored = handler.restore("/checkpoints")
 assert restored["model_name"] == "my_model_v2"
@@ -240,7 +242,7 @@ assert restored["model_name"] == "my_model_v2"
 
 - [Checkpointing Guide](../user_guide/checkpointing_guide.md) - Complete checkpointing tutorial
 - [Checkpoint Quick Reference](../examples/advanced/checkpointing/checkpoint-quickref.md)
-- DAG Executor - Pipeline checkpointing
+- [Pipeline](../dag/index.md) - Pipeline construction and checkpointing
 - [Orbax Documentation](https://orbax.readthedocs.io/)
 
 ---

@@ -27,9 +27,9 @@ handle different data modalities, and build production-ready pipelines.
 
 | PyTorch | Datarax |
 |---------|---------|
-| `transforms.Compose([T1, T2, T3])` | `CompositeOperatorModule(config, operators=[op1, op2, op3])` |
-| `transforms.RandomApply([t], p=0.5)` | `ProbabilisticOperator(config, operator=t, p=0.5)` |
-| `DataLoader(shuffle=True)` | `MemorySource` with `ShuffleSampler` |
+| `transforms.Compose([T1, T2, T3])` | `CompositeOperatorModule(CompositeOperatorConfig(operators=[op1, op2, op3]), rngs=...)` |
+| `transforms.RandomApply([t], p=0.5)` | `ProbabilisticOperator(ProbabilisticOperatorConfig(operator=t, probability=0.5), rngs=...)` |
+| `DataLoader(shuffle=True)` | `MemorySourceConfig(shuffle=True)` |
 | Manual seed setting | `nnx.Rngs(seed)` with stream names |
 
 **Key insight:** Datarax separates RNG streams by name (e.g., `flip`, `noise`) for fine-grained reproducibility control.
@@ -40,7 +40,7 @@ handle different data modalities, and build production-ready pipelines.
 |--------------------|---------|
 | `dataset.map(fn1).map(fn2)` | `Pipeline(source=source, stages=[op1, op2], ...)` |
 | `tf.function` compiled transforms | JAX JIT compilation with `jax.jit` |
-| `dataset.shuffle(buffer_size)` | Sampler-based shuffling in source |
+| `dataset.shuffle(buffer_size)` | `MemorySourceConfig(shuffle=True)` |
 | `tf.random.Generator` | `nnx.Rngs` with stream-based key management |
 
 ## Files
@@ -79,7 +79,7 @@ flowchart LR
         B[Batched Output]
     end
 
-    DS --> FS --> ON1 --> ON2 --> ON3 --> B
+    DS --> FS --> SNormalizer --> SComposite --> SBrightness --> B
 ```
 
 **Key concepts:**
@@ -117,11 +117,6 @@ print(f"Source created: {len(source)} samples")
 
 **Terminal Output:**
 ```
-Dataset structure:
-  image: shape=(500, 32, 32, 3), dtype=float32
-  label: shape=(500, 10), dtype=float32
-  metadata: shape=(500, 4), dtype=float32
-
 Source created: 500 samples
 ```
 
@@ -168,12 +163,30 @@ flipper = ElementOperator(
     fn=random_flip,
     rngs=nnx.Rngs(flip=42),
 )
+
+# Stochastic operator: Add Gaussian noise
+def add_noise(element, key):
+    noise_key, _ = jax.random.split(key)
+    image = element.data["image"]
+
+    # Add small noise (std=0.1)
+    noise = jax.random.normal(noise_key, image.shape) * 0.1
+    noisy = jnp.clip(image + noise, 0.0, 1.0)  # Keep in valid range
+
+    return element.update_data({"image": noisy})
+
+noise_adder = ElementOperator(
+    ElementOperatorConfig(stochastic=True, stream_name="noise"),
+    fn=add_noise,
+    rngs=nnx.Rngs(noise=123),
+)
 ```
 
 **Terminal Output:**
 ```
 Created: normalizer (deterministic)
 Created: flipper (stochastic)
+Created: noise_adder (stochastic)
 ```
 
 ## Part 4: Composing Operators
@@ -206,12 +219,37 @@ augmentation_pipeline = CompositeOperatorModule(
 Created composite operator with SEQUENTIAL strategy (2 operators)
 ```
 
-## Part 5: Building the Complete Pipeline
+## Part 5: Additional Transformations
+
+Add more operators to the pipeline for extensive augmentation.
+
+```python
+# Create a brightness adjustment operator
+def adjust_brightness(element, key):
+    brightness_key, _ = jax.random.split(key)
+    factor = jax.random.uniform(brightness_key, minval=0.8, maxval=1.2)
+
+    image = element.data["image"]
+    adjusted = jnp.clip(image * factor, 0.0, 1.0)
+    return element.update_data({"image": adjusted})
+
+brightness_op = ElementOperator(
+    ElementOperatorConfig(stochastic=True, stream_name="brightness"),
+    fn=adjust_brightness,
+    rngs=nnx.Rngs(brightness=456),
+)
+```
+
+**Terminal Output:**
+```
+Created brightness adjustment operator (stochastic)
+```
+
+## Part 6: Building the Complete Pipeline
 
 Chain everything together using the DAG API.
 
 ```python
-from datarax.pipeline import Pipeline
 from datarax.pipeline import Pipeline
 
 pipeline = (
@@ -227,7 +265,7 @@ Pipeline structure:
   Total samples: 500
 ```
 
-## Part 6: Running the Pipeline
+## Part 7: Running the Pipeline
 
 ```python
 print("Processing batches:")
@@ -255,7 +293,7 @@ Batch 3: shape=(32, 32, 32, 3), range=[0.000, 1.000]
 Batch 4: shape=(32, 32, 32, 3), range=[0.000, 1.000]
 ```
 
-## Part 7: Reproducibility
+## Part 8: Reproducibility
 
 Datarax ensures reproducible pipelines through explicit RNG management.
 

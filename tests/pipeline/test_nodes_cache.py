@@ -39,3 +39,27 @@ class TestCachingIterator:
             raise AssertionError("expected StopIteration")
         except StopIteration:
             pass
+
+
+class _ClosableIterator:
+    def __init__(self):
+        self.closed = False
+        self._it = iter(range(3))
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._it)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_close_forwards_to_wrapped_iterator() -> None:
+    """close() reaches the wrapped iterator so its session state is released."""
+    inner = _ClosableIterator()
+    caching = CachingIterator(inner)
+    next(caching)
+    caching.close()
+    assert inner.closed

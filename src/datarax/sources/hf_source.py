@@ -248,7 +248,7 @@ class HFEagerSource(EagerSourceBase):
             raise ImportError(
                 "Loading from HuggingFace Datasets requires additional "
                 "dependencies. Install Datarax with optional HF dependencies "
-                "using: pip install datarax[hf]"
+                "using: pip install datarax[data]"
             ) from e
 
         # Store config for feature access
@@ -422,7 +422,7 @@ class HFStreamingSource(StreamingSourceBase):
             raise ImportError(
                 "Loading from HuggingFace Datasets requires additional "
                 "dependencies. Install Datarax with optional HF dependencies "
-                "using: pip install datarax[hf]"
+                "using: pip install datarax[data]"
             ) from e
 
         # Load the dataset

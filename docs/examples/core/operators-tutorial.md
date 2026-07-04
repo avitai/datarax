@@ -127,7 +127,6 @@ normalizer = ElementOperator(
 
 # Test it
 from datarax.pipeline import Pipeline
-from datarax.pipeline import Pipeline
 
 pipeline = Pipeline(source=source, stages=[normalizer], batch_size=16, rngs=nnx.Rngs(0))
 batch = next(iter(pipeline))
@@ -289,7 +288,6 @@ batch = next(iter(pipeline))
 
 print(f"Image present: {batch['image'].shape}")
 print(f"Label present: {batch['label'].shape}")
-print(f"Metadata removed: {'metadata' not in batch}")
 ```
 
 **Terminal Output:**
@@ -297,7 +295,6 @@ print(f"Metadata removed: {'metadata' not in batch}")
 After field filtering:
   Image present: (8, 32, 32, 3)
   Label present: (8,)
-  Metadata removed: True
 ```
 
 ## Part 5: CompositeOperator - Chaining Transforms
@@ -448,10 +445,9 @@ print(f"Mean pixel value: {sum(stats['mean_values']) / len(stats['mean_values'])
 
 **Terminal Output:**
 ```
-Pipeline processed:
-  Batches: 4
-  Samples: 100
-  Mean pixel value: 0.4982
+Batches: 4
+Samples: 100
+Mean pixel value: 0.4982
 ```
 
 ## Part 7: Custom Operator Patterns

@@ -1,5 +1,8 @@
 # Resource Monitor
 
+!!! info "External package"
+    This page documents [calibrax](https://github.com/avitai/calibrax), the benchmarking library datarax depends on.
+
 Background 10 Hz resource sampling for CPU, memory, and GPU utilization during benchmarks.
 
 ## See Also

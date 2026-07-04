@@ -1,6 +1,6 @@
 # Config Loaders
 
-Load configuration from YAML, JSON, and TOML files.
+Load configuration from TOML files, with include-directive merging.
 
 ## See Also
 

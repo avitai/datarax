@@ -9,24 +9,24 @@ Applies a function to specific fields in the data dictionary.
 ```python
 from datarax.operators import MapOperator, MapOperatorConfig
 
-# Transform a single field
+# Transform a single field (fn signature is always fn(x, key))
 normalize = MapOperator(
     MapOperatorConfig(subtree={"image": None}),
-    fn=lambda x: x / 255.0,
+    fn=lambda x, key: x / 255.0,
     rngs=nnx.Rngs(0),
 )
 
 # Transform multiple fields
 scale = MapOperator(
     MapOperatorConfig(subtree={"image": None, "mask": None}),
-    fn=lambda x: x.astype(jnp.float32),
+    fn=lambda x, key: x.astype(jnp.float32),
     rngs=nnx.Rngs(0),
 )
 
 # Full-tree mode (applies to entire data dict)
 identity = MapOperator(
     MapOperatorConfig(subtree=None),
-    fn=lambda x: x,
+    fn=lambda x, key: x,
     rngs=nnx.Rngs(0),
 )
 ```
@@ -38,8 +38,8 @@ Applies a function to the entire Element (data + state + metadata).
 ```python
 from datarax.operators import ElementOperator, ElementOperatorConfig
 
-# Deterministic element transform
-def add_length(element):
+# Deterministic element transform (fn signature is always fn(element, key))
+def add_length(element, key):
     text = element.data["text"]
     length = jnp.array(text.shape[0])
     return element.update_data({"text": text, "length": length})
@@ -50,9 +50,8 @@ length_op = ElementOperator(
     rngs=nnx.Rngs(0),
 )
 
-# Stochastic element transform
-def random_crop(element, *, rngs):
-    key = rngs.augment()
+# Stochastic element transform (the per-record key arrives as the second arg)
+def random_crop(element, key):
     # ... crop logic using key
     return element.update_data({"image": cropped})
 
@@ -70,7 +69,7 @@ For operators with learnable parameters or complex state.
 ```python
 from datarax.core.operator import OperatorModule
 from datarax.core.config import OperatorConfig
-from datarax.core.element_batch import Element
+import jax.numpy as jnp
 import flax.nnx as nnx
 
 class MyOperator(OperatorModule):
@@ -78,9 +77,11 @@ class MyOperator(OperatorModule):
         super().__init__(config, rngs=rngs)
         self.scale = nnx.Param(jnp.ones(()))  # Learnable parameter
 
-    def apply(self, element: Element, *, rngs=None) -> Element:
-        scaled = element.data["image"] * self.scale.value
-        return element.update_data({"image": scaled})
+    # apply() is a pure per-element function operating on raw PyTrees.
+    # It returns a (data, state, metadata) tuple.
+    def apply(self, data, state, metadata, random_params=None, stats=None):
+        scaled = data["image"] * self.scale.value
+        return {**data, "image": scaled}, state, metadata
 
 op = MyOperator(OperatorConfig(), rngs=nnx.Rngs(0))
 ```
@@ -198,9 +199,7 @@ maybe_noise = ProbabilisticOperator(
 ```python
 from datarax.pipeline import Pipeline
 
-pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
-# Use stages=[brightness] when constructing the Pipeline instead.
-# Use stages=[contrast] when constructing the Pipeline instead.
+pipeline = Pipeline(source=source, stages=[brightness, contrast], batch_size=32, rngs=nnx.Rngs(0))
 for batch in pipeline:
     augmented_images = batch["image"]
 ```

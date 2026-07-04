@@ -1,10 +1,13 @@
 # Benchmarking Guide
 
+!!! info "External package"
+    This page documents [calibrax](https://github.com/avitai/calibrax), the benchmarking library datarax depends on.
+
 Datarax provides a benchmarking suite to measure and analyze the performance of your data pipelines.
 
 ## Overview
 
-The benchmarking module (`calibrax`) allows you to:
+Datarax uses [calibrax](https://github.com/avitai/calibrax), an external benchmarking library, which allows you to:
 
 1.  **Time pipeline throughput** with `TimingCollector` (GPU-sync aware).
 2.  **Profile GPU memory** with `GPUMemoryProfiler` and optimize with `MemoryOptimizer`.
@@ -52,9 +55,10 @@ from calibrax.profiling import MemoryOptimizer
 
 optimizer = MemoryOptimizer()
 analysis = optimizer.analyze_pipeline_memory(pipeline_fn, sample_data)
-print(f"Peak usage: {analysis['peak_usage_mb']:.1f} MB")
-for suggestion in analysis["suggestions"]:
-    print(f"  - {suggestion}")
+if analysis is not None:
+    print(f"Peak usage: {analysis.peak_usage_mb:.1f} MB")
+    for suggestion in analysis.suggestions:
+        print(f"  - {suggestion}")
 ```
 
 ### Comparative Benchmarking

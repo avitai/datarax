@@ -19,6 +19,7 @@ The simplest data source is `MemorySource`, which works with data already loaded
 ```python
 from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
+from flax import nnx
 import jax.numpy as jnp
 
 # Create sample data
@@ -38,7 +39,7 @@ for i, batch in enumerate(pipeline):
         break
 ```
 
-`MemorySource` accepts any iterable of elements, such as a list of dictionaries or arrays.
+`MemorySource` accepts a dict of arrays or a list/sequence of elements, such as a list of dictionaries.
 
 ### TFDSEagerSource
 
@@ -48,7 +49,7 @@ For data from TensorFlow Datasets, use `TFDSEagerSource`:
 from datarax.pipeline import Pipeline
 from datarax.sources import TFDSEagerSource, TFDSEagerConfig
 from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.pipeline import Pipeline
+from flax import nnx
 
 # Load MNIST from TensorFlow Datasets
 config = TFDSEagerConfig(name="mnist", split="train")
@@ -87,18 +88,17 @@ For data from Hugging Face datasets, use `HFEagerSource`:
 
 ```python
 from datarax.pipeline import Pipeline
-from datarax.sources import HFEagerSource, HFEagerConfig
+from datarax.sources import HFStreamingSource, HFStreamingConfig
 from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.pipeline import Pipeline
+from flax import nnx
 
-# Load dataset from HuggingFace (streaming mode for large datasets)
-config = HFEagerConfig(
-    name="glue",
-    config_name="sst2",  # Use SST-2 for simpler example
+# Stream a large dataset from HuggingFace (streaming keeps memory bounded)
+config = HFStreamingConfig(
+    name="stanfordnlp/sst2",
     split="train",
-    streaming=True
+    streaming=True,
 )
-train_source = HFEagerSource(config)
+train_source = HFStreamingSource(config, rngs=nnx.Rngs(0))
 
 # Define field extraction as an operator
 def extract_fields(element, key=None):
@@ -124,9 +124,11 @@ for i, batch in enumerate(pipeline):
         break
 ```
 
-`HFEagerSource` supports both downloaded and streaming modes, allowing you to work with datasets of any size.
+`HFEagerSource` loads the entire dataset into JAX arrays at initialization, so it is best for datasets that fit in memory. For datasets too large to hold in memory, use `HFStreamingSource` (shown above), which wraps HuggingFace's streaming iterator.
 
-> **Tip:** Use `from_hf(name, split, ...)` factory function for automatic eager/streaming mode selection.
+> **Note:** Dataset configs/variants (for example selecting `"sst2"` within the `"glue"` dataset) are currently unsupported — pass the standalone dataset name to `name`. There is no `config_name` (or subset) field on the HF configs.
+
+> **Tip:** Use `from_hf(name, split, streaming=True, rngs=...)` to select eager or streaming mode, or construct `HFEagerConfig`/`HFStreamingConfig` directly.
 
 ### ArrayRecordSourceModule
 
@@ -134,10 +136,12 @@ For array record format data (commonly used in large-scale ML training), use `Ar
 
 ```python
 from datarax.pipeline import Pipeline
-from datarax.sources import ArrayRecordSourceModule
+from datarax.sources import ArrayRecordSourceModule, ArrayRecordSourceConfig
+from flax import nnx
 
-# Create source from array record file
-source = ArrayRecordSourceModule("path/to/arrayrecord/file")
+# Create source from array record file (config first, then path)
+config = ArrayRecordSourceConfig()
+source = ArrayRecordSourceModule(config, "path/to/arrayrecord/file")
 
 # Use in pipeline
 pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
@@ -148,58 +152,78 @@ pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 You can create custom data sources by subclassing `DataSourceModule`:
 
 ```python
-import flax.nnx as nnx
+import csv
+from dataclasses import dataclass
+from typing import Any
+
 import jax.numpy as jnp
+from flax import nnx
+
+from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
-from typing import Iterator
-from datarax.typing import Element
+
+
+@dataclass(frozen=True)
+class CSVDataSourceConfig(StructuralConfig):
+    """Configuration for CSVDataSource."""
+
+    file_path: str | None = None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.file_path is None:
+            raise ValueError("file_path is required")
+
 
 class CSVDataSource(DataSourceModule):
-    """Data source that reads from a CSV file."""
+    """Random-access data source that reads numeric rows from a CSV file."""
 
-    def __init__(self, file_path: str, name: str = "csv_source"):
-        super().__init__(name=name)
-        self.file_path = file_path
-        self.data = None  # Will be loaded later
-        self.index = 0
+    # Narrow config type for pyright (base stores via nnx.static)
+    config: CSVDataSourceConfig  # pyright: ignore[reportIncompatibleVariableOverride]
 
-    def __iter__(self) -> Iterator[Element]:
-        # Load data on first iteration
-        if self.data is None:
-            import csv
-            import numpy as np
+    def __init__(
+        self,
+        config: CSVDataSourceConfig,
+        *,
+        rngs: nnx.Rngs | None = None,
+        name: str | None = None,
+    ) -> None:
+        # A StructuralConfig-derived config is the required first argument.
+        super().__init__(config, rngs=rngs, name=name)
 
-            rows = []
-            with open(self.file_path, 'r') as f:
-                reader = csv.reader(f)
-                header = next(reader)  # Skip header
-                for row in reader:
-                    rows.append([float(x) for x in row])
+        # Load all rows once at construction (skip the header row).
+        with open(config.file_path, newline="") as f:
+            reader = csv.reader(f)
+            next(reader)  # skip header
+            rows = [[float(value) for value in row] for row in reader]
 
-            self.data = np.array(rows)
+        # Wrap array data with nnx.data so NNX treats it as pytree data,
+        # not trainable parameters.
+        self.data = nnx.data(jnp.asarray(rows))
 
-        # Reset iterator state
-        self.index = 0
-        return self
+    def __len__(self) -> int:
+        return int(self.data.shape[0])
 
-    def __next__(self) -> Element:
-        if self.index >= len(self.data):
-            raise StopIteration
+    def supports_indexed_access(self) -> bool:
+        # Random-access sources return True so Pipeline drives them via
+        # the jitted, indexed step() path.
+        return True
 
-        # Get current element
-        element = {"features": jnp.array(self.data[self.index])}
-
-        # Update state
-        self.index += 1
-
-        return element
+    def get_batch_at(self, start: int | Any, size: int, key: Any | None = None) -> dict[str, Any]:
+        # Return `size` rows starting at `start`, wrapping at the end.
+        indices = (jnp.arange(size) + start) % len(self)
+        return {"features": self.data[indices]}
 ```
 
 When creating custom data sources, ensure:
 
 1. Your class extends `DataSourceModule`
-2. The `__iter__` method returns `self` and resets any iteration state
-3. The `__next__` method returns the next element or raises `StopIteration`
+2. You pass a `StructuralConfig`-derived config as the required first positional
+   argument to `super().__init__(config, ...)`
+3. You implement the Pipeline contract: for random access, implement
+   `get_batch_at(start, size, key)` and return `True` from
+   `supports_indexed_access()`; for forward-only streaming, implement
+   `get_batch()` instead
 4. Any mutable state is managed appropriately for checkpointing
 
 ## Using Data Sources in Pipelines
@@ -210,6 +234,7 @@ Data sources plug directly into a `Pipeline`:
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
+from flax import nnx
 
 # Create data and source
 data = [{"x": i} for i in range(100)]
@@ -241,12 +266,13 @@ from datarax.sources import MemorySource, MemorySourceConfig
 images = [jnp.ones((28, 28)) for _ in range(10)]
 labels = [i % 10 for i in range(10)]
 
-# Create source with metadata
+# Create source with metadata tracking (opt-in)
 data = [{"image": image, "label": label} for image, label in zip(images, labels)]
-config = MemorySourceConfig()
+config = MemorySourceConfig(track_metadata=True)
 source = MemorySource(config, data)
 
-# Metadata is automatically tracked per element
+# Metadata tracking is opt-in via track_metadata=True; when enabled, each
+# element carries associated metadata (index, source info, etc.)
 for element in source:
     # Element has associated metadata (index, source info, etc.)
     pass
@@ -278,8 +304,8 @@ for i in range(10):
 When working with data sources:
 
 1. **Use appropriate source types**: Choose the right data source for your data to optimize loading and processing
-2. **Leverage shuffling**: For training, use `.shuffle(buffer_size)` with a sufficiently large buffer
-3. **Batch appropriately**: Use `.batch(batch_size)` or `Pipeline(source=source, stages=[], batch_size=N, rngs=nnx.Rngs(0))` for efficient processing
+2. **Leverage shuffling**: For training, enable shuffling on the source config, e.g. `TFDSEagerConfig(name="mnist", split="train", shuffle=True, seed=42)`. Eager sources shuffle in O(1) memory via Grain's index_shuffle (a Feistel permutation) — there is no shuffle buffer to size.
+3. **Batch appropriately**: Batching is the Pipeline's job — set `Pipeline(source=source, stages=[], batch_size=N, rngs=nnx.Rngs(0))`. Sources do not expose a `.batch()` method.
 4. **Handle state properly**: Ensure your custom data sources properly manage their state
 5. **Monitor performance**: Watch for bottlenecks in data loading, especially with large datasets
 6. **Use JAX arrays**: Convert to JAX arrays early in the pipeline for better performance

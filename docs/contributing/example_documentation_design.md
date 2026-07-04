@@ -286,132 +286,148 @@ flowchart LR
 Datarax separates documentation from code, following a clean pattern where markdown
 files in `docs/examples/` explain and link to runnable code in `examples/`:
 
+Each runnable `.py` file has a generated `.ipynb` companion (omitted below for
+brevity); the `.py` file is the source of truth.
+
 ```text
 datarax/
 ├── docs/
 │   └── examples/
 │       ├── overview.md                      # Entry point with cards
+│       ├── basic/
+│       │   └── index.md
 │       ├── core/
-│       │   ├── simple-pipeline.md           # Docs for simple pipeline
-│       │   ├── pipeline-tutorial.md         # Docs for pipeline tutorial
-│       │   ├── operators-tutorial.md        # Docs for operators tutorial
-│       │   ├── cifar10-quickref.md          # Docs for CIFAR-10 quick ref
-│       │   ├── augmentation-quickref.md     # Docs for augmentation quick ref
-│       │   ├── mnist-tutorial.md            # Docs for MNIST tutorial
+│       │   ├── simple-pipeline.md
+│       │   ├── pipeline-tutorial.md
+│       │   ├── operators-tutorial.md
+│       │   ├── advanced-operators-tutorial.md
+│       │   ├── cifar10-quickref.md
+│       │   ├── augmentation-quickref.md
+│       │   ├── batch-processing-quickref.md
+│       │   ├── data-loading-quickref.md
+│       │   ├── mnist-tutorial.md
 │       │   ├── fashion-augmentation-tutorial.md
-│       │   ├── composition-strategies-tutorial.md
-│       │   └── advanced-operators-tutorial.md
+│       │   └── composition-strategies-tutorial.md
 │       │
 │       ├── integration/
 │       │   ├── huggingface/
-│       │   │   ├── hf-quickref.md           # Docs for HF quick reference
-│       │   │   ├── hf-tutorial.md           # Docs for HF tutorial
-│       │   │   └── imdb-quickref.md         # Docs for IMDB quick reference
+│       │   │   ├── hf-quickref.md
+│       │   │   ├── hf-tutorial.md
+│       │   │   └── imdb-quickref.md
 │       │   ├── tfds/
-│       │   │   └── tfds-quickref.md         # Docs for TFDS quick reference
+│       │   │   └── tfds-quickref.md
 │       │   └── arrayrecord/
-│       │       └── arrayrecord-quickref.md  # Docs for ArrayRecord quick ref
+│       │       └── arrayrecord-quickref.md
 │       │
-│       └── advanced/
-│           ├── augmentation/
-│           │   └── mixup-cutmix-tutorial.md
-│           ├── checkpointing/
-│           │   ├── checkpoint-quickref.md
-│           │   └── resumable-training-guide.md
-│           ├── dag/
-│           │   └── dag-fundamentals-guide.md
-│           ├── distributed/
-│           │   ├── sharding-quickref.md
-│           │   └── sharding-guide.md
-│           ├── monitoring/
-│           │   └── monitoring-quickref.md
-│           ├── multi_source/
-│           │   └── interleaved-tutorial.md
-│           ├── performance/
-│           │   └── optimization-guide.md
-│           ├── sampling/
-│           │   └── sampling-tutorial.md
-│           └── training/
-│               └── e2e-cifar10-guide.md
+│       ├── advanced/
+│       │   ├── augmentation/
+│       │   │   └── mixup-cutmix-tutorial.md
+│       │   ├── checkpointing/
+│       │   │   ├── checkpoint-quickref.md
+│       │   │   └── resumable-training-guide.md
+│       │   ├── dag/
+│       │   │   ├── dag-fundamentals-guide.md
+│       │   │   └── branching-dag-cookbook.md
+│       │   ├── differentiable/
+│       │   │   ├── dada-learned-augmentation.md
+│       │   │   ├── ddsp-audio-synthesis.md
+│       │   │   └── learned-isp-guide.md
+│       │   ├── distributed/
+│       │   │   ├── sharding-quickref.md
+│       │   │   └── sharding-guide.md
+│       │   ├── multi_source/
+│       │   │   └── interleaved-tutorial.md
+│       │   ├── performance/
+│       │   │   └── optimization-guide.md
+│       │   ├── sampling/
+│       │   │   └── sampling-tutorial.md
+│       │   └── training/
+│       │       └── e2e-cifar10-guide.md
+│       │
+│       └── quick-reference/
+│           ├── index.md
+│           ├── config-reference.md
+│           ├── error-guide.md
+│           └── operator-cheatsheet.md
 │
 ├── examples/                                # Runnable code files
 │   ├── README.md                            # Examples overview and guide
+│   ├── __init__.py
+│   ├── run_all_examples_on_gpu.sh
+│   ├── run_gpu_examples.sh
+│   ├── custom_benchmark.py
+│   ├── hf_datasets_test.py
+│   ├── hf_model_training_example.py
+│   │
 │   ├── _templates/
 │   │   └── example_template.py              # Template for new examples
 │   │
 │   ├── core/
+│   │   ├── 00_pipeline_quickstart.py
 │   │   ├── 01_simple_pipeline.py            # Tier 1: Quick Reference
-│   │   ├── 01_simple_pipeline.ipynb         # Generated notebook
 │   │   ├── 02_pipeline_tutorial.py          # Tier 2: Tutorial
-│   │   ├── 02_pipeline_tutorial.ipynb
 │   │   ├── 03_operators_tutorial.py         # Tier 2: Deep dive
-│   │   ├── 03_operators_tutorial.ipynb
 │   │   ├── 04_cifar10_quickref.py           # Tier 1: CIFAR-10
-│   │   ├── 04_cifar10_quickref.ipynb
 │   │   ├── 05_augmentation_quickref.py      # Tier 1: Augmentation
-│   │   ├── 05_augmentation_quickref.ipynb
 │   │   ├── 06_mnist_tutorial.py             # Tier 2: MNIST
-│   │   ├── 06_mnist_tutorial.ipynb
 │   │   ├── 07_fashion_augmentation_tutorial.py  # Tier 2: Fashion-MNIST
-│   │   ├── 07_fashion_augmentation_tutorial.ipynb
 │   │   ├── 08_composition_strategies_tutorial.py
-│   │   ├── 08_composition_strategies_tutorial.ipynb
-│   │   ├── 09_advanced_operators_tutorial.py
-│   │   └── 09_advanced_operators_tutorial.ipynb
+│   │   └── 09_advanced_operators_tutorial.py
+│   │
+│   ├── comparison/
+│   │   ├── quick_demo.py
+│   │   ├── 02_stateful_transformations.py
+│   │   ├── 03_distributed_memory_efficient.py
+│   │   ├── 04_end_to_end_pipeline.py
+│   │   └── README.md
+│   │
+│   ├── config/
+│   │   └── config_example.py
 │   │
 │   ├── integration/
+│   │   ├── README.md
+│   │   ├── 01_ml_classification.py
+│   │   ├── 02_sciml_pinn.py
+│   │   ├── 03_calibration_eval.py
 │   │   ├── huggingface/
 │   │   │   ├── 01_hf_quickref.py
-│   │   │   ├── 01_hf_quickref.ipynb
 │   │   │   ├── 02_hf_tutorial.py
-│   │   │   ├── 02_hf_tutorial.ipynb
-│   │   │   ├── 03_imdb_quickref.py          # Tier 1: IMDB text
-│   │   │   └── 03_imdb_quickref.ipynb
+│   │   │   └── 03_imdb_quickref.py          # Tier 1: IMDB text
 │   │   ├── tfds/
-│   │   │   ├── 01_tfds_quickref.py
-│   │   │   └── 01_tfds_quickref.ipynb
+│   │   │   └── 01_tfds_quickref.py
 │   │   └── arrayrecord/
-│   │       ├── 01_arrayrecord_quickref.py
-│   │       └── 01_arrayrecord_quickref.ipynb
+│   │       └── 01_arrayrecord_quickref.py
 │   │
 │   ├── advanced/
 │   │   ├── augmentation/
-│   │   │   ├── 01_mixup_cutmix_tutorial.py  # Tier 2: Batch mixing
-│   │   │   └── 01_mixup_cutmix_tutorial.ipynb
+│   │   │   └── 01_mixup_cutmix_tutorial.py  # Tier 2: Batch mixing
 │   │   ├── checkpointing/
 │   │   │   ├── 01_checkpoint_quickref.py
-│   │   │   ├── 01_checkpoint_quickref.ipynb
-│   │   │   ├── 02_resumable_training_guide.py  # Tier 3: Resumable
-│   │   │   └── 02_resumable_training_guide.ipynb
+│   │   │   └── 02_resumable_training_guide.py  # Tier 3: Resumable
 │   │   ├── dag/
 │   │   │   ├── 01_dag_fundamentals_guide.py
-│   │   │   └── 01_dag_fundamentals_guide.ipynb
+│   │   │   └── 02_branching_dag_cookbook.py
+│   │   ├── differentiable/
+│   │   │   ├── 01_dada_learned_augmentation_guide.py
+│   │   │   ├── 02_learned_isp_guide.py
+│   │   │   └── 03_ddsp_audio_synthesis_guide.py
 │   │   ├── distributed/
 │   │   │   ├── 01_sharding_quickref.py
-│   │   │   ├── 01_sharding_quickref.ipynb
-│   │   │   ├── 02_sharding_guide.py         # Tier 3: Distributed
-│   │   │   └── 02_sharding_guide.ipynb
-│   │   ├── monitoring/
-│   │   │   ├── 01_monitoring_quickref.py
-│   │   │   └── 01_monitoring_quickref.ipynb
+│   │   │   └── 02_sharding_guide.py         # Tier 3: Distributed
 │   │   ├── multi_source/
-│   │   │   ├── 01_interleaved_tutorial.py   # Tier 2: Multi-source
-│   │   │   └── 01_interleaved_tutorial.ipynb
+│   │   │   └── 01_interleaved_tutorial.py   # Tier 2: Multi-source
 │   │   ├── performance/
-│   │   │   ├── 01_optimization_guide.py     # Tier 3: Performance
-│   │   │   └── 01_optimization_guide.ipynb
+│   │   │   └── 01_optimization_guide.py     # Tier 3: Performance
 │   │   ├── sampling/
-│   │   │   ├── 01_sampling_tutorial.py
-│   │   │   └── 01_sampling_tutorial.ipynb
+│   │   │   └── 01_sampling_tutorial.py
 │   │   └── training/
-│   │       ├── 01_e2e_cifar10_guide.py      # Tier 3: End-to-end
-│   │       └── 01_e2e_cifar10_guide.ipynb
+│   │       └── 01_e2e_cifar10_guide.py      # Tier 3: End-to-end
 │   │
 │   └── utils/                               # Shared utilities
 │       ├── __init__.py
 │       └── sample_data.py
 │
-├── benchmarks/                              # Standalone benchmark scripts
+├── benchmarks/                              # Benchmark application + scripts
 │   ├── mnist_pipeline_benchmark.py
 │   ├── distributed_scaling_benchmark.py
 │   └── performance_sweep_benchmark.py
@@ -784,7 +800,7 @@ If you're familiar with PyTorch DataLoader, here's how Datarax compares:
 | `dataset.batch(32).prefetch(2)` | `Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))` |
 | `dataset.map(transform_fn)` | `Pipeline(source=..., stages=[operator], ...)` |
 | `dataset.shuffle(buffer_size)` | `ShuffleSampler(config)` |
-| `dataset.cache()` | `CachingNode()` in DAG |
+| `dataset.cache()` | `CachingIterator` (from `datarax.pipeline.nodes`) |
 
 ## Coming from Google Grain?
 
@@ -805,7 +821,7 @@ Use this reference when creating migration sections:
 | Concept | PyTorch | TensorFlow | Grain | Datarax |
 |---------|---------|------------|-------|---------|
 | In-memory data | `TensorDataset` | `from_tensor_slices` | `MapDataset` | `MemorySource` |
-| HuggingFace | `torchvision.datasets` | N/A | `HuggingFaceDataset` | `HfDataSourceModule` |
+| HuggingFace | `torchvision.datasets` | N/A | `HuggingFaceDataset` | `HFEagerSource` |
 | TFRecords/ArrayRecord | N/A | `TFRecordDataset` | `ArrayRecordDataSource` | `ArrayRecordSourceModule` |
 | TFDS | N/A | `tfds.load()` | N/A | `TFDSEagerSource` |
 
@@ -1049,7 +1065,7 @@ This memory-efficient approach is essential for large-scale datasets.
 
 1. Increase `batch_size` to 64 and observe memory usage
 2. Add a second stochastic operator (e.g., random rotation)
-3. Replace `MemorySource` with `HuggingFaceSource`
+3. Replace `MemorySource` with `HFStreamingSource`
 
 ### Related Examples
 
@@ -1118,7 +1134,7 @@ Use admonitions for different information types:
 
 !!! warning "Memory Warning"
     Large datasets with `MemorySource` load entirely into RAM.
-    Consider using `HuggingFaceSource` for streaming.
+    Consider using `HFStreamingSource` for streaming.
 
 !!! danger "Breaking Change"
     `Pipeline` requires explicit `batch_size` and `rngs` arguments.
@@ -1757,7 +1773,7 @@ These templates can be copied and adapted for new examples.
 
 ### Setup Section Template
 
-```python
+````python
 # %% [markdown]
 """
 ## Setup
@@ -1777,41 +1793,32 @@ uv pip install -e ".[dev]"
 
 ### Environment
 
-````markdown
 ```bash
 # Optional: Configure JAX for specific device
 export JAX_PLATFORM_NAME=gpu  # or cpu, tpu
 ```
+"""
 
 # %%
-
-```python
 # Imports - organized by source
 
 # Standard library
-
-from typing import Dict, Any
+from typing import Any
 
 # Third-party
-
 import jax
 import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
 # Datarax
-
 from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.pipeline import Pipeline
 
 # Verify setup
-
 print(f"JAX version: {jax.__version__}")
 print(f"Devices: {jax.devices()}")
-
-```
 ````
 
 ### Learning Objectives Template
@@ -1955,7 +1962,7 @@ def normalize(element, key=None):
 
 1. **Increase batch size**: Try `batch_size=64` and monitor GPU memory
 2. **Add operators**: Chain additional augmentation operators
-3. **Switch data source**: Replace `MemorySource` with `HuggingFaceSource`
+3. **Switch data source**: Replace `MemorySource` with `HFStreamingSource`
 
 ### Related Examples
 
@@ -2058,7 +2065,7 @@ Batches are processed lazily by the pipeline.
 |------|------------|-------|
 | Pipeline | Complete data processing graph | "Build a pipeline with `Pipeline(source=..., stages=[...], ...)`" |
 | DAG | Directed Acyclic Graph of operations | "The pipeline DAG executes lazily" |
-| Source | Data origin (MemorySource, HuggingFaceSource) | "Create a source from your data" |
+| Source | Data origin (MemorySource, HFStreamingSource) | "Create a source from your data" |
 | Operator | Data transformation node | "Add operators to transform batches" |
 | Element | Single data sample before batching | "Operators process elements individually" |
 | Batch | Group of elements | "Pipeline yields batches of size 32" |
@@ -2110,12 +2117,11 @@ import numpy as np
 from flax import nnx
 
 # Datarax core
-from datarax.pipeline import Pipeline
-from datarax.core import DataSource, Operator
+from datarax.core import DataSourceModule, OperatorModule
 
 # Datarax submodules (alphabetical)
-from datarax.pipeline import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 ```
 
@@ -2550,20 +2556,20 @@ When Datarax APIs change:
 3. **Update troubleshooting** for common upgrade issues
 4. **Test both old and new patterns** during transition
 
-```markdown
+````markdown
 !!! warning "API Change in v0.2.0"
     The `Pipeline` class requires explicit `batch_size` and `rngs` arguments.
 
     **Before (v0.1.x)**:
     ```python
-    pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))  # Default batch_size=1
+    pipeline = Pipeline(source=source, stages=[])  # Implicit defaults
     ```
 
     **After (v0.2.0+)**:
     ```python
     pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))  # Explicit required
     ```
-```
+````
 
 ### Community Contributions
 

@@ -1,107 +1,123 @@
-# Distributed Training with NNX Modules
+# Distributed Training
 
-This guide shows how to use Datarax's NNX-based distributed training components for multi-device and multi-host training.
+This guide shows how to use Datarax's distributed training utilities for multi-device and multi-host training.
 
 ## Overview
 
-Datarax provides NNX-based modules for distributed training that leverage JAX's powerful distributed computing capabilities. These modules allow for:
+Datarax provides utilities for distributed training that leverage JAX's powerful distributed computing capabilities. These utilities allow for:
 
 - Data-parallel training across multiple devices
 - Model-parallel training for large models
 - Hybrid parallelism combining both approaches
 - Distributed metrics collection and aggregation
 
-## NNX-based Distributed Components
+## Distributed Components
 
-Datarax provides three main NNX modules for distributed training:
+Datarax exposes distributed training helpers through three groups of APIs: a
+mesh manager, data-parallel functions, and metrics functions. All of them are
+importable from `datarax.distributed`.
 
-### DeviceMeshModule
+### DeviceMeshManager
 
-The `DeviceMeshModule` handles JAX device mesh creation and management:
+`DeviceMeshManager` handles JAX device mesh creation and management through
+static methods (no instance is required):
 
 ```python
-from datarax.distributed import DeviceMeshModule
-
-# Create the mesh module
-mesh_module = DeviceMeshModule()
+from datarax.distributed import DeviceMeshManager
 
 # Create a data-parallel mesh
-mesh = mesh_module.create_data_parallel_mesh()
+mesh = DeviceMeshManager.create_data_parallel_mesh()
 
 # Or create a model-parallel mesh
-model_mesh = mesh_module.create_model_parallel_mesh(num_devices=4)
+model_mesh = DeviceMeshManager.create_model_parallel_mesh(num_devices=4)
 
 # Or create a hybrid mesh
-hybrid_mesh = mesh_module.create_hybrid_mesh(
+hybrid_mesh = DeviceMeshManager.create_hybrid_mesh(
     data_parallel_size=2,
-    model_parallel_size=4
+    model_parallel_size=4,
 )
 
 # Get information about the mesh
-mesh_info = mesh_module.get_mesh_info(mesh)
+mesh_info = DeviceMeshManager.get_mesh_info(mesh)
 print(f"Mesh info: {mesh_info}")
 ```
 
-### DataParallelModule
+### Data-parallel functions
 
-The `DataParallelModule` provides utilities for data-parallel training:
+The data-parallel functions build sharding specifications and place data and
+model state across devices:
 
 ```python
-from datarax.distributed import DataParallelModule, DeviceMeshModule
-
-# Create the modules
-mesh_module = DeviceMeshModule()
-dp_module = DataParallelModule()
+from datarax.distributed import (
+    DeviceMeshManager,
+    create_data_parallel_sharding,
+    place_batch_on_shards,
+    place_model_state_on_shards,
+    reduce_gradients_across_devices,
+)
 
 # Create a data-parallel mesh
-mesh = mesh_module.create_data_parallel_mesh()
+mesh = DeviceMeshManager.create_data_parallel_mesh()
 
 # Create sharding specification for data parallelism
-sharding = dp_module.create_data_parallel_sharding(mesh)
+sharding = create_data_parallel_sharding(mesh)
 
 # Shard a batch across devices
-sharded_batch = dp_module.place_batch_on_shards(batch, sharding)
+sharded_batch = place_batch_on_shards(batch, sharding)
 
-# Shard model state across devices
-sharded_state = dp_module.place_model_state_on_shards(state, mesh)
+# Shard model state across devices (replicated by default)
+sharded_state = place_model_state_on_shards(state, mesh)
 
-# Reduce gradients across devices
-reduced_grads = dp_module.reduce_gradients_across_devices(gradients, reduce_type="mean")
+# Reduce gradients across devices (only valid inside pmap/shard_map)
+reduced_grads = reduce_gradients_across_devices(gradients, reduce_type="mean")
 ```
 
-### DistributedMetricsModule
+### Metrics functions
 
-The `DistributedMetricsModule` handles metrics collection and aggregation:
+The metrics functions aggregate values across devices. Two variants are
+provided:
+
+- **SPMD functions** (`reduce_mean`, `reduce_sum`, `reduce_custom`, ...) operate
+  on global arrays and work inside `nnx.jit` with an active mesh. They take no
+  `axis_name`.
+- **Collective functions** (`reduce_mean_collective`, `reduce_sum_collective`,
+  `all_gather`) use `lax.p*` collectives and are only valid inside a `pmap` or
+  `shard_map` context. They accept an `axis_name`.
 
 ```python
-from datarax.distributed import DistributedMetricsModule
+from datarax.distributed import (
+    collect_from_devices,
+    reduce_custom,
+    reduce_mean,
+    reduce_sum,
+)
 
-# Create the metrics module
-metrics_module = DistributedMetricsModule()
+# Compute mean of metrics across devices (SPMD)
+reduced_metrics = reduce_mean(metrics)
 
-# Compute mean of metrics across devices
-reduced_metrics = metrics_module.reduce_mean(metrics)
+# Compute sum of metrics across devices (SPMD)
+sum_metrics = reduce_sum(metrics)
 
-# Compute sum of metrics across devices
-sum_metrics = metrics_module.reduce_sum(metrics)
-
-# Apply custom reduction operations
-custom_metrics = metrics_module.reduce_custom(
+# Apply custom per-metric reduction operations
+custom_metrics = reduce_custom(
     metrics,
     reduce_fn={
         "loss": "mean",
         "accuracy": "mean",
         "step": "max",
-    }
+    },
 )
 
-# Collect metrics from all devices
-device_metrics = metrics_module.collect_from_devices(metrics)
+# Split stacked per-device metrics into per-device lists
+device_metrics = collect_from_devices(metrics)
 ```
 
 ## Example: Data-Parallel Training
 
-Here's a simple example of data-parallel training with Datarax's NNX-based distributed components:
+Here's a simple example of data-parallel training with Datarax's distributed
+components using the SPMD path (`nnx.jit` with an active mesh). Parameters are
+replicated across devices and the batch is sharded along the data axis; the XLA
+compiler handles gradient all-reduce automatically.
 
 ```python
 import flax.nnx as nnx
@@ -109,87 +125,86 @@ import jax
 import optax
 
 from datarax.distributed import (
-    DataParallelModule,
-    DeviceMeshModule,
-    DistributedMetricsModule,
+    DeviceMeshManager,
+    create_data_parallel_sharding,
+    place_batch_on_shards,
 )
 
-# Initialize modules
-mesh_module = DeviceMeshModule()
-dp_module = DataParallelModule()
-metrics_module = DistributedMetricsModule()
-
-# Create device mesh
-mesh = mesh_module.create_data_parallel_mesh()
-sharding = dp_module.create_data_parallel_sharding(mesh)
+# Create the device mesh and data-parallel sharding
+mesh = DeviceMeshManager.create_data_parallel_mesh()
+sharding = create_data_parallel_sharding(mesh)
 
 # Define model and optimizer
 model = MyNNXModel()
-optimizer = optax.adam(learning_rate=1e-3)
+optimizer = nnx.Optimizer(model, optax.adam(learning_rate=1e-3), wrt=nnx.Param)
 
-# Create training state
-state = TrainingState(model=model, optimizer=optimizer)
 
-# Load data and shard it
-batch = load_data_batch()
-sharded_batch = dp_module.place_batch_on_shards(batch, sharding)
+@nnx.jit
+def train_step(model, optimizer, batch):
+    def loss_fn(model):
+        # Call the model directly on the batch
+        logits = model(batch["inputs"])
+        return compute_loss(logits, batch["targets"])
 
-# Define a pmapped training step
-@jax.pmap(axis_name="batch")
-def train_step(state, batch):
-    def loss_fn(params):
-        # Forward pass
-        outputs = state.model.apply(params, batch["inputs"])
-        loss = compute_loss(outputs, batch["targets"])
-        return loss
+    # Compute loss and gradients; the compiler all-reduces sharded grads
+    loss, grads = nnx.value_and_grad(loss_fn)(model)
 
-    # Compute gradients
-    grads = jax.grad(loss_fn)(state.params)
+    # Update parameters in place
+    optimizer.update(model, grads)
+    return loss
 
-    # Average gradients across devices
-    grads = metrics_module.reduce_mean(grads, axis_name="batch")
 
-    # Update parameters
-    updates, new_opt_state = optimizer.update(grads, state.opt_state)
-    new_params = optax.apply_updates(state.params, updates)
-
-    # Update state
-    new_state = state.replace(params=new_params, opt_state=new_opt_state)
-
-    return new_state
-
-# Train for multiple steps
-for step in range(num_steps):
-    state = train_step(state, sharded_batch)
+# Train for multiple steps under the mesh context
+with jax.set_mesh(mesh):
+    for step in range(num_steps):
+        batch = load_data_batch()
+        sharded_batch = place_batch_on_shards(batch, sharding)
+        loss = train_step(model, optimizer, sharded_batch)
 ```
 
-## Using with JAX Transformations
+The training-step body above is also available as the `spmd_train_step`
+convenience function, which wraps `nnx.value_and_grad` and `optimizer.update`.
 
-Datarax's NNX-based distributed modules work seamlessly with JAX transformations:
+## Using with pmap and collectives
+
+For the explicit `pmap` path, gradients and metrics must be reduced with the
+collective functions inside the mapped function. Build the `pmap` with the
+assignment form so the `axis_name` matches the collective reductions:
 
 ```python
-# Define a model
-model = MyNNXModel()
+import flax.nnx as nnx
+import jax
 
-# Apply vmap to process multiple examples in parallel
-batch_size = 32
-vmapped_model = jax.vmap(model, in_axes=0, out_axes=0)
+from datarax.distributed import (
+    DeviceMeshManager,
+    create_data_parallel_sharding,
+    place_batch_on_shards,
+    reduce_mean_collective,
+)
 
-# Create a pmap function to run across devices
-pmapped_forward = jax.pmap(vmapped_model, axis_name="batch")
 
-# Combine with distributed modules
-mesh_module = DeviceMeshModule()
-dp_module = DataParallelModule()
+def train_step(model, optimizer, batch):
+    def loss_fn(model):
+        logits = model(batch["inputs"])
+        return compute_loss(logits, batch["targets"])
 
-mesh = mesh_module.create_data_parallel_mesh()
-sharding = dp_module.create_data_parallel_sharding(mesh)
+    loss, grads = nnx.value_and_grad(loss_fn)(model)
 
-batch = load_data_batch()
-sharded_batch = dp_module.place_batch_on_shards(batch, sharding)
+    # Average gradients across devices with a collective reduction
+    grads = reduce_mean_collective(grads, axis_name="batch")
 
-# Run forward pass across devices
-outputs = pmapped_forward(sharded_batch["inputs"])
+    optimizer.update(model, grads)
+    return loss
+
+
+# Build the pmapped step with the assignment form (pmap already compiles)
+train_step = jax.pmap(train_step, axis_name="batch")
+
+# Shard the batch and run across devices
+mesh = DeviceMeshManager.create_data_parallel_mesh()
+sharding = create_data_parallel_sharding(mesh)
+sharded_batch = place_batch_on_shards(load_data_batch(), sharding)
+loss = train_step(model, optimizer, sharded_batch)
 ```
 
 ## Recommended Practices
@@ -201,29 +216,31 @@ When using Datarax's distributed training components:
    batch_size = per_device_batch_size * jax.device_count()
    ```
 
-2. **Use XLA compilation for performance**:
+2. **Do not wrap `pmap` in `jit`** — `pmap` already compiles its function:
    ```python
-   train_step = jax.jit(jax.pmap(train_step_fn, axis_name="batch"))
+   # pmap compiles on its own; no jax.jit wrapper needed
+   train_step = jax.pmap(train_step_fn, axis_name="batch")
    ```
 
-3. **Be consistent with axis names** when using pmap and pmean/psum:
+3. **Be consistent with axis names** when using `pmap` and collective reductions:
    ```python
-   # Use the same axis_name in pmap and reduction operations
-   pmap_fn = jax.pmap(fn, axis_name="batch")
-   reduced = lax.pmean(values, axis_name="batch")
+   # Use the same axis_name in pmap and in the collective reduction
+   train_step = jax.pmap(fn, axis_name="batch")
+   reduced = reduce_mean_collective(values, axis_name="batch")
    ```
 
 4. **Shard data correctly** to match the device arrangement:
    ```python
-   mesh = mesh_module.create_data_parallel_mesh()
-   sharding = dp_module.create_data_parallel_sharding(mesh)
-   sharded_batch = dp_module.place_batch_on_shards(batch, sharding)
+   mesh = DeviceMeshManager.create_data_parallel_mesh()
+   sharding = create_data_parallel_sharding(mesh)
+   sharded_batch = place_batch_on_shards(batch, sharding)
    ```
 
-5. **Use DistributedMetricsModule for accuracy** when reporting metrics:
+5. **Use SPMD metric reductions for accuracy** when reporting metrics under
+   `nnx.jit`:
    ```python
    metrics = {"loss": loss, "accuracy": accuracy}
-   reduced_metrics = metrics_module.reduce_mean(metrics)
+   reduced_metrics = reduce_mean(metrics)
    ```
 
 ## Next Steps
@@ -239,3 +256,5 @@ For complete examples, see the [examples section](../examples/overview.md):
 - [Sharding](../sharding/index.md) - Data sharding utilities
 - [Performance Tools](../performance/index.md) - Optimization utilities
 - [NNX Best Practices](nnx_best_practices.md) - JAX/Flax optimization tips
+</content>
+</invoke>

@@ -66,12 +66,19 @@ tests/                           # Core test suite (default)
 ├── config/                      #   Configuration handling
 ├── control/                     #   Control flow
 ├── core/                        #   Core functionality
-├── dag/                         #   DAG execution
+├── data/                        #   Test data and fixtures
 ├── distributed/                 #   Distributed processing
+├── examples/                    #   Example validation tests
+├── fixtures/                    #   Shared pytest fixtures
 ├── integration/                 #   End-to-end integration tests
+├── memory/                      #   Memory management
 ├── monitoring/                  #   Monitoring functionality
 ├── operators/                   #   Pipeline operators
+├── performance/                 #   Performance tests
+├── pipeline/                    #   Pipeline / DAG execution
 ├── samplers/                    #   Sampling functionality
+├── scripts/                     #   Test helper scripts
+├── sharding/                    #   Data sharding
 ├── sources/                     #   Data sources
 ├── test_common/                 #   Common testing utilities
 ├── transforms/                  #   Data transformations (neural network ops)
@@ -79,11 +86,18 @@ tests/                           # Core test suite (default)
 └── conftest.py                  #   Pytest configuration and custom markers
 
 benchmarks/tests/                # Benchmark application suite (--all-suites)
-├── test_adapters/               #   Per-framework adapter tests (15 adapters)
+├── test_adapters/               #   Per-framework adapter tests (16 adapters, incl. Datarax-scan)
+├── test_analysis/               #   Comparison reports, gap detection, stability
+├── test_automation/             #   SkyPilot / Vast orchestration templates
+├── test_runners/                #   CI and full-runner tests
+├── test_scenarios/              #   Scenario suites (vision, NLP, tabular, ...)
+├── test_visualization/          #   Chart generation
+├── test_baselines.py            #   Baseline store
+├── test_cli.py                  #   Benchmark CLI
+├── test_config_loader.py        #   TOML config loading
 ├── test_integration.py          #   Runner + adapter integration
 ├── test_synthetic_data.py       #   Synthetic data generation
-├── test_config_loader.py        #   TOML config loading
-├── test_baselines.py            #   Baseline store
+├── ...                          #   Additional determinism, profiling, sharding tests
 └── conftest.py                  #   Adapter-specific fixtures
 ```
 

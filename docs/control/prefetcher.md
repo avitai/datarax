@@ -5,7 +5,7 @@ Asynchronous data prefetching for pipeline optimization.
 ## See Also
 
 - [Control Overview](index.md) - Control flow tools
-- DAG Executor - Built-in prefetching
+- [Pipeline](../dag/index.md) - Pipeline construction
 - [Performance](../performance/index.md) - Optimization
 - [Benchmarking](../benchmarking/index.md) - Measure improvement
 

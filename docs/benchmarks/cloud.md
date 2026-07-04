@@ -124,7 +124,7 @@ Pre-configured YAML files live in `benchmarks/sky/`:
 | File | Platform | Hardware | Profile |
 |------|----------|----------|---------|
 | `cpu-benchmark.yaml` | CPU | 8+ vCPUs, 16+ GB RAM | `ci_cpu` (6 CI scenarios) |
-| `gpu-benchmark.yaml` | GPU | A100 (80GB) | `gpu_a100` (13 core cross-framework scenarios) |
+| `gpu-benchmark.yaml` | GPU | A100:1 | `gpu_a100` (15 scenarios) |
 | `tpu-benchmark.yaml` | TPU | TPU v5 lite pod (4 chips) | `tpu_v5e` |
 
 Each config defines:
@@ -291,7 +291,7 @@ sequenceDiagram
     Cloud-->>Sky: VM ready (SSH access)
     Sky->>VM: rsync local datarax/ → ~/datarax/
     Sky->>VM: Run setup: (bootstrap uv, install benchmark deps)
-    Sky->>VM: Run run: (full_runner.py)
+    Sky->>VM: Run run: (benchmarks.cli run)
     VM->>VM: Execute profile scenario set × adapters
     VM->>VM: Save results to /root/results/
     alt W&B enabled
@@ -320,7 +320,7 @@ sky status
 ### SSH into a running VM
 
 ```bash
-sky ssh datarax-vast-a100
+ssh datarax-vast-a100
 ```
 
 Useful for debugging setup failures or inspecting intermediate results.
@@ -336,7 +336,7 @@ Useful for debugging setup failures or inspecting intermediate results.
 sky rsync datarax-vast-a100:~/results/ ./benchmark-data/reports/cloud-gpu/
 
 # CPU results (SkyPilot CLI with rsync support)
-sky rsync datarax-benchmark-cpu:~/results/ ./benchmark-data/reports/cloud-cpu/
+sky rsync uv run python -m benchmarks.climark-cpu:~/results/ ./benchmark-data/reports/cloud-cpu/
 ```
 
 If your SkyPilot CLI does not include `rsync`, use `scp` after `sky status`:
@@ -356,7 +356,7 @@ To download artifacts later:
 
 ```bash
 # Via W&B CLI
-wandb artifact get your-entity/datarax-benchmarks/benchmark-results-abc1234:latest \
+wandb artifact get your-entity/uv run python -m benchmarks.climarks/benchmark-results-abc1234:latest \
     --root ./benchmark-data/reports/cloud-gpu/
 
 # Or via Python
@@ -375,7 +375,7 @@ If the VM is still running (no `--down`), you can copy results directly:
 sky rsync datarax-vast-a100:~/results/ ./benchmark-data/reports/cloud-gpu/
 
 # CPU results (rsync-capable SkyPilot builds)
-sky rsync datarax-benchmark-cpu:~/results/ ./benchmark-data/reports/cloud-cpu/
+sky rsync uv run python -m benchmarks.climark-cpu:~/results/ ./benchmark-data/reports/cloud-cpu/
 ```
 
 ```bash
@@ -396,7 +396,7 @@ If you ran without `WANDB_API_KEY`, export the downloaded results locally:
 
 ```bash
 export WANDB_API_KEY="your-key"
-datarax-bench export --results-dir ./benchmark-data/reports/cloud-gpu/
+uv run python -m benchmarks.cli export --results-dir ./benchmark-data/reports/cloud-gpu/
 ```
 
 ---
@@ -688,15 +688,15 @@ For fully reproducible environments (pinned dependencies, no install step), use 
 
 ```bash
 # Build locally, push to registry
-docker build -f benchmarks/docker/Dockerfile.gpu -t datarax-bench:gpu .
-docker tag datarax-bench:gpu your-registry/datarax-bench:gpu
-docker push your-registry/datarax-bench:gpu
+docker build -f benchmarks/docker/Dockerfile.gpu -t uv run python -m benchmarks.cli:gpu .
+docker tag uv run python -m benchmarks.cli:gpu your-registry/uv run python -m benchmarks.cli:gpu
+docker push your-registry/uv run python -m benchmarks.cli:gpu
 
 # Run on any cloud VM with Docker + NVIDIA runtime
 docker run --rm --gpus all \
     -e WANDB_API_KEY=$WANDB_API_KEY \
     -v $(pwd)/results:/app/results \
-    your-registry/datarax-bench:gpu
+    your-registry/uv run python -m benchmarks.cli:gpu
 ```
 
 SkyPilot's `setup:` approach installs from scratch each launch (~5-10 min for the benchmark extra) but always uses your latest code. Docker images are faster to start but require a rebuild when code changes.
@@ -717,7 +717,7 @@ SkyPilot's `setup:` approach installs from scratch each launch (~5-10 min for th
 | Any provider (cheapest) | `sky launch benchmarks/sky/gpu-benchmark.yaml --down` |
 | With W&B export | Append `--env WANDB_API_KEY=$WANDB_API_KEY` |
 | Watch logs | `sky logs <cluster-name>` |
-| SSH into VM | `sky ssh <cluster-name>` |
+| SSH into VM | `ssh <cluster-name>` |
 | Download results | `sky rsync <cluster>:~/results/ ./local-dir/` (or `scp` compatibility path) |
 | Re-run (skip setup) | `sky exec <cluster> -- "command"` |
 | Stop billing | `sky down <cluster>` |

@@ -14,7 +14,7 @@ Load and process datasets from [HuggingFace Hub](https://huggingface.co/datasets
 ## What You'll Learn
 
 1. Configure `HFEagerSource` for HuggingFace datasets
-2. Use streaming mode for large datasets
+2. Use `HFStreamingSource` for large datasets
 3. Inspect dataset structure and contents
 4. Apply transformations to HuggingFace data
 5. Handle different data types (images, text, tabular)
@@ -23,9 +23,9 @@ Load and process datasets from [HuggingFace Hub](https://huggingface.co/datasets
 
 | PyTorch | Datarax |
 |---------|---------|
-| `datasets.load_dataset("mnist")` | `HFEagerSource(HFEagerConfig(name="mnist"))` |
+| `datasets.load_dataset("ylecun/mnist")` | `HFEagerSource(HFEagerConfig(name="ylecun/mnist"))` |
 | `dataset["train"]` | `HFEagerConfig(split="train")` |
-| `IterableDataset` + `DataLoader` | `HFEagerSource` with `streaming=True` |
+| `IterableDataset` + `DataLoader` | `HFStreamingSource` (via `from_hf(..., streaming=True)`) |
 | `dataset.map(transform)` | `Pipeline(source=..., stages=[operator], ...)` |
 | Manual batching in DataLoader | `Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))` |
 
@@ -35,7 +35,7 @@ Load and process datasets from [HuggingFace Hub](https://huggingface.co/datasets
 
 | TensorFlow | Datarax |
 |------------|---------|
-| `tfds.load("mnist")` | `HFEagerSource(HFEagerConfig(name="mnist"))` |
+| `tfds.load("mnist")` | `HFEagerSource(HFEagerConfig(name="ylecun/mnist"))` |
 | `dataset.take(1000)` | Use split syntax: `split="train[:1000]"` |
 | `dataset.batch(32).prefetch(2)` | `Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))` |
 | `dataset.map(preprocess)` | `Pipeline(source=..., stages=[operator], ...)` |
@@ -74,36 +74,36 @@ jupyter lab examples/integration/huggingface/01_hf_quickref.ipynb
 |-----------|-------------|---------|
 | `name` | Dataset identifier | `"mnist"`, `"imdb"`, `"squad"` |
 | `split` | Which split to use | `"train"`, `"test"`, `"validation"` |
-| `streaming` | Enable for large datasets | `True` avoids full download |
-| `subset` | Dataset variant/configuration | `"en"` for multilingual datasets |
+| `shuffle` | Shuffle rows (O(1) index shuffle) | `True` |
+| `seed` | Seed for shuffling | `42` |
+
+> **Streaming large datasets?** Use `from_hf(name, split, streaming=True, rngs=...)`
+> (or `HFStreamingConfig`/`HFStreamingSource` directly) instead of `HFEagerConfig`,
+> which always loads the full dataset into JAX arrays at init.
 
 ```python
 import jax
 from flax import nnx
 from datarax.sources import HFEagerConfig, HFEagerSource
 
-# Load MNIST dataset in streaming mode
+# Load the MNIST training split (eager: loaded into JAX arrays at init)
 config = HFEagerConfig(
-    name="mnist",
+    name="ylecun/mnist",
     split="train",
-    streaming=True,  # Stream data instead of downloading all
 )
 
 source = HFEagerSource(config, rngs=nnx.Rngs(0))
 print(f"Loaded HuggingFace dataset: {config.name}")
 
-# Check dataset size (may not be available in streaming mode)
-try:
-    print(f"Dataset size: {len(source)}")
-except (NotImplementedError, TypeError):
-    print("Dataset size: N/A (streaming mode)")
+# Eager sources expose their length directly
+print(f"Dataset size: {len(source)}")
 ```
 
 **Terminal Output:**
 ```
 JAX devices: [CudaDevice(id=0)]
 Loaded HuggingFace dataset: mnist
-Dataset size: N/A (streaming mode)
+Dataset size: 60000
 ```
 
 ## Step 2: Create Pipeline and Inspect Data
@@ -117,8 +117,8 @@ flowchart LR
     end
 
     subgraph Source["HFEagerSource"]
-        CFG[HFEagerConfig<br/>streaming=True]
-        SRC[HFEagerSource<br/>Load on demand]
+        CFG[HFEagerConfig<br/>name=mnist]
+        SRC[HFEagerSource<br/>Loaded at init]
     end
 
     subgraph Pipeline["Pipeline"]
@@ -145,7 +145,7 @@ example_iter = iter(pipeline)
 
 for i in range(3):
     batch = next(example_iter)
-    data = batch.get_data()
+    data = batch  # pipelines yield plain dicts
 
     print(f"\nExample {i + 1}:")
     print(f"  Keys: {list(data.keys())}")
@@ -164,17 +164,17 @@ First 3 examples:
 Example 1:
   Keys: ['image', 'label']
   image: shape=(1, 28, 28), dtype=uint8
-  label: shape=(1,), dtype=int64
+  label: shape=(1,), dtype=int32
 
 Example 2:
   Keys: ['image', 'label']
   image: shape=(1, 28, 28), dtype=uint8
-  label: shape=(1,), dtype=int64
+  label: shape=(1,), dtype=int32
 
 Example 3:
   Keys: ['image', 'label']
   image: shape=(1, 28, 28), dtype=uint8
-  label: shape=(1,), dtype=int64
+  label: shape=(1,), dtype=int32
 ```
 
 ## Step 3: Apply Transformations
@@ -228,54 +228,69 @@ Transformed batch:
 
 ## Popular HuggingFace Datasets
 
+Large datasets are best loaded with the `from_hf` factory in streaming mode; small
+ones can use `HFEagerConfig`/`HFEagerSource` directly.
+
 ### Computer Vision
 
 ```python
+from datarax.sources import from_hf
+
 # CIFAR-10: 60K 32x32 color images, 10 classes
-config = HFEagerConfig(name="cifar10", split="train", streaming=True)
+source = from_hf("cifar10", "train", streaming=True, rngs=nnx.Rngs(0))
 
 # ImageNet-1K: 1.28M images, 1000 classes
-config = HFEagerConfig(name="imagenet-1k", split="train", streaming=True)
+source = from_hf("imagenet-1k", "train", streaming=True, rngs=nnx.Rngs(0))
 
 # Fashion-MNIST: 70K 28x28 grayscale fashion items
-config = HFEagerConfig(name="fashion_mnist", split="train", streaming=True)
+source = from_hf("fashion_mnist", "train", streaming=True, rngs=nnx.Rngs(0))
 ```
 
 ### Natural Language Processing
 
 ```python
+from datarax.sources import from_hf
+
 # IMDB: 50K movie reviews (sentiment analysis)
-config = HFEagerConfig(name="imdb", split="train", streaming=True)
+source = from_hf("stanfordnlp/imdb", "train", streaming=True, rngs=nnx.Rngs(0))
 
 # SQuAD: Reading comprehension dataset
-config = HFEagerConfig(name="squad", split="train", streaming=True)
+source = from_hf("squad", "train", streaming=True, rngs=nnx.Rngs(0))
 
-# WikiText-103: Language modeling dataset
-config = HFEagerConfig(name="wikitext", subset="wikitext-103-v1", split="train", streaming=True)
+# WikiText: Language modeling dataset
+source = from_hf("wikitext", "train", streaming=True, rngs=nnx.Rngs(0))
 ```
 
 ### Multimodal
 
 ```python
+from datarax.sources import from_hf
+
 # COCO Captions: Image captioning
-config = HFEagerConfig(name="coco", subset="2017", split="train", streaming=True)
+source = from_hf("coco", "train", streaming=True, rngs=nnx.Rngs(0))
 
 # Conceptual Captions: 3.3M image-text pairs
-config = HFEagerConfig(name="conceptual_captions", split="train", streaming=True)
+source = from_hf("conceptual_captions", "train", streaming=True, rngs=nnx.Rngs(0))
 ```
 
-## Streaming vs Non-Streaming Mode
+## Streaming vs Eager Sources
 
-### Streaming Mode (Recommended for Large Datasets)
+Datarax exposes two source types for HuggingFace data. `HFEagerSource` loads the
+whole split into JAX arrays at init; `HFStreamingSource` pulls records on demand.
+
+### Streaming (Recommended for Large Datasets)
 
 ```python
-# Streaming: Downloads data on-demand
-config = HFEagerConfig(
+from flax import nnx
+from datarax.sources import HFStreamingConfig, HFStreamingSource
+
+# Streaming: pulls records on-demand
+config = HFStreamingConfig(
     name="imagenet-1k",
     split="train",
     streaming=True,  # No full download
 )
-source = HFEagerSource(config, rngs=nnx.Rngs(0))
+source = HFStreamingSource(config, rngs=nnx.Rngs(0))
 
 # Advantages:
 # - No large upfront download
@@ -287,25 +302,27 @@ source = HFEagerSource(config, rngs=nnx.Rngs(0))
 # - May have variable latency
 ```
 
-### Non-Streaming Mode
+### Eager
 
 ```python
-# Non-streaming: Downloads full dataset first
+from flax import nnx
+from datarax.sources import HFEagerConfig, HFEagerSource
+
+# Eager: loads the full split into JAX arrays at init
 config = HFEagerConfig(
-    name="mnist",
+    name="ylecun/mnist",
     split="train",
-    streaming=False,
 )
 source = HFEagerSource(config, rngs=nnx.Rngs(0))
 
 # Advantages:
-# - Faster iteration (local access)
+# - Fast random access (local arrays)
 # - Works offline after download
-# - Deterministic ordering
+# - Deterministic ordering, exposes len()
 
 # Disadvantages:
-# - Large upfront download
-# - Requires disk space
+# - Whole split held in memory
+# - Not suitable for very large datasets
 ```
 
 ## Results Summary
@@ -313,7 +330,7 @@ source = HFEagerSource(config, rngs=nnx.Rngs(0))
 | Feature | Value |
 |---------|-------|
 | Dataset | MNIST from HuggingFace Hub |
-| Mode | Streaming (no full download) |
+| Mode | Eager |
 | Batch Size | 32 |
 | Output Shape | (32, 28, 28, 1) |
 | Normalization | [0, 255] → [0, 1] |
@@ -340,8 +357,7 @@ Explore datasets at [HuggingFace Hub](https://huggingface.co/datasets):
 
 ## Next Steps
 
-- [TFDS Quick Reference](../../core/cifar10-quickref.md) - Alternative dataset source
+- [TFDS Quick Reference](../tfds/tfds-quickref.md) - Alternative dataset source
 - [Operators Tutorial](../../core/operators-tutorial.md) - Advanced transformations
-- [Text Processing Tutorial](hf-tutorial.md) - NLP pipelines
-- [Multimodal Tutorial](hf-tutorial.md) - Image-text datasets
+- [Text Processing](imdb-quickref.md) - NLP pipelines
 - [API Reference: HFEagerSource](../../../sources/hf_source.md) - Complete HuggingFace API documentation

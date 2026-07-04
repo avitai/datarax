@@ -51,6 +51,19 @@ XLA call.
   gradients) showing that Tier C works equally well for evaluation
   and calibration sweeps.
 
+### Source-specific quickrefs
+
+Per-source integration examples live in dedicated subdirectories:
+
+- `arrayrecord/`
+  - `01_arrayrecord_quickref.py` — loading ArrayRecord files.
+- `huggingface/`
+  - `01_hf_quickref.py` — HuggingFace Datasets quickref.
+  - `02_hf_tutorial.py` — longer HuggingFace Datasets tutorial.
+  - `03_imdb_quickref.py` — IMDB text-dataset quickref.
+- `tfds/`
+  - `01_tfds_quickref.py` — TensorFlow Datasets quickref.
+
 ## Differentiability
 
 datarax pipelines are JAX-traceable end-to-end. Within a single

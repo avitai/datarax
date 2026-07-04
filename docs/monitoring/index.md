@@ -8,7 +8,7 @@ Metrics collection and observability for data pipelines. Track throughput, laten
 |-----------|---------|----------|
 | **Metrics** | Collect measurements | Throughput, latency, custom |
 | **Callbacks** | Event hooks | Log on batch/epoch end |
-| **Reporters** | Output backends | Console, file, TensorBoard |
+| **Reporters** | Output backends | Console and file |
 
 !!! note "Key points"
 

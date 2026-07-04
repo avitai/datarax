@@ -1,6 +1,7 @@
 # Memory
 
-Memory management utilities for efficient data handling. These tools help manage shared memory for multi-process data loading.
+Memory management utilities for efficient data handling. These tools help
+manage shared memory for multi-process data loading.
 
 ## Components
 
@@ -11,26 +12,27 @@ Memory management utilities for efficient data handling. These tools help manage
 !!! note "Key points"
 
     - Shared memory avoids copying data between processes
-    - Essential for multi-worker data loading
-    - Managed automatically by DataLoader
+    - Arrays of at least 1 MiB are automatically placed in shared memory
+    - Used by `datarax.workers` for cross-process transforms
     - Use for custom multi-process pipelines
 
 ## Quick Start
 
 ```python
+import numpy as np
 from datarax.memory import SharedMemoryManager
 
-# Create shared memory region
-manager = SharedMemoryManager(size_bytes=1024 * 1024 * 100)  # 100MB
+# The manager sizes segments automatically
+manager = SharedMemoryManager()
 
-# Write data (from worker process)
-manager.write("batch_0", batch_data)
+# Publish an array to shared memory (arrays >= 1 MiB are shared)
+shared = manager.make_shared("batch_0", np.zeros((1024, 1024), dtype=np.float32))
 
-# Read data (from main process)
-batch = manager.read("batch_0")
+# Retrieve it from another reference
+batch = manager.get_shared("batch_0")
 
-# Cleanup
-manager.close()
+# Release all segments
+manager.cleanup()
 ```
 
 ## Modules
@@ -39,31 +41,25 @@ manager.close()
 
 ## Multi-Worker Pattern
 
-```python
-from datarax.memory import SharedMemoryManager
-from multiprocessing import Process
+Use the context manager so segments are always released:
 
-def worker(manager, worker_id):
+```python
+import numpy as np
+from datarax.memory import SharedMemoryManager
+
+with SharedMemoryManager() as manager:
     for i in range(100):
         batch = load_batch(i)
-        manager.write(f"worker_{worker_id}_batch_{i}", batch)
+        manager.make_shared(f"batch_{i}", np.asarray(batch))
 
-# Create shared memory
-manager = SharedMemoryManager(size_bytes=1e9)
-
-# Spawn workers
-workers = [Process(target=worker, args=(manager, i)) for i in range(4)]
-for w in workers:
-    w.start()
-
-# Read from main process
-for batch_key in manager.keys():
-    batch = manager.read(batch_key)
+    # Retrieve by name
+    batch = manager.get_shared("batch_0")
     process(batch)
+# Segments are cleaned up on exit
 ```
 
 ## See Also
 
-- DAG Loaders - DataLoader with workers
+- [Workers](../root/index.md) - Cross-process transform workers
 - [Control](../control/index.md) - Prefetching
 - [Performance](../performance/index.md) - Optimization

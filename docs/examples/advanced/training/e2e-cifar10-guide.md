@@ -61,21 +61,22 @@ python examples/advanced/training/01_e2e_cifar10_guide.py
 flowchart TB
     subgraph Data["Data Pipeline"]
         S[TFDSEagerSource<br/>CIFAR-10] --> P[Preprocess]
-        P --> A[Augmentation<br/>Brightness/Contrast]
+        P --> A[Augmentation<br/>Brightness/Contrast/Noise]
         A --> M[MixUp]
     end
 
-    subgraph Model["CNN Model"]
-        C1[Conv 32] --> C2[Conv 64]
-        C2 --> C3[Conv 128]
-        C3 --> F[Flatten]
-        F --> D1[Dense 256]
-        D1 --> D2[Dense 10]
+    subgraph Model["CIFAR10Net (ResNet-style)"]
+        C1[Conv 3→32 + BN] --> C2[ResBlock 32→32]
+        C2 --> C3[ResBlock 32→64<br/>stride 2]
+        C3 --> C4[ResBlock 64→64]
+        C4 --> C5[ResBlock 64→128<br/>stride 2]
+        C5 --> G1[GlobalAvgPool]
+        G1 --> D2[FC 128→10]
     end
 
     subgraph Training["Training Loop"]
-        L[Loss: CrossEntropy]
-        O[Optimizer: Adam]
+        L[Loss: Soft CrossEntropy]
+        O[Optimizer: AdamW]
         G[Gradients]
     end
 
@@ -91,36 +92,47 @@ CIFAR10_CLASSES = [
     "airplane", "automobile", "bird", "cat", "deer",
     "dog", "frog", "horse", "ship", "truck"
 ]
+NUM_CLASSES = 10
+IMAGE_SHAPE = (32, 32, 3)
 CIFAR10_MEAN = jnp.array([0.4914, 0.4822, 0.4465])
 CIFAR10_STD = jnp.array([0.2470, 0.2435, 0.2616])
 
 # Training hyperparameters
-BATCH_SIZE = 128
-LEARNING_RATE = 1e-3
-NUM_EPOCHS = 10
+# QUICK_MODE keeps the example under the per-example test timeout.
+# Set QUICK_MODE=False for the full demo configuration (5 epochs / 5000 samples).
+QUICK_MODE = True
+BATCH_SIZE = 64
+LEARNING_RATE = 3e-4
+WEIGHT_DECAY = 1e-4
+NUM_EPOCHS = 2 if QUICK_MODE else 5
+TRAIN_SAMPLES = 1024 if QUICK_MODE else 5000
+TEST_SAMPLES = 256 if QUICK_MODE else 1000
+
+# Augmentation
+USE_MIXUP = True
 MIXUP_ALPHA = 0.2
 ```
 
 ## Part 1: Data Pipeline
 
 ```python
-def create_train_pipeline(batch_size=128, mixup_alpha=0.2):
+def create_train_pipeline(seed=42):
     """Create training pipeline with augmentation and MixUp."""
     source = TFDSEagerSource(
         TFDSEagerConfig(
             name="cifar10",
-            split="train",
+            split=f"train[:{TRAIN_SAMPLES}]",
             shuffle=True,
-            seed=42,
+            seed=seed,
             exclude_keys={"id"},
         ),
-        rngs=nnx.Rngs(42)
+        rngs=nnx.Rngs(seed),
     )
 
-    # Preprocessing
-    preprocessor = ElementOperator(
+    # Preprocessing (normalize + one-hot labels for MixUp)
+    prep = ElementOperator(
         ElementOperatorConfig(stochastic=False),
-        fn=preprocess_cifar10,
+        fn=preprocess_train,
         rngs=nnx.Rngs(0),
     )
 
@@ -128,132 +140,223 @@ def create_train_pipeline(batch_size=128, mixup_alpha=0.2):
     brightness = BrightnessOperator(
         BrightnessOperatorConfig(
             field_key="image",
-            brightness_range=(-0.2, 0.2),
-            stochastic=True, stream_name="brightness",
+            brightness_range=(-0.1, 0.1),
+            stochastic=True,
+            stream_name="brightness",
         ),
-        rngs=nnx.Rngs(brightness=100),
+        rngs=nnx.Rngs(brightness=seed + 100),
     )
 
-    # MixUp
-    mixup = BatchMixOperator(
-        BatchMixOperatorConfig(
-            mode="mixup",
-            alpha=mixup_alpha,
-            data_field="image",
-            label_field="label",
-            stochastic=True, stream_name="mixup",
+    contrast = ContrastOperator(
+        ContrastOperatorConfig(
+            field_key="image",
+            contrast_range=(0.9, 1.1),
+            stochastic=True,
+            stream_name="contrast",
         ),
-        rngs=nnx.Rngs(mixup=200),
+        rngs=nnx.Rngs(contrast=seed + 200),
     )
 
-    return (
-        Pipeline(source=source, stages=[preprocessor, brightness, mixup], batch_size=batch_size, rngs=nnx.Rngs(0))
+    noise = NoiseOperator(
+        NoiseOperatorConfig(
+            field_key="image",
+            mode="gaussian",
+            noise_std=0.05,
+            stochastic=True,
+            stream_name="noise",
+        ),
+        rngs=nnx.Rngs(noise=seed + 300),
     )
+
+    # Build stages (conditionally include MixUp)
+    stages = [prep, brightness, contrast, noise]
+    if USE_MIXUP:
+        mixup = BatchMixOperator(
+            BatchMixOperatorConfig(
+                mode="mixup",
+                alpha=MIXUP_ALPHA,
+                data_field="image",
+                label_field="label",
+                stochastic=True,
+                stream_name="mixup",
+            ),
+            rngs=nnx.Rngs(mixup=seed + 400),
+        )
+        stages.append(mixup)
+
+    return Pipeline(source=source, stages=stages, batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
 ```
 
-## Part 2: CNN Model
+The training source uses a `train[:{TRAIN_SAMPLES}]` split so the QUICK_MODE
+configuration stays within the test timeout. `preprocess_train` normalizes with
+the CIFAR-10 statistics and produces one-hot labels (plus a `label_idx` field)
+so MixUp can blend soft labels.
+
+## Part 2: Model Architecture
+
+`CIFAR10Net` is a ResNet-inspired CNN built from residual blocks with
+BatchNorm, global average pooling, and a single linear classification head.
 
 ```python
-class CIFAR10CNN(nnx.Module):
-    """CNN for CIFAR-10 classification."""
+class ResidualBlock(nnx.Module):
+    """Basic residual block with skip connection."""
+
+    def __init__(self, in_channels: int, out_channels: int, stride: int, rngs: nnx.Rngs):
+        self.conv1 = nnx.Conv(
+            in_channels, out_channels, kernel_size=(3, 3),
+            strides=(stride, stride), padding="SAME", rngs=rngs,
+        )
+        self.bn1 = nnx.BatchNorm(out_channels, rngs=rngs)
+        self.conv2 = nnx.Conv(
+            out_channels, out_channels, kernel_size=(3, 3),
+            strides=(1, 1), padding="SAME", rngs=rngs,
+        )
+        self.bn2 = nnx.BatchNorm(out_channels, rngs=rngs)
+
+        # Skip connection (project when shape changes)
+        if stride != 1 or in_channels != out_channels:
+            self.skip = nnx.Conv(
+                in_channels, out_channels, kernel_size=(1, 1),
+                strides=(stride, stride), padding="SAME", rngs=rngs,
+            )
+        else:
+            self.skip = None
+
+    def __call__(self, x):
+        identity = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = nnx.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        if self.skip is not None:
+            identity = self.skip(identity)
+
+        out = out + identity
+        return nnx.relu(out)
+
+
+class CIFAR10Net(nnx.Module):
+    """ResNet-inspired network for CIFAR-10."""
 
     def __init__(self, rngs: nnx.Rngs):
-        # Conv blocks
+        # Initial convolution
         self.conv1 = nnx.Conv(3, 32, kernel_size=(3, 3), padding="SAME", rngs=rngs)
-        self.conv2 = nnx.Conv(32, 64, kernel_size=(3, 3), padding="SAME", rngs=rngs)
-        self.conv3 = nnx.Conv(64, 128, kernel_size=(3, 3), padding="SAME", rngs=rngs)
+        self.bn1 = nnx.BatchNorm(32, rngs=rngs)
 
-        # Dense layers
-        self.dense1 = nnx.Linear(128 * 4 * 4, 256, rngs=rngs)
-        self.dense2 = nnx.Linear(256, 10, rngs=rngs)
+        # Residual blocks
+        self.block1 = ResidualBlock(32, 32, stride=1, rngs=rngs)
+        self.block2 = ResidualBlock(32, 64, stride=2, rngs=rngs)  # 16x16
+        self.block3 = ResidualBlock(64, 64, stride=1, rngs=rngs)
+        self.block4 = ResidualBlock(64, 128, stride=2, rngs=rngs)  # 8x8
 
-    def __call__(self, x: jax.Array) -> jax.Array:
-        # Conv block 1
-        x = nnx.relu(self.conv1(x))
-        x = nnx.max_pool(x, window_shape=(2, 2), strides=(2, 2))
+        # Classification head
+        self.fc = nnx.Linear(128, NUM_CLASSES, rngs=rngs)
 
-        # Conv block 2
-        x = nnx.relu(self.conv2(x))
-        x = nnx.max_pool(x, window_shape=(2, 2), strides=(2, 2))
+    def __call__(self, x):
+        # Initial
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = nnx.relu(x)
 
-        # Conv block 3
-        x = nnx.relu(self.conv3(x))
-        x = nnx.max_pool(x, window_shape=(2, 2), strides=(2, 2))
+        # Residual blocks
+        x = self.block1(x)
+        x = self.block2(x)
+        x = self.block3(x)
+        x = self.block4(x)
 
-        # Dense
-        x = x.reshape(x.shape[0], -1)
-        x = nnx.relu(self.dense1(x))
-        return self.dense2(x)
+        # Global average pooling + classification
+        x = jnp.mean(x, axis=(1, 2))
+        return self.fc(x)
 ```
 
 ## Part 3: Training Loop
 
 ```python
+# Create model and optimizer (AdamW with weight decay)
+model = CIFAR10Net(rngs=nnx.Rngs(0))
+optimizer = nnx.Optimizer(
+    model,
+    optax.adamw(learning_rate=LEARNING_RATE, weight_decay=WEIGHT_DECAY),
+    wrt=nnx.Param,
+)
+
+
 @nnx.jit
-def train_step(model, optimizer, batch):
-    """Single training step with MixUp."""
-    images = batch["image"]
-    labels = batch["label"]  # Soft labels from MixUp
+def train_step(model, optimizer, images, labels):
+    """Single training step with soft (MixUp) labels."""
 
     def loss_fn(model):
         logits = model(images)
-        return optax.softmax_cross_entropy(logits, labels).mean()
+        # Soft cross-entropy for MixUp
+        return -jnp.sum(labels * jax.nn.log_softmax(logits), axis=-1).mean()
 
     loss, grads = nnx.value_and_grad(loss_fn)(model)
     optimizer.update(model, grads)
-    return loss
 
-# Training
-model = CIFAR10CNN(rngs=nnx.Rngs(0))
-optimizer = nnx.Optimizer(model, optax.adam(LEARNING_RATE), wrt=nnx.Param)
+    # Accuracy from argmax of soft labels
+    logits = model(images)
+    predictions = jnp.argmax(logits, axis=-1)
+    targets = jnp.argmax(labels, axis=-1)
+    accuracy = (predictions == targets).mean()
+
+    return loss, accuracy
+
 
 for epoch in range(NUM_EPOCHS):
-    pipeline = create_train_pipeline()
+    train_pipeline = create_train_pipeline(seed=epoch)
     epoch_losses = []
+    epoch_accs = []
 
-    for batch in pipeline:
-        loss = train_step(model, optimizer, batch)
+    for batch in train_pipeline:
+        loss, acc = train_step(model, optimizer, batch["image"], batch["label"])
         epoch_losses.append(float(loss))
+        epoch_accs.append(float(acc))
 
-    print(f"Epoch {epoch+1}: loss={np.mean(epoch_losses):.4f}")
+    print(f"Epoch {epoch + 1}/{NUM_EPOCHS}: "
+          f"loss={np.mean(epoch_losses):.4f}, acc={np.mean(epoch_accs):.2%}")
 ```
 
-**Terminal Output:**
-```
-Epoch 1: loss=1.8234
-Epoch 2: loss=1.4567
-Epoch 3: loss=1.2345
-Epoch 4: loss=1.0987
-Epoch 5: loss=0.9876
-...
-Epoch 10: loss=0.7234
-```
+`train_step` returns both the loss and the batch accuracy. Because MixUp emits
+soft labels, the loss uses `log_softmax` against the blended targets rather than
+`softmax_cross_entropy_with_integer_labels`. A fresh pipeline is created each
+epoch (seeded by the epoch index) so the shuffle order differs per epoch.
 
 ## Part 4: Evaluation
 
+The validation pipeline (`create_val_pipeline`) applies normalization only and
+keeps integer labels, so evaluation uses a dedicated `eval_step`.
+
 ```python
-def evaluate(model, test_pipeline):
-    """Evaluate model on test set."""
-    all_preds = []
-    all_labels = []
+@nnx.jit
+def eval_step(model, images, labels):
+    """Single evaluation step with hard (integer) labels."""
+    logits = model(images)
+    predictions = jnp.argmax(logits, axis=-1)
+    accuracy = (predictions == labels).mean()
+    loss = optax.softmax_cross_entropy_with_integer_labels(logits, labels).mean()
+    return loss, accuracy, predictions
 
-    for batch in test_pipeline:
-        logits = model(batch["image"])
-        preds = jnp.argmax(logits, axis=-1)
-        all_preds.extend(preds.tolist())
-        all_labels.extend(batch["label_idx"].tolist())
 
-    accuracy = sum(p == l for p, l in zip(all_preds, all_labels)) / len(all_labels)
-    return accuracy, all_preds, all_labels
+val_pipeline = create_val_pipeline()
+val_accs_epoch = []
+all_predictions = []
+all_labels = []
 
-accuracy, preds, labels = evaluate(model, test_pipeline)
-print(f"Test accuracy: {accuracy:.2%}")
+for batch in val_pipeline:
+    loss, acc, preds = eval_step(model, batch["image"], batch["label"])
+    val_accs_epoch.append(float(acc))
+    all_predictions.extend(preds.tolist())
+    all_labels.extend(batch["label"].tolist())
+
+print(f"Val accuracy: {np.mean(val_accs_epoch):.2%}")
 ```
 
-**Terminal Output:**
-```
-Test accuracy: 82.45%
-```
+Validation labels come straight from `batch["label"]` (integers, since the
+validation pipeline skips the one-hot preprocessing used for MixUp).
 
 ## Part 5: Visualization
 
@@ -266,17 +369,33 @@ plt.ylabel("Loss")
 plt.title("CIFAR-10 Training Loss")
 plt.savefig("docs/assets/images/examples/e2e-training-curves.png", dpi=150)
 
-# Confusion matrix
-from sklearn.metrics import confusion_matrix
-import seaborn as sns
+# Confusion matrix (numpy + matplotlib, no sklearn/seaborn)
+confusion = np.zeros((NUM_CLASSES, NUM_CLASSES), dtype=np.int32)
+for pred, true in zip(all_predictions, all_labels):
+    confusion[true, pred] += 1
 
-cm = confusion_matrix(labels, preds)
-plt.figure(figsize=(10, 8))
-sns.heatmap(cm, annot=True, fmt="d", xticklabels=CIFAR10_CLASSES,
-            yticklabels=CIFAR10_CLASSES, cmap="Blues")
-plt.xlabel("Predicted")
-plt.ylabel("True")
-plt.title("CIFAR-10 Confusion Matrix")
+# Normalize by row (recall)
+confusion_norm = confusion.astype(np.float32) / confusion.sum(axis=1, keepdims=True)
+
+fig, ax = plt.subplots(figsize=(10, 8))
+im = ax.imshow(confusion_norm, cmap="Blues")
+
+# Annotate each cell
+for i in range(NUM_CLASSES):
+    for j in range(NUM_CLASSES):
+        val = confusion_norm[i, j]
+        color = "white" if val > 0.5 else "black"
+        ax.text(j, i, f"{val:.2f}", ha="center", va="center", color=color, fontsize=8)
+
+ax.set_xticks(range(NUM_CLASSES))
+ax.set_yticks(range(NUM_CLASSES))
+ax.set_xticklabels(CIFAR10_CLASSES, rotation=45, ha="right")
+ax.set_yticklabels(CIFAR10_CLASSES)
+ax.set_xlabel("Predicted")
+ax.set_ylabel("True")
+ax.set_title("Confusion Matrix (Normalized)")
+plt.colorbar(im, ax=ax)
+plt.tight_layout()
 plt.savefig("docs/assets/images/examples/e2e-confusion-matrix.png", dpi=150)
 ```
 

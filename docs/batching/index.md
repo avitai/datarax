@@ -6,33 +6,25 @@ Batch creation and management for data pipelines. Batching groups individual sam
 
 | Component | Purpose | Features |
 |-----------|---------|----------|
-| **DefaultBatcher** | Standard batching | Padding, dropping remainder |
+| **DefaultBatcher** | Standard batching | Dropping remainder |
 
 !!! note "Key points"
 
     - Batching is required before most operators (batch-first)
     - Use `drop_remainder=True` for consistent batch sizes
-    - Padding handles variable-length sequences
+    - Elements must share shapes — batching stacks arrays, it does not pad
     - Pipeline enforces batching by default
 
 ## Quick Start
 
 ```python
-from datarax.batching import DefaultBatcher
+from datarax.batching import DefaultBatcher, DefaultBatcherConfig
 
-batcher = DefaultBatcher(
-    batch_size=32,
-    drop_remainder=False,  # Keep partial final batch
-)
+batcher = DefaultBatcher(DefaultBatcherConfig())
 
-# Batch elements
-for element in source:
-    batch = batcher.add(element)
-    if batch is not None:  # Full batch ready
-        process(batch)
-
-# Get remaining elements
-final_batch = batcher.flush()
+# process() consumes an element iterator and yields batches
+for batch in batcher.process(iter(elements), batch_size=32, drop_remainder=False):
+    process(batch)
 ```
 
 ## Modules
@@ -57,13 +49,12 @@ pipeline = Pipeline(source=source, stages=[transform], batch_size=32, rngs=nnx.R
 # Input elements: {"image": (H, W, C)}
 # After batching: {"image": (B, H, W, C)}
 
-# With variable lengths and padding:
-# Input: {"text": (L,)} where L varies
-# After batching: {"text": (B, max_L)} with padding
+# Elements must share shapes — batching stacks along a new leading axis
+# and does not pad. Normalize shapes upstream before batching.
 ```
 
 ## See Also
 
-- DAG Executor - Batch-first enforcement
+- [Pipeline](../dag/index.md) - Batch-first enforcement
 - [Core Batcher](../core/batcher.md) - Batcher protocol
-- DAG Rebatch - Reshape batches
+- [Pipeline](../dag/index.md) - Reshape batches with built-in DAG nodes

@@ -71,8 +71,8 @@ Configuration for ArrayRecord data sources:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `seed` | int | 42 | Random seed for shuffling |
-| `num_epochs` | int | -1 | Number of epochs (-1 for infinite) |
-| `shuffle_files` | bool | False | Whether to shuffle file order |
+| `num_epochs` | int | -1 | Epoch budget for direct source iteration (-1 for unbounded) |
+| `shuffle_files` | bool | False | Shuffle record order within each epoch |
 
 ```python
 from datarax.sources import ArrayRecordSourceConfig
@@ -80,7 +80,7 @@ from datarax.sources import ArrayRecordSourceConfig
 config = ArrayRecordSourceConfig(
     seed=42,
     num_epochs=10,       # Run for 10 epochs
-    shuffle_files=True,  # Shuffle each epoch
+    shuffle_files=True,  # Reshuffle record order each epoch
 )
 ```
 
@@ -119,15 +119,22 @@ source = ArrayRecordSourceModule(
 
 ```python
 from datarax.pipeline import Pipeline
-from datarax.pipeline import Pipeline
 
 # Create pipeline from ArrayRecord source
 pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 
 # Add transformations
-# Add normalize_op to the stages list when constructing the Pipeline.
+# Pipeline stages are set at construction; rebuild with normalize_op in stages.
+pipeline = Pipeline(
+    source=pipeline.source,
+    stages=[normalize_op],
+    batch_size=pipeline.batch_size,
+    rngs=nnx.Rngs(0),
+)
+
 # Iterate
 for batch in pipeline:
+    # Process batch
     print(f"Batch shape: {batch['data'].shape}")
 ```
 
@@ -157,29 +164,42 @@ source.set_state(state)
 ### Epoch Control
 
 **Finite Epochs:**
+
+Reuse a single pipeline across epochs. Each `iter(pipeline)` session covers one
+pass over the source, so re-entering the `for batch in pipeline` loop starts a
+new epoch.
+
 ```python
 # Run for exactly 10 epochs
 config = ArrayRecordSourceConfig(num_epochs=10)
 source = ArrayRecordSourceModule(config, paths=paths, rngs=nnx.Rngs(0))
 
-for batch in Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0)):
-    train_step(batch)
-# Automatically stops after 10 epochs
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
+for epoch in range(10):
+    for batch in pipeline:
+        train_step(batch)
+# Each iter(pipeline) session covers one pass over the source.
 ```
 
-**Infinite Iteration:**
+**Step-Based Training:**
+
+Re-enter the pipeline per epoch until a step budget is reached.
+
 ```python
-# Run indefinitely (for step-based training)
-config = ArrayRecordSourceConfig(num_epochs=-1)
-source = ArrayRecordSourceModule(config, paths=paths, rngs=nnx.Rngs(0))
+# Run until a step budget is reached, re-entering the pipeline per epoch
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 
 step = 0
-for batch in Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0)):
-    train_step(batch)
-    step += 1
-    if step >= max_steps:
-        break
+while step < max_steps:
+    for batch in pipeline:
+        train_step(batch)
+        step += 1
+        if step >= max_steps:
+            break
 ```
+
+Setting `num_epochs=-1` makes the **source** iterate unboundedly when consumed
+directly (iterating the source itself, not the pipeline).
 
 ### Shuffling Behavior
 
@@ -246,7 +266,7 @@ Quick reference completed!
 | **Stateful** | Tracks position via NNX Variables |
 | **Checkpointing** | Full `get_state()` / `set_state()` |
 | **Shuffling** | Per-epoch reshuffling with seed control |
-| **Epoch Control** | Finite or infinite iteration |
+| **Epoch Control** | Per-session passes; loop `iter(pipeline)` for epochs |
 | **Grain Compatible** | Wraps Grain's ArrayRecordDataSource |
 
 ## When to Use ArrayRecord

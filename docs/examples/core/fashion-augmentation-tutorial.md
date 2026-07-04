@@ -100,7 +100,6 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.pipeline import Pipeline
-from datarax.pipeline import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.modality.image import (
     BrightnessOperator, BrightnessOperatorConfig,

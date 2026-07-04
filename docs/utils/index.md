@@ -1,61 +1,60 @@
 # Utilities
 
-Utility modules providing common functionality across Datarax. These are low-level helpers used internally and available for advanced use cases.
+Utility modules providing common functionality across Datarax. These are
+low-level helpers used internally and available for advanced use cases.
 
 ## Available Utilities
 
 | Utility | Purpose | Key Functions |
 |---------|---------|---------------|
-| **PRNG** | Random numbers | Seed management, key splitting |
-| **PyTree Utils** | Tree operations | Flatten, unflatten, map |
+| **PRNG** | Random numbers | `nnx.Rngs` creation from seed |
+| **PyTree Utils** | Batch tree operations | Batch size, split, concatenate |
 | **External** | Library adapters | Integration helpers |
+| **Cache** | Dataset cache layout | Resolve/structure cache dirs |
+| **Multirate** | Signal alignment | Align streams at different rates |
 
 !!! note "Key points"
 
-    - PRNG utilities wrap JAX random for consistent seeding
-    - PyTree utils handle nested data structures
+    - PRNG utilities create `nnx.Rngs` with consistent seeding
+    - PyTree utils operate on `Element`/`Batch` structures
     - Use these for custom operators and extensions
 
 ## Quick Start
 
 ```python
-from datarax.utils import create_rng_key, split_key
-from datarax.utils.pytree_utils import tree_map_with_path
+from datarax.utils.prng import create_rngs
+from datarax.utils.pytree_utils import get_batch_size
 
-# Create and split RNG keys
-key = create_rng_key(42)
-key1, key2 = split_key(key, 2)
+# Create named RNG streams from a seed
+rngs = create_rngs(42)
 
-# Map over PyTree with path info
-def scale_images(path, value):
-    if "image" in path:
-        return value / 255.0
-    return value
-
-scaled = tree_map_with_path(scale_images, data)
+# Inspect a batch produced by a pipeline
+size = get_batch_size(batch)
 ```
 
 ## Modules
 
-- [prng](prng.md) - Pseudo-random number generation utilities for JAX
-- [pytree_utils](pytree_utils.md) - PyTree manipulation and transformation
+- [prng](prng.md) - `nnx.Rngs` creation utilities for JAX
+- [pytree_utils](pytree_utils.md) - Batch PyTree manipulation and transformation
 - [external](external.md) - External library adapters and integrations
+- [cache](cache.md) - Dataset cache-layout helpers
+- [multirate](multirate.md) - Multirate signal-alignment helpers
 
-## PyTree Operations
+## Batch PyTree Operations
 
 ```python
 from datarax.utils.pytree_utils import (
-    flatten_dict,
-    unflatten_dict,
-    tree_select,
+    add_batch_dimension,
+    split_batch_for_devices,
+    concatenate_batch_sequence,
 )
 
-# Flatten nested dict
-flat = flatten_dict({"a": {"b": 1, "c": 2}})
-# {"a.b": 1, "a.c": 2}
+# Promote a single element to a batch of size 1
+batch = add_batch_dimension(element)
 
-# Select subset
-subset = tree_select(data, keys=["image", "label"])
+# Split a batch across devices, then recombine
+shards = split_batch_for_devices(batch, num_splits=4)
+merged = concatenate_batch_sequence(shards)
 ```
 
 ## See Also

@@ -126,16 +126,9 @@ from flax import nnx
 # Datarax imports
 from datarax.pipeline import Pipeline
 from datarax.core.config import BatchMixOperatorConfig
-from datarax.pipeline import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.batch_mix_operator import BatchMixOperator
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
-```
-
-**Terminal Output:**
-```
-TensorFlow configured for CPU-only
-JAX backend: gpu
 ```
 
 ## Part 1: Load CIFAR-10 Data
@@ -202,8 +195,6 @@ def create_base_pipeline(seed=42, num_samples=256):
 
 **Terminal Output:**
 ```
-Loaded CIFAR-10 dataset
-Preprocessing: normalize + one-hot encode labels
 Base pipeline factory created
 ```
 
@@ -570,7 +561,7 @@ axes[0].set_xlabel("Max Class Probability")
 axes[0].set_ylabel("Count")
 axes[0].set_title("Label Hardness Distribution")
 axes[0].legend()
-axes[0].axvline(x=1.0, color="red", linestyle="--", alpha=0.5)
+axes[0].axvline(x=1.0, color="red", linestyle="--", label="Hard label")
 
 # Example soft label vectors
 sample_mixup = mixup_labels[0]

@@ -8,7 +8,7 @@ State persistence and recovery for pipeline checkpointing. Built on [Orbax](http
 |-----------|---------|--------------|
 | **OrbaxCheckpointHandler** | Save/load state | PRNG keys, versioning, metadata |
 | **Checkpointable Protocol** | Interface | `get_state()`, `set_state()` |
-| **CheckpointableIterator** | Resumable iteration | Iterator + checkpointing |
+| **IteratorCheckpoint / PipelineCheckpoint** | Resumable iteration | Iterator + pipeline state |
 
 !!! note "Key points"
 
@@ -25,7 +25,7 @@ from datarax.checkpoint import OrbaxCheckpointHandler
 # Save and restore with context manager
 with OrbaxCheckpointHandler() as handler:
     # Save versioned checkpoint
-    handler.save("/checkpoints", pipeline, step=1000)
+    handler.save_to_directory("/checkpoints", pipeline, step=1000)
 
     # Restore latest
     handler.restore("/checkpoints", pipeline)
@@ -46,7 +46,7 @@ for step, batch in enumerate(pipeline):
 
     # Save every 1000 steps
     if step % 1000 == 0:
-        handler.save("/checkpoints", pipeline, step=step, keep=5)
+        handler.save_to_directory("/checkpoints", pipeline, step=step, keep=5)
 
 # Cleanup
 handler.close()
@@ -72,4 +72,4 @@ handler.restore("/checkpoints", pipeline, step=3000)
 - [Handlers Guide](handlers.md) - Complete handler documentation
 - [Checkpointing User Guide](../user_guide/checkpointing_guide.md)
 - [Checkpoint Tutorial](../examples/advanced/checkpointing/checkpoint-quickref.md)
-- DAG Executor - Pipeline checkpointing
+- [Pipeline](../dag/index.md) - Pipeline construction and checkpointing

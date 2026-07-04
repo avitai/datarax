@@ -1,5 +1,8 @@
 # Results
 
+!!! info "External package"
+    This page documents [calibrax](https://github.com/avitai/calibrax), the benchmarking library datarax depends on.
+
 Serializable benchmark result containers with typed fields for throughput, latency, and resource metrics.
 
 ## See Also

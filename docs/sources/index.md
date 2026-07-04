@@ -11,11 +11,11 @@ Data source adapters for loading data from various formats and libraries. Source
 | **TFDSEagerSource** | TensorFlow Datasets | Small/medium TFDS catalog |
 | **TFDSStreamingSource** | TensorFlow Datasets | Large datasets (streaming) |
 | **MemorySource** | In-memory arrays | Testing, small data |
-| **ArrayRecordSource** | ArrayRecord format | Large-scale training |
-| **MixedSource** | Multiple sources | Multi-dataset training |
+| **ArrayRecordSourceModule** | ArrayRecord format | Large-scale training |
+| **MixDataSourcesNode** | Multiple sources | Multi-dataset training |
 
 !!! tip "Factory functions with auto-selection"
-    Use `from_hf(name, split, ...)` and `from_tfds(name, split, ...)` for automatic eager/streaming mode selection. These factory functions choose between eager and streaming mode based on dataset size (threshold: 1GB). You can override with `eager=True` or `eager=False`.
+    Use `from_hf(name, split, ...)` and `from_tfds(name, split, ...)` for eager/streaming mode selection. `from_tfds` picks by split size (`< 1GB` → eager), while `from_hf` defaults to eager — pass `streaming=True` to force HuggingFace streaming. You can also override with `eager=True` or `eager=False`.
 
 ## Quick Start
 
@@ -24,7 +24,7 @@ from datarax.sources import HFEagerSource, TFDSEagerSource
 from datarax.sources.hf_source import HFEagerConfig
 
 # HuggingFace dataset
-config = HFEagerConfig(name="mnist", split="train")
+config = HFEagerConfig(name="ylecun/mnist", split="train")
 source = HFEagerSource(config)
 
 # Iterate or get batches
@@ -48,22 +48,21 @@ batch = source.get_batch(32)
 ### Streaming Large Datasets
 
 ```python
-config = HFEagerConfig(
-    name="c4",
-    split="train",
-    streaming=True,  # Don't download everything
-)
+import flax.nnx as nnx
+from datarax.sources import from_hf
+
+# Streaming is selected via the factory, not HFEagerConfig
+source = from_hf("allenai/c4", "train", streaming=True, rngs=nnx.Rngs(0))
 ```
 
 ### Shuffling
 
 ```python
 config = HFEagerConfig(
-    name="imagenet",
+    name="mnist",
     split="train",
     shuffle=True,
-    shuffle_buffer_size=10000,
-    seed=42,
+    seed=42,  # Eager: O(1)-memory Feistel index shuffle
 )
 ```
 

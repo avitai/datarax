@@ -123,6 +123,27 @@ normalizer = ElementOperator(
     fn=normalize,
     rngs=nnx.Rngs(0)
 )
+
+# Stochastic operator: Random horizontal flip
+def apply_augmentation(element, key):
+    key1, _ = jax.random.split(key)
+    flip = jax.random.bernoulli(key1, 0.5)
+
+    def flip_image(img):
+        return jnp.flip(img, axis=1)
+
+    def no_flip(img):
+        return img
+
+    # Use jax.lax.cond for JAX-compatible branching
+    new_image = jax.lax.cond(flip, flip_image, no_flip, element.data["image"])
+    return element.update_data({"image": new_image})
+
+augmenter = ElementOperator(
+    ElementOperatorConfig(stochastic=True, stream_name="augment"),
+    fn=apply_augmentation,
+    rngs=nnx.Rngs(augment=42),
+)
 ```
 
 ### Step 4: Build Pipeline
@@ -131,10 +152,9 @@ Chain the source and operators using the DAG-based API.
 
 ```python
 from datarax.pipeline import Pipeline
-from datarax.pipeline import Pipeline
 
 pipeline = (
-    Pipeline(source=source, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0))
+    Pipeline(source=source, stages=[normalizer, augmenter], batch_size=32, rngs=nnx.Rngs(0))
 )
 print("Pipeline created with batch_size=32")
 ```
@@ -182,7 +202,7 @@ flowchart LR
         B[Batched Data<br/>32 samples/batch]
     end
 
-    MS --> FS --> ON1 --> ON2 --> B
+    MS --> FS --> Snormalizer --> Saugmenter --> B
 ```
 
 ## Results Summary

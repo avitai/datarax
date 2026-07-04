@@ -22,9 +22,13 @@ A `Batch` is a Flax NNX Module that holds a collection of data samples stacked a
 | `states` | `dict[str, jax.Array]` | Per-element state arrays (vmapped with data) |
 | `metadata` | `list[Metadata]` | Per-element metadata (Python objects, not JIT-compiled) |
 
-## Creating Batches
+## Iterating a Pipeline
 
 ### From a pipeline (most common)
+
+Iterating a `Pipeline` yields plain `dict[str, jax.Array]` batches -- each
+value is stacked along axis 0 with the leading `batch_size` dimension. The
+pipeline does not wrap them in a `Batch` object.
 
 ```python
 from datarax.sources import MemorySource, MemorySourceConfig
@@ -38,15 +42,20 @@ data = {
 }
 source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
 
-# Pipeline auto-batches with the specified batch_size
+# Pipeline groups elements into batches of the specified batch_size
 pipeline = Pipeline(source=source, stages=[], batch_size=16, rngs=nnx.Rngs(0))
 
 for batch in pipeline:
-    print(batch["image"].shape)  # (16, 32, 32, 3)
+    print(batch["image"].shape)  # (16, 32, 32, 3)  -- batch is a plain dict
     break
 ```
 
+## Creating Batches
+
 ### From pre-built arrays (direct construction)
+
+When you need an explicit `Batch` object -- for example to pass through code
+that expects the `Batch` API -- build one with `Batch.from_parts`:
 
 ```python
 from datarax.core.element_batch import Batch
@@ -59,6 +68,8 @@ batch = Batch.from_parts(
 ```
 
 ## Accessing Batch Data
+
+The `Batch` object supports dict-like access plus a few helpers:
 
 ```python
 # Dict-like access (recommended)
@@ -114,19 +125,12 @@ The `Pipeline` constructor auto-batches via the `batch_size` argument:
 Source (yields elements) --> Pipeline (groups into batches via batch_size) --> You iterate
 ```
 
-- `batch_size=32` groups 32 elements into each `Batch`
+- `batch_size=32` groups 32 elements into each batch
 - The last batch may be smaller if `num_elements % batch_size != 0`
-- Set `enforce_batch=False` to skip auto-batching (advanced use)
 
 ```python
 # Standard batching
 pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
-
-# No auto-batching (elements yielded individually)
-pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))  # enforce_batch=False
-
-# With prefetching (default: 2 batches ahead)
-pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))  # prefetch_size=4
 ```
 
 ## Next Steps

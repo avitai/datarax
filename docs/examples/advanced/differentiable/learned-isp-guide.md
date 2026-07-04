@@ -20,7 +20,7 @@ Traditional camera ISPs are hand-tuned for human perception. By making the ISP d
 
 ## What You'll Learn
 
-- Building multi-stage ISP pipelines using datarax's the `stages=[...]` argument
+- Building multi-stage ISP pipelines using datarax's `stages=[...]` argument
 - Creating custom `ModalityOperator` subclasses with `nnx.Param` parameters
 - End-to-end optimization via `nnx.value_and_grad` through the DAG
 - Two-phase training: freeze detector → joint optimization
@@ -102,6 +102,7 @@ class GammaCorrectionOperator(ModalityOperator):
     def apply(self, data, state, metadata, random_params=None, stats=None):
         image = self._extract_field(data, self.config.field_key)
         gamma = jnp.exp(self.log_gamma[...])
+        gamma = jnp.clip(gamma, 0.1, 5.0)  # Reasonable range
         transformed = jnp.power(jnp.clip(image, 1e-6, 1.0), gamma)
         result = self._remap_field(data, self._apply_clip_range(transformed))
         return result, state, metadata

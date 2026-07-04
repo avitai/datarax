@@ -143,6 +143,7 @@ patch_dropout = PatchDropoutOperator(
         patch_size=(8, 8),
         drop_value=0.0,  # Black patches
         stochastic=True,
+        stream_name="patch",
     ),
     rngs=nnx.Rngs(patch=42),
 )

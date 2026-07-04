@@ -41,7 +41,7 @@ By the end of this example, you will be able to:
 
 ```bash
 # Install datarax with TFDS support
-uv pip install "datarax[tfds]"
+uv pip install "datarax[data]"
 ```
 """
 
@@ -71,7 +71,7 @@ try:
     from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 except ImportError as e:
     raise ImportError(
-        "This example requires TensorFlow Datasets. Install with: uv pip install datarax[tfds]"
+        "This example requires TensorFlow Datasets. Install with: uv pip install datarax[data]"
     ) from e
 
 from datarax.operators import ElementOperator, ElementOperatorConfig

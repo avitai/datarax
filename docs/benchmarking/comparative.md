@@ -1,5 +1,8 @@
 # Comparative Benchmarking
 
+!!! info "External package"
+    This page documents [calibrax](https://github.com/avitai/calibrax), the benchmarking library datarax depends on.
+
 Compare performance across configurations or versions.
 
 ## See Also
@@ -11,7 +14,7 @@ Compare performance across configurations or versions.
 
 ## Overview
 
-calibrax provides comparative analysis through `Run` objects containing multiple `Point` entries (one per framework/configuration). The `rank_table()` function ranks entries by any metric with direction-aware sorting, while `compare_configurations()` produces a full comparison report between two runs.
+calibrax provides comparative analysis through `Run` objects containing multiple `Point` entries (one per framework/configuration). The `rank_table()` function ranks entries by any metric with direction-aware sorting, while `compare_configurations()` produces a comparison report across a labeled mapping of runs.
 
 ## Quick Start
 

@@ -85,10 +85,9 @@ try:
     from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 except ImportError as e:
     raise ImportError(
-        "This example requires TensorFlow Datasets. Install with: uv pip install datarax[tfds]"
+        "This example requires TensorFlow Datasets. Install with: uv pip install datarax[data]"
     ) from e
 
-from datarax.pipeline import Pipeline
 from datarax.pipeline import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
 ```
@@ -112,8 +111,8 @@ JAX will use GPU for computation
 | `name` | TFDS dataset name | Required | `"mnist"`, `"cifar10"` |
 | `split` | Dataset split | Required | `"train"`, `"test[:500]"` |
 | `shuffle` | Enable shuffling | `False` | `True` for training |
-| `stochastic` | Use RNG for shuffle | `False` | `True` when shuffling |
-| `stream_name` | Named RNG stream | `"default"` | `"shuffle"` |
+| `stochastic` | Auto-derived from `shuffle` (not user-set) | `False` | Set internally to `True` when shuffling |
+| `stream_name` | Named RNG stream (defaults to `"shuffle"` when shuffling) | `None` | `"shuffle"` |
 
 ### Basic Example
 
@@ -203,8 +202,7 @@ for i, batch in enumerate(pipeline):
     print(f"Batch {i}:")
     print(f"  Image: shape={image_batch.shape}, dtype={image_batch.dtype}")
     print(f"  Image range: [{float(image_batch.min()):.3f}, {float(image_batch.max()):.3f}]")
-    print(f"  Label: shape={label_batch.shape}, dtype={label_batch.dtype}")
-    print(f"  Sample labels: {label_batch[:5]}")
+    print(f"  Label: shape={label_batch.shape}")
 ```
 
 **Terminal Output:**
@@ -213,18 +211,15 @@ Processing batches:
 Batch 0:
   Image: shape=(32, 28, 28, 1), dtype=float32
   Image range: [0.000, 1.000]
-  Label: shape=(32,), dtype=int64
-  Sample labels: [5 0 4 1 9]
+  Label: shape=(32,)
 Batch 1:
   Image: shape=(32, 28, 28, 1), dtype=float32
   Image range: [0.000, 1.000]
-  Label: shape=(32,), dtype=int64
-  Sample labels: [2 1 3 1 4]
+  Label: shape=(32,)
 Batch 2:
   Image: shape=(32, 28, 28, 1), dtype=float32
   Image range: [0.000, 1.000]
-  Label: shape=(32,), dtype=int64
-  Sample labels: [3 5 3 6 1]
+  Label: shape=(32,)
 ```
 
 ## Architecture Diagram
@@ -275,7 +270,7 @@ TFDS provides access to 500+ datasets across multiple domains:
 | `fashion_mnist` | 70k | 28×28×1 | 10 |
 | `cifar10` | 60k | 32×32×3 | 10 |
 | `cifar100` | 60k | 32×32×3 | 100 |
-| `imagenet2012` | 1.3M | 224×224×3 | 1000 |
+| `imagenet2012` | 1.3M | variable size (commonly resized to 224) | 1000 |
 
 ### Natural Language Processing
 
