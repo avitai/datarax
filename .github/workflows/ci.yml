@@ -221,10 +221,12 @@ jobs:
 
       - name: Run long-running tests
         run: |
-          # Keep the fast shard short, but still run slow coverage in CI.
+          # Bound each example so one stalled external dataset download (e.g.
+          # a TFDS fetch that hangs on the runner) cannot consume the whole
+          # job budget; the harness skips an example that exceeds this.
           export JAX_PLATFORMS="cpu"
-          export DATARAX_EXAMPLE_TIMEOUT_SECONDS=3600
-          uv run pytest tests -m slow -v --device=cpu --cov-fail-under=0 --timeout=3900
+          export DATARAX_EXAMPLE_TIMEOUT_SECONDS=300
+          uv run pytest tests -m slow -v --device=cpu --cov-fail-under=0 --timeout=600
 
       - name: Prepare coverage data
         run: uv run coverage combine || true

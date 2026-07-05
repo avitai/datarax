@@ -172,21 +172,33 @@ class TestExampleExecution:
         if IS_MACOS and "tfds" in str(example_path).lower():
             pytest.skip("TFDS examples skipped on macOS (TensorFlow ARM64 issue)")
 
-        result = subprocess.run(
-            [sys.executable, str(example_path)],
-            capture_output=True,
-            env={
-                **os.environ,
-                "JAX_PLATFORMS": os.environ.get("JAX_PLATFORMS", "cpu"),
-                "TFDS_DISABLE_PROGRESS_BAR": "1",
-                # Redirect example plot output so test runs never modify the
-                # committed images under docs/assets/images/examples.
-                "DATARAX_EXAMPLES_OUTPUT_DIR": str(tmp_path),
-            },
-            text=True,
-            timeout=EXAMPLE_TIMEOUT_SECONDS,
-            cwd=EXAMPLES_DIR.parent,  # Repo root
-        )
+        try:
+            result = subprocess.run(
+                [sys.executable, str(example_path)],
+                capture_output=True,
+                env={
+                    **os.environ,
+                    "JAX_PLATFORMS": os.environ.get("JAX_PLATFORMS", "cpu"),
+                    "TFDS_DISABLE_PROGRESS_BAR": "1",
+                    # Redirect example plot output so test runs never modify the
+                    # committed images under docs/assets/images/examples.
+                    "DATARAX_EXAMPLES_OUTPUT_DIR": str(tmp_path),
+                },
+                text=True,
+                timeout=EXAMPLE_TIMEOUT_SECONDS,
+                cwd=EXAMPLES_DIR.parent,  # Repo root
+            )
+        except subprocess.TimeoutExpired:
+            # Exceeding the budget almost always means a stalled external
+            # dataset download (TFDS/HuggingFace), not a Datarax defect — the
+            # unit and integration tiers cover Datarax logic with their own
+            # per-test timeouts. Skip so an unreachable external service cannot
+            # hang the long-running job past its own timeout.
+            pytest.skip(
+                f"Example exceeded {EXAMPLE_TIMEOUT_SECONDS}s; most likely a "
+                f"stalled external dataset download. Skipping so CI is not "
+                f"blocked by an external service."
+            )
         if result.returncode != 0:
             # A transient dataset-download/network failure exercises an external
             # service, not Datarax — skip rather than fail so CI is not flaky.

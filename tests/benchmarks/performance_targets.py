@@ -152,24 +152,40 @@ def measure_peak_rss_delta_mb(
     return (peak_rss - baseline_rss) / (1024 * 1024)
 
 
-def measure_latency(fn: Callable[[], Any], *, repetitions: int = 5) -> float:
-    """Measure median wall-clock latency of fn() in seconds.
+def measure_latency(
+    fn: Callable[[], Any],
+    *,
+    repetitions: int = 5,
+    warmup: int = 0,
+    aggregate: str = "median",
+) -> float:
+    """Measure wall-clock latency of fn() in seconds.
 
     Reusable across P5 checkpoint and any future latency tests (DRY).
 
     Args:
         fn: Callable to measure.
-        repetitions: Number of repetitions (median is returned).
+        repetitions: Number of timed repetitions.
+        warmup: Number of untimed warmup calls run first to absorb one-time
+            costs (filesystem, JIT, Orbax initialization) that would otherwise
+            skew the first timed sample.
+        aggregate: ``"median"`` (default) or ``"min"``. Use ``"min"`` for
+            ratio comparisons where the steady-state best case is the stable
+            signal — noise and scheduling jitter only ever add time.
 
     Returns:
-        Median latency in seconds.
+        Aggregated latency in seconds.
     """
+    for _ in range(warmup):
+        fn()
     times = []
     for _ in range(repetitions):
         start = time.perf_counter()
         fn()
         times.append(time.perf_counter() - start)
     times.sort()
+    if aggregate == "min":
+        return times[0]
     return times[len(times) // 2]
 
 
