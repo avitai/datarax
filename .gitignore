@@ -261,3 +261,6 @@ benchmark-data/
 # activated virtual environments
 activate.sh
 secrets.sh
+
+# Private working notes and per-editor assistant configuration. Local only.
+AGENTS.md
