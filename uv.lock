@@ -1211,8 +1211,6 @@ dependencies = [
     { name = "protobuf" },
     { name = "psutil" },
     { name = "pyyaml" },
-    { name = "tensorflow" },
-    { name = "tensorflow-datasets" },
     { name = "tomli-w" },
 ]
 
@@ -1558,6 +1556,10 @@ test = [
     { name = "pytest-xdist" },
     { name = "spdl", marker = "sys_platform == 'linux'" },
 ]
+tfds = [
+    { name = "tensorflow" },
+    { name = "tensorflow-datasets" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -1880,13 +1882,13 @@ requires-dist = [
     { name = "spdl", marker = "sys_platform == 'linux' and extra == 'test'", specifier = ">=0.1" },
     { name = "spdl", marker = "extra == 'benchmark'", specifier = ">=0.1" },
     { name = "tabulate", marker = "extra == 'benchmark'", specifier = ">=0.9" },
-    { name = "tensorflow", specifier = ">=2.20.0,<2.21" },
-    { name = "tensorflow-datasets", specifier = ">=4.9.2" },
+    { name = "tensorflow", marker = "extra == 'tfds'", specifier = ">=2.20.0,<2.21" },
     { name = "tensorflow-datasets", marker = "extra == 'all'", specifier = ">=4.9.2" },
     { name = "tensorflow-datasets", marker = "extra == 'all-cpu'", specifier = ">=4.9.2" },
     { name = "tensorflow-datasets", marker = "extra == 'all-macos'", specifier = ">=4.9.2" },
     { name = "tensorflow-datasets", marker = "extra == 'benchmark'", specifier = ">=4.9" },
     { name = "tensorflow-datasets", marker = "extra == 'data'", specifier = ">=4.9.2" },
+    { name = "tensorflow-datasets", marker = "extra == 'tfds'", specifier = ">=4.9.2" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2" },
     { name = "tomli-w", specifier = ">=1" },
     { name = "torch", marker = "extra == 'all'", specifier = ">=2.0,<2.11" },
@@ -1928,7 +1930,7 @@ requires-dist = [
     { name = "xenon", marker = "extra == 'cuda-dev'", specifier = ">=0.9.3" },
     { name = "xenon", marker = "extra == 'dev'", specifier = ">=0.9.3" },
 ]
-provides-extras = ["all", "all-cpu", "all-macos", "automation", "benchmark", "cuda-dev", "data", "dev", "docs", "examples", "gpu", "metal", "test"]
+provides-extras = ["all", "all-cpu", "all-macos", "automation", "benchmark", "cuda-dev", "data", "dev", "docs", "examples", "gpu", "metal", "test", "tfds"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -67,8 +67,6 @@ dependencies = [
   "optax>=0.1.4",
   "orbax-checkpoint>=0.11.10",
   "protobuf>=5.28.0,<6", # TFDS 4.9.9 is warning-clean with TensorFlow 2.20 protobuf runtime
-  "tensorflow>=2.20.0,<2.21", # TensorFlow 2.21 requires protobuf 6 and trips TFDS descriptor warnings
-  "tensorflow-datasets>=4.9.2", # Required for TFDS source tests
   'tomli>=2; python_version < "3.11"',
   "tomli-w>=1",
   "numpy>=1.26",
@@ -240,6 +238,12 @@ test = [
   # Optional comparison/benchmark dependencies that are CPU-compatible.
   # spdl: Linux-only; comparison adapter for memory-efficiency benchmarks.
   "spdl>=0.1; sys_platform == 'linux'"
+]
+# TFDS-backed sources. Kept out of the base install so a JAX-native package does not
+# pull TensorFlow: every import site in src/datarax/sources/ is already lazy.
+tfds = [
+  "tensorflow>=2.20.0,<2.21", # 2.21 requires protobuf 6 and trips TFDS descriptor warnings
+  "tensorflow-datasets>=4.9.2"
 ]
 
 [project.scripts]
