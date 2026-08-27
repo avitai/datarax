@@ -1,0 +1,33 @@
+name: Feature request
+description: Propose a new Datarax capability
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user need or workflow gap should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API or behavior
+      description: Include example code or CLI usage if possible.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation plan
+      description: What tests, docs, or examples would prove this works?
+    validations:
+      required: false
