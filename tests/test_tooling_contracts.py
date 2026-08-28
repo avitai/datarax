@@ -47,15 +47,25 @@ def test_grain_dependency_declares_single_package_with_current_api() -> None:
 
 def test_tfds_dependency_set_is_warning_clean() -> None:
     """TFDS tests should not rely on third-party deprecation filters."""
-    dependencies = {
+    config = _pyproject()
+    base = {
         Requirement(dependency).name: Requirement(dependency)
-        for dependency in _pyproject()["project"]["dependencies"]
+        for dependency in config["project"]["dependencies"]
+    }
+    # tensorflow is deliberately not a base dependency: a JAX-native package should not
+    # pull TensorFlow on a plain install, so it lives in the tfds extra beside
+    # tensorflow-datasets. The ceiling is what this test exists to hold, and it moves with
+    # the declaration rather than staying pinned to where the declaration used to be.
+    tfds = {
+        Requirement(dependency).name: Requirement(dependency)
+        for dependency in config["project"]["optional-dependencies"]["tfds"]
     }
 
-    assert dependencies["tensorflow"].specifier.contains("2.20.0")
-    assert not dependencies["tensorflow"].specifier.contains("2.21.0")
-    assert dependencies["protobuf"].specifier.contains("5.29.6")
-    assert not dependencies["protobuf"].specifier.contains("6.0.0")
+    assert "tensorflow" not in base, "tensorflow must stay out of the base install"
+    assert tfds["tensorflow"].specifier.contains("2.20.0")
+    assert not tfds["tensorflow"].specifier.contains("2.21.0")
+    assert base["protobuf"].specifier.contains("5.29.6")
+    assert not base["protobuf"].specifier.contains("6.0.0")
 
 
 def test_python_version_range_matches_backend_support() -> None:
