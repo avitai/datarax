@@ -590,6 +590,11 @@ conflicts = [
   [{extra = "automation"}, {extra = "metal"}],
   [{extra = "automation"}, {extra = "test"}]
 ]
+# Floors for transitively-reached packages carrying advisories, raised here because no
+# direct dependency declares them. Same mechanism the sibling repositories use.
+constraint-dependencies = [
+  "cryptography>=50" # PYSEC-2026-3552, PKCS#7 EnvelopedData decryption oracle
+]
 python-preference = "only-managed"
 
 # Configure for GPU package installation
