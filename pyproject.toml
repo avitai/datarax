@@ -134,7 +134,14 @@ benchmark = [
   # Benchmark infrastructure
   "matplotlib>=3.8", # Plotting for benchmark reports
   "tabulate>=0.9", # Table formatting for reports
-  "rich>=13.0" # Rich terminal output for benchmark runners
+  "rich>=13.0", # Rich terminal output for benchmark runners
+  # benchmarks/cli.py imports click at module level, and the nightly workflow runs it as
+  # `from benchmarks.cli import main`. click was declared only under `automation`, which
+  # was harmless while the nightly installed every extra and load-bearing the moment
+  # automation became a conflicting extra. It stays in `automation` as well, pinned <8.3
+  # there for SkyPilot, because the orchestrator invokes benchmarks.cli locally; the two
+  # declarations never resolve together because the extras conflict by construction.
+  "click>=8.1" # benchmarks/cli.py
 ]
 # Note: FFCV requires system OpenCV (libopencv-dev) — install separately via:
 # sudo apt-get install libopencv-dev && pip install ffcv>=1.0
