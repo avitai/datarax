@@ -44,7 +44,7 @@ ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 # Install main + dev/gpu/test/data extras (not benchmark, not docs)
-RUN uv pip install -e ".[dev,gpu,test,data]"
+RUN uv pip install -e ".[cuda12,data,dev,test]"
 
 # --- Layer 2: Source code (changes frequently, invalidates only this layer) ---
 COPY src ./src
@@ -55,7 +55,7 @@ COPY benchmarks ./benchmarks
 COPY conftest.py ./conftest.py
 
 # Reinstall datarax in editable mode now that source is present
-RUN uv pip install -e ".[dev,gpu,test,data]"
+RUN uv pip install -e ".[cuda12,data,dev,test]"
 
 # Verify JAX can import (allow failure on CPU-only build hosts)
 RUN python -c "import jax; print(f'JAX {jax.__version__}, devices: {jax.devices()}')" || true

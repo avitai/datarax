@@ -6,14 +6,10 @@ in the ``benchmarks/config/`` directory.
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 from typing import Any
 
-
-try:
-    import tomllib  # Python 3.11+
-except ModuleNotFoundError:
-    import tomli as tomllib  # type: ignore[no-redef]
 
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 

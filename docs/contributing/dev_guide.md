@@ -73,7 +73,7 @@ uv pip install -e ".[dev]"      # Development tools
 uv pip install -e ".[test]"     # Testing dependencies
 uv pip install -e ".[docs]"     # Documentation tools
 uv pip install -e ".[data]"     # Data loading (HF, TFDS, etc.)
-uv pip install -e ".[gpu]"      # GPU support (CUDA 12)
+uv pip install -e ".[cuda12]"      # GPU support (CUDA 12)
 ```
 
 ### Adding New Dependencies
@@ -125,7 +125,7 @@ Datarax uses Pyright for static type checking. Configuration is in `pyproject.to
 [tool.pyright]
 exclude = ["example_data", ".deprecated", "**/__pycache__", "**/.venv"]
 include = ["src", "tests", "examples", "scripts", "benchmarks"]
-pythonVersion = "3.11"
+pythonVersion = "3.12"
 typeCheckingMode = "basic"
 ```
 
@@ -169,7 +169,7 @@ Datarax follows standard Python code style practices enforced by Ruff:
 | Quote style | Double quotes |
 | Docstring convention | Google style |
 | Import sorting | isort-compatible |
-| Target Python | 3.11+ |
+| Target Python | 3.12+ |
 
 ### Running Linters
 
@@ -191,7 +191,7 @@ Key Ruff settings in `pyproject.toml`:
 ```toml
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.format]
 quote-style = "double"
@@ -404,7 +404,7 @@ The setup script automatically detects NVIDIA GPUs and configures CUDA support.
 ./setup.sh --force
 
 # Or install GPU extras manually
-uv pip install -e ".[gpu]"
+uv pip install -e ".[cuda12]"
 ```
 
 ### Environment Variables for GPU

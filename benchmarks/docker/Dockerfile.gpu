@@ -43,7 +43,7 @@ ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 # benchmark + gpu extras — so JAX uses CUDA, not CPU fallback
-RUN uv pip install -e ".[benchmark,gpu]"
+RUN uv pip install -e ".[benchmark,cuda12]"
 
 # --- Layer 2: Source + benchmark code ---
 COPY src ./src
@@ -51,7 +51,7 @@ COPY benchmarks ./benchmarks
 COPY conftest.py ./conftest.py
 
 # Reinstall to link source
-RUN uv pip install -e ".[benchmark,gpu]"
+RUN uv pip install -e ".[benchmark,cuda12]"
 
 # Verify GPU JAX
 RUN python -c "import jax; print(f'JAX {jax.__version__}, devices: {jax.devices()}')" || true

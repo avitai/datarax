@@ -73,7 +73,7 @@ uv pip install datarax
 uv pip install "datarax[data]"
 
 # With GPU support (CUDA 12)
-uv pip install "datarax[gpu]"
+uv pip install "datarax[cuda12]"
 
 # Full development installation
 uv pip install "datarax[all]"

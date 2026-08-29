@@ -126,7 +126,7 @@ SYNC_ARGS=(sync --extra dev --extra test --extra data)
 case "$BACKEND" in
     cpu) ;;
     cuda12)
-        SYNC_ARGS+=(--extra gpu)
+        SYNC_ARGS+=(--extra cuda12)
         ;;
     metal)
         SYNC_ARGS+=(--extra metal)

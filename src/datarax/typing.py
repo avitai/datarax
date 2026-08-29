@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Any, Protocol, runtime_checkable, TypeAlias, TypeVar
+from typing import Any, Protocol, runtime_checkable, TypeVar
 
 import jax
 
@@ -21,8 +21,11 @@ logger = logging.getLogger(__name__)
 
 
 # Type aliases for implementations
-Element: TypeAlias = ElementImpl
-Batch: TypeAlias = BatchImpl
+# Re-exports of concrete classes, not type aliases. They are called as constructors and
+# carry classmethods, so they must stay plain assignments: `type X = Y` binds a lazy
+# TypeAliasType, which is not callable and exposes none of the class's attributes.
+Element = ElementImpl
+Batch = BatchImpl
 
 # Generic type variables
 T = TypeVar("T")
@@ -31,27 +34,27 @@ E = TypeVar("E", bound=Element)
 B = TypeVar("B", bound=Batch)
 
 # Common type aliases
-DataDict: TypeAlias = dict[str, jax.Array]
-StateDict: TypeAlias = dict[str, Any]
-MetadataDict: TypeAlias = dict[str, Any]
+type DataDict = dict[str, jax.Array]
+type StateDict = dict[str, Any]
+type MetadataDict = dict[str, Any]
 
 # JAX types
 
-ArrayShape: TypeAlias = tuple[int, ...]
-PRNGKey: TypeAlias = jax.Array
+type ArrayShape = tuple[int, ...]
+PRNGKey = jax.Array
 
 # Function signatures
-ElementTransform: TypeAlias = Callable[[Element], Element]
-BatchTransform: TypeAlias = Callable[[Batch], Batch]
-ArrayTransform: TypeAlias = Callable[[jax.Array], jax.Array]
-DataProcessor: TypeAlias = Callable[[DataDict], DataDict]
-StateProcessor: TypeAlias = Callable[[StateDict], StateDict]
-MetadataProcessor: TypeAlias = Callable[[Metadata], Metadata]
+type ElementTransform = Callable[[Element], Element]
+type BatchTransform = Callable[[Batch], Batch]
+type ArrayTransform = Callable[[jax.Array], jax.Array]
+type DataProcessor = Callable[[DataDict], DataDict]
+type StateProcessor = Callable[[StateDict], StateDict]
+type MetadataProcessor = Callable[[Metadata], Metadata]
 
 # JAX-specific function types
-ScanFn: TypeAlias = Callable[[Any, Element], tuple[Any, Element]]
-CondFn: TypeAlias = Callable[[Any], bool]
-WhileBodyFn: TypeAlias = Callable[[Any], Any]
+type ScanFn = Callable[[Any, Element], tuple[Any, Element]]
+type CondFn = Callable[[Any], bool]
+type WhileBodyFn = Callable[[Any], Any]
 
 
 # Checkpointing protocol

@@ -26,7 +26,7 @@ def test_verifier_fails_when_backend_query_errors(monkeypatch) -> None:
         datarax_backend="cuda12",
         jax_platforms="cuda,cpu",
         platform="Linux",
-        python="3.11",
+        python="3.12",
         jax_import_ok=True,
         jax_version="0.0",
         default_backend=None,
