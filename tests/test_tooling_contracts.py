@@ -72,7 +72,7 @@ def test_python_version_range_matches_backend_support() -> None:
     """Do not advertise Python versions unsupported by JAX/TFDS backends."""
     requires_python = _pyproject()["project"]["requires-python"]
 
-    assert requires_python == ">=3.11,<3.14"
+    assert requires_python == ">=3.12,<3.14"
 
 
 def test_required_quality_tools_are_in_dev_extra() -> None:

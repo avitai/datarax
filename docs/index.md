@@ -89,7 +89,7 @@ uv pip install datarax
 
 # Install with optional dependencies
 uv pip install datarax[data]     # For data loading (HF, TFDS)
-uv pip install datarax[gpu]      # For GPU support
+uv pip install datarax[cuda12]      # For GPU support
 
 # Or locally for development
 pip install -e .

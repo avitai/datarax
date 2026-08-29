@@ -11,7 +11,7 @@ Datarax provides Docker images for two audiences:
 |-------|-----------|------|--------|------|
 | `datarax:latest` | `Dockerfile` | `nvidia/cuda:12.4.1-cudnn-runtime` | `dev,gpu,test,data` | ~4GB |
 | `datarax-bench:cpu` | `benchmarks/docker/Dockerfile.cpu` | `python:3.11-slim` | `benchmark` | ~8GB |
-| `datarax-bench:gpu` | `benchmarks/docker/Dockerfile.gpu` | `nvidia/cuda:12.4.1-cudnn-runtime` | `benchmark,gpu` | ~12GB |
+| `datarax-bench:gpu` | `benchmarks/docker/Dockerfile.gpu` | `nvidia/cuda:12.4.1-cudnn-runtime` | `benchmark,cuda12` | ~12GB |
 | `datarax-bench:tpu` | `benchmarks/docker/Dockerfile.tpu` | `python:3.11-slim` | `benchmark` + `jax[tpu]` | ~8GB |
 
 !!! note
@@ -133,7 +133,7 @@ SkyPilot GPU benchmarks use the config at `benchmarks/sky/gpu-benchmark.yaml`:
 sky launch benchmarks/sky/gpu-benchmark.yaml
 ```
 
-This installs `.[benchmark,gpu]` on the provisioned VM directly (no Docker needed — SkyPilot manages the environment).
+This installs `.[benchmark,cuda12]` on the provisioned VM directly (no Docker needed — SkyPilot manages the environment).
 
 ## Image Tagging Convention
 

@@ -45,7 +45,7 @@ def test_setup_script_supports_benchmark_extra() -> None:
     )
     sync_line = next(line for line in result.stdout.splitlines() if line.startswith("uv sync"))
     assert "--extra benchmark" in sync_line
-    assert "--extra gpu" in sync_line
+    assert "--extra cuda12" in sync_line
     assert "--extra data" in sync_line
 
 

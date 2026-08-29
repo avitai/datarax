@@ -101,7 +101,7 @@ def assert_batch_shape(
     )
 
 
-def time_execution(func: F) -> F:
+def time_execution[F: Callable](func: F) -> F:
     """Time the execution of a function.
 
     Args:
