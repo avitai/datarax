@@ -7,17 +7,20 @@
 
 [![Project Status: Active](https://www.repostatus.org/badges/latest/active.svg)](https://www.repostatus.org/#active)
 
+[Documentation](https://datarax.readthedocs.io/en/latest/) - [Issues](https://github.com/avitai/datarax/issues)
+
 ---
 
-> **Early Development - API Unstable**
+> **Research preview.** The API will change while we iterate toward v1.0, so pin a version if you
+> need stability, and do not put this in production yet. Throughput is still being tuned; the
+> design is settled and the numbers are not.
 >
-> Datarax is in early development and undergoing rapid iteration.
-> Breaking changes are expected. Pin to specific commits if stability is required.
-> We recommend waiting for a stable release (v1.0) before using Datarax in production.
+> This is public this early on purpose. Issues, questions and pull requests genuinely steer
+> what gets built next, and a star tells us which layer to push on.
 
 ---
 
-**Datarax** (*Data + Array/JAX*) is an extensible data pipeline framework built for JAX-based machine learning workflows. It leverages JAX's JIT compilation, automatic differentiation, and hardware acceleration to build data loading, preprocessing, and augmentation pipelines that run on CPUs, GPUs, and TPUs.
+**Datarax** (*Data + Array/JAX*) is an extensible data pipeline framework built for JAX-based machine learning workflows. It uses JAX's JIT compilation, automatic differentiation, and hardware acceleration to build data loading, preprocessing, and augmentation pipelines that run on CPUs, GPUs, and TPUs.
 
 ## Key Features
 
@@ -32,19 +35,19 @@
 
 ## Why Datarax?
 
-JAX has mature libraries for models (Flax), optimizers (Optax), and checkpointing (Orbax), but lacks a dedicated data pipeline framework that operates at the same level of abstraction. Existing options are either framework-agnostic loaders that return NumPy arrays (losing JIT/autodiff benefits) or wrappers around tf.data/PyTorch that introduce cross-framework overhead. Datarax aims to fill this gap. The framework is under active development with ongoing performance optimization — the architecture is functional, but throughput and API surface are still being refined.
+JAX has mature libraries for models (Flax), optimizers (Optax), and checkpointing (Orbax), but lacks a dedicated data pipeline framework that operates at the same level of abstraction. Existing options are either framework-agnostic loaders that return NumPy arrays (losing JIT/autodiff benefits) or wrappers around tf.data/PyTorch that introduce cross-framework overhead. Datarax aims to fill this gap. The framework is under active development with ongoing performance optimization - the architecture is functional, but throughput and API surface are still being refined.
 
 ### JAX-Native from the Ground Up
 
-Every component — sources, operators, batchers, samplers, sharders — is a Flax NNX module. Pipeline state is managed through NNX's variable system, which means operators can hold learnable parameters, be serialized with Orbax, and participate in JAX transformations (`jit`, `vmap`, `grad`) without special handling.
+Every component - sources, operators, batchers, samplers, sharders - is a Flax NNX module. Pipeline state is managed through NNX's variable system, which means operators can hold learnable parameters, be serialized with Orbax, and participate in JAX transformations (`jit`, `vmap`, `grad`) without special handling.
 
 ### Differentiable Data Pipelines
 
 Because operators are NNX modules, gradients flow through the entire pipeline. This enables approaches that are not possible with standard data loaders:
 
-- [Gradient-based augmentation search](examples/advanced/differentiable/01_dada_learned_augmentation_guide.py) — replacing RL-based methods like AutoAugment with direct optimization
-- [Task-optimized preprocessing](examples/advanced/differentiable/02_learned_isp_guide.py) — backpropagating task loss through every processing stage
-- [Differentiable audio synthesis](examples/advanced/differentiable/03_ddsp_audio_synthesis_guide.py) — extending the same pattern to non-vision domains
+- [Gradient-based augmentation search](examples/advanced/differentiable/01_dada_learned_augmentation_guide.py) - replacing RL-based methods like AutoAugment with direct optimization
+- [Task-optimized preprocessing](examples/advanced/differentiable/02_learned_isp_guide.py) - backpropagating task loss through every processing stage
+- [Differentiable audio synthesis](examples/advanced/differentiable/03_ddsp_audio_synthesis_guide.py) - extending the same pattern to non-vision domains
 
 See the [differentiable pipeline examples](docs/examples/advanced/differentiable/) for details.
 
@@ -58,7 +61,7 @@ Shuffling uses Grain's Feistel cipher permutation, which generates a full-epoch 
 
 ### Built-in Competitive Benchmarking
 
-The benchmarking suite profiles datarax against 14 peer frameworks (Grain, tf.data, PyTorch DataLoader, DALI, Ray Data, and others) across 37 standardized scenarios. Results are converted to calibrax runs for direction-aware metrics, regression gating, and W&B export. This benchmark-driven loop is how datarax tracks progress toward competitive throughput — current results and optimization status are tracked in the [benchmarking documentation](docs/benchmarks/index.md).
+The benchmarking suite profiles datarax against 14 peer frameworks (Grain, tf.data, PyTorch DataLoader, DALI, Ray Data, and others) across 37 standardized scenarios. Results are converted to calibrax runs for direction-aware metrics, regression gating, and W&B export. This benchmark-driven loop is how datarax tracks progress toward competitive throughput - current results and optimization status are tracked in the [benchmarking documentation](docs/benchmarks/index.md).
 
 ## Installation
 
