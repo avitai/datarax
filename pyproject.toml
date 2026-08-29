@@ -59,7 +59,7 @@ classifiers = [
 ]
 dependencies = [
   "array-record>=0.4",
-  "calibrax>=0.1.0",
+  "calibrax>=0.1.2",
   # 0.12.1 is where nnx Variable gained set_value / get_value, which
   # pipeline/iteration.py calls at every yield boundary to sync the live module.
   # On 0.12.0 flax forwards the attribute miss to the wrapped array and the iterator
@@ -624,5 +624,3 @@ python-preference = "only-managed"
 [tool.uv.pip]
 find-links = ["https://storage.googleapis.com/jax-releases/jax_cuda_releases.html"]
 
-[tool.uv.sources]
-calibrax = {git = "https://github.com/avitai/calibrax.git", tag = "v0.1.0"}

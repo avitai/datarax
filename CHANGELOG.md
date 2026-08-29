@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-08-29
+
+### Changed
+
+- **Requires Python 3.12 or later.** jax 0.11.0 dropped 3.11, and this release
+  takes that jax line.
+- **The `gpu` extra is renamed `cuda12`.** JAX names its own extras for the CUDA
+  major version and publishes no `gpu` extra, and this package also ships
+  `metal`, which is a GPU. The extra no longer restates the jaxlib pin, which
+  every jax cuda extra already enforces at its own version.
+- Resolves to jax 0.11.1, jaxlib 0.11.1, flax 0.12.9, optax 0.2.8 and grain
+  0.2.18, matching the sibling packages.
+- `flax>=0.12.1` is now required: it is the first release with
+  `nnx.Variable.set_value`, which the pipeline iteration path calls.
+- `optax>=0.2.8` is now required. Below it, optax sets a jax config option
+  removed in jax 0.10, so importing flax raises `AttributeError` and takes out
+  collection for the whole suite.
+- calibrax is resolved from PyPI at 0.1.2 or later rather than from a pinned git
+  tag, so the tested environment matches what this package ships against.
+- TensorFlow moved to the `tfds` extra, and the automation extra is isolated
+  through a uv conflict so its exact pins no longer govern ordinary installs.
+- `click` is declared in the `benchmark` extra, where `benchmarks/cli.py`
+  imports it.
+
+### Added
+
+- A security policy, issue templates, and a security workflow.
+
 ## [0.1.4] - 2026-07-04
 
 ### Added
