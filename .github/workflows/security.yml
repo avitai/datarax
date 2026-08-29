@@ -1,0 +1,64 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 0 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Create virtual environment
+        run: uv venv
+
+      - name: Install dependencies
+        run: |
+          uv pip install -e ".[dev]"
+          uv pip install pip-audit bandit
+
+      # Two advisories are ignored, both reviewed 2026-08-27 and both unreachable from
+      # datarax's own code, which imports neither package: `git grep` for click imports
+      # and for wheel under src/ returns zero files, against a control returning 67 for
+      # jax.
+      #
+      # PYSEC-2026-2132 is command injection in click.edit(). click is pinned at 8.1.8
+      # rather than the fixed 8.3.3 because skypilot, in the optional automation extra,
+      # requires click<8.2.0, and uv resolves one universal lockfile across every extra.
+      #
+      # CVE-2026-24049 is path traversal in `wheel unpack`, a build-time command this
+      # project never invokes on untrusted input.
+      - name: Pip audit
+        run: >-
+          uv run pip-audit
+          --ignore-vuln PYSEC-2026-2132
+          --ignore-vuln CVE-2026-24049
+
+      - name: Bandit
+        run: uv run bandit -r src/datarax/ -c pyproject.toml -f json -o bandit-report.json
+
+      - name: Upload Bandit report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bandit-report
+          path: bandit-report.json
