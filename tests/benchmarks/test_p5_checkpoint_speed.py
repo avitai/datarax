@@ -90,7 +90,14 @@ class TestP5CheckpointSpeed:
                 handler.save_to_directory(str(ckpt_path), model_state)
                 handler.restore(str(ckpt_path))
 
-            datarax_latency = measure_latency(datarax_cycle, repetitions=3)
+            # Warm up and compare best-case (min) latencies: this guard is
+            # about the steady-state preprocessing overhead, and a ratio of
+            # two separately-measured medians is dominated by scheduling and
+            # GC jitter on shared CI runners (which only ever add time to one
+            # side). Warmup absorbs first-call filesystem/Orbax init costs.
+            datarax_latency = measure_latency(
+                datarax_cycle, repetitions=7, warmup=2, aggregate="min"
+            )
 
             # Raw Orbax cycle (baseline — no datarax preprocessing)
             orbax_counter = [0]
@@ -102,9 +109,9 @@ class TestP5CheckpointSpeed:
                 raw_checkpointer.wait_until_finished()
                 raw_checkpointer.restore(str(ckpt_path))
 
-            orbax_latency = measure_latency(orbax_cycle, repetitions=3)
+            orbax_latency = measure_latency(orbax_cycle, repetitions=7, warmup=2, aggregate="min")
 
-            # Assert: datarax overhead must be within 1.5x of raw orbax
+            # Assert: datarax steady-state overhead must be within 1.5x of raw orbax
             if orbax_latency > 0:
                 ratio = datarax_latency / orbax_latency
                 assert ratio <= 1.5, (
