@@ -570,6 +570,31 @@ convention = "google"
 max-args = 13
 
 [tool.uv]
+# The automation extra is benchmark tooling: skypilot[vast] and vastai-sdk, used only
+# by benchmarks/automation/ and imported nowhere under src/. vastai-sdk pins
+# aiohttp==3.10.1 exactly and the extra pins click<8.3. uv resolves ONE universal
+# lockfile across every extra, so those two pins governed the aiohttp and click that
+# ordinary installs and CI received, putting 37 advisories into an audit of
+# .[dev,test,data], which does not include automation at all.
+# Declaring the conflict lets uv fork the resolution: automation keeps aiohttp 3.10.1
+# and click 8.1.8, everything else gets 3.14.3 and 8.5.0.
+conflicts = [
+  [{extra = "automation"}, {extra = "benchmark"}],
+  [{extra = "automation"}, {extra = "cuda-dev"}],
+  [{extra = "automation"}, {extra = "tfds"}],
+  [{extra = "automation"}, {extra = "data"}],
+  [{extra = "automation"}, {extra = "dev"}],
+  [{extra = "automation"}, {extra = "docs"}],
+  [{extra = "automation"}, {extra = "examples"}],
+  [{extra = "automation"}, {extra = "gpu"}],
+  [{extra = "automation"}, {extra = "metal"}],
+  [{extra = "automation"}, {extra = "test"}]
+]
+# Floors for transitively-reached packages carrying advisories, raised here because no
+# direct dependency declares them. Same mechanism the sibling repositories use.
+constraint-dependencies = [
+  "cryptography>=50" # PYSEC-2026-3552, PKCS#7 EnvelopedData decryption oracle
+]
 python-preference = "only-managed"
 
 # Configure for GPU package installation

@@ -22,7 +22,12 @@ jobs:
           version: "latest"
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        # automation is excluded rather than skipped by accident. It is declared as
+        # conflicting with every other extra so its exact pins stop governing the
+        # universal resolution, which makes --all-extras impossible by definition:
+        # uv cannot install a set it has been told is inconsistent. This gate runs
+        # benchmarks.runners.ci_runner, which never touches benchmarks/automation.
+        run: uv sync --all-extras --no-extra automation
 
       - name: Install calibrax
         run: uv pip install "calibrax @ git+https://github.com/avitai/calibrax.git"

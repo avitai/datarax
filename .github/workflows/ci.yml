@@ -80,8 +80,15 @@ jobs:
           uv sync --locked --extra dev --extra test --extra data
 
       - name: Run pip-audit
+        # Both remaining advisories are torch, and neither can be closed by a lockfile
+        # change. PYSEC-2026-139 has no fixed version published in any release.
+        # PYSEC-2025-194 is fixed in 2.13.0, above the deliberate <2.11 ceiling this
+        # project declares three times in pyproject.toml, because 2.11 wheels link
+        # against libcudart.so.13 and would move the whole stack to CUDA 13.
+        # Reviewed 2026-08-27. Revisit when the CUDA 12 ceiling is lifted, or when
+        # PYSEC-2026-139 publishes a fix.
         run: |
-          uv run pip-audit --desc
+          uv run pip-audit --desc --ignore-vuln PYSEC-2026-139 --ignore-vuln PYSEC-2025-194
 
   examples:
     name: Validate Examples
