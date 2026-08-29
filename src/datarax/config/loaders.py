@@ -5,16 +5,12 @@ for Datarax pipelines and components.
 """
 
 import logging
+import tomllib
 from pathlib import Path
 from typing import Any
 
 import tomli_w  # type: ignore
 
-
-try:
-    import tomllib  # type: ignore
-except ImportError:
-    import tomli as tomllib  # type: ignore
 
 logger = logging.getLogger(__name__)
 

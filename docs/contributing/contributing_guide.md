@@ -334,7 +334,7 @@ Pre-commit hooks automatically run: Ruff (linting + formatting), Pyright (type c
 
 ### 3. Type Annotations
 
-All public APIs **must** include type annotations using Python 3.11+ style:
+All public APIs **must** include type annotations using Python 3.12+ style:
 
 ```python
 from typing import Any
