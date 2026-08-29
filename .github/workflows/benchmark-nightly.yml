@@ -28,7 +28,10 @@ jobs:
       - uses: astral-sh/setup-uv@v4
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        # automation is excluded deliberately, matching benchmark-gate.yml: it is declared
+        # as conflicting with every other extra, so --all-extras cannot resolve and exits 2.
+        # This job needs click, which the benchmark extra now declares in its own right.
+        run: uv sync --all-extras --no-extra automation
 
       - name: Install calibrax (W&B extras)
         run: uv pip install "calibrax[wandb] @ git+https://github.com/avitai/calibrax.git"
@@ -59,7 +62,7 @@ jobs:
   #   steps:
   #     - uses: actions/checkout@v4
   #     - uses: astral-sh/setup-uv@v4
-  #     - run: uv sync --all-extras
+  #     - run: uv sync --all-extras --no-extra automation
   #     - run: uv pip install "calibrax[wandb] @ git+https://github.com/avitai/calibrax.git"
   #     - name: Run GPU benchmarks and export
   #       env:
@@ -84,7 +87,7 @@ jobs:
   #   steps:
   #     - uses: actions/checkout@v4
   #     - uses: astral-sh/setup-uv@v4
-  #     - run: uv sync --all-extras
+  #     - run: uv sync --all-extras --no-extra automation
   #     - run: uv pip install "calibrax[wandb] @ git+https://github.com/avitai/calibrax.git"
   #     - name: Run TPU benchmarks and export
   #       env:

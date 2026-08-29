@@ -1395,6 +1395,7 @@ automation = [
     { name = "vastai-sdk" },
 ]
 benchmark = [
+    { name = "click", version = "8.5.0", source = { registry = "https://pypi.org/simple" } },
     { name = "datasets" },
     { name = "deeplake" },
     { name = "jax-dataloader" },
@@ -1597,6 +1598,7 @@ requires-dist = [
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0.3" },
     { name = "calibrax", git = "https://github.com/avitai/calibrax.git?tag=v0.1.0" },
     { name = "click", marker = "extra == 'automation'", specifier = "<8.3" },
+    { name = "click", marker = "extra == 'benchmark'", specifier = ">=8.1" },
     { name = "coverage", marker = "extra == 'all'", specifier = ">=7" },
     { name = "coverage", marker = "extra == 'all-cpu'", specifier = ">=7" },
     { name = "coverage", marker = "extra == 'all-macos'", specifier = ">=7" },
