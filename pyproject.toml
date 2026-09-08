@@ -2,41 +2,6 @@
 build-backend = "hatchling.build"
 requires = ["hatchling>=1.18"]
 
-[dependency-groups]
-dev = [
-  "bandit[toml]>=1.8.0",
-  "build>=1.0.3",
-  "coverage>=7",
-  "deadcode>=2.4.1",
-  "deptry>=0.23.0",
-  "flake8>=7.0",
-  "flake8-functions-names>=0.4.0",
-  "import-linter>=2.0",
-  "interrogate>=1.5",
-  "ipykernel>=6.29.5",
-  "jupytext>=1.16.0",
-  "nbqa>=1.9.1",
-  "pip-audit>=2.7",
-  "pre-commit>=4.3.0",
-  "pylint>=3.0",
-  "pyright>=1.1.336",
-  "pytest>=8.3.5",
-  "pytest-asyncio>=0.23",
-  "pytest-benchmark>=4",
-  "pytest-cov>=6.1.1",
-  "pytest-env>=1.0.1",
-  "pytest-json-report>=1.5.0",
-  "pytest-randomly>=3.15",
-  "pytest-timeout>=2.1",
-  "pytest-xdist>=3.6",
-  "radon>=6.0",
-  "ruff>=0.1.5",
-  "shellcheck-py>=0.10.0.1",
-  "vulture>=2.14",
-  "wemake-python-styleguide>=1.0",
-  "xenon>=0.9.3"
-]
-
 [project]
 authors = [{name = "Mahdi Shafiei"}]
 classifiers = [
@@ -186,8 +151,10 @@ dev = [
   "import-linter>=2.0",
   "interrogate>=1.5",
   "ipykernel>=6.29.5",
+  "jupytext>=1.16.0",
   "pip-audit>=2.7",
   "pydeps>=1.12.17",
+  "pydoclint>=0.5",
   "pylint>=3.0",
   "pyright>=1.1.336",
   "pre-commit>=4.3.0",
@@ -241,6 +208,7 @@ metal = [
 test = [
   "beartype>=0.14.1",
   "coverage>=7",
+  "hypothesis>=6.100",
   "matplotlib>=3.8",
   "pytest>=8.3.5",
   "pytest-asyncio>=0.23",
