@@ -28,6 +28,9 @@ jobs:
           enable-cache: true
           cache-suffix: "lint"
 
+      - name: Lock file is current
+        run: uv lock --check
+
       - name: Create virtual environment
         run: |
           uv venv
@@ -406,8 +409,8 @@ jobs:
           done
 
           if [ "$i" -eq 0 ]; then
-            echo "::warning::No coverage data found from test jobs"
-            exit 0
+            echo "::error::No coverage data found from test jobs; the floor cannot be checked"
+            exit 1
           fi
 
           echo "Found $i coverage file(s), combining..."

@@ -61,7 +61,7 @@ jobs:
 
       - name: Verify package
         run: |
-          uv run twine check dist/*
+          uv run twine check --strict dist/*
 
       - name: Test installation in clean environment
         run: |
