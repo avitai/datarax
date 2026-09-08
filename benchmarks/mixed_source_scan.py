@@ -96,8 +96,7 @@ def _time_pipeline(pipeline: Pipeline) -> float:
         start = time.perf_counter()
         for _ in range(NUM_EPOCHS):
             pipeline._position.value = jnp.int32(0)
-            outputs = pipeline.scan(step_fn, length=STEPS_PER_EPOCH)
-        jax.block_until_ready(outputs)
+            jax.block_until_ready(pipeline.scan(step_fn, length=STEPS_PER_EPOCH))
         trials.append(time.perf_counter() - start)
     return float(np.median(trials))
 
@@ -135,6 +134,7 @@ def main() -> None:
     print("-" * 72)
 
     results: list[tuple[int, float, float]] = []
+    ref_per_step_us: float | None = None
     for n_sources in (1, 2, 3, 5, 8):
         mix = _make_mix(n_sources)
         pipeline = Pipeline(source=mix, stages=[], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
@@ -142,8 +142,8 @@ def main() -> None:
         per_step_us = seconds / (NUM_EPOCHS * STEPS_PER_EPOCH) * 1e6
         results.append((n_sources, seconds, per_step_us))
 
-        # Overhead reference: N=1 mix vs raw single-source baseline.
-        if n_sources == 1:
+        # Overhead reference: the first row (N=1) against every later one.
+        if ref_per_step_us is None:
             ref_per_step_us = per_step_us
             overhead_str = "—"
         else:

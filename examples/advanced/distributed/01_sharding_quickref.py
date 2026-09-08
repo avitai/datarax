@@ -142,11 +142,6 @@ if use_sharding:
     device_mesh = np.array(devices).reshape(-1)
     mesh = Mesh(device_mesh, axis_names=("data",))
     print(f"Created mesh with {len(device_mesh)} devices along 'data' axis")
-
-    # Define partition spec for batched data
-    # batch dimension sharded across "data" axis, others replicated
-    data_sharding = NamedSharding(mesh, PartitionSpec("data", None, None, None))
-    label_sharding = NamedSharding(mesh, PartitionSpec("data"))
 else:
     mesh = None
     print("Skipping mesh creation (single device)")
@@ -164,6 +159,11 @@ use the sharded execution.
 print("\nProcessing batches:")
 
 if use_sharding and mesh is not None:
+    # Partition specs for batched data: the batch dimension is sharded across
+    # the "data" axis and every other dimension is replicated.
+    data_sharding = NamedSharding(mesh, PartitionSpec("data", None, None, None))
+    label_sharding = NamedSharding(mesh, PartitionSpec("data"))
+
     with mesh:
         for i, batch in enumerate(pipeline):
             if i >= 2:

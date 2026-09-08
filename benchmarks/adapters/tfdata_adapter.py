@@ -131,7 +131,7 @@ def _tf_gaussian_blur(x: Any) -> Any:
         kernel_2d = tf.tensordot(kernel_1d, kernel_1d, axes=0)
         kernel_2d = kernel_2d[:, :, tf.newaxis, tf.newaxis]  # type: ignore[reportIndexIssue]
         channels = tf.shape(img)[-1]  # type: ignore[reportIndexIssue]
-        kernel = tf.tile(kernel_2d, [1, 1, channels, 1])
+        kernel = tf.tile(kernel_2d, tf.stack([1, 1, channels, 1]))
         img_4d = img[tf.newaxis]
         blurred = tf.nn.depthwise_conv2d(
             tf.cast(img_4d, tf.float32),

@@ -8,15 +8,10 @@ import pytest
 from datarax.utils.console import emit
 
 
-try:
-    import grain
-    import grain.samplers
-    import grain.sharding
-    import grain.transforms
-
-    HAS_GRAIN = True
-except ImportError:
-    HAS_GRAIN = False
+grain = pytest.importorskip("grain")
+pytest.importorskip("grain.samplers")
+pytest.importorskip("grain.sharding")
+pytest.importorskip("grain.transforms")
 
 from pathlib import Path
 
@@ -28,7 +23,6 @@ DATASET_DIR = Path("tests/data/imagenet64_arrayrecord")
 
 
 @pytest.mark.benchmark
-@pytest.mark.skipif(not HAS_GRAIN, reason="Grain not installed")
 @pytest.mark.skipif(
     not DATASET_DIR.exists(), reason="Real ImageNet ArrayRecord directory not found."
 )

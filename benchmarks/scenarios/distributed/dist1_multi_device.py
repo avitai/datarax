@@ -29,25 +29,26 @@ def _make_data_generator(seed: int = DEFAULT_SEED) -> dict:
     return {"image": gen.images(_DATASET_SIZE, *_ELEMENT_SHAPE, dtype="float32")}
 
 
-VARIANTS: dict[str, ScenarioVariant] = {}
+def _build_variants() -> dict[str, ScenarioVariant]:
+    """One variant per device count."""
+    variants: dict[str, ScenarioVariant] = {}
+    for count in _DEVICE_COUNTS:
+        name = f"{count}_device{'s' if count > 1 else ''}"
+        variants[name] = ScenarioVariant(
+            config=ScenarioConfig(
+                scenario_id=SCENARIO_ID,
+                dataset_size=_DATASET_SIZE,
+                element_shape=_ELEMENT_SHAPE,
+                batch_size=_BATCH_SIZE,
+                transforms=["Normalize"],
+                seed=DEFAULT_SEED,
+                extra={"device_count": count, "variant_name": name},
+            ),
+            data_generator=_make_data_generator,
+        )
+    return variants
 
-for _n in _DEVICE_COUNTS:
-    _name = f"{_n}_device{'s' if _n > 1 else ''}"
-    VARIANTS[_name] = ScenarioVariant(
-        config=ScenarioConfig(
-            scenario_id=SCENARIO_ID,
-            dataset_size=_DATASET_SIZE,
-            element_shape=_ELEMENT_SHAPE,
-            batch_size=_BATCH_SIZE,
-            transforms=["Normalize"],
-            seed=DEFAULT_SEED,
-            extra={"device_count": _n, "variant_name": _name},
-        ),
-        data_generator=lambda: _make_data_generator(),
-    )
 
-# Clean up loop variables from module namespace
-del _n, _name
-
+VARIANTS: dict[str, ScenarioVariant] = _build_variants()
 
 get_variant = make_get_variant(VARIANTS)

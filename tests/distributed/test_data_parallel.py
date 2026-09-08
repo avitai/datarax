@@ -196,7 +196,9 @@ class TestSpmdTrainStep:
             return jnp.mean((m(b["x"]) - b["y"]) ** 2)
 
         loss_first = spmd_train_step(model, optimizer, loss_fn, batch)  # type: ignore[reportArgumentType]
-        for _ in range(10):
-            loss_last = spmd_train_step(model, optimizer, loss_fn, batch)  # type: ignore[reportArgumentType]
+        losses = [
+            spmd_train_step(model, optimizer, loss_fn, batch)  # type: ignore[reportArgumentType]
+            for _ in range(10)
+        ]
 
-        assert float(loss_last) < float(loss_first)
+        assert float(losses[-1]) < float(loss_first)

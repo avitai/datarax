@@ -28,32 +28,33 @@ _RESOLUTION_CONFIGS = {
 }
 
 
-VARIANTS: dict[str, ScenarioVariant] = {}
+def _build_variants() -> dict[str, ScenarioVariant]:
+    """One variant per resolution, each with a generator bound to its own shape."""
+    variants: dict[str, ScenarioVariant] = {}
+    for res_name, (ds_size, shape, bs) in _RESOLUTION_CONFIGS.items():
+        # Bind the loop values through defaults so each generator keeps its own shape.
+        def make_gen(n: int = ds_size, h: int = shape[0], w: int = shape[1]) -> dict:
+            gen = SyntheticDataGenerator(seed=DEFAULT_SEED)
+            return {"image": gen.images(n, h, w, 3, dtype="float32")}
 
-for _res_name, (_ds_size, _shape, _bs) in _RESOLUTION_CONFIGS.items():
-    # Capture loop variables via default arguments to avoid late-binding closure
-    def _make_gen(n: int = _ds_size, h: int = _shape[0], w: int = _shape[1]) -> dict:
-        gen = SyntheticDataGenerator(seed=DEFAULT_SEED)
-        return {"image": gen.images(n, h, w, 3, dtype="float32")}
+        variants[res_name] = ScenarioVariant(
+            config=ScenarioConfig(
+                scenario_id=SCENARIO_ID,
+                dataset_size=ds_size,
+                element_shape=shape,
+                batch_size=bs,
+                transforms=["Normalize", "RandomCrop", "AffineRotation"],
+                seed=DEFAULT_SEED,
+                extra={
+                    "modes": list(_COMPILATION_MODES),
+                    "variant_name": res_name,
+                },
+            ),
+            data_generator=make_gen,
+        )
+    return variants
 
-    VARIANTS[_res_name] = ScenarioVariant(
-        config=ScenarioConfig(
-            scenario_id=SCENARIO_ID,
-            dataset_size=_ds_size,
-            element_shape=_shape,
-            batch_size=_bs,
-            transforms=["Normalize", "RandomCrop", "AffineRotation"],
-            seed=DEFAULT_SEED,
-            extra={
-                "modes": list(_COMPILATION_MODES),
-                "variant_name": _res_name,
-            },
-        ),
-        data_generator=_make_gen,
-    )
 
-# Clean up loop variables from module namespace
-del _res_name, _ds_size, _shape, _bs
-
+VARIANTS: dict[str, ScenarioVariant] = _build_variants()
 
 get_variant = make_get_variant(VARIANTS)

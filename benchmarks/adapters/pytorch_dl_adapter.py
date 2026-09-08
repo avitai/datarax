@@ -21,21 +21,32 @@ from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
 _PYTORCH_TRANSFORMS = STANDARD_TRANSFORMS
 
 
-class _DictDataset:
-    """Wraps a dict of numpy arrays as a PyTorch-style map dataset."""
+def _dict_dataset(data: dict[str, np.ndarray]) -> Any:
+    """Wrap a dict of numpy arrays as a PyTorch map-style ``Dataset``.
 
-    def __init__(self, data: dict[str, np.ndarray]) -> None:
-        self._data = data
-        self._key = next(iter(data))
-        self._len = len(data[self._key])
+    Defined inside the function so the module imports without torch installed;
+    the adapter reports itself unavailable in that case.
+    """
+    import torch
+    from torch.utils.data import Dataset
 
-    def __len__(self) -> int:
-        return self._len
+    class _DictDataset(Dataset[dict[str, Any]]):
+        def __init__(self, arrays: dict[str, np.ndarray]) -> None:
+            self._data = arrays
+            self._len = len(arrays[next(iter(arrays))])
 
-    def __getitem__(self, idx: int) -> dict[str, Any]:
-        import torch
+        def __len__(self) -> int:
+            return self._len
 
-        return {k: torch.from_numpy(np.asarray(v[idx])) for k, v in self._data.items()}
+        def __getitem__(self, idx: int) -> dict[str, Any]:
+            # torch re-exports its constructors from torch._C without listing them in
+            # __all__, so pyright reads every one of them as private.
+            return {
+                k: torch.from_numpy(np.asarray(v[idx]))  # pyright: ignore[reportPrivateImportUsage]
+                for k, v in self._data.items()
+            }
+
+    return _DictDataset(data)
 
 
 @register
@@ -80,7 +91,7 @@ class PyTorchDataLoaderAdapter(PipelineAdapter):
         # Resolve transforms from config
         self._transform_fns = resolve_transforms(config.transforms, _PYTORCH_TRANSFORMS, self.name)
 
-        dataset = _DictDataset(data)
+        dataset = _dict_dataset(data)
 
         # Optimal settings per Section 8.6 Fairness Principles
         use_workers = config.num_workers > 0

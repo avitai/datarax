@@ -381,7 +381,7 @@ reportIncompatibleVariableOverride = false
 # not required in every dev environment or pre-commit hook env.
 reportMissingImports = false
 reportMissingTypeStubs = false
-typeCheckingMode = "basic"
+typeCheckingMode = "standard"
 
 [tool.pytest.ini_options]
 addopts = "--strict-markers --strict-config --verbose --tb=short --color=yes --durations=10 --cov=src/ --cov-report=term-missing --cov-report=html --cov-fail-under=80 --timeout=300 --json-report --json-report-file=temp/test-results.json --json-report-indent=2"

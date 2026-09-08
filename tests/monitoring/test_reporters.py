@@ -95,8 +95,9 @@ def test_file_reporter_context_manager_on_exception():
     with tempfile.NamedTemporaryFile(delete=False) as tf:
         path = tf.name
     try:
+        reporter = FileReporter(filename=path, report_interval=0.0)
         with pytest.raises(RuntimeError):
-            with FileReporter(filename=path, report_interval=0.0) as reporter:
+            with reporter:
                 reporter.update([MetricRecord("test", 1.0, time.time(), "test")])
                 raise RuntimeError("test error")
         assert reporter.file.closed

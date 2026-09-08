@@ -131,8 +131,9 @@ class TestSharedMemoryManager:
 
     def test_context_manager_cleanup_on_exception(self):
         """Test that context manager cleans up even when exception occurs."""
+        manager = SharedMemoryManager()
         with pytest.raises(RuntimeError):
-            with SharedMemoryManager() as manager:
+            with manager:
                 manager.make_shared("test", np.ones((1024, 1024)))  # type: ignore[reportArgumentType]
                 raise RuntimeError("test error")
         assert len(manager.shared_blocks) == 0

@@ -477,6 +477,11 @@ print("=" * 60)
 print("TRAINING CIFAR-10")
 print("=" * 60)
 
+# Predictions and labels of the most recent validation pass, used for the
+# confusion matrix after training.
+all_predictions: list[int] = []
+all_labels: list[int] = []
+
 for epoch in range(NUM_EPOCHS):
     epoch_start = time.time()
 
