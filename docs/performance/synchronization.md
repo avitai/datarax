@@ -7,7 +7,6 @@ JAX arrays.
 
 - [Performance Overview](index.md) - All performance tools
 - [Goodput](goodput.md) - Goodput tracking
-- [Roofline](roofline.md) - Roofline analysis
 
 ---
 

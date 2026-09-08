@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- `datarax.performance.roofline` (`RooflineAnalyzer`, `HardwareSpecs`),
+  `CompilationProfiler` and `DistributedUtils` from `datarax.performance.xla_optimization`.
+  calibrax owns roofline analysis, compilation profiling and the hardware table
+  (`calibrax.profiling`); datarax's copies had drifted from it and had no consumer in
+  this package or its dependants. The hardware figures datarax's tests pinned now live in
+  calibrax's tests.
+- The eight `docs/benchmarking/*` API pages and the three `tests/benchmarks` files that
+  documented and tested calibrax's profiler, monitor and adaptive-operation classes
+  rather than any datarax code; the benchmarking page now links calibrax's reference.
+
 ## [0.1.5] - 2026-08-29
 
 ### Changed

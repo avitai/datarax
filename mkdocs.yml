@@ -247,16 +247,7 @@ nav:
       - Batching:
           - Overview: batching/index.md
           - default_batcher: batching/default_batcher.md
-      - Benchmarking:
-          - Overview: benchmarking/index.md
-          - comparative: benchmarking/comparative.md
-          - monitor: benchmarking/monitor.md
-          - profiler: benchmarking/profiler.md
-          - regression: benchmarking/regression.md
-          - timing: benchmarking/timing.md
-          - statistics: benchmarking/statistics.md
-          - resource_monitor: benchmarking/resource_monitor.md
-          - results: benchmarking/results.md
+      - Benchmarking: benchmarking/index.md
       - Checkpoint:
           - Overview: checkpoint/index.md
           - handlers: checkpoint/handlers.md
@@ -311,7 +302,6 @@ nav:
               - sequential: operators/sequential.md
       - Performance:
           - Overview: performance/index.md
-          - roofline: performance/roofline.md
           - xla_optimization: performance/xla_optimization.md
           - goodput: performance/goodput.md
           - synchronization: performance/synchronization.md

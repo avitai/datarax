@@ -1,7 +1,10 @@
 # Benchmarking
 
 !!! info "External package"
-    This page documents [calibrax](https://github.com/avitai/calibrax), the benchmarking library datarax depends on.
+    Benchmarking is provided by [calibrax](https://github.com/avitai/calibrax), which
+    datarax depends on. Its API reference lives at
+    [calibrax.readthedocs.io](https://calibrax.readthedocs.io); this page shows how the
+    tools apply to a datarax pipeline.
 
 Performance measurement and analysis tools for data pipelines. Use these tools to measure throughput, identify bottlenecks, and track performance regressions.
 
@@ -39,16 +42,15 @@ print(f"Throughput: {throughput:.2f} samples/sec")
 print(f"First batch: {result.first_batch_time:.4f}s (includes JIT)")
 ```
 
-## Modules
+## Reference
 
-- [profiler](profiler.md) - GPU memory profiling and hardware-adaptive optimization
-- [comparative](comparative.md) - Compare configurations side-by-side
-- [regression](regression.md) - Detect performance regressions over time
-- [monitor](monitor.md) - Real-time performance monitoring and alerting
-- [timing](timing.md) - Framework-agnostic timing with GPU sync
-- [statistics](statistics.md) - Statistical analysis with bootstrap CI
-- [resource_monitor](resource_monitor.md) - Background resource sampling
-- [results](results.md) - Serializable benchmark result containers
+Each tool is documented in calibrax's API reference:
+
+- [profiling](https://calibrax.readthedocs.io/en/latest/api-reference/profiling/) - timing, GPU memory profiling, hardware-adaptive optimization, background resource sampling
+- [analysis](https://calibrax.readthedocs.io/en/latest/api-reference/analysis/) - side-by-side comparison and regression detection
+- [monitoring](https://calibrax.readthedocs.io/en/latest/api-reference/monitoring/) - real-time monitoring and alerting
+- [statistics](https://calibrax.readthedocs.io/en/latest/api-reference/statistics/) - bootstrap confidence intervals and significance tests
+- [core](https://calibrax.readthedocs.io/en/latest/api-reference/core/) - serializable result containers
 
 ## GPU Memory Profiling
 

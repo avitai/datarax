@@ -25,7 +25,7 @@
 ## Key Features
 
 - **JAX-Native Design:** All core components built on JAX's functional paradigm with Flax NNX module system for state management
-- **High Performance:** JIT-compiled pipelines via XLA, with built-in profiling and roofline analysis
+- **High Performance:** JIT-compiled pipelines via XLA, profiled and roofline-analysed through calibrax
 - **DAG Pipelines:** Graph-based construction via `Pipeline.from_dag` with branching, parallel execution, caching, and differentiable rebatching nodes
 - **Scalability:** Multi-device and multi-host data distribution with device mesh sharding
 - **Determinism:** Reproducible pipelines by default using Grain's Feistel cipher shuffling (O(1) memory), with resumable mid-epoch iteration for exact checkpoint/restore
@@ -195,7 +195,7 @@ src/datarax/
   distributed/  # DeviceMeshManager, data-parallel and sharding utilities
   checkpoint/   # Orbax integration (NNX-standard checkpoint pattern)
   monitoring/   # MetricsCollector, callbacks, reporters (console/file)
-  performance/  # Roofline analysis, XLA optimization utilities
+  performance/  # XLA optimization, goodput tracking, host/device synchronization
   control/      # Prefetcher for asynchronous data loading
   memory/       # Shared memory manager for multi-process data sharing
   workers/      # Reserved namespace for the planned multiprocessing backend

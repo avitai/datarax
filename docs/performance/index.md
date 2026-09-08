@@ -6,14 +6,13 @@ Performance analysis and optimization tools. Understand your pipeline's performa
 
 | Tool | Purpose | Output |
 |------|---------|--------|
-| **Roofline** | Performance modeling | Compute vs memory bound |
 | **XLA Optimization** | JAX/XLA tuning | Compilation hints |
 | **Goodput** | Effective-time tracking | Useful vs stalled time |
 | **Synchronization** | Host/device sync | Blocking + async copy helpers |
 
 !!! note "Key points"
 
-    - Roofline model reveals if you're compute or memory bound
+    - calibrax's roofline analyzer reveals if you're compute or memory bound
     - XLA optimizations require understanding JAX compilation
     - Profile before optimizing - measure, don't guess
     - Most pipelines are I/O bound, not compute bound
@@ -21,26 +20,27 @@ Performance analysis and optimization tools. Understand your pipeline's performa
 ## Quick Start
 
 ```python
-from datarax.performance import RooflineAnalyzer
+from calibrax.profiling import RooflineAnalyzer
 
 # Analyze a JAX operation against the detected hardware's roofline
-analyzer = RooflineAnalyzer(hardware="auto")
-result = analyzer.analyze_operation(my_fn, sample_input)
+analyzer = RooflineAnalyzer()
+result = analyzer.analyze_operation(my_fn, [sample_input])
 
-print(f"Arithmetic intensity: {result['arithmetic_intensity']:.2f}")
-print(f"Bottleneck: {result['bottleneck']}")  # 'compute' or 'memory'
+print(f"Arithmetic intensity: {result.arithmetic_intensity:.2f}")
+print(f"Bottleneck: {result.bottleneck}")  # 'compute' or 'memory_bandwidth'
 ```
 
 ## Modules
 
-- [roofline](roofline.md) - Roofline model analysis for performance characterization
 - [xla_optimization](xla_optimization.md) - XLA-specific optimization utilities
 - [goodput](goodput.md) - Effective-training-time tracking
 - [synchronization](synchronization.md) - Host/device synchronization helpers
 
 ## Roofline Model
 
-The roofline model helps identify your performance bottleneck:
+The roofline model, implemented by
+[`calibrax.profiling.RooflineAnalyzer`](https://calibrax.readthedocs.io/en/latest/api-reference/profiling/),
+helps identify your performance bottleneck:
 
 ```
 Performance (FLOPS)
