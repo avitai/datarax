@@ -224,6 +224,7 @@ for the authoritative, complete list.
 | Hook | Purpose |
 |------|---------|
 | `sort_pyproject` | Keep `pyproject.toml` sorted |
+| `validate-pyproject` | Validate `pyproject.toml` against the packaging schema |
 | `trailing-whitespace` | Remove trailing whitespace |
 | `end-of-file-fixer` | Ensure files end with newline |
 | `check-yaml` / `check-toml` / `check-json` | Validate config file syntax |
@@ -243,7 +244,6 @@ for the authoritative, complete list.
 | `vulture` | Detect dead code |
 | `pyright` | Type checking |
 | `bandit` | Security scanning |
-| `pydocstyle` | Docstring style checking |
 | `nbqa-ruff` | Notebook linting |
 | `shellcheck` | Shell script linting |
 

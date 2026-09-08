@@ -15,13 +15,9 @@ trace, which JAX cannot express. Caching at the iteration boundary (outside
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Generic, TypeVar
 
 
-T = TypeVar("T")
-
-
-class CachingIterator(Iterator[T], Generic[T]):
+class CachingIterator[T](Iterator[T]):
     """Caches a wrapped iterator's elements in memory for reuse across passes.
 
     Each ``__iter__`` resets the read position to the start. ``__next__`` serves

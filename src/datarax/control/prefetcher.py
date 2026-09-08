@@ -199,7 +199,7 @@ class Prefetcher:
         return _PrefetchIterator(iterator=iterator, buffer_size=self.buffer_size)
 
 
-def create_prefetch_stream(
+def create_prefetch_stream[T](
     iterator: Iterator[T],
     *,
     mode: Literal["none", "grain", "flax", "thread"],

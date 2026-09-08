@@ -15,7 +15,7 @@ state tracking (position, epoch) for resumable training.
 
 import logging
 from collections.abc import Callable, Iterator
-from typing import Any, Generic, TypeVar
+from typing import Any
 
 import jax.numpy as jnp
 from flax import nnx
@@ -54,7 +54,6 @@ class IterationCount(nnx.Variable):
 
 
 # Type variable for iterator return type
-T_co = TypeVar("T_co", covariant=True)
 
 
 class DataraxModule(nnx.Module):
@@ -622,7 +621,7 @@ class DataraxModule(nnx.Module):
         return f"{class_name}()"
 
 
-class CheckpointableIteratorModule(DataraxModule, Generic[T_co]):
+class CheckpointableIteratorModule[T_co](DataraxModule):
     """Base class for iterator modules that can be checkpointed.
 
     This class extends DataraxModule to implement the CheckpointableIterator

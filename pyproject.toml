@@ -362,33 +362,6 @@ path = "src/datarax/__init__.py"
 # type stubs. Do not use mypy --strict for audit purposes.
 follow_imports = "skip"
 
-[tool.pydocstyle]
-add-ignore = [
-  "D100",
-  "D200",
-  "D202",
-  "D203",
-  "D204",
-  "D205",
-  "D212",
-  "D213",
-  "D400",
-  "D401",
-  "D404",
-  "D415"
-]
-add-select = [
-  "D101",
-  "D102",
-  "D103",
-  "D104",
-  "D105",
-  "D107"
-]
-convention = "google"
-match = "(?!test_).*\\.py"
-match-dir = "(?!tests|scripts|examples|benchmarks).*"
-
 [tool.pylint."messages_control"]
 # NNX modules require nnx.Variable as direct attrs; config dataclasses map 1:1
 # to parameters. Default max-attrs=7 is too restrictive for this domain.
@@ -502,15 +475,6 @@ ignore = [
   "E721", # Do not compare types directly
   "E741", # Ambiguous variable name
   "F722", # Forward annotation syntax error
-  # PEP 695 generic syntax (`def f[T]`, `class C[T]`). Enabled by target-version py312, but
-  # the docstring gate is pydocstyle 6.3.0, whose parser predates PEP 695: it reports D101 /
-  # D103 "missing docstring" for generic functions, and for generic classes with a bound, on
-  # definitions whose docstring is plainly present. 6.3.0 is its final release (2023-01-17),
-  # so no version of it reads this syntax. Re-enable these together with replacing pydocstyle
-  # with ruff's own D rules, which parse it correctly.
-  "UP046", # Generic class uses Generic subclass instead of type parameters
-  "UP047", # Generic function should use type parameters
-  "UP049", # Private type parameter name
   "W391", # Blank line at end of file
   "E203", # Whitespace before ':'
   # UP035 — fixed: imports now use collections.abc

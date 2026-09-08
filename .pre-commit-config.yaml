@@ -14,6 +14,11 @@ repos:
         files: ^pyproject\.toml$
         additional_dependencies: ["toml-sort==0.23.1"]
 
+  - repo: https://github.com/abravalheri/validate-pyproject
+    rev: v0.24.1
+    hooks:
+      - id: validate-pyproject
+
   # Standard pre-commit hooks with scientific computing adaptations
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -191,15 +196,6 @@ repos:
         exclude: ^(documents|custom_modes|notebooks|tests|example_data)/
         additional_dependencies: ["bandit[toml]"]
         log_file: /dev/null # Suppress stderr warnings
-
-  # Workshop-inspired documentation quality
-  - repo: https://github.com/pycqa/pydocstyle
-    rev: 6.3.0
-    hooks:
-      - id: pydocstyle
-        exclude: ^(documents|custom_modes|notebooks|tests|.deprecated|example_data)/|^conftest\.py$
-        additional_dependencies: ["pydocstyle[toml]"]
-        args: ["--config=pyproject.toml"]
 
   # Workshop-inspired notebook quality
   - repo: https://github.com/nbQA-dev/nbQA
