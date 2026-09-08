@@ -92,13 +92,13 @@ jobs:
           uv run pytest tests/examples/ -v -m "not slow" --no-cov
 
   unit_tests:
-    name: Unit Tests (${{ matrix.os }})
+    name: Unit Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
     needs: lint
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest, macos-14]
-        python-version: ['3.12']
+        python-version: ['3.12', '3.13']
       fail-fast: false
 
     steps:
@@ -149,7 +149,7 @@ jobs:
       - name: Upload coverage data
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-unit-${{ matrix.os }}
+          name: coverage-unit-${{ matrix.os }}-py${{ matrix.python-version }}
           path: .coverage
           include-hidden-files: true
         if: always()
