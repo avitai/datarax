@@ -40,11 +40,6 @@ class StructuralModule(DataraxModule):
 
     - process() - Transforms input structure (abstract method)
 
-    Args:
-        config: StructuralConfig (already validated via __post_init__, frozen)
-        rngs: Random number generators (required if stochastic=True)
-        name: Optional name for the structural module
-
     Attributes:
         config: Structural module configuration (immutable)
         stochastic: Whether this module uses randomness (from config)
@@ -124,6 +119,9 @@ class StructuralModule(DataraxModule):
 
         Returns:
             Processed output (type varies by processor)
+
+        Raises:
+            NotImplementedError: If a subclass does not override this method.
 
         Examples:
             Batcher implementation:

@@ -24,6 +24,9 @@ class MetricsObserver:
 
         Args:
             metrics: List of new metric records.
+
+        Raises:
+            NotImplementedError: If a subclass does not override this method.
         """
         raise NotImplementedError("Subclasses must implement update()")
 

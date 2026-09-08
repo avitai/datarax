@@ -259,7 +259,7 @@ class ModalityOperator(OperatorModule):
         ```
     """
 
-    def __init__(
+    def __init__(  # noqa: DOC502
         self,
         config: ModalityOperatorConfig,
         *,
@@ -333,7 +333,7 @@ class ModalityOperator(OperatorModule):
         """
         raise NotImplementedError(f"{self.__class__.__name__} must implement apply()")
 
-    def generate_random_params(
+    def generate_random_params(  # noqa: DOC502
         self,
         rng: jax.Array,
         data_shapes: PyTree,

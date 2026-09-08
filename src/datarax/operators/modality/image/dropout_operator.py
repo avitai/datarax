@@ -160,6 +160,7 @@ class DropoutOperator(ModalityOperator):
 
         Raises:
             KeyError: If field_key not in data_shapes
+            ValueError: If ``config.mode`` is not a known dropout mode.
         """
         if self.config.field_key not in data_shapes:
             raise KeyError(
@@ -224,6 +225,10 @@ class DropoutOperator(ModalityOperator):
                 - transformed_data: Data dict with dropout applied to target field
                 - state: Unchanged state dict
                 - metadata: Unchanged metadata dict
+
+        Raises:
+            ValueError: If stochastic mode receives ``random_params`` without ``keep_mask``, or
+                ``config.mode`` is not a known dropout mode.
 
         Note:
             CRITICAL: Always check config.stochastic flag, not whether random_params is None.

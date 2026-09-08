@@ -223,8 +223,8 @@ class MemorySource(DataSourceModule):
         When num_workers > 1, yields only this worker's partition of the
         global order: worker k gets global positions [k::num_workers].
 
-        Returns:
-            Iterator over data elements
+        Yields:
+            Data elements in iteration order.
         """
         # Reset for new iteration
         self.index.set_value(0)
@@ -539,7 +539,7 @@ class MemorySource(DataSourceModule):
             self._shuffle_seed = None
             self._shuffled_indices.set_value(None)
 
-    def get_with_metadata(self, index: int) -> tuple[Any, RecordMetadata]:
+    def get_with_metadata(self, index: int) -> tuple[Any, RecordMetadata]:  # noqa: DOC503
         """Get element at specific index with its metadata.
 
         This method is only available when track_metadata=True was set

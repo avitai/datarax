@@ -28,6 +28,9 @@ def merge_output_sequence(
 
     Returns:
         Merged output
+
+    Raises:
+        ValueError: If ``outputs`` is empty or ``merge_strategy`` is unknown.
     """
     if not outputs:
         raise ValueError("outputs must not be empty")
@@ -83,6 +86,10 @@ def merge_outputs_conditional(
 
     Returns:
         Merged output with only True-condition outputs
+
+    Raises:
+        ValueError: If ``outputs`` is empty, ``conditions`` and ``outputs`` differ in length,
+            or ``merge_strategy`` is unknown.
     """
     if not outputs:
         raise ValueError("outputs must not be empty")

@@ -316,6 +316,9 @@ class HFEagerSource(EagerSourceBase):
 
         Returns:
             Dictionary mapping keys to JAX arrays
+
+        Raises:
+            ValueError: If the dataset yields no elements after loading and key filtering.
         """
         download_kwargs = _resolve_hf_download_options(
             config.download_kwargs, local_files_only=config.local_files_only
@@ -512,6 +515,9 @@ class HFStreamingSource(StreamingSourceBase):
 
         Returns:
             Total number of elements or raises NotImplementedError if unknown
+
+        Raises:
+            NotImplementedError: If the length of the streaming dataset is unknown.
         """
         if self.length is None:
             raise NotImplementedError("Length unknown for streaming dataset")
@@ -523,7 +529,7 @@ class HFStreamingSource(StreamingSourceBase):
         self._iterator = iter(self._hf_dataset)
         return self
 
-    def __next__(self) -> dict[str, Any]:
+    def __next__(self) -> dict[str, Any]:  # noqa: DOC502
         """Get next element from the dataset.
 
         Returns:

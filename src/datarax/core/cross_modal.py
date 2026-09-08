@@ -265,7 +265,7 @@ class CrossModalOperator(OperatorModule):
         ```
     """
 
-    def __init__(
+    def __init__(  # noqa: DOC502
         self,
         config: CrossModalOperatorConfig,
         *,
@@ -336,7 +336,7 @@ class CrossModalOperator(OperatorModule):
         """
         raise NotImplementedError(f"{self.__class__.__name__} must implement apply()")
 
-    def generate_random_params(
+    def generate_random_params(  # noqa: DOC502
         self,
         rng: jax.Array,
         data_shapes: PyTree,
@@ -377,7 +377,7 @@ class CrossModalOperator(OperatorModule):
         # Default implementation for deterministic operators
         return super().generate_random_params(rng, data_shapes)
 
-    def _extract_inputs(self, data: dict) -> list[Any]:
+    def _extract_inputs(self, data: dict) -> list[Any]:  # noqa: DOC502
         """Extract all input fields from data.
 
         Helper method for subclasses to safely extract multiple input fields.

@@ -75,6 +75,9 @@ class ArrayRecordSourceModule(DataSourceModule):
             paths: Path pattern or list of paths to ArrayRecord files.
             rngs: NNX Rngs for additional randomness.
             name: Optional name for the module.
+
+        Raises:
+            FileNotFoundError: If ``local_files_only`` is set and any of ``paths`` does not exist.
         """
         super().__init__(config, rngs=rngs, name=name)
 
@@ -228,6 +231,9 @@ class ArrayRecordSourceModule(DataSourceModule):
 
         Returns:
             Element at the given index.
+
+        Raises:
+            IndexError: If ``idx`` is outside the dataset after negative-index wrapping.
         """
         total_records = self.total_records.get_value()
         # Handle negative indices

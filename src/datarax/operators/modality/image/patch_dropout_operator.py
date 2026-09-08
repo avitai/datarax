@@ -151,7 +151,7 @@ class PatchDropoutOperator(ModalityOperator):
         # Type narrowing for better IDE support
         self.config: PatchDropoutOperatorConfig = config
 
-    def generate_random_params(
+    def generate_random_params(  # noqa: DOC502
         self,
         element_keys: jax.Array,
         data_shapes: dict[str, tuple[int, ...]],

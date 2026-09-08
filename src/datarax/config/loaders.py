@@ -15,7 +15,7 @@ import tomli_w  # type: ignore
 logger = logging.getLogger(__name__)
 
 
-def load_toml_from_path(config_path: str | Path, encoding: str = "utf-8") -> dict[str, Any]:
+def load_toml_from_path(config_path: str | Path, encoding: str = "utf-8") -> dict[str, Any]:  # noqa: DOC503
     """Load a TOML configuration file.
 
     Args:
@@ -38,7 +38,7 @@ def load_toml_from_path(config_path: str | Path, encoding: str = "utf-8") -> dic
         return tomllib.loads(f.read())
 
 
-def save_toml_to_path(
+def save_toml_to_path(  # noqa: DOC502
     config: dict[str, Any], config_path: str | Path, encoding: str = "utf-8"
 ) -> None:
     """Save a configuration dictionary to a TOML file.
@@ -86,7 +86,7 @@ def deep_merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str,
     return result
 
 
-def load_config_from_path_with_includes(
+def load_config_from_path_with_includes(  # noqa: DOC503
     config_path: str | Path,
     encoding: str = "utf-8",
     include_key: str = "include",

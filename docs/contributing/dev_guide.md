@@ -239,6 +239,7 @@ for the authoritative, complete list.
 | `check-file-length` | Enforce a maximum file length |
 | `lint-imports` | Enforce import-layer boundaries |
 | `interrogate` | Docstring coverage |
+| `pydoclint` | Docstring sections match signatures and raise statements |
 | `xenon` | Complexity thresholds |
 | `pylint-duplicate-code` | Detect duplicated code |
 | `vulture` | Detect dead code |

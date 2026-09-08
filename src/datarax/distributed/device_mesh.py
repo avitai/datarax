@@ -95,6 +95,9 @@ class DeviceMeshManager:
 
         Returns:
             A JAX device mesh configured for model-parallel training.
+
+        Raises:
+            ValueError: If fewer than ``num_devices`` devices are available.
         """
         devices = jax.devices()
         if len(devices) < num_devices:

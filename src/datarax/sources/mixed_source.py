@@ -24,7 +24,7 @@ from datarax.sources._grain_streaming import data_source_to_iter_dataset, mix_st
 logger = logging.getLogger(__name__)
 
 
-def _validate_compatible_element_specs(sources: list[DataSourceModule]) -> None:
+def _validate_compatible_element_specs(sources: list[DataSourceModule]) -> None:  # noqa: DOC502
     """Verify that every source produces records with the same element_spec.
 
     Required so that the per-position ``lax.switch`` dispatch in
@@ -155,6 +155,10 @@ class MixDataSourcesNode(DataSourceModule):
             sources: List of data source modules to mix from.
             rngs: Optional Flax NNX random number generators.
             name: Optional module name for identification.
+
+        Raises:
+            ValueError: If ``sources`` does not match ``config.num_sources``, or ``config.weights``
+                is ``None``.
         """
         if name is None:
             name = "MixDataSourcesNode"

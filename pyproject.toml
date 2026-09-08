@@ -362,6 +362,20 @@ path = "src/datarax/__init__.py"
 # type stubs. Do not use mypy --strict for audit purposes.
 follow_imports = "skip"
 
+[tool.pydoclint]
+allow-init-docstring = true
+arg-type-hints-in-docstring = false
+# Instance attributes are documented under Attributes per the Google style; pydoclint would
+# compare them with class-level attributes only.
+check-class-attributes = false
+# Annotations are the source of truth for types; docstrings carry the prose.
+check-return-types = false
+check-yield-types = false
+# `# noqa: DOC...` is read from the def line, where propagated exceptions are annotated.
+native-mode-noqa-location = "definition"
+skip-checking-short-docstrings = true
+style = "google"
+
 [tool.pylint."messages_control"]
 # NNX modules require nnx.Variable as direct attrs; config dataclasses map 1:1
 # to parameters. Default max-attrs=7 is too restrictive for this domain.
@@ -468,6 +482,8 @@ quote-style = "double"
 skip-magic-trailing-comma = false
 
 [tool.ruff.lint]
+# pydoclint's DOC codes appear in `# noqa` comments on def lines.
+external = ["DOC"]
 # Add W291, W292, W293 to fixable to handle whitespace issues
 fixable = ["I001", "F401", "E", "W", "W291", "W292", "W293", "F841"]
 ignore = [

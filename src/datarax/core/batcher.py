@@ -82,6 +82,7 @@ class BatcherModule(StructuralModule):
 
         Raises:
             ValueError: If batch_size is not positive.
+            NotImplementedError: If a subclass does not override this method.
         """
         if batch_size <= 0:
             raise ValueError("batch_size must be positive")
@@ -90,7 +91,7 @@ class BatcherModule(StructuralModule):
         del elements, args, drop_remainder, kwargs
         raise NotImplementedError(f"{self.__class__.__name__} must implement process() method")
 
-    def batch_spec(self, element_spec: Any, *, batch_size: int) -> dict[str, Any]:
+    def batch_spec(self, element_spec: Any, *, batch_size: int) -> dict[str, Any]:  # noqa: DOC502
         """Return the batched-output spec given a per-element spec and ``batch_size``.
 
         The default implementation prepends a leading ``(batch_size,)`` dimension

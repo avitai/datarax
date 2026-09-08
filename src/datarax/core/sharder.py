@@ -126,6 +126,9 @@ class SharderModule(DataraxModule):
         Returns:
             A sharded batch (PyTree of jax.Array objects with the specified
             sharding).
+
+        Raises:
+            NotImplementedError: If a subclass does not override this method.
         """
         raise NotImplementedError("Subclasses must implement this method")
 

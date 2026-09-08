@@ -28,11 +28,6 @@ class SamplerModule(StructuralModule):
     This class extends StructuralModule for non-parametric structural processing.
     Concrete samplers define their own config classes extending StructuralConfig.
 
-    Args:
-        config: StructuralConfig or subclass with sampler-specific parameters
-        rngs: Random number generators (required if stochastic=True)
-        name: Optional name for the sampler
-
     Examples:
         from dataclasses import dataclass
         from datarax.core.config import StructuralConfig
@@ -116,11 +111,14 @@ class SamplerModule(StructuralModule):
 
         Args:
             n: The number of indices to sample.
-            *args: Additional positional arguments (unused, for signature compatibility).
-            **kwargs: Additional keyword arguments (unused, for signature compatibility).
+            *_args: Additional positional arguments (unused, for signature compatibility).
+            **_kwargs: Additional keyword arguments (unused, for signature compatibility).
 
         Returns:
             A list of sampled indices.
+
+        Raises:
+            ValueError: If ``n`` is negative.
         """
         # Validate input
         if n < 0:
@@ -184,6 +182,9 @@ class SamplerModule(StructuralModule):
 
         Returns:
             An iterator that yields indices for data access.
+
+        Raises:
+            NotImplementedError: If a subclass does not override this method.
         """
         raise NotImplementedError("Subclasses must implement __iter__")
 
@@ -192,6 +193,9 @@ class SamplerModule(StructuralModule):
 
         Returns:
             The total number of indices in the sampler.
+
+        Raises:
+            NotImplementedError: If a subclass does not override this method.
         """
         msg = "Length determination not supported."
         raise NotImplementedError(msg)

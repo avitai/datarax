@@ -54,7 +54,7 @@ class CachingIterator[T](Iterator[T]):
         if callable(close):
             close()
 
-    def __next__(self) -> T:
+    def __next__(self) -> T:  # noqa: DOC502
         """Return the next element, from cache when available else from the source.
 
         Returns:

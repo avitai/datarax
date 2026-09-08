@@ -189,7 +189,7 @@ class Pipeline(nnx.Module):
         return resolved_nodes, resolved_edges, sink
 
     @classmethod
-    def from_dag(
+    def from_dag(  # noqa: DOC502
         cls,
         *,
         source: DataSourceModule,

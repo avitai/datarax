@@ -103,10 +103,13 @@ class DataSourceModule(StructuralModule):
 
         Returns:
             An iterator that yields data elements as PyTrees.
+
+        Raises:
+            NotImplementedError: If a subclass does not override this method.
         """
         raise NotImplementedError("Subclasses must implement __iter__")
 
-    def __next__(self) -> Element:
+    def __next__(self) -> Element:  # noqa: DOC503
         """Get the next element from this data source.
 
         Returns:
@@ -114,6 +117,7 @@ class DataSourceModule(StructuralModule):
 
         Raises:
             StopIteration: When there are no more elements to yield.
+            NotImplementedError: If a subclass does not override this method.
         """
         raise NotImplementedError("Subclasses must implement __next__")
 

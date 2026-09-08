@@ -522,6 +522,9 @@ class TFDSStreamingSource(StreamingSourceBase):
 
         Returns:
             Total number of elements or raises NotImplementedError if unknown
+
+        Raises:
+            NotImplementedError: If the length of the dataset split is unknown.
         """
         if self.length is None:
             raise NotImplementedError("Length unknown for this dataset split")
@@ -533,7 +536,7 @@ class TFDSStreamingSource(StreamingSourceBase):
         self._iterator = iter(self._tf_dataset)
         return self
 
-    def __next__(self) -> dict[str, jax.Array]:
+    def __next__(self) -> dict[str, jax.Array]:  # noqa: DOC502
         """Get next element from the dataset.
 
         Returns:

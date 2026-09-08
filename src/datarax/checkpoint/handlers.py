@@ -213,7 +213,7 @@ class OrbaxCheckpointHandler:
 
         return saved_path
 
-    def restore(
+    def restore(  # noqa: DOC502
         self,
         directory: str | Path,
         target: Any | None = None,

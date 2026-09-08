@@ -136,15 +136,15 @@ def _session_cache_size(pipeline: Pipeline) -> int:
 
 
 class PipelineIterator:
-    """Compiled iteration session over a random-access pipeline source.
-
-    Args:
-        pipeline: The pipeline to iterate. Its state is captured at
-            construction and written back when the session ends.
-    """
+    """Compiled iteration session over a random-access pipeline source."""
 
     def __init__(self, pipeline: Pipeline) -> None:
-        """Split the pipeline once and prepare the compiled session step."""
+        """Split the pipeline once and prepare the compiled session step.
+
+        Args:
+            pipeline: The pipeline to iterate. Its state is captured at
+                construction and written back when the session ends.
+        """
         self._pipeline = pipeline
         graphdef, mutable_state, immutable_state = nnx.split(pipeline, _is_step_mutable, ...)
         # Canonicalize carried leaves to device arrays so every session
@@ -219,6 +219,10 @@ class PipelineIterator:
 
         Args:
             state: Dict with ``position`` and ``rng_counts`` entries.
+
+        Raises:
+            ValueError: If ``state`` carries a different number of rng counts than this
+                pipeline has streams.
         """
         counts = state["rng_counts"]
         if len(counts) != len(self._rng_count_indices):

@@ -119,11 +119,6 @@ class OperatorModule(DataraxModule):
     2. apply() - Applies transformation to single element (pure function)
     3. apply_batch() - Orchestrates batch processing with vmap (concrete implementation)
 
-    Args:
-        config: OperatorConfig (already validated via __post_init__)
-        rngs: Random number generators (required if stochastic=True)
-        name: Optional name for the operator
-
     Attributes:
         config: Operator configuration
         stochastic: Whether this operator uses randomness (from config)
@@ -252,6 +247,9 @@ class OperatorModule(DataraxModule):
         Returns:
             Tuple of (transformed_data, new_state, new_metadata)
             All return values are PyTrees matching input structure
+
+        Raises:
+            NotImplementedError: If a subclass does not override this method.
 
         Examples:
             Example implementation:

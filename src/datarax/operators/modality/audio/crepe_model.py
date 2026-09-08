@@ -85,14 +85,18 @@ class CrepeModel(nnx.Module):
     - All weights are nnx.Param (learnable for fine-tuning)
 
     Use model.train()/model.eval() to switch BatchNorm modes.
-
-    Args:
-        capacity: Model size variant ("tiny", "small", "medium", "large", "full").
-        rngs: Flax NNX random number generators.
     """
 
     def __init__(self, capacity: str = "full", *, rngs: nnx.Rngs) -> None:
-        """Initialize CREPE model with the given capacity variant."""
+        """Initialize CREPE model with the given capacity variant.
+
+        Args:
+            capacity: Model size variant ("tiny", "small", "medium", "large", "full").
+            rngs: Flax NNX random number generators.
+
+        Raises:
+            ValueError: If ``capacity`` is not a known variant.
+        """
         super().__init__()
 
         if capacity not in _CAPACITY_MULTIPLIERS:
@@ -349,6 +353,10 @@ def load_crepe_weights_from_path(
         model: CrepeModel instance to load weights into.
         weights_path: Explicit path to .h5 or .pth file. If None, auto-detects.
         capacity: Model capacity (must be "full" for pretrained).
+
+    Raises:
+        FileNotFoundError: If ``weights_path`` does not exist, or it is ``None`` and neither
+            torchcrepe nor the cache provides weights.
     """
     if weights_path is not None:
         weights_path = pathlib.Path(weights_path)

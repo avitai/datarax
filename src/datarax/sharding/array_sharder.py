@@ -234,6 +234,9 @@ class ArraySharder(SharderModule):
 
         Returns:
             An initialized parameter with sharding annotation.
+
+        Raises:
+            ValueError: If the sharder was built without ``rngs``.
         """
         # Convert logical spec to physical if needed
         physical_spec = self.get_partition_spec(logical_spec)

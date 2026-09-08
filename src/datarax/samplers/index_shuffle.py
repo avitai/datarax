@@ -18,6 +18,9 @@ def index_shuffle(index: int, seed: int, num_elements: int) -> int:
 
     Returns:
         Shuffled index in [0, num_elements).
+
+    Raises:
+        IndexError: If ``index`` is outside ``[0, num_elements)``.
     """
     if index < 0 or index >= num_elements:
         raise IndexError(f"Index {index} out of range for {num_elements} elements")

@@ -96,6 +96,12 @@ def array_to_spec_strip_leading(value: ArrayLike) -> jax.ShapeDtypeStruct:
     (e.g., a dict of arrays where each array is shape ``(N, *element_shape)``).
     The returned spec describes one element by stripping the leading axis.
 
+    Args:
+        value: Array-like whose leading axis is the dataset size.
+
+    Returns:
+        The spec of one element, with the leading axis removed.
+
     Raises:
         ValueError: If ``value`` is a scalar (no leading dimension to strip).
     """

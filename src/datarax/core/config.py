@@ -347,7 +347,7 @@ class StructuralConfig(DataraxModuleConfig):
     stochastic: bool = False
     stream_name: str | None = None
 
-    def __post_init__(self) -> None:
+    def __post_init__(self) -> None:  # noqa: DOC502
         """Validate configuration.
 
         Validates both base config (via super) and structural-specific rules.

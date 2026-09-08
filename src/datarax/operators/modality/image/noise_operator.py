@@ -211,7 +211,7 @@ class NoiseOperator(ModalityOperator):
         # Type narrowing for better IDE support
         self.config: NoiseOperatorConfig = config
 
-    def generate_random_params(
+    def generate_random_params(  # noqa: DOC503
         self,
         element_keys: jax.Array,
         data_shapes: dict[str, tuple[int, ...]],
@@ -236,6 +236,7 @@ class NoiseOperator(ModalityOperator):
 
         Raises:
             KeyError: If field_key not in data_shapes
+            ValueError: If ``config.mode`` is not a known noise mode.
         """
         # Full shape includes the batch dim; per-record draws use the element shape.
         full_shape = validate_field_key_shape(data_shapes, self.config.field_key)
@@ -293,6 +294,9 @@ class NoiseOperator(ModalityOperator):
                 - transformed_data: Data dict with noise applied to target field
                 - state: Unchanged state dict
                 - metadata: Unchanged metadata dict
+
+        Raises:
+            ValueError: If ``config.mode`` is not a known noise mode.
 
         Note:
             CRITICAL: Always check config.stochastic flag, not whether random_params is None.

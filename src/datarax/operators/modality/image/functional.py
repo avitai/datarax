@@ -32,6 +32,9 @@ def resize_image_to_shape(
     Returns:
         Resized image with shape [new_height, new_width, channels] or
         [new_height, new_width] for grayscale.
+
+    Raises:
+        ValueError: If ``method`` is not one of the supported interpolation methods.
     """
     # Get input dimensions
     input_shape = image.shape
@@ -319,6 +322,9 @@ def rgb_to_hsv(rgb: jax.Array) -> jax.Array:
 
     Returns:
         HSV image with values in ranges H: [0, 2π], S: [0, 1], V: [0, 1]
+
+    Raises:
+        ValueError: If the last axis of ``rgb`` does not hold three channels.
     """
     # Ensure input has the correct shape
     if rgb.shape[-1] != 3:
@@ -394,6 +400,9 @@ def hsv_to_rgb(hsv: jax.Array) -> jax.Array:
 
     Returns:
         RGB image with values in range [0, 1]
+
+    Raises:
+        ValueError: If the last axis of ``hsv`` does not hold three channels.
     """
     # Ensure input has the correct shape
     if hsv.shape[-1] != 3:
@@ -481,6 +490,9 @@ def adjust_saturation(
 
     Returns:
         Saturation-adjusted image, clipped to [0, 1].
+
+    Raises:
+        ValueError: If ``image`` is not an RGB image of shape ``[H, W, 3]``.
     """
     # Ensure input is RGB
     if len(image.shape) != 3 or image.shape[2] != 3:
@@ -508,6 +520,9 @@ def adjust_hue(
 
     Returns:
         Hue-adjusted image, clipped to [0, 1].
+
+    Raises:
+        ValueError: If ``image`` is not an RGB image of shape ``[H, W, 3]``.
     """
     # Ensure input is RGB
     if len(image.shape) != 3 or image.shape[2] != 3:

@@ -188,8 +188,8 @@ class SmartCompilation:
 
         Args:
             func: Function to compile
-            args: Example arguments (for shape/dtype)
-            kwargs: Example keyword arguments
+            *args: Example arguments (for shape/dtype)
+            **kwargs: Example keyword arguments
 
         Returns:
             Compiled function ready for execution (lowered and compiled)
@@ -317,6 +317,9 @@ class DistributedUtils:
 
         Returns:
             jax.sharding.Mesh
+
+        Raises:
+            ValueError: If fewer devices are available than ``axis_dims`` requires.
         """
         devices = jax.devices()
         n_devices = len(devices)

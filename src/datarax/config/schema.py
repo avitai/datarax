@@ -119,7 +119,7 @@ class ConfigSchema:
         return validated
 
     @classmethod
-    def create(cls, config: dict[str, Any]) -> dict[str, Any]:
+    def create(cls, config: dict[str, Any]) -> dict[str, Any]:  # noqa: DOC502
         """Create a validated configuration dictionary from the schema.
 
         Args:

@@ -172,7 +172,7 @@ def remove_batch_dimension(batch: Batch) -> Element:
     return batch.get_element(0)
 
 
-def split_batch_for_devices(batch: Batch, num_splits: int) -> list[Batch]:
+def split_batch_for_devices(batch: Batch, num_splits: int) -> list[Batch]:  # noqa: DOC502
     """Split a batch into multiple smaller batches.
 
     Delegates to Batch.split_for_devices() for consistent implementation.

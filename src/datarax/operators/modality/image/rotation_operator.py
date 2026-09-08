@@ -104,7 +104,7 @@ class RotationOperator(ModalityOperator):
         ```
     """
 
-    def __init__(
+    def __init__(  # noqa: DOC502
         self,
         config: RotationOperatorConfig,
         *,

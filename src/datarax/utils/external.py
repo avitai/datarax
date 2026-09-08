@@ -190,6 +190,9 @@ class PureJaxAdapter(OperatorModule):
             config: Configuration (must have stochastic=False).
             fn: Pure function taking data dict and returning data dict.
             name: Optional module name.
+
+        Raises:
+            ValueError: If ``config.stochastic`` is set; the adapter wraps a pure function.
         """
         if config.stochastic:
             raise ValueError("PureJaxAdapter requires stochastic=False config")

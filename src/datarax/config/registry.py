@@ -149,6 +149,10 @@ def _initialize_nnx_variables(instance: nnx.Module, config: dict[str, Any]) -> N
     Args:
         instance: The NNX module instance.
         config: Configuration containing variable specifications.
+
+    Raises:
+        ValueError: If a variable path in ``config["variables"]`` names an attribute the
+            module does not have.
     """
     variables_config = config.get("variables", {})
     if not variables_config:
@@ -181,8 +185,12 @@ def _load_state_from_file(_instance: nnx.Module, config: dict[str, Any]) -> None
     """Load state from file if specified in configuration.
 
     Args:
-        instance: The NNX module instance.
+        _instance: The NNX module instance.
         config: Configuration potentially containing load_state_from path.
+
+    Raises:
+        NotImplementedError: If ``config`` names a ``load_state_from`` path; loading state
+            from a file is not implemented yet.
     """
     load_path = config.get("load_state_from")
     if load_path:
@@ -288,7 +296,7 @@ def list_registered_components(
     }
 
 
-def create_component_from_config(component_type: str, name: str, config: dict[str, Any]) -> Any:
+def create_component_from_config(component_type: str, name: str, config: dict[str, Any]) -> Any:  # noqa: DOC503
     """Create a component instance from configuration.
 
     Enhanced to properly handle NNX modules with RNG and Variable initialization.

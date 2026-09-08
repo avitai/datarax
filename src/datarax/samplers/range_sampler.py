@@ -111,8 +111,8 @@ class RangeSampler(SamplerModule):
             stop: The end of the range (exclusive).
             step: The step size between consecutive elements.
 
-        Returns:
-            An iterator that yields integers in the specified range.
+        Yields:
+            Integers in the specified range.
 
         Raises:
             ValueError: If step is 0, or if the range parameters would result
@@ -140,8 +140,8 @@ class RangeSampler(SamplerModule):
     def __iter__(self) -> Iterator[int]:
         """Generate the sequence of integers in the range.
 
-        Returns:
-            An iterator that yields integers in the specified range.
+        Yields:
+            Integers in the specified range.
         """
         current = self.start
         for _ in range(self._length):

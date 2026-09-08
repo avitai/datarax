@@ -235,6 +235,9 @@ class EagerSourceBase(DataSourceModule):
 
         Subclasses with non-dict storage should override.
 
+        Returns:
+            A dict mapping each key to the ``jax.ShapeDtypeStruct`` of one element.
+
         Raises:
             ValueError: If the source is empty.
         """

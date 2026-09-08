@@ -64,11 +64,6 @@ class DataraxModule(nnx.Module):
 
     All modules use config-based initialization with typed, validated config dataclasses.
 
-    Args:
-        config: DataraxModuleConfig (already validated via __post_init__)
-        rngs: Random number generators (optional)
-        name: Optional name for the module
-
     Attributes:
         config: Module configuration
         rngs: Random number generators
@@ -631,11 +626,6 @@ class CheckpointableIteratorModule[T_co](DataraxModule):
     Useful for data sources, data loaders, and any module that iterates
     through data and needs checkpoint/restore capability.
 
-    Args:
-        config: DataraxModuleConfig for the module
-        rngs: Optional Rngs object for randomness
-        name: Optional name for the module
-
     Attributes:
         epoch: Current epoch (nnx.Variable)
         position: Current position in iteration (nnx.Variable)
@@ -673,7 +663,7 @@ class CheckpointableIteratorModule[T_co](DataraxModule):
         """
         return self  # type: ignore[return-value]
 
-    def __next__(self) -> T_co:
+    def __next__(self) -> T_co:  # noqa: DOC503
         """Get the next item from the iterator.
 
         This method should be implemented by subclasses.

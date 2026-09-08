@@ -126,9 +126,9 @@ class RooflineAnalyzer:
 
         Args:
             func: Function to analyze
-            args: Arguments to the function
+            *args: Arguments to the function
             output_shape: Optional output shape for memory estimation
-            kwargs: Keyword arguments to the function
+            **kwargs: Keyword arguments to the function
 
         Returns:
             Analysis dict with performance metrics and recommendations
