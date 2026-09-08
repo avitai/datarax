@@ -276,6 +276,7 @@ See [Docker Guide](docs/contributing/docker.md) for full details.
 - [Examples](docs/examples/overview.md)
 - [Benchmarking](docs/benchmarks/index.md)
 - [Contributing](docs/contributing/contributing_guide.md)
+- [Releasing](RELEASING.md)
 - [Docker](docs/contributing/docker.md)
 
 ## License
