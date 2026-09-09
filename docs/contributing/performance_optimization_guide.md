@@ -65,17 +65,15 @@ vectorized_op = ElementOperator(config, fn=your_transform_fn)
 
 ### 3. Prefetching
 
-For data loading operations, use the device placement prefetching:
+For data loading operations, prefetch to the device on a background thread:
 
 ```python
-from datarax.distributed.device_placement import DevicePlacement
-
-placement = DevicePlacement()
+from datarax import prefetch_to_device
 
 # Create a prefetching iterator for overlapping data transfer with compute
-prefetched_iterator = placement.prefetch_to_device(
+prefetched_iterator = prefetch_to_device(
     data_iterator,
-    buffer_size=2  # Prefetch 2 batches ahead
+    size=2,  # Prefetch 2 batches ahead
 )
 ```
 
@@ -85,7 +83,7 @@ Build optimized pipelines by composing operators and using proper batch sizes:
 
 ```python
 from datarax.pipeline import Pipeline
-from datarax.distributed.device_placement import get_batch_size_recommendation
+from substrax.devices import get_batch_size_recommendation
 
 # Get hardware-optimized batch size
 rec = get_batch_size_recommendation()

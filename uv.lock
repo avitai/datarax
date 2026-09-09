@@ -1188,6 +1188,7 @@ dependencies = [
     { name = "protobuf" },
     { name = "psutil" },
     { name = "pyyaml" },
+    { name = "substrax" },
     { name = "tomli-w" },
 ]
 
@@ -1841,6 +1842,7 @@ requires-dist = [
     { name = "spdl", marker = "sys_platform == 'linux' and extra == 'all-macos'", specifier = ">=0.1" },
     { name = "spdl", marker = "sys_platform == 'linux' and extra == 'test'", specifier = ">=0.1" },
     { name = "spdl", marker = "extra == 'benchmark'", specifier = ">=0.1" },
+    { name = "substrax", specifier = ">=0.1.0" },
     { name = "tabulate", marker = "extra == 'benchmark'", specifier = ">=0.9" },
     { name = "tensorflow", marker = "extra == 'tfds'", specifier = ">=2.20.0,<2.21" },
     { name = "tensorflow-datasets", marker = "extra == 'all'", specifier = ">=4.9.2" },
@@ -7058,6 +7060,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a2/6d/90764092216fa560f6587f83bb70113a8ba510ba436c6476a2b47359057c/stevedore-5.7.0.tar.gz", hash = "sha256:31dd6fe6b3cbe921e21dcefabc9a5f1cf848cf538a1f27543721b8ca09948aa3", size = 516200, upload-time = "2026-02-20T13:27:06.765Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/69/06/36d260a695f383345ab5bbc3fd447249594ae2fa8dfd19c533d5ae23f46b/stevedore-5.7.0-py3-none-any.whl", hash = "sha256:fd25efbb32f1abb4c9e502f385f0018632baac11f9ee5d1b70f88cc5e22ad4ed", size = 54483, upload-time = "2026-02-20T13:27:05.561Z" },
+]
+
+[[package]]
+name = "substrax"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "flax" },
+    { name = "jax" },
+    { name = "jaxlib" },
+    { name = "numpy" },
+    { name = "orbax-checkpoint" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/30/bb/cf33bc10a454c5b2250a6e570f5ade4ba7ce6e62fd70328b249d795ffdb3/substrax-0.1.0.tar.gz", hash = "sha256:9b8ec6166c0202e11fd92339e7e2e9baed2b05b49aeb5fd8e45d3517be1b3c83", size = 37692, upload-time = "2026-09-08T23:59:38.803Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cc/33/6fcfa61962aa8e05e2a758ca41f09246c56c4b742372caa9fc6676cae6bd/substrax-0.1.0-py3-none-any.whl", hash = "sha256:fba35f0d6844f46c41f2cdfaa8f4d9eccff3e0477ab4cb8bae1b99e3c38640b1", size = 44830, upload-time = "2026-09-08T23:59:36.752Z" },
 ]
 
 [[package]]

@@ -262,13 +262,7 @@ nav:
           - Overview: control/index.md
           - prefetcher: control/prefetcher.md
       - DAG: dag/index.md
-      - Distributed:
-          - Overview: distributed/index.md
-          - data_parallel: distributed/data_parallel.md
-          - device_mesh: distributed/device_mesh.md
-          - device_placement: distributed/device_placement.md
-          - metrics: distributed/metrics.md
-          - sharding: distributed/sharding.md
+      - Distributed: distributed/index.md
       - Memory:
           - Overview: memory/index.md
           - shared_memory_manager: memory/shared_memory_manager.md

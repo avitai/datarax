@@ -10,7 +10,6 @@ layers =
     datarax.pipeline
     datarax.operators
     datarax.sources
-    datarax.distributed
     datarax.sharding
     datarax.control
     datarax.memory

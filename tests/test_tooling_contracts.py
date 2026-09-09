@@ -119,7 +119,6 @@ def test_importlinter_contract_exists_for_datarax_layers() -> None:
         "datarax.pipeline",
         "datarax.operators",
         "datarax.sources",
-        "datarax.distributed",
         "datarax.sharding",
         "datarax.control",
         "datarax.samplers",

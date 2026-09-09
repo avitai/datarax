@@ -1,10 +1,12 @@
 # Distributed Training
 
-This guide shows how to use Datarax's distributed training utilities for multi-device and multi-host training.
+This guide shows how to train on several devices or hosts with a datarax pipeline.
 
 ## Overview
 
-Datarax provides utilities for distributed training that leverage JAX's powerful distributed computing capabilities. These utilities allow for:
+The device, mesh and SPMD utilities live in
+[substrax](https://github.com/avitai/substrax), the infrastructure package datarax
+depends on. They allow for:
 
 - Data-parallel training across multiple devices
 - Model-parallel training for large models
@@ -13,9 +15,9 @@ Datarax provides utilities for distributed training that leverage JAX's powerful
 
 ## Distributed Components
 
-Datarax exposes distributed training helpers through three groups of APIs: a
-mesh manager, data-parallel functions, and metrics functions. All of them are
-importable from `datarax.distributed`.
+Three groups of APIs cover distributed training: a mesh manager
+(`substrax.mesh`), data-parallel functions and metrics functions
+(`substrax.spmd`).
 
 ### DeviceMeshManager
 
@@ -23,7 +25,7 @@ importable from `datarax.distributed`.
 static methods (no instance is required):
 
 ```python
-from datarax.distributed import DeviceMeshManager
+from substrax.mesh import DeviceMeshManager
 
 # Create a data-parallel mesh
 mesh = DeviceMeshManager.create_data_parallel_mesh()
@@ -48,12 +50,13 @@ The data-parallel functions build sharding specifications and place data and
 model state across devices:
 
 ```python
-from datarax.distributed import (
-    DeviceMeshManager,
+import flax.nnx as nnx
+from substrax.mesh import DeviceMeshManager
+from substrax.spmd import (
     create_data_parallel_sharding,
     place_batch_on_shards,
-    place_model_state_on_shards,
-    reduce_gradients_across_devices,
+    place_nnx_state_on_shards,
+    reduce_gradient_tree,
 )
 
 # Create a data-parallel mesh
@@ -65,11 +68,11 @@ sharding = create_data_parallel_sharding(mesh)
 # Shard a batch across devices
 sharded_batch = place_batch_on_shards(batch, sharding)
 
-# Shard model state across devices (replicated by default)
-sharded_state = place_model_state_on_shards(state, mesh)
+# Place the model's NNX state on the mesh (replicated by default)
+sharded_state = place_nnx_state_on_shards(nnx.state(model), mesh)
 
-# Reduce gradients across devices (only valid inside pmap/shard_map)
-reduced_grads = reduce_gradients_across_devices(gradients, reduce_type="mean")
+# Reduce a gradient tree across devices (inside nnx.jit with an active mesh)
+reduced_grads = reduce_gradient_tree(gradients, reduce_type="mean")
 ```
 
 ### Metrics functions
@@ -85,7 +88,7 @@ provided:
   `shard_map` context. They accept an `axis_name`.
 
 ```python
-from datarax.distributed import (
+from substrax.spmd import (
     collect_from_devices,
     reduce_custom,
     reduce_mean,
@@ -114,21 +117,17 @@ device_metrics = collect_from_devices(metrics)
 
 ## Example: Data-Parallel Training
 
-Here's a simple example of data-parallel training with Datarax's distributed
-components using the SPMD path (`nnx.jit` with an active mesh). Parameters are
-replicated across devices and the batch is sharded along the data axis; the XLA
-compiler handles gradient all-reduce automatically.
+Here's a simple example of data-parallel training using the SPMD path
+(`nnx.jit` with an active mesh). Parameters are replicated across devices and
+the batch is sharded along the data axis; the XLA compiler handles gradient
+all-reduce automatically.
 
 ```python
 import flax.nnx as nnx
 import jax
 import optax
-
-from datarax.distributed import (
-    DeviceMeshManager,
-    create_data_parallel_sharding,
-    place_batch_on_shards,
-)
+from substrax.mesh import DeviceMeshManager
+from substrax.spmd import create_data_parallel_sharding, place_batch_on_shards
 
 # Create the device mesh and data-parallel sharding
 mesh = DeviceMeshManager.create_data_parallel_mesh()
@@ -163,7 +162,8 @@ with jax.set_mesh(mesh):
 ```
 
 The training-step body above is also available as the `spmd_train_step`
-convenience function, which wraps `nnx.value_and_grad` and `optimizer.update`.
+convenience function in `substrax.spmd`, which wraps `nnx.value_and_grad` and
+`optimizer.update`.
 
 ## Using with pmap and collectives
 
@@ -174,9 +174,8 @@ assignment form so the `axis_name` matches the collective reductions:
 ```python
 import flax.nnx as nnx
 import jax
-
-from datarax.distributed import (
-    DeviceMeshManager,
+from substrax.mesh import DeviceMeshManager
+from substrax.spmd import (
     create_data_parallel_sharding,
     place_batch_on_shards,
     reduce_mean_collective,
@@ -207,9 +206,20 @@ sharded_batch = place_batch_on_shards(load_data_batch(), sharding)
 loss = train_step(model, optimizer, sharded_batch)
 ```
 
-## Recommended Practices
+## Feeding the devices
 
-When using Datarax's distributed training components:
+`prefetch_to_device` overlaps host-to-device transfer with compute and is
+datarax's own (`datarax.control.prefetcher`, also exported from the package
+root):
+
+```python
+from datarax import prefetch_to_device
+
+for batch in prefetch_to_device(pipeline, size=2):
+    loss = train_step(model, optimizer, batch)
+```
+
+## Recommended Practices
 
 1. **Scale batch size with device count** to maintain the effective batch size:
    ```python
@@ -251,10 +261,7 @@ For complete examples, see the [examples section](../examples/overview.md):
 
 ## See Also
 
-- [Distributed API Reference](../distributed/index.md) - API documentation
-- [Device Placement](../distributed/device_placement.md) - Device detection strategies
+- [Distributed](../distributed/index.md) - Where each name lives now
 - [Sharding](../sharding/index.md) - Data sharding utilities
 - [Performance Tools](../performance/index.md) - Optimization utilities
 - [NNX Best Practices](nnx_best_practices.md) - JAX/Flax optimization tips
-</content>
-</invoke>

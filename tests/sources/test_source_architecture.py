@@ -449,7 +449,7 @@ class TestTwoStagePrefetch:
     @pytest.mark.unit
     def test_prefetch_to_device_basic(self):
         """Basic test that prefetch_to_device works."""
-        from datarax.distributed.device_placement import prefetch_to_device
+        from datarax.control.prefetcher import prefetch_to_device
 
         # Create simple iterator
         def data_gen():
@@ -463,16 +463,15 @@ class TestTwoStagePrefetch:
         assert all(isinstance(item["x"], jax.Array) for item in items)
 
     @pytest.mark.unit
-    def test_prefetch_with_custom_cpu_buffer(self):
-        """Test prefetch with custom CPU buffer size."""
-        from datarax.distributed.device_placement import prefetch_to_device
+    def test_prefetch_with_deeper_buffer(self):
+        """A deeper device buffer yields every element once, in order."""
+        from datarax.control.prefetcher import prefetch_to_device
 
         def data_gen():
             for i in range(5):
                 yield {"x": jnp.array([i])}
 
-        # Custom CPU buffer size
-        prefetched = prefetch_to_device(data_gen(), size=2, cpu_buffer_size=4)
+        prefetched = prefetch_to_device(data_gen(), size=4)
 
         items = list(prefetched)
-        assert len(items) == 5
+        assert [int(item["x"][0]) for item in items] == list(range(5))

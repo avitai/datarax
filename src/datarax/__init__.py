@@ -6,6 +6,9 @@ Just-In-Time (JIT) compilation, automatic differentiation, and hardware
 acceleration capabilities.
 """
 
+# Host-to-device prefetching
+from datarax.control.prefetcher import prefetch_to_device
+
 # Core modules
 from datarax.core.batcher import BatcherModule
 from datarax.core.data_source import DataSourceModule
@@ -13,9 +16,6 @@ from datarax.core.operator import OperatorModule
 from datarax.core.sampler import SamplerModule
 from datarax.core.sharder import SharderModule
 from datarax.core.temporal import TimeSeriesSpec
-
-# Distributed utilities
-from datarax.distributed import prefetch_to_device
 
 # Pipeline (DAG composition + iteration + scan)
 from datarax.pipeline import Pipeline
@@ -54,7 +54,7 @@ __all__ = [
     "SharderModule",
     # Pipeline (linear stages + Pipeline.from_dag for branching)
     "Pipeline",
-    # Distributed utilities
+    # Host-to-device prefetching
     "prefetch_to_device",
     # Time-series contracts
     "TimeSeriesSpec",

@@ -38,6 +38,7 @@ dependencies = [
   "optax>=0.2.8",
   "orbax-checkpoint>=0.11.10",
   "protobuf>=5.28.0,<6", # TFDS 4.9.9 is warning-clean with TensorFlow 2.20 protobuf runtime
+  "substrax>=0.1.0",
   "tomli-w>=1",
   "numpy>=1.26",
   "psutil>=5.9.0",

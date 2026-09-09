@@ -9,10 +9,16 @@ from collections.abc import Iterator
 from typing import Any, cast
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from datarax.control.prefetcher import create_prefetch_stream, DevicePrefetcher, Prefetcher
+from datarax.control.prefetcher import (
+    create_prefetch_stream,
+    DevicePrefetcher,
+    prefetch_to_device,
+    Prefetcher,
+)
 
 
 class TestDevicePrefetcherBasic:
@@ -243,12 +249,52 @@ class TestPrefetchIteratorAdapters:
         import inspect
 
         import datarax.control.prefetcher as prefetcher_module
-        import datarax.distributed.device_placement as device_placement_module
 
         combined = "\n".join(
             [
                 inspect.getsource(prefetcher_module),
-                inspect.getsource(device_placement_module),
             ]
         )
         assert "20-50%" not in combined
+
+
+class TestPrefetchToDevice:
+    """Tests for the prefetch_to_device function."""
+
+    def test_prefetch_simple_iterator(self):
+        data_list = [jnp.ones((4, 8)) * i for i in range(5)]
+        device = jax.devices()[0]
+
+        prefetched = list(prefetch_to_device(iter(data_list), device=device))
+
+        assert len(prefetched) == 5
+        for i, item in enumerate(prefetched):
+            assert isinstance(item, jax.Array)
+            np.testing.assert_allclose(np.asarray(item), np.ones((4, 8)) * i)
+
+    def test_prefetch_empty_iterator(self):
+        prefetched = list(prefetch_to_device(iter([]), device=jax.devices()[0]))
+
+        assert prefetched == []
+
+    def test_prefetch_defaults_to_the_default_device(self):
+        prefetched = list(prefetch_to_device(iter([jnp.ones((2,))]), size=1))
+
+        assert len(prefetched) == 1
+        assert isinstance(prefetched[0], jax.Array)
+
+    def test_prefetch_delegates_to_the_thread_stream(self, monkeypatch):
+        calls = {}
+
+        def fake_prefetch_stream(iterator, *, mode, size, device=None):
+            calls.update({"iterator": iterator, "mode": mode, "size": size, "device": device})
+            return iter(["prefetched"])
+
+        monkeypatch.setattr(
+            "datarax.control.prefetcher.create_prefetch_stream", fake_prefetch_stream
+        )
+        iterator = iter([1])
+        device = jax.devices()[0]
+
+        assert list(prefetch_to_device(iterator, size=7, device=device)) == ["prefetched"]
+        assert calls == {"iterator": iterator, "mode": "thread", "size": 7, "device": device}

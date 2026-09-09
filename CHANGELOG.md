@@ -7,8 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Depends on `substrax>=0.1.0`, the shared infrastructure package below calibrax.
+- `prefetch_to_device` lives in `datarax.control.prefetcher` (still exported from the
+  package root) and no longer takes the `cpu_buffer_size` argument, which was accepted
+  and discarded.
+
 ### Removed
 
+- The `datarax.distributed` package. Its device placement, mesh, SPMD and metric
+  utilities moved to substrax, which datarax now depends on; the names are unchanged
+  and `docs/distributed/index.md` maps each to its new module: `DevicePlacement`,
+  `HardwareType`, `BatchSizeRecommendation`, `place_on_device`, `distribute_batch` and
+  `get_batch_size_recommendation` in `substrax.devices`; `DeviceMeshManager`,
+  `MeshRules`, `data_parallel_rules`, `fsdp_rules`, `create_named_sharding` and
+  `partition_spec_for_names` in `substrax.mesh`; `create_data_parallel_sharding`,
+  `place_batch_on_shards`, `place_nnx_state_on_shards`, `spmd_train_step`,
+  `reduce_gradient_tree`, the `reduce_*` and `*_collective` functions, `all_gather`
+  and `collect_from_devices` in `substrax.spmd`. `DevicePlacement.prefetch_to_device`
+  is the `prefetch_to_device` function. `data_parallel_train_step`,
+  `place_model_state_on_shards` and `reduce_gradients_across_devices` had no consumer
+  and are gone; `spmd_train_step`, `place_nnx_state_on_shards` and
+  `reduce_gradient_tree` cover them.
 - `datarax.performance.roofline` (`RooflineAnalyzer`, `HardwareSpecs`),
   `CompilationProfiler` and `DistributedUtils` from `datarax.performance.xla_optimization`.
   calibrax owns roofline analysis, compilation profiling and the hardware table

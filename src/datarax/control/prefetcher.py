@@ -406,3 +406,41 @@ class DevicePrefetcher:
             A closeable iterator to consume when ready.
         """
         return self.prefetch(iterator)
+
+
+def prefetch_to_device(
+    data_iterator: Iterator[Any],
+    size: int = 2,
+    device: object | None = None,
+) -> Iterator[Any]:
+    """Prefetch iterator outputs to device memory on a background thread.
+
+    Args:
+        data_iterator: Iterator yielding PyTrees of data (e.g., a pipeline).
+        size: Number of batches held on the device ahead of the consumer.
+        device: Target device. If None, arrays land on the default device.
+
+    Returns:
+        A closeable iterator that yields device-placed data.
+
+    Example:
+        ```python
+        from flax import nnx
+
+        from datarax import Pipeline, prefetch_to_device
+
+        pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
+
+        for batch in prefetch_to_device(pipeline, size=3):
+            # batch is already on device, ready for computation
+            train_step(batch)
+        ```
+
+    Note:
+        Numeric throughput claims must be backed by benchmark artifacts for
+        the target workload and hardware.
+    """
+    return cast(
+        Iterator[Any],
+        create_prefetch_stream(data_iterator, mode="thread", size=size, device=device),
+    )
