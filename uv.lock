@@ -706,7 +706,7 @@ wheels = [
 
 [[package]]
 name = "calibrax"
-version = "0.1.2"
+version = "0.1.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click", version = "8.1.8", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-7-datarax-automation'" },
@@ -717,11 +717,12 @@ dependencies = [
     { name = "jaxtyping" },
     { name = "numpy" },
     { name = "psutil" },
+    { name = "substrax" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/86/c8/3425dc8b942f98628337c23206a93186d4b55a44f0746c93d514862624de/calibrax-0.1.2.tar.gz", hash = "sha256:965ebfa0832c3971cfded5cce19522dfd2e3ae02a33bb3f1f2c8d947731641e8", size = 146455, upload-time = "2026-08-29T19:28:18.057Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/21/af/b046e863c85ae7278d0127ed5be5a31f916c67c762996358a4454165d9ea/calibrax-0.1.3.tar.gz", hash = "sha256:f6a13e1357ca765fcb616d66d339f56b597598245d5031c62ec021fa8b8dcfa3", size = 158631, upload-time = "2026-09-09T00:26:05.399Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/aa/fe/6ae8ef5535dda6e37d9581a0d2f43a29944cc5343d60cabb155238bc4a1d/calibrax-0.1.2-py3-none-any.whl", hash = "sha256:c9289c2aa93551d73aabc3af4ec507728c96e08ffe47703f79d5219c02a2ce4e", size = 184362, upload-time = "2026-08-29T19:28:16.115Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/7f/01b9f333d18b3333ba9c7ced26685ec6224cbdb8263a8193290f755280c6/calibrax-0.1.3-py3-none-any.whl", hash = "sha256:aa608497dfc10bdf94f2bd1e62fd4d8ddf4607c927b61fcdd7c1d07406c1cd30", size = 198156, upload-time = "2026-09-09T00:26:03.189Z" },
 ]
 
 [[package]]
@@ -1560,7 +1561,7 @@ requires-dist = [
     { name = "build", marker = "extra == 'all-macos'", specifier = ">=1.0.3" },
     { name = "build", marker = "extra == 'cuda-dev'", specifier = ">=1.0.3" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0.3" },
-    { name = "calibrax", specifier = ">=0.1.2" },
+    { name = "calibrax", specifier = ">=0.1.3" },
     { name = "click", marker = "extra == 'automation'", specifier = "<8.3" },
     { name = "click", marker = "extra == 'benchmark'", specifier = ">=8.1" },
     { name = "coverage", marker = "extra == 'all'", specifier = ">=7" },
@@ -1595,7 +1596,7 @@ requires-dist = [
     { name = "flake8-functions-names", marker = "extra == 'all-macos'", specifier = ">=0.4.0" },
     { name = "flake8-functions-names", marker = "extra == 'cuda-dev'", specifier = ">=0.4.0" },
     { name = "flake8-functions-names", marker = "extra == 'dev'", specifier = ">=0.4.0" },
-    { name = "flax", specifier = ">=0.12.1" },
+    { name = "flax", specifier = ">=0.12.9" },
     { name = "google-cloud-aiplatform", marker = "extra == 'all'", specifier = ">=1.38.0" },
     { name = "google-cloud-aiplatform", marker = "extra == 'all-cpu'", specifier = ">=1.38.0" },
     { name = "google-cloud-aiplatform", marker = "extra == 'all-macos'", specifier = ">=1.38.0" },
@@ -1639,10 +1640,10 @@ requires-dist = [
     { name = "ipykernel", marker = "extra == 'all-macos'", specifier = ">=6.29.5" },
     { name = "ipykernel", marker = "extra == 'cuda-dev'", specifier = ">=6.29.5" },
     { name = "ipykernel", marker = "extra == 'dev'", specifier = ">=6.29.5" },
-    { name = "jax", specifier = ">=0.6.1" },
-    { name = "jax", extras = ["cuda12"], marker = "sys_platform == 'linux' and extra == 'all'", specifier = ">=0.6.1" },
-    { name = "jax", extras = ["cuda12"], marker = "sys_platform == 'linux' and extra == 'cuda-dev'", specifier = ">=0.6.1" },
-    { name = "jax", extras = ["cuda12"], marker = "sys_platform == 'linux' and extra == 'cuda12'", specifier = ">=0.6.1" },
+    { name = "jax", specifier = ">=0.11.1" },
+    { name = "jax", extras = ["cuda12"], marker = "sys_platform == 'linux' and extra == 'all'", specifier = ">=0.11.1" },
+    { name = "jax", extras = ["cuda12"], marker = "sys_platform == 'linux' and extra == 'cuda-dev'", specifier = ">=0.11.1" },
+    { name = "jax", extras = ["cuda12"], marker = "sys_platform == 'linux' and extra == 'cuda12'", specifier = ">=0.11.1" },
     { name = "jax-dataloader", marker = "extra == 'benchmark'", specifier = ">=0.1" },
     { name = "jax-metal", marker = "sys_platform == 'darwin' and extra == 'all-macos'", specifier = ">=0.1.0" },
     { name = "jax-metal", marker = "sys_platform == 'darwin' and extra == 'metal'", specifier = ">=0.1.0" },
@@ -1703,10 +1704,10 @@ requires-dist = [
     { name = "mkdocstrings-python", marker = "extra == 'all-macos'", specifier = ">=1.1.2" },
     { name = "mkdocstrings-python", marker = "extra == 'docs'", specifier = ">=1.1.2" },
     { name = "mosaicml-streaming", marker = "extra == 'benchmark'", specifier = ">=0.7" },
-    { name = "numpy", specifier = ">=1.26" },
+    { name = "numpy", specifier = ">=2.1" },
     { name = "nvidia-dali-cuda120", marker = "sys_platform == 'linux' and extra == 'benchmark'", specifier = ">=1.0" },
     { name = "optax", specifier = ">=0.2.8" },
-    { name = "orbax-checkpoint", specifier = ">=0.11.10" },
+    { name = "orbax-checkpoint", specifier = ">=0.11.33" },
     { name = "pillow", marker = "extra == 'all'", specifier = ">=10.0.0" },
     { name = "pillow", marker = "extra == 'all-cpu'", specifier = ">=10.0.0" },
     { name = "pillow", marker = "extra == 'all-macos'", specifier = ">=10.0.0" },
@@ -1832,7 +1833,7 @@ requires-dist = [
     { name = "spdl", marker = "sys_platform == 'linux' and extra == 'all-macos'", specifier = ">=0.1" },
     { name = "spdl", marker = "sys_platform == 'linux' and extra == 'test'", specifier = ">=0.1" },
     { name = "spdl", marker = "extra == 'benchmark'", specifier = ">=0.1" },
-    { name = "substrax", specifier = ">=0.1.0" },
+    { name = "substrax", specifier = ">=0.1.2" },
     { name = "tabulate", marker = "extra == 'benchmark'", specifier = ">=0.9" },
     { name = "tensorflow", marker = "extra == 'tfds'", specifier = ">=2.20.0,<2.21" },
     { name = "tensorflow-datasets", marker = "extra == 'all'", specifier = ">=4.9.2" },
@@ -7031,7 +7032,7 @@ wheels = [
 
 [[package]]
 name = "substrax"
-version = "0.1.0"
+version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "flax" },
@@ -7040,9 +7041,9 @@ dependencies = [
     { name = "numpy" },
     { name = "orbax-checkpoint" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/30/bb/cf33bc10a454c5b2250a6e570f5ade4ba7ce6e62fd70328b249d795ffdb3/substrax-0.1.0.tar.gz", hash = "sha256:9b8ec6166c0202e11fd92339e7e2e9baed2b05b49aeb5fd8e45d3517be1b3c83", size = 37692, upload-time = "2026-09-08T23:59:38.803Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/82/35/3c52d3b96127345646eaf6bc3b9d9571ca40f9b73c86b0fd1e5fb71cea9b/substrax-0.1.2.tar.gz", hash = "sha256:0b549852dc1e1519ac72ebb5294aae03c2645f3e206e0f6673c4d1f0c7f2462e", size = 38050, upload-time = "2026-09-09T00:43:42.932Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cc/33/6fcfa61962aa8e05e2a758ca41f09246c56c4b742372caa9fc6676cae6bd/substrax-0.1.0-py3-none-any.whl", hash = "sha256:fba35f0d6844f46c41f2cdfaa8f4d9eccff3e0477ab4cb8bae1b99e3c38640b1", size = 44830, upload-time = "2026-09-08T23:59:36.752Z" },
+    { url = "https://files.pythonhosted.org/packages/43/36/a4fe47a84573d3796dca6f772edc60f1ad355f0dbfc91b7e8d6c34cf9655/substrax-0.1.2-py3-none-any.whl", hash = "sha256:3713dfa7b22a1b2fd6e661993b65b0d80705c36d700468002c544d5f69a80cb1", size = 45137, upload-time = "2026-09-09T00:43:41.12Z" },
 ]
 
 [[package]]

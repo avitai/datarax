@@ -24,23 +24,21 @@ classifiers = [
 ]
 dependencies = [
   "array-record>=0.4",
-  "calibrax>=0.1.2",
-  # 0.12.1 is where nnx Variable gained set_value / get_value, which
-  # pipeline/iteration.py calls at every yield boundary to sync the live module.
-  # On 0.12.0 flax forwards the attribute miss to the wrapped array and the iterator
-  # dies with "'jaxlib._jax.ArrayImpl' object has no attribute 'set_value'", so the
-  # old floor admitted exactly one release that cannot run this package.
-  "flax>=0.12.1",
-  "jax>=0.6.1",
+  "calibrax>=0.1.3",
+  # The flax, jax, orbax and numpy floors are what every release since 0.1.5 has
+  # resolved and run CI against. Below flax 0.12.1 nnx Variable lacks set_value /
+  # get_value, which pipeline/iteration.py calls at every yield boundary.
+  "flax>=0.12.9",
+  "jax>=0.11.1",
   "jaxtyping>=0.2.20",
   # 0.2.8 removed optax's module-level jax.config.update("jax_pmap_shmap_merge");
   # jax removed that option in 0.10, so older optax breaks flax's import outright.
   "optax>=0.2.8",
-  "orbax-checkpoint>=0.11.10",
+  "orbax-checkpoint>=0.11.33",
   "protobuf>=5.28.0,<6", # TFDS 4.9.9 is warning-clean with TensorFlow 2.20 protobuf runtime
-  "substrax>=0.1.0",
+  "substrax>=0.1.2",
   "tomli-w>=1",
-  "numpy>=1.26",
+  "numpy>=2.1",
   "psutil>=5.9.0",
   "PyYAML>=6",
   "grain>=0.2.18"
@@ -123,7 +121,7 @@ cuda12 = [
   # cuda13); JAX publishes no `gpu` extra, and this package also ships `metal`, which is a
   # GPU too. No jaxlib line: every jax cuda extra already requires jaxlib<=X,>=X at its own
   # version, so restating it here only creates a second place for the two to disagree.
-  "jax[cuda12]>=0.6.1; sys_platform == 'linux'"
+  "jax[cuda12]>=0.11.1; sys_platform == 'linux'"
 ]
 data = [
   # Data loading and processing dependencies

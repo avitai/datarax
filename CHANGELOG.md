@@ -9,7 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Depends on `substrax>=0.1.0`, the shared infrastructure package below calibrax.
+- Depends on `substrax>=0.1.2`, the shared infrastructure package below calibrax, and
+  `calibrax>=0.1.3`.
+- **Floors match what is tested.** `jax>=0.11.1`, `flax>=0.12.9`,
+  `orbax-checkpoint>=0.11.33` and `numpy>=2.1` (and `jax[cuda12]>=0.11.1` in the cuda12
+  extra) are what every lock since 0.1.5 has resolved and run CI against; the previous
+  floors promised compatibility nothing checked.
 - `prefetch_to_device` lives in `datarax.control.prefetcher` (still exported from the
   package root) and no longer takes the `cpu_buffer_size` argument, which was accepted
   and discarded.
