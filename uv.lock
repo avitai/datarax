@@ -1230,7 +1230,6 @@ all = [
     { name = "pre-commit" },
     { name = "pyarrow" },
     { name = "pydeps" },
-    { name = "pydoclint" },
     { name = "pylint" },
     { name = "pymdown-extensions" },
     { name = "pyright" },
@@ -1294,7 +1293,6 @@ all-cpu = [
     { name = "pre-commit" },
     { name = "pyarrow" },
     { name = "pydeps" },
-    { name = "pydoclint" },
     { name = "pylint" },
     { name = "pymdown-extensions" },
     { name = "pyright" },
@@ -1359,7 +1357,6 @@ all-macos = [
     { name = "pre-commit" },
     { name = "pyarrow" },
     { name = "pydeps" },
-    { name = "pydoclint" },
     { name = "pylint" },
     { name = "pymdown-extensions" },
     { name = "pyright" },
@@ -1431,7 +1428,6 @@ cuda-dev = [
     { name = "pip-audit" },
     { name = "pre-commit" },
     { name = "pydeps" },
-    { name = "pydoclint" },
     { name = "pylint" },
     { name = "pyright" },
     { name = "pytest" },
@@ -1484,7 +1480,6 @@ dev = [
     { name = "pip-audit" },
     { name = "pre-commit" },
     { name = "pydeps" },
-    { name = "pydoclint" },
     { name = "pylint" },
     { name = "pyright" },
     { name = "pytest" },
@@ -1738,11 +1733,6 @@ requires-dist = [
     { name = "pydeps", marker = "extra == 'all-macos'", specifier = ">=1.12.17" },
     { name = "pydeps", marker = "extra == 'cuda-dev'", specifier = ">=1.12.17" },
     { name = "pydeps", marker = "extra == 'dev'", specifier = ">=1.12.17" },
-    { name = "pydoclint", marker = "extra == 'all'", specifier = ">=0.5" },
-    { name = "pydoclint", marker = "extra == 'all-cpu'", specifier = ">=0.5" },
-    { name = "pydoclint", marker = "extra == 'all-macos'", specifier = ">=0.5" },
-    { name = "pydoclint", marker = "extra == 'cuda-dev'", specifier = ">=0.5" },
-    { name = "pydoclint", marker = "extra == 'dev'", specifier = ">=0.5" },
     { name = "pylint", marker = "extra == 'all'", specifier = ">=3.0" },
     { name = "pylint", marker = "extra == 'all-cpu'", specifier = ">=3.0" },
     { name = "pylint", marker = "extra == 'all-macos'", specifier = ">=3.0" },
@@ -2084,15 +2074,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e0/4d/f332313098c1de1b2d2ff91cf2674415cc7cddab2ca1b01ae29774bd5fdf/docstring_parser-0.18.0.tar.gz", hash = "sha256:292510982205c12b1248696f44959db3cdd1740237a968ea1e2e7a900eeb2015", size = 29341, upload-time = "2026-04-14T04:09:19.867Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/5f/ed01f9a3cdffbd5a008556fc7b2a08ddb1cc6ace7effa7340604b1d16699/docstring_parser-0.18.0-py3-none-any.whl", hash = "sha256:b3fcbed555c47d8479be0796ef7e19c2670d428d72e96da63f3a40122860374b", size = 22484, upload-time = "2026-04-14T04:09:18.638Z" },
-]
-
-[[package]]
-name = "docstring-parser-fork"
-version = "0.0.16"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/04/ce/48b17c6c24d0af112f73721a90fac245450e548b82b53169260720f60d07/docstring_parser_fork-0.0.16.tar.gz", hash = "sha256:9ecf861ceab8b87d1297a71001c15a1956ad02e87434ee6473643a5988094f7c", size = 36360, upload-time = "2026-07-03T07:27:46.668Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c1/69/427c34e61827818942b48ececd7c892b8f58ba4ce4cfc89ba9fd8dbe8a8d/docstring_parser_fork-0.0.16-py3-none-any.whl", hash = "sha256:c024c97af582d6acf85a14f0b332b3a2ab08626648d251c25e47191f33064386", size = 25253, upload-time = "2026-07-03T07:27:45.591Z" },
 ]
 
 [[package]]
@@ -5757,20 +5738,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/15/1b/b5dfc2ed2d5fc4e281b319562bae323c4dbb83dedc91f952e15a565a41c4/pydeps-3.0.6.tar.gz", hash = "sha256:7f8b12c9db90f5a2e009fe0ef75f2945bf698d6cc5fb064423a525823d423085", size = 54777, upload-time = "2026-04-23T10:34:50.012Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d6/93/f152a9d5c669efdce1c4e4328256eb2a61486134a2ff4dce8cb93bcd8e9d/pydeps-3.0.6-py3-none-any.whl", hash = "sha256:fc102c0ee2ad25a1596714c7175d8060fa138aaa87eafb308e820e88a709e5fc", size = 48106, upload-time = "2026-04-23T10:34:48.622Z" },
-]
-
-[[package]]
-name = "pydoclint"
-version = "0.9.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "click", version = "8.1.8", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-7-datarax-automation'" },
-    { name = "click", version = "8.5.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
-    { name = "docstring-parser-fork" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/4c/46/e5043a43a127627c4eb901f511787096fe2b50d27bdf5e36dcc21e502dec/pydoclint-0.9.1.tar.gz", hash = "sha256:eb699ecf95124b8d0b881d55cd53cccaa567172005d1223ec91a0259b51a5650", size = 206434, upload-time = "2026-07-03T08:17:08.879Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/bc/35/e2fa913ba2d692ccefbf2e21337fe3fd44200efd9a6ee1ba65766eff7d14/pydoclint-0.9.1-py3-none-any.whl", hash = "sha256:685b4a1c3c852045e4523b61d9c3f789672dfab3a454fe51a9e346c9e21dfcdb", size = 84702, upload-time = "2026-07-03T08:17:07.827Z" },
 ]
 
 [[package]]

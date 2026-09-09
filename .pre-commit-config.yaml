@@ -122,13 +122,6 @@ repos:
         pass_filenames: false
         files: ^src/datarax/.*\.py$
 
-      - id: pydoclint
-        name: pydoclint (docstring sections match signatures)
-        entry: uv run --no-sync pydoclint src/
-        language: system
-        pass_filenames: false
-        files: ^src/datarax/.*\.py$
-
       - id: xenon
         name: xenon (cyclomatic complexity gate — Rule 2 SRP/KISS)
         entry: uv run --no-sync xenon --max-absolute B --max-modules B --max-average A src/
@@ -148,6 +141,17 @@ repos:
         entry: uv run --no-sync vulture src/ --min-confidence 80
         language: system
         pass_filenames: false
+        files: ^src/datarax/.*\.py$
+
+  # Runs in its own environment: pydoclint installs docstring_parser_fork into the same
+  # package path as docstring_parser, which google-cloud-aiplatform in the dev extra needs,
+  # and one virtual environment cannot hold both.
+  - repo: https://github.com/jsh9/pydoclint
+    rev: 0.9.1
+    hooks:
+      - id: pydoclint
+        name: pydoclint (docstring sections match signatures)
+        args: ["--config=pyproject.toml"]
         files: ^src/datarax/.*\.py$
 
   # Workshop-inspired type checking with JAX ecosystem support

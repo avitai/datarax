@@ -155,7 +155,6 @@ dev = [
   "jupytext>=1.16.0",
   "pip-audit>=2.7",
   "pydeps>=1.12.17",
-  "pydoclint>=0.5",
   "pylint>=3.0",
   "pyright>=1.1.336",
   "pre-commit>=4.3.0",
