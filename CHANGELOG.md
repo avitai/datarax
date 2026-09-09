@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `scripts/derive_status.py` measures the benchmark scenario count, the peer-framework
+  count and every adapter's scenario coverage from the adapter registry and checks the
+  README and `benchmarks/COVERAGE_MATRIX.md` against them; CI runs it with `--check`.
+- A weekly `Upstream Compatibility` workflow runs the fast test subset against the newest
+  Grain and Orbax releases, ahead of the lock.
+
 ### Changed
 
 - Depends on `substrax>=0.1.2`, the shared infrastructure package below calibrax, and

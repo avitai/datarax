@@ -1,0 +1,53 @@
+# Runs the fast test subset against the newest Grain and Orbax releases, ahead of the
+# lock. A failure here is a heads-up that the next `uv lock --upgrade` will need work,
+# not a gate on merges: nothing depends on this job.
+name: Upstream Compatibility
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"  # Mondays, 06:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  latest-grain-orbax:
+    name: Latest grain and orbax-checkpoint
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      JAX_PLATFORMS: cpu
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-suffix: "upstream-compat"
+
+      - name: Install the locked environment
+        run: |
+          uv venv
+          uv sync --locked --extra dev --extra test --extra data
+
+      # `uv pip install` on top of the locked environment; every later step calls the
+      # environment's own binaries, because `uv run` would re-sync to the lock and undo
+      # the upgrade.
+      - name: Upgrade grain and orbax-checkpoint to their newest releases
+        run: |
+          uv pip install --upgrade grain orbax-checkpoint
+          .venv/bin/python -c "import grain, orbax.checkpoint as ocp; print('grain', grain.__version__); print('orbax-checkpoint', ocp.__version__)"
+
+      - name: Run the fast test subset
+        run: |
+          echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> "$GITHUB_ENV"
+          .venv/bin/pytest tests --no-integration --no-end-to-end -m "not slow" --device=cpu --no-cov -p no:cacheprovider
