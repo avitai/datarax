@@ -1,75 +1,65 @@
 # Checkpoint
 
-State persistence and recovery for pipeline checkpointing. Built on [Orbax](https://orbax.readthedocs.io/), Google's checkpointing library for JAX.
+State persistence and recovery for pipelines, iterators and modules. Built on
+[substrax](https://github.com/avitai/substrax)'s Orbax-backed checkpoint store.
 
 ## Components
 
 | Component | Purpose | Key Features |
 |-----------|---------|--------------|
-| **OrbaxCheckpointHandler** | Save/load state | PRNG keys, versioning, metadata |
 | **Checkpointable Protocol** | Interface | `get_state()`, `set_state()` |
-| **IteratorCheckpoint / PipelineCheckpoint** | Resumable iteration | Iterator + pipeline state |
+| **IteratorCheckpoint** | Save and restore any Checkpointable | Step addressing, retention, metadata, identity validation |
 
 !!! note "Key points"
 
-    - Orbax handles PyTree serialization automatically
-    - PRNG keys and strings are converted automatically
-    - Use `step` parameter for versioned checkpoints
-    - Always use context manager or call `close()`
+    - Every Datarax module, pipeline and iterator is Checkpointable
+    - Arrays, typed PRNG keys and plain-Python leaves (positions, seeds, reprs) all round-trip
+    - Checkpoints are addressed by integer step; Orbax keeps the most recent `max_to_keep`
+    - Use the context manager, or call `close()`, to release the store
 
 ## Quick Start
 
 ```python
-from datarax.checkpoint import OrbaxCheckpointHandler
+from datarax.checkpoint import IteratorCheckpoint
 
-# Save and restore with context manager
-with OrbaxCheckpointHandler() as handler:
-    # Save versioned checkpoint
-    handler.save_to_directory("/checkpoints", pipeline, step=1000)
+with IteratorCheckpoint("/checkpoints", max_to_keep=5) as checkpoint:
+    # Save the pipeline's state under step 1000
+    checkpoint.save(pipeline, step=1000)
 
-    # Restore latest
-    handler.restore("/checkpoints", pipeline)
+    # Restore the latest step into a freshly built pipeline
+    checkpoint.restore(pipeline)
 ```
 
 ## Modules
 
-- [handlers](handlers.md) - `OrbaxCheckpointHandler` for save/load operations
-- [iterators](iterators.md) - Checkpointable iterator implementations
+- [iterators](iterators.md) - `IteratorCheckpoint` and restore validation
 
 ## Training Loop Example
 
 ```python
-handler = OrbaxCheckpointHandler()
-
-for step, batch in enumerate(pipeline):
-    loss = train_step(batch)
-
-    # Save every 1000 steps
-    if step % 1000 == 0:
-        handler.save_to_directory("/checkpoints", pipeline, step=step, keep=5)
-
-# Cleanup
-handler.close()
+with IteratorCheckpoint("/checkpoints", max_to_keep=5) as checkpoint:
+    for step, batch in enumerate(pipeline):
+        loss = train_step(batch)
+        checkpoint.save_if_due(pipeline, step, interval=1000)
 ```
 
 ## Checkpoint Management
 
 ```python
 # List all checkpoints
-steps = handler.get_checkpoint_steps("/checkpoints")
+checkpoint.all_steps()
 # [1000, 2000, 3000, 4000, 5000]
 
 # Get latest step
-latest = handler.latest_step("/checkpoints")
+checkpoint.latest_step()
 # 5000
 
-# Restore specific step
-handler.restore("/checkpoints", pipeline, step=3000)
+# Restore a specific step
+checkpoint.restore(pipeline, step=3000)
 ```
 
 ## See Also
 
-- [Handlers Guide](handlers.md) - Complete handler documentation
 - [Checkpointing User Guide](../user_guide/checkpointing_guide.md)
 - [Checkpoint Tutorial](../examples/advanced/checkpointing/checkpoint-quickref.md)
 - [Pipeline](../dag/index.md) - Pipeline construction and checkpointing

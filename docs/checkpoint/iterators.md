@@ -1,11 +1,12 @@
 # Checkpoint Iterators
 
-Checkpoint iterator state for resumable iteration (`IteratorCheckpoint`, `PipelineCheckpoint`).
+Save and restore the state of any Checkpointable object, addressed by step
+(`IteratorCheckpoint`), and validate that a checkpoint matches the object it
+is restored into (`validate_restore_compatibility`).
 
 ## See Also
 
 - [Checkpoint Overview](index.md) - All checkpoint tools
-- [Handlers](handlers.md) - Save/restore handlers
 - [Checkpointing Guide](../user_guide/checkpointing_guide.md)
 - [Checkpoint Quick Reference](../examples/advanced/checkpointing/checkpoint-quickref.md)
 

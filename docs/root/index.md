@@ -115,5 +115,5 @@ def should_augment(x) -> bool:
 ## See Also
 
 - [Configuration System](../core/config.md) - Config dataclasses
-- [Checkpoint Handlers](../checkpoint/handlers.md) - Using Checkpointable protocol
+- [Checkpoint](../checkpoint/index.md) - Using the Checkpointable protocol
 - [Element Operator](../operators/element_operator.md) - Using Element type

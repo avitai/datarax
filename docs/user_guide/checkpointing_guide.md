@@ -1,114 +1,87 @@
 # Checkpointing Guide
 
-Datarax provides checkpointing capabilities through Orbax integration. This guide covers how to effectively checkpoint and restore pipeline state.
+Datarax checkpoints through [substrax](https://github.com/avitai/substrax)'s
+Orbax-backed checkpoint store. This guide covers how to checkpoint and restore
+pipeline, iterator and module state.
 
 ## Overview
 
 Datarax's checkpointing system is built on:
 
-1. **Orbax Integration**: Uses Orbax's `StandardCheckpointer` for PyTree serialization
-2. **DataraxModule State**: All Datarax modules inherit from NNX Module with state management
-3. **Checkpointable Iterators**: Iterator modules that can save and restore position
+1. **The `Checkpointable` protocol**: `get_state()` returns a state dictionary,
+   `set_state()` restores one. Every Datarax module, pipeline and iterator
+   implements it.
+2. **`IteratorCheckpoint`**: saves a Checkpointable's state under an integer step
+   and restores it into a freshly built object.
+3. **substrax's `OrbaxCheckpointStore`**: the storage layer. It carries arrays,
+   typed PRNG keys and plain-Python leaves (positions, seeds, sampler reprs)
+   alike, keeps the most recent `max_to_keep` steps, and writes a JSON metadata
+   sidecar beside each checkpoint.
 
-## Core Handler
-
-The main checkpointing handler is `OrbaxCheckpointHandler`:
-
-```python
-from datarax.checkpoint import OrbaxCheckpointHandler
-
-# Create handler
-handler = OrbaxCheckpointHandler()
-
-# Use as context manager for automatic cleanup
-with OrbaxCheckpointHandler() as handler:
-    handler.save_to_directory("./checkpoints", state, step=1)
-    restored = handler.restore("./checkpoints")
-```
-
-## Basic Checkpointing
-
-### Saving Checkpoints
+## Saving and Restoring
 
 ```python
-from datarax.checkpoint import OrbaxCheckpointHandler
-import jax.numpy as jnp
+from datarax.checkpoint import IteratorCheckpoint
 
-# Create handler
-handler = OrbaxCheckpointHandler()
+with IteratorCheckpoint("./checkpoints", max_to_keep=5) as checkpoint:
+    # Save the pipeline's state under a step
+    checkpoint.save(pipeline, step=100, metadata={"description": "Training checkpoint"})
 
-# State to checkpoint (dict or Checkpointable object)
-state = {
-    "model_weights": jnp.ones((10, 10)),
-    "position": 42,
-    "epoch": 5,
-}
+    # Restore the latest step, or a specific one, into a pipeline built the same way
+    checkpoint.restore(pipeline)
+    checkpoint.restore(pipeline, step=50)
 
-# Save checkpoint
-handler.save_to_directory(
-    directory="./checkpoints",
-    target=state,
-    step=100,      # Optional step number
-    keep=5,        # Keep last 5 checkpoints
-    overwrite=False,
-    metadata={"description": "Training checkpoint"},
-)
-
-# Don't forget to close when done
-handler.close()
+    # What is on disk
+    print(checkpoint.all_steps())   # [50, 100]
+    print(checkpoint.latest_step())  # 100
 ```
 
-### Restoring Checkpoints
+`restore` reads the saved state into the object's current state as a template,
+so the object must be built the way the saved one was: same structure, same
+seeds. A checkpoint whose identity fields (sampler and data-source reprs,
+shard and worker counts) differ from the object's is rejected with a
+`ValueError` before anything is applied.
+
+## Periodic Checkpoints in a Loop
 
 ```python
-from datarax.checkpoint import OrbaxCheckpointHandler
-
-with OrbaxCheckpointHandler() as handler:
-    # Restore latest checkpoint
-    state = handler.restore("./checkpoints")
-
-    # Restore specific step
-    state = handler.restore("./checkpoints", step=50)
-
-    # List available checkpoints
-    steps = handler.get_checkpoint_steps("./checkpoints")
-    print(f"Available steps: {steps}")
-
-    # Get latest step number
-    latest = handler.latest_step("./checkpoints")
-    print(f"Latest step: {latest}")
+with IteratorCheckpoint("./checkpoints", max_to_keep=3) as checkpoint:
+    for step, batch in enumerate(pipeline):
+        train_step(model, batch)
+        checkpoint.save_if_due(pipeline, step, interval=1000)
 ```
+
+`save_if_due` saves when `step` is a multiple of `interval` and returns the
+checkpoint path, or `None` when the step is not due.
 
 ## Checkpointing Datarax Modules
 
-Datarax modules implement the `get_state()` method for checkpointing:
+Every Datarax module is Checkpointable: `get_state()` is its NNX state as a
+pure dictionary and `set_state()` restores it strictly (the structure must
+match).
 
 ```python
-from datarax.pipeline import Pipeline
-from datarax.sources import MemorySource, MemorySourceConfig
-from datarax.checkpoint import OrbaxCheckpointHandler
 from flax import nnx
 
-# Create a pipeline
+from datarax.checkpoint import IteratorCheckpoint
+from datarax.pipeline import Pipeline
+from datarax.sources import MemorySource, MemorySourceConfig
+
 data = [{"value": i} for i in range(100)]
-config = MemorySourceConfig()
-source = MemorySource(config, data=data, rngs=nnx.Rngs(0))
+source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
 pipeline = Pipeline(source=source, stages=[], batch_size=10, rngs=nnx.Rngs(0))
 
-# Process some batches
-iterator = iter(pipeline)
-for i in range(3):
-    batch = next(iterator)
-    print(f"Batch {i}: processed")
+for step, batch in zip(range(3), pipeline):
+    pass
 
-# Checkpoint the pipeline state
-with OrbaxCheckpointHandler() as handler:
-    # Get state from all pipeline components
-    state = {
-        "pipeline_step": i,
-        # Add any custom state you need to track
-    }
-    handler.save_to_directory("./pipeline_ckpt", state, step=i)
+with IteratorCheckpoint("./pipeline_ckpt") as checkpoint:
+    checkpoint.save(pipeline, step=step)
+
+# Later: rebuild the pipeline the same way and restore
+fresh = Pipeline(source=MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0)),
+                 stages=[], batch_size=10, rngs=nnx.Rngs(0))
+with IteratorCheckpoint("./pipeline_ckpt") as checkpoint:
+    checkpoint.restore(fresh)
 ```
 
 ## Pipeline Iterator State
@@ -119,7 +92,7 @@ checkpointing surfaces:
 
 - **Module state**: the live pipeline module (position, RNG counts) is
   synced at every yield boundary, so checkpointing the pipeline with
-  ``nnx.split``/Orbax — inside the loop or after it — always captures
+  `IteratorCheckpoint` — inside the loop or after it — always captures
   exactly the batches already consumed.
 - **Iterator state**: a lighter, JSON-serializable alternative for data
   checkpoints that should live outside the module snapshot:
@@ -167,122 +140,87 @@ class MyCheckpointableIterator(CheckpointableIteratorModule):
         self.position[...] = jnp.array(pos + 1)
         return item
 
-    def checkpoint(self) -> dict:
-        """Return checkpoint state."""
-        return {
-            "position": int(self.position[...]),
-        }
-
-    def restore(self, checkpoint: dict) -> None:
-        """Restore from checkpoint."""
-        self.position[...] = jnp.array(checkpoint["position"])
-
 # Usage
 iterator = MyCheckpointableIterator([1, 2, 3, 4, 5], rngs=nnx.Rngs(0))
-
-# Consume some items
 print(next(iterator))  # 1
 print(next(iterator))  # 2
 
-# Checkpoint
-ckpt = iterator.checkpoint()
-print(f"Checkpoint: {ckpt}")
-
-# Continue
-print(next(iterator))  # 3
-
-# Restore to previous position
-iterator.restore(ckpt)
-print(next(iterator))  # 2 (resumed from checkpoint)
+with IteratorCheckpoint("./iterator_ckpt") as checkpoint:
+    checkpoint.save(iterator, step=2)
+    print(next(iterator))  # 3
+    checkpoint.restore(iterator, step=2)
+    print(next(iterator))  # 3 again: resumed from the checkpoint
 ```
 
 ## PRNG State Handling
 
-The handler automatically manages JAX PRNG keys:
+Typed PRNG keys are part of the state and round-trip as keys:
 
 ```python
 import jax
 
-# PRNGKeys are automatically serialized/deserialized
-state = {
-    "rng_key": jax.random.key(42),
-    "split_keys": jax.random.split(jax.random.key(0), 4),
-}
+class KeyedIterator:
+    def __init__(self):
+        self.key = jax.random.key(42)
+        self.position = 0
 
-with OrbaxCheckpointHandler() as handler:
-    handler.save_to_directory("./checkpoints", state, step=1)
-    restored = handler.restore("./checkpoints")
+    def get_state(self):
+        return {"key": self.key, "position": self.position}
 
-# Keys are properly restored
-print(type(restored["rng_key"]))  # jax.Array (key type)
+    def set_state(self, state):
+        self.key = state["key"]
+        self.position = state["position"]
+
+with IteratorCheckpoint("./checkpoints") as checkpoint:
+    checkpoint.save(KeyedIterator(), step=1)
+    restored = KeyedIterator()
+    checkpoint.restore(restored, step=1)
+    print(jax.random.key_data(restored.key))
 ```
 
-## Checkpoint Management
+## Retention
 
-### Multiple Checkpoints
-
-```python
-with OrbaxCheckpointHandler() as handler:
-    # Save multiple checkpoints with keep=N
-    for step in range(100):
-        if step % 10 == 0:
-            handler.save_to_directory(
-                "./checkpoints",
-                {"step": step},
-                step=step,
-                keep=5,  # Only keep last 5 checkpoints
-            )
-
-    # List all available checkpoints
-    checkpoints = handler.list_checkpoints("./checkpoints")
-    print(f"Checkpoints: {checkpoints}")
-```
-
-### Overwriting Checkpoints
+`max_to_keep` bounds how many steps stay on disk; Orbax deletes the oldest
+when a newer one is saved:
 
 ```python
-with OrbaxCheckpointHandler() as handler:
-    # First save
-    handler.save_to_directory("./checkpoints", {"v": 1}, step=1)
-
-    # Overwrite existing checkpoint
-    handler.save_to_directory("./checkpoints", {"v": 2}, step=1, overwrite=True)
+with IteratorCheckpoint("./checkpoints", max_to_keep=5) as checkpoint:
+    for step in range(0, 100, 10):
+        checkpoint.save(pipeline, step=step)
+    print(checkpoint.all_steps())  # [50, 60, 70, 80, 90]
 ```
 
 ## Best Practices
 
-1. **Use context manager**: Always use `with OrbaxCheckpointHandler() as handler:` to ensure proper cleanup
+1. **Use the context manager**: `with IteratorCheckpoint(...) as checkpoint:` releases
+   the store when the block ends
 
-2. **Checkpoint regularly**: Save checkpoints at regular intervals during training
+2. **Checkpoint regularly**: `save_if_due` at a fixed interval
 
-3. **Keep essential state**: Only checkpoint what's needed to resume - not derived values
+3. **Keep essential state**: only checkpoint what is needed to resume, not derived values
 
-4. **Use step numbers**: Use meaningful step numbers for easier checkpoint management
+4. **Use monotonic steps**: Orbax addresses checkpoints by step and keeps them in order
 
-5. **Set keep parameter**: Limit checkpoint count to avoid disk space issues
+5. **Set `max_to_keep`**: bound the checkpoint count to avoid filling the disk
 
-6. **Handle PRNG state**: The handler manages PRNG keys automatically
+6. **Rebuild before restoring**: restore into an object built the way the saved one was
 
 ## Error Handling
 
 ```python
-from datarax.checkpoint import OrbaxCheckpointHandler
-from pathlib import Path
+from datarax.checkpoint import IteratorCheckpoint
 
-with OrbaxCheckpointHandler() as handler:
-    checkpoint_dir = Path("./checkpoints")
-
-    # Check if checkpoints exist
-    if checkpoint_dir.exists():
-        steps = handler.get_checkpoint_steps(checkpoint_dir)
-        if steps:
-            state = handler.restore(checkpoint_dir)
-            print(f"Restored from step {handler.latest_step(checkpoint_dir)}")
-        else:
-            print("No checkpoints found")
+with IteratorCheckpoint("./checkpoints") as checkpoint:
+    if checkpoint.has_checkpoint():
+        checkpoint.restore(pipeline)
+        print(f"Restored from step {checkpoint.latest_step()}")
     else:
-        print("Checkpoint directory doesn't exist")
+        print("No checkpoints found")
 ```
+
+`restore` raises `ValueError` when the directory holds no checkpoint at the
+requested step, or when the checkpoint's identity fields do not match the
+object it is being restored into.
 
 ## See Also
 

@@ -16,7 +16,7 @@ and need to continue from where they left off.
 ## What You'll Learn
 
 1. Create a `CheckpointableIterator` with proper state management
-2. Use `PipelineCheckpoint` to save/restore state
+2. Use `IteratorCheckpoint` to save/restore state
 3. Implement resumable data processing loops
 4. Handle interrupted jobs gracefully
 
@@ -24,8 +24,8 @@ and need to continue from where they left off.
 
 | PyTorch | Datarax |
 |---------|---------|
-| `torch.save(state_dict, path)` | `checkpointer.save_to_directory(pipeline, step=N)` |
-| `model.load_state_dict(torch.load(path))` | `checkpointer.restore_latest(pipeline)` |
+| `torch.save(state_dict, path)` | `checkpoint.save(pipeline, step=N)` |
+| `model.load_state_dict(torch.load(path))` | `checkpoint.restore(pipeline)` |
 | Custom `state_dict()` methods | `get_state()` / `set_state()` protocol |
 | DataLoader `sampler.set_epoch()` | State includes epoch, position, RNG |
 
@@ -35,10 +35,10 @@ and need to continue from where they left off.
 
 | TensorFlow | Datarax |
 |------------|---------|
-| `tf.train.Checkpoint` | `PipelineCheckpoint` |
-| `ckpt.save(path)` | `checkpointer.save_to_directory(pipeline, step=N)` |
-| `ckpt.restore(latest)` | `checkpointer.restore_latest(pipeline)` |
-| `tf.train.CheckpointManager` | Built-in `keep` parameter |
+| `tf.train.Checkpoint` | `IteratorCheckpoint` |
+| `ckpt.save(path)` | `checkpoint.save(pipeline, step=N)` |
+| `ckpt.restore(latest)` | `checkpoint.restore(pipeline)` |
+| `tf.train.CheckpointManager` | Built-in `max_to_keep` parameter |
 
 ## Files
 
@@ -115,10 +115,10 @@ class SimplePipeline(CheckpointableIterator[dict[str, jax.Array]]):
 ### Step 2: Set Up Checkpointing
 
 ```python
-from datarax.checkpoint import PipelineCheckpoint
+from datarax.checkpoint import IteratorCheckpoint
 
 checkpoint_dir = "/path/to/checkpoints"
-checkpointer = PipelineCheckpoint(checkpoint_dir)
+checkpoint = IteratorCheckpoint(checkpoint_dir, max_to_keep=2)  # Keep last 2 checkpoints
 print(f"Checkpoint directory: {checkpoint_dir}")
 ```
 
@@ -136,14 +136,7 @@ for epoch in range(2):
         step += 1
         # Process batch...
 
-        if step % 3 == 0:  # Save every 3 steps
-            checkpointer.save_to_directory(
-                pipeline,
-                step=step,
-                metadata={"epoch": epoch},
-                keep=2,  # Keep last 2 checkpoints
-                overwrite=True,
-            )
+        if checkpoint.save_if_due(pipeline, step, interval=3, metadata={"epoch": epoch}):
             print(f"Saved checkpoint at step {step}")
 ```
 
@@ -162,7 +155,7 @@ new_pipeline = SimplePipeline(data)
 print(f"Before restore: position={new_pipeline.position}")
 
 # Restore from latest checkpoint
-checkpointer.restore_latest(new_pipeline)
+checkpoint.restore(new_pipeline)
 print(f"After restore: position={new_pipeline.position}")
 
 # Continue processing from checkpoint
@@ -206,4 +199,4 @@ After restore: position=40
 
 - [Resumable Training Guide](resumable-training-guide.md) - Complete training with checkpointing
 - [Distributed Checkpointing](../distributed/sharding-guide.md) - Multi-device checkpoints
-- [API Reference: Checkpoint](../../../checkpoint/handlers.md) - Complete API
+- [API Reference: Checkpoint](../../../checkpoint/iterators.md) - Complete API

@@ -1,29 +1,34 @@
-"""Iterator checkpoint functionality for Datarax.
+"""Step-addressed checkpoints for objects that expose ``get_state`` / ``set_state``.
 
-This module provides checkpoint handlers for data iterators and streams,
-supporting save and restore of iterator state for resumable iteration.
+Data iterators, pipelines and Datarax modules all implement the
+:class:`~datarax.typing.Checkpointable` protocol. :class:`IteratorCheckpoint`
+persists such a state dictionary under an integer step with substrax's
+:class:`~substrax.checkpoint.OrbaxCheckpointStore`, which carries arrays, typed
+PRNG keys and plain-Python leaves (positions, seeds, sampler reprs) alike, and
+restores it back into a freshly built object after checking that the object was
+built the same way as the one that was saved.
 """
 
-import logging
-from pathlib import Path
-from typing import Any, TypeVar
+from __future__ import annotations
 
-from datarax.checkpoint.handlers import OrbaxCheckpointHandler
-from datarax.typing import CheckpointableIterator
+import logging
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any, Self
+
+from substrax.checkpoint import CheckpointStore, OrbaxCheckpointStore
+
+from datarax.typing import Checkpointable
 
 
 logger = logging.getLogger(__name__)
-
-
-# Define covariant type parameter for iterators
-T_co = TypeVar("T_co", covariant=True)
 
 # Grain-style identity fields that must stay compatible across a checkpoint
 # restore. Following Grain's checkpoint validation: sampler / data-source
 # representations must match exactly, ``shard_count`` must match (``shard_index``
 # may differ), and ``worker_count`` must match. Only fields present in BOTH the
-# saved checkpoint and the current iterator state are compared, so iterators
-# that do not expose identity fields are simply not validated (no regression).
+# saved checkpoint and the current state are compared, so objects that do not
+# expose identity fields are simply not validated.
 _RESTORE_IDENTITY_FIELDS: tuple[str, ...] = (
     "sampler_repr",
     "data_source_repr",
@@ -33,20 +38,20 @@ _RESTORE_IDENTITY_FIELDS: tuple[str, ...] = (
 
 
 def validate_restore_compatibility(
-    current_state: dict[str, Any],
-    saved_state: dict[str, Any],
+    current_state: Mapping[str, Any],
+    saved_state: Mapping[str, Any],
 ) -> None:
-    """Raise if a checkpoint's identity fields are incompatible with the iterator.
+    """Raise if a checkpoint's identity fields are incompatible with the live object.
 
     Compares the Grain-style identity fields in ``_RESTORE_IDENTITY_FIELDS`` that
-    appear in both ``current_state`` (from the live iterator) and ``saved_state``
+    appear in both ``current_state`` (from the live object) and ``saved_state``
     (from the checkpoint). A mismatch means the checkpoint was produced with a
     different sampler / data-source configuration or a different shard/worker
     topology, which would silently corrupt resumed iteration order or the
     per-host data distribution.
 
     Args:
-        current_state: ``get_state()`` of the iterator being restored into.
+        current_state: ``get_state()`` of the object being restored into.
         saved_state: The state dict loaded from the checkpoint.
 
     Raises:
@@ -72,196 +77,172 @@ def validate_restore_compatibility(
         )
 
 
-class IteratorCheckpoint:
-    """Handler for checkpointing iterators.
+def _state_of(target: Checkpointable) -> dict[str, Any]:
+    """Return ``target``'s state dictionary, rejecting anything that is not a dict.
 
-    This class provides methods for saving and restoring the state of iterators
-    that implement the CheckpointableIterator interface.
+    Args:
+        target: The object being checkpointed.
+
+    Returns:
+        The state ``target.get_state()`` produced.
+
+    Raises:
+        TypeError: If ``get_state`` returned something other than a dict.
+        ValueError: If the dict is empty; Orbax cannot write an empty tree.
+    """
+    state = target.get_state()
+    if not isinstance(state, dict):
+        raise TypeError(
+            f"{type(target).__name__}.get_state() must return a dict, got {type(state).__name__}"
+        )
+    if not state:
+        raise ValueError(f"{type(target).__name__}.get_state() returned nothing to checkpoint")
+    return state
+
+
+class IteratorCheckpoint:
+    """Save and restore ``Checkpointable`` state under a directory, addressed by step.
+
+    Each ``save`` writes one checkpoint for an integer step; Orbax keeps the most
+    recent ``max_to_keep`` of them. ``restore`` reads a step (the latest by
+    default) back into an object built the same way as the one that was saved.
+    The store is injectable so the same class runs over any
+    :class:`~substrax.checkpoint.CheckpointStore`.
+
+    Example:
+        ```python
+        checkpoint = IteratorCheckpoint(run_dir / "pipeline", max_to_keep=3)
+        for step, batch in enumerate(pipeline):
+            train_step(batch)
+            checkpoint.save_if_due(pipeline, step, interval=1000)
+
+        fresh = build_pipeline()
+        checkpoint.restore(fresh)  # the latest step
+        ```
     """
 
     def __init__(
         self,
         base_dir: str | Path,
-        handler: OrbaxCheckpointHandler | None = None,
-        async_checkpointing: bool = False,
+        *,
+        max_to_keep: int = 5,
+        store: CheckpointStore | None = None,
     ) -> None:
-        """Initialize the iterator checkpoint handler.
+        """Open (creating if needed) the checkpoint directory.
 
         Args:
-            base_dir: Base directory to store checkpoints in.
-            handler: Optional custom checkpoint handler to use. If None,
-                a default OrbaxCheckpointHandler will be created.
-            async_checkpointing: Whether to enable asynchronous checkpointing.
+            base_dir: Directory the checkpoints live under.
+            max_to_keep: How many of the most recent steps the default store retains.
+            store: A store to use instead of an Orbax store over ``base_dir``.
         """
         self.base_dir = Path(base_dir)
-        self.handler = handler or OrbaxCheckpointHandler(async_checkpointing=async_checkpointing)
-
-    def save_to_directory(
-        self,
-        iterator: CheckpointableIterator[T_co],
-        step: int | None = None,
-        keep: int = 1,
-        overwrite: bool = False,
-        metadata: dict[str, int | str | float | bool] | None = None,
-    ) -> str:
-        """Save the state of an iterator to the checkpoint directory.
-
-        Args:
-            iterator: The iterator to checkpoint.
-            step: Optional step number for versioning.
-            keep: Number of checkpoints to keep.
-            overwrite: Whether to overwrite existing checkpoints.
-            metadata: Optional metadata to save with checkpoint.
-
-        Returns:
-            Path to the saved checkpoint.
-
-        Raises:
-            ValueError: If the iterator does not implement get_state.
-        """
-        if not hasattr(iterator, "get_state") or not callable(iterator.get_state):
-            raise ValueError("Iterator does not implement get_state method")
-        state_dict = iterator.get_state()
-        if not isinstance(state_dict, dict):
-            raise ValueError(
-                f"Iterator get_state() must return dict, got {type(state_dict).__name__}"
-            )
-
-        return self.handler.save_to_directory(
-            self.base_dir,
-            state_dict,
-            step=step,
-            keep=keep,
-            overwrite=overwrite,
-            metadata=metadata,
+        self.store: CheckpointStore = (
+            OrbaxCheckpointStore(self.base_dir, max_to_keep=max_to_keep) if store is None else store
         )
 
-    def restore(
+    def __enter__(self) -> Self:
+        """Enter a context that closes the store on exit.
+
+        Returns:
+            This checkpoint.
+        """
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        """Close the store."""
+        self.close()
+
+    def close(self) -> None:
+        """Release the store's resources."""
+        self.store.close()
+
+    def save(
         self,
-        iterator: CheckpointableIterator[T_co],
-        step: int | None = None,
-    ) -> CheckpointableIterator[T_co]:
-        """Restore the state of an iterator from a checkpoint.
-
-        Args:
-            iterator: The iterator to restore state into.
-            step: Optional step number to restore from. If None, uses latest.
-
-        Returns:
-            The restored iterator.
-
-        Raises:
-            ValueError: If the iterator does not implement set_state or if the
-                checkpoint cannot be restored.
-        """
-        if not hasattr(iterator, "set_state") or not callable(iterator.set_state):
-            msg = f"Iterator of type {type(iterator)} does not implement "
-            msg += "set_state"
-            raise ValueError(msg)
-
-        if not hasattr(iterator, "get_state") or not callable(iterator.get_state):
-            raise ValueError("Iterator does not implement get_state method")
-
-        # Load the saved state without mutating the iterator, validate that its
-        # Grain-style identity fields (sampler/data-source repr, shard/worker
-        # counts) are compatible with the live iterator, then apply. For a
-        # Checkpointable target the handler's own apply path is exactly
-        # ``iterator.set_state(state)``, so this is behavior-preserving.
-        saved_state = self.handler.restore(self.base_dir, step=step, target=None)
-        if not isinstance(saved_state, dict):
-            raise ValueError(
-                "Iterator restore failed: checkpoint did not contain a state dict "
-                f"(got {type(saved_state).__name__})"
-            )
-        validate_restore_compatibility(iterator.get_state(), saved_state)
-        iterator.set_state(saved_state)
-        return iterator
-
-    def restore_latest(
-        self,
-        iterator: CheckpointableIterator[T_co],
-    ) -> CheckpointableIterator[T_co]:
-        """Restore from the latest available checkpoint.
-
-        Args:
-            iterator: The iterator to restore state into.
-
-        Returns:
-            The restored iterator.
-
-        Raises:
-            ValueError: If no checkpoints are found or restoration fails.
-        """
-        latest_step = self.get_latest_step()
-        if latest_step is None:
-            raise ValueError(f"No checkpoints found in {self.base_dir}")
-        return self.restore(iterator, step=latest_step)
-
-    def get_latest_step(self) -> int | None:
-        """Get the latest checkpoint step.
-
-        Returns:
-            The latest checkpoint step, or None if no checkpoints are found.
-        """
-        return self.handler.latest_step(self.base_dir)
-
-    def list_checkpoints(self) -> dict[int, str]:
-        """List all available checkpoints.
-
-        Returns:
-            A dictionary mapping step numbers to checkpoint paths.
-        """
-        return self.handler.list_checkpoints(self.base_dir)
-
-    def has_checkpoint(self) -> bool:
-        """Check if any checkpoints exist.
-
-        Returns:
-            True if at least one checkpoint exists, False otherwise.
-        """
-        return self.get_latest_step() is not None
-
-
-class PipelineCheckpoint(IteratorCheckpoint):
-    """Specialized checkpoint handler for Pipeline objects.
-
-    This class extends IteratorCheckpoint with Pipeline-specific
-    functionality like conditional saving based on step intervals.
-    """
-
-    def save_to_step(
-        self,
-        data_stream: CheckpointableIterator[T_co],
+        target: Checkpointable,
         step: int,
-        interval: int = 1000,
-        keep: int = 5,
-        overwrite: bool = False,
-        metadata: dict[str, int | str | float | bool] | None = None,
-    ) -> str | None:
-        """Save a checkpoint conditionally based on the step.
-
-        Only saves when the step is a multiple of the interval.
+        *,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> str:
+        """Save ``target``'s state under ``step``.
 
         Args:
-            data_stream: The data stream to checkpoint.
-            step: Current step number.
-            interval: Step interval for saving.
-            keep: Number of checkpoints to keep.
-            overwrite: Whether to overwrite existing checkpoints.
-            metadata: Optional metadata to store with the checkpoint.
+            target: The object whose ``get_state()`` is written.
+            step: Non-negative step the checkpoint is addressed by.
+            metadata: JSON-serialisable values recorded beside the state.
 
         Returns:
-            Path to the saved checkpoint or None if not saved.
+            The path of the saved checkpoint.
         """
-        # Only save at specified intervals
+        state = _state_of(target)
+        path = self.store.save(
+            state, step, additional_metadata=dict(metadata) if metadata else None
+        )
+        logger.info("Saved %s state at step %d to %s", type(target).__name__, step, path)
+        return path
+
+    def save_if_due(
+        self,
+        target: Checkpointable,
+        step: int,
+        *,
+        interval: int,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> str | None:
+        """Save when ``step`` is a multiple of ``interval``.
+
+        Args:
+            target: The object whose ``get_state()`` is written.
+            step: The current step.
+            interval: Steps between checkpoints; must be positive.
+            metadata: JSON-serialisable values recorded beside the state.
+
+        Returns:
+            The saved checkpoint's path, or ``None`` when the step is not due.
+
+        Raises:
+            ValueError: If ``interval`` is not positive.
+        """
+        if interval <= 0:
+            raise ValueError(f"interval must be positive, got {interval}")
         if step % interval != 0:
             return None
+        return self.save(target, step, metadata=metadata)
 
-        # Save checkpoint using the inherited method
-        return self.save_to_directory(
-            data_stream,
-            step=step,
-            keep=keep,
-            overwrite=overwrite,
-            metadata=metadata,
-        )
+    def restore(self, target: Checkpointable, *, step: int | None = None) -> None:
+        """Restore a saved state into ``target``.
+
+        The checkpoint describes its own tree and is read back as saved; the
+        identity fields of ``target`` (sampler and data-source reprs, shard and
+        worker counts) must match the checkpoint's, and ``target.set_state``
+        decides whether the structure fits.
+
+        Args:
+            target: The object whose ``set_state`` receives the saved state.
+            step: The step to restore; the latest when ``None``.
+
+        Raises:
+            ValueError: If the directory holds no checkpoint at ``step`` (or none at
+                all), or the checkpoint's identity fields differ from ``target``'s.
+        """
+        if step is None:
+            step = self.latest_step()
+            if step is None:
+                raise ValueError(f"No checkpoints found in {self.base_dir}")
+        restored, _ = self.store.restore(step=step, return_original_on_missing=False)
+        if not isinstance(restored, dict):
+            raise ValueError(f"No checkpoint at step {step} in {self.base_dir}")
+        validate_restore_compatibility(target.get_state(), restored)
+        target.set_state(restored)
+        logger.info("Restored %s state from step %d", type(target).__name__, step)
+
+    def latest_step(self) -> int | None:
+        """Return the most recent saved step, or ``None`` without checkpoints."""
+        return self.store.latest_step()
+
+    def all_steps(self) -> list[int]:
+        """Return every saved step, oldest first."""
+        return sorted(self.store.list_steps())
+
+    def has_checkpoint(self) -> bool:
+        """Return whether at least one step has been saved."""
+        return self.latest_step() is not None

@@ -496,17 +496,37 @@ class DataraxModule(nnx.Module):
     def _restore_state_tree(
         self, target: Any, saved: Any, path: tuple[str | int, ...] = ()
     ) -> None:
-        """Restore validated state into an NNX object tree."""
+        """Restore validated state into an NNX object tree.
+
+        A saved dict is applied through the target's attributes, which covers
+        ``nnx.Module`` as well as ``nnx.Rngs`` and its streams (neither is a
+        Module, and both carry Variables that must resume with the module).
+
+        Args:
+            target: The node receiving the state: a Variable, an object with
+                children, or a sequence.
+            saved: The saved state for that node.
+            path: Path to ``target`` from the tree root, for error messages.
+
+        Raises:
+            ValueError: If ``saved`` has a shape no target node can receive.
+        """
         if isinstance(target, nnx.Variable):
             target.set_value(saved)
             return
 
-        if isinstance(target, nnx.Module):
+        if isinstance(saved, dict):
             self._restore_module_state(target, saved, path)
             return
 
         if isinstance(target, list | tuple):
             self._restore_sequence_state(target, saved, path)
+            return
+
+        raise ValueError(
+            f"Cannot restore state at {self._format_path(path)}: "
+            f"{type(saved).__name__} into {type(target).__name__}"
+        )
 
     @staticmethod
     def _format_path(path: tuple[str | int, ...]) -> str:
@@ -514,21 +534,13 @@ class DataraxModule(nnx.Module):
         return ".".join(str(p) for p in path) if path else "<root>"
 
     def _restore_module_state(self, target: Any, saved: Any, path: tuple[str | int, ...]) -> None:
-        """Restore a saved dict of child state into an ``nnx.Module`` target.
+        """Restore a saved dict of child state through the target's attributes.
 
         Args:
-            target: Module whose children are being restored.
-            saved: Saved state; must be a dict keyed by child name.
+            target: Module, ``nnx.Rngs`` or stream whose children are being restored.
+            saved: Saved state, a dict keyed by child name.
             path: Path to ``target`` from the tree root, for error messages.
-
-        Raises:
-            ValueError: If ``saved`` is not a dict.
         """
-        if not isinstance(saved, dict):
-            raise ValueError(
-                f"Invalid state node at {self._format_path(path)}: "
-                f"expected dict, got {type(saved).__name__}"
-            )
         for key, value in saved.items():
             child = self._resolve_state_child(target, key, path)
             self._restore_state_tree(child, value, (*path, key))

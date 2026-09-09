@@ -1,20 +1,15 @@
-"""Checkpoint functionality for Datarax.
+"""Checkpointing of Datarax pipelines, iterators and modules.
 
-This module provides utilities for checkpointing Datarax data pipelines,
-particularly iterators and data streams.
+Any object that implements the :class:`~datarax.typing.Checkpointable` protocol
+(``get_state`` / ``set_state``) is saved and restored through
+:class:`IteratorCheckpoint`, which stores each state under an integer step with
+substrax's Orbax-backed checkpoint store.
 """
 
-from datarax.checkpoint.handlers import OrbaxCheckpointHandler
-from datarax.checkpoint.iterators import (
-    IteratorCheckpoint,
-    PipelineCheckpoint,
-)
+from datarax.checkpoint.iterators import IteratorCheckpoint, validate_restore_compatibility
 
 
 __all__ = [
-    # Checkpoint handlers
-    "OrbaxCheckpointHandler",
-    # Iterator checkpointing
     "IteratorCheckpoint",
-    "PipelineCheckpoint",
+    "validate_restore_compatibility",
 ]

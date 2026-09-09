@@ -1,14 +1,12 @@
 """Tests for checkpointable module functionality."""
 
-import tempfile
-import warnings
 from pathlib import Path
 
 import flax.nnx as nnx
 import jax.numpy as jnp
 import pytest
 
-from datarax.checkpoint.handlers import OrbaxCheckpointHandler
+from datarax.checkpoint import IteratorCheckpoint
 from datarax.core.config import DataraxModuleConfig
 from datarax.core.module import CheckpointableIteratorModule, DataraxModule
 
@@ -224,148 +222,80 @@ class TestCheckpointableIteratorModule:
         assert "current" in state_dict
 
 
-class TestIntegrationWithOrbax:
-    """Integration tests with the existing Orbax checkpoint system."""
+class TestCheckpointRoundTrip:
+    """Modules and iterator modules round-trip through IteratorCheckpoint."""
 
-    def test_module_with_orbax_checkpoint_handler(self):
-        """Test that modules work with the existing OrbaxCheckpointHandler."""
-        from datarax.checkpoint.handlers import OrbaxCheckpointHandler
-
-        rngs = nnx.Rngs(42)
-        module = SimpleModule(10, rngs=rngs)
-
-        # Change module state
-        x = jnp.ones((5, 10))
-        module(x)
+    def test_module_state_is_restored_into_a_fresh_module(self, tmp_path):
+        module = SimpleModule(10, rngs=nnx.Rngs(42))
+        module(jnp.ones((5, 10)))
         original_counter = module.counter.get_value()
 
-        # Save with Orbax handler (using context manager for proper cleanup)
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            with OrbaxCheckpointHandler() as handler:
-                checkpoint_path = handler.save_to_directory(tmp_dir, module)
-                assert Path(checkpoint_path).exists()
+        with IteratorCheckpoint(tmp_path) as checkpoint:
+            path = checkpoint.save(module, step=0)
+            assert Path(path).exists()
 
-                # Create new module and restore
-                new_module = SimpleModule(10, rngs=nnx.Rngs(42))
-                # Suppress the Orbax sharding info warning
-                with warnings.catch_warnings():
-                    warnings.filterwarnings(
-                        "ignore", message="Sharding info not provided when restoring"
-                    )
-                    restored_module = handler.restore(tmp_dir, new_module)
+            fresh = SimpleModule(10, rngs=nnx.Rngs(123))
+            checkpoint.restore(fresh, step=0)
 
-                # Should have same counter value
-                assert restored_module.counter.get_value() == original_counter
+        assert fresh.counter.get_value() == original_counter
+        assert jnp.array_equal(fresh.linear.kernel.get_value(), module.linear.kernel.get_value())
 
-    def test_iterator_with_orbax_checkpoint_handler(self):
-        """Test that iterator modules work with the existing OrbaxCheckpointHandler."""
-        from datarax.checkpoint.handlers import OrbaxCheckpointHandler
-
+    def test_iterator_module_position_is_restored(self, tmp_path):
         iterator = SimpleIteratorModule(5)
-
-        # Consume some items
         next(iterator)
         next(iterator)
-        original_position = iterator.position.get_value()
 
-        # Save with Orbax handler (using context manager for proper cleanup)
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            with OrbaxCheckpointHandler() as handler:
-                checkpoint_path = handler.save_to_directory(tmp_dir, iterator)
-                assert Path(checkpoint_path).exists()
+        with IteratorCheckpoint(tmp_path) as checkpoint:
+            checkpoint.save(iterator, step=0)
+            fresh = SimpleIteratorModule(5)
+            checkpoint.restore(fresh, step=0)
 
-                # Create new iterator and restore
-                new_iterator = SimpleIteratorModule(5)
-                # Suppress the Orbax sharding info warning
-                with warnings.catch_warnings():
-                    warnings.filterwarnings(
-                        "ignore", message="Sharding info not provided when restoring"
-                    )
-                    restored_iterator = handler.restore(tmp_dir, new_iterator)
+        assert fresh.position.get_value() == iterator.position.get_value()
+        assert next(fresh) == 2
 
-                # Should have same position
-                assert restored_iterator.position.get_value() == original_position
-
-
-class TestOrbaxCheckpointHandlers:
-    """Test Orbax checkpoint handlers."""
-
-    def test_orbax_checkpoint_handler_initialization(self):
-        """Test that OrbaxCheckpointHandler initializes with NNX support."""
-        with OrbaxCheckpointHandler() as handler:
-            assert handler.checkpointer is not None
-
-    def test_orbax_save_and_restore_datarax_module(self):
-        """Test saving and restoring DataraxModule using OrbaxCheckpointHandler."""
-        # Create a module
-        rngs = nnx.Rngs(42)
-        module = SimpleModule(10, rngs=rngs)
-
-        # Modify its state
+    def test_each_step_restores_the_state_saved_at_that_step(self, tmp_path):
+        module = SimpleModule(10, rngs=nnx.Rngs(42))
         x = jnp.ones((5, 10))
-        module(x)
-        assert module.counter.get_value() == 1
 
-        # Save using Orbax handler (with context manager for proper cleanup)
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with OrbaxCheckpointHandler() as handler:
-                checkpoint_path = handler.save_to_directory(temp_dir, module)
-                assert checkpoint_path is not None
+        with IteratorCheckpoint(tmp_path, max_to_keep=10) as checkpoint:
+            for step in range(5):
+                module(x)
+                checkpoint.save(module, step=step)
 
-                # Create a new module to restore into
-                restored_module = SimpleModule(10, rngs=nnx.Rngs(123))
-                assert restored_module.counter.get_value() == 0
+            fresh = SimpleModule(10, rngs=nnx.Rngs(123))
+            checkpoint.restore(fresh, step=2)
 
-                # Restore the checkpoint
-                # Suppress the Orbax sharding info warning
-                with warnings.catch_warnings():
-                    warnings.filterwarnings(
-                        "ignore", message="Sharding info not provided when restoring"
-                    )
-                    restored_state = handler.restore(temp_dir, target=None)
+        assert fresh.counter.get_value() == 3
 
-                # Apply the restored state
-                if restored_state is not None:
-                    restored_module.set_state(restored_state)
+    def test_nested_module_state_is_restored(self, tmp_path):
+        class NestedModule(DataraxModule):
+            def __init__(self, rngs):
+                super().__init__(DataraxModuleConfig(), rngs=rngs)
+                self.inner = SimpleModule(5, rngs=rngs)
+                self.outer = SimpleModule(10, rngs=rngs)
 
-                # Verify state was restored
-                assert restored_module.counter.get_value() == 1
+        module = NestedModule(nnx.Rngs(42))
+        module.inner(jnp.ones((5, 5)))
 
-    def test_orbax_save_and_restore_iterator_module(self):
-        """Test saving and restoring iterator module using OrbaxCheckpointHandler."""
-        # Create an iterator module
-        module = SimpleIteratorModule(10)
+        with IteratorCheckpoint(tmp_path) as checkpoint:
+            checkpoint.save(module, step=0)
+            fresh = NestedModule(nnx.Rngs(123))
+            checkpoint.restore(fresh, step=0)
 
-        # Advance the iterator
-        next(module)  # 0
-        next(module)  # 1
-        next(module)  # 2
-        assert module.position.get_value() == 3
+        assert fresh.inner.counter.get_value() == module.inner.counter.get_value()
 
-        # Save using Orbax handler (with context manager for proper cleanup)
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with OrbaxCheckpointHandler() as handler:
-                checkpoint_path = handler.save_to_directory(temp_dir, module)
-                assert checkpoint_path is not None
+    def test_module_without_variables_saves(self, tmp_path):
+        module = DataraxModule(DataraxModuleConfig())
 
-                # Create a new module to restore into
-                restored_module = SimpleIteratorModule(10)
-                assert restored_module.position.get_value() == 0
+        with IteratorCheckpoint(tmp_path) as checkpoint:
+            assert Path(checkpoint.save(module, step=0)).exists()
 
-                # Restore the checkpoint
-                # Suppress the Orbax sharding info warning
-                with warnings.catch_warnings():
-                    warnings.filterwarnings(
-                        "ignore", message="Sharding info not provided when restoring"
-                    )
-                    restored_state = handler.restore(temp_dir, target=None)
+    def test_restore_from_a_directory_without_checkpoints_raises(self, tmp_path):
+        (tmp_path / "junk").write_text("not a checkpoint")
 
-                # Apply the restored state
-                if restored_state is not None:
-                    restored_module.set_state(restored_state)
-
-                # Verify state was restored
-                assert restored_module.position.get_value() == 3
+        with IteratorCheckpoint(tmp_path) as checkpoint:
+            with pytest.raises(ValueError, match="No checkpoints found"):
+                checkpoint.restore(SimpleModule(10, rngs=nnx.Rngs(42)))
 
 
 class TestDataraxModuleAdditionalCoverage:
@@ -412,104 +342,6 @@ class TestDataraxModuleAdditionalCoverage:
         # Should not raise even with empty stream list
         module.ensure_rng_streams([])
         module.ensure_rng_streams(["any", "streams"])
-
-
-class TestCheckpointManagerIntegration:
-    """Test integration with checkpoint manager."""
-
-    def test_checkpoint_manager_basic(self):
-        """Test basic checkpoint manager functionality."""
-        # Note: Using OrbaxCheckpointHandler as manager since CheckpointManager doesn't exist
-        # This simulates manager-like functionality
-
-        rngs = nnx.Rngs(42)
-        module = SimpleModule(10, rngs=rngs)
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            with OrbaxCheckpointHandler() as handler:
-                # Save checkpoint (simulating manager with step in path)
-                handler.save_to_directory(f"{tmp_dir}/step_0", module)
-
-                # Modify module
-                x = jnp.ones((5, 10))
-                module(x)
-
-                # Create new module and restore
-                new_module = SimpleModule(10, rngs=nnx.Rngs(123))
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore")
-                    restored = handler.restore(f"{tmp_dir}/step_0", new_module)
-
-                # Verify restoration
-                assert restored.counter.get_value() == 0  # Should be initial state
-
-    def test_checkpoint_manager_multiple_steps(self):
-        """Test checkpoint manager with multiple steps."""
-        # Simulating manager functionality with OrbaxCheckpointHandler
-
-        rngs = nnx.Rngs(42)
-        module = SimpleModule(10, rngs=rngs)
-        x = jnp.ones((5, 10))
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            with OrbaxCheckpointHandler() as handler:
-                saved_steps = []
-
-                # Save multiple checkpoints
-                for step in range(5):
-                    module(x)  # Increment counter
-                    handler.save_to_directory(f"{tmp_dir}/step_{step}", module)
-                    saved_steps.append(step)
-
-                # Verify we can restore from different steps
-                new_module = SimpleModule(10, rngs=nnx.Rngs(123))
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore")
-                    restored = handler.restore(f"{tmp_dir}/step_2", new_module)
-                # Counter would be 3 after being called 3 times (steps 0, 1, 2)
-                assert restored.counter.get_value() == 3
-
-
-class TestDistributedCheckpointing:
-    """Test distributed checkpointing scenarios."""
-
-    def test_sharded_state_checkpointing(self):
-        """Test checkpointing with sharded state."""
-        # Note: Full distributed testing requires multi-device setup
-        # This is a simplified test for single device
-        rngs = nnx.Rngs(42)
-        module = SimpleModule(10, rngs=rngs)
-
-        # Simulate sharded state (in real scenario this would use pjit)
-        module.get_state()
-
-        # Save and restore should handle sharded state
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            with OrbaxCheckpointHandler() as handler:
-                handler.save_to_directory(tmp_dir, module)
-
-                # Restore to new module
-                new_module = SimpleModule(10, rngs=nnx.Rngs(123))
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore", message="Sharding info")
-                    restored = handler.restore(tmp_dir, new_module)
-
-                assert restored is not None
-
-    def test_multi_host_checkpointing_simulation(self):
-        """Test multi-host checkpointing (simulated)."""
-        # This simulates multi-host without actual distribution
-        rngs = nnx.Rngs(42)
-        module = SimpleModule(10, rngs=rngs)
-
-        # In real multi-host, different hosts would have different data
-        # Here we simulate with process_index
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            with OrbaxCheckpointHandler() as handler:
-                # Save with process index simulation
-                checkpoint_path = handler.save_to_directory(tmp_dir, module)
-                assert Path(checkpoint_path).exists()
 
 
 class TestCheckpointVersioningAndMigration:
@@ -564,29 +396,6 @@ class TestCheckpointVersioningAndMigration:
 class TestErrorRecoveryAndCorruption:
     """Test error recovery and corruption handling."""
 
-    def test_corrupted_checkpoint_handling(self):
-        """Test handling of corrupted checkpoints."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            # Create a corrupted checkpoint file
-            checkpoint_path = Path(tmp_dir) / "checkpoint"
-            checkpoint_path.mkdir()
-
-            # Write invalid data
-            (checkpoint_path / "state").write_text("corrupted data")
-
-            # Try to restore from corrupted checkpoint
-            with OrbaxCheckpointHandler() as handler:
-                rngs = nnx.Rngs(42)
-                module = SimpleModule(10, rngs=rngs)
-
-                # Should handle error gracefully
-                with pytest.raises(
-                    (ValueError, RuntimeError, OSError, FileNotFoundError, TypeError)
-                ):
-                    with warnings.catch_warnings():
-                        warnings.filterwarnings("ignore")
-                        handler.restore(tmp_dir, module)
-
     def test_partial_checkpoint_recovery(self):
         """Partial checkpoint states should fail fast."""
         rngs = nnx.Rngs(42)
@@ -602,108 +411,9 @@ class TestErrorRecoveryAndCorruption:
         with pytest.raises(ValueError, match="structurally incompatible"):
             new_module.set_state(partial_state)
 
-    def test_checkpoint_atomic_save(self):
-        """Test atomic checkpoint saving."""
-        rngs = nnx.Rngs(42)
-        module = SimpleModule(10, rngs=rngs)
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            with OrbaxCheckpointHandler() as handler:
-                # Save should be atomic (all or nothing)
-                checkpoint_path = handler.save_to_directory(tmp_dir, module)
-
-                # Verify checkpoint integrity
-                assert Path(checkpoint_path).exists()
-
-                # Should be able to restore
-                new_module = SimpleModule(10, rngs=nnx.Rngs(123))
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore")
-                    restored = handler.restore(tmp_dir, new_module)
-                assert restored is not None
-
-
-class TestAsyncCheckpointing:
-    """Test async checkpointing functionality."""
-
-    def test_concurrent_checkpoint_operations(self):
-        """Test concurrent checkpoint operations."""
-        import threading
-        from unittest.mock import MagicMock, patch
-
-        results = []
-
-        # Mock ocp.StandardCheckpointer to avoid real I/O and JAX runtime contention
-        # which causes deadlocks when called from multiple threads
-        with patch("orbax.checkpoint.StandardCheckpointer") as mock_checkpointer_cls:
-            mock_checkpointer = MagicMock()
-            mock_checkpointer_cls.return_value = mock_checkpointer
-
-            def save_checkpoint(index):
-                rngs = nnx.Rngs(42 + index)
-                module = SimpleModule(10, rngs=rngs)
-
-                with tempfile.TemporaryDirectory() as tmp_dir:
-                    # Use context manager to ensure proper cleanup of async operations
-                    with OrbaxCheckpointHandler() as handler:
-                        checkpoint_path = handler.save_to_directory(tmp_dir, module)
-                        results.append(checkpoint_path is not None)
-
-            # Run multiple saves concurrently
-            threads = []
-            for i in range(3):
-                thread = threading.Thread(target=save_checkpoint, args=(i,))
-                threads.append(thread)
-                thread.start()
-
-            # Wait for all threads to complete
-            for thread in threads:
-                thread.join(timeout=5.0)  # Should be very fast with mocks
-
-            # All saves should succeed
-            assert all(results)
-            assert len(results) == 3
-            # Verify that save was called (though from different threads, so call count matches)
-            assert mock_checkpointer.save.call_count >= 3
-
 
 class TestPerformanceAndStress:
     """Test performance and stress scenarios."""
-
-    def test_large_state_checkpointing(self):
-        """Test checkpointing with large state."""
-        # Create module with large state
-        rngs = nnx.Rngs(42)
-        large_module = SimpleModule(1000, rngs=rngs)  # Large feature size
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            # Use context manager to ensure proper cleanup of async operations
-            with OrbaxCheckpointHandler() as handler:
-                # Should handle large state
-                import time
-
-                start_time = time.time()
-                checkpoint_path = handler.save_to_directory(tmp_dir, large_module)
-                save_time = time.time() - start_time
-
-                # Should complete in reasonable time
-                assert save_time < 10  # 10 seconds max
-                assert Path(checkpoint_path).exists()
-
-    def test_frequent_checkpointing(self):
-        """Test frequent checkpoint saves."""
-        rngs = nnx.Rngs(42)
-        module = SimpleModule(10, rngs=rngs)
-        x = jnp.ones((5, 10))
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            # Use context manager to ensure proper cleanup of async operations
-            with OrbaxCheckpointHandler() as handler:
-                # Save many checkpoints rapidly
-                for i in range(10):
-                    module(x)
-                    checkpoint_path = handler.save_to_directory(f"{tmp_dir}/ckpt_{i}", module)
-                    assert Path(checkpoint_path).exists()
 
     def test_checkpoint_memory_efficiency(self):
         """Test memory efficiency of checkpointing."""
@@ -728,49 +438,8 @@ class TestPerformanceAndStress:
         assert module is not None
 
 
-class TestCheckpointHandlerEdgeCases:
-    """Test edge cases for checkpoint handlers."""
-
-    def test_empty_module_checkpointing(self):
-        """Test checkpointing empty module."""
-        # Create minimal module
-        config = DataraxModuleConfig()
-        module = DataraxModule(config)
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            with OrbaxCheckpointHandler() as handler:
-                checkpoint_path = handler.save_to_directory(tmp_dir, module)
-                assert Path(checkpoint_path).exists()
-
-    def test_nested_module_checkpointing(self):
-        """Test checkpointing nested modules."""
-
-        class NestedModule(DataraxModule):
-            def __init__(self, rngs):
-                config = DataraxModuleConfig()
-                super().__init__(config, rngs=rngs)
-                self.inner = SimpleModule(5, rngs=rngs)
-                self.outer = SimpleModule(10, rngs=rngs)
-
-        rngs = nnx.Rngs(42)
-        module = NestedModule(rngs)
-
-        # Modify nested modules
-        x = jnp.ones((5, 5))
-        module.inner(x)
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            with OrbaxCheckpointHandler() as handler:
-                handler.save_to_directory(tmp_dir, module)
-
-                # Restore to new nested module
-                new_module = NestedModule(nnx.Rngs(123))
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore")
-                    restored = handler.restore(tmp_dir, new_module)
-
-                # Check nested state restored
-                assert restored.inner.counter.get_value() == module.inner.counter.get_value()
+class TestCheckpointEdgeCases:
+    """Edge cases of module state checkpointing."""
 
     def test_checkpoint_with_none_fields(self):
         """Test checkpointing with None fields."""

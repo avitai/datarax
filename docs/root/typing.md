@@ -7,7 +7,7 @@ Type definitions and protocols for Datarax.
 - [Types & Protocols Overview](index.md) - All types
 - [Core](../core/index.md) - Core protocols
 - [Config](../core/config.md) - Config types
-- [Checkpointing](../checkpoint/handlers.md) - Checkpointable protocol
+- [Checkpointing](../checkpoint/index.md) - Checkpointable protocol
 
 ---
 

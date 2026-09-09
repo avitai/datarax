@@ -15,12 +15,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `orbax-checkpoint>=0.11.33` and `numpy>=2.1` (and `jax[cuda12]>=0.11.1` in the cuda12
   extra) are what every lock since 0.1.5 has resolved and run CI against; the previous
   floors promised compatibility nothing checked.
+- `IteratorCheckpoint` is the one checkpoint API and is built on
+  `substrax.checkpoint.OrbaxCheckpointStore`: `save(target, step, metadata=)`,
+  `save_if_due(target, step, interval=)`, `restore(target, step=None)`, `all_steps()`,
+  `latest_step()`, `has_checkpoint()`. Any `Checkpointable` (module, pipeline, iterator)
+  is accepted; retention is `max_to_keep` on the store; restore validates the
+  checkpoint's identity fields against the target before applying it.
 - `prefetch_to_device` lives in `datarax.control.prefetcher` (still exported from the
   package root) and no longer takes the `cpu_buffer_size` argument, which was accepted
   and discarded.
 
+### Fixed
+
+- `DataraxModule.set_state` restores the module's `nnx.Rngs` streams. They were skipped
+  without a word because `nnx.Rngs` is not an `nnx.Module`, so a stochastic module resumed
+  from a checkpoint drew fresh random numbers instead of continuing its stream.
+
 ### Removed
 
+- `OrbaxCheckpointHandler` and `PipelineCheckpoint`. The handler re-implemented what
+  Orbax's `CheckpointManager` does (step discovery, pruning, a marker codec for strings
+  and PRNG keys that `PyTreeSave` carries natively) and substrax's store is its home;
+  `PipelineCheckpoint.save_to_step` is `IteratorCheckpoint.save_if_due`. The `keep`,
+  `overwrite` and `async_checkpointing` options are gone with them.
 - The `datarax.distributed` package. Its device placement, mesh, SPMD and metric
   utilities moved to substrax, which datarax now depends on; the names are unchanged
   and `docs/distributed/index.md` maps each to its new module: `DevicePlacement`,

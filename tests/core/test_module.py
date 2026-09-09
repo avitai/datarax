@@ -1,6 +1,7 @@
 """Tests for the DataraxModule base class."""
 
 import flax.nnx as nnx
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -91,6 +92,14 @@ def test_serialization():
 
     # Test that the weights are the same by checking output
     assert jnp.allclose(module(x, increment=False), new_module(x, increment=False))
+
+    # The RNG streams are state too: a resumed module draws the same numbers
+    assert new_module.rngs is not None and module.rngs is not None
+    assert jnp.array_equal(
+        jax.random.key_data(new_module.rngs.default.key.get_value()),
+        jax.random.key_data(module.rngs.default.key.get_value()),
+    )
+    assert new_module.rngs.default.count.get_value() == module.rngs.default.count.get_value()
 
 
 def test_clone():

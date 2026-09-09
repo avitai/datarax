@@ -250,7 +250,6 @@ nav:
       - Benchmarking: benchmarking/index.md
       - Checkpoint:
           - Overview: checkpoint/index.md
-          - handlers: checkpoint/handlers.md
           - iterators: checkpoint/iterators.md
       - Config:
           - Overview: config/index.md

@@ -30,7 +30,7 @@ and need to continue from where they left off.
 By the end of this example, you will be able to:
 
 1. Create a `CheckpointableIterator` with proper state management
-2. Use `PipelineCheckpoint` to save/restore state
+2. Use `IteratorCheckpoint` to save/restore state
 3. Implement resumable data processing loops
 4. Handle interrupted jobs gracefully
 """
@@ -55,7 +55,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
-from datarax.checkpoint import PipelineCheckpoint
+from datarax.checkpoint import IteratorCheckpoint
 from datarax.typing import CheckpointableIterator
 
 
@@ -162,13 +162,14 @@ print(f"Pipeline: {len(pipeline)} batches, {len(data)} samples")
 """
 ## Step 2: Set Up Checkpointing
 
-`PipelineCheckpoint` manages checkpoint files using Orbax.
+`IteratorCheckpoint` stores each step with substrax's Orbax checkpoint store and
+keeps the most recent `max_to_keep` of them.
 """
 
 # %%
 # Create checkpoint directory
 checkpoint_dir = tempfile.mkdtemp(prefix="datarax_ckpt_")
-checkpointer = PipelineCheckpoint(os.path.join(checkpoint_dir, "pipeline_state"))
+checkpoint = IteratorCheckpoint(os.path.join(checkpoint_dir, "pipeline_state"), max_to_keep=2)
 
 print(f"Checkpoint directory: {checkpoint_dir}")
 
@@ -193,14 +194,9 @@ for epoch in range(2):
         print(f"  Batch {batch_idx}: mean={batch_mean:.2f}")
 
         # Save checkpoint every 3 steps
-        if step % 3 == 0:
-            save_path = checkpointer.save_to_directory(
-                pipeline,
-                step=step,
-                metadata={"epoch": epoch, "batch": batch_idx},
-                keep=2,  # Keep last 2 checkpoints
-                overwrite=True,
-            )
+        if checkpoint.save_if_due(
+            pipeline, step, interval=3, metadata={"epoch": epoch, "batch": batch_idx}
+        ):
             print(f"  -> Saved checkpoint at step {step}")
 
 print(f"\nProcessed {step} total steps")
@@ -217,8 +213,8 @@ Demonstrate resuming from a saved checkpoint.
 new_pipeline = SimplePipeline(data, batch_size=10, shuffle=True)
 print(f"New pipeline state: epoch={new_pipeline.epoch}, position={new_pipeline.position}")
 
-# Restore from checkpoint
-checkpointer.restore_latest(new_pipeline)
+# Restore from the latest checkpoint
+checkpoint.restore(new_pipeline)
 print(f"Restored state: epoch={new_pipeline.epoch}, position={new_pipeline.position}")
 
 # Continue processing
@@ -235,7 +231,8 @@ Remove checkpoint files when done.
 """
 
 # %%
-# Clean up checkpoint directory
+# Release the store and remove the checkpoint directory
+checkpoint.close()
 shutil.rmtree(checkpoint_dir)
 print(f"Cleaned up: {checkpoint_dir}")
 
@@ -246,8 +243,8 @@ print(f"Cleaned up: {checkpoint_dir}")
 | Feature | Description |
 |---------|-------------|
 | State Saved | RNG, position, epoch, indices |
-| Checkpoint Format | Orbax (efficient, async-capable) |
-| Retention | Configurable via `keep` parameter |
+| Checkpoint Format | Orbax, through substrax's checkpoint store |
+| Retention | Configurable via `max_to_keep` |
 | Metadata | Custom fields (epoch, batch, etc.) |
 
 Key benefits:
@@ -279,19 +276,19 @@ def main():
     pipeline = SimplePipeline(data, batch_size=10, shuffle=True)
 
     checkpoint_dir = tempfile.mkdtemp(prefix="datarax_ckpt_")
-    checkpointer = PipelineCheckpoint(os.path.join(checkpoint_dir, "pipeline_state"))
+    with IteratorCheckpoint(
+        os.path.join(checkpoint_dir, "pipeline_state"), max_to_keep=2
+    ) as checkpoint:
+        # Process with checkpoints
+        step = 0
+        for _epoch in range(2):
+            for _batch in pipeline.iterator():
+                step += 1
+                checkpoint.save_if_due(pipeline, step, interval=5)
 
-    # Process with checkpoints
-    step = 0
-    for epoch in range(2):
-        for batch in pipeline.iterator():
-            step += 1
-            if step % 5 == 0:
-                checkpointer.save_to_directory(pipeline, step=step, keep=2, overwrite=True)
-
-    # Test restoration
-    new_pipeline = SimplePipeline(data, batch_size=10, shuffle=True)
-    checkpointer.restore_latest(new_pipeline)
+        # Test restoration
+        new_pipeline = SimplePipeline(data, batch_size=10, shuffle=True)
+        checkpoint.restore(new_pipeline)
 
     # Cleanup
     shutil.rmtree(checkpoint_dir)

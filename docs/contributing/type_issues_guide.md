@@ -240,15 +240,9 @@ restored_key = jax.random.wrap_key_data(key_bytes)  # Reconstruct typed key
 # pickle.dumps(key)  # May not preserve key type information
 ```
 
-Datarax checkpoint handlers use this pattern internally:
-
-```python
-# From datarax/checkpoint/handlers.py pattern
-state = {
-    'rng_key': jax.random.key_data(module.rngs.default.key[...]),
-    'rng_count': module.rngs.default.count[...]
-}
-```
+Datarax checkpoints do not need this: substrax's Orbax store writes typed keys
+with `PyTreeSave`, which serialises the key data and dtype itself, so a state
+dictionary can carry the key as it is.
 
 **Context 4: Flax NNX Modules (Recommended for Stateful Random)**
 
