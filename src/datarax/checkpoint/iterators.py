@@ -91,7 +91,8 @@ def _state_of(target: Checkpointable) -> dict[str, Any]:
         ValueError: If the dict is empty; Orbax cannot write an empty tree.
     """
     state = target.get_state()
-    if not isinstance(state, dict):
+    # The protocol promises a dict; untyped callers can still hand over anything.
+    if not isinstance(state, dict):  # pyright: ignore[reportUnnecessaryIsInstance]
         raise TypeError(
             f"{type(target).__name__}.get_state() must return a dict, got {type(state).__name__}"
         )

@@ -188,6 +188,10 @@ repos:
             pytest,
             typer,
 
+            # The sibling packages datarax depends on
+            calibrax,
+            substrax,
+
             # Datarax specific
             array-record,
             astunparse,

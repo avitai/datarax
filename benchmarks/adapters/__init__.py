@@ -16,8 +16,11 @@ from benchmarks.adapters.base import PipelineAdapter
 _ADAPTER_REGISTRY: dict[str, type[PipelineAdapter]] = {}
 
 
-def register(cls: type[PipelineAdapter]) -> type[PipelineAdapter]:
+def register[AdapterT: type[PipelineAdapter]](cls: AdapterT) -> AdapterT:
     """Register a PipelineAdapter subclass in the global registry.
+
+    The decorated class comes back as its own type, so its attributes stay visible
+    to the type checker.
 
     Usage::
 
