@@ -393,6 +393,8 @@ reportIncompatibleVariableOverride = false
 # not required in every dev environment or pre-commit hook env.
 reportMissingImports = false
 reportMissingTypeStubs = false
+# The checkpoint package was rewritten in 0.1.6 and holds the full standard.
+strict = ["src/datarax/checkpoint"]
 typeCheckingMode = "standard"
 
 [tool.pytest.ini_options]

@@ -180,6 +180,11 @@ class TestNNXCheckpointingIntegration:
         assert fresh_module.epoch.get_value() == module.epoch.get_value()
         assert fresh_module.accuracy.get_value() == module.accuracy.get_value()
         assert _plain(fresh_module.batcher.get_state()) == _plain(module.batcher.get_state())
+        # nnx.List children are keyed by integer; the restore keeps them integers.
+        assert jnp.array_equal(
+            fresh_module.linear_layers[1].kernel.get_value(),
+            module.linear_layers[1].kernel.get_value(),
+        )
 
     def test_modules_saved_side_by_side_do_not_interfere(self, tmp_path):
         """Three modules saved under three directories each restore their own state."""
