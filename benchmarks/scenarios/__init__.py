@@ -57,19 +57,18 @@ def discover_scenarios(
     """
     modules: list[ModuleType] = []
 
+    # A category package or scenario module that fails to import is a broken
+    # catalogue, not a smaller one: the error propagates instead of shrinking the
+    # list of scenarios in silence.
     for pkg_name in _CATEGORY_PACKAGES:
-        try:
-            pkg = importlib.import_module(pkg_name)
-        except ImportError:
-            continue
+        pkg = importlib.import_module(pkg_name)
 
-        for importer, mod_name, is_pkg in pkgutil.iter_modules(pkg.__path__, prefix=f"{pkg_name}."):
+        for _importer, mod_name, is_pkg in pkgutil.iter_modules(
+            pkg.__path__, prefix=f"{pkg_name}."
+        ):
             if is_pkg:
                 continue
-            try:
-                mod = importlib.import_module(mod_name)
-            except ImportError:
-                continue
+            mod = importlib.import_module(mod_name)
             if _is_scenario_module(mod):
                 if tier == 1:
                     if getattr(mod, "TIER1_VARIANT", None) is not None:

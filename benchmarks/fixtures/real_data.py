@@ -32,7 +32,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from PIL import Image
 
 
 DOWNLOAD_ENV_VAR: str = "DATARAX_BENCH_DOWNLOAD"
@@ -118,6 +117,10 @@ def _resize_image(image: np.ndarray, h: int, w: int) -> np.ndarray:
     """Bilinearly resize one HWC uint8 image to ``(h, w)``."""
     if image.shape[:2] == (h, w):
         return image
+    # Pillow ships in the data extra; importing it here keeps the scenario catalogue
+    # importable without it, so discovery never silently loses the image scenarios.
+    from PIL import Image
+
     resized = Image.fromarray(image).resize((w, h), Image.Resampling.BILINEAR)
     return np.asarray(resized, dtype=np.uint8)
 
@@ -253,6 +256,8 @@ def _load_coco_rows(count: int, allow_download: bool) -> Iterator[tuple[np.ndarr
             for row in batch.to_pylist():
                 if yielded >= count:
                     return
+                from PIL import Image
+
                 with Image.open(io.BytesIO(row["image"]["bytes"])) as decoded:
                     image = np.asarray(decoded.convert("RGB"), dtype=np.uint8)
                 yield image, str(row["caption"])
