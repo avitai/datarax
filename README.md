@@ -192,7 +192,7 @@ src/datarax/
   samplers/     # Sequential, Shuffle (Feistel cipher), Range, EpochAware, SlidingWindow, BufferSampler
   batching/     # DefaultBatcher with buffer state management
   sharding/     # ArraySharder, JaxProcessSharder for multi-device distribution
-  checkpoint/   # Orbax integration (NNX-standard checkpoint pattern)
+  checkpoint/   # IteratorCheckpoint over substrax's Orbax checkpoint store
   monitoring/   # MetricsCollector, callbacks, reporters (console/file)
   performance/  # XLA optimization, goodput tracking, host/device synchronization
   control/      # Prefetcher for asynchronous data loading
