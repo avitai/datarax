@@ -128,7 +128,9 @@ def run_jupytext_command(args: list[str], verbose: bool = False) -> tuple[bool, 
     Returns:
         Tuple of (success: bool, output: str)
     """
-    cmd = ["jupytext", *args]
+    # The interpreter running this script owns the jupytext install; a `jupytext` on PATH
+    # may belong to another environment.
+    cmd = [sys.executable, "-m", "jupytext", *args]
 
     if verbose:
         print(f"Running: {' '.join(cmd)}")
