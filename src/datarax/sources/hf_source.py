@@ -36,12 +36,12 @@ from flax import nnx
 
 from datarax.sources._config_base import SourceConfigBase
 from datarax.sources._conversion import hf_to_jax
-from datarax.sources._eager_source_ops import (
+from datarax.sources._source_base import EagerSourceBase, StreamingSourceBase
+from datarax.sources.source_ops import (
     converted_filtered_record,
     validate_eager_source_settings,
     validate_streaming_source_settings,
 )
-from datarax.sources._source_base import EagerSourceBase, StreamingSourceBase
 
 
 logger = logging.getLogger(__name__)

@@ -11,7 +11,8 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.data_source import DataSourceModule
-from datarax.sources._eager_source_ops import (
+from datarax.sources._grain_bridge import records_from_batched_mapping, validate_index_batch
+from datarax.sources.source_ops import (
     eager_get_batch_default,
     eager_iter_default,
     eager_reset,
@@ -19,46 +20,12 @@ from datarax.sources._eager_source_ops import (
     gather_eager_batch,
     get_eager_item,
     reset_streaming_state,
+    resolve_wrapped_indices,
     streaming_apply_batch,
 )
-from datarax.sources._grain_bridge import records_from_batched_mapping, validate_index_batch
 
 
 logger = logging.getLogger(__name__)
-
-
-def resolve_wrapped_indices(
-    start: jax.Array | int,
-    size: int,
-    length: int,
-    is_random_order: bool,
-    key: jax.Array | None,
-) -> jax.Array:
-    """Return the record indices for a wrapped, optionally shuffled slice.
-
-    Computes ``(start + arange(size)) % length`` and, when ``is_random_order``
-    is set and a ``key`` is supplied, gathers those positions through a
-    deterministic full-dataset permutation derived from ``key``. Same
-    ``(start, size, length, key)`` always yields the same indices.
-
-    Args:
-        start: Starting logical index (concrete int or traced ``jax.Array``).
-        size: Number of records to return (static Python int).
-        length: Total number of records in the dataset.
-        is_random_order: Whether the source serves records in shuffled order.
-        key: PRNG key for shuffled mode; ignored when ``is_random_order`` is
-            False or ``key`` is None.
-
-    Returns:
-        Int32 ``jax.Array`` of shape ``(size,)`` with the resolved indices.
-    """
-    start_arr = jnp.asarray(start, dtype=jnp.int32)
-    offsets = jnp.arange(size, dtype=jnp.int32)
-    base_indices = (start_arr + offsets) % jnp.int32(length)
-    if is_random_order and key is not None:
-        permutation = jax.random.permutation(key, length)
-        return permutation[base_indices]
-    return base_indices
 
 
 class EagerSourceBase(DataSourceModule):

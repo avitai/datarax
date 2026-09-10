@@ -18,9 +18,8 @@ from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
 from datarax.core.metadata import MetadataManager, RecordMetadata
 from datarax.samplers.index_shuffle import index_shuffle
-from datarax.sources._eager_source_ops import configure_stochastic_from_shuffle
 from datarax.sources._grain_bridge import records_from_batched_mapping, validate_index_batch
-from datarax.sources._source_base import resolve_wrapped_indices
+from datarax.sources.source_ops import configure_stochastic_from_shuffle, resolve_wrapped_indices
 
 
 logger = logging.getLogger(__name__)

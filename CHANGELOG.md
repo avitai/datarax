@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The helpers a data source is built from are public: `datarax.sources.source_ops`
+  (formerly the private `datarax.sources._eager_source_ops`) now also holds
+  `resolve_wrapped_indices` (formerly on the private `datarax.sources._source_base`), and
+  `datarax.sources` exports `eager_iter`, `eager_get_batch`, `eager_reset` and
+  `resolve_wrapped_indices`. DiffAV and DiffBio imported the private paths; the private
+  module path is gone.
+
 ## [0.1.6] - 2026-09-09
 
 ### Added

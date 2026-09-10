@@ -1,4 +1,4 @@
-"""Tests for shared eager source operations (_eager_source_ops.py).
+"""Tests for the eager source operations (datarax.sources.source_ops).
 
 Tests the standalone composition helpers that both HFEagerSource and
 TFDSEagerSource delegate to. These functions handle shuffling, iteration,
@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import jax
 import jax.numpy as jnp
 
-from datarax.sources._eager_source_ops import (
+from datarax.sources.source_ops import (
     eager_get_batch,
     eager_iter,
     eager_reset,
@@ -318,3 +318,20 @@ class TestFilterKeys(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPublicSurface(unittest.TestCase):
+    """The helpers are exported from ``datarax.sources``; the private path is gone."""
+
+    def test_sources_package_exports_the_helpers(self) -> None:
+        import datarax.sources as sources
+
+        for name in ("eager_iter", "eager_get_batch", "eager_reset", "resolve_wrapped_indices"):
+            self.assertIn(name, sources.__all__)
+            self.assertTrue(callable(getattr(sources, name)))
+
+    def test_private_module_path_is_gone(self) -> None:
+        import importlib
+
+        with self.assertRaises(ModuleNotFoundError):
+            importlib.import_module("datarax.sources._eager_source_ops")

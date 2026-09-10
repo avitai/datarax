@@ -1,8 +1,9 @@
-"""Shared operations for eager and streaming data sources (composition helpers).
+"""Operations a data source is built from (public helpers for source authors).
 
-These standalone functions extract duplicated patterns from HFEagerSource,
-TFDSEagerSource, HFStreamingSource, and TFDSStreamingSource. Sources
-delegate to these helpers for:
+The bundled sources (HFEagerSource, TFDSEagerSource, HFStreamingSource,
+TFDSStreamingSource, MemorySource) and sources in other packages delegate to
+these helpers for:
+- Wrapped, optionally shuffled index resolution (``resolve_wrapped_indices``)
 - Shuffled index computation (Grain's Feistel cipher)
 - Iteration with O(1) memory shuffling
 - Batch retrieval (stateless and stateful)
@@ -26,6 +27,40 @@ import jax
 import jax.numpy as jnp
 
 from datarax.samplers.index_shuffle import index_shuffle
+
+
+def resolve_wrapped_indices(
+    start: jax.Array | int,
+    size: int,
+    length: int,
+    is_random_order: bool,
+    key: jax.Array | None,
+) -> jax.Array:
+    """Return the record indices for a wrapped, optionally shuffled slice.
+
+    Computes ``(start + arange(size)) % length`` and, when ``is_random_order``
+    is set and a ``key`` is supplied, gathers those positions through a
+    deterministic full-dataset permutation derived from ``key``. Same
+    ``(start, size, length, key)`` always yields the same indices.
+
+    Args:
+        start: Starting logical index (concrete int or traced ``jax.Array``).
+        size: Number of records to return (static Python int).
+        length: Total number of records in the dataset.
+        is_random_order: Whether the source serves records in shuffled order.
+        key: PRNG key for shuffled mode; ignored when ``is_random_order`` is
+            False or ``key`` is None.
+
+    Returns:
+        Int32 ``jax.Array`` of shape ``(size,)`` with the resolved indices.
+    """
+    start_arr = jnp.asarray(start, dtype=jnp.int32)
+    offsets = jnp.arange(size, dtype=jnp.int32)
+    base_indices = (start_arr + offsets) % jnp.int32(length)
+    if is_random_order and key is not None:
+        permutation = jax.random.permutation(key, length)
+        return permutation[base_indices]
+    return base_indices
 
 
 logger = logging.getLogger(__name__)

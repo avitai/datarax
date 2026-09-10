@@ -317,6 +317,7 @@ nav:
           - hf_source: sources/hf_source.md
           - memory_source: sources/memory_source.md
           - mixed_source: sources/mixed_source.md
+          - source_ops: sources/source_ops.md
           - tfds_source: sources/tfds_source.md
   - Benchmarks:
       - Overview: benchmarks/index.md

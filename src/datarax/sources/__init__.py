@@ -27,6 +27,12 @@ from typing import Any, TYPE_CHECKING
 
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
+from datarax.sources.source_ops import (
+    eager_get_batch,
+    eager_iter,
+    eager_reset,
+    resolve_wrapped_indices,
+)
 
 
 _TFDS_AUTO_DETECT_ERRORS = (ImportError, AttributeError, KeyError, TypeError, ValueError, OSError)
@@ -328,4 +334,9 @@ __all__ = [
     # Factory functions
     "from_tfds",
     "from_hf",
+    # Helpers a source is built from
+    "eager_get_batch",
+    "eager_iter",
+    "eager_reset",
+    "resolve_wrapped_indices",
 ]

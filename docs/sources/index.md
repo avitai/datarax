@@ -38,6 +38,7 @@ batch = source.get_batch(32)
 ## Modules
 
 - [hf_source](hf_source.md) - HuggingFace Datasets integration (recommended)
+- [source_ops](source_ops.md) - The helpers a source is built from: wrapped index resolution, eager iteration, batching and reset
 - [tfds_source](tfds_source.md) - TensorFlow Datasets integration
 - [memory_source](memory_source.md) - In-memory data for testing
 - [array_record_source](array_record_source.md) - ArrayRecord format (Google)
