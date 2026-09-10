@@ -79,6 +79,13 @@ class Pipeline(nnx.Module):
         batch_size: Number of records fetched per ``step()`` call.
         rngs: ``nnx.Rngs`` consumed by stochastic stages and the source.
 
+    Epochs: the pipeline owns the iteration position and the epoch counter.
+    Every ``step()`` of an epoch passes the same epoch key to
+    ``get_batch_at``, so a shuffled source serves one permutation per epoch
+    and each record is visited exactly once; :meth:`reset` starts the next
+    epoch at position 0 with a new permutation. Iterating an exhausted
+    pipeline yields nothing until it is reset.
+
     Use :meth:`from_dag` for branching / merging topologies.
     """
 
@@ -118,6 +125,10 @@ class Pipeline(nnx.Module):
         self._predecessors: dict[str, list[str]] = resolved_edges
         self._sink: str | None = resolved_sink
         self._position: nnx.Variable[jax.Array] = nnx.Variable(jnp.zeros((), dtype=jnp.int32))
+        self._epoch: nnx.Variable[jax.Array] = nnx.Variable(jnp.zeros((), dtype=jnp.int32))
+        # The epoch key is derived from this base and the epoch counter, so
+        # iterator state (position, epoch, rng counts) reproduces every slice.
+        self._epoch_key_base: nnx.Variable[jax.Array] = nnx.Variable(jax.random.key_data(rngs()))
         # Cache of compiled @nnx.scan bodies, keyed on the call signature.
         # The decorator must be applied to a stable function identity for
         # nnx.scan's JIT cache to hit on subsequent calls; rebuilding on
@@ -314,19 +325,36 @@ class Pipeline(nnx.Module):
         batch_size = leaves[0].shape[0]
         return jnp.asarray(start_index, dtype=jnp.int32) + jnp.arange(batch_size, dtype=jnp.int32)
 
+    def epoch_key(self) -> jax.Array:
+        """The key every batch of the current epoch passes to ``get_batch_at``.
+
+        One key per epoch is what makes a shuffled epoch a single permutation.
+        """
+        base = jax.random.wrap_key_data(self._epoch_key_base[...])
+        return jax.random.fold_in(base, self._epoch[...])
+
+    def reset(self) -> None:
+        """Start the next epoch: position 0, epoch counter advanced.
+
+        A shuffled source serves a new permutation; a sequential source serves
+        the same order again. Sessions in progress see the change at their next
+        ``iter()``.
+        """
+        self._position[...] = jnp.zeros((), dtype=jnp.int32)
+        self._epoch[...] = self._epoch[...] + jnp.int32(1)
+
     @nnx.jit
     def step(self) -> dict:
         """Fetch one batch from the source and run it through the DAG.
 
         Reads ``self._position``, fetches via
-        ``source.get_batch_at(position, batch_size, key)``, runs
+        ``source.get_batch_at(position, batch_size, epoch_key)``, runs
         ``__call__``, advances ``self._position`` by ``batch_size``.
         The method is JAX-traceable; the DAG iteration unrolls during
         tracing.
         """
         idx = self._position[...]
-        key = self.rngs()
-        batch = self.source.get_batch_at(idx, self.batch_size, key)
+        batch = self.source.get_batch_at(idx, self.batch_size, self.epoch_key())
         # __call__ reads self._position (== idx here) to key per-record RNG on
         # stable global indices (idx + arange); advance only afterwards.
         batch = self(batch)

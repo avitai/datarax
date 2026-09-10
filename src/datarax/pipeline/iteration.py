@@ -174,6 +174,11 @@ class PipelineIterator:
             for index, variable in enumerate(self._live_variables)
             if variable is pipeline._position
         )
+        self._epoch_index = next(
+            index
+            for index, variable in enumerate(self._live_variables)
+            if variable is pipeline._epoch
+        )
         self._closed = False
 
     def __iter__(self) -> Iterator[dict]:
@@ -201,15 +206,20 @@ class PipelineIterator:
         """Return iterator state valid at the current yield boundary.
 
         The state names the batches already yielded to the caller:
-        ``position`` (records consumed) and ``rng_counts`` (per-stream fork
+        ``position`` (records consumed), ``epoch`` (which permutation a
+        shuffled source serves) and ``rng_counts`` (per-stream fork
         counters, which determine every stochastic draw). Shapes and types
         are stable across the iterator's lifetime.
 
         Returns:
-            JSON-serializable dict with ``position`` and ``rng_counts``.
+            JSON-serializable dict with ``position``, ``epoch`` and ``rng_counts``.
         """
         counts = [int(self._live_variables[index].get_value()) for index in self._rng_count_indices]
-        return {"position": np.int64(self._position), "rng_counts": counts}
+        return {
+            "position": np.int64(self._position),
+            "epoch": int(self._live_variables[self._epoch_index].get_value()),
+            "rng_counts": counts,
+        }
 
     def set_state(self, state: dict[str, Any]) -> None:
         """Restore iterator state produced by :meth:`get_state`.
@@ -218,7 +228,7 @@ class PipelineIterator:
         seeds) to the one that produced the state.
 
         Args:
-            state: Dict with ``position`` and ``rng_counts`` entries.
+            state: Dict with ``position``, ``epoch`` and ``rng_counts`` entries.
 
         Raises:
             ValueError: If ``state`` carries a different number of rng counts than this
@@ -238,6 +248,8 @@ class PipelineIterator:
                 target.set_value(jnp.asarray(count, dtype=target.get_value().dtype))
         for target in (self._live_variables[self._position_index], carried[self._position_index]):
             target.set_value(jnp.asarray(position, dtype=jnp.int32))
+        for target in (self._live_variables[self._epoch_index], carried[self._epoch_index]):
+            target.set_value(jnp.asarray(int(state["epoch"]), dtype=jnp.int32))
         self._position = position
 
     def close(self) -> None:

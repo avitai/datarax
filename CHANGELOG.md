@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A shuffled epoch through `Pipeline` is a permutation. `step()` drew a fresh key from
+  the pipeline's rng stream for every batch and `get_batch_at` builds a full permutation
+  from its key, so consecutive batches came from different permutations and an epoch
+  repeated some records and skipped others (measured: 4 batches of 16 from 64 shuffled
+  records visited 42 distinct records). Every batch of an epoch now receives the same
+  epoch key, derived from a base key drawn once at construction and the epoch counter,
+  on both the iterator and the `scan` paths.
+
+### Added
+
+- `Pipeline.reset()` starts the next epoch (position 0, epoch counter advanced, a new
+  permutation for shuffled sources); iterating an exhausted pipeline yields nothing until
+  it is reset. `Pipeline.epoch_key()` is the key the current epoch passes to the source.
+  `PipelineIterator.get_state()` / `set_state()` carry `epoch` alongside `position` and
+  `rng_counts`, so a mid-epoch resume reproduces the same slices.
+
 ## [0.1.7] - 2026-09-09
 
 ### Changed
