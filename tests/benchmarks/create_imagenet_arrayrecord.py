@@ -40,7 +40,7 @@ def convert_to_array_record() -> str | NoReturn:
     from tqdm import tqdm
 
     # Source path from user
-    SOURCE_DATA_PATH = Path("/media/mahdi/ssd23/Data/SimplyHumanTakeHome/case_study_v2/to_share")
+    SOURCE_DATA_PATH = Path("/mnt/ssd2/Data/SimplyHumanTakeHome/case_study_v2/to_share")
     # Output path (in our workspace)
     OUTPUT_DIR = Path("tests/data/imagenet64_arrayrecord")
 
