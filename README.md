@@ -1,4 +1,4 @@
-# Datarax: A Data Pipeline Framework for JAX
+# Datarax: Differentiable Data Pipelines for JAX
 
 [![CI](https://github.com/avitai/datarax/actions/workflows/ci.yml/badge.svg)](https://github.com/avitai/datarax/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/avitai/datarax/branch/main/graph/badge.svg)](https://codecov.io/gh/avitai/datarax)

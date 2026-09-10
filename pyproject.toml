@@ -43,7 +43,7 @@ dependencies = [
   "PyYAML>=6",
   "grain>=0.2.18"
 ]
-description = "Datarax: A high-performance, NNX-based data pipeline framework for JAX"
+description = "Differentiable data pipelines for JAX/Flax NNX: HuggingFace, TFDS and ArrayRecord sources, augmentation stages, scan-based epochs, exact mid-epoch resume"
 dynamic = ["version"]
 keywords = ["jax", "flax", "nnx", "data-loading", "machine-learning", "workshop"]
 license = {file = "LICENSE"}
