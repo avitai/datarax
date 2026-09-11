@@ -12,21 +12,23 @@ A. Construction validation:
 
    1. ``test_mixed_rejects_sources_with_incompatible_element_specs`` —
       sources must produce records with identical structure.
+   2. ``test_mixed_rejects_incompatible_element_specs_naming_the_field`` —
+      the rejection names the differing field and both of its shapes.
 
 B. Sampling semantics:
 
-   2. ``test_mixed_get_batch_at_is_deterministic_for_fixed_key``
-   3. ``test_mixed_get_batch_at_differs_across_keys``
-   4. ``test_mixed_get_batch_at_returns_size_records``
-   5. ``test_mixed_get_batch_at_respects_weights_in_distribution`` —
+   3. ``test_mixed_get_batch_at_is_deterministic_for_fixed_key``
+   4. ``test_mixed_get_batch_at_differs_across_keys``
+   5. ``test_mixed_get_batch_at_returns_size_records``
+   6. ``test_mixed_get_batch_at_respects_weights_in_distribution`` —
       over many positions, source-A records appear roughly
       ``weight_A / sum(weights)`` of the time.
 
 C. JIT compatibility:
 
-   6. ``test_mixed_get_batch_at_traces_under_jit`` — calling under
+   7. ``test_mixed_get_batch_at_traces_under_jit`` — calling under
       ``jax.jit`` does not raise; output shape is correct.
-   7. ``test_mixed_get_batch_at_accepts_traced_start``.
+   8. ``test_mixed_get_batch_at_accepts_traced_start``.
 """
 
 from __future__ import annotations
@@ -70,6 +72,21 @@ def test_mixed_rejects_sources_with_incompatible_element_specs() -> None:
     )
 
     with pytest.raises(ValueError, match="element_spec"):
+        MixDataSourcesNode(
+            MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)),
+            [src_a, src_b],
+        )
+
+
+def test_mixed_rejects_incompatible_element_specs_naming_the_field() -> None:
+    """The rejection names the differing field and both of its shapes."""
+    src_a = _source([0.0, 1.0])
+    src_b = MemorySource(
+        MemorySourceConfig(shuffle=False),
+        {"x": jnp.zeros((2, 3), dtype=jnp.float32)},
+    )
+
+    with pytest.raises(ValueError, match=r"\['x'\].*\(3,\).*\(\)"):
         MixDataSourcesNode(
             MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)),
             [src_a, src_b],

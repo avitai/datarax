@@ -11,8 +11,10 @@ Three integration tiers (user picks based on speed/flexibility tradeoff):
 - **Tier A — ``for batch in pipeline:``** — compiled iteration session
   (:class:`~datarax.pipeline.iteration.PipelineIterator`). The module
   graph is split once per session and batches run through a cached
-  ``jax.jit`` step, so per-batch cost is one compiled dispatch. Works
-  with any training framework; the recommended data-loading loop.
+  ``jax.jit`` step, so per-batch cost is one compiled dispatch. A
+  streaming source's host batches run through the stage DAG compiled the
+  same way. Works with any training framework; the recommended
+  data-loading loop.
 - **Tier B — ``Pipeline.step()``** — single JIT-traceable batch fetch
   with live module state. For single-shot use or embedding inside your
   own jitted train step, where the outer trace absorbs the call.
@@ -59,7 +61,9 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.data_source import DataSourceModule
-from datarax.pipeline.iteration import PipelineIterator
+from datarax.core.spec import batch_length, validate_batch, validate_device_dtypes
+from datarax.pipeline.dag import run_dag
+from datarax.pipeline.iteration import compile_streaming_dag, declared_spec, PipelineIterator
 from datarax.pipeline.topo import topological_sort, validate_dag
 
 
@@ -286,44 +290,14 @@ class Pipeline(nnx.Module):
         index), so augmentation is invariant to batch composition, host count,
         and resume point. Traceable under ``nnx.jit``/``nnx.scan``.
         """
-        if not self._exec_order or self._sink is None:
-            return batch
-
-        global_indices = self._global_indices_for(batch, self._position[...])
-
-        outputs: dict[str, Any] = {}
-        states: dict[str, Any] = {}
-        for name in self._exec_order:
-            preds = self._predecessors[name]
-            if not preds:
-                inputs: tuple[Any, ...] = (batch,)
-            else:
-                inputs = tuple(outputs[p] for p in preds)
-            stage = self._stage_modules[name]
-            apply_on_raw = getattr(stage, "_apply_on_raw", None)
-            if callable(apply_on_raw) and len(inputs) == 1:
-                # OperatorModule fast path: dict + states threading.
-                data, states = apply_on_raw(inputs[0], states, None, global_indices)  # type: ignore[reportGeneralTypeIssues]
-                outputs[name] = data
-            else:
-                outputs[name] = stage(*inputs)
-        return outputs[self._sink]
-
-    @staticmethod
-    def _global_indices_for(batch: dict, start_index: jax.Array | int | None) -> jax.Array | None:
-        """Per-record global indices for ``batch``, or None for the arange fallback.
-
-        ``batch_size`` comes from the leading axis of the first array leaf (static
-        under tracing); ``start_index`` may be a traced scalar. The result is
-        ``start_index + arange(batch_size)``.
-        """
-        if start_index is None:
-            return None
-        leaves = jax.tree.leaves(batch)
-        if not leaves:
-            return None
-        batch_size = leaves[0].shape[0]
-        return jnp.asarray(start_index, dtype=jnp.int32) + jnp.arange(batch_size, dtype=jnp.int32)
+        return run_dag(
+            self._stage_modules,
+            self._exec_order,
+            self._predecessors,
+            self._sink,
+            batch,
+            self._position[...],
+        )
 
     def epoch_key(self) -> jax.Array:
         """The key every batch of the current epoch passes to ``get_batch_at``.
@@ -475,39 +449,48 @@ class Pipeline(nnx.Module):
         state written back when the session ends (exhaustion, ``close()``,
         or garbage collection after an early break). Iteration stops when
         the position exceeds the source length; sources without ``__len__``
-        iterate indefinitely. Streaming sources (no ``get_batch_at``) are
-        driven sequentially via :meth:`_iter_streaming` instead.
+        iterate indefinitely. Streaming sources (no ``get_batch_at``) pull
+        batches on the host and run them through the compiled stage DAG via
+        :meth:`_iter_streaming` instead.
         """
         if not self.source.supports_indexed_access():
             return self._iter_streaming()
         return PipelineIterator(self)
 
-    def _iter_streaming(self) -> Iterator[dict]:
+    def _iter_streaming(self) -> Iterator[dict]:  # noqa: DOC502
         """Iterate a streaming source (sequential, no random access) through the DAG.
 
-        Streaming sources have no ``get_batch_at``, so batches are pulled
-        sequentially with ``get_batch`` and run through the DAG eagerly — outside
-        ``step``'s jit, since the final batch may be short. Iteration ends when the
-        source is exhausted (``get_batch`` returns an empty batch).
+        Streaming sources have no ``get_batch_at``, so batches are pulled on the
+        host with ``get_batch`` and run through the stage DAG, compiled once per
+        batch shape by :func:`~datarax.pipeline.iteration.compile_streaming_dag`;
+        the final batch may be short. Iteration ends when the source is exhausted
+        (``get_batch`` returns an empty batch).
+
+        The source's ``element_spec()`` is read once per source and x64 setting and
+        is refused if it declares a dtype JAX arrays cannot hold as declared: a
+        ``float64`` field while x64 is off would otherwise be narrowed silently
+        inside the compiled DAG. Every batch is checked against it with
+        :func:`~datarax.core.spec.validate_batch` before it reaches the DAG, so a
+        batch whose structure, per-element shapes, dtypes or record counts disagree
+        with the declaration stops iteration with the fields named. Pipeline state
+        is current at every yield.
 
         Yields:
             One transformed batch dict per source batch, until exhaustion.
+
+        Raises:
+            SpecMismatchError: If the declared spec, or a source batch, breaks the
+                contract above.
+            ValueError: If a stage writes state the compiled step does not carry, or
+                changes the module structure.
         """
+        element_spec = declared_spec(self.source)
+        validate_device_dtypes(element_spec)
+        apply = compile_streaming_dag(self)
         while True:
             batch = self.source.get_batch(self.batch_size)  # type: ignore[attr-defined]
-            leaves = jax.tree.leaves(batch)
-            if not leaves or leaves[0].shape[0] == 0:
+            size = batch_length(batch)
+            if not size:
                 return
-            idx = self._position[...]
-            # Compiled DAG apply: one trace per batch shape (the final short
-            # batch retraces once) instead of eager per-batch op dispatch.
-            output = _jitted_dag_apply(self, batch)
-            self._position[...] = idx + jnp.int32(leaves[0].shape[0])
-            yield output
-
-
-# Compiled DAG apply for the streaming iteration path. Module-level so
-# nnx.jit's trace cache keys on a stable function identity; per-call graph
-# traversal remains (acceptable for streaming, whose per-batch cost is
-# dominated by the source pull), but the DAG body itself is compiled.
-_jitted_dag_apply = nnx.jit(Pipeline.__call__)
+            validate_batch(batch, element_spec, batch_size=self.batch_size)
+            yield apply(batch)

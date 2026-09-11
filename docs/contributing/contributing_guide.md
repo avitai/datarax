@@ -478,7 +478,8 @@ Your PR should include:
 
 ### 1. New Data Sources
 
-When adding data sources:
+When adding data sources, implement one Pipeline access mode and declare the
+records your batches carry:
 
 ```python
 from datarax.core import DataSourceModule
@@ -491,11 +492,21 @@ class NewDataSource(DataSourceModule):
         # stores it as self.config
         super().__init__(config, name=name)
 
-    def __iter__(self):
-        """Implement iteration protocol."""
+    def supports_indexed_access(self):
+        """Return True for random access (get_batch_at), False for streaming (get_batch)."""
+        return True
+
+    def get_batch_at(self, start, size, key=None):
+        """Return `size` records from position `start` as a dict of JAX arrays."""
         # Your implementation
-        pass
+
+    def element_spec(self):
+        """Describe one record exactly as your batches carry it (keys, shapes, dtypes)."""
+        # Your implementation, e.g. with datarax.core.spec helpers
 ```
+
+See [Creating Custom Data Sources](../user_guide/data_sources.md#creating-custom-data-sources)
+for a complete example and the contract `Pipeline` checks.
 
 ### 2. New Operators
 

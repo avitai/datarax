@@ -7,11 +7,14 @@ rely on this contract for buffer pre-allocation and auto-sizing.
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
+from datarax.core.spec import validate_batch
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
 
@@ -42,11 +45,11 @@ def test_memory_source_element_spec_dict_data() -> None:
 
 
 def test_memory_source_element_spec_uses_jax_dtypes() -> None:
-    """element_spec dtypes must be JAX/jnp dtypes, not numpy dtypes.
+    """element_spec dtypes compare equal to JAX dtypes.
 
-    NumPy and JAX dtypes compare unequal under ``==``, which would silently
-    break shape-validation pipelines downstream. The spec contract requires
-    JAX-flavored dtypes.
+    ``jax.ShapeDtypeStruct`` stores its dtype as a ``numpy.dtype``, which
+    compares equal to the matching ``jnp`` scalar type, so the spec can be
+    checked directly against JAX-traced shapes downstream.
     """
     data = {"x": np.ones((10, 5), dtype=np.float64)}
     source = MemorySource(MemorySourceConfig(), data, rngs=nnx.Rngs(0))
@@ -76,3 +79,51 @@ def test_memory_source_element_spec_preserves_pipeline_chain() -> None:
     assert image_spec.shape == (8, 4)
     assert valid_mask_spec.shape == (8,)
     assert valid_mask_spec.dtype == jnp.bool_
+
+
+def test_memory_source_element_spec_describes_get_batch_at_output() -> None:
+    """The declared spec is exactly what the Pipeline-facing ``get_batch_at`` emits.
+
+    ``get_batch_at`` converts host storage to JAX arrays, so with x64 off a
+    float64 or int64 host array is emitted, and declared, as float32 or int32.
+    """
+    data = {
+        "x": np.random.rand(10, 5),
+        "y": np.arange(10, dtype=np.int64),
+        "image": np.zeros((10, 2, 2), dtype=np.uint8),
+    }
+    source = MemorySource(MemorySourceConfig(), data, rngs=nnx.Rngs(0))
+
+    spec = source.element_spec()
+
+    assert spec == {
+        "x": jax.ShapeDtypeStruct((5,), jnp.float32),
+        "y": jax.ShapeDtypeStruct((), jnp.int32),
+        "image": jax.ShapeDtypeStruct((2, 2), jnp.uint8),
+    }
+    validate_batch(source.get_batch_at(0, 4), spec, batch_size=4)
+
+
+def test_memory_source_element_spec_reads_storage_metadata_without_converting_it() -> None:
+    """Deriving the spec never copies the stored dataset to the device."""
+    source = MemorySource(MemorySourceConfig(), {"x": np.random.rand(10, 5)}, rngs=nnx.Rngs(0))
+    refuse = AssertionError("storage was converted to derive element_spec")
+
+    with (
+        patch("jax.numpy.asarray", side_effect=refuse),
+        patch("jax.numpy.array", side_effect=refuse),
+    ):
+        spec = source.element_spec()
+
+    assert spec["x"].shape == (5,)
+
+
+def test_memory_source_list_mode_element_spec_is_the_device_view_of_element_zero() -> None:
+    """List-mode sources declare element zero as the device holds it."""
+    data = [{"x": np.ones((3,), dtype=np.float64), "y": 1} for _ in range(4)]
+    source = MemorySource(MemorySourceConfig(), data, rngs=nnx.Rngs(0))
+
+    assert source.element_spec() == {
+        "x": jax.ShapeDtypeStruct((3,), jnp.float32),
+        "y": jax.ShapeDtypeStruct((), jnp.int32),
+    }

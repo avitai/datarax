@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 from flax import nnx
 
+from datarax.core.spec import validate_batch
 from datarax.sources.hf_source import (
     HFEagerConfig,
     HFEagerSource,
@@ -33,6 +34,21 @@ def _local_files_only_from_kwargs(kwargs: dict) -> bool:
     return bool(getattr(download_config, "local_files_only", False))
 
 
+def _serve(
+    monkeypatch: pytest.MonkeyPatch,
+    dataset: datasets.Dataset,
+    captured: dict[str, object] | None = None,
+) -> None:
+    """Make ``datasets.load_dataset`` return ``dataset``, recording its keyword arguments."""
+
+    def load_dataset(name, split=None, **kwargs):  # noqa: ARG001
+        if captured is not None:
+            captured.update(kwargs)
+        return dataset
+
+    monkeypatch.setattr(datasets, "load_dataset", load_dataset)
+
+
 @pytest.fixture
 def numeric_dataset():
     """Numeric-only dataset suitable for both eager and streaming HF wrappers."""
@@ -49,12 +65,7 @@ def test_hf_eager_source_passes_local_files_only_to_load_dataset(
 ) -> None:
     """``local_files_only=True`` flows to ``DownloadConfig.local_files_only``."""
     captured: dict[str, object] = {}
-
-    def mock_load_dataset(name, split=None, **kwargs):  # noqa: ARG001
-        captured.update(kwargs)
-        return numeric_dataset
-
-    monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
+    _serve(monkeypatch, numeric_dataset, captured)
 
     config = HFEagerConfig(name="mock", split="train", local_files_only=True)
     HFEagerSource(config, rngs=nnx.Rngs(0))
@@ -65,12 +76,7 @@ def test_hf_eager_source_passes_local_files_only_to_load_dataset(
 def test_hf_eager_source_default_local_files_only_is_false(numeric_dataset, monkeypatch) -> None:
     """Default ``local_files_only=False`` keeps download-on-demand behavior."""
     captured: dict[str, object] = {}
-
-    def mock_load_dataset(name, split=None, **kwargs):  # noqa: ARG001
-        captured.update(kwargs)
-        return numeric_dataset
-
-    monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
+    _serve(monkeypatch, numeric_dataset, captured)
 
     config = HFEagerConfig(name="mock", split="train")
     HFEagerSource(config, rngs=nnx.Rngs(0))
@@ -83,12 +89,7 @@ def test_hf_streaming_source_passes_local_files_only_to_load_dataset(
 ) -> None:
     """``local_files_only`` is honored on the streaming path via DownloadConfig."""
     captured: dict[str, object] = {}
-
-    def mock_load_dataset(name, split=None, **kwargs):  # noqa: ARG001
-        captured.update(kwargs)
-        return numeric_dataset
-
-    monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
+    _serve(monkeypatch, numeric_dataset, captured)
 
     config = HFStreamingConfig(name="mock", split="train", local_files_only=True)
     HFStreamingSource(config, rngs=nnx.Rngs(0))
@@ -101,14 +102,9 @@ def test_hf_streaming_source_element_spec_peeks_first_element(numeric_dataset, m
 
     Streaming sources can't strip a leading dimension because they iterate one
     element at a time. The spec is derived by peeking the first element from
-    the backend iterator and applying ``jax.tree.map`` to extract structs.
+    the backend iterator and describing the record the source emits for it.
     """
-
-    def mock_load_dataset(name, split=None, **kwargs):  # noqa: ARG001
-        del kwargs
-        return numeric_dataset
-
-    monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
+    _serve(monkeypatch, numeric_dataset)
 
     config = HFStreamingConfig(name="mock", split="train")
     source = HFStreamingSource(config, rngs=nnx.Rngs(0))
@@ -126,3 +122,37 @@ def test_hf_streaming_source_element_spec_peeks_first_element(numeric_dataset, m
     assert label_spec.shape == ()
     assert feature_spec.shape == (4,)
     assert feature_spec.dtype == jnp.float32
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [{"include_keys": {"feature"}}, {"exclude_keys": {"label"}}],
+    ids=["include_keys", "exclude_keys"],
+)
+def test_hf_streaming_source_element_spec_honors_key_filters(
+    numeric_dataset, monkeypatch, filters
+) -> None:
+    """The declared keys are exactly the keys the filtered records carry."""
+    _serve(monkeypatch, numeric_dataset)
+    source = HFStreamingSource(
+        HFStreamingConfig(name="mock", split="train", **filters), rngs=nnx.Rngs(0)
+    )
+
+    spec = source.element_spec()
+
+    assert set(spec) == {"feature"}
+    assert set(source.get_batch(2)) == {"feature"}
+
+
+def test_hf_streaming_source_element_spec_describes_its_converted_batches(monkeypatch) -> None:
+    """Python floats reach batches as float32 arrays, and the spec declares float32."""
+    dataset = datasets.Dataset.from_dict(
+        {"score": [float(i) for i in range(6)], "label": list(range(6))}
+    )
+    _serve(monkeypatch, dataset)
+    source = HFStreamingSource(HFStreamingConfig(name="mock", split="train"), rngs=nnx.Rngs(0))
+
+    spec = source.element_spec()
+
+    assert spec["score"] == jax.ShapeDtypeStruct((), jnp.float32)
+    validate_batch(source.get_batch(3), spec, batch_size=3)

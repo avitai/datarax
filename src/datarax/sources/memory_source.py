@@ -649,12 +649,16 @@ class MemorySource(DataSourceModule):
         )
 
     def element_spec(self) -> Any:
-        """Return per-element shape/dtype derived from the in-memory data.
+        """Return the spec of the records ``get_batch_at`` emits.
 
-        Dict-mode sources strip the leading dataset-size dimension from every
-        array to produce one ``jax.ShapeDtypeStruct`` per key. List-mode
-        sources introspect element 0 and apply ``jax.tree.map`` to produce a
-        matching PyTree of ``ShapeDtypeStruct`` leaves.
+        ``get_batch_at`` converts the stored data to JAX arrays, so the spec is
+        ``device_spec`` of the stored data: dict-mode sources strip the leading
+        dataset-size axis from every stored array, list-mode sources describe
+        element 0, and while x64 is off a stored ``float64`` or ``int64`` array
+        is declared as ``float32`` or ``int32``. Only array metadata is read; the
+        stored data is never converted to derive the spec. The host-side
+        accessors (``get_batch``, indexing, iteration) return stored values
+        unconverted.
 
         Returns:
             ``jax.ShapeDtypeStruct`` PyTree describing one emitted element.
@@ -663,7 +667,11 @@ class MemorySource(DataSourceModule):
             ValueError: If the source is empty (no element to introspect).
         """
         # Imported lazily to keep memory_source's import surface stable.
-        from datarax.core.spec import array_to_spec, array_to_spec_strip_leading  # noqa: PLC0415
+        from datarax.core.spec import (  # noqa: PLC0415
+            array_to_spec,
+            array_to_spec_strip_leading,
+            device_spec,
+        )
 
         if self.length == 0:
             raise ValueError(
@@ -673,8 +681,9 @@ class MemorySource(DataSourceModule):
 
         data = self.data
         if isinstance(data, dict):
-            return {key: array_to_spec_strip_leading(value) for key, value in data.items()}
+            return device_spec(
+                {key: array_to_spec_strip_leading(value) for key, value in data.items()}
+            )
 
-        # List/sequence mode: introspect element 0.
-        first_element = data[0]
-        return jax.tree.map(array_to_spec, first_element)
+        # List/sequence mode: describe element 0.
+        return device_spec(jax.tree.map(array_to_spec, data[0]))

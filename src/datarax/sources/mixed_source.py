@@ -18,6 +18,7 @@ from flax import nnx
 from datarax.config.registry import register_component
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
+from datarax.core.spec import spec_mismatches, SpecMismatchError
 from datarax.sources._grain_streaming import data_source_to_iter_dataset, mix_streaming_sources
 
 
@@ -68,25 +69,17 @@ def _assert_specs_match(reference: Any, other: Any, index: int) -> None:
         index: Position of ``other`` among the sources, for error messages.
 
     Raises:
-        ValueError: If pytree structure differs, or any leaf differs in shape/dtype.
+        SpecMismatchError: Naming every field where the two specs differ in
+            structure, shape or dtype.
     """
-    if jax.tree.structure(reference) != jax.tree.structure(other):
-        raise ValueError(
-            f"MixDataSourcesNode requires every source to produce records "
-            f"with the same element_spec; source 0 and source {index} have "
-            f"different structure. Mixing under lax.switch needs matching "
-            f"output shapes across all branches."
+    problems = spec_mismatches(reference, other)
+    if problems:
+        raise SpecMismatchError(
+            f"MixDataSourcesNode requires every source to produce records with the same "
+            f"element_spec (mixing under lax.switch needs matching output shapes across "
+            f"all branches); source {index} differs from source 0:",
+            problems,
         )
-    for leaf_a, leaf_b in zip(jax.tree.leaves(reference), jax.tree.leaves(other), strict=False):
-        if not (hasattr(leaf_a, "shape") and hasattr(leaf_b, "shape")):
-            continue
-        if leaf_a.shape != leaf_b.shape or leaf_a.dtype != leaf_b.dtype:
-            raise ValueError(
-                f"MixDataSourcesNode requires every source to produce records "
-                f"with the same element_spec; source 0 leaf has shape="
-                f"{leaf_a.shape} dtype={leaf_a.dtype} but source {index} leaf "
-                f"has shape={leaf_b.shape} dtype={leaf_b.dtype}."
-            )
 
 
 @dataclass(frozen=True)

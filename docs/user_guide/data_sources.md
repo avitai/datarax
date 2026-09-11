@@ -161,6 +161,7 @@ from flax import nnx
 
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
+from datarax.core.spec import array_to_spec_strip_leading
 
 
 @dataclass(frozen=True)
@@ -213,6 +214,10 @@ class CSVDataSource(DataSourceModule):
         # Return `size` rows starting at `start`, wrapping at the end.
         indices = (jnp.arange(size) + start) % len(self)
         return {"features": self.data[indices]}
+
+    def element_spec(self) -> dict[str, Any]:
+        # Declare exactly what get_batch_at emits: one row of float32 features.
+        return {"features": array_to_spec_strip_leading(self.data)}
 ```
 
 When creating custom data sources, ensure:
@@ -224,7 +229,15 @@ When creating custom data sources, ensure:
    `get_batch_at(start, size, key)` and return `True` from
    `supports_indexed_access()`; for forward-only streaming, implement
    `get_batch()` instead
-4. Any mutable state is managed appropriately for checkpointing
+4. `element_spec()` describes exactly the records your batches carry: the same
+   keys, per-element shapes and dtypes. For a streaming source, `Pipeline` checks
+   every batch against it with `datarax.core.spec.validate_batch` before running
+   the DAG, and names the field that disagrees. It reads the declaration once per
+   source and x64 setting, so keep it fixed after construction. Declare dtypes the
+   device holds as declared: while `jax_enable_x64` is off, a declared `float64` or
+   `int64` field is refused rather than narrowed, so cast in the source or enable
+   x64. See [Element Specs](../core/spec.md).
+5. Any mutable state is managed appropriately for checkpointing
 
 ## Using Data Sources in Pipelines
 

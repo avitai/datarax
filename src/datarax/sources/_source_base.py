@@ -193,12 +193,13 @@ class EagerSourceBase(DataSourceModule):
         )
 
     def element_spec(self) -> Any:
-        """Derive per-element spec from the eager dict-of-arrays storage.
+        """Derive the spec of emitted records from the eager dict-of-arrays storage.
 
         EagerSourceBase subclasses store data as a dict mapping keys to arrays
-        whose leading axis is the dataset size. This default implementation
-        strips that leading axis from every leaf to produce one
-        ``jax.ShapeDtypeStruct`` per key.
+        whose leading axis is the dataset size, and ``get_batch_at`` gathers
+        those arrays as JAX arrays. This default implementation strips the
+        leading axis from every leaf and states the result as JAX arrays hold it
+        (``device_spec``), reading only array metadata.
 
         Subclasses with non-dict storage should override.
 
@@ -209,14 +210,16 @@ class EagerSourceBase(DataSourceModule):
             ValueError: If the source is empty.
         """
         # Imported lazily to keep module import light (matches sibling sources).
-        from datarax.core.spec import array_to_spec_strip_leading  # noqa: PLC0415
+        from datarax.core.spec import array_to_spec_strip_leading, device_spec  # noqa: PLC0415
 
         if self.length == 0:
             raise ValueError(
                 f"{type(self).__name__} has zero elements; element_spec() "
                 "cannot be inferred from an empty dataset."
             )
-        return {key: array_to_spec_strip_leading(value) for key, value in self.data.items()}
+        return device_spec(
+            {key: array_to_spec_strip_leading(value) for key, value in self.data.items()}
+        )
 
 
 class StreamingSourceBase(DataSourceModule):

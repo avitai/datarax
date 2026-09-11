@@ -20,6 +20,12 @@ Semantics:
 - :meth:`PipelineIterator.get_state`/:meth:`~PipelineIterator.set_state`
   expose iterator-owned state (position and RNG counts), valid at every
   yield boundary, for exact mid-epoch resume without touching the module.
+
+Streaming sources pull batches on the host, so :func:`compile_streaming_dag`
+applies the same pattern to the stage modules and the position counter only.
+The source never enters the compiled step: its state stays with the live
+module, and a source that replaces its backend iterator between passes does
+not force a recompile. Structurally identical pipelines share compiled steps.
 """
 
 from __future__ import annotations
@@ -33,9 +39,12 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
+from datarax.core.spec import batch_length
+from datarax.pipeline.dag import run_dag
+
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from datarax.pipeline.pipeline import Pipeline
 
@@ -130,9 +139,148 @@ def _state_leaves(state: Any) -> list[Any]:
     ]
 
 
+def _write_back(live_variables: list[nnx.Variable], state: Any) -> None:
+    """Copy each value a compiled step returned into its live Variable."""
+    for variable, updated in zip(live_variables, _state_leaves(state), strict=True):
+        variable.set_value(updated.get_value())
+
+
 def _session_cache_size(pipeline: Pipeline) -> int:
     """Number of compiled session steps cached for ``pipeline`` (testing)."""
     return len(_SESSION_STEP_CACHES.get(pipeline, []))
+
+
+# Declared element specs per source, by x64 setting. Reading a spec can open a
+# backend iterator (the TFDS and HuggingFace streaming sources peek their first
+# record, which fills a shuffle buffer), so it is read once per source and
+# precision mode instead of once per pass. Weak keys let entries die with sources.
+_DECLARED_SPECS: weakref.WeakKeyDictionary[Any, dict[bool, Any]] = weakref.WeakKeyDictionary()
+
+
+def declared_spec(source: Any) -> Any:
+    """Return ``source.element_spec()``, read once per source and x64 setting.
+
+    Args:
+        source: The data source whose declaration is needed.
+
+    Returns:
+        The element spec the source declared under the active x64 setting.
+    """
+    specs = _DECLARED_SPECS.setdefault(source, {})
+    x64 = bool(jax.config.read("jax_enable_x64"))
+    if x64 not in specs:
+        specs[x64] = source.element_spec()
+    return specs[x64]
+
+
+# Compiled streaming DAG steps shared across pipelines, matched by equality of the
+# stage graph and the execution plan (graphs holding lists are unhashable). The
+# most recently used entry is kept last; the oldest is dropped past the bound.
+_DAG_STEPS: list[tuple[Any, Any, Callable[..., Any]]] = []
+_MAX_DAG_STEPS = 16
+
+
+def _uncarried_state(graph: Any) -> list[tuple[tuple[Any, ...], nnx.Variable, Any]]:
+    """Variables a compiled step does not return, each with the raw value it holds now."""
+    return [
+        (path, node, node.get_raw_value())
+        for path, node in nnx.iter_graph(graph)
+        if isinstance(node, nnx.Variable) and not _is_step_mutable(path, node)
+    ]
+
+
+def _refuse_lost_updates(
+    graph: Any,
+    graphdef: Any,
+    uncarried: list[tuple[tuple[Any, ...], nnx.Variable, Any]],
+) -> None:
+    """Raise while tracing if running the DAG changed what the step cannot return.
+
+    Args:
+        graph: The merged stage graph after the DAG ran.
+        graphdef: The graph definition the step was compiled for.
+        uncarried: :func:`_uncarried_state` of ``graph`` before the DAG ran.
+
+    Raises:
+        ValueError: If a stage added or removed module attributes, or wrote a
+            Variable other than an RNG count or a plain ``nnx.Variable``.
+    """
+    if nnx.graphdef(graph) != graphdef:
+        raise ValueError(
+            "A stage changed the module structure while the DAG ran; streaming iteration "
+            "compiles the stage graph once and cannot keep added or removed attributes. "
+            "Create stage state in __init__."
+        )
+    written = [
+        f"{'.'.join(str(key) for key in path[1:])} ({type(node).__name__})"
+        for path, node, raw in uncarried
+        if node.get_raw_value() is not raw
+    ]
+    if written:
+        raise ValueError(
+            "Stages wrote state that streaming iteration does not carry between batches: "
+            f"{', '.join(written)}. The compiled step returns RNG counts and plain "
+            "nnx.Variable state only; keep per-batch state in nnx.Variable."
+        )
+
+
+def _dag_step(graphdef: Any, plan: tuple[Any, ...]) -> Callable[..., Any]:
+    """Return the compiled step running a stage graph over one batch."""
+    for index, (cached_graphdef, cached_plan, cached_step) in enumerate(_DAG_STEPS):
+        if cached_plan == plan and cached_graphdef == graphdef:
+            _DAG_STEPS.append(_DAG_STEPS.pop(index))
+            return cached_step
+    exec_order, predecessors, sink = plan
+
+    @jax.jit
+    def step(mutable_state: Any, read_only_state: Any, batch: Any) -> tuple[Any, Any]:
+        graph = nnx.merge(graphdef, mutable_state, read_only_state)
+        stages, position = graph
+        uncarried = _uncarried_state(graph)
+        output = run_dag(stages, exec_order, predecessors, sink, batch, position[...])
+        position[...] = position[...] + jnp.int32(batch_length(batch))
+        _refuse_lost_updates(graph, graphdef, uncarried)
+        return output, nnx.state(graph, _is_step_mutable)
+
+    _DAG_STEPS.append((graphdef, plan, step))
+    if len(_DAG_STEPS) > _MAX_DAG_STEPS:
+        _DAG_STEPS.pop(0)
+    return step
+
+
+def compile_streaming_dag(pipeline: Pipeline) -> Callable[[Any], Any]:
+    """Return a function running ``pipeline``'s stage DAG over one host batch.
+
+    The stage modules and the position counter are split once and each batch runs
+    through a cached ``jax.jit`` step, so the module graph is not traversed per
+    batch. The split state references the live Variables: every call reads their
+    current values, including changes made between batches, and writes the RNG
+    counts and plain ``nnx.Variable`` state the step returns back into the live
+    module, advancing the position by the batch's record count. A stage that
+    writes other state or changes the module structure is refused while tracing.
+
+    Args:
+        pipeline: The pipeline whose stage DAG runs.
+
+    Returns:
+        A function taking a validated batch and returning the sink's output.
+    """
+    graph = (pipeline._stage_modules, pipeline._position)
+    graphdef, mutable_state, read_only_state = nnx.split(graph, _is_step_mutable, ...)
+    plan = (
+        tuple(pipeline._exec_order),
+        {name: tuple(preds) for name, preds in pipeline._predecessors.items()},
+        pipeline._sink,
+    )
+    step = _dag_step(graphdef, plan)
+    live_variables = _state_leaves(mutable_state)
+
+    def apply(batch: Any) -> Any:
+        output, updated = step(mutable_state, read_only_state, batch)
+        _write_back(live_variables, updated)
+        return output
+
+    return apply
 
 
 class PipelineIterator:
@@ -195,10 +343,7 @@ class PipelineIterator:
         batch, self._state = self._pure_step(self._state, self._immutable_state)
         # Sync the live module at every yield boundary: mid-loop
         # checkpointing (nnx.state on the pipeline) must see the truth.
-        for variable, new_value in zip(
-            self._live_variables, _state_leaves(self._state), strict=True
-        ):
-            variable.set_value(new_value.get_value())
+        _write_back(self._live_variables, self._state)
         self._position += self._batch_size
         return batch
 

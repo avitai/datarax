@@ -543,7 +543,10 @@ class HFStreamingSource(StreamingSourceBase):
             iterator = iter(self._hf_dataset)
             self._iterator = iterator
 
-        element = next(iterator)
+        return self._convert_record(next(iterator))
+
+    def _convert_record(self, element: dict[str, Any]) -> dict[str, Any]:
+        """Filter and convert one raw HuggingFace record into the record this source emits."""
         return converted_filtered_record(
             element,
             self.selected_keys,
@@ -556,25 +559,20 @@ class HFStreamingSource(StreamingSourceBase):
         return {"streaming": self.is_iterable_mode}
 
     def element_spec(self) -> Any:
-        """Return per-element shape/dtype derived by peeking the backend.
+        """Return the spec of the records this source emits, derived from the first one.
 
         Streaming sources cannot strip a leading dataset-size dimension because
-        each iteration yields one element. The spec is derived by peeking the
-        first element from the underlying HuggingFace dataset (without
-        consuming the iterator state for normal training) and converting each
-        top-level value into a single ``ShapeDtypeStruct``.
+        each iteration yields one element. The first element of the cached
+        ``self._hf_dataset`` is filtered and converted exactly as iteration does
+        it, so ``include_keys``/``exclude_keys`` apply and Python values become
+        the JAX arrays batches carry; each top-level value is then described as
+        one ``ShapeDtypeStruct`` (a Python list feature becomes one 1-D array,
+        not per-element scalars).
 
-        Top-level dict values are treated as single arrays (HuggingFace
-        commonly emits Python lists for vector features; those become 1-D
-        arrays, not nested per-element scalars).
-
-        The peek operates on the cached ``self._hf_dataset`` (already loaded
-        in ``__init__``) so it does not re-trigger downloads and is safe to
-        call repeatedly.
+        The peek starts a fresh iterator on the dataset loaded in ``__init__``,
+        so it neither consumes the training iterator nor re-triggers downloads.
         """
         from datarax.core.spec import array_to_spec  # noqa: PLC0415
 
-        first = next(iter(self._hf_dataset))
-        if not isinstance(first, dict):
-            return array_to_spec(first)
-        return {key: array_to_spec(value) for key, value in first.items()}
+        record = self._convert_record(next(iter(self._hf_dataset)))
+        return {key: array_to_spec(value) for key, value in record.items()}

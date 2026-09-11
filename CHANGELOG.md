@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `datarax.core.spec.validate_batch` checks a batch against a declared element spec: tree
+  structure, per-element shapes, dtypes and one shared record count, with a short final
+  batch allowed when `batch_size` is given. Every problem is reported with its field path
+  in one `SpecMismatchError` (a `ValueError`). Only shapes and dtypes are read, so nothing
+  is copied or cast, and the check runs on tracers without adding to the compiled graph.
+- `device_spec` states a spec as JAX arrays hold its data under the active x64 setting,
+  `validate_device_dtypes` refuses declared dtypes the device cannot hold as declared, and
+  `spec_mismatches` and `batch_length` expose the field-level comparisons.
+
+### Changed
+
+- `array_to_spec` and `array_to_spec_strip_leading` describe a value exactly as given.
+  They called `jnp.asarray`, which copied the value to the device (the whole dataset for
+  `MemorySource.element_spec`: 12 ms for 200,000 x 64 `float64` rows on CPU) and turned
+  host `float64`/`int64` into `float32`/`int32` while x64 was off. Sources whose batches
+  are converted JAX arrays now state it with `device_spec`: `MemorySource` and
+  `EagerSourceBase` declare `device_spec` of their storage, the same values as before.
+  Code that derives a spec with `array_to_spec` from data it later converts must wrap the
+  result in `device_spec`.
+- Streaming iteration (`for batch in pipeline` over a source without indexed access)
+  validates every source batch against `source.element_spec()` before it reaches the DAG,
+  and refuses a declared dtype the device would narrow when the pass starts. It used to
+  check only the first leaf's leading axis, so a wrong trailing shape, a `float64` batch
+  declared `float32` (narrowed silently inside the compiled DAG), an undeclared or missing
+  field, or leaves with different record counts all ran, and the position advanced by the
+  first leaf's length.
+- Streaming iteration runs the stage DAG as one compiled step per batch shape instead of
+  calling `nnx.jit(Pipeline.__call__)` on every batch. The step covers the stage modules
+  and the position counter only, so the module graph is no longer traversed per batch
+  and a source that replaces its backend iterator between passes no longer forces a
+  recompile. Measured on CPU with 64-record batches over repeated epochs: 26.7 µs per
+  batch instead of 445.8 µs without stages, and 45.4 µs instead of 817.8 µs with one
+  stochastic stage. Pipeline state is still read before and written back after every
+  batch. A stage that writes state other than RNG counts and plain `nnx.Variable` state,
+  or adds attributes while it runs, is refused with a `ValueError` instead of losing the
+  write.
+- Streaming iteration reads `source.element_spec()` once per source and x64 setting,
+  because the TFDS and HuggingFace streaming sources open their backend to answer it. A
+  streaming source must implement `element_spec()`, and its declaration must stay fixed
+  after construction.
+- `MixDataSourcesNode` names every differing field when it rejects incompatible sources.
+
+### Fixed
+
+- `HFStreamingSource.element_spec` and `TFDSStreamingSource.element_spec` describe the
+  records the source emits: the first record is filtered and converted exactly as
+  iteration does it, so `include_keys` and `exclude_keys` apply. The spec used to list
+  every dataset column.
+
 ## [0.1.8] - 2026-09-09
 
 ### Fixed

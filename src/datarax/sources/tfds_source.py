@@ -550,8 +550,10 @@ class TFDSStreamingSource(StreamingSourceBase):
             iterator = iter(self._tf_dataset)
             self._iterator = iterator
 
-        tf_element = next(iterator)
+        return self._convert_record(next(iterator))
 
+    def _convert_record(self, tf_element: Any) -> dict[str, Any]:
+        """Filter and convert one raw TFDS element into the record this source emits."""
         # Handle as_supervised tuple format
         if self.as_supervised and isinstance(tf_element, tuple):
             tf_element = {"image": tf_element[0], "label": tf_element[1]}
@@ -564,21 +566,18 @@ class TFDSStreamingSource(StreamingSourceBase):
         )
 
     def element_spec(self) -> Any:
-        """Return per-element shape/dtype derived by peeking the TFDS stream.
+        """Return the spec of the records this source emits, derived from the first one.
 
-        TFDS streams yield single-element dicts (or tuples in
-        ``as_supervised`` mode). The spec is derived by peeking the first
-        element from a fresh iterator on the cached ``self._tf_dataset``
-        (which has already been built in ``__init__``) so it does not
-        re-trigger downloads. Top-level dict values are treated as single
+        TFDS streams yield single-element dicts (or tuples in ``as_supervised``
+        mode). The first element of a fresh iterator on the cached
+        ``self._tf_dataset`` (built in ``__init__``, so no download is
+        re-triggered) is filtered and converted exactly as iteration does it,
+        so ``include_keys``/``exclude_keys`` apply and the spec describes the JAX
+        arrays batches carry. Top-level dict values are described as single
         leaves so vector features become 1-D ``ShapeDtypeStruct`` instead of
         per-scalar leaves.
         """
         from datarax.core.spec import array_to_spec  # noqa: PLC0415
 
-        first = next(iter(self._tf_dataset))
-        if self.as_supervised and isinstance(first, tuple):
-            first = {"image": first[0], "label": first[1]}
-        if not isinstance(first, dict):
-            return array_to_spec(first)
-        return {key: array_to_spec(value) for key, value in first.items()}
+        record = self._convert_record(next(iter(self._tf_dataset)))
+        return {key: array_to_spec(value) for key, value in record.items()}

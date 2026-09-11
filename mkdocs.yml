@@ -232,6 +232,7 @@ nav:
           - operator: core/operator.md
           - sampler: core/sampler.md
           - sharder: core/sharder.md
+          - spec: core/spec.md
           - structural: core/structural.md
       - Utilities:
           - Overview: utils/index.md
