@@ -130,8 +130,8 @@ def test_gpu_specific_functionality():
 For tests that should behave differently on different devices, use the device detection utilities:
 
 ```python
-# In test files (tests/ directory is on sys.path via conftest.py)
-from test_common.device_detection import has_gpu, has_tpu, get_device_info
+# In test files, import the helpers through the tests package
+from tests.test_common.device_detection import has_gpu, has_tpu, get_device_info
 
 def test_device_specific_behavior():
     if has_gpu():

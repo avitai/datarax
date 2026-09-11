@@ -13,7 +13,8 @@ import sys
 from pathlib import Path
 
 import pytest
-from jax_test_environment import resolve_test_jax_environment
+
+from tests.jax_test_environment import resolve_test_jax_environment
 
 
 _EMULATION = "--xla_force_host_platform_device_count"
@@ -87,10 +88,10 @@ def test_asking_for_cuda_without_the_plugin_fails() -> None:
 
 def test_importing_the_resolver_does_not_import_jax() -> None:
     """JAX reads JAX_PLATFORMS at import, so choosing the backend must not load it."""
-    tests_dir = str(Path(__file__).resolve().parent)
+    repo_root = str(Path(__file__).resolve().parents[1])
     code = (
-        f"import sys; sys.path.insert(0, {tests_dir!r}); "
-        "import jax_test_environment; print('jax' in sys.modules)"
+        f"import sys; sys.path.insert(0, {repo_root!r}); "
+        "import tests.jax_test_environment; print('jax' in sys.modules)"
     )
     result = subprocess.run(  # noqa: S603 - fixed interpreter and code
         [sys.executable, "-c", code], capture_output=True, text=True, check=True

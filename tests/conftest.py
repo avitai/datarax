@@ -50,12 +50,10 @@ elif IS_LINUX:
 
 
 # JAX reads JAX_PLATFORMS when it is imported, so the backend is chosen first, by a
-# module that imports nothing that loads JAX (test_common's package does).
-_TESTS_DIR = str(Path(__file__).resolve().parent)
-if _TESTS_DIR not in sys.path:
-    sys.path.insert(0, _TESTS_DIR)
-
-from jax_test_environment import resolve_test_jax_environment
+# module that imports nothing that loads JAX (test_common's package does). Test helpers
+# import through the tests package: tests/ itself on sys.path would make every test
+# subpackage a top-level module, and tests/benchmarks would shadow benchmarks.
+from tests.jax_test_environment import resolve_test_jax_environment
 
 
 def _cuda_plugin_available() -> bool:
@@ -120,12 +118,10 @@ except ImportError:
     # Beartype is not installed, skipping configuration
     pass
 
-# Add the tests directory to the Python path for easy importing of test_common
-
 # Add the src directory to the Python path so tests can import modules
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from test_common.device_detection import (
+from tests.test_common.device_detection import (
     has_multiple_devices,
     is_distributed_env,
 )
