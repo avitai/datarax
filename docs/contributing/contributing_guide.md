@@ -492,12 +492,12 @@ class NewDataSource(DataSourceModule):
         # stores it as self.config
         super().__init__(config, name=name)
 
-    def supports_indexed_access(self):
-        """Return True for random access (get_batch_at), False for streaming (get_batch)."""
-        return True
-
     def get_batch_at(self, start, size, key=None):
-        """Return `size` records from position `start` as a dict of JAX arrays."""
+        """Return `size` records from `start` as JAX arrays; stateless and traceable.
+
+        Implementing it is what gives a source indexed access. A forward-only
+        source implements get_batch(batch_size) instead.
+        """
         # Your implementation
 
     def element_spec(self):

@@ -87,13 +87,21 @@ config = ArrayRecordSourceConfig(
 ### Creating an ArrayRecord Source
 
 ```python
+import numpy as np
 from datarax.sources import ArrayRecordSourceModule, ArrayRecordSourceConfig
 from flax import nnx
+
+
+def decode(record: bytes) -> dict[str, np.ndarray]:
+    # ArrayRecord records are bytes; turn one into a dict of arrays.
+    return {"data": np.frombuffer(record, dtype=np.float32)}
+
 
 # Single file
 source = ArrayRecordSourceModule(
     ArrayRecordSourceConfig(seed=42),
     paths="/path/to/data.riegeli",
+    decode=decode,
     rngs=nnx.Rngs(0),
 )
 
@@ -101,6 +109,7 @@ source = ArrayRecordSourceModule(
 source = ArrayRecordSourceModule(
     ArrayRecordSourceConfig(seed=42, shuffle_files=True),
     paths="/path/to/data-*.riegeli",
+    decode=decode,
     rngs=nnx.Rngs(0),
 )
 
@@ -111,6 +120,7 @@ source = ArrayRecordSourceModule(
         "/path/to/train-00000.riegeli",
         "/path/to/train-00001.riegeli",
     ],
+    decode=decode,
     rngs=nnx.Rngs(0),
 )
 ```
@@ -120,7 +130,7 @@ source = ArrayRecordSourceModule(
 ```python
 from datarax.pipeline import Pipeline
 
-# Create pipeline from ArrayRecord source
+# Create pipeline from ArrayRecord source; each pass covers one epoch
 pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 
 # Add transformations
@@ -172,7 +182,7 @@ new epoch.
 ```python
 # Run for exactly 10 epochs
 config = ArrayRecordSourceConfig(num_epochs=10)
-source = ArrayRecordSourceModule(config, paths=paths, rngs=nnx.Rngs(0))
+source = ArrayRecordSourceModule(config, paths=paths, decode=decode, rngs=nnx.Rngs(0))
 
 pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 for epoch in range(10):
@@ -244,6 +254,7 @@ Key API Summary:
      source = ArrayRecordSourceModule(
          config,
          paths="/path/to/*.riegeli",
+         decode=decode,
          rngs=nnx.Rngs(0),
      )
 
@@ -267,6 +278,7 @@ Quick reference completed!
 | **Checkpointing** | Full `get_state()` / `set_state()` |
 | **Shuffling** | Per-epoch reshuffling with seed control |
 | **Epoch Control** | Per-session passes; loop `iter(pipeline)` for epochs |
+| **Decoding** | `decode` turns each bytes record into arrays for batches |
 | **Grain Compatible** | Wraps Grain's ArrayRecordDataSource |
 
 ## When to Use ArrayRecord

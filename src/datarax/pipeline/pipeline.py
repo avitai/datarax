@@ -464,10 +464,23 @@ class Pipeline(nnx.Module):
         iterate indefinitely. Streaming sources (no ``get_batch_at``) pull
         batches on the host and run them through the compiled stage DAG via
         :meth:`_iter_streaming` instead.
+
+        Returns:
+            A :class:`~datarax.pipeline.iteration.PipelineIterator` for a source
+            with indexed access, otherwise a generator over streamed batches.
+
+        Raises:
+            TypeError: If the source implements neither ``get_batch_at`` nor
+                ``get_batch``.
         """
-        if not self.source.supports_indexed_access():
-            return self._iter_streaming()
-        return PipelineIterator(self)
+        if self.source.supports_indexed_access():
+            return PipelineIterator(self)
+        if not callable(getattr(self.source, "get_batch", None)):
+            raise TypeError(
+                f"{type(self.source).__name__} implements neither get_batch_at (indexed "
+                "access) nor get_batch (streaming), so Pipeline cannot iterate it."
+            )
+        return self._iter_streaming()
 
     def _iter_streaming(self) -> Iterator[dict]:  # noqa: DOC502
         """Iterate a streaming source (sequential, no random access) through the DAG.

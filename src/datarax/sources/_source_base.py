@@ -110,10 +110,6 @@ class EagerSourceBase(DataSourceModule):
             key,
         )
 
-    def supports_indexed_access(self) -> bool:
-        """Eager sources support random-access ``get_batch_at``."""
-        return True
-
     def get_batch_at(
         self,
         start: int | jax.Array,

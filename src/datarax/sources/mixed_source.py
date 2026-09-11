@@ -233,10 +233,6 @@ class MixDataSourcesNode(DataSourceModule):
             if reset_fn is not None:
                 reset_fn()
 
-    def supports_indexed_access(self) -> bool:
-        """Mixed sources support keyed random-access ``get_batch_at``."""
-        return True
-
     def get_batch_at(
         self,
         start: int | jax.Array,

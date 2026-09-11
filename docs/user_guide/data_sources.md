@@ -135,15 +135,22 @@ for i, batch in enumerate(pipeline):
 For array record format data (commonly used in large-scale ML training), use `ArrayRecordSourceModule`:
 
 ```python
+import numpy as np
 from datarax.pipeline import Pipeline
 from datarax.sources import ArrayRecordSourceModule, ArrayRecordSourceConfig
 from flax import nnx
 
+
+def decode(record: bytes) -> dict[str, np.ndarray]:
+    # ArrayRecord records are bytes; turn one into a dict of arrays.
+    return {"features": np.frombuffer(record, dtype=np.float32)}
+
+
 # Create source from array record file (config first, then path)
 config = ArrayRecordSourceConfig()
-source = ArrayRecordSourceModule(config, "path/to/arrayrecord/file")
+source = ArrayRecordSourceModule(config, "path/to/arrayrecord/file", decode=decode)
 
-# Use in pipeline
+# Each pass over the pipeline covers one epoch of decoded batches
 pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 ```
 
@@ -205,11 +212,6 @@ class CSVDataSource(DataSourceModule):
     def __len__(self) -> int:
         return int(self.data.shape[0])
 
-    def supports_indexed_access(self) -> bool:
-        # Random-access sources return True so Pipeline drives them via
-        # the jitted, indexed step() path.
-        return True
-
     def get_batch_at(self, start: int | Any, size: int, key: Any | None = None) -> dict[str, Any]:
         # Return `size` rows starting at `start`, wrapping at the end.
         indices = (jnp.arange(size) + start) % len(self)
@@ -225,10 +227,11 @@ When creating custom data sources, ensure:
 1. Your class extends `DataSourceModule`
 2. You pass a `StructuralConfig`-derived config as the required first positional
    argument to `super().__init__(config, ...)`
-3. You implement the Pipeline contract: for random access, implement
-   `get_batch_at(start, size, key)` and return `True` from
-   `supports_indexed_access()`; for forward-only streaming, implement
-   `get_batch()` instead
+3. You implement the Pipeline contract: for random access, implement a stateless,
+   JAX-traceable `get_batch_at(start, size, key)`, which is what makes
+   `supports_indexed_access()` true; for forward-only streaming, implement
+   `get_batch(batch_size)` instead. A source implementing neither is refused when
+   iteration starts
 4. `element_spec()` describes exactly the records your batches carry: the same
    keys, per-element shapes and dtypes. For a streaming source, `Pipeline` checks
    every batch against it with `datarax.core.spec.validate_batch` before running

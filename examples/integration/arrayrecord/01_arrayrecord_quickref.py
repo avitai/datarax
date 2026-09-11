@@ -115,12 +115,20 @@ print("    - Re-shuffles at each epoch boundary")
 ### Basic Usage Pattern
 
 ```python
+import numpy as np
 from datarax.sources import ArrayRecordSourceModule, ArrayRecordSourceConfig
+
+
+def decode(record: bytes) -> dict[str, np.ndarray]:
+    # ArrayRecord records are bytes; turn one into a dict of arrays.
+    return {"data": np.frombuffer(record, dtype=np.float32)}
+
 
 # Single file
 source = ArrayRecordSourceModule(
     ArrayRecordSourceConfig(seed=42),
     paths="/path/to/data.riegeli",
+    decode=decode,
     rngs=nnx.Rngs(0),
 )
 
@@ -128,6 +136,7 @@ source = ArrayRecordSourceModule(
 source = ArrayRecordSourceModule(
     ArrayRecordSourceConfig(seed=42, shuffle_files=True),
     paths="/path/to/data-*.riegeli",
+    decode=decode,
     rngs=nnx.Rngs(0),
 )
 
@@ -138,6 +147,7 @@ source = ArrayRecordSourceModule(
         "/path/to/train-00000.riegeli",
         "/path/to/train-00001.riegeli",
     ],
+    decode=decode,
     rngs=nnx.Rngs(0),
 )
 ```
@@ -156,6 +166,7 @@ print("  # Initialization:")
 print("  source = ArrayRecordSourceModule(")
 print("      ArrayRecordSourceConfig(seed=42),")
 print("      paths=paths,")
+print("      decode=decode,")
 print("      rngs=nnx.Rngs(0),")
 print("  )")
 
@@ -168,7 +179,7 @@ print("  )")
 ```python
 from datarax.pipeline import Pipeline
 
-# Create pipeline from ArrayRecord source
+# Create pipeline from ArrayRecord source; each pass covers one epoch
 pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 
 # Add transformations
@@ -252,7 +263,7 @@ print("  # Iteration resumes from saved position")
 ```python
 # Run for exactly 10 epochs
 config = ArrayRecordSourceConfig(num_epochs=10)
-source = ArrayRecordSourceModule(config, paths=paths, rngs=nnx.Rngs(0))
+source = ArrayRecordSourceModule(config, paths=paths, decode=decode, rngs=nnx.Rngs(0))
 
 pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 for epoch in range(10):
@@ -336,6 +347,7 @@ print("    - Ensures varied but reproducible order")
 | **Checkpointing** | Full `get_state()` / `set_state()` |
 | **Shuffling** | Per-epoch reshuffling with seed control |
 | **Epoch Control** | Per-session passes; loop `iter(pipeline)` for epochs |
+| **Decoding** | `decode` turns each bytes record into arrays for batches |
 | **Grain Compatible** | Wraps Grain's ArrayRecordDataSource |
 
 ### When to Use ArrayRecord
@@ -381,6 +393,7 @@ def main():
     print("     source = ArrayRecordSourceModule(")
     print("         config,")
     print('         paths="/path/to/*.riegeli",')
+    print("         decode=decode,")
     print("         rngs=nnx.Rngs(0),")
     print("     )")
     print()

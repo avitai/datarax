@@ -49,6 +49,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   streaming source must implement `element_spec()`, and its declaration must stay fixed
   after construction.
 - `MixDataSourcesNode` names every differing field when it rejects incompatible sources.
+- `DataSourceModule.supports_indexed_access()` is true for any source whose class implements
+  `get_batch_at`, which the base class documents as stateless and JAX-traceable, so
+  `MemorySource`, `EagerSourceBase` and `MixDataSourcesNode` no longer restate it. Iterating
+  a source that implements neither `get_batch_at` nor `get_batch` raises `TypeError` when
+  iteration starts; it used to fail inside the loop with `AttributeError: get_batch`.
+- `ArrayRecordSourceModule` takes `decode`, a function turning one `bytes` record into a
+  dict of arrays, and implements `get_batch`: records of the current epoch are decoded and
+  stacked on the host, and each `for batch in pipeline` pass covers one epoch. Its
+  `element_spec` describes a decoded record. The host-only `get_batch_at`, which needed a
+  concrete Python int and returned raw records, is removed; Pipeline iteration over the
+  source used to fail.
 
 ### Fixed
 
@@ -65,6 +76,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   records the source emits: the first record is filtered and converted exactly as
   iteration does it, so `include_keys` and `exclude_keys` apply. The spec used to list
   every dataset column.
+- `StreamingDiskSource` iterates through `Pipeline`. It implements a traceable `get_batch_at`
+  but reported no indexed access, so `for batch in pipeline` failed with
+  `AttributeError: get_batch`, and `step()` failed with `UnexpectedTracerError`: the
+  memory-map was NNX state, traced into the step and read back by the host callback. The
+  memory-map now stays on the host, outside module state.
 
 ## [0.1.8] - 2026-09-09
 

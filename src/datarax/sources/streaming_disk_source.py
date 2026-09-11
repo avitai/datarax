@@ -54,8 +54,22 @@ class StreamingDiskSourceConfig(StructuralConfig):
             raise ValueError("StreamingDiskSourceConfig.feature_key must be non-empty.")
 
 
+class _HostArray:
+    """A host-side array handle that NNX keeps out of module state.
+
+    A memory-map stored as ``nnx.data`` would become a traced input of every
+    compiled step, and the host callback would then close over a tracer. As a
+    plain object it stays static and compares equal only to itself.
+    """
+
+    __slots__ = ("array",)
+
+    def __init__(self, array: np.ndarray) -> None:
+        self.array = array
+
+
 class StreamingDiskSource(DataSourceModule):
-    """``io_callback``-backed streaming source for arrays larger than RAM."""
+    """``io_callback``-backed source for arrays larger than RAM, with indexed access."""
 
     config: StreamingDiskSourceConfig  # pyright: ignore[reportIncompatibleVariableOverride]
 
@@ -81,8 +95,8 @@ class StreamingDiskSource(DataSourceModule):
                 f"got shape {getattr(memmap, 'shape', None)!r}."
             )
 
-        # Static metadata captured at construction.
-        self._memmap = nnx.data(memmap)
+        # The memory-map stays on the host, outside NNX state; the rest is static metadata.
+        self._host = _HostArray(memmap)
         self._length = nnx.static(int(memmap.shape[0]))
         self._feature_key = nnx.static(config.feature_key)
         self._element_shape = nnx.static(tuple(int(d) for d in memmap.shape[1:]))
@@ -127,11 +141,13 @@ class StreamingDiskSource(DataSourceModule):
             dtype=self._element_dtype,
         )
 
+        host = self._host
+
         def _host_read(idx_array: np.ndarray) -> np.ndarray:
             # ``idx_array`` arrives as a numpy array on the host. Index the
             # memory-map and copy to a contiguous numpy array (memmap rows are
             # already contiguous; the np.asarray ensures owned memory).
-            return np.asarray(self._memmap[idx_array.astype(np.int64)])
+            return np.asarray(host.array[idx_array.astype(np.int64)])
 
         raw = io_callback(_host_read, result_spec, indices)
         # io_callback outputs are non-differentiable by design — make that

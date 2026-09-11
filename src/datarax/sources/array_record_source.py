@@ -1,17 +1,19 @@
 """Data source for reading from ArrayRecord format files."""
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Self
 
 import grain
 import grain.sources
+import jax
 import numpy as np
 from flax import nnx
 
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
+from datarax.core.spec import array_to_spec
 from datarax.sources._grain_bridge import validate_index_batch
 from datarax.utils.state import build_state_with_iteration_fields, restore_iteration_fields
 
@@ -51,6 +53,11 @@ class ArrayRecordSourceModule(DataSourceModule):
     Note: Grain's ArrayRecordDataSource doesn't accept a seed parameter directly.
     Shuffling is handled at the sampler level or through file ordering.
 
+    ArrayRecord records are ``bytes``. Pass ``decode`` to turn one record into a
+    dict of arrays; ``get_batch`` then decodes and stacks records of the current
+    epoch and returns an empty batch at the epoch boundary, so every
+    ``for batch in pipeline`` pass covers one epoch.
+
     Resource management: the underlying ArrayRecord readers hold C++ file handles
     that are not reliably freed by garbage collection. Use the module as a context
     manager (``with ArrayRecordSourceModule(...) as source:``) or call ``close()``
@@ -65,6 +72,7 @@ class ArrayRecordSourceModule(DataSourceModule):
         config: ArrayRecordSourceConfig,
         paths: str | list[str],
         *,
+        decode: Callable[[bytes], Mapping[str, Any]] | None = None,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
     ) -> None:
@@ -73,6 +81,8 @@ class ArrayRecordSourceModule(DataSourceModule):
         Args:
             config: Configuration for the source.
             paths: Path pattern or list of paths to ArrayRecord files.
+            decode: Turns one ``bytes`` record into a dict of arrays; required for
+                ``get_batch``, ``element_spec`` and ``Pipeline`` iteration.
             rngs: NNX Rngs for additional randomness.
             name: Optional name for the module.
 
@@ -98,6 +108,7 @@ class ArrayRecordSourceModule(DataSourceModule):
 
         # Initialize Grain data source (doesn't take seed parameter)
         self.grain_source = grain.sources.ArrayRecordDataSource(paths=paths)
+        self._decode = decode
 
         # Stateful variables using nnx.Variable
         self.current_index = nnx.Variable(0)
@@ -155,27 +166,16 @@ class ArrayRecordSourceModule(DataSourceModule):
 
     def __next__(self) -> Any:  # type: ignore[override]
         """Get next element with state management."""
-        current_epoch = self.current_epoch.get_value()
-        # Check if we've completed all epochs
-        if self.config.num_epochs != -1 and current_epoch >= self.config.num_epochs:
+        if self._epochs_exhausted():
             raise StopIteration
 
         current_index = self.current_index.get_value()
-        total_records = self.total_records.get_value()
         # Check if we need to start a new epoch
-        if current_index >= total_records:
-            current_epoch += 1
-            self.current_epoch.set_value(current_epoch)
-            current_index = 0
-            self.current_index.set_value(0)
-
-            # Check epoch limit again
-            if self.config.num_epochs != -1 and current_epoch >= self.config.num_epochs:
+        if current_index >= self.total_records.get_value():
+            self._start_next_epoch()
+            if self._epochs_exhausted():
                 raise StopIteration
-
-            # Re-shuffle for new epoch if needed
-            if self.config.shuffle_files:
-                self._initialize_shuffle()
+            current_index = 0
 
         # Get the actual index (shuffled or sequential)
         shuffled_indices = self.shuffled_indices.get_value()
@@ -251,58 +251,70 @@ class ArrayRecordSourceModule(DataSourceModule):
         # Get from Grain source
         return self.grain_source[int(actual_idx)]
 
-    def get_batch_at(
-        self,
-        start: int,
-        size: int,
-        key: Any | None = None,
-    ) -> list[Any]:
-        """Stateless indexed batch access for ``Pipeline``-driven iteration.
+    def _epochs_exhausted(self) -> bool:
+        """Whether ``num_epochs`` epochs have been served."""
+        num_epochs = self.config.num_epochs
+        return num_epochs != -1 and self.current_epoch.get_value() >= num_epochs
 
-        Returns ``size`` records starting at logical position ``start``,
-        wrapping at the end of the dataset and applying any active
-        shuffle permutation. Does not advance ``self.current_index`` or
-        any other internal state.
+    def _start_next_epoch(self) -> None:
+        """Advance to the next epoch: first record, and a new order when shuffling."""
+        self.current_epoch.set_value(self.current_epoch.get_value() + 1)
+        self.current_index.set_value(0)
+        if self.config.shuffle_files:
+            self._initialize_shuffle()
 
-        ArrayRecord records are loaded host-side (Grain is a Python
-        library), so this method requires a concrete Python ``int`` for
-        ``start``. Driving an ArrayRecord source under ``nnx.scan``
-        (Tier C of the pipeline integration story) currently requires
-        wrapping the host-side fetch in ``jax.experimental.io_callback``
-        — left as a future enhancement. Tier A (Python iteration) and
-        Tier B (single ``step()``) work today.
-
-        Args:
-            start: Concrete starting index (Python int).
-            size: Number of records to return.
-            key: Reserved for future shuffled-mode support; currently
-                ignored (shuffle uses ``self.shuffled_indices``).
+    def _require_decode(self) -> Callable[[bytes], Mapping[str, Any]]:
+        """Return the record decoder, refusing to produce arrays without one.
 
         Returns:
-            List of ``size`` records as returned by the underlying
-            Grain source. Records are typically Python dicts; callers
-            (typically a parse / decode operator) handle structure.
+            The ``decode`` function the source was built with.
 
         Raises:
-            TypeError: If ``start`` is a JAX tracer (not host-side
-                concrete). ArrayRecord cannot be traced through
-                ``nnx.scan`` without an io_callback wrapper.
+            TypeError: If the source was built without ``decode``.
         """
-        del key  # ArrayRecord uses self.shuffled_indices for shuffle, not key
-
-        if hasattr(start, "shape"):
+        if self._decode is None:
             raise TypeError(
-                "ArrayRecordSourceModule.get_batch_at requires a concrete "
-                "Python int for `start`. ArrayRecord records are loaded "
-                "host-side and cannot be traced through nnx.scan in this "
-                "form. Use the Pipeline iterator (`for batch in pipeline:`) "
-                "for ArrayRecord, or wrap fetches via jax.experimental."
-                "io_callback if scan compatibility is needed."
+                "ArrayRecordSourceModule needs decode= to produce batches: ArrayRecord "
+                "records are bytes, and batches are dicts of arrays."
             )
+        return self._decode
 
+    def get_batch(self, batch_size: int) -> dict[str, np.ndarray]:
+        """Decode and stack up to ``batch_size`` records of the current epoch.
+
+        Returns an empty dict at the end of an epoch, and the next call starts the
+        next epoch, so each ``for batch in pipeline`` pass covers one epoch. Once
+        ``num_epochs`` epochs have been served every call returns an empty dict.
+
+        Args:
+            batch_size: Largest number of records to return.
+
+        Returns:
+            Arrays stacked along a leading record axis, or ``{}`` at an epoch boundary.
+        """
+        decode = self._require_decode()
+        if self._epochs_exhausted():
+            return {}
+        index = self.current_index.get_value()
         total = self.total_records.get_value()
-        indices = [(int(start) + i) % total for i in range(size)]
-        return self._getitems(indices)
+        if index >= total:
+            self._start_next_epoch()
+            return {}
+        stop = min(index + batch_size, total)
+        records = [decode(record) for record in self._getitems(list(range(index, stop)))]
+        self.current_index.set_value(stop)
+        return {
+            key: np.stack([np.asarray(record[key]) for record in records]) for key in records[0]
+        }
+
+    def element_spec(self) -> dict[str, jax.ShapeDtypeStruct]:
+        """Describe one decoded record exactly as ``get_batch`` stacks it.
+
+        Returns:
+            The shape and dtype of each field of the first decoded record.
+        """
+        record = self._require_decode()(self.grain_source[0])
+        return {key: array_to_spec(np.asarray(value)) for key, value in record.items()}
 
     def _getitems(self, indices: Sequence[int]) -> list[Any]:
         """Get multiple records using Grain's batched random-access protocol."""

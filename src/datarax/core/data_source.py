@@ -175,26 +175,28 @@ class DataSourceModule(StructuralModule):
 
         Raises:
             NotImplementedError: If the source does not support indexed
-                access (e.g. forward-only streams). Pipeline falls back to
-                its ``__iter__`` debug path in that case.
+                access (e.g. forward-only streams). Pipeline drives such a
+                source through ``get_batch`` instead.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support indexed batch access. "
-            f"Implement get_batch_at(start, size, key) or use the Pipeline "
-            f"iterator path (for batch in pipeline)."
+            f"Implement get_batch_at(start, size, key), or get_batch(batch_size) "
+            f"for a forward-only stream."
         )
 
     def supports_indexed_access(self) -> bool:
-        """Whether the source implements random-access ``get_batch_at``.
+        """Whether ``Pipeline`` can drive this source through ``get_batch_at``.
 
-        Random-access (eager) sources return ``True``; forward-only streaming
-        sources return ``False``, so the Pipeline drives them sequentially via
-        ``get_batch`` instead of the jitted, indexed ``step``.
+        ``get_batch_at`` is stateless and JAX-traceable by contract, so a source
+        whose class implements it supports indexed access: ``Pipeline`` iterates
+        it through the compiled session and drives ``step()`` and ``scan()`` with
+        it. Forward-only sources implement ``get_batch`` instead. A source whose
+        indexed access depends on how it was built overrides this.
 
         Returns:
-            ``False`` on the base class; random-access subclasses override it.
+            Whether the source's class implements ``get_batch_at``.
         """
-        return False
+        return type(self).get_batch_at is not DataSourceModule.get_batch_at
 
     def element_spec(self) -> Any:
         """Return a PyTree of ``jax.ShapeDtypeStruct`` describing per-element output.

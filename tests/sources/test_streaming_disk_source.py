@@ -125,3 +125,28 @@ def test_streaming_disk_source_repr_identifies_config(tmp_path: Path) -> None:
     assert str(path) in r
     assert "feature_key='feat'" in r
     assert "length=12" in r
+
+
+def test_the_memory_map_is_not_module_state(tmp_path: Path) -> None:
+    """The on-disk array stays on the host; NNX state holds none of it."""
+    path = _write_npy(tmp_path / "data.npy", np.ones((6, 2), dtype=np.float32))
+    source = StreamingDiskSource(StreamingDiskSourceConfig(path=str(path)), rngs=nnx.Rngs(0))
+
+    assert all(np.shape(leaf) != (6, 2) for leaf in jax.tree.leaves(nnx.state(source)))
+
+
+def test_pipeline_iterates_the_disk_array_in_order(tmp_path: Path) -> None:
+    """``for batch in pipeline`` and ``step()`` both read through the compiled session."""
+    from datarax.pipeline import Pipeline, PipelineIterator  # noqa: PLC0415
+
+    array = np.arange(16 * 3, dtype=np.float32).reshape(16, 3)
+    path = _write_npy(tmp_path / "data.npy", array)
+
+    def pipeline() -> Pipeline:
+        source = StreamingDiskSource(StreamingDiskSourceConfig(path=str(path)), rngs=nnx.Rngs(0))
+        return Pipeline(source=source, stages=[], batch_size=4, rngs=nnx.Rngs(0))
+
+    iterator = iter(pipeline())
+    assert isinstance(iterator, PipelineIterator)
+    np.testing.assert_array_equal(np.concatenate([np.asarray(b["x"]) for b in iterator]), array)
+    np.testing.assert_array_equal(np.asarray(pipeline().step()["x"]), array[:4])  # type: ignore[call-arg]
