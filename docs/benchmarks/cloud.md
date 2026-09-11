@@ -170,7 +170,7 @@ sky launch benchmarks/sky/gpu-benchmark.yaml --infra lambda --down \
     --env WANDB_API_KEY=$WANDB_API_KEY
 ```
 
-!!! important "GPU JAX requires the `gpu` extra"
+!!! important "GPU JAX requires the `cuda12` extra"
     The GPU config installs `.[benchmark,cuda12]` — the `cuda12` extra provides `jax[cuda12]`. Without it, JAX silently falls back to CPU even on a GPU instance.
 
 ### Automated Vast Two-Pass (Recommended)

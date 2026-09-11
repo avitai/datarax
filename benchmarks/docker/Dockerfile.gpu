@@ -2,7 +2,7 @@
 # Datarax Benchmark — GPU Image (CUDA 12.4)
 # =============================================================================
 # Runs all benchmark scenarios on NVIDIA GPUs with CUDA 12.4 + cuDNN.
-# Includes both the `benchmark` extra (competing frameworks) and `gpu` extra
+# Includes both the `benchmark` extra (competing frameworks) and `cuda12` extra
 # (jax[cuda12]) so JAX actually uses the GPU.
 #
 # Build:  docker build -f benchmarks/docker/Dockerfile.gpu -t datarax-bench:gpu .
@@ -20,16 +20,10 @@ ENV XLA_PYTHON_CLIENT_PREALLOCATE=false
 ENV XLA_PYTHON_CLIENT_MEM_FRACTION=0.75
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 \
-    python3.11-venv \
-    python3.11-dev \
-    python3-pip \
     build-essential \
     git \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-
-RUN ln -sf /usr/bin/python3.11 /usr/bin/python
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
@@ -38,11 +32,12 @@ WORKDIR /app
 # --- Layer 1: Dependencies ---
 COPY pyproject.toml uv.lock README.md LICENSE ./
 
-RUN uv venv /app/.venv
+# datarax requires Python 3.12+; Ubuntu 22.04 ships 3.10, so uv provides the interpreter.
+RUN uv venv --python 3.12 /app/.venv
 ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
-# benchmark + gpu extras — so JAX uses CUDA, not CPU fallback
+# benchmark + cuda12 extras — so JAX uses CUDA, not CPU fallback
 RUN uv pip install -e ".[benchmark,cuda12]"
 
 # --- Layer 2: Source + benchmark code ---

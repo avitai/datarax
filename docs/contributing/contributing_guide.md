@@ -16,7 +16,7 @@ Thank you for your interest in contributing to Datarax! This guide covers everyt
 
 ### Prerequisites
 
-- Python 3.11 or higher
+- Python 3.12 or 3.13
 - `uv` package manager (recommended)
 - Git
 - Basic understanding of JAX and Flax NNX
@@ -43,12 +43,9 @@ Thank you for your interest in contributing to Datarax! This guide covers everyt
    Or manually:
 
    ```bash
-   # Create virtual environment with uv
-   uv venv .venv
+   # Sync every development extra (Linux with CUDA; use all-cpu or all-macos elsewhere)
+   uv sync --extra all
    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-   # Install all development dependencies
-   uv pip install -e ".[all]"
    ```
 
 3. **Verify installation**:

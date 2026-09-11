@@ -49,74 +49,27 @@ elif IS_LINUX:
     os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 
 
-def _configure_test_jax_multi_device_emulation() -> None:
-    """Enable JAX CPU multi-device emulation for tests that need it.
+# JAX reads JAX_PLATFORMS when it is imported, so the backend is chosen first, by a
+# module that imports nothing that loads JAX (test_common's package does).
+_TESTS_DIR = str(Path(__file__).resolve().parent)
+if _TESTS_DIR not in sys.path:
+    sys.path.insert(0, _TESTS_DIR)
 
-    Multi-device tests (data-parallel sharding, mesh transforms) call
-    ``jax.device_count()`` at collection time and skip when fewer than 2
-    devices exist. On a single-GPU or CPU host we get one device by
-    default. JAX exposes ``--xla_force_host_platform_device_count=N`` to
-    fan out a single CPU into N logical devices for emulation.
-
-    The flag only affects the CPU backend, so when emulation is active
-    we also force ``JAX_PLATFORMS=cpu`` (overriding any earlier CUDA
-    selection) — otherwise CUDA would be picked first and expose its
-    actual one-or-zero device count.
-
-    Tests can override the device count via ``DATARAX_TEST_DEVICE_COUNT``
-    or disable emulation entirely with ``DATARAX_TEST_DEVICE_COUNT=0``.
-    """
-    requested = os.environ.get("DATARAX_TEST_DEVICE_COUNT", "8")
-    if requested == "0":
-        return
-    flag = f"--xla_force_host_platform_device_count={requested}"
-    existing = os.environ.get("XLA_FLAGS", "")
-    if "xla_force_host_platform_device_count" not in existing:
-        os.environ["XLA_FLAGS"] = (f"{existing} {flag}").strip()
-    # Multi-device emulation lives on the CPU backend; force CPU so it
-    # is exposed even when a CUDA plugin is available.
-    os.environ["JAX_PLATFORMS"] = "cpu"
+from jax_test_environment import resolve_test_jax_environment
 
 
-def _configure_test_jax_platforms() -> None:
-    """Set a safe JAX backend default for test runs.
-
-    Tests should run on CPU by default, while still allowing explicit
-    CUDA platform selection via environment override.
-    """
-    explicit_platforms = os.environ.get("DATARAX_TEST_JAX_PLATFORMS")
-    if explicit_platforms:
-        os.environ["JAX_PLATFORMS"] = explicit_platforms
-        return
-
-    requested = os.environ.get("JAX_PLATFORMS", "")
-    if not requested:
-        os.environ["JAX_PLATFORMS"] = "cpu"
-        return
-
-    # If CUDA is requested but CUDA plugin support is missing in this env,
-    # force CPU to avoid backend initialization failures during test collection.
-    if "cuda" in requested:
-        has_cuda_plugin = (
-            _module_exists("jax_cuda12_plugin")
-            or _module_exists("jax_cuda13_plugin")
-            or _module_exists("jax_plugins.xla_cuda12")
-            or _module_exists("jax_plugins.xla_cuda13")
-        )
-        if not has_cuda_plugin:
-            os.environ["JAX_PLATFORMS"] = "cpu"
+def _cuda_plugin_available() -> bool:
+    """Whether a JAX CUDA plugin can be imported, checked without importing it."""
+    return any(
+        importlib.util.find_spec(name) is not None
+        for name in ("jax_cuda12_plugin", "jax_cuda13_plugin")
+    )
 
 
-def _module_exists(module_name: str) -> bool:
-    """Return whether a module can be imported without importing it."""
-    try:
-        return importlib.util.find_spec(module_name) is not None
-    except ModuleNotFoundError:
-        return False
-
-
-_configure_test_jax_platforms()
-_configure_test_jax_multi_device_emulation()
+# Backend and device emulation must be decided before JAX is imported.
+os.environ.update(
+    resolve_test_jax_environment(os.environ, cuda_plugin_available=_cuda_plugin_available())
+)
 
 import jax
 import jax.numpy as jnp
@@ -168,9 +121,6 @@ except ImportError:
     pass
 
 # Add the tests directory to the Python path for easy importing of test_common
-tests_dir = str(Path(__file__).resolve().parent)
-if tests_dir not in sys.path:
-    sys.path.insert(0, tests_dir)
 
 # Add the src directory to the Python path so tests can import modules
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))

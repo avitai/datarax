@@ -43,7 +43,7 @@ Example usage:
 ./setup.sh --recreate             # Rebuild .venv from scratch
 ```
 
-Linux CUDA development uses JAX's uv-managed CUDA runtime via the `gpu` extra;
+Linux CUDA development uses JAX's uv-managed CUDA runtime via the `cuda12` extra;
 the setup does not rely on a system CUDA toolkit or custom `LD_LIBRARY_PATH`
 injection.
 
@@ -65,23 +65,22 @@ injection.
 Datarax defines dependencies in `pyproject.toml` using optional dependency groups:
 
 ```bash
-# Install all dependencies
-uv pip install -e ".[all]"
+# Set up the environment the repository's tooling expects (detects the backend)
+./setup.sh
 
-# Install specific groups
-uv pip install -e ".[dev]"      # Development tools
-uv pip install -e ".[test]"     # Testing dependencies
-uv pip install -e ".[docs]"     # Documentation tools
-uv pip install -e ".[data]"     # Data loading (HF, TFDS, etc.)
-uv pip install -e ".[cuda12]"      # GPU support (CUDA 12)
+# Or sync extras yourself. uv sync installs exactly the extras you name and removes
+# the others, so list every extra you need in one command:
+uv sync --extra dev --extra test --extra data --extra docs
+uv sync --extra all          # Linux with CUDA 12: dev, test, data, docs and cuda12
+uv sync --extra all-cpu      # every extra except a GPU backend
 ```
 
 ### Adding New Dependencies
 
 ```bash
 # Add a runtime dependency (edit pyproject.toml manually)
-# Then sync:
-uv sync
+# Then sync with the extras you use (a bare `uv sync` removes them):
+./setup.sh
 
 # Or use uv add for development:
 uv add package_name
@@ -89,18 +88,15 @@ uv add package_name
 
 ### Installing Multiple Extras
 
-> **Important:** `uv sync` and `uv pip install` have different syntax for extras.
+> **Important:** `uv sync` installs exactly the extras you pass and removes the rest.
 
 ```bash
-# ✅ Correct: pip-style bracket syntax (commas inside brackets)
-uv pip install -e ".[dev,test,data]"
-
 # ✅ Correct: multiple --extra flags for uv sync
 uv sync --extra dev --extra test --extra data
 
 # ✅ Recommended: use compound extras defined in pyproject.toml
-uv sync --extra all      # includes dev, test, data, docs, gpu
-uv sync --extra all-cpu  # includes dev, test, data, docs (no gpu)
+uv sync --extra all      # includes dev, test, data, docs, cuda12
+uv sync --extra all-cpu  # includes dev, test, data, docs (no GPU backend)
 
 # ❌ Wrong: comma-separated values with --extra flag
 # uv sync --extra dev,test,data  # This will ERROR!
@@ -114,7 +110,7 @@ uv sync --extra all-cpu  # includes dev, test, data, docs (no gpu)
 | `test` | Testing dependencies (pytest, coverage, etc.) |
 | `docs` | Documentation tools (MkDocs, mkdocstrings) |
 | `data` | Data loading libraries (datasets, tensorflow-datasets) |
-| `gpu` | CUDA 12 support for JAX |
+| `cuda12` | CUDA 12 support for JAX |
 | `all` | All of the above |
 
 ## Type Checking
@@ -401,11 +397,12 @@ The setup script automatically detects NVIDIA GPUs and configures CUDA support.
 ### Manual GPU Setup
 
 ```bash
-# Force GPU setup
-./setup.sh --force
+# Select the CUDA 12 backend explicitly, then load the environment
+./setup.sh --backend cuda12
+source activate.sh
 
-# Or install GPU extras manually
-uv pip install -e ".[cuda12]"
+# Rebuild the environment from scratch if it is broken
+./setup.sh --backend cuda12 --recreate
 ```
 
 ### Environment Variables for GPU
@@ -529,8 +526,8 @@ docs/
 **Import errors after installation:**
 
 ```bash
-# Reinstall in development mode
-uv pip install -e ".[all]"
+# Rebuild the environment
+./setup.sh --recreate
 ```
 
 **GPU not detected:**
@@ -539,8 +536,8 @@ uv pip install -e ".[all]"
 # Check NVIDIA drivers
 nvidia-smi
 
-# Force GPU reinstall
-./setup.sh --force
+# Rebuild the environment with the CUDA 12 backend
+./setup.sh --backend cuda12 --recreate
 ```
 
 **Pre-commit hook failures:**

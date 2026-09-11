@@ -4,10 +4,10 @@ This document describes how to run Datarax tests on GPU hardware.
 
 ## Prerequisites
 
-1. NVIDIA GPU with CUDA support
-2. CUDA Toolkit 12.x installed
-3. Python 3.11 virtual environment with JAX GPU support
-4. Datarax development dependencies installed
+1. NVIDIA GPU with a driver that supports CUDA 12
+2. Python 3.12 or 3.13
+3. The environment from `./setup.sh --backend cuda12` (JAX's CUDA runtime comes from the
+   `cuda12` extra, so no system CUDA toolkit is needed)
 
 ## Setting Up the Environment
 
@@ -27,7 +27,7 @@ source activate.sh
 This approach:
 
 - Detects NVIDIA GPUs automatically, or accepts an explicit `--backend cuda12`
-- Uses JAX's uv-managed CUDA runtime via the `gpu` extra — no system CUDA
+- Uses JAX's uv-managed CUDA runtime via the `cuda12` extra — no system CUDA
   toolkit or custom `LD_LIBRARY_PATH` injection is required
 - Writes backend configuration to the generated `.datarax.env`
   (your user-owned `.env` is never modified)
@@ -45,23 +45,27 @@ bash scripts/run_gpu_tests.sh
 
 This script will:
 
-1. Check for GPU availability
-2. Set up the required environment variables (`JAX_PLATFORMS=cuda`)
-3. Run selected tests with GPU support
+1. Activate the project environment and check for GPU availability
+2. Ask the test run for CUDA with `DATARAX_TEST_JAX_PLATFORMS=cuda`
+3. Run the GPU-marked tests on the GPU
 
 ## Manual GPU Testing
 
 If you want more control over which tests to run on GPU, you can:
 
 ```bash
-# Set the environment to use CUDA
-export JAX_PLATFORMS="cuda"
+# Test runs use the CPU with eight emulated devices unless they ask for an
+# accelerator; a JAX_PLATFORMS inherited from your shell does not change that.
+export DATARAX_TEST_JAX_PLATFORMS="cuda"
 
-# Run all tests with GPU device selection
+# Run every test on the GPU
+uv run pytest
+
+# Run a specific test directory on the GPU
+uv run pytest tests/operators/
+
+# --device=gpu additionally selects only the tests marked for GPU
 uv run pytest --device=gpu
-
-# Run a specific test on GPU
-uv run pytest --device=gpu tests/operators/
 ```
 
 ## Troubleshooting

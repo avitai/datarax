@@ -29,7 +29,7 @@ Options:
 
 Notes:
   - Datarax uses uv for all repo-maintained setup and test workflows.
-  - Linux CUDA development uses JAX's pip-managed CUDA runtime via the `gpu` extra.
+  - Linux CUDA development uses JAX's pip-managed CUDA runtime via the `cuda12` extra.
   - The setup does not rely on a system CUDA toolkit or custom LD_LIBRARY_PATH injection.
   - The generated backend file is .datarax.env. User-owned .env is not modified.
 EOF

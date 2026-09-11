@@ -6,9 +6,9 @@ This guide covers installing Datarax and its dependencies.
 
 Datarax requires:
 
-- Python 3.11-3.13
-- JAX 0.6.1 or higher
-- Flax 0.12 or higher
+- Python 3.12 or 3.13
+- JAX 0.11.1 or higher
+- Flax 0.12.9 or higher
 
 **Supported Platforms:**
 
@@ -61,7 +61,7 @@ To use Datarax with CUDA-enabled GPUs:
 pip install datarax[all]
 
 # Or install JAX with CUDA separately
-pip install "jax[cuda12]>=0.6.1"
+pip install "jax[cuda12]>=0.11.1"
 ```
 
 This will install the appropriate CUDA and cuDNN dependencies.
@@ -111,15 +111,15 @@ cd datarax
 # Use the automated setup script (recommended)
 ./setup.sh
 
-# Or install manually based on your platform:
+# Or sync the extras for your platform yourself:
 # Linux with GPU:
-pip install -e ".[all]"
+uv sync --extra all
 
 # macOS (Apple Silicon with Metal):
-pip install -e ".[all-macos]"
+uv sync --extra all-macos
 
 # Any platform (CPU-only):
-pip install -e ".[all-cpu]"
+uv sync --extra all-cpu
 ```
 
 ## Environment Setup
@@ -156,25 +156,23 @@ source ./activate.sh
 # Install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Create and activate a new environment
-uv venv
-source .venv/bin/activate
-
-# Install based on your platform:
+# Sync the project environment for your platform (uv creates .venv):
 # Linux with CUDA:
-uv pip install -e ".[all]"
+uv sync --extra all
 
 # macOS with Metal:
-uv pip install -e ".[all-macos]"
+uv sync --extra all-macos
 
 # CPU-only (any platform):
-uv pip install -e ".[all-cpu]"
+uv sync --extra all-cpu
+
+source .venv/bin/activate
 ```
 
 ### Using conda/mamba
 
 ```bash
-conda create -n datarax python=3.11
+conda create -n datarax python=3.12
 conda activate datarax
 
 # Install based on your platform
@@ -261,7 +259,7 @@ If Metal acceleration isn't working on Apple Silicon:
    # Should show [METAL:0] or similar
    ```
 
-4. If using the setup script, ensure you used the `--metal` flag:
+4. If using the setup script, ensure you selected the Metal backend:
 
    ```bash
    ./setup.sh --backend metal --recreate

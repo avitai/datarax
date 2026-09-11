@@ -22,8 +22,13 @@ def test_templates_do_not_install_uv_with_root_pip() -> None:
         text = template.read_text()
         assert "pip install uv" not in text
         assert "python -m ensurepip" not in text
-        # The gpu template delegates venv creation to setup.sh --python 3.11.
-        assert "uv venv --python 3.11 .venv" in text or "./setup.sh" in text
+        # datarax requires Python 3.12+; the gpu template delegates venv creation
+        # to setup.sh and must request the same interpreter.
+        assert "3.11" not in text
+        assert (
+            "uv venv --python 3.12 .venv" in text
+            or "./setup.sh --backend cuda12 --python 3.12" in text
+        )
         assert "uv pip install --python .venv/bin/python" in text
         assert ".venv/bin/datarax-bench run" not in text
         assert ".venv/bin/python -m benchmarks.cli run" in text

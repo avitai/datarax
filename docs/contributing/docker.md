@@ -9,10 +9,10 @@ Datarax provides Docker images for two audiences:
 
 | Image | Dockerfile | Base | Extras | Size |
 |-------|-----------|------|--------|------|
-| `datarax:latest` | `Dockerfile` | `nvidia/cuda:12.4.1-cudnn-runtime` | `dev,gpu,test,data` | ~4GB |
-| `datarax-bench:cpu` | `benchmarks/docker/Dockerfile.cpu` | `python:3.11-slim` | `benchmark` | ~8GB |
-| `datarax-bench:gpu` | `benchmarks/docker/Dockerfile.gpu` | `nvidia/cuda:12.4.1-cudnn-runtime` | `benchmark,cuda12` | ~12GB |
-| `datarax-bench:tpu` | `benchmarks/docker/Dockerfile.tpu` | `python:3.11-slim` | `benchmark` + `jax[tpu]` | ~8GB |
+| `datarax:latest` | `Dockerfile` | `nvidia/cuda:12.4.1-cudnn-runtime` + Python 3.12 via uv | `dev,cuda12,test,data` | ~4GB |
+| `datarax-bench:cpu` | `benchmarks/docker/Dockerfile.cpu` | `python:3.12-slim` | `benchmark` | ~8GB |
+| `datarax-bench:gpu` | `benchmarks/docker/Dockerfile.gpu` | `nvidia/cuda:12.4.1-cudnn-runtime` + Python 3.12 via uv | `benchmark,cuda12` | ~12GB |
+| `datarax-bench:tpu` | `benchmarks/docker/Dockerfile.tpu` | `python:3.12-slim` | `benchmark` + `jax[tpu]` | ~8GB |
 
 !!! note
     The root image intentionally excludes the `benchmark` extra, which adds PyTorch, NVIDIA DALI, Ray, MosaicML, and other competing frameworks (~10GB). Use the benchmark-specific images for competitive benchmarking.
@@ -53,8 +53,8 @@ docker run --rm -it --gpus all datarax:latest python
 docker run --rm -e JAX_PLATFORMS=cpu datarax:latest \
     python -m pytest tests/ -x --timeout=60 -m "not gpu and not slow" -q
 
-# Run tests with GPU
-docker run --rm --gpus all datarax:latest \
+# Run tests with GPU (test runs stay on the CPU unless they ask for CUDA)
+docker run --rm --gpus all -e DATARAX_TEST_JAX_PLATFORMS=cuda datarax:latest \
     python -m pytest tests/ -x --timeout=120 -q
 
 # Run a specific example
@@ -106,6 +106,7 @@ Key variables for controlling JAX behavior inside containers:
 | `XLA_PYTHON_CLIENT_PREALLOCATE` | `false` | Disable full GPU memory grab at startup |
 | `XLA_PYTHON_CLIENT_MEM_FRACTION` | `0.75` | Fraction of GPU memory JAX may use |
 | `XLA_FLAGS` | (none) | XLA compiler flags (e.g., simulated devices) |
+| `DATARAX_TEST_JAX_PLATFORMS` | (unset) | Backend for test runs: `cuda` runs tests on the GPU; unset keeps them on the CPU with emulated devices |
 
 ## Use Cases
 

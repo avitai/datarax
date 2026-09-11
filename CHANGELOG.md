@@ -81,6 +81,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AttributeError: get_batch`, and `step()` failed with `UnexpectedTracerError`: the
   memory-map was NNX state, traced into the step and read back by the host callback. The
   memory-map now stays on the host, outside module state.
+- Test runs honour `DATARAX_TEST_JAX_PLATFORMS`. The test configuration applied it and
+  then its CPU device emulation reset `JAX_PLATFORMS` to `cpu`, so a run asking for CUDA,
+  `scripts/run_gpu_tests.sh` included, used eight emulated CPU devices. The backend is now
+  resolved once, before JAX is imported: an accelerator request disables emulation, a
+  `JAX_PLATFORMS` inherited from the shell still leaves tests on the CPU, and asking for
+  CUDA without a JAX CUDA plugin fails. `scripts/run_gpu_tests.sh` activates the project
+  environment and requests CUDA that way.
+- The development docs, the root and benchmark Dockerfiles and the Sky templates target Python 3.12,
+  the minimum this package requires. They named Python 3.11, the `gpu` extra (now
+  `cuda12`), a `setup.sh --force` flag that does not exist, and `uv pip install -e` for a
+  checkout whose tooling syncs with `uv sync`.
 
 ## [0.1.8] - 2026-09-09
 

@@ -160,9 +160,6 @@ Test dependencies can be installed using:
 # Using uv sync (recommended)
 uv sync --extra test
 
-# Or with pip-style installation
-uv pip install -e ".[test]"
-
 # For complete development setup including tests
 uv sync --extra all
 ```

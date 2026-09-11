@@ -19,17 +19,11 @@ ENV PYTHONUNBUFFERED=1
 ENV XLA_PYTHON_CLIENT_PREALLOCATE=false
 ENV XLA_PYTHON_CLIENT_MEM_FRACTION=0.75
 
-# System dependencies + Python 3.11
+# System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 \
-    python3.11-venv \
-    python3.11-dev \
-    python3-pip \
     git \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-
-RUN ln -sf /usr/bin/python3.11 /usr/bin/python
 
 # Install uv — single-layer binary copy from official OCI image
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
@@ -39,11 +33,12 @@ WORKDIR /app
 # --- Layer 1: Dependencies (cached unless pyproject.toml or uv.lock change) ---
 COPY pyproject.toml uv.lock README.md LICENSE ./
 
-RUN uv venv /app/.venv
+# datarax requires Python 3.12+; Ubuntu 22.04 ships 3.10, so uv provides the interpreter.
+RUN uv venv --python 3.12 /app/.venv
 ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
-# Install main + dev/gpu/test/data extras (not benchmark, not docs)
+# Install main + dev/cuda12/test/data extras (not benchmark, not docs)
 RUN uv pip install -e ".[cuda12,data,dev,test]"
 
 # --- Layer 2: Source code (changes frequently, invalidates only this layer) ---

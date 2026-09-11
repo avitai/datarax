@@ -22,17 +22,16 @@ cd "$PROJECT_ROOT"
 echo -e "${BLUE}🎮 Datarax GPU Test Runner${NC}"
 echo "================================"
 
-# Source .env if it exists (contains CUDA library paths)
-if [ -f ".env" ]; then
-    echo -e "${GREEN}✅ Loading environment configuration from .env${NC}"
-    source .env
+# Load the environment setup.sh generated (backend file, .env and .env.local)
+if [ -f "activate.sh" ] && [ -d ".venv" ]; then
+    echo -e "${GREEN}✅ Activating the project environment${NC}"
+    source ./activate.sh
 else
-    echo -e "${YELLOW}⚠️  No .env file found - using default CUDA configuration${NC}"
-    echo "   Run ./setup.sh first for proper CUDA setup"
+    echo -e "${YELLOW}⚠️  No environment found - run ./setup.sh --backend cuda12 first${NC}"
 fi
 
-# Set GPU-specific environment variables
-export JAX_PLATFORMS="cuda"
+# Test runs stay on the CPU unless they ask for an accelerator explicitly
+export DATARAX_TEST_JAX_PLATFORMS="cuda"
 export XLA_PYTHON_CLIENT_MEM_FRACTION="${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.75}"
 export XLA_PYTHON_CLIENT_PREALLOCATE="${XLA_PYTHON_CLIENT_PREALLOCATE:-false}"
 
@@ -45,8 +44,8 @@ if ! uv run python scripts/check_gpu.py; then
     echo ""
     echo "Troubleshooting:"
     echo "  1. Ensure NVIDIA drivers are installed: nvidia-smi"
-    echo "  2. Ensure CUDA is configured: ./setup.sh --force"
-    echo "  3. Check LD_LIBRARY_PATH includes CUDA libraries"
+    echo "  2. Set up the CUDA 12 backend: ./setup.sh --backend cuda12"
+    echo "  3. Inspect the JAX backend: uv run python scripts/verify_datarax_gpu.py"
     exit 1
 fi
 

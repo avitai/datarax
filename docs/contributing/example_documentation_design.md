@@ -1787,8 +1787,8 @@ uv pip install datarax
 # With data source support
 uv pip install "datarax[data]"
 
-# Development installation
-uv pip install -e ".[dev]"
+# Development installation (from a clone)
+./setup.sh
 ```
 
 ### Environment
