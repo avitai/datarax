@@ -66,7 +66,7 @@ Flagship examples demonstrating datarax's unique differentiable pipeline capabil
 
     ---
 
-    10,000x faster augmentation policy search via gradient descent
+    Augmentation policy search by gradient descent, following DADA
 
     [:octicons-arrow-right-24: Advanced Guide](advanced/differentiable/dada-learned-augmentation.md)
 

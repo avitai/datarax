@@ -60,7 +60,7 @@ Shuffling uses Grain's Feistel cipher permutation, which generates a full-epoch 
 
 ### Built-in Competitive Benchmarking
 
-The benchmarking suite profiles datarax against 14 peer frameworks (Grain, tf.data, PyTorch DataLoader, DALI, Ray Data, and others) across 37 standardized scenarios. Results are converted to calibrax runs for direction-aware metrics, regression gating, and W&B export. This benchmark-driven loop is how datarax tracks progress toward competitive throughput - current results and optimization status are tracked in the [benchmarking documentation](docs/benchmarks/index.md).
+The benchmarking suite profiles datarax against 14 peer frameworks (Grain, tf.data, PyTorch DataLoader, DALI, Ray Data, and others) across 37 standardized scenarios. Results are converted to calibrax runs for direction-aware metrics, regression checks, and W&B export. This benchmark-driven loop is how datarax tracks progress toward competitive throughput - current results and optimization status are tracked in the [benchmarking documentation](docs/benchmarks/index.md).
 
 ## Installation
 

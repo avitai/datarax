@@ -109,13 +109,13 @@ Example benchmark format:
 ```markdown
 ## Benchmark Results
 
-- **Test Environment**: NVIDIA RTX 3090, JAX 0.6.1, Flax 0.12.0
-- **Data Dimensions**: 1000 images, 224x224x3, batch size 32
+- **Test Environment**: <GPU or CPU model>, JAX <version>, Flax <version>
+- **Data Dimensions**: <number of examples>, <shape>, batch size <n>
 - **Metrics**:
 
-  - Before: 1,200 examples/sec, 90% GPU utilization
-  - After: 4,800 examples/sec, 95% GPU utilization
-  - Speedup: 4.0x
+  - Before: <examples/sec>, <device utilization>
+  - After: <examples/sec>, <device utilization>
+  - Speedup: <after divided by before>
 - **Methodology**: 10 warmup batches, 50 measurement batches, averaged over 3 runs
 ```
 
@@ -146,7 +146,7 @@ from calibrax.profiling import TimingCollector
 # Create a timing collector (pass sync_fn for GPU benchmarks)
 timer = TimingCollector()
 
-# Warmup — exclude JIT compilation from measurements
+# Warmup: exclude JIT compilation from measurements
 for i, batch in enumerate(pipeline):
     if i >= 5:
         break

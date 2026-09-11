@@ -14,13 +14,13 @@ graph LR
 
 ## Why W&B?
 
-Rather than building a custom visualization frontend, we use W&B as the dashboard UI. It provides interactive charts, run history, comparison tables, filtering, and team collaboration — all well-established and familiar to ML practitioners. W&B is free for open-source projects.
+Rather than building a custom visualization frontend, we use W&B as the dashboard UI. It provides interactive charts, run history, comparison tables, filtering, and team collaboration, all well established and familiar to ML practitioners. W&B is free for open-source projects.
 
 **What calibrax adds on top of W&B:**
 
 -   Direction-aware metric definitions (`higher` throughput is better, `lower` latency is better)
 -   Best-value highlighting with correct direction semantics
--   Regression detection with CI gate (`calibrax check`)
+-   Regression detection (`calibrax check`, which exits 1 on a regression)
 -   Bootstrap confidence intervals (pure Python, no scipy)
 -   Framework ranking tables
 -   JSON-per-run local storage (works fully offline)
@@ -47,10 +47,10 @@ calibrax's data model captures the semantics that W&B doesn't track natively:
 
 | Concept | Description |
 |---------|-------------|
-| `MetricDef` | How to interpret a metric — name, unit, direction (`higher`/`lower`/`info`), group, priority |
+| `MetricDef` | How to interpret a metric: name, unit, direction (`higher`/`lower`/`info`), group, priority |
 | `Metric` | A single value with optional CI bounds and raw samples |
 | `Point` | One benchmark + one configuration (e.g., "CV-1/small" for Datarax) |
-| `Run` | One execution of a benchmark suite — a collection of Points |
+| `Run` | One execution of a benchmark suite: a collection of Points |
 
 All metric definitions live in a `config.json` file inside the local data store:
 
@@ -103,7 +103,7 @@ calibrax export --data benchmark-data/ --project my-project --entity my-team
 
 ### `calibrax check`
 
-Run regression detection against baseline. Exits with code 1 if regressions exceed the threshold. This is the CI gate — fully offline, no W&B needed.
+Run regression detection against baseline. Exits with code 1 if regressions exceed the threshold. It is the command a CI gate runs, fully offline with no W&B needed.
 
 ```bash
 calibrax check --data benchmark-data/ --threshold 0.05
@@ -213,7 +213,7 @@ print(f"Dashboard: {url}")
 
 ## W&B Authentication
 
-Credentials are read **exclusively** from environment variables — never stored in config files or committed to git.
+Credentials are read **exclusively** from environment variables and never stored in config files or committed to git.
 
 ### Local Development
 
@@ -247,25 +247,10 @@ calibrax export --data benchmark-data/
 
 ## CI Integration
 
-Two GitHub Actions workflows automate benchmarking:
+One GitHub Actions workflow automates benchmarking.
 
-### Performance Gate (per-PR)
-
-**File:** `.github/workflows/benchmark-gate.yml`
-
-Runs on every PR that touches `src/datarax/`, `benchmarks/`, or `pyproject.toml`. Executes Tier 1 benchmarks and runs `calibrax check` for regression detection.
-
-```mermaid
-graph TD
-    PR[Pull Request] --> CI[benchmark-gate.yml]
-    CI --> T1[Run Tier 1 benchmarks]
-    T1 --> CK[calibrax check --threshold 0.05]
-    CK -->|No regressions| PASS[PR passes]
-    CK -->|Regressions found| WARN[Warning logged]
-```
-
-!!! warning "Non-blocking gate"
-    The regression check is currently **non-blocking** (`continue-on-error: true` in the workflow). Regressions are logged as warnings but will **not** prevent PR merge. This will change once a stable baseline is established.
+!!! note "The per-PR performance gate is retired"
+    The former `benchmark-gate.yml` ran on shared CPU runners and compared their throughput against baselines recorded on an RTX 4090 GPU, so it reported a regression on every run whatever the change. It measured the difference between two machines, not the pull request, and has been removed. A regression gate returns once benchmarks run on fixed hardware with the baseline recorded on that same hardware.
 
 ### Nightly Comparative (scheduled)
 
@@ -287,7 +272,7 @@ GPU and TPU jobs are defined but commented out until cloud credits are available
 
 ## Local Data Store
 
-All results are saved locally as JSON regardless of W&B status. The default store directory is `benchmark-data/` (gitignored — not committed to version control). The directory structure is:
+All results are saved locally as JSON regardless of W&B status. The default store directory is `benchmark-data/` (gitignored, so not committed to version control). The directory structure is:
 
 ```
 <store-dir>/
@@ -335,6 +320,6 @@ calibrax's regression detection is **direction-aware**: a throughput drop is a r
 | `lower` | Value increases beyond threshold | Value decreases |
 | `info` | Never (skipped) | Never (skipped) |
 
-The default threshold is 5% — any change beyond this triggers a regression flag.
+The default threshold is 5%: any change beyond this triggers a regression flag.
 
 Points are matched between runs using a composite key of `(name, tags)`, ensuring that "CV-1/small for Datarax" is compared against the correct baseline even when multiple frameworks share the same point name.

@@ -7,7 +7,7 @@ This example shows a realistic ML training pipeline comparing:
 - Grain's fragmented stateless approach
 
 Demonstrates the cumulative advantages when all components work together.
-All metrics are calculated from actual code execution.
+Timings come from running these mock-ups, not the Datarax or Grain libraries.
 """
 
 import inspect
@@ -763,7 +763,7 @@ def demonstrate_production_advantages(all_metrics: dict):
 
     print()
     print("=" * 70)
-    print("PRODUCTION ADVANTAGES (MEASURED)")
+    print("PRODUCTION DIFFERENCES (MOCK-UP TIMINGS)")
     print("=" * 70)
 
     # Training performance
@@ -847,7 +847,7 @@ def run_memory_comparison():
 if __name__ == "__main__":
     print("DATARAX vs GRAIN: END-TO-END PIPELINE")
     print("=" * 70)
-    print("All metrics are calculated from actual code execution")
+    print("Timings come from running these mock-ups, not the Datarax or Grain libraries")
     print("=" * 70)
 
     # Run comparisons and collect metrics
@@ -868,7 +868,7 @@ if __name__ == "__main__":
 
     print()
     print("=" * 70)
-    print("FINAL VERDICT: Datarax Advantages (MEASURED)")
+    print("SUMMARY: Mock-up Differences (not a library benchmark)")
     print("-" * 40)
 
     # Calculate actual improvements
@@ -877,11 +877,11 @@ if __name__ == "__main__":
 
     if grain_lines > 0:
         code_reduction = (1 - workshop_lines / grain_lines) * 100
-        print(f"✅ {code_reduction:.0f}% less code (measured)")
+        print(f"✅ {code_reduction:.0f}% less code in these mock-ups")
 
     if all_metrics.get("workshop_save_time", 0) > 0:
         checkpoint_speedup = all_metrics["grain_save_time"] / all_metrics["workshop_save_time"]
-        print(f"✅ {checkpoint_speedup:.1f}x faster checkpointing (measured)")
+        print(f"✅ {checkpoint_speedup:.1f}x faster checkpointing in these mock-ups")
 
     print(f"✅ {all_metrics['grain']['state_updates']} manual state updates eliminated")
     print("✅ Automatic state management via NNX")
@@ -893,6 +893,6 @@ if __name__ == "__main__":
 
     print("=" * 70)
     print("\nCONCLUSION:")
-    print("These measurements prove that the stateful NNX approach")
-    print("provides strong architectural advantages for ML pipelines.")
+    print("These mock-up timings illustrate the stateful NNX pattern;")
+    print("they are not a benchmark of the Datarax or Grain libraries.")
     print("=" * 70)

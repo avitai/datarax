@@ -417,22 +417,11 @@ figure:
   operator's overhead relative to baseline, the most memory-efficient batch
   size, and general tuning recommendations.
 
-## Results Summary
+## What to Expect
 
-| Optimization | Speedup | Notes |
-|--------------|---------|-------|
-| Optimal batch size | 1.5-2x | Hardware dependent |
-| Combined operators | 1.3x | Reduce function call overhead |
-| JIT compilation | 2-5x | One-time compilation cost |
-| Memory efficiency | 1.2x | Reduce allocations |
-
-**Performance Targets:**
-
-| Hardware | Expected Throughput |
-|----------|---------------------|
-| CPU (8 cores) | 5,000-15,000 samples/sec |
-| Single GPU | 50,000-100,000 samples/sec |
-| Multi-GPU (4x) | 150,000-300,000 samples/sec |
+These techniques have no fixed speedup: the gain from batch size, operator fusion, JIT
+compilation and fewer allocations depends on the hardware, the data and the pipeline shape.
+Measure each change with the profiling steps above, on the hardware you deploy on.
 
 ## Best Practices
 

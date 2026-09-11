@@ -26,10 +26,10 @@
 This example re-implements the core ideas from
 **DADA: Differentiable Automatic Data Augmentation** (Li et al., ECCV 2020)
 using datarax's operator library. Traditional augmentation search methods like
-AutoAugment require ~15,000 GPU-hours of reinforcement learning. DADA uses
+AutoAugment spend thousands of GPU-hours on reinforcement learning. DADA uses
 Gumbel-Softmax relaxation to make the discrete augmentation selection
-differentiable, reducing search cost to **~0.1 GPU-hours** on CIFAR-10 — a
-10,000x speedup.
+differentiable; its authors report a search cost of **0.1 GPU-hours** on reduced
+CIFAR-10, at least an order of magnitude faster than earlier search methods.
 
 **Key insight**: When your preprocessing pipeline is differentiable, you can
 *learn* the optimal augmentation policy via gradient descent instead of
@@ -1519,8 +1519,8 @@ differentiable augmentation policy search — the core innovation of DADA.
 1. **Differentiability enables search**: Gumbel-Softmax makes discrete
    augmentation selection differentiable, enabling gradient-based policy search.
 
-2. **10,000x speedup**: DADA achieves comparable accuracy to AutoAugment
-   (15,000 GPU-hrs) in ~0.1 GPU-hrs.
+2. **Cheaper search**: DADA reports accuracy comparable to AutoAugment with a
+   0.1 GPU-hour search on reduced CIFAR-10.
 
 3. **datarax makes it natural**: Each augmentation operation can be a datarax
    operator with learnable parameters. The pipeline is end-to-end differentiable

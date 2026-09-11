@@ -49,7 +49,7 @@ graph LR
 -   [Methodology](methodology.md) -- Timing protocol, warmup strategy, statistical analysis
 -   [Framework Comparison](comparison.md) -- Results with charts and comparative analysis
 -   [Cloud Benchmarking](cloud.md) -- Running benchmarks on Vast.ai, Lambda, GCP via SkyPilot
--   [Dashboard & calibrax](dashboard.md) -- W&B dashboard, regression gates, and the calibrax analysis library
+-   [Dashboard & calibrax](dashboard.md) -- W&B dashboard, CI workflows, and the calibrax analysis library
 
 ---
 
@@ -74,7 +74,7 @@ uv pip install "calibrax[wandb] @ git+https://github.com/avitai/calibrax.git"
 
 === "uv run python -m benchmarks.cli CLI (Recommended)"
 
-    The `uv run python -m benchmarks.cli` CLI is the preferred entry point. It runs benchmarks, converts results, stores them, and optionally exports to W&B — all in one command.
+    The `uv run python -m benchmarks.cli` CLI is the preferred entry point. It runs benchmarks, converts results, stores them, and optionally exports to W&B, all in one command.
 
     ```bash
     uv run python -m benchmarks.cli run --platform cpu --repetitions 3
@@ -86,7 +86,7 @@ uv pip install "calibrax[wandb] @ git+https://github.com/avitai/calibrax.git"
         The click-based `benchmarks.cli run` command takes **repeated** `--scenarios`/`--adapters` flags (one value each), not a space-separated list. The space-separated form (`--scenarios CV-1 NLP-1`) works only for the argparse runners (`full_runner.py`, `benchmark_runner.py`).
 
     !!! note "Nightly CI runs `benchmarks.cli run`"
-        The nightly CI workflow runs `uv run python -m benchmarks.cli run` — this is the preferred entry point for all benchmark runs.
+        The nightly CI workflow runs `uv run python -m benchmarks.cli run`, the preferred entry point for all benchmark runs.
 
 === "Shell Script"
 
@@ -148,15 +148,15 @@ uv pip install "calibrax[wandb] @ git+https://github.com/avitai/calibrax.git"
         --yes
     ```
 
-=== "CI Gate"
+=== "Fast CPU Set"
 
-    Lightweight regression gate — 6 fast gate scenarios, Datarax only:
+    The `ci_cpu` profile's 6 fast scenarios, Datarax only:
 
     ```bash
     uv run python -m benchmarks.runners.ci_runner --repetitions 3
     ```
 
-    Runs automatically on PRs touching `src/datarax/` or `benchmarks/`. See [Performance Gate](dashboard.md#ci-integration).
+    This runs locally; no workflow runs it on pull requests. See [CI Integration](dashboard.md#ci-integration).
 
 Results are saved to a local `benchmark-data/` directory (not committed to version control).
 
@@ -260,7 +260,7 @@ Each adapter supports only the scenarios where it implements the required transf
 | `Energon` | Tier 3 | Megatron Energon | 1 |
 | `Deep Lake` | Tier 3 | Deep Lake | 13 |
 
-**25 of 37 scenarios run on ≥3 frameworks** — the set with meaningful cross-framework comparison. Best-covered are CV-1 and NLP-1 (14 frameworks each) and TAB-1 (12). See the [Coverage Matrix](https://github.com/avitai/datarax/blob/main/benchmarks/COVERAGE_MATRIX.md) for the full per-scenario breakdown.
+**25 of 37 scenarios run on ≥3 frameworks**: the set with meaningful cross-framework comparison. Best-covered are CV-1 and NLP-1 (14 frameworks each) and TAB-1 (12). See the [Coverage Matrix](https://github.com/avitai/datarax/blob/main/benchmarks/COVERAGE_MATRIX.md) for the full per-scenario breakdown.
 
 !!! warning "Names with spaces require shell quotes"
     Adapter names are exact-match. Names containing spaces must be quoted on the command line:
@@ -272,7 +272,7 @@ Profiles control warmup batches, measurement batches, and timeouts:
 
 | Profile | Backend | Warmup | Batches | Timeout | Default Scenario Set |
 |---------|---------|--------|---------|---------|----------------------|
-| `ci_cpu` | CPU | 3 | 20 | 5 min | 6 scenarios (CI gate set) |
+| `ci_cpu` | CPU | 3 | 20 | 5 min | 6 scenarios (fast CPU set) |
 | `gpu_a100` | GPU | 8 | 50 | 10 min | 15 scenarios (includes heavy `HCV-1`, `HPC-1`) |
 | `gpu_rtx4090` | GPU | 6 | 40 | 10 min | 28 scenarios (all non-heavy; fit the 24 GB card) |
 | `gpu_rtx4090_real` | GPU | 6 | 40 | 10 min | 5 real-data scenarios (CV-1, CV-3, NLP-1, TAB-1, MM-1 pinned to `real_*` variants) |
