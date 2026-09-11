@@ -545,8 +545,6 @@ class ModernDocGenerator:
             "# Datarax: High-Performance JAX Data Pipelines",
             "",
             "[![CI](https://github.com/avitai/datarax/actions/workflows/ci.yml/badge.svg)](https://github.com/avitai/datarax/actions/workflows/ci.yml)",
-            "[![Test Coverage](https://github.com/avitai/datarax/actions/workflows/test-coverage.yml/badge.svg)](https://github.com/avitai/datarax/actions/workflows/test-coverage.yml)",
-            "[![codecov](https://codecov.io/gh/avitai/datarax/branch/main/graph/badge.svg)](https://codecov.io/gh/avitai/datarax)",
             "",
             "Datarax is a high-performance, extensible data pipeline framework specifically ",
             "engineered for JAX-based machine learning workflows. It simplifies and accelerates ",

@@ -178,3 +178,98 @@ def test_setup_script_names_only_declared_extras() -> None:
 
     assert {"dev", "test", "cuda12"} <= named
     assert named - declared == set()
+
+
+CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+# Test module roots CI must cover: the core suite and the benchmark harness suite.
+TEST_ROOTS = ("tests", "benchmarks/tests")
+CAP_OVERRIDES = ("--fail-under=0", "--no-cov", "-o addopts", "--override-ini")
+
+
+def _is_under(path: str, root: str) -> bool:
+    return path == root or path.startswith(f"{root.rstrip('/')}/")
+
+
+def _pytest_roots(command: str) -> list[str]:
+    """Return the path arguments of the pytest invocations in a workflow ``run`` script."""
+    joined = command.replace("\\\n", " ")
+    roots = []
+    for line in joined.splitlines():
+        if "pytest" not in line:
+            continue
+        arguments = line.split("pytest", 1)[1].split()
+        roots += [
+            a.rstrip("/")
+            for a in arguments
+            if not a.startswith("-") and a.split("/")[0] in {"tests", "benchmarks"}
+        ]
+    return roots
+
+
+def test_every_test_module_is_selected_by_a_ci_job() -> None:
+    """Each ``test_*.py`` under the test roots is on the path of some CI pytest job."""
+    workflow = yaml.safe_load(CI_WORKFLOW.read_text())
+    roots = [
+        root
+        for job in workflow["jobs"].values()
+        for step in job.get("steps", [])
+        for root in _pytest_roots(str(step.get("run", "")))
+    ]
+    modules = sorted(
+        path.relative_to(REPO_ROOT).as_posix()
+        for test_root in TEST_ROOTS
+        for path in (REPO_ROOT / test_root).rglob("test_*.py")
+    )
+
+    assert len(modules) > 200
+    assert [
+        module for module in modules if not any(_is_under(module, root) for root in roots)
+    ] == []
+
+
+def coverage_floor_violations(workflow: dict, pyproject: dict) -> list[str]:
+    """Return why CI would not fail below the coverage floor, if it would not."""
+    # PyYAML reads the `on:` key as the boolean True.
+    triggers = workflow.get("on") or workflow.get(True) or {}
+    job = workflow["jobs"]["coverage"]
+    commands = "\n".join(str(step.get("run", "")) for step in job["steps"])
+    floor = pyproject["tool"]["coverage"]["report"].get("fail_under")
+
+    problems = []
+    if floor is None or float(floor) < 80:
+        problems.append(f"[tool.coverage.report] fail_under is {floor}, not at least 80")
+    if not {"push", "pull_request"} <= set(triggers):
+        problems.append(f"CI runs on {sorted(triggers)}, not on both push and pull_request")
+    if "if" in job:
+        problems.append(f"the coverage job only runs when {job['if']}")
+    if "coverage report" not in commands:
+        problems.append("the coverage job does not run coverage report")
+    problems += [
+        f"the coverage job overrides the floor with {o}" for o in CAP_OVERRIDES if o in commands
+    ]
+    return problems
+
+
+def test_ci_fails_below_the_coverage_floor() -> None:
+    """The combined coverage report applies pyproject's floor on every push and pull request."""
+    assert coverage_floor_violations(yaml.safe_load(CI_WORKFLOW.read_text()), _pyproject()) == []
+
+
+def test_ci_uploads_no_coverage_to_codecov() -> None:
+    """coverage.py in CI is the coverage gate; no workflow uploads to Codecov."""
+    uses = [
+        str(step.get("uses", ""))
+        for path in sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml"))
+        for job in (yaml.safe_load(path.read_text()) or {}).get("jobs", {}).values()
+        for step in job.get("steps", [])
+    ]
+
+    assert any(action.startswith("actions/checkout@") for action in uses)
+    assert [action for action in uses if action.startswith("codecov/")] == []
+
+
+def test_readme_and_docs_show_no_codecov_badge() -> None:
+    """Coverage is not published to Codecov, so no page links a Codecov badge."""
+    pages = ("README.md", "docs/index.md", "scripts/generate_docs.py")
+
+    assert [page for page in pages if "codecov.io" in (REPO_ROOT / page).read_text()] == []
