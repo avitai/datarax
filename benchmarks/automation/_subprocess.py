@@ -104,6 +104,8 @@ class _CommandRunner:
     stall_diagnostics: Callable[[], dict[str, str]] | None
     capture: _OutputCapture
     start: float = 0.0
+    # Time source for elapsed, silence and peek scheduling; tests inject a fake clock.
+    clock: Callable[[], float] = time.monotonic
 
     @property
     def rendered(self) -> str:
@@ -140,7 +142,7 @@ class _CommandRunner:
         _clear_transient_status_line()
         _status(f"Running command: {self.rendered}")
         _status(f"Command log: {self.log_path}")
-        self.start = time.monotonic()
+        self.start = self.clock()
         with self.log_path.open("w", encoding="utf-8") as handle:
             handle.write(
                 "\n".join(
@@ -197,7 +199,7 @@ class _CommandRunner:
             stdout=self.capture.format("stdout"),
             stderr=self.capture.format("stderr"),
         )
-        elapsed = time.monotonic() - self.start
+        elapsed = self.clock() - self.start
         self._raise_for_failed_result(proc, result, elapsed)
         _clear_transient_status_line()
         _status(f"Command completed in {elapsed:.1f}s")
@@ -308,13 +310,13 @@ class _CommandMonitor:
             return True
         except subprocess.TimeoutExpired:
             self.consume_available_output()
-            self._handle_running_tick(time.monotonic() - self.runner.start)
+            self._handle_running_tick(self.runner.clock() - self.runner.start)
             return False
 
     def _handle_running_tick(self, elapsed: float) -> None:
         self._raise_on_timeout(elapsed)
         self._emit_heartbeat(elapsed)
-        silence_for = time.monotonic() - self.last_output_at
+        silence_for = self.runner.clock() - self.last_output_at
         self._raise_on_stall(silence_for)
         self._emit_idle_notice(silence_for)
 
@@ -447,7 +449,7 @@ class _CommandMonitor:
         if not chunk:
             return
         self.runner.capture.append(stream, chunk)
-        self.last_output_at = time.monotonic()
+        self.last_output_at = self.runner.clock()
         self.next_idle_notice = self.idle_notice_sec
         self._update_progress_line(chunk)
         self._update_phase_hint(chunk)
@@ -479,14 +481,14 @@ class _CommandMonitor:
         _status(f"peek: {self.last_progress_line}")
         self.last_peek_line = self.last_progress_line
         interval = max(self.runner.peek_interval_sec, 1)
-        self.next_peek_emit = (time.monotonic() - self.runner.start) + interval
+        self.next_peek_emit = (self.runner.clock() - self.runner.start) + interval
 
     def _should_emit_live_peek(self) -> bool:
         return bool(
             self.runner.live_peek
             and self.last_progress_line
             and self.last_progress_line != self.last_peek_line
-            and (time.monotonic() - self.runner.start) >= self.next_peek_emit
+            and (self.runner.clock() - self.runner.start) >= self.next_peek_emit
         )
 
     def flush_decoders(self) -> None:

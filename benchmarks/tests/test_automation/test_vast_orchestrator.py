@@ -1178,29 +1178,6 @@ class TestCommandExecution:
         # The same progress line should not be emitted repeatedly every interval.
         assert out.count("peek: same-line") <= 1
 
-    def test_idle_output_notice_emits_when_command_goes_silent(
-        self,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ):
-        log_path = tmp_path / "peek_idle_cmd.log"
-
-        vo._run_logged_command(  # noqa: SLF001
-            [
-                "bash",
-                "-lc",
-                "echo warmup-line; sleep 3; echo done-line",
-            ],
-            log_path,
-            live_peek=True,
-            peek_interval_sec=1,
-            _heartbeat_interval_sec=1,
-            _idle_notice_sec=2,
-        )
-
-        out = capsys.readouterr().out
-        assert "no new command output for" in out
-
     def test_phase_notice_after_setup_install_complete(
         self,
         tmp_path: Path,
@@ -1223,30 +1200,6 @@ class TestCommandExecution:
 
         out = capsys.readouterr().out
         assert "Remote dependency install appears complete" in out
-
-    def test_idle_output_notice_includes_phase_hint(
-        self,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ):
-        log_path = tmp_path / "peek_phase_idle_cmd.log"
-
-        vo._run_logged_command(  # noqa: SLF001
-            [
-                "bash",
-                "-lc",
-                "echo '(setup pid=1) Installed 226 packages in 23.74s'; sleep 3; echo done-line",
-            ],
-            log_path,
-            live_peek=True,
-            peek_interval_sec=1,
-            _heartbeat_interval_sec=1,
-            _idle_notice_sec=2,
-        )
-
-        out = capsys.readouterr().out
-        assert "phase:" in out
-        assert "setup_complete" in out
 
     def test_idle_notice_explains_post_setup_pipeline_state(
         self,
