@@ -11,11 +11,11 @@ The DAG runs as one compiled step per batch shape. The step covers the stages
 and the position counter, never the source, so a source that swaps its backend
 iterator between passes does not force a recompile, and the state the source
 advances while pulling is never overwritten. Pipeline state is read before and
-written back after every batch, so it is current at every yield. The step
-carries RNG counts and plain ``nnx.Variable`` counters; a stage that writes any
-other state, or changes the module structure, is refused instead of losing the
-write. A source's declared spec is read once per source and precision mode,
-because reading it can open a backend iterator.
+written back after every batch, so it is current at every yield. Every Variable
+a stage writes, whatever its type, reaches the live module; a stage that changes
+the module structure is refused instead of losing the change. A source's
+declared spec is read once per source and precision mode, because reading it can
+open a backend iterator.
 """
 
 from __future__ import annotations
@@ -108,7 +108,7 @@ class _NoiseStage(nnx.Module):
 
 
 class _StatisticsStage(nnx.Module):
-    """Stage accumulating a total in batch statistics, which the step does not carry."""
+    """Stage accumulating each batch's sum in batch statistics."""
 
     def __init__(self) -> None:
         self.total = nnx.BatchStat(jnp.zeros((), jnp.float32))
@@ -349,16 +349,24 @@ def test_state_changed_between_batches_is_read_by_the_next_batch() -> None:
     assert int(stage.calls[...]) == 8
 
 
-def test_a_stage_writing_state_the_step_does_not_carry_is_refused() -> None:
-    pipeline = Pipeline(
-        source=_ListStream([_records(2)], _SPEC),
-        stages=[_StatisticsStage()],
+def test_batch_statistics_a_stage_keeps_accumulate_as_applying_through_nnx_jit() -> None:
+    batches = [_records(2), _records(2), _records(1)]
+    streamed_stage, reference_stage = _StatisticsStage(), _StatisticsStage()
+    streamed = Pipeline(
+        source=_ListStream(batches, _SPEC), stages=[streamed_stage], batch_size=2, rngs=nnx.Rngs(0)
+    )
+    reference = Pipeline(
+        source=_ListStream(batches, _SPEC),
+        stages=[reference_stage],
         batch_size=2,
         rngs=nnx.Rngs(0),
     )
 
-    with pytest.raises(ValueError, match=re.escape("stage_0.total (BatchStat)")):
-        list(pipeline)
+    list(streamed)
+    for batch in batches:
+        _apply_per_batch(reference, batch)
+
+    assert float(streamed_stage.total[...]) == float(reference_stage.total[...]) == 15.0
 
 
 def test_a_stage_changing_the_module_structure_is_refused() -> None:

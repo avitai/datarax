@@ -19,6 +19,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 from flax import nnx
 
 from datarax.operators import ElementOperator, ElementOperatorConfig
@@ -58,6 +59,30 @@ def _pipeline(*, stochastic: bool = False, n: int = _N, seed: int = 0) -> Pipeli
             ElementOperatorConfig(stochastic=False), fn=_normalize, rngs=nnx.Rngs(seed)
         )
     return Pipeline(source=source, stages=[stage], batch_size=_BATCH, rngs=nnx.Rngs(seed))
+
+
+class _RunningTotal(nnx.Module):
+    """Stage accumulating each batch's sum in batch statistics."""
+
+    def __init__(self) -> None:
+        self.total = nnx.BatchStat(jnp.zeros((), jnp.float32))
+
+    def __call__(self, batch: dict) -> dict:
+        self.total[...] = self.total[...] + batch["x"].sum()
+        return batch
+
+
+class _GrowingStage(nnx.Module):
+    """Stage adding state while it runs, which changes the module structure."""
+
+    def __call__(self, batch: dict) -> dict:
+        self.seen = nnx.Variable(jnp.zeros((), jnp.int32))
+        return batch
+
+
+def _pipeline_with(stage: nnx.Module) -> Pipeline:
+    source = MemorySource(MemorySourceConfig(shuffle=False), data=_data(), rngs=nnx.Rngs(0))
+    return Pipeline(source=source, stages=[stage], batch_size=_BATCH, rngs=nnx.Rngs(0))
 
 
 def _session(pipeline: Pipeline) -> PipelineIterator:
@@ -235,6 +260,40 @@ class TestIteratorState:
         got = [np.asarray(next(resumed)["x"]) for _ in range(3)]
         for g, e in zip(got, expected):
             np.testing.assert_array_equal(g, e)
+
+
+# ---------------------------------------------------------------------------
+# Stage state
+# ---------------------------------------------------------------------------
+
+
+class TestStageState:
+    """Every Variable a stage writes reaches the live module, as with step()."""
+
+    def test_batch_statistics_written_by_a_stage_match_step(self):
+        iterated_stage, stepped_stage = _RunningTotal(), _RunningTotal()
+        for _ in _pipeline_with(iterated_stage):
+            pass
+        stepped = _pipeline_with(stepped_stage)
+        for _ in range(_N // _BATCH):
+            stepped.step()  # type: ignore[call-arg]
+
+        assert float(stepped_stage.total[...]) != 0.0
+        assert float(iterated_stage.total[...]) == float(stepped_stage.total[...])
+
+    def test_a_stage_changing_the_module_structure_is_refused(self):
+        with pytest.raises(ValueError, match="changed the module structure"):
+            for _ in _pipeline_with(_GrowingStage()):
+                pass
+
+    def test_the_compiled_step_returns_only_the_state_it_writes(self):
+        """Source payloads and RNG keys are never copied out of the step."""
+        iterator = _session(_pipeline())
+        _, (per_batch, staged) = iterator._pure_step(iterator._state, iterator._immutable_state)
+        iterator.close()
+
+        assert staged == {}
+        assert iterator._position_index in per_batch
 
 
 # ---------------------------------------------------------------------------

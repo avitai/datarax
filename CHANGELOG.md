@@ -42,9 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recompile. Measured on CPU with 64-record batches over repeated epochs: 26.7 µs per
   batch instead of 445.8 µs without stages, and 45.4 µs instead of 817.8 µs with one
   stochastic stage. Pipeline state is still read before and written back after every
-  batch. A stage that writes state other than RNG counts and plain `nnx.Variable` state,
-  or adds attributes while it runs, is refused with a `ValueError` instead of losing the
-  write.
+  batch, and every Variable a stage writes, whatever its type, reaches the live module. A
+  stage that adds or removes state while it runs is refused with a `ValueError`.
 - Streaming iteration reads `source.element_spec()` once per source and x64 setting,
   because the TFDS and HuggingFace streaming sources open their backend to answer it. A
   streaming source must implement `element_spec()`, and its declaration must stay fixed
@@ -53,6 +52,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Iterating a random-access source (`for batch in pipeline`) kept only RNG counts and
+  plain `nnx.Variable` state between batches, so a stage that updated `nnx.BatchStat` or
+  any other Variable type lost the update silently: a running total stayed 0.0 where
+  `Pipeline.step()` reached -109.6. The compiled session now finds, while tracing, every
+  Variable the step writes and returns exactly those, and a step that adds or removes
+  state is refused with a `ValueError`. The session calls the step body directly instead
+  of nesting `nnx.jit`, whose write-back rebinds every Variable. Measured against
+  651389f with paired interleaved rounds and one stochastic stage: 120.2 to 45.9 us per
+  batch on CPU and 150.9 to 62.6 us on GPU.
 - `HFStreamingSource.element_spec` and `TFDSStreamingSource.element_spec` describe the
   records the source emits: the first record is filtered and converted exactly as
   iteration does it, so `include_keys` and `exclude_keys` apply. The spec used to list

@@ -327,6 +327,18 @@ class Pipeline(nnx.Module):
         The method is JAX-traceable; the DAG iteration unrolls during
         tracing.
         """
+        return self._next_batch()
+
+    def _next_batch(self) -> dict:
+        """Fetch the batch at the position, run the DAG and advance the position.
+
+        The traceable body of :meth:`step`. Compiled iteration sessions call it
+        directly: nesting ``nnx.jit`` inside their ``jax.jit`` step would rebind
+        every Variable and hide which ones the step wrote.
+
+        Returns:
+            The sink output for the batch at the current position.
+        """
         idx = self._position[...]
         batch = self.source.get_batch_at(idx, self.batch_size, self.epoch_key())
         # __call__ reads self._position (== idx here) to key per-record RNG on
@@ -481,8 +493,7 @@ class Pipeline(nnx.Module):
         Raises:
             SpecMismatchError: If the declared spec, or a source batch, breaks the
                 contract above.
-            ValueError: If a stage writes state the compiled step does not carry, or
-                changes the module structure.
+            ValueError: If a stage adds or removes state while it runs.
         """
         element_spec = declared_spec(self.source)
         validate_device_dtypes(element_spec)

@@ -90,8 +90,9 @@ with IteratorCheckpoint("./pipeline_ckpt") as checkpoint:
 ``PipelineIterator`` — a compiled iteration session with two
 checkpointing surfaces:
 
-- **Module state**: the live pipeline module (position, RNG counts) is
-  synced at every yield boundary, so checkpointing the pipeline with
+- **Module state**: every Variable a batch writes (position, RNG counts, and
+  any stage state such as batch statistics) reaches the live pipeline module at
+  every yield boundary, so checkpointing the pipeline with
   `IteratorCheckpoint` — inside the loop or after it — always captures
   exactly the batches already consumed.
 - **Iterator state**: a lighter, JSON-serializable alternative for data
