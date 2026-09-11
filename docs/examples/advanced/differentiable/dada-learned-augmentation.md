@@ -15,10 +15,11 @@ This advanced guide re-implements the core ideas from
 **DADA: Differentiable Automatic Data Augmentation** (Li et al., ECCV 2020)
 using datarax's operator library and composition system.
 
-Traditional augmentation search (AutoAugment) requires ~15,000 GPU-hours of
+Traditional augmentation search (AutoAugment) spends thousands of GPU-hours on
 reinforcement learning. DADA uses **Gumbel-Softmax relaxation** to make
-discrete augmentation selection differentiable, reducing search cost to
-**~0.1 GPU-hours** on CIFAR-10 — a 10,000x speedup.
+discrete augmentation selection differentiable; its authors report a search cost of
+**0.1 GPU-hours** on reduced CIFAR-10, at least an order of magnitude faster than
+earlier search methods.
 
 **Key insight**: When your preprocessing pipeline is differentiable, you can
 *learn* the optimal augmentation policy via gradient descent instead of
@@ -195,7 +196,7 @@ aug_composite = CompositeOperatorModule(
 At each forward call, the composite:
 
 1. **Extracts** Gumbel-Softmax weights from `data["op_weights"]`
-2. **Strips** the weight key — child operators only see `{image, magnitude}`
+2. **Strips** the weight key, so child operators only see `{image, magnitude}`
 3. **Computes** a differentiable weighted sum of all 15 augmented outputs
 
 Gradients flow back through the weights to the upstream policy parameters.
@@ -244,7 +245,7 @@ def full_loss_fn(policy):
     logits = model(aug_images)
     return cross_entropy_loss(logits, labels)
 
-model.eval()  # Model in closure — prevent BatchNorm mutation
+model.eval()  # Model in closure: prevent BatchNorm mutation
 loss, grads = nnx.value_and_grad(full_loss_fn)(policy)
 model.train()
 grad_leaves = jax.tree.leaves(grads)
@@ -272,7 +273,7 @@ SUCCESS: Augmentation pipeline is fully differentiable!
 
 ![DADA Policy Analysis](../../../assets/images/examples/cv-dada-policy-analysis.png)
 
-*Left: ranked operation preferences — the policy learns which augmentations are most useful for CIFAR-10. Right: sample augmented images produced by the learned policy.*
+*Left: ranked operation preferences: the policy learns which augmentations are most useful for CIFAR-10. Right: sample augmented images produced by the learned policy.*
 
 ## Results & Evaluation
 
@@ -288,7 +289,7 @@ SUCCESS: Augmentation pipeline is fully differentiable!
 ### Interpretation
 
 The learned policy typically favors geometric augmentations (rotation,
-shear, translation) for CIFAR-10, which makes intuitive sense — these
+shear, translation) for CIFAR-10, which makes intuitive sense: these
 create the most useful training signal for a classifier that needs to
 recognize objects at different orientations and positions. Color
 augmentations (brightness, contrast) are usually assigned lower
@@ -301,7 +302,7 @@ magnitudes and probabilities.
 1. **Different architectures**: Replace WRN-40-2 with ResNet-18 or
    Vision Transformer and compare learned policies
 2. **Transfer the policy**: Use the learned policy on CIFAR-100 or
-   SVHN — does it generalize?
+   SVHN: does it generalize?
 3. **Add more operations**: Extend `AUGMENTATION_OPS` with new
    augmentations (elastic deformation, grid distortion)
 4. **Temperature schedule**: Try different annealing schedules (linear,
@@ -317,13 +318,13 @@ magnitudes and probabilities.
 
 ### API Reference
 
-- [`CompositeOperatorModule`](../../../operators/composite_operator.md) — Unified composite operator
-- [`ElementOperator`](../../../operators/element_operator.md) — Element-level transformation wrapper
-- [`Batch.from_parts()`](../../../core/element_batch.md) — Construct batch from pre-stacked arrays
+- [`CompositeOperatorModule`](../../../operators/composite_operator.md): Unified composite operator
+- [`ElementOperator`](../../../operators/element_operator.md): Element-level transformation wrapper
+- [`Batch.from_parts()`](../../../core/element_batch.md): Construct batch from pre-stacked arrays
 
 ### Further Reading
 
-- [DADA Paper (arXiv)](https://arxiv.org/abs/2003.03780) — Full paper
-- [Gumbel-Softmax (Jang et al.)](https://arxiv.org/abs/1611.01144) — The relaxation technique
-- [RELAX (Grathwohl et al.)](https://arxiv.org/abs/1711.00123) — Variance reduction
-- [AutoAugment (Cubuk et al.)](https://arxiv.org/abs/1805.09501) — The RL baseline
+- [DADA Paper (arXiv)](https://arxiv.org/abs/2003.03780): Full paper
+- [Gumbel-Softmax (Jang et al.)](https://arxiv.org/abs/1611.01144): The relaxation technique
+- [RELAX (Grathwohl et al.)](https://arxiv.org/abs/1711.00123): Variance reduction
+- [AutoAugment (Cubuk et al.)](https://arxiv.org/abs/1805.09501): The RL baseline

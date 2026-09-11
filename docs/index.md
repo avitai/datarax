@@ -37,7 +37,7 @@ Datarax's differentiable pipeline architecture enables optimization paradigms th
 
     ---
 
-    10,000x faster augmentation policy search via gradient descent through datarax's operator library
+    Augmentation policy search by gradient descent through datarax's operator library, following DADA
 
     [:octicons-arrow-right-24: Advanced Guide](examples/advanced/differentiable/dada-learned-augmentation.md)
 
@@ -53,7 +53,7 @@ Datarax's differentiable pipeline architecture enables optimization paradigms th
 
     ---
 
-    Custom `OperatorModule` subclasses for audio — proving extensibility beyond images
+    Custom `OperatorModule` subclasses for audio, extending the operator library beyond images
 
     [:octicons-arrow-right-24: Advanced Guide](examples/advanced/differentiable/ddsp-audio-synthesis.md)
 

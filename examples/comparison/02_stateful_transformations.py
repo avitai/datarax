@@ -747,7 +747,7 @@ if __name__ == "__main__":
     # Final summary
     print()
     print("=" * 80)
-    print("FINAL SUMMARY - MEASURED ADVANTAGES")
+    print("FINAL SUMMARY - MOCK-UP TIMINGS")
     print("=" * 80)
 
     # Calculate averages
