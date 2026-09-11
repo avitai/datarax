@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-09-10
+
 ### Added
 
 - `datarax.core.spec.validate_batch` checks a batch against a declared element spec: tree
