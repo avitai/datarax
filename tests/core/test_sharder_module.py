@@ -6,6 +6,7 @@ verifying sharding specifications, partition spec creation, named sharding,
 state management, and multi-device operations.
 """
 
+import warnings
 from typing import Any
 
 import flax.nnx as nnx
@@ -418,6 +419,21 @@ class TestParallelTransform:
 
         expected = -jnp.ones((4, 8))
         np.testing.assert_allclose(np.asarray(result), np.asarray(expected))
+
+    def test_parallel_transform_uses_no_deprecated_mesh_context(self, single_device_mesh):
+        """nnx.shard_map takes the mesh itself; the deprecated ``with mesh:`` is not needed."""
+        sharder = ConcreteSharderModule()
+
+        def double_fn(x):
+            return x * 2
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            sharder.parallel_transform(
+                jnp.ones((4, 8)), double_fn, single_device_mesh, in_spec=PartitionSpec("data", None)
+            )
+
+        assert [str(w.message) for w in caught if "with mesh" in str(w.message)] == []
 
 
 class TestJITCompatibility:

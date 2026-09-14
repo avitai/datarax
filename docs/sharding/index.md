@@ -25,7 +25,9 @@ from flax import nnx
 from datarax.sharding import ArraySharder
 
 # Build a single-axis device mesh and the corresponding NamedSharding.
-mesh = jax.make_mesh((len(jax.devices()),), ("data",))
+mesh = jax.make_mesh(
+    (len(jax.devices()),), ("data",), axis_types=(jax.sharding.AxisType.Auto,)
+)
 sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("data"))
 
 sharder = ArraySharder(rngs=nnx.Rngs(0))
@@ -79,7 +81,9 @@ class _Shard(nnx.Module):
         return self.sharder.shard(batch, self.sharding)
 
 
-mesh = jax.make_mesh((len(jax.devices()),), ("data",))
+mesh = jax.make_mesh(
+    (len(jax.devices()),), ("data",), axis_types=(jax.sharding.AxisType.Auto,)
+)
 sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("data"))
 shard_stage = _Shard(ArraySharder(rngs=nnx.Rngs(0)), sharding)
 

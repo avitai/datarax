@@ -160,10 +160,9 @@ class SharderModule(DataraxModule):
         in_pspec = self.get_partition_spec(in_spec)
         out_pspec = self.get_partition_spec(out_spec) if out_spec else in_pspec
 
-        with mesh:
-            return nnx.shard_map(
-                transform_fn, mesh=mesh, in_specs=(in_pspec,), out_specs=out_pspec
-            )(batch)
+        return nnx.shard_map(transform_fn, mesh=mesh, in_specs=(in_pspec,), out_specs=out_pspec)(
+            batch
+        )
 
     def get_state(self) -> dict[str, Any]:
         """Get the current state of the SharderModule for checkpointing.
