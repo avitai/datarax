@@ -42,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   examples and pytest with the interpreter that runs the script. `check_sync.py --fix` used to
   report "fix failed" without saying why when `python` was missing. Importing
   `distributed_test_runner.py` no longer configures logging; its `main()` does.
+- `SharderModule.parallel_transform` no longer enters the deprecated `with mesh:` context, which
+  made jax warn on every call; `nnx.shard_map` already receives the mesh. The sharding guide's
+  meshes name `axis_types=(jax.sharding.AxisType.Auto,)`, because `jax.make_mesh` builds
+  Explicit axes without it, and a contract test fails any documented `make_mesh` call that
+  does not name its axis types.
 
 ## [0.1.9] - 2026-09-10
 
