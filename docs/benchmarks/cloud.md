@@ -522,7 +522,7 @@ cat "$LATEST/validation_report_subset.json"
 cat "$LATEST/results/subset/manifest.json"
 ```
 
-If `active_backend` is not `gpu`, rerun after confirming GPU env vars (`JAX_PLATFORMS`, `JAX_PLATFORM_NAME`) and GPU JAX installation.
+If `active_backend` is not `gpu`, rerun after confirming that `JAX_PLATFORMS` lists `cuda` first and GPU JAX installation.
 
 ### `CUDA_ERROR_NO_DEVICE` during subset/full stage
 

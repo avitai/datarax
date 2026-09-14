@@ -81,7 +81,7 @@ class TestGenerateSkyYaml:
         assert generated["resources"]["accelerators"] == "A100:1"
         assert generated["envs"]["WANDB_API_KEY"] == "test-key"
         assert generated["envs"]["JAX_PLATFORMS"] == "cuda,cpu"
-        assert generated["envs"]["JAX_PLATFORM_NAME"] == "gpu"
+        assert "JAX_PLATFORM_NAME" not in generated["envs"]
         assert generated["envs"]["XLA_PYTHON_CLIENT_PREALLOCATE"] == "false"
         assert generated["envs"]["DATARAX_BENCH_RUN_ID"] == "run123"
 
@@ -1530,3 +1530,11 @@ class TestAcceleratorSelection:
             accelerators="A100:2",
         )
         assert yaml.safe_load(out.read_text())["resources"]["accelerators"] == "A100:2"
+
+
+def test_remote_gpu_exports_select_the_backend_with_jax_platforms() -> None:
+    """jax makes the first listed platform the default, so JAX_PLATFORMS alone selects CUDA."""
+    exports = vo_utils.REMOTE_GPU_ENV_EXPORTS
+
+    assert "export JAX_PLATFORMS=cuda,cpu" in exports
+    assert [line for line in exports if "JAX_PLATFORM_NAME" in line] == []

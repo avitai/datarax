@@ -7,16 +7,10 @@ See tests/operators/test_element_operator.py for ElementOperator tests
 covering reproducibility, batch augmentation, and batch consistency.
 """
 
-import os
-
 import flax.nnx as nnx
 import jax
 
 from datarax.utils.prng import create_rngs, DEFAULT_RNG_STREAMS
-
-
-# Force CPU mode for consistent testing
-os.environ["JAX_PLATFORM_NAME"] = "cpu"
 
 
 def test_create_rngs():

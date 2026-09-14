@@ -63,7 +63,7 @@ def submit_job(args, config):
                 "command": [],  # Uses Docker ENTRYPOINT
                 "args": args.test_args,  # Pass test args like ["tests/benchmarks"]
                 "env": [
-                    {"name": "JAX_PLATFORM_NAME", "value": "cuda"},
+                    {"name": "JAX_PLATFORMS", "value": "cuda,cpu"},
                     # Add any other required env vars here
                 ],
             },

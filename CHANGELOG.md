@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The cloud benchmark launchers (SkyPilot template, Vast orchestrator, Vertex job script) select
+  the GPU backend with `JAX_PLATFORMS=cuda,cpu` alone. jax makes the first listed platform the
+  default, so the deprecated `JAX_PLATFORM_NAME` they also set is no longer exported.
+
 ### Removed
 
 - The `datarax` command no longer reads `DATARAX_DEVICE`. It set jax's deprecated

@@ -42,7 +42,6 @@ DEFAULT_ADAPTERS = [
 ]
 REMOTE_GPU_ENV_EXPORTS = [
     "export JAX_PLATFORMS=cuda,cpu",
-    "export JAX_PLATFORM_NAME=gpu",
     "export XLA_PYTHON_CLIENT_PREALLOCATE=false",
 ]
 REMOTE_RESULTS_ROOT = "/root/results"
