@@ -108,3 +108,8 @@ def test_a_fresh_interpreter_started_with_the_environment_sees_its_cpu_devices(
     )
 
     assert result.check().last_json() == ["cpu", devices]
+
+
+def test_the_substrax_pytest_plugin_is_enabled(pytestconfig: pytest.Config) -> None:
+    """It fails a test that changes global jax configuration and adds the device markers."""
+    assert pytestconfig.pluginmanager.hasplugin("substrax.testing.pytest_plugin")
