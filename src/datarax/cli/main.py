@@ -4,13 +4,10 @@ This module provides the main entry point for the Datarax command-line interface
 """
 
 import argparse
-import os
 import sys
 import tomllib
 from pathlib import Path
 from typing import Any
-
-import jax
 
 from datarax import __version__
 
@@ -242,15 +239,6 @@ def _handle_version(args: argparse.Namespace) -> int:
     return 0
 
 
-def _configure_device() -> None:
-    """Configure JAX device from environment variables."""
-    device = os.environ.get("DATARAX_DEVICE", "auto")
-    if device == "cpu":
-        jax.config.update("jax_platform_name", "cpu")
-    elif device.startswith("cuda"):
-        jax.config.update("jax_platform_name", "gpu")
-
-
 def _build_parser() -> argparse.ArgumentParser:
     """Build the argument parser with all subcommands."""
     parser = argparse.ArgumentParser(
@@ -323,8 +311,6 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         An exit code (0 for success, non-zero for error).
     """
-    _configure_device()
-
     parser = _build_parser()
     args = parser.parse_args(argv)
 

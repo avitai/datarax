@@ -3,6 +3,7 @@
 from unittest.mock import patch
 
 import pytest
+from substrax.testing import restored_jax_config
 
 from datarax.cli.main import main
 
@@ -171,8 +172,12 @@ save_interval = 1000
 
         assert exit_code == 0
 
-    def test_cli_with_env_variables(self, tmp_path, monkeypatch):
-        """Test CLI respects environment variables."""
+    def test_running_the_cli_changes_no_global_jax_configuration(self, tmp_path, monkeypatch):
+        """The CLI leaves backend selection to ``JAX_PLATFORMS``, which jax reads when it starts.
+
+        ``DATARAX_DEVICE`` set the deprecated ``jax_platform_name`` option after jax was imported,
+        which cannot choose the backends jax starts; setting it must change nothing.
+        """
         config_file = tmp_path / "env_test.toml"
         config_file.write_text("""
 [pipeline]
@@ -181,12 +186,10 @@ name = "env_test"
 [sources.train]
 type = "memory"
         """)
-
-        # Set environment variable for Datarax
-        monkeypatch.setenv("DATARAX_LOG_LEVEL", "DEBUG")
         monkeypatch.setenv("DATARAX_DEVICE", "cpu")
 
-        exit_code = main(["validate", "--config-path", str(config_file)])
+        with restored_jax_config() as changed:
+            exit_code = main(["validate", "--config-path", str(config_file)])
 
         assert exit_code == 0
-        # The implementation should respect these env variables
+        assert changed == []

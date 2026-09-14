@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- The `datarax` command no longer reads `DATARAX_DEVICE`. It set jax's deprecated
+  `jax_platform_name` option after jax was imported, which does not choose the backends jax
+  starts. Set `JAX_PLATFORMS` before running the command instead.
+
 ## [0.1.9] - 2026-09-10
 
 ### Added
