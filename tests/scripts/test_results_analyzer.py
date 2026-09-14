@@ -54,9 +54,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from substrax.runtime import configure_entry_point_logging
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
 logger = logging.getLogger(__name__)
 
 DASHBOARD_TEMPLATE = """
@@ -1772,6 +1772,7 @@ def generate_dashboard(
 
 def main():
     """Main execution function."""
+    configure_entry_point_logging(logging.INFO, fmt="%(levelname)s: %(message)s")
     args = parse_args()
 
     if args.verbose:

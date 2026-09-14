@@ -61,9 +61,9 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from substrax.runtime import configure_entry_point_logging
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
 logger = logging.getLogger(__name__)
 
 
@@ -915,6 +915,7 @@ class ModernDocGenerator:
 
 def main():
     """Main entry point for the documentation generator."""
+    configure_entry_point_logging(logging.INFO, fmt="%(levelname)s: %(message)s")
     parser = argparse.ArgumentParser(
         description="Modern documentation generator for Datarax",
         formatter_class=argparse.RawTextHelpFormatter,
