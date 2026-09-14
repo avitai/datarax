@@ -77,11 +77,11 @@ Tests are configured with several pytest markers and command-line options:
 
 - `--all-suites`: Collect all test suites (`tests/`, `benchmarks/tests/`). Without this flag, only `tests/` is collected (configured in `pyproject.toml` via `testpaths`).
 
-### Device Selection
+### Test Backend
 
-- `--device=cpu`: Run tests only on CPU
-- `--device=gpu`: Run tests only on GPU
-- `--device=all`: Run tests on all available devices (default)
+- Tests run on eight emulated CPU devices by default
+- `DATARAX_TEST_JAX_PLATFORMS=cuda`: run the tests on the GPU
+- `DATARAX_TEST_DEVICE_COUNT=N`: emulate `N` CPU devices
 
 ### Test Categories
 
@@ -93,8 +93,8 @@ Tests are configured with several pytest markers and command-line options:
 
 ### Test Markers
 
-- `@pytest.mark.gpu`: Test requires a GPU
-- `@pytest.mark.tpu`: Test requires a TPU (currently skipped for stability)
+- `@pytest.mark.accelerator(kind="gpu")`: Test needs a GPU backend (substrax plugin)
+- `@pytest.mark.devices(count)`: Test needs at least `count` devices (substrax plugin)
 - `@pytest.mark.integration`: Integration test
 - `@pytest.mark.end_to_end`: End-to-end test
 - `@pytest.mark.benchmark`: Performance benchmark test
@@ -112,39 +112,24 @@ The following workflows are configured to run tests on CPU:
 
 ## Writing Device-Specific Tests
 
-To write tests that run on specific devices:
+Declare what a test needs, and the substrax pytest plugin skips it when the run cannot provide it:
 
 ```python
 import pytest
 
-# Test runs on all devices
+# Runs on whatever backend the run selected
 def test_basic_functionality():
     ...
 
-# Test only runs when GPU is available and selected
-@pytest.mark.gpu
+# Runs only when the run selected a GPU backend
+@pytest.mark.accelerator(kind="gpu")
 def test_gpu_specific_functionality():
     ...
-```
 
-For tests that should behave differently on different devices, use the device detection utilities:
-
-```python
-# In test files, import the helpers through the tests package
-from tests.test_common.device_detection import has_gpu, has_tpu, get_device_info
-
-def test_device_specific_behavior():
-    if has_gpu():
-        # GPU-specific test code
-        ...
-    else:
-        # CPU-specific test code
-        ...
-
-def test_with_device_info():
-    info = get_device_info()
-    print(f"Running on {info['total']} devices")
-    print(f"GPU count: {info['by_type']['gpu']}")
+# Runs only with at least two visible devices
+@pytest.mark.devices(2)
+def test_multi_device_sharding():
+    ...
 ```
 
 ## Troubleshooting

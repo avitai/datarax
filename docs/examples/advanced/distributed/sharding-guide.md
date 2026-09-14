@@ -26,7 +26,7 @@ optimize throughput for distributed training, and handle common pitfalls.
 
 | PyTorch | Datarax |
 |---------|---------|
-| `DistributedDataParallel(model)` | Model with `Mesh` context |
+| `DistributedDataParallel(model)` | Model run under `jax.set_mesh(mesh)` |
 | `DistributedSampler` | Data sharded via `PartitionSpec` |
 | `torch.distributed.all_reduce()` | JAX handles via GSPMD |
 | `world_size`, `rank` | `mesh.axis_size`, device position |
@@ -39,7 +39,7 @@ optimize throughput for distributed training, and handle common pitfalls.
 |------------|---------|
 | `tf.distribute.MirroredStrategy` | `Mesh` with data axis |
 | `experimental_distribute_dataset` | `jax.device_put` with sharding |
-| `strategy.scope()` | `with mesh:` context |
+| `strategy.scope()` | `jax.set_mesh(mesh)` |
 | `tf.distribute.Strategy.run()` | `jax.jit` + sharding |
 
 ## Files
@@ -98,8 +98,7 @@ single `"data"` axis. This is what the script does:
 
 ```python
 import jax
-import numpy as np
-from jax.sharding import Mesh, NamedSharding, PartitionSpec
+from substrax.mesh import DeviceMeshManager
 
 devices = jax.devices()
 num_devices = len(devices)
@@ -107,8 +106,7 @@ use_sharding = num_devices >= 2
 
 if use_sharding:
     # Create 1D mesh for pure data parallelism
-    device_array = np.array(devices)
-    mesh = Mesh(device_array, axis_names=("data",))
+    mesh = DeviceMeshManager.create_data_parallel_mesh()
     print(f"Created mesh: {mesh.shape} with axis 'data'")
 else:
     mesh = None
@@ -129,32 +127,19 @@ Created mesh: (2,) with axis 'data'
     ```python
     # Conceptual only — not exercised by this guide
     if len(devices) >= 4:
-        mesh_2d = Mesh(
-            np.array(devices).reshape(2, 2),
-            axis_names=("data", "model"),
-        )
+        mesh_2d = DeviceMeshManager.create_device_mesh({"data": 2, "model": 2}, devices)
     ```
 
 ## Part 3: Sharded Batch Distribution
 
-A helper builds the right `PartitionSpec` for any array shape — sharding the
-first (batch) dimension across the `"data"` axis and replicating the rest:
+substrax builds the data-parallel sharding: the first (batch) dimension of every array is split
+across the `"data"` axis and the rest is replicated:
 
 ```python
-def create_sharding_spec(shape, mesh, shard_first_dim=True):
-    """Create appropriate PartitionSpec for a given shape."""
-    if mesh is None:
-        return None
+from substrax.spmd import create_data_parallel_sharding
 
-    ndim = len(shape)
-    if shard_first_dim and ndim > 0:
-        # Shard first dim (batch), replicate rest
-        spec = ("data",) + (None,) * (ndim - 1)
-    else:
-        # Fully replicate
-        spec = (None,) * ndim
-
-    return NamedSharding(mesh, PartitionSpec(*spec))
+batch_sharding = create_data_parallel_sharding(mesh)
+print(f"Batch sharding: {batch_sharding}")
 ```
 
 The pipeline itself is a standard Datarax pipeline with a preprocessing stage:
@@ -189,30 +174,16 @@ def create_pipeline(batch_size=BATCH_SIZE, num_samples=NUM_SAMPLES, seed=42):
     return Pipeline(source=source, stages=[preprocessor], batch_size=batch_size, rngs=nnx.Rngs(0))
 ```
 
-Each batch is distributed by applying the sharding to every array it contains:
+Each batch is placed on the mesh by applying the sharding to every array it contains:
 
 ```python
-def distribute_batch(batch, mesh, shard_batch_dim=True):
-    """Distribute batch data across devices."""
-    if mesh is None:
-        return batch
-
-    distributed = {}
-    for key, array in batch.items():
-        if hasattr(array, "shape"):
-            sharding = create_sharding_spec(array.shape, mesh, shard_batch_dim)
-            distributed[key] = jax.device_put(array, sharding)
-        else:
-            distributed[key] = array
-
-    return distributed
-
+from substrax.spmd import place_batch_on_shards
 
 # Distribute a batch within the mesh context
 pipeline = create_pipeline()
 test_batch = next(iter(pipeline))
-with mesh:
-    sharded_batch = distribute_batch(test_batch, mesh)
+with jax.set_mesh(mesh):
+    sharded_batch = place_batch_on_shards(test_batch, create_data_parallel_sharding(mesh))
     print(f"  Image shape: {sharded_batch['image'].shape}")
     print(f"  Image sharding: {sharded_batch['image'].sharding.spec}")
 ```
@@ -237,8 +208,9 @@ def benchmark_pipeline(batch_size, num_batches=20, mesh=None):
     # Warmup
     warmup_batch = next(iter(pipeline))
     if mesh is not None:
-        with mesh:
-            _ = distribute_batch(warmup_batch, mesh)
+        sharding = create_data_parallel_sharding(mesh)
+        with jax.set_mesh(mesh):
+            _ = place_batch_on_shards(warmup_batch, sharding)
 
     # Benchmark
     pipeline = create_pipeline(batch_size=batch_size, num_samples=batch_size * num_batches)
@@ -247,9 +219,10 @@ def benchmark_pipeline(batch_size, num_batches=20, mesh=None):
     samples = 0
 
     if mesh is not None:
-        with mesh:
+        sharding = create_data_parallel_sharding(mesh)
+        with jax.set_mesh(mesh):
             for batch in pipeline:
-                sharded = distribute_batch(batch, mesh)
+                sharded = place_batch_on_shards(batch, sharding)
                 _ = sharded["image"].block_until_ready()
                 samples += batch["image"].shape[0]
     else:
@@ -317,7 +290,8 @@ total batch of 128.*
 1. **Batch size**: Should be divisible by device count
 2. **Memory**: Sharding reduces per-device memory linearly
 3. **Overhead**: Distribution has fixed cost — larger batches amortize it
-4. **Mesh context**: All sharded operations must be within mesh context
+4. **Mesh**: Build it with `DeviceMeshManager`, place batches with `place_batch_on_shards`,
+   and run the sharded loop under `jax.set_mesh(mesh)`
 5. **Fallback**: Code should handle single-device gracefully
 
 ## Next Steps

@@ -16,14 +16,11 @@ In GitHub Actions workflows, this is handled by explicitly adding the project ro
 
 ## Contents
 
-- `device_detection.py`: Functions for detecting available hardware devices
-- `hardware_fixtures.py`: Fixtures for hardware/device-dependent tests
 - `data_generators.py`: Functions for generating test data
 - `data_source_fixtures.py`: Test fixtures for data source components
 - `dependency_utilities.py`: Helpers for optional-dependency detection and skipping
 - `mock_operators.py`: Mock operator implementations for tests
 - `nnx_fixtures.py`: Fixtures for Flax NNX module tests
-- `fixtures.py`: PyTest fixtures for tests
 - `utils.py`: General test utilities
 
 ### Data Source Fixtures

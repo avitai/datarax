@@ -70,8 +70,9 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 from flax import nnx
-from jax.sharding import Mesh, NamedSharding, PartitionSpec
 from substrax.artifacts import resolve_output_dir
+from substrax.mesh import DeviceMeshManager
+from substrax.spmd import create_data_parallel_sharding, place_batch_on_shards
 
 from datarax.operators import ElementOperator, ElementOperatorConfig
 
@@ -128,8 +129,7 @@ print(f"Device types: {[str(d.device_kind) for d in devices]}")
 
 if use_sharding:
     # Create 1D mesh for pure data parallelism
-    device_array = np.array(devices)
-    mesh = Mesh(device_array, axis_names=("data",))
+    mesh = DeviceMeshManager.create_data_parallel_mesh()
     print(f"\nCreated mesh: {mesh.shape} with axis 'data'")
 else:
     mesh = None
@@ -151,39 +151,11 @@ else:
 
 
 # %%
-def create_sharding_spec(shape, mesh, shard_first_dim=True):
-    """Create appropriate PartitionSpec for a given shape.
-
-    Args:
-        shape: Array shape tuple
-        mesh: JAX Mesh object
-        shard_first_dim: Whether to shard along first (batch) dimension
-
-    Returns:
-        NamedSharding for the array
-    """
-    if mesh is None:
-        return None
-
-    ndim = len(shape)
-    if shard_first_dim and ndim > 0:
-        # Shard first dim (batch), replicate rest
-        spec = ("data",) + (None,) * (ndim - 1)
-    else:
-        # Fully replicate
-        spec = (None,) * ndim
-
-    return NamedSharding(mesh, PartitionSpec(*spec))
-
-
-# Example sharding specs
+# Data-parallel sharding: the batch dimension of every array is split across
+# the "data" axis, and the remaining dimensions are replicated.
 if mesh is not None:
-    image_sharding = create_sharding_spec((64, 32, 32, 3), mesh)
-    label_sharding = create_sharding_spec((64,), mesh)
-    assert image_sharding is not None  # noqa: S101
-    assert label_sharding is not None  # noqa: S101
-    print(f"Image sharding: {image_sharding.spec}")
-    print(f"Label sharding: {label_sharding.spec}")
+    batch_sharding = create_data_parallel_sharding(mesh)
+    print(f"Batch sharding: {batch_sharding}")
 
 # %% [markdown]
 """
@@ -243,36 +215,11 @@ print("Created CIFAR-10 pipeline")
 
 
 # %%
-def distribute_batch(batch, mesh, shard_batch_dim=True):
-    """Distribute batch data across devices.
-
-    Args:
-        batch: Dictionary of batch arrays
-        mesh: JAX Mesh object
-        shard_batch_dim: Whether to shard along batch dimension
-
-    Returns:
-        Dictionary with sharded arrays
-    """
-    if mesh is None:
-        return batch
-
-    distributed = {}
-    for key, array in batch.items():
-        if hasattr(array, "shape"):
-            sharding = create_sharding_spec(array.shape, mesh, shard_batch_dim)
-            distributed[key] = jax.device_put(array, sharding)
-        else:
-            distributed[key] = array
-
-    return distributed
-
-
 # Test distribution
 if mesh is not None:
     test_batch = next(iter(pipeline))
-    with mesh:
-        sharded_batch = distribute_batch(test_batch, mesh)
+    with jax.set_mesh(mesh):
+        sharded_batch = place_batch_on_shards(test_batch, create_data_parallel_sharding(mesh))
         print("\nDistributed batch:")
         print(f"  Image shape: {sharded_batch['image'].shape}")
         print(f"  Image sharding: {sharded_batch['image'].sharding.spec}")
@@ -309,13 +256,14 @@ pipeline = create_pipeline(num_samples=512)
 metrics = []
 
 if mesh is not None:
-    with mesh:
+    batch_sharding = create_data_parallel_sharding(mesh)
+    with jax.set_mesh(mesh):
         for i, batch in enumerate(pipeline):
             if i >= 5:
                 break
 
-            # Distribute batch
-            sharded_batch = distribute_batch(batch, mesh)
+            # Place the batch on the mesh
+            sharded_batch = place_batch_on_shards(batch, batch_sharding)
 
             # Run sharded computation
             result = sharded_training_step(sharded_batch, mesh)
@@ -348,8 +296,9 @@ def benchmark_pipeline(batch_size, num_batches=20, mesh=None):
     # Warmup
     warmup_batch = next(iter(pipeline))
     if mesh is not None:
-        with mesh:
-            _ = distribute_batch(warmup_batch, mesh)
+        sharding = create_data_parallel_sharding(mesh)
+        with jax.set_mesh(mesh):
+            _ = place_batch_on_shards(warmup_batch, sharding)
 
     # Benchmark
     pipeline = create_pipeline(batch_size=batch_size, num_samples=batch_size * num_batches)
@@ -358,9 +307,10 @@ def benchmark_pipeline(batch_size, num_batches=20, mesh=None):
     samples = 0
 
     if mesh is not None:
-        with mesh:
+        sharding = create_data_parallel_sharding(mesh)
+        with jax.set_mesh(mesh):
             for batch in pipeline:
-                sharded = distribute_batch(batch, mesh)
+                sharded = place_batch_on_shards(batch, sharding)
                 _ = sharded["image"].block_until_ready()
                 samples += batch["image"].shape[0]
     else:
@@ -590,7 +540,8 @@ print(f"Saved: {output_dir / 'dist-sharding-batch-distribution.png'}")
 1. **Batch size**: Should be divisible by device count
 2. **Memory**: Sharding reduces per-device memory linearly
 3. **Overhead**: Distribution has fixed cost - larger batches amortize it
-4. **Mesh context**: All sharded operations must be within mesh context
+4. **Mesh**: Build it with `DeviceMeshManager`, place batches with `place_batch_on_shards`,
+   and run the sharded loop under `jax.set_mesh(mesh)`
 5. **Fallback**: Code should handle single-device gracefully
 """
 
@@ -620,10 +571,11 @@ def main():
     # Process with optional sharding
     total_samples = 0
     if num_devices >= 2:
-        mesh = Mesh(np.array(devices), axis_names=("data",))
-        with mesh:
+        mesh = DeviceMeshManager.create_data_parallel_mesh()
+        sharding = create_data_parallel_sharding(mesh)
+        with jax.set_mesh(mesh):
             for batch in pipeline:
-                sharded = distribute_batch(batch, mesh)
+                sharded = place_batch_on_shards(batch, sharding)
                 total_samples += sharded["image"].shape[0]
     else:
         for batch in pipeline:

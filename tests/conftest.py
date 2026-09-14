@@ -110,11 +110,6 @@ except ImportError:
 # Add the src directory to the Python path so tests can import modules
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from tests.test_common.device_detection import (
-    has_multiple_devices,
-    is_distributed_env,
-)
-
 
 # Register custom markers
 def pytest_configure(config):
@@ -124,8 +119,6 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "integration: mark test as an integration test")
     config.addinivalue_line("markers", "end_to_end: mark test as an end-to-end test")
     config.addinivalue_line("markers", "benchmark: mark test as a performance benchmark")
-    config.addinivalue_line("markers", "gpu: mark test as requiring GPU")
-    config.addinivalue_line("markers", "tpu: mark test as requiring TPU")
 
 
 # Add command-line options for different test types
@@ -160,12 +153,6 @@ def pytest_addoption(parser):
         action="store_true",
         default=False,
         help="skip end-to-end tests",
-    )
-    parser.addoption(
-        "--device",
-        choices=["cpu", "gpu", "tpu", "all"],
-        default="all",
-        help="select device type for tests (cpu, gpu, tpu, or all)",
     )
 
 
@@ -228,31 +215,6 @@ def _apply_explicit_deselect_flags(
     _deselect_items(config, items, deselected)
 
 
-def _apply_device_filter(items: list[Any], *, device_option: str) -> None:
-    """Filter tests by requested device type."""
-    if device_option == "all":
-        return
-
-    for item in items:
-        if device_option == "cpu" and ("gpu" in item.keywords or "tpu" in item.keywords):
-            item.add_marker(pytest.mark.skip(reason="test not selected for cpu"))
-        elif device_option == "gpu" and "tpu" in item.keywords:
-            item.add_marker(pytest.mark.skip(reason="test not selected for gpu"))
-        elif device_option == "tpu":
-            if "gpu" in item.keywords:
-                item.add_marker(pytest.mark.skip(reason="test not selected for tpu"))
-            if "tpu" in item.keywords:
-                item.add_marker(pytest.mark.skip(reason="TPU tests skipped for stability"))
-
-
-def _skip_tpu_tests_unconditionally(items: list[Any]) -> None:
-    """Always skip TPU tests to avoid unstable runtime crashes."""
-    skip_tpu = pytest.mark.skip(reason="TPU tests skipped for stability")
-    for item in items:
-        if "tpu" in item.keywords:
-            item.add_marker(skip_tpu)
-
-
 # Skip tests based on command-line options
 def pytest_collection_modifyitems(config, items):
     """Skip tests based on command-line options."""
@@ -261,7 +223,6 @@ def pytest_collection_modifyitems(config, items):
     run_benchmark = config.getoption("--benchmark")
     skip_integration = config.getoption("--no-integration")
     skip_end_to_end = config.getoption("--no-end-to-end")
-    device_option = config.getoption("--device")
 
     _deselect_unselected_test_types(
         config,
@@ -276,11 +237,6 @@ def pytest_collection_modifyitems(config, items):
         skip_integration=skip_integration,
         skip_end_to_end=skip_end_to_end,
     )
-
-    # Note: Benchmarks are now run by default to ensure complete testing
-    # They can still be explicitly excluded with pytest -m "not benchmark"
-    _apply_device_filter(items, device_option=device_option)
-    _skip_tpu_tests_unconditionally(items)
 
 
 # Define fixtures that can be reused across tests
@@ -339,22 +295,3 @@ def temp_checkpoint_dir(tmpdir) -> str:
     """Create a temporary directory for checkpoint testing."""
     checkpoint_dir = tmpdir.mkdir("checkpoints")
     return str(checkpoint_dir)
-
-
-@pytest.fixture
-def device_matrix(request):
-    """Create a matrix of available devices for testing different configurations."""
-    del request
-    device_counts = {
-        "cpu": jax.local_device_count("cpu"),
-        "gpu": jax.local_device_count("gpu"),
-        "tpu": jax.local_device_count("tpu"),
-    }
-
-    return {
-        "counts": device_counts,
-        "total": sum(device_counts.values()),
-        "has_multiple_types": sum(1 for count in device_counts.values() if count > 0) > 1,
-        "has_multiple_devices": has_multiple_devices(),
-        "is_distributed": is_distributed_env(),
-    }

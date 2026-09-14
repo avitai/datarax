@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The sharding examples and their notebooks, the sharding docs pages, the distributed scaling
+  benchmark and the comparison example build meshes with `substrax.mesh.DeviceMeshManager` and place
+  batches with `substrax.spmd.create_data_parallel_sharding` and `place_batch_on_shards`, replacing
+  their own `Mesh(...)` construction and the `create_sharding_spec` and `distribute_batch` helpers;
+  `benchmarks/core/sharding.py`, which duplicated them, is removed. Meshes are entered with
+  `with jax.set_mesh(mesh):` instead of `with mesh:`, which jax deprecates in favour of it, in those
+  files and the sharding tests, and the TensorFlow comparison tables map `strategy.scope()` to
+  `jax.set_mesh(mesh)`. Contracts fail any `with mesh:` in source, tests, benchmarks, examples,
+  notebooks or docs, and any raw `Mesh(...)` or `jax.make_mesh(...)` in examples, benchmarks or
+  docs pages.
 - The generated `.datarax.env`, the pytest environment, the Dockerfiles, the SkyPilot template,
   the GPU run scripts and the docs set `XLA_CLIENT_MEM_FRACTION`, the name jaxlib reads, instead
   of the deprecated `XLA_PYTHON_CLIENT_MEM_FRACTION`. jax refuses a process that sets both;
@@ -31,6 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The pytest `--device` option and the `gpu`, `gpu_required`, `cuda`, `cpu` and `tpu` markers, which
+  only a keyword filter behind that option acted on. A test that needs a GPU backend or several
+  devices declares the substrax plugin's `accelerator(kind="gpu")` or `devices(count)` marker, which
+  skips it from the backend and devices the run selected; `DATARAX_TEST_JAX_PLATFORMS=cuda` selects
+  the GPU. CI, `scripts/run_tests.sh`, `scripts/run_gpu_tests.sh` and the contributing docs no longer
+  pass `--device`. The unused `tests/test_common/device_detection.py` and `hardware_fixtures.py`, the
+  device-skip fixtures and decorators in `tests/test_common`, and `benchmarks/core/platform.py`'s
+  `required_devices` are removed.
 - The `datarax` command no longer reads `DATARAX_DEVICE`. It set jax's deprecated
   `jax_platform_name` option after jax was imported, which does not choose the backends jax
   starts. Set `JAX_PLATFORMS` before running the command instead.
@@ -38,10 +56,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SmartCompilation` and `MemoryEfficientCompilation`. JAX process settings move to
   `substrax.runtime` (`JaxRuntime`, `apply_runtime`, `merge_xla_flags`), and the compilation
   wrappers give way to `jax.jit`, `jax.shard_map`, `jax.jit(donate_argnums=...)` and
-  `jax.checkpoint`. `docs/performance/index.md` lists where each name went.
+  `jax.checkpoint`.
 
 ### Fixed
 
+- `scripts/run_tests.sh` runs its GPU pass on the GPU. It exported `JAX_PLATFORMS=cuda`, which the
+  test environment ignores, so both passes ran on emulated CPU devices; it now sets
+  `DATARAX_TEST_JAX_PLATFORMS=cuda`.
 - `scripts/check_sync.py --fix`, `scripts/validate_examples.py --execute` and
   `scripts/distributed_test_runner.py` no longer need a `python` on `PATH`: they run jupytext,
   examples and pytest with the interpreter that runs the script. `check_sync.py --fix` used to

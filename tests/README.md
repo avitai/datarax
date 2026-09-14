@@ -27,8 +27,8 @@ For GPU-accelerated testing (requires CUDA setup):
 # Use the GPU test script
 bash scripts/run_gpu_tests.sh
 
-# Or manually with device selection
-JAX_PLATFORMS=cuda uv run pytest --device=gpu tests/ -v
+# Or run the suite on the GPU directly
+DATARAX_TEST_JAX_PLATFORMS=cuda uv run pytest tests/ -v
 ```
 
 ### Full Test Suite
@@ -84,16 +84,16 @@ Tests are organized using pytest markers defined in `conftest.py` and `pyproject
 | `@pytest.mark.integration` | Component interaction tests |
 | `@pytest.mark.end_to_end` | Complete workflow tests |
 | `@pytest.mark.benchmark` | Performance benchmarks |
-| `@pytest.mark.gpu` | Requires GPU hardware |
-| `@pytest.mark.tpu` | Requires TPU hardware (currently skipped) |
+| `@pytest.mark.accelerator(kind="gpu")` | Requires a GPU backend (substrax plugin) |
+| `@pytest.mark.devices(count)` | Requires `count` devices (substrax plugin) |
 | `@pytest.mark.tfds` | Requires TensorFlow Datasets |
 | `@pytest.mark.hf` | Requires HuggingFace Datasets |
 
 ### Running Specific Test Types
 
 ```bash
-# Run only GPU tests
-uv run pytest -m gpu --device=gpu
+# Run the tests that need a GPU backend
+DATARAX_TEST_JAX_PLATFORMS=cuda uv run pytest -m accelerator
 
 # Run integration tests
 uv run pytest -m integration

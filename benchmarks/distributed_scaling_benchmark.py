@@ -155,7 +155,8 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 from flax import nnx
-from jax.sharding import Mesh, NamedSharding, PartitionSpec
+from substrax.mesh import DeviceMeshManager
+from substrax.spmd import create_data_parallel_sharding
 
 
 matplotlib.use("Agg")
@@ -264,7 +265,7 @@ def benchmark_single_device(data: dict, batch_size: int = 64) -> dict:
 def benchmark_sharded(data: dict, num_devices: int, batch_size: int = 64) -> dict:
     """Benchmark pipeline + sharded computation across N devices.
 
-    Uses JAX Mesh and NamedSharding to distribute batches, then runs
+    Uses a substrax data-parallel mesh and sharding to distribute batches, then runs
     a jitted workload that executes in parallel across shards.
 
     The loop structure — device_put → workload → block_until_ready — is
@@ -273,12 +274,9 @@ def benchmark_sharded(data: dict, num_devices: int, batch_size: int = 64) -> dic
     dispatch naturally overlaps compute with host-side data loading,
     which would further improve effective throughput.
     """
-    devices = jax.devices()[:num_devices]
-    mesh = Mesh(np.array(devices), axis_names=("data",))
-    # Data-parallel sharding: batch dimension split across devices.
-    # Follows the pattern from Flax examples/04_data_parallel_with_jit.py:
-    #   data_sharding = NamedSharding(mesh, PartitionSpec('data'))
-    sharding = NamedSharding(mesh, PartitionSpec("data"))
+    mesh = DeviceMeshManager.create_data_parallel_mesh(num_devices)
+    # Data-parallel sharding: the batch dimension is split across the devices.
+    sharding = create_data_parallel_sharding(mesh)
 
     # Batch size must be divisible by device count for even sharding.
     effective_bs = (batch_size // num_devices) * num_devices
@@ -287,7 +285,7 @@ def benchmark_sharded(data: dict, num_devices: int, batch_size: int = 64) -> dic
     # Warmup: JIT compilation happens on first call with each new input shape.
     # We run several batches to ensure compilation is complete and caches warm.
     # Ref: JAX docs/benchmarking.md — "first run includes compilation overhead"
-    with mesh:
+    with jax.set_mesh(mesh):
         for i, batch in enumerate(pipeline):
             images = jax.device_put(batch["image"], sharding)
             block_until_ready_tree(_workload(images))
@@ -300,7 +298,7 @@ def benchmark_sharded(data: dict, num_devices: int, batch_size: int = 64) -> dic
     pipeline = create_pipeline(data, effective_bs)
     total_samples = 0
     t0 = time.perf_counter()
-    with mesh:
+    with jax.set_mesh(mesh):
         for batch in pipeline:
             images = jax.device_put(batch["image"], sharding)
             block_until_ready_tree(_workload(images))

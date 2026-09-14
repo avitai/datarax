@@ -15,15 +15,9 @@ from datarax.utils.console import emit
 
 
 @pytest.mark.benchmark
+@pytest.mark.accelerator(kind="gpu")
 class TestPersistentCache:
     """Tests the effectiveness of JAX's persistent compilation cache."""
-
-    @pytest.fixture(autouse=True)
-    def check_gpu(self):
-        try:
-            jax.devices("gpu")
-        except RuntimeError:
-            pytest.skip("No GPU devices available for persistent cache testing.")
 
     def test_cache_hit_vs_miss(self, tmp_path):
         """Measures compilation time with and without cache hit."""
