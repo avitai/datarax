@@ -1,54 +1,46 @@
-"""JAX backend selection and CPU device emulation for test runs.
+"""The JAX environment a datarax test run starts with: backend choice and CPU device emulation.
 
-Tests run on CPU with emulated devices unless ``DATARAX_TEST_JAX_PLATFORMS``
-asks for an accelerator. An inherited ``JAX_PLATFORMS`` (for example the
-``cuda,cpu`` a developer shell exports) does not move tests onto a GPU, so a
-local run matches CI unless the accelerator is requested for the test run.
+``substrax.runtime.resolve_test_runtime`` decides it; this module holds datarax's part, the
+``DATARAX_TEST_`` variable prefix and how an installed JAX CUDA plugin is detected. Tests run on
+CPU with eight emulated devices unless ``DATARAX_TEST_JAX_PLATFORMS`` asks for an accelerator, and
+an inherited ``JAX_PLATFORMS`` does not move them onto a GPU, so a local run matches CI. Importing
+this module imports no jax, because jax reads these variables when it is imported.
 """
 
 from __future__ import annotations
 
+import importlib.util
 from collections.abc import Mapping
 
-
-_EMULATION_FLAG = "--xla_force_host_platform_device_count"
-_DEFAULT_DEVICE_COUNT = "8"
+from substrax.runtime import resolve_test_runtime, runtime_environment
 
 
-def resolve_test_jax_environment(
+TEST_VARIABLE_PREFIX = "DATARAX_TEST_"
+_CUDA_PLUGINS = ("jax_cuda12_plugin", "jax_cuda13_plugin")
+
+
+def has_cuda_plugin() -> bool:
+    """Whether a JAX CUDA plugin can be imported, checked without importing it."""
+    return any(importlib.util.find_spec(name) is not None for name in _CUDA_PLUGINS)
+
+
+def resolve_test_environment(
     env: Mapping[str, str], *, cuda_plugin_available: bool
 ) -> dict[str, str]:
-    """Return the ``JAX_PLATFORMS`` and ``XLA_FLAGS`` a test run uses.
-
-    ``DATARAX_TEST_JAX_PLATFORMS`` naming a backend other than ``cpu`` selects
-    it and disables emulation, which only affects the CPU backend. Otherwise the
-    run uses the CPU with ``DATARAX_TEST_DEVICE_COUNT`` emulated devices (eight
-    by default, none when it is ``0``), keeping any device count already in
-    ``XLA_FLAGS``.
+    """Return the variables a test run writes into its environment before importing jax.
 
     Args:
         env: The process environment.
         cuda_plugin_available: Whether a JAX CUDA plugin is installed.
 
     Returns:
-        Values for ``JAX_PLATFORMS`` and ``XLA_FLAGS``.
+        The variables to set. An inherited variable the run leaves as it is, such as
+        ``XLA_FLAGS``, is absent.
 
     Raises:
         RuntimeError: If CUDA is requested and no JAX CUDA plugin is installed.
     """
-    flags = env.get("XLA_FLAGS", "")
-    requested = env.get("DATARAX_TEST_JAX_PLATFORMS", "")
-    accelerators = [
-        name.strip() for name in requested.split(",") if name.strip() not in ("", "cpu")
-    ]
-    if any(name.startswith("cuda") for name in accelerators) and not cuda_plugin_available:
-        raise RuntimeError(
-            f"DATARAX_TEST_JAX_PLATFORMS={requested!r} asks for CUDA, but no JAX CUDA plugin "
-            "is installed; run ./setup.sh --backend cuda12."
-        )
-    if accelerators:
-        return {"JAX_PLATFORMS": requested, "XLA_FLAGS": flags}
-    count = env.get("DATARAX_TEST_DEVICE_COUNT", _DEFAULT_DEVICE_COUNT)
-    if count != "0" and _EMULATION_FLAG not in flags:
-        flags = f"{flags} {_EMULATION_FLAG}={count}".strip()
-    return {"JAX_PLATFORMS": "cpu", "XLA_FLAGS": flags}
+    runtime = resolve_test_runtime(
+        env, prefix=TEST_VARIABLE_PREFIX, cuda_plugin_available=cuda_plugin_available
+    )
+    return runtime_environment(runtime, env)

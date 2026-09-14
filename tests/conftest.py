@@ -1,6 +1,5 @@
 """Test configuration for Datarax."""
 
-import importlib.util
 import os
 import platform
 import sys
@@ -53,21 +52,11 @@ elif IS_LINUX:
 # module that imports nothing that loads JAX (test_common's package does). Test helpers
 # import through the tests package: tests/ itself on sys.path would make every test
 # subpackage a top-level module, and tests/benchmarks would shadow benchmarks.
-from tests.jax_test_environment import resolve_test_jax_environment
-
-
-def _cuda_plugin_available() -> bool:
-    """Whether a JAX CUDA plugin can be imported, checked without importing it."""
-    return any(
-        importlib.util.find_spec(name) is not None
-        for name in ("jax_cuda12_plugin", "jax_cuda13_plugin")
-    )
+from tests.jax_test_environment import has_cuda_plugin, resolve_test_environment
 
 
 # Backend and device emulation must be decided before JAX is imported.
-os.environ.update(
-    resolve_test_jax_environment(os.environ, cuda_plugin_available=_cuda_plugin_available())
-)
+os.environ.update(resolve_test_environment(os.environ, cuda_plugin_available=has_cuda_plugin()))
 
 import jax
 import jax.numpy as jnp
