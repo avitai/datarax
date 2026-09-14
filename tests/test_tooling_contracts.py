@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 import tomllib
 from pathlib import Path
@@ -273,3 +274,71 @@ def test_readme_and_docs_show_no_codecov_badge() -> None:
     pages = ("README.md", "docs/index.md", "scripts/generate_docs.py")
 
     assert [page for page in pages if "codecov.io" in (REPO_ROOT / page).read_text()] == []
+
+
+_ENVIRONMENT_METHODS = frozenset({"update", "setdefault", "pop", "popitem", "clear"})
+_TEST_MODULE_ROOTS = ("tests", "benchmarks/tests")
+
+
+def _is_os_environ(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "environ"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "os"
+    )
+
+
+def _writes_environment(node: ast.AST) -> bool:
+    """Whether one statement or expression changes the process environment."""
+    if isinstance(node, (ast.Assign, ast.AugAssign, ast.Delete)):
+        targets = node.targets if isinstance(node, (ast.Assign, ast.Delete)) else [node.target]
+        return any(isinstance(t, ast.Subscript) and _is_os_environ(t.value) for t in targets)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        function = node.func
+        if _is_os_environ(function.value) and function.attr in _ENVIRONMENT_METHODS:
+            return True
+        return (
+            isinstance(function.value, ast.Name)
+            and function.value.id == "os"
+            and function.attr in {"putenv", "unsetenv"}
+        )
+    return False
+
+
+def _module_level_environment_writes(path: Path) -> list[int]:
+    """Line numbers of environment writes that run when the module is imported."""
+    lines: list[int] = []
+
+    def visit(node: ast.AST) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            return
+        if isinstance(node, (ast.stmt, ast.expr)) and _writes_environment(node):
+            lines.append(node.lineno)
+        for child in ast.iter_child_nodes(node):
+            visit(child)
+
+    for statement in ast.parse(path.read_text(encoding="utf-8")).body:
+        visit(statement)
+    return lines
+
+
+def test_no_test_module_writes_the_environment_at_import() -> None:
+    """A test module that changes os.environ at import changes it for every test collected after it.
+
+    Environment a test needs belongs in that test (``monkeypatch.setenv``); the process-wide
+    choices live in ``tests/conftest.py``, which runs before any test module is imported.
+    """
+    modules = [
+        path
+        for root in _TEST_MODULE_ROOTS
+        for path in sorted((REPO_ROOT / root).rglob("test_*.py"))
+    ]
+    writes = [
+        f"{path.relative_to(REPO_ROOT)}:{line}"
+        for path in modules
+        for line in _module_level_environment_writes(path)
+    ]
+
+    assert len(modules) > 100
+    assert writes == []

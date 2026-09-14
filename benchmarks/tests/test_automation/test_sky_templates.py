@@ -65,3 +65,11 @@ def test_gpu_template_delegates_setup_to_canonical_script() -> None:
     assert "./setup.sh" in setup
     assert "--with-benchmarks" in setup
     assert "uv sync" not in setup
+
+
+def test_gpu_template_selects_the_backend_with_jax_platforms() -> None:
+    """jax makes the first listed platform the default, so JAX_PLATFORMS alone selects CUDA."""
+    template = yaml.safe_load((_REPO_ROOT / "benchmarks/sky/gpu-benchmark.yaml").read_text())
+
+    assert template["envs"]["JAX_PLATFORMS"] == "cuda,cpu"
+    assert "JAX_PLATFORM_NAME" not in template["envs"]

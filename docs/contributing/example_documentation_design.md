@@ -1795,7 +1795,7 @@ uv pip install "datarax[data]"
 
 ```bash
 # Optional: Configure JAX for specific device
-export JAX_PLATFORM_NAME=gpu  # or cpu, tpu
+export JAX_PLATFORMS=cuda,cpu  # or cpu, tpu
 ```
 """
 

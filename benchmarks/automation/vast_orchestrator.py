@@ -162,7 +162,6 @@ def generate_sky_yaml(
     # SkyPilot rejects null env values; always emit a string value.
     envs["WANDB_API_KEY"] = os.getenv("WANDB_API_KEY", "")
     envs["JAX_PLATFORMS"] = "cuda,cpu"
-    envs["JAX_PLATFORM_NAME"] = "gpu"
     envs["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
     envs["DATARAX_BENCH_RUN_ID"] = run_id
     envs["DATARAX_BENCH_MODE"] = mode
