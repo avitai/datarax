@@ -47,6 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   meshes name `axis_types=(jax.sharding.AxisType.Auto,)`, because `jax.make_mesh` builds
   Explicit axes without it, and a contract test fails any documented `make_mesh` call that
   does not name its axis types.
+- `HFEagerSource` builds each column once from the dataset's numpy format and moves it to JAX in
+  one array. It used to convert every row to its own JAX array and stack them on the device,
+  which compiled a program whose input count was the row count: building MNIST's training
+  split took tens of minutes (8,000 rows took 31 s). The full 60,000-row split now builds in
+  about 3 s. Text and ragged columns keep the per-row conversion.
 
 ## [0.1.9] - 2026-09-10
 
