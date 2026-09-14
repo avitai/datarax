@@ -5,6 +5,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 from jax import tree_util
+from substrax.testing import TraceCounter
 
 from datarax.core.element_batch import (
     Batch,
@@ -637,25 +638,21 @@ class TestJAXIntegration:
         assert result == expected
 
     def test_no_recompilation(self):
-        """Test that different data doesn't cause recompilation."""
-        trace_count = 0
+        """Batches with the same structure and different values reuse the compiled function."""
+        counter = TraceCounter()
 
-        @jax.jit
-        def process(batch: Batch) -> jax.Array:
-            nonlocal trace_count
-            trace_count += 1
+        def total(batch: Batch) -> jax.Array:
             return jnp.sum(batch.get_data()["x"])
 
+        process = jax.jit(counter.wrap(total))
         batch1 = Batch([Element(data={"x": jnp.ones(3) * i}) for i in range(4)])
         batch2 = Batch([Element(data={"x": jnp.ones(3) * (i + 10)}) for i in range(4)])
 
-        result1 = process(batch1)
-        first_trace = trace_count
+        with counter.expect(new_traces=1):
+            result1 = process(batch1)
+        with counter.expect(new_traces=0):
+            result2 = process(batch2)
 
-        result2 = process(batch2)
-
-        # Should not recompile for different data values
-        assert trace_count == first_trace
         assert result1 != result2
 
     def test_element_in_tree_map(self):
