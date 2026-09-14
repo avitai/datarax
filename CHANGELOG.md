@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `datarax` command no longer reads `DATARAX_DEVICE`. It set jax's deprecated
   `jax_platform_name` option after jax was imported, which does not choose the backends jax
   starts. Set `JAX_PLATFORMS` before running the command instead.
+- `datarax.performance.xla_optimization`: `XLAOptimizer`, `get_xla_flags`, `apply_xla_flags`,
+  `SmartCompilation` and `MemoryEfficientCompilation`. JAX process settings move to
+  `substrax.runtime` (`JaxRuntime`, `apply_runtime`, `merge_xla_flags`), and the compilation
+  wrappers give way to `jax.jit`, `jax.shard_map`, `jax.jit(donate_argnums=...)` and
+  `jax.checkpoint`. `docs/performance/index.md` lists where each name went.
 
 ## [0.1.9] - 2026-09-10
 
