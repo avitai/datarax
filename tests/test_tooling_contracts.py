@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import re
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
 
 import yaml
@@ -306,14 +307,33 @@ def _writes_environment(node: ast.AST) -> bool:
     return False
 
 
-def _module_level_environment_writes(path: Path) -> list[int]:
-    """Line numbers of environment writes that run when the module is imported."""
+def _is_main_guard(node: ast.AST) -> bool:
+    """Whether ``node`` is ``if __name__ == "__main__":``, which runs only as a script."""
+    return (
+        isinstance(node, ast.If)
+        and isinstance(node.test, ast.Compare)
+        and isinstance(node.test.left, ast.Name)
+        and node.test.left.id == "__name__"
+        and len(node.test.comparators) == 1
+        and isinstance(node.test.comparators[0], ast.Constant)
+        and node.test.comparators[0].value == "__main__"
+    )
+
+
+def _module_level_nodes(path: Path, matches: Callable[[ast.AST], bool]) -> list[int]:
+    """Line numbers of nodes that ``matches`` and that run when the module is imported.
+
+    Function and class bodies and the ``__main__`` guard run only when called or run as a script,
+    so they are not searched.
+    """
     lines: list[int] = []
 
     def visit(node: ast.AST) -> None:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
             return
-        if isinstance(node, (ast.stmt, ast.expr)) and _writes_environment(node):
+        if _is_main_guard(node):
+            return
+        if isinstance(node, (ast.stmt, ast.expr)) and matches(node):
             lines.append(node.lineno)
         for child in ast.iter_child_nodes(node):
             visit(child)
@@ -321,6 +341,25 @@ def _module_level_environment_writes(path: Path) -> list[int]:
     for statement in ast.parse(path.read_text(encoding="utf-8")).body:
         visit(statement)
     return lines
+
+
+def _module_level_environment_writes(path: Path) -> list[int]:
+    """Line numbers of environment writes that run when the module is imported."""
+    return _module_level_nodes(path, _writes_environment)
+
+
+def _configures_logging(node: ast.AST) -> bool:
+    """Whether a node calls ``logging.basicConfig``."""
+    if not isinstance(node, ast.Call):
+        return False
+    function = node.func
+    if isinstance(function, ast.Attribute):
+        return (
+            function.attr == "basicConfig"
+            and isinstance(function.value, ast.Name)
+            and function.value.id == "logging"
+        )
+    return isinstance(function, ast.Name) and function.id == "basicConfig"
 
 
 def test_no_test_module_writes_the_environment_at_import() -> None:
@@ -342,3 +381,28 @@ def test_no_test_module_writes_the_environment_at_import() -> None:
 
     assert len(modules) > 100
     assert writes == []
+
+
+_IMPORTABLE_ROOTS = ("src", "scripts", "examples", "tests", "benchmarks")
+
+
+def test_no_module_configures_logging_at_import() -> None:
+    """Importing a module must leave the root logger alone; an entry point configures it in main().
+
+    A module that calls ``logging.basicConfig`` at import changes logging for everything imported
+    after it, test collection included.
+    """
+    modules = [
+        path
+        for root in _IMPORTABLE_ROOTS
+        for path in sorted((REPO_ROOT / root).rglob("*.py"))
+        if "example_data" not in path.parts
+    ]
+    configured = [
+        f"{path.relative_to(REPO_ROOT)}:{line}"
+        for path in modules
+        for line in _module_level_nodes(path, _configures_logging)
+    ]
+
+    assert len(modules) > 200
+    assert configured == []

@@ -10,16 +10,13 @@ from typing import Any
 
 import jax
 from flax import nnx
+from substrax.runtime import configure_entry_point_logging
 from tqdm import tqdm
 
 from datarax.pipeline import Pipeline
 from datarax.sources import HFEagerConfig, HFEagerSource
 
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
 logger = logging.getLogger("hf_datasets_test")
 
 
@@ -185,4 +182,7 @@ def run_dataset_tests():
 
 
 if __name__ == "__main__":
+    configure_entry_point_logging(
+        logging.INFO, fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     run_dataset_tests()
