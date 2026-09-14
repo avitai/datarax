@@ -272,7 +272,7 @@ If Metal acceleration isn't working on Apple Silicon:
 For GPU/Metal memory management:
 
 ```bash
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.75  # Use only 75% of GPU memory
+export XLA_CLIENT_MEM_FRACTION=0.75  # Use only 75% of GPU memory
 export XLA_PYTHON_CLIENT_PREALLOCATE=false  # Don't preallocate memory
 ```
 

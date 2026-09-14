@@ -5,7 +5,7 @@
 
 # Set up environment for GPU
 export JAX_PLATFORMS="cuda"
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.75 # Limit memory usage to avoid OOM errors
+export XLA_CLIENT_MEM_FRACTION=0.75 # Limit memory usage to avoid OOM errors
 
 # Get the directory where the script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

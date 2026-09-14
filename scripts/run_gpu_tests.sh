@@ -32,7 +32,7 @@ fi
 
 # Test runs stay on the CPU unless they ask for an accelerator explicitly
 export DATARAX_TEST_JAX_PLATFORMS="cuda"
-export XLA_PYTHON_CLIENT_MEM_FRACTION="${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.75}"
+export XLA_CLIENT_MEM_FRACTION="${XLA_CLIENT_MEM_FRACTION:-0.75}"
 export XLA_PYTHON_CLIENT_PREALLOCATE="${XLA_PYTHON_CLIENT_PREALLOCATE:-false}"
 
 # Check if GPU is available

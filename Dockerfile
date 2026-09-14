@@ -17,7 +17,7 @@ ENV PYTHONUNBUFFERED=1
 
 # JAX runtime defaults — prevent full GPU memory preallocation
 ENV XLA_PYTHON_CLIENT_PREALLOCATE=false
-ENV XLA_PYTHON_CLIENT_MEM_FRACTION=0.75
+ENV XLA_CLIENT_MEM_FRACTION=0.75
 
 # System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \

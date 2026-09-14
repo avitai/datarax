@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The generated `.datarax.env`, the pytest environment, the Dockerfiles, the SkyPilot template,
+  the GPU run scripts and the docs set `XLA_CLIENT_MEM_FRACTION`, the name jaxlib reads, instead
+  of the deprecated `XLA_PYTHON_CLIENT_MEM_FRACTION`. jax refuses a process that sets both;
+  re-running `source activate.sh` unsets the old name from a shell activated before.
 - Examples write their figures through `substrax.artifacts.resolve_output_dir("examples")`
   instead of reading `DATARAX_EXAMPLES_OUTPUT_DIR`. They default to a per-run temporary
   directory, never the working tree. Set `AVITAI_OUTPUT_DIR` to an absolute directory to choose
