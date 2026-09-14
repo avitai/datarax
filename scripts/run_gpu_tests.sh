@@ -49,10 +49,10 @@ if ! uv run python scripts/check_gpu.py; then
     exit 1
 fi
 
-# Run GPU tests using pytest with --device=gpu
+# Run the test suite on the GPU
 echo ""
 echo -e "${BLUE}Running GPU tests...${NC}"
-uv run pytest --device=gpu -v tests/
+uv run pytest -v tests/
 
 echo ""
 echo -e "${GREEN}✅ GPU test run complete!${NC}"

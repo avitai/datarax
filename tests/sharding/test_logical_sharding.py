@@ -60,7 +60,7 @@ class LogicalShardingHelper(nnx.Module):
         """Apply transformation in parallel using logical names."""
         in_pspec = self.get_partition_spec(in_spec)
         out_pspec = self.get_partition_spec(out_spec) if out_spec else in_pspec
-        with mesh:
+        with jax.set_mesh(mesh):
             shard_fn = nnx.shard_map(
                 transform_fn, mesh=mesh, in_specs=(in_pspec,), out_specs=out_pspec
             )
@@ -110,7 +110,7 @@ class TestLogicalSharding:
             assert physical_pspec == PartitionSpec("data", None, None)
 
             # Also test with the device we have
-            with self.mesh:
+            with jax.set_mesh(self.mesh):
                 # Create a named sharding
                 named_sharding = self.sharder.get_named_sharding(self.mesh, logical_spec)
 
@@ -127,7 +127,7 @@ class TestLogicalSharding:
         logical_spec = ("batch", None, "feature")
 
         # This should map to ('data', None, None) in physical device axes
-        with self.mesh:
+        with jax.set_mesh(self.mesh):
             sharded_batch = self.sharder.shard_with_logical_names(
                 self.test_batch["inputs"], self.mesh, logical_spec
             )
@@ -140,18 +140,16 @@ class TestLogicalSharding:
         physical_pspec = self.sharder.get_partition_spec(logical_spec)
         assert physical_pspec == PartitionSpec("data", None, None)
 
+    @pytest.mark.devices(8)
     def test_parallel_transform(self):
         """Test applying a transformation in parallel across devices."""
-        if self.limited_test:
-            # Skip detailed tests for limited device setups
-            pytest.skip("Needs multiple devices for meaningful parallel transform test")
 
         # Define a simple transformation function
         def double_values(x):
             return x * 2
 
         # Apply the transformation in parallel
-        with self.mesh:
+        with jax.set_mesh(self.mesh):
             transformed = self.sharder.apply_parallel_transform(
                 self.test_batch["inputs"],
                 double_values,
@@ -176,7 +174,7 @@ class TestLogicalSharding:
         init_fn = jax.nn.initializers.ones
 
         # Create a sharded parameter
-        with self.mesh:
+        with jax.set_mesh(self.mesh):
             param = self.sharder.create_sharded_param(
                 init_fn,
                 shape=(16, 32),  # (hidden, feature)

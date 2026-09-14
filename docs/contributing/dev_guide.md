@@ -279,8 +279,8 @@ Tests use pytest markers for categorization:
 | `@pytest.mark.unit` | Unit tests |
 | `@pytest.mark.integration` | Integration tests |
 | `@pytest.mark.e2e` | End-to-end tests |
-| `@pytest.mark.gpu` | Tests requiring GPU |
-| `@pytest.mark.gpu_required` | Tests that must have GPU |
+| `@pytest.mark.accelerator(kind="gpu")` | Tests that need a GPU backend (substrax plugin) |
+| `@pytest.mark.devices(count)` | Tests that need at least `count` devices (substrax plugin) |
 | `@pytest.mark.slow` | Slow-running tests |
 | `@pytest.mark.benchmark` | Performance benchmarks |
 | `@pytest.mark.tfds` | TensorFlow Datasets tests |
@@ -289,8 +289,8 @@ Tests use pytest markers for categorization:
 ### Running Specific Test Types
 
 ```bash
-# Skip GPU tests
-uv run pytest -m "not gpu"
+# Run on a GPU; tests marked accelerator skip on a CPU run
+DATARAX_TEST_JAX_PLATFORMS=cuda uv run pytest
 
 # Run only integration tests
 uv run pytest -m integration
@@ -422,8 +422,8 @@ export XLA_CLIENT_MEM_FRACTION="0.8"
 # Check GPU availability
 python -c "import jax; print(jax.devices())"
 
-# Run GPU tests
-uv run pytest -m gpu
+# Run the tests that need a GPU backend
+DATARAX_TEST_JAX_PLATFORMS=cuda uv run pytest -m accelerator
 ```
 
 ## Docker

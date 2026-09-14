@@ -286,8 +286,8 @@ JAX_PLATFORMS=cpu uv run pytest --cov=src/datarax --cov-report=html
 # Run integration tests
 JAX_PLATFORMS=cpu uv run pytest tests/integration/
 
-# Run GPU tests (requires CUDA)
-JAX_PLATFORMS=cuda uv run pytest --device=gpu -m gpu
+# Run the tests on a GPU (requires CUDA); tests that need a GPU skip on a CPU run
+DATARAX_TEST_JAX_PLATFORMS=cuda uv run pytest
 
 # Or use the automated test runner
 ./run_tests.sh  # Runs on CPU, then GPU if available

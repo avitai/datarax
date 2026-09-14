@@ -120,7 +120,7 @@ def test_logical_sharding():
     named_sharding = jax.sharding.NamedSharding(mesh, p_spec)
 
     # Apply sharding
-    with mesh:
+    with jax.set_mesh(mesh):
         sharded_array = jax.device_put(test_array, named_sharding)
 
         # Check basic sharding properties
@@ -199,7 +199,7 @@ def test_shard_consistency():
         pspec1 = PartitionSpec("x")  # Shard on the x axis
         pspec2 = PartitionSpec(None)  # Replicate
 
-        with mesh:
+        with jax.set_mesh(mesh):
             # Create two different shardings
             sharding1 = jax.sharding.NamedSharding(mesh, pspec1)
             sharding2 = jax.sharding.NamedSharding(mesh, pspec2)
@@ -263,7 +263,7 @@ def test_gather_from_shards():
         # Create partition specs for different sharding strategies
         row_sharded = PartitionSpec("x", None)  # Shard by rows
 
-        with mesh:
+        with jax.set_mesh(mesh):
             # Shard the array by rows
             row_sharding = jax.sharding.NamedSharding(mesh, row_sharded)
             sharded_rows = jax.device_put(test_array, row_sharding)
@@ -401,7 +401,7 @@ def test_mesh_sharding():
     }
 
     # Apply sharding
-    with mesh:
+    with jax.set_mesh(mesh):
         sharded_batch = {}
         for key, pspec in partition_specs.items():
             mesh_sharding = jax.sharding.NamedSharding(mesh, pspec)

@@ -122,54 +122,6 @@ def time_execution[F: Callable](func: F) -> F:
     return wrapper  # type: ignore[return-value]
 
 
-def requires_device_type(device_type: str) -> Callable[[F], F]:
-    """Mark a test as requiring a specific device type.
-
-    Args:
-        device_type: The device type ('cpu', 'gpu', or 'tpu').
-
-    Returns:
-        The decorator function.
-    """
-
-    def decorator(func: F) -> F:
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            if jax.local_device_count(device_type) == 0:
-                import pytest
-
-                pytest.skip(f"Test requires {device_type}")
-            return func(*args, **kwargs)
-
-        return wrapper  # type: ignore[return-value]
-
-    return decorator
-
-
-def requires_multi_devices(min_count: int = 2) -> Callable[[F], F]:
-    """Mark a test as requiring multiple devices.
-
-    Args:
-        min_count: The minimum number of devices required.
-
-    Returns:
-        The decorator function.
-    """
-
-    def decorator(func: F) -> F:
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            if jax.local_device_count() < min_count:
-                import pytest
-
-                pytest.skip(f"Test requires at least {min_count} devices")
-            return func(*args, **kwargs)
-
-        return wrapper  # type: ignore[return-value]
-
-    return decorator
-
-
 def data_generator(size: int = 100, seed: int = 42) -> dict[str, np.ndarray]:
     """Generate reproducible test data.
 

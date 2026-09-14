@@ -421,7 +421,7 @@ class TestParallelTransform:
         np.testing.assert_allclose(np.asarray(result), np.asarray(expected))
 
     def test_parallel_transform_uses_no_deprecated_mesh_context(self, single_device_mesh):
-        """nnx.shard_map takes the mesh itself; the deprecated ``with mesh:`` is not needed."""
+        """nnx.shard_map takes the mesh itself, so the deprecated mesh context is not needed."""
         sharder = ConcreteSharderModule()
 
         def double_fn(x):

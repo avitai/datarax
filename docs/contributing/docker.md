@@ -51,7 +51,7 @@ docker run --rm -it --gpus all datarax:latest python
 
 # Run tests on CPU
 docker run --rm -e JAX_PLATFORMS=cpu datarax:latest \
-    python -m pytest tests/ -x --timeout=60 -m "not gpu and not slow" -q
+    python -m pytest tests/ -x --timeout=60 -m "not slow" -q
 
 # Run tests with GPU (test runs stay on the CPU unless they ask for CUDA)
 docker run --rm --gpus all -e DATARAX_TEST_JAX_PLATFORMS=cuda datarax:latest \

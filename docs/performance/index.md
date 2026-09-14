@@ -2,20 +2,6 @@
 
 Performance analysis and optimization tools. Understand your pipeline's performance characteristics and apply optimizations.
 
-!!! warning "XLA helpers removed in 0.1.10"
-    `datarax.performance.xla_optimization` is gone. JAX process settings live in
-    [substrax](https://github.com/avitai/substrax), which datarax depends on, and the
-    compilation wrappers are replaced by the JAX transforms they wrapped.
-
-| datarax 0.1.9 | datarax 0.1.10 |
-|---------------|----------------|
-| `XLAOptimizer` | `substrax.runtime.apply_runtime` with a `JaxRuntime` (compilation cache, matmul precision, 64-bit types) |
-| `get_xla_flags`, `apply_xla_flags` | `JaxRuntime(xla_flags=...)` or `substrax.runtime.merge_xla_flags`. substrax has no per-backend flag presets; pass the flags a run needs |
-| `SmartCompilation.adaptive_jit`, `SmartCompilation.aot_compile` | `jax.jit` |
-| `SmartCompilation.shard_map_jit` | `jax.shard_map` |
-| `MemoryEfficientCompilation.donate_wrapper`, `MemoryEfficientCompilation.parameter_update_pattern` | `jax.jit(..., donate_argnums=...)`, naming the arguments to donate |
-| `MemoryEfficientCompilation.with_rematerialization` | `jax.checkpoint` |
-
 ## Tools
 
 | Tool | Purpose | Output |

@@ -13,15 +13,9 @@ from datarax.utils.console import emit
 
 
 @pytest.mark.benchmark
-@pytest.mark.gpu
+@pytest.mark.accelerator(kind="gpu")
 class TestBatchAlignment:
     """Tests the performance impact of hardware-aligned batch sizes."""
-
-    def setup_method(self):
-        try:
-            jax.devices("gpu")
-        except RuntimeError:
-            pytest.skip("No GPU devices available for batch alignment testing.")
 
     def _measure_workload(self, workload_fn, warmup=10, iterations=100):
         """Measure a zero-arg workload function."""

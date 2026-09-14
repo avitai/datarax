@@ -143,7 +143,7 @@ jobs:
           # Note: TFDS tests are skipped on macOS due to TensorFlow ARM64 import hang issue
           # (https://github.com/tensorflow/tensorflow/issues/52138)
           # This matches the approach of major ML projects (Keras, Flax) which don't test on macOS
-          uv run pytest tests benchmarks/tests --no-integration --no-end-to-end -v -m "not slow" --device=cpu --cov-fail-under=0
+          uv run pytest tests benchmarks/tests --no-integration --no-end-to-end -v -m "not slow" --cov-fail-under=0
 
       - name: Prepare coverage data
         run: uv run coverage combine || true
@@ -254,7 +254,7 @@ jobs:
           # so no example downloads them inside its budget.
           export JAX_PLATFORMS="cpu"
           export DATARAX_EXAMPLE_TIMEOUT_SECONDS=300
-          uv run pytest tests benchmarks/tests -m slow -v --device=cpu --cov-fail-under=0 --timeout=600
+          uv run pytest tests benchmarks/tests -m slow -v --cov-fail-under=0 --timeout=600 --durations=0
 
       - name: Prepare coverage data
         run: uv run coverage combine || true
@@ -303,7 +303,7 @@ jobs:
         run: |
           # Explicitly run on CPU for GitHub workflow
           export JAX_PLATFORMS="cpu"
-          uv run pytest tests --integration -v --device=cpu --cov-fail-under=0
+          uv run pytest tests --integration -v --cov-fail-under=0
 
       - name: Prepare coverage data
         run: uv run coverage combine || true
@@ -356,7 +356,7 @@ jobs:
             tests/pipeline/test_pipeline_integration.py \
             tests/pipeline/test_pipeline_scan.py \
             tests/pipeline/test_pipeline_dag.py \
-            -v --device=cpu --cov-fail-under=0
+            -v --cov-fail-under=0
 
       - name: Prepare coverage data
         run: uv run coverage combine || true
@@ -407,7 +407,7 @@ jobs:
           # Explicitly run on CPU for GitHub workflow
           # Disable coverage to avoid distorting benchmark timings
           export JAX_PLATFORMS="cpu"
-          uv run pytest tests --benchmark -v --no-cov --benchmark-autosave --benchmark-columns=mean,stddev,min,max --device=cpu
+          uv run pytest tests --benchmark -v --no-cov --benchmark-autosave --benchmark-columns=mean,stddev,min,max
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4

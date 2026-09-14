@@ -53,8 +53,9 @@ run_tests_on_device() {
     echo "======================================================"
 
     if [ "$device" = "gpu" ]; then
-        # For GPU tests, set JAX to use CUDA
-        export JAX_PLATFORMS="cuda"
+        # The test environment selects its backend from DATARAX_TEST_JAX_PLATFORMS and
+        # ignores an exported JAX_PLATFORMS.
+        export DATARAX_TEST_JAX_PLATFORMS="cuda"
         export XLA_CLIENT_MEM_FRACTION=0.75  # Limit memory usage to avoid OOM errors
 
         # Run tests with GPU enabled
@@ -63,7 +64,7 @@ run_tests_on_device() {
 
         # We need to temporarily disable set -e to capture failure
         set +e
-        uv run pytest --device=gpu "${extra_args[@]}"
+        uv run pytest "${extra_args[@]}"
         local status=$?
         set -e
 
@@ -72,12 +73,11 @@ run_tests_on_device() {
             return $status
         fi
     else
-        # For CPU tests, reset environment and force CPU
-        unset JAX_PLATFORMS
-        export JAX_PLATFORMS="cpu"
+        # Without DATARAX_TEST_JAX_PLATFORMS the tests run on emulated CPU devices.
+        unset DATARAX_TEST_JAX_PLATFORMS
 
         set +e
-        uv run pytest --device=cpu "${extra_args[@]}"
+        uv run pytest "${extra_args[@]}"
         local status=$?
         set -e
 

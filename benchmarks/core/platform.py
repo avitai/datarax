@@ -8,7 +8,6 @@ Design ref: Section 6.4.2 of the benchmark report.
 
 from __future__ import annotations
 
-import functools
 import math
 
 # Controlled local system introspection commands (nvidia-smi).
@@ -48,30 +47,6 @@ def get_device_count() -> int:
 def get_local_device_count() -> int:
     """Return the number of local JAX devices."""
     return jax.local_device_count()
-
-
-def required_devices(min_count: int):
-    """Skip test/scenario if fewer than min_count devices available.
-
-    Args:
-        min_count: Minimum number of JAX devices required.
-
-    Returns:
-        Decorator that skips the test with pytest.skip if insufficient devices.
-    """
-
-    def decorator(fn):
-        @functools.wraps(fn)
-        def wrapper(*args, **kwargs):
-            if get_device_count() < min_count:
-                import pytest
-
-                pytest.skip(f"Requires {min_count} devices, found {get_device_count()}")
-            return fn(*args, **kwargs)
-
-        return wrapper
-
-    return decorator
 
 
 # ---------------------------------------------------------------------------

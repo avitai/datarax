@@ -19,16 +19,15 @@ Data sharding utilities for distributed processing. Shard data across devices an
 ## Quick Start
 
 ```python
-import jax
 from flax import nnx
+from substrax.mesh import DeviceMeshManager
+from substrax.spmd import create_data_parallel_sharding
 
 from datarax.sharding import ArraySharder
 
-# Build a single-axis device mesh and the corresponding NamedSharding.
-mesh = jax.make_mesh(
-    (len(jax.devices()),), ("data",), axis_types=(jax.sharding.AxisType.Auto,)
-)
-sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("data"))
+# A data-parallel mesh over every device (Auto axes) and its batch sharding.
+mesh = DeviceMeshManager.create_data_parallel_mesh()
+sharding = create_data_parallel_sharding(mesh)
 
 sharder = ArraySharder(rngs=nnx.Rngs(0))
 sharded_batch = sharder.shard(batch, sharding)
@@ -65,6 +64,8 @@ Wrap the sharder in an `nnx.Module` and place it in `stages=[...]`:
 ```python
 import jax
 from flax import nnx
+from substrax.mesh import DeviceMeshManager
+from substrax.spmd import create_data_parallel_sharding
 
 from datarax.pipeline import Pipeline
 from datarax.sharding import ArraySharder
@@ -81,10 +82,8 @@ class _Shard(nnx.Module):
         return self.sharder.shard(batch, self.sharding)
 
 
-mesh = jax.make_mesh(
-    (len(jax.devices()),), ("data",), axis_types=(jax.sharding.AxisType.Auto,)
-)
-sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("data"))
+mesh = DeviceMeshManager.create_data_parallel_mesh()
+sharding = create_data_parallel_sharding(mesh)
 shard_stage = _Shard(ArraySharder(rngs=nnx.Rngs(0)), sharding)
 
 pipeline = Pipeline(
