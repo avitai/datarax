@@ -13,9 +13,9 @@ import subprocess
 import sys
 
 import jax
+from substrax.runtime import configure_entry_point_logging
 
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -90,6 +90,7 @@ def setup_distributed_environment():
 
 def main():
     """Set up distributed JAX environment and run pytest."""
+    configure_entry_point_logging(logging.INFO, fmt=logging.BASIC_FORMAT)
     setup_distributed_environment()
 
     # Run pytest
@@ -104,7 +105,7 @@ def main():
     try:
         # Using subprocess to invoke pytest ensures clean separation
         # and allows pytest to handle its own exit codes
-        subprocess.run(["python", "-m", "pytest", *pytest_args], check=True)
+        subprocess.run([sys.executable, "-m", "pytest", *pytest_args], check=True)
     except subprocess.CalledProcessError as e:
         logger.error("Tests failed!")
         sys.exit(e.returncode)

@@ -31,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wrappers give way to `jax.jit`, `jax.shard_map`, `jax.jit(donate_argnums=...)` and
   `jax.checkpoint`. `docs/performance/index.md` lists where each name went.
 
+### Fixed
+
+- `scripts/check_sync.py --fix`, `scripts/validate_examples.py --execute` and
+  `scripts/distributed_test_runner.py` no longer need a `python` on `PATH`: they run jupytext,
+  examples and pytest with the interpreter that runs the script. `check_sync.py --fix` used to
+  report "fix failed" without saying why when `python` was missing. Importing
+  `distributed_test_runner.py` no longer configures logging; its `main()` does.
+
 ## [0.1.9] - 2026-09-10
 
 ### Added

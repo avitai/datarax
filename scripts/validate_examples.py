@@ -23,14 +23,19 @@ Validation checks:
 from __future__ import annotations
 
 import argparse
+import os
 import re
-import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from substrax.testing import discover_examples
+from substrax.testing import ChildFailedError, discover_examples, ExampleTimeoutError, run_example
 
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+# The backend and device settings a caller chose; a fresh interpreter does not inherit them.
+_FORWARDED_JAX_VARIABLES = ("JAX_PLATFORMS", "JAX_NUM_CPU_DEVICES", "XLA_FLAGS")
 
 # Required sections in order of appearance
 REQUIRED_SECTIONS = [
@@ -164,25 +169,30 @@ def validate_notebook_sync(py_path: Path, result: ValidationResult) -> None:
 
 
 def validate_execution(py_path: Path, result: ValidationResult, timeout: int = 120) -> None:
-    """Validate that the example executes without errors."""
-    try:
-        proc = subprocess.run(
-            ["python", str(py_path)],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=py_path.parent.parent.parent.parent,  # Run from repo root
-        )
-        if proc.returncode != 0:
-            # Truncate long error messages
-            stderr = proc.stderr[:500] if len(proc.stderr) > 500 else proc.stderr
-            result.add_error(f"Execution failed (exit code {proc.returncode}): {stderr}")
+    """Run the example in its own interpreter from the repository root and record the outcome.
+
+    ``substrax.testing.run_example`` starts this interpreter, so the run does not depend on which
+    ``python`` the shell resolves. The example's outputs go to a temporary directory, and the
+    backend and device settings of this process are passed on.
+    """
+    env = {name: os.environ[name] for name in _FORWARDED_JAX_VARIABLES if name in os.environ}
+    with tempfile.TemporaryDirectory(prefix="datarax-example-") as outputs:
+        try:
+            run = run_example(
+                py_path,
+                repo_root=REPO_ROOT,
+                output_dir=Path(outputs),
+                timeout=timeout,
+                call_main=False,
+                env=env,
+            )
+            run.result.check()
+        except ExampleTimeoutError:
+            result.add_error(f"Execution timed out after {timeout}s")
+        except ChildFailedError as error:
+            result.add_error(f"Execution failed: {error}")
         else:
             result.add_info("Execution passed")
-    except subprocess.TimeoutExpired:
-        result.add_error(f"Execution timed out after {timeout}s")
-    except Exception as e:
-        result.add_error(f"Execution error: {e}")
 
 
 def validate_file(
