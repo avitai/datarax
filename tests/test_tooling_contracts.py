@@ -229,6 +229,33 @@ def test_every_test_module_is_selected_by_a_ci_job() -> None:
     ] == []
 
 
+def test_long_running_examples_restore_the_prepared_dataset_cache() -> None:
+    """A dataset job fills the cache, and the example tier fails if the cache is missing.
+
+    CIFAR-10 comes from a host the runners fetch at 13-16 s per MiB, so an example must not
+    download it inside its time budget.
+    """
+    jobs = yaml.safe_load(CI_WORKFLOW.read_text())["jobs"]
+    prepare = jobs["prepare_example_datasets"]
+    long_running = jobs["long_running_tests"]
+    needs = long_running["needs"]
+    saved = next(
+        step for step in prepare["steps"] if str(step.get("uses", "")).startswith("actions/cache@")
+    )
+    restored = next(
+        step
+        for step in long_running["steps"]
+        if str(step.get("uses", "")).startswith("actions/cache/restore@")
+    )
+    prepare_commands = "\n".join(str(step.get("run", "")) for step in prepare["steps"])
+
+    assert "prepare_example_datasets" in ([needs] if isinstance(needs, str) else needs)
+    assert restored["with"]["key"] == saved["with"]["key"]
+    assert restored["with"]["path"] == saved["with"]["path"]
+    assert restored["with"]["fail-on-cache-miss"] is True
+    assert "scripts/prepare_example_datasets.py" in prepare_commands
+
+
 def coverage_floor_violations(workflow: dict, pyproject: dict) -> list[str]:
     """Return why CI would not fail below the coverage floor, if it would not."""
     # PyYAML reads the `on:` key as the boolean True.
