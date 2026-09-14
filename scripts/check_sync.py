@@ -21,13 +21,13 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 
 
 # Allow importing sibling scripts (validate_examples lives in the same directory)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from jupytext_converter import convert_py_to_nb
 from validate_examples import find_example_files
 
 
@@ -157,30 +157,19 @@ def compare_files(py_path: Path, ipynb_path: Path) -> tuple[bool, str]:
 
 
 def regenerate_notebook(py_path: Path, verbose: bool = False) -> bool:
-    """Regenerate notebook from Python file using jupytext.
+    """Regenerate the notebook paired with a Python file through ``jupytext_converter``.
+
+    The converter runs jupytext with the interpreter running this script, so the result does
+    not depend on which ``python`` the shell resolves, and it reports its own failures.
 
     Args:
         py_path: Path to the Python file.
-        verbose: Show command output.
+        verbose: Show the converter's detailed output.
 
     Returns:
-        True if successful.
+        True if the notebook was regenerated.
     """
-    try:
-        result = subprocess.run(
-            [
-                "python",
-                "scripts/jupytext_converter.py",
-                "py-to-nb",
-                str(py_path),
-            ],
-            capture_output=not verbose,
-            text=True,
-            cwd=py_path.parent.parent.parent.parent,  # Repo root
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
+    return convert_py_to_nb(py_path, verbose=verbose)
 
 
 def main() -> int:

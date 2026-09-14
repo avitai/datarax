@@ -9,18 +9,16 @@ These tests validate that example files:
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import platform
 import re
-import sys
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 from substrax.testing import run_example, unavailable_reason
 
 from tests.jax_test_environment import forwarded_jax_environment
+from tests.scripts.script_loader import load_script
 
 
 # Detect macOS - TensorFlow crashes on macOS ARM64
@@ -59,20 +57,8 @@ _NETWORK_FAILURE_SIGNATURES = (
 RECOMMENDED_SECTIONS = ["Learning Goals", "Next Steps"]
 
 
-def _load_validate_examples() -> ModuleType:
-    """Load ``scripts/validate_examples.py``, which owns the rule for what counts as an example."""
-    spec = importlib.util.spec_from_file_location(
-        "validate_examples", REPO_ROOT / "scripts" / "validate_examples.py"
-    )
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["validate_examples"] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-find_example_files = _load_validate_examples().find_example_files
+# scripts/validate_examples.py owns the rule for what counts as an example.
+find_example_files = load_script("validate_examples").find_example_files
 
 
 # Generate test IDs from file paths

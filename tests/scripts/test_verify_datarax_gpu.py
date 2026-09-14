@@ -2,21 +2,13 @@
 
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
 from types import SimpleNamespace
+
+from tests.scripts.script_loader import load_script
 
 
 def _load_verify_module():
-    module_path = Path(__file__).resolve().parents[2] / "scripts" / "verify_datarax_gpu.py"
-    spec = importlib.util.spec_from_file_location("datarax_verify_gpu", module_path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_script("verify_datarax_gpu")
 
 
 def test_verifier_fails_when_backend_query_errors(monkeypatch) -> None:

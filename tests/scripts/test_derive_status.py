@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import importlib.util
 import re
-import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 import pytest
+
+from tests.scripts.script_loader import load_script
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -17,15 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 @pytest.fixture(scope="module")
 def derive_status() -> ModuleType:
-    spec = importlib.util.spec_from_file_location(
-        "derive_status", REPO_ROOT / "scripts" / "derive_status.py"
-    )
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["derive_status"] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_script("derive_status")
 
 
 @pytest.fixture(scope="module")

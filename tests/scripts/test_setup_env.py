@@ -2,18 +2,13 @@
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
+
+from tests.scripts.script_loader import load_script
 
 
 def _load_setup_env_module():
-    module_path = Path(__file__).resolve().parents[2] / "scripts" / "setup_env.py"
-    spec = importlib.util.spec_from_file_location("datarax_setup_env", module_path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return load_script("setup_env")
 
 
 def test_cpu_backend_sets_cpu_platform_without_cuda_paths(tmp_path: Path) -> None:
