@@ -8,15 +8,36 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import jax
 import pytest
+from substrax.testing import restored_jax_config
 
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.core.platform import (
+    active_backend,
     can_run_scenario,
     estimate_scenario_memory_mb,
     get_available_memory_mb,
 )
 from benchmarks.scenarios.base import ScenarioVariant
+
+
+# ---------------------------------------------------------------------------
+# active_backend
+# ---------------------------------------------------------------------------
+
+
+class TestActiveBackend:
+    """The runner reads the backend jax started; ``JAX_PLATFORMS`` chooses it before jax starts."""
+
+    def test_reports_the_default_backend(self):
+        assert active_backend() == jax.default_backend()
+
+    def test_changes_no_global_jax_configuration(self):
+        with restored_jax_config() as changed:
+            active_backend()
+
+        assert changed == []
 
 
 # ---------------------------------------------------------------------------

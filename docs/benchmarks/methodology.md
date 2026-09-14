@@ -108,7 +108,7 @@ Every canonical benchmark run must record and validate:
 | Field | Source | Expected value for GPU runs |
 |-------|--------|-----------------------------|
 | `requested_platform` | Runner CLI/profile | `gpu` |
-| `active_backend` | `init_platform()` / JAX | `gpu` |
+| `active_backend` | `jax.default_backend()`, which `JAX_PLATFORMS` selects before the run | `gpu` |
 | `environment.platform.devices` | Runtime probe | Includes `cuda` devices |
 | `gpu_name` | Environment capture | Matches expected hardware class (for Vast automation: A100) |
 

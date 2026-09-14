@@ -19,9 +19,9 @@ from benchmarks.adapters.base import PipelineAdapter
 from benchmarks.core.baselines import BaselineStore
 from benchmarks.core.config_loader import load_hardware_profile
 from benchmarks.core.platform import (
+    active_backend,
     can_run_scenario,
     estimate_scenario_memory_mb,
-    init_platform,
 )
 from benchmarks.core.result_model import (
     result_scenario_id,
@@ -266,26 +266,20 @@ class BenchmarkRunner:
             return self.active_backend
 
         try:
-            active_backend = init_platform(expected_backend)
+            started = active_backend()
         except (RuntimeError, ImportError, OSError) as exc:
-            try:
-                import jax
-
-                active_backend = jax.default_backend()
-            except (ImportError, RuntimeError):  # pragma: no cover - catastrophic env failure
-                active_backend = "unknown"
             raise RuntimeError(
-                f"Unable to initialize backend {expected_backend!r}; "
-                f"active backend is {active_backend!r}"
+                f"jax could not start a backend; expected {expected_backend!r}. "
+                "Set JAX_PLATFORMS to the selected profile's backend before running.",
             ) from exc
 
-        if active_backend != expected_backend:
+        if started != expected_backend:
             raise RuntimeError(
-                f"Backend mismatch: expected {expected_backend!r}, got {active_backend!r}. "
-                "Set JAX_PLATFORMS/JAX_PLATFORM_NAME to match the selected profile.",
+                f"Backend mismatch: expected {expected_backend!r}, got {started!r}. "
+                "Set JAX_PLATFORMS to match the selected profile before running.",
             )
-        self.active_backend = active_backend
-        return active_backend
+        self.active_backend = started
+        return started
 
     def _is_scenario_enabled(
         self,

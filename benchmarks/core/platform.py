@@ -28,18 +28,15 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-def init_platform(backend: str | None = None) -> str:
-    """Initialize JAX with the specified backend.
+def active_backend() -> str:
+    """Return the backend jax started with.
 
-    Args:
-        backend: JAX backend to use ('cpu', 'gpu', 'tpu').
-            If None, uses JAX's default selection.
+    jax chooses its backends from ``JAX_PLATFORMS`` when it starts, so a run selects the backend by
+    setting that variable before it runs; nothing here can change the choice afterwards.
 
     Returns:
-        The active backend name.
+        The default backend name, such as ``"cpu"`` or ``"gpu"``.
     """
-    if backend is not None:
-        jax.config.update("jax_platform_name", backend)
     return jax.default_backend()
 
 

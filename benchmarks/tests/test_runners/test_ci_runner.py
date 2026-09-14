@@ -35,10 +35,10 @@ class TestBenchmarkRunner:
     def runner(self, tmp_path: Path) -> Generator[BenchmarkRunner]:
         """Runner with ci_cpu profile and temp output dir.
 
-        Patches init_platform so tests work regardless of actual hardware
+        Patches active_backend so tests work regardless of actual hardware
         (GPU, TPU, or CPU). Individual tests can override with their own patch.
         """
-        with patch("benchmarks.runners.benchmark_runner.init_platform", return_value="cpu"):
+        with patch("benchmarks.runners.benchmark_runner.active_backend", return_value="cpu"):
             yield BenchmarkRunner(
                 output_dir=tmp_path / "output",
                 hardware_profile="ci_cpu",
@@ -61,10 +61,20 @@ class TestBenchmarkRunner:
 
     def test_ensure_backend_uses_profile_backend(self, runner: BenchmarkRunner):
         """Backend initialization should honor profile backend."""
-        with patch("benchmarks.runners.benchmark_runner.init_platform", return_value="cpu") as init:
+        with patch(
+            "benchmarks.runners.benchmark_runner.active_backend", return_value="cpu"
+        ) as read:
             backend = runner.ensure_backend()
-        init.assert_called_once_with("cpu")
+        read.assert_called_once_with()
         assert backend == "cpu"
+
+    def test_ensure_backend_rejects_a_started_backend_other_than_the_profile_backend(
+        self, runner: BenchmarkRunner
+    ):
+        """The backend is chosen by JAX_PLATFORMS before jax starts, so a mismatch is an error."""
+        with patch("benchmarks.runners.benchmark_runner.active_backend", return_value="gpu"):
+            with pytest.raises(RuntimeError, match="JAX_PLATFORMS"):
+                runner.ensure_backend()
 
     def test_ensure_backend_rejects_platform_profile_mismatch(self, tmp_path: Path):
         """Requested platform must match backend in profile."""
@@ -169,7 +179,7 @@ class TestBenchmarkRunner:
             ),
             patch("benchmarks.runners.benchmark_runner.can_run_scenario", return_value=True),
             patch.object(runner, "run_scenario", return_value=fake_result),
-            patch("benchmarks.runners.benchmark_runner.init_platform", return_value="cpu"),
+            patch("benchmarks.runners.benchmark_runner.active_backend", return_value="cpu"),
         ):
             results = runner.run_all(adapter, scenario_filter=None, num_repetitions=1)
 
