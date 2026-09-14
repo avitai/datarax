@@ -193,7 +193,7 @@ src/datarax/
   sharding/     # ArraySharder, JaxProcessSharder for multi-device distribution
   checkpoint/   # IteratorCheckpoint over substrax's Orbax checkpoint store
   monitoring/   # MetricsCollector, callbacks, reporters (console/file)
-  performance/  # XLA optimization, goodput tracking, host/device synchronization
+  performance/  # Goodput tracking, host/device synchronization
   control/      # Prefetcher for asynchronous data loading
   memory/       # Shared memory manager for multi-process data sharing
   workers/      # Reserved namespace for the planned multiprocessing backend

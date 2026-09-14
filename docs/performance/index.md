@@ -2,18 +2,30 @@
 
 Performance analysis and optimization tools. Understand your pipeline's performance characteristics and apply optimizations.
 
+!!! warning "XLA helpers removed in 0.1.10"
+    `datarax.performance.xla_optimization` is gone. JAX process settings live in
+    [substrax](https://github.com/avitai/substrax), which datarax depends on, and the
+    compilation wrappers are replaced by the JAX transforms they wrapped.
+
+| datarax 0.1.9 | datarax 0.1.10 |
+|---------------|----------------|
+| `XLAOptimizer` | `substrax.runtime.apply_runtime` with a `JaxRuntime` (compilation cache, matmul precision, 64-bit types) |
+| `get_xla_flags`, `apply_xla_flags` | `JaxRuntime(xla_flags=...)` or `substrax.runtime.merge_xla_flags`. substrax has no per-backend flag presets; pass the flags a run needs |
+| `SmartCompilation.adaptive_jit`, `SmartCompilation.aot_compile` | `jax.jit` |
+| `SmartCompilation.shard_map_jit` | `jax.shard_map` |
+| `MemoryEfficientCompilation.donate_wrapper`, `MemoryEfficientCompilation.parameter_update_pattern` | `jax.jit(..., donate_argnums=...)`, naming the arguments to donate |
+| `MemoryEfficientCompilation.with_rematerialization` | `jax.checkpoint` |
+
 ## Tools
 
 | Tool | Purpose | Output |
 |------|---------|--------|
-| **XLA Optimization** | JAX/XLA tuning | Compilation hints |
 | **Goodput** | Effective-time tracking | Useful vs stalled time |
 | **Synchronization** | Host/device sync | Blocking + async copy helpers |
 
 !!! note "Key points"
 
     - calibrax's roofline analyzer reveals if you're compute or memory bound
-    - XLA optimizations require understanding JAX compilation
     - Profile before optimizing - measure, don't guess
     - Most pipelines are I/O bound, not compute bound
 
@@ -32,7 +44,6 @@ print(f"Bottleneck: {result.bottleneck}")  # 'compute' or 'memory_bandwidth'
 
 ## Modules
 
-- [xla_optimization](xla_optimization.md) - XLA-specific optimization utilities
 - [goodput](goodput.md) - Effective-training-time tracking
 - [synchronization](synchronization.md) - Host/device synchronization helpers
 
@@ -53,23 +64,30 @@ Performance (FLOPS)
      +-------------------> Arithmetic Intensity (FLOPS/byte)
 ```
 
-## XLA Optimization Tips
+## JAX Process Settings
+
+XLA flags, the persistent compilation cache and accelerator memory are settings of the JAX
+process. Declare them once with
+[`substrax.runtime`](https://github.com/avitai/substrax/blob/main/docs/api/runtime.md), before
+importing JAX:
 
 ```python
-from datarax.performance import XLAOptimizer
+from pathlib import Path
 
-optimizer = XLAOptimizer(target_hardware="auto")
+from substrax.runtime import JaxRuntime, apply_runtime
 
-# Apply hardware-tuned XLA flags
-optimizer.setup_xla_flags()
+apply_runtime(
+    JaxRuntime(
+        compilation_cache_dir=Path("~/.cache/jax").expanduser(),
+        memory_fraction=0.9,
+    )
+)
 
-# Cache JIT compilations to disk (persistent compilation cache)
-optimizer.setup_compilation_cache()
+import jax  # noqa: E402 - the settings above must come first
 ```
 
-To limit GPU memory usage, set the `XLA_PYTHON_CLIENT_MEM_FRACTION`
-environment variable (for example `export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9`)
-before importing JAX.
+JAX reads the memory fraction when its backends start, from `XLA_CLIENT_MEM_FRACTION`;
+`XLA_PYTHON_CLIENT_MEM_FRACTION` is its deprecated name.
 
 ## See Also
 

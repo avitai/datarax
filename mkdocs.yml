@@ -296,7 +296,6 @@ nav:
               - sequential: operators/sequential.md
       - Performance:
           - Overview: performance/index.md
-          - xla_optimization: performance/xla_optimization.md
           - goodput: performance/goodput.md
           - synchronization: performance/synchronization.md
       - Types & Protocols:

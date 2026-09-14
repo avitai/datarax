@@ -20,7 +20,7 @@ Complete auto-generated API documentation for all Datarax modules. Each page is 
 | [Batching](../batching/index.md) | Batch assembly and collation |
 | [Control](../control/index.md) | Prefetching and iteration control |
 | [Memory](../memory/index.md) | Shared-memory management for multi-process transforms |
-| [Performance](../performance/index.md) | Roofline, XLA tuning, goodput, synchronization |
+| [Performance](../performance/index.md) | Roofline (calibrax), goodput, synchronization |
 | [Types & Protocols](../root/typing.md) | Type aliases and checkpointable protocols |
 | [Utilities](../utils/index.md) | PRNG, pytree utilities, external helpers |
 | [CLI](../cli/index.md) | Command-line interface entry points |
