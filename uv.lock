@@ -1249,6 +1249,7 @@ all = [
     { name = "shellcheck-py" },
     { name = "soundfile" },
     { name = "spdl", marker = "sys_platform == 'linux' or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-benchmark') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-cuda-dev') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-cuda12') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-data') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-dev') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-docs') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-examples') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-metal') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-test') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-tfds')" },
+    { name = "substrax", extra = ["testing"] },
     { name = "tensorflow-datasets" },
     { name = "torch" },
     { name = "torchaudio" },
@@ -1312,6 +1313,7 @@ all-cpu = [
     { name = "shellcheck-py" },
     { name = "soundfile" },
     { name = "spdl", marker = "sys_platform == 'linux' or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-benchmark') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-cuda-dev') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-cuda12') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-data') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-dev') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-docs') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-examples') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-metal') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-test') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-tfds')" },
+    { name = "substrax", extra = ["testing"] },
     { name = "tensorflow-datasets" },
     { name = "torch" },
     { name = "torchaudio" },
@@ -1376,6 +1378,7 @@ all-macos = [
     { name = "shellcheck-py" },
     { name = "soundfile" },
     { name = "spdl", marker = "sys_platform == 'linux' or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-benchmark') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-cuda-dev') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-cuda12') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-data') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-dev') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-docs') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-examples') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-metal') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-test') or (extra == 'extra-7-datarax-automation' and extra == 'extra-7-datarax-tfds')" },
+    { name = "substrax", extra = ["testing"] },
     { name = "tensorflow-datasets" },
     { name = "torch" },
     { name = "torchaudio" },
@@ -1538,6 +1541,7 @@ test = [
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
     { name = "spdl", marker = "sys_platform == 'linux'" },
+    { name = "substrax", extra = ["testing"], marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
 ]
 tfds = [
     { name = "tensorflow" },
@@ -1833,7 +1837,11 @@ requires-dist = [
     { name = "spdl", marker = "sys_platform == 'linux' and extra == 'all-macos'", specifier = ">=0.1" },
     { name = "spdl", marker = "sys_platform == 'linux' and extra == 'test'", specifier = ">=0.1" },
     { name = "spdl", marker = "extra == 'benchmark'", specifier = ">=0.1" },
-    { name = "substrax", specifier = ">=0.1.2" },
+    { name = "substrax", specifier = ">=0.1.6" },
+    { name = "substrax", extras = ["testing"], marker = "extra == 'all'", specifier = ">=0.1.6" },
+    { name = "substrax", extras = ["testing"], marker = "extra == 'all-cpu'", specifier = ">=0.1.6" },
+    { name = "substrax", extras = ["testing"], marker = "extra == 'all-macos'", specifier = ">=0.1.6" },
+    { name = "substrax", extras = ["testing"], marker = "extra == 'test'", specifier = ">=0.1.6" },
     { name = "tabulate", marker = "extra == 'benchmark'", specifier = ">=0.9" },
     { name = "tensorflow", marker = "extra == 'tfds'", specifier = ">=2.20.0,<2.21" },
     { name = "tensorflow-datasets", marker = "extra == 'all'", specifier = ">=4.9.2" },
@@ -7032,7 +7040,7 @@ wheels = [
 
 [[package]]
 name = "substrax"
-version = "0.1.2"
+version = "0.1.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "flax" },
@@ -7041,9 +7049,14 @@ dependencies = [
     { name = "numpy" },
     { name = "orbax-checkpoint" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/82/35/3c52d3b96127345646eaf6bc3b9d9571ca40f9b73c86b0fd1e5fb71cea9b/substrax-0.1.2.tar.gz", hash = "sha256:0b549852dc1e1519ac72ebb5294aae03c2645f3e206e0f6673c4d1f0c7f2462e", size = 38050, upload-time = "2026-09-09T00:43:42.932Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/95/b9/0658096a784d24b6ef3529d9de565ea6df4eee70b99d98c66736aa577103/substrax-0.1.6.tar.gz", hash = "sha256:adc6058510625cc69440eeb3ac953cca83df3f9e2869a2c412b59ee56c21a60a", size = 64627, upload-time = "2026-09-14T07:49:12.844Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/43/36/a4fe47a84573d3796dca6f772edc60f1ad355f0dbfc91b7e8d6c34cf9655/substrax-0.1.2-py3-none-any.whl", hash = "sha256:3713dfa7b22a1b2fd6e661993b65b0d80705c36d700468002c544d5f69a80cb1", size = 45137, upload-time = "2026-09-09T00:43:41.12Z" },
+    { url = "https://files.pythonhosted.org/packages/20/bd/3ffc3540c5525f01dc24d6d8011cc93f2b446cf2f748e416efb7f8b0b1d5/substrax-0.1.6-py3-none-any.whl", hash = "sha256:0ebca90a12dff4c1f56022e10d2fa50cfa599792ca947a0d327bf5f32d41bf29", size = 74965, upload-time = "2026-09-14T07:49:11.087Z" },
+]
+
+[package.optional-dependencies]
+testing = [
+    { name = "pytest" },
 ]
 
 [[package]]
