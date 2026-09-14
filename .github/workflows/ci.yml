@@ -157,9 +157,52 @@ jobs:
           include-hidden-files: true
         if: always()
 
+  prepare_example_datasets:
+    name: Prepare Example Datasets
+    needs: lint
+    runs-on: ubuntu-latest
+    # CIFAR-10 comes from a host the runners fetch at 13-16 s per MiB, so a cold cache takes about
+    # an hour to fill. The download has its own job and budget instead of an example's.
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore or save the example dataset cache
+        id: datasets
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/tensorflow_datasets
+            ~/.keras/datasets
+          key: example-datasets-${{ hashFiles('scripts/prepare_example_datasets.py') }}
+
+      - name: Set up Python
+        if: steps.datasets.outputs.cache-hit != 'true'
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        if: steps.datasets.outputs.cache-hit != 'true'
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-suffix: "long-running"
+
+      - name: Install dependencies
+        if: steps.datasets.outputs.cache-hit != 'true'
+        run: |
+          uv venv
+          uv sync --locked --extra dev --extra test --extra data --extra tfds --extra examples
+
+      - name: Download and prepare the datasets
+        if: steps.datasets.outputs.cache-hit != 'true'
+        run: uv run python scripts/prepare_example_datasets.py
+
   long_running_tests:
     name: Long-Running Tests
-    needs: unit_tests
+    needs: [unit_tests, prepare_example_datasets]
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -195,11 +238,20 @@ jobs:
         run: |
           echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
 
+      - name: Restore the prepared example datasets
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/tensorflow_datasets
+            ~/.keras/datasets
+          key: example-datasets-${{ hashFiles('scripts/prepare_example_datasets.py') }}
+          fail-on-cache-miss: true
+
       - name: Run long-running tests
         run: |
-          # Bound each example so one stalled external dataset download (e.g.
-          # a TFDS fetch that hangs on the runner) cannot consume the whole
-          # job budget; the harness skips an example that exceeds this.
+          # Each example has a 300 s budget, and running past it fails the test.
+          # Slow-host datasets come from the cache prepare_example_datasets fills,
+          # so no example downloads them inside its budget.
           export JAX_PLATFORMS="cpu"
           export DATARAX_EXAMPLE_TIMEOUT_SECONDS=300
           uv run pytest tests benchmarks/tests -m slow -v --device=cpu --cov-fail-under=0 --timeout=600
