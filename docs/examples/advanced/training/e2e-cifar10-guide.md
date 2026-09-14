@@ -361,13 +361,17 @@ validation pipeline skips the one-hot preprocessing used for MixUp).
 ## Part 5: Visualization
 
 ```python
+from substrax.artifacts import resolve_output_dir
+
+output_dir = resolve_output_dir("examples").path
+
 # Training curves
 plt.figure(figsize=(10, 6))
 plt.plot(train_losses)
 plt.xlabel("Step")
 plt.ylabel("Loss")
 plt.title("CIFAR-10 Training Loss")
-plt.savefig("docs/assets/images/examples/e2e-training-curves.png", dpi=150)
+plt.savefig(output_dir / "e2e-training-curves.png", dpi=150)
 
 # Confusion matrix (numpy + matplotlib, no sklearn/seaborn)
 confusion = np.zeros((NUM_CLASSES, NUM_CLASSES), dtype=np.int32)
@@ -396,7 +400,7 @@ ax.set_ylabel("True")
 ax.set_title("Confusion Matrix (Normalized)")
 plt.colorbar(im, ax=ax)
 plt.tight_layout()
-plt.savefig("docs/assets/images/examples/e2e-confusion-matrix.png", dpi=150)
+plt.savefig(output_dir / "e2e-confusion-matrix.png", dpi=150)
 ```
 
 ## Results Summary

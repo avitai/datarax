@@ -61,12 +61,12 @@ tf.config.set_visible_devices([], "GPU")
 
 # Core imports
 import time
-from pathlib import Path
 
 import jax
 import matplotlib.pyplot as plt
 import numpy as np
 from flax import nnx
+from substrax.artifacts import resolve_output_dir
 
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.modality.image import (
@@ -248,8 +248,7 @@ for bs in batch_sizes:
     print(f"  Batch {bs:4d}: {avg_tp:,.0f} samples/s (±{np.std(throughputs):.0f})")
 
 # %%
-output_dir = Path(os.environ.get("DATARAX_EXAMPLES_OUTPUT_DIR", "docs/assets/images/examples"))
-output_dir.mkdir(parents=True, exist_ok=True)
+output_dir = resolve_output_dir("examples").path
 
 # Plot batch size sweep
 fig, axes = plt.subplots(1, 2, figsize=(14, 5))

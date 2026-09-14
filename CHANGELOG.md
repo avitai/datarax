@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Examples write their figures through `substrax.artifacts.resolve_output_dir("examples")`
+  instead of reading `DATARAX_EXAMPLES_OUTPUT_DIR`. They default to a per-run temporary
+  directory, never the working tree. Set `AVITAI_OUTPUT_DIR` to an absolute directory to choose
+  where `examples/` is written; `scripts/run_all_examples_on_gpu.sh` points it at
+  `docs/assets/images`. The example tests run each example in its own interpreter through
+  `substrax.testing.run_example`, and an example that runs past its time budget now fails
+  instead of being skipped.
 - The cloud benchmark launchers (SkyPilot template, Vast orchestrator, Vertex job script) select
   the GPU backend with `JAX_PLATFORMS=cuda,cpu` alone. jax makes the first listed platform the
   default, so the deprecated `JAX_PLATFORM_NAME` they also set is no longer exported.

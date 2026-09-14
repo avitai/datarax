@@ -7,13 +7,17 @@ set -e
 
 # Set up environment for GPU
 export JAX_PLATFORMS="cuda"
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.75 # Limit memory usage to avoid OOM errors
+export XLA_CLIENT_MEM_FRACTION=0.75 # Limit memory usage to avoid OOM errors
 
 # Get the directory where the script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 EXAMPLES_DIR="$PROJECT_ROOT/examples"
 cd "$PROJECT_ROOT"
+
+# Examples resolve their figures through substrax.artifacts under $AVITAI_OUTPUT_DIR/examples;
+# point that at the docs assets so a run regenerates the published figures.
+export AVITAI_OUTPUT_DIR="$PROJECT_ROOT/docs/assets/images"
 
 echo "====================================================================="
 echo "Running all examples on GPU"

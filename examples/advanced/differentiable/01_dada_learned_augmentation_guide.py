@@ -83,6 +83,7 @@ import matplotlib
 import numpy as np
 import optax
 from flax import nnx
+from substrax.artifacts import resolve_output_dir
 
 from datarax.core.element_batch import Batch, Element
 from datarax.operators import (
@@ -97,15 +98,12 @@ from datarax.sources import MemorySource, MemorySourceConfig
 
 
 matplotlib.use("Agg")
-import os
-from pathlib import Path
 
 import matplotlib.pyplot as plt
 
 
 # Output directory for saved figures
-OUTPUT_DIR = Path(os.environ.get("DATARAX_EXAMPLES_OUTPUT_DIR", "docs/assets/images/examples"))
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR = resolve_output_dir("examples").path
 
 # Keep the script entry point bounded for CI and local documentation builds.
 # Set QUICK_MODE=False for the full CIFAR-10 DADA search.
@@ -311,7 +309,7 @@ plt.savefig(
     facecolor="white",
 )
 plt.close()
-print("Saved: docs/assets/images/examples/cv-dada-cifar10-samples.png")
+print(f"Saved: {OUTPUT_DIR / 'cv-dada-cifar10-samples.png'}")
 
 # %% [markdown]
 """
@@ -636,7 +634,7 @@ plt.savefig(
     facecolor="white",
 )
 plt.close()
-print("Saved: docs/assets/images/examples/cv-dada-augmentation-showcase.png")
+print(f"Saved: {OUTPUT_DIR / 'cv-dada-augmentation-showcase.png'}")
 
 # %% [markdown]
 """
@@ -1300,7 +1298,7 @@ plt.savefig(
     facecolor="white",
 )
 plt.close()
-print("Saved: docs/assets/images/examples/perf-dada-training-curves.png")
+print(f"Saved: {OUTPUT_DIR / 'perf-dada-training-curves.png'}")
 
 # %% [markdown]
 """
@@ -1494,7 +1492,7 @@ plt.savefig(
     facecolor="white",
 )
 plt.close()
-print("Saved: docs/assets/images/examples/cv-dada-policy-analysis.png")
+print(f"Saved: {OUTPUT_DIR / 'cv-dada-policy-analysis.png'}")
 
 # %% [markdown]
 """

@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from substrax.testing import run_python
 
-from tests.jax_test_environment import resolve_test_environment
+from tests.jax_test_environment import forwarded_jax_environment, resolve_test_environment
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -108,6 +108,27 @@ def test_a_fresh_interpreter_started_with_the_environment_sees_its_cpu_devices(
     )
 
     assert result.check().last_json() == ["cpu", devices]
+
+
+def test_an_example_run_is_given_the_jax_settings_of_the_test_process() -> None:
+    """Examples run in fresh interpreters, which start without the test process's JAX variables."""
+    env = {
+        "JAX_PLATFORMS": "cpu",
+        "JAX_NUM_CPU_DEVICES": "8",
+        "XLA_FLAGS": "--xla_cpu_multi_thread_eigen=false",
+        "JAX_ENABLE_X64": "0",
+        "HOME": "/home/tester",
+    }
+
+    assert forwarded_jax_environment(env) == {
+        "JAX_PLATFORMS": "cpu",
+        "JAX_NUM_CPU_DEVICES": "8",
+        "XLA_FLAGS": "--xla_cpu_multi_thread_eigen=false",
+    }
+
+
+def test_a_setting_the_test_process_does_not_have_is_not_forwarded() -> None:
+    assert forwarded_jax_environment({"JAX_PLATFORMS": "cpu"}) == {"JAX_PLATFORMS": "cpu"}
 
 
 def test_the_substrax_pytest_plugin_is_enabled(pytestconfig: pytest.Config) -> None:
