@@ -25,9 +25,9 @@ from __future__ import annotations
 
 import gc
 import logging
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -101,6 +101,30 @@ def _stack_hf_array_columns(arrays: dict[str, list[Any]]) -> dict[str, Any]:
         else:
             result[key] = values
     return result
+
+
+def _selected_hf_columns(
+    column_names: list[str],
+    include_keys: Collection[str] | None,
+    exclude_keys: Collection[str] | None,
+) -> list[str]:
+    """Return the dataset columns the include and exclude filters keep, in dataset order."""
+    included = [name for name in column_names if not include_keys or name in include_keys]
+    return [name for name in included if not exclude_keys or name not in exclude_keys]
+
+
+def _hf_column_to_jax(values: Any) -> Any:
+    """Convert one numpy-formatted HF column; a numeric column becomes a single JAX array.
+
+    String and ragged columns arrive as object or text arrays and keep the element-wise
+    conversion.
+    """
+    if isinstance(values, np.ndarray) and values.dtype.kind in "biuf":
+        return jnp.asarray(values)
+    buffer: dict[str, list[Any]] = {}
+    for value in values:
+        _append_hf_converted_value(buffer, "column", value)
+    return _stack_hf_array_columns(buffer)["column"]
 
 
 def _infer_hf_column_length(data: dict[str, Any]) -> int:
@@ -337,25 +361,18 @@ class HFEagerSource(EagerSourceBase):
             **download_kwargs,
         )
 
-        arrays: dict[str, list[Any]] = {}
-        # A single-split load yields dict rows; the datasets stubs type the
-        # iterator loosely, so cast each row at this library boundary.
-        for element in dataset:
-            for k, v in cast(dict[str, Any], element).items():
-                # Apply key filtering
-                if config.include_keys and k not in config.include_keys:
-                    continue
-                if config.exclude_keys and k in config.exclude_keys:
-                    continue
-                _append_hf_converted_value(arrays, k, v)
-
-        if not arrays:
+        keys = _selected_hf_columns(dataset.column_names, config.include_keys, config.exclude_keys)
+        if not keys or len(dataset) == 0:
             raise ValueError(
                 "Dataset produced no elements after loading/filtering. "
                 "Check split selection and include/exclude key filters."
             )
 
-        return _stack_hf_array_columns(arrays)
+        # The numpy format decodes and stacks each column once, so a column becomes one JAX
+        # array. Stacking one JAX array per row instead compiles an XLA program whose operand
+        # count grows with the row count.
+        columns = dataset.select_columns(keys).with_format("numpy")[:]
+        return {key: _hf_column_to_jax(values) for key, values in columns.items()}
 
 
 # =============================================================================
