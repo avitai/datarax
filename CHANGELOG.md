@@ -24,8 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the GPU backend with `JAX_PLATFORMS=cuda,cpu` alone. jax makes the first listed platform the
   default, so the deprecated `JAX_PLATFORM_NAME` they also set is no longer exported.
 - CI's long-running tier restores CIFAR-10 from a cache that a new `prepare_example_datasets` job
-  fills with `scripts/prepare_example_datasets.py`. The dataset's host serves GitHub runners at
-  13-16 s per MiB, so the examples that load it no longer download it inside their time budget.
+  fills with `scripts/prepare_example_datasets.py`, so the examples that load it no longer
+  download it inside their time budget. The dataset's host sends each connection about 100 KB/s,
+  so the script fetches the TFDS and keras archives in byte ranges over eight connections,
+  verifies their SHA-256, and places them where both loaders reuse them instead of downloading.
 
 ### Removed
 
