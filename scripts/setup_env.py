@@ -18,7 +18,7 @@ MANAGED_ENV_VARS = (
     "JAX_ENABLE_X64",
     "JAX_PLATFORMS",
     "TF_CPP_MIN_LOG_LEVEL",
-    "XLA_PYTHON_CLIENT_MEM_FRACTION",
+    "XLA_CLIENT_MEM_FRACTION",
     "XLA_PYTHON_CLIENT_PREALLOCATE",
     "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION",
 )
@@ -67,7 +67,7 @@ def build_env_contents(project_root: Path, backend: str) -> str:
         "JAX_ENABLE_X64": "0",
         "JAX_PLATFORMS": "cpu" if backend == "cpu" else None,
         "TF_CPP_MIN_LOG_LEVEL": "1",
-        "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.75",
+        "XLA_CLIENT_MEM_FRACTION": "0.75",
         "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
         "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION": "python",
     }

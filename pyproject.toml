@@ -468,7 +468,7 @@ JAX_SKIP_CUDA_CONSTRAINTS_CHECK = {skip_if_set = true, value = "1"}
 RAY_DATA_DISABLE_PROGRESS_BARS = "1"
 RAY_ENABLE_UV_RUN_RUNTIME_ENV = "0"
 TF_CPP_MIN_LOG_LEVEL = {skip_if_set = true, value = "1"}
-XLA_PYTHON_CLIENT_MEM_FRACTION = {skip_if_set = true, value = "0.75"}
+XLA_CLIENT_MEM_FRACTION = {skip_if_set = true, value = "0.75"}
 XLA_PYTHON_CLIENT_PREALLOCATE = {skip_if_set = true, value = "false"}
 
 [tool.ruff]

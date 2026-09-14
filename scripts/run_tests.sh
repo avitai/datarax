@@ -55,7 +55,7 @@ run_tests_on_device() {
     if [ "$device" = "gpu" ]; then
         # For GPU tests, set JAX to use CUDA
         export JAX_PLATFORMS="cuda"
-        export XLA_PYTHON_CLIENT_MEM_FRACTION=0.75  # Limit memory usage to avoid OOM errors
+        export XLA_CLIENT_MEM_FRACTION=0.75  # Limit memory usage to avoid OOM errors
 
         # Run tests with GPU enabled
         # We catch the exit code to ensure we continue even if some tests fail?

@@ -53,3 +53,17 @@ def test_show_status_reports_managed_and_user_env_layers(tmp_path: Path, capsys)
     assert ".env present: False" in output
     assert ".env.local present: True" in output
     assert "Configured backend: cpu" in output
+
+
+def test_the_memory_fraction_uses_the_name_jaxlib_reads(tmp_path: Path) -> None:
+    """jaxlib reads XLA_CLIENT_MEM_FRACTION and refuses it beside the deprecated name.
+
+    activate.sh unsets every variable of the previous managed list before sourcing the new file,
+    so a shell activated with the old name loses it on the next activation.
+    """
+    setup_env = _load_setup_env_module()
+
+    contents = setup_env.build_env_contents(tmp_path, "cuda12")
+
+    assert "export XLA_CLIENT_MEM_FRACTION=0.75" in contents
+    assert "XLA_PYTHON_CLIENT_MEM_FRACTION" not in contents

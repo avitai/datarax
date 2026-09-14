@@ -413,7 +413,7 @@ The generated `.datarax.env` file configures JAX for GPU:
 # GPU configuration
 export JAX_PLATFORMS="cuda,cpu"
 export XLA_PYTHON_CLIENT_PREALLOCATE="false"
-export XLA_PYTHON_CLIENT_MEM_FRACTION="0.8"
+export XLA_CLIENT_MEM_FRACTION="0.8"
 ```
 
 ### Testing GPU Support
@@ -479,7 +479,7 @@ Key environment variables for development:
 | `JAX_PLATFORMS` | JAX device platforms | `cpu` or `cuda,cpu` |
 | `JAX_ENABLE_X64` | Enable 64-bit floats | `0` |
 | `XLA_PYTHON_CLIENT_PREALLOCATE` | GPU memory preallocation | `false` |
-| `XLA_PYTHON_CLIENT_MEM_FRACTION` | GPU memory fraction | `0.8` |
+| `XLA_CLIENT_MEM_FRACTION` | GPU memory fraction | `0.8` |
 | `TF_CPP_MIN_LOG_LEVEL` | TensorFlow logging level | `1` |
 
 ## Documentation

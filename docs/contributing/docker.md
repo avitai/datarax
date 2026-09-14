@@ -104,7 +104,7 @@ Key variables for controlling JAX behavior inside containers:
 |----------|---------|-------------|
 | `JAX_PLATFORMS` | (auto) | Force platform: `cpu`, `cuda`, `tpu` |
 | `XLA_PYTHON_CLIENT_PREALLOCATE` | `false` | Disable full GPU memory grab at startup |
-| `XLA_PYTHON_CLIENT_MEM_FRACTION` | `0.75` | Fraction of GPU memory JAX may use |
+| `XLA_CLIENT_MEM_FRACTION` | `0.75` | Fraction of GPU memory JAX may use |
 | `XLA_FLAGS` | (none) | XLA compiler flags (e.g., simulated devices) |
 | `DATARAX_TEST_JAX_PLATFORMS` | (unset) | Backend for test runs: `cuda` runs tests on the GPU; unset keeps them on the CPU with emulated devices |
 

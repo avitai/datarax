@@ -87,7 +87,7 @@ If you encounter issues with GPU tests:
 3. **Memory issues**: Adjust memory fraction if tests fail due to OOM errors:
 
    ```bash
-   export XLA_PYTHON_CLIENT_MEM_FRACTION=0.5
+   export XLA_CLIENT_MEM_FRACTION=0.5
    ```
 
 4. **GPU acceleration not used**: Ensure JAX is using the GPU:
@@ -166,7 +166,7 @@ The GPU testing infrastructure supports:
 JAX_PLATFORMS=cuda uv run pytest --device=gpu tests/
 
 # Run with memory limits (useful for shared GPUs)
-XLA_PYTHON_CLIENT_MEM_FRACTION=0.5 JAX_PLATFORMS=cuda uv run pytest --device=gpu tests/
+XLA_CLIENT_MEM_FRACTION=0.5 JAX_PLATFORMS=cuda uv run pytest --device=gpu tests/
 ```
 
 For more testing information, see the [Testing Guide](testing_guide.md).
