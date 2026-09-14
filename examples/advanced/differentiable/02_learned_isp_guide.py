@@ -87,6 +87,7 @@ import matplotlib
 import numpy as np
 import optax
 from flax import nnx
+from substrax.artifacts import resolve_output_dir
 
 from datarax.core.element_batch import Batch
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
@@ -100,15 +101,12 @@ from datarax.sources import MemorySource, MemorySourceConfig
 
 
 matplotlib.use("Agg")
-import os
-from pathlib import Path
 
 import matplotlib.pyplot as plt
 
 
 # Output directory for saved figures
-OUTPUT_DIR = Path(os.environ.get("DATARAX_EXAMPLES_OUTPUT_DIR", "docs/assets/images/examples"))
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR = resolve_output_dir("examples").path
 
 # Keep the script entry point bounded for CI and local documentation builds.
 # Set QUICK_MODE=False for the longer learned-ISP run.
@@ -301,7 +299,7 @@ plt.savefig(
     facecolor="white",
 )
 plt.close()
-print("Saved: docs/assets/images/examples/cv-isp-dark-vs-clean-samples.png")
+print(f"Saved: {OUTPUT_DIR / 'cv-isp-dark-vs-clean-samples.png'}")
 
 # %% [markdown]
 """
@@ -1074,7 +1072,7 @@ plt.savefig(
     facecolor="white",
 )
 plt.close()
-print("Saved: docs/assets/images/examples/perf-isp-training-curves.png")
+print(f"Saved: {OUTPUT_DIR / 'perf-isp-training-curves.png'}")
 
 # %% [markdown]
 """
@@ -1239,7 +1237,7 @@ def analyze_isp(isp_composite: CompositeOperatorModule) -> None:
         facecolor="white",
     )
     plt.close()
-    print("\nSaved: docs/assets/images/examples/cv-isp-learned-parameters.png")
+    print(f"\nSaved: {OUTPUT_DIR / 'cv-isp-learned-parameters.png'}")
 
 
 analyze_isp(isp_composite)
@@ -1339,7 +1337,7 @@ plt.savefig(
     facecolor="white",
 )
 plt.close()
-print("Saved: docs/assets/images/examples/cv-isp-before-after.png")
+print(f"Saved: {OUTPUT_DIR / 'cv-isp-before-after.png'}")
 
 # %% [markdown]
 """

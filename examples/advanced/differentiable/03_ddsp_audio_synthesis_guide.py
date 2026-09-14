@@ -85,6 +85,7 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 from flax import nnx
+from substrax.artifacts import resolve_output_dir
 
 from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import Batch
@@ -119,15 +120,12 @@ from datarax.operators.modality.audio.f0_operator import CrepeF0Config, CrepeF0O
 
 
 matplotlib.use("Agg")
-import os
-from pathlib import Path
 
 import matplotlib.pyplot as plt
 
 
 # Output directory for saved figures
-OUTPUT_DIR = Path(os.environ.get("DATARAX_EXAMPLES_OUTPUT_DIR", "docs/assets/images/examples"))
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR = resolve_output_dir("examples").path
 
 
 def plot_specgram(ax, audio, sample_rate=16000):
@@ -640,7 +638,7 @@ plt.savefig(
     facecolor="white",
 )
 plt.close()
-print("Saved: docs/assets/images/examples/cv-ddsp-dataset-samples.png")
+print(f"Saved: {OUTPUT_DIR / 'cv-ddsp-dataset-samples.png'}")
 
 # %% [markdown]
 """
@@ -1502,7 +1500,7 @@ plt.savefig(
     facecolor="white",
 )
 plt.close()
-print("Saved: docs/assets/images/examples/perf-ddsp-training-curve.png")
+print(f"Saved: {OUTPUT_DIR / 'perf-ddsp-training-curve.png'}")
 
 # %% [markdown]
 """
@@ -1714,7 +1712,7 @@ plt.savefig(
     facecolor="white",
 )
 plt.close()
-print("Saved: docs/assets/images/examples/cv-ddsp-resynthesis-comparison.png")
+print(f"Saved: {OUTPUT_DIR / 'cv-ddsp-resynthesis-comparison.png'}")
 
 # %% [markdown]
 """
@@ -1842,7 +1840,7 @@ def analyze_ddsp(
         facecolor="white",
     )
     plt.close()
-    print("\nSaved: docs/assets/images/examples/cv-ddsp-learned-parameters.png")
+    print(f"\nSaved: {OUTPUT_DIR / 'cv-ddsp-learned-parameters.png'}")
 
 
 analyze_ddsp(decoder, synth_composite)

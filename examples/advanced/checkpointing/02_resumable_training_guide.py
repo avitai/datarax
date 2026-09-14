@@ -54,7 +54,6 @@ By the end of this guide, you will be able to:
 """
 
 # %%
-import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -66,6 +65,7 @@ import numpy as np
 import optax
 import orbax.checkpoint as ocp
 from flax import nnx
+from substrax.artifacts import resolve_output_dir
 
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.pipeline import Pipeline
@@ -458,8 +458,7 @@ print("Determinism check passed: model parameters round-trip through Orbax.")
 """
 
 # %%
-output_dir = Path(os.environ.get("DATARAX_EXAMPLES_OUTPUT_DIR", "docs/assets/images/examples"))
-output_dir.mkdir(parents=True, exist_ok=True)
+output_dir = resolve_output_dir("examples").path
 
 fig, ax = plt.subplots(figsize=(8, 4))
 ax.plot(ref_arr, label="Reference (uninterrupted)", color="tab:blue", linewidth=2)

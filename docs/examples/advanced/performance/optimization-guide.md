@@ -358,6 +358,9 @@ a bar chart of the same data.
 
 ```python
 import matplotlib.pyplot as plt
+from substrax.artifacts import resolve_output_dir
+
+output_dir = resolve_output_dir("examples").path
 
 fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
@@ -399,7 +402,7 @@ for bar, tp in zip(bars, tp_list):
 ax2.grid(True, alpha=0.3, axis="y")
 
 plt.tight_layout()
-plt.savefig("docs/assets/images/examples/perf-batch-size-sweep.png", dpi=150)
+plt.savefig(output_dir / "perf-batch-size-sweep.png", dpi=150)
 ```
 
 ### Further Analysis

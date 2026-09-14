@@ -682,6 +682,9 @@ All plots, charts, and visual outputs must be saved and embedded:
 
 ```python
 import matplotlib.pyplot as plt
+from substrax.artifacts import resolve_output_dir
+
+output_dir = resolve_output_dir("examples").path
 
 # Create visualization
 fig, axes = plt.subplots(2, 4, figsize=(10, 5))
@@ -692,7 +695,7 @@ for i, ax in enumerate(axes.flat):
 plt.tight_layout()
 
 # Save at 150 DPI for documentation
-plt.savefig('docs/assets/images/examples/cv-mnist-sample-grid.png', dpi=150, bbox_inches='tight')
+plt.savefig(output_dir / 'cv-mnist-sample-grid.png', dpi=150, bbox_inches='tight')
 plt.close()
 ```
 
@@ -704,7 +707,11 @@ plt.close()
 
 ### Image Naming Conventions
 
-Store all example images in `docs/assets/images/examples/` with consistent naming:
+Published example images live in `docs/assets/images/examples/`, with consistent naming.
+An example writes its images under `$AVITAI_OUTPUT_DIR/examples`, and under a temporary
+directory when `AVITAI_OUTPUT_DIR` is unset, so a run never rewrites the published ones.
+`scripts/run_all_examples_on_gpu.sh` regenerates them by pointing `AVITAI_OUTPUT_DIR` at
+`docs/assets/images`:
 
 | Category | Prefix | Examples |
 |----------|--------|----------|

@@ -516,10 +516,9 @@ flowchart TB
 ```python
 import matplotlib.pyplot as plt
 import numpy as np
-from pathlib import Path
+from substrax.artifacts import resolve_output_dir
 
-output_dir = Path("docs/assets/images/examples")
-output_dir.mkdir(parents=True, exist_ok=True)
+output_dir = resolve_output_dir("examples").path
 
 # Get sample batch
 sample_batch = next(iter(create_train_pipeline()))

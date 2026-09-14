@@ -17,6 +17,8 @@ from substrax.runtime import resolve_test_runtime, runtime_environment
 
 TEST_VARIABLE_PREFIX = "DATARAX_TEST_"
 _CUDA_PLUGINS = ("jax_cuda12_plugin", "jax_cuda13_plugin")
+# The backend and device settings a test run applies, which a fresh interpreter does not inherit.
+_FORWARDED_JAX_VARIABLES = ("JAX_PLATFORMS", "JAX_NUM_CPU_DEVICES", "XLA_FLAGS")
 
 
 def has_cuda_plugin() -> bool:
@@ -44,3 +46,19 @@ def resolve_test_environment(
         env, prefix=TEST_VARIABLE_PREFIX, cuda_plugin_available=cuda_plugin_available
     )
     return runtime_environment(runtime, env)
+
+
+def forwarded_jax_environment(env: Mapping[str, str]) -> dict[str, str]:
+    """Return the backend and device settings of a test process, for a child interpreter.
+
+    ``substrax.testing.run_python`` starts children without the parent's ``JAX_*`` and ``XLA_*``
+    variables, so an example run started from a test would otherwise lose the CPU device
+    emulation this module applied.
+
+    Args:
+        env: The test process's environment.
+
+    Returns:
+        ``JAX_PLATFORMS``, ``JAX_NUM_CPU_DEVICES`` and ``XLA_FLAGS``, each only when ``env`` has it.
+    """
+    return {name: env[name] for name in _FORWARDED_JAX_VARIABLES if name in env}

@@ -61,13 +61,13 @@ tf.config.set_visible_devices([], "GPU")
 
 # Core imports
 import time
-from pathlib import Path
 
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 from flax import nnx
+from substrax.artifacts import resolve_output_dir
 
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.modality.image import (
@@ -406,8 +406,7 @@ for i, (name, op, imgs) in enumerate(aug_configs):
 
 # %%
 # Plot augmentation comparison grid
-output_dir = Path(os.environ.get("DATARAX_EXAMPLES_OUTPUT_DIR", "docs/assets/images/examples"))
-output_dir.mkdir(parents=True, exist_ok=True)
+output_dir = resolve_output_dir("examples").path
 
 fig, axes = plt.subplots(6, 8, figsize=(16, 12))
 fig.suptitle("Fashion-MNIST Augmentation Effects", fontsize=14)

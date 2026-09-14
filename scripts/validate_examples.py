@@ -29,6 +29,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from substrax.testing import discover_examples
+
 
 # Required sections in order of appearance
 REQUIRED_SECTIONS = [
@@ -209,26 +211,24 @@ def validate_file(
     return result
 
 
+def is_tutorial_example(path: Path) -> bool:
+    """Whether an example file is a numbered tutorial, not a test helper or a comparison script."""
+    return (
+        re.match(r"^\d+_", path.name) is not None
+        and "test" not in path.name.lower()
+        and "comparison" not in path.parts
+    )
+
+
 def find_example_files(base_path: Path) -> list[Path]:
-    """Find all Python example files in the given path."""
+    """Find the runnable example files in the given path, or return a single file as given.
+
+    ``substrax.testing.discover_examples`` skips private names (anything starting with ``_``,
+    such as ``_templates``), and ``is_tutorial_example`` keeps the numbered tutorials.
+    """
     if base_path.is_file():
         return [base_path] if base_path.suffix == ".py" else []
-
-    examples = []
-    for py_file in base_path.rglob("*.py"):
-        # Skip __init__.py, test files, and non-example directories
-        if py_file.name.startswith("_"):
-            continue
-        if "test" in py_file.name.lower():
-            continue
-        # Skip comparison directory (benchmark scripts, not tutorials)
-        if "comparison" in py_file.parts:
-            continue
-        # Only include files with numbered prefixes (01_, 02_, etc.)
-        if re.match(r"^\d+_", py_file.name):
-            examples.append(py_file)
-
-    return sorted(examples)
+    return discover_examples(base_path, include=is_tutorial_example)
 
 
 def print_result(result: ValidationResult, verbose: bool = False) -> None:

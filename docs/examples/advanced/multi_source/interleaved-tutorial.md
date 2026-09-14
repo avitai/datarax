@@ -298,6 +298,9 @@ Sources in first 10 batches: [0, 1, 0, 1, 0, 1, 0, 1, 0, 1]
 
 ```python
 import matplotlib.pyplot as plt
+from substrax.artifacts import resolve_output_dir
+
+output_dir = resolve_output_dir("examples").path
 
 # Collect samples from both sources
 interleaved = InterleavedIterator(create_interleaved_pipelines())
@@ -352,7 +355,7 @@ for i in range(8):
     axes[3, i].set_title(f"Fashion: {FASHION_CLASSES[all_original_labels[idx] % 10]}", fontsize=8)
 
 plt.tight_layout()
-plt.savefig("docs/assets/images/examples/cv-multisource-samples.png", dpi=150)
+plt.savefig(output_dir / "cv-multisource-samples.png", dpi=150)
 ```
 
 ## Results Summary

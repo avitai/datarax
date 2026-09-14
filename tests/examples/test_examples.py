@@ -9,21 +9,26 @@ These tests validate that example files:
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import platform
 import re
-import subprocess
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
+from substrax.testing import run_example, unavailable_reason
+
+from tests.jax_test_environment import forwarded_jax_environment
 
 
 # Detect macOS - TensorFlow crashes on macOS ARM64
 IS_MACOS = platform.system() == "Darwin"
 
 # Path to runnable examples directory
-EXAMPLES_DIR = Path(__file__).parent.parent.parent / "examples"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+EXAMPLES_DIR = REPO_ROOT / "examples"
 EXAMPLE_TIMEOUT_SECONDS = int(os.environ.get("DATARAX_EXAMPLE_TIMEOUT_SECONDS", "120"))
 
 # Required sections for validation
@@ -54,23 +59,20 @@ _NETWORK_FAILURE_SIGNATURES = (
 RECOMMENDED_SECTIONS = ["Learning Goals", "Next Steps"]
 
 
-def find_example_files() -> list[Path]:
-    """Find all Python example files."""
-    if not EXAMPLES_DIR.exists():
-        return []
+def _load_validate_examples() -> ModuleType:
+    """Load ``scripts/validate_examples.py``, which owns the rule for what counts as an example."""
+    spec = importlib.util.spec_from_file_location(
+        "validate_examples", REPO_ROOT / "scripts" / "validate_examples.py"
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["validate_examples"] = module
+    spec.loader.exec_module(module)
+    return module
 
-    examples = []
-    for py_file in EXAMPLES_DIR.rglob("*.py"):
-        if py_file.name.startswith("_"):
-            continue
-        if "test" in py_file.name.lower():
-            continue
-        if "comparison" in py_file.parts:
-            continue
-        if re.match(r"^\d+_", py_file.name):
-            examples.append(py_file)
 
-    return sorted(examples)
+find_example_files = _load_validate_examples().find_example_files
 
 
 # Generate test IDs from file paths
@@ -79,7 +81,7 @@ def example_id(path: Path) -> str:
     return str(path.relative_to(EXAMPLES_DIR))
 
 
-EXAMPLE_FILES = find_example_files()
+EXAMPLE_FILES = find_example_files(EXAMPLES_DIR)
 
 
 class TestExampleStructure:
@@ -156,6 +158,44 @@ class TestExampleSync:
             pytest.fail(f"Notebook may be out of sync (py newer by {py_mtime - nb_mtime:.0f}s)")
 
 
+class TestExampleDiscovery:
+    """``scripts/validate_examples.py`` decides which files are runnable examples."""
+
+    def test_numbered_examples_are_found_and_everything_else_is_not(self, tmp_path: Path) -> None:
+        for relative in (
+            "core/01_quickstart.py",
+            "advanced/02_guide.py",
+            "core/03_test_helpers.py",
+            "comparison/04_versus.py",
+            "_templates/05_template.py",
+            "core/notes.py",
+            "core/__init__.py",
+        ):
+            (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / relative).write_text("", encoding="utf-8")
+
+        found = [path.relative_to(tmp_path).as_posix() for path in find_example_files(tmp_path)]
+
+        assert found == ["advanced/02_guide.py", "core/01_quickstart.py"]
+
+    def test_a_single_example_file_is_returned_as_given(self, tmp_path: Path) -> None:
+        example = tmp_path / "01_quickstart.py"
+        example.write_text("", encoding="utf-8")
+
+        assert find_example_files(example) == [example]
+
+
+class TestExampleOutputs:
+    """Examples write outputs through substrax.artifacts, so a run never rewrites tracked files."""
+
+    @pytest.mark.parametrize("example_path", EXAMPLE_FILES, ids=example_id)
+    def test_outputs_are_resolved_through_substrax(self, example_path: Path) -> None:
+        content = example_path.read_text()
+
+        assert "DATARAX_EXAMPLES_OUTPUT_DIR" not in content
+        assert "docs/assets" not in content
+
+
 @pytest.mark.slow
 class TestExampleExecution:
     """Tests that execute example files.
@@ -165,50 +205,31 @@ class TestExampleExecution:
     """
 
     @pytest.mark.parametrize("example_path", EXAMPLE_FILES, ids=example_id)
-    def test_example_executes(self, example_path: Path, tmp_path: Path) -> None:
-        """Each example should execute without errors."""
+    def test_example_executes(self, example_path: Path, output_dir: Path) -> None:
+        """Each example runs to completion in its own interpreter, with its outputs redirected.
+
+        The child gets the test process's backend and emulated devices, so multi-device examples
+        keep running on several devices. An example that needs an unreachable dataset or service
+        is skipped, because it exercises that service rather than Datarax; one that runs past its
+        budget fails, because a timeout is a finding.
+        """
         # Skip TFDS examples on macOS - TensorFlow hangs on ARM64
         # https://github.com/tensorflow/tensorflow/issues/52138
         if IS_MACOS and "tfds" in str(example_path).lower():
             pytest.skip("TFDS examples skipped on macOS (TensorFlow ARM64 issue)")
 
-        try:
-            result = subprocess.run(
-                [sys.executable, str(example_path)],
-                capture_output=True,
-                env={
-                    **os.environ,
-                    "JAX_PLATFORMS": os.environ.get("JAX_PLATFORMS", "cpu"),
-                    "TFDS_DISABLE_PROGRESS_BAR": "1",
-                    # Redirect example plot output so test runs never modify the
-                    # committed images under docs/assets/images/examples.
-                    "DATARAX_EXAMPLES_OUTPUT_DIR": str(tmp_path),
-                },
-                text=True,
-                timeout=EXAMPLE_TIMEOUT_SECONDS,
-                cwd=EXAMPLES_DIR.parent,  # Repo root
-            )
-        except subprocess.TimeoutExpired:
-            # Exceeding the budget almost always means a stalled external
-            # dataset download (TFDS/HuggingFace), not a Datarax defect — the
-            # unit and integration tiers cover Datarax logic with their own
-            # per-test timeouts. Skip so an unreachable external service cannot
-            # hang the long-running job past its own timeout.
+        run = run_example(
+            example_path,
+            repo_root=REPO_ROOT,
+            output_dir=output_dir,
+            timeout=EXAMPLE_TIMEOUT_SECONDS,
+            call_main=False,
+            env={**forwarded_jax_environment(os.environ), "TFDS_DISABLE_PROGRESS_BAR": "1"},
+        )
+
+        reason = unavailable_reason(run, _NETWORK_FAILURE_SIGNATURES)
+        if reason is not None:
             pytest.skip(
-                f"Example exceeded {EXAMPLE_TIMEOUT_SECONDS}s; most likely a "
-                f"stalled external dataset download. Skipping so CI is not "
-                f"blocked by an external service."
+                f"Example needs an external dataset or network, unavailable here ({reason!r})."
             )
-        if result.returncode != 0:
-            # A transient dataset-download/network failure exercises an external
-            # service, not Datarax — skip rather than fail so CI is not flaky.
-            lowered = result.stderr.lower()
-            if any(sig in lowered for sig in _NETWORK_FAILURE_SIGNATURES):
-                pytest.skip(
-                    f"Example needs an external dataset/network which was unavailable "
-                    f"(exit {result.returncode})."
-                )
-            # Keep enough stderr to diagnose real failures (the tail holds the
-            # actual exception, which a small head-truncation would hide).
-            stderr = result.stderr if len(result.stderr) <= 3000 else result.stderr[-3000:]
-            pytest.fail(f"Example failed with exit code {result.returncode}:\n{stderr}")
+        run.result.check()

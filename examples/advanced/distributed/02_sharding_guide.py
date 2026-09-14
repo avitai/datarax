@@ -64,7 +64,6 @@ tf.config.set_visible_devices([], "GPU")
 
 # Core imports
 import time
-from pathlib import Path
 
 import jax
 import jax.numpy as jnp
@@ -72,6 +71,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from flax import nnx
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
+from substrax.artifacts import resolve_output_dir
 
 from datarax.operators import ElementOperator, ElementOperatorConfig
 
@@ -338,8 +338,7 @@ else:
 """
 
 # %%
-output_dir = Path(os.environ.get("DATARAX_EXAMPLES_OUTPUT_DIR", "docs/assets/images/examples"))
-output_dir.mkdir(parents=True, exist_ok=True)
+output_dir = resolve_output_dir("examples").path
 
 
 def benchmark_pipeline(batch_size, num_batches=20, mesh=None):
