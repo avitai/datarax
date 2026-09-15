@@ -168,3 +168,47 @@ def test_weight_key_mixes_only_the_named_fields() -> None:
     np.testing.assert_allclose(np.asarray(data["signal"]), [23.0], rtol=1e-6)
     np.testing.assert_array_equal(np.asarray(data["f0_hz"]), [440.0])
     assert "op_weights" not in data
+
+
+def test_mixture_weights_are_the_static_weights_as_given() -> None:
+    mix = _weighted(
+        operators=[_scale(2.0), _scale(3.0)], weights=[1.0, 0.1], mix_fields=("signal",)
+    )
+
+    np.testing.assert_allclose(np.asarray(mix.mixture_weights()), [1.0, 0.1], rtol=1e-6)
+
+
+@pytest.mark.parametrize(
+    ("temperature", "expected"), [(1.0, [0.7, 0.3]), (0.5, [0.49 / 0.58, 0.09 / 0.58])]
+)
+def test_mixture_weights_of_learnable_weights_are_the_temperature_softmax(
+    temperature: float, expected: list[float]
+) -> None:
+    mix = _weighted(
+        operators=[_scale(2.0), _scale(3.0)],
+        weights=[0.7, 0.3],
+        learnable_weights=True,
+        temperature=temperature,
+        mix_fields=("signal",),
+    )
+
+    np.testing.assert_allclose(np.asarray(mix.mixture_weights()), expected, rtol=1e-6)
+
+
+def test_mixture_weights_come_from_each_record_under_weight_key() -> None:
+    mix = _weighted(
+        operators=[_scale(2.0), _scale(3.0)], weight_key="op_weights", mix_fields=("signal",)
+    )
+
+    with pytest.raises(ValueError, match="weight_key"):
+        mix.mixture_weights()
+
+
+def test_only_weighted_parallel_composites_have_mixture_weights() -> None:
+    sequential = CompositeOperatorModule(
+        CompositeOperatorConfig(strategy=CompositionStrategy.SEQUENTIAL, operators=[_scale(2.0)]),
+        rngs=nnx.Rngs(0),
+    )
+
+    with pytest.raises(ValueError, match="WEIGHTED_PARALLEL"):
+        sequential.mixture_weights()

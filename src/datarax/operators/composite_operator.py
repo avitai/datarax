@@ -475,8 +475,8 @@ class CompositeOperatorModule(OperatorModule):
 
         Only ``WEIGHTED_PARALLEL`` consumes weights; every other strategy returns the
         data unchanged with no extra params. For ``WEIGHTED_PARALLEL`` the weights come
-        from (in priority order) a dynamic ``data[weight_key]`` entry, the learnable
-        ``self.weights`` param, or the static ``config.weights``.
+        from (in priority order) a dynamic ``data[weight_key]`` entry, the softmax of the
+        learnable ``weight_logits`` at ``temperature``, or the static ``config.weights``.
 
         Args:
             data: Input pytree passed to :meth:`apply`.
@@ -503,10 +503,34 @@ class CompositeOperatorModule(OperatorModule):
             clean_data = {k: v for k, v in data.items() if k != self.config.weight_key}
             return {"weights": data[self.config.weight_key]}, clean_data
 
-        if self.config.learnable_weights:
-            return {"weights": nnx.softmax(self.weight_logits[...] / self.config.temperature)}, data
+        return {"weights": self.mixture_weights()}, data
 
-        return {"weights": jnp.array(self.config.weights)}, data
+    def mixture_weights(self) -> jax.Array:
+        """Return the weights a ``WEIGHTED_PARALLEL`` composite applies to its operators' outputs.
+
+        Static weights are returned as configured. Learnable weights are
+        ``softmax(weight_logits / temperature)``, so the value follows training.
+
+        Returns:
+            One weight per operator.
+
+        Raises:
+            ValueError: If the strategy is not ``WEIGHTED_PARALLEL``, or if each record supplies
+                the weights through ``weight_key``.
+        """
+        if self.config.strategy != CompositionStrategy.WEIGHTED_PARALLEL:
+            raise ValueError(
+                "mixture_weights applies to WEIGHTED_PARALLEL composites, "
+                f"not {self.config.strategy}"
+            )
+        if self.config.weight_key is not None:
+            raise ValueError(
+                f"each record supplies the weights as data[{self.config.weight_key!r}] "
+                "(weight_key), so the composite has no fixed mixture"
+            )
+        if self.config.learnable_weights:
+            return nnx.softmax(self.weight_logits[...] / self.config.temperature)
+        return jnp.asarray(self.config.weights)
 
     def _get_operators_list(self) -> list[OperatorModule]:
         """Get list of operators."""

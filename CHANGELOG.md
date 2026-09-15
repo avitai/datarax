@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `CompositeOperatorModule.mixture_weights()` returns the weights a `WEIGHTED_PARALLEL` composite
+  applies: its static weights, or `softmax(weight_logits / temperature)` for learnable weights. A
+  composite that reads its weights from each record (`weight_key`) has no fixed mixture and
+  raises `ValueError`, as does a composite with another strategy.
+
 ### Changed
 
 - datarax requires substrax 0.1.7, whose `place_batch_on_shards` places the NumPy leaves of a host
