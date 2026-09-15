@@ -124,8 +124,8 @@ config = CompositeOperatorConfig(
 )
 weighted = CompositeOperatorModule(config, rngs=nnx.Rngs(0))
 
-# The mixture the composite currently applies
-current_weights = nnx.softmax(weighted.weight_logits[...] / config.temperature)
+# The mixture the composite currently applies: softmax(weight_logits / temperature)
+current_weights = weighted.mixture_weights()
 ```
 
 With `weight_key="op_weights"` the weights come from each record instead, for example
