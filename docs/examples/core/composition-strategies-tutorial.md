@@ -106,11 +106,7 @@ composition example can create fresh operators with fixed parameters:
 def make_brightness_op(delta: float, seed: int = 0) -> BrightnessOperator:
     """Create a brightness operator with fixed delta."""
     return BrightnessOperator(
-        BrightnessOperatorConfig(
-            field_key="image",
-            brightness_range=(delta, delta),  # Fixed delta
-            stochastic=False,
-        ),
+        BrightnessOperatorConfig(field_key="image", brightness_delta=delta),
         rngs=nnx.Rngs(seed),
     )
 
@@ -118,11 +114,7 @@ def make_brightness_op(delta: float, seed: int = 0) -> BrightnessOperator:
 def make_contrast_op(factor: float, seed: int = 0) -> ContrastOperator:
     """Create a contrast operator with fixed factor."""
     return ContrastOperator(
-        ContrastOperatorConfig(
-            field_key="image",
-            contrast_range=(factor, factor),  # Fixed factor
-            stochastic=False,
-        ),
+        ContrastOperatorConfig(field_key="image", contrast_factor=factor),
         rngs=nnx.Rngs(seed),
     )
 

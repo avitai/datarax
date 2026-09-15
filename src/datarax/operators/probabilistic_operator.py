@@ -102,7 +102,7 @@ class ProbabilisticOperator(OperatorModule):
 
         ```python
         # Wrap any operator with 50% application probability
-        child_config = BrightnessOperatorConfig(field_key="image", factor_range=(0.8, 1.2))
+        child_config = BrightnessOperatorConfig(field_key="image", brightness_delta=0.2)
         child_op = BrightnessOperator(child_config, rngs=nnx.Rngs(0))
 
         prob_config = ProbabilisticOperatorConfig(

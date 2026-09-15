@@ -90,6 +90,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The composition strategies and advanced operators tutorials built their fixed brightness and
+  contrast operators with `brightness_range=(d, d)` and `contrast_range=(f, f)` in deterministic
+  mode, which applies `brightness_delta` and `contrast_factor`, so those operators returned images
+  unchanged. They set `brightness_delta` and `contrast_factor`.
 - A `WEIGHTED_PARALLEL` composite took the weighted sum of every field of its operators'
   outputs, so fields no operator wrote were scaled whenever the weights did not sum to one and
   integer fields became floats (with weights `[1.0, 0.1]`, an untouched `f0_hz` of 440 became
