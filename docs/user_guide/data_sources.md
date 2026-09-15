@@ -231,7 +231,11 @@ When creating custom data sources, ensure:
    JAX-traceable `get_batch_at(start, size, key)`, which is what makes
    `supports_indexed_access()` true; for forward-only streaming, implement
    `get_batch(batch_size)` instead. A source implementing neither is refused when
-   iteration starts
+   iteration starts. An indexed source that shuffles, partitions or mixes records
+   also overrides `record_indices_at(start, size, key)` to return the stable index
+   of each record `get_batch_at` serves; stochastic operators key each record's
+   randomness on it. The default names records by position, which is right for a
+   source that serves them in order, like the one above
 4. `element_spec()` describes exactly the records your batches carry: the same
    keys, per-element shapes and dtypes. For a streaming source, `Pipeline` checks
    every batch against it with `datarax.core.spec.validate_batch` before running

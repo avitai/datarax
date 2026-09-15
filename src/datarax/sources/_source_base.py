@@ -110,6 +110,24 @@ class EagerSourceBase(DataSourceModule):
             key,
         )
 
+    def record_indices_at(
+        self,
+        start: int | jax.Array,
+        size: int,
+        key: jax.Array | None = None,
+    ) -> jax.Array:
+        """Return the index of each record ``get_batch_at(start, size, key)`` returns.
+
+        Args:
+            start: Starting logical position; concrete int or traced ``jax.Array``.
+            size: Number of records (Python int).
+            key: PRNG key for shuffled mode.
+
+        Returns:
+            Int32 ``jax.Array`` of shape ``(size,)``.
+        """
+        return resolve_wrapped_indices(start, size, self.length, self.is_random_order, key)
+
     def get_batch_at(
         self,
         start: int | jax.Array,
@@ -148,7 +166,7 @@ class EagerSourceBase(DataSourceModule):
             Dict mapping each data key to a JAX array with leading
             dimension ``size``.
         """
-        indices = resolve_wrapped_indices(start, size, self.length, self.is_random_order, key)
+        indices = self.record_indices_at(start, size, key)
         return {
             data_key: jnp.take(jnp.asarray(value), indices, axis=0, mode="wrap")
             for data_key, value in self.data.items()

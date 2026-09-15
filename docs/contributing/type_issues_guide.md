@@ -644,8 +644,7 @@ DataraxModule (base, extends nnx.Module)
 │   └── BatchMixOperator        # Cross-element transforms
 ├── StructuralModule            # Non-parametric processors
 │   ├── BatcherModule           # Batch creation
-│   ├── SamplerModule           # Index sampling
-│   └── SharderModule           # Data sharding
+│   └── SamplerModule           # Index sampling
 └── DataSourceModule            # Data sources
     ├── MemorySource            # In-memory data
     ├── TFDSEagerSource         # TensorFlow Datasets (eager; also TFDSStreamingSource)

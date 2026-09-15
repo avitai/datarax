@@ -201,6 +201,7 @@ class TestWeightingEdgeCases:
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
             operators=[op1, op2],
             weights=[0.0, 0.0],
+            mix_fields=("value",),
             stochastic=False,
         )
         composite = CompositeOperatorModule(composite_config, rngs=rngs)
@@ -226,6 +227,7 @@ class TestWeightingEdgeCases:
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
             operators=[op1, op2],
             weights=[1.0, -0.5],  # 1.0 * (x*2) + (-0.5) * (x*3)
+            mix_fields=("value",),
             stochastic=False,
         )
         composite = CompositeOperatorModule(composite_config, rngs=rngs)

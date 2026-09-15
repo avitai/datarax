@@ -66,6 +66,16 @@ class RNGRequiringModule(DataraxModule):
         return x
 
 
+def test_base_module_carries_no_operation_counters():
+    """Every compiled step carries a module's variables, so the base adds none nothing updates."""
+    module = RNGRequiringModule()
+
+    top_level_names = {path[0] for path, _ in nnx.to_flat_state(nnx.state(module))}
+
+    assert top_level_names.isdisjoint({"_applied_count", "_skipped_count"})
+    assert not hasattr(module, "get_operation_stats")
+
+
 def test_serialization():
     """Test serialization and deserialization of DataraxModule."""
     # Create and initialize a module

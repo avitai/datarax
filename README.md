@@ -190,7 +190,7 @@ src/datarax/
     strategies/ # Sequential, Parallel, Branching, Ensemble, Merging composition strategies
   samplers/     # Sequential, Shuffle (Feistel cipher), Range, EpochAware, SlidingWindow, BufferSampler
   batching/     # DefaultBatcher with buffer state management
-  sharding/     # ArraySharder, JaxProcessSharder for multi-device distribution
+  sharding/     # JaxProcessSharderModule: data slicing per JAX process
   checkpoint/   # IteratorCheckpoint over substrax's Orbax checkpoint store
   monitoring/   # MetricsCollector, callbacks, reporters (console/file)
   performance/  # Goodput tracking, host/device synchronization

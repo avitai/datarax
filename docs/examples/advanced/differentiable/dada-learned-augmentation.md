@@ -180,6 +180,7 @@ aug_composite = CompositeOperatorModule(
         strategy=CompositionStrategy.WEIGHTED_PARALLEL,
         operators=[op for _, op in AUGMENTATION_OPS],
         weight_key="op_weights",
+        mix_fields=("image",),
     )
 )
 ```
@@ -189,15 +190,16 @@ aug_composite = CompositeOperatorModule(
 
     | Mode | Config | Use Case |
     |------|--------|----------|
-    | Static | `weights=[0.5, 0.5]` | Fixed blending ratios |
-    | Learnable | `learnable_weights=True` | Weights as `nnx.Param` |
+    | Static | `weights=[1.0, 0.1]` | Fixed linear combination |
+    | Learnable | `learnable_weights=True` | Logits mixed as `softmax(logits / temperature)` |
     | **Dynamic** | **`weight_key="op_weights"`** | **External weights per call** |
 
 At each forward call, the composite:
 
 1. **Extracts** Gumbel-Softmax weights from `data["op_weights"]`
 2. **Strips** the weight key, so child operators only see `{image, magnitude}`
-3. **Computes** a differentiable weighted sum of all 15 augmented outputs
+3. **Replaces** `image`, the field named in `mix_fields`, with a differentiable weighted sum of
+   the 15 augmented images; `magnitude` passes through unchanged
 
 Gradients flow back through the weights to the upstream policy parameters.
 

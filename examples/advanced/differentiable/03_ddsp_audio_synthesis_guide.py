@@ -209,8 +209,8 @@ $$
 \\text{exp\_sigmoid}(x) = 2.0 \\cdot \\sigma(x)^{\\ln 10} + 10^{-7}
 $$
 
-This replaces ``softplus`` (unbounded) and ``softmax`` (zero-sum competition
-between harmonics), which caused amplitude collapse in early training.
+Unlike ``softplus`` (unbounded) or ``softmax`` (zero-sum competition between
+harmonics), it keeps every amplitude bounded and independent of the others.
 
 ### Multi-Scale Spectral Loss
 
@@ -1209,18 +1209,20 @@ Instead of manually calling each operator's `.apply()` and explicit `jax.vmap()`
 we compose the synthesis pipeline using `CompositeOperatorModule`:
 
 - **`WEIGHTED_PARALLEL([1.0, 0.1])`**: Runs HarmonicSynth and FilteredNoise on the
-  same input dict, then computes `1.0 * harmonic_audio + 0.1 * noise_audio`
+  same input dict, then computes `1.0 * harmonic_audio + 0.1 * noise_audio`, the
+  harmonic-plus-noise sum of DDSP (Engel et al. 2020, §3.5)
 - **`SEQUENTIAL`**: Chains the parallel mix into Reverb
 
 ```
 synth_composite = SEQUENTIAL([
-    WEIGHTED_PARALLEL([HarmonicSynth, FilteredNoise], weights=[1.0, 0.1]),
+    WEIGHTED_PARALLEL([HarmonicSynth, FilteredNoise], weights=[1.0, 0.1], mix_fields=("audio",)),
     Reverb,
 ])
 ```
 
-Both operators use `{**data, "audio": audio}` passthrough, so non-audio keys
-get weighted-summed but Reverb ignores them — only reading the `audio` key.
+Both synthesizers write only the `audio` field, so `mix_fields=("audio",)` names it:
+the composite sums `audio` and passes `amplitudes`, `f0_hz` and `noise_magnitudes`
+through unchanged.
 """
 
 
@@ -1235,7 +1237,9 @@ def create_synth_composite(
 
     Architecture:
         SEQUENTIAL([
-            WEIGHTED_PARALLEL([HarmonicSynth, FilteredNoise], weights=[1.0, 0.1]),
+            WEIGHTED_PARALLEL(
+                [HarmonicSynth, FilteredNoise], weights=[1.0, 0.1], mix_fields=("audio",)
+            ),
             Reverb,
         ])
     """
@@ -1244,6 +1248,7 @@ def create_synth_composite(
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
             operators=[harmonic_synth, noise_synth],
             weights=[1.0, 0.1],
+            mix_fields=("audio",),
         )
     )
     return CompositeOperatorModule(
@@ -1577,11 +1582,11 @@ print("\n=== Composite Pipeline Demonstration ===")
 print("DDSP synthesis uses a nested CompositeOperatorModule:")
 print("""
   synth_composite = SEQUENTIAL([
-      WEIGHTED_PARALLEL([HarmonicSynth, FilteredNoise], weights=[1.0, 0.1]),
+      WEIGHTED_PARALLEL([HarmonicSynth, FilteredNoise], weights=[1.0, 0.1], mix_fields=("audio",)),
       Reverb,
   ])
 
-  This replaces the manual pattern:
+  Equivalent to:
       h_audio = harmonic_synth.apply(h_data)["audio"]
       n_audio = noise_synth.apply(n_data)["audio"]
       combined = h_audio + n_audio * 0.1

@@ -328,7 +328,7 @@ batch = next(iter(pipeline))
 
 print("WEIGHTED_PARALLEL Strategy:")
 print("  Weights: [0.5 (Brightness), 0.3 (Contrast), 0.2 (Noise)]")
-print("  Output: weighted sum of augmented versions")
+print("  Output: 'image' (the operators' field_key) replaced by the weighted sum")
 print(f"  Shape: {batch['image'].shape}")
 
 # %% [markdown]

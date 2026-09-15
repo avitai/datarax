@@ -165,10 +165,11 @@ class OperatorModule(DataraxModule):
         self.stream_name = nnx.static(config.stream_name)
 
         # Stable per-operator base key, drawn ONCE (not per batch). Per-record
-        # keys are derived as fold_in(base_key, global_record_index), so a
-        # record's randomness depends only on (base_key, its global index) —
-        # invariant to batch composition, shuffle order, host count, and resume.
-        # Stored as NNX state so it round-trips through checkpoints.
+        # keys are derived as fold_in(fold_in(base_key, epoch), record_index), so
+        # within an epoch a record's randomness does not depend on batch
+        # composition, shuffle order, worker split or resume point, and each
+        # epoch draws fresh randomness. Stored as NNX state so it round-trips
+        # through checkpoints.
         if config.stochastic:
             assert rngs is not None  # guaranteed by the check above
             if config.stream_name is None:
@@ -315,6 +316,7 @@ class OperatorModule(DataraxModule):
         batch_states: PyTree,
         stats: dict[str, Any] | None = None,
         global_indices: jax.Array | None = None,
+        epoch: jax.Array | int | None = None,
     ) -> tuple[PyTree, PyTree]:
         """Apply operator over batch via vmap (parallel) or scan (sequential).
 
@@ -326,18 +328,20 @@ class OperatorModule(DataraxModule):
         and the DAG executor's fused chain.
 
         Randomness is keyed per record: each element's PRNG key is
-        ``fold_in(self._base_key, global_index)`` (see ``generate_random_params``),
-        so augmentation is invariant to batch composition, shuffle order, host
-        count, and resume point.
+        ``fold_in(fold_in(self._base_key, epoch), record_index)`` (see
+        ``per_record_keys``), so within an epoch augmentation does not depend on
+        batch composition, shuffle order, worker split or resume point.
 
         Args:
             batch_data: PyTree with arrays having batch dimension as axis 0.
             batch_states: PyTree with arrays having batch dimension as axis 0.
             stats: Optional statistics (if None, uses get_statistics()).
-            global_indices: Optional int array ``(batch_size,)`` of stable global
-                record indices for per-record RNG. When ``None`` (no positional
-                information available), falls back to ``arange(batch_size)``,
-                which is deterministic per batch layout but not globally unique.
+            global_indices: Optional int array ``(batch_size,)`` of stable record
+                indices for per-record RNG. When ``None`` (no record information
+                available), falls back to ``arange(batch_size)``, which is
+                deterministic per batch layout but not globally unique.
+            epoch: The epoch the records belong to, or ``None`` when the keys
+                depend on the record index alone.
 
         Returns:
             Tuple of (transformed_data, transformed_states) as raw PyTrees.
@@ -355,7 +359,7 @@ class OperatorModule(DataraxModule):
             batch_size = extract_batch_size(data_shapes)
             if global_indices is None:
                 global_indices = jnp.arange(batch_size, dtype=jnp.uint32)
-            element_keys = per_record_keys(self._base_key[...], global_indices)
+            element_keys = per_record_keys(self._base_key[...], global_indices, epoch)
             random_params_batch = self.generate_random_params(element_keys, data_shapes)
         else:
             # Deterministic operators receive no random parameters.
@@ -410,6 +414,7 @@ class OperatorModule(DataraxModule):
         batch_states: PyTree,
         stats: dict[str, Any] | None = None,
         global_indices: jax.Array | None = None,
+        epoch: jax.Array | int | None = None,
     ) -> tuple[PyTree, PyTree]:
         """Apply operator on raw dicts without Batch object creation.
 
@@ -421,14 +426,15 @@ class OperatorModule(DataraxModule):
             batch_data: Dict of batched arrays (axis 0 is batch).
             batch_states: Dict of batched state arrays.
             stats: Optional statistics.
-            global_indices: Optional ``(batch_size,)`` global record indices for
+            global_indices: Optional ``(batch_size,)`` stable record indices for
                 per-record RNG (see ``_vmap_apply``). The Pipeline threads the
-                batch start position here so augmentation is position-keyed.
+                indices its source names for the batch.
+            epoch: The epoch the records belong to (see ``_vmap_apply``).
 
         Returns:
             Tuple of (transformed_data, transformed_states) as raw dicts.
         """
-        return self._vmap_apply(batch_data, batch_states, stats, global_indices)
+        return self._vmap_apply(batch_data, batch_states, stats, global_indices, epoch)
 
     def apply_batch(
         self,

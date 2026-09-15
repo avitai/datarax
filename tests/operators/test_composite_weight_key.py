@@ -41,6 +41,7 @@ class TestWeightKeyConfig:
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
             operators=[op1, op2],
             weight_key="op_weights",
+            mix_fields=("value",),
         )
         assert config.weight_key == "op_weights"
         # weights should remain None (not auto-filled with equal weights)
@@ -59,6 +60,7 @@ class TestWeightKeyConfig:
                 strategy=CompositionStrategy.WEIGHTED_PARALLEL,
                 operators=[op1, op2],
                 weight_key="op_weights",
+                mix_fields=("value",),
                 learnable_weights=True,
             )
 
@@ -75,6 +77,7 @@ class TestWeightKeyConfig:
                 strategy=CompositionStrategy.WEIGHTED_PARALLEL,
                 operators=[op1, op2],
                 weight_key="op_weights",
+                mix_fields=("value",),
                 weights=[0.5, 0.5],
             )
 
@@ -99,6 +102,7 @@ class TestWeightKeyBasic:
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
             operators=[op1, op2],
             weight_key="op_weights",
+            mix_fields=("value",),
         )
         composite = CompositeOperatorModule(composite_config)
 
@@ -134,6 +138,7 @@ class TestWeightKeyBasic:
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
             operators=[op1, op2],
             weight_key="op_weights",
+            mix_fields=("value",),
         )
         composite = CompositeOperatorModule(composite_config)
 
@@ -161,6 +166,7 @@ class TestWeightKeyBasic:
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
             operators=[op1, op2],
             weight_key="op_weights",
+            mix_fields=("value",),
         )
         composite = CompositeOperatorModule(composite_config)
 
@@ -186,6 +192,7 @@ class TestWeightKeyAdvanced:
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
             operators=[op1, op2],
             weight_key="op_weights",
+            mix_fields=("value",),
         )
         composite = CompositeOperatorModule(composite_config)
 
@@ -217,6 +224,7 @@ class TestWeightKeyAdvanced:
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
             operators=[op1, op2],
             weight_key="op_weights",
+            mix_fields=("value",),
         )
         composite = CompositeOperatorModule(composite_config)
 
@@ -255,6 +263,7 @@ class TestWeightKeyAdvanced:
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
             operators=[op1, op2],
             weight_key="op_weights",
+            mix_fields=("value",),
         )
         composite = CompositeOperatorModule(composite_config)
 

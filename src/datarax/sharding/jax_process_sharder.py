@@ -9,14 +9,15 @@ import jax
 import numpy as np
 from flax import nnx
 
-from datarax.core.sharder import SharderModule, SharderModuleConfig
+from datarax.core.config import DataraxModuleConfig
+from datarax.core.module import DataraxModule
 
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class JaxProcessSharderConfig(SharderModuleConfig):
+class JaxProcessSharderConfig(DataraxModuleConfig):
     """Configuration for JaxProcessSharderModule.
 
     Attributes:
@@ -26,7 +27,7 @@ class JaxProcessSharderConfig(SharderModuleConfig):
     drop_remainder: bool = True
 
 
-class JaxProcessSharderModule(SharderModule):
+class JaxProcessSharderModule(DataraxModule):
     """Shard data across JAX processes.
 
     Implements Grain's ShardByJaxProcess pattern with state tracking.

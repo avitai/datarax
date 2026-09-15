@@ -1,9 +1,9 @@
 """Run a pipeline's stage DAG over one batch.
 
-``Pipeline.__call__`` and the compiled streaming step both execute the plan that
-:func:`~datarax.pipeline.topo.topological_sort` builds: each node receives the
-source batch, or its predecessors' outputs as positional arguments, in
-topological order. The plan is static, so tracing unrolls it into one graph.
+``Pipeline.__call__``, the indexed step and the compiled streaming step all execute the plan
+that :func:`~datarax.pipeline.topo.topological_sort` builds: each node receives the source
+batch, or its predecessors' outputs as positional arguments, in topological order. The plan is
+static, so tracing unrolls it into one graph.
 """
 
 from __future__ import annotations
@@ -15,16 +15,24 @@ import jax
 import jax.numpy as jnp
 
 
-def _record_indices(batch: Any, start: jax.Array | int) -> jax.Array | None:
-    """Global record positions ``start + arange(n)`` for ``batch``, or None without leaves.
+def record_count(batch: Any) -> int | None:
+    """Number of records in ``batch``: the leading axis of its first leaf, or None without leaves.
 
-    ``n`` is the leading axis of the first leaf, which is static under tracing;
-    ``start`` may be a traced scalar.
+    The leading axis is static under tracing.
     """
     leaves = jax.tree.leaves(batch)
-    if not leaves:
+    return leaves[0].shape[0] if leaves else None
+
+
+def record_positions(batch: Any, start: jax.Array | int) -> jax.Array | None:
+    """Positions ``start + arange(n)`` of ``batch``'s records, or None without leaves.
+
+    A stream serves records in order, so these positions name its records. ``start`` may be
+    a traced scalar.
+    """
+    size = record_count(batch)
+    if size is None:
         return None
-    size = leaves[0].shape[0]
     return jnp.asarray(start, dtype=jnp.int32) + jnp.arange(size, dtype=jnp.int32)
 
 
@@ -34,16 +42,17 @@ def run_dag(  # noqa: PLR0913 - the static plan is four separate pipeline attrib
     predecessors: Mapping[str, Sequence[str]],
     sink: str | None,
     batch: Any,
-    start: jax.Array | int,
+    record_indices: jax.Array | None,
+    epoch: jax.Array | int | None,
 ) -> Any:
     """Run the stages over ``batch`` in ``exec_order`` and return the sink's output.
 
-    Stages exposing ``_apply_on_raw(data, states, metadata, global_indices)``
+    Stages exposing ``_apply_on_raw(data, states, stats, global_indices, epoch)``
     (every ``OperatorModule``) take the raw dict path with states threaded
     between them and discarded at the sink; any other ``nnx.Module`` is called
-    with its inputs. Stochastic operators are keyed on the records' global
-    positions ``start + arange(n)``, so augmentation does not depend on how
-    records are grouped into batches.
+    with its inputs. Stochastic operators key each record on ``epoch`` and its
+    entry in ``record_indices``, so within an epoch a record's augmentation does
+    not depend on how records are batched, ordered or split across workers.
 
     Args:
         stages: Stage modules by node name.
@@ -52,14 +61,14 @@ def run_dag(  # noqa: PLR0913 - the static plan is four separate pipeline attrib
             the node consumes the source batch.
         sink: Node whose output is returned, or None for a pipeline without stages.
         batch: Source batch.
-        start: Global position of the batch's first record.
+        record_indices: Stable index of each record in ``batch``.
+        epoch: The epoch the records belong to.
 
     Returns:
         The sink node's output, or ``batch`` unchanged when there are no stages.
     """
     if not exec_order or sink is None:
         return batch
-    global_indices = _record_indices(batch, start)
     outputs: dict[str, Any] = {}
     states: dict[str, Any] = {}
     for name in exec_order:
@@ -68,7 +77,7 @@ def run_dag(  # noqa: PLR0913 - the static plan is four separate pipeline attrib
         stage = stages[name]
         apply_on_raw = getattr(stage, "_apply_on_raw", None)
         if callable(apply_on_raw) and len(inputs) == 1:
-            data, states = apply_on_raw(inputs[0], states, None, global_indices)  # type: ignore[reportGeneralTypeIssues]
+            data, states = apply_on_raw(inputs[0], states, None, record_indices, epoch)  # type: ignore[reportGeneralTypeIssues]
             outputs[name] = data
         else:
             outputs[name] = stage(*inputs)

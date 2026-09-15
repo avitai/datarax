@@ -23,7 +23,6 @@ Core abstractions and building blocks that form the foundation of Datarax pipeli
 ```
 DataraxModule (base)
 ├── OperatorModule          → Transformations (learnable)
-├── SharderModule           → Device sharding
 └── StructuralModule        → Non-parametric structural processors
     ├── DataSourceModule    → Data loading
     ├── BatcherModule       → Batching logic
@@ -70,7 +69,6 @@ new_element = element.replace(
 - [data_source](data_source.md) - `DataSourceModule` for data loading
 - [batcher](batcher.md) - `BatcherModule` for batch creation
 - [sampler](sampler.md) - `SamplerModule` for index sampling
-- [sharder](sharder.md) - `SharderModule` for device sharding
 
 ### Specialized
 

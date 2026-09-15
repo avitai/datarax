@@ -326,9 +326,9 @@ approximations where needed (e.g., `jnp.round` → `x - sg(x - round(x))`
 for posterize). The 15 operators are composed into a single
 `CompositeOperatorModule` with `WEIGHTED_PARALLEL` strategy and
 `weight_key="op_weights"`. At each forward call, the composite extracts
-Gumbel-Softmax weights from `data["op_weights"]` and computes a differentiable
-weighted sum of all augmented outputs — replacing the manual loop + einsum
-pattern with datarax's native composition API.
+Gumbel-Softmax weights from `data["op_weights"]` and replaces the `image` field
+(`mix_fields=("image",)`) with a differentiable weighted sum of the augmented
+images.
 """
 
 
@@ -572,16 +572,17 @@ AUGMENTATION_OPS: list[tuple[str, ElementOperator]] = [
 NUM_OPS = len(AUGMENTATION_OPS)
 
 # Create a CompositeOperatorModule with WEIGHTED_PARALLEL strategy and dynamic
-# weights via weight_key. This replaces the manual loop + einsum pattern with
-# datarax's native composition API. The composite:
+# weights via weight_key. The composite:
 # 1. Extracts Gumbel-Softmax weights from data["op_weights"]
 # 2. Passes clean data (image + magnitude) to each augmentation operator
-# 3. Computes the weighted sum of all augmented outputs
+# 3. Replaces "image" (mix_fields) with the weighted sum of all augmented images;
+#    "magnitude" passes through unchanged
 aug_composite = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.WEIGHTED_PARALLEL,
         operators=[op for _, op in AUGMENTATION_OPS],
         weight_key="op_weights",
+        mix_fields=("image",),
     )
 )
 
@@ -856,7 +857,7 @@ def apply_augmentation_slot(
 
     Computes per-image Gumbel-Softmax weights via batched JAX operations, then
     delegates to CompositeOperatorModule's native Batch processing for the
-    weighted sum of all augmentation operators. No manual vmap required —
+    weighted sum of the augmented images. No manual vmap required —
     the composite handles batch parallelism internally.
 
     Args:
@@ -883,7 +884,7 @@ def apply_augmentation_slot(
     # The composite's __call__ → apply_batch → _vmap_apply handles:
     #   1. Extracting op_weights from data[weight_key] per element
     #   2. Stripping weight_key so children only see {image, magnitude}
-    #   3. Computing weighted sum of all 15 augmentation outputs
+    #   3. Replacing "image" with the weighted sum of all 15 augmented images
     batch = Batch.from_parts(
         data={
             "image": images,
