@@ -135,7 +135,6 @@ for batch in pipeline:
 - **API Reference** - Complete API documentation
 - **Module Documentation** - Detailed documentation for each module
 - **Examples** - Usage examples and tutorials
-- **Migration Guides** - Guides for migrating between versions
 
 ## Contributing
 

@@ -79,6 +79,13 @@ def test_pipeline_iterates_a_get_batch_at_source_through_the_compiled_session() 
         np.testing.assert_array_equal(got, want)
 
 
+def test_a_source_that_serves_records_in_order_names_them_by_position() -> None:
+    """Without an override, record ids are the wrapped positions ``get_batch_at`` reads."""
+    ids = _IndexedOnly().record_indices_at(start=6, size=4)
+
+    np.testing.assert_array_equal(np.asarray(ids), np.array([6, 7, 0, 1]))
+
+
 def test_iterating_a_source_without_an_access_method_names_both() -> None:
     pipeline = Pipeline(source=_NoAccess(), stages=[], batch_size=4, rngs=nnx.Rngs(0))
 

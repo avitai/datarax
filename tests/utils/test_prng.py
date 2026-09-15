@@ -36,6 +36,18 @@ class TestPerRecordKeys:
         keys1 = per_record_keys(jax.random.key(1), jnp.array([7]))
         assert not jnp.array_equal(jax.random.key_data(keys0[0]), jax.random.key_data(keys1[0]))
 
+    def test_the_epoch_folds_in_before_the_record(self):
+        """Each epoch derives its own key for a record: fold_in(fold_in(base, epoch), record)."""
+        base = jax.random.key(0)
+        records = jnp.array([4, 9])
+
+        epoch0 = per_record_keys(base, records, epoch=jnp.int32(0))
+        epoch1 = per_record_keys(base, records, epoch=jnp.int32(1))
+
+        expected = jax.random.fold_in(jax.random.fold_in(base, 1), 9)
+        assert not jnp.array_equal(jax.random.key_data(epoch0), jax.random.key_data(epoch1))
+        assert jnp.array_equal(jax.random.key_data(epoch1[1]), jax.random.key_data(expected))
+
 
 class TestCreateRngs:
     """Tests for create_rngs function."""

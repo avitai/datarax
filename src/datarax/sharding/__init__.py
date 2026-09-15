@@ -1,11 +1,10 @@
 """Datarax sharding components.
 
-This module provides sharding components for distributed data processing.
+Datarax slices data for the current JAX process. Placing batches on a device mesh and naming
+mesh axes come from ``substrax.spmd`` and ``substrax.mesh``.
 """
 
-# Re-export specific sharders
-from datarax.sharding.array_sharder import ArraySharder
-from datarax.sharding.jax_process_sharder import JaxProcessSharderModule
+from datarax.sharding.jax_process_sharder import JaxProcessSharderConfig, JaxProcessSharderModule
 
 
-__all__ = ["ArraySharder", "JaxProcessSharderModule"]
+__all__ = ["JaxProcessSharderConfig", "JaxProcessSharderModule"]

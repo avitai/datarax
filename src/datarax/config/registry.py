@@ -16,7 +16,6 @@ from datarax.core.batcher import BatcherModule
 from datarax.core.data_source import DataSourceModule
 from datarax.core.operator import OperatorModule
 from datarax.core.sampler import SamplerModule
-from datarax.core.sharder import SharderModule
 from datarax.utils.prng import create_rngs
 
 
@@ -38,7 +37,6 @@ _COMPONENT_TYPES: dict[str, type] = {
     "operator": OperatorModule,
     "sampler": SamplerModule,
     "batcher": BatcherModule,
-    "sharder": SharderModule,
 }
 
 

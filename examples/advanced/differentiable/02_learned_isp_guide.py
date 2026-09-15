@@ -768,10 +768,9 @@ This is where it all comes together. We define a loss function that:
 2. Feeds processed images to the detector
 3. Computes classification loss
 
-The `CompositeOperatorModule(SEQUENTIAL)` replaces a manual operator loop:
-instead of manually creating intermediate `Batch` objects per operator, the
-sequential strategy chains `.apply()` calls internally — output of op_N feeds
-as input to op_N+1.
+The `CompositeOperatorModule(SEQUENTIAL)` chains the stages: the sequential
+strategy calls `.apply()` internally, feeding the output of op_N to op_N+1,
+with no intermediate `Batch` per operator.
 
 `nnx.value_and_grad` computes gradients that flow from the loss all the way
 back through the detector AND all 5 ISP stages inside the composite.

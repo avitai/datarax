@@ -167,19 +167,24 @@ class BatchMixOperator(OperatorModule):
         # cutmix
         return self._apply_cutmix(batch, key)
 
-    def _mix_key(self, global_indices: jax.Array | None) -> jax.Array:
+    def _mix_key(
+        self, global_indices: jax.Array | None, epoch: jax.Array | int | None = None
+    ) -> jax.Array:
         """Return the batch-level mixing key.
 
         Batch mixing is inherently batch-level (it permutes across the batch), so
-        it uses a single key. When the batch's global record indices are known,
-        the key is derived from the operator's stable base key and the batch's
-        first global index — making the mix reproducible across batch composition,
-        host count, and resume. Otherwise it falls back to the RNG stream.
+        it uses a single key. When the batch's record indices are known, the key is
+        derived from the operator's stable base key, the epoch when given, and the
+        batch's first record index, so a resumed run mixes the same batch the same
+        way. Otherwise it falls back to the RNG stream.
         """
         assert self.rngs is not None, "BatchMixOperator requires rngs"
         assert self.stream_name is not None, "BatchMixOperator requires stream_name"
         if global_indices is not None:
-            return jax.random.fold_in(self._base_key[...], global_indices[0])
+            base_key = self._base_key[...]
+            if epoch is not None:
+                base_key = jax.random.fold_in(base_key, epoch)
+            return jax.random.fold_in(base_key, global_indices[0])
         return self.rngs[self.stream_name]()
 
     def _apply_mixup(self, batch: Batch, key: jax.Array) -> Batch:
@@ -232,11 +237,12 @@ class BatchMixOperator(OperatorModule):
         batch_states: PyTree,
         stats: dict[str, Any] | None = None,
         global_indices: jax.Array | None = None,
+        epoch: jax.Array | int | None = None,
     ) -> tuple[PyTree, PyTree]:
         """Apply batch-level mixing in the DAG fused raw-batch path.
 
-        Accepts ``global_indices`` (threaded by the Pipeline) so the batch-mix
-        key is reproducible from the batch's global start index.
+        Accepts ``global_indices`` and ``epoch`` (threaded by the Pipeline) so the
+        batch-mix key is reproducible from the batch's first record and its epoch.
         """
         del stats
 
@@ -244,7 +250,7 @@ class BatchMixOperator(OperatorModule):
         if batch_size < 2:
             return batch_data, batch_states
 
-        key = self._mix_key(global_indices)
+        key = self._mix_key(global_indices, epoch)
         if self.config.mode == "mixup":
             return self._apply_mixup_raw(batch_data, batch_states, key)
         return self._apply_cutmix_raw(batch_data, batch_states, key)

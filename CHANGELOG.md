@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- datarax requires substrax 0.1.7, whose `place_batch_on_shards` places the NumPy leaves of a host
+  batch and assembles a global batch from each process's slice.
+- `CompositeOperatorConfig` for `WEIGHTED_PARALLEL` takes `mix_fields`, the dotted paths of the
+  data fields to combine. It defaults to the fields the child operators declare they write
+  (`target_key` or `field_key`) and must be given when a child declares none, such as an
+  `ElementOperator` or `MapOperator`. Static weights still form a linear combination.
+  `learnable_weights=True` now stores logits in `weight_logits`, initialized to
+  `log(weights / sum(weights))` and mixed with `softmax(logits / temperature)` (new
+  `temperature`, default 1.0; initial weights must be positive), as DARTS and Faster
+  AutoAugment learn operation mixtures. The DDSP and DADA guides name their mixed field.
+- `ModalityOperator` reads and writes dotted field paths through the new
+  `datarax.core.field_paths.get_field` and `set_field`, which weighted-parallel composites use too.
 - The sharding examples and their notebooks, the sharding docs pages, the distributed scaling
   benchmark and the comparison example build meshes with `substrax.mesh.DeviceMeshManager` and place
   batches with `substrax.spmd.create_data_parallel_sharding` and `place_batch_on_shards`, replacing
@@ -57,9 +69,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `substrax.runtime` (`JaxRuntime`, `apply_runtime`, `merge_xla_flags`), and the compilation
   wrappers give way to `jax.jit`, `jax.shard_map`, `jax.jit(donate_argnums=...)` and
   `jax.checkpoint`.
+- `DataraxModule.get_operation_stats`, `reset_operation_stats`, the applied and skipped operation
+  counters and the `IterationCount` variable type. Nothing outside the tests incremented the
+  counters, so they always read zero while every module carried them through each compiled step.
+- `datarax.sharding.ArraySharder`, `datarax.core.SharderModule` and `SharderModuleConfig`, which
+  duplicated substrax. Place a batch on a mesh with `substrax.spmd.place_batch_on_shards`, map
+  logical axis names with `substrax.mesh.MeshRules` and `partition_spec_for_names`, build a named
+  sharding with `substrax.mesh.create_named_sharding`, apply a function per shard with
+  `flax.nnx.shard_map` and create a partitioned parameter with `flax.nnx.with_partitioning`.
+  `JaxProcessSharderModule` and `JaxProcessSharderConfig` now derive from `DataraxModule` and
+  `DataraxModuleConfig`, `datarax.sharding` exports both, and the component registry has no
+  `sharder` type.
 
 ### Fixed
 
+- A `WEIGHTED_PARALLEL` composite took the weighted sum of every field of its operators'
+  outputs, so fields no operator wrote were scaled whenever the weights did not sum to one and
+  integer fields became floats (with weights `[1.0, 0.1]`, an untouched `f0_hz` of 440 became
+  484 and an int32 label of 3 became 3.3). Only the `mix_fields` are combined now; every other
+  field passes through from the input unchanged.
+- Stochastic operators in a `Pipeline` keyed each record's randomness on its position in the
+  epoch, and that position restarts every epoch. A record's augmentation therefore changed when
+  the order was shuffled, and repeated identically every epoch (every record with
+  `shuffle=False`, every slot with `shuffle=True`). Keys are now
+  `fold_in(fold_in(base_key, epoch), record_index)`, where `record_index` is the stable index
+  that `DataSourceModule.record_indices_at` names for each record `get_batch_at` serves. Within
+  an epoch a record keeps its augmentation across batch size, shuffle order, worker split and
+  resume point, and every epoch draws fresh augmentation. The default `record_indices_at` names
+  records by position; `MemorySource`, the eager sources and `MixDataSourcesNode` name the
+  records they shuffle, partition or mix. `per_record_keys` and the operators' raw batch path
+  take the epoch.
+- `Pipeline` iteration ignored `MemorySourceConfig(num_workers, shard_id)`, so every worker
+  served every record. `get_batch_at`, `record_indices_at` and `len()` now follow the worker's
+  partition, positions `[shard_id::num_workers]` of the global order, with global record
+  indices.
 - `scripts/run_tests.sh` runs its GPU pass on the GPU. It exported `JAX_PLATFORMS=cuda`, which the
   test environment ignores, so both passes ran on emulated CPU devices; it now sets
   `DATARAX_TEST_JAX_PLATFORMS=cuda`.

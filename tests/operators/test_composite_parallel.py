@@ -457,6 +457,7 @@ class TestParallelAdvanced:
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
             operators=[op1, op2],
             weights=[0.7, 0.3],
+            mix_fields=("value",),
         )
         composite = CompositeOperatorModule(composite_config)
 

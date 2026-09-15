@@ -86,6 +86,7 @@ class TestConfigValidation:
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
             operators=[op1, op2],
             weights=[0.3, 0.7],
+            mix_fields=("value",),
         )
 
         # Should not raise - validation passes
@@ -327,6 +328,7 @@ class TestConfigValidationFailures:
                 strategy=CompositionStrategy.WEIGHTED_PARALLEL,
                 operators=[op1, op2],
                 weights=[0.5],  # Only 1 weight for 2 operators
+                mix_fields=("value",),
             )
 
     def test_branching_without_router_fails(self):

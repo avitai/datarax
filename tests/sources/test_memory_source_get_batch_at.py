@@ -137,7 +137,51 @@ def test_shuffled_handles_partial_final_batch() -> None:
     assert batch["x"].shape == (4,)
 
 
-# ---------- C. Indexed-access capability ----------
+# ---------- C. Record identity ----------
+
+
+def test_record_indices_name_the_records_get_batch_at_serves() -> None:
+    """``record_indices_at`` returns the stable index of every record in the same batch."""
+    src = MemorySource(
+        MemorySourceConfig(shuffle=True),
+        {"x": jnp.arange(16, dtype=jnp.float32) * 10},
+        rngs=nnx.Rngs(shuffle=0),
+    )
+    key = jax.random.key(5)
+
+    ids = src.record_indices_at(start=3, size=4, key=key)
+    batch = src.get_batch_at(start=3, size=4, key=key)
+
+    np.testing.assert_array_equal(np.asarray(batch["x"]), np.asarray(ids) * 10.0)
+
+
+def test_workers_serve_disjoint_global_records_covering_the_source() -> None:
+    """Worker k serves global positions ``[k::num_workers]`` of the (shuffled) order."""
+    length = 10
+    data = {"x": jnp.arange(length, dtype=jnp.float32)}
+    key = jax.random.key(1)
+    whole = MemorySource(MemorySourceConfig(shuffle=True), data, rngs=nnx.Rngs(shuffle=0))
+    order = np.asarray(whole.record_indices_at(start=0, size=length, key=key))
+
+    served: list[np.ndarray] = []
+    for shard_id in range(3):
+        worker = MemorySource(
+            MemorySourceConfig(shuffle=True, num_workers=3, shard_id=shard_id),
+            data,
+            rngs=nnx.Rngs(shuffle=0),
+        )
+        worker_ids = np.asarray(worker.record_indices_at(start=0, size=len(worker), key=key))
+        np.testing.assert_array_equal(worker_ids, order[shard_id::3])
+        np.testing.assert_array_equal(
+            np.asarray(worker.get_batch_at(start=0, size=len(worker), key=key)["x"]), worker_ids
+        )
+        served.append(worker_ids)
+
+    assert [len(ids) for ids in served] == [4, 3, 3]
+    assert sorted(np.concatenate(served).tolist()) == list(range(length))
+
+
+# ---------- D. Indexed-access capability ----------
 
 
 def test_supports_indexed_access_is_true() -> None:

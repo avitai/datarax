@@ -10,7 +10,7 @@ The `CompositeOperatorModule` enables **composing multiple operators** into soph
 | **Conditional Sequential** | Chain with per-operator conditions |
 | **Dynamic Sequential** | Runtime-modifiable chain |
 | **Parallel** | Apply all operators to same input, merge outputs |
-| **Weighted Parallel** | Parallel with learnable weights |
+| **Weighted Parallel** | Weighted sum of named fields, with static, learnable or per-record weights |
 | **Conditional Parallel** | Parallel with per-operator conditions |
 | **Ensemble Mean/Sum/Max/Min** | Parallel + reduction |
 | **Branching** | Route through different paths based on input |
@@ -91,22 +91,45 @@ config = CompositeOperatorConfig(
 branched = CompositeOperatorModule(config)
 ```
 
-## Weighted Parallel (Learnable)
+## Weighted Parallel
 
-Create learnable weighted combinations:
+A weighted parallel composite runs every operator on the same record and replaces the fields
+named in `mix_fields` with the weighted sum of the operators' outputs. Every other field passes
+through from the input unchanged, dtype included. `mix_fields` defaults to the fields the
+operators declare they write (`target_key` or `field_key`) and is required when an operator
+declares none.
+
+Static weights form a linear combination, such as DDSP's harmonic-plus-noise sum:
 
 ```python
 config = CompositeOperatorConfig(
     strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-    operators=[op_a, op_b],
+    operators=[harmonic, noise],
+    weights=[1.0, 0.1],
+    mix_fields=("audio",),
+)
+```
+
+Learnable weights are logits, initialized to `log(weights / sum(weights))` and mixed with
+`softmax(logits / temperature)`, the relaxation DARTS and Faster AutoAugment use to learn which
+operation to apply:
+
+```python
+config = CompositeOperatorConfig(
+    strategy=CompositionStrategy.WEIGHTED_PARALLEL,
+    operators=[brightness, contrast],  # both declare field_key="image"
     weights=[0.5, 0.5],
-    learnable_weights=True,  # Weights become trainable parameters
+    learnable_weights=True,
+    temperature=1.0,
 )
 weighted = CompositeOperatorModule(config, rngs=nnx.Rngs(0))
 
-# Access weights for training
-current_weights = weighted.weights.get_value()
+# The mixture the composite currently applies
+current_weights = nnx.softmax(weighted.weight_logits[...] / config.temperature)
 ```
+
+With `weight_key="op_weights"` the weights come from each record instead, for example
+Gumbel-Softmax weights from an upstream policy.
 
 ## Dynamic Sequential
 

@@ -62,7 +62,7 @@ from flax import nnx
 
 from datarax.core.data_source import DataSourceModule
 from datarax.core.spec import batch_length, validate_batch, validate_device_dtypes
-from datarax.pipeline.dag import run_dag
+from datarax.pipeline.dag import record_count, run_dag
 from datarax.pipeline.iteration import compile_streaming_dag, declared_spec, PipelineIterator
 from datarax.pipeline.topo import topological_sort, validate_dag
 
@@ -284,19 +284,26 @@ class Pipeline(nnx.Module):
           are called directly. This is the recommended shape for new
           pipelines.
 
-        Per-record RNG: stochastic operators are keyed on the batch's global
-        record positions ``self._position + arange(batch_size)`` (the Pipeline
-        owns the position counter; during ``step()`` it equals the batch's start
-        index), so augmentation is invariant to batch composition, host count,
-        and resume point. Traceable under ``nnx.jit``/``nnx.scan``.
+        Per-record RNG: stochastic operators key each record on the epoch and on
+        the index the source names for the record at that position,
+        ``source.record_indices_at(self._position, batch_size, epoch_key)``. During
+        ``step()`` the position is the batch's start, so these are exactly the
+        records ``get_batch_at`` served. Traceable under ``nnx.jit``/``nnx.scan``.
         """
+        size = record_count(batch)
+        record_indices = (
+            None
+            if size is None
+            else self.source.record_indices_at(self._position[...], size, self.epoch_key())
+        )
         return run_dag(
             self._stage_modules,
             self._exec_order,
             self._predecessors,
             self._sink,
             batch,
-            self._position[...],
+            record_indices,
+            self._epoch[...],
         )
 
     def epoch_key(self) -> jax.Array:
@@ -341,8 +348,9 @@ class Pipeline(nnx.Module):
         """
         idx = self._position[...]
         batch = self.source.get_batch_at(idx, self.batch_size, self.epoch_key())
-        # __call__ reads self._position (== idx here) to key per-record RNG on
-        # stable global indices (idx + arange); advance only afterwards.
+        # __call__ reads self._position (== idx here) to ask the source which records it
+        # served, so a subclass overriding __call__ still runs; advance only afterwards.
+        # Under jit XLA computes the shuffle both calls share once.
         batch = self(batch)
         self._position[...] = idx + jnp.int32(self.batch_size)
         return batch

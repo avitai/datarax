@@ -415,29 +415,6 @@ class TestDefaultBatcherImplementation:
 class TestBatcherModuleAdvancedFeatures:
     """Test advanced features of BatcherModule."""
 
-    def test_operation_statistics_tracking(self):
-        """Test operation statistics tracking."""
-        batcher = SimpleTestBatcher(SimpleTestBatcherConfig())
-
-        # Initial stats
-        stats = batcher.get_operation_stats()
-        assert stats["applied_count"] == 0
-        assert stats["skipped_count"] == 0
-
-        # Perform operations
-        elements = [{"data": jnp.array([1.0])}]
-        batcher(elements, batch_size=1)
-
-        # Check stats updated (through inherited behavior)
-        stats = batcher.get_operation_stats()
-        # Note: Actual stats updating would need to be implemented in batch method
-
-        # Reset stats
-        batcher.reset_operation_stats()
-        stats = batcher.get_operation_stats()
-        assert stats["applied_count"] == 0
-        assert stats["skipped_count"] == 0
-
     def test_clone_functionality(self):
         """Test module cloning."""
         config = SimpleTestBatcherConfig(cacheable=True)

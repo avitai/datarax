@@ -231,7 +231,6 @@ nav:
           - module: core/module.md
           - operator: core/operator.md
           - sampler: core/sampler.md
-          - sharder: core/sharder.md
           - spec: core/spec.md
           - structural: core/structural.md
       - Utilities:
@@ -309,7 +308,6 @@ nav:
           - shuffle_sampler: samplers/shuffle_sampler.md
       - Sharding:
           - Overview: sharding/index.md
-          - array_sharder: sharding/array_sharder.md
           - jax_process_sharder: sharding/jax_process_sharder.md
       - Sources:
           - Overview: sources/index.md

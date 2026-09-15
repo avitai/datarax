@@ -8,6 +8,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import PyTree
 
+from datarax.core.field_paths import get_field, set_field
 from datarax.core.operator import OperatorModule
 from datarax.operators.strategies.base import CompositionStrategyImpl, StrategyContext
 from datarax.operators.strategies.merging import merge_output_sequence, merge_outputs_conditional
@@ -91,46 +92,55 @@ class ParallelStrategy(CompositionStrategyImpl):
 
 
 class WeightedParallelStrategy(CompositionStrategyImpl):
-    """Applies operators in parallel and merges with weights."""
+    """Applies operators in parallel and combines the fields they write with weights.
+
+    Only the named ``mix_fields`` come from the operators' outputs, each as the weighted
+    sum ``sum_i weights[i] * output_i[field]``. Every other field of the input passes
+    through unchanged, as Kornia's ``data_keys`` and torchvision's AugMix leave inputs they
+    do not transform alone.
+    """
+
+    def __init__(self, mix_fields: Sequence[str]) -> None:
+        """Initialize with the fields to combine.
+
+        Args:
+            mix_fields: Dotted paths of the data fields to combine.
+        """
+        self.mix_fields = tuple(mix_fields)
 
     def apply(
         self,
         operators: list[OperatorModule],
         context: StrategyContext,
     ) -> tuple[PyTree, PyTree, dict[str, Any]]:
-        """Apply operators in parallel and combine with learned weights.
+        """Apply operators in parallel and combine their ``mix_fields`` with weights.
 
         Args:
             operators: Operators to execute in parallel.
             context: Must include ``extra_params["weights"]`` JAX array.
 
         Returns:
-            Tuple of (weighted_sum, last_state, last_metadata).
+            Tuple of (the input data with each mix field replaced by its weighted sum,
+            last_state, last_metadata).
 
         Raises:
             ValueError: If ``weights`` not found in ``context.extra_params``.
         """
         outputs, states, metadatas = self._execute_operators(operators, context)
 
-        # Get weights from context
         if not context.extra_params or "weights" not in context.extra_params:
             raise ValueError("WeightedParallelStrategy requires 'weights' in extra_params")
 
-        weights = context.extra_params["weights"]
-
-        # Apply weights and summ
-        # Stack outputs first, then multiply by weights and sum
-        weighted_data = jax.tree.map(
-            lambda *args: jnp.sum(
-                jnp.stack(args, axis=0) * weights.reshape(-1, *([1] * (args[0].ndim))), axis=0
-            ),
-            *outputs,
-        )
+        weights = jnp.asarray(context.extra_params["weights"])
+        mixed_data = context.data
+        for path in self.mix_fields:
+            stacked = jnp.stack([get_field(output, path) for output in outputs])
+            mixed_data = set_field(mixed_data, path, jnp.tensordot(weights, stacked, axes=1))
 
         merged_state = states[-1] if states else context.state
         merged_metadata = metadatas[-1] if metadatas else context.metadata
 
-        return weighted_data, merged_state, merged_metadata
+        return mixed_data, merged_state, merged_metadata
 
 
 class ConditionalParallelStrategy(CompositionStrategyImpl):

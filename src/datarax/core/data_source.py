@@ -10,6 +10,8 @@ from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
+import jax.numpy as jnp
+
 from datarax.core.structural import StructuralModule
 from datarax.typing import Element
 
@@ -183,6 +185,36 @@ class DataSourceModule(StructuralModule):
             f"Implement get_batch_at(start, size, key), or get_batch(batch_size) "
             f"for a forward-only stream."
         )
+
+    def record_indices_at(
+        self,
+        start: int | Any,
+        size: int,
+        key: Any | None = None,
+    ) -> Any:
+        """Return the stable index of each record ``get_batch_at(start, size, key)`` returns.
+
+        Stochastic operators key each record's randomness on these indices, so within an
+        epoch a record keeps its augmentation however records are batched, ordered or split
+        across workers. The default names records by their wrapped position
+        ``(start + arange(size)) % len(self)``, which is right for a source that serves
+        records in order. A source that shuffles, partitions or mixes records overrides it.
+
+        Args:
+            start: Starting position, as passed to ``get_batch_at``.
+            size: Number of records (Python int).
+            key: The key passed to ``get_batch_at``.
+
+        Returns:
+            Int32 array of shape ``(size,)``.
+        """
+        del key
+        positions = jnp.asarray(start, dtype=jnp.int32) + jnp.arange(size, dtype=jnp.int32)
+        try:
+            length = len(self)
+        except NotImplementedError:
+            return positions
+        return positions % jnp.int32(length)
 
     def supports_indexed_access(self) -> bool:
         """Whether ``Pipeline`` can drive this source through ``get_batch_at``.

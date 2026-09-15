@@ -17,43 +17,12 @@ import logging
 from collections.abc import Callable, Iterator
 from typing import Any
 
-import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.config import DataraxModuleConfig
 
 
 logger = logging.getLogger(__name__)
-
-
-# ============================================================================
-# Custom Variable Types for Datarax
-# ============================================================================
-
-
-class IterationCount(nnx.Variable):
-    """Variable type for iteration counters.
-
-    This custom Variable type wraps JAX arrays for iteration counters.
-    Using jnp.array(0) instead of plain Python int is critical because:
-
-    1. Python ints are classified as "static" by NNX (not data)
-    2. Static values cannot be mutated inside JAX transforms
-    3. JAX arrays are classified as "data" and CAN be mutated in transforms
-    4. This avoids TraceContextError when mutating inside nnx.jit/nnx.vmap
-
-    The custom type also enables StateAxes control:
-
-    - Broadcast: `nnx.StateAxes({IterationCount: None})`
-    - Carry: `nnx.StateAxes({IterationCount: nnx.Carry})`
-
-
-    """
-
-    pass
-
-
-# Type variable for iterator return type
 
 
 class DataraxModule(nnx.Module):
@@ -70,8 +39,6 @@ class DataraxModule(nnx.Module):
         name: Module name
         _cache: Cache storage (plain dict if cacheable, None otherwise)
         _computed_stats: Computed statistics (nnx.Variable)
-        _applied_count: Applied operation counter (IterationCount)
-        _skipped_count: Skipped operation counter (IterationCount)
     """
 
     def __init__(
@@ -108,53 +75,6 @@ class DataraxModule(nnx.Module):
         # Flag to override precomputed_stats (for reset_statistics)
         # Mark as static for proper serialization
         self._is_stats_reset: bool = nnx.static(False)
-
-        # Initialize operation counters for tracking applied/skipped operations
-        # Uses IterationCount for consistency and transform compatibility
-        self._applied_count: IterationCount = IterationCount(jnp.array(0, dtype=jnp.int32))
-        self._skipped_count: IterationCount = IterationCount(jnp.array(0, dtype=jnp.int32))
-
-    # ========================================================================
-    # Operation Statistics
-    # ========================================================================
-
-    def get_operation_stats(self) -> dict[str, int]:
-        """Get operation statistics.
-
-        Note: This method converts JAX arrays to Python ints for introspection.
-        It is intended for use outside of JIT-compiled functions.
-
-        Returns:
-            Dictionary with 'applied_count' and 'skipped_count'
-        """
-        return {
-            "applied_count": int(self._applied_count[...]),
-            "skipped_count": int(self._skipped_count[...]),
-        }
-
-    def _increment_applied_count(self) -> None:
-        """Increment the applied operation counter.
-
-        This method works inside JIT transforms because it operates on
-        JAX arrays wrapped in IterationCount Variable.
-        """
-        self._applied_count[...] += 1
-
-    def _increment_skipped_count(self) -> None:
-        """Increment the skipped operation counter.
-
-        This method works inside JIT transforms because it operates on
-        JAX arrays wrapped in IterationCount Variable.
-        """
-        self._skipped_count[...] += 1
-
-    def reset_operation_stats(self) -> None:
-        """Reset operation statistics to zero.
-
-        Note: Creates new JAX arrays to reset the counters.
-        """
-        self._applied_count[...] = 0
-        self._skipped_count[...] = 0
 
     # ========================================================================
     # Statistics System

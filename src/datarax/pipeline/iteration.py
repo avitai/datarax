@@ -41,7 +41,7 @@ import numpy as np
 from flax import nnx
 
 from datarax.core.spec import batch_length
-from datarax.pipeline.dag import run_dag
+from datarax.pipeline.dag import record_positions, run_dag
 
 
 if TYPE_CHECKING:
@@ -258,8 +258,12 @@ def _dag_step(graphdef: Any, plan: tuple[Any, ...]) -> Callable[..., Any]:
     @jax.jit
     def step(mutable_state: Any, read_only_state: Any, batch: Any) -> tuple[Any, _Writes]:
         def run(graph: Any) -> Any:
-            stages, position = graph
-            output = run_dag(stages, exec_order, predecessors, sink, batch, position[...])
+            stages, position, epoch = graph
+            # A stream serves records in order, so their positions name them.
+            record_indices = record_positions(batch, position[...])
+            output = run_dag(
+                stages, exec_order, predecessors, sink, batch, record_indices, epoch[...]
+            )
             position[...] = position[...] + jnp.int32(batch_length(batch))
             return output
 
@@ -288,7 +292,7 @@ def compile_streaming_dag(pipeline: Pipeline) -> Callable[[Any], Any]:
     Returns:
         A function taking a validated batch and returning the sink's output.
     """
-    graph = (pipeline._stage_modules, pipeline._position)
+    graph = (pipeline._stage_modules, pipeline._position, pipeline._epoch)
     graphdef, per_batch_state, staged_state = nnx.split(graph, _is_per_batch_state, ...)
     plan = (
         tuple(pipeline._exec_order),

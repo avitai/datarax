@@ -24,6 +24,7 @@ def test_learnable_weighted_parallel_uses_param_indexing(monkeypatch: pytest.Mon
             operators=[op1, op2],
             weights=[0.7, 0.3],
             learnable_weights=True,
+            mix_fields=("value",),
         )
     )
 

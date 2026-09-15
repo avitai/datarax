@@ -4,8 +4,7 @@ Shard data across JAX processes for multi-host training.
 
 ## See Also
 
-- [Sharding Overview](index.md) - All sharding tools
-- [Array Sharder](array_sharder.md) - Device-level sharding
+- [Sharding Overview](index.md) - Process slicing here, device placement in substrax
 - [Distributed](../distributed/index.md) - Distributed training
 - [Distributed Training Guide](../user_guide/distributed_training.md)
 
