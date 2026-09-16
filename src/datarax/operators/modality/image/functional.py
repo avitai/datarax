@@ -284,31 +284,17 @@ def adjust_contrast(
 ) -> jax.Array:
     """Adjust the contrast of an image.
 
+    Each channel is scaled about its spatial mean, so a uniform image, which has no contrast,
+    is returned unchanged for every factor.
+
     Args:
         image: Input image as JAX array with values in [0, 1].
         factor: Contrast adjustment factor. Values > 1 increase contrast, < 1 decrease it.
 
     Returns:
-        Contrast-adjusted image, clipped to [0, 1].
+        Contrast-adjusted image with the input's shape, clipped to [0, 1].
     """
     mean = jnp.mean(image, axis=(0, 1), keepdims=True)
-
-    # For uniform images, ensure there's a perceptible change if factor != 1.0
-    # This is needed for testing and to avoid numerical issues
-    # Note: We avoid Python `if` on traced values to support JAX transformations
-    # Check if the image is uniform (all pixels are the same)
-    is_uniform = jnp.allclose(image, mean)
-
-    # If image is uniform, add a slight variation
-    # This helps with testing and ensures contrast has a visible effect
-    variation = 0.1 * (factor - 1.0)
-    offset = jnp.array([variation, -variation, variation], dtype=image.dtype)
-    offset = jnp.reshape(offset, (1, 1, -1))
-
-    # Only apply if image is 3-channel, uniform, and factor != 1.0
-    should_adjust = is_uniform & (image.ndim == 3) & (factor != 1.0)
-    image = jnp.where(should_adjust, jnp.clip(image + offset, 0.0, 1.0), image)
-
     adjusted = mean + factor * (image - mean)
     return jnp.clip(adjusted, 0.0, 1.0)
 

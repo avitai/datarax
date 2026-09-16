@@ -228,6 +228,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `functional.adjust_contrast`, which `ContrastOperator` and `color_jitter` apply, returned a
+  one-channel image with three channels, and changed a uniform image by a fabricated per-channel
+  offset. It added a hardcoded three-element offset to any uniform three-channel image whose factor
+  was not 1.0, inside a `jnp.where` whose broadcast reached the output even when its condition was
+  false. The offset is gone: each channel is scaled about its spatial mean, the output has the
+  input's shape, and a uniform image, which has no contrast, comes back unchanged for every factor.
 - `CrepeF0Operator` could only run in eager eval mode. It computed its pad width with
   `jnp.maximum`, which `jnp.pad` cannot read under a trace, so every `jit` path and the
   `batch_strategy="scan"` its own config recommends raised `ConcretizationTypeError`, and in

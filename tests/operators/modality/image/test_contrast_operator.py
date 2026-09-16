@@ -111,6 +111,17 @@ class TestContrastOperatorTransformations:
         expected = jnp.array([[0.35, 0.65], [0.35, 0.65]])[..., None]
         assert jnp.allclose(result["image"], expected, atol=1e-6)
 
+    def test_uniform_image_is_returned_unchanged(self):
+        """A uniform image has no contrast to adjust, so the operator returns it as it is."""
+        config = ContrastOperatorConfig(field_key="image", contrast_factor=1.5, stochastic=False)
+        operator = ContrastOperator(config, rngs=nnx.Rngs(0))
+        image = jnp.full((4, 4, 1), 0.5)
+
+        result, _, _ = operator.apply({"image": image}, {}, {})
+
+        assert result["image"].shape == image.shape
+        assert jnp.array_equal(result["image"], image)
+
     def test_clip_range_applied(self):
         """Test that clip_range is applied."""
         config = ContrastOperatorConfig(

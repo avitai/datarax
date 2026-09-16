@@ -2,6 +2,7 @@
 
 import jax
 import jax.numpy as jnp
+import pytest
 
 from datarax.operators.modality.image import functional
 
@@ -37,6 +38,21 @@ class TestFunctionalOps:
         result = functional.adjust_contrast(image, 1.2)
         expected = jnp.array([[0.38, 0.62], [0.38, 0.62]])[..., None]
         assert jnp.allclose(result, expected, atol=1e-6)
+
+    @pytest.mark.parametrize("channels", [1, 3])
+    def test_adjust_contrast_keeps_the_channel_count(self, channels):
+        """The output has the input's shape, whatever its channel count."""
+        image = jnp.linspace(0.2, 0.8, 4 * channels).reshape(2, 2, channels)
+        assert functional.adjust_contrast(image, 1.2).shape == image.shape
+
+    @pytest.mark.parametrize("channels", [1, 3])
+    @pytest.mark.parametrize("factor", [0.5, 1.0, 1.5, 3.0])
+    def test_adjust_contrast_leaves_a_uniform_image_unchanged(self, channels, factor):
+        """A uniform image has no contrast to adjust, so it comes back as it went in."""
+        image = jnp.full((4, 4, channels), 0.5)
+        result = functional.adjust_contrast(image, factor)
+        assert result.shape == image.shape
+        assert jnp.array_equal(result, image)
 
     def test_rotate(self):
         """Test bilinear rotation."""
