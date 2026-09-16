@@ -19,7 +19,6 @@ class ConstantMockOperator(OperatorModule):
     def __init__(self, value: float, name: str = "mock"):
         self.value = value
         self.name = name
-        self.statistics = {f"{name}_stat": 1.0}
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
         del random_params, stats
@@ -40,7 +39,6 @@ class MultiplierMockOperator(OperatorModule):
     def __init__(self, multiplier: float = 2.0, name: str = "mock"):
         self.multiplier = multiplier
         self.name = name
-        self.statistics = {f"{name}_stat": 1.0}
 
     def apply(self, data, state, metadata, random_params=None, stats=None):
         del random_params, stats

@@ -209,8 +209,6 @@ class ConditionalParallelStrategy(CompositionStrategyImpl):
             states.append(out_state)
             metadatas.append(out_metadata)
 
-            self._emit_operator_statistics(operator, i, context.stats_callback)
-
         if not outputs:
             return context.data, context.state, context.metadata
 

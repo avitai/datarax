@@ -238,9 +238,6 @@ class TestBranchingAdvanced:
         result_data_b = result_batch_b.get_data()
         assert jnp.allclose(result_data_b["value"], jnp.array([[70.0]]))
 
-        # Statistics tracking works (even if MapOperator doesn't populate them)
-        assert hasattr(composite, "operator_statistics")
-
     def test_branching_different_operator_types_per_branch(self):
         """Test branching with different operator types on each branch."""
         rngs = nnx.Rngs(0)

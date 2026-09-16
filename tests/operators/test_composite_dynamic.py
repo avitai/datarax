@@ -218,20 +218,13 @@ class TestDynamicSequential:
         )
         composite = CompositeOperatorModule(composite_config)
 
-        # Apply once to initialize statistics
         batch = Batch([Element(data={"value": jnp.array([5.0])})])
         composite(batch)
-
-        # Verify composite has statistics attribute
-        assert hasattr(composite, "operator_statistics")
 
         # Modify operators
         config3 = MapOperatorConfig(stochastic=False)
         op3 = MapOperator(config3, fn=lambda x, _key: x * 3, rngs=rngs)
         composite.add_operator(op3)
-
-        # Verify statistics still exist after modification
-        assert hasattr(composite, "operator_statistics")
 
         # Apply again to verify it still works
         result_batch2 = composite(batch)

@@ -2,7 +2,6 @@
 
 import abc
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,7 +23,6 @@ class StrategyContext:
     metadata: dict[str, Any]
     random_params: dict[str, Any] | None = None
     extra_params: dict[str, Any] | None = None
-    stats_callback: Callable[[int, dict[str, Any]], None] | None = None
 
 
 class CompositionStrategyImpl(abc.ABC):
@@ -73,17 +71,6 @@ class CompositionStrategyImpl(abc.ABC):
             (data, state, metadata, random_params),
         )
 
-    @staticmethod
-    def _emit_operator_statistics(
-        operator: OperatorModule,
-        operator_index: int,
-        stats_callback: Callable[[int, dict[str, Any]], None] | None,
-    ) -> None:
-        """Send operator statistics to callback when available."""
-        stats = getattr(operator, "statistics", None)
-        if stats_callback and stats:
-            stats_callback(operator_index, stats)
-
     def _execute_operators(
         self,
         operators: list[OperatorModule],
@@ -107,7 +94,6 @@ class CompositionStrategyImpl(abc.ABC):
             outputs.append(out_data)
             states.append(out_state)
             metadatas.append(out_metadata)
-            self._emit_operator_statistics(operator, i, context.stats_callback)
         return outputs, states, metadatas
 
     @abc.abstractmethod
