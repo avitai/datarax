@@ -241,6 +241,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `PipelineIterator.get_state()` returns `position` as an `int`. It was an `np.int64`, so the
+  state the method documents as JSON-serializable failed `json.dumps`, and a checkpoint store
+  building its restore template from the state refused the NumPy scalar.
 - `functional.adjust_contrast`, which `ContrastOperator` and `color_jitter` apply, returned a
   one-channel image with three channels, and changed a uniform image by a fabricated per-channel
   offset. It added a hardcoded three-element offset to any uniform three-channel image whose factor

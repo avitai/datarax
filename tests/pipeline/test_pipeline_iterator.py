@@ -16,6 +16,8 @@ its equivalence with the plain ``step()`` path and its state semantics:
 
 from __future__ import annotations
 
+import json
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -235,9 +237,23 @@ class TestIteratorState:
         state = iterator.get_state()
         assert isinstance(state, dict)
         assert state["position"] == _BATCH
-        assert type(state["position"]) is np.int64
+        assert type(state["position"]) is int
         assert isinstance(state["rng_counts"], list)
         assert all(isinstance(c, int) for c in state["rng_counts"])
+
+    def test_state_survives_a_json_round_trip(self):
+        """The state is JSON: what ``json.loads`` gives back resumes the same batches."""
+        reference = _session(_pipeline(stochastic=True))
+        for _ in range(3):
+            next(reference)
+        checkpoint = json.loads(json.dumps(reference.get_state()))
+        expected = [np.asarray(next(reference)["x"]) for _ in range(3)]
+
+        resumed = _session(_pipeline(stochastic=True))
+        resumed.set_state(checkpoint)
+        got = [np.asarray(next(resumed)["x"]) for _ in range(3)]
+        for g, e in zip(got, expected, strict=True):
+            np.testing.assert_array_equal(g, e)
 
     def test_state_shapes_stable_across_life(self):
         iterator = _session(_pipeline(stochastic=True))
