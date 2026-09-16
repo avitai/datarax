@@ -377,10 +377,7 @@ datarax/
 │   │   └── 09_advanced_operators_tutorial.py
 │   │
 │   ├── comparison/
-│   │   ├── quick_demo.py
-│   │   ├── 02_stateful_transformations.py
-│   │   ├── 03_distributed_memory_efficient.py
-│   │   ├── 04_end_to_end_pipeline.py
+│   │   ├── 01_grain_datarax_quickref.py     # Tier 1: Grain and Datarax side by side
 │   │   └── README.md
 │   │
 │   ├── config/

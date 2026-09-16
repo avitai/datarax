@@ -162,7 +162,7 @@ class TestExampleDiscovery:
 
         found = [path.relative_to(tmp_path).as_posix() for path in find_example_files(tmp_path)]
 
-        assert found == ["advanced/02_guide.py", "core/01_quickstart.py"]
+        assert found == ["advanced/02_guide.py", "comparison/04_versus.py", "core/01_quickstart.py"]
 
     def test_a_single_example_file_is_returned_as_given(self, tmp_path: Path) -> None:
         example = tmp_path / "01_quickstart.py"

@@ -222,12 +222,8 @@ def validate_file(
 
 
 def is_tutorial_example(path: Path) -> bool:
-    """Whether an example file is a numbered tutorial, not a test helper or a comparison script."""
-    return (
-        re.match(r"^\d+_", path.name) is not None
-        and "test" not in path.name.lower()
-        and "comparison" not in path.parts
-    )
+    """Whether an example file is a numbered tutorial rather than a test helper."""
+    return re.match(r"^\d+_", path.name) is not None and "test" not in path.name.lower()
 
 
 def find_example_files(base_path: Path) -> list[Path]:

@@ -13,7 +13,7 @@ examples/
 │                                 #   dag, differentiable, distributed,
 │                                 #   multi_source, performance, sampling, training)
 ├── integration/                  # Source integrations (arrayrecord, huggingface, tfds)
-├── comparison/                   # Framework comparison scripts
+├── comparison/                   # Grain and Datarax side by side
 ├── config/                       # Configuration system examples
 ├── utils/                        # Shared utilities for examples
 ├── _templates/                   # Example templates
@@ -78,9 +78,9 @@ Configuration system examples demonstrating:
 - Schema validation with `PipelineSchema`
 
 ### Comparison (`comparison/`)
-Framework comparison scripts demonstrating the architectural differences between
-Datarax's NNX-based stateful approach and Google Grain's stateless framework.
-See `comparison/README.md` for detailed documentation.
+Tutorials that run one job with Grain and with Datarax, so the two APIs sit side by
+side: reading records, per-record randomness, batching, and resuming an interrupted
+epoch from saved iterator state. See `comparison/README.md` for the index.
 
 ### Utilities (`utils/`)
 Shared utilities used by multiple examples:
