@@ -94,6 +94,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The cloud benchmark launchers (SkyPilot template, Vast orchestrator, Vertex job script) select
   the GPU backend with `JAX_PLATFORMS=cuda,cpu` alone. jax makes the first listed platform the
   default, so the deprecated `JAX_PLATFORM_NAME` they also set is no longer exported.
+- CI's integration, end-to-end and performance jobs depend on the lint job alone and run beside
+  the unit-test matrix instead of after it. They built their own environments and shared no
+  artifact with the unit jobs, so the ordering only delayed their verdicts by the slowest unit
+  cell; `coverage` still joins every tier.
 - CI's long-running tier restores CIFAR-10 from a cache that a new `prepare_example_datasets` job
   fills with `scripts/prepare_example_datasets.py`, so the examples that load it no longer
   download it inside their time budget. The dataset's host sends each connection about 100 KB/s,
