@@ -253,19 +253,15 @@ def eager_get_batch(
 def eager_reset(
     index_var: Any,
     epoch_var: Any,
-    cache: Any | None,
 ) -> None:
     """Shared reset logic for eager sources.
 
     Args:
         index_var: nnx.Variable for current index
         epoch_var: nnx.Variable for current epoch
-        cache: Optional cache to clear
     """
     index_var.set_value(0)
     epoch_var.set_value(0)
-    if cache is not None:
-        cache.clear()
 
 
 def build_eager_element(data: dict[str, Any], idx: int) -> dict[str, Any]:
@@ -588,14 +584,10 @@ def batch_elements_to_dict(elements: list[dict[str, Any]]) -> dict[str, Any]:
 
 def reset_streaming_state(
     epoch_var: Any,
-    cache: Any | None,
 ) -> None:
     """Reset streaming source state to initial values.
 
     Args:
         epoch_var: nnx.Variable for current epoch.
-        cache: Optional cache to clear.
     """
     epoch_var.set_value(0)
-    if cache is not None:
-        cache.clear()

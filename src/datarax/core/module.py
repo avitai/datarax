@@ -37,7 +37,6 @@ class DataraxModule(nnx.Module):
         config: Module configuration
         rngs: Random number generators
         name: Module name
-        _cache: Cache storage (plain dict if cacheable, None otherwise)
         _computed_stats: Computed statistics (nnx.Variable)
     """
 
@@ -63,11 +62,6 @@ class DataraxModule(nnx.Module):
         self.config = nnx.static(config)
         self.rngs = rngs
         self.name = nnx.static(name)
-
-        # Initialize caching system
-        # Use plain dict (not nnx.Dict) - cache is internal state, not parameters
-        # Mark as static to exclude from checkpoints
-        self._cache: dict[int, Any] | None = nnx.static({} if config.cacheable else None)
 
         # Initialize statistics system
         # Use nnx.Variable to make it trackable by NNX
@@ -146,80 +140,6 @@ class DataraxModule(nnx.Module):
         """
         self._computed_stats.set_value(None)
         self._is_stats_reset = True  # Mark that stats have been reset
-
-    # ========================================================================
-    # Caching System
-    # ========================================================================
-
-    def _compute_cache_key(self, input_data: Any) -> int:
-        """Compute cache key from input data using content-based hashing.
-
-        For JAX arrays, computes a hash based on array content (shape, dtype, and values).
-        For PyTrees, recursively hashes all leaves.
-        Subclasses can override for custom keys.
-
-        Args:
-            input_data: Input to compute cache key from (scalars, arrays, or PyTrees)
-
-        Returns:
-            Integer cache key based on content
-        """
-        import jax
-
-        leaves_hash = self._hash_pytree_leaves(input_data, jax)
-        if leaves_hash is not None:
-            return leaves_hash
-        return self._hash_fallback(input_data)
-
-    def _hash_pytree_leaves(self, input_data: Any, jax_module: Any) -> int | None:
-        """Hash all pytree leaves, returning None when pytree traversal fails."""
-        try:
-            leaves = jax_module.tree.leaves(input_data)
-        except (TypeError, ValueError, AttributeError, RuntimeError):
-            return None
-        if not leaves:
-            return hash(())
-        return hash(tuple(self._hash_value(leaf, jax_module) for leaf in leaves))
-
-    def _hash_value(self, value: Any, jax_module: Any) -> int:
-        """Hash a value with special handling for arrays and nested containers."""
-        if isinstance(value, jax_module.Array):
-            return self._hash_jax_array(value)
-        if isinstance(value, (int, float, str, bool, type(None), tuple, frozenset)):
-            return hash(value)
-        if isinstance(value, list):
-            return hash(tuple(self._hash_value(v, jax_module) for v in value))
-        if isinstance(value, dict):
-            hashed_items = tuple(
-                sorted((k, self._hash_value(v, jax_module)) for k, v in value.items())
-            )
-            return hash(hashed_items)
-        return self._hash_fallback(value)
-
-    def _hash_jax_array(self, value: Any) -> int:
-        """Hash a JAX array using shape/dtype and identity.
-
-        Uses only host-side metadata — no device-to-host transfers.
-        Previous implementation sampled values via .tolist() which forced
-        a blocking D2H sync on GPU/TPU.
-        """
-        return hash((value.shape, str(value.dtype), id(value)))
-
-    def _hash_fallback(self, value: Any) -> int:
-        """Hash a value using Python hash, falling back to object identity."""
-        try:
-            return hash(value)
-        except TypeError:
-            return id(value)
-
-    def reset_cache(self) -> None:
-        """Clear the cache.
-
-        Only has effect if cacheable=True in config.
-        """
-        if self._cache is not None:
-            # Clear all entries from the cache
-            self._cache.clear()
 
     # ========================================================================
     # Utilities
@@ -495,10 +415,6 @@ class DataraxModule(nnx.Module):
 
         if self.name:
             parts.append(f"name='{self.name}'")
-
-        # Add key config info
-        if self.config.cacheable:
-            parts.append("cacheable=True")
 
         if parts:
             return f"{class_name}({', '.join(parts)})"

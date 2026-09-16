@@ -9,6 +9,7 @@ from datarax.core.config import (
     DataraxModuleConfig,
     ElementOperatorConfig,
     OperatorConfig,
+    SamplerConfig,
     StructuralConfig,
 )
 from datarax.core.data_source import DataSourceModule
@@ -31,6 +32,7 @@ __all__ = [
     # ===== Unified Architecture =====
     "DataraxModuleConfig",
     "OperatorConfig",
+    "SamplerConfig",
     "StructuralConfig",
     "ElementOperatorConfig",
     "BatchMixOperatorConfig",

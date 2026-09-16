@@ -7,7 +7,7 @@ from typing import Any, Self
 
 from flax import nnx
 
-from datarax.core.config import StructuralConfig
+from datarax.core.config import SamplerConfig
 from datarax.core.sampler import SamplerModule
 from datarax.samplers._iteration import (
     read_epoch_step,
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class EpochAwareSamplerConfig(StructuralConfig):
+class EpochAwareSamplerConfig(SamplerConfig):
     """Configuration for EpochAwareSamplerModule.
 
     Attributes:

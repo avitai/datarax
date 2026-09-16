@@ -7,7 +7,7 @@ from typing import Any
 
 from flax import nnx
 
-from datarax.core.config import StructuralConfig
+from datarax.core.config import SamplerConfig
 from datarax.core.sampler import SamplerModule
 from datarax.samplers._iteration import (
     consume_epoch_step_index,
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class SequentialSamplerConfig(StructuralConfig):
+class SequentialSamplerConfig(SamplerConfig):
     """Configuration for SequentialSamplerModule.
 
     Attributes:

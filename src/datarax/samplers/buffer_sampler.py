@@ -21,7 +21,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax.core.config import StructuralConfig
+from datarax.core.config import SamplerConfig
 from datarax.core.sampler import SamplerModule
 
 
@@ -33,7 +33,7 @@ _READ_MODES = ("sequential", "shuffled")
 
 
 @dataclass(frozen=True)
-class BufferSamplerConfig(StructuralConfig):
+class BufferSamplerConfig(SamplerConfig):
     """Configuration for ``BufferSampler``.
 
     Attributes:

@@ -552,8 +552,6 @@ class MemorySource(DataSourceModule):
         self._shuffle_seed = None
         self._shuffled_indices.set_value(None)
         self._last_shuffle_epoch.set_value(-1)
-        if self._cache is not None:
-            self._cache.clear()
         if self.metadata_manager is not None:
             self.metadata_manager.reset()
 

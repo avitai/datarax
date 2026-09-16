@@ -16,7 +16,7 @@ import pytest
 from flax import nnx
 
 from datarax.core.batcher import BatcherModule
-from datarax.core.config import OperatorConfig, StructuralConfig
+from datarax.core.config import OperatorConfig, SamplerConfig, StructuralConfig
 from datarax.core.data_source import DataSourceModule
 from datarax.core.operator import OperatorModule
 from datarax.core.sampler import SamplerModule
@@ -109,7 +109,7 @@ def test_batcher_module_batch_spec_adds_leading_dim_and_valid_mask() -> None:
 
 
 @dataclass(frozen=True)
-class _MinimalSamplerConfig(StructuralConfig):
+class _MinimalSamplerConfig(SamplerConfig):
     pass
 
 

@@ -221,21 +221,9 @@ class TestEagerReset(unittest.TestCase):
     def test_resets_index_and_epoch(self):
         index_var = MagicMock()
         epoch_var = MagicMock()
-        eager_reset(index_var, epoch_var, cache=None)
+        eager_reset(index_var, epoch_var)
         index_var.set_value.assert_called_with(0)
         epoch_var.set_value.assert_called_with(0)
-
-    def test_clears_cache_if_present(self):
-        index_var = MagicMock()
-        epoch_var = MagicMock()
-        cache = MagicMock()
-        eager_reset(index_var, epoch_var, cache)
-        cache.clear.assert_called_once()
-
-    def test_no_error_with_none_cache(self):
-        index_var = MagicMock()
-        epoch_var = MagicMock()
-        eager_reset(index_var, epoch_var, None)  # Should not raise
 
 
 class TestValidateEagerConfig(unittest.TestCase):

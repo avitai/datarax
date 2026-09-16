@@ -195,7 +195,7 @@ class TestEnhancedDataraxModule:
     @pytest.fixture
     def basic_module(self, rngs):
         """Basic enhanced DataraxModule for testing."""
-        config = DataraxModuleConfig(cacheable=True)
+        config = DataraxModuleConfig()
         return DataraxModule(config, rngs=rngs, name="test_module")
 
     def test_enhanced_initialization(self, rngs):
@@ -204,77 +204,12 @@ class TestEnhancedDataraxModule:
         # Note: batch_stats_fn and precomputed_stats are mutually exclusive
         # Testing precomputed_stats path
         config = DataraxModuleConfig(
-            cacheable=True,
             precomputed_stats={"constant": 42},
         )
         module = DataraxModule(config, rngs=rngs, name="test_module")
 
         assert module.name == "test_module"
-        assert module.config.cacheable is True
         assert module.config.precomputed_stats == {"constant": 42}
-        assert module._cache is not None
-
-    def test_caching_functionality(self, basic_module):
-        """Test caching functionality."""
-        # Test cache initialization
-        assert basic_module._cache is not None
-        assert len(basic_module._cache) == 0
-
-        # Test cache operations
-        test_data = jnp.array([1, 2, 3])
-        cache_key = basic_module._compute_cache_key(test_data)
-
-        # Cache should be empty initially
-        assert cache_key not in basic_module._cache
-
-        # Add to cache
-        result = jnp.array([2, 4, 6])
-        basic_module._cache[cache_key] = result
-
-        # Verify cached result
-        assert cache_key in basic_module._cache
-        assert jnp.array_equal(basic_module._cache[cache_key], result)
-
-        # Test cache reset
-        basic_module.reset_cache()
-        assert len(basic_module._cache) == 0
-
-    def test_cache_key_computation(self, basic_module):
-        """Test cache key computation for different data types."""
-        # Test with hashable types (strings, tuples)
-        key1 = basic_module._compute_cache_key("test_string")
-        key2 = basic_module._compute_cache_key("test_string")
-        key3 = basic_module._compute_cache_key("different_string")
-
-        # Same hashable data should produce same key
-        assert key1 == key2
-        # Different data should produce different key
-        assert key1 != key3
-
-        # Test with JAX arrays - identity-based hashing (no device-to-host sync)
-        # Same array object should produce same key
-        data1 = jnp.array([1, 2, 3])
-        array_key1 = basic_module._compute_cache_key(data1)
-        array_key2 = basic_module._compute_cache_key(data1)
-        assert array_key1 == array_key2
-
-        # Different array objects produce different keys (identity-based)
-        data2 = jnp.array([1, 2, 3])  # Same content, different object
-        array_key3 = basic_module._compute_cache_key(data2)
-        assert array_key1 != array_key3  # Identity-based: different object = different key
-
-        # Different content with different objects also produce different keys
-        data3 = jnp.array([4, 5, 6])  # Different content
-        array_key4 = basic_module._compute_cache_key(data3)
-        assert array_key1 != array_key4
-
-        # Test with PyTree structures - identity-based
-        pytree1 = {"a": jnp.array([1, 2]), "b": jnp.array([3, 4])}
-        # Same object = same key
-        assert basic_module._compute_cache_key(pytree1) == basic_module._compute_cache_key(pytree1)
-        # Different objects = different keys
-        pytree2 = {"a": jnp.array([1, 2]), "b": jnp.array([3, 4])}
-        assert basic_module._compute_cache_key(pytree1) != basic_module._compute_cache_key(pytree2)
 
     def test_statistics_computation(self, rngs):
         """Test batch statistics computation."""
@@ -304,29 +239,16 @@ class TestEnhancedDataraxModule:
 
     def test_enhanced_state_management(self, basic_module):
         """Test enhanced state management including new features."""
-        basic_module._cache["test_key"] = "test_value"
-
         # Get state
         state = basic_module.get_state()
 
-        # _cache is not included as it's not an nnx.Variable
         assert isinstance(state, dict)
 
         # Test state restoration
-        new_config = DataraxModuleConfig(cacheable=True)
+        new_config = DataraxModuleConfig()
         # State restoration is strict: target must have compatible RNG structure.
         new_module = DataraxModule(new_config, rngs=nnx.Rngs(0))
         new_module.set_state(state)
-
-    def test_module_without_caching(self, rngs):
-        """Test module behavior when caching is disabled."""
-        config = DataraxModuleConfig(cacheable=False)
-        module = DataraxModule(config, rngs=rngs)
-
-        assert module._cache is None
-
-        # reset_cache should work even when cache is None
-        module.reset_cache()  # Should not raise error
 
     def test_batch_stats_with_none_function(self, rngs):
         """Test statistics computation when no function is provided."""

@@ -56,7 +56,6 @@ class DataraxModuleConfig:
     Child classes inherit from this and add their specific configuration.
 
     Attributes:
-        cacheable: Whether to enable caching for this module
         batch_stats_fn: Function or module to compute batch statistics dynamically
         precomputed_stats: Static precomputed statistics
 
@@ -66,7 +65,6 @@ class DataraxModuleConfig:
     """
 
     # Common configuration (inherited by all modules)
-    cacheable: bool = False
     batch_stats_fn: Callable | nnx.Module | None = None
     precomputed_stats: dict[str, Any] | None = None
 
@@ -90,7 +88,6 @@ class OperatorConfig(DataraxModuleConfig):
 
     Inherits from DataraxModuleConfig:
 
-        - cacheable: bool
         - batch_stats_fn: Callable | nnx.Module | None
         - precomputed_stats: dict[str, Any] | None
 
@@ -142,7 +139,6 @@ class MapOperatorConfig(OperatorConfig):
 
     Inherits from OperatorConfig:
 
-        - cacheable: bool
         - batch_stats_fn: Callable | nnx.Module | None
         - precomputed_stats: dict[str, Any] | None
         - stochastic: bool (currently must be False - stochastic mode not yet implemented)
@@ -202,7 +198,6 @@ class ElementOperatorConfig(OperatorConfig):
 
     Inherits from OperatorConfig:
 
-        - cacheable: bool
         - batch_stats_fn: Callable | nnx.Module | None
         - precomputed_stats: dict[str, Any] | None
         - stochastic: bool
@@ -243,7 +238,6 @@ class BatchMixOperatorConfig(OperatorConfig):
 
     Inherits from OperatorConfig:
 
-        - cacheable: bool
         - batch_stats_fn: Callable | nnx.Module | None
         - precomputed_stats: dict[str, Any] | None
         - stochastic: bool (always True for BatchMixOperator)
@@ -319,7 +313,6 @@ class StructuralConfig(DataraxModuleConfig):
 
     Inherits from DataraxModuleConfig:
 
-        - cacheable: bool
         - batch_stats_fn: Callable | nnx.Module | None
         - precomputed_stats: dict[str, Any] | None
 
@@ -360,3 +353,24 @@ class StructuralConfig(DataraxModuleConfig):
 
         # Validate stochastic configuration rules
         validate_stochastic_config(self.stochastic, self.stream_name)
+
+
+@dataclass(frozen=True)
+class SamplerConfig(StructuralConfig):
+    """Configuration for SamplerModule, the only module kind that caches its result.
+
+    Inherits from StructuralConfig:
+
+        - stochastic: bool
+        - stream_name: str | None
+        - batch_stats_fn: Callable | nnx.Module | None
+        - precomputed_stats: dict[str, Any] | None
+
+    A sampler maps a request for ``n`` indices to a list of indices, which is worth memoizing.
+    Every other module transforms data it is handed, so it has nothing to key a cache on.
+
+    Attributes:
+        cacheable: Whether the sampler memoizes each sampled result by request size.
+    """
+
+    cacheable: bool = False

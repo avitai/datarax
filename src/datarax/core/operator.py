@@ -512,8 +512,6 @@ class OperatorModule(DataraxModule):
         Returns:
             Transformed batch
         """
-        # TODO: Add caching logic if config.cacheable
-
         # Delegate to apply_batch
         return self.apply_batch(batch)
 
