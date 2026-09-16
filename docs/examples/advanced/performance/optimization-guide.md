@@ -64,14 +64,32 @@ python examples/advanced/performance/01_optimization_guide.py
 
 ## Part 1: Baseline Measurement
 
-Use the `PipelineBenchmark` utility to measure throughput and latency
-percentiles for any pipeline configuration.
+Every measurement in this guide goes through one timing helper. It draws the batch inside
+the timed span, from the request to the batch being ready on the device, after warm-up
+batches that absorb the session's compilation. Timing only `block_until_ready()` on a batch
+the iterator has already produced measures nothing. The `PipelineBenchmark` utility turns
+those per-batch times into throughput and latency percentiles for any pipeline configuration.
 
 ```python
 import time
 import numpy as np
 from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
+
+
+def time_batches(pipeline, warmup_batches: int, num_batches: int) -> list[float]:
+    """Seconds from requesting each batch to that batch being ready on the device."""
+    batches = iter(pipeline)
+    for _ in range(warmup_batches):
+        next(batches)["image"].block_until_ready()
+
+    latencies = []
+    for _ in range(num_batches):
+        start = time.perf_counter()
+        next(batches)["image"].block_until_ready()
+        latencies.append(time.perf_counter() - start)
+    return latencies
+
 
 class PipelineBenchmark:
     """Utility for benchmarking pipeline configurations."""
@@ -83,50 +101,20 @@ class PipelineBenchmark:
         self.results = []
 
     def benchmark(self, pipeline, name: str = "Pipeline") -> dict:
-        """Benchmark a pipeline and return metrics."""
-        # Warmup
-        warmup_count = 0
-        for batch in pipeline:
-            _ = batch["image"].block_until_ready()
-            warmup_count += 1
-            if warmup_count >= self.warmup_batches:
-                break
+        """Time ``measure_batches`` batches of a pipeline and return throughput and latencies."""
+        latencies = time_batches(pipeline, self.warmup_batches, self.measure_batches)
+        samples = self.measure_batches * pipeline.batch_size
+        total_time = sum(latencies)
 
-        # Measurement
-        latencies = []
-        samples = 0
-        batch_count = 0
-
-        start_total = time.time()
-        for batch in pipeline:
-            start_batch = time.time()
-            _ = batch["image"].block_until_ready()
-            latencies.append(time.time() - start_batch)
-
-            samples += batch["image"].shape[0]
-            batch_count += 1
-
-            if batch_count >= self.measure_batches + self.warmup_batches:
-                break
-
-        total_time = time.time() - start_total
-
-        measured_latencies = latencies[self.warmup_batches :]
         result = {
             "name": name,
             "total_samples": samples,
             "total_time": total_time,
-            "throughput": samples / total_time if total_time > 0 else 0,
-            "avg_latency_ms": np.mean(measured_latencies) * 1000 if measured_latencies else 0,
-            "p50_latency_ms": (
-                np.percentile(measured_latencies, 50) * 1000 if measured_latencies else 0
-            ),
-            "p95_latency_ms": (
-                np.percentile(measured_latencies, 95) * 1000 if measured_latencies else 0
-            ),
-            "p99_latency_ms": (
-                np.percentile(measured_latencies, 99) * 1000 if measured_latencies else 0
-            ),
+            "throughput": samples / total_time,
+            "avg_latency_ms": np.mean(latencies) * 1000,
+            "p50_latency_ms": np.percentile(latencies, 50) * 1000,
+            "p95_latency_ms": np.percentile(latencies, 95) * 1000,
+            "p99_latency_ms": np.percentile(latencies, 99) * 1000,
         }
 
         self.results.append(result)
@@ -134,15 +122,10 @@ class PipelineBenchmark:
 
 
 benchmark = PipelineBenchmark(warmup_batches=3, measure_batches=30)
-
-# Baseline measurement
-result = benchmark.benchmark(pipeline, name="Baseline")
-print(f"Throughput: {result['throughput']:,.0f} samples/s")
-print(f"Avg latency: {result['avg_latency_ms']:.2f} ms (p95: {result['p95_latency_ms']:.2f} ms)")
 ```
 
-Throughput and latency depend heavily on your hardware, so run the benchmark
-locally rather than relying on fixed numbers.
+Throughput and latency depend heavily on your hardware. The numbers below come from one
+run on an NVIDIA L40S; measure on the hardware you deploy on.
 
 ## Part 2: Batch Size Optimization
 
@@ -161,38 +144,49 @@ def create_memory_pipeline(data, batch_size):
     return Pipeline(source=source, stages=[prep], batch_size=batch_size, rngs=nnx.Rngs(0))
 
 
-# Benchmark different batch sizes with the Datarax DAG pipeline
+# Baseline measurement
+result = benchmark.benchmark(create_memory_pipeline(test_data, 64), name="Baseline")
+print(f"Baseline (batch 64): {result['throughput']:,.0f} samples/s")
+print(f"Avg latency: {result['avg_latency_ms']:.2f} ms (p95: {result['p95_latency_ms']:.2f} ms)")
+
+# Benchmark different batch sizes with the Datarax DAG pipeline. Each trial times up to 50
+# batches after 3 warm-up batches; an epoch of NUM_SAMPLES bounds the count at the large sizes.
 batch_sizes = [8, 16, 32, 64, 128, 256, 512]
 batch_results = []
 
-print("Batch Size Sweep (Datarax Pipeline):")
+print("\nBatch Size Sweep (Datarax Pipeline):")
 for bs in batch_sizes:
-    # Run multiple trials for stable measurements
+    # Run multiple trials
     throughputs = []
+    num_batches = min(50, NUM_SAMPLES // bs - 3)
     for trial in range(3):
         pipeline = create_memory_pipeline(test_data, bs)
-
-        samples = 0
-        start = time.time()
-        for i, batch in enumerate(pipeline):
-            if i >= 50:
-                break
-            _ = batch["image"].block_until_ready()
-            samples += batch["image"].shape[0]
-        elapsed = time.time() - start
-        throughputs.append(samples / elapsed)
+        latencies = time_batches(pipeline, warmup_batches=3, num_batches=num_batches)
+        throughputs.append(num_batches * bs / sum(latencies))
 
     avg_tp = np.mean(throughputs)
     batch_results.append({"batch_size": bs, "throughput": avg_tp, "std": np.std(throughputs)})
     print(f"  Batch {bs:4d}: {avg_tp:,.0f} samples/s (±{np.std(throughputs):.0f})")
-
-# Find optimal
-optimal = max(batch_results, key=lambda x: x["throughput"])
-print(f"\nOptimal batch size: {optimal['batch_size']}")
 ```
 
-Each batch size runs 3 trials of 50 batches so the reported throughput carries
-a standard deviation. The optimal size is hardware dependent.
+**Terminal Output:**
+```
+Baseline (batch 64): 270,217 samples/s
+Avg latency: 0.24 ms (p95: 0.31 ms)
+
+Batch Size Sweep (Datarax Pipeline):
+  Batch    8: 36,204 samples/s (±827)
+  Batch   16: 73,563 samples/s (±3534)
+  Batch   32: 149,587 samples/s (±2100)
+  Batch   64: 288,573 samples/s (±13653)
+  Batch  128: 636,699 samples/s (±30710)
+  Batch  256: 1,086,639 samples/s (±48406)
+  Batch  512: 2,000,521 samples/s (±182913)
+```
+
+Each batch size runs 3 trials, so the reported throughput carries a standard deviation. On the
+L40S the per-batch time barely moves with the batch size, so throughput grows almost linearly
+with it up to 512. The optimal size is hardware dependent.
 
 ## Part 3: Operator Profiling
 
@@ -222,25 +216,9 @@ def create_operator_pipeline(data, operator, batch_size=64):
 
 
 def benchmark_operator(name, operator, data, num_batches=30):
-    """Benchmark a single operator, reporting per-batch latency in ms."""
-    # Warmup
+    """Per-batch latency of a pipeline with one operator, after 5 warm-up batches."""
     pipeline = create_operator_pipeline(data, operator)
-    for i, batch in enumerate(pipeline):
-        if i >= 5:
-            break
-        _ = batch["image"].block_until_ready()
-
-    # Measure
-    pipeline = create_operator_pipeline(data, operator)
-    latencies = []
-    for i, batch in enumerate(pipeline):
-        if i >= num_batches + 5:
-            break
-        start = time.time()
-        _ = batch["image"].block_until_ready()
-        latencies.append(time.time() - start)
-
-    measured = latencies[5:]
+    measured = time_batches(pipeline, warmup_batches=5, num_batches=num_batches)
     return {
         "name": name,
         "avg_ms": np.mean(measured) * 1000,
@@ -285,8 +263,20 @@ for name, op in operators.items():
     print(f"  {name:12s}: {result['avg_ms']:6.2f} ms (p95: {result['p95_ms']:.2f} ms)")
 ```
 
+**Terminal Output:**
+```
+Operator Benchmarks:
+  Baseline    :   0.23 ms (p95: 0.32 ms)
+  Brightness  :   0.25 ms (p95: 0.30 ms)
+  Contrast    :   0.24 ms (p95: 0.32 ms)
+  Rotation    :   0.32 ms (p95: 0.50 ms)
+  Noise       :   0.26 ms (p95: 0.35 ms)
+```
+
 Each operator is measured against the `Baseline` (normalization only), so you
-can read off the marginal latency each augmentation adds per batch.
+can read off the marginal latency each augmentation adds per batch: on the L40S the
+pixel-wise operators add a few hundredths of a millisecond and rotation, which resamples
+the image, about a tenth.
 
 ## Part 4: Pipeline Optimization Strategies
 
@@ -415,12 +405,38 @@ figure:
 - **Operator comparison** (`perf-throughput-comparison.png`): average and P95
   per-operator latency as horizontal and grouped bar charts.
 - **Latency distribution** (`perf-latency-distribution.png`): a histogram per
-  operator over 100 batches, with mean and P95 lines marked.
+  operator over 60 batches after 10 warm-up batches, with mean and P95 lines marked.
 - **Memory profiling** (`perf-memory-profile.png`): estimated batch memory
   versus batch size, plus a throughput-per-MB efficiency chart.
 - **Optimization report**: a printed summary of the optimal batch size, each
   operator's overhead relative to baseline, the most memory-efficient batch
   size, and general tuning recommendations.
+
+**Terminal Output:**
+```
+============================================================
+OPTIMIZATION REPORT
+============================================================
+1. BATCH SIZE OPTIMIZATION
+   Optimal batch size: 512
+   Peak throughput: 2,000,521 samples/s
+   Recommendation: Use batch sizes between 256 and 512
+2. OPERATOR OVERHEAD
+   Baseline latency: 0.23 ms
+   Brightness: +0.01 ms (+6%)
+   Contrast: +0.01 ms (+2%)
+   Rotation: +0.09 ms (+39%)
+   Noise: +0.03 ms (+13%)
+3. MEMORY EFFICIENCY
+   Most efficient batch size: 128
+   Throughput/MB: 337226 samples/s/MB
+4. GENERAL RECOMMENDATIONS
+   - Use JIT compilation for custom operators
+   - Minimize Python overhead in operator functions
+   - Prefer vectorized operations over loops
+   - Consider operator order (cheap before expensive)
+============================================================
+```
 
 ## What to Expect
 

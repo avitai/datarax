@@ -437,16 +437,18 @@ for batch in full_pipeline:
     stats["samples"] += batch["image"].shape[0]
     stats["mean_values"].append(float(batch["image"].mean()))
 
-print(f"\nBatches: {stats['batches']}")
-print(f"Samples: {stats['samples']}")
-print(f"Mean pixel value: {sum(stats['mean_values']) / len(stats['mean_values']):.4f}")
+print("\nPipeline processed:")
+print(f"  Batches: {stats['batches']}")
+print(f"  Samples: {stats['samples']}")
+print(f"  Mean pixel value: {sum(stats['mean_values']) / len(stats['mean_values']):.4f}")
 ```
 
 **Terminal Output:**
 ```
-Batches: 4
-Samples: 128
-Mean pixel value: 0.4947
+Pipeline processed:
+  Batches: 4
+  Samples: 128
+  Mean pixel value: 0.4947
 ```
 
 ## Part 7: Custom Operator Patterns

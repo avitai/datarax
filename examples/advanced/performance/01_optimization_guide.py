@@ -118,6 +118,26 @@ print(f"JAX devices: {jax.devices()}")
 
 
 # %%
+def time_batches(pipeline, warmup_batches: int, num_batches: int) -> list[float]:
+    """Seconds from requesting each batch to that batch being ready on the device.
+
+    The first batch of a session compiles it, so ``warmup_batches`` batches are drawn and
+    discarded before ``num_batches`` batches are timed. The request is inside the timed
+    span: timing only ``block_until_ready()`` on a batch the iterator has already produced
+    measures nothing.
+    """
+    batches = iter(pipeline)
+    for _ in range(warmup_batches):
+        next(batches)["image"].block_until_ready()
+
+    latencies = []
+    for _ in range(num_batches):
+        start = time.perf_counter()
+        next(batches)["image"].block_until_ready()
+        latencies.append(time.perf_counter() - start)
+    return latencies
+
+
 class PipelineBenchmark:
     """Utility for benchmarking pipeline configurations."""
 
@@ -128,54 +148,20 @@ class PipelineBenchmark:
         self.results = []
 
     def benchmark(self, pipeline, name: str = "Pipeline") -> dict:
-        """Benchmark a pipeline and return metrics."""
-        # Warmup
-        warmup_count = 0
-        for batch in pipeline:
-            _ = batch["image"].block_until_ready()
-            warmup_count += 1
-            if warmup_count >= self.warmup_batches:
-                break
+        """Time ``measure_batches`` batches of a pipeline and return throughput and latencies."""
+        latencies = time_batches(pipeline, self.warmup_batches, self.measure_batches)
+        samples = self.measure_batches * pipeline.batch_size
+        total_time = sum(latencies)
 
-        # Need fresh pipeline after warmup
-        # (For real benchmarks, create new pipeline)
-
-        # Measurement
-        latencies = []
-        samples = 0
-        batch_count = 0
-
-        start_total = time.time()
-        for batch in pipeline:
-            start_batch = time.time()
-            _ = batch["image"].block_until_ready()
-            latencies.append(time.time() - start_batch)
-
-            samples += batch["image"].shape[0]
-            batch_count += 1
-
-            if batch_count >= self.measure_batches + self.warmup_batches:
-                break
-
-        total_time = time.time() - start_total
-
-        # Compute metrics
-        measured_latencies = latencies[self.warmup_batches :]
         result = {
             "name": name,
             "total_samples": samples,
             "total_time": total_time,
-            "throughput": samples / total_time if total_time > 0 else 0,
-            "avg_latency_ms": np.mean(measured_latencies) * 1000 if measured_latencies else 0,
-            "p50_latency_ms": (
-                np.percentile(measured_latencies, 50) * 1000 if measured_latencies else 0
-            ),
-            "p95_latency_ms": (
-                np.percentile(measured_latencies, 95) * 1000 if measured_latencies else 0
-            ),
-            "p99_latency_ms": (
-                np.percentile(measured_latencies, 99) * 1000 if measured_latencies else 0
-            ),
+            "throughput": samples / total_time,
+            "avg_latency_ms": np.mean(latencies) * 1000,
+            "p50_latency_ms": np.percentile(latencies, 50) * 1000,
+            "p95_latency_ms": np.percentile(latencies, 95) * 1000,
+            "p99_latency_ms": np.percentile(latencies, 99) * 1000,
         }
 
         self.results.append(result)
@@ -222,7 +208,14 @@ def create_memory_pipeline(data, batch_size):
 
 
 # %%
-# Benchmark different batch sizes with Datarax DAG pipeline
+# Baseline measurement
+result = benchmark.benchmark(create_memory_pipeline(test_data, 64), name="Baseline")
+print(f"Baseline (batch 64): {result['throughput']:,.0f} samples/s")
+print(f"Avg latency: {result['avg_latency_ms']:.2f} ms (p95: {result['p95_latency_ms']:.2f} ms)")
+
+# %%
+# Benchmark different batch sizes with Datarax DAG pipeline. Each trial times up to 50 batches
+# after 3 warm-up batches; an epoch of NUM_SAMPLES bounds the count at the large batch sizes.
 batch_sizes = [8, 16, 32, 64, 128, 256, 512]
 batch_results = []
 
@@ -230,18 +223,11 @@ print("\nBatch Size Sweep (Datarax Pipeline):")
 for bs in batch_sizes:
     # Run multiple trials
     throughputs = []
+    num_batches = min(50, NUM_SAMPLES // bs - 3)
     for trial in range(3):
         pipeline = create_memory_pipeline(test_data, bs)
-
-        samples = 0
-        start = time.time()
-        for i, batch in enumerate(pipeline):
-            if i >= 50:
-                break
-            _ = batch["image"].block_until_ready()
-            samples += batch["image"].shape[0]
-        elapsed = time.time() - start
-        throughputs.append(samples / elapsed)
+        latencies = time_batches(pipeline, warmup_batches=3, num_batches=num_batches)
+        throughputs.append(num_batches * bs / sum(latencies))
 
     avg_tp = np.mean(throughputs)
     batch_results.append({"batch_size": bs, "throughput": avg_tp, "std": np.std(throughputs)})
@@ -321,26 +307,9 @@ def create_operator_pipeline(data, operator, batch_size=64):
 
 
 def benchmark_operator(name, operator, data, num_batches=30):
-    """Benchmark a single operator."""
+    """Per-batch latency of a pipeline with one operator, after 5 warm-up batches."""
     pipeline = create_operator_pipeline(data, operator)
-
-    # Warmup
-    for i, batch in enumerate(pipeline):
-        if i >= 5:
-            break
-        _ = batch["image"].block_until_ready()
-
-    # Measure
-    pipeline = create_operator_pipeline(data, operator)
-    latencies = []
-    for i, batch in enumerate(pipeline):
-        if i >= num_batches + 5:
-            break
-        start = time.time()
-        _ = batch["image"].block_until_ready()
-        latencies.append(time.time() - start)
-
-    measured = latencies[5:]
+    measured = time_batches(pipeline, warmup_batches=5, num_batches=num_batches)
     return {
         "name": name,
         "avg_ms": np.mean(measured) * 1000,
@@ -400,8 +369,8 @@ colors = plt.cm.viridis(np.linspace(0.2, 0.8, len(names)))  # type: ignore[repor
 bars = ax1.barh(names, avg_times, color=colors)
 ax1.set_xlabel("Latency (ms)")
 ax1.set_title("Average Operator Latency per Batch")
-for bar, val in zip(bars, avg_times):
-    ax1.text(val + 0.5, bar.get_y() + bar.get_height() / 2, f"{val:.1f}", va="center")
+# Value labels offset in points, so the canvas stays the figure's size at any latency scale
+ax1.bar_label(bars, labels=[f"{val:.2f}" for val in avg_times], padding=3)
 
 # P95 vs Average
 ax2 = axes[1]
@@ -431,18 +400,11 @@ print(f"Saved: {output_dir / 'perf-throughput-comparison.png'}")
 # Collect latency distributions
 latency_distributions = {}
 
+# 60 timed batches after 10 warm-up batches, within the 79-batch epoch of NUM_SAMPLES at batch 64
 for name, op in operators.items():
     pipeline = create_operator_pipeline(test_data, op)
-    latencies = []
-
-    for i, batch in enumerate(pipeline):
-        if i >= 100:
-            break
-        start = time.time()
-        _ = batch["image"].block_until_ready()
-        latencies.append((time.time() - start) * 1000)
-
-    latency_distributions[name] = latencies[10:]  # Skip warmup
+    latencies = time_batches(pipeline, warmup_batches=10, num_batches=60)
+    latency_distributions[name] = [latency * 1000 for latency in latencies]
 
 # %%
 # Plot latency distribution
@@ -555,7 +517,7 @@ for r in op_results:
     if r["name"] != "Baseline":
         overhead = r["avg_ms"] - baseline_time
         overhead_pct = (overhead / baseline_time) * 100
-        print(f"   {r['name']}: +{overhead:.2f} ms (+{overhead_pct:.0f}%)")
+        print(f"   {r['name']}: {overhead:+.2f} ms ({overhead_pct:+.0f}%)")
 
 # Memory efficiency
 best_mem_eff_idx = np.argmax(tp_per_mem)
@@ -609,24 +571,18 @@ def main():
     print("Performance Optimization Guide")
     print("=" * 50)
 
-    # Quick benchmark
+    # Quick benchmark: 20 timed batches after one warm-up batch
     np.random.seed(42)
     data = {
-        "image": np.random.rand(1000, 32, 32, 3).astype(np.float32),
-        "label": np.random.randint(0, 10, (1000,)).astype(np.int32),
+        "image": np.random.rand(NUM_SAMPLES, 32, 32, 3).astype(np.float32),
+        "label": np.random.randint(0, 10, (NUM_SAMPLES,)).astype(np.int32),
     }
 
     # Test different batch sizes
     for bs in [32, 64, 128]:
         pipeline = create_memory_pipeline(data, bs)
-        samples = 0
-        start = time.time()
-        for i, batch in enumerate(pipeline):
-            if i >= 20:
-                break
-            samples += batch["image"].shape[0]
-        elapsed = time.time() - start
-        print(f"Batch {bs}: {samples / elapsed:.0f} samples/s")
+        latencies = time_batches(pipeline, warmup_batches=1, num_batches=20)
+        print(f"Batch {bs}: {20 * bs / sum(latencies):.0f} samples/s")
 
     print("Guide completed successfully!")
 
