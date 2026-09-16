@@ -212,7 +212,7 @@ print(f"Learned mixture weights: {np.round(np.asarray(learned_mixture.mixture_we
 ```
 Mixed field: ('image',)
 Initial mixture weights: [0.5 0.5]
-Loss: first 0.00296, last 8.50e-10
+Loss: first 0.00296, last 8.48e-10
 Learned mixture weights: [0.25 0.75] (target [0.25 0.75])
 ```
 

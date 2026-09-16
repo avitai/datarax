@@ -201,8 +201,8 @@ datarax_losses, datarax_weights = train(datarax_over_grain_share)
 
 **Terminal Output:**
 ```
-Grain:   40 steps, loss first 3.7473, last 5.76e-10
-Datarax: 40 steps, loss first 3.7473, last 5.76e-10
+Grain:   40 steps, loss first 3.7473, last 5.77e-10
+Datarax: 40 steps, loss first 3.7473, last 5.77e-10
 Same records through both loaders give the same losses: True
 Learned weights: [ 2.  -1.   0.5] (true [ 2.  -1.   0.5])
 ```
