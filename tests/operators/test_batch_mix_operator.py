@@ -375,6 +375,27 @@ class TestBatchMixOperatorStochastic:
 
         assert jnp.allclose(result1.get_data()["value"], result2.get_data()["value"])
 
+    def test_a_direct_call_mix_key_differs_from_the_pipeline_key_at_epoch_minus_one(self):
+        """The direct-call key hangs one level below the stream a pipeline key could reach.
+
+        This operator keys a batch on its first record rather than on each one, so it folds one
+        level less deeply than the others. ``fold_in`` casts -1 to ``DIRECT_CALL_STREAM``, so at
+        epoch -1 a bare stream draw would land at exactly the depth of the pipeline's mix key;
+        folding zero into the draw is what keeps the two families apart.
+        """
+        operator = BatchMixOperator(
+            BatchMixOperatorConfig(mode="mixup"), rngs=nnx.Rngs({"batch_mix": 0})
+        )
+
+        # The epoch arrives as an array, which is what wraps -1 around to DIRECT_CALL_STREAM;
+        # fold_in refuses a negative Python int outright.
+        pipeline_key = operator._mix_key(jnp.zeros((1,), jnp.uint32), jnp.int32(-1))
+        direct_key = operator._mix_key(None)
+
+        assert not jnp.array_equal(
+            jax.random.key_data(pipeline_key), jax.random.key_data(direct_key)
+        )
+
 
 class TestBatchMixOperatorJAX:
     """Test JAX compatibility of BatchMixOperator."""

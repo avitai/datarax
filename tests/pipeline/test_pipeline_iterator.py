@@ -444,3 +444,89 @@ class TestImmutableStaging:
         second.close()
         assert not np.array_equal(batch_before, batch_after)
         np.testing.assert_array_equal(batch_after, np.zeros_like(batch_after))
+
+
+class TestIteratorRngCounts:
+    """``rng_counts`` holds one entry per stochastic operator and none for a deterministic one.
+
+    Pipeline iteration keys each record on the operator's ``_base_key``, so an operator's own
+    stream is never drawn from and its count stays 0; the entries that move belong to the
+    pipeline and the source. The list's length therefore depends on how many operators are
+    stochastic, not on how many streams the caller's ``Rngs`` happened to carry.
+    """
+
+    @staticmethod
+    def _counts(pipeline: Pipeline) -> list[int]:
+        iterator = _session(pipeline)
+        counts = iterator.get_state()["rng_counts"]
+        iterator.close()
+        return counts
+
+    def test_a_deterministic_operator_contributes_no_count(self):
+        # The pipeline's own stream, then the source's.
+        assert self._counts(_pipeline()) == [1, 0]
+
+    def test_a_stochastic_operator_contributes_exactly_one(self):
+        # The operator's private stream, the pipeline's, then the source's.
+        assert self._counts(_pipeline(stochastic=True)) == [0, 1, 0]
+
+    def test_operators_sharing_one_rngs_no_longer_share_a_count(self):
+        shared = nnx.Rngs(jitter=0)
+        stages = [
+            ElementOperator(
+                ElementOperatorConfig(stochastic=True, stream_name="jitter"),
+                fn=_jitter,
+                rngs=shared,
+            )
+            for _ in range(2)
+        ]
+        source = MemorySource(MemorySourceConfig(shuffle=False), data=_data(), rngs=nnx.Rngs(0))
+        pipeline = Pipeline(source=source, stages=stages, batch_size=_BATCH, rngs=nnx.Rngs(0))
+
+        assert self._counts(pipeline) == [0, 0, 1, 0]
+
+
+class TestIteratorStateVersioning:
+    """The iterator state names its format, and a state saved without one is upgraded."""
+
+    def test_get_state_names_its_format_version(self):
+        iterator = _session(_pipeline(stochastic=True))
+        next(iterator)
+        state = iterator.get_state()
+        iterator.close()
+
+        assert state["version"] == 1
+
+    def test_a_state_from_the_earlier_layout_resumes_like_its_current_equivalent(self):
+        reference = _session(_pipeline(stochastic=True))
+        for _ in range(3):
+            next(reference)
+        current = reference.get_state()
+        expected = [np.asarray(next(reference)["x"]) for _ in range(3)]
+        reference.close()
+
+        # The operator used to hold the caller's Rngs, whose `default` and `jitter` streams each
+        # carried a count ahead of the pipeline's and the source's; it now contributes one entry.
+        legacy = {
+            "position": current["position"],
+            "epoch": current["epoch"],
+            "rng_counts": [0, 1, *current["rng_counts"][1:]],
+        }
+
+        resumed = _session(_pipeline(stochastic=True))
+        resumed.set_state(legacy)
+        got = [np.asarray(next(resumed)["x"]) for _ in range(3)]
+        resumed.close()
+
+        for g, e in zip(got, expected, strict=True):
+            np.testing.assert_array_equal(g, e)
+
+    def test_a_current_state_with_the_wrong_count_length_is_still_refused(self):
+        iterator = _session(_pipeline(stochastic=True))
+        next(iterator)
+        state = iterator.get_state()
+        state["rng_counts"] = [*state["rng_counts"], 0]
+
+        with pytest.raises(ValueError, match="rng streams"):
+            iterator.set_state(state)
+        iterator.close()

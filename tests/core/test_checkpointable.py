@@ -3,12 +3,16 @@
 from pathlib import Path
 
 import flax.nnx as nnx
+import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from datarax.checkpoint import IteratorCheckpoint
-from datarax.core.config import DataraxModuleConfig
+from datarax.core.config import DataraxModuleConfig, ElementOperatorConfig
 from datarax.core.module import CheckpointableIteratorModule, DataraxModule
+from datarax.core.operator import DIRECT_CALL_STREAM
+from datarax.operators import ElementOperator
 
 
 class SimpleModule(DataraxModule):
@@ -465,3 +469,71 @@ class TestCheckpointEdgeCases:
         new_module.set_state(state)
         assert new_module.optional_field is None
         assert new_module.counter.get_value() == 0
+
+
+class TestOperatorStateUpgradeOnLoad:
+    """A module checkpoint written under the earlier operator layout still restores.
+
+    An operator used to keep the caller's ``Rngs`` and to hold its statistics under
+    ``_computed_stats``. It now derives a private ``_rng_stream`` from ``_base_key`` and stores
+    statistics under ``_statistics``. The saved dict identifies its own layout — ``rngs`` and
+    ``_computed_stats`` appear only in the earlier one — so the upgrade needs no version field,
+    which is what keeps a variable-free module's state empty and refused.
+    """
+
+    @staticmethod
+    def _operator() -> ElementOperator:
+        """A stochastic operator, which is the only kind that carries RNG state."""
+        return ElementOperator(
+            ElementOperatorConfig(stochastic=True, stream_name="augment"),
+            fn=lambda element, key=None: element,
+            rngs=nnx.Rngs(augment=1),
+        )
+
+    def test_the_current_layout_names_the_stream_and_the_statistics(self):
+        assert set(self._operator().get_state()) == {"_base_key", "_rng_stream", "_statistics"}
+
+    def test_a_state_saved_under_the_earlier_layout_restores(self):
+        current = self._operator().get_state()
+        base_key = current["_base_key"]
+        legacy = {
+            "_base_key": base_key,
+            "_computed_stats": None,
+            "rngs": {"augment": {"count": jnp.zeros((), jnp.uint32), "key": base_key}},
+        }
+
+        restored = self._operator()
+        restored.set_state(legacy)
+
+        assert restored.rngs is None
+        assert int(restored._rng_stream.count[...]) == 0
+        expected = jax.random.fold_in(base_key, DIRECT_CALL_STREAM)
+        np.testing.assert_array_equal(
+            jax.random.key_data(restored._rng_stream.key[...]), jax.random.key_data(expected)
+        )
+
+    def test_an_upgraded_state_leaves_the_operator_drawing_as_a_fresh_one_does(self):
+        reference = self._operator()
+        current = reference.get_state()
+        base_key = current["_base_key"]
+        legacy = {
+            "_base_key": base_key,
+            "_computed_stats": None,
+            "rngs": {"augment": {"count": jnp.zeros((), jnp.uint32), "key": base_key}},
+        }
+
+        restored = self._operator()
+        restored.set_state(legacy)
+
+        np.testing.assert_array_equal(
+            jax.random.key_data(restored._rng_stream()),
+            jax.random.key_data(reference._rng_stream()),
+        )
+
+    def test_a_deterministic_operator_carries_no_rng_state_to_upgrade(self):
+        operator = ElementOperator(
+            ElementOperatorConfig(stochastic=False), fn=lambda element, key=None: element
+        )
+        state = operator.get_state()
+        assert "_rng_stream" not in state
+        assert "_base_key" not in state

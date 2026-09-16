@@ -53,7 +53,8 @@ class TestFieldOperations:
 
         assert operator.config.subtree == {"field": None}
         assert operator.config.stream_name == "custom"
-        assert operator.rngs is rngs
+        # The caller's Rngs is read once, for the base key, and not kept.
+        assert operator.rngs is None
         assert operator.stochastic
         assert operator.name == "TestOperator"
 

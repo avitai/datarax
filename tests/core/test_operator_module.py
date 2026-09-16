@@ -29,7 +29,8 @@ from substrax.testing import TraceCounter
 
 from datarax.core.config import DataraxModuleConfig, OperatorConfig
 from datarax.core.element_batch import Batch
-from datarax.core.operator import OperatorModule, require_key
+from datarax.core.module import DataraxModule
+from datarax.core.operator import DIRECT_CALL_STREAM, OperatorModule, require_key
 
 
 @dataclass(frozen=True)
@@ -147,7 +148,8 @@ class TestOperatorModuleInitialization:
         assert operator.config is config
         assert operator.stochastic is True
         assert operator.stream_name == "augment"
-        assert operator.rngs is rngs
+        # The caller's Rngs is read once, for the base key, and not kept.
+        assert operator.rngs is None
 
     def test_stochastic_initialization_without_rngs_fails(self):
         """Test that stochastic operator requires rngs at runtime."""
@@ -179,7 +181,7 @@ class TestOperatorModuleInitialization:
         rngs = nnx.Rngs(42)
         operator = NormalizeOperator(config, rngs=rngs)
 
-        assert operator.rngs is rngs
+        assert operator.rngs is None  # accepted, and not kept
         assert operator.stochastic is False  # Won't use rngs
 
     def test_initialization_with_name(self):
@@ -359,6 +361,126 @@ class KeyRecordingPassthrough(OperatorModule):
         del metadata, stats
         _SEEN_KEYS.append(key)
         return data, state, None
+
+
+class TestOperatorPrivateRngStream:
+    """A stochastic operator draws direct-call randomness from its own stream.
+
+    The caller's ``Rngs`` is read once, at construction, to draw the operator's stable base key.
+    After that the operator owns its randomness: a call that carries record identity keys off the
+    base key, and a call without it draws from a private stream instead of reaching back into a
+    caller whose state it does not own.
+    """
+
+    _CONFIG = RandomBrightnessConfig(stochastic=True, stream_name="augment")
+
+    @classmethod
+    def _stochastic(cls) -> RandomBrightnessOperator:
+        return RandomBrightnessOperator(cls._CONFIG, rngs=nnx.Rngs(augment=0))
+
+    @staticmethod
+    def _batch() -> dict:
+        return {"image": jnp.ones((4, 8, 8, 3)) * 0.5}
+
+    @staticmethod
+    def _rng_counts(operator: OperatorModule) -> list[int]:
+        return [int(count) for count in jax.tree.leaves(nnx.state(operator, nnx.RngCount))]
+
+    def test_an_operator_does_not_keep_the_callers_rngs(self):
+        """The caller's Rngs is used at construction and is not operator state afterwards."""
+        operator = RandomBrightnessOperator(self._CONFIG, rngs=nnx.Rngs(augment=0))
+
+        assert operator.rngs is None
+
+    def test_a_module_that_is_not_an_operator_keeps_its_rngs(self):
+        """Only operators clear it; a source or sampler still draws from the caller's Rngs."""
+        rngs = nnx.Rngs(0)
+
+        assert DataraxModule(DataraxModuleConfig(), rngs=rngs).rngs is rngs
+
+    def test_a_stochastic_operator_carries_a_base_key_and_a_private_stream(self):
+        """Both live in module state, so both round-trip through a checkpoint."""
+        state = nnx.to_pure_dict(nnx.state(self._stochastic()))
+
+        assert "_base_key" in state
+        assert set(state["_rng_stream"]) == {"key", "count"}
+
+    def test_the_private_stream_hangs_off_the_base_key(self):
+        """The stream is derived, not drawn, so it survives a restore of the base key alone."""
+        state = nnx.to_pure_dict(nnx.state(self._stochastic()))
+
+        expected = jax.random.fold_in(state["_base_key"], DIRECT_CALL_STREAM)
+        assert jnp.array_equal(
+            jax.random.key_data(state["_rng_stream"]["key"]), jax.random.key_data(expected)
+        )
+
+    def test_a_deterministic_operator_has_no_rng_state(self):
+        """It draws nothing, so it carries neither a base key nor a stream."""
+        operator = NormalizeOperator(NormalizeConfig(stochastic=False), rngs=nnx.Rngs(0))
+
+        state = nnx.to_pure_dict(nnx.state(operator))
+        assert "_base_key" not in state
+        assert "_rng_stream" not in state
+        assert self._rng_counts(operator) == []
+
+    def test_two_direct_calls_draw_differently(self):
+        """Without record identity there is nothing to key on, so each call draws afresh."""
+        operator = self._stochastic()
+        batch = self._batch()
+
+        first, _ = operator._vmap_apply(batch, {})
+        second, _ = operator._vmap_apply(batch, {})
+
+        assert not jnp.allclose(first["image"], second["image"])
+
+    def test_a_direct_call_advances_the_operators_own_stream(self):
+        """The draw is counted on the operator, which is what makes it resumable."""
+        operator = self._stochastic()
+
+        before = self._rng_counts(operator)
+        operator._vmap_apply(self._batch(), {})
+        after = self._rng_counts(operator)
+
+        assert before == [0]
+        assert after == [1]
+
+    def test_a_call_carrying_record_indices_does_not_draw(self):
+        """With record identity the key comes from the base key, so the call repeats exactly."""
+        operator = self._stochastic()
+        batch = self._batch()
+        indices = jnp.arange(4, dtype=jnp.uint32)
+
+        first, _ = operator._vmap_apply(batch, {}, None, indices)
+        second, _ = operator._vmap_apply(batch, {}, None, indices)
+
+        assert jnp.array_equal(first["image"], second["image"])
+        assert self._rng_counts(operator) == [0]
+
+    def test_two_operators_built_from_one_seed_agree(self):
+        """A fresh operator with the same seed reproduces the first one's draws.
+
+        The control for the two tests above: without it, an operator that simply returned noise
+        would satisfy "two calls differ" while reproducing nothing.
+        """
+        first, _ = self._stochastic()._vmap_apply(self._batch(), {})
+        second, _ = self._stochastic()._vmap_apply(self._batch(), {})
+
+        assert jnp.array_equal(first["image"], second["image"])
+
+    def test_a_subclass_may_hold_the_callers_rngs_without_changing_draws(self):
+        """Assigning ``self.rngs`` after ``super().__init__`` is allowed and changes no draw."""
+
+        class KeepsRngs(RandomBrightnessOperator):
+            def __init__(self, config, *, rngs):
+                super().__init__(config, rngs=rngs)
+                self.rngs = rngs
+
+        plain, _ = self._stochastic()._vmap_apply(self._batch(), {})
+        keeping, _ = KeepsRngs(self._CONFIG, rngs=nnx.Rngs(augment=0))._vmap_apply(
+            self._batch(), {}
+        )
+
+        assert jnp.array_equal(plain["image"], keeping["image"])
 
 
 class TestOperatorKeyContract:

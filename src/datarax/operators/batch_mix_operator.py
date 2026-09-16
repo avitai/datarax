@@ -159,16 +159,19 @@ class BatchMixOperator(OperatorModule):
         it uses a single key. When the batch's record indices are known, the key is
         derived from the operator's stable base key, the epoch when given, and the
         batch's first record index, so a resumed run mixes the same batch the same
-        way. Otherwise it falls back to the RNG stream.
+        way. Otherwise it draws from the operator's own stream.
+
+        This operator keys one level higher than the others, on its first record rather than on
+        each one, so a bare stream draw would land at the same depth as a pipeline mix key: at
+        epoch -1 the two coincide exactly. Folding zero into the draw restores the difference.
         """
-        assert self.rngs is not None, "BatchMixOperator requires rngs"
         assert self.stream_name is not None, "BatchMixOperator requires stream_name"
         if record_indices is not None:
             base_key = self._base_key[...]
             if epoch is not None:
                 base_key = jax.random.fold_in(base_key, epoch)
             return jax.random.fold_in(base_key, record_indices[0])
-        return self.rngs[self.stream_name]()
+        return jax.random.fold_in(self._rng_stream(), 0)
 
     def _apply_mixup(self, batch: Batch, key: jax.Array) -> Batch:
         """Apply MixUp augmentation to batch.

@@ -24,6 +24,25 @@ from datarax.core.config import DataraxModuleConfig
 logger = logging.getLogger(__name__)
 
 
+def _copy_state_nodes(value: Any) -> Any:
+    """Copy a saved state's containers while sharing its leaves.
+
+    An upgrade rewrites container entries, so the containers are copied and the array leaves
+    are not; the caller's dictionary is left as it was.
+
+    Args:
+        value: A node of a saved state tree.
+
+    Returns:
+        A copy of the node's containers, sharing every leaf.
+    """
+    if isinstance(value, dict):
+        return {key: _copy_state_nodes(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_copy_state_nodes(item) for item in value]
+    return value
+
+
 class DataraxModule(nnx.Module):
     """Base class for all Datarax modules.
 
@@ -103,6 +122,8 @@ class DataraxModule(nnx.Module):
         if not isinstance(state, dict):
             raise TypeError(f"State must be a dict, got {type(state).__name__}")
 
+        state = self._upgrade_state_tree(state)
+
         current_state = nnx.state(self)
         current_dict = nnx.to_pure_dict(current_state)
 
@@ -115,6 +136,44 @@ class DataraxModule(nnx.Module):
             ) from exc
 
         self._restore_state_tree(self, state)
+
+    def _upgrade_state_tree(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Return ``state`` with each module's earlier layout rewritten to the current one.
+
+        Every module in the graph is offered its own subtree, so a checkpoint written before a
+        layout change restores without its reader knowing which module changed. A module whose
+        subtree the saved state does not carry is skipped, and the validation below reports that
+        difference as it would have anyway.
+
+        Args:
+            state: The saved state dictionary, as ``get_state`` produced it.
+
+        Returns:
+            The upgraded state. The argument is not modified.
+        """
+        upgraded = _copy_state_nodes(state)
+        for path, node in nnx.iter_graph(self):
+            if not isinstance(node, DataraxModule):
+                continue
+            subtree: Any = upgraded
+            for key in path:
+                if not isinstance(subtree, dict) or key not in subtree:
+                    subtree = None
+                    break
+                subtree = subtree[key]
+            if isinstance(subtree, dict):
+                node._upgrade_saved_state(subtree)
+        return upgraded
+
+    def _upgrade_saved_state(self, saved: dict[str, Any]) -> None:
+        """Rewrite this module's saved subtree from an earlier layout to the current one.
+
+        The base module's state layout has not changed, so this does nothing. A subclass whose
+        layout changed overrides it and edits ``saved`` in place.
+
+        Args:
+            saved: This module's own saved subtree.
+        """
 
     @staticmethod
     def _is_array_like(value: Any) -> bool:
