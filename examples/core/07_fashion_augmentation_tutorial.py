@@ -231,8 +231,10 @@ rotation_op = RotationOperator(
         field_key="image",
         angle_range=(-10.0, 10.0),
         fill_value=0.0,
+        stochastic=True,
+        stream_name="rotation",
     ),
-    rngs=nnx.Rngs(0),
+    rngs=nnx.Rngs(rotation=400),
 )
 
 # 4. Gaussian noise
@@ -361,8 +363,10 @@ aug_configs = [
                 field_key="image",
                 angle_range=(-10.0, 10.0),
                 fill_value=0.0,
+                stochastic=True,
+                stream_name="rotation",
             ),
-            rngs=nnx.Rngs(0),
+            rngs=nnx.Rngs(rotation=400),
         ),
         None,
     ),
@@ -485,8 +489,10 @@ def create_full_augmentation_pipeline(seed=42):
             field_key="image",
             angle_range=(-10.0, 10.0),
             fill_value=0.0,
+            stochastic=True,
+            stream_name="rotation",
         ),
-        rngs=nnx.Rngs(0),
+        rngs=nnx.Rngs(rotation=400),
     )
 
     noise = NoiseOperator(

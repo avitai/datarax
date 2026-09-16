@@ -27,7 +27,7 @@ If you're familiar with torchvision transforms, here's how Datarax compares:
 | PyTorch | Datarax |
 |---------|---------|
 | `transforms.RandomBrightness(0.15)` | `BrightnessOperator(brightness_range=(-0.15, 0.15))` |
-| `transforms.RandomRotation(10)` | `RotationOperator(angle_range=(-10.0, 10.0))` |
+| `transforms.RandomRotation(10)` | `RotationOperator(angle_range=(-10.0, 10.0), stochastic=True)` |
 | `transforms.GaussianNoise(std=0.1)` | `NoiseOperator(mode="gaussian", noise_std=0.1)` |
 | `transforms.RandomErasing()` | `PatchDropoutOperator(patch_size=(6,6), num_patches=2)` |
 | `transforms.Compose([T1, T2, T3])` | Chain with `stages=[op1, op2]` |
@@ -40,7 +40,7 @@ If you're familiar with torchvision transforms, here's how Datarax compares:
 |---------------------|---------|
 | `tf.image.random_brightness(delta=0.15)` | `BrightnessOperator(brightness_range=(-0.15, 0.15))` |
 | `tf.image.random_contrast(0.85, 1.15)` | `ContrastOperator(contrast_range=(0.85, 1.15))` |
-| `tf.image.rot90(k=random)` | `RotationOperator(angle_range=(-10.0, 10.0))` |
+| `tf.image.rot90(k=random)` | `RotationOperator(angle_range=(-10.0, 10.0), stochastic=True)` |
 | Sequential `dataset.map()` calls | Pipeline DAG with chained operators |
 
 ## Files
@@ -212,8 +212,10 @@ rotation_op = RotationOperator(
         field_key="image",
         angle_range=(-10.0, 10.0),
         fill_value=0.0,
+        stochastic=True,
+        stream_name="rotation",
     ),
-    rngs=nnx.Rngs(0),
+    rngs=nnx.Rngs(rotation=400),
 )
 ```
 
@@ -407,8 +409,10 @@ def create_full_augmentation_pipeline(seed=42):
             field_key="image",
             angle_range=(-10.0, 10.0),
             fill_value=0.0,
+            stochastic=True,
+            stream_name="rotation",
         ),
-        rngs=nnx.Rngs(0),
+        rngs=nnx.Rngs(rotation=400),
     )
 
     noise = NoiseOperator(

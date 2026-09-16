@@ -21,6 +21,8 @@ from datarax.operators.modality.image import (
     BrightnessOperatorConfig,
     ContrastOperator,
     ContrastOperatorConfig,
+    RotationOperator,
+    RotationOperatorConfig,
 )
 
 
@@ -49,6 +51,17 @@ CASES = [
         (1.2, 1.5),
         1.3,
         id="contrast",
+    ),
+    pytest.param(
+        RotationOperatorConfig,
+        RotationOperator,
+        "angle_range",
+        "angle",
+        (-15.0, 15.0),
+        0.0,
+        (20.0, 40.0),
+        30.0,
+        id="rotation",
     ),
 ]
 MODE_CASES = pytest.mark.parametrize(

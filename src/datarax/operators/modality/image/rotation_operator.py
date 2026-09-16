@@ -9,8 +9,8 @@ This module provides rotation augmentation with:
 """
 
 import logging
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -19,9 +19,13 @@ from flax import nnx
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 from datarax.core.operator import require_key
 from datarax.operators.modality.image import functional
+from datarax.operators.modality.image._validation import resolve_mode_parameters
 
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_ANGLE_RANGE = (-15.0, 15.0)
+DEFAULT_ANGLE = 0.0
 
 
 @dataclass(frozen=True)
@@ -30,8 +34,11 @@ class RotationOperatorConfig(ModalityOperatorConfig):
 
     Attributes:
         field_key: Field to rotate (e.g., "image" or "data.image" for nested).
-        angle_range: Tuple of (min_angle, max_angle) in degrees for rotation range.
-                     Positive angles rotate counter-clockwise.
+        angle_range: ``(min_angle, max_angle)`` in degrees a stochastic operator draws each
+                     record's angle from. Default: (-15.0, 15.0). Refused when
+                     stochastic=False. Positive angles rotate counter-clockwise.
+        angle: The angle in degrees a deterministic operator applies. Default: 0.0.
+               Refused when stochastic=True.
         fill_value: Value to fill empty areas after rotation (default: 0.0).
         interpolation: Interpolation mode (currently only "bilinear" supported).
         clip_range: Range to clip output values (default: (0.0, 1.0)).
@@ -39,8 +46,9 @@ class RotationOperatorConfig(ModalityOperatorConfig):
         stream_name: RNG stream name (required if stochastic=True).
     """
 
-    # Rotation parameters
-    angle_range: tuple[float, float] = (-15.0, 15.0)
+    # Each mode uses one of these; __post_init__ fills in its default and refuses the other.
+    angle_range: tuple[float, float] | None = field(default=None, kw_only=True)
+    angle: float | None = field(default=None, kw_only=True)
     fill_value: float = 0.0
     interpolation: str = "bilinear"
 
@@ -48,12 +56,15 @@ class RotationOperatorConfig(ModalityOperatorConfig):
     clip_range: tuple[float, float] = (0.0, 1.0)
 
     def __post_init__(self) -> None:
-        """Validate configuration parameters."""
+        """Validate configuration parameters and resolve the parameter the mode uses."""
         super().__post_init__()
-
-        # Validate angle_range order
-        if self.angle_range[0] > self.angle_range[1]:
-            raise ValueError(f"angle_range min must be <= max, got {self.angle_range}")
+        resolve_mode_parameters(
+            self,
+            range_field="angle_range",
+            fixed_field="angle",
+            default_range=DEFAULT_ANGLE_RANGE,
+            default_fixed=DEFAULT_ANGLE,
+        )
 
 
 class RotationOperator(ModalityOperator):
@@ -77,7 +88,7 @@ class RotationOperator(ModalityOperator):
         ```python
         config = RotationOperatorConfig(
             field_key="image",
-            angle_range=(15.0, 15.0),  # Fixed 15-degree rotation
+            angle=15.0,  # Fixed 15-degree rotation
             fill_value=0.0,
         )
         operator = RotationOperator(config)
@@ -154,14 +165,12 @@ class RotationOperator(ModalityOperator):
         # Determine rotation angle
         if self.config.stochastic:
             # This record's own angle, drawn from its own key
-            min_angle, max_angle = self.config.angle_range
+            min_angle, max_angle = cast(tuple[float, float], self.config.angle_range)
             angle_deg = jax.random.uniform(
                 require_key(key, self), shape=(), minval=min_angle, maxval=max_angle
             )
         else:
-            # Deterministic: use midpoint of angle_range
-            min_angle, max_angle = self.config.angle_range
-            angle_deg = (min_angle + max_angle) / 2.0
+            angle_deg = cast(float, self.config.angle)
 
         # Convert angle to radians
         angle_rad = angle_deg * jnp.pi / 180.0

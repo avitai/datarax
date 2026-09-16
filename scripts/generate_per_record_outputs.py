@@ -305,9 +305,7 @@ CASES: list[tuple[str, Callable[[], OperatorModule], dict[str, jax.Array]]] = [
     ),
     (
         "rotation deterministic",
-        lambda: RotationOperator(
-            RotationOperatorConfig(field_key="image", angle_range=(10.0, 10.0))
-        ),
+        lambda: RotationOperator(RotationOperatorConfig(field_key="image", angle=10.0)),
         IMAGE_LABEL,
     ),
     (
