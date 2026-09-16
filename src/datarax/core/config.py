@@ -141,7 +141,7 @@ class MapOperatorConfig(OperatorConfig):
 
         - batch_stats_fn: Callable | nnx.Module | None
         - precomputed_stats: dict[str, Any] | None
-        - stochastic: bool (currently must be False - stochastic mode not yet implemented)
+        - stochastic: bool
         - stream_name: str | None
 
     Adds MapOperator-specific configuration:
@@ -153,7 +153,6 @@ class MapOperatorConfig(OperatorConfig):
     Validation Rules:
 
         - Inherits all validation from OperatorConfig
-        - Currently enforces stochastic=False (NotImplementedError if True)
 
     Attributes:
         subtree: Optional PyTree mask specifying which parts of data to transform.
@@ -189,7 +188,6 @@ class MapOperatorConfig(OperatorConfig):
 
     # Note: No additional validation in __post_init__ needed
     # Parent OperatorConfig handles stochastic validation
-    # MapOperator.__init__ enforces stochastic=False
 
 
 @dataclass(frozen=True)
