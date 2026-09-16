@@ -37,7 +37,6 @@ from typing import Any, TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 from flax import nnx
 
 from datarax.core.operator import OperatorModule
@@ -439,7 +438,7 @@ class PipelineIterator:
         """
         counts = [int(self._live_variables[index].get_value()) for index in self._rng_count_indices]
         return {
-            "position": np.int64(self._position),
+            "position": int(self._position),
             "epoch": int(self._live_variables[self._epoch_index].get_value()),
             "rng_counts": counts,
             "version": _ITERATOR_STATE_VERSION,

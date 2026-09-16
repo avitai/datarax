@@ -230,7 +230,7 @@ datarax_matches = all(
 )
 print(f"Datarax resumes exactly: {datarax_matches}")
 # Expected output:
-# Datarax checkpoint: {'position': np.int64(8), 'epoch': 0, 'rng_counts': [0, 1, 0], 'version': 1}
+# Datarax checkpoint: {'position': 8, 'epoch': 0, 'rng_counts': [0, 1, 0], 'version': 1}
 # Datarax resumes exactly: True
 
 # %% [markdown]
