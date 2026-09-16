@@ -71,9 +71,6 @@ class SamplerModule(StructuralModule):
         # Type narrowing for pyright
         self.config: SamplerConfig = config
 
-        # Initialize last computed stats for caching
-        self._last_computed_stats: dict[str, Any] | None = None
-
         # The sampled-result cache: internal state rather than parameters, marked static
         # so it stays out of checkpoints.
         self._cache: dict[int, Any] | None = nnx.static({} if config.cacheable else None)
@@ -88,36 +85,8 @@ class SamplerModule(StructuralModule):
             return None
         return [self.stream_name]
 
-    def _compute_statistics(self, data: Any) -> dict[str, Any] | None:
-        """Compute statistics from data.
-
-        Uses precomputed_stats if available, otherwise calls batch_stats_fn.
-        This method is safe to call directly (handles errors gracefully).
-
-        Args:
-            data: Input data to compute statistics from
-
-        Returns:
-            Dictionary of statistics, or None if computation fails/not configured
-        """
-        # Priority 1: Precomputed stats (static)
-        if self.config.precomputed_stats is not None:
-            # Handle both nnx.Variable and dict (runtime duck-type check)
-            if hasattr(self.config.precomputed_stats, "get_value"):
-                return self.config.precomputed_stats.get_value()  # type: ignore[union-attr]
-            return self.config.precomputed_stats
-
-        # Priority 2: Dynamic computation via batch_stats_fn
-        if self.config.batch_stats_fn is not None:
-            try:
-                return self.config.batch_stats_fn(data)
-            except (AttributeError, TypeError, ValueError, RuntimeError):
-                return None
-
-        return None
-
     def __call__(self, n: int, *_args: Any, **_kwargs: Any) -> list[int]:  # type: ignore[override]
-        """Enhanced sampling interface with caching and statistics.
+        """Enhanced sampling interface with caching.
 
         Args:
             n: The number of indices to sample.
@@ -143,7 +112,6 @@ class SamplerModule(StructuralModule):
             return cached
 
         result = self._sample_impl(n)
-        self._maybe_update_statistics(result)
         self._maybe_store_in_cache(cache_key, result)
         return result
 
@@ -161,11 +129,6 @@ class SamplerModule(StructuralModule):
             return None, None
         cache_key = self._compute_cache_key(n)
         return cache_key, self._cache.get(cache_key)
-
-    def _maybe_update_statistics(self, result: list[int]) -> None:
-        """Recompute and store sampling statistics when a stats source is configured."""
-        if self.config.batch_stats_fn is not None or self.config.precomputed_stats is not None:
-            self._last_computed_stats = self._compute_statistics(result)
 
     def _maybe_store_in_cache(self, cache_key: int | None, result: list[int]) -> None:
         """Store ``result`` under ``cache_key`` when caching is enabled and keyed."""

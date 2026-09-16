@@ -11,7 +11,7 @@ Test Categories:
 - Field access and defaults
 """
 
-from typing import Any
+from dataclasses import fields
 
 import pytest
 
@@ -27,28 +27,6 @@ class TestOperatorConfigStochasticConstruction:
 
         assert config.stochastic is True
         assert config.stream_name == "augment"
-
-    def test_stochastic_with_batch_stats_fn(self):
-        """Test stochastic config with statistics function."""
-
-        def compute_stats(batch: Any) -> dict[str, Any]:
-            del batch
-            return {"mean": 0.5}
-
-        config = OperatorConfig(
-            stochastic=True, stream_name="augment", batch_stats_fn=compute_stats
-        )
-
-        assert config.stochastic is True
-        assert config.batch_stats_fn is compute_stats
-
-    def test_stochastic_with_precomputed_stats(self):
-        """Test stochastic config with precomputed statistics."""
-        stats = {"mean": 0.5, "std": 0.2}
-        config = OperatorConfig(stochastic=True, stream_name="augment", precomputed_stats=stats)
-
-        assert config.stochastic is True
-        assert config.precomputed_stats == stats
 
 
 class TestOperatorConfigDeterministicConstruction:
@@ -67,14 +45,6 @@ class TestOperatorConfigDeterministicConstruction:
 
         assert config.stochastic is False
         assert config.stream_name is None
-
-    def test_deterministic_with_precomputed_stats(self):
-        """Test deterministic config with precomputed statistics."""
-        stats = {"mean": 0.5, "std": 0.2}
-        config = OperatorConfig(stochastic=False, precomputed_stats=stats)
-
-        assert config.stochastic is False
-        assert config.precomputed_stats == stats
 
 
 class TestOperatorConfigValidationRules:
@@ -103,18 +73,13 @@ class TestOperatorConfigValidationRules:
         assert "stream_name" in error_msg
 
     def test_inherits_parent_validation(self):
-        """Test that OperatorConfig inherits DataraxModuleConfig validation."""
-        # Should still enforce mutual exclusivity of statistics
+        """Test that OperatorConfig runs its parent's __post_init__."""
+        # The parent hook runs before the operator's own rules, which reject this config
         with pytest.raises(ValueError) as exc_info:
-            OperatorConfig(
-                stochastic=True,
-                stream_name="augment",
-                batch_stats_fn=lambda _x: {},
-                precomputed_stats={},
-            )
+            OperatorConfig(stochastic=False, stream_name="augment")
 
         error_msg = str(exc_info.value).lower()
-        assert "both" in error_msg
+        assert "stream_name" in error_msg
 
     def test_validation_error_messages_are_helpful(self):
         """Test that validation errors provide actionable guidance."""
@@ -138,27 +103,22 @@ class TestOperatorConfigValidationRules:
 class TestOperatorConfigInheritance:
     """Test OperatorConfig inheritance from DataraxModuleConfig."""
 
-    def test_inherits_all_base_fields(self):
-        """Test that OperatorConfig has all DataraxModuleConfig fields."""
+    def test_declares_only_operator_fields(self):
+        """An operator config says how to run the operator, never what it fitted to data.
+
+        Statistics live on the operator itself, so a config stays static metadata that every
+        transform can compare.
+        """
+        assert {field.name for field in fields(OperatorConfig)} == {
+            "stochastic",
+            "stream_name",
+            "batch_strategy",
+        }
+
+    def test_operator_field_defaults(self):
+        """Test that operator field defaults are preserved."""
         config = OperatorConfig()
 
-        # Base fields should be accessible
-        assert hasattr(config, "batch_stats_fn")
-        assert hasattr(config, "precomputed_stats")
-
-        # Operator fields should be accessible
-        assert hasattr(config, "stochastic")
-        assert hasattr(config, "stream_name")
-
-    def test_base_field_defaults_preserved(self):
-        """Test that base field defaults are preserved."""
-        config = OperatorConfig()
-
-        # Base defaults
-        assert config.batch_stats_fn is None
-        assert config.precomputed_stats is None
-
-        # Operator defaults
         assert config.stochastic is False
         assert config.stream_name is None
 
@@ -214,10 +174,6 @@ class TestOperatorConfigChildInheritance:
         # Should enforce deterministic forbids stream_name
         with pytest.raises(ValueError):
             ChildConfig(stochastic=False, stream_name="augment")
-
-        # Should enforce statistics mutual exclusivity
-        with pytest.raises(ValueError):
-            ChildConfig(batch_stats_fn=lambda _x: {}, precomputed_stats={})
 
     def test_child_config_custom_validation(self):
         """Test child config can add its own validation."""
@@ -334,21 +290,7 @@ class TestOperatorConfigDefaults:
         config = OperatorConfig()
         assert config.stream_name is None
 
-    def test_inherited_defaults(self):
-        """Test inherited defaults from DataraxModuleConfig."""
+    def test_batch_strategy_defaults_to_vmap(self):
+        """Test batch_strategy defaults to 'vmap'."""
         config = OperatorConfig()
-        assert config.batch_stats_fn is None
-        assert config.precomputed_stats is None
-
-
-# Test Count Summary
-# ------------------
-# TestOperatorConfigStochasticConstruction: 4 tests
-# TestOperatorConfigDeterministicConstruction: 4 tests
-# TestOperatorConfigValidationRules: 4 tests
-# TestOperatorConfigInheritance: 3 tests
-# TestOperatorConfigChildInheritance: 4 tests
-# TestOperatorConfigDataclass: 3 tests
-# TestOperatorConfigDefaults: 3 tests
-# ------------------
-# Total: 25 tests
+        assert config.batch_strategy == "vmap"

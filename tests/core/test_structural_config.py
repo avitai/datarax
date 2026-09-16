@@ -11,6 +11,8 @@ Test Categories:
 - Child config inheritance
 """
 
+from dataclasses import fields
+
 import pytest
 
 from datarax.core.config import DataraxModuleConfig, FrozenInstanceError, StructuralConfig
@@ -39,13 +41,6 @@ class TestStructuralConfigConstruction:
 
         assert config.stochastic is True
         assert config.stream_name == "sampling"
-
-    def test_with_precomputed_stats(self):
-        """Test structural config with precomputed statistics."""
-        stats = {"count": 1000, "shape": (32, 224, 224, 3)}
-        config = StructuralConfig(stochastic=False, precomputed_stats=stats)
-
-        assert config.precomputed_stats == stats
 
 
 class TestStructuralConfigFrozenBehavior:
@@ -93,18 +88,15 @@ class TestStructuralConfigFrozenBehavior:
         # Error message should mention the field
         assert "batch_size" in str(exc_info.value)
 
-    def test_frozen_with_mutable_precomputed_stats(self):
-        """Test that precomputed_stats dict itself is not frozen."""
-        stats = {"count": 1000}
-        config = StructuralConfig(precomputed_stats=stats)
+    def test_frozen_config_rejects_assignment(self):
+        """Test that a constructed config refuses every field assignment."""
+        config = StructuralConfig(stochastic=True, stream_name="sampling")
 
-        # Config is frozen
         with pytest.raises(FrozenInstanceError):
-            config.stochastic = True  # type: ignore[reportAttributeAccessIssue]
+            config.stochastic = False  # type: ignore[reportAttributeAccessIssue]
 
-        # But the dict inside can be modified (not ideal but acceptable)
-        stats["count"] = 2000  # Modifying original dict
-        assert stats["count"] == 2000
+        with pytest.raises(FrozenInstanceError):
+            config.stream_name = "other"  # type: ignore[reportAttributeAccessIssue]
 
 
 class TestStructuralConfigValidation:
@@ -132,16 +124,12 @@ class TestStructuralConfigValidation:
         assert "stream_name" in error_msg
 
     def test_inherits_base_validation(self):
-        """Test that StructuralConfig inherits DataraxModuleConfig validation."""
-        # Note: With frozen=True, parent __post_init__ validation needs
-        # special handling, but mutual exclusivity should still be enforced
-
-        # Should enforce mutual exclusivity of statistics
+        """Test that StructuralConfig runs its parent's __post_init__ under frozen=True."""
         with pytest.raises(ValueError) as exc_info:
-            StructuralConfig(batch_stats_fn=lambda _x: {}, precomputed_stats={})
+            StructuralConfig(stochastic=False, stream_name="sampling")
 
         error_msg = str(exc_info.value).lower()
-        assert "both" in error_msg
+        assert "stream_name" in error_msg
 
     def test_validation_runs_before_freeze(self):
         """Test that __post_init__ validation runs before freezing."""
@@ -155,27 +143,21 @@ class TestStructuralConfigValidation:
 class TestStructuralConfigInheritance:
     """Test StructuralConfig inheritance from DataraxModuleConfig."""
 
-    def test_inherits_all_base_fields(self):
-        """Test that StructuralConfig has all DataraxModuleConfig fields."""
+    def test_declares_only_structural_fields(self):
+        """A structural config says how to run the module, never what it fitted to data.
+
+        Statistics live on the operator that applies them, so a config stays static metadata
+        that every transform can compare.
+        """
+        assert {field.name for field in fields(StructuralConfig)} == {
+            "stochastic",
+            "stream_name",
+        }
+
+    def test_structural_field_defaults(self):
+        """Test that structural field defaults are preserved."""
         config = StructuralConfig()
 
-        # Base fields should be accessible
-        assert hasattr(config, "batch_stats_fn")
-        assert hasattr(config, "precomputed_stats")
-
-        # Structural fields should be accessible
-        assert hasattr(config, "stochastic")
-        assert hasattr(config, "stream_name")
-
-    def test_base_field_defaults_preserved(self):
-        """Test that base field defaults are preserved."""
-        config = StructuralConfig()
-
-        # Base defaults
-        assert config.batch_stats_fn is None
-        assert config.precomputed_stats is None
-
-        # Structural defaults
         assert config.stochastic is False
         assert config.stream_name is None
 
@@ -330,21 +312,6 @@ class TestStructuralConfigDefaults:
         config = StructuralConfig()
         assert config.stream_name is None
 
-    def test_inherited_defaults(self):
-        """Test inherited defaults from DataraxModuleConfig."""
-        config = StructuralConfig()
-        assert config.batch_stats_fn is None
-        assert config.precomputed_stats is None
-
-
-# Test Count Summary
-# ------------------
-# TestStructuralConfigConstruction: 4 tests
-# TestStructuralConfigFrozenBehavior: 5 tests
-# TestStructuralConfigValidation: 4 tests
-# TestStructuralConfigInheritance: 3 tests
-# TestStructuralConfigChildInheritance: 4 tests
-# TestStructuralConfigDataclass: 3 tests
-# TestStructuralConfigDefaults: 3 tests
-# ------------------
-# Total: 26 tests
+    def test_cacheable_is_not_a_structural_field(self):
+        """Caching belongs to SamplerConfig, the only module kind that memoizes its result."""
+        assert not hasattr(StructuralConfig(), "cacheable")

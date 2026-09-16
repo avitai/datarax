@@ -192,17 +192,6 @@ class TestModalityOperatorConfigInheritedValidation:
                 stream_name="augment",
             )
 
-    def test_batch_stats_fn_and_precomputed_stats_mutually_exclusive(self):
-        """Cannot specify both batch_stats_fn and precomputed_stats."""
-        with pytest.raises(
-            ValueError, match="Cannot specify both batch_stats_fn and precomputed_stats"
-        ):
-            ModalityOperatorConfig(
-                field_key="image",
-                batch_stats_fn=lambda _x: {"mean": 0.5},
-                precomputed_stats={"mean": 0.5},
-            )
-
 
 class TestModalityOperatorConfigTargetKey:
     """Test target_key configuration."""

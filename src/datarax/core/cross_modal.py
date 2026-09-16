@@ -193,9 +193,10 @@ class CrossModalOperator(OperatorModule):
       batch-level contrastive loss, cross-element attention). Default is sufficient
       for most element-wise cross-modal operations.
 
-        - **Statistics system**: Optionally collect and use batch statistics via stats
-          parameter in apply(). Useful for adaptive cross-modal operations (e.g.,
-          batch-aware normalization of fused embeddings).
+        - **Statistics**: apply() receives the operator's statistics through its stats
+          parameter, for adaptive cross-modal operations such as batch-aware normalization
+          of fused embeddings. Set them with set_statistics(), or override
+          compute_statistics() to derive them per batch.
 
     Subclass Implementation Pattern:
         ```python

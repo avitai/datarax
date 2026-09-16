@@ -101,17 +101,12 @@ class SimpleTestBatcher(BatcherModule):
 class TestBatcherModuleEnhanced:
     """Test suite for enhanced BatcherModule functionality."""
 
-    def test_initialization_with_enhanced_features(self):
-        """Test BatcherModule initialization with enhanced DataraxModule features."""
-        # Enhanced features are now passed through config
-        config = SimpleTestBatcherConfig(
-            stochastic=False,
-            batch_stats_fn=lambda x: {"count": len(x)},
-        )
+    def test_initialization_with_rngs(self):
+        """Test BatcherModule initialization from a structural config."""
+        config = SimpleTestBatcherConfig(stochastic=False)
         batcher = SimpleTestBatcher(config, rngs=nnx.Rngs(0))
 
-        # Should have DataraxModule features (accessed through config)
-        assert batcher.config.batch_stats_fn is not None
+        assert batcher.config is config
 
     def test_basic_batching(self):
         """Test basic batching functionality."""
@@ -124,48 +119,24 @@ class TestBatcherModuleEnhanced:
         assert len(result) == 1
         assert result[0]["data"].shape == (2, 1)
 
-    def test_statistics_computation(self):
-        """Test batch statistics computation."""
+    def test_a_batcher_carries_no_statistics(self):
+        """Statistics belong to the operator that applies them, not to a batcher.
 
-        def compute_batch_stats(elements):
-            return {
-                "element_count": len(elements),
-                "has_data": any("data" in elem for elem in elements if isinstance(elem, dict)),
-            }
+        A batcher has no data to fit values to, so it carries no statistics store at all.
+        """
+        batcher = SimpleTestBatcher(SimpleTestBatcherConfig())
 
-        config = SimpleTestBatcherConfig(batch_stats_fn=compute_batch_stats)
-        batcher = SimpleTestBatcher(config)
-
-        elements = [
-            {"data": jnp.array([1.0])},
-            {"data": jnp.array([2.0])},
-        ]
-
-        # Access statistics through the public API
-        stats = batcher.compute_statistics(elements)
-        assert stats is not None
-        assert stats["element_count"] == 2
-        assert stats["has_data"] is True
-
-    def test_precomputed_statistics(self):
-        """Test precomputed statistics usage."""
-        precomputed_stats = {"batch_size": 32, "expected_shape": (32, 10)}
-        config = SimpleTestBatcherConfig(precomputed_stats=precomputed_stats)
-        batcher = SimpleTestBatcher(config)
-
-        # get_statistics() returns precomputed_stats (compute_statistics() computes new stats)
-        stats = batcher.get_statistics()
-        assert stats == precomputed_stats
+        assert not hasattr(batcher, "compute_statistics")
+        assert not hasattr(batcher, "get_statistics")
+        assert not hasattr(batcher, "set_statistics")
 
     def test_state_management(self):
         """Test enhanced state management."""
         config = SimpleTestBatcherConfig()
         batcher = SimpleTestBatcher(config)
 
-        # Get state - nnx.Variable fields are included
         state = batcher.get_state()
-        # _computed_stats IS in state as it's nnx.Variable
-        assert "_computed_stats" in state
+        assert isinstance(state, dict)
 
         new_batcher = SimpleTestBatcher(SimpleTestBatcherConfig())
         new_batcher.set_state(state)
@@ -248,10 +219,7 @@ class TestBatcherModuleCoverage:
         # Get state (should be serializable)
         state = batcher.get_state()
 
-        # State should contain nnx.Variable fields
         assert isinstance(state, dict)
-        # _computed_stats IS in state (it's nnx.Variable)
-        assert "_computed_stats" in state
 
         new_batcher = SimpleTestBatcher(SimpleTestBatcherConfig())
         new_batcher.set_state(state)
@@ -348,16 +316,18 @@ class TestBatcherModuleAdvancedFeatures:
 
     def test_clone_functionality(self):
         """Test module cloning."""
-        config = SimpleTestBatcherConfig()
-        batcher = SimpleTestBatcher(config)
-        batcher.set_statistics({"mean": 1.5})
+        batcher = SimpleTestBatcher(SimpleTestBatcherConfig(), rngs=nnx.Rngs(0))
+        state = batcher.get_state()
+        # Without state of its own the comparison below holds vacuously and proves nothing.
+        assert state
 
         # Clone the module
         cloned = batcher.clone()
 
         # The clone carries the module's state
         assert cloned is not batcher
-        assert cloned.get_statistics() == {"mean": 1.5}
+        matches = jax.tree.map(lambda a, b: bool(jnp.all(a == b)), cloned.get_state(), state)
+        assert all(jax.tree.leaves(matches))
 
     def test_rng_stream_requirements(self):
         """Test RNG stream requirement checking."""
@@ -491,7 +461,7 @@ class TestBatcherModuleRobustness:
         batcher = SimpleTestBatcher(SimpleTestBatcherConfig())
 
         # Try to restore incompatible state (with fields that don't exist)
-        invalid_state = {"non_existent_field": 42, "_computed_stats": {"custom": "data"}}
+        invalid_state = {"non_existent_field": 42}
 
         with pytest.raises(ValueError, match="structurally incompatible"):
             batcher.set_state(invalid_state)
@@ -534,21 +504,6 @@ class TestBatcherModuleDocumentation:
         assert len(batches) == 2  # 2 full batches + 1 remainder
         assert batches[0]["data"].shape == (2, 1)  # 2 elements, each with shape (1,)
         assert batches[1]["data"].shape == (1, 1)  # 1 element with shape (1,)
-
-    def test_statistics_example(self):
-        """Test statistics computation example."""
-
-        def compute_stats(elements):
-            return {"count": len(elements)}
-
-        config = SimpleTestBatcherConfig(batch_stats_fn=compute_stats)
-        batcher = SimpleTestBatcher(config)
-
-        elements = [{"data": jnp.array([i])} for i in range(5)]
-        stats = batcher.compute_statistics(elements)
-        assert stats is not None
-
-        assert stats["count"] == 5
 
 
 class TestBatcherModuleWithPRNGKeys:
@@ -607,9 +562,6 @@ class TestBatcherModuleIntegrationAdvanced:
         batcher(elements, batch_size=2)
         batcher(elements, batch_size=2)
 
-        # Set some statistics to persist
-        batcher.set_statistics({"mean": 1.5, "count": 3})
-
         # Save state
         state = batcher.get_state()
 
@@ -617,8 +569,7 @@ class TestBatcherModuleIntegrationAdvanced:
         new_batcher = SimpleTestBatcher(SimpleTestBatcherConfig())
         new_batcher.set_state(state)
 
-        # _computed_stats IS persisted (nnx.Variable)
-        assert new_batcher.get_statistics() == {"mean": 1.5, "count": 3}
+        assert new_batcher.get_state().keys() == state.keys()
 
     def test_batcher_with_jit_compilation(self):
         """Test batcher compatibility with JAX JIT."""

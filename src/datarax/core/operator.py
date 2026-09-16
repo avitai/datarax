@@ -10,7 +10,7 @@ Key Features:
 - Deterministic mode (no randomness)
 - Batch processing with vmap
 - JIT compatibility with static branching
-- Statistics system (inherited from DataraxModule)
+- A statistics store the operator applies to every record
 """
 
 import logging
@@ -136,6 +136,52 @@ class OperatorModule(DataraxModule):
             if config.stream_name is None:
                 raise ValueError("Stochastic operators require config.stream_name to be set.")
             self._base_key = nnx.Variable(rngs[config.stream_name]())
+
+        # Fitted or fixed statistics, which every record's apply receives. A plain nnx.Variable,
+        # so the statistics are module state rather than graphdef metadata: two operators with
+        # equal configurations share one compiled trace whatever their statistics hold, and the
+        # store round-trips through a checkpoint.
+        self._statistics: nnx.Variable[dict[str, Any] | None] = nnx.Variable(None)
+
+    # ========================================================================
+    # Statistics
+    # ========================================================================
+
+    def compute_statistics(self, batch_data: PyTree) -> dict[str, Any] | None:
+        """Return the statistics every record of this batch passes to ``apply``.
+
+        The default is whatever was stored with ``set_statistics``. An operator that fits
+        statistics to each batch overrides this.
+
+        Args:
+            batch_data: The batch about to be applied, with the batch on axis 0.
+
+        Returns:
+            The statistics to give ``apply``, or None when the operator has none.
+        """
+        del batch_data
+        return self._statistics.get_value()
+
+    def get_statistics(self) -> dict[str, Any] | None:
+        """Return the stored statistics, or None when the operator has none.
+
+        Returns:
+            The statistics this operator applies, or None.
+        """
+        return self._statistics.get_value()
+
+    def set_statistics(self, stats: dict[str, Any]) -> None:
+        """Store the statistics this operator applies.
+
+        Args:
+            stats: The statistics to store. An operator that constrains them validates here, by
+                overriding this method and calling ``super().set_statistics``.
+        """
+        self._statistics.set_value(stats)
+
+    def reset_statistics(self) -> None:
+        """Forget the stored statistics, so the operator applies none."""
+        self._statistics.set_value(None)
 
     # ========================================================================
     # Abstract Methods (must be implemented by subclasses)

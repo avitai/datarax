@@ -284,11 +284,17 @@ class TestCheckpointRoundTrip:
 
         assert fresh.inner.counter.get_value() == module.inner.counter.get_value()
 
-    def test_module_without_variables_saves(self, tmp_path):
+    def test_module_without_variables_is_refused(self, tmp_path):
+        """A module holding no variables has nothing to write, and Orbax rejects an empty tree.
+
+        Orbax raises a bare ``Found empty item.`` from inside its own save path, so the state is
+        checked first and the refusal names the module that produced it.
+        """
         module = DataraxModule(DataraxModuleConfig())
 
         with IteratorCheckpoint(tmp_path) as checkpoint:
-            assert Path(checkpoint.save(module, step=0)).exists()
+            with pytest.raises(ValueError, match="returned nothing to checkpoint"):
+                checkpoint.save(module, step=0)
 
     def test_restore_from_a_directory_without_checkpoints_raises(self, tmp_path):
         (tmp_path / "junk").write_text("not a checkpoint")

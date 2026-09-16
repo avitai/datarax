@@ -199,43 +199,25 @@ class TestEnhancedDataraxModule:
         return DataraxModule(config, rngs=rngs, name="test_module")
 
     def test_enhanced_initialization(self, rngs):
-        """Test enhanced DataraxModule initialization with new features."""
-        # Test with all new parameters via config
-        # Note: batch_stats_fn and precomputed_stats are mutually exclusive
-        # Testing precomputed_stats path
-        config = DataraxModuleConfig(
-            precomputed_stats={"constant": 42},
-        )
+        """Test DataraxModule initialization records its config, rngs and name."""
+        config = DataraxModuleConfig()
         module = DataraxModule(config, rngs=rngs, name="test_module")
 
         assert module.name == "test_module"
-        assert module.config.precomputed_stats == {"constant": 42}
+        assert module.config is config
+        assert module.rngs is rngs
 
-    def test_statistics_computation(self, rngs):
-        """Test batch statistics computation."""
+    def test_a_module_has_no_statistics_of_its_own(self, rngs):
+        """Statistics belong to operators, which hold them in their own store.
 
-        # Test with batch_stats_fn
-        def compute_stats(batch):
-            return {"mean": jnp.mean(batch), "std": jnp.std(batch)}
+        A source, sampler or batcher carried an empty statistics variable through every
+        compiled step and had no way to fill it.
+        """
+        module = DataraxModule(DataraxModuleConfig(), rngs=rngs)
 
-        config = DataraxModuleConfig(batch_stats_fn=compute_stats)
-        module = DataraxModule(config, rngs=rngs)
-
-        batch = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        stats = module.compute_statistics(batch)
-
-        assert stats is not None
-        assert "mean" in stats
-        assert "std" in stats
-        assert jnp.isclose(stats["mean"], 3.0)
-
-        # Test with static stats - using get_statistics for precomputed
-        static_config = DataraxModuleConfig(precomputed_stats={"constant_mean": 10.0})
-        static_module = DataraxModule(static_config, rngs=rngs)
-
-        # Precomputed stats are returned via get_statistics, not compute_statistics
-        static_stats = static_module.get_statistics()
-        assert static_stats == {"constant_mean": 10.0}
+        assert not hasattr(module, "get_statistics")
+        assert not hasattr(module, "set_statistics")
+        assert not hasattr(module, "compute_statistics")
 
     def test_enhanced_state_management(self, basic_module):
         """Test enhanced state management including new features."""
@@ -249,16 +231,6 @@ class TestEnhancedDataraxModule:
         # State restoration is strict: target must have compatible RNG structure.
         new_module = DataraxModule(new_config, rngs=nnx.Rngs(0))
         new_module.set_state(state)
-
-    def test_batch_stats_with_none_function(self, rngs):
-        """Test statistics computation when no function is provided."""
-        config = DataraxModuleConfig()  # No batch_stats_fn
-        module = DataraxModule(config, rngs=rngs)
-
-        batch = jnp.array([1, 2, 3])
-        stats = module.compute_statistics(batch)
-
-        assert stats is None
 
     def test_requires_rng_streams_override(self, rngs):
         """Test that subclasses can override required RNG streams."""
