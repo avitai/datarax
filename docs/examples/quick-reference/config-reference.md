@@ -13,8 +13,6 @@ classDiagram
     OperatorConfig <|-- BatchMixOperatorConfig
 
     class DataraxModuleConfig {
-        +batch_stats_fn: Callable | None = None
-        +precomputed_stats: dict | None = None
         ~frozen dataclass (all subclasses inherit)~
     }
     class OperatorConfig {
@@ -32,14 +30,9 @@ classDiagram
 
 **Source**: `datarax.core.config.DataraxModuleConfig`
 
-Base config for all Datarax modules.
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `batch_stats_fn` | `Callable \| nnx.Module \| None` | `None` | Function to compute batch statistics dynamically |
-| `precomputed_stats` | `dict[str, Any] \| None` | `None` | Static precomputed statistics |
-
-**Validation**: `batch_stats_fn` and `precomputed_stats` are mutually exclusive.
+Base config for all Datarax modules. It declares no fields of its own: a configuration is static
+metadata that a transform compares, so fitted values such as an operator's statistics live on the
+operator (`set_statistics`), not in its config.
 
 ## OperatorConfig
 

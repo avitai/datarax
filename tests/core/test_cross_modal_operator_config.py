@@ -223,18 +223,6 @@ class TestCrossModalOperatorConfigInheritedValidation:
                 stream_name="fusion",
             )
 
-    def test_batch_stats_fn_and_precomputed_stats_mutually_exclusive(self):
-        """Cannot specify both batch_stats_fn and precomputed_stats."""
-        with pytest.raises(
-            ValueError, match="Cannot specify both batch_stats_fn and precomputed_stats"
-        ):
-            CrossModalOperatorConfig(
-                input_fields=["input"],
-                output_fields=["output"],
-                batch_stats_fn=lambda _x: {"mean": 0.5},
-                precomputed_stats={"mean": 0.5},
-            )
-
 
 class TestCrossModalOperatorConfigRealWorldExamples:
     """Test real-world configuration examples."""

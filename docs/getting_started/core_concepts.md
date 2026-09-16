@@ -32,11 +32,11 @@ graph TD
 ### Key Capabilities
 -   **State Management**: Automatically tracks state (parameters, RNG keys, metrics) using Flax NNX.
 -   **Checkpointing**: Integration with Orbax for saving and restoring full pipeline state.
--   **Statistics**: Built-in support for computing and tracking batch statistics.
--   **Caching**: Mechanisms to cache processed results for efficiency.
 -   **Iteration Tracking**: Keeps track of the number of iterations/calls.
 
-All Datarax components, regardless of their specific role, share this common DNA.
+All Datarax components, regardless of their specific role, share this common DNA. Capabilities that
+only one kind of module needs live on that kind: operators hold the statistics they apply
+(`set_statistics`), and samplers memoize each sampled result by request size.
 
 ---
 

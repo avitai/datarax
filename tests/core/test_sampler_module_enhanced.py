@@ -93,13 +93,11 @@ class TestSamplerModuleEnhanced:
         config = SimpleTestSamplerConfig(
             dataset_size=5,
             cacheable=True,
-            batch_stats_fn=lambda x: {"count": len(x)},
         )
         sampler = SimpleTestSampler(config, rngs=create_rngs(seed=42))
 
         # Check enhanced features are available
         assert hasattr(sampler, "_cache")
-        assert sampler.config.batch_stats_fn is not None  # Accessed through config
         assert hasattr(sampler, "rngs")
         assert sampler.config.cacheable is True
 
@@ -125,36 +123,17 @@ class TestSamplerModuleEnhanced:
         # Results should be identical (from cache)
         assert result1 == result2
 
-    def test_statistics_computation(self):
-        """Test statistics computation functionality."""
+    def test_a_sampler_keeps_no_statistics(self):
+        """Statistics belong to operators, which apply them to records.
 
-        def compute_stats(indices):
-            return {"count": len(indices), "max": max(indices) if indices else 0}
+        A sampler recorded statistics after every call into an attribute nothing read.
+        """
+        sampler = SimpleTestSampler(SimpleTestSamplerConfig(dataset_size=5))
 
-        config = SimpleTestSamplerConfig(dataset_size=5, batch_stats_fn=compute_stats)
-        sampler = SimpleTestSampler(config)
-
-        # Call enhanced interface
         sampler(3)
 
-        # Should have computed statistics
-        assert hasattr(sampler, "_last_computed_stats")
-        stats = sampler._last_computed_stats
-        assert stats is not None
-        assert stats["count"] == 3
-        assert stats["max"] == 2
-
-    def test_precomputed_statistics(self):
-        """Test precomputed statistics functionality."""
-        precomputed = {"dataset_size": 100, "type": "test"}
-        config = SimpleTestSamplerConfig(dataset_size=5, precomputed_stats=precomputed)
-        sampler = SimpleTestSampler(config)
-
-        # Statistics should be available
-        stats = sampler._compute_statistics([])
-        assert stats is not None
-        assert stats["dataset_size"] == 100
-        assert stats["type"] == "test"
+        assert not hasattr(sampler, "_last_computed_stats")
+        assert not hasattr(sampler, "_compute_statistics")
 
     def test_rng_integration(self):
         """Test RNG integration with enhanced features."""
@@ -276,20 +255,6 @@ class TestSamplerModuleErrorHandling:
         sampler(3)
         assert sampler._cache is None  # Cache should be None when not cacheable
 
-    def test_statistics_computation_errors(self):
-        """Test handling of statistics computation errors."""
-
-        def failing_stats(indices):
-            del indices
-            raise ValueError("Statistics computation failed")
-
-        config = SimpleTestSamplerConfig(dataset_size=5, batch_stats_fn=failing_stats)
-        sampler = SimpleTestSampler(config)
-
-        # Should handle errors gracefully
-        result = sampler._compute_statistics([1, 2, 3])
-        assert result is None
-
     def test_rng_without_streams(self):
         """Test behavior when RNG streams are not available."""
         sampler = SimpleTestSampler(dataset_size=5, rngs=None)
@@ -394,25 +359,6 @@ class TestSamplerModuleDocumentation:
         assert result1 == result2
         assert len(sampler._cache) > 0
 
-    def test_statistics_example(self):
-        """Test statistics computation example."""
-
-        def compute_stats(indices):
-            return {"count": len(indices), "sum": sum(indices)}
-
-        config = SimpleTestSamplerConfig(dataset_size=5, batch_stats_fn=compute_stats)
-        sampler = SimpleTestSampler(config)
-
-        # Use enhanced interface
-        sampler(3)
-
-        # Should have computed statistics
-        assert hasattr(sampler, "_last_computed_stats")
-        stats = sampler._last_computed_stats
-        assert stats is not None
-        assert stats["count"] == 3
-        assert stats["sum"] == sum([0, 1, 2])
-
 
 class TestSamplerModuleAdditionalCoverage:
     """Additional tests to ensure complete coverage of SamplerModule."""
@@ -450,25 +396,6 @@ class TestSamplerModuleAdditionalCoverage:
         # Test that cache keys differ for different inputs
         key2 = sampler._compute_cache_key(10)
         assert key1a != key2
-
-    def test_compute_statistics_internal(self):
-        """Test _compute_statistics method directly."""
-
-        def stats_fn(indices):
-            return {"mean": sum(indices) / len(indices) if indices else 0}
-
-        config = SimpleTestSamplerConfig(dataset_size=5, batch_stats_fn=stats_fn)
-        sampler = SimpleTestSampler(config)
-
-        # Test with valid data
-        stats = sampler._compute_statistics([1, 2, 3])
-        assert stats is not None
-        assert stats["mean"] == 2.0
-
-        # Test with empty data
-        stats = sampler._compute_statistics([])
-        assert stats is not None
-        assert stats["mean"] == 0
 
     def test_sample_impl_method(self):
         """Test the _sample_impl method which is overridden in SimpleTestSampler."""
@@ -568,18 +495,6 @@ class TestSamplerModuleAdditionalCoverage:
 
         # Check state is preserved
         assert cloned.dataset_size == 5
-
-    def test_precomputed_stats_with_dict(self):
-        """Test precomputed statistics stored as dict."""
-        precomputed = {"mean": 5.0, "std": 2.0}
-        config = SimpleTestSamplerConfig(dataset_size=5, precomputed_stats=precomputed)
-        sampler = SimpleTestSampler(config)
-
-        # Access precomputed stats through _compute_statistics
-        stats = sampler._compute_statistics([])
-        assert stats is not None
-        assert stats["mean"] == 5.0
-        assert stats["std"] == 2.0
 
     def test_sample_with_dataset_size_none(self):
         """Test sample method when dataset_size starts as None."""

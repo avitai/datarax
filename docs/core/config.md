@@ -30,15 +30,13 @@ All configs inherit common settings:
 ```python
 from datarax.core.config import DataraxModuleConfig
 
-# Base attributes available to all configs:
-config = DataraxModuleConfig(
-    batch_stats_fn=None,       # Dynamic statistics function
-    precomputed_stats=None,    # Static statistics
-)
+# The base config carries no fields of its own; each subclass adds what it needs:
+config = DataraxModuleConfig()
 ```
 
-!!! note "Mutual Exclusivity"
-    `batch_stats_fn` and `precomputed_stats` cannot both be set.
+!!! note "A configuration holds no fitted values"
+    A configuration is static metadata that a transform compares, so statistics belong to the
+    operator that applies them: `operator.set_statistics({"mean": 0.5, "std": 0.2})`.
 
 ## Operator Configuration
 

@@ -3,10 +3,9 @@
 This module provides DataraxModule - the base class that all Datarax modules inherit from.
 It provides common functionality like:
 
-- Statistics computation and management
-- Caching system
+- Config, RNG state and naming
 - Iteration tracking
-- Module copying
+- Checkpointing through get_state/set_state
 - NNX compliance
 
 Also provides CheckpointableIteratorModule for data sources that need iteration
@@ -14,7 +13,7 @@ state tracking (position, epoch) for resumable training.
 """
 
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from typing import Any
 
 from flax import nnx
@@ -28,8 +27,9 @@ logger = logging.getLogger(__name__)
 class DataraxModule(nnx.Module):
     """Base class for all Datarax modules.
 
-    Provides common functionality shared by all Datarax modules including
-    statistics management, caching, iteration tracking, and module copying.
+    Provides the configuration, RNG state and checkpointing every Datarax module shares.
+    Statistics belong to operators, which hold them in their own store
+    (``OperatorModule.set_statistics``), not to every module.
 
     All modules use config-based initialization with typed, validated config dataclasses.
 
@@ -37,7 +37,6 @@ class DataraxModule(nnx.Module):
         config: Module configuration
         rngs: Random number generators
         name: Module name
-        _computed_stats: Computed statistics (nnx.Variable)
     """
 
     def __init__(
@@ -62,84 +61,6 @@ class DataraxModule(nnx.Module):
         self.config = nnx.static(config)
         self.rngs = rngs
         self.name = nnx.static(name)
-
-        # Initialize statistics system
-        # Use nnx.Variable to make it trackable by NNX
-        self._computed_stats: nnx.Variable[dict[str, Any] | None] = nnx.Variable(None)
-        # Flag to override precomputed_stats (for reset_statistics)
-        # Mark as static for proper serialization
-        self._is_stats_reset: bool = nnx.static(False)
-
-    # ========================================================================
-    # Statistics System
-    # ========================================================================
-
-    def compute_statistics(self, data: Any) -> dict[str, Any] | None:
-        """Compute statistics from data using batch_stats_fn.
-
-        If batch_stats_fn is not configured, returns None.
-        Computed statistics are cached in _computed_stats.
-
-        Args:
-            data: Input data to compute statistics from
-
-        Returns:
-            Dictionary of statistics, or None if no batch_stats_fn configured
-        """
-        if self.config.batch_stats_fn is None:
-            return None
-
-        # Compute statistics using the configured function/module
-        # Both Callable and nnx.Module support __call__, but need type narrowing for pyright
-        batch_stats_fn: Callable[[Any], dict[str, Any]] = self.config.batch_stats_fn  # type: ignore[assignment]
-        stats = batch_stats_fn(data)
-
-        # Cache the computed statistics
-        self._computed_stats.set_value(stats)
-
-        return stats
-
-    def get_statistics(self) -> dict[str, Any] | None:
-        """Get current statistics.
-
-        Returns precomputed_stats if configured (unless reset was called),
-        otherwise returns cached computed statistics, or None if no statistics available.
-
-        Returns:
-            Dictionary of statistics, or None if no statistics available
-        """
-        # If reset was called, return None regardless of precomputed_stats
-        # _is_stats_reset is a plain boolean (static), safe for JIT control flow
-        if self._is_stats_reset:
-            return None
-
-        # Priority 1: Precomputed stats (static)
-        if self.config.precomputed_stats is not None:
-            return self.config.precomputed_stats
-
-        # Priority 2: Computed stats (dynamic, cached)
-        return self._computed_stats.get_value()
-
-    def set_statistics(self, stats: dict[str, Any]) -> None:
-        """Manually set statistics.
-
-        This overwrites any previously computed statistics and clears reset flag.
-
-        Args:
-            stats: Dictionary of statistics to set
-        """
-        self._computed_stats.set_value(stats)
-        self._is_stats_reset = False  # Clear reset flag when setting new stats
-
-    def reset_statistics(self) -> None:
-        """Reset all statistics to None.
-
-        This clears both computed statistics and marks that precomputed_stats
-        should be ignored (via internal flag). After reset, get_statistics()
-        will return None until new statistics are set or computed.
-        """
-        self._computed_stats.set_value(None)
-        self._is_stats_reset = True  # Mark that stats have been reset
 
     # ========================================================================
     # Utilities

@@ -10,14 +10,11 @@ All configs use dataclass with __post_init__ validation for fail-fast configurat
 """
 
 import logging
-from collections.abc import Callable
 from dataclasses import (
     dataclass,
     FrozenInstanceError as FrozenInstanceError,  # noqa: F401 — re-export
 )
-from typing import Any
 
-from flax import nnx
 from jaxtyping import PyTree
 
 
@@ -55,41 +52,17 @@ class DataraxModuleConfig:
 
     Child classes inherit from this and add their specific configuration.
 
-    Attributes:
-        batch_stats_fn: Function or module to compute batch statistics dynamically
-        precomputed_stats: Static precomputed statistics
-
-    Validation Rules:
-
-        - batch_stats_fn and precomputed_stats are mutually exclusive
+    A configuration is static metadata that a transform compares, so it holds no fitted
+    values: an operator's statistics live on the operator (``OperatorModule.set_statistics``).
     """
 
-    # Common configuration (inherited by all modules)
-    batch_stats_fn: Callable | nnx.Module | None = None
-    precomputed_stats: dict[str, Any] | None = None
-
     def __post_init__(self) -> None:
-        """Validate configuration after initialization.
-
-        Raises:
-            ValueError: If configuration is invalid.
-        """
-        # Mutual exclusivity validation
-        if self.batch_stats_fn is not None and self.precomputed_stats is not None:
-            raise ValueError(
-                "Cannot specify both batch_stats_fn and precomputed_stats. "
-                "Choose dynamic computation or static values, not both."
-            )
+        """Validate configuration after initialization."""
 
 
 @dataclass(frozen=True)
 class OperatorConfig(DataraxModuleConfig):
     """Configuration for OperatorModule (mutable, learnable).
-
-    Inherits from DataraxModuleConfig:
-
-        - batch_stats_fn: Callable | nnx.Module | None
-        - precomputed_stats: dict[str, Any] | None
 
     Adds operator-specific configuration:
 
@@ -98,7 +71,6 @@ class OperatorConfig(DataraxModuleConfig):
 
     Validation Rules:
 
-        - Inherits mutual exclusivity of statistics from parent
         - Stochastic operators require stream_name for RNG management
         - Deterministic operators should not specify stream_name
 
@@ -120,7 +92,6 @@ class OperatorConfig(DataraxModuleConfig):
         Raises:
             ValueError: If configuration is invalid.
         """
-        # Call parent validation (mutual exclusivity of statistics)
         super().__post_init__()
 
         # Validate stochastic configuration rules
@@ -139,8 +110,6 @@ class MapOperatorConfig(OperatorConfig):
 
     Inherits from OperatorConfig:
 
-        - batch_stats_fn: Callable | nnx.Module | None
-        - precomputed_stats: dict[str, Any] | None
         - stochastic: bool
         - stream_name: str | None
 
@@ -196,8 +165,6 @@ class ElementOperatorConfig(OperatorConfig):
 
     Inherits from OperatorConfig:
 
-        - batch_stats_fn: Callable | nnx.Module | None
-        - precomputed_stats: dict[str, Any] | None
         - stochastic: bool
         - stream_name: str | None
 
@@ -236,8 +203,6 @@ class BatchMixOperatorConfig(OperatorConfig):
 
     Inherits from OperatorConfig:
 
-        - batch_stats_fn: Callable | nnx.Module | None
-        - precomputed_stats: dict[str, Any] | None
         - stochastic: bool (always True for BatchMixOperator)
         - stream_name: str | None
 
@@ -309,11 +274,6 @@ class BatchMixOperatorConfig(OperatorConfig):
 class StructuralConfig(DataraxModuleConfig):
     """Configuration for StructuralModule (runtime immutable, compile-time constants).
 
-    Inherits from DataraxModuleConfig:
-
-        - batch_stats_fn: Callable | nnx.Module | None
-        - precomputed_stats: dict[str, Any] | None
-
     Adds structural-specific configuration:
 
         - stochastic: bool
@@ -325,7 +285,6 @@ class StructuralConfig(DataraxModuleConfig):
 
     Validation Rules:
 
-        - Inherits mutual exclusivity of statistics from parent
         - Stochastic structural modules require stream_name for RNG management
         - Deterministic structural modules should not specify stream_name
 
@@ -346,7 +305,6 @@ class StructuralConfig(DataraxModuleConfig):
         Raises:
             ValueError: If configuration is invalid.
         """
-        # Call parent validation (mutual exclusivity of statistics)
         super().__post_init__()
 
         # Validate stochastic configuration rules
@@ -361,8 +319,6 @@ class SamplerConfig(StructuralConfig):
 
         - stochastic: bool
         - stream_name: str | None
-        - batch_stats_fn: Callable | nnx.Module | None
-        - precomputed_stats: dict[str, Any] | None
 
     A sampler maps a request for ``n`` indices to a list of indices, which is worth memoizing.
     Every other module transforms data it is handed, so it has nothing to key a cache on.

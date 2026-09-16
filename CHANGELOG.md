@@ -67,6 +67,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- An operator holds the statistics it applies. `set_statistics` stores them, `get_statistics` reads
+  them back, `reset_statistics` clears them, and `compute_statistics(batch_data)` returns the stored
+  statistics, which an operator that fits statistics to each batch overrides. The store is a plain
+  `nnx.Variable`, so statistics are module state: they round-trip through a checkpoint, and two
+  operators with equal configurations share one compiled trace whatever their statistics hold.
 - Two operators with equal configurations share one compiled trace. Every operator used to carry a
   unique integer identity, and a configuration is graphdef metadata, so each instance traced again and
   a rebuilt pipeline recompiled. A wrapper whose configuration holds child modules — the composite, the
@@ -86,6 +91,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `DataraxModuleConfig.batch_stats_fn` and `precomputed_stats`, with the validation that made them
+  mutually exclusive, and the statistics system on `DataraxModule`: `compute_statistics`,
+  `get_statistics`, `set_statistics`, `reset_statistics`, `_computed_stats` and `_is_stats_reset`.
+  Statistics are fitted values, and a configuration is static metadata that every transform
+  compares, so holding them there made each fitted number part of what decided whether two
+  operators could share a compiled trace. They now live on the operator that applies them. A config
+  that passed either field must set the statistics on the operator instead. A module whose only
+  variables were these two now has an empty state, which Orbax refuses; `IteratorCheckpoint.save`
+  rejects it by name rather than letting Orbax raise its own `Found empty item.`
+- `SamplerModule._compute_statistics`, `_maybe_update_statistics` and `_last_computed_stats`. The
+  sampler recomputed statistics after every call into an attribute that nothing in datarax or any
+  dependent read.
 - `OperatorModule.get_output_structure`, the module-level output-structure cache with its size bound,
   and the per-operator identity that keyed it. The batch path vectorizes with `out_axes=0`, which is a
   tree prefix of whatever an operator returns, so nothing discovers the output structure before the

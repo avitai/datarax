@@ -193,9 +193,9 @@ class ModalityOperator(OperatorModule):
           batch normalization, cross-element operations). Default is sufficient for
           most element-wise transformations.
 
-        - **Statistics system**: Optionally collect and use batch statistics via stats
-          parameter in apply(). Useful for adaptive operations (e.g., batch-aware
-          normalization). Statistics are computed externally and passed in.
+        - **Statistics**: apply() receives the operator's statistics through its stats
+          parameter, for adaptive operations such as batch-aware normalization. Set them
+          with set_statistics(), or override compute_statistics() to derive them per batch.
 
     Subclass Implementation Pattern:
         ```python

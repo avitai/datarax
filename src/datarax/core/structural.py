@@ -12,7 +12,6 @@ Key Features:
 - Single process() method for all structural operations
 - No learnable parameters (compile-time constants only)
 - JIT compatibility
-- Statistics system (inherited from DataraxModule)
 """
 
 import logging

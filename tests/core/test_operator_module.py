@@ -19,14 +19,15 @@ Test Categories (from operator-module-api.md):
 # Test Fixture: Example Operator Implementations
 # ========================================================================
 # Example 1: Simple stochastic operator (random brightness)
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 import jax
 import jax.numpy as jnp
 import pytest
 from flax import nnx
+from substrax.testing import TraceCounter
 
-from datarax.core.config import OperatorConfig
+from datarax.core.config import DataraxModuleConfig, OperatorConfig
 from datarax.core.element_batch import Batch
 from datarax.core.operator import OperatorModule
 
@@ -168,8 +169,9 @@ class TestOperatorModuleInitialization:
 
     def test_deterministic_initialization_without_rngs(self):
         """Test deterministic operator doesn't require rngs."""
-        config = NormalizeConfig(stochastic=False, precomputed_stats={"mean": 0.5, "std": 0.2})
+        config = NormalizeConfig(stochastic=False)
         operator = NormalizeOperator(config)
+        operator.set_statistics({"mean": 0.5, "std": 0.2})
 
         assert operator.config is config
         assert operator.stochastic is False
@@ -397,8 +399,9 @@ class TestOperatorModuleDeterministicMode:
 
     def test_apply_without_random_params(self):
         """Test apply() in deterministic mode (no random_params)."""
-        config = NormalizeConfig(stochastic=False, precomputed_stats={"mean": 0.5, "std": 0.2})
+        config = NormalizeConfig(stochastic=False)
         operator = NormalizeOperator(config)
+        operator.set_statistics({"mean": 0.5, "std": 0.2})
 
         data = {"image": jnp.ones((64, 64, 3)) * 0.7}
         state = {}
@@ -414,8 +417,9 @@ class TestOperatorModuleDeterministicMode:
 
     def test_determinism_same_input_same_output(self):
         """Test that deterministic operator is truly deterministic."""
-        config = NormalizeConfig(stochastic=False, precomputed_stats={"mean": 0.5, "std": 0.2})
+        config = NormalizeConfig(stochastic=False)
         operator = NormalizeOperator(config)
+        operator.set_statistics({"mean": 0.5, "std": 0.2})
 
         data = {"image": jnp.array([[[0.3, 0.7, 0.9]]])}
         state = {}
@@ -430,8 +434,9 @@ class TestOperatorModuleDeterministicMode:
 
     def test_apply_batch_deterministic_mode(self):
         """Test apply_batch() in deterministic mode."""
-        config = NormalizeConfig(stochastic=False, precomputed_stats={"mean": 0.5, "std": 0.2})
+        config = NormalizeConfig(stochastic=False)
         operator = NormalizeOperator(config)
+        operator.set_statistics({"mean": 0.5, "std": 0.2})
 
         batch = create_test_batch(
             data={"image": jnp.ones((8, 64, 64, 3)) * 0.7},
@@ -447,9 +452,10 @@ class TestOperatorModuleDeterministicMode:
 
     def test_deterministic_batch_no_rng_required(self):
         """Test that deterministic mode doesn't use rngs."""
-        config = NormalizeConfig(stochastic=False, precomputed_stats={"mean": 0.5, "std": 0.2})
+        config = NormalizeConfig(stochastic=False)
         # No rngs provided
         operator = NormalizeOperator(config)
+        operator.set_statistics({"mean": 0.5, "std": 0.2})
 
         batch = create_test_batch(
             data={"image": jnp.ones((4, 32, 32, 3))},
@@ -530,8 +536,9 @@ class TestOperatorModuleBatchProcessing:
 
     def test_multi_element_batch_deterministic(self):
         """Test processing multi-element batch in deterministic mode."""
-        config = NormalizeConfig(stochastic=False, precomputed_stats={"mean": 0.5, "std": 0.2})
+        config = NormalizeConfig(stochastic=False)
         operator = NormalizeOperator(config)
+        operator.set_statistics({"mean": 0.5, "std": 0.2})
 
         batch_size = 32
         batch = create_test_batch(
@@ -607,8 +614,9 @@ class TestOperatorModuleJITCompatibility:
 
     def test_apply_batch_compiles_deterministic(self):
         """Test that apply_batch() compiles successfully in deterministic mode."""
-        config = NormalizeConfig(stochastic=False, precomputed_stats={"mean": 0.5, "std": 0.2})
+        config = NormalizeConfig(stochastic=False)
         operator = NormalizeOperator(config)
+        operator.set_statistics({"mean": 0.5, "std": 0.2})
 
         batch = create_test_batch(
             data={"image": jnp.ones((4, 32, 32, 3))},
@@ -639,8 +647,9 @@ class TestOperatorModuleJITCompatibility:
 
     def test_apply_is_pure_function(self):
         """Test that apply() is a pure function (same input → same output)."""
-        config = NormalizeConfig(stochastic=False, precomputed_stats={"mean": 0.5, "std": 0.2})
+        config = NormalizeConfig(stochastic=False)
         operator = NormalizeOperator(config)
+        operator.set_statistics({"mean": 0.5, "std": 0.2})
 
         data = {"image": jnp.array([[[0.3, 0.7]]])}
         state = {}
@@ -728,72 +737,57 @@ class TestOperatorModuleRandomParams:
 
 
 class TestOperatorModuleStatistics:
-    """Test statistics computation and usage (inherited from DataraxModule)."""
+    """Test statistics stored on the operator and applied to its records."""
 
-    def test_precomputed_stats_usage(self):
-        """Test operator using precomputed statistics."""
+    def test_stored_statistics_are_readable(self):
+        """Test operator using statistics set on it."""
         stats = {"mean": 0.5, "std": 0.2}
-        config = NormalizeConfig(stochastic=False, precomputed_stats=stats)
-        operator = NormalizeOperator(config)
+        operator = NormalizeOperator(NormalizeConfig(stochastic=False))
+        operator.set_statistics(stats)
 
         # Statistics should be available
         assert operator.get_statistics() == stats
 
-    def test_batch_stats_fn_usage(self):
-        """Test operator using batch statistics function."""
+    def test_compute_statistics_returns_the_stored_statistics(self):
+        """By default an operator applies whatever was stored on it."""
+        operator = NormalizeOperator(NormalizeConfig(stochastic=False))
+        operator.set_statistics({"mean": 0.5, "std": 0.2})
 
-        def compute_stats(batch):
-            return {
-                "mean": float(jnp.mean(batch.data["image"])),
-                "std": float(jnp.std(batch.data["image"])),
-            }
+        assert operator.compute_statistics({"image": jnp.ones((4, 8, 8, 3))}) == {
+            "mean": 0.5,
+            "std": 0.2,
+        }
 
-        config = NormalizeConfig(stochastic=False, batch_stats_fn=compute_stats)
-        operator = NormalizeOperator(config)
+    def test_an_operator_can_derive_statistics_from_the_batch(self):
+        """An operator that fits statistics to each batch overrides compute_statistics."""
 
-        # Create test batch
-        batch = create_test_batch(
-            data={"image": jnp.ones((4, 64, 64, 3)) * 0.7},
-            states={},
-            metadata_list=[None] * 4,
-        )
+        class BatchFittedNormalize(NormalizeOperator):
+            def compute_statistics(self, batch_data):
+                image = batch_data["image"]
+                return {"mean": jnp.mean(image), "std": jnp.std(image) + 1e-6}
 
-        # Compute statistics
-        stats = operator.compute_statistics(batch)
+        operator = BatchFittedNormalize(NormalizeConfig(stochastic=False))
 
-        assert stats is not None
-        assert "mean" in stats
-        assert "std" in stats
-        # Use relaxed tolerance due to float32 precision in 0.7 representation
+        stats = operator.compute_statistics({"image": jnp.ones((4, 64, 64, 3)) * 0.7})
+
         assert jnp.isclose(stats["mean"], 0.7, rtol=1e-4)
 
-    def test_statistics_caching(self):
-        """Test that statistics are cached after computation."""
+    def test_compute_statistics_is_not_memoized(self):
+        """Nothing caches the result, so an operator that fits per batch sees every batch."""
         call_count = 0
 
-        def compute_stats(batch):
-            del batch
-            nonlocal call_count
-            call_count += 1
-            return {"mean": 0.5}
+        class CountingNormalize(NormalizeOperator):
+            def compute_statistics(self, batch_data):
+                nonlocal call_count
+                call_count += 1
+                return {"mean": jnp.mean(batch_data["image"]), "std": 1.0}
 
-        config = NormalizeConfig(stochastic=False, batch_stats_fn=compute_stats)
-        operator = NormalizeOperator(config)
+        operator = CountingNormalize(NormalizeConfig(stochastic=False))
 
-        batch = create_test_batch(
-            data={"image": jnp.ones((4, 32, 32, 3))},
-            states={},
-            metadata_list=[None] * 4,
-        )
+        operator.compute_statistics({"image": jnp.ones((4, 8, 8, 3))})
+        operator.compute_statistics({"image": jnp.zeros((4, 8, 8, 3))})
 
-        # First call - computes
-        stats1 = operator.compute_statistics(batch)
-        assert call_count == 1
-
-        # Second call - should use cached
-        stats2 = operator.get_statistics()
-        assert call_count == 1  # Not called again
-        assert stats2 == stats1
+        assert call_count == 2
 
     def test_set_statistics(self):
         """Test manually setting statistics."""
@@ -811,8 +805,9 @@ class TestOperatorModuleStatistics:
 
     def test_reset_statistics(self):
         """Test resetting statistics."""
-        config = NormalizeConfig(stochastic=False, precomputed_stats={"mean": 0.5, "std": 0.2})
+        config = NormalizeConfig(stochastic=False)
         operator = NormalizeOperator(config)
+        operator.set_statistics({"mean": 0.5, "std": 0.2})
 
         # Initially has stats
         assert operator.get_statistics() is not None
@@ -881,18 +876,12 @@ class TestOperatorModuleScanBatchStrategy:
     def test_scan_produces_same_result_as_vmap(self):
         """Scan strategy produces identical results to vmap for deterministic ops."""
         # Create two operators: one vmap (default), one scan
-        config_vmap = NormalizeConfig(
-            stochastic=False,
-            batch_strategy="vmap",
-            precomputed_stats={"mean": 0.5, "std": 0.2},
-        )
-        config_scan = NormalizeConfig(
-            stochastic=False,
-            batch_strategy="scan",
-            precomputed_stats={"mean": 0.5, "std": 0.2},
-        )
+        config_vmap = NormalizeConfig(stochastic=False, batch_strategy="vmap")
+        config_scan = NormalizeConfig(stochastic=False, batch_strategy="scan")
         op_vmap = NormalizeOperator(config_vmap)
         op_scan = NormalizeOperator(config_scan)
+        op_vmap.set_statistics({"mean": 0.5, "std": 0.2})
+        op_scan.set_statistics({"mean": 0.5, "std": 0.2})
 
         # Create batch of 4 elements
         batch = create_test_batch(
@@ -930,12 +919,9 @@ class TestOperatorModuleScanBatchStrategy:
 
     def test_scan_single_element_batch(self):
         """Scan strategy works with batch size 1."""
-        config = NormalizeConfig(
-            stochastic=False,
-            batch_strategy="scan",
-            precomputed_stats={"mean": 0.5, "std": 0.2},
-        )
+        config = NormalizeConfig(stochastic=False, batch_strategy="scan")
         op = NormalizeOperator(config)
+        op.set_statistics({"mean": 0.5, "std": 0.2})
 
         batch = create_test_batch(
             data={"image": jnp.ones((1, 32, 32, 3)) * 0.7},
@@ -949,9 +935,105 @@ class TestOperatorModuleScanBatchStrategy:
         assert jnp.allclose(result.data["image"], expected)
 
 
+class TestOperatorStatisticsStore:
+    """Statistics belong to the operator, not to its static configuration.
+
+    Measured before this change (``probes/probe_c13_statistics_today.txt``): statistics already
+    reach ``apply`` under ``nnx.jit``, and two operators with equal statistics already share one
+    trace. Those tests therefore guard what the previous commit delivered. What changes here is
+    where the statistics live and what a configuration may carry.
+    """
+
+    @staticmethod
+    def _fitted() -> NormalizeOperator:
+        """Return an operator holding statistics that halve and rescale the input."""
+        operator = NormalizeOperator(NormalizeConfig())
+        operator.set_statistics({"mean": jnp.asarray(0.5), "std": jnp.asarray(0.2)})
+        return operator
+
+    def test_statistics_reach_apply_through_the_batch_call(self):
+        """A batch is normalized with the statistics set on the operator."""
+        operator = self._fitted()
+        batch = create_test_batch(
+            data={"image": jnp.ones((1, 4, 4, 3)) * 0.7}, states={}, metadata_list=[None]
+        )
+
+        result = operator.apply_batch(batch)
+
+        assert jnp.allclose(result.data["image"], jnp.ones((1, 4, 4, 3)))
+
+    def test_statistics_reach_apply_through_the_raw_path(self):
+        """The fused raw-batch path reads the same store."""
+        operator = self._fitted()
+
+        out_data, _ = operator._apply_on_raw({"image": jnp.ones((2, 4, 4, 3)) * 0.7}, {})
+
+        assert jnp.allclose(out_data["image"], jnp.ones((2, 4, 4, 3)))
+
+    def test_statistics_reach_apply_under_nnx_jit(self):
+        """Statistics are module state, so a compiled call sees them."""
+        operator = self._fitted()
+
+        @nnx.jit
+        def run(op, data):
+            return op._apply_on_raw(data, {})[0]
+
+        out_data = run(operator, {"image": jnp.ones((2, 4, 4, 3)) * 0.7})
+
+        assert jnp.allclose(out_data["image"], jnp.ones((2, 4, 4, 3)))
+
+    def test_two_operators_with_equal_statistics_share_one_trace(self):
+        """Statistics are state rather than graphdef metadata, so equal ones force no trace.
+
+        The counter wraps the function and the transform wraps the counter, the order
+        ``TraceCounter.wrap`` requires: jitting first would count calls instead of traces.
+        """
+        counter = TraceCounter()
+
+        def run(op, data):
+            return op._apply_on_raw(data, {})[0]
+
+        traced = nnx.jit(counter.wrap(run))
+        data = {"image": jnp.ones((2, 4, 4, 3)) * 0.7}
+
+        with counter.expect(new_traces=1):
+            traced(self._fitted(), data)
+        with counter.expect(new_traces=0):
+            traced(self._fitted(), data)
+
+    def test_statistics_live_in_module_state_under_their_own_name(self):
+        """The store is the operator's own state, named for what it holds."""
+        operator = self._fitted()
+
+        state = nnx.to_pure_dict(nnx.state(operator))
+
+        assert "_statistics" in state
+        assert "_computed_stats" not in state
+
+    def test_reset_statistics_clears_the_store(self):
+        """After a reset the operator has no statistics to give apply."""
+        operator = self._fitted()
+
+        operator.reset_statistics()
+
+        assert operator.get_statistics() is None
+
+    def test_a_module_configuration_carries_no_statistics(self):
+        """Statistics are fitted state; a configuration is static metadata.
+
+        Keeping them in a frozen config made every fitted value part of the graphdef a
+        transform compares, and gave two ways to say the same thing.
+        """
+        names = {field.name for field in fields(DataraxModuleConfig)}
+
+        assert "batch_stats_fn" not in names
+        assert "precomputed_stats" not in names
+
+
 # ========================================================================
 # Test Count Summary
 # ========================================================================
+# TestOperatorStatisticsStore: 7 tests
 # TestOperatorModuleInitialization: 8 tests
 # TestOperatorModuleStochasticMode: 10 tests
 # TestOperatorModuleDeterministicMode: 4 tests

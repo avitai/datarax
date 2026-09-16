@@ -56,22 +56,20 @@ config.stochastic = False  # FrozenInstanceError: cannot assign to field 'stocha
 config = StructuralConfig(stochastic=False)
 ```
 
-### `ValueError: Cannot specify both batch_stats_fn and precomputed_stats`
+### `TypeError: __init__() got an unexpected keyword argument 'precomputed_stats'`
 
-**Cause**: These are mutually exclusive -- use either dynamic computation or static values.
+**Cause**: Statistics are no longer configuration. They live on the operator that applies them.
 
 ```python
 # Wrong
-config = DataraxModuleConfig(
-    batch_stats_fn=my_fn,
-    precomputed_stats={"mean": 0.5},
-)
+config = OperatorConfig(precomputed_stats={"mean": 0.5, "std": 0.2})
 
-# Fix: choose one
-config = DataraxModuleConfig(batch_stats_fn=my_fn)
-# or
-config = DataraxModuleConfig(precomputed_stats={"mean": 0.5})
+# Fix: store them on the operator
+operator = MyOperator(OperatorConfig())
+operator.set_statistics({"mean": 0.5, "std": 0.2})
 ```
+
+To fit statistics to each batch instead, override `compute_statistics(batch_data)`.
 
 ## Operator Errors
 

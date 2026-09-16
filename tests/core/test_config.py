@@ -10,10 +10,9 @@ Test Categories:
 - Invalid configurations
 """
 
-from typing import Any
+from dataclasses import fields
 
 import pytest
-from flax import nnx
 
 from datarax.core.config import DataraxModuleConfig
 
@@ -25,93 +24,15 @@ class TestDataraxModuleConfigConstruction:
         """Test config with all defaults."""
         config = DataraxModuleConfig()
 
-        assert config.batch_stats_fn is None
-        assert config.precomputed_stats is None
+        assert isinstance(config, DataraxModuleConfig)
 
-    def test_with_batch_stats_fn(self):
-        """Test config with dynamic statistics function."""
+    def test_the_base_config_declares_no_fields(self):
+        """A configuration is static metadata, so it carries no fitted values.
 
-        def compute_stats(batch: Any) -> dict[str, Any]:
-            del batch
-            return {"mean": 0.5}
-
-        config = DataraxModuleConfig(batch_stats_fn=compute_stats)
-
-        assert config.batch_stats_fn is compute_stats
-        assert config.precomputed_stats is None
-
-    def test_with_batch_stats_fn_as_module(self):
-        """Test config with statistics computed by NNX module."""
-
-        class StatsModule(nnx.Module):
-            def __call__(self, batch: Any) -> dict[str, Any]:
-                del batch
-                return {"mean": 0.5}
-
-        stats_module = StatsModule()
-        config = DataraxModuleConfig(batch_stats_fn=stats_module)
-
-        assert config.batch_stats_fn is stats_module
-
-    def test_with_precomputed_stats(self):
-        """Test config with static precomputed statistics."""
-        stats = {"mean": 0.5, "std": 0.2}
-        config = DataraxModuleConfig(precomputed_stats=stats)
-
-        assert config.precomputed_stats == stats
-        assert config.batch_stats_fn is None
-
-    def test_all_valid_combinations(self):
-        """Test various valid parameter combinations."""
-        # A statistics function
-        config1 = DataraxModuleConfig(batch_stats_fn=lambda _x: {"mean": 0.5})
-        assert config1.batch_stats_fn is not None
-
-        # Precomputed statistics
-        config2 = DataraxModuleConfig(precomputed_stats={"mean": 0.5})
-        assert config2.precomputed_stats is not None
-
-
-class TestDataraxModuleConfigValidation:
-    """Test __post_init__ validation rules."""
-
-    def test_mutual_exclusivity_batch_stats_fn_and_precomputed_stats(self):
-        """Test that batch_stats_fn and precomputed_stats are mutually exclusive."""
-
-        def compute_stats(batch: Any) -> dict[str, Any]:
-            del batch
-            return {"mean": 0.5}
-
-        with pytest.raises(ValueError) as exc_info:
-            DataraxModuleConfig(batch_stats_fn=compute_stats, precomputed_stats={"mean": 0.5})
-
-        error_msg = str(exc_info.value).lower()
-        assert "both" in error_msg
-        assert "batch_stats_fn" in error_msg
-        assert "precomputed_stats" in error_msg
-
-    def test_validation_error_message_quality(self):
-        """Test that validation errors have helpful messages."""
-        with pytest.raises(ValueError) as exc_info:
-            DataraxModuleConfig(batch_stats_fn=lambda _x: {}, precomputed_stats={})
-
-        error_msg = str(exc_info.value)
-        # Message should explain the mutual exclusivity
-        assert "cannot" in error_msg.lower() or "choose" in error_msg.lower()
-
-
-class TestDataraxModuleConfigDefaults:
-    """Test default values are correct."""
-
-    def test_batch_stats_fn_defaults_to_none(self):
-        """Test batch_stats_fn defaults to None."""
-        config = DataraxModuleConfig()
-        assert config.batch_stats_fn is None
-
-    def test_precomputed_stats_defaults_to_none(self):
-        """Test precomputed_stats defaults to None."""
-        config = DataraxModuleConfig()
-        assert config.precomputed_stats is None
+        Statistics moved to the operator that applies them, where they are state rather than
+        part of the graphdef every transform compares.
+        """
+        assert [field.name for field in fields(DataraxModuleConfig)] == []
 
 
 class TestDataraxModuleConfigInheritance:
@@ -128,22 +49,7 @@ class TestDataraxModuleConfigInheritance:
             extra_field: int = 42
 
         config = ChildConfig()
-        assert config.batch_stats_fn is None  # Inherited
         assert config.extra_field == 42  # Child-specific
-
-    def test_child_config_inherits_validation(self):
-        """Test that child configs inherit parent validation."""
-        from dataclasses import dataclass
-
-        @dataclass(frozen=True)
-        class ChildConfig(DataraxModuleConfig):  # type: ignore[reportGeneralTypeIssues]
-            """Child config that inherits validation."""
-
-            pass
-
-        # Should still enforce mutual exclusivity
-        with pytest.raises(ValueError):
-            ChildConfig(batch_stats_fn=lambda _x: {}, precomputed_stats={})
 
     def test_child_config_can_add_validation(self):
         """Test that child configs can add their own validation."""
@@ -160,10 +66,6 @@ class TestDataraxModuleConfigInheritance:
                 super().__post_init__()  # Parent validation first
                 if self.min_value >= self.max_value:
                     raise ValueError("min_value must be < max_value")
-
-        # Parent validation still works
-        with pytest.raises(ValueError):
-            ChildConfig(batch_stats_fn=lambda _x: {}, precomputed_stats={})
 
         # Child validation works
         with pytest.raises(ValueError) as exc_info:
@@ -182,30 +84,30 @@ class TestDataraxModuleConfigDataclass:
         assert is_dataclass(DataraxModuleConfig)
 
     def test_is_frozen(self):
-        """Test that base config is frozen (immutable)."""
-        from dataclasses import FrozenInstanceError
+        """Test that the base is frozen, so every config below it is immutable too."""
+        from dataclasses import dataclass, FrozenInstanceError
 
-        config = DataraxModuleConfig()
-        # Should NOT be able to modify fields (frozen)
+        @dataclass(frozen=True)
+        class ChildConfig(DataraxModuleConfig):  # type: ignore[reportGeneralTypeIssues]
+            """Child config with one field."""
+
+            extra_field: int = 42
+
+        config = ChildConfig()
         with pytest.raises(FrozenInstanceError):
-            config.precomputed_stats = {}  # type: ignore[reportAttributeAccessIssue]
+            config.extra_field = 7  # type: ignore[reportAttributeAccessIssue]
 
     def test_repr_includes_fields(self):
         """Test that __repr__ shows field values."""
-        config = DataraxModuleConfig(precomputed_stats={"mean": 0.5})
-        repr_str = repr(config)
+        from dataclasses import dataclass
 
-        assert "DataraxModuleConfig" in repr_str
-        assert "precomputed_stats" in repr_str
-        assert "mean" in repr_str
+        @dataclass(frozen=True)
+        class ChildConfig(DataraxModuleConfig):  # type: ignore[reportGeneralTypeIssues]
+            """Child config with one field."""
 
+            mean: float = 0.5
 
-# Test Count Summary
-# ------------------
-# TestDataraxModuleConfigConstruction: 7 tests
-# TestDataraxModuleConfigValidation: 2 tests
-# TestDataraxModuleConfigDefaults: 3 tests
-# TestDataraxModuleConfigInheritance: 3 tests
-# TestDataraxModuleConfigDataclass: 3 tests
-# ------------------
-# Total: 18 tests
+        repr_str = repr(ChildConfig())
+
+        assert "ChildConfig" in repr_str
+        assert "mean=0.5" in repr_str
