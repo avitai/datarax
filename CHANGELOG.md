@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   applies: its static weights, or `softmax(weight_logits / temperature)` for learnable weights. A
   composite that reads its weights from each record (`weight_key`) has no fixed mixture and
   raises `ValueError`, as does a composite with another strategy.
+- An operator can override `compute_statistics(batch_data)` to fit the statistics it applies to
+  each batch, as batch normalization does. The batch path calls it once per batch, before the
+  batch is vectorized, and gives every record the result. An operator that stores fixed
+  statistics with `set_statistics` is unaffected: the default `compute_statistics` returns
+  exactly those, so what such an operator produces does not change.
 
 ### Changed
 
@@ -134,6 +139,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as `_computed_stats` are read as `_statistics`. `DataraxModule._upgrade_saved_state` is the
   hook a module overrides to carry its own layout change, applied to each module's own subtree
   before the state is validated.
+- A wrapper's children receive the statistics they computed on the wrapper's input rather than
+  the wrapper's own. A composite, a selector and a probabilistic wrapper each compute one entry
+  per child, once per batch, and give each child its own; a wrapper whose children all compute
+  none passes none. Composite children used to receive no statistics at all, and selector and
+  probabilistic children received the wrapper's. A wrapper applies its children inside one
+  vectorized call, so a child cannot compute statistics of its own while it runs: a sequential
+  composition's later children see the statistics of the composition's input, not of the
+  previous child's output. Exact per-stage statistics come from separate `Pipeline` stages.
 
 ### Removed
 

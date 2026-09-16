@@ -456,14 +456,3 @@ class TestStructuralModuleStructuralOperations:
 
         for orig, recon in zip(elements, reconstructed):
             assert jnp.array_equal(orig["data"], recon["data"])
-
-
-# ========================================================================
-# Test Count Summary
-# ========================================================================
-# TestStructuralModuleInitialization: 7 tests
-# TestStructuralModuleProcessMethod: 9 tests
-# TestStructuralModuleFrozenConfig: 6 tests
-# TestStructuralModuleStructuralOperations: 11 tests
-# ========================================================================
-# Total: 33 tests

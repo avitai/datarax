@@ -188,11 +188,17 @@ class ConditionalParallelStrategy(CompositionStrategyImpl):
 
         # Second pass: apply operators with jax.lax.cond, each with its own key
         outputs, states, metadatas = [], [], []
-        for (operator, key), cond_result in zip(
-            self._with_keys(operators, context), condition_results, strict=False
+        for (operator, key, child_stats), cond_result in zip(
+            self._with_key_and_stats(operators, context), condition_results, strict=False
         ):
             out_data, out_state, out_metadata = self._apply_operator_conditionally(
-                operator, cond_result, context.data, context.state, context.metadata, key
+                operator,
+                cond_result,
+                context.data,
+                context.state,
+                context.metadata,
+                key,
+                child_stats,
             )
             outputs.append(out_data)
             states.append(out_state)

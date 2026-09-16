@@ -1162,17 +1162,127 @@ class TestOperatorStatisticsStore:
 
 
 # ========================================================================
-# Test Count Summary
+# Test Category 11: Statistics computed per batch
 # ========================================================================
-# TestOperatorStatisticsStore: 7 tests
-# TestOperatorModuleInitialization: 8 tests
-# TestOperatorModuleStochasticMode: 10 tests
-# TestOperatorModuleDeterministicMode: 4 tests
-# TestOperatorModuleBatchProcessing: 6 tests
-# TestOperatorModuleJITCompatibility: 4 tests
-# TestOperatorModuleRandomParams: 3 tests
-# TestOperatorModuleStatistics: 5 tests
-# TestOperatorModuleTrainingMode: 3 tests
-# TestOperatorModuleScanBatchStrategy: 5 tests
-# ========================================================================
-# Total: 48 tests
+
+
+class TestComputeStatisticsReachesApply:
+    """The batch path computes each batch's statistics and gives them to every record.
+
+    ``compute_statistics`` has been overridable since the statistics store landed, but nothing
+    called it: the batch path read ``get_statistics()``, so an operator that fits statistics to
+    each batch never saw a batch. Every test here runs through a batch path rather than calling
+    ``compute_statistics`` directly, which is the only way to observe that wiring.
+    """
+
+    IMAGE = jnp.asarray([0.2, 0.4, 0.6, 0.8], dtype=jnp.float32).reshape(4, 1, 1, 1)
+
+    @staticmethod
+    def _normalized(image: jax.Array) -> jax.Array:
+        """The batch normalized by its own mean and standard deviation."""
+        return (image - jnp.mean(image)) / (jnp.std(image) + 1e-6)
+
+    @staticmethod
+    def _batch_fitted(batch_strategy: str = "vmap") -> OperatorModule:
+        """An operator normalizing with the statistics of whatever batch it is given.
+
+        Its ``apply`` uses exactly what it is handed and keeps no fallback to the stored
+        statistics, so a batch path that computes none fails here instead of quietly
+        normalizing with something else.
+        """
+
+        class BatchFitted(NormalizeOperator):
+            def compute_statistics(self, batch_data):
+                image = batch_data["image"]
+                return {"mean": jnp.mean(image), "std": jnp.std(image) + 1e-6}
+
+            def apply(self, data, state, metadata, key=None, stats=None):
+                del key
+                if stats is None:
+                    raise AssertionError("the batch path passed no statistics")
+                normalized = (data["image"] - stats["mean"]) / stats["std"]
+                return {**data, "image": normalized}, state, metadata
+
+        return BatchFitted(NormalizeConfig(stochastic=False, batch_strategy=batch_strategy))
+
+    @staticmethod
+    def _counting() -> tuple[OperatorModule, list[int]]:
+        """An operator recording how many times its statistics were computed."""
+        calls: list[int] = []
+
+        class Counting(NormalizeOperator):
+            def compute_statistics(self, batch_data):
+                calls.append(1)
+                return {"mean": jnp.mean(batch_data["image"]), "std": 1.0}
+
+            def apply(self, data, state, metadata, key=None, stats=None):
+                del key
+                if stats is None:
+                    raise AssertionError("the batch path passed no statistics")
+                return {**data, "image": data["image"] - stats["mean"]}, state, metadata
+
+        return Counting(NormalizeConfig(stochastic=False)), calls
+
+    def test_the_batch_call_normalizes_with_the_batch_statistics(self):
+        operator = self._batch_fitted()
+        batch = create_test_batch(data={"image": self.IMAGE})
+
+        result = operator(batch)
+
+        assert jnp.allclose(result.data["image"], self._normalized(self.IMAGE), atol=1e-6)
+
+    def test_the_raw_path_normalizes_with_the_batch_statistics(self):
+        operator = self._batch_fitted()
+
+        out_data, _ = operator._apply_on_raw({"image": self.IMAGE}, {})
+
+        assert jnp.allclose(out_data["image"], self._normalized(self.IMAGE), atol=1e-6)
+
+    def test_the_statistics_are_computed_under_nnx_jit(self):
+        operator = self._batch_fitted()
+
+        @nnx.jit
+        def run(op, data):
+            return op._apply_on_raw(data, {})[0]
+
+        out_data = run(operator, {"image": self.IMAGE})
+
+        assert jnp.allclose(out_data["image"], self._normalized(self.IMAGE), atol=1e-6)
+
+    def test_the_scan_strategy_normalizes_with_the_batch_statistics(self):
+        operator = self._batch_fitted(batch_strategy="scan")
+
+        out_data, _ = operator._apply_on_raw({"image": self.IMAGE}, {})
+
+        assert jnp.allclose(out_data["image"], self._normalized(self.IMAGE), atol=1e-6)
+
+    def test_the_statistics_are_computed_once_for_the_whole_batch(self):
+        """Statistics describe the batch, so they are computed before it is vectorized."""
+        operator, calls = self._counting()
+
+        operator._apply_on_raw({"image": jnp.ones((8, 2, 2, 1), jnp.float32)}, {})
+
+        assert len(calls) == 1
+
+    def test_statistics_passed_by_the_caller_are_not_recomputed(self):
+        """An explicit argument still wins, so a caller can supply statistics of its own."""
+        operator, calls = self._counting()
+
+        out_data, _ = operator._apply_on_raw(
+            {"image": jnp.ones((4, 1, 1, 1), jnp.float32)}, {}, {"mean": 0.25, "std": 1.0}
+        )
+
+        assert calls == []
+        assert jnp.allclose(out_data["image"], 0.75)
+
+    def test_gradients_reach_the_input_through_the_computed_statistics(self):
+        """The statistics are part of the traced computation, not a constant read beside it."""
+        operator = self._batch_fitted()
+
+        def loss(image):
+            out_data, _ = operator._apply_on_raw({"image": image}, {})
+            return jnp.sum(out_data["image"] ** 2)
+
+        gradient = jax.grad(loss)(self.IMAGE)
+
+        assert jnp.any(gradient != 0.0)

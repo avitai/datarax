@@ -7,7 +7,7 @@ from typing import Any
 import jax
 from jaxtyping import PyTree
 
-from datarax.core.operator import OperatorModule
+from datarax.core.operator import OperatorModule, statistics_for_child
 from datarax.operators.strategies.base import CompositionStrategyImpl, StrategyContext
 
 
@@ -47,14 +47,14 @@ class BranchingStrategy(CompositionStrategyImpl):
 
         # Create list of branch functions that call each operator's apply method
         def make_branch_fn(i: int, operator: OperatorModule) -> Callable:
+            # This child's statistics are fixed for the batch, so they are captured here
+            # rather than carried through the switch's operands.
+            child_stats = statistics_for_child(context.stats, i)
+
             def branch_fn(operands: Any) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
                 d, s, m, k = operands
                 # This child's key, folded from the record's; None stays None.
-                out_data, out_state, out_metadata = operator.apply(
-                    d, s, m, self._key_for_operator(k, i)
-                )
-
-                return out_data, out_state, out_metadata
+                return operator.apply(d, s, m, self._key_for_operator(k, i), child_stats)
 
             return branch_fn
 
