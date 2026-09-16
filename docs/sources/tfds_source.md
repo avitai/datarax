@@ -101,21 +101,6 @@ For ImageNet-scale splits that do not fit in memory, use the streaming path via
 `from_tfds(name, split, ...)` (or `TFDSStreamingConfig` directly), which streams
 with a fixed prefetch buffer instead of loading everything at init.
 
-## Apply Caching
-
-The `cacheable` flag is the module-level apply cache (memoizing the result of the
-processing `apply`), not a dataset cache — the eager source already holds all data
-in memory as JAX arrays, so no dataset-level caching is needed:
-
-```python
-config = TFDSEagerConfig(
-    name="mnist",
-    split="train",
-    cacheable=True,  # Enables the module-level apply cache
-)
-source = TFDSEagerSource(config)
-```
-
 ## Custom Data Directory
 
 Store datasets in a specific location:

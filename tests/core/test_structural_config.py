@@ -25,11 +25,10 @@ class TestStructuralConfigConstruction:
 
         assert config.stochastic is False
         assert config.stream_name is None
-        assert config.cacheable is False  # Inherited
 
     def test_deterministic_structural(self):
         """Test deterministic structural config."""
-        config = StructuralConfig(stochastic=False, cacheable=False)
+        config = StructuralConfig(stochastic=False)
 
         assert config.stochastic is False
         assert config.stream_name is None
@@ -58,18 +57,18 @@ class TestStructuralConfigFrozenBehavior:
 
         # Attempting to modify should raise FrozenInstanceError
         with pytest.raises(FrozenInstanceError):
-            config.cacheable = True  # type: ignore[reportAttributeAccessIssue]
+            config.stochastic = True  # type: ignore[reportAttributeAccessIssue]
 
     def test_frozen_enforces_compile_time_constants(self):
         """Test that frozen config represents compile-time constants."""
-        config = StructuralConfig(stochastic=False, cacheable=True)
+        config = StructuralConfig(stochastic=False, stream_name=None)
 
         # Values should be fixed
-        assert config.cacheable is True
+        assert config.stochastic is False
 
         # Should not be modifiable
         with pytest.raises(FrozenInstanceError):
-            config.cacheable = False  # type: ignore[reportAttributeAccessIssue]
+            config.stochastic = True  # type: ignore[reportAttributeAccessIssue]
 
     def test_child_frozen_config(self):
         """Test that child configs inherit runtime freezing behavior."""
@@ -101,7 +100,7 @@ class TestStructuralConfigFrozenBehavior:
 
         # Config is frozen
         with pytest.raises(FrozenInstanceError):
-            config.cacheable = True  # type: ignore[reportAttributeAccessIssue]
+            config.stochastic = True  # type: ignore[reportAttributeAccessIssue]
 
         # But the dict inside can be modified (not ideal but acceptable)
         stats["count"] = 2000  # Modifying original dict
@@ -161,7 +160,6 @@ class TestStructuralConfigInheritance:
         config = StructuralConfig()
 
         # Base fields should be accessible
-        assert hasattr(config, "cacheable")
         assert hasattr(config, "batch_stats_fn")
         assert hasattr(config, "precomputed_stats")
 
@@ -174,7 +172,6 @@ class TestStructuralConfigInheritance:
         config = StructuralConfig()
 
         # Base defaults
-        assert config.cacheable is False
         assert config.batch_stats_fn is None
         assert config.precomputed_stats is None
 
@@ -308,16 +305,16 @@ class TestStructuralConfigDataclass:
 
         # Attempting modification should fail
         with pytest.raises(FrozenInstanceError):
-            config.cacheable = True  # type: ignore[reportAttributeAccessIssue]
+            config.stochastic = True  # type: ignore[reportAttributeAccessIssue]
 
     def test_repr_shows_all_fields(self):
         """Test that __repr__ includes all field values."""
-        config = StructuralConfig(stochastic=False, cacheable=True)
+        config = StructuralConfig(stochastic=False)
         repr_str = repr(config)
 
         assert "StructuralConfig" in repr_str
         assert "stochastic" in repr_str
-        assert "cacheable" in repr_str
+        assert "stream_name" in repr_str
 
 
 class TestStructuralConfigDefaults:
@@ -336,7 +333,6 @@ class TestStructuralConfigDefaults:
     def test_inherited_defaults(self):
         """Test inherited defaults from DataraxModuleConfig."""
         config = StructuralConfig()
-        assert config.cacheable is False
         assert config.batch_stats_fn is None
         assert config.precomputed_stats is None
 

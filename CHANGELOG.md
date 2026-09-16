@@ -65,6 +65,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so the script fetches the TFDS and keras archives in byte ranges over eight connections,
   verifies their SHA-256, and places them where both loaders reuse them instead of downloading.
 
+### Changed
+
+- `cacheable` moves from `DataraxModuleConfig` to a new `SamplerConfig`, and the result cache with its
+  hashing helpers and `reset_cache` move from `DataraxModule` to `SamplerModule`. A sampler memoizes each
+  sampled list by request size, which is the only module kind with something to key a cache on; every other
+  module carried an empty dict through each compiled step. The six sampler configs derive from
+  `SamplerConfig`, `eager_reset` and `reset_streaming_state` no longer take the cache they only ever cleared
+  when it was empty, and the modality and cross-modal docstrings stop promising a caching system that never
+  ran. A config that set `cacheable` on an operator or another module must drop it.
+
 ### Removed
 
 - `DataraxModule.copy`. It rebuilt a module as `type(self)(config=..., rngs=..., name=...)`, which 17 of the

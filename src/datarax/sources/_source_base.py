@@ -179,7 +179,7 @@ class EagerSourceBase(DataSourceModule):
     def reset(self, seed: int | None = None) -> None:
         """Reset eager-source iteration state."""
         del seed
-        eager_reset(self.index, self.epoch, self._cache)
+        eager_reset(self.index, self.epoch)
 
     @property
     def is_random_order(self) -> bool:
@@ -272,7 +272,7 @@ class StreamingSourceBase(DataSourceModule):
         """Reset streaming iterator state."""
         del seed
         self._iterator = None
-        reset_streaming_state(self.epoch, self._cache)
+        reset_streaming_state(self.epoch)
 
     def get_batch(self, batch_size: int) -> dict[str, Any]:
         """Collect up to batch_size items from the streaming iterator."""

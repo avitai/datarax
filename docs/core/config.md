@@ -32,7 +32,6 @@ from datarax.core.config import DataraxModuleConfig
 
 # Base attributes available to all configs:
 config = DataraxModuleConfig(
-    cacheable=False,           # Enable caching
     batch_stats_fn=None,       # Dynamic statistics function
     precomputed_stats=None,    # Static statistics
 )

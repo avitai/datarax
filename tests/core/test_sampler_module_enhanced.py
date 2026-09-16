@@ -12,13 +12,13 @@ from dataclasses import dataclass
 import flax.nnx as nnx
 import pytest
 
-from datarax.core.config import StructuralConfig
+from datarax.core.config import SamplerConfig
 from datarax.core.sampler import SamplerModule
 from datarax.utils.prng import create_rngs
 
 
 @dataclass(frozen=True)
-class SimpleTestSamplerConfig(StructuralConfig):  # type: ignore[reportGeneralTypeIssues]
+class SimpleTestSamplerConfig(SamplerConfig):  # type: ignore[reportGeneralTypeIssues]
     """Configuration for SimpleTestSampler."""
 
     dataset_size: int = 10
@@ -597,7 +597,7 @@ class TestSamplerModuleAdditionalCoverage:
         """Test the default sample implementation that uses iterator."""
 
         @dataclass(frozen=True)
-        class IteratorOnlySamplerConfig(StructuralConfig):
+        class IteratorOnlySamplerConfig(SamplerConfig):
             """Config for IteratorOnlySampler."""
 
             dataset_size: int = 10

@@ -11,7 +11,7 @@ from typing import Any
 
 from flax import nnx
 
-from datarax.core.config import StructuralConfig
+from datarax.core.config import SamplerConfig
 from datarax.core.sampler import SamplerModule
 from datarax.typing import Element
 
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class RangeSamplerConfig(StructuralConfig):
+class RangeSamplerConfig(SamplerConfig):
     """Configuration for RangeSampler.
 
     Attributes:

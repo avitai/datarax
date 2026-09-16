@@ -13,7 +13,6 @@ classDiagram
     OperatorConfig <|-- BatchMixOperatorConfig
 
     class DataraxModuleConfig {
-        +cacheable: bool = False
         +batch_stats_fn: Callable | None = None
         +precomputed_stats: dict | None = None
         ~frozen dataclass (all subclasses inherit)~
@@ -37,7 +36,6 @@ Base config for all Datarax modules.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `cacheable` | `bool` | `False` | Enable caching for this module |
 | `batch_stats_fn` | `Callable \| nnx.Module \| None` | `None` | Function to compute batch statistics dynamically |
 | `precomputed_stats` | `dict[str, Any] \| None` | `None` | Static precomputed statistics |
 

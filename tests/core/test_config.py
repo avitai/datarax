@@ -25,15 +25,6 @@ class TestDataraxModuleConfigConstruction:
         """Test config with all defaults."""
         config = DataraxModuleConfig()
 
-        assert config.cacheable is False
-        assert config.batch_stats_fn is None
-        assert config.precomputed_stats is None
-
-    def test_with_cacheable(self):
-        """Test config with cacheable enabled."""
-        config = DataraxModuleConfig(cacheable=True)
-
-        assert config.cacheable is True
         assert config.batch_stats_fn is None
         assert config.precomputed_stats is None
 
@@ -72,14 +63,12 @@ class TestDataraxModuleConfigConstruction:
 
     def test_all_valid_combinations(self):
         """Test various valid parameter combinations."""
-        # Cacheable with stats function
-        config1 = DataraxModuleConfig(cacheable=True, batch_stats_fn=lambda _x: {"mean": 0.5})
-        assert config1.cacheable is True
+        # A statistics function
+        config1 = DataraxModuleConfig(batch_stats_fn=lambda _x: {"mean": 0.5})
         assert config1.batch_stats_fn is not None
 
-        # Cacheable with precomputed stats
-        config2 = DataraxModuleConfig(cacheable=True, precomputed_stats={"mean": 0.5})
-        assert config2.cacheable is True
+        # Precomputed statistics
+        config2 = DataraxModuleConfig(precomputed_stats={"mean": 0.5})
         assert config2.precomputed_stats is not None
 
 
@@ -114,11 +103,6 @@ class TestDataraxModuleConfigValidation:
 class TestDataraxModuleConfigDefaults:
     """Test default values are correct."""
 
-    def test_cacheable_defaults_to_false(self):
-        """Test cacheable defaults to False."""
-        config = DataraxModuleConfig()
-        assert config.cacheable is False
-
     def test_batch_stats_fn_defaults_to_none(self):
         """Test batch_stats_fn defaults to None."""
         config = DataraxModuleConfig()
@@ -144,7 +128,7 @@ class TestDataraxModuleConfigInheritance:
             extra_field: int = 42
 
         config = ChildConfig()
-        assert config.cacheable is False  # Inherited
+        assert config.batch_stats_fn is None  # Inherited
         assert config.extra_field == 42  # Child-specific
 
     def test_child_config_inherits_validation(self):
@@ -204,16 +188,16 @@ class TestDataraxModuleConfigDataclass:
         config = DataraxModuleConfig()
         # Should NOT be able to modify fields (frozen)
         with pytest.raises(FrozenInstanceError):
-            config.cacheable = True  # type: ignore[reportAttributeAccessIssue]
+            config.precomputed_stats = {}  # type: ignore[reportAttributeAccessIssue]
 
     def test_repr_includes_fields(self):
         """Test that __repr__ shows field values."""
-        config = DataraxModuleConfig(cacheable=True)
+        config = DataraxModuleConfig(precomputed_stats={"mean": 0.5})
         repr_str = repr(config)
 
         assert "DataraxModuleConfig" in repr_str
-        assert "cacheable" in repr_str
-        assert "True" in repr_str
+        assert "precomputed_stats" in repr_str
+        assert "mean" in repr_str
 
 
 # Test Count Summary

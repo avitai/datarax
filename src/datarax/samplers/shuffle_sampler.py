@@ -9,7 +9,7 @@ from typing import Any
 
 from flax import nnx
 
-from datarax.core.config import StructuralConfig
+from datarax.core.config import SamplerConfig
 from datarax.core.sampler import SamplerModule
 from datarax.samplers._validation import validate_seed
 from datarax.samplers.index_shuffle import index_shuffle
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class ShuffleSamplerConfig(StructuralConfig):
+class ShuffleSamplerConfig(SamplerConfig):
     """Configuration for Grain ``IndexSampler`` shuffling."""
 
     dataset_size: int = 0

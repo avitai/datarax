@@ -19,7 +19,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax.core.config import StructuralConfig
+from datarax.core.config import SamplerConfig
 from datarax.core.sampler import SamplerModule
 
 
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class SlidingWindowSamplerConfig(StructuralConfig):
+class SlidingWindowSamplerConfig(SamplerConfig):
     """Configuration for ``SlidingWindowSampler``.
 
     Attributes:

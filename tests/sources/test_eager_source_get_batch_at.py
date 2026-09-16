@@ -49,7 +49,6 @@ class _FakeEagerSource(EagerSourceBase):
         self.dataset_name = "fake"
         self.split_name = "all"
         self._dataset_info = None
-        self._cache = None  # not used by tests but required by reset()
 
 
 # ---------- A. Sequential mode ----------

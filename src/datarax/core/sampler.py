@@ -11,7 +11,7 @@ from typing import Any
 
 from flax import nnx
 
-from datarax.core.config import StructuralConfig
+from datarax.core.config import SamplerConfig
 from datarax.core.structural import StructuralModule
 
 
@@ -26,15 +26,18 @@ class SamplerModule(StructuralModule):
     epoch management.
 
     This class extends StructuralModule for non-parametric structural processing.
-    Concrete samplers define their own config classes extending StructuralConfig.
+    Concrete samplers define their own config classes extending SamplerConfig.
+
+    A sampler is the only module kind that caches its result: ``cacheable`` memoizes each
+    sampled list by request size.
 
     Examples:
         from dataclasses import dataclass
-        from datarax.core.config import StructuralConfig
+        from datarax.core.config import SamplerConfig
         from datarax.core.sampler import SamplerModule
         from flax import nnx
 
-        class SequentialSamplerConfig(StructuralConfig):
+        class SequentialSamplerConfig(SamplerConfig):
             num_records: int = 100
             num_epochs: int = 1
         SequentialSamplerConfig = dataclass(frozen=True)(SequentialSamplerConfig)
@@ -51,7 +54,7 @@ class SamplerModule(StructuralModule):
 
     def __init__(
         self,
-        config: StructuralConfig,
+        config: SamplerConfig,
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
@@ -65,8 +68,15 @@ class SamplerModule(StructuralModule):
         """
         super().__init__(config, rngs=rngs, name=name)
 
+        # Type narrowing for pyright
+        self.config: SamplerConfig = config
+
         # Initialize last computed stats for caching
         self._last_computed_stats: dict[str, Any] | None = None
+
+        # The sampled-result cache: internal state rather than parameters, marked static
+        # so it stays out of checkpoints.
+        self._cache: dict[int, Any] | None = nnx.static({} if config.cacheable else None)
 
     def requires_rng_streams(self) -> list[str] | None:
         """Get the list of RNG streams required by this module.
@@ -161,6 +171,80 @@ class SamplerModule(StructuralModule):
         """Store ``result`` under ``cache_key`` when caching is enabled and keyed."""
         if self.config.cacheable and self._cache is not None and cache_key is not None:
             self._cache[cache_key] = result
+
+    # ========================================================================
+    # Result Cache
+    # ========================================================================
+
+    def _compute_cache_key(self, input_data: Any) -> int:
+        """Compute cache key from input data using content-based hashing.
+
+        For JAX arrays, computes a hash based on array content (shape, dtype, and values).
+        For PyTrees, recursively hashes all leaves.
+        Subclasses can override for custom keys.
+
+        Args:
+            input_data: Input to compute cache key from (scalars, arrays, or PyTrees)
+
+        Returns:
+            Integer cache key based on content
+        """
+        import jax
+
+        leaves_hash = self._hash_pytree_leaves(input_data, jax)
+        if leaves_hash is not None:
+            return leaves_hash
+        return self._hash_fallback(input_data)
+
+    def _hash_pytree_leaves(self, input_data: Any, jax_module: Any) -> int | None:
+        """Hash all pytree leaves, returning None when pytree traversal fails."""
+        try:
+            leaves = jax_module.tree.leaves(input_data)
+        except (TypeError, ValueError, AttributeError, RuntimeError):
+            return None
+        if not leaves:
+            return hash(())
+        return hash(tuple(self._hash_value(leaf, jax_module) for leaf in leaves))
+
+    def _hash_value(self, value: Any, jax_module: Any) -> int:
+        """Hash a value with special handling for arrays and nested containers."""
+        if isinstance(value, jax_module.Array):
+            return self._hash_jax_array(value)
+        if isinstance(value, (int, float, str, bool, type(None), tuple, frozenset)):
+            return hash(value)
+        if isinstance(value, list):
+            return hash(tuple(self._hash_value(v, jax_module) for v in value))
+        if isinstance(value, dict):
+            hashed_items = tuple(
+                sorted((k, self._hash_value(v, jax_module)) for k, v in value.items())
+            )
+            return hash(hashed_items)
+        return self._hash_fallback(value)
+
+    def _hash_jax_array(self, value: Any) -> int:
+        """Hash a JAX array using shape/dtype and identity.
+
+        Uses only host-side metadata — no device-to-host transfers.
+        Previous implementation sampled values via .tolist() which forced
+        a blocking D2H sync on GPU/TPU.
+        """
+        return hash((value.shape, str(value.dtype), id(value)))
+
+    def _hash_fallback(self, value: Any) -> int:
+        """Hash a value using Python hash, falling back to object identity."""
+        try:
+            return hash(value)
+        except TypeError:
+            return id(value)
+
+    def reset_cache(self) -> None:
+        """Clear the cache.
+
+        Only has effect if cacheable=True in config.
+        """
+        if self._cache is not None:
+            # Clear all entries from the cache
+            self._cache.clear()
 
     def _sample_impl(self, n: int) -> list[int]:
         """Implementation method for sampling.

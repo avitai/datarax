@@ -43,11 +43,9 @@ class TestCrossModalOperatorConfigBasic:
             output_fields=["output"],
             stochastic=True,
             stream_name="fusion",
-            cacheable=True,
         )
         assert config.stochastic is True
         assert config.stream_name == "fusion"
-        assert config.cacheable is True
 
 
 class TestCrossModalOperatorConfigInputFieldsValidation:

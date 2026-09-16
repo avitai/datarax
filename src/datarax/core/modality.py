@@ -197,10 +197,6 @@ class ModalityOperator(OperatorModule):
           parameter in apply(). Useful for adaptive operations (e.g., batch-aware
           normalization). Statistics are computed externally and passed in.
 
-        - **Caching system**: Results can be cached based on operator configuration
-          and input characteristics. Inherited from base OperatorModule, helps avoid
-          redundant computation for deterministic operators.
-
     Subclass Implementation Pattern:
         ```python
         class ImageOperator(ModalityOperator):

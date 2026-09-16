@@ -197,10 +197,6 @@ class CrossModalOperator(OperatorModule):
           parameter in apply(). Useful for adaptive cross-modal operations (e.g.,
           batch-aware normalization of fused embeddings).
 
-        - **Caching system**: Results can be cached based on operator configuration
-      and input characteristics. Inherited from base OperatorModule, helps avoid
-      redundant computation for deterministic cross-modal operations.
-
     Subclass Implementation Pattern:
         ```python
         class FusionOperator(CrossModalOperator):

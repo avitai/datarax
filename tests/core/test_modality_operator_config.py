@@ -45,11 +45,9 @@ class TestModalityOperatorConfigBasic:
             field_key="image",
             stochastic=True,
             stream_name="augment",
-            cacheable=True,
         )
         assert config.stochastic is True
         assert config.stream_name == "augment"
-        assert config.cacheable is True
 
 
 class TestModalityOperatorConfigFieldKeyValidation:
