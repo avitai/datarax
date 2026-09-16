@@ -284,10 +284,10 @@ from substrax.artifacts import resolve_output_dir
 
 output_dir = resolve_output_dir("examples").path
 
-def create_single_aug_pipeline(operator, seed=0):
+def create_single_aug_pipeline(operator, seed=0, num_samples=64):
     """Create pipeline with single augmentation for visualization."""
     source = TFDSEagerSource(
-        TFDSEagerConfig(name="fashion_mnist", split="train[:64]", shuffle=False),
+        TFDSEagerConfig(name="fashion_mnist", split=f"train[:{num_samples}]", shuffle=False),
         rngs=nnx.Rngs(seed),
     )
 
@@ -296,8 +296,9 @@ def create_single_aug_pipeline(operator, seed=0):
         fn=preprocess_fashion,
         rngs=nnx.Rngs(0),
     )
+    stages = [prep] if operator is None else [prep, operator]
 
-    return Pipeline(source=source, stages=[prep, operator], batch_size=64, rngs=nnx.Rngs(0))
+    return Pipeline(source=source, stages=stages, batch_size=64, rngs=nnx.Rngs(0))
 
 # Get baseline (no augmentation)
 baseline_source = TFDSEagerSource(
@@ -451,29 +452,33 @@ Full augmentation pipeline:
 
 ## Part 6: Measure Augmentation Latency
 
-Profile the time cost of each augmentation step.
+Profile the time cost of each augmentation step: the wall-clock time from asking the
+pipeline for a batch to that batch being ready on the device. The "Original" row runs the
+preprocessing stage alone, so each augmentation's own cost is the difference from it. Each
+pipeline is timed over the training split for twenty batches after a warm-up batch (the first
+batch compiles the session): a 64-sample source yields one batch, which leaves nothing to
+average once the warm-up is skipped.
 
 ```python
 import time
 
-# Benchmark individual augmentations
 num_batches = 20
 latencies = {}
 
-for name, op, _ in aug_configs[1:]:  # Skip "Original"
-    pipeline = create_single_aug_pipeline(op, seed=0)
+for name, op, _ in aug_configs:
+    pipeline = create_single_aug_pipeline(op, seed=0, num_samples=TRAIN_SAMPLES)
+    batches = iter(pipeline)
 
     times = []
-    for i, batch in enumerate(pipeline):
-        if i >= num_batches:
-            break
-        start = time.time()
-        _ = batch["image"].block_until_ready()
-        times.append(time.time() - start)
+    for _ in range(num_batches + 1):
+        start = time.perf_counter()
+        batch = next(batches)
+        batch["image"].block_until_ready()
+        times.append(time.perf_counter() - start)
 
-    latencies[name] = np.mean(times[1:]) * 1000  # Skip warmup, convert to ms
+    latencies[name] = np.mean(times[1:]) * 1000  # Skip first (warmup), convert to ms
 
-print("Augmentation latency per batch (ms):")
+print("Pipeline latency per batch (ms):")
 for name, latency in latencies.items():
     print(f"  {name}: {latency:.2f} ms")
 
@@ -484,12 +489,10 @@ values = list(latencies.values())
 
 bars = ax.barh(names, values, color=plt.cm.viridis(np.linspace(0.2, 0.8, len(names))))
 ax.set_xlabel("Latency (ms)")
-ax.set_title("Augmentation Latency per Batch (64 samples)")
+ax.set_title("Pipeline Latency per Batch (64 samples)")
 
-# Add value labels
-for bar, val in zip(bars, values):
-    ax.text(val + 0.5, bar.get_y() + bar.get_height() / 2,
-            f"{val:.1f}ms", va="center", fontsize=9)
+# Value labels offset in points, so the canvas stays the figure's size at any latency scale
+ax.bar_label(bars, labels=[f"{val:.2f} ms" for val in values], padding=3, fontsize=9)
 
 plt.tight_layout()
 plt.savefig(output_dir / "cv-fashion-latency.png", dpi=150, bbox_inches="tight", facecolor="white")
@@ -498,12 +501,13 @@ plt.close()
 
 **Terminal Output:**
 ```
-Augmentation latency per batch (ms):
-  Brightness: 2.14 ms
-  Contrast: 2.08 ms
-  Rotation: 4.87 ms
-  Noise: 2.95 ms
-  PatchDropout: 3.12 ms
+Pipeline latency per batch (ms):
+  Original: 0.26 ms
+  Brightness: 0.25 ms
+  Contrast: 0.29 ms
+  Rotation: 0.21 ms
+  Noise: 0.25 ms
+  PatchDropout: 0.32 ms
 Saved: docs/assets/images/examples/cv-fashion-latency.png
 ```
 
@@ -589,15 +593,21 @@ flowchart TB
 
 ## Results Summary
 
-### Augmentation Latency (CPU)
+### Pipeline Latency per Batch (NVIDIA L40S)
 
-| Augmentation | Parameter | Latency (ms) |
-|--------------|-----------|--------------|
-| Brightness | ±0.15 | ~2 ms |
-| Contrast | 0.85-1.15x | ~2 ms |
-| Rotation | ±10° | ~5 ms |
-| Noise | std=0.1 | ~3 ms |
-| PatchDropout | 2×6×6 | ~3 ms |
+64 samples per batch, 20 batches after warm-up:
+
+| Pipeline | Parameter | Latency |
+|----------|-----------|---------|
+| Original (preprocess only) | - | 0.26 ms |
+| Brightness | ±0.15 | 0.25 ms |
+| Contrast | 0.85-1.15x | 0.29 ms |
+| Rotation | ±10° | 0.21 ms |
+| Noise | std=0.1 | 0.25 ms |
+| PatchDropout | 2×6×6 | 0.32 ms |
+
+Every augmentation lands within the run-to-run spread of the preprocessing-only pipeline: at
+this batch size the per-batch cost is the pipeline step itself, not the augmentation.
 
 ### Best Practices
 
