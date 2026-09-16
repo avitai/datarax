@@ -92,9 +92,23 @@ EPOCH = jnp.int32(2)
 IMAGE = jnp.linspace(0.1, 0.9, BATCH * 16 * 16 * 3, dtype=jnp.float32).reshape(BATCH, 16, 16, 3)
 IMAGE_LABEL: dict[str, jax.Array] = {"image": IMAGE, "label": jnp.arange(BATCH, dtype=jnp.int32)}
 IMAGE_ONLY: dict[str, jax.Array] = {"image": IMAGE}
-AUDIO: dict[str, jax.Array] = {
-    "audio": jnp.sin(jnp.linspace(0.0, 400.0, BATCH * 4096, dtype=jnp.float32)).reshape(BATCH, 4096)
-}
+# Tones at real frequencies plus broadband noise, so every FFT bin carries energy. This is not
+# decoration: a tone alone leaves most bins at the loudness operator's 1e-20 power floor, where
+# log10 turns one input ULP into 0.44 dB (measured 3.7e6x amplification, against 32x here) and
+# float32 differs from a float64 reference by 8 dB. Such a value cannot be recorded and compared
+# on another machine, because it is not a meaningful number on this one either.
+_AUDIO_TIME = jnp.arange(4096, dtype=jnp.float32) / 16000.0
+_AUDIO_TONES = jnp.stack(
+    [
+        0.5 * jnp.sin(2 * jnp.pi * 220.0 * (index + 1) * _AUDIO_TIME)
+        + 0.3 * jnp.sin(2 * jnp.pi * 437.0 * (index + 1) * _AUDIO_TIME)
+        for index in range(BATCH)
+    ]
+)
+_AUDIO_NOISE = jnp.asarray(
+    np.random.default_rng(0).standard_normal((BATCH, 4096)).astype(np.float32) * 0.1
+)
+AUDIO: dict[str, jax.Array] = {"audio": _AUDIO_TONES + _AUDIO_NOISE}
 
 PIPELINE_RECORDS = 16
 PIPELINE_BATCH = 4
