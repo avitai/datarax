@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   applies: its static weights, or `softmax(weight_logits / temperature)` for learnable weights. A
   composite that reads its weights from each record (`weight_key`) has no fixed mixture and
   raises `ValueError`, as does a composite with another strategy.
+- `examples/comparison/01_grain_datarax_quickref.py`, with its notebook and docs page: one job
+  run with Grain and with Datarax side by side — reading records, adding per-record noise,
+  batching, and resuming an interrupted epoch from saved iterator state — with what each
+  library's checkpoint holds and where its randomness comes from. The numbered files under
+  `examples/comparison` are now discovered and checked like every other tutorial.
 - An operator can override `compute_statistics(batch_data)` to fit the statistics it applies to
   each batch, as batch normalization does. The batch path calls it once per batch, before the
   batch is vectorized, and gives every record the result. An operator that stores fixed
@@ -214,6 +219,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `JaxProcessSharderModule` and `JaxProcessSharderConfig` now derive from `DataraxModule` and
   `DataraxModuleConfig`, `datarax.sharding` exports both, and the component registry has no
   `sharder` type.
+- The `examples/comparison` mock-ups `quick_demo.py`, `02_stateful_transformations.py`,
+  `03_distributed_memory_efficient.py` and `04_end_to_end_pipeline.py`, with their notebooks.
+  They imported neither datarax nor grain, illustrating a stateful-versus-stateless design in
+  plain flax and numpy, and `validate_examples.py` excluded the directory from every example
+  check, so none of them had to pass one. Its tutorials now run both libraries on one job and
+  are checked like every other numbered example.
 
 ### Fixed
 
