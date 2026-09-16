@@ -66,6 +66,8 @@ from datarax.operators.modality.image import (
     ContrastOperatorConfig,
     NoiseOperator,
     NoiseOperatorConfig,
+    RotationOperator,
+    RotationOperatorConfig,
 )
 from datarax.pipeline import Pipeline
 
@@ -210,10 +212,23 @@ noise_op = NoiseOperator(
     rngs=nnx.Rngs(noise=300),
 )
 
+# Rotation by a random angle, bilinear interpolation, black fill
+rotation_op = RotationOperator(
+    RotationOperatorConfig(
+        field_key="image",
+        angle_range=(-15.0, 15.0),  # Degrees
+        fill_value=0.0,
+        stochastic=True,
+        stream_name="rotation",
+    ),
+    rngs=nnx.Rngs(rotation=400),
+)
+
 print("Built-in operators created:")
 print("  - BrightnessOperator (range: -0.3 to +0.3)")
 print("  - ContrastOperator (factor: 0.8-1.2)")
 print("  - NoiseOperator (gaussian, std=0.05)")
+print("  - RotationOperator (angle: -15° to +15°)")
 
 # %% [markdown]
 """

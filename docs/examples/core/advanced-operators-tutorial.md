@@ -92,11 +92,11 @@ prob_brightness = ProbabilisticOperator(
 **Terminal Output:**
 ```
 Effect of probability values:
-  p=0.00 (deterministic): mean delta = +0.0000
-  p=0.25 (stochastic   ): mean delta = +0.0500
-  p=0.50 (stochastic   ): mean delta = +0.1000
-  p=0.75 (stochastic   ): mean delta = +0.1500
-  p=1.00 (deterministic): mean delta = +0.2000
+  p=0.00 (deterministic): mean delta = -0.0000
+  p=0.25 (stochastic  ): mean delta = +0.0504
+  p=0.50 (stochastic  ): mean delta = +0.0953
+  p=0.75 (stochastic  ): mean delta = +0.1475
+  p=1.00 (deterministic): mean delta = +0.1800
 ```
 
 ### SelectorOperator

@@ -172,9 +172,12 @@ def main():
     print("\nLoading SST-2 dataset...")
 
     # Create data source for SST-2 dataset using config-based API
+    # GLUE is one dataset with many configurations; SST-2 is the ``sst2`` configuration,
+    # which ``datasets.load_dataset`` takes as its ``name`` argument.
     train_config = HFEagerConfig(
         name="nyu-mll/glue",
-        split="train[:sst2]",  # SST-2 subset of GLUE
+        split="train",
+        download_kwargs={"name": "sst2"},
         shuffle=True,
         seed=42,
     )
@@ -182,7 +185,8 @@ def main():
 
     val_config = HFEagerConfig(
         name="nyu-mll/glue",
-        split="validation[:sst2]",
+        split="validation",
+        download_kwargs={"name": "sst2"},
     )
     val_source = HFEagerSource(val_config, rngs=nnx.Rngs(1))
 
