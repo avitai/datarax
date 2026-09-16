@@ -261,6 +261,24 @@ class TestIteratorState:
         for g, e in zip(got, expected):
             np.testing.assert_array_equal(g, e)
 
+    def test_set_state_refuses_a_negative_position(self):
+        iterator = _session(_pipeline(stochastic=True))
+        next(iterator)
+        state = iterator.get_state()
+        state["position"] = -1
+
+        with pytest.raises(ValueError, match="position"):
+            iterator.set_state(state)
+
+    def test_set_state_refuses_a_negative_epoch(self):
+        iterator = _session(_pipeline(stochastic=True))
+        next(iterator)
+        state = iterator.get_state()
+        state["epoch"] = -1
+
+        with pytest.raises(ValueError, match="epoch"):
+            iterator.set_state(state)
+
 
 # ---------------------------------------------------------------------------
 # Stage state

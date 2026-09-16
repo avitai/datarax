@@ -409,7 +409,7 @@ class PipelineIterator:
 
         Raises:
             ValueError: If ``state`` carries a different number of rng counts than this
-                pipeline has streams.
+                pipeline has streams, or a negative ``position`` or ``epoch``.
         """
         counts = state["rng_counts"]
         if len(counts) != len(self._rng_count_indices):
@@ -419,6 +419,12 @@ class PipelineIterator:
                 f"pipeline structure must match the one that produced it."
             )
         position = int(state["position"])
+        epoch = int(state["epoch"])
+        if position < 0 or epoch < 0:
+            raise ValueError(
+                f"state carries position {position} and epoch {epoch}; both count up from 0, "
+                f"so a negative value is not state this pipeline produced."
+            )
         carried = self._carried_variables
         for index, count in zip(self._rng_count_indices, counts, strict=True):
             for target in (self._live_variables[index], carried[index]):
@@ -426,7 +432,7 @@ class PipelineIterator:
         for target in (self._live_variables[self._position_index], carried[self._position_index]):
             target.set_value(jnp.asarray(position, dtype=jnp.int32))
         for target in (self._live_variables[self._epoch_index], carried[self._epoch_index]):
-            target.set_value(jnp.asarray(int(state["epoch"]), dtype=jnp.int32))
+            target.set_value(jnp.asarray(epoch, dtype=jnp.int32))
         self._position = position
 
     def close(self) -> None:

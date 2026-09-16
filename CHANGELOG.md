@@ -90,6 +90,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `PipelineIterator.set_state` accepted a negative `position` or `epoch`. An epoch of `-1` becomes
+  `2**32 - 1` where it is folded into a record key, so the restored iterator would draw a different
+  stream than the one that was saved, and a negative position would place the iterator before the
+  start of its epoch. Both now raise `ValueError`.
 - The composition strategies and advanced operators tutorials built their fixed brightness and
   contrast operators with `brightness_range=(d, d)` and `contrast_range=(f, f)` in deterministic
   mode, which applies `brightness_delta` and `contrast_factor`, so those operators returned images
