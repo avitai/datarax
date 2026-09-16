@@ -9,7 +9,7 @@ from typing import Any
 import jax
 from jaxtyping import PyTree
 
-from datarax.core.operator import OperatorModule
+from datarax.core.operator import OperatorModule, statistics_for_child
 
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,7 @@ class StrategyContext:
     state: PyTree
     metadata: dict[str, Any]
     key: jax.Array | None = None
+    stats: dict[str, Any] | None = None
     extra_params: dict[str, Any] | None = None
 
 
@@ -60,6 +61,7 @@ class CompositionStrategyImpl(abc.ABC):
         state: PyTree,
         metadata: dict[str, Any],
         key: jax.Array | None,
+        stats: dict[str, Any] | None = None,
     ) -> tuple[PyTree, PyTree, dict[str, Any]]:
         """Apply operator with JAX control flow (cond) for trace compatibility."""
 
@@ -67,7 +69,7 @@ class CompositionStrategyImpl(abc.ABC):
             operands: tuple[PyTree, PyTree, dict[str, Any], jax.Array | None],
         ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
             d, s, m, k = operands
-            return operator.apply(d, s, m, k)
+            return operator.apply(d, s, m, k, stats)
 
         def noop_fn(
             operands: tuple[PyTree, PyTree, dict[str, Any], jax.Array | None],
@@ -97,31 +99,38 @@ class CompositionStrategyImpl(abc.ABC):
             Tuple of (outputs, states, metadatas) lists
         """
         outputs, states, metadatas = [], [], []
-        for operator, key in self._with_keys(operators, context):
+        for operator, key, stats in self._with_key_and_stats(operators, context):
             out_data, out_state, out_metadata = operator.apply(
-                context.data, context.state, context.metadata, key
+                context.data, context.state, context.metadata, key, stats
             )
             outputs.append(out_data)
             states.append(out_state)
             metadatas.append(out_metadata)
         return outputs, states, metadatas
 
-    def _with_keys(
+    def _with_key_and_stats(
         self,
         operators: list[OperatorModule],
         context: StrategyContext,
-    ) -> Iterator[tuple[OperatorModule, jax.Array | None]]:
-        """Yield each operator with the key folded from the record's, by its position.
+    ) -> Iterator[tuple[OperatorModule, jax.Array | None, dict[str, Any] | None]]:
+        """Yield each operator with the key and the statistics belonging to its position.
+
+        Both are a function of the child's position: the key is folded from the record's, and
+        the statistics are the entry the composition computed for that child on its own input.
 
         Args:
             operators: The composition's operators, in order.
-            context: Execution context carrying the record's key.
+            context: Execution context carrying the record's key and the children's statistics.
 
         Yields:
-            Each operator paired with its own key.
+            Each operator with its own key and its own statistics.
         """
         for index, operator in enumerate(operators):
-            yield operator, self._key_for_operator(context.key, index)
+            yield (
+                operator,
+                self._key_for_operator(context.key, index),
+                statistics_for_child(context.stats, index),
+            )
 
     @abc.abstractmethod
     def apply(

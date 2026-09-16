@@ -294,7 +294,7 @@ class ModalityOperator(OperatorModule):
             state: Element state PyTree (typically dict[str, Any])
             metadata: Element metadata dict
             key: This record's PRNG key, or ``None`` for a deterministic operator
-            stats: Optional batch statistics (from get_statistics() or passed explicitly)
+            stats: This batch's statistics (from compute_statistics() or passed explicitly)
 
         Returns:
             Tuple of (transformed_data, new_state, new_metadata)

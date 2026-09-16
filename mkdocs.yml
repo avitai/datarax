@@ -272,6 +272,7 @@ nav:
           - reporters: monitoring/reporters.md
       - Operators:
           - Overview: operators/index.md
+          - Statistics: operators/statistics.md
           - batch_mix_operator: operators/batch_mix_operator.md
           - composite_operator: operators/composite_operator.md
           - element_operator: operators/element_operator.md

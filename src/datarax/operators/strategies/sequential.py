@@ -7,7 +7,7 @@ from typing import Any
 import jax
 from jaxtyping import PyTree
 
-from datarax.core.operator import OperatorModule
+from datarax.core.operator import OperatorModule, statistics_for_child
 from datarax.operators.strategies.base import CompositionStrategyImpl, StrategyContext
 
 
@@ -36,9 +36,14 @@ class SequentialStrategy(CompositionStrategyImpl):
         result_metadata: dict[str, Any] | None = context.metadata
 
         for i, operator in enumerate(operators):
-            # Apply operator with this child's own key, folded from the record's
+            # Each child gets its own key, folded from the record's, and the statistics the
+            # composition computed for it on the composition's input.
             result_data, result_state, result_metadata = operator.apply(
-                result_data, result_state, result_metadata, self._key_for_operator(context.key, i)
+                result_data,
+                result_state,
+                result_metadata,
+                self._key_for_operator(context.key, i),
+                statistics_for_child(context.stats, i),
             )
 
         return result_data, result_state, result_metadata or {}
@@ -93,6 +98,7 @@ class ConditionalSequentialStrategy(CompositionStrategyImpl):
                 result_state,
                 result_metadata,
                 self._key_for_operator(context.key, i),
+                statistics_for_child(context.stats, i),
             )
 
         return result_data, result_state, result_metadata

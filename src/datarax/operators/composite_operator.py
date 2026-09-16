@@ -72,7 +72,7 @@ from flax import nnx
 from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
-from datarax.core.operator import OperatorModule, require_key
+from datarax.core.operator import child_statistics, OperatorModule, require_key
 
 
 logger = logging.getLogger(__name__)
@@ -390,6 +390,23 @@ class CompositeOperatorModule(OperatorModule):
             ),
         }
 
+    def compute_statistics(self, batch_data: PyTree) -> dict[str, Any] | None:
+        """Return one entry per child, each computed on this composition's input.
+
+        A composite applies no statistics of its own; it carries what its children computed, in
+        child order, so each child receives its own. ``weight_key`` is stripped first, because a
+        weighted composite removes it before any child runs and a child's statistics must
+        describe the fields it is actually given.
+
+        Args:
+            batch_data: The batch about to be applied, with the batch on axis 0.
+
+        Returns:
+            The children's statistics, or ``None`` when no child has any.
+        """
+        _, clean_data = self._resolve_weighted_params(batch_data)
+        return child_statistics(self._get_operators_list(), clean_data)
+
     def apply(
         self,
         data: PyTree,
@@ -407,7 +424,6 @@ class CompositeOperatorModule(OperatorModule):
         ``data[weight_key]``, strips the key from data, and passes clean data
         to the strategy. Raises ``ValueError`` if the key is missing from data.
         """
-        del stats
         from datarax.operators.strategies.base import StrategyContext
 
         extra_params, clean_data = self._resolve_weighted_params(data)
@@ -417,6 +433,7 @@ class CompositeOperatorModule(OperatorModule):
             state=state,
             metadata=metadata if metadata is not None else {},
             key=require_key(key, self) if self.stochastic else key,
+            stats=stats,
             extra_params=extra_params if extra_params else None,
         )
 

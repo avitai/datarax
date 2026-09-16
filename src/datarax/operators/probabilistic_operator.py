@@ -29,7 +29,12 @@ from flax import nnx
 from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
-from datarax.core.operator import OperatorModule, require_key
+from datarax.core.operator import (
+    child_statistics,
+    OperatorModule,
+    require_key,
+    statistics_for_child,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -140,6 +145,20 @@ class ProbabilisticOperator(OperatorModule):
         self.operator = config.operator
         self.probability = config.probability
 
+    def compute_statistics(self, batch_data: PyTree) -> dict[str, Any] | None:
+        """Return the child's statistics for this batch, computed on this wrapper's input.
+
+        They are computed whatever the probability: whether a given record reaches the child is
+        decided per record inside the vectorized call, long after the batch is gone.
+
+        Args:
+            batch_data: The batch about to be applied, with the batch on axis 0.
+
+        Returns:
+            The child's statistics, or ``None`` when it has none.
+        """
+        return child_statistics([self.operator], batch_data)
+
     def apply(
         self,
         data: PyTree,
@@ -177,9 +196,11 @@ class ProbabilisticOperator(OperatorModule):
 
         # The child's key is independent of the decision key drawn below.
         child_key = None if key is None else jax.random.fold_in(key, 1)
+        # The child applies what it computed on this wrapper's input, not the wrapper's own.
+        child_stats = statistics_for_child(stats, 0)
 
         if self.probability == 1.0:
-            return self.operator.apply(data, state, metadata, child_key, stats)
+            return self.operator.apply(data, state, metadata, child_key, child_stats)
 
         # Stochastic case (0 < p < 1): decide per record, from its own key.
         should_apply = (
@@ -203,5 +224,5 @@ class ProbabilisticOperator(OperatorModule):
             should_apply,
             apply_fn,
             passthrough_fn,
-            (data, state, metadata, child_key, stats),
+            (data, state, metadata, child_key, child_stats),
         )

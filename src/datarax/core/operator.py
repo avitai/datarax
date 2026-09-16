@@ -14,6 +14,7 @@ Key Features:
 """
 
 import logging
+from collections.abc import Sequence
 from typing import Any, final
 
 import jax
@@ -88,6 +89,53 @@ def require_key(key: jax.Array | None, operator: "OperatorModule") -> jax.Array:
             "apply_batch, _apply_on_raw and Pipeline pass one, or call apply(..., key=...)"
         )
     return key
+
+
+# The name a wrapper's statistics carry their children's entries under. A wrapper applies no
+# statistics of its own: what it holds is what each child computed on the wrapper's input, in
+# child order.
+CHILD_STATISTICS = "children"
+
+
+def child_statistics(
+    operators: Sequence["OperatorModule"], batch_data: PyTree
+) -> dict[str, Any] | None:
+    """Return what each child computes for this batch, or ``None`` when no child has any.
+
+    A child cannot compute statistics of its own while it runs: a wrapper applies its children
+    inside one vectorized call, by which point the batch is gone. So the wrapper computes them
+    once per batch, before the batch is vectorized.
+
+    Args:
+        operators: The wrapper's children, in the order it applies them.
+        batch_data: The batch the wrapper is about to apply, with the batch on axis 0.
+
+    Returns:
+        One entry per child, or ``None`` when every child computed ``None`` — so a wrapper
+        over children with no statistics passes nothing down rather than an empty shell.
+    """
+    computed = tuple(operator.compute_statistics(batch_data) for operator in operators)
+    if all(entry is None for entry in computed):
+        return None
+    return {CHILD_STATISTICS: computed}
+
+
+def statistics_for_child(stats: dict[str, Any] | None, index: int) -> dict[str, Any] | None:
+    """Return the entry a wrapper computed for the child at ``index``.
+
+    Args:
+        stats: The wrapper's statistics, as ``child_statistics`` built them.
+        index: The child's position in the wrapper.
+
+    Returns:
+        That child's statistics, or ``None`` when the wrapper carries none.
+    """
+    if stats is None:
+        return None
+    children = stats.get(CHILD_STATISTICS)
+    if children is None:
+        return None
+    return children[index]
 
 
 def _record_indices_from_metadata(metadata_list: Any) -> jax.Array | None:
@@ -280,7 +328,7 @@ class OperatorModule(DataraxModule):
             metadata: Element metadata as structured dict
             key: This record's PRNG key for a stochastic operator, ``None`` for a
                 deterministic one. Pass it through ``require_key`` before drawing.
-            stats: Optional statistics (from get_statistics() or passed explicitly)
+            stats: This batch's statistics (from compute_statistics() or passed explicitly)
 
         Returns:
             Tuple of (transformed_data, new_state, new_metadata)
@@ -331,7 +379,9 @@ class OperatorModule(DataraxModule):
         Args:
             batch_data: PyTree with arrays having batch dimension as axis 0.
             batch_states: PyTree with arrays having batch dimension as axis 0.
-            stats: Optional statistics (if None, uses get_statistics()).
+            stats: The statistics to give every record. When ``None`` the operator computes
+                them for this batch with ``compute_statistics``, which is what lets an
+                operator fit statistics to each batch it is given.
             record_indices: Optional int array ``(batch_size,)`` of stable record
                 indices for per-record RNG. When ``None`` (no record information
                 available), falls back to ``arange(batch_size)``, which is
@@ -343,7 +393,7 @@ class OperatorModule(DataraxModule):
             Tuple of (transformed_data, transformed_states) as raw PyTrees.
         """
         if stats is None:
-            stats = self.get_statistics()
+            stats = self.compute_statistics(batch_data)
         _stats = stats
 
         data_shapes = jax.tree.map(lambda x: x.shape, batch_data)
@@ -444,7 +494,7 @@ class OperatorModule(DataraxModule):
 
         Args:
             batch: Input batch (Batch[Element] structure)
-            stats: Optional statistics (if None, uses get_statistics())
+            stats: Optional statistics (if None, uses compute_statistics() on this batch)
 
         Returns:
             Transformed batch with same structure

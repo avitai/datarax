@@ -34,7 +34,12 @@ from flax import nnx
 from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
-from datarax.core.operator import OperatorModule, require_key
+from datarax.core.operator import (
+    child_statistics,
+    OperatorModule,
+    require_key,
+    statistics_for_child,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -142,6 +147,20 @@ class SelectorOperator(OperatorModule):
         self.operators = nnx.List(config.operators)
         self.weights = nnx.static(config.normalized_weights)
 
+    def compute_statistics(self, batch_data: PyTree) -> dict[str, Any] | None:
+        """Return one entry per child, each computed on this selector's input.
+
+        Every child's statistics are computed, not only the selected one's: which child a record
+        gets is decided per record inside the vectorized call, long after the batch is gone.
+
+        Args:
+            batch_data: The batch about to be applied, with the batch on axis 0.
+
+        Returns:
+            The children's statistics, or ``None`` when no child has any.
+        """
+        return child_statistics(list(self.operators), batch_data)
+
     def apply(
         self,
         data: PyTree,
@@ -178,9 +197,13 @@ class SelectorOperator(OperatorModule):
         # Create branch functions for each operator
         # Each branch applies its operator with its own key, folded from the record's
         def make_branch_fn(i: int, operator: OperatorModule) -> Callable:
+            # This child's statistics are fixed for the batch, so they are captured here
+            # rather than carried through the switch's operands.
+            child_stats = statistics_for_child(stats, i)
+
             def branch_fn(operands: Any) -> tuple[Any, Any, Any]:
-                d, s, m, k, st = operands
-                return operator.apply(d, s, m, jax.random.fold_in(k, i + 1), st)
+                d, s, m, k = operands
+                return operator.apply(d, s, m, jax.random.fold_in(k, i + 1), child_stats)
 
             return branch_fn
 
@@ -191,7 +214,7 @@ class SelectorOperator(OperatorModule):
         result_data, result_state, result_metadata = jax.lax.switch(
             selected_idx,
             branches,
-            (data, state, metadata, record_key, stats),
+            (data, state, metadata, record_key),
         )
 
         return result_data, result_state, result_metadata
