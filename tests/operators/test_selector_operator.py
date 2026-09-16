@@ -52,7 +52,7 @@ class TestSelectorOperatorConfig:
         selector_config = SelectorOperatorConfig(operators=[op1, op2], weights=[2.0, 8.0])
 
         # Weights should be normalized to [0.2, 0.8]
-        assert jnp.allclose(selector_config.normalized_weights, jnp.array([0.2, 0.8]))
+        assert selector_config.normalized_weights == pytest.approx((0.2, 0.8))
 
     def test_config_uniform_weights_by_default(self):
         """Default weights should be uniform."""
@@ -64,7 +64,7 @@ class TestSelectorOperatorConfig:
         selector_config = SelectorOperatorConfig(operators=[op1, op2])
 
         # Uniform weights: [0.5, 0.5]
-        assert jnp.allclose(selector_config.normalized_weights, jnp.array([0.5, 0.5]))
+        assert selector_config.normalized_weights == pytest.approx((0.5, 0.5))
 
     def test_config_is_always_stochastic(self):
         """Verify the operator is always stochastic (always makes random choice)."""
@@ -74,6 +74,39 @@ class TestSelectorOperatorConfig:
 
         selector_config = SelectorOperatorConfig(operators=[op1])
         assert selector_config.stochastic is True
+
+    def test_equal_configs_compare_equal(self):
+        """Two configs built the same way compare equal, with no array truth value."""
+        rngs = nnx.Rngs(0)
+        config = MapOperatorConfig(stochastic=False)
+        op1 = MapOperator(config, fn=lambda x, _key: x * 2, rngs=rngs)
+        op2 = MapOperator(config, fn=lambda x, _key: x * 3, rngs=rngs)
+
+        first = SelectorOperatorConfig(operators=[op1, op2], weights=[2.0, 8.0])
+        second = SelectorOperatorConfig(operators=[op1, op2], weights=[2.0, 8.0])
+
+        assert first == second
+
+    def test_two_selectors_over_the_same_children_share_a_jitted_function(self):
+        """Dispatch compares the static config, which must not hold an array."""
+        rngs = nnx.Rngs(0)
+        config = MapOperatorConfig(stochastic=False)
+        op1 = MapOperator(config, fn=lambda x, _key: x * 2, rngs=rngs)
+        op2 = MapOperator(config, fn=lambda x, _key: x * 3, rngs=rngs)
+        first = SelectorOperator(
+            SelectorOperatorConfig(operators=[op1, op2], weights=[2.0, 8.0]), rngs=nnx.Rngs(1)
+        )
+        second = SelectorOperator(
+            SelectorOperatorConfig(operators=[op1, op2], weights=[2.0, 8.0]), rngs=nnx.Rngs(2)
+        )
+
+        @nnx.jit
+        def increment(operator: SelectorOperator, x: jnp.ndarray) -> jnp.ndarray:
+            del operator
+            return x + 1
+
+        assert increment(first, jnp.array(1.0)) == 2.0
+        assert increment(second, jnp.array(1.0)) == 2.0
 
 
 class TestSelectorOperatorInit:
