@@ -383,10 +383,10 @@ mixture_losses = train(
 learned_weights = np.asarray(learned_mixture.mixture_weights())
 print(f"Loss: first {mixture_losses[0]:.5f}, last {mixture_losses[-1]:.2e}")
 print(f"Learned mixture weights: {np.round(learned_weights, 3)} (target [0.25 0.75])")
-# Expected output:
+# Expected output (an L40S run; the converged loss varies by hardware):
 # Mixed field: ('image',)
 # Initial mixture weights: [0.5 0.5]
-# Loss: first 0.00296, last 8.50e-10
+# Loss: first 0.00296, last 8.48e-10
 # Learned mixture weights: [0.25 0.75] (target [0.25 0.75])
 
 # %% [markdown]
