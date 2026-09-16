@@ -524,6 +524,15 @@ class TestBatchMixOperatorEdgeCases:
         assert jnp.all(result_values >= 0.0)
         assert jnp.all(result_values <= 100.0)
 
+    def test_apply_refuses_a_single_record(self):
+        """Mixing needs the whole batch, so the per-record entry point refuses."""
+        rngs = nnx.Rngs({"batch_mix": 42})
+        config = BatchMixOperatorConfig(mode="mixup")
+        op = BatchMixOperator(config, rngs=rngs)
+
+        with pytest.raises(NotImplementedError, match="apply_batch"):
+            op.apply({"value": jnp.array([1.0])}, {}, {})
+
     def test_cutmix_grayscale_image(self):
         """Verify cutmix works with grayscale images (H, W, 1)."""
         rngs = nnx.Rngs({"batch_mix": 42})

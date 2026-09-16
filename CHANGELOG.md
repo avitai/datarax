@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `BatchMixOperator.apply` raises `NotImplementedError` instead of returning its input unchanged,
+  which looked like a successful mix. Batch mixing combines each record with another record of the
+  same batch, so it has no per-record form: call `apply_batch(batch)`, or the operator itself.
 - datarax requires substrax 0.1.7, whose `place_batch_on_shards` places the NumPy leaves of a host
   batch and assembles a global batch from each process's slice.
 - `CompositeOperatorConfig` for `WEIGHTED_PARALLEL` takes `mix_fields`, the dotted paths of the
