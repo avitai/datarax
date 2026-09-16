@@ -59,20 +59,6 @@ def extract_batch_size(data_shapes: PyTree) -> int:
     return batch_size_leaves[0]
 
 
-# Module-level cache for output structure discovery.
-# Using module-level cache instead of instance attribute avoids NNX pytree tracking,
-# which is critical for nnx.cond/switch where branches must have identical pytree structure.
-# Key: (unique_operator_id, PyTreeDef of input)
-# Value: (out_data_struct, out_state_struct)
-_OUTPUT_STRUCT_CACHE: dict[tuple[int, Any], tuple[PyTree, PyTree]] = {}
-
-# Upper bound on cache entries. Each unique (operator, input-structure) pair adds
-# one entry; without a bound a long-running process that builds many operators or
-# feeds many distinct input structures would grow this dict without limit. When
-# full, the oldest entry is evicted (FIFO) — dicts preserve insertion order.
-_OUTPUT_STRUCT_CACHE_MAXSIZE = 1024
-
-
 def _global_indices_from_metadata(metadata_list: Any) -> jax.Array | None:
     """Extract per-record global indices from a batch's metadata list.
 
@@ -86,26 +72,6 @@ def _global_indices_from_metadata(metadata_list: Any) -> jax.Array | None:
     if not metadata_list or not all(isinstance(meta, Metadata) for meta in metadata_list):
         return None
     return jnp.asarray([meta.index for meta in metadata_list], dtype=jnp.uint32)
-
-
-def _store_output_struct(
-    cache_key: tuple[int, Any],
-    value: tuple[PyTree, PyTree],
-) -> None:
-    """Insert into the output-structure cache with bounded FIFO eviction."""
-    if cache_key not in _OUTPUT_STRUCT_CACHE and (
-        len(_OUTPUT_STRUCT_CACHE) >= _OUTPUT_STRUCT_CACHE_MAXSIZE
-    ):
-        # Evict the oldest inserted entry to keep the cache bounded.
-        oldest_key = next(iter(_OUTPUT_STRUCT_CACHE))
-        del _OUTPUT_STRUCT_CACHE[oldest_key]
-    _OUTPUT_STRUCT_CACHE[cache_key] = value
-
-
-# Monotonically increasing ID counter for unique operator identification.
-# Using id(self) is unsafe because Python reuses memory addresses after GC.
-# This counter ensures each operator instance gets a unique, permanent ID.
-_OPERATOR_ID_COUNTER = 0
 
 
 class OperatorModule(DataraxModule):
@@ -145,11 +111,6 @@ class OperatorModule(DataraxModule):
             ValueError: If stochastic=True but rngs is None
         """
         super().__init__(config, rngs=rngs, name=name)
-
-        # Assign unique ID for cache keying (avoids id() reuse after GC)
-        global _OPERATOR_ID_COUNTER
-        _OPERATOR_ID_COUNTER += 1
-        self._unique_id = _OPERATOR_ID_COUNTER
 
         # Runtime validation: Stochastic operators require rngs
         if config.stochastic and rngs is None:
@@ -265,47 +226,6 @@ class OperatorModule(DataraxModule):
         """
         raise NotImplementedError(f"{self.__class__.__name__} must implement apply() method")
 
-    def get_output_structure(
-        self,
-        sample_data: PyTree,
-        sample_state: PyTree,
-    ) -> tuple[PyTree, PyTree]:
-        """Declare output PyTree structure for vmap axis specification.
-
-        Default uses jax.eval_shape to discover structure automatically.
-        Override for efficiency or when eval_shape doesn't work (e.g., data-dependent shapes).
-
-        Args:
-            sample_data: Single element data (not batched)
-            sample_state: Single element state (not batched)
-
-        Returns:
-            Tuple of (output_data_structure, output_state_structure) with None leaves.
-            The structure (keys/nesting) matters, leaf values are ignored.
-
-        Example override for operator that adds keys:
-            def get_output_structure(self, sample_data, sample_state):
-                out_data = {
-                    **jax.tree.map(lambda _: None, sample_data),
-                    "score": None,
-                    "alignment": None,
-                }
-                return out_data, sample_state
-        """
-
-        # Default: use eval_shape to discover output structure without computation
-        def apply_wrapper(data: PyTree, state: PyTree) -> tuple[PyTree, PyTree]:
-            out_data, out_state, _ = self.apply(data, state, None)
-            return out_data, out_state
-
-        out_shapes = jax.eval_shape(apply_wrapper, sample_data, sample_state)
-        # Use 0 as placeholder (not None!) because None is an empty pytree in JAX
-        # and jax.tree.map won't transform it. Using 0 makes these directly usable
-        # as vmap axis specifications.
-        out_data_struct = jax.tree.map(lambda _: 0, out_shapes[0])
-        out_state_struct = jax.tree.map(lambda _: 0, out_shapes[1])
-        return out_data_struct, out_state_struct
-
     # ========================================================================
     # Concrete Methods (implemented by base class)
     # ========================================================================
@@ -389,24 +309,14 @@ class OperatorModule(DataraxModule):
             _, result = jax.lax.scan(lambda carry, x: (carry, apply_one(*x)), None, inputs)
             return result
 
-        # === VMAP BRANCH (parallel, needs output structure for axis specs) ===
-        input_struct_key = jax.tree.structure(batch_data)
-        cache_key = (self._unique_id, input_struct_key)
-        if cache_key not in _OUTPUT_STRUCT_CACHE:
-            sample_data = jax.tree.map(lambda x: x[0], batch_data)
-            sample_state = jax.tree.map(lambda x: x[0], batch_states)
-            _store_output_struct(cache_key, self.get_output_structure(sample_data, sample_state))
-        out_data_axes, out_state_axes = _OUTPUT_STRUCT_CACHE[cache_key]
-
+        # === VMAP BRANCH (parallel) ===
+        # Every leaf apply returns carries the batch on axis 0, whatever fields it adds, so the
+        # integer 0 is a tree prefix of any output and no structure has to be discovered first.
         in_data_axes = jax.tree.map(lambda _: 0, batch_data)
         in_state_axes = jax.tree.map(lambda _: 0, batch_states)
         in_axes = (in_data_axes, in_state_axes, 0) if has_rp else (in_data_axes, in_state_axes)
 
-        return jax.vmap(
-            apply_one,
-            in_axes=in_axes,
-            out_axes=(out_data_axes, out_state_axes),
-        )(*inputs)
+        return jax.vmap(apply_one, in_axes=in_axes, out_axes=0)(*inputs)
 
     def _apply_on_raw(
         self,

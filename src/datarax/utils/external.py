@@ -82,35 +82,6 @@ class ExternalLibraryAdapter(OperatorModule):
         super().__init__(config, rngs=rngs, name=name)
         self.fn = fn
 
-    def get_output_structure(
-        self,
-        sample_data: PyTree,
-        sample_state: PyTree,
-    ) -> tuple[PyTree, PyTree]:
-        """Declare output structure for vmap axis specification.
-
-        ExternalLibraryAdapter.apply() requires random_params which isn't available
-        during jax.eval_shape tracing. We trace through fn with a dummy key.
-
-        Args:
-            sample_data: Single element data (not batched)
-            sample_state: Single element state (not batched)
-
-        Returns:
-            Tuple of (output_data_structure, output_state_structure) with 0 leaves.
-        """
-
-        def apply_wrapper(data: PyTree, state: PyTree) -> tuple[PyTree, PyTree]:
-            # Use dummy key for tracing (value doesn't matter for shape inference)
-            dummy_key = jax.random.key(0)
-            transformed_data = self.fn(data, dummy_key)
-            return transformed_data, state
-
-        out_shapes = jax.eval_shape(apply_wrapper, sample_data, sample_state)
-        out_data_struct = jax.tree.map(lambda _: 0, out_shapes[0])
-        out_state_struct = jax.tree.map(lambda _: 0, out_shapes[1])
-        return out_data_struct, out_state_struct
-
     def generate_random_params(
         self,
         element_keys: jax.Array,
