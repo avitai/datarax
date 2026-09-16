@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
+from datarax.core.element_batch import Batch, Element
 from datarax.operators.modality.audio.f0_operator import (
     CrepeF0Config,
     CrepeF0Operator,
@@ -335,3 +336,52 @@ class TestCrepeF0PitchAccuracy:
         out_data, _, _ = op.apply(data, {}, None)
         mean_conf = jnp.mean(out_data["f0_confidence"])
         assert mean_conf < 0.5, f"Silence should have low confidence, got {mean_conf:.3f}"
+
+
+# ============================================================================
+# Transform Compatibility (jit, vmap, scan)
+# ============================================================================
+
+
+class TestCrepeF0Transforms:
+    """The operator runs under the transforms the pipeline and its config use."""
+
+    @staticmethod
+    def _audio_batch(n: int = 2, samples: int = 4096) -> Batch:
+        """Return a batch of ``n`` random audio records of ``samples`` each."""
+        keys = jax.random.split(jax.random.key(0), n)
+        return Batch([Element(data={"audio": jax.random.normal(key, (samples,))}) for key in keys])
+
+    def test_apply_under_jit(self):
+        """A jitted call extracts f0, so the pad width stays concrete."""
+        op = CrepeF0Operator(CrepeF0Config(capacity="tiny"), rngs=nnx.Rngs(0))
+        op.eval()
+
+        @nnx.jit
+        def extract(operator: CrepeF0Operator, data: dict) -> jnp.ndarray:
+            out_data, _, _ = operator.apply(data, {}, None)
+            return out_data["f0_hz"]
+
+        f0 = extract(op, {"audio": jnp.zeros(4096)})
+
+        assert f0.shape == (64,)
+
+    def test_batch_in_train_mode(self):
+        """Train mode maps over a batch without writing batch statistics mid-trace."""
+        op = CrepeF0Operator(CrepeF0Config(capacity="tiny"), rngs=nnx.Rngs(0))
+        op.train()
+
+        result = op(self._audio_batch())
+
+        assert result.get_data()["f0_hz"].shape == (2, 64)
+
+    def test_batch_under_the_scan_strategy(self):
+        """The scan strategy the config recommends for memory runs."""
+        op = CrepeF0Operator(
+            CrepeF0Config(capacity="tiny", batch_strategy="scan"), rngs=nnx.Rngs(0)
+        )
+        op.eval()
+
+        result = op(self._audio_batch())
+
+        assert result.get_data()["f0_hz"].shape == (2, 64)
