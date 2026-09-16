@@ -251,8 +251,9 @@ through a pipeline.
 
 ## Next Steps
 
-1. [Stateful Operators Tutorial](02_stateful_operators_tutorial.py): randomness, running
-   statistics and gradients through operators in both libraries
+1. [Randomness and Learnable Operators Tutorial](02_randomness_and_learnable_operators_tutorial.py):
+   where each record's randomness comes from, and gradients through operators, in both
+   libraries
 2. [Checkpoint Quick Reference](../advanced/checkpointing/01_checkpoint_quickref.py):
    saving iterator state with Orbax
 3. [Framework comparison](../../docs/benchmarks/comparison.md): measured throughput and
