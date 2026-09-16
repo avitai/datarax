@@ -20,7 +20,6 @@ graph TD
     C --> E[Data Sources]
     C --> F[Batchers]
     C --> G[Samplers]
-    C --> H[Sharders]
 ```
 
 ---
@@ -124,7 +123,9 @@ source's records are named by their position in the stream.
 1.  **Data Sources**: specialized `StructuralModule` that yields initial data Element.
 2.  **Batchers**: Group individual elements into a `Batch`.
 3.  **Samplers**: Generate sequences of indices for data retrieval.
-4.  **Sharders**: Split batches across multiple devices (GPUs/TPUs).
+
+Record sharding across JAX processes is `JaxProcessSharderModule`, a `DataraxModule` in
+`datarax.sharding`; device meshes and batch placement come from `substrax`.
 
 ### Usage Example
 

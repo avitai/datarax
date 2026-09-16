@@ -529,11 +529,20 @@ from datarax.core.operator import OperatorModule
 class CustomOperator(OperatorModule):
     """Template for custom operators."""
 
-    def apply(self, element: Element, key=None) -> Element:
-        """Apply transformation to single element."""
+    def apply(self, data, state, metadata, key=None, stats=None):
+        """Transform one record.
+
+        ``key`` is the record's PRNG key when the operator is stochastic, else ``None``;
+        ``stats`` is what ``compute_statistics(batch_data)`` returned for the batch.
+        """
         # Your implementation
-        return transformed_element
+        return transformed_data, state, metadata
 ```
+
+`apply` is a pure function of one record: the batch path runs it under `vmap` with one key
+per record, so it reads no `self.rngs` (an operator keeps none) and writes no module state.
+Statistics an operator fits per batch belong in `compute_statistics(batch_data)`, which runs
+once per batch before the records are vectorized.
 
 ### 3. Performance Optimizations
 
