@@ -861,110 +861,6 @@ class TestOperatorModuleTrainingMode:
 
 
 # ========================================================================
-# Test Category 9: Module Copying
-# ========================================================================
-
-
-class TestOperatorModuleCopying:
-    """Test module copying with config changes."""
-
-    def test_copy_with_same_config(self):
-        """Test copying operator with same configuration."""
-        config = RandomBrightnessConfig(
-            stochastic=True,
-            stream_name="augment",
-            min_factor=0.8,
-            max_factor=1.2,
-        )
-        rngs = nnx.Rngs(42)
-        operator = RandomBrightnessOperator(config, rngs=rngs, name="original")
-
-        # Copy without changes
-        copy = operator.copy()
-
-        # Should have same config
-        assert copy.config is operator.config
-        assert copy.rngs is operator.rngs
-        assert copy.name == operator.name
-
-        # But should be a different instance
-        assert copy is not operator
-
-    def test_copy_with_new_config(self):
-        """Test copying with new configuration."""
-        config1 = RandomBrightnessConfig(
-            stochastic=True,
-            stream_name="augment",
-            min_factor=0.8,
-            max_factor=1.2,
-        )
-        rngs = nnx.Rngs(42)
-        operator = RandomBrightnessOperator(config1, rngs=rngs)
-
-        # Copy with new config (different range)
-        config2 = RandomBrightnessConfig(
-            stochastic=True,
-            stream_name="augment",
-            min_factor=0.5,
-            max_factor=1.5,
-        )
-        copy = operator.copy(config=config2)
-
-        # Should have new config
-        assert copy.config is config2
-        assert copy.config.min_factor == 0.5  # type: ignore[reportAttributeAccessIssue]
-        assert copy.config.max_factor == 1.5  # type: ignore[reportAttributeAccessIssue]
-
-        # Original unchanged
-        assert operator.config is config1
-        assert operator.config.min_factor == 0.8  # type: ignore[reportAttributeAccessIssue]
-        assert operator.config.max_factor == 1.2  # type: ignore[reportAttributeAccessIssue]
-
-    def test_copy_with_new_rngs(self):
-        """Test copying with new RNG state."""
-        config = RandomBrightnessConfig(
-            stochastic=True,
-            stream_name="augment",
-        )
-        rngs1 = nnx.Rngs(42)
-        operator = RandomBrightnessOperator(config, rngs=rngs1)
-
-        # Copy with new rngs
-        rngs2 = nnx.Rngs(123)
-        copy = operator.copy(rngs=rngs2)
-
-        assert copy.rngs is rngs2
-        assert operator.rngs is rngs1
-
-    def test_copy_with_new_name(self):
-        """Test copying with new name."""
-        config = NormalizeConfig(stochastic=False)
-        operator = NormalizeOperator(config, name="original")
-
-        copy = operator.copy(name="renamed")
-
-        assert copy.name == "renamed"
-        assert operator.name == "original"
-
-    def test_copy_preserves_functionality(self):
-        """Test that copied operator works identically."""
-        config = NormalizeConfig(stochastic=False, precomputed_stats={"mean": 0.5, "std": 0.2})
-        operator = NormalizeOperator(config, name="original")
-
-        copy = operator.copy()
-
-        # Both should produce same results
-        data = {"image": jnp.ones((64, 64, 3)) * 0.7}
-        state = {}
-        metadata = None
-
-        result1, _, _ = operator.apply(data, state, metadata)
-        result2, _, _ = copy.apply(data, state, metadata)  # type: ignore[reportAttributeAccessIssue]
-
-        assert jnp.array_equal(result1["image"], result2["image"])
-
-
-# ========================================================================
 # Test Category 10: Scan Batch Strategy
 # ========================================================================
 
@@ -1064,7 +960,6 @@ class TestOperatorModuleScanBatchStrategy:
 # TestOperatorModuleRandomParams: 3 tests
 # TestOperatorModuleStatistics: 5 tests
 # TestOperatorModuleTrainingMode: 3 tests
-# TestOperatorModuleCopying: 5 tests
 # TestOperatorModuleScanBatchStrategy: 5 tests
 # ========================================================================
-# Total: 53 tests
+# Total: 48 tests

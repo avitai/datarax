@@ -67,6 +67,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `DataraxModule.copy`. It rebuilt a module as `type(self)(config=..., rngs=..., name=...)`, which 17 of the
+  42 module classes cannot accept: nine operators take no `name` (the composite, the selector, the
+  probabilistic wrapper and the six image operators), `PureJaxAdapter` takes no `rngs`, and eight classes
+  require an argument of their own (a mapped function, the data, the paths, the sources, an element spec).
+  Construct the module with the arguments its constructor takes, or use `nnx.clone` for a structural copy.
 - `CompositeOperatorModule.operator_statistics` and `StrategyContext.stats_callback`, with the
   `_emit_operator_statistics` hook the sequential and parallel strategies called. The hook
   forwarded an operator's `statistics` attribute, which no operator defines, so the variable

@@ -459,93 +459,11 @@ class TestStructuralModuleStructuralOperations:
 
 
 # ========================================================================
-# Test Category 5: Module Copying
-# ========================================================================
-
-
-class TestStructuralModuleCopying:
-    """Test module copying with frozen configs."""
-
-    def test_copy_with_same_config(self):
-        """Test copying module with same frozen configuration."""
-        config = BatcherConfig(stochastic=False, batch_size=32)
-        module = SimpleBatcher(config, name="original")
-
-        # Copy without changes
-        copy = module.copy()
-
-        # Should have same config
-        assert copy.config is module.config
-        assert copy.name == module.name
-
-        # But different instance
-        assert copy is not module
-
-    def test_copy_with_new_config(self):
-        """Test copying with new frozen configuration."""
-        config1 = BatcherConfig(stochastic=False, batch_size=32)
-        module = SimpleBatcher(config1, name="original")
-
-        # Create new frozen config
-        config2 = BatcherConfig(stochastic=False, batch_size=64)
-        copy = module.copy(config=config2)
-
-        # Should have new config
-        assert copy.config is config2
-        assert copy.config.batch_size == 64
-
-        # Original unchanged
-        assert module.config is config1
-        assert module.config.batch_size == 32
-
-    def test_copy_with_new_name(self):
-        """Test copying with new name."""
-        config = BatcherConfig(stochastic=False, batch_size=32)
-        module = SimpleBatcher(config, name="original")
-
-        copy = module.copy(name="renamed")
-
-        assert copy.name == "renamed"
-        assert module.name == "original"
-
-    def test_copy_preserves_functionality(self):
-        """Test that copied module works identically."""
-        config = BatcherConfig(stochastic=False, batch_size=3)
-        module = SimpleBatcher(config)
-
-        copy = module.copy()
-
-        # Both should produce same results (deterministic)
-        elements = [1, 2, 3, 4, 5, 6]
-        batches1 = module.process(elements)
-        batches2 = copy.process(elements)
-
-        assert batches1 == batches2
-
-    def test_copy_frozen_config_safe(self):
-        """Test that copying with frozen configs is safe."""
-        config = BatcherConfig(stochastic=False, batch_size=16)
-        module1 = SimpleBatcher(config)
-        module2 = SimpleBatcher(config)  # Share same config
-
-        # Both use same frozen config (safe)
-        assert module1.config is module2.config
-
-        # Creating copies is also safe
-        copy1 = module1.copy()
-        copy2 = module2.copy()
-
-        assert copy1.config is config
-        assert copy2.config is config
-
-
-# ========================================================================
 # Test Count Summary
 # ========================================================================
 # TestStructuralModuleInitialization: 7 tests
 # TestStructuralModuleProcessMethod: 9 tests
 # TestStructuralModuleFrozenConfig: 6 tests
 # TestStructuralModuleStructuralOperations: 11 tests
-# TestStructuralModuleCopying: 5 tests
 # ========================================================================
-# Total: 38 tests (within 40-50 target range)
+# Total: 33 tests
