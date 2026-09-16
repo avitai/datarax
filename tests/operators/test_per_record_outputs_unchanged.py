@@ -17,17 +17,18 @@ What is compared exactly, and what is not. Record indices, labels, masks and the
 names are integers or strings, and every one of them must match exactly: a change in which record
 gets which augmentation shows up there immediately. Float entries are compared within float32
 rounding, because a reduction reassociates differently on different architectures and the fixture
-is a recording from one of them. Measured between x86-64 and arm64: of the 54 cases, four differ,
-each of them computing a reduction over many elements -- the mean over 256 pixels inside
-``adjust_contrast``, the ``rfft`` and mean in the loudness operator, and the mean in the cross-modal
-case. The largest difference is 5.96e-08, which is half a float32 ULP at unit scale, while a real
-change in behaviour differs by orders of magnitude.
+is a recording from one of them. Measured between x86-64 and arm64, those differences are half a
+float32 ULP at unit scale, while a real change in behaviour differs by orders of magnitude.
 
-The bound is relative and has no absolute floor, because the recorded magnitudes span 0.76 to 120.0
-(loudness is in decibels), so one flat tolerance would be too loose for the small entries and too
-tight for the large ones. It remains a detector rather than an eraser: a thousand-ULP change to any
-of the three affected entries still fails, as do a NaN, an infinity, a changed shape and a flipped
-sign.
+The bound is relative, with an absolute floor scaled to each entry's own peak magnitude. A purely
+element-wise relative bound collapses toward zero for an element near zero, and it carries no
+meaning at all on a logarithmic quantity such as the loudness operator's decibels. It stays a
+detector rather than an eraser: a thousand-ULP change to a recorded entry still fails, as do a NaN,
+an infinity, a changed shape and a flipped sign.
+
+An operator can only be recorded where its output is well conditioned, and the generator chooses
+its inputs accordingly: ``scripts/generate_per_record_outputs.py`` records why the audio case is
+broadband rather than a single tone.
 """
 
 from __future__ import annotations
@@ -47,8 +48,9 @@ FIXTURE_PATH = (
     Path(__file__).resolve().parents[1] / "fixtures" / "operators" / "per_record_outputs.npz"
 )
 
-# Eight float32 ULP at the value's own scale. The measured divergence between architectures is
-# half a ULP; this leaves room for a longer reduction without admitting a behavioural change.
+# Eight float32 ULP at the entry's own scale. Measured against a one-ULP change to each case's
+# input: the worst entry moves 2.24 ULP of its peak, so the bound keeps a factor of three, while a
+# thousand-ULP change to any entry still fails.
 FLOAT_RTOL = 8 * float(np.finfo(np.float32).eps)
 
 
@@ -57,8 +59,19 @@ def assert_entry_matches(key: str, produced: np.ndarray, recorded: np.ndarray) -
     assert produced.dtype == recorded.dtype, f"{key}: dtype {produced.dtype} != {recorded.dtype}"
     assert produced.shape == recorded.shape, f"{key}: shape {produced.shape} != {recorded.shape}"
     if produced.dtype.kind == "f":
+        # Scale the absolute floor to the entry's own peak. 17 of the 69 float entries hold exact
+        # zeros -- the dropout masks, salt-and-pepper and poisson noise -- and an element-wise
+        # relative bound gives an exact zero no tolerance whatever: measured on one machine, a
+        # single input ULP already pushes 15 of 61 entries past eight ULP element-wise, the worst
+        # to 3224, while against the peak that same case moves 2.24. A decibel field is
+        # logarithmic, where an element-wise relative bound carries no meaning either.
+        peak = float(np.abs(recorded).max(initial=0.0))
         np.testing.assert_allclose(
-            produced, recorded, rtol=FLOAT_RTOL, atol=0.0, err_msg=f"{key} differs"
+            produced,
+            recorded,
+            rtol=FLOAT_RTOL,
+            atol=FLOAT_RTOL * peak,
+            err_msg=f"{key} differs",
         )
     else:
         np.testing.assert_array_equal(produced, recorded, err_msg=f"{key} differs")
