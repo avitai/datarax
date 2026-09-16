@@ -143,11 +143,7 @@ Uses `jax.lax.cond` for JIT-compatible conditional execution.
 # %%
 # Create a child operator (brightness adjustment)
 brightness_op = BrightnessOperator(
-    BrightnessOperatorConfig(
-        field_key="image",
-        brightness_range=(0.2, 0.2),  # Fixed +0.2 brightness
-        stochastic=False,
-    ),
+    BrightnessOperatorConfig(field_key="image", brightness_delta=0.2),
     rngs=nnx.Rngs(0),
 )
 
@@ -223,20 +219,12 @@ Uses weighted random selection with configurable weights.
 # %%
 # Create multiple operators for selection
 op_bright = BrightnessOperator(
-    BrightnessOperatorConfig(
-        field_key="image",
-        brightness_range=(0.15, 0.15),
-        stochastic=False,
-    ),
+    BrightnessOperatorConfig(field_key="image", brightness_delta=0.15),
     rngs=nnx.Rngs(1),
 )
 
 op_contrast = ContrastOperator(
-    ContrastOperatorConfig(
-        field_key="image",
-        contrast_range=(1.3, 1.3),
-        stochastic=False,
-    ),
+    ContrastOperatorConfig(field_key="image", contrast_factor=1.3),
     rngs=nnx.Rngs(2),
 )
 
@@ -562,7 +550,7 @@ def main():
     print()
     print("1. ProbabilisticOperator (p=0.5):")
     bright = BrightnessOperator(
-        BrightnessOperatorConfig(field_key="image", brightness_range=(0.2, 0.2)),
+        BrightnessOperatorConfig(field_key="image", brightness_delta=0.2),
         rngs=nnx.Rngs(0),
     )
     prob = ProbabilisticOperator(
@@ -578,11 +566,11 @@ def main():
     print()
     print("2. SelectorOperator (3 operators):")
     op1 = BrightnessOperator(
-        BrightnessOperatorConfig(field_key="image", brightness_range=(0.1, 0.1)),
+        BrightnessOperatorConfig(field_key="image", brightness_delta=0.1),
         rngs=nnx.Rngs(1),
     )
     op2 = ContrastOperator(
-        ContrastOperatorConfig(field_key="image", contrast_range=(1.2, 1.2)),
+        ContrastOperatorConfig(field_key="image", contrast_factor=1.2),
         rngs=nnx.Rngs(2),
     )
     selector = SelectorOperator(

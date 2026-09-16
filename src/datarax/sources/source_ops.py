@@ -29,38 +29,62 @@ import jax.numpy as jnp
 from datarax.samplers.index_shuffle import index_shuffle
 
 
-def resolve_wrapped_indices(
+def partition_length(length: int, num_workers: int = 1, shard_id: int = 0) -> int:
+    """Return how many records worker ``shard_id`` of ``num_workers`` serves.
+
+    The worker serves positions ``[shard_id::num_workers]`` of the dataset order.
+
+    Args:
+        length: Total number of records in the dataset.
+        num_workers: Number of workers the dataset is split across.
+        shard_id: This worker's index.
+
+    Returns:
+        ``len(range(shard_id, length, num_workers))``.
+    """
+    return len(range(shard_id, length, num_workers))
+
+
+def resolve_wrapped_indices(  # noqa: PLR0913 - the order, its partition and the slice are separate
     start: jax.Array | int,
     size: int,
     length: int,
     is_random_order: bool,
     key: jax.Array | None,
+    *,
+    num_workers: int = 1,
+    shard_id: int = 0,
 ) -> jax.Array:
-    """Return the record indices for a wrapped, optionally shuffled slice.
+    """Return the global record indices for a wrapped slice of a worker's record order.
 
-    Computes ``(start + arange(size)) % length`` and, when ``is_random_order``
-    is set and a ``key`` is supplied, gathers those positions through a
-    deterministic full-dataset permutation derived from ``key``. Same
-    ``(start, size, length, key)`` always yields the same indices.
+    The dataset order is ``arange(length)``, or a full-dataset permutation derived from
+    ``key`` when ``is_random_order`` is set and a ``key`` is supplied. Worker ``shard_id`` of
+    ``num_workers`` serves positions ``[shard_id::num_workers]`` of that order, and its
+    logical positions ``start + arange(size)`` wrap at its own length. The same arguments
+    always yield the same indices.
 
     Args:
-        start: Starting logical index (concrete int or traced ``jax.Array``).
+        start: Starting logical position (concrete int or traced ``jax.Array``).
         size: Number of records to return (static Python int).
         length: Total number of records in the dataset.
         is_random_order: Whether the source serves records in shuffled order.
         key: PRNG key for shuffled mode; ignored when ``is_random_order`` is
             False or ``key`` is None.
+        num_workers: Number of workers the dataset is split across.
+        shard_id: This worker's index.
 
     Returns:
-        Int32 ``jax.Array`` of shape ``(size,)`` with the resolved indices.
+        Int32 ``jax.Array`` of shape ``(size,)`` with the global record indices.
     """
+    worker_length = partition_length(length, num_workers, shard_id)
     start_arr = jnp.asarray(start, dtype=jnp.int32)
     offsets = jnp.arange(size, dtype=jnp.int32)
-    base_indices = (start_arr + offsets) % jnp.int32(length)
+    positions = (start_arr + offsets) % jnp.int32(worker_length)
+    global_positions = jnp.int32(shard_id) + positions * jnp.int32(num_workers)
     if is_random_order and key is not None:
         permutation = jax.random.permutation(key, length)
-        return permutation[base_indices]
-    return base_indices
+        return permutation[global_positions]
+    return global_positions
 
 
 logger = logging.getLogger(__name__)
@@ -229,19 +253,15 @@ def eager_get_batch(
 def eager_reset(
     index_var: Any,
     epoch_var: Any,
-    cache: Any | None,
 ) -> None:
     """Shared reset logic for eager sources.
 
     Args:
         index_var: nnx.Variable for current index
         epoch_var: nnx.Variable for current epoch
-        cache: Optional cache to clear
     """
     index_var.set_value(0)
     epoch_var.set_value(0)
-    if cache is not None:
-        cache.clear()
 
 
 def build_eager_element(data: dict[str, Any], idx: int) -> dict[str, Any]:
@@ -564,14 +584,10 @@ def batch_elements_to_dict(elements: list[dict[str, Any]]) -> dict[str, Any]:
 
 def reset_streaming_state(
     epoch_var: Any,
-    cache: Any | None,
 ) -> None:
     """Reset streaming source state to initial values.
 
     Args:
         epoch_var: nnx.Variable for current epoch.
-        cache: Optional cache to clear.
     """
     epoch_var.set_value(0)
-    if cache is not None:
-        cache.clear()

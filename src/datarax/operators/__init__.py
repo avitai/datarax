@@ -9,9 +9,11 @@ This module provides concrete operator implementations:
 - SelectorOperator: Route inputs to one of N operators
 - BatchMixOperator: Batch-level mixing (e.g., CutMix, MixUp)
 
-CompositeOperatorModule supports WEIGHTED_PARALLEL with three weight modes:
-static weights, learnable weights (nnx.Param), and dynamic external weights
-via ``weight_key`` for differentiable pipelines (e.g., Gumbel-Softmax policies).
+CompositeOperatorModule's WEIGHTED_PARALLEL replaces the fields named in ``mix_fields``
+with a weighted sum of its operators' outputs, under three weight modes: static weights
+(a linear combination), learnable weights (``softmax`` over ``nnx.Param`` logits), and
+dynamic external weights via ``weight_key`` for differentiable pipelines (e.g.,
+Gumbel-Softmax policies).
 """
 
 from datarax.core.config import (

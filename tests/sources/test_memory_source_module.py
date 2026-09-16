@@ -240,7 +240,6 @@ def test_memory_source_with_transform_interface():
     # Test that MemorySource has the expected interface properties
     # from StructuralModule (new config-based architecture)
     assert hasattr(source, "config")
-    assert hasattr(source.config, "cacheable")  # cacheable is now in config
     assert hasattr(source, "name")
     assert hasattr(source.config, "stochastic")
 
@@ -248,22 +247,6 @@ def test_memory_source_with_transform_interface():
     batch = source.get_batch(5)
     assert "values" in batch
     assert len(batch["values"]) == 5
-
-
-def test_memory_source_caching():
-    """Test caching configuration."""
-    # Create data source with caching enabled
-    data = list(range(100))
-    config = MemorySourceConfig(cache_size=10, cacheable=True)
-    source = MemorySource(config, data)
-
-    # Check that cacheable flag is set correctly in config
-    assert source.config.cacheable
-
-    # Create without caching
-    config2 = MemorySourceConfig(cache_size=0, cacheable=False)
-    source2 = MemorySource(config2, data)
-    assert not source2.config.cacheable
 
 
 def test_memory_source_repr():
@@ -574,28 +557,6 @@ def test_memory_source_array_batch_gathering():
     batch = source.get_batch(5)
     expected = jnp.arange(5).reshape(5, 1)
     assert jnp.array_equal(batch, expected)
-
-
-def test_memory_source_reset_with_cache():
-    """Test reset method with caching enabled."""
-    # Test cache clearing in reset (line 327)
-    data = list(range(10))
-    # cacheable must be True to create the _cache dict
-    config = MemorySourceConfig(cache_size=5, cacheable=True)
-    source = MemorySource(config, data)
-
-    # The cache is a simple dict when cacheable=True
-    assert source._cache is not None  # Should exist when cacheable=True
-    assert isinstance(source._cache, dict)
-
-    # Add something to cache
-    source._cache[123] = "test_value"
-
-    # Reset should clear cache
-    source.reset()
-    assert source.index.get_value() == 0
-    assert source.epoch.get_value() == 0
-    assert len(source._cache) == 0  # Cache should be cleared
 
 
 def test_memory_source_set_random_order():

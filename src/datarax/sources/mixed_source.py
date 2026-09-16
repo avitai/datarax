@@ -178,7 +178,10 @@ class MixDataSourcesNode(DataSourceModule):
         self._weights = tuple(weights)
         self.index = nnx.Variable(0)
         self.epoch = nnx.Variable(0)
-        self._total_len = sum(len(s) for s in sources)
+        lengths = [len(s) for s in sources]
+        self._total_len = sum(lengths)
+        # A mixed record's index is its source's offset plus its index within that source.
+        self._offsets = tuple(sum(lengths[:position]) for position in range(len(lengths)))
         self._iterator: Iterator[Any] | None = None
 
     def __len__(self) -> int:
@@ -233,7 +236,71 @@ class MixDataSourcesNode(DataSourceModule):
             if reset_fn is not None:
                 reset_fn()
 
-    def get_batch_at(
+    def _selections(
+        self,
+        start: int | jax.Array,
+        size: int,
+        key: jax.Array | None,
+    ) -> tuple[jax.Array, jax.Array, jax.Array]:
+        """Choose, for each output position, a source, a record within it and a fetch key.
+
+        Args:
+            start: Starting logical position (int or traced ``jax.Array``).
+            size: Number of records.
+            key: PRNG key for deterministic source / index selection.
+
+        Returns:
+            ``(chosen_sources, local_indices, fetch_keys)``, each with leading dim ``size``.
+
+        Raises:
+            ValueError: If ``key is None``.
+        """
+        if key is None:
+            raise ValueError(
+                "MixDataSourcesNode.get_batch_at requires a PRNG key for "
+                "deterministic mixing. Pass `key=jax.random.key(seed)` or "
+                "drive iteration via Pipeline (which threads its own rngs)."
+            )
+
+        log_weights = jnp.log(jnp.asarray(self._weights, dtype=jnp.float32))
+        source_lengths = jnp.asarray([len(s) for s in self._sources], dtype=jnp.int32)
+        positions = jnp.asarray(start, dtype=jnp.int32) + jnp.arange(size, dtype=jnp.int32)
+
+        def _select(position: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
+            pos_key = jax.random.fold_in(key, position)
+            src_key, idx_key, fetch_key = jax.random.split(pos_key, 3)
+            chosen_src = jax.random.categorical(src_key, log_weights)
+            local_idx = jax.random.randint(idx_key, (), 0, source_lengths[chosen_src])
+            return chosen_src, local_idx, fetch_key
+
+        return jax.vmap(_select)(positions)
+
+    def record_indices_at(  # noqa: DOC502
+        self,
+        start: int | jax.Array,
+        size: int,
+        key: jax.Array | None = None,
+    ) -> jax.Array:
+        """Return the index of each record ``get_batch_at(start, size, key)`` returns.
+
+        A mixed record's index is its source's offset in the concatenation of the sources
+        plus its index within that source, so every record of every source has one index.
+
+        Args:
+            start: Starting logical position (int or traced ``jax.Array``).
+            size: Number of records.
+            key: PRNG key for deterministic source / index selection.
+
+        Returns:
+            Int32 ``jax.Array`` of shape ``(size,)``.
+
+        Raises:
+            ValueError: If ``key is None``.
+        """
+        chosen_sources, local_indices, _ = self._selections(start, size, key)
+        return jnp.asarray(self._offsets, dtype=jnp.int32)[chosen_sources] + local_indices
+
+    def get_batch_at(  # noqa: DOC502
         self,
         start: int | jax.Array,
         size: int,
@@ -272,34 +339,17 @@ class MixDataSourcesNode(DataSourceModule):
         Raises:
             ValueError: If ``key is None``.
         """
-        if key is None:
-            raise ValueError(
-                "MixDataSourcesNode.get_batch_at requires a PRNG key for "
-                "deterministic mixing. Pass `key=jax.random.key(seed)` or "
-                "drive iteration via Pipeline (which threads its own rngs)."
-            )
-
-        log_weights = jnp.log(jnp.asarray(self._weights, dtype=jnp.float32))
-        source_lengths = jnp.asarray([len(s) for s in self._sources], dtype=jnp.int32)
+        chosen_sources, local_indices, fetch_keys = self._selections(start, size, key)
         sources = list(self._sources)
+        # Each branch fetches a single record from one source. All branches share the
+        # same output shape (validated at construction by _validate_compatible_element_specs).
+        branches = [lambda li, fk, src=src: src.get_batch_at(li, 1, fk) for src in sources]
 
-        start_arr = jnp.asarray(start, dtype=jnp.int32)
-        positions = start_arr + jnp.arange(size, dtype=jnp.int32)
-
-        def _fetch_one(position: jax.Array) -> dict[str, jax.Array]:
-            pos_key = jax.random.fold_in(key, position)
-            src_key, idx_key, fetch_key = jax.random.split(pos_key, 3)
-
-            chosen_src = jax.random.categorical(src_key, log_weights)
-            chosen_length = source_lengths[chosen_src]
-            local_idx = jax.random.randint(idx_key, (), 0, chosen_length)
-
-            # Each branch fetches a single record from one source.
-            # All branches share the same output shape (validated at
-            # construction by _validate_compatible_element_specs).
-            branches = [lambda li, fk, src=src: src.get_batch_at(li, 1, fk) for src in sources]
+        def _fetch_one(
+            chosen_src: jax.Array, local_idx: jax.Array, fetch_key: jax.Array
+        ) -> dict[str, jax.Array]:
             record = jax.lax.switch(chosen_src, branches, local_idx, fetch_key)
             # Each source returned a batch of size 1; squeeze the leading axis.
             return jax.tree.map(lambda x: x[0], record)
 
-        return jax.vmap(_fetch_one)(positions)
+        return jax.vmap(_fetch_one)(chosen_sources, local_indices, fetch_keys)

@@ -1,8 +1,8 @@
 """StructuralModule - unified non-parametric structural processor module.
 
-This module provides StructuralModule, which unifies BatcherModule, SamplerModule,
-SharderModule, and other structural processors into a single base class for all
-non-parametric, structural data organization operations.
+This module provides StructuralModule, which unifies BatcherModule, SamplerModule and
+other structural processors into a single base class for all non-parametric, structural
+data organization operations.
 
 Key Features:
 

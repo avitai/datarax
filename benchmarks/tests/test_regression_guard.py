@@ -41,7 +41,7 @@ def _gpu_matches_baseline(store: BaselineStore, name: str) -> bool:
     return bool(baseline_model) and baseline_model == current_model
 
 
-@pytest.mark.gpu
+@pytest.mark.accelerator(kind="gpu")
 @pytest.mark.slow
 @pytest.mark.parametrize(
     ("baseline_name", "module_path", "variant_name"),
@@ -55,14 +55,10 @@ def test_throughput_within_regression_budget(
     import importlib
     import sys
 
-    import jax
-
     if "coverage" in sys.modules:
         # Instrumentation roughly halves throughput; timings under coverage
         # would flag phantom regressions.
         pytest.skip("throughput is not meaningful under coverage instrumentation")
-    if jax.default_backend() != "gpu":
-        pytest.skip("regression guard runs on the baseline GPU only")
     store = BaselineStore(BASELINES_DIR)
     if not _gpu_matches_baseline(store, baseline_name):
         pytest.skip(f"local GPU differs from the {baseline_name} baseline hardware")

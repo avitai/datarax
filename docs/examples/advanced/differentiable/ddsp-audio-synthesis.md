@@ -154,10 +154,13 @@ class ReverbOperator(OperatorModule):
 
 ```python
 synth_composite = SEQUENTIAL([
-    WEIGHTED_PARALLEL([HarmonicSynth, FilteredNoise], weights=[1.0, 0.1]),
+    WEIGHTED_PARALLEL([HarmonicSynth, FilteredNoise], weights=[1.0, 0.1], mix_fields=("audio",)),
     Reverb,
 ])
 ```
+
+The parallel stage sums only `audio`, the field both synthesizers write; the control signals
+pass through to Reverb unchanged.
 
 ### Multi-Scale Spectral Loss
 

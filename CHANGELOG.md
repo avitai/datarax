@@ -7,8 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `CompositeOperatorModule.mixture_weights()` returns the weights a `WEIGHTED_PARALLEL` composite
+  applies: its static weights, or `softmax(weight_logits / temperature)` for learnable weights. A
+  composite that reads its weights from each record (`weight_key`) has no fixed mixture and
+  raises `ValueError`, as does a composite with another strategy.
+
 ### Changed
 
+- `SelectorOperatorConfig.normalized_weights` is a tuple of floats instead of a `jax.Array`.
+  Comparing two equal configs raised `ValueError: The truth value of an array with more than one
+  element is ambiguous`, which also reaches `nnx.jit` dispatch, since a config is graphdef
+  metadata that dispatch compares.
+- `BatchMixOperator.apply` raises `NotImplementedError` instead of returning its input unchanged,
+  which looked like a successful mix. Batch mixing combines each record with another record of the
+  same batch, so it has no per-record form: call `apply_batch(batch)`, or the operator itself.
+- datarax requires substrax 0.1.7, whose `place_batch_on_shards` places the NumPy leaves of a host
+  batch and assembles a global batch from each process's slice.
+- `CompositeOperatorConfig` for `WEIGHTED_PARALLEL` takes `mix_fields`, the dotted paths of the
+  data fields to combine. It defaults to the fields the child operators declare they write
+  (`target_key` or `field_key`) and must be given when a child declares none, such as an
+  `ElementOperator` or `MapOperator`. Static weights still form a linear combination.
+  `learnable_weights=True` now stores logits in `weight_logits`, initialized to
+  `log(weights / sum(weights))` and mixed with `softmax(logits / temperature)` (new
+  `temperature`, default 1.0; initial weights must be positive), as DARTS and Faster
+  AutoAugment learn operation mixtures. The DDSP and DADA guides name their mixed field.
+- `ModalityOperator` reads and writes dotted field paths through the new
+  `datarax.core.field_paths.get_field` and `set_field`, which weighted-parallel composites use too.
+- The sharding examples and their notebooks, the sharding docs pages, the distributed scaling
+  benchmark and the comparison example build meshes with `substrax.mesh.DeviceMeshManager` and place
+  batches with `substrax.spmd.create_data_parallel_sharding` and `place_batch_on_shards`, replacing
+  their own `Mesh(...)` construction and the `create_sharding_spec` and `distribute_batch` helpers;
+  `benchmarks/core/sharding.py`, which duplicated them, is removed. Meshes are entered with
+  `with jax.set_mesh(mesh):` instead of `with mesh:`, which jax deprecates in favour of it, in those
+  files and the sharding tests, and the TensorFlow comparison tables map `strategy.scope()` to
+  `jax.set_mesh(mesh)`. Contracts fail any `with mesh:` in source, tests, benchmarks, examples,
+  notebooks or docs, and any raw `Mesh(...)` or `jax.make_mesh(...)` in examples, benchmarks or
+  docs pages.
 - The generated `.datarax.env`, the pytest environment, the Dockerfiles, the SkyPilot template,
   the GPU run scripts and the docs set `XLA_CLIENT_MEM_FRACTION`, the name jaxlib reads, instead
   of the deprecated `XLA_PYTHON_CLIENT_MEM_FRACTION`. jax refuses a process that sets both;
@@ -29,8 +65,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so the script fetches the TFDS and keras archives in byte ranges over eight connections,
   verifies their SHA-256, and places them where both loaders reuse them instead of downloading.
 
+### Changed
+
+- `cacheable` moves from `DataraxModuleConfig` to a new `SamplerConfig`, and the result cache with its
+  hashing helpers and `reset_cache` move from `DataraxModule` to `SamplerModule`. A sampler memoizes each
+  sampled list by request size, which is the only module kind with something to key a cache on; every other
+  module carried an empty dict through each compiled step. The six sampler configs derive from
+  `SamplerConfig`, `eager_reset` and `reset_streaming_state` no longer take the cache they only ever cleared
+  when it was empty, and the modality and cross-modal docstrings stop promising a caching system that never
+  ran. A config that set `cacheable` on an operator or another module must drop it.
+
 ### Removed
 
+- `DataraxModule.copy`. It rebuilt a module as `type(self)(config=..., rngs=..., name=...)`, which 17 of the
+  42 module classes cannot accept: nine operators take no `name` (the composite, the selector, the
+  probabilistic wrapper and the six image operators), `PureJaxAdapter` takes no `rngs`, and eight classes
+  require an argument of their own (a mapped function, the data, the paths, the sources, an element spec).
+  Construct the module with the arguments its constructor takes, or use `nnx.clone` for a structural copy.
+- `CompositeOperatorModule.operator_statistics` and `StrategyContext.stats_callback`, with the
+  `_emit_operator_statistics` hook the sequential and parallel strategies called. The hook
+  forwarded an operator's `statistics` attribute, which no operator defines, so the variable
+  every composite carried through each compiled step stayed empty.
+- The pytest `--device` option and the `gpu`, `gpu_required`, `cuda`, `cpu` and `tpu` markers, which
+  only a keyword filter behind that option acted on. A test that needs a GPU backend or several
+  devices declares the substrax plugin's `accelerator(kind="gpu")` or `devices(count)` marker, which
+  skips it from the backend and devices the run selected; `DATARAX_TEST_JAX_PLATFORMS=cuda` selects
+  the GPU. CI, `scripts/run_tests.sh`, `scripts/run_gpu_tests.sh` and the contributing docs no longer
+  pass `--device`. The unused `tests/test_common/device_detection.py` and `hardware_fixtures.py`, the
+  device-skip fixtures and decorators in `tests/test_common`, and `benchmarks/core/platform.py`'s
+  `required_devices` are removed.
 - The `datarax` command no longer reads `DATARAX_DEVICE`. It set jax's deprecated
   `jax_platform_name` option after jax was imported, which does not choose the backends jax
   starts. Set `JAX_PLATFORMS` before running the command instead.
@@ -38,10 +101,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SmartCompilation` and `MemoryEfficientCompilation`. JAX process settings move to
   `substrax.runtime` (`JaxRuntime`, `apply_runtime`, `merge_xla_flags`), and the compilation
   wrappers give way to `jax.jit`, `jax.shard_map`, `jax.jit(donate_argnums=...)` and
-  `jax.checkpoint`. `docs/performance/index.md` lists where each name went.
+  `jax.checkpoint`.
+- `DataraxModule.get_operation_stats`, `reset_operation_stats`, the applied and skipped operation
+  counters and the `IterationCount` variable type. Nothing outside the tests incremented the
+  counters, so they always read zero while every module carried them through each compiled step.
+- `datarax.sharding.ArraySharder`, `datarax.core.SharderModule` and `SharderModuleConfig`, which
+  duplicated substrax. Place a batch on a mesh with `substrax.spmd.place_batch_on_shards`, map
+  logical axis names with `substrax.mesh.MeshRules` and `partition_spec_for_names`, build a named
+  sharding with `substrax.mesh.create_named_sharding`, apply a function per shard with
+  `flax.nnx.shard_map` and create a partitioned parameter with `flax.nnx.with_partitioning`.
+  `JaxProcessSharderModule` and `JaxProcessSharderConfig` now derive from `DataraxModule` and
+  `DataraxModuleConfig`, `datarax.sharding` exports both, and the component registry has no
+  `sharder` type.
 
 ### Fixed
 
+- `CrepeF0Operator` could only run in eager eval mode. It computed its pad width with
+  `jnp.maximum`, which `jnp.pad` cannot read under a trace, so every `jit` path and the
+  `batch_strategy="scan"` its own config recommends raised `ConcretizationTypeError`, and in
+  train mode `vmap` raised `TraceContextError` because BatchNorm wrote its statistics from
+  inside the mapped function. The pad width is a Python `int`, and pitch extraction reads the
+  stored batch statistics, so the operator runs under `jit`, `vmap` and `scan` in both modes.
+  `CrepeModel.__call__` takes `use_running_average` for that choice.
+- `PipelineIterator.set_state` accepted a negative `position` or `epoch`. An epoch of `-1` becomes
+  `2**32 - 1` where it is folded into a record key, so the restored iterator would draw a different
+  stream than the one that was saved, and a negative position would place the iterator before the
+  start of its epoch. Both now raise `ValueError`.
+- The composition strategies and advanced operators tutorials built their fixed brightness and
+  contrast operators with `brightness_range=(d, d)` and `contrast_range=(f, f)` in deterministic
+  mode, which applies `brightness_delta` and `contrast_factor`, so those operators returned images
+  unchanged. They set `brightness_delta` and `contrast_factor`.
+- A `WEIGHTED_PARALLEL` composite took the weighted sum of every field of its operators'
+  outputs, so fields no operator wrote were scaled whenever the weights did not sum to one and
+  integer fields became floats (with weights `[1.0, 0.1]`, an untouched `f0_hz` of 440 became
+  484 and an int32 label of 3 became 3.3). Only the `mix_fields` are combined now; every other
+  field passes through from the input unchanged.
+- Stochastic operators in a `Pipeline` keyed each record's randomness on its position in the
+  epoch, and that position restarts every epoch. A record's augmentation therefore changed when
+  the order was shuffled, and repeated identically every epoch (every record with
+  `shuffle=False`, every slot with `shuffle=True`). Keys are now
+  `fold_in(fold_in(base_key, epoch), record_index)`, where `record_index` is the stable index
+  that `DataSourceModule.record_indices_at` names for each record `get_batch_at` serves. Within
+  an epoch a record keeps its augmentation across batch size, shuffle order, worker split and
+  resume point, and every epoch draws fresh augmentation. The default `record_indices_at` names
+  records by position; `MemorySource`, the eager sources and `MixDataSourcesNode` name the
+  records they shuffle, partition or mix. `per_record_keys` and the operators' raw batch path
+  take the epoch.
+- `Pipeline` iteration ignored `MemorySourceConfig(num_workers, shard_id)`, so every worker
+  served every record. `get_batch_at`, `record_indices_at` and `len()` now follow the worker's
+  partition, positions `[shard_id::num_workers]` of the global order, with global record
+  indices.
+- `scripts/run_tests.sh` runs its GPU pass on the GPU. It exported `JAX_PLATFORMS=cuda`, which the
+  test environment ignores, so both passes ran on emulated CPU devices; it now sets
+  `DATARAX_TEST_JAX_PLATFORMS=cuda`.
 - `scripts/check_sync.py --fix`, `scripts/validate_examples.py --execute` and
   `scripts/distributed_test_runner.py` no longer need a `python` on `PATH`: they run jupytext,
   examples and pytest with the interpreter that runs the script. `check_sync.py --fix` used to

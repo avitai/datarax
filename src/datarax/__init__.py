@@ -14,7 +14,6 @@ from datarax.core.batcher import BatcherModule
 from datarax.core.data_source import DataSourceModule
 from datarax.core.operator import OperatorModule
 from datarax.core.sampler import SamplerModule
-from datarax.core.sharder import SharderModule
 from datarax.core.temporal import TimeSeriesSpec
 
 # Pipeline (DAG composition + iteration + scan)
@@ -51,7 +50,6 @@ __all__ = [
     "DataSourceModule",
     "OperatorModule",
     "SamplerModule",
-    "SharderModule",
     # Pipeline (linear stages + Pipeline.from_dag for branching)
     "Pipeline",
     # Host-to-device prefetching

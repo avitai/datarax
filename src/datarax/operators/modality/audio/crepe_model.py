@@ -165,13 +165,17 @@ class CrepeModel(nnx.Module):
             rngs=rngs,
         )
 
-    def __call__(self, x: jax.Array) -> jax.Array:
+    def __call__(self, x: jax.Array, *, use_running_average: bool | None = None) -> jax.Array:
         """Forward pass through CREPE.
 
         Matches torchcrepe exactly: pad → conv(VALID) → ReLU → BN → maxpool.
 
         Args:
             x: Audio frames shape (batch, 1024, 1).
+            use_running_average: Passed to every BatchNorm, overriding the mode the
+                layer was left in. With ``True`` the stored statistics are used and
+                nothing is written, which a caller inside ``vmap``, ``scan`` or ``jit``
+                needs; ``None`` follows the layer's own mode.
 
         Returns:
             Pitch probability distribution shape (batch, 360), values in [0, 1].
@@ -182,7 +186,7 @@ class CrepeModel(nnx.Module):
             x = jnp.pad(x, ((0, 0), (pad_left, pad_right), (0, 0)))
             x = conv(x)
             x = nnx.relu(x)
-            x = bn(x)
+            x = bn(x, use_running_average)
             x = max_pool_1d(x, window=2, stride=2)
 
         x = x.reshape(x.shape[0], -1)  # Flatten → (B, flatten_dim)

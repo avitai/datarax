@@ -27,15 +27,6 @@ class TestOperatorConfigStochasticConstruction:
 
         assert config.stochastic is True
         assert config.stream_name == "augment"
-        assert config.cacheable is False  # Inherited default
-
-    def test_stochastic_with_stream_name_and_cacheable(self):
-        """Test stochastic config with caching enabled."""
-        config = OperatorConfig(stochastic=True, stream_name="augment", cacheable=True)
-
-        assert config.stochastic is True
-        assert config.stream_name == "augment"
-        assert config.cacheable is True
 
     def test_stochastic_with_batch_stats_fn(self):
         """Test stochastic config with statistics function."""
@@ -76,13 +67,6 @@ class TestOperatorConfigDeterministicConstruction:
 
         assert config.stochastic is False
         assert config.stream_name is None
-
-    def test_deterministic_with_cacheable(self):
-        """Test deterministic config with caching enabled."""
-        config = OperatorConfig(stochastic=False, cacheable=True)
-
-        assert config.stochastic is False
-        assert config.cacheable is True
 
     def test_deterministic_with_precomputed_stats(self):
         """Test deterministic config with precomputed statistics."""
@@ -159,7 +143,6 @@ class TestOperatorConfigInheritance:
         config = OperatorConfig()
 
         # Base fields should be accessible
-        assert hasattr(config, "cacheable")
         assert hasattr(config, "batch_stats_fn")
         assert hasattr(config, "precomputed_stats")
 
@@ -172,7 +155,6 @@ class TestOperatorConfigInheritance:
         config = OperatorConfig()
 
         # Base defaults
-        assert config.cacheable is False
         assert config.batch_stats_fn is None
         assert config.precomputed_stats is None
 
@@ -327,17 +309,16 @@ class TestOperatorConfigDataclass:
 
         # Should NOT be able to modify fields (frozen)
         with pytest.raises(FrozenInstanceError):
-            config.cacheable = True  # type: ignore[reportAttributeAccessIssue]
+            config.stochastic = True  # type: ignore[reportAttributeAccessIssue]
 
     def test_repr_shows_all_fields(self):
         """Test that __repr__ includes all field values."""
-        config = OperatorConfig(stochastic=True, stream_name="augment", cacheable=True)
+        config = OperatorConfig(stochastic=True, stream_name="augment")
         repr_str = repr(config)
 
         assert "OperatorConfig" in repr_str
         assert "stochastic" in repr_str
         assert "stream_name" in repr_str
-        assert "cacheable" in repr_str
 
 
 class TestOperatorConfigDefaults:
@@ -356,7 +337,6 @@ class TestOperatorConfigDefaults:
     def test_inherited_defaults(self):
         """Test inherited defaults from DataraxModuleConfig."""
         config = OperatorConfig()
-        assert config.cacheable is False
         assert config.batch_stats_fn is None
         assert config.precomputed_stats is None
 

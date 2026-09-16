@@ -26,7 +26,7 @@ pipelines, essential for training on large datasets.
 |---------|---------|
 | `DistributedSampler(dataset)` | JAX `Mesh` with `PartitionSpec` |
 | `DataParallel(model)` | Data sharded along batch dimension |
-| `torch.distributed.init_process_group()` | `Mesh(devices, axis_names)` |
+| `torch.distributed.init_process_group()` | `DeviceMeshManager.create_data_parallel_mesh()` |
 | `sampler.set_epoch(epoch)` | RNG-based shuffling per device |
 
 **Key difference:** Datarax uses JAX's built-in GSPMD for transparent sharding without explicit communication.
@@ -37,7 +37,7 @@ pipelines, essential for training on large datasets.
 |------------|---------|
 | `tf.distribute.MirroredStrategy` | `Mesh` with data axis |
 | `strategy.experimental_distribute_dataset` | `jax.device_put(batch, sharding)` |
-| `tf.distribute.Strategy.scope()` | `with mesh:` context |
+| `tf.distribute.Strategy.scope()` | `jax.set_mesh(mesh)` |
 | `strategy.reduce()` | JAX handles via GSPMD |
 
 ## Files
@@ -80,7 +80,6 @@ flowchart TB
 
 ```python
 import jax
-from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 devices = jax.devices()
 use_sharding = len(devices) >= 2
@@ -137,19 +136,16 @@ Pipeline created with batch_size=128
 ### Step 3: Create Device Mesh
 
 ```python
-import numpy as np
-from jax.sharding import Mesh, NamedSharding, PartitionSpec
+from substrax.mesh import DeviceMeshManager
+from substrax.spmd import create_data_parallel_sharding
 
-# Create mesh for data parallelism
-device_mesh = np.array(devices).reshape(-1)
-mesh = Mesh(device_mesh, axis_names=("data",))
+# Create a mesh for data parallelism (Auto axes)
+mesh = DeviceMeshManager.create_data_parallel_mesh()
 
-# Define sharding specs
-# Batch dimension sharded, others replicated
-data_sharding = NamedSharding(mesh, PartitionSpec("data", None, None, None))
-label_sharding = NamedSharding(mesh, PartitionSpec("data"))
+# Split the batch dimension of every array across the "data" axis
+batch_sharding = create_data_parallel_sharding(mesh)
 
-print(f"Created mesh with {len(device_mesh)} devices along 'data' axis")
+print(f"Created mesh with {mesh.devices.size} devices along 'data' axis")
 ```
 
 **Terminal Output:**
@@ -160,19 +156,20 @@ Created mesh with 2 devices along 'data' axis
 ### Step 4: Process with Sharding
 
 ```python
-with mesh:
+from substrax.spmd import place_batch_on_shards
+
+with jax.set_mesh(mesh):
     for i, batch in enumerate(pipeline):
         if i >= 2:
             break
 
-        # Apply sharding to batch
-        image_batch = jax.device_put(batch["image"], data_sharding)
-        label_batch = jax.device_put(batch["label"], label_sharding)
+        # Place every array of the batch on the mesh
+        sharded_batch = place_batch_on_shards(batch, batch_sharding)
 
         print(f"Batch {i}:")
-        print(f"  Image shape: {image_batch.shape}")
-        print(f"  Image sharding: {image_batch.sharding}")
-        print(f"  Label shape: {label_batch.shape}")
+        print(f"  Image shape: {sharded_batch['image'].shape}")
+        print(f"  Image sharding: {sharded_batch['image'].sharding}")
+        print(f"  Label shape: {sharded_batch['label'].shape}")
 ```
 
 **Terminal Output (multi-GPU):**

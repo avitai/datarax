@@ -125,11 +125,7 @@ def example_pipeline(source, batch_size: int, stages=()):
 def make_brightness_op(delta: float, seed: int = 0) -> BrightnessOperator:
     """Create a brightness operator with fixed delta."""
     return BrightnessOperator(
-        BrightnessOperatorConfig(
-            field_key="image",
-            brightness_range=(delta, delta),  # Fixed delta
-            stochastic=False,
-        ),
+        BrightnessOperatorConfig(field_key="image", brightness_delta=delta),
         rngs=nnx.Rngs(seed),
     )
 
@@ -137,11 +133,7 @@ def make_brightness_op(delta: float, seed: int = 0) -> BrightnessOperator:
 def make_contrast_op(factor: float, seed: int = 0) -> ContrastOperator:
     """Create a contrast operator with fixed factor."""
     return ContrastOperator(
-        ContrastOperatorConfig(
-            field_key="image",
-            contrast_range=(factor, factor),  # Fixed factor
-            stochastic=False,
-        ),
+        ContrastOperatorConfig(field_key="image", contrast_factor=factor),
         rngs=nnx.Rngs(seed),
     )
 
@@ -328,7 +320,7 @@ batch = next(iter(pipeline))
 
 print("WEIGHTED_PARALLEL Strategy:")
 print("  Weights: [0.5 (Brightness), 0.3 (Contrast), 0.2 (Noise)]")
-print("  Output: weighted sum of augmented versions")
+print("  Output: 'image' (the operators' field_key) replaced by the weighted sum")
 print(f"  Shape: {batch['image'].shape}")
 
 # %% [markdown]

@@ -7,10 +7,13 @@ Implements CompositeOperatorModule with 11 composition strategies:
 - Ensemble (4 reductions): Parallel with mean/sum/max/min
 - Branching (1 routing): Route through different paths
 
-WEIGHTED_PARALLEL supports three mutually exclusive weight modes:
+WEIGHTED_PARALLEL replaces the fields named in ``mix_fields`` with the weighted sum of the
+operators' outputs and passes every other field through. It supports three mutually
+exclusive weight modes:
 
-- **Static weights**: Fixed at construction via ``weights=[0.5, 0.5]``
-- **Learnable weights**: Stored as ``nnx.Param`` via ``learnable_weights=True``
+- **Static weights**: A linear combination fixed at construction via ``weights=[1.0, 0.1]``
+- **Learnable weights**: Logits stored as ``nnx.Param`` via ``learnable_weights=True``,
+  mixed with ``softmax(logits / temperature)``
 - **Dynamic external weights**: Extracted from ``data[weight_key]`` at each call
   via ``weight_key="op_weights"``, enabling upstream modules (e.g., Gumbel-Softmax
   policies) to supply per-call weights with full gradient flow
@@ -110,9 +113,11 @@ class CompositeOperatorConfig(OperatorConfig):
 
     WEIGHTED_PARALLEL supports three mutually exclusive weight modes:
 
-        1. **Static weights** (default): ``weights=[0.5, 0.5]`` — fixed at construction.
-        2. **Learnable weights**: ``learnable_weights=True`` — stored as ``nnx.Param``,
-           optimized via gradient descent.
+        1. **Static weights** (default): ``weights=[1.0, 0.1]`` — a linear combination
+           fixed at construction.
+        2. **Learnable weights**: ``learnable_weights=True`` — logits stored as
+           ``nnx.Param``, mixed with ``softmax(logits / temperature)`` and optimized via
+           gradient descent.
         3. **Dynamic external weights**: ``weight_key="op_weights"`` — extracted from
            ``data[weight_key]`` at each forward call. Enables upstream modules (e.g.,
            a Gumbel-Softmax policy) to supply weights that change per call, with
@@ -127,11 +132,19 @@ class CompositeOperatorConfig(OperatorConfig):
         merge_strategy: How to merge parallel outputs ("concat", "stack", "sum", "mean", "dict").
         merge_fn: Custom merge function (overrides merge_strategy).
         merge_axis: Axis for stack/concat operations.
-        weights: Weights for weighted parallel (None = equal weights).
-        learnable_weights: Whether weights are learnable parameters.
+        weights: Weights for weighted parallel (None = equal weights). Static weights form
+            a linear combination, e.g. DDSP's sum of harmonic and noise synthesizers.
+        learnable_weights: Whether the weights are learned. They are stored as logits
+            initialized to ``log(weights / sum(weights))`` and mixed with
+            ``softmax(logits / temperature)``, the relaxation DARTS and Faster AutoAugment use.
         weight_key: Key in data dict for external dynamic weights. Mutually exclusive
             with ``weights`` and ``learnable_weights``. When set, weights are extracted
             from ``data[weight_key]`` at each call and the key is stripped from child data.
+        mix_fields: Dotted paths of the data fields a weighted parallel combines. Every
+            other field passes through from the input unchanged. Defaults to the fields the
+            operators declare they write (``target_key`` or ``field_key``); required when an
+            operator declares none.
+        temperature: Softmax temperature for learnable weights; must be positive.
         conditions: Conditions for conditional strategies (returns JAX arrays).
         router: Router function for branching (returns integer index).
         default_branch: Default branch index for fallback behavior.
@@ -150,6 +163,8 @@ class CompositeOperatorConfig(OperatorConfig):
     weights: list[float] | None = None
     learnable_weights: bool = False
     weight_key: str | None = None  # Key in data dict for external dynamic weights
+    mix_fields: Sequence[str] | None = None  # Fields combined; others pass through
+    temperature: float = 1.0  # Softmax temperature for learnable weights
 
     # Conditions (for conditional strategies)
     # Conditions can return Python bool or JAX scalar (converted automatically)
@@ -200,11 +215,16 @@ class CompositeOperatorConfig(OperatorConfig):
                 raise ValueError("Number of conditions must match number of operators")
 
     def _validate_weighted_parallel_strategy(self) -> None:
-        """Validate weighted-parallel configuration and defaults."""
+        """Validate weighted-parallel configuration and resolve its defaults."""
         if self.strategy != CompositionStrategy.WEIGHTED_PARALLEL:
             return
         if self.operators is None:
             raise ValueError("operators is required")
+        self._validate_weight_mode(self.operators)
+        self._resolve_mix_fields(self.operators)
+
+    def _validate_weight_mode(self, operators: Sequence[OperatorModule]) -> None:
+        """Validate the weight source: an external key, learnable logits or static weights."""
         if self.weight_key is not None:
             if self.learnable_weights:
                 raise ValueError("Cannot combine weight_key with learnable_weights")
@@ -212,10 +232,39 @@ class CompositeOperatorConfig(OperatorConfig):
                 raise ValueError("Cannot combine weight_key with explicit weights")
             return
         if self.weights is None:
-            object.__setattr__(self, "weights", [1.0 / len(self.operators)] * len(self.operators))
-            return
-        if len(self.weights) != len(self.operators):
+            object.__setattr__(self, "weights", [1.0 / len(operators)] * len(operators))
+        elif len(self.weights) != len(operators):
             raise ValueError("Number of weights must match number of operators")
+        if not self.learnable_weights:
+            return
+        if self.temperature <= 0:
+            raise ValueError(f"temperature must be positive, got {self.temperature}")
+        if any(weight <= 0 for weight in cast(list[float], self.weights)):
+            raise ValueError(
+                "learnable_weights needs positive initial weights: the logits start at "
+                f"log(weights / sum(weights)), got {self.weights}"
+            )
+
+    def _resolve_mix_fields(self, operators: Sequence[OperatorModule]) -> None:
+        """Default ``mix_fields`` to the fields the operators declare they write."""
+        if self.mix_fields is not None:
+            if not self.mix_fields:
+                raise ValueError("mix_fields must name at least one field")
+            object.__setattr__(self, "mix_fields", tuple(self.mix_fields))
+            return
+        declared: list[str] = []
+        for index, operator in enumerate(operators):
+            written = getattr(operator.config, "target_key", None) or getattr(
+                operator.config, "field_key", None
+            )
+            if written is None:
+                raise ValueError(
+                    f"WEIGHTED_PARALLEL needs mix_fields: operator {index} "
+                    f"({type(operator).__name__}) declares no field_key, so the fields to "
+                    "combine cannot be inferred"
+                )
+            declared.append(written)
+        object.__setattr__(self, "mix_fields", tuple(dict.fromkeys(declared)))
 
     def _validate_branching_strategy(self) -> None:
         """Validate branching strategy requirements."""
@@ -237,7 +286,8 @@ class CompositeOperatorModule(OperatorModule):
 
     For ``WEIGHTED_PARALLEL`` with ``weight_key``, the composite extracts weights
     from the data dict at each forward call, strips the key from child data, and
-    delegates to ``WeightedParallelStrategy`` for the weighted sum. This enables
+    delegates to ``WeightedParallelStrategy`` for the weighted sum of the ``mix_fields``.
+    This enables
     differentiable pipelines where an upstream module (e.g., Gumbel-Softmax policy)
     supplies per-call weights with full gradient flow.
     """
@@ -265,12 +315,11 @@ class CompositeOperatorModule(OperatorModule):
         else:
             self.operators = nnx.List(config.operators)
 
-        # Initialize weights if learnable
+        # Learnable weights are logits; the mixture is softmax(logits / temperature), which
+        # starts at the configured weights normalized to sum to one.
         if config.strategy == CompositionStrategy.WEIGHTED_PARALLEL and config.learnable_weights:
-            self.weights = nnx.Param(jnp.array(config.weights))
-
-        # Statistics tracking
-        self.operator_statistics = nnx.Variable({})
+            initial = jnp.asarray(config.weights)
+            self.weight_logits = nnx.Param(jnp.log(initial / jnp.sum(initial)))
 
         # Initialize strategy implementation
         self._init_strategy()
@@ -323,7 +372,9 @@ class CompositeOperatorModule(OperatorModule):
                 merge_axis=cfg.merge_axis,
                 merge_fn=cfg.merge_fn,
             ),
-            CompositionStrategy.WEIGHTED_PARALLEL: WeightedParallelStrategy,
+            CompositionStrategy.WEIGHTED_PARALLEL: lambda: WeightedParallelStrategy(
+                cast(Sequence[str], cfg.mix_fields)
+            ),
             CompositionStrategy.CONDITIONAL_PARALLEL: lambda: ConditionalParallelStrategy(
                 conditions=cast(Sequence[Callable], cfg.conditions),
                 merge_strategy=cfg.merge_strategy,
@@ -398,20 +449,12 @@ class CompositeOperatorModule(OperatorModule):
 
         extra_params, clean_data = self._resolve_weighted_params(data)
 
-        # Stats callback
-        def stats_callback(index: int, stats: dict[str, Any]) -> None:
-            # Updates NNX variable
-            current_stats = self.operator_statistics.get_value()
-            current_stats[f"operator_{index}"] = stats
-            self.operator_statistics.set_value(current_stats)
-
         context = StrategyContext(
             data=clean_data,
             state=state,
             metadata=metadata if metadata is not None else {},
             random_params=random_params,
             extra_params=extra_params if extra_params else None,
-            stats_callback=stats_callback,
         )
 
         return self.strategy_impl.apply(self._get_operators_list(), context)
@@ -421,8 +464,8 @@ class CompositeOperatorModule(OperatorModule):
 
         Only ``WEIGHTED_PARALLEL`` consumes weights; every other strategy returns the
         data unchanged with no extra params. For ``WEIGHTED_PARALLEL`` the weights come
-        from (in priority order) a dynamic ``data[weight_key]`` entry, the learnable
-        ``self.weights`` param, or the static ``config.weights``.
+        from (in priority order) a dynamic ``data[weight_key]`` entry, the softmax of the
+        learnable ``weight_logits`` at ``temperature``, or the static ``config.weights``.
 
         Args:
             data: Input pytree passed to :meth:`apply`.
@@ -449,10 +492,34 @@ class CompositeOperatorModule(OperatorModule):
             clean_data = {k: v for k, v in data.items() if k != self.config.weight_key}
             return {"weights": data[self.config.weight_key]}, clean_data
 
-        if self.config.learnable_weights:
-            return {"weights": self.weights[...]}, data
+        return {"weights": self.mixture_weights()}, data
 
-        return {"weights": jnp.array(self.config.weights)}, data
+    def mixture_weights(self) -> jax.Array:
+        """Return the weights a ``WEIGHTED_PARALLEL`` composite applies to its operators' outputs.
+
+        Static weights are returned as configured. Learnable weights are
+        ``softmax(weight_logits / temperature)``, so the value follows training.
+
+        Returns:
+            One weight per operator.
+
+        Raises:
+            ValueError: If the strategy is not ``WEIGHTED_PARALLEL``, or if each record supplies
+                the weights through ``weight_key``.
+        """
+        if self.config.strategy != CompositionStrategy.WEIGHTED_PARALLEL:
+            raise ValueError(
+                "mixture_weights applies to WEIGHTED_PARALLEL composites, "
+                f"not {self.config.strategy}"
+            )
+        if self.config.weight_key is not None:
+            raise ValueError(
+                f"each record supplies the weights as data[{self.config.weight_key!r}] "
+                "(weight_key), so the composite has no fixed mixture"
+            )
+        if self.config.learnable_weights:
+            return nnx.softmax(self.weight_logits[...] / self.config.temperature)
+        return jnp.asarray(self.config.weights)
 
     def _get_operators_list(self) -> list[OperatorModule]:
         """Get list of operators."""

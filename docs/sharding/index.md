@@ -1,99 +1,54 @@
 # Sharding
 
-Data sharding utilities for distributed processing. Shard data across devices and hosts for parallel training.
+Datarax slices data for the current JAX process. Placing batches on a device mesh, naming mesh
+axes and partitioning parameters come from substrax and Flax NNX.
 
-## Sharders
+| Need | API |
+|------|-----|
+| Slice records for the current JAX process | `datarax.sharding.JaxProcessSharderModule` |
+| A data-parallel mesh and its batch sharding | `substrax.mesh.DeviceMeshManager`, `substrax.spmd.create_data_parallel_sharding` |
+| Place a batch on the mesh | `substrax.spmd.place_batch_on_shards` |
+| Map logical axis names to mesh axes | `substrax.mesh.MeshRules`, `substrax.mesh.partition_spec_for_names` |
+| Apply a function to each shard | `flax.nnx.shard_map` |
+| Create a parameter with a partitioning annotation | `flax.nnx.with_partitioning` |
 
-| Sharder | Scope | Use Case |
-|---------|-------|----------|
-| **ArraySharder** | Single host | Multi-GPU on one machine |
-| **JaxProcessSharder** | Multi-host | TPU pods, multi-node |
+## Place Pipeline Batches on a Mesh
 
-!!! note "Key points"
-
-    - Sharding splits data across devices for parallel processing
-    - Use `ArraySharder` for single-host multi-GPU
-    - Use `JaxProcessSharder` for multi-host (TPU pods)
-    - JAX handles the communication automatically
-
-## Quick Start
+`place_batch_on_shards` hands every array leaf of a batch to one
+`jax.make_array_from_process_local_data` call. On one process that is a single batched
+transfer; on several, each process passes the batch it loaded and jax assembles the global
+batch. The batch size must be a multiple of the number of devices on the `data` axis.
 
 ```python
 import jax
-from flax import nnx
+from substrax.mesh import DeviceMeshManager
+from substrax.spmd import create_data_parallel_sharding, place_batch_on_shards
 
-from datarax.sharding import ArraySharder
+mesh = DeviceMeshManager.create_data_parallel_mesh()
+sharding = create_data_parallel_sharding(mesh)
 
-# Build a single-axis device mesh and the corresponding NamedSharding.
-mesh = jax.make_mesh(
-    (len(jax.devices()),), ("data",), axis_types=(jax.sharding.AxisType.Auto,)
-)
-sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("data"))
-
-sharder = ArraySharder(rngs=nnx.Rngs(0))
-sharded_batch = sharder.shard(batch, sharding)
-# Each device now holds ``batch_size / num_devices`` samples.
+with jax.set_mesh(mesh):
+    for batch in pipeline:
+        batch = place_batch_on_shards(batch, sharding)
+        loss = train_step(model, optimizer, batch)
 ```
 
-## Modules
-
-- [array_sharder](array_sharder.md) - Shard arrays across devices on single host
-- [jax_process_sharder](jax_process_sharder.md) - Process-level sharding for multi-host
-
-## Multi-Host Example
+## Slice Data per Process
 
 ```python
-import jax
-from flax import nnx
-
 from datarax.sharding import JaxProcessSharderModule
 
-# Each host instantiates its own sharder; the module reads
-# ``jax.process_count()`` and ``jax.process_index()`` on construction.
-sharder = JaxProcessSharderModule(rngs=nnx.Rngs(0))
+# The module reads the process index and count from Grain's ShardByJaxProcess.
+sharder = JaxProcessSharderModule()
 
-# ``shard_data`` slices arrays / lists / tuples down to the
-# current host's portion (``Grain``-style bounds).
+# ``shard_data`` slices arrays, lists and tuples to this process's portion.
 local_images = sharder.shard_data(global_images)
 local_labels = sharder.shard_data(global_labels)
 ```
 
-## With Pipelines
+## Modules
 
-Wrap the sharder in an `nnx.Module` and place it in `stages=[...]`:
-
-```python
-import jax
-from flax import nnx
-
-from datarax.pipeline import Pipeline
-from datarax.sharding import ArraySharder
-
-
-class _Shard(nnx.Module):
-    """Wrap ``ArraySharder.shard`` as a Pipeline-compatible stage."""
-
-    def __init__(self, sharder: ArraySharder, sharding: jax.sharding.Sharding) -> None:
-        self.sharder = sharder
-        self.sharding = sharding
-
-    def __call__(self, batch):
-        return self.sharder.shard(batch, self.sharding)
-
-
-mesh = jax.make_mesh(
-    (len(jax.devices()),), ("data",), axis_types=(jax.sharding.AxisType.Auto,)
-)
-sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("data"))
-shard_stage = _Shard(ArraySharder(rngs=nnx.Rngs(0)), sharding)
-
-pipeline = Pipeline(
-    source=source,
-    stages=[shard_stage, transform],
-    batch_size=256,
-    rngs=nnx.Rngs(0),
-)
-```
+- [jax_process_sharder](jax_process_sharder.md) - Process-level data slicing
 
 ## See Also
 

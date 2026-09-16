@@ -106,14 +106,11 @@ class TestBatcherModuleEnhanced:
         # Enhanced features are now passed through config
         config = SimpleTestBatcherConfig(
             stochastic=False,
-            cacheable=True,
             batch_stats_fn=lambda x: {"count": len(x)},
         )
         batcher = SimpleTestBatcher(config, rngs=nnx.Rngs(0))
 
         # Should have DataraxModule features (accessed through config)
-        assert batcher.config.cacheable
-        assert batcher._cache == {}
         assert batcher.config.batch_stats_fn is not None
 
     def test_basic_batching(self):
@@ -162,36 +159,16 @@ class TestBatcherModuleEnhanced:
 
     def test_state_management(self):
         """Test enhanced state management."""
-        config = SimpleTestBatcherConfig(cacheable=True)
+        config = SimpleTestBatcherConfig()
         batcher = SimpleTestBatcher(config)
-
-        # Modify internal state
-        assert batcher._cache is not None
-        batcher._cache["test"] = "data"  # type: ignore[reportArgumentType]
 
         # Get state - nnx.Variable fields are included
         state = batcher.get_state()
-        # _cache is not included in state as it's not an nnx.Variable
         # _computed_stats IS in state as it's nnx.Variable
         assert "_computed_stats" in state
 
         new_batcher = SimpleTestBatcher(SimpleTestBatcherConfig())
         new_batcher.set_state(state)
-
-    def test_cache_reset(self):
-        """Test cache reset functionality."""
-        config = SimpleTestBatcherConfig(cacheable=True)
-        batcher = SimpleTestBatcher(config)
-
-        # Add to cache
-        assert batcher._cache is not None
-        batcher._cache["key1"] = "value1"  # type: ignore[reportArgumentType]
-        assert len(batcher._cache) == 1
-
-        # Reset cache
-        batcher.reset_cache()
-        assert batcher._cache is not None
-        assert len(batcher._cache) == 0
 
 
 class TestBatcherModuleIntegration:
@@ -221,37 +198,9 @@ class TestBatcherModuleErrorHandling:
         result = batcher([], batch_size=2)
         assert result == []
 
-    def test_caching_with_non_cacheable_data(self):
-        """Test caching behavior with non-cacheable data."""
-        config = SimpleTestBatcherConfig(cacheable=True)
-        batcher = SimpleTestBatcher(config)
-
-        # Elements with non-hashable components
-        elements = [{"data": [1, 2, 3]}]  # List is not hashable
-
-        # Should handle gracefully and not cache
-        result = batcher(elements, batch_size=1)
-        assert result is not None
-        # Cache might be empty due to unhashable data
-        assert len(batcher._cache) >= 0
-
 
 class TestBatcherModuleCoverage:
     """Additional tests to reach 80% coverage."""
-
-    def test_different_cacheable_configs(self):
-        """Test BatcherModule with different cacheable configurations."""
-        # Test with caching enabled
-        config_cacheable = SimpleTestBatcherConfig(cacheable=True)
-        batcher_cacheable = SimpleTestBatcher(config_cacheable)
-        assert batcher_cacheable.config.cacheable is True
-        assert batcher_cacheable._cache == {}
-
-        # Test with caching disabled
-        config_no_cache = SimpleTestBatcherConfig(cacheable=False)
-        batcher_no_cache = SimpleTestBatcher(config_no_cache)
-        assert batcher_no_cache.config.cacheable is False
-        assert batcher_no_cache._cache is None
 
     def test_complex_pytree_batching(self):
         """Test batching of complex PyTree structures."""
@@ -291,27 +240,10 @@ class TestBatcherModuleCoverage:
         assert (end_time - start_time) < 2.0  # 2 second threshold
         assert len(result) == 10  # 1000 / 100 = 10 batches
 
-    def test_memory_efficiency(self):
-        """Test memory efficiency of caching."""
-        config = SimpleTestBatcherConfig(cacheable=True)
-        batcher = SimpleTestBatcher(config)
-
-        # Process multiple different batches
-        for i in range(10):
-            elements = [{"data": jnp.array([i])}]
-            batcher(elements, batch_size=1)
-
-        # Cache should not grow unbounded
-        assert len(batcher._cache) <= 10
-
     def test_serialization_compatibility(self):
         """Test that enhanced BatcherModule is serialization compatible."""
-        config = SimpleTestBatcherConfig(cacheable=True)
+        config = SimpleTestBatcherConfig()
         batcher = SimpleTestBatcher(config)
-
-        # Modify internal state
-        assert batcher._cache is not None
-        batcher._cache["test"] = "value"  # type: ignore[reportArgumentType]
 
         # Get state (should be serializable)
         state = batcher.get_state()
@@ -320,7 +252,6 @@ class TestBatcherModuleCoverage:
         assert isinstance(state, dict)
         # _computed_stats IS in state (it's nnx.Variable)
         assert "_computed_stats" in state
-        # _cache is not included in state as it's not an nnx.Variable
 
         new_batcher = SimpleTestBatcher(SimpleTestBatcherConfig())
         new_batcher.set_state(state)
@@ -415,43 +346,18 @@ class TestDefaultBatcherImplementation:
 class TestBatcherModuleAdvancedFeatures:
     """Test advanced features of BatcherModule."""
 
-    def test_operation_statistics_tracking(self):
-        """Test operation statistics tracking."""
-        batcher = SimpleTestBatcher(SimpleTestBatcherConfig())
-
-        # Initial stats
-        stats = batcher.get_operation_stats()
-        assert stats["applied_count"] == 0
-        assert stats["skipped_count"] == 0
-
-        # Perform operations
-        elements = [{"data": jnp.array([1.0])}]
-        batcher(elements, batch_size=1)
-
-        # Check stats updated (through inherited behavior)
-        stats = batcher.get_operation_stats()
-        # Note: Actual stats updating would need to be implemented in batch method
-
-        # Reset stats
-        batcher.reset_operation_stats()
-        stats = batcher.get_operation_stats()
-        assert stats["applied_count"] == 0
-        assert stats["skipped_count"] == 0
-
     def test_clone_functionality(self):
         """Test module cloning."""
-        config = SimpleTestBatcherConfig(cacheable=True)
+        config = SimpleTestBatcherConfig()
         batcher = SimpleTestBatcher(config)
-        assert batcher._cache is not None
-        batcher._cache["test"] = "data"  # type: ignore[reportArgumentType]
+        batcher.set_statistics({"mean": 1.5})
 
         # Clone the module
         cloned = batcher.clone()
 
-        # Cache is cloned too
-        assert cloned._cache is not None
-        assert "test" in cloned._cache
-        assert cloned._cache["test"] == "data"  # type: ignore[reportArgumentType]
+        # The clone carries the module's state
+        assert cloned is not batcher
+        assert cloned.get_statistics() == {"mean": 1.5}
 
     def test_rng_stream_requirements(self):
         """Test RNG stream requirement checking."""
@@ -569,24 +475,6 @@ class TestBatcherModuleEdgeCases:
         batches = list(batcher(elements, batch_size=10))
         assert len(batches) == 1
         assert batches[0]["data"].shape == (1, 1)
-
-    def test_cache_key_with_different_data_types(self):
-        """Test cache key computation with various data types."""
-        config = SimpleTestBatcherConfig(cacheable=True)
-        batcher = SimpleTestBatcher(config)
-
-        # Test with arrays
-        key1 = batcher._compute_cache_key([jnp.array([1.0])])
-        assert key1 is not None
-
-        # Test with nested structures
-        key2 = batcher._compute_cache_key([{"a": jnp.array([1.0]), "b": {"c": 2}}])
-        assert key2 is not None
-        assert key1 != key2
-
-        # Test with non-hashable types (should handle gracefully)
-        key3 = batcher._compute_cache_key([{"data": [1, 2, 3]}])
-        assert key3 is not None
 
 
 class TestBatcherModuleConcurrency:
@@ -711,7 +599,7 @@ class TestBatcherModuleIntegrationAdvanced:
 
     def test_batcher_state_persistence(self):
         """Test state persistence across save/load cycles."""
-        config = SimpleTestBatcherConfig(cacheable=True)
+        config = SimpleTestBatcherConfig()
         batcher = SimpleTestBatcher(config)
 
         # Perform some operations
@@ -726,7 +614,7 @@ class TestBatcherModuleIntegrationAdvanced:
         state = batcher.get_state()
 
         # Create new batcher and restore
-        new_batcher = SimpleTestBatcher(SimpleTestBatcherConfig(cacheable=True))
+        new_batcher = SimpleTestBatcher(SimpleTestBatcherConfig())
         new_batcher.set_state(state)
 
         # _computed_stats IS persisted (nnx.Variable)
@@ -751,50 +639,6 @@ class TestBatcherModuleIntegrationAdvanced:
 
 class TestBatcherModulePerformance:
     """Performance and efficiency tests."""
-
-    def test_cache_performance_improvement(self):
-        """Test that caching improves performance."""
-        import time
-
-        cached_config = SimpleTestBatcherConfig(cacheable=True)
-        uncached_config = SimpleTestBatcherConfig(cacheable=False)
-        batcher_cached = SimpleTestBatcher(cached_config)
-        batcher_uncached = SimpleTestBatcher(uncached_config)
-
-        # Large dataset
-        elements = [{"data": jnp.array([i])} for i in range(100)]
-
-        # First run - both should take similar time
-        start = time.time()
-        batcher_cached(elements, batch_size=10)
-        cached_first_time = time.time() - start
-
-        start = time.time()
-        batcher_uncached(elements, batch_size=10)
-        _uncached_first_time = time.time() - start
-
-        # Second run - cached should be faster
-        start = time.time()
-        batcher_cached(elements, batch_size=10)  # Should use cache
-        cached_second_time = time.time() - start
-
-        # Cache should make second call faster
-        # Note: In practice, caching overhead might make this test flaky
-        assert cached_second_time <= cached_first_time * 1.5  # Allow some variance
-
-    def test_memory_bounded_caching(self):
-        """Test that cache doesn't grow unbounded."""
-        config = SimpleTestBatcherConfig(cacheable=True)
-        batcher = SimpleTestBatcher(config)
-
-        # Process many unique batches
-        for i in range(100):
-            elements = [{"data": jnp.array([i + j])} for j in range(3)]
-            batcher(elements, batch_size=2)
-
-        # Cache should have reasonable size
-        # (Implementation would need cache size limits)
-        assert len(batcher._cache) <= 100  # Should not exceed reasonable limit
 
 
 class TestBatcherModuleCompliance:

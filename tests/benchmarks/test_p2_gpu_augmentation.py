@@ -13,19 +13,10 @@ import pytest
 from datarax.core.element_batch import Batch
 
 
-# Skip entire module if no GPU available
-def _has_gpu():
-    try:
-        return bool(jax.devices("gpu"))
-    except RuntimeError:
-        return False
-
-
-pytestmark = pytest.mark.skipif(not _has_gpu(), reason="GPU not available")
+pytestmark = pytest.mark.accelerator(kind="gpu")
 
 
 @pytest.mark.benchmark
-@pytest.mark.gpu
 class TestP2GPUAugmentation:
     """P2: Datarax vision transforms within 2x of DALI on GPU."""
 

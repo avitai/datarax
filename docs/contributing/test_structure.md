@@ -27,8 +27,8 @@ For GPU-accelerated testing (requires CUDA setup):
 # Use the GPU test script
 bash scripts/run_gpu_tests.sh
 
-# Or manually with device selection
-JAX_PLATFORMS=cuda uv run pytest --device=gpu tests/ -v
+# Or run the suite on the GPU directly
+DATARAX_TEST_JAX_PLATFORMS=cuda uv run pytest tests/ -v
 ```
 
 ### Full Test Suite
@@ -113,8 +113,8 @@ Tests are organized using pytest markers defined in `conftest.py`:
 | `@pytest.mark.integration` | Component interaction tests | `test_*_integration.py` files |
 | `@pytest.mark.end_to_end` | Complete workflow tests | `integration/` directory |
 | `@pytest.mark.benchmark` | Performance measurement | `benchmarks/` directory |
-| `@pytest.mark.gpu` | Requires GPU hardware | Use `--device=gpu` to run |
-| `@pytest.mark.tpu` | Requires TPU hardware | Currently skipped for stability |
+| `@pytest.mark.accelerator(kind="gpu")` | Requires a GPU backend | Skips unless `DATARAX_TEST_JAX_PLATFORMS=cuda` selects one |
+| `@pytest.mark.devices(count)` | Requires `count` devices | Skips below `count` visible devices |
 | `@pytest.mark.tfds` | Requires TensorFlow Datasets | TFDS integration tests |
 | `@pytest.mark.hf` | Requires HuggingFace Datasets | HF integration tests |
 
@@ -130,16 +130,12 @@ uv run pytest -m integration
 # Skip slow tests
 uv run pytest -m "not slow"
 
-# Run GPU tests only
-uv run pytest -m gpu --device=gpu
+# Run the tests that need a GPU backend
+DATARAX_TEST_JAX_PLATFORMS=cuda uv run pytest -m accelerator
 
 # Run HuggingFace integration tests
 uv run pytest -m hf
 ```
-
-!!! note "TPU Tests"
-    TPU tests are currently skipped unconditionally for stability reasons.
-    They can be enabled by modifying `conftest.py` if TPU hardware is available.
 
 ## Adding New Tests
 
@@ -149,7 +145,7 @@ When adding new tests:
 2. Name test files according to the specific component they test (`test_component_name.py`)
 3. Follow the naming convention `test_*` for all test functions
 4. Create one test file per source component when possible
-5. Use appropriate markers for hardware requirements (`gpu`, `tpu`, etc.)
+5. Declare hardware requirements with the `accelerator` and `devices` markers
 6. Create standalone test units that don't depend on other test files
 
 ## Test Dependencies
@@ -170,15 +166,14 @@ The `tests/conftest.py` file provides:
 
 - **Custom markers** for test categorization
 - **Fixtures** for common test data and setup
-- **Command-line options** like `--device` for hardware selection
-- **Automatic test skipping** based on available hardware
+- **Command-line options** for test categories
+- **The test backend**, chosen through `DATARAX_TEST_JAX_PLATFORMS` before JAX is imported
 
 ### Key Command-Line Options
 
 | Option | Values | Description |
 |--------|--------|-------------|
 | `--all-suites` | flag | Collect all test suites: `tests/`, `benchmarks/tests/` |
-| `--device` | `cpu`, `gpu`, `tpu`, `all` | Select device type for tests (default: `all`) |
 | `--integration` | flag | Include integration tests |
 | `--end-to-end` | flag | Include end-to-end tests |
 | `--benchmark` | flag | Include benchmark tests |

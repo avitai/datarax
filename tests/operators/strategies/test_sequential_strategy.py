@@ -43,7 +43,6 @@ class TestSequentialStrategy:
         # Verify random params are extracted correctly
         op1 = MagicMock(spec=OperatorModule)
         op1.apply.return_value = (jnp.array([1]), {}, {})
-        op1.statistics = {}
 
         strategy = SequentialStrategy()
         context = StrategyContext(
@@ -70,7 +69,6 @@ class TestConditionalSequentialStrategy:
         class AddOperator(OperatorModule):
             def __init__(self, value):
                 self.value = value
-                self.statistics = {}
 
             def apply(self, data, state, meta, rp=None, stats=None):
                 del rp, stats

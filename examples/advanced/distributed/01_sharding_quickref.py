@@ -53,7 +53,8 @@ Single-device systems will run in fallback mode.
 import jax
 import numpy as np
 from flax import nnx
-from jax.sharding import Mesh, NamedSharding, PartitionSpec
+from substrax.mesh import DeviceMeshManager
+from substrax.spmd import create_data_parallel_sharding, place_batch_on_shards
 
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.pipeline import Pipeline
@@ -128,7 +129,8 @@ print("Pipeline created with batch_size=128")
 """
 ## Step 3: Device Mesh Setup
 
-A JAX `Mesh` defines how devices are organized. Common patterns:
+A JAX `Mesh` defines how devices are organized. substrax's `DeviceMeshManager` builds one with
+Auto axes, so XLA infers how a computation over sharded inputs is partitioned. Common patterns:
 
 - `("data",)` - Data parallelism across all devices
 - `("data", "model")` - 2D mesh for data + model parallelism
@@ -137,11 +139,9 @@ A JAX `Mesh` defines how devices are organized. Common patterns:
 # %%
 # Create device mesh
 if use_sharding:
-    # Reshape devices into a mesh
-    # For data parallelism: all devices along "data" axis
-    device_mesh = np.array(devices).reshape(-1)
-    mesh = Mesh(device_mesh, axis_names=("data",))
-    print(f"Created mesh with {len(device_mesh)} devices along 'data' axis")
+    # Data parallelism: every device along the "data" axis
+    mesh = DeviceMeshManager.create_data_parallel_mesh()
+    print(f"Created mesh with {mesh.devices.size} devices along 'data' axis")
 else:
     mesh = None
     print("Skipping mesh creation (single device)")
@@ -150,8 +150,9 @@ else:
 """
 ## Step 4: Process with Sharding
 
-When running inside a mesh context, JAX operations automatically
-use the sharded execution.
+Each batch is placed on the mesh's `"data"` axis with `place_batch_on_shards`, and the loop runs
+under `jax.set_mesh(mesh)`: computations on the sharded arrays run across the devices, and inside
+it APIs that take a sharding also accept a bare `PartitionSpec`.
 """
 
 # %%
@@ -159,24 +160,22 @@ use the sharded execution.
 print("\nProcessing batches:")
 
 if use_sharding and mesh is not None:
-    # Partition specs for batched data: the batch dimension is sharded across
-    # the "data" axis and every other dimension is replicated.
-    data_sharding = NamedSharding(mesh, PartitionSpec("data", None, None, None))
-    label_sharding = NamedSharding(mesh, PartitionSpec("data"))
+    # The batch dimension of every array is split across the "data" axis;
+    # the remaining dimensions are replicated.
+    batch_sharding = create_data_parallel_sharding(mesh)
 
-    with mesh:
+    with jax.set_mesh(mesh):
         for i, batch in enumerate(pipeline):
             if i >= 2:
                 break
 
-            # Apply sharding to batch data
-            image_batch = jax.device_put(batch["image"], data_sharding)
-            label_batch = jax.device_put(batch["label"], label_sharding)
+            # Place every array of the batch on the mesh
+            sharded_batch = place_batch_on_shards(batch, batch_sharding)
 
             print(f"Batch {i}:")
-            print(f"  Image shape: {image_batch.shape}")
-            print(f"  Image sharding: {image_batch.sharding}")
-            print(f"  Label shape: {label_batch.shape}")
+            print(f"  Image shape: {sharded_batch['image'].shape}")
+            print(f"  Image sharding: {sharded_batch['image'].sharding}")
+            print(f"  Label shape: {sharded_batch['label'].shape}")
 else:
     # Single device fallback
     for i, batch in enumerate(pipeline):

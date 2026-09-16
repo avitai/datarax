@@ -64,8 +64,8 @@ uv run pytest
 # Run a specific test directory on the GPU
 uv run pytest tests/operators/
 
-# --device=gpu additionally selects only the tests marked for GPU
-uv run pytest --device=gpu
+# Run only the tests that need a GPU backend
+uv run pytest -m accelerator
 ```
 
 ## Troubleshooting
@@ -100,47 +100,34 @@ If you encounter issues with GPU tests:
 
 The GPU testing infrastructure consists of:
 
-1. **Pytest `--device` Option**: The `conftest.py` provides a `--device` flag that accepts `cpu`, `gpu`, `tpu`, or `all`. When `--device=gpu` is specified, TPU-specific tests are skipped.
+1. **Test backend** (`tests/jax_test_environment.py`): tests run on emulated CPU devices unless `DATARAX_TEST_JAX_PLATFORMS` asks for an accelerator; an inherited `JAX_PLATFORMS` does not move them onto a GPU.
 
 2. **Shell Script** (`scripts/run_gpu_tests.sh`):
    - Verifies GPU availability using `scripts/check_gpu.py`
-   - Sets required environment variables (`JAX_PLATFORMS=cuda`)
-   - Runs pytest with `--device=gpu` flag
+   - Sets `DATARAX_TEST_JAX_PLATFORMS=cuda`
+   - Runs pytest over `tests/`
 
-3. **Test Markers**: Tests can use `@pytest.mark.gpu` or `@pytest.mark.gpu_required` to indicate GPU requirements. Currently, most tests run on any device, with only a few explicitly marked as GPU-specific.
+3. **Test Markers**: the substrax pytest plugin's `@pytest.mark.accelerator(kind="gpu")` skips a test unless the run uses a GPU backend, and `@pytest.mark.devices(count)` skips it below `count` visible devices. Most tests run on any device.
 
 ## Adding New GPU Tests
 
-Most Datarax tests are device-agnostic and run on whatever JAX backend is available. Use GPU markers when a test:
+Most Datarax tests are device-agnostic and run on whatever JAX backend the run selected. Declare a requirement with a marker from the substrax pytest plugin when a test needs it:
 
-- **Requires GPU** (would fail on CPU): Use `@pytest.mark.gpu_required`
-- **Benefits from GPU** (runs faster): Use `@pytest.mark.gpu`
+- **Needs a GPU backend**: `@pytest.mark.accelerator(kind="gpu")`
+- **Needs several devices**: `@pytest.mark.devices(count)`, or `@pytest.mark.devices(count, kind="gpu")` for several GPUs
 
-### Example: GPU-Required Test
+### Example
 
 ```python
-import pytest
 import jax
-
-@pytest.mark.gpu_required
-def test_multi_gpu_sharding():
-    """Test that requires multiple GPU devices."""
-    devices = jax.devices("gpu")
-    if len(devices) < 2:
-        pytest.skip("Requires at least 2 GPUs")
-    # Test multi-GPU functionality
-```
-
-### Example: GPU-Beneficial Test
-
-```python
 import pytest
 
-@pytest.mark.gpu
-def test_large_batch_processing():
-    """Test that benefits from GPU acceleration."""
-    # This test runs on any device but is faster on GPU
-    pass
+
+@pytest.mark.devices(2, kind="gpu")
+def test_multi_gpu_sharding():
+    """Runs only when the run selected a GPU backend with at least two GPUs."""
+    devices = jax.devices("gpu")
+    ...
 ```
 
 ### Test File Location
@@ -156,17 +143,17 @@ Place GPU-intensive tests in appropriate directories:
 The GPU testing infrastructure supports:
 
 - **Automatic device detection**: Tests adapt to available hardware
-- **Selective test execution**: Use `--device=gpu` to focus on GPU-relevant tests
+- **Selective test execution**: `-m accelerator` runs only the tests that need an accelerator
 - **Memory management**: Environment variables control GPU memory allocation
 
 ### Running Full GPU Test Suite
 
 ```bash
 # Run all tests on GPU
-JAX_PLATFORMS=cuda uv run pytest --device=gpu tests/
+DATARAX_TEST_JAX_PLATFORMS=cuda uv run pytest tests/
 
 # Run with memory limits (useful for shared GPUs)
-XLA_CLIENT_MEM_FRACTION=0.5 JAX_PLATFORMS=cuda uv run pytest --device=gpu tests/
+XLA_CLIENT_MEM_FRACTION=0.5 DATARAX_TEST_JAX_PLATFORMS=cuda uv run pytest tests/
 ```
 
 For more testing information, see the [Testing Guide](testing_guide.md).

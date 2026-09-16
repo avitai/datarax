@@ -156,6 +156,23 @@ def test_mixed_get_batch_at_respects_weights_in_distribution() -> None:
     )
 
 
+def test_mixed_record_indices_name_the_source_and_record_served() -> None:
+    """A mixed record's id is its source's offset plus its index within that source."""
+    src_a, src_b = _disjoint_pair()  # A holds 0..3, B holds 100..103
+    mix = MixDataSourcesNode(
+        MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)),
+        [src_a, src_b],
+    )
+    key = jax.random.key(3)
+
+    ids = np.asarray(mix.record_indices_at(start=0, size=32, key=key))
+    values = np.asarray(mix.get_batch_at(start=0, size=32, key=key)["x"])
+
+    assert set(ids.tolist()) <= set(range(8))
+    expected = np.where(ids < 4, ids.astype(np.float32), 100.0 + (ids - 4).astype(np.float32))
+    np.testing.assert_array_equal(values, expected)
+
+
 # ---------- C. JIT compatibility ----------
 
 

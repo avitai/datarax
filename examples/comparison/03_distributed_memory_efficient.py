@@ -24,6 +24,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import psutil
+from substrax.mesh import DeviceMeshManager
+from substrax.spmd import create_data_parallel_sharding
 
 
 warnings.filterwarnings("ignore")
@@ -429,7 +431,7 @@ class JAXShardedLoader(nnx.Module):
         # JAX sharding integration
         if mesh is not None:
             self.mesh = mesh
-            self.sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("data"))
+            self.sharding = create_data_parallel_sharding(mesh)
             devices = mesh.devices.flatten()
         else:
             devices = jax.devices()
@@ -667,7 +669,7 @@ def test_jax_sharding():
 
     # Create mesh if multiple devices
     if len(devices) > 1:
-        mesh = jax.sharding.Mesh(devices, ("data",))
+        mesh = DeviceMeshManager.create_data_parallel_mesh()
         print(f"\nCreated mesh with {len(devices)} devices")
     else:
         mesh = None

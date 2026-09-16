@@ -12,13 +12,13 @@ from dataclasses import dataclass
 import flax.nnx as nnx
 import pytest
 
-from datarax.core.config import StructuralConfig
+from datarax.core.config import SamplerConfig
 from datarax.core.sampler import SamplerModule
 from datarax.utils.prng import create_rngs
 
 
 @dataclass(frozen=True)
-class SimpleTestSamplerConfig(StructuralConfig):  # type: ignore[reportGeneralTypeIssues]
+class SimpleTestSamplerConfig(SamplerConfig):  # type: ignore[reportGeneralTypeIssues]
     """Configuration for SimpleTestSampler."""
 
     dataset_size: int = 10
@@ -556,31 +556,6 @@ class TestSamplerModuleAdditionalCoverage:
         streams = sampler_stoch.requires_rng_streams()
         assert streams == ["my_stream"]
 
-    def test_operation_stats(self):
-        """Test operation statistics tracking from DataraxModule."""
-        sampler = SimpleTestSampler(dataset_size=5)
-
-        # Get initial stats
-        stats = sampler.get_operation_stats()
-        assert stats["applied_count"] == 0
-        assert stats["skipped_count"] == 0
-
-        # Increment applied count (inherited method)
-        sampler._increment_applied_count()
-        stats = sampler.get_operation_stats()
-        assert stats["applied_count"] == 1
-
-        # Increment skipped count
-        sampler._increment_skipped_count()
-        stats = sampler.get_operation_stats()
-        assert stats["skipped_count"] == 1
-
-        # Reset stats
-        sampler.reset_operation_stats()
-        stats = sampler.get_operation_stats()
-        assert stats["applied_count"] == 0
-        assert stats["skipped_count"] == 0
-
     def test_clone_method(self):
         """Test the clone method from DataraxModule."""
         sampler = SimpleTestSampler(dataset_size=5)
@@ -622,7 +597,7 @@ class TestSamplerModuleAdditionalCoverage:
         """Test the default sample implementation that uses iterator."""
 
         @dataclass(frozen=True)
-        class IteratorOnlySamplerConfig(StructuralConfig):
+        class IteratorOnlySamplerConfig(SamplerConfig):
             """Config for IteratorOnlySampler."""
 
             dataset_size: int = 10

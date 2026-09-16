@@ -102,9 +102,11 @@ pipeline = (
 # Then add callbacks for metrics collection
 
 # Level 4: Add sharding for distributed execution
-with Mesh(devices, axis_names=("data",)):
+mesh = DeviceMeshManager.create_data_parallel_mesh()
+sharding = create_data_parallel_sharding(mesh)
+with jax.set_mesh(mesh):
     for batch in pipeline:
-        sharded_batch = jax.device_put(batch, sharding)
+        sharded_batch = place_batch_on_shards(batch, sharding)
 ```
 
 **Application in Documentation**:

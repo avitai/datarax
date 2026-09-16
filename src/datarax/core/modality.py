@@ -44,6 +44,7 @@ from flax import nnx
 from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
+from datarax.core.field_paths import get_field, set_field
 from datarax.core.operator import OperatorModule
 
 
@@ -195,10 +196,6 @@ class ModalityOperator(OperatorModule):
         - **Statistics system**: Optionally collect and use batch statistics via stats
           parameter in apply(). Useful for adaptive operations (e.g., batch-aware
           normalization). Statistics are computed externally and passed in.
-
-        - **Caching system**: Results can be cached based on operator configuration
-          and input characteristics. Inherited from base OperatorModule, helps avoid
-          redundant computation for deterministic operators.
 
     Subclass Implementation Pattern:
         ```python
@@ -373,7 +370,7 @@ class ModalityOperator(OperatorModule):
         # Default implementation for deterministic operators
         return super().generate_random_params(rng, data_shapes)
 
-    def _extract_field(self, data: dict, field_key: str) -> Any:
+    def _extract_field(self, data: dict, field_key: str) -> Any:  # noqa: DOC502
         """Extract field from data dict with validation.
 
         Helper method for subclasses to safely extract fields from data.
@@ -396,19 +393,7 @@ class ModalityOperator(OperatorModule):
             nested = self._extract_field(data, "data.image")  # Access data["data"]["image"]
             ```
         """
-        # Support nested field access with dot notation
-        if "." in field_key:
-            keys = field_key.split(".")
-            current = data
-            for key in keys:
-                if not isinstance(current, dict) or key not in current:
-                    raise KeyError(f"Field '{field_key}' not found in data")
-                current = current[key]
-            return current
-        # Simple field access
-        if field_key not in data:
-            raise KeyError(f"Field '{field_key}' not found in data")
-        return data[field_key]
+        return get_field(data, field_key)
 
     def _apply_clip_range(self, value: jax.Array) -> jax.Array:
         """Apply value range clipping if configured.
@@ -458,32 +443,4 @@ class ModalityOperator(OperatorModule):
             result = self._remap_field(data, transformed_image)  # Nested field
             ```
         """
-        target_key = self.config.target_key or self.config.field_key
-
-        # Support nested field paths with dot notation
-        if "." in target_key:
-            keys = target_key.split(".")
-
-            # Recursively rebuild nested dict structure
-            def set_nested(current_data: dict, key_path: list[str], value: Any) -> dict:
-                if len(key_path) == 1:
-                    # Base case: set the value
-                    return {**current_data, key_path[0]: value}
-                # Recursive case: navigate deeper
-                key = key_path[0]
-                rest = key_path[1:]
-
-                # Get existing nested dict or create empty one
-                nested = current_data.get(key, {})
-                if not isinstance(nested, dict):
-                    raise ValueError(
-                        f"Cannot create nested path '{target_key}': '{key}' is not a dict"
-                    )
-
-                # Recursively update nested structure
-                updated_nested = set_nested(nested, rest, value)
-                return {**current_data, key: updated_nested}
-
-            return set_nested(data, keys, transformed_value)
-        # Simple field assignment (shallow copy + update)
-        return {**data, target_key: transformed_value}
+        return set_field(data, self.config.target_key or self.config.field_key, transformed_value)

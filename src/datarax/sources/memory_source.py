@@ -19,7 +19,11 @@ from datarax.core.data_source import DataSourceModule
 from datarax.core.metadata import MetadataManager, RecordMetadata
 from datarax.samplers.index_shuffle import index_shuffle
 from datarax.sources._grain_bridge import records_from_batched_mapping, validate_index_batch
-from datarax.sources.source_ops import configure_stochastic_from_shuffle, resolve_wrapped_indices
+from datarax.sources.source_ops import (
+    configure_stochastic_from_shuffle,
+    partition_length,
+    resolve_wrapped_indices,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -188,12 +192,15 @@ class MemorySource(DataSourceModule):
             self.metadata_manager = None
 
     def __len__(self) -> int:
-        """Return the total number of data elements.
+        """Return the number of records this source serves.
+
+        With ``num_workers > 1`` that is this worker's partition, positions
+        ``[shard_id::num_workers]`` of the global order.
 
         Returns:
-            Total number of elements in the source
+            Number of records served.
         """
-        return self.length
+        return partition_length(self.length, self.config.num_workers, self.config.shard_id or 0)
 
     def __iter__(self) -> Iterator[Any]:
         """Iterate over data elements.
@@ -329,6 +336,37 @@ class MemorySource(DataSourceModule):
         indices = self._get_indices()
         return self._gather_batch(indices[start:end])
 
+    def record_indices_at(
+        self,
+        start: int | jax.Array,
+        size: int,
+        key: jax.Array | None = None,
+    ) -> jax.Array:
+        """Return the global index of each record ``get_batch_at(start, size, key)`` returns.
+
+        ``start`` and ``size`` are positions in the order this source serves: the whole
+        dataset, or with ``num_workers > 1`` this worker's positions
+        ``[shard_id::num_workers]`` of the global order, shuffled by ``key`` when
+        ``shuffle=True``. The indices are global, so a record has one index on every worker.
+
+        Args:
+            start: Starting logical position; concrete int or traced ``jax.Array``.
+            size: Number of records (Python int).
+            key: PRNG key for shuffled mode.
+
+        Returns:
+            Int32 ``jax.Array`` of shape ``(size,)``.
+        """
+        return resolve_wrapped_indices(
+            start,
+            size,
+            self.length,
+            self.is_random_order,
+            key,
+            num_workers=self.config.num_workers,
+            shard_id=self.config.shard_id or 0,
+        )
+
     def get_batch_at(
         self,
         start: int | jax.Array,
@@ -337,7 +375,8 @@ class MemorySource(DataSourceModule):
     ) -> Any:
         """Stateless indexed batch access; JIT-traceable for scan-based iteration.
 
-        Returns ``size`` records starting at logical position ``start``.
+        Returns ``size`` records starting at logical position ``start`` of the order this
+        source serves (see :meth:`record_indices_at`).
         Does not advance ``self.index`` or any other internal state, so
         callers can drive iteration via their own ``nnx.Variable`` position
         counter and trace ``get_batch_at`` under ``nnx.scan`` / ``nnx.jit``.
@@ -367,7 +406,7 @@ class MemorySource(DataSourceModule):
         Returns:
             Batch dict with leading dim ``size``.
         """
-        indices = resolve_wrapped_indices(start, size, self.length, self.is_random_order, key)
+        indices = self.record_indices_at(start, size, key)
 
         data = self.data
         if isinstance(data, dict):
@@ -513,8 +552,6 @@ class MemorySource(DataSourceModule):
         self._shuffle_seed = None
         self._shuffled_indices.set_value(None)
         self._last_shuffle_epoch.set_value(-1)
-        if self._cache is not None:
-            self._cache.clear()
         if self.metadata_manager is not None:
             self.metadata_manager.reset()
 

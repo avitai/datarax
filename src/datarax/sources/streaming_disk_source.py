@@ -181,12 +181,7 @@ class StreamingDiskSource(DataSourceModule):
             ``{feature_key: array}`` with leading dim ``size`` and
             ``stop_gradient`` applied at the io_callback boundary.
         """
-        del key  # streaming-disk shuffling deferred to a future enhancement
-
-        start_arr = jnp.asarray(start, dtype=jnp.int32)
-        offsets = jnp.arange(size, dtype=jnp.int32)
-        indices = (start_arr + offsets) % jnp.int32(self._length)
-        return self.read_batch(indices)
+        return self.read_batch(self.record_indices_at(start, size, key))
 
 
 __all__ = ["StreamingDiskSource", "StreamingDiskSourceConfig"]

@@ -432,14 +432,9 @@ class TestParallelAdvanced:
         )
         composite = CompositeOperatorModule(composite_config)
 
-        # Create batch to trigger statistics collection
         batch = Batch([Element(data={"value": jnp.array([1.0])})])
 
-        # Apply composite
         composite(batch)
-
-        # Verify statistics dict exists
-        assert hasattr(composite, "operator_statistics")
 
     def test_weighted_parallel_fixed_weights(self):
         """Test weighted parallel with fixed weights."""
@@ -457,6 +452,7 @@ class TestParallelAdvanced:
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
             operators=[op1, op2],
             weights=[0.7, 0.3],
+            mix_fields=("value",),
         )
         composite = CompositeOperatorModule(composite_config)
 

@@ -70,8 +70,11 @@ class CrepeF0Operator(OperatorModule):
     4. Run through CREPE CNN → 360-bin probability distribution
     5. Decode pitch (differentiable or local mode)
 
-    All CREPE weights are nnx.Param — learnable for fine-tuning.
-    Use op.train()/op.eval() to switch modes (propagates to inner CrepeModel).
+    All CREPE weights are nnx.Param — learnable for fine-tuning, and op.train()/op.eval()
+    propagate to the inner CrepeModel. Pitch extraction always runs the model's BatchNorm on
+    its stored statistics, because writing them inside the pipeline's vmap or scan is a
+    mutation from another trace level; fine-tuning therefore trains the weights while the
+    batch statistics stay as loaded.
 
     Input:  data["audio"] shape (n_samples,)
     Output: data["audio"] preserved + data["f0_hz"] (n_frames,)
@@ -141,7 +144,7 @@ class CrepeF0Operator(OperatorModule):
         # Pad audio so we can extract n_frames windows of frame_size
         # Need: last frame start = (n_frames - 1) * hop, end = start + frame_size
         needed_length = (n_frames - 1) * hop + frame_size
-        pad_amount = jnp.maximum(needed_length - n_samples, 0)
+        pad_amount = max(needed_length - n_samples, 0)
         audio_padded = jnp.pad(audio, (0, pad_amount), mode="constant")
 
         # Frame audio: extract 1024-sample windows at hop stride
@@ -164,7 +167,7 @@ class CrepeF0Operator(OperatorModule):
         # size) instead of a Python for-loop which unrolls N copies.
         batch_frames = self.config.batch_frames
         if batch_frames <= 0 or n_frames <= batch_frames:
-            probs = self.crepe_model(frames_input)
+            probs = self.crepe_model(frames_input, use_running_average=True)
         else:
             # Pad frames to multiple of batch_frames and reshape into chunks
             n_chunks = -(-n_frames // batch_frames)  # ceil division
@@ -173,7 +176,7 @@ class CrepeF0Operator(OperatorModule):
             frames_chunked = frames_padded.reshape(n_chunks, batch_frames, frame_size, 1)
 
             def _crepe_scan_fn(carry: Any, chunk: Any) -> tuple[Any, Any]:
-                return carry, self.crepe_model(chunk)
+                return carry, self.crepe_model(chunk, use_running_average=True)
 
             _, probs_chunked = jax.lax.scan(_crepe_scan_fn, None, frames_chunked)
             probs = probs_chunked.reshape(-1, 360)[:n_frames]

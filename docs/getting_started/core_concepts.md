@@ -98,14 +98,15 @@ augment_op = RandomFlipOperator(
 
 ### Per-Record Determinism
 
-Stochastic operators key their randomness on each record's **stable global
-index**, not on batch position or how many batches have been consumed. Each
-operator draws one base key at construction and derives a per-record key as
-`fold_in(base_key, global_index)` (the JAX-native analogue of Grain's
-`Philox(seed + index)`). Consequently a given record is augmented **identically**
-regardless of batch size, shard/host count, shuffle order, or resume point —
-while gradients still flow through the transformation. The `Pipeline` supplies
-the global index automatically from its position counter.
+Stochastic operators key their randomness on the **epoch** and each record's
+**stable index**, not on batch position or how many batches have been consumed.
+Each operator draws one base key at construction and derives a per-record key as
+`fold_in(fold_in(base_key, epoch), record_index)`. Within an epoch a record is
+augmented **identically** regardless of batch size, shuffle order, how records are
+split across workers, or resume point, and every epoch draws fresh augmentation —
+while gradients still flow through the transformation. The `Pipeline` asks its
+source for the indices of the records it serves (`record_indices_at`); a streaming
+source's records are named by their position in the stream.
 
 ---
 
