@@ -251,14 +251,17 @@ def adjust_brightness(
 ) -> jax.Array:
     """Adjust the brightness of an image.
 
+    The result is not clipped: an operator clips to its ``clip_range``, and
+    :func:`color_jitter` clips its final result.
+
     Args:
         image: Input image as JAX array with values in [0, 1].
         factor: Brightness adjustment factor. Values > 1 increase brightness, < 1 decrease it.
 
     Returns:
-        Brightness-adjusted image, clipped to [0, 1].
+        ``image * factor``.
     """
-    return jnp.clip(image * factor, 0.0, 1.0)
+    return image * factor
 
 
 def adjust_brightness_delta(
@@ -267,15 +270,17 @@ def adjust_brightness_delta(
 ) -> jax.Array:
     """Adjust the brightness of an image using an additive delta.
 
+    The result is not clipped: an operator clips to its ``clip_range``.
+
     Args:
         image: Input image as JAX array with values in [0, 1].
         delta: Brightness adjustment delta, a constant or a value drawn for this record.
             Values > 0 increase brightness, < 0 decrease it.
 
     Returns:
-        Brightness-adjusted image, clipped to [0, 1].
+        ``image + delta``.
     """
-    return jnp.clip(image + delta, 0.0, 1.0)
+    return image + delta
 
 
 def adjust_contrast(
@@ -285,18 +290,18 @@ def adjust_contrast(
     """Adjust the contrast of an image.
 
     Each channel is scaled about its spatial mean, so a uniform image, which has no contrast,
-    is returned unchanged for every factor.
+    is returned unchanged for every factor. The result is not clipped: an operator clips to
+    its ``clip_range``, and :func:`color_jitter` clips its final result.
 
     Args:
         image: Input image as JAX array with values in [0, 1].
         factor: Contrast adjustment factor. Values > 1 increase contrast, < 1 decrease it.
 
     Returns:
-        Contrast-adjusted image with the input's shape, clipped to [0, 1].
+        ``mean + factor * (image - mean)`` per channel, with the input's shape.
     """
     mean = jnp.mean(image, axis=(0, 1), keepdims=True)
-    adjusted = mean + factor * (image - mean)
-    return jnp.clip(adjusted, 0.0, 1.0)
+    return mean + factor * (image - mean)
 
 
 def rgb_to_hsv(rgb: jax.Array) -> jax.Array:
