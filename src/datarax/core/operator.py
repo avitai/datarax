@@ -30,6 +30,12 @@ from datarax.core.prng import per_record_keys
 
 logger = logging.getLogger(__name__)
 
+# The child of an operator's base key that its direct-call stream hangs from. A pipeline keys a
+# record as fold_in(fold_in(base_key, epoch), index), so a direct-call key is one level deeper than
+# any pipeline key and the two families cannot coincide by construction — including at epoch -1,
+# which fold_in casts to this same value.
+DIRECT_CALL_STREAM = 0xFFFF_FFFF
+
 
 def extract_batch_size(data_shapes: PyTree) -> int:
     """Extract batch size from a PyTree of shape tuples.
@@ -136,6 +142,12 @@ class OperatorModule(DataraxModule):
         """
         super().__init__(config, rngs=rngs, name=name)
 
+        # The caller's Rngs is read once, below, to draw this operator's base key. It is not kept:
+        # an operator's randomness afterwards comes from its own base key or its own stream, so it
+        # never reaches back into state the caller owns. Assigned through nnx.data so a subclass
+        # may still store an Rngs here after super().__init__.
+        self.rngs = nnx.data(None)
+
         # Runtime validation: Stochastic operators require rngs
         if config.stochastic and rngs is None:
             raise ValueError(
@@ -159,13 +171,48 @@ class OperatorModule(DataraxModule):
             assert rngs is not None  # guaranteed by the check above
             if config.stream_name is None:
                 raise ValueError("Stochastic operators require config.stream_name to be set.")
-            self._base_key = nnx.Variable(rngs[config.stream_name]())
+            base_key = rngs[config.stream_name]()
+            self._base_key = nnx.Variable(base_key)
+            # The operator's own stream, for calls that carry no record identity. It is derived
+            # from the base key rather than drawn from the caller, so building it costs the caller
+            # no second draw and every operator after this one keeps the base key it would have
+            # had. Its keys hang one level below DIRECT_CALL_STREAM, which no pipeline key reaches.
+            self._rng_stream = nnx.RngStream(
+                jax.random.fold_in(base_key, DIRECT_CALL_STREAM), tag=config.stream_name
+            )
 
         # Fitted or fixed statistics, which every record's apply receives. A plain nnx.Variable,
         # so the statistics are module state rather than graphdef metadata: two operators with
         # equal configurations share one compiled trace whatever their statistics hold, and the
         # store round-trips through a checkpoint.
         self._statistics: nnx.Variable[dict[str, Any] | None] = nnx.Variable(None)
+
+    # ========================================================================
+    # Checkpoint upgrade
+    # ========================================================================
+
+    def _upgrade_saved_state(self, saved: dict[str, Any]) -> None:
+        """Rewrite a subtree saved before an operator kept its randomness to itself.
+
+        An operator used to hold the caller's ``Rngs`` and to store its statistics under
+        ``_computed_stats``. It now stores them under ``_statistics`` and derives a private
+        ``_rng_stream`` from ``_base_key``, which such a checkpoint already carries, so the
+        stream is rebuilt rather than restored. Both former names appear only in the earlier
+        layout, which is what lets the subtree identify itself without a version field.
+
+        Args:
+            saved: This operator's own saved subtree, rewritten in place.
+        """
+        if "_computed_stats" in saved and "_statistics" not in saved:
+            saved["_statistics"] = saved.pop("_computed_stats")
+        if "rngs" not in saved:
+            return
+        del saved["rngs"]
+        if self.stochastic and "_base_key" in saved and "_rng_stream" not in saved:
+            saved["_rng_stream"] = {
+                "count": jnp.zeros((), jnp.uint32),
+                "key": jax.random.fold_in(saved["_base_key"], DIRECT_CALL_STREAM),
+            }
 
     # ========================================================================
     # Statistics
@@ -305,10 +352,17 @@ class OperatorModule(DataraxModule):
         # Derive one stateless key per record from the operator's stable base key
         # and the record's global index — never from a per-batch stream draw.
         if self.stochastic:
-            batch_size = extract_batch_size(data_shapes)
             if record_indices is None:
-                record_indices = jnp.arange(batch_size, dtype=jnp.uint32)
-            element_keys = per_record_keys(self._base_key[...], record_indices, epoch)
+                # No record identity to key on, so this call draws: a fresh key from the
+                # operator's own stream, with positions standing in for record indices. Two such
+                # calls therefore differ, which is what a caller asking for randomness expects.
+                base_key = self._rng_stream()
+                indices = jnp.arange(extract_batch_size(data_shapes), dtype=jnp.uint32)
+            else:
+                # The records name themselves, so the keys are a function of the record alone and
+                # the same batch reproduces exactly, however often it is applied.
+                base_key, indices = self._base_key[...], record_indices
+            element_keys = per_record_keys(base_key, indices, epoch)
         else:
             # A deterministic operator has nothing to draw, so it is handed no key.
             element_keys = None

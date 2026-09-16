@@ -103,7 +103,7 @@ iterator = iter(pipeline)
 for step, batch in enumerate(iterator):
     train_step(model, batch)
     if step % 1000 == 0:
-        data_state = iterator.get_state()  # {"position": ..., "rng_counts": [...]}
+        data_state = iterator.get_state()  # position, epoch, rng_counts, version
         save_checkpoint(model, data_state)
 
 # Resume later: identical pipeline configuration, then restore.
@@ -114,6 +114,20 @@ iterator.set_state(data_state)
 ``get_state()`` returns a JSON-serializable dict naming the batches the
 caller has already consumed; ``set_state()`` requires a pipeline with the
 same structure and seeds as the one that produced the state.
+
+``rng_counts`` holds one count per stochastic operator, then the pipeline's
+and the source's. An operator's own count stays 0: iteration keys each
+record on the operator's stable base key and never draws from the operator's
+private stream. A deterministic operator contributes no count, so the list's
+length follows how many operators are stochastic.
+
+``version`` names the layout those counts are in. A state saved before the
+field existed is upgraded when it is restored — the counts outside operators
+keep their values and their order, and every operator count restores to 0.
+An upgrade needs each operator's counts to precede the rest, which holds for
+operators used as pipeline stages; a pipeline holding an operator somewhere
+else, such as inside its source, refuses such a state rather than resuming
+from counts placed wrongly.
 
 ## Checkpointable Iterator Pattern
 

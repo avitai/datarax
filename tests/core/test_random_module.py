@@ -13,7 +13,7 @@ import pytest
 from datarax.core.config import DataraxModuleConfig, OperatorConfig, StructuralConfig
 from datarax.core.data_source import DataSourceModule
 from datarax.core.module import DataraxModule
-from datarax.core.operator import OperatorModule
+from datarax.core.operator import OperatorModule, require_key
 
 
 @pytest.fixture
@@ -56,10 +56,10 @@ class RandomOperatorModule(OperatorModule):
         config = OperatorConfig(stochastic=True, stream_name="transform")
         super().__init__(config, rngs=rngs)
 
-    def apply(self, data, state, metadata, random_params=None, stats=None):
-        """Apply random scaling to the input data."""
-        del random_params, stats
-        scale = jax.random.uniform(self.rngs.transform(), minval=0.5, maxval=1.5)
+    def apply(self, data, state, metadata, key=None, stats=None):
+        """Scale the input data by a factor drawn from this record's key."""
+        del stats
+        scale = jax.random.uniform(require_key(key, self), minval=0.5, maxval=1.5)
         new_data = {k: v * scale for k, v in data.items()}
         return new_data, state, metadata
 
@@ -148,49 +148,27 @@ def test_streaming_random_values(test_seed):
 
 
 def test_random_integration(test_seed):
-    """Test random numbers in pipeline with NNX modules."""
-    # Create source and operator with the same seed (config-first pattern)
+    """Test random numbers in pipeline with NNX modules.
+
+    The operator draws from each record's key, which the batch path derives from the operator's
+    own base key, so reproducibility is a property of the seed rather than of call order.
+    """
     config = StructuralConfig(stochastic=True, stream_name="source")
-    rngs1 = nnx.Rngs(test_seed)
-    source1 = RandomArraySourceModule(config, num_items=3, rngs=rngs1)
-    operator1 = RandomOperatorModule(rngs=rngs1)
 
-    # Process items through the pipeline using the proper apply() API
-    pipeline1_results = []
-    for item in source1:
-        data = {"value": item}
-        new_data, _, _ = operator1.apply(data, {}, None)
-        pipeline1_results.append(new_data["value"])
+    def scaled(seed):
+        """Run three source items through the operator, keyed by record index."""
+        rngs = nnx.Rngs(seed)
+        source = RandomArraySourceModule(config, num_items=3, rngs=rngs)
+        operator = RandomOperatorModule(rngs=rngs)
+        values = jax.numpy.stack(list(source))
+        data, _ = operator._vmap_apply(
+            {"value": values}, {}, None, jax.numpy.arange(3, dtype=jax.numpy.uint32)
+        )
+        return np.asarray(data["value"])
 
-    # Create another pipeline with the same seed
-    rngs2 = nnx.Rngs(test_seed)
-    source2 = RandomArraySourceModule(config, num_items=3, rngs=rngs2)
-    operator2 = RandomOperatorModule(rngs=rngs2)
-
-    # Process items through the second pipeline
-    pipeline2_results = []
-    for item in source2:
-        data = {"value": item}
-        new_data, _, _ = operator2.apply(data, {}, None)
-        pipeline2_results.append(new_data["value"])
-
-    # Initial results should be identical with the same seed
-    assert np.array_equal(pipeline1_results[0], pipeline2_results[0])
-
-    # Create pipeline with a different seed
-    rngs3 = nnx.Rngs(test_seed + 1)
-    source3 = RandomArraySourceModule(config, num_items=3, rngs=rngs3)
-    operator3 = RandomOperatorModule(rngs=rngs3)
-
-    # Process items through the third pipeline
-    pipeline3_results = []
-    for item in source3:
-        data = {"value": item}
-        new_data, _, _ = operator3.apply(data, {}, None)
-        pipeline3_results.append(new_data["value"])
-
-    # Results should be different with a different seed
-    assert not np.array_equal(pipeline1_results[0], pipeline3_results[0])
+    # The same seed reproduces, a different seed does not
+    assert np.array_equal(scaled(test_seed), scaled(test_seed))
+    assert not np.array_equal(scaled(test_seed), scaled(test_seed + 1))
 
 
 def test_rngs_reseed():

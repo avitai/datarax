@@ -112,6 +112,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are private and every call site passes the index positionally, so only a caller naming it as a keyword
   has anything to change; the helper reading the indices out of batch metadata is
   `_record_indices_from_metadata`.
+- An operator no longer keeps the `nnx.Rngs` its caller passes. The base class reads it once, to
+  draw the operator's stable base key, and leaves `rngs` as `None`; a module that is not an
+  operator keeps its `Rngs` as before, and a subclass may still store one after
+  `super().__init__`. A call carrying record indices — every pipeline batch, `apply_batch` and
+  `_apply_on_raw` — still keys each record on the base key, so pipeline outputs do not change. A
+  direct call carrying no record identity draws from a private per-operator stream instead, so
+  two such calls now differ where they used to repeat one draw. That stream hangs below
+  `datarax.core.operator.DIRECT_CALL_STREAM`, one level deeper than any key a pipeline derives,
+  so the two families cannot coincide; `BatchMixOperator`'s direct calls draw from it too.
+- `PipelineIterator.get_state()` carries a `version`, and `rng_counts` holds one count per
+  stochastic operator rather than one per stream of the `Rngs` each operator held. A
+  deterministic operator contributes none and operators that shared one `Rngs` no longer share a
+  count, so the list changes length: a pipeline with one stochastic operator reads `[0, 1, 0]`
+  where it read `[1, 1, 0]`. A state saved without a `version` is upgraded on load — the counts
+  outside operators keep their values and order, and every operator count restores to 0. A
+  pipeline that holds an operator's count after one no operator owns, such as an operator inside
+  a source, refuses the state instead of resuming from counts placed wrongly.
+- Module checkpoints written before these changes are upgraded on load: an operator's `rngs`
+  subtree is dropped, `_rng_stream` is rebuilt from the saved `_base_key`, and statistics saved
+  as `_computed_stats` are read as `_statistics`. `DataraxModule._upgrade_saved_state` is the
+  hook a module overrides to carry its own layout change, applied to each module's own subtree
+  before the state is validated.
 
 ### Removed
 

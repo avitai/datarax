@@ -40,6 +40,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
+from datarax.core.operator import OperatorModule
 from datarax.core.spec import batch_length
 from datarax.pipeline.dag import record_positions, run_dag
 
@@ -64,6 +65,11 @@ _MAX_SESSIONS_PER_PIPELINE = 4
 # A compiled step's writes: raw values by position within each state partition,
 # per-batch state first and staged state second.
 _Writes = tuple[dict[int, Any], dict[int, Any]]
+
+# The layout of PipelineIterator.get_state(). Version 1 gives each stochastic operator one
+# private stream count and a deterministic one none; before it, an operator carried every
+# stream of the Rngs its caller passed. A state without the field predates it and is upgraded.
+_ITERATOR_STATE_VERSION = 1
 
 
 def _is_per_batch_state(path: Any, value: Any) -> bool:
@@ -310,6 +316,35 @@ def compile_streaming_dag(pipeline: Pipeline) -> Callable[[Any], Any]:
     return apply
 
 
+def _operator_owned_counts(
+    pipeline: Pipeline, live_variables: list[Any], rng_count_indices: list[int]
+) -> list[bool]:
+    """Return whether each of a session's RNG counts belongs to an operator.
+
+    Ownership is decided by Variable identity rather than by state path, so the answer does not
+    depend on how a path happens to be spelled. An operator's counts precede the pipeline's and
+    the source's, because flax orders attributes by name and ``_stage_modules`` sorts first; an
+    operator reached through some other attribute, such as one a source holds, would not, and
+    :meth:`PipelineIterator._upgraded_rng_counts` refuses such a pipeline rather than placing a
+    saved state into it wrongly.
+
+    Args:
+        pipeline: The pipeline being iterated.
+        live_variables: The session's per-batch Variables, in traversal order.
+        rng_count_indices: Positions of the RNG counts within ``live_variables``.
+
+    Returns:
+        One flag per entry of ``rng_count_indices``, True where an operator owns that count.
+    """
+    owned = {
+        id(variable)
+        for _, node in nnx.iter_graph(pipeline)
+        if isinstance(node, OperatorModule)
+        for variable in _state_leaves(nnx.state(node, nnx.RngCount))
+    }
+    return [id(live_variables[index]) in owned for index in rng_count_indices]
+
+
 class PipelineIterator:
     """Compiled iteration session over a random-access pipeline source."""
 
@@ -349,6 +384,9 @@ class PipelineIterator:
             for index, variable in enumerate(self._live_variables)
             if isinstance(variable, nnx.RngCount)
         ]
+        self._count_is_an_operators = _operator_owned_counts(
+            pipeline, self._live_variables, self._rng_count_indices
+        )
         self._position_index = next(
             index
             for index, variable in enumerate(self._live_variables)
@@ -384,34 +422,86 @@ class PipelineIterator:
 
         The state names the batches already yielded to the caller:
         ``position`` (records consumed), ``epoch`` (which permutation a
-        shuffled source serves) and ``rng_counts`` (per-stream fork
-        counters, which determine every stochastic draw). Shapes and types
-        are stable across the iterator's lifetime.
+        shuffled source serves), ``rng_counts`` (per-stream fork counters,
+        which determine every stochastic draw) and ``version``, the layout
+        those counts are in. Shapes and types are stable across the
+        iterator's lifetime.
+
+        ``rng_counts`` holds one count per stochastic operator, which stays
+        0 because iteration keys each record on the operator's base key and
+        never draws from its private stream, followed by the pipeline's and
+        the source's. A deterministic operator contributes none, so the
+        list's length follows how many operators are stochastic rather than
+        how many streams their caller's ``Rngs`` carried.
 
         Returns:
-            JSON-serializable dict with ``position``, ``epoch`` and ``rng_counts``.
+            JSON-serializable dict with ``position``, ``epoch``, ``rng_counts`` and ``version``.
         """
         counts = [int(self._live_variables[index].get_value()) for index in self._rng_count_indices]
         return {
             "position": np.int64(self._position),
             "epoch": int(self._live_variables[self._epoch_index].get_value()),
             "rng_counts": counts,
+            "version": _ITERATOR_STATE_VERSION,
         }
+
+    def _upgraded_rng_counts(self, state: dict[str, Any]) -> list[int]:
+        """Return ``state``'s rng counts in the layout this iterator holds.
+
+        A state naming the current version is taken as it is. One saved before the field existed
+        came from a pipeline whose operators each kept the caller's ``Rngs``, so it carries an
+        entry per stream of every such ``Rngs`` where this pipeline carries one per stochastic
+        operator. Only the entries outside operators still mean anything — iteration never draws
+        from an operator's own stream, so every operator entry restores to 0 — and those entries
+        keep their order at the end of the list.
+
+        Args:
+            state: The state given to :meth:`set_state`.
+
+        Returns:
+            The rng counts to restore.
+
+        Raises:
+            ValueError: If an operator's count follows one that no operator owns, which is the
+                order the placement relies on, or if the state carries fewer counts than this
+                pipeline holds outside its operators.
+        """
+        counts = list(state["rng_counts"])
+        if int(state.get("version", 0)) >= _ITERATOR_STATE_VERSION:
+            return counts
+
+        outside = self._count_is_an_operators.count(False)
+        owned = len(self._count_is_an_operators) - outside
+        if not all(self._count_is_an_operators[:owned]) or any(self._count_is_an_operators[owned:]):
+            raise ValueError(
+                "This pipeline holds an operator's RNG count after a count no operator owns, so "
+                "a state saved before the counts carried a version cannot be placed in it. "
+                "Save the iterator state again from this pipeline."
+            )
+        if len(counts) < outside:
+            raise ValueError(
+                f"state carries {len(counts)} rng counts, fewer than the {outside} streams this "
+                f"pipeline holds outside its operators; it did not come from this pipeline."
+            )
+        return [0] * owned + counts[len(counts) - outside :]
 
     def set_state(self, state: dict[str, Any]) -> None:
         """Restore iterator state produced by :meth:`get_state`.
 
         The pipeline must be configured identically (same structure, same
-        seeds) to the one that produced the state.
+        seeds) to the one that produced the state. A state saved before
+        ``rng_counts`` carried a version is upgraded to this pipeline's
+        layout first; see :meth:`_upgraded_rng_counts`.
 
         Args:
-            state: Dict with ``position``, ``epoch`` and ``rng_counts`` entries.
+            state: Dict with ``position``, ``epoch``, ``rng_counts`` and, from version 1
+                onwards, ``version`` entries.
 
         Raises:
             ValueError: If ``state`` carries a different number of rng counts than this
                 pipeline has streams, or a negative ``position`` or ``epoch``.
         """
-        counts = state["rng_counts"]
+        counts = self._upgraded_rng_counts(state)
         if len(counts) != len(self._rng_count_indices):
             raise ValueError(
                 f"state carries {len(counts)} rng counts but this pipeline "

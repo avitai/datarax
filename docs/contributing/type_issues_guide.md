@@ -251,7 +251,7 @@ For modules that need persistent random state, use `nnx.Rngs`:
 ```python
 # ✅ Datarax operator pattern - pass rngs to super().__init__()
 from datarax.core import OperatorModule
-from datarax.core.operator import OperatorConfig
+from datarax.core.operator import OperatorConfig, require_key
 
 class StochasticOperator(OperatorModule):
     def __init__(
@@ -261,18 +261,17 @@ class StochasticOperator(OperatorModule):
         rngs: nnx.Rngs,
         name: str | None = None,
     ):
-        # DataraxModule stores self.rngs automatically
+        # The base reads rngs once, for this operator's base key, and does not keep it.
         super().__init__(config, rngs=rngs, name=name)
-        # No need for self.rngs = rngs - base class already handles it!
 
-    def apply(self, batch: Batch, key: jax.Array | None = None) -> Batch:
-        # Access self.rngs from base class
-        dropout_key = self.rngs.dropout()  # Get key, auto-advance state
-        noise_key = self.rngs.noise()      # Separate stream
+    def apply(self, data, state, metadata, key=None, stats=None):
+        # Every draw comes from this record's key, so the same record draws the same
+        # values whatever batch it arrives in.
+        dropout_key, noise_key = jax.random.split(require_key(key, self))
         ...
 ```
 
-**Important**: Datarax's `DataraxModule` stores `self.rngs = rngs` in its `__init__`, so subclasses should NOT duplicate this assignment. The Flax NNX base `nnx.Module.__init__()` takes no parameters.
+**Important**: an operator does not read `self.rngs` — it is `None` after construction. `apply` is a pure function of one record, and the batch path derives that record's key from the operator's stable base key, so randomness does not depend on batch composition, shuffle order or resume point. A module that is not an operator keeps the `rngs` its caller passed.
 
 ```python
 # Creating nnx.Rngs - accepts int or jax.Array
