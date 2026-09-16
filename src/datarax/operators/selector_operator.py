@@ -34,7 +34,7 @@ from flax import nnx
 from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
-from datarax.core.operator import OperatorModule
+from datarax.core.operator import OperatorModule, require_key
 
 
 logger = logging.getLogger(__name__)
@@ -142,92 +142,45 @@ class SelectorOperator(OperatorModule):
         self.operators = nnx.List(config.operators)
         self.weights = nnx.static(config.normalized_weights)
 
-    def generate_random_params(
-        self,
-        element_keys: jax.Array,
-        data_shapes: PyTree,
-    ) -> dict[str, Any]:
-        """Generate per-record operator selection indices and child params.
-
-        Each record independently selects an operator from its own key
-        (``fold_in``), and each child receives its own per-record key set, so
-        both the selection and each child's randomness are reproducible per
-        record regardless of batch composition, shuffle, host count, or resume.
-
-        Args:
-            element_keys: ``(batch_size,)`` per-record PRNG keys.
-            data_shapes: PyTree with same structure as batch.data, containing shapes.
-
-        Returns:
-            Dict with:
-
-                - "selected_indices": Array of operator indices per record
-                - "child_params": Dict mapping operator index to its random params
-        """
-        n_children = len(self.operators)
-        weights = jnp.asarray(self.weights)
-
-        # Per-record operator selection (fold index 0 reserved for selection).
-        select_keys = jax.vmap(lambda key: jax.random.fold_in(key, 0))(element_keys)
-        selected_indices = jax.vmap(
-            lambda key: jax.random.choice(key, n_children, shape=(), p=weights)
-        )(select_keys)
-
-        # Per-child per-record keys (fold index i+1 for child i), delegated to
-        # each child. All children's params are generated because selection is
-        # resolved per record at apply time.
-        child_params: dict[str, Any] = {}
-        for i, operator in enumerate(self.operators):
-            if hasattr(operator, "generate_random_params"):
-                child_keys = jax.vmap(lambda key, offset=i + 1: jax.random.fold_in(key, offset))(
-                    element_keys
-                )
-                child_params[f"operator_{i}"] = operator.generate_random_params(
-                    child_keys, data_shapes
-                )
-            else:
-                child_params[f"operator_{i}"] = None
-
-        return {
-            "selected_indices": selected_indices,
-            "child_params": child_params,
-        }
-
     def apply(
         self,
         data: PyTree,
         state: PyTree,
         metadata: dict[str, Any] | None,
-        random_params: Any = None,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
-        """Apply the randomly selected operator to the data.
+        """Apply one child operator, chosen for this record from its own key.
 
-        Uses jax.lax.switch for JIT-compatible operator selection based on
-        the pre-generated random index.
+        The choice and every child's randomness are folded out of this record's key — index
+        0 for the selection, ``i + 1`` for child ``i`` — so which operator a record gets, and
+        what that operator draws, depend on the record alone. ``jax.lax.switch`` keeps the
+        choice traceable and executes only the branch taken.
 
         Args:
             data: Element data PyTree (no batch dimension)
             state: Element state PyTree
             metadata: Element metadata
-            random_params: Dict with "selected_indices" (int) and "child_params"
+            key: This record's PRNG key
             stats: Optional statistics
 
         Returns:
             Tuple of (transformed_data, state, metadata) from selected operator
         """
-        # Get selection index for this element
-        selected_idx = random_params["selected_indices"]
-        child_params = random_params.get("child_params", {})
+        record_key = require_key(key, self)
+        weights = jnp.asarray(self.weights)
+
+        # Which child this record gets (fold index 0 is reserved for the selection).
+        selected_idx = jax.random.choice(
+            jax.random.fold_in(record_key, 0), len(self.operators), shape=(), p=weights
+        )
 
         # Create branch functions for each operator
-        # Each branch applies its operator with its specific random params
+        # Each branch applies its operator with its own key, folded from the record's
         def make_branch_fn(i: int, operator: OperatorModule) -> Callable:
             def branch_fn(operands: Any) -> tuple[Any, Any, Any]:
-                d, s, m, cp_dict, st = operands
-                # Get this operator's random params
-                op_params = cp_dict.get(f"operator_{i}", None)
-                return operator.apply(d, s, m, op_params, st)
+                d, s, m, k, st = operands
+                return operator.apply(d, s, m, jax.random.fold_in(k, i + 1), st)
 
             return branch_fn
 
@@ -238,7 +191,7 @@ class SelectorOperator(OperatorModule):
         result_data, result_state, result_metadata = jax.lax.switch(
             selected_idx,
             branches,
-            (data, state, metadata, child_params, stats),
+            (data, state, metadata, record_key, stats),
         )
 
         return result_data, result_state, result_metadata

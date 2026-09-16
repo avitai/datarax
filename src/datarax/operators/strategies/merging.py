@@ -1,7 +1,7 @@
 """Merging utilities for parallel and ensemble strategies."""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import jax
@@ -70,7 +70,7 @@ def merge_output_sequence(
 
 def merge_outputs_conditional(
     outputs: list[PyTree],
-    conditions: list[jax.Array],
+    conditions: Sequence[bool | jax.Array],
     merge_strategy: str | None,
     merge_axis: int = 0,
     merge_fn: Callable | None = None,
@@ -79,7 +79,8 @@ def merge_outputs_conditional(
 
     Args:
         outputs: List of ALL operator outputs (identity for False conditions)
-        conditions: Boolean arrays indicating which operators executed
+        conditions: Which operators executed, as Python bools or traced arrays; a
+            condition is only an array when it was computed from the data
         merge_strategy: How to merge
         merge_axis: Axis used for merge
         merge_fn: Custom merge function

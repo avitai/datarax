@@ -88,6 +88,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SamplerConfig`, `eager_reset` and `reset_streaming_state` no longer take the cache they only ever cleared
   when it was empty, and the modality and cross-modal docstrings stop promising a caching system that never
   ran. A config that set `cacheable` on an operator or another module must drop it.
+- An operator's `apply` takes the record's PRNG key as its fourth argument and draws whatever
+  randomness it applies from that key. `generate_random_params` is gone, along with
+  `datarax.operators._random_params`: an operator no longer produces a batch of parameters for
+  `_vmap_apply` to distribute, so the two halves of every stochastic operator — drawing and
+  applying — are one function of one record. A stochastic operator handed no key raises through the
+  new `datarax.core.operator.require_key`, naming itself, rather than silently applying a fixed
+  value. An operator that overrode `generate_random_params` moves its draw into `apply`; one that
+  read the fourth argument as parameters reads it as a key.
+- A composition passes each child a key folded from the record's own, by the child's position, in
+  place of the `{"operator_i": params}` dictionaries it used to build. `StrategyContext` carries
+  `key` instead of `random_params`.
+- A `probability=1.0` wrapper around a stochastic child is itself stochastic, so the child receives
+  a key and draws. Previously such a wrapper was classified deterministic, was handed nothing, and
+  passed nothing down, which silently turned its stochastic child into a fixed one; the outputs of
+  those compositions change. `CompositeOperatorConfig` already derived its mode from its children,
+  and `SelectorOperatorConfig` is always stochastic, so neither changes. `add_operator` refuses a
+  stochastic operator on a deterministic composite, which would otherwise have no key to give it.
 - The stable per-record index that `OperatorModule._vmap_apply` and `_apply_on_raw` take is named
   `record_indices`, which is what the pipeline layer calling them already called it (`run_dag`,
   `PipelineIterator`, `per_record_keys`). One concept carried two names across the seam between the two

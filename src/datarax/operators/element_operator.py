@@ -108,37 +108,12 @@ class ElementOperator(OperatorModule):
 
         self.fn = fn
 
-    def generate_random_params(
-        self,
-        element_keys: PRNGKey | None,
-        data_shapes: PyTree,
-    ) -> PRNGKey | None:
-        """Return the per-record PRNG keys for the user function.
-
-        ``element_keys`` already holds one stateless key per record (derived by
-        the base class as ``fold_in(base_key, global_index)``), which is exactly
-        what the user function's ``fn(element, key)`` signature expects — so this
-        just passes them through. Each ``apply()`` receives its element's key.
-
-        Args:
-            element_keys: ``(batch_size,)`` per-record PRNG keys, or ``None`` for
-                deterministic operators.
-            data_shapes: Unused (kept for signature compatibility).
-
-        Returns:
-            The per-record keys, or ``None`` for deterministic operators.
-        """
-        del data_shapes
-        if not self.stochastic:
-            return None
-        return element_keys
-
     def apply(
         self,
         data: PyTree,
         state: PyTree,
         metadata: dict[str, Any] | None,
-        random_params: Any = None,
+        key: PRNGKey | None = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
         """Apply element transformation.
@@ -150,7 +125,7 @@ class ElementOperator(OperatorModule):
             data: Element data PyTree
             state: Element state PyTree
             metadata: Element metadata dict (unchanged - not vmapped)
-            random_params: RNG key for this element (from generate_random_params)
+            key: This record's PRNG key, or ``None`` for a deterministic operator
             stats: Optional batch statistics (unused)
 
         Returns:
@@ -161,8 +136,9 @@ class ElementOperator(OperatorModule):
         # Cast metadata to Metadata | None for Element constructor
         element = Element(data=data, state=state, metadata=cast(Metadata | None, metadata))
 
-        # Get key (real for stochastic, dummy for deterministic)
-        key = random_params if random_params is not None else jax.random.key(0)
+        # The user function always takes a key, so a deterministic operator passes a fixed
+        # one rather than None: its "random" values are then reproducible constants.
+        key = key if key is not None else jax.random.key(0)
 
         # Apply user function
         transformed_element = self.fn(element, key)

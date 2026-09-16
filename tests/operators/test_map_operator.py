@@ -450,52 +450,41 @@ class TestMapOperatorSubtree:
 class TestMapOperatorStochastic:
     """Test MapOperator in stochastic mode with RNG key generation."""
 
-    def test_generate_random_params_structure(self):
-        """generate_random_params returns PyTree matching data structure."""
+    def test_each_leaf_draws_from_its_own_key(self):
+        """Every data leaf gets an independent key, so two leaves never share one draw."""
         config = MapOperatorConfig(stochastic=True, stream_name="augment")
-        rngs = nnx.Rngs(0, augment=1)
 
         def add_noise(x, key):
             return x + jax.random.normal(key, x.shape) * 0.1
 
-        op = MapOperator(config, fn=add_noise, rngs=rngs)
+        op = MapOperator(config, fn=add_noise, rngs=nnx.Rngs(0, augment=1))
 
-        # Create data shapes
         batch_size = 4
-        data_shapes = {
-            "image": (batch_size, 32, 32, 3),
-            "mask": (batch_size, 32, 32, 1),
+        batch = {
+            "image": jnp.zeros((batch_size, 8, 8)),
+            "mask": jnp.zeros((batch_size, 8, 8)),
         }
 
-        # Generate random params from per-record keys (one key per record).
-        element_keys = jax.random.split(jax.random.key(42), batch_size)
-        random_params = op.generate_random_params(element_keys, data_shapes)
+        data, _ = op._vmap_apply(batch, {})
 
-        # Verify structure matches
-        assert random_params is not None
-        assert set(random_params.keys()) == {"image", "mask"}
-        # Each leaf holds one per-record key (leading dim == batch_size).
-        assert random_params["image"].shape[0] == batch_size
-        assert random_params["mask"].shape[0] == batch_size
+        assert set(data.keys()) == {"image", "mask"}
+        # Both leaves started identical, so any difference is the per-leaf key.
+        assert not jnp.allclose(data["image"], data["mask"])
 
-    def test_generate_random_params_batch_size_extraction(self):
-        """generate_random_params correctly extracts batch size from shapes."""
+    def test_every_batch_size_gives_one_draw_per_record(self):
+        """Each record draws independently, whatever the batch size."""
         config = MapOperatorConfig(stochastic=True, stream_name="augment")
-        rngs = nnx.Rngs(0, augment=1)
 
-        def fn(x, key):
-            del key
-            return x
+        def add_noise(x, key):
+            return x + jax.random.normal(key, x.shape) * 0.1
 
-        op = MapOperator(config, fn=fn, rngs=rngs)
+        op = MapOperator(config, fn=add_noise, rngs=nnx.Rngs(0, augment=1))
 
-        # Different batch sizes
-        for batch_size in [1, 2, 8, 16]:
-            data_shapes = {"data": (batch_size, 10)}
-            element_keys = jax.random.split(jax.random.key(0), batch_size)
-            random_params = op.generate_random_params(element_keys, data_shapes)
-            assert random_params is not None
-            assert random_params["data"].shape[0] == batch_size
+        for batch_size in [2, 8, 16]:
+            data, _ = op._vmap_apply({"data": jnp.zeros((batch_size, 10))}, {})
+
+            assert data["data"].shape == (batch_size, 10)
+            assert not jnp.allclose(data["data"][0], data["data"][1])
 
     def test_stochastic_full_tree_adds_noise(self):
         """Stochastic mode adds randomness in full-tree mode."""

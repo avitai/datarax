@@ -651,7 +651,7 @@ extensibility: you can build operators for any data type.
 Each operator follows the standard contract:
 - `OperatorConfig` subclass for configuration
 - `nnx.Param` for learnable parameters
-- `apply(data, state, metadata, random_params, stats) → (data, state, metadata)`
+- `apply(data, state, metadata, key, stats) → (data, state, metadata)`
 
 **Critical design choices**: The harmonic synthesizer uses **per-frame synthesis**
 with upsampling from frame rate (250 Hz) to sample rate (16 kHz) via linear
@@ -709,7 +709,7 @@ class HarmonicSynthOperator(OperatorModule):
         data: dict[str, Any],
         state: dict[str, Any],
         metadata: dict[str, Any] | None,
-        random_params: Any = None,
+        key: Any = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
         """Synthesize audio from per-frame harmonic amplitudes and f0.
@@ -804,7 +804,7 @@ class FilteredNoiseOperator(OperatorModule):
         data: dict[str, Any],
         state: dict[str, Any],
         metadata: dict[str, Any] | None,
-        random_params: Any = None,
+        key: Any = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
         """Filter noise using learned frequency magnitudes.
@@ -879,7 +879,7 @@ class ReverbOperator(OperatorModule):
         data: dict[str, Any],
         state: dict[str, Any],
         metadata: dict[str, Any] | None,
-        random_params: Any = None,
+        key: Any = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
         """Apply reverb to audio via FFT-based convolution.

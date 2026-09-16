@@ -263,13 +263,14 @@ def adjust_brightness(
 
 def adjust_brightness_delta(
     image: jax.Array,
-    delta: float,
+    delta: float | jax.Array,
 ) -> jax.Array:
     """Adjust the brightness of an image using an additive delta.
 
     Args:
         image: Input image as JAX array with values in [0, 1].
-        delta: Brightness adjustment delta. Values > 0 increase brightness, < 0 decrease it.
+        delta: Brightness adjustment delta, a constant or a value drawn for this record.
+            Values > 0 increase brightness, < 0 decrease it.
 
     Returns:
         Brightness-adjusted image, clipped to [0, 1].
@@ -709,7 +710,7 @@ def convert_rgb_to_grayscale(image: jax.Array) -> jax.Array:
 
 def rotate(
     image: jax.Array,
-    angle_rad: float,
+    angle_rad: float | jax.Array,
     fill_value: float = 0.0,
 ) -> jax.Array:
     """Rotate image using bilinear interpolation.
@@ -721,7 +722,8 @@ def rotate(
 
     Args:
         image: Input image array, shape (H, W, C) or (H, W).
-        angle_rad: Rotation angle in radians (counter-clockwise).
+        angle_rad: Rotation angle in radians (counter-clockwise), a constant or a value
+            drawn for this record.
         fill_value: Value to fill empty areas after rotation.
 
     Returns:

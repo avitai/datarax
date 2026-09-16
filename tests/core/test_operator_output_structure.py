@@ -574,17 +574,12 @@ class TestTracingIsDecidedByTheConfiguration:
 class MaskWhenDrawnOperator(OperatorModule):
     """Stochastic operator whose drawn branch adds a ``mask`` field."""
 
-    def generate_random_params(self, element_keys, data_shapes):
-        """Return one key per record."""
-        del data_shapes
-        return element_keys
-
-    def apply(self, data, state, metadata, random_params=None, stats=None):
+    def apply(self, data, state, metadata, key=None, stats=None):
         """Add a mask drawn from the record's key, refusing to run without one."""
         del stats
-        if random_params is None:
+        if key is None:
             raise ValueError("MaskWhenDrawnOperator draws its mask from a random key")
-        mask = jax.random.bernoulli(random_params, 0.5, data["x"].shape)
+        mask = jax.random.bernoulli(key, 0.5, data["x"].shape)
         return {**data, "mask": mask}, state, metadata
 
 

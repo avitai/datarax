@@ -2,6 +2,7 @@
 
 import abc
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,7 +22,7 @@ class StrategyContext:
     data: PyTree
     state: PyTree
     metadata: dict[str, Any]
-    random_params: dict[str, Any] | None = None
+    key: jax.Array | None = None
     extra_params: dict[str, Any] | None = None
 
 
@@ -33,13 +34,23 @@ class CompositionStrategyImpl(abc.ABC):
         return {"strategy": type(self).__name__}
 
     @staticmethod
-    def _random_params_for_operator(
-        random_params: dict[str, Any] | None, operator_index: int
-    ) -> Any | None:
-        """Extract random params payload for one operator index."""
-        if random_params is None:
+    def _key_for_operator(key: jax.Array | None, operator_index: int) -> jax.Array | None:
+        """Derive one child's key by folding its position into the record's key.
+
+        Each child gets an independent key that is still a function of the record alone, so a
+        child draws the same values wherever its parent sits in a batch. A deterministic
+        parent has no key to fold, and hands each child ``None``.
+
+        Args:
+            key: The record's key, or ``None`` for a deterministic parent.
+            operator_index: The child's position in the composition.
+
+        Returns:
+            The child's key, or ``None``.
+        """
+        if key is None:
             return None
-        return random_params.get(f"operator_{operator_index}")
+        return jax.random.fold_in(key, operator_index)
 
     @staticmethod
     def _apply_operator_conditionally(
@@ -48,18 +59,18 @@ class CompositionStrategyImpl(abc.ABC):
         data: PyTree,
         state: PyTree,
         metadata: dict[str, Any],
-        random_params: Any | None,
+        key: jax.Array | None,
     ) -> tuple[PyTree, PyTree, dict[str, Any]]:
         """Apply operator with JAX control flow (cond) for trace compatibility."""
 
         def apply_fn(
-            operands: tuple[PyTree, PyTree, dict[str, Any], Any | None],
+            operands: tuple[PyTree, PyTree, dict[str, Any], jax.Array | None],
         ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
-            d, s, m, rp = operands
-            return operator.apply(d, s, m, rp)
+            d, s, m, k = operands
+            return operator.apply(d, s, m, k)
 
         def noop_fn(
-            operands: tuple[PyTree, PyTree, dict[str, Any], Any | None],
+            operands: tuple[PyTree, PyTree, dict[str, Any], jax.Array | None],
         ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
             d, s, m, _ = operands
             return d, s, m
@@ -68,7 +79,7 @@ class CompositionStrategyImpl(abc.ABC):
             should_apply,
             apply_fn,
             noop_fn,
-            (data, state, metadata, random_params),
+            (data, state, metadata, key),
         )
 
     def _execute_operators(
@@ -80,21 +91,37 @@ class CompositionStrategyImpl(abc.ABC):
 
         Args:
             operators: List of operators to apply
-            context: Execution context with data, state, metadata, random_params
+            context: Execution context with data, state, metadata and the record's key
 
         Returns:
             Tuple of (outputs, states, metadatas) lists
         """
         outputs, states, metadatas = [], [], []
-        for i, operator in enumerate(operators):
-            op_random_params = self._random_params_for_operator(context.random_params, i)
+        for operator, key in self._with_keys(operators, context):
             out_data, out_state, out_metadata = operator.apply(
-                context.data, context.state, context.metadata, op_random_params
+                context.data, context.state, context.metadata, key
             )
             outputs.append(out_data)
             states.append(out_state)
             metadatas.append(out_metadata)
         return outputs, states, metadatas
+
+    def _with_keys(
+        self,
+        operators: list[OperatorModule],
+        context: StrategyContext,
+    ) -> Iterator[tuple[OperatorModule, jax.Array | None]]:
+        """Yield each operator with the key folded from the record's, by its position.
+
+        Args:
+            operators: The composition's operators, in order.
+            context: Execution context carrying the record's key.
+
+        Yields:
+            Each operator paired with its own key.
+        """
+        for index, operator in enumerate(operators):
+            yield operator, self._key_for_operator(context.key, index)
 
     @abc.abstractmethod
     def apply(

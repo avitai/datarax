@@ -206,7 +206,7 @@ class CrossModalOperator(OperatorModule):
                 # Add learnable fusion parameters
                 self.fusion_weights = nnx.Param(jnp.ones(len(config.input_fields)))
 
-            def apply(self, data, state, metadata, random_params=None, stats=None):
+            def apply(self, data, state, metadata, key=None, stats=None):
                 # Extract inputs
                 inputs = self._extract_inputs(data)
 
@@ -218,11 +218,6 @@ class CrossModalOperator(OperatorModule):
                 result = self._store_outputs(data, outputs)
 
                 return result, state, metadata
-
-            def generate_random_params(self, rng, data_shapes):
-                # For stochastic operators only
-                batch_size = data_shapes[self.config.input_fields[0]][0]
-                return jax.random.normal(rng, (batch_size,))
         ```
 
     Subclasses provide specific cross-modal operations:
@@ -288,23 +283,23 @@ class CrossModalOperator(OperatorModule):
         data: PyTree,
         state: PyTree,
         metadata: dict[str, Any] | None,
-        random_params: Any = None,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
         """Apply cross-modal operation to element.
 
         MUST be implemented by subclasses to provide cross-modal behavior.
 
-        This is a PURE FUNCTION that transforms a single data element.
-        It should not access self.rngs or generate random numbers.
-        All randomness comes through random_params argument.
+        This is a PURE FUNCTION that transforms a single data element. It does not read
+        ``self.rngs``: every random value it applies is drawn from ``key``, this record's
+        own PRNG key.
 
         Args:
             data: Element data PyTree (contains fields specified by config.input_fields)
                  Typically dict[str, Array] with no batch dimension
             state: Element state PyTree (typically dict[str, Any])
             metadata: Element metadata dict
-            random_params: Random parameters for this element (from generate_random_params)
+            key: This record's PRNG key, or ``None`` for a deterministic operator
             stats: Optional batch statistics (from get_statistics() or passed explicitly)
 
         Returns:
@@ -315,12 +310,12 @@ class CrossModalOperator(OperatorModule):
 
         Implementation Pattern:
             ```python
-            def apply(self, data, state, metadata, random_params=None, stats=None):
+            def apply(self, data, state, metadata, key=None, stats=None):
                 # 1. Extract input fields
                 inputs = self._extract_inputs(data)
 
                 # 2. Perform cross-modal operation
-                outputs = self._cross_modal_transform(inputs, random_params, stats)
+                outputs = self._cross_modal_transform(inputs, key, stats)
 
                 # 3. Store outputs in data
                 result = self._store_outputs(data, outputs)
@@ -332,47 +327,6 @@ class CrossModalOperator(OperatorModule):
             NotImplementedError: If not implemented by subclass
         """
         raise NotImplementedError(f"{self.__class__.__name__} must implement apply()")
-
-    def generate_random_params(  # noqa: DOC502
-        self,
-        rng: jax.Array,
-        data_shapes: PyTree,
-    ) -> PyTree:
-        """Generate random parameters for stochastic cross-modal operations.
-
-        MUST be implemented by stochastic operators (config.stochastic=True).
-        Deterministic operators can use default implementation (returns None).
-
-        Generates PyTree of random parameters for cross-modal operations. For example,
-        contrastive learning might generate per-element noise for augmentation.
-
-        This method is impure (uses RNG) and called once per batch. The generated
-        parameters are then passed to apply() for each element via vmap.
-
-        Args:
-            rng: JAX random key for this batch
-            data_shapes: PyTree with same structure as batch.data, containing shapes
-                        Examples: {"image_emb": (batch_size, dim), "text_emb": (batch_size, dim)}
-
-        Returns:
-            PyTree of random parameters for this batch.
-            Structure depends on operator needs.
-            For deterministic operators, returns None.
-
-        Examples:
-            ```python
-            # Stochastic contrastive operator with noise augmentation
-            def generate_random_params(self, rng, data_shapes):
-                batch_size = data_shapes[self.config.input_fields[0]][0]
-                # Generate per-element noise scales
-                return jax.random.uniform(rng, (batch_size,), minval=0.0, maxval=0.1)
-            ```
-
-        Raises:
-            NotImplementedError: If stochastic=True but not implemented
-        """
-        # Default implementation for deterministic operators
-        return super().generate_random_params(rng, data_shapes)
 
     def _extract_inputs(self, data: dict) -> list[Any]:  # noqa: DOC502
         """Extract all input fields from data.

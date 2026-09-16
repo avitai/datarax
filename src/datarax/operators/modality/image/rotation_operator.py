@@ -17,7 +17,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
-from datarax.operators._random_params import per_element_params
+from datarax.core.operator import require_key
 from datarax.operators.modality.image import functional
 
 
@@ -123,34 +123,12 @@ class RotationOperator(ModalityOperator):
         # Type narrowing for pyright — config is RotationOperatorConfig
         self.config: RotationOperatorConfig = config
 
-    def generate_random_params(
-        self,
-        element_keys: jax.Array,
-        data_shapes: dict[str, tuple[int, ...]],
-    ) -> dict[str, Any]:
-        """Generate per-record rotation angles from per-record PRNG keys.
-
-        Args:
-            element_keys: ``(batch_size,)`` per-record PRNG keys.
-            data_shapes: Unused (batch size comes from ``element_keys``).
-
-        Returns:
-            Dictionary with "angle" key containing random angles (one per record).
-        """
-        del data_shapes
-        min_angle, max_angle = self.config.angle_range
-        angle = per_element_params(
-            element_keys,
-            lambda key: jax.random.uniform(key, shape=(), minval=min_angle, maxval=max_angle),
-        )
-        return {"angle": angle}
-
     def apply(
         self,
         data: dict[str, Any],
         state: dict[str, Any],
         metadata: dict[str, Any],
-        random_params: dict[str, Any] | None = None,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
         """Apply rotation to image data.
@@ -159,7 +137,7 @@ class RotationOperator(ModalityOperator):
             data: Input data dict containing image to rotate.
             state: State dict (passed through unchanged).
             metadata: Metadata dict (passed through unchanged).
-            random_params: Optional random parameters (contains "angle" if stochastic).
+            key: This record's PRNG key, required in stochastic mode.
             stats: Optional statistics dict (unused).
 
         Returns:
@@ -174,8 +152,12 @@ class RotationOperator(ModalityOperator):
             return data, state, metadata
 
         # Determine rotation angle
-        if self.config.stochastic and random_params is not None:
-            angle_deg = random_params["angle"]
+        if self.config.stochastic:
+            # This record's own angle, drawn from its own key
+            min_angle, max_angle = self.config.angle_range
+            angle_deg = jax.random.uniform(
+                require_key(key, self), shape=(), minval=min_angle, maxval=max_angle
+            )
         else:
             # Deterministic: use midpoint of angle_range
             min_angle, max_angle = self.config.angle_range

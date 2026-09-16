@@ -82,33 +82,12 @@ class ExternalLibraryAdapter(OperatorModule):
         super().__init__(config, rngs=rngs, name=name)
         self.fn = fn
 
-    def generate_random_params(
-        self,
-        element_keys: jax.Array,
-        data_shapes: PyTree,
-    ) -> jax.Array:
-        """Return the per-record PRNG keys for the wrapped external function.
-
-        ``element_keys`` already holds one stable per-record key
-        (``fold_in(base_key, global_index)``), which is exactly what the external
-        ``fn(data, key)`` expects, so this passes them through unchanged.
-
-        Args:
-            element_keys: ``(batch_size,)`` per-record PRNG keys.
-            data_shapes: Unused (batch size comes from ``element_keys``).
-
-        Returns:
-            The per-record keys, one per record.
-        """
-        del data_shapes
-        return element_keys
-
     def apply(
         self,
         data: PyTree,
         state: PyTree,
         metadata: dict[str, Any] | None,
-        random_params: jax.Array | None = None,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
         """Apply the external function to a single element.
@@ -117,17 +96,17 @@ class ExternalLibraryAdapter(OperatorModule):
             data: Element data dictionary
             state: Element state (passed through)
             metadata: Element metadata (passed through)
-            random_params: Random key for this element
+            key: This record's PRNG key, or ``None`` for a deterministic adapter
             stats: Statistics (unused)
 
         Returns:
             Tuple of (transformed_data, state, metadata)
         """
         del stats
-        # Stochastic operators receive a per-record key; deterministic ones get
-        # no key, so fall back to a fixed key for reproducible "deterministic
-        # noise" (the external fn always requires a key argument).
-        key = random_params if random_params is not None else jax.random.key(0)
+        # Stochastic adapters receive a per-record key; deterministic ones get none, so
+        # fall back to a fixed key for reproducible "deterministic noise" (the external fn
+        # always requires a key argument).
+        key = key if key is not None else jax.random.key(0)
         transformed_data = self.fn(data, key)
         return transformed_data, state, metadata
 
@@ -171,24 +150,16 @@ class PureJaxAdapter(OperatorModule):
         super().__init__(config, rngs=None, name=name)
         self.fn = fn
 
-    def generate_random_params(
-        self,
-        rng: jax.Array,
-        data_shapes: PyTree,
-    ) -> None:
-        """No random params for pure functions."""
-        del rng, data_shapes
-
     def apply(
         self,
         data: PyTree,
         state: PyTree,
         metadata: dict[str, Any] | None,
-        random_params: Any = None,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
         """Apply pure function."""
-        del random_params, stats
+        del key, stats
         transformed_data = self.fn(data)
         return transformed_data, state, metadata
 

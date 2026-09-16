@@ -29,11 +29,11 @@ class ConcreteFusionOperator(CrossModalOperator):
 class StochasticContrastiveOperator(CrossModalOperator):
     """Stochastic contrastive implementation for testing."""
 
-    def apply(self, data, state, metadata, random_params=None, stats=None):
-        """Compute similarity with optional noise."""
+    def apply(self, data, state, metadata, key=None, stats=None):
+        """Compute similarity with noise drawn from this record's key."""
         del stats
         inputs = self._extract_inputs(data)
-        noise = random_params if random_params is not None else 0.0
+        noise = jax.random.normal(key, ()) * 0.01 if key is not None else 0.0
 
         # Compute cosine similarity with noise
         emb1, emb2 = inputs[0], inputs[1]
@@ -43,13 +43,6 @@ class StochasticContrastiveOperator(CrossModalOperator):
         outputs = [similarity]
         result = self._store_outputs(data, outputs)
         return result, state, metadata
-
-    def generate_random_params(self, rng, data_shapes):
-        """Generate random noise for contrastive learning."""
-        # Get batch size from first input field
-        first_field = self.config.input_fields[0]
-        batch_size = data_shapes[first_field][0]
-        return jax.random.normal(rng, (batch_size,)) * 0.01
 
 
 class TestCrossModalOperatorInitialization:
@@ -126,31 +119,6 @@ class TestCrossModalOperatorAbstractMethods:
 
         with pytest.raises(NotImplementedError, match="must implement apply"):
             operator.apply(data, state, metadata)
-
-    def test_stochastic_without_generate_random_params_raises_error(self):
-        """Stochastic operator without generate_random_params should raise error."""
-
-        class IncompleteStochasticOperator(CrossModalOperator):
-            """Missing generate_random_params implementation."""
-
-            def apply(self, data, state, metadata, random_params=None, stats=None):
-                del random_params, stats
-                return data, state, metadata
-
-        config = CrossModalOperatorConfig(
-            input_fields=["input1", "input2"],
-            output_fields=["output"],
-            stochastic=True,
-            stream_name="fusion",
-        )
-        rngs = nnx.Rngs(0, fusion=1)
-        operator = IncompleteStochasticOperator(config, rngs=rngs)
-
-        data_shapes = {"input1": (4, 128), "input2": (4, 128)}
-        rng = jax.random.PRNGKey(0)
-
-        with pytest.raises(NotImplementedError, match="does not implement generate_random_params"):
-            operator.generate_random_params(rng, data_shapes)
 
 
 class TestCrossModalOperatorHelperMethods:
@@ -302,48 +270,51 @@ class TestCrossModalOperatorApply:
 class TestCrossModalOperatorStochastic:
     """Test stochastic operator behavior."""
 
-    def test_stochastic_operator_generates_random_params(self):
-        """Stochastic operator should generate random parameters."""
+    def test_each_record_draws_its_own_noise(self):
+        """The batch path gives every record its own noise term."""
         config = CrossModalOperatorConfig(
             input_fields=["anchor", "positive"],
             output_fields=["similarity"],
             stochastic=True,
             stream_name="contrastive",
         )
-        rngs = nnx.Rngs(0, contrastive=1)
-        operator = StochasticContrastiveOperator(config, rngs=rngs)
+        operator = StochasticContrastiveOperator(config, rngs=nnx.Rngs(0, contrastive=1))
 
-        data_shapes = {"anchor": (8, 128), "positive": (8, 128)}
-        rng = jax.random.PRNGKey(42)
+        # Identical orthogonal pairs, so the similarity is 0 and any spread is the noise
+        batch = {
+            "anchor": jnp.tile(jnp.array([1.0, 0.0]), (8, 1)),
+            "positive": jnp.tile(jnp.array([0.0, 1.0]), (8, 1)),
+        }
 
-        random_params = operator.generate_random_params(rng, data_shapes)
+        data, _ = operator._vmap_apply(batch, {})
 
-        # Should generate 8 random noise values (batch size = 8)
-        assert random_params.shape == (8,)
+        assert data["similarity"].shape == (8,)
+        assert not jnp.allclose(data["similarity"][0], data["similarity"][1])
+        assert jnp.allclose(data["similarity"], 0.0, atol=0.1)
 
-    def test_stochastic_operator_apply_uses_random_params(self):
-        """Stochastic operator apply should use provided random params."""
+    def test_apply_draws_its_noise_from_the_key(self):
+        """One key repeats its noise; a different key draws another."""
         config = CrossModalOperatorConfig(
             input_fields=["anchor", "positive"],
             output_fields=["similarity"],
             stochastic=True,
             stream_name="contrastive",
         )
-        rngs = nnx.Rngs(0, contrastive=1)
-        operator = StochasticContrastiveOperator(config, rngs=rngs)
+        operator = StochasticContrastiveOperator(config, rngs=nnx.Rngs(0, contrastive=1))
 
         data = {
             "anchor": jnp.array([1.0, 0.0]),
             "positive": jnp.array([0.0, 1.0]),
         }
-        state = {}
-        metadata = None
 
-        # Apply with specific noise
-        result_data, _, _ = operator.apply(data, state, metadata, random_params=0.5)
+        first, _, _ = operator.apply(data, {}, None, key=jax.random.key(0))
+        again, _, _ = operator.apply(data, {}, None, key=jax.random.key(0))
+        other, _, _ = operator.apply(data, {}, None, key=jax.random.key(1))
 
-        # Similarity should be 0.0 + 0.5 = 0.5
-        assert jnp.allclose(result_data["similarity"], 0.5, atol=0.01)
+        assert jnp.allclose(first["similarity"], again["similarity"])
+        assert not jnp.allclose(first["similarity"], other["similarity"])
+        # Orthogonal inputs give a similarity of 0, moved only by the drawn noise
+        assert jnp.allclose(first["similarity"], 0.0, atol=0.1)
 
 
 class TestCrossModalOperatorJAXCompatibility:

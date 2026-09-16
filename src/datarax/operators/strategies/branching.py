@@ -48,13 +48,11 @@ class BranchingStrategy(CompositionStrategyImpl):
         # Create list of branch functions that call each operator's apply method
         def make_branch_fn(i: int, operator: OperatorModule) -> Callable:
             def branch_fn(operands: Any) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
-                d, s, m, rp = operands
-                # Extract random params for this specific operator
-                op_random_params = None
-                if rp and f"operator_{i}" in rp:
-                    op_random_params = rp[f"operator_{i}"]
-
-                out_data, out_state, out_metadata = operator.apply(d, s, m, op_random_params)
+                d, s, m, k = operands
+                # This child's key, folded from the record's; None stays None.
+                out_data, out_state, out_metadata = operator.apply(
+                    d, s, m, self._key_for_operator(k, i)
+                )
 
                 return out_data, out_state, out_metadata
 
@@ -67,7 +65,7 @@ class BranchingStrategy(CompositionStrategyImpl):
         result_data, result_state, result_metadata = jax.lax.switch(
             branch_index,
             branches,
-            (context.data, context.state, context.metadata, context.random_params),
+            (context.data, context.state, context.metadata, context.key),
         )
 
         return result_data, result_state, result_metadata

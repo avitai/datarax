@@ -15,6 +15,8 @@ Example Usage:
     operator = DropoutOperator(config, rngs=nnx.Rngs(0, augment=1))
 """
 
+from typing import Literal
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -351,45 +353,38 @@ class TestDropoutOperatorEdgeCases:
 class TestDropoutOperatorStochasticMode:
     """Tests for stochastic random parameter generation."""
 
-    def test_generate_random_params_shape(self):
-        """Test random parameter generation produces correct shape."""
+    @staticmethod
+    def _dropped(mode: Literal["pixel", "channel"]) -> jnp.ndarray:
+        """Run a batch of identical images through a stochastic dropout operator."""
         config = DropoutOperatorConfig(
             field_key="image",
             dropout_rate=0.3,
-            mode="pixel",
+            mode=mode,
             stochastic=True,
             stream_name="augment",
         )
         operator = DropoutOperator(config, rngs=nnx.Rngs(42, augment=1))
+        data, _ = operator._vmap_apply({"image": jnp.ones((4, 32, 32, 3))}, {})
+        return data["image"]
 
-        element_keys = jax.random.split(jax.random.key(42), 4)  # one key per record
-        data_shapes = {"image": (4, 32, 32, 3)}  # Batch size 4
+    def test_pixel_mode_drops_individual_pixels_per_record(self):
+        """Pixel mode zeroes scattered pixels, and each record's pattern differs."""
+        dropped = self._dropped("pixel")
 
-        random_params = operator.generate_random_params(element_keys, data_shapes)
+        assert dropped.shape == (4, 32, 32, 3)
+        assert jnp.any(dropped == 0.0)
+        assert not jnp.array_equal(dropped[0], dropped[1])
 
-        assert "keep_mask" in random_params
-        # Pixel mode: full shape mask
-        assert random_params["keep_mask"].shape == (4, 32, 32, 3)
+    def test_channel_mode_drops_whole_channels_per_record(self):
+        """Channel mode keeps or drops each channel as a unit, per record."""
+        dropped = self._dropped("channel")
 
-    def test_generate_random_params_channel_mode_shape(self):
-        """Test random parameter generation for channel mode."""
-        config = DropoutOperatorConfig(
-            field_key="image",
-            dropout_rate=0.3,
-            mode="channel",
-            stochastic=True,
-            stream_name="augment",
-        )
-        operator = DropoutOperator(config, rngs=nnx.Rngs(42, augment=1))
-
-        element_keys = jax.random.split(jax.random.key(42), 4)  # one key per record
-        data_shapes = {"image": (4, 32, 32, 3)}  # Batch size 4
-
-        random_params = operator.generate_random_params(element_keys, data_shapes)
-
-        assert "keep_mask" in random_params
-        # Channel mode: broadcasted shape (batch, 1, 1, C)
-        assert random_params["keep_mask"].shape == (4, 1, 1, 3)
+        assert dropped.shape == (4, 32, 32, 3)
+        # A channel is either wholly kept or wholly dropped, so each record x channel
+        # has exactly one distinct value across its pixels.
+        for record in range(4):
+            for channel in range(3):
+                assert len(jnp.unique(dropped[record, :, :, channel])) == 1
 
     def test_stochastic_apply_batch_varies_between_samples(self):
         """Test stochastic mode produces different results for batch elements."""

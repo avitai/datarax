@@ -122,7 +122,7 @@ class LoudnessOperator(OperatorModule):
         data: PyTree,
         state: PyTree,
         metadata: dict[str, Any] | None,
-        random_params: Any = None,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
         """Compute loudness from audio.
@@ -131,14 +131,14 @@ class LoudnessOperator(OperatorModule):
             data: Must contain "audio" key with shape (n_samples,).
             state: Passed through unchanged.
             metadata: Passed through unchanged.
-            random_params: Unused (deterministic operator).
+            key: Unused (deterministic operator).
             stats: Unused.
 
         Returns:
             (data_with_loudness, state, metadata) where data_with_loudness
             has original keys plus "loudness" with shape (n_frames,).
         """
-        del random_params, stats
+        del key, stats
         audio = data["audio"]
         loudness = self._compute_loudness(audio)
         out_data = {**data, "loudness": loudness}

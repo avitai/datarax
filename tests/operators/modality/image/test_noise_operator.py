@@ -6,6 +6,8 @@ This test suite covers all three noise modes:
 - Poisson: Shot noise (photon noise simulation)
 """
 
+from typing import Literal
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -792,66 +794,42 @@ class TestNoiseOperatorEdgeCases:
 class TestNoiseOperatorStochasticMode:
     """Test suite for stochastic mode and random parameter generation."""
 
-    def test_generate_random_params_gaussian(self):
-        """Test random parameter generation for Gaussian mode."""
+    @staticmethod
+    def _noised(mode: Literal["gaussian", "salt_pepper", "poisson"], **extra) -> tuple:
+        """Run one batch of identical images through a stochastic noise operator."""
         config = NoiseOperatorConfig(
-            field_key="image",
-            mode="gaussian",
-            noise_std=0.1,
-            stochastic=True,
-            stream_name="augment",
+            field_key="image", mode=mode, stochastic=True, stream_name="augment", **extra
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
+        batch = {"image": jnp.ones((4, 32, 32, 3)) * 0.5}
+        data, _ = operator._vmap_apply(batch, {})
+        return data["image"], batch["image"]
 
-        element_keys = jax.random.split(jax.random.key(42), 4)  # one key per record
-        data_shapes = {"image": (4, 32, 32, 3)}
+    def test_gaussian_noise_is_drawn_per_record(self):
+        """Each record gets its own Gaussian noise, so identical inputs come out different."""
+        noised, original = self._noised("gaussian", noise_std=0.1)
 
-        random_params = operator.generate_random_params(element_keys, data_shapes)
+        assert noised.shape == (4, 32, 32, 3)
+        assert not jnp.allclose(noised, original)
+        assert not jnp.allclose(noised[0], noised[1])
 
-        assert "noise" in random_params
-        assert random_params["noise"].shape == (4, 32, 32, 3)
+    def test_salt_pepper_noise_is_drawn_per_record(self):
+        """Salt and pepper pick different pixels in each record."""
+        noised, original = self._noised("salt_pepper", salt_prob=0.02, pepper_prob=0.02)
 
-    def test_generate_random_params_salt_pepper(self):
-        """Test random parameter generation for salt & pepper mode."""
-        config = NoiseOperatorConfig(
-            field_key="image",
-            mode="salt_pepper",
-            salt_prob=0.02,
-            pepper_prob=0.02,
-            stochastic=True,
-            stream_name="augment",
-        )
-        operator = NoiseOperator(config, rngs=nnx.Rngs(0))
+        assert noised.shape == (4, 32, 32, 3)
+        assert not jnp.allclose(noised, original)
+        assert not jnp.allclose(noised[0], noised[1])
 
-        element_keys = jax.random.split(jax.random.key(42), 4)  # one key per record
-        data_shapes = {"image": (4, 32, 32, 3)}
+    def test_poisson_noise_is_drawn_per_record(self):
+        """Poisson shot noise differs per record."""
+        noised, _ = self._noised("poisson", lam_scale=1.0)
 
-        random_params = operator.generate_random_params(element_keys, data_shapes)
+        assert noised.shape == (4, 32, 32, 3)
+        assert not jnp.allclose(noised[0], noised[1])
 
-        assert "noise_mask" in random_params
-        assert random_params["noise_mask"].shape == (4, 32, 32, 3)
-
-    def test_generate_random_params_poisson(self):
-        """Test random parameter generation for Poisson mode."""
-        config = NoiseOperatorConfig(
-            field_key="image",
-            mode="poisson",
-            lam_scale=1.0,
-            stochastic=True,
-            stream_name="augment",
-        )
-        operator = NoiseOperator(config, rngs=nnx.Rngs(0))
-
-        element_keys = jax.random.split(jax.random.key(42), 4)  # one key per record
-        data_shapes = {"image": (4, 32, 32, 3)}
-
-        random_params = operator.generate_random_params(element_keys, data_shapes)
-
-        assert "poisson_rngs" in random_params
-        assert random_params["poisson_rngs"].shape == (4,)
-
-    def test_generate_random_params_missing_field(self):
-        """Test that missing field_key raises KeyError."""
+    def test_missing_field_raises(self):
+        """A record without the configured field cannot be noised."""
         config = NoiseOperatorConfig(
             field_key="image",
             mode="gaussian",
@@ -860,11 +838,8 @@ class TestNoiseOperatorStochasticMode:
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
-        rng = jax.random.key(42)
-        data_shapes = {"other": (4, 32, 32, 3)}
-
-        with pytest.raises(KeyError, match="Field key 'image' not found in data_shapes"):
-            operator.generate_random_params(rng, data_shapes)
+        with pytest.raises(KeyError):
+            operator.apply({"other": jnp.ones((32, 32, 3))}, {}, {}, key=jax.random.key(42))
 
     def test_stochastic_batch_different_noise(self):
         """Test that stochastic mode produces different noise for each batch element."""

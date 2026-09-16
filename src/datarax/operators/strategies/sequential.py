@@ -36,11 +36,9 @@ class SequentialStrategy(CompositionStrategyImpl):
         result_metadata: dict[str, Any] | None = context.metadata
 
         for i, operator in enumerate(operators):
-            op_random_params = self._random_params_for_operator(context.random_params, i)
-
-            # Apply operator
+            # Apply operator with this child's own key, folded from the record's
             result_data, result_state, result_metadata = operator.apply(
-                result_data, result_state, result_metadata, op_random_params
+                result_data, result_state, result_metadata, self._key_for_operator(context.key, i)
             )
 
         return result_data, result_state, result_metadata or {}
@@ -88,14 +86,13 @@ class ConditionalSequentialStrategy(CompositionStrategyImpl):
             )
 
         for i, (operator, condition) in enumerate(zip(operators, self.conditions, strict=False)):
-            op_random_params = self._random_params_for_operator(context.random_params, i)
             result_data, result_state, result_metadata = self._apply_operator_conditionally(
                 operator,
                 condition(result_data),
                 result_data,
                 result_state,
                 result_metadata,
-                op_random_params,
+                self._key_for_operator(context.key, i),
             )
 
         return result_data, result_state, result_metadata

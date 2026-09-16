@@ -105,7 +105,7 @@ class CrepeF0Operator(OperatorModule):
         data: PyTree,
         state: PyTree,
         metadata: dict[str, Any] | None,
-        random_params: Any = None,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
         """Extract f0 and confidence from audio.
@@ -114,14 +114,14 @@ class CrepeF0Operator(OperatorModule):
             data: Must contain "audio" key with shape (n_samples,).
             state: Passed through unchanged.
             metadata: Passed through unchanged.
-            random_params: Unused (deterministic operator in eval mode).
+            key: Unused (deterministic operator in eval mode).
             stats: Unused.
 
         Returns:
             (data_with_f0, state, metadata) where data_with_f0 has original
             keys plus "f0_hz" and "f0_confidence" with shape (n_frames,).
         """
-        del random_params, stats
+        del key, stats
         audio = data["audio"]
         f0_hz, confidence = self._extract_f0(audio)
         out_data = {**data, "f0_hz": f0_hz, "f0_confidence": confidence}

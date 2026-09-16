@@ -150,7 +150,7 @@ class TestRotationOperatorTransformations:
         image = image.at[:, 16, :].set(1.0)
         data = {"image": image}
 
-        result, state, metadata = operator.apply(data, {}, {})
+        result, state, metadata = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Result should have same shape
         assert result["image"].shape == (32, 32, 3)
@@ -188,11 +188,13 @@ class TestRotationOperatorTransformations:
         image = jnp.ones((32, 32, 3)) * 0.5
         data = {"image": image}
 
-        result, state, metadata = operator.apply(data, {}, {})
+        result, state, metadata = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         assert result["image"].shape == (32, 32, 3)
-        # For uniform images, small rotation should preserve most values
-        assert jnp.allclose(result["image"], image, atol=0.05)
+        # A small rotation moves edge pixels outside the frame, where fill_value shows
+        # through, so the claim is about the interior the rotation keeps covered.
+        interior = slice(6, 26)
+        assert jnp.allclose(result["image"][interior, interior], image[interior, interior])
 
     def test_large_angle_rotation(self):
         """Test rotation with large angles (180 degrees)."""
@@ -208,7 +210,7 @@ class TestRotationOperatorTransformations:
         image = jnp.ones((16, 16, 3)) * 0.5
         data = {"image": image}
 
-        result, state, metadata = operator.apply(data, {}, {})
+        result, state, metadata = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Should handle large angles without errors
         assert result["image"].shape == (16, 16, 3)
@@ -250,7 +252,7 @@ class TestRotationOperatorTransformations:
         image = jnp.ones((32, 32, 3)) * 0.5
         data = {"image": image}
 
-        result, state, metadata = operator.apply(data, {}, {})
+        result, state, metadata = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         assert result["image"].shape == (32, 32, 3)
 
@@ -268,7 +270,7 @@ class TestRotationOperatorTransformations:
         image = jnp.ones((24, 32, 3)) * 0.5
         data = {"image": image}
 
-        result, state, metadata = operator.apply(data, {}, {})
+        result, state, metadata = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         assert result["image"].shape == (24, 32, 3)
 
@@ -287,7 +289,7 @@ class TestRotationOperatorTransformations:
         image = jnp.ones((28, 28)) * 0.5
         data = {"image": image}
 
-        result, state, metadata = operator.apply(data, {}, {})
+        result, state, metadata = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         assert result["image"].shape == (28, 28)
 
@@ -345,13 +347,13 @@ class TestRotationOperatorEdgeCases:
         # Test with 4x4 image
         image_4x4 = jnp.ones((4, 4, 3)) * 0.5
         data_4x4 = {"image": image_4x4}
-        result_4x4, _, _ = operator.apply(data_4x4, {}, {})
+        result_4x4, _, _ = operator.apply(data_4x4, {}, {}, key=jax.random.key(0))
         assert result_4x4["image"].shape == (4, 4, 3)
 
         # Test with 1x1 "image"
         image_1x1 = jnp.ones((1, 1, 3)) * 0.5
         data_1x1 = {"image": image_1x1}
-        result_1x1, _, _ = operator.apply(data_1x1, {}, {})
+        result_1x1, _, _ = operator.apply(data_1x1, {}, {}, key=jax.random.key(0))
         assert result_1x1["image"].shape == (1, 1, 3)
 
     def test_negative_angle_range_handling(self):
@@ -373,8 +375,8 @@ class TestRotationOperatorEdgeCases:
 class TestRotationOperatorStochasticMode:
     """Test suite for stochastic mode behavior."""
 
-    def test_random_angle_generation(self):
-        """Test that stochastic mode generates different random angles."""
+    def test_different_keys_rotate_differently(self):
+        """Two keys give two different angles; the same key repeats its angle."""
         config = RotationOperatorConfig(
             field_key="image",
             angle_range=(-45.0, 45.0),
@@ -383,33 +385,17 @@ class TestRotationOperatorStochasticMode:
         )
         operator = RotationOperator(config, rngs=nnx.Rngs(augment=42))
 
-        # data_shapes provides shape info for random param generation
-        # First dimension is batch size
-        batch_size = 4
-        data_shapes = {"image": (batch_size, 16, 16, 3)}
-
-        # Generate different random params using different per-record key sets
-        key1 = jax.random.split(jax.random.key(42), batch_size)
-        key2 = jax.random.split(jax.random.key(43), batch_size)
-
-        random_params1 = operator.generate_random_params(key1, data_shapes)
-        random_params2 = operator.generate_random_params(key2, data_shapes)
-
-        # Should generate batch_size angles per call
-        assert random_params1["angle"].shape == (batch_size,)
-        assert random_params2["angle"].shape == (batch_size,)
-
-        # Different keys should produce different angles
-        different_angles = not jnp.allclose(random_params1["angle"], random_params2["angle"])
-        assert different_angles
-
-        # Test application with single image
-        image = jnp.ones((16, 16, 3)) * 0.5
+        # A structured image, so a different angle is visible in the output
+        image = jnp.zeros((16, 16, 3)).at[:, 8, :].set(1.0)
         data = {"image": image}
-        single_params = {"angle": random_params1["angle"][0]}  # Use first angle
 
-        result, _, _ = operator.apply(data, {}, {}, random_params=single_params)
-        assert result["image"].shape == (16, 16, 3)
+        first, _, _ = operator.apply(data, {}, {}, key=jax.random.key(42))
+        again, _, _ = operator.apply(data, {}, {}, key=jax.random.key(42))
+        other, _, _ = operator.apply(data, {}, {}, key=jax.random.key(43))
+
+        assert first["image"].shape == (16, 16, 3)
+        assert jnp.array_equal(first["image"], again["image"])
+        assert not jnp.allclose(first["image"], other["image"])
 
     def test_reproducibility_with_same_key(self):
         """Test that same RNG key produces same results."""
@@ -427,17 +413,18 @@ class TestRotationOperatorStochasticMode:
         rngs2 = nnx.Rngs(augment=42)
         operator2 = RotationOperator(config, rngs=rngs2)
 
-        image = jnp.ones((16, 16, 3)) * 0.5
-        data = {"image": image}
+        # Go through the batch path: that is where an operator's own base key decides the
+        # angles, so two same-seeded operators agreeing means something here.
+        batch = {"image": jnp.zeros((4, 16, 16, 3)).at[:, :, 8, :].set(1.0)}
 
-        result1, _, _ = operator1.apply(data, {}, {})
-        result2, _, _ = operator2.apply(data, {}, {})
+        result1, _ = operator1._vmap_apply(batch, {})
+        result2, _ = operator2._vmap_apply(batch, {})
 
         # Should produce same results with same seed
         assert jnp.allclose(result1["image"], result2["image"], atol=1e-6)
 
     def test_batch_independence(self):
-        """Test that different batch items can get different rotations."""
+        """Each record in a batch is rotated by its own angle, not one shared angle."""
         config = RotationOperatorConfig(
             field_key="image",
             angle_range=(-45.0, 45.0),
@@ -447,15 +434,14 @@ class TestRotationOperatorStochasticMode:
         rngs = nnx.Rngs(augment=42)
         operator = RotationOperator(config, rngs=rngs)
 
-        # Note: ModalityOperator applies element-wise, so batch handling
-        # is done at pipeline level. Here we test single element.
-        image = jnp.ones((16, 16, 3)) * 0.5
-        data = {"image": image}
+        # A structured image repeated across the batch: identical inputs, so any difference
+        # in the outputs comes from the per-record angle.
+        batch = {"image": jnp.zeros((4, 16, 16, 3)).at[:, :, 8, :].set(1.0)}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result, _ = operator._vmap_apply(batch, {})
 
-        # Just verify operation completes successfully
-        assert result["image"].shape == (16, 16, 3)
+        assert result["image"].shape == (4, 16, 16, 3)
+        assert not jnp.allclose(result["image"][0], result["image"][1])
 
 
 class TestRotationOperatorJAXCompatibility:

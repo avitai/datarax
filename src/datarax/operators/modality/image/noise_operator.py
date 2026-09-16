@@ -36,8 +36,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
-from datarax.operators._random_params import per_element_params
-from datarax.operators.modality.image._validation import validate_field_key_shape
+from datarax.core.operator import require_key
 
 
 logger = logging.getLogger(__name__)
@@ -158,7 +157,7 @@ class NoiseOperator(ModalityOperator):
     Supports three operation modes:
 
         1. **Deterministic**: Fixed noise pattern using fixed seed
-        2. **Stochastic**: Per-sample random noise from generate_random_params()
+        2. **Stochastic**: Per-record noise drawn from the record's own key
         3. **External params**: Accept pre-generated random parameters
 
     The operator works on single elements (H, W, C images) and is composed into
@@ -212,82 +211,23 @@ class NoiseOperator(ModalityOperator):
         # Type narrowing for better IDE support
         self.config: NoiseOperatorConfig = config
 
-    def generate_random_params(  # noqa: DOC503
-        self,
-        element_keys: jax.Array,
-        data_shapes: dict[str, tuple[int, ...]],
-    ) -> dict[str, jax.Array]:
-        """Generate per-record noise from per-record PRNG keys.
-
-        Each record's noise is drawn from its own key
-        (``fold_in(base_key, global_index)``), so noise is reproducible per
-        record regardless of batch composition, shuffle, host count, or resume.
-
-        Args:
-            element_keys: Per-record PRNG keys, one per element in the batch.
-            data_shapes: Dictionary mapping field keys to their shapes.
-                        Used to determine batch size and element shapes.
-
-        Returns:
-            Dictionary with mode-specific noise data:
-
-                - Gaussian: {"noise": Array of shape (batch, H, W, C)}
-                - Salt & Pepper: {"noise_mask": Array of shape (batch, H, W, C)}
-                - Poisson: {"poisson_samples": Array of shape (batch, H, W, C)}
-
-        Raises:
-            KeyError: If field_key not in data_shapes
-            ValueError: If ``config.mode`` is not a known noise mode.
-        """
-        # Full shape includes the batch dim; per-record draws use the element shape.
-        full_shape = validate_field_key_shape(data_shapes, self.config.field_key)
-        element_shape = tuple(full_shape[1:])
-
-        if self.config.mode == "gaussian":
-            # Per-record Gaussian noise: each record drawn from its own key.
-            noise = per_element_params(
-                element_keys,
-                lambda key: (
-                    jax.random.normal(key, shape=element_shape) * self.config.noise_std
-                    + self.config.noise_mean
-                ),
-            )
-            return {"noise": noise}
-
-        if self.config.mode == "salt_pepper":
-            # Per-record uniform values for salt & pepper selection.
-            noise_mask = per_element_params(
-                element_keys, lambda key: jax.random.uniform(key, shape=element_shape)
-            )
-            return {"noise_mask": noise_mask}
-
-        if self.config.mode == "poisson":
-            # Poisson needs the image values, applied per record; the per-record
-            # keys are exactly what apply() consumes.
-            return {"poisson_rngs": element_keys}
-
-        raise ValueError(f"Unknown noise mode: {self.config.mode}")
-
     def apply(
         self,
         data: dict[str, jax.Array],
         state: dict[str, Any],
         metadata: dict[str, Any],
-        random_params: dict[str, jax.Array] | None = None,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, jax.Array], dict[str, Any], dict[str, Any]]:
         """Apply noise transformation to a single element.
 
         This operates on single elements (e.g., one image of shape [H, W, C]).
-        For batch processing, use apply_batch() which handles random param generation.
 
         Args:
             data: Input data dictionary. Must contain field specified by config.field_key
             state: Operator state (unused for noise, passed through)
             metadata: Metadata dictionary (passed through unchanged)
-            random_params: Optional random parameters from generate_random_params().
-                          If config.stochastic=True and this is provided, uses
-                          pre-generated noise/masks.
+            key: This record's PRNG key, required in stochastic mode
             stats: Optional statistics dictionary (unused)
 
         Returns:
@@ -298,10 +238,6 @@ class NoiseOperator(ModalityOperator):
 
         Raises:
             ValueError: If ``config.mode`` is not a known noise mode.
-
-        Note:
-            CRITICAL: Always check config.stochastic flag, not whether random_params is None.
-            apply_batch() always passes random_params even in deterministic mode.
         """
         del stats
         # Extract the field to transform using base class helper
@@ -309,11 +245,11 @@ class NoiseOperator(ModalityOperator):
 
         # Apply mode-specific noise
         if self.config.mode == "gaussian":
-            transformed = self._apply_gaussian_noise(value, random_params)
+            transformed = self._apply_gaussian_noise(value, key)
         elif self.config.mode == "salt_pepper":
-            transformed = self._apply_salt_pepper_noise(value, random_params)
+            transformed = self._apply_salt_pepper_noise(value, key)
         elif self.config.mode == "poisson":
-            transformed = self._apply_poisson_noise(value, random_params)
+            transformed = self._apply_poisson_noise(value, key)
         else:
             raise ValueError(f"Unknown noise mode: {self.config.mode}")
 
@@ -329,35 +265,27 @@ class NoiseOperator(ModalityOperator):
     def _apply_gaussian_noise(
         self,
         value: jax.Array,
-        random_params: dict[str, jax.Array] | None,
+        key: jax.Array | None,
     ) -> jax.Array:
         """Apply Gaussian noise to image."""
         # Short-circuit if std is zero
         if self.config.noise_std == 0.0:
             return value
 
-        # Get or generate noise
-        if self.config.stochastic and random_params is not None:
-            # Use pre-generated noise
-            noise = random_params.get("noise")
-            if noise is None:
-                raise ValueError(
-                    "Stochastic mode requires 'noise' in random_params for Gaussian mode"
-                )
-        else:
-            # Deterministic mode: generate noise with fixed seed
-            rng_key = jax.random.key(0)
-            noise = (
-                jax.random.normal(rng_key, shape=value.shape) * self.config.noise_std
-                + self.config.noise_mean
-            )
+        # This record's key when stochastic; a fixed one otherwise, which makes the
+        # "deterministic noise" the class documents reproducible.
+        rng_key = require_key(key, self) if self.config.stochastic else jax.random.key(0)
+        noise = (
+            jax.random.normal(rng_key, shape=value.shape) * self.config.noise_std
+            + self.config.noise_mean
+        )
 
         return value + noise
 
     def _apply_salt_pepper_noise(
         self,
         value: jax.Array,
-        random_params: dict[str, jax.Array] | None,
+        key: jax.Array | None,
     ) -> jax.Array:
         """Apply salt and pepper noise to image."""
         # Short-circuit if no salt or pepper
@@ -377,18 +305,9 @@ class NoiseOperator(ModalityOperator):
 
         pepper_val = 0.0 if self.config.pepper_value is None else self.config.pepper_value
 
-        # Get or generate random mask
-        if self.config.stochastic and random_params is not None:
-            # Use pre-generated mask
-            random_vals = random_params.get("noise_mask")
-            if random_vals is None:
-                raise ValueError(
-                    "Stochastic mode requires 'noise_mask' in random_params for salt_pepper mode"
-                )
-        else:
-            # Deterministic mode: generate mask with fixed seed
-            rng_key = jax.random.key(0)
-            random_vals = jax.random.uniform(rng_key, shape=value.shape)
+        # This record's key when stochastic; a fixed one otherwise.
+        rng_key = require_key(key, self) if self.config.stochastic else jax.random.key(0)
+        random_vals = jax.random.uniform(rng_key, shape=value.shape)
 
         # Apply salt and pepper
         return jnp.where(
@@ -402,22 +321,14 @@ class NoiseOperator(ModalityOperator):
     def _apply_poisson_noise(
         self,
         value: jax.Array,
-        random_params: dict[str, jax.Array] | None,
+        key: jax.Array | None,
     ) -> jax.Array:
         """Apply Poisson noise to image."""
         # Ensure image is non-negative for Poisson
         value = jnp.maximum(value, 0)
 
-        # Get RNG key
-        if self.config.stochastic and random_params is not None:
-            poisson_rng = random_params.get("poisson_rngs")
-            if poisson_rng is None:
-                raise ValueError(
-                    "Stochastic mode requires 'poisson_rngs' in random_params for poisson mode"
-                )
-        else:
-            # Deterministic mode
-            poisson_rng = jax.random.key(0)
+        # This record's key when stochastic; a fixed one otherwise.
+        poisson_rng = require_key(key, self) if self.config.stochastic else jax.random.key(0)
 
         # Apply Poisson noise based on image range
         return jax.lax.cond(

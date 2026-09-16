@@ -31,7 +31,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
-from datarax.operators._random_params import per_element_params
+from datarax.core.operator import require_key
 
 
 logger = logging.getLogger(__name__)
@@ -83,7 +83,7 @@ class DropoutOperator(ModalityOperator):
 
     Supports three modes:
     1. **Deterministic**: Fixed dropout pattern using fixed seed
-    2. **Stochastic**: Per-sample random dropout masks from generate_random_params()
+    2. **Stochastic**: Per-record dropout masks drawn from the record's own key
     3. **External params**: Accept pre-generated random parameters
 
     The operator works on single elements (H, W, C images) and is composed into
@@ -135,89 +135,23 @@ class DropoutOperator(ModalityOperator):
         # Type narrowing for better IDE support
         self.config: DropoutOperatorConfig = config
 
-    def generate_random_params(
-        self,
-        element_keys: jax.Array,
-        data_shapes: dict[str, tuple[int, ...]],
-    ) -> dict[str, jax.Array]:
-        """Generate per-record dropout masks from per-record PRNG keys.
-
-        Each record's mask is drawn from its own key
-        (``fold_in(base_key, global_index)``), so dropout is reproducible per
-        record regardless of batch composition, shuffle, host count, or resume.
-
-        Args:
-            element_keys: ``(batch_size,)`` per-record PRNG keys.
-            data_shapes: Dictionary mapping field keys to their shapes (used for
-                per-record element shape).
-
-        Returns:
-            Dictionary with:
-
-                - "keep_mask": Boolean array indicating which values to keep
-                              Shape: (batch_size, H, W, C) for pixel mode
-                              Shape: (batch_size, 1, 1, C) for channel mode (broadcast)
-
-        Raises:
-            KeyError: If field_key not in data_shapes
-            ValueError: If ``config.mode`` is not a known dropout mode.
-        """
-        if self.config.field_key not in data_shapes:
-            raise KeyError(
-                f"Field key '{self.config.field_key}' not found in data_shapes. "
-                f"Available keys: {list(data_shapes.keys())}"
-            )
-
-        # Full shape includes the batch dim; per-record draws use the element shape.
-        full_shape = data_shapes[self.config.field_key]  # e.g., (batch_size, H, W, C)
-        element_shape = tuple(full_shape[1:])
-        keep_prob = 1.0 - self.config.dropout_rate
-
-        if self.config.mode == "pixel":
-            # Per-record pixel-wise dropout mask.
-            keep_mask = per_element_params(
-                element_keys, lambda key: jax.random.bernoulli(key, keep_prob, shape=element_shape)
-            )
-        elif self.config.mode == "channel" and len(full_shape) == 4:
-            # Per-record channel mask (num_channels,), expanded to (1, 1, C) so the
-            # vmapped result is (batch, 1, 1, C) for broadcasting in apply().
-            num_channels = full_shape[3]
-            keep_mask = per_element_params(
-                element_keys,
-                lambda key: jax.random.bernoulli(key, keep_prob, shape=(num_channels,))[
-                    jnp.newaxis, jnp.newaxis, :
-                ],
-            )
-        elif self.config.mode == "channel":
-            # Fallback to pixel-wise for non-4D tensors.
-            keep_mask = per_element_params(
-                element_keys, lambda key: jax.random.bernoulli(key, keep_prob, shape=element_shape)
-            )
-        else:
-            raise ValueError(f"Unknown dropout mode: {self.config.mode}")
-
-        return {"keep_mask": keep_mask}
-
     def apply(
         self,
         data: dict[str, jax.Array],
         state: dict[str, Any],
         metadata: dict[str, Any],
-        random_params: dict[str, jax.Array] | None = None,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, jax.Array], dict[str, Any], dict[str, Any]]:
         """Apply dropout transformation to a single element.
 
         This operates on single elements (e.g., one image of shape [H, W, C]).
-        For batch processing, use apply_batch() which handles random param generation.
 
         Args:
             data: Input data dictionary. Must contain field specified by config.field_key
             state: Operator state (unused for dropout, passed through)
             metadata: Metadata dictionary (passed through unchanged)
-            random_params: Optional random parameters from generate_random_params().
-                          If config.stochastic=True and this is provided, uses
-                          random_params["keep_mask"] for the dropout mask.
+            key: This record's PRNG key, required in stochastic mode
             stats: Optional statistics dictionary (unused)
 
         Returns:
@@ -227,12 +161,7 @@ class DropoutOperator(ModalityOperator):
                 - metadata: Unchanged metadata dict
 
         Raises:
-            ValueError: If stochastic mode receives ``random_params`` without ``keep_mask``, or
-                ``config.mode`` is not a known dropout mode.
-
-        Note:
-            CRITICAL: Always check config.stochastic flag, not whether random_params is None.
-            apply_batch() always passes random_params even in deterministic mode.
+            ValueError: If ``config.mode`` is not a known dropout mode.
         """
         del stats
         # Extract the field to transform using base class helper
@@ -242,53 +171,38 @@ class DropoutOperator(ModalityOperator):
         if self.config.dropout_rate == 0.0:
             return data, state, metadata
 
-        # Get or generate dropout mask
-        # CRITICAL: Check config.stochastic flag, not if random_params is None
-        if self.config.stochastic and random_params is not None:
-            # Use pre-generated mask from generate_random_params()
-            # The mask is generated for the full batch, we get one slice per element
-            keep_mask = random_params.get("keep_mask")
-            if keep_mask is None:
-                raise ValueError(
-                    "Stochastic mode requires 'keep_mask' in random_params. "
-                    "This should be generated by generate_random_params()."
-                )
-            # Apply mask (will be broadcast if needed for channel mode)
-            transformed = value * keep_mask
-        else:
-            # Deterministic mode: generate mask with fixed seed
-            # CRITICAL: Never call self.rngs() here - it fails inside vmap!
-            # Use fixed seed for reproducible dropout pattern
-            rng_key = jax.random.key(0)
+        # This record's key when stochastic; a fixed one otherwise, which is what makes the
+        # deterministic dropout pattern the class documents reproducible. One dispatch serves
+        # both: only where the key comes from differs.
+        rng_key = require_key(key, self) if self.config.stochastic else jax.random.key(0)
 
-            # Apply dropout based on mode
-            if self.config.mode == "pixel":
-                # Pixel-wise dropout: each pixel independently dropped
+        if self.config.mode == "pixel":
+            # Pixel-wise dropout: each pixel independently dropped
+            keep_mask = jax.random.bernoulli(
+                rng_key, 1.0 - self.config.dropout_rate, shape=value.shape
+            )
+            transformed = value * keep_mask
+
+        elif self.config.mode == "channel":
+            # Channel-wise dropout: entire channels dropped
+            if value.ndim == 3:
+                h, w, c = value.shape
+                # Generate channel mask
+                channel_mask = jax.random.bernoulli(
+                    rng_key, 1.0 - self.config.dropout_rate, shape=(c,)
+                )
+                # Broadcast to full image shape (H, W, C)
+                keep_mask = jnp.ones((h, w, 1)) * channel_mask[None, None, :]
+                transformed = value * keep_mask
+            else:
+                # Fallback to pixel-wise for non-3D images
                 keep_mask = jax.random.bernoulli(
                     rng_key, 1.0 - self.config.dropout_rate, shape=value.shape
                 )
                 transformed = value * keep_mask
-
-            elif self.config.mode == "channel":
-                # Channel-wise dropout: entire channels dropped
-                if value.ndim == 3:
-                    h, w, c = value.shape
-                    # Generate channel mask
-                    channel_mask = jax.random.bernoulli(
-                        rng_key, 1.0 - self.config.dropout_rate, shape=(c,)
-                    )
-                    # Broadcast to full image shape (H, W, C)
-                    keep_mask = jnp.ones((h, w, 1)) * channel_mask[None, None, :]
-                    transformed = value * keep_mask
-                else:
-                    # Fallback to pixel-wise for non-3D images
-                    keep_mask = jax.random.bernoulli(
-                        rng_key, 1.0 - self.config.dropout_rate, shape=value.shape
-                    )
-                    transformed = value * keep_mask
-            else:
-                # Should never reach here due to config validation
-                raise ValueError(f"Unknown dropout mode: {self.config.mode}")
+        else:
+            # Should never reach here due to config validation
+            raise ValueError(f"Unknown dropout mode: {self.config.mode}")
 
         # Apply clipping if configured (though typically not needed for dropout)
         if self.config.clip_range is not None:

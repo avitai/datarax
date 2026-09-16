@@ -73,14 +73,14 @@ class NormalizeOperator(OperatorModule):
         self.mean = mean
         self.std = std
 
-    def apply(self, data, state, metadata, random_params=None, stats=None):
+    def apply(self, data, state, metadata, key=None, stats=None):
         # Simplified implementation
         return data, state, metadata
 
 # Defining a custom Stochastic Operator
 class RandomFlipOperator(OperatorModule):
-    def apply(self, data, state, metadata, random_params=None, stats=None):
-        # random_params would contain the key here
+    def apply(self, data, state, metadata, key=None, stats=None):
+        # key is this record's PRNG key; draw whatever randomness you apply from it
         return data, state, metadata
 
 # Instantiation

@@ -349,7 +349,7 @@ class CCMOperator(ModalityOperator):
         data: dict[str, Any],
         state: dict[str, Any],
         metadata: dict[str, Any] | None,
-        random_params: Any = None,
+        key: Any = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
         """Apply learnable color correction matrix to the image."""
@@ -390,7 +390,7 @@ class DesaturationOperator(ModalityOperator):
         data: dict[str, Any],
         state: dict[str, Any],
         metadata: dict[str, Any] | None,
-        random_params: Any = None,
+        key: Any = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
         """Apply learnable desaturation blending color with grayscale."""
@@ -435,7 +435,7 @@ class ToneMappingOperator(ModalityOperator):
         data: dict[str, Any],
         state: dict[str, Any],
         metadata: dict[str, Any] | None,
-        random_params: Any = None,
+        key: Any = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
         """Apply piecewise-linear tone mapping curve to the image."""
@@ -485,7 +485,7 @@ class GammaCorrectionOperator(ModalityOperator):
         data: dict[str, Any],
         state: dict[str, Any],
         metadata: dict[str, Any] | None,
-        random_params: Any = None,
+        key: Any = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
         """Apply learnable gamma correction to the image."""
@@ -540,7 +540,7 @@ class SharpeningOperator(ModalityOperator):
         data: dict[str, Any],
         state: dict[str, Any],
         metadata: dict[str, Any] | None,
-        random_params: Any = None,
+        key: Any = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
         """Apply learnable unsharp mask sharpening to the image."""
