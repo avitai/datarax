@@ -127,7 +127,7 @@ FASHION_CLASSES = [
 **Terminal Output:**
 ```
 JAX backend: gpu
-Fashion-MNIST classes: ['T-shirt/top', 'Trouser', 'Pullover', ...]
+Fashion-MNIST classes: ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat', 'Sandal', 'Shirt', 'Sneaker', 'Bag', 'Ankle boot']
 ```
 
 ## Part 2: Create Data Source and Preprocessing
@@ -170,7 +170,6 @@ preprocessor = ElementOperator(
 **Terminal Output:**
 ```
 Loaded 5000 Fashion-MNIST samples
-Created preprocessing operator
 ```
 
 ## Part 3: Define Augmentation Operators

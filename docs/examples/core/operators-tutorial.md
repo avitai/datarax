@@ -250,20 +250,17 @@ rotation_op = RotationOperator(
     RotationOperatorConfig(
         field_key="image",
         angle_range=(-15.0, 15.0),  # Degrees
-        fill_value=0.0,  # Fill empty areas with black
+        fill_value=0.0,
         stochastic=True,
         stream_name="rotation",
     ),
-    rngs=nnx.Rngs(rotation=0),
+    rngs=nnx.Rngs(rotation=400),
 )
 ```
 
 **Terminal Output:**
 ```
-RotationOperator:
-  - Rotates image by random angle
-  - Range: [-15°, +15°]
-  - Uses bilinear interpolation
+  - RotationOperator (angle: -15° to +15°)
 ```
 
 ## Part 4: Field Filtering
@@ -448,8 +445,8 @@ print(f"Mean pixel value: {sum(stats['mean_values']) / len(stats['mean_values'])
 **Terminal Output:**
 ```
 Batches: 4
-Samples: 100
-Mean pixel value: 0.4982
+Samples: 128
+Mean pixel value: 0.4947
 ```
 
 ## Part 7: Custom Operator Patterns

@@ -290,10 +290,10 @@ See the effect of each augmentation type.
 
 
 # %%
-def create_single_aug_pipeline(operator, seed=0):
+def create_single_aug_pipeline(operator, seed=0, num_samples=64):
     """Create pipeline with single augmentation for visualization."""
     source = TFDSEagerSource(
-        TFDSEagerConfig(name="fashion_mnist", split="train[:64]", shuffle=False),
+        TFDSEagerConfig(name="fashion_mnist", split=f"train[:{num_samples}]", shuffle=False),
         rngs=nnx.Rngs(seed),
     )
 
@@ -538,16 +538,18 @@ Profile the time cost of each augmentation step.
 """
 
 # %%
-# Benchmark individual augmentations
+# Benchmark individual augmentations over the training split, so each operator is timed on
+# num_batches batches after a warm-up batch; a 64-sample source yields one batch, which
+# leaves nothing to average once the warm-up is skipped.
 num_batches = 20
 latencies = {}
 
 for name, op, _ in aug_configs[1:]:  # Skip "Original"
-    pipeline = create_single_aug_pipeline(op, seed=0)
+    pipeline = create_single_aug_pipeline(op, seed=0, num_samples=TRAIN_SAMPLES)
 
     times = []
     for i, batch in enumerate(pipeline):
-        if i >= num_batches:
+        if i > num_batches:
             break
         start = time.time()
         _ = batch["image"].block_until_ready()  # Force computation
