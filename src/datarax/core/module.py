@@ -222,49 +222,6 @@ class DataraxModule(nnx.Module):
             self._cache.clear()
 
     # ========================================================================
-    # Module Copying
-    # ========================================================================
-
-    def copy(
-        self,
-        *,
-        config: DataraxModuleConfig | None = None,
-        rngs: nnx.Rngs | None = None,
-        name: str | None = None,
-    ) -> "DataraxModule":
-        """Create a copy of this module with optional config/parameter changes.
-
-        This allows creating a new module instance with modified configuration
-        while preserving other attributes. Useful for hyperparameter tuning.
-
-        Args:
-            config: New config (if None, uses current config)
-            rngs: New RNG state (if None, uses current rngs)
-            name: New name (if None, uses current name)
-
-        Returns:
-            New module instance with updated parameters
-
-        Examples:
-            # Change configuration
-            new_config = DataraxModuleConfig(cacheable=True)
-            new_module = module.copy(config=new_config)
-
-            # Change name only
-            renamed = module.copy(name="new_name")
-
-        Note:
-            Subclasses can override this method to provide more fine-grained
-            control over copying, such as allowing individual config field
-            updates without requiring dataclass replace().
-        """
-        return type(self)(
-            config=config if config is not None else self.config,
-            rngs=rngs if rngs is not None else self.rngs,
-            name=name if name is not None else self.name,
-        )
-
-    # ========================================================================
     # Utilities
     # ========================================================================
 
