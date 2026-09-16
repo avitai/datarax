@@ -4,14 +4,18 @@ Validates that:
 1. Deterministic ElementOperator.generate_random_params returns None
 2. Deterministic MapOperator.generate_random_params returns None
 3. The 2-argument vmap path is used when random_params is None
+4. A deterministic operator's apply receives no random parameters at all
 """
+
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax.core.config import ElementOperatorConfig
+from datarax.core.config import ElementOperatorConfig, OperatorConfig
+from datarax.core.operator import OperatorModule
 from datarax.operators.element_operator import ElementOperator
 from datarax.operators.map_operator import MapOperator, MapOperatorConfig
 
@@ -109,3 +113,61 @@ class TestVmapPathSelection:
         result_data, result_states = op._vmap_apply(data, states)
         assert "value" in result_data
         np.testing.assert_array_equal(result_data["value"], data["value"])
+
+
+_SEEN_RANDOM_PARAMS: list[Any] = []
+
+
+class _RecordingOperator(OperatorModule):
+    """An operator that records the random parameters each apply call is given."""
+
+    def apply(self, data, state, metadata, random_params=None, stats=None):
+        """Record the random parameters and return the record unchanged."""
+        del metadata, stats
+        _SEEN_RANDOM_PARAMS.append(random_params)
+        return data, state, None
+
+    def generate_random_params(self, element_keys, data_shapes):
+        """Return one key per record, as any stochastic operator does."""
+        del data_shapes
+        return element_keys
+
+
+class TestDeterministicApplyReceivesNoRandomParameters:
+    """What a deterministic operator's apply is handed, not just what it returns."""
+
+    def test_deterministic_apply_is_given_none(self):
+        """Every apply call a deterministic operator makes receives None.
+
+        The assertion is over every recorded call rather than a call count: the output
+        structure is discovered by calling apply as well, so counting calls would pin the
+        discovery mechanism instead of the property.
+        """
+        _SEEN_RANDOM_PARAMS.clear()
+        op = _RecordingOperator(OperatorConfig(stochastic=False))
+
+        op._vmap_apply({"value": jnp.ones((4, 8))}, {})
+
+        assert _SEEN_RANDOM_PARAMS
+        assert all(params is None for params in _SEEN_RANDOM_PARAMS)
+
+    def test_stochastic_apply_is_given_parameters(self):
+        """The same spy sees parameters when the operator is stochastic.
+
+        Without this, the test above would pass just as well against a spy that records
+        nothing the operator is given. The two assertions are deliberately asymmetric: a
+        deterministic operator has no call that receives parameters, while a stochastic one
+        has at least one. Discovering the output structure calls apply with no parameters
+        whatever the mode, so a stochastic operator is handed None once and its per-record
+        keys once.
+        """
+        _SEEN_RANDOM_PARAMS.clear()
+        op = _RecordingOperator(
+            OperatorConfig(stochastic=True, stream_name="augment"),
+            rngs=nnx.Rngs(augment=0),
+        )
+
+        op._vmap_apply({"value": jnp.ones((4, 8))}, {})
+
+        assert _SEEN_RANDOM_PARAMS
+        assert any(params is not None for params in _SEEN_RANDOM_PARAMS)
