@@ -198,12 +198,13 @@ All advanced operators use specific patterns for JAX compatibility:
 | `jax.lax.cond` | ProbabilisticOperator | Conditional execution |
 | `jax.lax.switch` | SelectorOperator | Multi-way branching |
 | `jax.lax.fori_loop` | PatchDropoutOperator | Loop over patches |
-| Pre-generated random params | All | vmap compatibility |
+| One PRNG key per record, passed to `apply` | All | vmap compatibility |
 
 **Why These Patterns?**
 
 1. **No Python if statements**: Traced JAX values can't be used in Python conditionals
-2. **Pre-generated randoms**: Avoids RNG state mutations inside vmap
+2. **A key per record**: `apply` draws only from its `key` argument and an operator keeps
+   no `Rngs`, so nothing mutates RNG state inside vmap
 3. **Fixed output shapes**: vmap requires consistent shapes across branches
 
 ## Results

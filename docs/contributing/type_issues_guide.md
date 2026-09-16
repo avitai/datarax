@@ -500,12 +500,15 @@ def increment(counter: Counter):
 
 result = increment(counter)
 
-# ✅ For Datarax operators
+# ✅ For Datarax operators: apply is a pure function of one record and runs under vmap,
+# so module state moves in compute_statistics, which runs once per batch
 class MyOperator(OperatorModule):
-    def apply(self, batch: Batch, key: jax.Array | None = None) -> Batch:
-        # State updates happen through self.* Variables
-        self.call_count[...] += 1
-        return batch
+    def compute_statistics(self, batch_data):
+        self.batches_seen[...] += 1
+        return self.get_statistics()
+
+    def apply(self, data, state, metadata, key=None, stats=None):
+        return data, state, metadata
 ```
 
 ### 9. Custom Variable Types and Filtering
@@ -541,8 +544,8 @@ special, regular = state.split(SpecialParam, nnx.Param)
 from datarax.core import DataraxModule
 
 class MyModule(DataraxModule):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config: DataraxModuleConfig):
+        super().__init__(config)
         self.weight = nnx.Param(jnp.ones((10, 10)))
         self.running_mean = nnx.BatchStat(jnp.zeros((10,)))
 

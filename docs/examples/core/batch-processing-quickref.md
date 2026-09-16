@@ -126,7 +126,10 @@ Source (yields elements) --> Pipeline (groups into batches via batch_size) --> Y
 ```
 
 - `batch_size=32` groups 32 elements into each batch
-- The last batch may be smaller if `num_elements % batch_size != 0`
+- A random-access source (`MemorySource` and the other indexed sources) keeps every batch at
+  `batch_size`, so the compiled step has one shape; when `num_elements % batch_size != 0`,
+  the last batch of an epoch continues from the start of the epoch's order
+- A streaming source, which has no indexed access, yields a shorter last batch instead
 
 ```python
 # Standard batching
