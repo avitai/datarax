@@ -23,7 +23,7 @@ Key Features:
 """
 
 import logging
-from typing import Any
+from typing import Any, NoReturn
 
 import jax
 import jax.numpy as jnp
@@ -114,12 +114,12 @@ class BatchMixOperator(OperatorModule):
         metadata: dict[str, Any] | None,
         random_params: Any = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
-        """Apply operator to single element - not used for batch-level ops.
+    ) -> NoReturn:
+        """Refuse the per-record call: batch mixing has no element-level form.
 
-        BatchMixOperator overrides apply_batch() completely, so this method
-        is not called. Batch mixing cannot be decomposed into element-level
-        operations. Implemented to satisfy the interface.
+        The operator mixes each record with another record of the same batch, which a
+        single record cannot do, so it overrides ``apply_batch`` and ``_apply_on_raw``
+        instead. This method exists to satisfy the element-level interface.
 
         Args:
             data: Element data PyTree
@@ -128,11 +128,14 @@ class BatchMixOperator(OperatorModule):
             random_params: Unused
             stats: Unused
 
-        Returns:
-            Input unchanged (not used in practice)
+        Raises:
+            NotImplementedError: Always; mixing needs the whole batch.
         """
-        del random_params, stats
-        return data, state, metadata
+        del data, state, metadata, random_params, stats
+        raise NotImplementedError(
+            "BatchMixOperator mixes each record with another record of the same batch, "
+            "so it has no per-record form; call apply_batch(batch) or the operator itself."
+        )
 
     def apply_batch(
         self,
