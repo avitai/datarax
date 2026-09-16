@@ -190,7 +190,8 @@ class NoiseOperator(ModalityOperator):
             stochastic=True
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
-        result, state, metadata = operator.apply_batch(batch_data, state, metadata)
+        # Call the operator on a batch: it draws noise per record
+        result_batch = operator(batch)
         ```
 
     """

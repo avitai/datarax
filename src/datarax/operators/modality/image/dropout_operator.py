@@ -113,8 +113,8 @@ class DropoutOperator(ModalityOperator):
             stochastic=True
         )
         operator = DropoutOperator(config, rngs=nnx.Rngs(0))
-        # Use apply_batch() for automatic random param generation
-        result, state, metadata = operator.apply_batch(batch_data, state, metadata)
+        # Call the operator on a batch: it draws a mask per record
+        result_batch = operator(batch)
         ```
 
     """
