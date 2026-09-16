@@ -59,7 +59,7 @@ def extract_batch_size(data_shapes: PyTree) -> int:
     return batch_size_leaves[0]
 
 
-def _global_indices_from_metadata(metadata_list: Any) -> jax.Array | None:
+def _record_indices_from_metadata(metadata_list: Any) -> jax.Array | None:
     """Extract per-record global indices from a batch's metadata list.
 
     Returns a ``(batch_size,)`` array of ``Metadata.index`` values, or ``None``
@@ -281,7 +281,7 @@ class OperatorModule(DataraxModule):
         batch_data: PyTree,
         batch_states: PyTree,
         stats: dict[str, Any] | None = None,
-        global_indices: jax.Array | None = None,
+        record_indices: jax.Array | None = None,
         epoch: jax.Array | int | None = None,
     ) -> tuple[PyTree, PyTree]:
         """Apply operator over batch via vmap (parallel) or scan (sequential).
@@ -302,7 +302,7 @@ class OperatorModule(DataraxModule):
             batch_data: PyTree with arrays having batch dimension as axis 0.
             batch_states: PyTree with arrays having batch dimension as axis 0.
             stats: Optional statistics (if None, uses get_statistics()).
-            global_indices: Optional int array ``(batch_size,)`` of stable record
+            record_indices: Optional int array ``(batch_size,)`` of stable record
                 indices for per-record RNG. When ``None`` (no record information
                 available), falls back to ``arange(batch_size)``, which is
                 deterministic per batch layout but not globally unique.
@@ -323,9 +323,9 @@ class OperatorModule(DataraxModule):
         # and the record's global index — never from a per-batch stream draw.
         if self.stochastic:
             batch_size = extract_batch_size(data_shapes)
-            if global_indices is None:
-                global_indices = jnp.arange(batch_size, dtype=jnp.uint32)
-            element_keys = per_record_keys(self._base_key[...], global_indices, epoch)
+            if record_indices is None:
+                record_indices = jnp.arange(batch_size, dtype=jnp.uint32)
+            element_keys = per_record_keys(self._base_key[...], record_indices, epoch)
             random_params_batch = self.generate_random_params(element_keys, data_shapes)
         else:
             # Deterministic operators receive no random parameters.
@@ -369,7 +369,7 @@ class OperatorModule(DataraxModule):
         batch_data: PyTree,
         batch_states: PyTree,
         stats: dict[str, Any] | None = None,
-        global_indices: jax.Array | None = None,
+        record_indices: jax.Array | None = None,
         epoch: jax.Array | int | None = None,
     ) -> tuple[PyTree, PyTree]:
         """Apply operator on raw dicts without Batch object creation.
@@ -382,7 +382,7 @@ class OperatorModule(DataraxModule):
             batch_data: Dict of batched arrays (axis 0 is batch).
             batch_states: Dict of batched state arrays.
             stats: Optional statistics.
-            global_indices: Optional ``(batch_size,)`` stable record indices for
+            record_indices: Optional ``(batch_size,)`` stable record indices for
                 per-record RNG (see ``_vmap_apply``). The Pipeline threads the
                 indices its source names for the batch.
             epoch: The epoch the records belong to (see ``_vmap_apply``).
@@ -390,7 +390,7 @@ class OperatorModule(DataraxModule):
         Returns:
             Tuple of (transformed_data, transformed_states) as raw dicts.
         """
-        return self._vmap_apply(batch_data, batch_states, stats, global_indices, epoch)
+        return self._vmap_apply(batch_data, batch_states, stats, record_indices, epoch)
 
     def apply_batch(
         self,
@@ -434,11 +434,11 @@ class OperatorModule(DataraxModule):
 
         # Per-record RNG: use the batch's stable global record indices when the
         # metadata carries them; otherwise _vmap_apply falls back to arange.
-        global_indices = _global_indices_from_metadata(batch_metadata.get_value())
+        record_indices = _record_indices_from_metadata(batch_metadata.get_value())
 
         # Delegate to shared vmap core
         transformed_data, transformed_states = self._vmap_apply(
-            batch_data, batch_states, stats, global_indices
+            batch_data, batch_states, stats, record_indices
         )
 
         # Reconstruct batch (preserves batch-level data, including valid_mask).

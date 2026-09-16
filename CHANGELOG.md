@@ -88,6 +88,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SamplerConfig`, `eager_reset` and `reset_streaming_state` no longer take the cache they only ever cleared
   when it was empty, and the modality and cross-modal docstrings stop promising a caching system that never
   ran. A config that set `cacheable` on an operator or another module must drop it.
+- The stable per-record index that `OperatorModule._vmap_apply` and `_apply_on_raw` take is named
+  `record_indices`, which is what the pipeline layer calling them already called it (`run_dag`,
+  `PipelineIterator`, `per_record_keys`). One concept carried two names across the seam between the two
+  layers, and the executor passed `record_indices` into a parameter named `global_indices`. Both methods
+  are private and every call site passes the index positionally, so only a caller naming it as a keyword
+  has anything to change; the helper reading the indices out of batch metadata is
+  `_record_indices_from_metadata`.
 
 ### Removed
 

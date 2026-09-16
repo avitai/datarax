@@ -47,7 +47,7 @@ def run_dag(  # noqa: PLR0913 - the static plan is four separate pipeline attrib
 ) -> Any:
     """Run the stages over ``batch`` in ``exec_order`` and return the sink's output.
 
-    Stages exposing ``_apply_on_raw(data, states, stats, global_indices, epoch)``
+    Stages exposing ``_apply_on_raw(data, states, stats, record_indices, epoch)``
     (every ``OperatorModule``) take the raw dict path with states threaded
     between them and discarded at the sink; any other ``nnx.Module`` is called
     with its inputs. Stochastic operators key each record on ``epoch`` and its
