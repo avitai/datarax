@@ -21,15 +21,28 @@ class TestContrastOperatorConfig:
     """Test ContrastOperatorConfig validation and initialization."""
 
     def test_basic_config_creation(self):
-        """Test basic config creation with required parameters."""
+        """A stochastic config keeps the contrast range it is given."""
         config = ContrastOperatorConfig(
             field_key="image",
             contrast_range=(0.8, 1.2),
+            stochastic=True,
+            stream_name="augment",
         )
 
         assert config.field_key == "image"
         assert config.contrast_range == (0.8, 1.2)
+        assert config.contrast_factor is None
         assert config.clip_range == (0.0, 1.0)  # Default value
+
+    def test_default_parameters_follow_the_mode(self):
+        """Deterministic mode defaults to factor 1.0, stochastic mode to the range (0.8, 1.2)."""
+        deterministic = ContrastOperatorConfig(field_key="image")
+        stochastic = ContrastOperatorConfig(
+            field_key="image", stochastic=True, stream_name="augment"
+        )
+
+        assert (deterministic.contrast_factor, deterministic.contrast_range) == (1.0, None)
+        assert (stochastic.contrast_factor, stochastic.contrast_range) == (None, (0.8, 1.2))
 
     def test_invalid_contrast_range(self):
         """Test validation of contrast_range parameter."""
@@ -37,6 +50,8 @@ class TestContrastOperatorConfig:
             ContrastOperatorConfig(
                 field_key="image",
                 contrast_range=(1.2, 0.8),  # Invalid: min > max
+                stochastic=True,
+                stream_name="augment",
             )
 
 

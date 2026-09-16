@@ -14,7 +14,9 @@ Examples:
     ```python
     config = BrightnessOperatorConfig(
         field_key="image",
-        brightness_range=(-0.2, 0.2)
+        brightness_range=(-0.2, 0.2),
+        stochastic=True,
+        stream_name="augment",
     )
     op = BrightnessOperator(config, rngs=rngs)
     ```
@@ -22,7 +24,7 @@ Examples:
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import jax
 from flax import nnx
@@ -30,9 +32,13 @@ from flax import nnx
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 from datarax.core.operator import require_key
 from datarax.operators.modality.image import functional
+from datarax.operators.modality.image._validation import resolve_mode_parameters
 
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_BRIGHTNESS_RANGE = (-0.2, 0.2)
+DEFAULT_BRIGHTNESS_DELTA = 0.0
 
 
 @dataclass(frozen=True)
@@ -44,10 +50,11 @@ class BrightnessOperatorConfig(ModalityOperatorConfig):
     Attributes:
         clip_range: Range for clipping output values. Default: (0.0, 1.0) for
                    normalized images. Overrides parent default of None.
-        brightness_range: Range for random brightness adjustment in stochastic mode.
-                         Format: (min_delta, max_delta). Default: (-0.2, 0.2)
-        brightness_delta: Fixed brightness adjustment for deterministic mode.
-                         Only used when stochastic=False. Default: 0.0
+        brightness_range: ``(min_delta, max_delta)`` a stochastic operator draws each
+                         record's delta from. Default: (-0.2, 0.2). Refused when
+                         stochastic=False.
+        brightness_delta: The delta a deterministic operator adds. Default: 0.0.
+                         Refused when stochastic=True.
 
     Note:
         Use brightness_range=(-max_delta, max_delta) for symmetric adjustments,
@@ -57,23 +64,20 @@ class BrightnessOperatorConfig(ModalityOperatorConfig):
     # Override parent's clip_range default to (0.0, 1.0) for normalized images
     clip_range: tuple[float, float] | None = field(default=(0.0, 1.0), kw_only=True)
 
-    brightness_range: tuple[float, float] = field(default=(-0.2, 0.2), kw_only=True)
-    brightness_delta: float = field(default=0.0, kw_only=True)
+    # Each mode uses one of these; __post_init__ fills in its default and refuses the other.
+    brightness_range: tuple[float, float] | None = field(default=None, kw_only=True)
+    brightness_delta: float | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
-        """Validate configuration parameters."""
+        """Validate configuration parameters and resolve the parameter the mode uses."""
         super().__post_init__()
-
-        # Validate brightness_range
-        if not isinstance(self.brightness_range, tuple) or len(self.brightness_range) != 2:
-            raise ValueError(
-                f"brightness_range must be a tuple of length 2, got {self.brightness_range}"
-            )
-        min_bright, max_bright = self.brightness_range
-        if min_bright > max_bright:
-            raise ValueError(
-                f"brightness_range must be (min, max) with min <= max, got {self.brightness_range}"
-            )
+        resolve_mode_parameters(
+            self,
+            range_field="brightness_range",
+            fixed_field="brightness_delta",
+            default_range=DEFAULT_BRIGHTNESS_RANGE,
+            default_fixed=DEFAULT_BRIGHTNESS_DELTA,
+        )
 
 
 class BrightnessOperator(ModalityOperator):
@@ -168,13 +172,13 @@ class BrightnessOperator(ModalityOperator):
         # 2. Determine brightness adjustment
         if self.config.stochastic:
             # This record's own delta, drawn from its own key
-            min_bright, max_bright = self.config.brightness_range
+            min_bright, max_bright = cast(tuple[float, float], self.config.brightness_range)
             brightness_delta = jax.random.uniform(
                 require_key(key, self), shape=(), minval=min_bright, maxval=max_bright
             )
         else:
             # Deterministic mode: use config value
-            brightness_delta = self.config.brightness_delta
+            brightness_delta = cast(float, self.config.brightness_delta)
 
         # 3. Apply brightness adjustment via functional API
         # Note: apply() operates on single elements (no batch dimension)
