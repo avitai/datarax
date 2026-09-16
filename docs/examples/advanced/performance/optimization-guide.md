@@ -264,8 +264,10 @@ operators = {
         rngs=nnx.Rngs(c=2),
     ),
     "Rotation": RotationOperator(
-        RotationOperatorConfig(field_key="image", angle_range=(-15, 15)),
-        rngs=nnx.Rngs(0),
+        RotationOperatorConfig(
+            field_key="image", angle_range=(-15, 15), stochastic=True, stream_name="r"
+        ),
+        rngs=nnx.Rngs(r=4),
     ),
     "Noise": NoiseOperator(
         NoiseOperatorConfig(

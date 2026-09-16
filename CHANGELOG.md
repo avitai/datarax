@@ -44,6 +44,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `RotationOperatorConfig` uses one parameter per mode, as the brightness and contrast configs
+  do: a stochastic operator draws each record's angle from `angle_range` (default
+  `(-15.0, 15.0)`), a deterministic operator applies `angle` (default `0.0`), and each config
+  refuses the parameter its mode does not use. A deterministic operator given `angle_range`
+  used to rotate every image by the range's midpoint, so the symmetric ranges the augmentation
+  examples passed without `stochastic=True` rotated by 0° while the examples called the result
+  a random rotation; those examples and their docs pages now build the operator stochastic.
 - `SelectorOperatorConfig.normalized_weights` is a tuple of floats instead of a `jax.Array`.
   Comparing two equal configs raised `ValueError: The truth value of an array with more than one
   element is ambiguous`, which also reaches `nnx.jit` dispatch, since a config is graphdef

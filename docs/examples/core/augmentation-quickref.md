@@ -26,7 +26,7 @@ This quick reference demonstrates Datarax's built-in image augmentation operator
 |---------|---------|
 | `transforms.ColorJitter(brightness=0.2)` | `BrightnessOperator(brightness_range=(-0.2, 0.2))` |
 | `transforms.ColorJitter(contrast=(0.8, 1.2))` | `ContrastOperator(contrast_range=(0.8, 1.2))` |
-| `transforms.RandomRotation(15)` | `RotationOperator(angle_range=(-15, 15))` |
+| `transforms.RandomRotation(15)` | `RotationOperator(angle_range=(-15, 15), stochastic=True)` |
 | `transforms.GaussianBlur(kernel_size)` | Custom `ElementOperator` with blur logic |
 | `transforms.Compose([T1, T2, T3])` | `Pipeline(source=..., stages=[op1, op2, ...], ...)` |
 
@@ -38,7 +38,7 @@ This quick reference demonstrates Datarax's built-in image augmentation operator
 |------------|---------|
 | `tf.image.random_brightness(image, 0.2)` | `BrightnessOperator(brightness_range=(-0.2, 0.2))` |
 | `tf.image.random_contrast(image, 0.8, 1.2)` | `ContrastOperator(contrast_range=(0.8, 1.2))` |
-| `tfa.image.rotate(image, angles)` | `RotationOperator(angle_range=(-180, 180))` |
+| `tfa.image.rotate(image, angles)` | `RotationOperator(angle_range=(-180, 180), stochastic=True)` |
 | `tf.image.random_noise(...)` | `NoiseOperator(mode="gaussian", noise_std=0.05)` |
 | Sequential preprocessing layers | Chain with the `stages=[...]` argument |
 
@@ -191,8 +191,10 @@ rotation_op = RotationOperator(
         field_key="image",
         angle_range=(-15.0, 15.0),  # Degrees
         fill_value=0.0,  # Fill empty areas with black
+        stochastic=True,
+        stream_name="rotation",
     ),
-    rngs=nnx.Rngs(0),
+    rngs=nnx.Rngs(rotation=0),
 )
 
 print("RotationOperator:")

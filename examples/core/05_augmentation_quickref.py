@@ -167,8 +167,10 @@ rotation_op = RotationOperator(
         field_key="image",
         angle_range=(-15.0, 15.0),  # Degrees
         fill_value=0.0,  # Fill empty areas with black
+        stochastic=True,
+        stream_name="rotation",
     ),
-    rngs=nnx.Rngs(0),
+    rngs=nnx.Rngs(rotation=0),
 )
 
 print("RotationOperator:")

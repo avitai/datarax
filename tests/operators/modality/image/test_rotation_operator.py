@@ -22,20 +22,29 @@ class TestRotationOperatorConfig:
     """Test suite for RotationOperatorConfig validation."""
 
     def test_config_defaults(self):
-        """Test default configuration values."""
+        """A deterministic config applies angle 0.0 and holds no range."""
         config = RotationOperatorConfig(field_key="image")
         assert config.field_key == "image"
-        assert config.angle_range == (-15.0, 15.0)
+        assert config.angle == 0.0
+        assert config.angle_range is None
         assert config.fill_value == 0.0
         assert config.interpolation == "bilinear"
         assert config.clip_range == (0.0, 1.0)
         # stochastic defaults to False (inherited from ModalityOperatorConfig)
+
+    def test_stochastic_config_defaults_to_the_symmetric_range(self):
+        """A stochastic config draws from (-15, 15) by default and holds no fixed angle."""
+        config = RotationOperatorConfig(field_key="image", stochastic=True, stream_name="augment")
+        assert config.angle_range == (-15.0, 15.0)
+        assert config.angle is None
 
     def test_config_custom_angle_range(self):
         """Test custom angle range configuration."""
         config = RotationOperatorConfig(
             field_key="image",
             angle_range=(-30.0, 30.0),
+            stochastic=True,
+            stream_name="augment",
         )
         assert config.angle_range == (-30.0, 30.0)
 
@@ -44,6 +53,8 @@ class TestRotationOperatorConfig:
         config = RotationOperatorConfig(
             field_key="image",
             angle_range=(-45.0, 45.0),
+            stochastic=True,
+            stream_name="augment",
         )
         assert config.angle_range == (-45.0, 45.0)
 
@@ -65,10 +76,12 @@ class TestRotationOperatorConfig:
 
     def test_config_invalid_angle_range_order(self):
         """Test that invalid angle range order raises ValueError."""
-        with pytest.raises(ValueError, match="angle_range min must be <= max"):
+        with pytest.raises(ValueError, match="angle_range must be.*with min <= max"):
             RotationOperatorConfig(
                 field_key="image",
                 angle_range=(30.0, -30.0),  # Invalid: min > max
+                stochastic=True,
+                stream_name="augment",
             )
 
     def test_config_stochastic_requires_stream_name(self):
@@ -98,12 +111,12 @@ class TestRotationOperatorInitialization:
         """Test deterministic initialization without RNGs."""
         config = RotationOperatorConfig(
             field_key="image",
-            angle_range=(-20.0, 20.0),
+            angle=20.0,
         )
         operator = RotationOperator(config)
 
         assert operator.config.field_key == "image"
-        assert operator.config.angle_range == (-20.0, 20.0)
+        assert operator.config.angle == 20.0
         assert operator.config.stochastic is False
 
     def test_stochastic_initialization(self):
@@ -162,7 +175,7 @@ class TestRotationOperatorTransformations:
         """Test that zero angle range produces no rotation."""
         config = RotationOperatorConfig(
             field_key="image",
-            angle_range=(0.0, 0.0),  # No rotation
+            angle=0.0,  # No rotation
         )
         operator = RotationOperator(config)
 
@@ -219,7 +232,7 @@ class TestRotationOperatorTransformations:
         """Test that fill value is applied to empty areas."""
         config = RotationOperatorConfig(
             field_key="image",
-            angle_range=(45.0, 45.0),  # Fixed 45-degree rotation
+            angle=45.0,  # Fixed 45-degree rotation
             fill_value=0.8,
         )
         operator = RotationOperator(config)
@@ -312,7 +325,7 @@ class TestRotationOperatorEdgeCases:
         """Test rotation with nested field access."""
         config = RotationOperatorConfig(
             field_key="data.image",
-            angle_range=(10.0, 10.0),  # Fixed 10-degree rotation
+            angle=10.0,  # Fixed 10-degree rotation
         )
         operator = RotationOperator(config)
 
@@ -361,14 +374,16 @@ class TestRotationOperatorEdgeCases:
         config = RotationOperatorConfig(
             field_key="image",
             angle_range=(-15.0, -5.0),  # Only negative angles
+            stochastic=True,
+            stream_name="augment",
         )
-        operator = RotationOperator(config)
+        operator = RotationOperator(config, rngs=nnx.Rngs(augment=0))
 
         image = jnp.ones((16, 16, 3)) * 0.5
         data = {"image": image}
 
         # Should not raise an error
-        result, state, metadata = operator.apply(data, {}, {})
+        result, state, metadata = operator.apply(data, {}, {}, key=jax.random.key(0))
         assert result["image"].shape == (16, 16, 3)
 
 
@@ -451,7 +466,7 @@ class TestRotationOperatorJAXCompatibility:
         """Test that operator works with JAX jit compilation."""
         config = RotationOperatorConfig(
             field_key="image",
-            angle_range=(15.0, 15.0),  # Fixed angle for deterministic test
+            angle=15.0,  # Fixed angle for deterministic test
         )
         operator = RotationOperator(config)
 
@@ -470,7 +485,7 @@ class TestRotationOperatorJAXCompatibility:
         """Test that operator works with JAX vmap."""
         config = RotationOperatorConfig(
             field_key="image",
-            angle_range=(10.0, 10.0),  # Fixed angle
+            angle=10.0,  # Fixed angle
         )
         operator = RotationOperator(config)
 
@@ -492,7 +507,7 @@ class TestRotationOperatorJAXCompatibility:
         """Test that gradients flow through rotation operator."""
         config = RotationOperatorConfig(
             field_key="image",
-            angle_range=(10.0, 10.0),  # Fixed angle for stable gradients
+            angle=10.0,  # Fixed angle for stable gradients
         )
         operator = RotationOperator(config)
 
@@ -512,7 +527,7 @@ class TestRotationOperatorJAXCompatibility:
         """Test that operator is functionally pure (no side effects)."""
         config = RotationOperatorConfig(
             field_key="image",
-            angle_range=(15.0, 15.0),  # Fixed angle
+            angle=15.0,  # Fixed angle
         )
         operator = RotationOperator(config)
 
@@ -538,8 +553,10 @@ class TestRotationOperatorCommonPatterns:
             field_key="image",
             angle_range=(-30.0, 30.0),
             fill_value=0.5,
+            stochastic=True,
+            stream_name="augment",
         )
-        operator = RotationOperator(config)
+        operator = RotationOperator(config, rngs=nnx.Rngs(augment=0))
 
         assert operator.config.field_key == "image"
         assert operator.config.angle_range == (-30.0, 30.0)
@@ -549,7 +566,7 @@ class TestRotationOperatorCommonPatterns:
         """Test that rotation preserves image statistics reasonably."""
         config = RotationOperatorConfig(
             field_key="image",
-            angle_range=(15.0, 15.0),  # Fixed 15-degree rotation
+            angle=15.0,  # Fixed 15-degree rotation
             fill_value=0.5,
         )
         operator = RotationOperator(config)

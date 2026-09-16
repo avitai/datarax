@@ -28,7 +28,7 @@ Master the Datarax operator system - the building blocks for data transformation
 | `transforms.Normalize(mean, std)` | `ElementOperator` with custom normalization fn |
 | `transforms.RandomHorizontalFlip(p=0.5)` | `ElementOperator(stochastic=True)` with flip logic |
 | `transforms.ColorJitter(brightness=0.2)` | `BrightnessOperator(brightness_range=(-0.2, 0.2))` |
-| `transforms.RandomRotation(15)` | `RotationOperator(angle_range=(-15, 15))` |
+| `transforms.RandomRotation(15)` | `RotationOperator(angle_range=(-15, 15), stochastic=True)` |
 | `transforms.Compose([T1, T2])` | `CompositeOperatorModule` with SEQUENTIAL strategy |
 
 **Key difference:** Datarax operators use JAX random keys and explicit RNG streams for fine-grained reproducibility. Each stochastic operator needs a unique `stream_name`.
@@ -40,7 +40,7 @@ Master the Datarax operator system - the building blocks for data transformation
 | `tf.keras.layers.Normalization()` | `ElementOperator` with normalization function |
 | `tf.image.random_brightness(image, 0.2)` | `BrightnessOperator(brightness_range=(-0.2, 0.2))` |
 | `tf.image.random_contrast(image, 0.8, 1.2)` | `ContrastOperator(contrast_range=(0.8, 1.2))` |
-| `tf.image.rot90(image, k=random)` | `RotationOperator(angle_range=(0, 360))` |
+| `tf.image.rot90(image, k=random)` | `RotationOperator(angle_range=(0, 360), stochastic=True)` |
 | Sequential preprocessing layers | `CompositeOperatorModule` |
 
 **Key difference:** Datarax operators are JAX-first with JIT compilation support and work with the Element abstraction rather than raw tensors.
@@ -251,8 +251,10 @@ rotation_op = RotationOperator(
         field_key="image",
         angle_range=(-15.0, 15.0),  # Degrees
         fill_value=0.0,  # Fill empty areas with black
+        stochastic=True,
+        stream_name="rotation",
     ),
-    rngs=nnx.Rngs(0),
+    rngs=nnx.Rngs(rotation=0),
 )
 ```
 
