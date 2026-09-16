@@ -28,7 +28,7 @@ import jax
 from flax import nnx
 
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
-from datarax.operators._random_params import per_element_params
+from datarax.core.operator import require_key
 from datarax.operators.modality.image import functional
 
 
@@ -112,7 +112,7 @@ class ContrastOperator(ModalityOperator):
         data: dict[str, Any],
         state: dict[str, Any],
         metadata: dict[str, Any],
-        random_params: dict[str, Any] | None = None,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
         """Apply contrast transformation to data.
@@ -121,7 +121,7 @@ class ContrastOperator(ModalityOperator):
             data: Input data dictionary containing the image field
             state: Operator state
             metadata: Metadata dictionary
-            random_params: Optional random parameters for stochastic mode.
+            key: This record's PRNG key, required in stochastic mode
             stats: Optional statistics dictionary
 
         Returns:
@@ -132,9 +132,12 @@ class ContrastOperator(ModalityOperator):
         image = self._extract_field(data, self.config.field_key)
 
         # 2. Determine contrast factor
-        if self.config.stochastic and random_params is not None:
-            # Stochastic mode
-            contrast_factor = random_params.get("contrast", 1.0)
+        if self.config.stochastic:
+            # This record's own factor, drawn from its own key
+            min_contrast, max_contrast = self.config.contrast_range
+            contrast_factor = jax.random.uniform(
+                require_key(key, self), shape=(), minval=min_contrast, maxval=max_contrast
+            )
         else:
             # Deterministic mode
             contrast_factor = self.config.contrast_factor
@@ -149,23 +152,3 @@ class ContrastOperator(ModalityOperator):
         result = self._remap_field(data, transformed)
 
         return result, state, metadata
-
-    def generate_random_params(
-        self, element_keys: jax.Array, data_shapes: dict[str, tuple[int, ...]]
-    ) -> dict[str, Any]:
-        """Generate per-record contrast factors from per-record PRNG keys.
-
-        Args:
-            element_keys: ``(batch_size,)`` per-record PRNG keys.
-            data_shapes: Unused (batch size comes from ``element_keys``).
-
-        Returns:
-            Dictionary containing 'contrast' array of shape (batch_size,)
-        """
-        del data_shapes
-        min_contrast, max_contrast = self.config.contrast_range
-        contrast = per_element_params(
-            element_keys,
-            lambda key: jax.random.uniform(key, shape=(), minval=min_contrast, maxval=max_contrast),
-        )
-        return {"contrast": contrast}

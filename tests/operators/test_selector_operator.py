@@ -401,13 +401,10 @@ class TestSelectorOperatorDifferentiability:
             rngs=nnx.Rngs(0),
         )
 
-        random_params = {
-            "selected_indices": jnp.asarray(0, dtype=jnp.int32),
-            "child_params": {"operator_0": None, "operator_1": None},
-        }
-
+        # Weights [1.0, 0.0] select operator 0 for any key, so the branch under test is fixed
+        # while the selection still comes from the key as it does in production.
         def loss(x):
-            output_data, _, _ = selector.apply({"value": x}, {}, None, random_params=random_params)
+            output_data, _, _ = selector.apply({"value": x}, {}, None, key=jax.random.key(0))
             return jnp.sum(output_data["value"])
 
         inputs = jnp.array([1.0, -3.0, 2.5], dtype=jnp.float32)

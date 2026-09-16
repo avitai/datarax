@@ -87,32 +87,12 @@ class BatchMixOperator(OperatorModule):
         # Type narrowing for pyright
         self.config: BatchMixOperatorConfig = config
 
-    def generate_random_params(
-        self,
-        element_keys: jax.Array,
-        data_shapes: PyTree,
-    ) -> jax.Array:
-        """Generate random parameters - not used for batch-level ops.
-
-        BatchMixOperator overrides apply_batch() completely, so this method
-        is not called. Implemented to satisfy the interface.
-
-        Args:
-            element_keys: Per-record PRNG keys (unused).
-            data_shapes: PyTree with shapes (unused).
-
-        Returns:
-            The per-record keys unchanged (not used).
-        """
-        del data_shapes
-        return element_keys
-
     def apply(
         self,
         data: PyTree,
         state: PyTree,
         metadata: dict[str, Any] | None,
-        random_params: Any = None,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
     ) -> NoReturn:
         """Refuse the per-record call: batch mixing has no element-level form.
@@ -125,13 +105,13 @@ class BatchMixOperator(OperatorModule):
             data: Element data PyTree
             state: Element state PyTree
             metadata: Element metadata
-            random_params: Unused
+            key: Unused
             stats: Unused
 
         Raises:
             NotImplementedError: Always; mixing needs the whole batch.
         """
-        del data, state, metadata, random_params, stats
+        del data, state, metadata, key, stats
         raise NotImplementedError(
             "BatchMixOperator mixes each record with another record of the same batch, "
             "so it has no per-record form; call apply_batch(batch) or the operator itself."

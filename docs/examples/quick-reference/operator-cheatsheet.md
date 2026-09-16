@@ -79,7 +79,7 @@ class MyOperator(OperatorModule):
 
     # apply() is a pure per-element function operating on raw PyTrees.
     # It returns a (data, state, metadata) tuple.
-    def apply(self, data, state, metadata, random_params=None, stats=None):
+    def apply(self, data, state, metadata, key=None, stats=None):
         scaled = data["image"] * self.scale.value
         return {**data, "image": scaled}, state, metadata
 

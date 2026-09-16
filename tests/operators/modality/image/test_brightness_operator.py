@@ -14,7 +14,6 @@ Example Usage:
     operator = BrightnessOperator(config, rngs=nnx.Rngs(0, augment=1))
 """
 
-import jax
 import jax.numpy as jnp
 import pytest
 from flax import nnx
@@ -274,42 +273,35 @@ class TestBrightnessOperatorEdgeCases:
 class TestBrightnessOperatorStochasticMode:
     """Tests for stochastic random parameter generation."""
 
-    def test_generate_random_params_shape(self):
-        """Test random parameter generation produces correct shape."""
+    @staticmethod
+    def _deltas(brightness_range: tuple[float, float], batch_size: int) -> jnp.ndarray:
+        """Recover each record's drawn delta from a mid-grey batch, one delta per record."""
         config = BrightnessOperatorConfig(
             field_key="image",
-            brightness_range=(-0.1, 0.1),
+            brightness_range=brightness_range,
             stochastic=True,
             stream_name="augment",
+            clip_range=None,
         )
         operator = BrightnessOperator(config, rngs=nnx.Rngs(42, augment=1))
 
-        element_keys = jax.random.split(jax.random.key(42), 4)  # one key per record
-        data_shapes = {"image": (4, 32, 32, 3)}  # Batch size 4
+        batch = {"image": jnp.ones((batch_size, 8, 8, 3)) * 0.5}
+        data, _ = operator._vmap_apply(batch, {})
+        return jnp.mean(data["image"], axis=(1, 2, 3)) - 0.5
 
-        random_params = operator.generate_random_params(element_keys, data_shapes)
+    def test_one_delta_is_drawn_per_record(self):
+        """The batch path draws one brightness delta for each record."""
+        deltas = self._deltas((-0.1, 0.1), 4)
 
-        assert "brightness" in random_params
-        assert random_params["brightness"].shape == (4,)
+        assert deltas.shape == (4,)
+        assert not jnp.allclose(deltas[0], deltas[1])
 
-    def test_generate_random_params_range(self):
-        """Test random parameters are within configured range."""
-        config = BrightnessOperatorConfig(
-            field_key="image",
-            brightness_range=(-0.3, 0.5),
-            stochastic=True,
-            stream_name="augment",
-        )
-        operator = BrightnessOperator(config, rngs=nnx.Rngs(42, augment=1))
+    def test_drawn_deltas_are_within_the_configured_range(self):
+        """Every record's delta falls inside brightness_range."""
+        deltas = self._deltas((-0.3, 0.5), 100)
 
-        element_keys = jax.random.split(jax.random.key(42), 100)  # one key per record
-        data_shapes = {"image": (100, 32, 32, 3)}  # Large batch for statistics
-
-        random_params = operator.generate_random_params(element_keys, data_shapes)
-
-        # All values should be within range
-        assert jnp.all(random_params["brightness"] >= -0.3)
-        assert jnp.all(random_params["brightness"] <= 0.5)
+        assert jnp.all(deltas >= -0.3 - 1e-5)
+        assert jnp.all(deltas <= 0.5 + 1e-5)
 
     def test_stochastic_produces_different_results(self):
         """Test stochastic mode produces different results per element."""
@@ -417,14 +409,19 @@ class TestBrightnessOperatorCommonPatterns:
             stochastic=True,
             stream_name="augment",
         )
+        config = BrightnessOperatorConfig(
+            field_key="image",
+            brightness_range=(-max_delta, max_delta),
+            stochastic=True,
+            stream_name="augment",
+            clip_range=None,
+        )
         operator = BrightnessOperator(config, rngs=nnx.Rngs(42, augment=1))
 
-        # Generate many samples to check distribution
-        element_keys = jax.random.split(jax.random.key(42), 1000)  # one key per record
-        data_shapes = {"image": (1000, 32, 32, 3)}
-
-        random_params = operator.generate_random_params(element_keys, data_shapes)
-        brightness_values = random_params["brightness"]
+        # Many records, to check the distribution the draws span
+        batch = {"image": jnp.ones((1000, 4, 4, 3)) * 0.5}
+        data, _ = operator._vmap_apply(batch, {})
+        brightness_values = jnp.mean(data["image"], axis=(1, 2, 3)) - 0.5
 
         # Mean should be near 0, values should span the range
         assert jnp.abs(jnp.mean(brightness_values)) < 0.05  # Near zero mean

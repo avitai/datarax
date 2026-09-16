@@ -29,7 +29,7 @@ from substrax.testing import TraceCounter
 
 from datarax.core.config import DataraxModuleConfig, OperatorConfig
 from datarax.core.element_batch import Batch
-from datarax.core.operator import OperatorModule
+from datarax.core.operator import OperatorModule, require_key
 
 
 @dataclass(frozen=True)
@@ -50,21 +50,16 @@ class RandomBrightnessConfig(OperatorConfig):  # type: ignore[reportGeneralTypeI
 class RandomBrightnessOperator(OperatorModule):
     """Stochastic operator that adjusts brightness randomly."""
 
-    def generate_random_params(self, element_keys, data_shapes):
-        del data_shapes
-        # One brightness factor per record, drawn from that record's key.
-        return jax.vmap(
-            lambda key: jax.random.uniform(
-                key,
-                shape=(),
-                minval=self.config.min_factor,  # type: ignore[reportAttributeAccessIssue]
-                maxval=self.config.max_factor,  # type: ignore[reportAttributeAccessIssue]
-            )
-        )(element_keys)
-
-    def apply(self, data, state, metadata, random_params=None, stats=None):
+    def apply(self, data, state, metadata, key=None, stats=None):
         del stats
-        factor = random_params if random_params is not None else 1.0
+        # This record's brightness factor, drawn from its own key.
+        record_key = require_key(key, self)
+        factor = jax.random.uniform(
+            record_key,
+            shape=(),
+            minval=self.config.min_factor,  # type: ignore[reportAttributeAccessIssue]
+            maxval=self.config.max_factor,  # type: ignore[reportAttributeAccessIssue]
+        )
         transformed_data = {**data, "image": jnp.clip(data["image"] * factor, 0.0, 1.0)}
         return transformed_data, state, metadata
 
@@ -80,9 +75,9 @@ class NormalizeConfig(OperatorConfig):  # type: ignore[reportGeneralTypeIssues]
 class NormalizeOperator(OperatorModule):
     """Deterministic operator that normalizes data using statistics."""
 
-    def apply(self, data, state, metadata, random_params=None, stats=None):
+    def apply(self, data, state, metadata, key=None, stats=None):
         # Get stats from config
-        del random_params
+        del key
         if stats is None:
             stats = self.get_statistics()
 
@@ -231,121 +226,73 @@ class TestOperatorModuleInitialization:
 class TestOperatorModuleStochasticMode:
     """Test stochastic operator functionality."""
 
-    def test_generate_random_params_output_shape(self):
-        """Test that generate_random_params returns correct batch dimension."""
-        config = RandomBrightnessConfig(
-            stochastic=True,
-            stream_name="augment",
-        )
-        rngs = nnx.Rngs(42)
-        operator = RandomBrightnessOperator(config, rngs=rngs)
+    @staticmethod
+    def _factors_from(data: dict) -> jax.Array:
+        """Recover each record's drawn factor from an all-``0.5`` input image."""
+        return jnp.mean(data["image"], axis=(1, 2, 3)) / 0.5
 
-        # Mock data shapes
-        data_shapes = {"image": (32, 224, 224, 3)}
-        element_keys = jax.random.split(jax.random.key(0), 32)  # one key per record
-
-        random_params = operator.generate_random_params(element_keys, data_shapes)
-
-        # Should be (batch_size,) for brightness factors
-        assert random_params.shape == (32,)
-
-    def test_generate_random_params_values_in_range(self):
-        """Test that generated values are within configured range."""
-        config = RandomBrightnessConfig(
-            stochastic=True,
-            stream_name="augment",
-            min_factor=0.5,
-            max_factor=1.5,
-        )
-        rngs = nnx.Rngs(42)
-        operator = RandomBrightnessOperator(config, rngs=rngs)
-
-        data_shapes = {"image": (100, 64, 64, 3)}
-        element_keys = jax.random.split(jax.random.key(0), 100)  # one key per record
-
-        random_params = operator.generate_random_params(element_keys, data_shapes)
-
-        # All values should be in [min_factor, max_factor]
-        assert jnp.all(random_params >= 0.5)
-        assert jnp.all(random_params <= 1.5)
-
-    def test_apply_with_random_params(self):
-        """Test apply() method with random parameters."""
-        config = RandomBrightnessConfig(
-            stochastic=True,
-            stream_name="augment",
-        )
-        rngs = nnx.Rngs(42)
-        operator = RandomBrightnessOperator(config, rngs=rngs)
-
-        # Single element (no batch dimension)
-        data = {"image": jnp.ones((224, 224, 3)) * 0.5}
-        state = {}
-        metadata = None
-        random_params = 1.2  # Brightness factor for this element
-
-        transformed_data, new_state, new_metadata = operator.apply(
-            data, state, metadata, random_params=random_params
+    def test_the_batch_path_draws_one_factor_per_record(self):
+        """Every record in the batch gets its own factor, whatever the batch size."""
+        operator = RandomBrightnessOperator(
+            RandomBrightnessConfig(stochastic=True, stream_name="augment"), rngs=nnx.Rngs(42)
         )
 
-        # Image should be brightened
-        expected = jnp.ones((224, 224, 3)) * 0.6  # 0.5 * 1.2
-        assert jnp.allclose(transformed_data["image"], expected)
+        for batch_size in (1, 8, 32):
+            data, _ = operator._vmap_apply({"image": jnp.ones((batch_size, 8, 8, 3)) * 0.5}, {})
+
+            assert self._factors_from(data).shape == (batch_size,)
+
+    def test_drawn_factors_are_within_the_configured_range(self):
+        """Each record's factor comes from its key and respects min_factor/max_factor."""
+        operator = RandomBrightnessOperator(
+            RandomBrightnessConfig(
+                stochastic=True, stream_name="augment", min_factor=0.5, max_factor=1.5
+            ),
+            rngs=nnx.Rngs(42),
+        )
+
+        data, _ = operator._vmap_apply({"image": jnp.ones((100, 8, 8, 3)) * 0.5}, {})
+
+        factors = self._factors_from(data)
+        assert jnp.all(factors >= 0.5)
+        assert jnp.all(factors <= 1.5)
+
+    def test_apply_draws_its_factor_from_the_key_it_is_given(self):
+        """One key repeats its factor; a different key draws a different one."""
+        operator = RandomBrightnessOperator(
+            RandomBrightnessConfig(stochastic=True, stream_name="augment"), rngs=nnx.Rngs(42)
+        )
+        data = {"image": jnp.ones((8, 8, 3)) * 0.5}
+
+        first, _, _ = operator.apply(data, {}, None, key=jax.random.key(0))
+        again, _, _ = operator.apply(data, {}, None, key=jax.random.key(0))
+        other, _, _ = operator.apply(data, {}, None, key=jax.random.key(1))
+
+        assert jnp.array_equal(first["image"], again["image"])
+        assert not jnp.allclose(first["image"], other["image"])
 
     def test_per_element_randomness_independence(self):
-        """Test that each batch element gets independent random values."""
-        config = RandomBrightnessConfig(
-            stochastic=True,
-            stream_name="augment",
+        """Each record in one batch draws independently of the others."""
+        operator = RandomBrightnessOperator(
+            RandomBrightnessConfig(stochastic=True, stream_name="augment"), rngs=nnx.Rngs(42)
         )
-        rngs = nnx.Rngs(42)
-        operator = RandomBrightnessOperator(config, rngs=rngs)
 
-        data_shapes = {"image": (10, 64, 64, 3)}
-        element_keys = jax.random.split(jax.random.key(0), 10)  # one key per record
-
-        random_params = operator.generate_random_params(element_keys, data_shapes)
+        data, _ = operator._vmap_apply({"image": jnp.ones((10, 8, 8, 3)) * 0.5}, {})
 
         # All 10 values should be different (with high probability)
-        unique_values = jnp.unique(random_params)
-        assert len(unique_values) >= 8  # At least 8 different values
+        assert len(jnp.unique(self._factors_from(data))) >= 8
 
-    def test_reproducibility_with_same_rng(self):
-        """Test that same RNG key produces same random values."""
-        config = RandomBrightnessConfig(
-            stochastic=True,
-            stream_name="augment",
-        )
-        rngs = nnx.Rngs(42)
-        operator = RandomBrightnessOperator(config, rngs=rngs)
+    def test_two_operators_with_one_seed_draw_the_same_factors(self):
+        """The operator's own base key, not call order, decides what each record draws."""
+        config = RandomBrightnessConfig(stochastic=True, stream_name="augment")
+        batch = {"image": jnp.ones((32, 8, 8, 3)) * 0.5}
 
-        data_shapes = {"image": (32, 64, 64, 3)}
-        element_keys = jax.random.split(jax.random.key(12345), 32)  # one key per record
+        first, _ = RandomBrightnessOperator(config, rngs=nnx.Rngs(42))._vmap_apply(batch, {})
+        second, _ = RandomBrightnessOperator(config, rngs=nnx.Rngs(42))._vmap_apply(batch, {})
+        other, _ = RandomBrightnessOperator(config, rngs=nnx.Rngs(7))._vmap_apply(batch, {})
 
-        # Generate twice with same per-record keys
-        params1 = operator.generate_random_params(element_keys, data_shapes)
-        params2 = operator.generate_random_params(element_keys, data_shapes)
-
-        assert jnp.array_equal(params1, params2)
-
-    def test_different_keys_produce_different_values(self):
-        """Test that different RNG keys produce different random values."""
-        config = RandomBrightnessConfig(
-            stochastic=True,
-            stream_name="augment",
-        )
-        rngs = nnx.Rngs(42)
-        operator = RandomBrightnessOperator(config, rngs=rngs)
-
-        data_shapes = {"image": (32, 64, 64, 3)}
-
-        keys1 = jax.random.split(jax.random.key(0), 32)
-        keys2 = jax.random.split(jax.random.key(1), 32)
-        params1 = operator.generate_random_params(keys1, data_shapes)
-        params2 = operator.generate_random_params(keys2, data_shapes)
-
-        # Should be different
-        assert not jnp.array_equal(params1, params2)
+        assert jnp.array_equal(first["image"], second["image"])
+        assert not jnp.allclose(first["image"], other["image"])
 
     def test_apply_batch_stochastic_mode(self):
         """Test apply_batch() in stochastic mode."""
@@ -389,6 +336,91 @@ class TestOperatorModuleStochasticMode:
         assert transformed.batch_size == 4
 
 
+_SEEN_KEYS: list = []
+
+
+class KeyDrawingOperator(OperatorModule):
+    """An operator written to the key contract: it draws from the record's own key."""
+
+    def apply(self, data, state, metadata, key=None, stats=None):
+        """Record what the framework passed, then scale by a draw from that key."""
+        del metadata, stats
+        _SEEN_KEYS.append(key)
+        record_key = require_key(key, self)
+        factor = jax.random.uniform(record_key, (), minval=0.5, maxval=1.5)
+        return {**data, "image": data["image"] * factor}, state, None
+
+
+class KeyRecordingPassthrough(OperatorModule):
+    """A spy that records its fourth argument and draws nothing, in either mode."""
+
+    def apply(self, data, state, metadata, key=None, stats=None):
+        """Record what the framework passed and return the record unchanged."""
+        del metadata, stats
+        _SEEN_KEYS.append(key)
+        return data, state, None
+
+
+class TestOperatorKeyContract:
+    """What the framework hands ``apply`` as its fourth argument.
+
+    Every assertion here runs through the framework rather than calling an override
+    directly: a direct call would only exercise the test operator's own signature, which
+    would hold whatever datarax passed.
+    """
+
+    @staticmethod
+    def _stochastic() -> KeyDrawingOperator:
+        return KeyDrawingOperator(
+            OperatorConfig(stochastic=True, stream_name="augment"), rngs=nnx.Rngs(augment=0)
+        )
+
+    def test_the_batch_path_passes_a_key_to_a_stochastic_operator(self):
+        """Every apply call the framework makes for a stochastic operator carries a key."""
+        _SEEN_KEYS.clear()
+
+        KeyRecordingPassthrough(
+            OperatorConfig(stochastic=True, stream_name="augment"), rngs=nnx.Rngs(augment=0)
+        )._vmap_apply({"image": jnp.ones((8, 4))}, {})
+
+        assert _SEEN_KEYS, "the framework never called apply"
+        assert all(key is not None for key in _SEEN_KEYS)
+
+    def test_the_batch_path_passes_no_key_to_a_deterministic_operator(self):
+        """The mirror of the case above: without it, a spy recording nothing would pass both."""
+        _SEEN_KEYS.clear()
+
+        KeyRecordingPassthrough(OperatorConfig(stochastic=False))._vmap_apply(
+            {"image": jnp.ones((8, 4))}, {}
+        )
+
+        assert _SEEN_KEYS, "the framework never called apply"
+        assert all(key is None for key in _SEEN_KEYS)
+
+    def test_each_record_is_transformed_by_its_own_draw(self):
+        """Eight records give eight different factors, so no draw is shared across the batch."""
+        data, _ = self._stochastic()._vmap_apply({"image": jnp.ones((8, 4))}, {})
+
+        means = {float(jnp.mean(data["image"][index])) for index in range(8)}
+        assert len(means) == 8
+
+    def test_a_record_keeps_its_draw_across_batch_position(self):
+        """The same record index draws the same factor whatever else shares its batch."""
+        whole, _ = self._stochastic()._vmap_apply(
+            {"image": jnp.ones((8, 4))}, {}, None, jnp.arange(8)
+        )
+        tail, _ = self._stochastic()._vmap_apply(
+            {"image": jnp.ones((3, 4))}, {}, None, jnp.arange(5, 8)
+        )
+
+        assert jnp.allclose(whole["image"][5:], tail["image"])
+
+    def test_require_key_names_the_operator_it_refuses(self):
+        """The helper reports which operator was handed no key."""
+        with pytest.raises(ValueError, match="KeyDrawingOperator is stochastic"):
+            require_key(None, self._stochastic())
+
+
 # ========================================================================
 # Test Category 3: Deterministic Mode Operations
 # ========================================================================
@@ -407,9 +439,7 @@ class TestOperatorModuleDeterministicMode:
         state = {}
         metadata = None
 
-        transformed_data, new_state, new_metadata = operator.apply(
-            data, state, metadata, random_params=None
-        )
+        transformed_data, new_state, new_metadata = operator.apply(data, state, metadata, key=None)
 
         # Should normalize: (0.7 - 0.5) / 0.2 = 1.0
         expected = jnp.ones((64, 64, 3)) * 1.0
@@ -671,24 +701,6 @@ class TestOperatorModuleJITCompatibility:
 class TestOperatorModuleRandomParams:
     """Test random parameter generation and distribution."""
 
-    def test_random_params_batch_dimension(self):
-        """Test that random params have correct batch dimension."""
-        config = RandomBrightnessConfig(
-            stochastic=True,
-            stream_name="augment",
-        )
-        rngs = nnx.Rngs(42)
-        operator = RandomBrightnessOperator(config, rngs=rngs)
-
-        for batch_size in [1, 8, 32, 128]:
-            data_shapes = {"image": (batch_size, 64, 64, 3)}
-            element_keys = jax.random.split(jax.random.key(0), batch_size)  # one key per record
-
-            params = operator.generate_random_params(element_keys, data_shapes)
-
-            # Should have batch_size as first dimension
-            assert params.shape[0] == batch_size
-
     def test_random_params_distributed_via_vmap(self):
         """Test that random params are correctly distributed to elements via vmap."""
         config = RandomBrightnessConfig(
@@ -718,17 +730,14 @@ class TestOperatorModuleRandomParams:
                     # At least first two should be different
                     assert not jnp.allclose(elem_i_mean, elem_j_mean)
 
-    def test_default_generate_random_params_returns_none(self):
-        """Test that base implementation returns None."""
-        config = NormalizeConfig(stochastic=False)
-        operator = NormalizeOperator(config)
+    def test_a_deterministic_operator_has_no_draw_to_make(self):
+        """A deterministic operator transforms its record without any key."""
+        operator = NormalizeOperator(NormalizeConfig(stochastic=False))
+        operator.set_statistics({"mean": 0.5, "std": 0.2})
 
-        data_shapes = {"image": (4, 64, 64, 3)}
-        rng = jax.random.key(0)
+        data, _, _ = operator.apply({"image": jnp.ones((4, 4, 3)) * 0.7}, {}, None)
 
-        # Deterministic operators don't generate random params
-        params = operator.generate_random_params(rng, data_shapes)
-        assert params is None
+        assert jnp.allclose(data["image"], jnp.ones((4, 4, 3)))
 
 
 # ========================================================================

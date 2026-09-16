@@ -117,8 +117,6 @@ INTENDED_CHANGE = (
     "probabilistic p=1 over a stochastic child",
     "probabilistic p=1 nested in another p=1 wrapper",
     "composite whose only stochastic descendant is behind a p=1 wrapper",
-    "deterministic external adapter inside a stochastic composite",
-    "operator built after a p=1 wrapper from one Rngs",
 )
 
 
@@ -157,20 +155,14 @@ class ShiftToTarget(ModalityOperator):
         data: Any,
         state: Any,
         metadata: Any,
-        random_params: Any = None,
+        key: Any = None,
         stats: Any = None,
     ) -> tuple[Any, Any, Any]:
         """Shift the field by a drawn amount, or by a fixed amount when deterministic."""
         del stats
         image = self._extract_field(data, self.config.field_key)
-        drawn = self.config.stochastic and random_params is not None
-        shift = random_params["shift"] if drawn else 0.05
+        shift = jax.random.uniform(key, ()) if self.config.stochastic else 0.05
         return self._remap_field(data, image + shift), state, metadata
-
-    def generate_random_params(self, element_keys: Any, data_shapes: Any) -> Any:
-        """Draw one shift per record."""
-        del data_shapes
-        return {"shift": jax.vmap(lambda key: jax.random.uniform(key, ()))(element_keys)}
 
 
 class Fuse(CrossModalOperator):
@@ -181,11 +173,11 @@ class Fuse(CrossModalOperator):
         data: Any,
         state: Any,
         metadata: Any,
-        random_params: Any = None,
+        key: Any = None,
         stats: Any = None,
     ) -> tuple[Any, Any, Any]:
         """Combine the two input fields into the declared output field."""
-        del random_params, stats
+        del key, stats
         image, label = self._extract_inputs(data)
         fused = jnp.mean(image) + label.astype(jnp.float32)
         return self._store_outputs(data, [fused]), state, metadata

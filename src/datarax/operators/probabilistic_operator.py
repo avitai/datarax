@@ -29,7 +29,7 @@ from flax import nnx
 from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
-from datarax.core.operator import OperatorModule
+from datarax.core.operator import OperatorModule, require_key
 
 
 logger = logging.getLogger(__name__)
@@ -64,15 +64,18 @@ class ProbabilisticOperatorConfig(OperatorConfig):
         if not 0.0 <= self.probability <= 1.0:
             raise ValueError(f"probability must be in [0.0, 1.0], got {self.probability}")
 
-        # Infer stochastic mode from probability
-        # ProbabilisticOperator is stochastic when it makes a random decision (0 < p < 1)
-        # It's deterministic when decision is fixed (p=0 always skip, p=1 always apply)
-        is_stochastic = 0.0 < self.probability < 1.0
+        # A wrapper needs a key when it makes a random decision (0 < p < 1) AND when it has a
+        # stochastic child to hand one to. At p == 1 the decision is fixed but the child still
+        # draws, so a wrapper that is deterministic on its own account would receive no key and
+        # silence the operator it wraps. At p == 0 the child is never reached, so nothing draws.
+        decides_randomly = 0.0 < self.probability < 1.0
+        child_is_stochastic = bool(getattr(self.operator.config, "stochastic", False))
+        is_stochastic = decides_randomly or (child_is_stochastic and self.probability > 0.0)
         object.__setattr__(self, "stochastic", is_stochastic)
 
         # Set stream_name BEFORE calling super().__post_init__() for validation
         if is_stochastic:
-            # Stochastic mode needs stream_name for random decision
+            # Stochastic mode needs stream_name for the decision, the child's draw, or both.
             # Use provided stream_name, or inherit from child, or default to "augment"
             if self.stream_name is None:
                 if hasattr(self.operator, "stream_name") and self.operator.stream_name is not None:
@@ -80,7 +83,7 @@ class ProbabilisticOperatorConfig(OperatorConfig):
                 else:
                     object.__setattr__(self, "stream_name", "augment")
         else:
-            # Deterministic mode (p=0.0 or p=1.0) doesn't need RNG for decision
+            # Nothing downstream draws: p == 0, or a fixed decision over a deterministic child.
             object.__setattr__(self, "stream_name", None)
 
         super().__post_init__()
@@ -137,66 +140,30 @@ class ProbabilisticOperator(OperatorModule):
         self.operator = config.operator
         self.probability = config.probability
 
-    def generate_random_params(
-        self,
-        element_keys: jax.Array,
-        data_shapes: PyTree,
-    ) -> dict[str, Any] | PyTree:
-        """Generate per-record application decisions and child params.
-
-        Derives two independent per-record key sets from ``element_keys`` (via
-        ``fold_in``): one for the per-record apply mask, one delegated to the
-        wrapped operator. Keying on the per-record key keeps the apply/skip
-        decision reproducible per record regardless of batch composition.
-
-        Args:
-            element_keys: ``(batch_size,)`` per-record PRNG keys.
-            data_shapes: PyTree with same structure as batch.data, containing shapes.
-
-        Returns:
-            - If probabilistic (0 < p < 1): Dict with "apply_mask" and "child_params"
-            - If deterministic (p=0 or p=1): Child's random params (or None if child deterministic)
-        """
-        # Independent per-record keys for the mask and the wrapped operator.
-        mask_keys = jax.vmap(lambda key: jax.random.fold_in(key, 0))(element_keys)
-        child_keys = jax.vmap(lambda key: jax.random.fold_in(key, 1))(element_keys)
-
-        child_params = None
-        if hasattr(self.operator, "generate_random_params"):
-            child_params = self.operator.generate_random_params(child_keys, data_shapes)
-
-        # Deterministic cases (p=0 or p=1): just return child's params.
-        if self.probability in {0.0, 1.0}:
-            return child_params
-
-        # Stochastic case (0 < p < 1): per-record apply mask.
-        apply_mask = jax.vmap(lambda key: jax.random.uniform(key, shape=()) < self.probability)(
-            mask_keys
-        )
-
-        return {
-            "apply_mask": apply_mask,
-            "child_params": child_params,
-        }
-
     def apply(
         self,
         data: PyTree,
         state: PyTree,
         metadata: dict[str, Any] | None,
-        random_params: Any = None,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
-        """Apply child operator conditionally based on probability.
+        """Apply the child operator with probability ``p``, decided for this record.
 
-        Uses jax.lax.cond for JIT-compatible conditional execution.
+        The decision and the child's randomness come from two keys folded out of this
+        record's key, so whether a record is augmented — and how — depends on the record
+        alone, not on the batch it arrives in. Uses ``jax.lax.cond`` so the choice survives
+        tracing.
+
+        At ``p == 1`` the child is still handed its own key. Passing the wrapper's fourth
+        argument straight through, as this did before, gave a deterministic wrapper's child
+        ``None`` and silently turned a stochastic child into a fixed one.
 
         Args:
             data: Element data PyTree (no batch dimension)
             state: Element state PyTree
             metadata: Element metadata
-            random_params: Dict with "apply_mask" (bool) and "child_params"
-                          For deterministic modes, can be None
+            key: This record's PRNG key, or ``None`` for a deterministic wrapper
             stats: Optional statistics
 
         Returns:
@@ -204,21 +171,20 @@ class ProbabilisticOperator(OperatorModule):
             - If applied: child operator's output
             - If not applied: input data/state/metadata unchanged
         """
-        # Deterministic cases - direct path without conditionals
+        # Never applied: the child is not reached, so no key is needed.
         if self.probability == 0.0:
-            # Never apply - passthrough
             return data, state, metadata
 
-        if self.probability == 1.0:
-            # Always apply - direct child call
-            # random_params IS the child_params directly
-            return self.operator.apply(data, state, metadata, random_params, stats)
+        # The child's key is independent of the decision key drawn below.
+        child_key = None if key is None else jax.random.fold_in(key, 1)
 
-        # Stochastic case (0 < p < 1) - use jax.lax.cond
-        # random_params is dict with "apply_mask" and "child_params"
-        should_apply = random_params["apply_mask"] if isinstance(random_params, dict) else True
-        child_params = (
-            random_params.get("child_params", None) if isinstance(random_params, dict) else None
+        if self.probability == 1.0:
+            return self.operator.apply(data, state, metadata, child_key, stats)
+
+        # Stochastic case (0 < p < 1): decide per record, from its own key.
+        should_apply = (
+            jax.random.uniform(jax.random.fold_in(require_key(key, self), 0), shape=())
+            < self.probability
         )
 
         # Define branch functions for jax.lax.cond
@@ -237,5 +203,5 @@ class ProbabilisticOperator(OperatorModule):
             should_apply,
             apply_fn,
             passthrough_fn,
-            (data, state, metadata, child_params, stats),
+            (data, state, metadata, child_key, stats),
         )

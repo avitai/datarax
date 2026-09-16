@@ -128,7 +128,7 @@ class ReverbOperator(OperatorModule):
         decay = jnp.exp(-jnp.arange(config.ir_length) * 5.0 / config.ir_length)
         self.impulse_response = nnx.Param(decay * 0.1)
 
-    def apply(self, data, state, metadata, random_params=None, stats=None):
+    def apply(self, data, state, metadata, key=None, stats=None):
         audio = data["audio"]
         ir = self.impulse_response[...]
         # FFT-based convolution

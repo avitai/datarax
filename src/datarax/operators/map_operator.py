@@ -149,51 +149,12 @@ class MapOperator(OperatorModule):
         # Check if we ended at a None leaf (transform marker)
         return current is None
 
-    def generate_random_params(
-        self,
-        element_keys: jax.Array,
-        data_shapes: PyTree,
-    ) -> PyTree | None:
-        """Generate a PyTree of per-leaf, per-record PRNG keys.
-
-        ``element_keys`` holds one stable per-record key
-        (``fold_in(base_key, global_index)``). Each data leaf gets its own
-        per-record key derived by folding the leaf index into ``element_keys``,
-        so per-leaf randomness stays independent while remaining reproducible per
-        record (invariant to batch composition, shuffle, host count, resume).
-
-        Args:
-            element_keys: ``(batch_size,)`` per-record PRNG keys.
-            data_shapes: PyTree with same structure as batch.data, containing shapes.
-
-        Returns:
-            PyTree of keys matching data structure, each leaf ``(batch_size,)``
-            per-record keys; or ``None`` for deterministic operators.
-        """
-        if not self.stochastic:
-            return None
-
-        # Flatten to get tree structure (tuples are atomic shape leaves).
-        shape_leaves, tree_def = jax.tree.flatten(
-            data_shapes, is_leaf=lambda x: isinstance(x, tuple)
-        )
-        n_leaves = len(shape_leaves)
-        if n_leaves == 0:
-            return jax.tree.unflatten(tree_def, [])
-
-        # Per-leaf, per-record keys: fold the leaf index into each record's key.
-        batched_keys = [
-            jax.vmap(lambda key, leaf=leaf: jax.random.fold_in(key, leaf))(element_keys)
-            for leaf in range(n_leaves)
-        ]
-        return jax.tree.unflatten(tree_def, batched_keys)
-
     def apply(
         self,
         data: PyTree,
         state: PyTree,
         metadata: dict[str, Any] | None,
-        random_params: Any = None,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
         """Apply array transformation to element (unified implementation).
@@ -211,7 +172,7 @@ class MapOperator(OperatorModule):
             data: Element data PyTree
             state: Element state PyTree (unchanged)
             metadata: Element metadata dict (unchanged)
-            random_params: PyTree of keys (stochastic) or dummy keys (deterministic)
+            key: This record's PRNG key, or ``None`` for a deterministic operator
             stats: Optional batch statistics (unused)
 
         Returns:
@@ -219,13 +180,16 @@ class MapOperator(OperatorModule):
             where state and metadata are unchanged
         """
         del stats
-        # Get keys (real for stochastic, dummy/None for deterministic)
-        # If random_params is None, create dummy keys matching data structure
-        # Use dummy PRNG keys (not None) so the mapped function can draw either way
-        if random_params is None:
+        # One key per data leaf, folded out of this record's key, so each leaf draws
+        # independently while still depending only on the record. A deterministic operator
+        # maps a fixed key over the same structure, since the mapped function always takes one.
+        if key is None:
             keys = jax.tree.map(lambda _: jax.random.key(0), data)
         else:
-            keys = random_params
+            leaves, tree_def = jax.tree.flatten(data)
+            keys = jax.tree.unflatten(
+                tree_def, [jax.random.fold_in(key, index) for index in range(len(leaves))]
+            )
 
         def transform_leaf(keypath: Any, leaf: Any, key: Any) -> Any:
             """Transform leaf if it should be transformed."""

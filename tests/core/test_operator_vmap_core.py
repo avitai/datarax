@@ -60,15 +60,11 @@ class StochasticNoiseConfig(OperatorConfig):  # type: ignore[reportGeneralTypeIs
 class StochasticNoiseOperator(OperatorModule):
     """Stochastic operator: adds random noise to data."""
 
-    def generate_random_params(self, element_keys, data_shapes):
-        del data_shapes
-        # One noise sample per record, drawn from that record's key.
-        scale = self.config.noise_scale  # type: ignore[reportAttributeAccessIssue]
-        return jax.vmap(lambda key: jax.random.normal(key, shape=()) * scale)(element_keys)
-
-    def apply(self, data, state, metadata, random_params=None, stats=None):
+    def apply(self, data, state, metadata, key=None, stats=None):
         del stats
-        noise = random_params if random_params is not None else 0.0
+        # This record's noise sample, drawn from its own key.
+        scale = self.config.noise_scale  # type: ignore[reportAttributeAccessIssue]
+        noise = jax.random.normal(key, shape=()) * scale if key is not None else 0.0
         new_data = jax.tree.map(lambda x: x + noise, data)
         return new_data, state, metadata
 

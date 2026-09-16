@@ -7,7 +7,6 @@ Tests cover:
 - JAX transformation compatibility
 """
 
-import jax
 import jax.numpy as jnp
 import pytest
 from flax import nnx
@@ -121,25 +120,23 @@ class TestContrastOperatorTransformations:
 class TestContrastOperatorStochastic:
     """Test stochastic mode."""
 
-    def test_generate_random_params(self):
-        """Test random parameter generation."""
+    def test_each_record_draws_its_own_contrast_factor(self):
+        """The batch path gives every record its own factor, and identical inputs diverge."""
         config = ContrastOperatorConfig(
             field_key="image",
             contrast_range=(0.5, 1.5),
             stochastic=True,
             stream_name="augment",
         )
-        rngs = nnx.Rngs(0, augment=1)
-        operator = ContrastOperator(config, rngs=rngs)
+        operator = ContrastOperator(config, rngs=nnx.Rngs(0, augment=1))
 
         batch_size = 10
-        data_shapes = {"image": (batch_size, 32, 32, 3)}
-        element_keys = jax.random.split(jax.random.key(0), batch_size)  # one key per record
+        # A two-tone image, so a change of contrast is visible in the output
+        image = jnp.zeros((32, 32, 3)).at[:16].set(1.0)
+        data, _ = operator._vmap_apply({"image": jnp.stack([image] * batch_size)}, {})
 
-        params = operator.generate_random_params(element_keys, data_shapes)
-        assert params["contrast"].shape == (batch_size,)
-        assert jnp.all(params["contrast"] >= 0.5)
-        assert jnp.all(params["contrast"] <= 1.5)
+        assert data["image"].shape == (batch_size, 32, 32, 3)
+        assert not jnp.allclose(data["image"][0], data["image"][1])
 
 
 class TestContrastOperatorJIT:

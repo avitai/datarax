@@ -99,7 +99,7 @@ class GammaCorrectionOperator(ModalityOperator):
         super().__init__(config, rngs=rngs)
         self.log_gamma = nnx.Param(jnp.array(0.0))  # Learnable!
 
-    def apply(self, data, state, metadata, random_params=None, stats=None):
+    def apply(self, data, state, metadata, key=None, stats=None):
         image = self._extract_field(data, self.config.field_key)
         gamma = jnp.exp(self.log_gamma[...])
         gamma = jnp.clip(gamma, 0.1, 5.0)  # Reasonable range

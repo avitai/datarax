@@ -6,7 +6,7 @@ differentiable data transformations in Datarax.
 Key Features:
 
 - Config-based initialization with OperatorConfig
-- Stochastic mode (with random parameter generation)
+- Stochastic mode (each record draws from its own PRNG key)
 - Deterministic mode (no randomness)
 - Batch processing with vmap
 - JIT compatibility with static branching
@@ -59,6 +59,31 @@ def extract_batch_size(data_shapes: PyTree) -> int:
     return batch_size_leaves[0]
 
 
+def require_key(key: jax.Array | None, operator: "OperatorModule") -> jax.Array:
+    """Return the record's PRNG key, refusing a stochastic operator that was handed none.
+
+    A stochastic operator draws everything it applies from the key its caller passes, so a
+    missing key leaves nothing to draw from. Falling back to a fixed key instead would give
+    every record in the batch the same draw, quietly, which is the failure this refuses.
+
+    Args:
+        key: The record's PRNG key, or ``None`` when the caller passed none.
+        operator: The operator asking for the key; its class is named in the error.
+
+    Returns:
+        The key, unchanged.
+
+    Raises:
+        ValueError: If ``key`` is ``None``.
+    """
+    if key is None:
+        raise ValueError(
+            f"{type(operator).__name__} is stochastic and needs a per-record key; "
+            "apply_batch, _apply_on_raw and Pipeline pass one, or call apply(..., key=...)"
+        )
+    return key
+
+
 def _record_indices_from_metadata(metadata_list: Any) -> jax.Array | None:
     """Extract per-record global indices from a batch's metadata list.
 
@@ -80,10 +105,9 @@ class OperatorModule(DataraxModule):
     Operators work on Batch[Element] data and can have learnable parameters.
     They support both stochastic (random) and deterministic modes.
 
-    The operator pattern separates RNG generation from transformation:
-    1. generate_random_params() - Generates batch-level random parameters (impure)
-    2. apply() - Applies transformation to single element (pure function)
-    3. apply_batch() - Orchestrates batch processing with vmap (concrete implementation)
+    The operator pattern keeps every transformation a pure function of its own record:
+    1. apply() - Transforms a single element, drawing any randomness from that record's key
+    2. apply_batch() - Derives one key per record and vmaps apply over the batch
 
     Attributes:
         config: Operator configuration
@@ -187,61 +211,19 @@ class OperatorModule(DataraxModule):
     # Abstract Methods (must be implemented by subclasses)
     # ========================================================================
 
-    def generate_random_params(
-        self,
-        element_keys: jax.Array | None,
-        data_shapes: PyTree,
-    ) -> PyTree:
-        """Generate per-record random parameters from per-record PRNG keys.
-
-        ``element_keys`` is a ``(batch_size, ...)`` array of stateless keys, one
-        per record, each derived as ``fold_in(base_key, global_index)`` (see
-        ``_vmap_apply``). Implementations should produce one parameter per record
-        by mapping over the keys, e.g.::
-
-            factors = jax.vmap(lambda k: jax.random.uniform(k, ()))(element_keys)
-            return {"factor": factors}
-
-        Keying on the per-record key (not a single per-batch draw) is what makes
-        augmentation reproducible across batch composition, shuffle order, host
-        count, and resume. Required for stochastic operators; deterministic
-        operators leave the default (``element_keys`` is ``None``).
-
-        Args:
-            element_keys: ``(batch_size, ...)`` array of per-record PRNG keys, or
-                ``None`` for deterministic operators.
-            data_shapes: PyTree with same structure as batch.data, containing shapes
-                        Examples: {"image": (batch_size, H, W, C)}
-
-        Returns:
-            PyTree of per-record random parameters (leading dim ``batch_size``),
-            or ``None`` for deterministic operators.
-
-        Raises:
-            NotImplementedError: If stochastic=True but not implemented
-        """
-        del element_keys, data_shapes
-        if self.stochastic:
-            raise NotImplementedError(
-                f"{self.__class__.__name__} is stochastic but does not implement "
-                "generate_random_params(). Stochastic operators must generate "
-                "random parameters for batch processing."
-            )
-        return None
-
     def apply(
         self,
         data: PyTree,
         state: PyTree,
         metadata: dict[str, Any] | None,
-        random_params: Any = None,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
         """Apply operator to single element (no batch dimension).
 
-        This is a PURE FUNCTION that transforms a single data element.
-        It should not access self.rngs or generate random numbers.
-        All randomness comes through random_params argument.
+        This is a PURE FUNCTION that transforms a single data element. It does not read
+        ``self.rngs``: every random value it applies is drawn from ``key``, the record's own
+        PRNG key, so the same record draws the same values whatever batch it arrives in.
 
         Subclasses MUST implement this method.
 
@@ -249,7 +231,8 @@ class OperatorModule(DataraxModule):
             data: Element data PyTree (typically dict[str, Array], no batch dim)
             state: Element state PyTree (typically dict[str, Any])
             metadata: Element metadata as structured dict
-            random_params: Random parameters for this element (from generate_random_params)
+            key: This record's PRNG key for a stochastic operator, ``None`` for a
+                deterministic one. Pass it through ``require_key`` before drawing.
             stats: Optional statistics (from get_statistics() or passed explicitly)
 
         Returns:
@@ -263,9 +246,9 @@ class OperatorModule(DataraxModule):
             Example implementation:
 
             ```python
-            def apply(self, data, state, metadata, random_params=None, stats=None):
-                # Apply random brightness
-                factor = random_params if random_params is not None else 1.0
+            def apply(self, data, state, metadata, key=None, stats=None):
+                # Draw this record's brightness from its own key
+                factor = jax.random.uniform(require_key(key, self), (), minval=0.8, maxval=1.2)
                 transformed = {"image": data["image"] * factor}
                 return transformed, state, metadata
             ```
@@ -326,28 +309,27 @@ class OperatorModule(DataraxModule):
             if record_indices is None:
                 record_indices = jnp.arange(batch_size, dtype=jnp.uint32)
             element_keys = per_record_keys(self._base_key[...], record_indices, epoch)
-            random_params_batch = self.generate_random_params(element_keys, data_shapes)
         else:
-            # Deterministic operators receive no random parameters.
-            random_params_batch = None
+            # A deterministic operator has nothing to draw, so it is handed no key.
+            element_keys = None
 
         # === PER-ELEMENT FUNCTION + INPUTS (unified — DRY) ===
-        has_rp = random_params_batch is not None
-        if has_rp:
+        has_keys = element_keys is not None
+        if has_keys:
 
-            def _apply_with_rp(data: Any, state: Any, rp: Any) -> tuple[Any, Any]:
-                out_data, out_state, _ = self.apply(data, state, None, rp, _stats)
+            def _apply_with_key(data: Any, state: Any, key: Any) -> tuple[Any, Any]:
+                out_data, out_state, _ = self.apply(data, state, None, key, _stats)
                 return out_data, out_state
 
-            apply_one = _apply_with_rp
-            inputs = (batch_data, batch_states, random_params_batch)
+            apply_one = _apply_with_key
+            inputs = (batch_data, batch_states, element_keys)
         else:
 
-            def _apply_no_rp(data: Any, state: Any) -> tuple[Any, Any]:
+            def _apply_no_key(data: Any, state: Any) -> tuple[Any, Any]:
                 out_data, out_state, _ = self.apply(data, state, None, None, _stats)
                 return out_data, out_state
 
-            apply_one = _apply_no_rp
+            apply_one = _apply_no_key
             inputs = (batch_data, batch_states)
 
         # === SCAN BRANCH (sequential, O(1) memory per element) ===
@@ -360,7 +342,7 @@ class OperatorModule(DataraxModule):
         # integer 0 is a tree prefix of any output and no structure has to be discovered first.
         in_data_axes = jax.tree.map(lambda _: 0, batch_data)
         in_state_axes = jax.tree.map(lambda _: 0, batch_states)
-        in_axes = (in_data_axes, in_state_axes, 0) if has_rp else (in_data_axes, in_state_axes)
+        in_axes = (in_data_axes, in_state_axes, 0) if has_keys else (in_data_axes, in_state_axes)
 
         return jax.vmap(apply_one, in_axes=in_axes, out_axes=0)(*inputs)
 

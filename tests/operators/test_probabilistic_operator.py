@@ -174,49 +174,32 @@ class TestProbabilisticOperatorApplication:
 class TestProbabilisticOperatorStochastic:
     """Test stochastic mode and random parameter generation."""
 
-    def test_generate_random_params_structure(self):
-        """Test that random parameters are boolean decisions per element."""
-        rngs = nnx.Rngs(0)
-
-        # Child operator
-        child_config = MapOperatorConfig(stochastic=False)
-        child_op = MapOperator(child_config, fn=lambda x, _key: x * 2, rngs=rngs)
-
-        # Probabilistic wrapper with p=0.5
-        prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=0.5)
-        prob_op = ProbabilisticOperator(prob_config, rngs=rngs)
-
-        # Generate random params for batch of 3 (one per-record key each)
-        element_keys = jax.random.split(jax.random.key(0), 3)
-        data_shapes = {"value": (3, 1)}  # 3 elements, shape (1,)
-
-        random_params = prob_op.generate_random_params(element_keys, data_shapes)
-
-        # Should contain boolean array of shape (3,)
-        assert "apply_mask" in random_params
-        assert random_params["apply_mask"].shape == (3,)
-        assert random_params["apply_mask"].dtype == jnp.bool_
-
-    def test_random_params_distribution(self):
-        """Test that random params follow probability distribution."""
+    @staticmethod
+    def _applied_ratio(probability: float, n_samples: int) -> float:
+        """Fraction of records the wrapper actually applied its doubling child to."""
         rngs = nnx.Rngs(42)
+        child_op = MapOperator(
+            MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 2, rngs=rngs
+        )
+        prob_op = ProbabilisticOperator(
+            ProbabilisticOperatorConfig(operator=child_op, probability=probability), rngs=rngs
+        )
 
-        # Child operator
-        child_config = MapOperatorConfig(stochastic=False)
-        child_op = MapOperator(child_config, fn=lambda x, _key: x * 2, rngs=rngs)
+        batch = {"value": jnp.ones((n_samples, 1))}
+        data, _ = prob_op._vmap_apply(batch, {})
 
-        # Probabilistic wrapper with p=0.3
-        prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=0.3)
-        prob_op = ProbabilisticOperator(prob_config, rngs=rngs)
+        # The child doubles, so an applied record reads 2.0 and a skipped one 1.0.
+        return float(jnp.mean(data["value"] == 2.0))
 
-        # Per-record determinism: draw one mask per record across many distinct
-        # records in a single call, and check the empirical apply ratio.
-        n_samples = 1000
-        element_keys = jax.random.split(jax.random.key(42), n_samples)
-        data_shapes = {"value": (n_samples, 1)}
+    def test_the_decision_is_made_per_record(self):
+        """At p=0.5 some records are applied and some are not, within one batch."""
+        ratio = self._applied_ratio(0.5, 64)
 
-        random_params = prob_op.generate_random_params(element_keys, data_shapes)
-        ratio = float(jnp.mean(random_params["apply_mask"]))
+        assert 0.0 < ratio < 1.0
+
+    def test_the_applied_fraction_follows_the_probability(self):
+        """Across many records the empirical rate matches the configured probability."""
+        ratio = self._applied_ratio(0.3, 1000)
 
         # Should be roughly 30% (allow 25-35% range)
         assert 0.25 < ratio < 0.35, f"Apply ratio: {ratio} (expected ~0.3)"

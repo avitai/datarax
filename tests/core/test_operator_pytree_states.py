@@ -35,16 +35,12 @@ class IncrementCountOperator(OperatorModule):
 class RandomScaleWithStateOperator(OperatorModule):
     """Stochastic operator that scales data and updates state."""
 
-    def generate_random_params(self, element_keys, data_shapes):
-        del data_shapes
-        # One random scale factor per record, drawn from that record's key.
-        return jax.vmap(lambda key: jax.random.uniform(key, (), minval=0.5, maxval=1.5))(
-            element_keys
-        )
-
-    def apply(self, data, state, metadata, random_params=None, stats=None):
+    def apply(self, data, state, metadata, key=None, stats=None):
         del stats
-        scale_factor = random_params if random_params is not None else 1.0
+        # This record's scale factor, drawn from its own key.
+        scale_factor = (
+            jax.random.uniform(key, (), minval=0.5, maxval=1.5) if key is not None else 1.0
+        )
         scaled_data = {"x": data["x"] * scale_factor}
 
         # Update state with applied scale

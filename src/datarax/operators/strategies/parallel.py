@@ -183,28 +183,17 @@ class ConditionalParallelStrategy(CompositionStrategyImpl):
             Tuple of (merged_data, last_state, last_metadata).
         """
         outputs = []
-        states = []
-        metadatas = []
-        condition_results = []
-
         # First pass: evaluate all conditions
-        for condition in self.conditions:
-            condition_results.append(condition(context.data))
+        condition_results = [condition(context.data) for condition in self.conditions]
 
-        # Second pass: apply operators with jax.lax.cond
-        for i, (operator, cond_result) in enumerate(
-            zip(operators, condition_results, strict=False)
+        # Second pass: apply operators with jax.lax.cond, each with its own key
+        outputs, states, metadatas = [], [], []
+        for (operator, key), cond_result in zip(
+            self._with_keys(operators, context), condition_results, strict=False
         ):
-            op_random_params = self._random_params_for_operator(context.random_params, i)
             out_data, out_state, out_metadata = self._apply_operator_conditionally(
-                operator,
-                cond_result,
-                context.data,
-                context.state,
-                context.metadata,
-                op_random_params,
+                operator, cond_result, context.data, context.state, context.metadata, key
             )
-
             outputs.append(out_data)
             states.append(out_state)
             metadatas.append(out_metadata)

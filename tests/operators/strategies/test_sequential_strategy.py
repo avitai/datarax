@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock
 
+import jax
 import jax.numpy as jnp
 
 from datarax.core.operator import OperatorModule
@@ -39,21 +40,22 @@ class TestSequentialStrategy:
         result_data, _, _ = strategy.apply([], context)
         assert jnp.array_equal(result_data, data)
 
-    def test_random_params_passing(self):
-        # Verify random params are extracted correctly
+    def test_each_child_is_given_its_own_key(self):
+        # Verify the child's key is folded from the record's, by its position
         op1 = MagicMock(spec=OperatorModule)
         op1.apply.return_value = (jnp.array([1]), {}, {})
 
         strategy = SequentialStrategy()
-        context = StrategyContext(
-            jnp.array([1]), {}, {}, random_params={"operator_0": {"seed": 42}}
-        )
+        key = jax.random.key(42)
+        context = StrategyContext(jnp.array([1]), {}, {}, key=key)
 
         strategy.apply([op1], context)
 
-        # Check that apply was called with extracted params
+        # Check that apply was called with this child's derived key
         args, _ = op1.apply.call_args
-        assert args[3] == {"seed": 42}  # 4th arg is random_params
+        assert jnp.array_equal(
+            jax.random.key_data(args[3]), jax.random.key_data(jax.random.fold_in(key, 0))
+        )
 
 
 class TestConditionalSequentialStrategy:

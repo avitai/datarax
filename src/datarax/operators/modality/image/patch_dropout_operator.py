@@ -33,8 +33,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
-from datarax.operators._random_params import per_element_params
-from datarax.operators.modality.image._validation import validate_field_key_shape
+from datarax.core.operator import require_key
 
 
 logger = logging.getLogger(__name__)
@@ -97,7 +96,7 @@ class PatchDropoutOperator(ModalityOperator):
 
     Supports three modes:
     1. **Deterministic**: Fixed patch positions using fixed seed
-    2. **Stochastic**: Per-sample random patch positions from generate_random_params()
+    2. **Stochastic**: Per-record patch positions drawn from the record's own key
     3. **External params**: Accept pre-generated random parameters
 
     The operator works on single elements (H, W, C images) and is composed into
@@ -151,60 +150,6 @@ class PatchDropoutOperator(ModalityOperator):
         # Type narrowing for better IDE support
         self.config: PatchDropoutOperatorConfig = config
 
-    def generate_random_params(  # noqa: DOC502
-        self,
-        element_keys: jax.Array,
-        data_shapes: dict[str, tuple[int, ...]],
-    ) -> dict[str, jax.Array]:
-        """Generate per-record patch positions from per-record PRNG keys.
-
-        Each record's patch positions are drawn from its own key
-        (``fold_in(base_key, global_index)``), so they are reproducible per
-        record regardless of batch composition, shuffle, host count, or resume.
-
-        Args:
-            element_keys: ``(batch_size,)`` per-record PRNG keys.
-            data_shapes: Dictionary mapping field keys to their shapes (image dims).
-
-        Returns:
-            Dictionary with:
-
-                - "patch_positions": Array of patch top-left positions
-                                   Shape: (batch_size, num_patches, 2) where last dim is (y, x)
-
-        Raises:
-            KeyError: If field_key not in data_shapes
-        """
-        # Get shape: (batch_size, H, W, C) or (batch_size, H, W)
-        full_shape = validate_field_key_shape(data_shapes, self.config.field_key)
-        batch_size = full_shape[0]
-        image_height = full_shape[1]
-        image_width = full_shape[2]
-
-        patch_h, patch_w = self.config.patch_size
-        num_patches = self.config.num_patches
-
-        # Check if patches can fit (will be checked again in apply for safety)
-        if image_height < patch_h or image_width < patch_w:
-            # Return zero positions - apply() will skip processing
-            return {"patch_positions": jnp.zeros((batch_size, num_patches, 2), dtype=jnp.int32)}
-
-        # Maximum valid positions (top-left corner of patch)
-        max_x = image_width - patch_w
-        max_y = image_height - patch_h
-
-        def _draw_positions(key: jax.Array) -> jax.Array:
-            # Per-record patch positions: split for x/y, one (num_patches,) draw each.
-            rng_x, rng_y = jax.random.split(key)
-            shape = (num_patches,)
-            x_positions = jax.random.randint(rng_x, shape=shape, minval=0, maxval=max_x + 1)
-            y_positions = jax.random.randint(rng_y, shape=shape, minval=0, maxval=max_y + 1)
-            # (num_patches, 2) where last dim is (y, x)
-            return jnp.stack([y_positions, x_positions], axis=-1)
-
-        patch_positions = per_element_params(element_keys, _draw_positions)
-        return {"patch_positions": patch_positions}
-
     @staticmethod
     def _normalize_to_3d(value: jax.Array) -> tuple[jax.Array, bool]:
         """Ensure the image is 3-D ``(H, W, C)``, adding a channel axis for 2-D input.
@@ -230,41 +175,25 @@ class PatchDropoutOperator(ModalityOperator):
         w: int,
         patch_h: int,
         patch_w: int,
-        random_params: dict[str, jax.Array] | None,
+        key: jax.Array | None,
     ) -> tuple[jax.Array, jax.Array]:
         """Return ``(y_positions, x_positions)`` for the patches to drop.
 
-        In stochastic mode positions come from ``random_params["patch_positions"]``
-        (pre-generated per record). Otherwise positions are drawn with a fixed seed so
-        the transform stays vmap-safe (``self.rngs()`` cannot be called inside vmap).
+        Positions come from this record's key when stochastic, and from a fixed key
+        otherwise, which is what makes the deterministic pattern reproducible. One draw
+        serves both: only where the key comes from differs.
 
         Args:
             h: Image height.
             w: Image width.
             patch_h: Patch height.
             patch_w: Patch width.
-            random_params: Optional pre-generated random parameters.
+            key: This record's PRNG key, required in stochastic mode.
 
         Returns:
             Tuple of ``(y_positions, x_positions)`` arrays of shape ``(num_patches,)``.
-
-        Raises:
-            ValueError: In stochastic mode when ``patch_positions`` is absent.
         """
-        # CRITICAL: Check config.stochastic flag, not if random_params is None.
-        if self.config.stochastic and random_params is not None:
-            # Shape: (num_patches, 2) where last dim is (y, x).
-            patch_positions = random_params.get("patch_positions")
-            if patch_positions is None:
-                raise ValueError(
-                    "Stochastic mode requires 'patch_positions' in random_params. "
-                    "This should be generated by generate_random_params()."
-                )
-            return patch_positions[:, 0], patch_positions[:, 1]
-
-        # Deterministic mode: generate positions with a fixed seed.
-        # CRITICAL: Never call self.rngs() here - it fails inside vmap!
-        rng_key = jax.random.key(0)
+        rng_key = require_key(key, self) if self.config.stochastic else jax.random.key(0)
         rng_x, rng_y = jax.random.split(rng_key)
         x_positions = jax.random.randint(
             rng_x, shape=(self.config.num_patches,), minval=0, maxval=(w - patch_w) + 1
@@ -279,21 +208,18 @@ class PatchDropoutOperator(ModalityOperator):
         data: dict[str, jax.Array],
         state: dict[str, Any],
         metadata: dict[str, Any],
-        random_params: dict[str, jax.Array] | None = None,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, jax.Array], dict[str, Any], dict[str, Any]]:
         """Apply patch dropout transformation to a single element.
 
         This operates on single elements (e.g., one image of shape [H, W, C]).
-        For batch processing, use apply_batch() which handles random param generation.
 
         Args:
             data: Input data dictionary. Must contain field specified by config.field_key
             state: Operator state (unused for patch dropout, passed through)
             metadata: Metadata dictionary (passed through unchanged)
-            random_params: Optional random parameters from generate_random_params().
-                          If config.stochastic=True and this is provided, uses
-                          random_params["patch_positions"] for patch locations.
+            key: This record's PRNG key, required in stochastic mode
             stats: Optional statistics dictionary (unused)
 
         Returns:
@@ -301,10 +227,6 @@ class PatchDropoutOperator(ModalityOperator):
                 - transformed_data: Data dict with patches dropped from target field
                 - state: Unchanged state dict
                 - metadata: Unchanged metadata dict
-
-        Note:
-            CRITICAL: Always check config.stochastic flag, not whether random_params is None.
-            apply_batch() always passes random_params even in deterministic mode.
         """
         del stats
         # Extract the field to transform using base class helper
@@ -324,9 +246,7 @@ class PatchDropoutOperator(ModalityOperator):
             # Return unchanged if patches don't fit
             return data, state, metadata
 
-        y_positions, x_positions = self._resolve_patch_positions(
-            h, w, patch_h, patch_w, random_params
-        )
+        y_positions, x_positions = self._resolve_patch_positions(h, w, patch_h, patch_w, key)
 
         # Apply patches using JAX-compatible loop
         def apply_single_patch(i: int, img: jax.Array) -> jax.Array:

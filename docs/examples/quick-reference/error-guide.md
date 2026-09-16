@@ -85,7 +85,7 @@ class MyOp(OperatorModule):
 # Fix: implement apply with the real 5-parameter signature.
 # It is a pure per-element function returning a (data, state, metadata) tuple.
 class MyOp(OperatorModule):
-    def apply(self, data, state, metadata, random_params=None, stats=None):
+    def apply(self, data, state, metadata, key=None, stats=None):
         return data, state, metadata  # your logic here
 ```
 

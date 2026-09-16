@@ -15,10 +15,15 @@ from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 class ConcreteModalityOperator(ModalityOperator):
     """Concrete implementation for testing."""
 
-    def apply(self, data, state, metadata, random_params=None, stats=None):
-        """Simple test implementation - multiply image by factor."""
-        del stats
-        factor = random_params if random_params is not None else 1.0
+    def __init__(self, config, *, rngs=None, name=None, factor=1.0):
+        """Take the multiplier at construction, so apply needs no key."""
+        super().__init__(config, rngs=rngs, name=name)
+        self.factor = factor
+
+    def apply(self, data, state, metadata, key=None, stats=None):
+        """Simple test implementation - multiply image by the configured factor."""
+        del key, stats
+        factor = self.factor
         field = self._extract_field(data, self.config.field_key)
         transformed = field * factor
         transformed = self._apply_clip_range(transformed)
@@ -29,20 +34,17 @@ class ConcreteModalityOperator(ModalityOperator):
 class StochasticModalityOperator(ModalityOperator):
     """Stochastic implementation for testing."""
 
-    def apply(self, data, state, metadata, random_params=None, stats=None):
-        """Apply random brightness adjustment."""
+    def apply(self, data, state, metadata, key=None, stats=None):
+        """Apply a brightness adjustment drawn from this record's key."""
         del stats
-        brightness_factor = random_params if random_params is not None else 1.0
+        brightness_factor = (
+            jax.random.uniform(key, (), minval=0.8, maxval=1.2) if key is not None else 1.0
+        )
         field = self._extract_field(data, self.config.field_key)
         transformed = field * brightness_factor
         transformed = self._apply_clip_range(transformed)
         result = self._remap_field(data, transformed)
         return result, state, metadata
-
-    def generate_random_params(self, rng, data_shapes):
-        """Generate random brightness factors."""
-        batch_size = data_shapes[self.config.field_key][0]
-        return jax.random.uniform(rng, (batch_size,), minval=0.8, maxval=1.2)
 
 
 class TestModalityOperatorInitialization:
@@ -106,30 +108,6 @@ class TestModalityOperatorAbstractMethods:
 
         with pytest.raises(NotImplementedError, match="must implement apply"):
             operator.apply(data, state, metadata)
-
-    def test_stochastic_without_generate_random_params_raises_error(self):
-        """Stochastic operator without generate_random_params should raise error."""
-
-        class IncompleteStochasticOperator(ModalityOperator):
-            """Missing generate_random_params implementation."""
-
-            def apply(self, data, state, metadata, random_params=None, stats=None):
-                del random_params, stats
-                return data, state, metadata
-
-        config = ModalityOperatorConfig(
-            field_key="image",
-            stochastic=True,
-            stream_name="augment",
-        )
-        rngs = nnx.Rngs(0, augment=1)
-        operator = IncompleteStochasticOperator(config, rngs=rngs)
-
-        data_shapes = {"image": (4, 224, 224, 3)}
-        rng = jax.random.PRNGKey(0)
-
-        with pytest.raises(NotImplementedError, match="does not implement generate_random_params"):
-            operator.generate_random_params(rng, data_shapes)
 
 
 class TestModalityOperatorHelperMethods:
@@ -216,15 +194,13 @@ class TestModalityOperatorApply:
         """Apply should work for deterministic operator."""
         config = ModalityOperatorConfig(field_key="image")
         rngs = nnx.Rngs(0)
-        operator = ConcreteModalityOperator(config, rngs=rngs)
+        operator = ConcreteModalityOperator(config, rngs=rngs, factor=2.0)
 
         data = {"image": jnp.array([1.0, 2.0, 3.0])}
         state = {}
         metadata = None
 
-        result_data, result_state, result_metadata = operator.apply(
-            data, state, metadata, random_params=2.0
-        )
+        result_data, result_state, result_metadata = operator.apply(data, state, metadata)
 
         expected = jnp.array([2.0, 4.0, 6.0])
         assert jnp.allclose(result_data["image"], expected)
@@ -235,15 +211,13 @@ class TestModalityOperatorApply:
         """Apply should clip values when clip_range is set."""
         config = ModalityOperatorConfig(field_key="image", clip_range=(0.0, 5.0))
         rngs = nnx.Rngs(0)
-        operator = ConcreteModalityOperator(config, rngs=rngs)
+        operator = ConcreteModalityOperator(config, rngs=rngs, factor=3.0)
 
         data = {"image": jnp.array([1.0, 2.0, 3.0])}
         state = {}
         metadata = None
 
-        result_data, result_state, result_metadata = operator.apply(
-            data, state, metadata, random_params=3.0
-        )
+        result_data, result_state, result_metadata = operator.apply(data, state, metadata)
 
         expected = jnp.array([3.0, 5.0, 5.0])  # 6.0 and 9.0 clipped to 5.0
         assert jnp.allclose(result_data["image"], expected)
@@ -255,15 +229,13 @@ class TestModalityOperatorApply:
             target_key="processed_image",
         )
         rngs = nnx.Rngs(0)
-        operator = ConcreteModalityOperator(config, rngs=rngs)
+        operator = ConcreteModalityOperator(config, rngs=rngs, factor=2.0)
 
         data = {"image": jnp.array([1.0, 2.0, 3.0])}
         state = {}
         metadata = None
 
-        result_data, result_state, result_metadata = operator.apply(
-            data, state, metadata, random_params=2.0
-        )
+        result_data, result_state, result_metadata = operator.apply(data, state, metadata)
 
         # Original should be preserved
         assert jnp.allclose(result_data["image"], jnp.array([1.0, 2.0, 3.0]))
@@ -274,45 +246,42 @@ class TestModalityOperatorApply:
 class TestModalityOperatorStochastic:
     """Test stochastic operator behavior."""
 
-    def test_stochastic_operator_generates_random_params(self):
-        """Stochastic operator should generate random parameters."""
+    def test_each_record_draws_its_own_factor(self):
+        """The batch path gives every record a factor of its own, within the drawn range."""
         config = ModalityOperatorConfig(
             field_key="image",
             stochastic=True,
             stream_name="augment",
         )
-        rngs = nnx.Rngs(0, augment=1)
-        operator = StochasticModalityOperator(config, rngs=rngs)
+        operator = StochasticModalityOperator(config, rngs=nnx.Rngs(0, augment=1))
 
-        data_shapes = {"image": (4, 224, 224, 3)}
-        rng = jax.random.PRNGKey(42)
+        data, _ = operator._vmap_apply({"image": jnp.ones((4, 8))}, {})
 
-        random_params = operator.generate_random_params(rng, data_shapes)
+        factors = data["image"][:, 0]
+        assert factors.shape == (4,)
+        assert jnp.all(factors >= 0.8)
+        assert jnp.all(factors <= 1.2)
+        assert not jnp.allclose(factors[0], factors[1])
 
-        # Should generate 4 random factors (batch size = 4)
-        assert random_params.shape == (4,)
-        # Values should be in [0.8, 1.2] range
-        assert jnp.all(random_params >= 0.8)
-        assert jnp.all(random_params <= 1.2)
-
-    def test_stochastic_operator_apply_uses_random_params(self):
-        """Stochastic operator apply should use provided random params."""
+    def test_apply_draws_its_factor_from_the_key(self):
+        """One key repeats its factor; a different key draws another."""
         config = ModalityOperatorConfig(
             field_key="image",
             stochastic=True,
             stream_name="augment",
         )
-        rngs = nnx.Rngs(0, augment=1)
-        operator = StochasticModalityOperator(config, rngs=rngs)
-
+        operator = StochasticModalityOperator(config, rngs=nnx.Rngs(0, augment=1))
         data = {"image": jnp.array([1.0, 2.0, 3.0])}
-        state = {}
-        metadata = None
 
-        result_data, _, _ = operator.apply(data, state, metadata, random_params=1.5)
+        first, _, _ = operator.apply(data, {}, None, key=jax.random.key(0))
+        again, _, _ = operator.apply(data, {}, None, key=jax.random.key(0))
+        other, _, _ = operator.apply(data, {}, None, key=jax.random.key(1))
 
-        expected = jnp.array([1.5, 3.0, 4.5])
-        assert jnp.allclose(result_data["image"], expected)
+        assert jnp.array_equal(first["image"], again["image"])
+        assert not jnp.allclose(first["image"], other["image"])
+        # The factor stays inside the operator's configured range
+        assert jnp.all(first["image"] >= data["image"] * 0.8)
+        assert jnp.all(first["image"] <= data["image"] * 1.2)
 
 
 class TestModalityOperatorJAXCompatibility:
@@ -322,11 +291,11 @@ class TestModalityOperatorJAXCompatibility:
         """Operator apply should be JIT compatible."""
         config = ModalityOperatorConfig(field_key="image")
         rngs = nnx.Rngs(0)
-        operator = ConcreteModalityOperator(config, rngs=rngs)
+        operator = ConcreteModalityOperator(config, rngs=rngs, factor=2.0)
 
         @jax.jit
         def jitted_apply(data, state, metadata):
-            return operator.apply(data, state, metadata, random_params=2.0)
+            return operator.apply(data, state, metadata)
 
         data = {"image": jnp.array([1.0, 2.0, 3.0])}
         state = {}
@@ -341,24 +310,19 @@ class TestModalityOperatorJAXCompatibility:
         """Operator apply should be vmap compatible."""
         config = ModalityOperatorConfig(field_key="image")
         rngs = nnx.Rngs(0)
-        operator = ConcreteModalityOperator(config, rngs=rngs)
+        operator = ConcreteModalityOperator(config, rngs=rngs, factor=2.0)
 
         # Batch of 3 images
         batch_data = {"image": jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])}
         batch_state = [{}, {}, {}]
-        batch_random_params = jnp.array([1.0, 2.0, 3.0])
 
-        def apply_single(data, state, random_param):
+        def apply_single(data, state):
             data_dict = {"image": data}
-            result_data, result_state, _ = operator.apply(
-                data_dict, state, None, random_params=random_param
-            )
+            result_data, result_state, _ = operator.apply(data_dict, state, None)
             return result_data["image"], result_state
 
-        vmapped_apply = jax.vmap(apply_single, in_axes=(0, 0, 0))
-        result_images, result_states = vmapped_apply(
-            batch_data["image"], batch_state, batch_random_params
-        )
+        vmapped_apply = jax.vmap(apply_single, in_axes=(0, 0))
+        result_images, result_states = vmapped_apply(batch_data["image"], batch_state)
 
-        expected = jnp.array([[1.0, 2.0], [6.0, 8.0], [15.0, 18.0]])
+        expected = jnp.array([[2.0, 4.0], [6.0, 8.0], [10.0, 12.0]])
         assert jnp.allclose(result_images, expected)

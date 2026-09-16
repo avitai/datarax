@@ -28,7 +28,7 @@ import jax
 from flax import nnx
 
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
-from datarax.operators._random_params import per_element_params
+from datarax.core.operator import require_key
 from datarax.operators.modality.image import functional
 
 
@@ -116,8 +116,7 @@ class BrightnessOperator(ModalityOperator):
             stream_name="augment"
         )
         operator = BrightnessOperator(config, rngs=nnx.Rngs(0, augment=1))
-        random_params = operator.generate_random_params(rng, data_shapes)
-        result, _, _ = operator.apply(data, {}, {}, random_params=random_params)
+        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
         ```
     """
 
@@ -141,7 +140,7 @@ class BrightnessOperator(ModalityOperator):
         data: dict[str, Any],
         state: dict[str, Any],
         metadata: dict[str, Any],
-        random_params: dict[str, Any] | None = None,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
         """Apply brightness transformation to data.
@@ -156,8 +155,7 @@ class BrightnessOperator(ModalityOperator):
             data: Input data dictionary containing the image field
             state: Operator state (unused for stateless transformations)
             metadata: Metadata dictionary (passed through unchanged)
-            random_params: Optional random parameters for stochastic mode.
-                          Expected keys: 'brightness'
+            key: This record's PRNG key, required in stochastic mode
             stats: Optional statistics dictionary (unused)
 
         Returns:
@@ -168,11 +166,12 @@ class BrightnessOperator(ModalityOperator):
         image = self._extract_field(data, self.config.field_key)
 
         # 2. Determine brightness adjustment
-        # Note: apply_batch() always passes random_params (dummy in deterministic mode)
-        # so we check config.stochastic instead of checking if random_params is None
-        if self.config.stochastic and random_params is not None:
-            # Stochastic mode: use random parameters
-            brightness_delta = random_params.get("brightness", 0.0)
+        if self.config.stochastic:
+            # This record's own delta, drawn from its own key
+            min_bright, max_bright = self.config.brightness_range
+            brightness_delta = jax.random.uniform(
+                require_key(key, self), shape=(), minval=min_bright, maxval=max_bright
+            )
         else:
             # Deterministic mode: use config value
             brightness_delta = self.config.brightness_delta
@@ -188,29 +187,3 @@ class BrightnessOperator(ModalityOperator):
         result = self._remap_field(data, transformed)
 
         return result, state, metadata
-
-    def generate_random_params(
-        self, element_keys: jax.Array, data_shapes: dict[str, tuple[int, ...]]
-    ) -> dict[str, Any]:
-        """Generate per-record brightness deltas from per-record PRNG keys.
-
-        Each record's brightness is drawn from its own key
-        (``fold_in(base_key, global_index)``), so the same record gets the same
-        delta regardless of batch composition, shuffle, host count, or resume.
-
-        Args:
-            element_keys: ``(batch_size,)`` per-record PRNG keys.
-            data_shapes: Unused (batch size comes from ``element_keys``).
-
-        Returns:
-            Dictionary containing:
-
-                - 'brightness': Array of shape (batch_size,) with per-record brightness deltas
-        """
-        del data_shapes
-        min_bright, max_bright = self.config.brightness_range
-        brightness = per_element_params(
-            element_keys,
-            lambda key: jax.random.uniform(key, shape=(), minval=min_bright, maxval=max_bright),
-        )
-        return {"brightness": brightness}

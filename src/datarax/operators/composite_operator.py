@@ -51,10 +51,10 @@ This module implements several critical patterns for vmap and JIT compatibility:
 
 5. **weight_key Data Stripping**:
 
-   - When ``weight_key`` is set, it is stripped from both ``data`` (in ``apply()``)
-     and ``data_shapes`` (in ``generate_random_params()``)
-   - Why: Children's random param trees must match the clean data they receive;
-     a shape mismatch causes vmap failures
+   - When ``weight_key`` is set, it is stripped from ``data`` in ``apply()`` before any
+     child runs
+   - Why: children see the fields the composite promises them; the weight is the
+     composite's own input, not theirs
    - Pattern: Dict comprehension ``{k: v for k, v in d.items() if k != weight_key}``
 
 These patterns ensure all strategies work correctly inside jax.vmap and jax.jit.
@@ -72,7 +72,7 @@ from flax import nnx
 from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
-from datarax.core.operator import OperatorModule
+from datarax.core.operator import OperatorModule, require_key
 
 
 logger = logging.getLogger(__name__)
@@ -390,55 +390,18 @@ class CompositeOperatorModule(OperatorModule):
             ),
         }
 
-    def generate_random_params(
-        self,
-        element_keys: jax.Array,
-        data_shapes: PyTree,
-    ) -> dict[str, Any]:
-        """Generate per-record random parameters for all child operators.
-
-        Each child receives its own per-record key set derived from
-        ``element_keys`` via ``fold_in`` (child index as the fold offset), so
-        every child's randomness is independent yet reproducible per record.
-
-        When ``weight_key`` is configured, strips that key from ``data_shapes``
-        before delegating to children so their random-param trees match the clean
-        data they receive (without the weight key), avoiding PyTree mismatches.
-        """
-        # Strip weight_key from data_shapes so children's random params
-        # match the clean data they actually receive (without the weight key)
-        child_data_shapes = data_shapes
-        if (
-            self.config.weight_key is not None
-            and isinstance(data_shapes, dict)
-            and self.config.weight_key in data_shapes
-        ):
-            child_data_shapes = {
-                k: v for k, v in data_shapes.items() if k != self.config.weight_key
-            }
-
-        # Per-child per-record keys: fold the child index into each record's key.
-        operators = self._get_operators_list()
-        random_params = {}
-        for i, operator in enumerate(operators):
-            child_keys = jax.vmap(lambda key, offset=i: jax.random.fold_in(key, offset))(
-                element_keys
-            )
-            random_params[f"operator_{i}"] = operator.generate_random_params(
-                child_keys, child_data_shapes
-            )
-
-        return random_params
-
     def apply(
         self,
         data: PyTree,
         state: PyTree,
         metadata: dict[str, Any] | None,
-        random_params: dict[str, Any] | None = None,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
         """Apply composition based on the configured strategy.
+
+        The record's key travels to the strategy, which folds each child's position into it
+        so every child draws independently while still depending only on the record.
 
         For ``WEIGHTED_PARALLEL`` with ``weight_key``, extracts weights from
         ``data[weight_key]``, strips the key from data, and passes clean data
@@ -453,7 +416,7 @@ class CompositeOperatorModule(OperatorModule):
             data=clean_data,
             state=state,
             metadata=metadata if metadata is not None else {},
-            random_params=random_params,
+            key=require_key(key, self) if self.stochastic else key,
             extra_params=extra_params if extra_params else None,
         )
 
@@ -529,9 +492,29 @@ class CompositeOperatorModule(OperatorModule):
 
     # Dynamic sequential methods
     def add_operator(self, operator: OperatorModule, index: int | None = None) -> None:
-        """Add operator to dynamic sequential."""
+        """Add operator to dynamic sequential.
+
+        Args:
+            operator: The operator to append or insert.
+            index: Position to insert at, or ``None`` to append.
+
+        Raises:
+            ValueError: If the strategy is not ``DYNAMIC_SEQUENTIAL``, or the operator is
+                stochastic while this composite is not.
+        """
         if self.config.strategy != CompositionStrategy.DYNAMIC_SEQUENTIAL:
             raise ValueError("add_operator only available for DYNAMIC_SEQUENTIAL")
+
+        # A composite's own mode is fixed when its config is built, and only a stochastic
+        # composite is handed a key to fold for its children. Adding a stochastic child to a
+        # deterministic composite would leave that child with no key, raising at apply time
+        # far from the call that caused it.
+        if getattr(operator.config, "stochastic", False) and not self.config.stochastic:
+            raise ValueError(
+                f"{type(operator).__name__} is stochastic but this composite is not, so it has "
+                "no key to give it; construct the composite with a stochastic operator among "
+                "its initial operators"
+            )
 
         if index is None:
             self.operators.append(operator)

@@ -384,49 +384,37 @@ class TestPatchDropoutOperatorEdgeCases:
 class TestPatchDropoutOperatorStochasticMode:
     """Tests for stochastic random parameter generation."""
 
-    def test_generate_random_params_shape(self):
-        """Test random parameter generation produces correct shape."""
+    @staticmethod
+    def _patched(batch_size: int) -> jnp.ndarray:
+        """Run a batch of identical images through a stochastic patch dropout operator."""
         config = PatchDropoutOperatorConfig(
             field_key="image",
             num_patches=4,
             patch_size=(8, 8),
+            drop_value=0.0,
             stochastic=True,
             stream_name="augment",
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(42, augment=1))
+        data, _ = operator._vmap_apply({"image": jnp.ones((batch_size, 32, 32, 3))}, {})
+        return data["image"]
 
-        element_keys = jax.random.split(jax.random.key(42), 3)  # one key per record
-        data_shapes = {"image": (3, 32, 32, 3)}  # Batch size 3
+    def test_each_record_gets_its_own_patch_positions(self):
+        """Identical inputs come out differently because each record places its own patches."""
+        patched = self._patched(3)
 
-        random_params = operator.generate_random_params(element_keys, data_shapes)
+        assert patched.shape == (3, 32, 32, 3)
+        assert jnp.any(patched == 0.0)
+        assert not jnp.array_equal(patched[0], patched[1])
 
-        assert "patch_positions" in random_params
-        # Shape: (batch_size, num_patches, 2) where last dim is (y, x)
-        assert random_params["patch_positions"].shape == (3, 4, 2)
+    def test_patches_stay_inside_the_image(self):
+        """Dropped pixels never exceed what four 8x8 patches can cover."""
+        patched = self._patched(10)
 
-    def test_generate_random_params_values(self):
-        """Test random parameters have valid values."""
-        config = PatchDropoutOperatorConfig(
-            field_key="image",
-            num_patches=4,
-            patch_size=(8, 8),
-            stochastic=True,
-            stream_name="augment",
-        )
-        operator = PatchDropoutOperator(config, rngs=nnx.Rngs(42, augment=1))
-
-        element_keys = jax.random.split(jax.random.key(42), 10)  # one key per record
-        data_shapes = {"image": (10, 32, 32, 3)}
-
-        random_params = operator.generate_random_params(element_keys, data_shapes)
-
-        positions = random_params["patch_positions"]
-        # All positions should be within valid range
-        # Max valid position is (image_size - patch_size)
-        assert jnp.all(positions[:, :, 0] >= 0)  # y >= 0
-        assert jnp.all(positions[:, :, 0] <= 32 - 8)  # y <= max_y
-        assert jnp.all(positions[:, :, 1] >= 0)  # x >= 0
-        assert jnp.all(positions[:, :, 1] <= 32 - 8)  # x <= max_x
+        # Four 8x8 patches over 3 channels, per record; overlapping patches drop fewer.
+        dropped_per_record = jnp.sum(patched == 0.0, axis=(1, 2, 3))
+        assert jnp.all(dropped_per_record > 0)
+        assert jnp.all(dropped_per_record <= 4 * 8 * 8 * 3)
 
     def test_stochastic_apply_batch_varies_between_samples(self):
         """Test stochastic mode produces different results for batch elements."""

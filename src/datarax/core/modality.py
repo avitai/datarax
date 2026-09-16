@@ -205,7 +205,7 @@ class ModalityOperator(OperatorModule):
                 # Add learnable parameters if needed
                 # self.augment_strength = nnx.Param(jnp.array(0.5))
 
-            def apply(self, data, state, metadata, random_params=None, stats=None):
+            def apply(self, data, state, metadata, key=None, stats=None):
                 # Extract field
                 image = self._extract_field(data, self.config.field_key)
 
@@ -219,11 +219,6 @@ class ModalityOperator(OperatorModule):
                 result = self._remap_field(data, transformed)
 
                 return result, state, metadata
-
-            def generate_random_params(self, rng, data_shapes):
-                # For stochastic operators only
-                batch_size = data_shapes[self.config.field_key][0]
-                return jax.random.uniform(rng, (batch_size,))
         ```
 
     Examples:
@@ -282,23 +277,23 @@ class ModalityOperator(OperatorModule):
         data: PyTree,
         state: PyTree,
         metadata: dict[str, Any] | None,
-        random_params: Any = None,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
     ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
         """Apply modality-specific transformation to element.
 
         MUST be implemented by subclasses to provide modality-specific behavior.
 
-        This is a PURE FUNCTION that transforms a single data element.
-        It should not access self.rngs or generate random numbers.
-        All randomness comes through random_params argument.
+        This is a PURE FUNCTION that transforms a single data element. It does not read
+        ``self.rngs``: every random value it applies is drawn from ``key``, this record's
+        own PRNG key.
 
         Args:
             data: Element data PyTree (contains field specified by config.field_key)
                  Typically dict[str, Array] with no batch dimension
             state: Element state PyTree (typically dict[str, Any])
             metadata: Element metadata dict
-            random_params: Random parameters for this element (from generate_random_params)
+            key: This record's PRNG key, or ``None`` for a deterministic operator
             stats: Optional batch statistics (from get_statistics() or passed explicitly)
 
         Returns:
@@ -309,12 +304,12 @@ class ModalityOperator(OperatorModule):
 
         Implementation Pattern:
             ```python
-            def apply(self, data, state, metadata, random_params=None, stats=None):
+            def apply(self, data, state, metadata, key=None, stats=None):
                 # 1. Extract field
                 field_value = self._extract_field(data, self.config.field_key)
 
                 # 2. Transform (modality-specific logic)
-                transformed = self._transform(field_value, random_params, stats)
+                transformed = self._transform(field_value, key, stats)
 
                 # 3. Apply clipping if configured
                 transformed = self._apply_clip_range(transformed)
@@ -329,46 +324,6 @@ class ModalityOperator(OperatorModule):
             NotImplementedError: If not implemented by subclass
         """
         raise NotImplementedError(f"{self.__class__.__name__} must implement apply()")
-
-    def generate_random_params(  # noqa: DOC502
-        self,
-        rng: jax.Array,
-        data_shapes: PyTree,
-    ) -> PyTree:
-        """Generate random parameters for stochastic transformations.
-
-        MUST be implemented by stochastic operators (config.stochastic=True).
-        Deterministic operators can use default implementation (returns None).
-
-        Generates PyTree of random parameters matching batch structure. For example,
-        image rotation might generate per-element rotation angles.
-
-        This method is impure (uses RNG) and called once per batch. The generated
-        parameters are then passed to apply() for each element via vmap.
-
-        Args:
-            rng: JAX random key for this batch
-            data_shapes: PyTree with same structure as batch.data, containing shapes
-                        Examples: {"image": (batch_size, H, W, C)}
-
-        Returns:
-            PyTree of random parameters for this batch.
-            Structure depends on operator needs.
-            For deterministic operators, returns None.
-
-        Examples:
-            ```python
-            def generate_random_params(self, rng, data_shapes):
-                # Stochastic rotation: generate per-element angles
-                batch_size = data_shapes[self.config.field_key][0]
-                return jax.random.uniform(rng, (batch_size,), minval=0, maxval=2*jnp.pi)
-            ```
-
-        Raises:
-            NotImplementedError: If stochastic=True but not implemented
-        """
-        # Default implementation for deterministic operators
-        return super().generate_random_params(rng, data_shapes)
 
     def _extract_field(self, data: dict, field_key: str) -> Any:  # noqa: DOC502
         """Extract field from data dict with validation.

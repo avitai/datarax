@@ -45,24 +45,17 @@ class TestExternalLibraryAdapter:
         assert adapter.fn == mock_external_fn
         assert adapter.stream_name == "augment"
 
-    def test_generate_random_params(self, mock_external_fn):
+    def test_each_record_is_given_its_own_key(self, mock_external_fn):
         config = ExternalAdapterConfig()
         rngs = nnx.Rngs(augment=42)
         adapter = ExternalLibraryAdapter(config, mock_external_fn, rngs=rngs)
 
         batch_size = 5
-        element_keys = jax.random.split(jax.random.key(0), batch_size)  # one key per record
-        # Simulate data_shapes for a batch of 5 images of shape (32, 32, 3)
-        data_shapes = {"x": (batch_size, 32, 32, 3)}
+        # Identical inputs, so any difference between records is their own key
+        data, _ = adapter._vmap_apply({"x": jnp.ones((batch_size, 8))}, {})
 
-        keys = adapter.generate_random_params(element_keys, data_shapes)
-
-        # JAX keys can be (N, 2) or (N,) depending on implementation/version
-        assert keys.shape[0] == batch_size
-
-        # Ensure keys are different
-        # Compare first two keys
-        assert not jnp.array_equal(keys[0], keys[1])
+        assert data["x"].shape == (batch_size, 8)
+        assert not jnp.array_equal(data["x"][0], data["x"][1])
 
     def test_apply_single_element(self, mock_external_fn):
         config = ExternalAdapterConfig()
@@ -74,9 +67,7 @@ class TestExternalLibraryAdapter:
         metadata = None
         key = jax.random.key(123)
 
-        transformed_data, new_state, new_metadata = adapter.apply(
-            data, state, metadata, random_params=key
-        )
+        transformed_data, new_state, new_metadata = adapter.apply(data, state, metadata, key=key)
 
         # Check that noise was added (unlikely to equal exactly 1.0 everywhere)
         assert not jnp.allclose(transformed_data["x"], data["x"])
@@ -96,7 +87,7 @@ class TestExternalLibraryAdapter:
         rngs = nnx.Rngs(augment=42)
         adapter = ExternalLibraryAdapter(config, mock_external_fn, rngs=rngs)
 
-        out_data, _, _ = adapter.apply({"x": jnp.zeros(1)}, {}, None, random_params=None)
+        out_data, _, _ = adapter.apply({"x": jnp.zeros(1)}, {}, None, key=None)
         assert out_data is not None
 
     def test_integration_with_batch(self, mock_external_fn):
