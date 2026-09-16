@@ -1,7 +1,5 @@
 """Unit tests for parallel strategy."""
 
-from unittest.mock import MagicMock
-
 import jax.numpy as jnp
 
 from datarax.operators.strategies.base import StrategyContext
@@ -43,18 +41,6 @@ class TestParallelStrategy:
         result_data, _, _ = strategy.apply([op1, op2], context)
 
         assert jnp.array_equal(result_data, jnp.array([3.0]))
-
-    def test_stats_callback(self):
-        op1 = MockOperator(1.0, name="op1")
-        callback = MagicMock()
-        strategy = ParallelStrategy(merge_strategy="sum")
-
-        context = StrategyContext(jnp.array([0]), {}, {}, stats_callback=callback)
-
-        strategy.apply([op1], context)
-
-        # Verify callback was called with index 0 and stats
-        callback.assert_called_with(0, {"op1_stat": 1.0})
 
 
 class TestWeightedParallelStrategy:

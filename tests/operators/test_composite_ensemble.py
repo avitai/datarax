@@ -317,11 +317,6 @@ class TestEnsembleAdvanced:
         )
         composite = CompositeOperatorModule(composite_config)
 
-        # Create batch to trigger statistics collection
         batch = Batch([Element(data={"value": jnp.array([1.0])})])
 
-        # Apply composite
         composite(batch)
-
-        # Verify statistics dict exists
-        assert hasattr(composite, "operator_statistics")

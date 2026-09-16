@@ -43,9 +43,6 @@ class SequentialStrategy(CompositionStrategyImpl):
                 result_data, result_state, result_metadata, op_random_params
             )
 
-            # Track statistics
-            self._emit_operator_statistics(operator, i, context.stats_callback)
-
         return result_data, result_state, result_metadata or {}
 
 
@@ -100,8 +97,5 @@ class ConditionalSequentialStrategy(CompositionStrategyImpl):
                 result_metadata,
                 op_random_params,
             )
-
-            # Track statistics
-            self._emit_operator_statistics(operator, i, context.stats_callback)
 
         return result_data, result_state, result_metadata

@@ -394,12 +394,7 @@ class TestSequentialAdvanced:
         # Create batch to trigger statistics collection
         batch = Batch([Element(data={"value": jnp.array([1.0])})])
 
-        # Apply composite
         composite(batch)
-
-        # Verify statistics dict exists (even if empty for MapOperator)
-        assert hasattr(composite, "operator_statistics")
-        # Statistics structure should be accessible (MapOperator may not populate)
 
     def test_nested_sequential_composites(self):
         """Test sequential composite containing another sequential composite."""

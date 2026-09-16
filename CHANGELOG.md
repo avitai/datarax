@@ -67,6 +67,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `CompositeOperatorModule.operator_statistics` and `StrategyContext.stats_callback`, with the
+  `_emit_operator_statistics` hook the sequential and parallel strategies called. The hook
+  forwarded an operator's `statistics` attribute, which no operator defines, so the variable
+  every composite carried through each compiled step stayed empty.
 - The pytest `--device` option and the `gpu`, `gpu_required`, `cuda`, `cpu` and `tpu` markers, which
   only a keyword filter behind that option acted on. A test that needs a GPU backend or several
   devices declares the substrax plugin's `accelerator(kind="gpu")` or `devices(count)` marker, which

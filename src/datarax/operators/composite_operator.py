@@ -321,9 +321,6 @@ class CompositeOperatorModule(OperatorModule):
             initial = jnp.asarray(config.weights)
             self.weight_logits = nnx.Param(jnp.log(initial / jnp.sum(initial)))
 
-        # Statistics tracking
-        self.operator_statistics = nnx.Variable({})
-
         # Initialize strategy implementation
         self._init_strategy()
 
@@ -452,20 +449,12 @@ class CompositeOperatorModule(OperatorModule):
 
         extra_params, clean_data = self._resolve_weighted_params(data)
 
-        # Stats callback
-        def stats_callback(index: int, stats: dict[str, Any]) -> None:
-            # Updates NNX variable
-            current_stats = self.operator_statistics.get_value()
-            current_stats[f"operator_{index}"] = stats
-            self.operator_statistics.set_value(current_stats)
-
         context = StrategyContext(
             data=clean_data,
             state=state,
             metadata=metadata if metadata is not None else {},
             random_params=random_params,
             extra_params=extra_params if extra_params else None,
-            stats_callback=stats_callback,
         )
 
         return self.strategy_impl.apply(self._get_operators_list(), context)
