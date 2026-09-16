@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `SelectorOperatorConfig.normalized_weights` is a tuple of floats instead of a `jax.Array`.
+  Comparing two equal configs raised `ValueError: The truth value of an array with more than one
+  element is ambiguous`, which also reaches `nnx.jit` dispatch, since a config is graphdef
+  metadata that dispatch compares.
 - `BatchMixOperator.apply` raises `NotImplementedError` instead of returning its input unchanged,
   which looked like a successful mix. Batch mixing combines each record with another record of the
   same batch, so it has no per-record form: call `apply_batch(batch)`, or the operator itself.

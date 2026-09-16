@@ -50,6 +50,9 @@ class SelectorOperatorConfig(OperatorConfig):
         operators: List of operators to select from (minimum 1)
         weights: Optional weights for random selection (defaults to uniform)
                  Will be normalized to sum to 1.0
+        normalized_weights: The weights normalized to sum to 1.0, as a tuple of floats.
+                 Derived in __post_init__; a config is graphdef metadata, which jit
+                 dispatch compares, so it holds no array.
 
     Note:
         - stochastic is always True (always makes random choice)
@@ -58,7 +61,7 @@ class SelectorOperatorConfig(OperatorConfig):
 
     operators: list[OperatorModule] = field(kw_only=True)
     weights: list[float] | None = field(default=None, kw_only=True)
-    normalized_weights: jax.Array = field(init=False, repr=False)
+    normalized_weights: tuple[float, ...] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Validate configuration and normalize weights."""
@@ -83,7 +86,7 @@ class SelectorOperatorConfig(OperatorConfig):
         # Normalize weights to sum to 1.0
         total = sum(weights)
         normalized = [w / total for w in weights]
-        object.__setattr__(self, "normalized_weights", jnp.array(normalized))
+        object.__setattr__(self, "normalized_weights", tuple(normalized))
 
         # SelectorOperator is ALWAYS stochastic (always makes random choice)
         object.__setattr__(self, "stochastic", True)
@@ -137,7 +140,7 @@ class SelectorOperator(OperatorModule):
 
         # Store operators in NNX List for proper state management
         self.operators = nnx.List(config.operators)
-        self.weights = nnx.static(tuple(float(w) for w in config.normalized_weights.tolist()))
+        self.weights = nnx.static(config.normalized_weights)
 
     def get_output_structure(
         self,
