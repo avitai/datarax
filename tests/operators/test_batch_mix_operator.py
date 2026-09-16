@@ -553,7 +553,7 @@ class TestBatchMixOperatorEdgeCases:
 class TestBatchMixOperatorPipelineRawPath:
     """Regression: BatchMixOperator must work through the Pipeline fused raw path.
 
-    The Pipeline calls ``_apply_on_raw(data, states, stats, global_indices)``; a
+    The Pipeline calls ``_apply_on_raw(data, states, stats, record_indices)``; a
     stale override signature previously broke mixup/cutmix pipelines (caught only
     by example execution). These tests exercise that path directly.
     """
@@ -573,8 +573,8 @@ class TestBatchMixOperatorPipelineRawPath:
         batch = pipeline.step()  # type: ignore[reportCallIssue]
         assert batch["image"].shape == (4, 4)
 
-    def test_apply_on_raw_accepts_global_indices(self):
-        """The raw path accepts the Pipeline's 4th positional (global_indices)."""
+    def test_apply_on_raw_accepts_record_indices(self):
+        """The raw path accepts the Pipeline's 4th positional (record_indices)."""
         mixer = BatchMixOperator(
             BatchMixOperatorConfig(mode="cutmix", data_field="image"),
             rngs=nnx.Rngs(batch_mix=0),

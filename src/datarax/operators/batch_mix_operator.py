@@ -32,7 +32,7 @@ from jaxtyping import PyTree
 
 from datarax.core.config import BatchMixOperatorConfig
 from datarax.core.element_batch import Batch
-from datarax.core.operator import _global_indices_from_metadata, OperatorModule
+from datarax.core.operator import _record_indices_from_metadata, OperatorModule
 
 
 logger = logging.getLogger(__name__)
@@ -162,7 +162,7 @@ class BatchMixOperator(OperatorModule):
 
         # Batch-level mix key, keyed on the batch's global record indices when
         # available (from metadata) for reproducibility across resume/host count.
-        key = self._mix_key(_global_indices_from_metadata(batch._metadata_list.get_value()))
+        key = self._mix_key(_record_indices_from_metadata(batch._metadata_list.get_value()))
 
         # Dispatch to appropriate mixing method
         if self.config.mode == "mixup":
@@ -171,7 +171,7 @@ class BatchMixOperator(OperatorModule):
         return self._apply_cutmix(batch, key)
 
     def _mix_key(
-        self, global_indices: jax.Array | None, epoch: jax.Array | int | None = None
+        self, record_indices: jax.Array | None, epoch: jax.Array | int | None = None
     ) -> jax.Array:
         """Return the batch-level mixing key.
 
@@ -183,11 +183,11 @@ class BatchMixOperator(OperatorModule):
         """
         assert self.rngs is not None, "BatchMixOperator requires rngs"
         assert self.stream_name is not None, "BatchMixOperator requires stream_name"
-        if global_indices is not None:
+        if record_indices is not None:
             base_key = self._base_key[...]
             if epoch is not None:
                 base_key = jax.random.fold_in(base_key, epoch)
-            return jax.random.fold_in(base_key, global_indices[0])
+            return jax.random.fold_in(base_key, record_indices[0])
         return self.rngs[self.stream_name]()
 
     def _apply_mixup(self, batch: Batch, key: jax.Array) -> Batch:
@@ -239,12 +239,12 @@ class BatchMixOperator(OperatorModule):
         batch_data: PyTree,
         batch_states: PyTree,
         stats: dict[str, Any] | None = None,
-        global_indices: jax.Array | None = None,
+        record_indices: jax.Array | None = None,
         epoch: jax.Array | int | None = None,
     ) -> tuple[PyTree, PyTree]:
         """Apply batch-level mixing in the DAG fused raw-batch path.
 
-        Accepts ``global_indices`` and ``epoch`` (threaded by the Pipeline) so the
+        Accepts ``record_indices`` and ``epoch`` (threaded by the Pipeline) so the
         batch-mix key is reproducible from the batch's first record and its epoch.
         """
         del stats
@@ -253,7 +253,7 @@ class BatchMixOperator(OperatorModule):
         if batch_size < 2:
             return batch_data, batch_states
 
-        key = self._mix_key(global_indices, epoch)
+        key = self._mix_key(record_indices, epoch)
         if self.config.mode == "mixup":
             return self._apply_mixup_raw(batch_data, batch_states, key)
         return self._apply_cutmix_raw(batch_data, batch_states, key)
