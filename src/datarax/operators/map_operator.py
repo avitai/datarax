@@ -221,8 +221,7 @@ class MapOperator(OperatorModule):
         del stats
         # Get keys (real for stochastic, dummy/None for deterministic)
         # If random_params is None, create dummy keys matching data structure
-        # This is needed for jax.eval_shape in get_output_structure()
-        # Use dummy PRNG keys (not None) so stochastic functions can trace correctly
+        # Use dummy PRNG keys (not None) so the mapped function can draw either way
         if random_params is None:
             keys = jax.tree.map(lambda _: jax.random.key(0), data)
         else:

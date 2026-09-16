@@ -87,14 +87,16 @@ class TestCrepeF0Output:
             f"Expected (1000,), got {out_data['f0_confidence'].shape}"
         )
 
-    def test_output_structure(self):
-        """get_output_structure declares f0_hz and f0_confidence."""
+    def test_batch_gains_f0_hz_and_f0_confidence(self):
+        """A batch comes back carrying the two fields the operator adds, and its audio."""
         op = CrepeF0Operator(CrepeF0Config(capacity="tiny"), rngs=nnx.Rngs(0))
-        sample_data = {"audio": jnp.zeros(64000)}
-        out_data_struct, out_state_struct = op.get_output_structure(sample_data, {})
-        assert "f0_hz" in out_data_struct
-        assert "f0_confidence" in out_data_struct
-        assert "audio" in out_data_struct
+        batch = Batch([Element(data={"audio": jnp.zeros(16000)}, state={}) for _ in range(2)])
+
+        result_data = op.apply_batch(batch).data.get_value()
+
+        assert "f0_hz" in result_data
+        assert "f0_confidence" in result_data
+        assert "audio" in result_data
 
     def test_shorter_audio(self):
         """Shorter audio produces fewer frames."""

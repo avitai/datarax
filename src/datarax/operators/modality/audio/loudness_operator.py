@@ -183,13 +183,3 @@ class LoudnessOperator(OperatorModule):
 
         # Floor at -range_db
         return jnp.maximum(loudness_per_frame, -self.config.range_db)
-
-    def get_output_structure(
-        self,
-        sample_data: PyTree,
-        sample_state: PyTree,
-    ) -> tuple[PyTree, PyTree]:
-        """Declare output structure with added 'loudness' key."""
-        out_data = {**{k: 0 for k in sample_data}, "loudness": 0}
-        out_state = jax.tree.map(lambda _: 0, sample_state) if sample_state else {}
-        return out_data, out_state

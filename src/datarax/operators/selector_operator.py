@@ -142,29 +142,6 @@ class SelectorOperator(OperatorModule):
         self.operators = nnx.List(config.operators)
         self.weights = nnx.static(config.normalized_weights)
 
-    def get_output_structure(
-        self,
-        sample_data: PyTree,
-        sample_state: PyTree,
-    ) -> tuple[PyTree, PyTree]:
-        """Declare output structure using first operator.
-
-        SelectorOperator's apply() requires random_params which isn't available
-        during jax.eval_shape tracing. Since all child operators should produce
-        compatible output structures, we use the first operator's structure.
-
-        Args:
-            sample_data: Single element data (not batched)
-            sample_state: Single element state (not batched)
-
-        Returns:
-            Tuple of (output_data_structure, output_state_structure) with 0 leaves.
-        """
-        # Use first operator to determine output structure
-        # All operators should have compatible output structures
-        first_op = self.operators[0]
-        return first_op.get_output_structure(sample_data, sample_state)
-
     def generate_random_params(
         self,
         element_keys: jax.Array,

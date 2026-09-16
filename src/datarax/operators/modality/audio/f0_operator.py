@@ -196,13 +196,3 @@ class CrepeF0Operator(OperatorModule):
             f0_hz, confidence = jax.vmap(_decode_local)(probs)
 
         return f0_hz, confidence
-
-    def get_output_structure(
-        self,
-        sample_data: PyTree,
-        sample_state: PyTree,
-    ) -> tuple[PyTree, PyTree]:
-        """Declare output structure with added 'f0_hz' and 'f0_confidence' keys."""
-        out_data = {**{k: 0 for k in sample_data}, "f0_hz": 0, "f0_confidence": 0}
-        out_state = jax.tree.map(lambda _: 0, sample_state) if sample_state else {}
-        return out_data, out_state

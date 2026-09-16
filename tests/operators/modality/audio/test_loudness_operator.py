@@ -134,17 +134,15 @@ class TestLoudnessOutput:
         assert "loudness" in out_data
         assert "audio" in out_data, "Original audio key should be preserved"
 
-    def test_get_output_structure(self):
-        """get_output_structure() must declare the 'loudness' key."""
-        config = LoudnessConfig()
-        op = LoudnessOperator(config, rngs=nnx.Rngs(0))
+    def test_batch_gains_the_loudness_field(self):
+        """A batch comes back carrying the loudness the operator adds, and its audio."""
+        op = LoudnessOperator(LoudnessConfig(), rngs=nnx.Rngs(0))
+        batch = Batch.from_parts(data={"audio": jnp.zeros((2, 32000))}, states={}, validate=False)
 
-        sample_data = {"audio": jnp.zeros(64000)}
-        sample_state = {}
+        result_data = op.apply_batch(batch).data.get_value()
 
-        out_data_struct, out_state_struct = op.get_output_structure(sample_data, sample_state)
-        assert "loudness" in out_data_struct, "Output structure must declare loudness key"
-        assert "audio" in out_data_struct, "Output structure must preserve audio key"
+        assert "loudness" in result_data, "the batch must carry the loudness the operator adds"
+        assert "audio" in result_data, "the original audio must be preserved"
 
     def test_output_shape_different_lengths(self):
         """Operator handles different audio lengths correctly."""

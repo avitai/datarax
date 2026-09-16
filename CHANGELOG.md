@@ -67,6 +67,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Two operators with equal configurations share one compiled trace. Every operator used to carry a
+  unique integer identity, and a configuration is graphdef metadata, so each instance traced again and
+  a rebuilt pipeline recompiled. A wrapper whose configuration holds child modules — the composite, the
+  selector, the probabilistic wrapper — still traces again when it is rebuilt over freshly constructed
+  children, because flax compares modules by identity.
+- An operator called on the raw path with empty states and then on a batch carrying a state field, or
+  in the other order, no longer raises `vmap out_axes specification must be a tree prefix of the
+  corresponding value`. The output axes come from the call itself rather than from a cache keyed on the
+  input structure alone.
 - `cacheable` moves from `DataraxModuleConfig` to a new `SamplerConfig`, and the result cache with its
   hashing helpers and `reset_cache` move from `DataraxModule` to `SamplerModule`. A sampler memoizes each
   sampled list by request size, which is the only module kind with something to key a cache on; every other
@@ -77,6 +86,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `OperatorModule.get_output_structure`, the module-level output-structure cache with its size bound,
+  and the per-operator identity that keyed it. The batch path vectorizes with `out_axes=0`, which is a
+  tree prefix of whatever an operator returns, so nothing discovers the output structure before the
+  call and no operator declares it. The four operators that did — the selector, the external adapter,
+  the CREPE f0 operator and the loudness operator — no longer carry an override. A dependent that
+  reads an operator's `_unique_id`, such as to wrap it as `nnx.static` for a transform, must drop that
+  code: the attribute no longer exists.
 - `DataraxModule.copy`. It rebuilt a module as `type(self)(config=..., rngs=..., name=...)`, which 17 of the
   42 module classes cannot accept: nine operators take no `name` (the composite, the selector, the
   probabilistic wrapper and the six image operators), `PureJaxAdapter` takes no `rngs`, and eight classes

@@ -1,23 +1,32 @@
-"""Tests for operators with dynamic output structure.
+"""Tests for operators whose output structure differs from their input.
 
-This module tests the get_output_structure() method and the ability
-of apply_batch() to handle operators that add new keys to output data.
+An operator may return data and state structured differently from what it was given:
+adding a computed field, enriching a record with derived values, or writing several
+outputs at once. The batch path vectorizes with an integer ``out_axes``, which is a tree
+prefix of whatever the operator returns, so nothing has to discover that structure before
+the call.
 
-The key feature being tested is that operators can now return data with
-a DIFFERENT structure than their input, enabling operations like:
-- Adding computed fields (e.g., "score", "alignment")
-- Enriching data with derived values
-- Multi-output operators
+The regression tests at the end of the module cover what a per-operator identity and a
+cached output structure used to break: branches under ``nnx.cond`` and ``nnx.switch``, a
+raw ``jax.jit`` closure, operators built and freed in sequence, and one operator called
+with different state structures in either order.
 """
+
+import gc
 
 import jax
 import jax.numpy as jnp
 import pytest
 from flax import nnx
+from substrax.testing import TraceCounter
 
 from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import Batch, Element
-from datarax.core.operator import _OUTPUT_STRUCT_CACHE, OperatorModule
+from datarax.core.operator import OperatorModule
+from datarax.operators.probabilistic_operator import (
+    ProbabilisticOperator,
+    ProbabilisticOperatorConfig,
+)
 
 
 # =============================================================================
@@ -47,27 +56,6 @@ class AddMultipleKeysOperator(OperatorModule):
             "sum": data["a"] + data["b"],
             "product": data["a"] * data["b"],
             "difference": data["a"] - data["b"],
-        }
-        return out_data, state, metadata
-
-
-class ExplicitStructureOperator(OperatorModule):
-    """Test operator with explicit get_output_structure override."""
-
-    def get_output_structure(self, sample_data, sample_state):
-        # Return 0 for each leaf (vmap axis spec)
-        out_data = {
-            **jax.tree.map(lambda _: 0, sample_data),
-            "result": 0,
-        }
-        out_state = jax.tree.map(lambda _: 0, sample_state) if sample_state else {}
-        return out_data, out_state
-
-    def apply(self, data, state, metadata, random_params=None, stats=None):
-        del random_params, stats
-        out_data = {
-            **data,
-            "result": data["value"] ** 2,
         }
         return out_data, state, metadata
 
@@ -176,44 +164,6 @@ class TestDynamicOutputStructure:
         assert jnp.allclose(result_data["product"][0], jnp.array([2.0]))
         assert jnp.allclose(result_data["difference"][0], jnp.array([-1.0]))
 
-    def test_default_eval_shape_discovery(self, config, rngs):
-        """Default get_output_structure uses eval_shape correctly."""
-        op = AddKeyOperator(config, rngs=rngs)
-
-        sample_data = {"input": jnp.array([1.0])}
-        sample_state = {}
-
-        out_data_struct, out_state_struct = op.get_output_structure(sample_data, sample_state)
-
-        # Should discover both input and computed keys
-        assert "input" in out_data_struct
-        assert "computed" in out_data_struct
-        # Leaf values should be 0 (vmap axis spec, not None!)
-        # Note: We use 0 instead of None because None is an empty pytree in JAX
-        assert out_data_struct["input"] == 0
-        assert out_data_struct["computed"] == 0
-
-    def test_explicit_override_works(self, config, rngs):
-        """Explicit get_output_structure override works correctly."""
-        op = ExplicitStructureOperator(config, rngs=rngs)
-
-        elements = [
-            Element(data={"value": jnp.array([2.0])}, state={}),
-            Element(data={"value": jnp.array([3.0])}, state={}),
-        ]
-        batch = Batch(elements)
-
-        result = op.apply_batch(batch)
-        result_data = result.data.get_value()
-
-        # Original key preserved
-        assert "value" in result_data
-        # New key added
-        assert "result" in result_data
-        # Correct squared values
-        assert jnp.allclose(result_data["result"][0], jnp.array([4.0]))
-        assert jnp.allclose(result_data["result"][1], jnp.array([9.0]))
-
     def test_structure_preserving_operator_still_works(self, config, rngs):
         """Operators with unchanged in/out structure execute correctly."""
         op = StructurePreservingOperator(config, rngs=rngs)
@@ -238,30 +188,6 @@ class TestDynamicOutputStructure:
         # Values doubled
         assert jnp.allclose(result_data["x"][0], jnp.array([2.0]))
         assert jnp.allclose(result_data["y"][0], jnp.array([4.0]))
-
-    def test_structure_caching_works(self, config, rngs):
-        """Output structure is cached between calls."""
-        op = AddKeyOperator(config, rngs=rngs)
-
-        elements = [Element(data={"input": jnp.array([1.0])}, state={})]
-        batch = Batch(elements)
-
-        # Get the cache key that will be used
-        batch_data = batch.data.get_value()
-        input_struct_key = jax.tree.structure(batch_data)
-        cache_key = (op._unique_id, input_struct_key)
-
-        # First call - should populate module-level cache
-        op.apply_batch(batch)
-        assert cache_key in _OUTPUT_STRUCT_CACHE
-
-        # Second call - should use cache (no new entries for this operator/structure)
-        cache_size_after_first = len(_OUTPUT_STRUCT_CACHE)
-        op.apply_batch(batch)
-        cache_size_after_second = len(_OUTPUT_STRUCT_CACHE)
-
-        # Cache should not grow (structure reused)
-        assert cache_size_after_first == cache_size_after_second
 
     def test_gradient_flow_with_new_keys(self, config, rngs):
         """Gradients flow through operators that add keys."""
@@ -437,42 +363,246 @@ class TestEdgeCases:
         assert result.batch_size == batch_size
         assert result_data["computed"].shape == (batch_size, 1)
 
-    def test_different_input_structures_use_different_cache_entries(self, config, rngs):
-        """Different input structures get separate cache entries."""
+
+# =============================================================================
+# Regression tests: an operator's own output decides the axes
+# =============================================================================
+
+
+class AddDataAndStateOperator(OperatorModule):
+    """Adds one data field and one state field."""
+
+    def apply(self, data, state, metadata, random_params=None, stats=None):
+        """Add a computed field and record that the record was seen."""
+        del random_params, stats
+        out_data = {**data, "computed": data["input"] * 2}
+        out_state = {**state, "seen": jnp.asarray(True)}
+        return out_data, out_state, metadata
+
+
+def _batch_of(values, state=None):
+    """Return a batch of single-value records, each carrying ``state``."""
+    return Batch(
+        [Element(data={"input": jnp.asarray([v])}, state=dict(state or {})) for v in values]
+    )
+
+
+class TestAddedFieldsSurviveEveryPath:
+    """An operator that adds a data field and a state field works on every path."""
+
+    def test_apply_batch(self, config, rngs):
+        """apply_batch returns both added fields."""
+        op = AddDataAndStateOperator(config, rngs=rngs)
+
+        result = op.apply_batch(_batch_of([1.0, 2.0]))
+
+        assert "computed" in result.data.get_value()
+        assert "seen" in result.states.get_value()
+
+    def test_raw_path(self, config, rngs):
+        """The raw path returns both added fields."""
+        op = AddDataAndStateOperator(config, rngs=rngs)
+
+        out_data, out_state = op._apply_on_raw({"input": jnp.ones((2, 1))}, {})
+
+        assert "computed" in out_data
+        assert "seen" in out_state
+
+    def test_under_nnx_jit(self, config, rngs):
+        """The added fields survive an nnx.jit call taking the operator as an argument."""
+        op = AddDataAndStateOperator(config, rngs=rngs)
+
+        @nnx.jit
+        def run(operator, data):
+            return operator._apply_on_raw(data, {})
+
+        out_data, out_state = run(op, {"input": jnp.ones((2, 1))})
+
+        assert "computed" in out_data
+        assert "seen" in out_state
+
+    def test_scan_strategy(self, rngs):
+        """The sequential strategy returns the same added fields as vmap."""
+        op = AddDataAndStateOperator(OperatorConfig(batch_strategy="scan"), rngs=rngs)
+
+        out_data, out_state = op._apply_on_raw({"input": jnp.ones((2, 1))}, {})
+
+        assert "computed" in out_data
+        assert "seen" in out_state
+
+
+class TestStateStructureOrderDoesNotMatter:
+    """One operator called with different state structures, in either order."""
+
+    def test_raw_path_without_state_then_batch_with_state(self, config, rngs):
+        """A call with empty states does not decide the axes of a later call that carries one."""
+        op = AddDataAndStateOperator(config, rngs=rngs)
+
+        op._apply_on_raw({"input": jnp.ones((2, 1))}, {})
+        result = op.apply_batch(_batch_of([1.0, 2.0], state={"count": jnp.asarray(0)}))
+
+        assert "computed" in result.data.get_value()
+        assert "count" in result.states.get_value()
+
+    def test_batch_with_state_then_raw_path_without_state(self, config, rngs):
+        """The reverse order works as well."""
+        op = AddDataAndStateOperator(config, rngs=rngs)
+
+        op.apply_batch(_batch_of([1.0, 2.0], state={"count": jnp.asarray(0)}))
+        out_data, out_state = op._apply_on_raw({"input": jnp.ones((2, 1))}, {})
+
+        assert "computed" in out_data
+        assert "seen" in out_state
+
+
+class TestCompiledAndBranchingCallers:
+    """The paths that a per-operator identity used to break."""
+
+    def test_raw_jit_closure_called_twice(self, config, rngs):
+        """A raw jax.jit closure over apply_batch runs twice without mutating the operator."""
         op = AddKeyOperator(config, rngs=rngs)
+        batch = _batch_of([1.0, 2.0])
 
-        # First structure: {"input": ...}
-        elements1 = [Element(data={"input": jnp.array([1.0])}, state={})]
-        batch1 = Batch(elements1)
-        op.apply_batch(batch1)
+        @jax.jit
+        def run(values):
+            return op.apply_batch(_batch_of([1.0, 2.0])).data.get_value()["computed"] + values
 
-        # Get cache key for this operator (uses _unique_id, not id())
-        batch_data = batch1.data.get_value()
-        input_struct_key = jax.tree.structure(batch_data)
-        cache_key = (op._unique_id, input_struct_key)
-        assert cache_key in _OUTPUT_STRUCT_CACHE
+        first = run(jnp.zeros((2, 1)))
+        second = run(jnp.ones((2, 1)))
 
-        # Note: We can only test with same-structure inputs here because
-        # AddKeyOperator specifically expects "input" key. Different structures
-        # would require different operators.
+        assert first.shape == second.shape
+        del batch
+
+    def test_cond_branches_adding_the_same_field(self, config, rngs):
+        """Two operators as nnx.cond branches, both adding the same field."""
+        left = AddKeyOperator(config, rngs=rngs)
+        right = AddKeyOperator(config, rngs=rngs)
+        data = {"input": jnp.ones((2, 1))}
+
+        def use_left(batch_data):
+            return left._apply_on_raw(batch_data, {})[0]
+
+        def use_right(batch_data):
+            return right._apply_on_raw(batch_data, {})[0]
+
+        chosen = nnx.cond(jnp.mean(data["input"]) > 0.0, use_left, use_right, data)
+
+        assert "computed" in chosen
+
+    def test_switch_branches_adding_the_same_field(self, config, rngs):
+        """Three operators as nnx.switch branches, all adding the same field."""
+        operators = [AddKeyOperator(config, rngs=rngs) for _ in range(3)]
+        data = {"input": jnp.ones((2, 1))}
+        branches = [
+            (lambda batch_data, op=op: op._apply_on_raw(batch_data, {})[0]) for op in operators
+        ]
+
+        chosen = nnx.switch(jnp.asarray(1), branches, data)
+
+        assert "computed" in chosen
+
+    def test_operators_built_called_and_freed_in_sequence(self, config, rngs):
+        """Building, calling and freeing many operators never serves another's structure."""
+        for index in range(200):
+            adds_state = index % 2 == 0
+            operator = (
+                AddDataAndStateOperator(config, rngs=rngs)
+                if adds_state
+                else AddKeyOperator(config, rngs=rngs)
+            )
+
+            out_data, out_state = operator._apply_on_raw({"input": jnp.ones((2, 1))}, {})
+
+            assert "computed" in out_data, f"iteration {index} lost its data field"
+            assert ("seen" in out_state) == adds_state, f"iteration {index} got another structure"
+            del operator
+            gc.collect()
 
 
-def test_output_struct_cache_evicts_oldest_when_full(monkeypatch):
-    """N4: the module-level output-structure cache is bounded via FIFO eviction."""
-    from datarax.core import operator as op_mod
+class TestTracingIsDecidedByTheConfiguration:
+    """What two operators share a compiled trace, and what they do not."""
 
-    monkeypatch.setattr(op_mod, "_OUTPUT_STRUCT_CACHE", {})
-    monkeypatch.setattr(op_mod, "_OUTPUT_STRUCT_CACHE_MAXSIZE", 3)
+    def test_equal_configurations_share_a_trace(self, config, rngs):
+        """Two operators with equal configurations do not each force a trace.
 
-    for i in range(5):
-        op_mod._store_output_struct((i, "struct"), (None, None))
+        The counter wraps the function and the transform wraps the counter, which is the
+        order ``TraceCounter.wrap`` requires: jitting first would leave the counter outside
+        the compiled function, where it counts calls instead of traces.
+        """
+        counter = TraceCounter()
 
-    cache = op_mod._OUTPUT_STRUCT_CACHE
-    assert len(cache) == 3  # bounded
-    assert (0, "struct") not in cache  # oldest evicted
-    assert (1, "struct") not in cache
-    assert (4, "struct") in cache  # newest retained
+        def run(operator, data):
+            return operator._apply_on_raw(data, {})[0]
 
-    # Re-inserting an existing key must not evict (no growth).
-    op_mod._store_output_struct((4, "struct"), (None, None))
-    assert len(cache) == 3
+        traced = nnx.jit(counter.wrap(run))
+        data = {"input": jnp.ones((2, 1))}
+
+        with counter.expect(new_traces=1):
+            traced(AddKeyOperator(config, rngs=rngs), data)
+        with counter.expect(new_traces=0):
+            traced(AddKeyOperator(config, rngs=rngs), data)
+
+    def test_a_wrapper_rebuilt_from_new_children_traces_again(self, config, rngs):
+        """A wrapper rebuilt over fresh children traces again, unlike a plain operator.
+
+        A wrapper's configuration holds the child module itself, and flax defines no
+        ``__eq__`` on ``Module``, so two wrappers built over freshly constructed children
+        carry different graphdef metadata however equal their configurations look. Removing
+        the per-operator identity does not change that, and this test measures it rather
+        than leaving it to be met later as a surprise.
+        """
+        counter = TraceCounter()
+
+        def run(operator, data):
+            return operator._apply_on_raw(data, {})[0]
+
+        traced = nnx.jit(counter.wrap(run))
+        data = {"input": jnp.ones((2, 1))}
+
+        def wrapper():
+            child = AddKeyOperator(config, rngs=rngs)
+            return ProbabilisticOperator(
+                ProbabilisticOperatorConfig(operator=child, probability=1.0), rngs=nnx.Rngs(0)
+            )
+
+        with counter.expect(new_traces=1):
+            traced(wrapper(), data)
+        with counter.expect(new_traces=1):
+            traced(wrapper(), data)
+
+
+class MaskWhenDrawnOperator(OperatorModule):
+    """Stochastic operator whose drawn branch adds a ``mask`` field."""
+
+    def generate_random_params(self, element_keys, data_shapes):
+        """Return one key per record."""
+        del data_shapes
+        return element_keys
+
+    def apply(self, data, state, metadata, random_params=None, stats=None):
+        """Add a mask drawn from the record's key, refusing to run without one."""
+        del stats
+        if random_params is None:
+            raise ValueError("MaskWhenDrawnOperator draws its mask from a random key")
+        mask = jax.random.bernoulli(random_params, 0.5, data["x"].shape)
+        return {**data, "mask": mask}, state, metadata
+
+
+class TestStochasticOutputStructure:
+    """An operator whose draw decides which fields it writes."""
+
+    def test_apply_batch_returns_the_fields_the_drawn_branch_adds(self):
+        """The batch carries the field only the drawn branch writes.
+
+        The operator raises when it is handed no random parameters, so a batch that comes
+        back at all also shows that nothing calls its ``apply`` without them.
+        """
+        operator = MaskWhenDrawnOperator(
+            OperatorConfig(stochastic=True, stream_name="aug"), rngs=nnx.Rngs(aug=0)
+        )
+        batch = Batch([Element(data={"x": jnp.ones(3)}, state={}) for _ in range(4)])
+
+        result_data = operator.apply_batch(batch).data.get_value()
+
+        assert set(result_data) == {"x", "mask"}
+        assert result_data["mask"].shape == (4, 3)
