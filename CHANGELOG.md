@@ -93,6 +93,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `CrepeF0Operator` could only run in eager eval mode. It computed its pad width with
+  `jnp.maximum`, which `jnp.pad` cannot read under a trace, so every `jit` path and the
+  `batch_strategy="scan"` its own config recommends raised `ConcretizationTypeError`, and in
+  train mode `vmap` raised `TraceContextError` because BatchNorm wrote its statistics from
+  inside the mapped function. The pad width is a Python `int`, and pitch extraction reads the
+  stored batch statistics, so the operator runs under `jit`, `vmap` and `scan` in both modes.
+  `CrepeModel.__call__` takes `use_running_average` for that choice.
 - `PipelineIterator.set_state` accepted a negative `position` or `epoch`. An epoch of `-1` becomes
   `2**32 - 1` where it is folded into a record key, so the restored iterator would draw a different
   stream than the one that was saved, and a negative position would place the iterator before the
