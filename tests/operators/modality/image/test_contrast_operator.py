@@ -142,6 +142,22 @@ class TestContrastOperatorTransformations:
         assert jnp.all(result["image"] >= 0.0)
         assert jnp.all(result["image"] <= 1.0)
 
+    def test_clip_range_none_returns_the_raw_adjustment(self):
+        """``clip_range=None`` means no clipping: a large factor pushes values past [0, 1]."""
+        config = ContrastOperatorConfig(
+            field_key="image",
+            contrast_factor=10.0,
+            clip_range=None,
+            stochastic=False,
+        )
+        operator = ContrastOperator(config, rngs=nnx.Rngs(0))
+
+        # Two pixels per channel, so the channel has a mean and a contrast to scale
+        result, _, _ = operator.apply({"image": jnp.array([[[0.0], [1.0]]])}, {}, {})
+
+        assert float(result["image"].min()) < 0.0
+        assert float(result["image"].max()) > 1.0
+
 
 class TestContrastOperatorStochastic:
     """Test stochastic mode."""

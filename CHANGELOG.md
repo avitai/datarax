@@ -257,6 +257,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `BrightnessOperator` and `ContrastOperator` honour `clip_range=None`. `functional.adjust_brightness`,
+  `adjust_brightness_delta` and `adjust_contrast` clipped to `[0, 1]` unconditionally, so the
+  option documented as "no clipping" changed nothing for these operators; the functions now
+  return the raw adjustment and the operators clip to their `clip_range`, `(0.0, 1.0)` by default,
+  so their default output is unchanged. `color_jitter` still clips its final result.
 - `PipelineIterator.get_state()` returns `position` as an `int`. It was an `np.int64`, so the
   state the method documents as JSON-serializable failed `json.dumps`, and a checkpoint store
   building its restore template from the state refused the NumPy scalar.

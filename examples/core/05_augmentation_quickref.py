@@ -275,14 +275,17 @@ for i, batch in enumerate(augmented_pipeline):
 # Expected output:
 # Batch 0:
 #   Image shape: (16, 32, 32, 3)
-#   Image range: [-0.123, 1.089]  # May exceed [0,1] due to augmentation
-#   Mean: 0.498, Std: 0.312
+#   Image range: [0.000, 1.000]
+#   Mean: 0.518, Std: 0.300
 
 # %% [markdown]
 """
-## Step 4: Add Clipping (Optional)
+## Step 4: Clipping
 
-Augmentations can push values outside [0, 1]. Add clipping if needed.
+The image operators clip their output to `clip_range`, `(0.0, 1.0)` by default, which is
+why the batches above stay in range. An operator built with `clip_range=None` returns the
+raw adjustment, and a custom `ElementOperator` does no clipping of its own; a clip stage
+after such an operator keeps the pipeline's output in range.
 """
 
 
@@ -308,21 +311,27 @@ brightness2 = BrightnessOperator(
     BrightnessOperatorConfig(
         field_key="image",
         brightness_range=(-0.15, 0.15),
+        clip_range=None,  # Raw adjustment: the clip stage below keeps the range
         stochastic=True,
         stream_name="brightness",
     ),
     rngs=nnx.Rngs(brightness=10),
 )
 
+unclipped_pipeline = Pipeline(source=source3, stages=[brightness2], batch_size=16, rngs=nnx.Rngs(0))
 clipped_pipeline = Pipeline(
     source=source3, stages=[brightness2, clipper], batch_size=16, rngs=nnx.Rngs(0)
 )
 
 # Verify clipping
-batch = next(iter(clipped_pipeline))
-img_min = float(batch["image"].min())
-img_max = float(batch["image"].max())
-print(f"With clipping - Image range: [{img_min:.3f}, {img_max:.3f}]")
+for label, pipeline in [
+    ("Without clipping", unclipped_pipeline),
+    ("With clipping", clipped_pipeline),
+]:
+    batch = next(iter(pipeline))
+    img_min = float(batch["image"].min())
+    img_max = float(batch["image"].max())
+    print(f"{label} - Image range: [{img_min:.3f}, {img_max:.3f}]")
 
 # %% [markdown]
 """

@@ -39,6 +39,21 @@ class TestFunctionalOps:
         expected = jnp.array([[0.38, 0.62], [0.38, 0.62]])[..., None]
         assert jnp.allclose(result, expected, atol=1e-6)
 
+    def test_brightness_and_contrast_return_the_raw_adjustment(self):
+        """The functions do not clip: the operators clip to their own ``clip_range``."""
+        image = jnp.array([[[0.0], [1.0]], [[0.8], [0.8]]])
+
+        assert jnp.allclose(functional.adjust_brightness_delta(image, 0.5), image + 0.5)
+        assert jnp.allclose(functional.adjust_brightness(image, 2.0), image * 2.0)
+        contrast = functional.adjust_contrast(image, 2.0)
+        assert float(contrast.min()) < 0.0 and float(contrast.max()) > 1.0
+
+    def test_color_jitter_stays_in_range(self):
+        """Color jitter is the one functional entry point that clips its result."""
+        image = jnp.ones((4, 4, 3)) * 0.9
+        jittered = functional.color_jitter(image, brightness=0.5, contrast=0.5)
+        assert float(jittered.min()) >= 0.0 and float(jittered.max()) <= 1.0
+
     @pytest.mark.parametrize("channels", [1, 3])
     def test_adjust_contrast_keeps_the_channel_count(self, channels):
         """The output has the input's shape, whatever its channel count."""

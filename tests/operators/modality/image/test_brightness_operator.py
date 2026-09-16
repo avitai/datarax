@@ -185,16 +185,15 @@ class TestBrightnessOperatorTransformations:
         assert jnp.all(result_images >= 0.0)
         assert jnp.all(result_images <= 1.0)
 
-    def test_stochastic_apply_without_clipping(self):
-        """Test stochastic brightness without clipping."""
+    def test_apply_without_clipping_returns_the_raw_adjustment(self):
+        """``clip_range=None`` means no clipping: a delta past 1.0 comes back past 1.0."""
         config = BrightnessOperatorConfig(
             field_key="image",
-            brightness_range=(-0.5, 0.5),
-            stochastic=True,
-            stream_name="augment",
-            clip_range=None,  # No clipping
+            brightness_delta=0.5,
+            stochastic=False,
+            clip_range=None,
         )
-        operator = BrightnessOperator(config, rngs=nnx.Rngs(42, augment=1))
+        operator = BrightnessOperator(config, rngs=nnx.Rngs(0))
 
         images = jnp.ones((2, 16, 16, 3)) * 0.8
         elements = [Element(data={"image": img}, state={}) for img in images]
@@ -202,9 +201,9 @@ class TestBrightnessOperatorTransformations:
 
         result_batch = operator.apply_batch(batch)
 
-        # Should be transformed but may exceed [0,1] without clipping
         result_images = result_batch.data.get_value()["image"]
         assert result_images.shape == (2, 16, 16, 3)
+        assert jnp.allclose(result_images, 1.3)
 
 
 class TestBrightnessOperatorEdgeCases:
