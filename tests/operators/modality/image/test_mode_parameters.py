@@ -24,10 +24,6 @@ from datarax.operators.modality.image import (
 )
 
 
-# Three channels, because ``functional.adjust_contrast`` adds a hardcoded three-element offset
-# inside a ``jnp.where`` whose broadcast reaches the output even when its condition is False, so a
-# one-channel image comes back with three. That is a defect of its own, recorded in the plan, and
-# not what these tests measure.
 IMAGES = jnp.linspace(0.2, 0.6, 24, dtype=jnp.float32).reshape(2, 2, 2, 3)
 
 # Each operator with the names its two modes use and the values each mode resolves unset.
