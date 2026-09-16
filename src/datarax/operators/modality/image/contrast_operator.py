@@ -14,7 +14,9 @@ Examples:
     ```python
     config = ContrastOperatorConfig(
         field_key="image",
-        contrast_range=(0.8, 1.2)
+        contrast_range=(0.8, 1.2),
+        stochastic=True,
+        stream_name="augment",
     )
     op = ContrastOperator(config, rngs=rngs)
     ```
@@ -22,7 +24,7 @@ Examples:
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import jax
 from flax import nnx
@@ -30,9 +32,13 @@ from flax import nnx
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 from datarax.core.operator import require_key
 from datarax.operators.modality.image import functional
+from datarax.operators.modality.image._validation import resolve_mode_parameters
 
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_CONTRAST_RANGE = (0.8, 1.2)
+DEFAULT_CONTRAST_FACTOR = 1.0
 
 
 @dataclass(frozen=True)
@@ -44,32 +50,30 @@ class ContrastOperatorConfig(ModalityOperatorConfig):
     Attributes:
         clip_range: Range for clipping output values. Default: (0.0, 1.0) for
                    normalized images. Overrides parent default of None.
-        contrast_range: Range for random contrast adjustment in stochastic mode.
-                       Format: (min_factor, max_factor). Default: (0.8, 1.2)
-        contrast_factor: Fixed contrast factor for deterministic mode.
-                        Only used when stochastic=False. Default: 1.0
+        contrast_range: ``(min_factor, max_factor)`` a stochastic operator draws each
+                       record's factor from. Default: (0.8, 1.2). Refused when
+                       stochastic=False.
+        contrast_factor: The factor a deterministic operator applies. Default: 1.0.
+                        Refused when stochastic=True.
     """
 
     # Override parent's clip_range default to (0.0, 1.0) for normalized images
     clip_range: tuple[float, float] | None = field(default=(0.0, 1.0), kw_only=True)
 
-    contrast_range: tuple[float, float] = field(default=(0.8, 1.2), kw_only=True)
-    contrast_factor: float = field(default=1.0, kw_only=True)
+    # Each mode uses one of these; __post_init__ fills in its default and refuses the other.
+    contrast_range: tuple[float, float] | None = field(default=None, kw_only=True)
+    contrast_factor: float | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
-        """Validate configuration parameters."""
+        """Validate configuration parameters and resolve the parameter the mode uses."""
         super().__post_init__()
-
-        # Validate contrast_range
-        if not isinstance(self.contrast_range, tuple) or len(self.contrast_range) != 2:
-            raise ValueError(
-                f"contrast_range must be a tuple of length 2, got {self.contrast_range}"
-            )
-        min_contrast, max_contrast = self.contrast_range
-        if min_contrast > max_contrast:
-            raise ValueError(
-                f"contrast_range must be (min, max) with min <= max, got {self.contrast_range}"
-            )
+        resolve_mode_parameters(
+            self,
+            range_field="contrast_range",
+            fixed_field="contrast_factor",
+            default_range=DEFAULT_CONTRAST_RANGE,
+            default_fixed=DEFAULT_CONTRAST_FACTOR,
+        )
 
 
 class ContrastOperator(ModalityOperator):
@@ -134,13 +138,13 @@ class ContrastOperator(ModalityOperator):
         # 2. Determine contrast factor
         if self.config.stochastic:
             # This record's own factor, drawn from its own key
-            min_contrast, max_contrast = self.config.contrast_range
+            min_contrast, max_contrast = cast(tuple[float, float], self.config.contrast_range)
             contrast_factor = jax.random.uniform(
                 require_key(key, self), shape=(), minval=min_contrast, maxval=max_contrast
             )
         else:
             # Deterministic mode
-            contrast_factor = self.config.contrast_factor
+            contrast_factor = cast(float, self.config.contrast_factor)
 
         # 3. Apply contrast adjustment via functional API
         transformed = functional.adjust_contrast(image, contrast_factor)

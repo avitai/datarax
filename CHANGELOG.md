@@ -147,6 +147,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vectorized call, so a child cannot compute statistics of its own while it runs: a sequential
   composition's later children see the statistics of the composition's input, not of the
   previous child's output. Exact per-stage statistics come from separate `Pipeline` stages.
+- `BrightnessOperatorConfig` and `ContrastOperatorConfig` refuse the parameter their mode does not
+  use and name the one it does. A deterministic operator applies `brightness_delta` or
+  `contrast_factor` and refuses a range; a stochastic operator draws from `brightness_range` or
+  `contrast_range` and refuses a fixed value. All four now default to `None` and resolve for the
+  mode: a stochastic operator draws from `(-0.2, 0.2)` or `(0.8, 1.2)`, a deterministic one
+  applies `0.0` or `1.0`. Previously a deterministic operator given `brightness_range=(0.2, 0.2)`
+  returned the image unchanged, and a `brightness_delta` given with `stochastic=True` was ignored
+  the same way, because that mode draws from the range; neither was reported. The check both
+  configs share lives in `datarax.operators.modality.image._validation.resolve_mode_parameters`.
 
 ### Removed
 

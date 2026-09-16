@@ -28,29 +28,37 @@ from datarax.operators.modality.image.brightness_operator import (
 class TestBrightnessOperatorConfig:
     """Tests for BrightnessOperatorConfig validation."""
 
-    def test_basic_config_creation(self):
-        """Test default configuration creation."""
-        config = BrightnessOperatorConfig(
-            field_key="image",
-            brightness_range=(-0.2, 0.2),
-        )
+    def test_deterministic_config_defaults_to_no_change(self):
+        """A deterministic config without a delta adds 0.0 and carries no range."""
+        config = BrightnessOperatorConfig(field_key="image")
         assert config.field_key == "image"
-        assert config.brightness_range == (-0.2, 0.2)
         assert config.brightness_delta == 0.0
+        assert config.brightness_range is None
         assert config.clip_range == (0.0, 1.0)  # Default for images
 
+    def test_stochastic_config_defaults_to_the_documented_range(self):
+        """A stochastic config without a range draws deltas from (-0.2, 0.2)."""
+        config = BrightnessOperatorConfig(field_key="image", stochastic=True, stream_name="augment")
+        assert config.brightness_range == (-0.2, 0.2)
+        assert config.brightness_delta is None
+
     def test_custom_params_config(self):
-        """Test configuration with custom parameters."""
-        config = BrightnessOperatorConfig(
+        """Test configuration with custom parameters in each mode."""
+        stochastic = BrightnessOperatorConfig(
             field_key="custom_image",
             brightness_range=(-0.5, 0.5),
-            brightness_delta=0.1,
             clip_range=(0.0, 255.0),
+            stochastic=True,
+            stream_name="augment",
         )
-        assert config.field_key == "custom_image"
-        assert config.brightness_range == (-0.5, 0.5)
-        assert config.brightness_delta == 0.1
-        assert config.clip_range == (0.0, 255.0)
+        deterministic = BrightnessOperatorConfig(
+            field_key="custom_image", brightness_delta=0.1, clip_range=(0.0, 255.0)
+        )
+        assert stochastic.field_key == "custom_image"
+        assert stochastic.brightness_range == (-0.5, 0.5)
+        assert stochastic.clip_range == (0.0, 255.0)
+        assert deterministic.brightness_delta == 0.1
+        assert deterministic.clip_range == (0.0, 255.0)
 
     def test_invalid_brightness_range(self):
         """Test validation of invalid brightness_range."""
@@ -58,12 +66,16 @@ class TestBrightnessOperatorConfig:
             BrightnessOperatorConfig(
                 field_key="image",
                 brightness_range=(-0.2,),  # Wrong length  # type: ignore[reportArgumentType]
+                stochastic=True,
+                stream_name="augment",
             )
 
         with pytest.raises(ValueError, match="min <= max"):
             BrightnessOperatorConfig(
                 field_key="image",
                 brightness_range=(0.2, -0.2),  # min > max
+                stochastic=True,
+                stream_name="augment",
             )
 
 
