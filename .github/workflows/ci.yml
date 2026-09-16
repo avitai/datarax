@@ -202,7 +202,10 @@ jobs:
 
   long_running_tests:
     name: Long-Running Tests
-    needs: [unit_tests, prepare_example_datasets]
+    # The longest job in the run, and the one the coverage job waits on. Its only input
+    # is the dataset cache prepare_example_datasets fills, so it runs beside the unit
+    # matrix rather than after it.
+    needs: prepare_example_datasets
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
