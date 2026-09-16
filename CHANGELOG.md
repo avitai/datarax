@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   because its key is a function of the global record index; and the same
   `substrax.spmd.place_batch_on_shards` and `spmd_train_step` applied to both libraries' batches
   under `jax.set_mesh`, giving the same losses on the same records.
+- `examples/comparison/04_resumed_training_guide.py`, with its notebook and docs page: model,
+  optimizer and loader state saved together through one `substrax.checkpoint.OrbaxCheckpointStore`
+  at a mid-epoch step (Grain's JSON bytes as a string leaf, Datarax's iterator state as a dict),
+  restored into fresh objects, and both resumed runs reproducing the uninterrupted runs loss for
+  loss, with `calibrax.metrics.functional.mse` as the loss.
 - An operator can override `compute_statistics(batch_data)` to fit the statistics it applies to
   each batch, as batch normalization does. The batch path calls it once per batch, before the
   batch is vectorized, and gives every record the result. An operator that stores fixed
