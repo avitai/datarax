@@ -27,7 +27,6 @@ matplotlib.use("Agg")
 
 from datarax import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.performance.synchronization import block_until_ready_tree
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -103,7 +102,7 @@ def benchmark_throughput(
 
     # Warmup
     for i, batch in enumerate(pipeline):
-        block_until_ready_tree(batch["image"])
+        jax.block_until_ready(batch["image"])
         if i >= warmup_batches:
             break
 
@@ -115,7 +114,7 @@ def benchmark_throughput(
         pipeline = create_pipeline(data, batch_size, with_augmentation, seed=epoch)
         for batch in pipeline:
             t0 = time.perf_counter()
-            block_until_ready_tree(batch["image"])
+            jax.block_until_ready(batch["image"])
             batch_times.append(time.perf_counter() - t0)
             total_samples += batch["image"].shape[0]
 

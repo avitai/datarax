@@ -11,9 +11,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import jax
 from calibrax.profiling import TimingCollector, TimingSample
-
-from datarax.performance.synchronization import block_until_ready_tree
 
 
 JSONValue = dict[str, "JSONValue"] | list["JSONValue"] | str | int | float | bool | None
@@ -25,13 +24,9 @@ def _emit(message: str = "", *, error: bool = False) -> None:
     stream.write(f"{message}\n")
 
 
-def _make_sync_fn() -> Callable[[Any], None]:
-    """Create a JAX device sync function for accurate GPU timing."""
-
-    def _sync(result: Any) -> None:
-        block_until_ready_tree(result)
-
-    return _sync
+def _make_sync_fn() -> Callable[[Any], Any]:
+    """The sync the timing collector waits with: ``jax.block_until_ready`` over the result."""
+    return jax.block_until_ready
 
 
 def _sample_to_dict(sample: TimingSample) -> dict[str, Any]:

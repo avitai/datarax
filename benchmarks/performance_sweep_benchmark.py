@@ -36,7 +36,6 @@ from datarax.operators.modality.image import (
     NoiseOperator,
     NoiseOperatorConfig,
 )
-from datarax.performance.synchronization import block_until_ready_tree
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -138,7 +137,7 @@ def measure(
 
     # Warmup
     for i, batch in enumerate(pipeline):
-        block_until_ready_tree(batch["image"])
+        jax.block_until_ready(batch["image"])
         if i >= warmup_batches:
             break
 
@@ -149,7 +148,7 @@ def measure(
 
     for batch in pipeline:
         t0 = time.perf_counter()
-        block_until_ready_tree(batch["image"])
+        jax.block_until_ready(batch["image"])
         batch_times.append(time.perf_counter() - t0)
         total_samples += batch["image"].shape[0]
 
