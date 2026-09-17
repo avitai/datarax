@@ -214,7 +214,7 @@ flowchart LR
     DL -->|"dict leaf"| S
 
     subgraph Resume["Fresh objects"]
-        R["restore(template, step=20)"]
+        R["restore(20, templates=...)"]
         RM["nnx.replace_by_pure_dict"]
         RG["grain iterator.set_state(bytes)"]
         RD["datarax iterator.set_state(dict)"]
