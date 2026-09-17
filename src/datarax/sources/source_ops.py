@@ -25,6 +25,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+from flax import nnx
 
 from datarax.samplers.index_shuffle import index_shuffle
 
@@ -54,6 +55,7 @@ def resolve_wrapped_indices(  # noqa: PLR0913 - the order, its partition and the
     *,
     num_workers: int = 1,
     shard_id: int = 0,
+    order: jax.Array | None = None,
 ) -> jax.Array:
     """Return the global record indices for a wrapped slice of a worker's record order.
 
@@ -72,6 +74,9 @@ def resolve_wrapped_indices(  # noqa: PLR0913 - the order, its partition and the
             False or ``key`` is None.
         num_workers: Number of workers the dataset is split across.
         shard_id: This worker's index.
+        order: The epoch's permutation of ``length`` when the caller already holds it
+            (an :class:`EpochOrderCache`); ``None`` derives it from ``key`` here, which
+            costs O(length) per call.
 
     Returns:
         Int32 ``jax.Array`` of shape ``(size,)`` with the global record indices.
@@ -82,9 +87,53 @@ def resolve_wrapped_indices(  # noqa: PLR0913 - the order, its partition and the
     positions = (start_arr + offsets) % jnp.int32(worker_length)
     global_positions = jnp.int32(shard_id) + positions * jnp.int32(num_workers)
     if is_random_order and key is not None:
-        permutation = jax.random.permutation(key, length)
+        permutation = jax.random.permutation(key, length) if order is None else order
         return permutation[global_positions]
     return global_positions
+
+
+class EpochOrderCache(nnx.Module):
+    """The permutation one epoch serves, computed once per key and reused by every batch.
+
+    A shuffled source is asked for records position by position, with the epoch's key
+    each time; deriving the full permutation on every call is O(length) per batch. The
+    cache holds the last key's permutation and recomputes only when the key changes
+    (under ``lax.cond``, so the compiled step runs the permutation once per epoch). The
+    stored order and key are NNX state, so a compiled iteration session carries them.
+    """
+
+    def __init__(self, length: int) -> None:
+        """Start empty; the first ``order_for`` fills the cache.
+
+        Args:
+            length: Number of records the permutation covers.
+        """
+        self.length = length
+        key_shape = jax.random.key_data(jax.random.key(0)).shape
+        self._key_data = nnx.Variable(jnp.zeros(key_shape, dtype=jnp.uint32))
+        self._order = nnx.Variable(jnp.arange(length, dtype=jnp.int32))
+        self._filled = nnx.Variable(jnp.zeros((), dtype=jnp.bool_))
+
+    def order_for(self, key: jax.Array) -> jax.Array:
+        """The permutation ``jax.random.permutation(key, length)``, from the cache when it holds it.
+
+        Args:
+            key: The epoch's key.
+
+        Returns:
+            Int32 array of shape ``(length,)``.
+        """
+        key_data = jax.random.key_data(key)
+        same = jnp.logical_and(self._filled[...], jnp.all(key_data == self._key_data[...]))
+        order = jax.lax.cond(
+            same,
+            lambda: self._order[...],
+            lambda: jax.random.permutation(key, self.length).astype(jnp.int32),
+        )
+        self._order[...] = order
+        self._key_data[...] = key_data
+        self._filled[...] = jnp.ones((), dtype=jnp.bool_)
+        return order
 
 
 logger = logging.getLogger(__name__)
