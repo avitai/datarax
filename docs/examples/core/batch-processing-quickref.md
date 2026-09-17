@@ -128,8 +128,11 @@ Source (yields elements) --> Pipeline (groups into batches via batch_size) --> Y
 - `batch_size=32` groups 32 elements into each batch
 - A random-access source (`MemorySource` and the other indexed sources) keeps every batch at
   `batch_size`, so the compiled step has one shape; when `num_elements % batch_size != 0`,
-  the last batch of an epoch continues from the start of the epoch's order
-- A streaming source, which has no indexed access, yields a shorter last batch instead
+  the last batch of an epoch is padded with rows from the start of the order and its
+  `valid_mask` leaf marks those rows invalid, or `drop_last=True` leaves it out
+- Every batch carries `valid_mask` (`(batch_size,)`, bool); a masked loss ignores the padding
+- A streaming source, which has no indexed access, yields a shorter last batch instead,
+  with an all-true mask
 
 ```python
 # Standard batching

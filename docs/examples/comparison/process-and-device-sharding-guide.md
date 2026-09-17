@@ -111,8 +111,10 @@ Datarax workers partition the records: True
 
 A Datarax pipeline keeps every batch at `batch_size` so the compiled step has one shape.
 When a process's share of the records is not a multiple of the batch size, the last batch
-continues from the start of that process's order; the guide uses 64 records, two processes
-and batches of 8, so every batch is full and every record is served once.
+is padded from the start of that process's order and the padding rows are marked invalid in
+the batch's `valid_mask` (or `drop_last=True` leaves the batch out); the guide uses 64
+records, two processes and batches of 8, so every batch is full and every record is served
+once.
 
 ### Part 2: A Record's Randomness Does Not Depend on the Process
 

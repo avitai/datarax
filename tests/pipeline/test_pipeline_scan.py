@@ -189,8 +189,11 @@ def test_scan_with_carry_and_modules_threads_both() -> None:
 
 def test_scan_lifts_model_param_mutations_across_steps() -> None:
     """A bias incremented inside step_fn retains the updated value next step."""
+    # Five steps over a 16-record source: a continuous stream, so the fifth step is a
+    # boundary batch rather than a refusal.
     pipeline = Pipeline(
         source=_source(num_elements=16),
+        num_epochs=None,
         stages=[],
         batch_size=4,
         rngs=nnx.Rngs(0),

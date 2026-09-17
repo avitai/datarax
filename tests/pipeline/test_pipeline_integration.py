@@ -145,11 +145,13 @@ def test_pipeline_handles_batch_size_larger_than_source() -> None:
     )
 
     out = pipeline.step()  # type: ignore[reportCallIssue]
-    # batch_size=8 over a source of length 4 wraps: [0, 1, 2, 3, 0, 1, 2, 3]
+    # batch_size=8 over a source of length 4: the rows past the end are padding, served
+    # from the start of the order and marked invalid.
     np.testing.assert_array_equal(
         np.asarray(out["x"]),
         np.array([0.0, 1.0, 2.0, 3.0, 0.0, 1.0, 2.0, 3.0]),
     )
+    np.testing.assert_array_equal(np.asarray(out["valid_mask"]), [True] * 4 + [False] * 4)
 
 
 def test_pipeline_handles_single_element_source() -> None:
@@ -161,8 +163,9 @@ def test_pipeline_handles_single_element_source() -> None:
     )
 
     out = pipeline.step()  # type: ignore[reportCallIssue]
-    # Source length 1 → every position wraps to index 0
+    # Source length 1: one valid row, three padding rows served from index 0
     np.testing.assert_array_equal(np.asarray(out["x"]), np.array([0.0, 0.0, 0.0, 0.0]))
+    np.testing.assert_array_equal(np.asarray(out["valid_mask"]), [True, False, False, False])
 
 
 def test_pipeline_iter_over_memory_source_terminates() -> None:
