@@ -176,6 +176,26 @@ def test_type_checking_runs_in_the_locked_environment() -> None:
     assert "additional_dependencies" not in hook
 
 
+def test_lint_job_type_checks_in_the_environment_setup_installs() -> None:
+    """The lint job syncs at least the extras setup.sh gives every developer.
+
+    pyright checks ``src``, ``tests`` and ``examples`` against the installed packages, and
+    ``datasets`` (the ``data`` extra) is imported by a source module; an environment without
+    it type-checks that module against Unknown and reports a defect the code does not have.
+    """
+    lint = yaml.safe_load(CI_WORKFLOW.read_text())["jobs"]["lint"]
+    install = next(step for step in lint["steps"] if step.get("name") == "Install dependencies")
+    synced = set(re.findall(r"--extra ([a-z0-9_-]+)", install["run"]))
+    setup_synced = {
+        synced_extra
+        for _, synced_extra in _EXTRA_REFERENCE.findall(SETUP_SCRIPT.read_text())
+        if synced_extra
+    }
+
+    assert {"dev", "test", "data"} <= setup_synced
+    assert {"dev", "test", "data"} <= synced
+
+
 def test_no_deferred_modernization_ignores_remain() -> None:
     """Modernization rules covered by the audit should be active."""
     ruff_ignores = set(_pyproject()["tool"]["ruff"]["lint"].get("ignore", []))
