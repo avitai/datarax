@@ -17,8 +17,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+import jax
+
 from benchmarks.adapters.base import PipelineAdapter, ScenarioConfig
-from datarax.performance.synchronization import block_until_ready_tree
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,7 +141,7 @@ def run_microbenchmark(
             per_batch_transform.append(t2 - t1)
 
             # Transfer phase: ensure data is on device
-            block_until_ready_tree(arrays)
+            jax.block_until_ready(arrays)
             t3 = time.perf_counter()
             per_batch_transfer.append(t3 - t2)
 

@@ -302,7 +302,6 @@ nav:
       - Performance:
           - Overview: performance/index.md
           - goodput: performance/goodput.md
-          - synchronization: performance/synchronization.md
       - Types & Protocols:
           - Overview: root/index.md
           - typing: root/typing.md

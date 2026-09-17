@@ -31,7 +31,6 @@ import jax.numpy as jnp
 from benchmarks.adapters import register
 from benchmarks.adapters.base import IterationResult
 from benchmarks.adapters.datarax_adapter import DataraxAdapter
-from datarax.performance.synchronization import block_until_ready_tree
 
 
 def _reducing_step(batch: Any) -> jax.Array:
@@ -80,7 +79,7 @@ class DataraxScanAdapter(DataraxAdapter):
             return self._batch_byte_estimate
         # Run one step explicitly to measure batch size.
         batch = self._pipeline.step()
-        block_until_ready_tree(batch)
+        jax.block_until_ready(batch)
         leaves = jax.tree.leaves(batch)
         bytes_per_batch = sum(int(arr.nbytes) for arr in leaves)
         # Reset position so warmup proceeds from a clean state.
@@ -98,7 +97,7 @@ class DataraxScanAdapter(DataraxAdapter):
         """
         self._per_batch_byte_estimate()
         outputs = self._pipeline.scan(_reducing_step, length=num_batches)
-        block_until_ready_tree(outputs)
+        jax.block_until_ready(outputs)
 
     def iterate(self, num_batches: int) -> IterationResult:
         """Run the entire epoch via ``Pipeline.scan`` and time the call.
@@ -110,7 +109,7 @@ class DataraxScanAdapter(DataraxAdapter):
         """
         start = time.perf_counter()
         outputs = self._pipeline.scan(_reducing_step, length=num_batches)
-        block_until_ready_tree(outputs)
+        jax.block_until_ready(outputs)
         wall_clock = time.perf_counter() - start
 
         config = self._config

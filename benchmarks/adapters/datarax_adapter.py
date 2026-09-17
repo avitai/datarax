@@ -35,7 +35,6 @@ from datarax.operators.probabilistic_operator import (
     ProbabilisticOperatorConfig,
 )
 from datarax.operators.selector_operator import SelectorOperator, SelectorOperatorConfig
-from datarax.performance.synchronization import block_until_ready_tree
 from datarax.pipeline.nodes import CachingIterator, RebatchNode
 from datarax.sources import (
     MemorySource,
@@ -737,7 +736,7 @@ class DataraxAdapter(PipelineAdapter):
     def _materialize_batch(self, batch: Any) -> list[Any]:
         # Pipeline yields plain dicts; legacy Batch/BatchView yields a wrapper.
         data = batch.get_data() if hasattr(batch, "get_data") else batch
-        block_until_ready_tree(data)
+        jax.block_until_ready(data)
         return jax.tree.leaves(data)
 
     def teardown(self) -> None:

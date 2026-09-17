@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import jax
 import pytest
 
 from datarax.cli.benchmark import (
@@ -163,13 +164,9 @@ class TestCLIArgumentParsing:
 class TestRunPipelineBenchmark:
     """Test the run_pipeline_benchmark function."""
 
-    def test_sync_fn_uses_shared_tree_synchronization_helper(self) -> None:
-        """CLI timing should use the production tree sync helper."""
-        payload = {"result": object()}
-        with patch("datarax.cli.benchmark.block_until_ready_tree") as sync_tree:
-            _make_sync_fn()(payload)
-
-        sync_tree.assert_called_once_with(payload)
+    def test_sync_fn_waits_with_jax_block_until_ready(self) -> None:
+        """CLI timing waits for the whole result pytree through jax's own barrier."""
+        assert _make_sync_fn() is jax.block_until_ready
 
     def test_run_pipeline_benchmark_with_valid_module(self, tmp_path: Path) -> None:
         """Test running pipeline benchmark with a valid module."""

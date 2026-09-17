@@ -163,7 +163,6 @@ matplotlib.use("Agg")
 
 from datarax import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.performance.synchronization import block_until_ready_tree
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -241,7 +240,7 @@ def benchmark_single_device(data: dict, batch_size: int = 64) -> dict:
 
     # Warmup
     for i, batch in enumerate(pipeline):
-        block_until_ready_tree(_workload(batch["image"]))
+        jax.block_until_ready(_workload(batch["image"]))
         if i >= 5:
             break
 
@@ -250,7 +249,7 @@ def benchmark_single_device(data: dict, batch_size: int = 64) -> dict:
     total_samples = 0
     t0 = time.perf_counter()
     for batch in pipeline:
-        block_until_ready_tree(_workload(batch["image"]))
+        jax.block_until_ready(_workload(batch["image"]))
         total_samples += batch["image"].shape[0]
     elapsed = time.perf_counter() - t0
 
@@ -288,7 +287,7 @@ def benchmark_sharded(data: dict, num_devices: int, batch_size: int = 64) -> dic
     with jax.set_mesh(mesh):
         for i, batch in enumerate(pipeline):
             images = jax.device_put(batch["image"], sharding)
-            block_until_ready_tree(_workload(images))
+            jax.block_until_ready(_workload(images))
             if i >= 5:
                 break
 
@@ -301,7 +300,7 @@ def benchmark_sharded(data: dict, num_devices: int, batch_size: int = 64) -> dic
     with jax.set_mesh(mesh):
         for batch in pipeline:
             images = jax.device_put(batch["image"], sharding)
-            block_until_ready_tree(_workload(images))
+            jax.block_until_ready(_workload(images))
             total_samples += batch["image"].shape[0]
     elapsed = time.perf_counter() - t0
 
