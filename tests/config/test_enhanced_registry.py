@@ -5,8 +5,10 @@ Flax NNX modules with proper RNG and Variable handling.
 """
 
 import flax.nnx as nnx
+import jax
 import jax.numpy as jnp
 import pytest
+from substrax.rng import rngs_from_seed
 
 from datarax.config.registry import (
     _initialize_nnx_variables,
@@ -18,6 +20,7 @@ from datarax.config.registry import (
     list_registered_components,
     register_component,
 )
+from datarax.core.prng import DEFAULT_RNG_STREAMS
 
 
 class SimpleClass:
@@ -98,6 +101,32 @@ class TestRNGPreparation:
 
         rngs = _prepare_rngs_for_nnx(config)
         assert isinstance(rngs, nnx.Rngs)
+
+    @pytest.mark.parametrize("config", [{"seed": 42}, {"seed": 42, "rngs": {}}])
+    def test_seeded_rngs_carry_every_datarax_stream_derived_by_name(self, config):
+        """A seed yields the datarax streams, each derived from the seed and its name.
+
+        The derivation is substrax's, so a stream's key does not depend on the position
+        of its name in the list, and a config seeded the same way in another repository
+        draws the same keys.
+        """
+        rngs = _prepare_rngs_for_nnx(config)
+        expected = rngs_from_seed(42, DEFAULT_RNG_STREAMS)
+
+        assert set(rngs) == set(DEFAULT_RNG_STREAMS)
+        for stream in DEFAULT_RNG_STREAMS:
+            assert jnp.array_equal(
+                jax.random.key_data(rngs[stream]()), jax.random.key_data(expected[stream]())
+            ), stream
+
+    def test_missing_seed_means_seed_zero(self):
+        """A config with neither ``rngs`` nor ``seed`` is seeded with zero, explicitly."""
+        rngs = _prepare_rngs_for_nnx({})
+        expected = rngs_from_seed(0, DEFAULT_RNG_STREAMS)
+
+        assert jnp.array_equal(
+            jax.random.key_data(rngs["params"]()), jax.random.key_data(expected["params"]())
+        )
 
     def test_prepare_rngs_with_existing_rngs(self):
         """Test preparing RNGs when already provided."""

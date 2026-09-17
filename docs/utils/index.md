@@ -7,7 +7,6 @@ low-level helpers used internally and available for advanced use cases.
 
 | Utility | Purpose | Key Functions |
 |---------|---------|---------------|
-| **PRNG** | Random numbers | `nnx.Rngs` creation from seed |
 | **PyTree Utils** | Batch tree operations | Batch size, split, concatenate |
 | **External** | Library adapters | Integration helpers |
 | **Cache** | Dataset cache layout | Resolve/structure cache dirs |
@@ -15,18 +14,14 @@ low-level helpers used internally and available for advanced use cases.
 
 !!! note "Key points"
 
-    - PRNG utilities create `nnx.Rngs` with consistent seeding
     - PyTree utils operate on `Element`/`Batch` structures
     - Use these for custom operators and extensions
+    - Randomness helpers live in the core layer: [prng](../core/prng.md)
 
 ## Quick Start
 
 ```python
-from datarax.utils.prng import create_rngs
 from datarax.utils.pytree_utils import get_batch_size
-
-# Create named RNG streams from a seed
-rngs = create_rngs(42)
 
 # Inspect a batch produced by a pipeline
 size = get_batch_size(batch)
@@ -34,7 +29,6 @@ size = get_batch_size(batch)
 
 ## Modules
 
-- [prng](prng.md) - `nnx.Rngs` creation utilities for JAX
 - [pytree_utils](pytree_utils.md) - Batch PyTree manipulation and transformation
 - [external](external.md) - External library adapters and integrations
 - [cache](cache.md) - Dataset cache-layout helpers

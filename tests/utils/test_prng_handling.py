@@ -1,7 +1,6 @@
-"""Tests for PRNG handling utilities in Datarax.
+"""Tests for PRNG handling in Datarax.
 
-This module tests the PRNG utility functions for creating and managing
-Rngs objects, forking, reseeding, and ensuring required streams exist.
+This module tests forking and reseeding ``nnx.Rngs`` built over the datarax streams.
 
 See tests/operators/test_element_operator.py for ElementOperator tests
 covering reproducibility, batch augmentation, and batch consistency.
@@ -9,29 +8,14 @@ covering reproducibility, batch augmentation, and batch consistency.
 
 import flax.nnx as nnx
 import jax
+from substrax.rng import rngs_from_seed
 
-from datarax.utils.prng import create_rngs, DEFAULT_RNG_STREAMS
-
-
-def test_create_rngs():
-    """Test create_rngs creates proper Rngs objects."""
-    # Test with default streams
-    rngs = create_rngs(seed=42)
-    assert isinstance(rngs, nnx.Rngs)
-    for stream in DEFAULT_RNG_STREAMS:
-        # Check if stream exists by indexing into rngs
-        assert stream in rngs
-
-    # Test with custom streams
-    custom_streams = ["test1", "test2"]
-    rngs = create_rngs(seed=42, streams=custom_streams)
-    assert isinstance(rngs, nnx.Rngs)
-    assert set(rngs) == set(custom_streams)
+from datarax.core.prng import DEFAULT_RNG_STREAMS
 
 
 def test_fork_rngs():
     """Test using fork() to create independent Rngs objects."""
-    rngs = create_rngs(seed=42)
+    rngs = rngs_from_seed(42, DEFAULT_RNG_STREAMS)
 
     # Create 3 independent Rngs using fork()
     forked_rngs_list = [rngs.fork() for _ in range(3)]
@@ -59,7 +43,7 @@ def test_nnx_reseed():
     and produces different random values than before reseeding.
     """
     # Create Rngs and sample a value
-    rngs = create_rngs(seed=42)
+    rngs = rngs_from_seed(42, DEFAULT_RNG_STREAMS)
 
     # Get a value before reseeding
     value_before = float(jax.random.uniform(rngs["augment"]()))
@@ -75,8 +59,8 @@ def test_nnx_reseed():
 
     # Verify that reseeding to the same seed twice produces consistent results
     # Create two fresh Rngs objects and reseed both to the same seed
-    rngs_a = create_rngs(seed=1)
-    rngs_b = create_rngs(seed=2)
+    rngs_a = rngs_from_seed(1, DEFAULT_RNG_STREAMS)
+    rngs_b = rngs_from_seed(2, DEFAULT_RNG_STREAMS)
 
     # Reseed both to seed 123
     nnx.reseed(rngs_a, augment=123)

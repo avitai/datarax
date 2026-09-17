@@ -3,9 +3,9 @@
 import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
+from substrax.rng import rngs_from_seed
 
-from datarax.core.prng import per_record_keys
-from datarax.utils.prng import create_rngs, DEFAULT_RNG_STREAMS
+from datarax.core.prng import DEFAULT_RNG_STREAMS, per_record_keys
 
 
 class TestPerRecordKeys:
@@ -49,51 +49,15 @@ class TestPerRecordKeys:
         assert jnp.array_equal(jax.random.key_data(epoch1[1]), jax.random.key_data(expected))
 
 
-class TestCreateRngs:
-    """Tests for create_rngs function."""
+class TestDefaultStreams:
+    """The datarax stream names, as substrax derives them."""
 
-    def test_create_default(self):
-        """Test creating Rngs with default streams."""
-        rngs = create_rngs(seed=42)
+    def test_every_stream_present_and_distinct(self):
+        """Each named stream exists and draws its own keys."""
+        rngs = rngs_from_seed(42, DEFAULT_RNG_STREAMS)
 
-        # Check all default streams are present
-        for stream in DEFAULT_RNG_STREAMS:
-            assert stream in rngs
-
-        # Check that streams produce different keys
-        key1 = rngs.augment()
-        key2 = rngs.dropout()
-        assert not jnp.array_equal(key1, key2)
-
-    def test_create_custom_streams(self):
-        """Test creating Rngs with custom streams."""
-        custom_streams = ["stream1", "stream2", "stream3"]
-        rngs = create_rngs(seed=42, streams=custom_streams)
-
-        # Check custom streams are present
-        for stream in custom_streams:
-            assert stream in rngs
-
-        # Check default streams are not present
-        assert "augment" not in rngs
-
-    def test_create_no_seed(self):
-        """Test creating Rngs without specifying seed."""
-        rngs = create_rngs()  # Should use seed=0
-
-        # Should still have default streams
-        for stream in DEFAULT_RNG_STREAMS:
-            assert stream in rngs
-
-    def test_create_reproducibility(self):
-        """Test that creation is reproducible."""
-        rngs1 = create_rngs(seed=42)
-        rngs2 = create_rngs(seed=42)
-
-        # Same seed should produce same keys
-        key1 = rngs1.augment()
-        key2 = rngs2.augment()
-        assert jnp.array_equal(key1, key2)
+        assert set(rngs) == set(DEFAULT_RNG_STREAMS)
+        assert not jnp.array_equal(rngs.augment(), rngs.dropout())
 
 
 class TestRngUsage:
@@ -111,7 +75,7 @@ class TestRngUsage:
                 key = self.rngs.dropout()
                 return jax.random.uniform(key)
 
-        rngs = create_rngs(seed=42)
+        rngs = rngs_from_seed(42, DEFAULT_RNG_STREAMS)
         module = TestModule(rngs)
 
         # Should produce different values each call
@@ -121,7 +85,7 @@ class TestRngUsage:
 
     def test_multiple_streams(self):
         """Test using multiple RNG streams."""
-        rngs = create_rngs(seed=42)
+        rngs = rngs_from_seed(42, DEFAULT_RNG_STREAMS)
 
         # Different streams should produce different keys
         aug_key = rngs.augment()
@@ -134,7 +98,7 @@ class TestRngUsage:
 
     def test_stream_iteration(self):
         """Test iterating with RNG streams."""
-        rngs = create_rngs(seed=42)
+        rngs = rngs_from_seed(42, DEFAULT_RNG_STREAMS)
 
         keys = []
         for i in range(5):
@@ -148,7 +112,7 @@ class TestRngUsage:
 
     def test_fork_rngs(self):
         """Test forking RNG streams."""
-        rngs = create_rngs(seed=42)
+        rngs = rngs_from_seed(42, DEFAULT_RNG_STREAMS)
 
         # Fork for different purposes
         key1 = rngs.augment()
@@ -168,7 +132,7 @@ class TestRngUsage:
         def random_fn(key):
             return jax.random.uniform(key)
 
-        rngs = create_rngs(seed=42)
+        rngs = rngs_from_seed(42, DEFAULT_RNG_STREAMS)
         keys = jax.random.split(rngs.augment(), 4)
 
         # Vmap the function
@@ -187,7 +151,7 @@ class TestRngUsage:
         def random_fn(key):
             return jax.random.normal(key, shape=(3,))
 
-        rngs = create_rngs(seed=42)
+        rngs = rngs_from_seed(42, DEFAULT_RNG_STREAMS)
 
         # Should work with JIT
         result1 = random_fn(rngs.augment())

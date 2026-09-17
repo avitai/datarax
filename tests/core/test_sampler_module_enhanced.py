@@ -11,10 +11,11 @@ from dataclasses import dataclass
 
 import flax.nnx as nnx
 import pytest
+from substrax.rng import rngs_from_seed
 
 from datarax.core.config import SamplerConfig
+from datarax.core.prng import DEFAULT_RNG_STREAMS
 from datarax.core.sampler import SamplerModule
-from datarax.utils.prng import create_rngs
 
 
 @dataclass(frozen=True)
@@ -94,7 +95,7 @@ class TestSamplerModuleEnhanced:
             dataset_size=5,
             cacheable=True,
         )
-        sampler = SimpleTestSampler(config, rngs=create_rngs(seed=42))
+        sampler = SimpleTestSampler(config, rngs=rngs_from_seed(42, DEFAULT_RNG_STREAMS))
 
         # Check enhanced features are available
         assert hasattr(sampler, "_cache")
@@ -137,7 +138,7 @@ class TestSamplerModuleEnhanced:
 
     def test_rng_integration(self):
         """Test RNG integration with enhanced features."""
-        rngs = create_rngs(seed=42)
+        rngs = rngs_from_seed(42, DEFAULT_RNG_STREAMS)
         # Use stochastic config to test RNG stream requirements
         config = SimpleTestSamplerConfig(dataset_size=5, stochastic=True, stream_name="default")
         sampler = SimpleTestSampler(config, rngs=rngs)
@@ -278,7 +279,9 @@ class TestSamplerModuleCoverage:
         config_stoch = SimpleTestSamplerConfig(
             dataset_size=5, stochastic=True, stream_name="sample"
         )
-        sampler_stoch = SimpleTestSampler(config_stoch, rngs=create_rngs(seed=42))
+        sampler_stoch = SimpleTestSampler(
+            config_stoch, rngs=rngs_from_seed(42, DEFAULT_RNG_STREAMS)
+        )
         assert sampler_stoch.stochastic is True
 
     def test_complex_sampling_patterns(self):
@@ -479,7 +482,7 @@ class TestSamplerModuleAdditionalCoverage:
 
         # Stochastic sampler with custom stream
         config = SimpleTestSamplerConfig(dataset_size=5, stochastic=True, stream_name="my_stream")
-        sampler_stoch = SimpleTestSampler(config, rngs=create_rngs(seed=42))
+        sampler_stoch = SimpleTestSampler(config, rngs=rngs_from_seed(42, DEFAULT_RNG_STREAMS))
         streams = sampler_stoch.requires_rng_streams()
         assert streams == ["my_stream"]
 

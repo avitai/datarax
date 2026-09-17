@@ -1,13 +1,18 @@
 """Foundational per-record PRNG helpers for Datarax.
 
 Lives in ``datarax.core`` because the operator execution model (the lowest
-architectural layer) derives per-record keys here; higher layers reach these
-helpers through :mod:`datarax.utils.prng`, which re-exports them alongside the
-``nnx.Rngs`` conveniences.
+architectural layer) derives per-record keys here. The named ``nnx.Rngs``
+streams a component draws from are :data:`DEFAULT_RNG_STREAMS`; an ``nnx.Rngs``
+over them comes from :func:`substrax.rng.rngs_from_seed`, which derives each
+stream's key from the seed and the stream's name.
 """
 
 import jax
 import jax.numpy as jnp
+
+
+DEFAULT_RNG_STREAMS: tuple[str, ...] = ("augment", "dropout", "params", "shuffling", "default")
+"""The streams a component built from a seeded configuration receives."""
 
 
 def per_record_keys(

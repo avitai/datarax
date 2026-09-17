@@ -6,7 +6,6 @@ rates.
 ## See Also
 
 - [Utilities Overview](index.md) - All utility helpers
-- [PRNG](prng.md) - Random-number utilities
 
 ---
 

@@ -5,14 +5,15 @@ This module contains tests for the NNX-based sampler module implementations.
 
 import flax.nnx as nnx
 import pytest
+from substrax.rng import rngs_from_seed
 
+from datarax.core.prng import DEFAULT_RNG_STREAMS
 from datarax.samplers import (
     RangeSampler,
     RangeSamplerConfig,
     ShuffleSampler,
     ShuffleSamplerConfig,
 )
-from datarax.utils.prng import create_rngs
 
 
 def test_shuffle_sampler_seed_range_validation():
@@ -95,7 +96,7 @@ def test_shuffle_sampler_basic():
 def test_shuffle_sampler_with_rngs():
     """Test ShuffleSamplerModule with RNGs for reproducibility."""
     # Create RNGs with a fixed seed for reproducibility
-    rngs = create_rngs(seed=42)
+    rngs = rngs_from_seed(42, DEFAULT_RNG_STREAMS)
 
     # Create two samplers with the same RNGs
     config1 = ShuffleSamplerConfig(dataset_size=10)
@@ -103,7 +104,7 @@ def test_shuffle_sampler_with_rngs():
 
     # We'll create a second sampler with a duplicate of the RNGs
     config2 = ShuffleSamplerConfig(dataset_size=10)
-    sampler2 = ShuffleSampler(config2, rngs=create_rngs(seed=42))
+    sampler2 = ShuffleSampler(config2, rngs=rngs_from_seed(42, DEFAULT_RNG_STREAMS))
 
     # The samplers should produce identifiable sequences
     indices1 = list(sampler1)
@@ -122,7 +123,7 @@ def test_shuffle_sampler_with_rngs():
 def test_shuffle_sampler_serialization():
     """Test serialization and deserialization of ShuffleSamplerModule."""
     # Create a sampler with some state
-    rngs = create_rngs(seed=42)
+    rngs = rngs_from_seed(42, DEFAULT_RNG_STREAMS)
     original_config = ShuffleSamplerConfig(dataset_size=10)
     original = ShuffleSampler(original_config, rngs=rngs)
 
@@ -132,7 +133,7 @@ def test_shuffle_sampler_serialization():
     # Create a new sampler and restore the state
     restored_config = ShuffleSamplerConfig(dataset_size=20)
     # Use the same stream schema for strict checkpoint compatibility.
-    restored = ShuffleSampler(restored_config, rngs=create_rngs(seed=0))
+    restored = ShuffleSampler(restored_config, rngs=rngs_from_seed(0, DEFAULT_RNG_STREAMS))
     restored.set_state(state)
 
     # Check that the parameters were restored

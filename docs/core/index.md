@@ -57,6 +57,7 @@ new_element = element.replace(
 - [element_batch](element_batch.md) - `Element` and `Batch` data containers
 - [metadata](metadata.md) - Metadata handling and field selection
 - [spec](spec.md) - Element specs: data as given or as JAX arrays, and batch validation
+- [prng](prng.md) - The named `nnx.Rngs` streams and per-record key derivation
 
 ### Configuration
 
