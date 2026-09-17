@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- The lock moves GitPython (skypilot's, in the `automation` extra) from 3.1.50 to 3.1.62 for
+  GHSA-284h-m62q-gf8w, GHSA-7833-fr7j-v32q, GHSA-8mcc-hrx5-hvxc, GHSA-3wxw-xv34-2frg and
+  GHSA-5xxx-qhh7-9287, and mkdocs-material (the `docs` extra) from 9.7.6 to 9.7.7 for
+  GHSA-xvg9-69gf-fjrf. Nothing else moves.
+
 ## [0.1.13] - 2026-09-17
 
 ### Changed
