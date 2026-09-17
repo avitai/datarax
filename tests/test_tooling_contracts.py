@@ -271,6 +271,35 @@ def test_every_test_module_is_selected_by_a_ci_job() -> None:
     ] == []
 
 
+FIXTURE_ACTION = "./.github/actions/format2-iterator-fixture"
+CHECKPOINT_TESTS = "tests/checkpoint"
+
+
+def test_every_job_collecting_the_checkpoint_tests_writes_the_fixture_first() -> None:
+    """The checkpoint tests raise without the generated format-2 fixture, so the job writes it.
+
+    A job collects them when one of its pytest paths covers ``tests/checkpoint``; the
+    fixture action must run in that job before the pytest step.
+    """
+    jobs = yaml.safe_load(CI_WORKFLOW.read_text())["jobs"]
+    for name, job in jobs.items():
+        steps = job.get("steps", [])
+        collecting = [
+            index
+            for index, step in enumerate(steps)
+            if any(
+                _is_under(CHECKPOINT_TESTS, root) or _is_under(root, CHECKPOINT_TESTS)
+                for root in _pytest_roots(str(step.get("run", "")))
+            )
+        ]
+        if not collecting:
+            continue
+        writing = [index for index, step in enumerate(steps) if step.get("uses") == FIXTURE_ACTION]
+
+        assert writing, f"{name} collects the checkpoint tests without writing the fixture"
+        assert writing[0] < collecting[0], f"{name} runs pytest before writing the fixture"
+
+
 def test_long_running_examples_restore_the_prepared_dataset_cache() -> None:
     """A dataset job fills the cache, and the example tier fails if the cache is missing.
 

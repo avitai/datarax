@@ -37,7 +37,7 @@ in what the loader contributes to the checkpoint and how it is put back.
 | The draw index resumes, so the same generators follow | The epoch and record index resume, so the same keys follow |
 | One sampler runs `num_epochs` epochs on one iterator | One iterator per epoch; `pipeline.reset()` starts the next |
 | `nnx.to_pure_dict(nnx.state(...))` for the model and optimizer | The same |
-| `OrbaxCheckpointStore.save(payload, step, loss)` with the bytes as a string leaf | The same call with the state dict |
+| `OrbaxCheckpointStore.save(step, items, metrics)` with the bytes as a string leaf | The same call with the state dict |
 
 ## Files
 
@@ -62,11 +62,12 @@ jupyter lab examples/comparison/04_resumed_training_guide.ipynb
 
 ### What a checkpoint holds
 
-`OrbaxCheckpointStore.save(payload, step, loss)` writes any pytree of arrays and plain leaves
-under a step number, with the step, a timestamp and the loss in a JSON sidecar;
-`restore(template, step)` fills a template of the same structure and returns that metadata.
-The model and optimizer travel as `nnx.to_pure_dict(nnx.state(...))`, Grain's bytes as a
-string leaf, and Datarax's iterator state as a dict of ints and lists.
+`OrbaxCheckpointStore.save(step, items, metrics=...)` writes the model, the optimizer and the
+loader state as three named items (`model`, `optimizer`, `data_iterator`), each any pytree of
+arrays and plain leaves, under a step number, with the loss in the record's metrics;
+`restore(step, templates=...)` fills templates of the same structure and returns the items
+with that record. The model and optimizer travel as `nnx.to_pure_dict(nnx.state(...))`,
+Grain's bytes as a string leaf, and Datarax's iterator state as a dict of ints and lists.
 
 ```python
 def training_state(model: LinearRegression, optimizer: nnx.Optimizer) -> dict:
@@ -125,15 +126,15 @@ grain_before, grain_payload = train_grain(
     build_grain_iterator(), model, optimizer, CHECKPOINT_STEP, save=(CHECKPOINT_STEP, grain_store)
 )
 # inside train_grain, at the checkpoint step:
-#   payload = {**training_state(model, optimizer), "loader": iterator.get_state().decode()}
-#   store.save(payload, step=CHECKPOINT_STEP, loss=losses[-1])
+#   payload = {**training_state(model, optimizer), "data_iterator": iterator.get_state().decode()}
+#   store.save(CHECKPOINT_STEP, payload, metrics={"loss": losses[-1]})
 
 datarax_store = OrbaxCheckpointStore(checkpoint_root / "datarax")
 datarax_before, datarax_payload = train_datarax(
     build_datarax_pipeline(), model, optimizer, CHECKPOINT_STEP, save=(CHECKPOINT_STEP, datarax_store)
 )
 # inside train_datarax, at the checkpoint step:
-#   payload = {**training_state(model, optimizer), "loader": iterator.get_state()}
+#   payload = {**training_state(model, optimizer), "data_iterator": iterator.get_state()}
 ```
 
 **Terminal Output:**
@@ -153,17 +154,17 @@ remaining 20 steps.
 
 ```python
 model, optimizer = build_fresh_model()
-template = {**training_state(model, optimizer), "loader": ""}
-restored, grain_metadata = restored_payload(grain_store, template, CHECKPOINT_STEP)
-load_training_state(model, optimizer, restored)
+templates = {**training_state(model, optimizer), "data_iterator": ""}
+grain_checkpoint = grain_store.restore(CHECKPOINT_STEP, templates=templates)
+load_training_state(model, optimizer, grain_checkpoint.items)
 grain_iterator = build_grain_iterator()
-grain_iterator.set_state(restored["loader"].encode())
+grain_iterator.set_state(grain_checkpoint.items["data_iterator"].encode())
 grain_after, _ = train_grain(grain_iterator, model, optimizer, TOTAL_STEPS - CHECKPOINT_STEP)
 
 model, optimizer = build_fresh_model()
-template = {
+templates = {
     **training_state(model, optimizer),
-    "loader": {
+    "data_iterator": {
         "position": 0,
         "epoch": 0,
         "rng_counts": [0, 0, 0],
@@ -178,11 +179,11 @@ template = {
         },
     },
 }
-restored, datarax_metadata = restored_payload(datarax_store, template, CHECKPOINT_STEP)
-load_training_state(model, optimizer, restored)
+datarax_checkpoint = datarax_store.restore(CHECKPOINT_STEP, templates=templates)
+load_training_state(model, optimizer, datarax_checkpoint.items)
 pipeline = build_datarax_pipeline()
 datarax_iterator = iter(pipeline)
-datarax_iterator.set_state(restored["loader"])
+datarax_iterator.set_state(datarax_checkpoint.items["data_iterator"])
 datarax_after, _ = train_datarax(
     pipeline, model, optimizer, TOTAL_STEPS - CHECKPOINT_STEP, first=datarax_iterator
 )
@@ -207,7 +208,7 @@ flowchart LR
         DL["Datarax iterator<br/>get_state(): position, epoch,<br/>rng_counts, version, fingerprint"]
     end
 
-    S["OrbaxCheckpointStore.save(payload, step=20, loss)"]
+    S["OrbaxCheckpointStore.save(20, items, metrics)"]
     M --> S
     GL -->|"string leaf"| S
     DL -->|"dict leaf"| S
@@ -233,7 +234,7 @@ flowchart LR
 | Restored into | `set_state(bytes)` on a loader built the same way | `set_state(dict)` on a fresh iterator of a pipeline built the same way |
 | Randomness after resume | The draw index continues, so the same generators follow | The epoch and record index continue, so the same keys follow |
 | Model and optimizer | `nnx.to_pure_dict` in, `nnx.replace_by_pure_dict` out | The same |
-| Store | One `OrbaxCheckpointStore.save(payload, step, loss)` | The same |
+| Store | One `OrbaxCheckpointStore.save(step, items, metrics)` with `model`, `optimizer` and `data_iterator` items | The same |
 
 Both resumed runs reproduce their reference loss for loss. The difference between the
 libraries is what the loader contributes to the payload: bytes that describe a Python

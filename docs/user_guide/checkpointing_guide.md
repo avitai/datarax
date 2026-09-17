@@ -13,10 +13,15 @@ Datarax's checkpointing system is built on:
    implements it.
 2. **`IteratorCheckpoint`**: saves a Checkpointable's state under an integer step
    and restores it into a freshly built object.
-3. **substrax's `OrbaxCheckpointStore`**: the storage layer. It carries arrays,
-   typed PRNG keys and plain-Python leaves (positions, seeds, sampler reprs)
-   alike, keeps the most recent `max_to_keep` steps, and writes a JSON metadata
-   sidecar beside each checkpoint.
+3. **substrax's `OrbaxCheckpointStore`**: the storage layer. It writes the state as the
+   checkpoint's `data_iterator` item, which carries arrays, typed PRNG keys and
+   plain-Python leaves (positions, seeds, sampler reprs) alike, keeps the most recent
+   `max_to_keep` steps, and records your `metadata` in the checkpoint's `extra`.
+
+A root written by datarax 0.1.11 or earlier (substrax's format 2, the state as the one
+payload) restores through `IteratorCheckpoint` unchanged, and
+`substrax.checkpoint.upgrade_checkpoints(source, destination,
+legacy_layout=ITERATOR_STATE_FORMAT2)` rewrites it in the current format into a new root.
 
 ## Saving and Restoring
 
@@ -24,8 +29,9 @@ Datarax's checkpointing system is built on:
 from datarax.checkpoint import IteratorCheckpoint
 
 with IteratorCheckpoint("./checkpoints", max_to_keep=5) as checkpoint:
-    # Save the pipeline's state under a step
-    checkpoint.save(pipeline, step=100, metadata={"description": "Training checkpoint"})
+    # Save the pipeline's state under a step; the epoch is a field of the record and
+    # metadata holds free keys (one naming a record field, such as "epoch", is refused)
+    checkpoint.save(pipeline, step=100, epoch=1, metadata={"description": "Training checkpoint"})
 
     # Restore the latest step, or a specific one, into a pipeline built the same way
     checkpoint.restore(pipeline)

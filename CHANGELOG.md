@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `IteratorCheckpoint` writes substrax's checkpoint format 3: the state is the checkpoint's
+  `data_iterator` item, `save` and `save_if_due` take the record's `epoch` as a keyword, and
+  `metadata` is the record's `extra` (a key naming a record field, `epoch` among them, is
+  refused); `save` returns the checkpoint's directory as a `Path`, and restoring a step the
+  directory does not hold raises `substrax.checkpoint.CheckpointNotFoundError`. A root
+  written by datarax 0.1.11 or
+  earlier restores unchanged through `ITERATOR_STATE_FORMAT2`, which
+  `substrax.checkpoint.upgrade_checkpoints` also takes to rewrite such a root.
+- The resumed-training guide saves the model, the optimizer and the loader state as named
+  items and reads them back through `Checkpoint.items` and `Checkpoint.metadata`.
+- Requires `substrax>=0.1.10`; the lock moves it from 0.1.8.
+
 ## [0.1.12] - 2026-09-17
 
 ### Added

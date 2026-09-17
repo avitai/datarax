@@ -2,6 +2,9 @@
 # Enhanced with workshop insights for thorough code quality
 # Optimized for performance and reduced package installations
 
+# Orbax-written checkpoint fixtures: binary and generated, never linted or reformatted.
+exclude: ^tests/checkpoint/fixtures/
+
 repos:
   # Workshop-inspired TOML formatting
   - repo: local
