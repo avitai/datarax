@@ -68,7 +68,10 @@ _Writes = tuple[dict[int, Any], dict[int, Any]]
 # The layout of PipelineIterator.get_state(). Version 1 gives each stochastic operator one
 # private stream count and a deterministic one none; before it, an operator carried every
 # stream of the Rngs its caller passed. A state without the field predates it and is upgraded.
-_ITERATOR_STATE_VERSION = 1
+_ITERATOR_STATE_VERSION = 2
+# Version 1 carried ``rng_counts`` in the per-operator layout; version 2 adds ``fingerprint``,
+# the configuration that produced the state, which ``set_state`` checks.
+_FINGERPRINT_FIELDS = ("batch_size", "length", "drop_last", "num_epochs", "shuffled")
 
 
 def _is_per_batch_state(path: Any, value: Any) -> bool:
@@ -372,9 +375,11 @@ class PipelineIterator:
             (self._live_variables, self._carried_variables),
             (_state_leaves(immutable_state), _state_leaves(self._immutable_state)),
         )
-        source = pipeline.source
-        self._source_length: int | None = len(source) if hasattr(source, "__len__") else None
+        self._source_length: int | None = pipeline._length
         self._batch_size = pipeline.batch_size
+        self._drop_last = pipeline.drop_last
+        self._num_epochs = pipeline.num_epochs
+        self._epochs_served = 0
         # One host sync at session entry; termination is then pure Python
         # arithmetic, preserving JAX's asynchronous dispatch run-ahead.
         self._position = int(pipeline._position[...])
@@ -403,18 +408,50 @@ class PipelineIterator:
         return self
 
     def __next__(self) -> dict:
-        """Produce the next batch via the compiled session step."""
+        """Produce the next batch via the compiled session step.
+
+        An epoch ends when its last batch has been served: at ``position >= N``, or at
+        ``position + B > N`` under ``drop_last``. The session then stops after
+        ``num_epochs`` epochs, or starts the next one (position 0, epoch advanced) as
+        :meth:`Pipeline.reset` does; a continuous stream never ends.
+        """
         if self._closed:
             raise StopIteration
-        if self._source_length is not None and self._position >= self._source_length:
-            self.close()
-            raise StopIteration
+        if self._num_epochs is not None and self._epoch_exhausted():
+            self._epochs_served += 1
+            if self._epochs_served >= self._num_epochs:
+                self.close()
+                raise StopIteration
+            self._start_next_epoch()
         batch, writes = self._pure_step(self._state, self._immutable_state)
         # Sync the live module and the session copies at every yield boundary:
         # mid-loop checkpointing (nnx.state on the pipeline) must see the truth.
         _apply_writes(writes, self._receivers)
         self._position += self._batch_size
+        if self._num_epochs is None and self._source_length is not None:
+            self._position %= self._source_length
         return batch
+
+    def _epoch_exhausted(self) -> bool:
+        """Whether the current epoch has served its last batch."""
+        if self._source_length is None:
+            return False
+        if self._drop_last:
+            return self._position + self._batch_size > self._source_length
+        return self._position >= self._source_length
+
+    def _start_next_epoch(self) -> None:
+        """Position 0 and the epoch advanced, on the live module and the session copy."""
+        epoch = int(self._live_variables[self._epoch_index].get_value()) + 1
+        self._write_position_and_epoch(0, epoch)
+
+    def _write_position_and_epoch(self, position: int, epoch: int) -> None:
+        carried = self._carried_variables
+        for target in (self._live_variables[self._position_index], carried[self._position_index]):
+            target.set_value(jnp.asarray(position, dtype=jnp.int32))
+        for target in (self._live_variables[self._epoch_index], carried[self._epoch_index]):
+            target.set_value(jnp.asarray(epoch, dtype=jnp.int32))
+        self._position = position
 
     def get_state(self) -> dict[str, Any]:
         """Return iterator state valid at the current yield boundary.
@@ -442,6 +479,22 @@ class PipelineIterator:
             "epoch": int(self._live_variables[self._epoch_index].get_value()),
             "rng_counts": counts,
             "version": _ITERATOR_STATE_VERSION,
+            "fingerprint": self._fingerprint(),
+        }
+
+    def _fingerprint(self) -> dict[str, Any]:
+        """The configuration a state is only valid for: batch rule, length, epochs, order.
+
+        Every leaf is a number or a bool (``num_epochs`` may be ``None``), so the state
+        also fits a checkpoint template of arrays.
+        """
+        source = self._pipeline.source
+        return {
+            "batch_size": self._batch_size,
+            "length": self._source_length,
+            "drop_last": self._drop_last,
+            "num_epochs": self._num_epochs,
+            "shuffled": bool(getattr(source, "is_random_order", False)),
         }
 
     def _upgraded_rng_counts(self, state: dict[str, Any]) -> list[int]:
@@ -493,13 +546,16 @@ class PipelineIterator:
         layout first; see :meth:`_upgraded_rng_counts`.
 
         Args:
-            state: Dict with ``position``, ``epoch``, ``rng_counts`` and, from version 1
-                onwards, ``version`` entries.
+            state: Dict with ``position``, ``epoch``, ``rng_counts``, ``version`` (from
+                version 1) and ``fingerprint`` (from version 2) entries.
 
         Raises:
-            ValueError: If ``state`` carries a different number of rng counts than this
-                pipeline has streams, or a negative ``position`` or ``epoch``.
+            ValueError: If the state's ``fingerprint`` names a different batch size, length,
+                last-batch rule, epoch count or order than this pipeline has, if ``state``
+                carries a different number of rng counts than this pipeline has streams, or
+                a negative ``position`` or ``epoch``.
         """
+        self._check_fingerprint(state)
         counts = self._upgraded_rng_counts(state)
         if len(counts) != len(self._rng_count_indices):
             raise ValueError(
@@ -518,11 +574,24 @@ class PipelineIterator:
         for index, count in zip(self._rng_count_indices, counts, strict=True):
             for target in (self._live_variables[index], carried[index]):
                 target.set_value(jnp.asarray(count, dtype=target.get_value().dtype))
-        for target in (self._live_variables[self._position_index], carried[self._position_index]):
-            target.set_value(jnp.asarray(position, dtype=jnp.int32))
-        for target in (self._live_variables[self._epoch_index], carried[self._epoch_index]):
-            target.set_value(jnp.asarray(epoch, dtype=jnp.int32))
-        self._position = position
+        self._write_position_and_epoch(position, epoch)
+
+    def _check_fingerprint(self, state: dict[str, Any]) -> None:
+        """Refuse a state produced under a different configuration, naming the first field.
+
+        A version-1 state has no fingerprint and is taken as it is.
+        """
+        recorded = state.get("fingerprint")
+        if recorded is None:
+            return
+        mine = self._fingerprint()
+        for field in _FINGERPRINT_FIELDS:
+            if recorded.get(field) != mine[field]:
+                raise ValueError(
+                    f"state was produced with {field}={recorded.get(field)!r} but this pipeline "
+                    f"has {field}={mine[field]!r}; iterator state is only valid for the "
+                    "configuration that produced it"
+                )
 
     def close(self) -> None:
         """End the session.

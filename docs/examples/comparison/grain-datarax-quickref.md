@@ -181,7 +181,7 @@ print(f"Datarax resumes exactly: {datarax_matches}")
 
 **Terminal Output:**
 ```
-Datarax checkpoint: {'position': 8, 'epoch': 0, 'rng_counts': [0, 1, 0], 'version': 1}
+Datarax checkpoint: {'position': 8, 'epoch': 0, 'rng_counts': [0, 1, 0], 'version': 2, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 1, 'shuffled': True}}
 Datarax resumes exactly: True
 ```
 
@@ -202,7 +202,7 @@ flowchart LR
         DS["MemorySource<br/>shuffle"]
         DO["ElementOperator<br/>key per record"]
         DB["Batching"]
-        DC["get_state()<br/>position, epoch,<br/>rng_counts, version"]
+        DC["get_state()<br/>position, epoch,<br/>rng_counts, version, fingerprint"]
         DS --> DO --> DB
         DB -.-> DC
     end

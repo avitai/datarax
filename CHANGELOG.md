@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Pipeline(..., drop_last=False, num_epochs=1)` settles the last batch of an epoch. A
+  random-access source keeps every batch at `batch_size`; under the default the last batch is
+  padded with rows from the start of the order and every batch carries a top-level
+  `valid_mask` leaf (`(batch_size,)`, bool) marking the rows past the epoch's end invalid,
+  attached after the stages run so a masked loss ignores the padding and the stages never
+  see the mask (a mask a batcher stage already set is combined with it). `drop_last=True`
+  serves floor(N / B) batches, PyTorch's rule. `num_epochs=k` makes `iter(pipeline)` serve `k`
+  epochs, advancing the epoch at each boundary as `reset()` does; `num_epochs=None` is a
+  continuous stream whose boundary batches hold the tail of one epoch and the head of the
+  next, no row padding, and whose iterator state reports the crossed epoch. `len(pipeline)`
+  is the batches per epoch, `batches_left()` what the epoch still holds, and `scan(length)`
+  refuses a `length` beyond it (a continuous stream scans any length). A streaming source
+  carries an all-true mask over the rows it yields.
+- `EpochOrderCache`, the permutation one epoch serves, computed once per epoch key and
+  reused by every batch: `MemorySource` and the eager sources (`EagerSourceBase` subclasses
+  build one over their length) read it through `resolve_wrapped_indices(..., order=...)`,
+  so the O(N) permutation runs once per epoch instead of once per batch, and the served
+  order for a given key is unchanged. A source built on `resolve_wrapped_indices` without
+  the cache keeps its behaviour.
+
+### Changed
+
+- Iterator state is version 2: `get_state()` adds `fingerprint` (`batch_size`, `length`,
+  `drop_last`, `num_epochs`, `shuffled`), and `set_state()` refuses a state produced under a
+  different configuration, naming the first field that disagrees; a version-1 state, which
+  has no fingerprint, is accepted and its counts upgraded as before.
+- The last batch of an epoch no longer wraps silently: the rows past the end are still served
+  from the start of the order, so batch shapes are unchanged, but they are marked invalid
+  in `valid_mask`, and a batch is one leaf richer.
+
+### Removed
+
+- `datarax.performance.synchronization` (`block_until_ready_tree`, `copy_to_host_async_tree`)
+  and the `performance` exports of both; `jax.block_until_ready` and `jax.copy_to_host_async`
+  do the same over a pytree. The CLI benchmark and the benchmark scripts wait through
+  `jax.block_until_ready`.
+
 ## [0.1.11] - 2026-09-17
 
 ### Changed

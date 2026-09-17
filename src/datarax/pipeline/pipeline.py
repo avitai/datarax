@@ -53,12 +53,14 @@ Public surface:
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any
 
 import jax
 import jax.numpy as jnp
 from flax import nnx
+from jax.core import Tracer
 
 from datarax.core.data_source import DataSourceModule
 from datarax.core.spec import batch_length, validate_batch, validate_device_dtypes
@@ -82,6 +84,18 @@ class Pipeline(nnx.Module):
             through ``scan`` via ``StateAxes``.
         batch_size: Number of records fetched per ``step()`` call.
         rngs: ``nnx.Rngs`` consumed by stochastic stages and the source.
+        drop_last: What the last batch of an epoch is when the source's length is
+            not a multiple of ``batch_size``. ``False`` (the default) serves it padded
+            to ``batch_size`` with the rows past the epoch's end marked invalid in the
+            batch's ``valid_mask``; ``True`` does not serve it, PyTorch's rule.
+        num_epochs: How many epochs ``iter(pipeline)`` serves before stopping, each
+            ending as ``drop_last`` says; ``None`` is a continuous stream whose batches
+            cross epoch boundaries without padding.
+
+    Every batch a random-access source serves carries a top-level ``valid_mask`` leaf
+    of shape ``(batch_size,)`` and dtype bool, attached after the stages run, so a
+    masked loss ignores padding and the stages never see the mask. A streaming source
+    carries an all-true mask over the rows it yields.
 
     Epochs: the pipeline owns the iteration position and the epoch counter.
     Every ``step()`` of an epoch passes the same epoch key to
@@ -93,7 +107,7 @@ class Pipeline(nnx.Module):
     Use :meth:`from_dag` for branching / merging topologies.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - the DAG shape, the batch rule and the streams are separate
         self,
         *,
         source: DataSourceModule,
@@ -103,9 +117,41 @@ class Pipeline(nnx.Module):
         nodes: Mapping[str, nnx.Module] | None = None,
         edges: Mapping[str, Sequence[str]] | None = None,
         sink: str | None = None,
+        drop_last: bool = False,
+        num_epochs: int | None = 1,
     ) -> None:
-        """Initialize the module."""
+        """Initialize the module.
+
+        Args:
+            source: The data source (see the class docstring).
+            batch_size: Records fetched per ``step()``.
+            rngs: ``nnx.Rngs`` for the epoch key and stochastic stages.
+            stages: Linear stages, exclusive with ``nodes``/``edges``/``sink``.
+            nodes: DAG nodes by name.
+            edges: Predecessors of each DAG node.
+            sink: The DAG node whose output is returned.
+            drop_last: The last-batch rule (see the class docstring).
+            num_epochs: Epochs ``iter`` serves, or ``None`` for a continuous stream.
+
+        Raises:
+            ValueError: If ``num_epochs`` is neither ``None`` nor at least 1, or a
+                continuous stream (``num_epochs=None``) is asked for with a batch larger
+                than the source, which no single boundary batch can hold.
+        """
         super().__init__()
+        if num_epochs is not None and num_epochs < 1:
+            raise ValueError(
+                f"num_epochs must be at least 1, or None for a stream; got {num_epochs}"
+            )
+        length = _source_length(source)
+        if num_epochs is None and length is not None and batch_size > length:
+            raise ValueError(
+                f"a continuous stream needs batch_size <= len(source); got batch_size "
+                f"{batch_size} over {length} records"
+            )
+        self.drop_last = drop_last
+        self.num_epochs = num_epochs
+        self._length: int | None = length
 
         # Resolve the construction shape into the unified DAG representation.
         resolved_nodes, resolved_edges, resolved_sink = self._resolve_dag_shape(
@@ -213,6 +259,8 @@ class Pipeline(nnx.Module):
         sink: str,
         batch_size: int,
         rngs: nnx.Rngs,
+        drop_last: bool = False,
+        num_epochs: int | None = 1,
     ) -> Pipeline:
         """Build a Pipeline whose stages execute in user-specified topological order.
 
@@ -228,6 +276,8 @@ class Pipeline(nnx.Module):
                 ``__call__``.
             batch_size: Records fetched per ``step()``.
             rngs: ``nnx.Rngs`` for stochastic stages and source.
+            drop_last: The last-batch rule (see the class docstring).
+            num_epochs: Epochs ``iter`` serves, or ``None`` for a stream.
 
         Raises:
             ValueError: If ``edges`` describes a cycle, references
@@ -243,6 +293,8 @@ class Pipeline(nnx.Module):
             sink=sink,
             batch_size=batch_size,
             rngs=rngs,
+            drop_last=drop_last,
+            num_epochs=num_epochs,
         )
 
     # ------------------------------------------------------------------
@@ -314,6 +366,35 @@ class Pipeline(nnx.Module):
         base = jax.random.wrap_key_data(self._epoch_key_base[...])
         return jax.random.fold_in(base, self._epoch[...])
 
+    def __len__(self) -> int:
+        """Batches per epoch: ceil(N / B), or floor(N / B) under ``drop_last``.
+
+        Returns:
+            The number of batches one epoch serves.
+
+        Raises:
+            TypeError: If the source has no length.
+        """
+        if self._length is None:
+            raise TypeError(f"{type(self.source).__name__} has no length, so the pipeline has none")
+        return _batches_in(self._length, self.batch_size, self.drop_last)
+
+    def batches_left(self) -> int | None:
+        """Batches the current epoch still holds from the current position.
+
+        Returns:
+            The count, or ``None`` when it is not known: a source without a length, a
+            continuous stream (which never runs out), or a call inside a traced function,
+            where the position is a tracer rather than a number.
+        """
+        if self._length is None or self.num_epochs is None:
+            return None
+        position = self._position[...]
+        if isinstance(position, Tracer):
+            return None
+        remaining = max(self._length - int(position), 0)
+        return _batches_in(remaining, self.batch_size, self.drop_last)
+
     def reset(self) -> None:
         """Start the next epoch: position 0, epoch counter advanced.
 
@@ -347,13 +428,69 @@ class Pipeline(nnx.Module):
             The sink output for the batch at the current position.
         """
         idx = self._position[...]
-        batch = self.source.get_batch_at(idx, self.batch_size, self.epoch_key())
+        size = self.batch_size
+        if self.num_epochs is None and self._length is not None:
+            return self._continuous_batch(idx)
+        batch = self.source.get_batch_at(idx, size, self.epoch_key())
         # __call__ reads self._position (== idx here) to ask the source which records it
         # served, so a subclass overriding __call__ still runs; advance only afterwards.
         # Under jit XLA computes the shuffle both calls share once.
         batch = self(batch)
-        self._position[...] = idx + jnp.int32(self.batch_size)
-        return batch
+        self._position[...] = idx + jnp.int32(size)
+        if self._length is None:
+            mask = jnp.ones((size,), dtype=jnp.bool_)
+        else:
+            mask = idx + jnp.arange(size, dtype=jnp.int32) < jnp.int32(self._length)
+        return _with_valid_mask(batch, mask, self._sink)
+
+    def _continuous_batch(self, idx: jax.Array) -> dict:
+        """One batch of the continuous stream, crossing the epoch boundary when it must.
+
+        The rows before the boundary come from this epoch's order at ``idx``; the rows
+        after it are the head of the next epoch's order, so no row is padding. The
+        stages key each record on the epoch the batch started in.
+
+        Args:
+            idx: The position the batch starts at, within this epoch.
+
+        Returns:
+            The sink output with an all-true ``valid_mask``.
+        """
+        size, length = self.batch_size, self._length
+        assert length is not None  # noqa: S101 - the caller checked
+        base = jax.random.wrap_key_data(self._epoch_key_base[...])
+        key_now = jax.random.fold_in(base, self._epoch[...])
+        key_next = jax.random.fold_in(base, self._epoch[...] + jnp.int32(1))
+        offsets = jnp.arange(size, dtype=jnp.int32)
+        in_epoch = idx + offsets < jnp.int32(length)
+        head_rows = jnp.clip(idx + offsets - jnp.int32(length), 0, size - 1)
+
+        def pick(tail_leaf: jax.Array, head_leaf: jax.Array) -> jax.Array:
+            chosen_head = jnp.take(head_leaf, head_rows, axis=0)
+            select = jnp.reshape(in_epoch, (size,) + (1,) * (tail_leaf.ndim - 1))
+            return jnp.where(select, tail_leaf, chosen_head)
+
+        tail = self.source.get_batch_at(idx, size, key_now)
+        head = self.source.get_batch_at(0, size, key_next)
+        batch = jax.tree.map(pick, tail, head)
+        record_indices = jnp.where(
+            in_epoch,
+            self.source.record_indices_at(idx, size, key_now),
+            jnp.take(self.source.record_indices_at(0, size, key_next), head_rows),
+        )
+        batch = run_dag(
+            self._stage_modules,
+            self._exec_order,
+            self._predecessors,
+            self._sink,
+            batch,
+            record_indices,
+            self._epoch[...],
+        )
+        consumed = idx + jnp.int32(size)
+        self._epoch[...] = self._epoch[...] + consumed // jnp.int32(length)
+        self._position[...] = consumed % jnp.int32(length)
+        return _with_valid_mask(batch, jnp.ones((size,), dtype=jnp.bool_), self._sink)
 
     def scan(
         self,
@@ -391,7 +528,20 @@ class Pipeline(nnx.Module):
         Returns:
             Stacked outputs (``init_carry is None``) or
             ``(final_carry, stacked_outputs)`` (``init_carry`` provided).
+
+        Raises:
+            ValueError: If ``length`` exceeds the batches left in the epoch, when the
+                position is known (an eager call); a continuous stream
+                (``num_epochs=None``) scans any length, and a ``scan`` traced inside
+                another transformation is not checked.
         """
+        left = self.batches_left()
+        if left is not None and length > left:
+            raise ValueError(
+                f"scan(length={length}) exceeds the {left} batches left in the epoch "
+                f"(position {int(self._position[...])} of {self._length} records, batch_size "
+                f"{self.batch_size}); reset() starts the next epoch"
+            )
         n_modules = len(modules)
         has_init_carry = init_carry is not None
         # Cache key: identity of step_fn plus the structural shape of the
@@ -525,4 +675,45 @@ class Pipeline(nnx.Module):
             if not size:
                 return
             validate_batch(batch, element_spec, batch_size=self.batch_size)
-            yield apply(batch)
+            yield _with_valid_mask(apply(batch), jnp.ones((size,), dtype=jnp.bool_), self._sink)
+
+
+def _source_length(source: DataSourceModule) -> int | None:
+    """The source's length, or ``None`` when it has none."""
+    try:
+        return len(source)
+    except (TypeError, NotImplementedError):
+        return None
+
+
+def _batches_in(records: int, batch_size: int, drop_last: bool) -> int:
+    """Batches ``records`` records make: floor under ``drop_last``, ceil otherwise."""
+    return records // batch_size if drop_last else math.ceil(records / batch_size)
+
+
+def _with_valid_mask(batch: Any, mask: jax.Array, sink: str | None) -> dict:
+    """Attach ``mask`` as the batch's top-level ``valid_mask`` leaf.
+
+    A mask the batch already carries (a batcher stage's) is combined with this one, so
+    a row is valid only when both say so.
+
+    Args:
+        batch: The sink output, a mapping of leaves.
+        mask: Validity of each row.
+        sink: The sink node's name, for the error.
+
+    Returns:
+        ``batch`` with ``valid_mask``.
+
+    Raises:
+        TypeError: If the sink output is not a mapping, which cannot carry the mask.
+    """
+    if not isinstance(batch, Mapping):
+        raise TypeError(
+            f"the sink {sink!r} returned {type(batch).__name__}, but a pipeline batch is a "
+            "mapping so it can carry valid_mask"
+        )
+    existing = batch.get("valid_mask")
+    if existing is not None:
+        mask = jnp.logical_and(mask, jnp.asarray(existing, dtype=jnp.bool_))
+    return {**batch, "valid_mask": mask}

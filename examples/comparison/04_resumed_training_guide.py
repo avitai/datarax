@@ -365,7 +365,7 @@ print(f"Datarax loader state: {saved_payload(datarax_payload)['loader']}")
 # Expected output:
 # Latest step in each store: 20, 20
 # Grain loader state keys: ['data_source', 'last_seen_indices', 'last_worker_index', 'sampler', 'version', 'worker_count']
-# Datarax loader state: {'position': 32, 'epoch': 2, 'rng_counts': [0, 1, 0], 'version': 1}
+# Datarax loader state: {'position': 32, 'epoch': 2, 'rng_counts': [0, 1, 0], 'version': 2, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 1, 'shuffled': True}}  # noqa: E501
 
 # %% [markdown]
 """
@@ -400,7 +400,20 @@ grain_store.close()
 model, optimizer = build_fresh_model()
 template = {
     **training_state(model, optimizer),
-    "loader": {"position": 0, "epoch": 0, "rng_counts": [0, 0, 0], "version": 1},
+    "loader": {
+        "position": 0,
+        "epoch": 0,
+        "rng_counts": [0, 0, 0],
+        "version": 2,
+        # The state names the configuration it is valid for; the template only fixes the shape.
+        "fingerprint": {
+            "batch_size": 0,
+            "length": 0,
+            "drop_last": False,
+            "num_epochs": 0,
+            "shuffled": False,
+        },
+    },
 }
 restored, datarax_metadata = restored_payload(datarax_store, template, CHECKPOINT_STEP)
 load_training_state(model, optimizer, restored)

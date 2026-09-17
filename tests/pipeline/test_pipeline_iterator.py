@@ -511,7 +511,7 @@ class TestIteratorStateVersioning:
         state = iterator.get_state()
         iterator.close()
 
-        assert state["version"] == 1
+        assert state["version"] == 2
 
     def test_a_state_from_the_earlier_layout_resumes_like_its_current_equivalent(self):
         reference = _session(_pipeline(stochastic=True))
@@ -546,3 +546,54 @@ class TestIteratorStateVersioning:
         with pytest.raises(ValueError, match="rng streams"):
             iterator.set_state(state)
         iterator.close()
+
+
+class TestStateFingerprint:
+    """Iterator state names the configuration that produced it, and ``set_state`` checks it."""
+
+    def test_state_carries_the_configuration(self):
+        state = _session(_pipeline()).get_state()
+
+        assert state["version"] == 2
+        assert state["fingerprint"] == {
+            "batch_size": _BATCH,
+            "length": _N,
+            "drop_last": False,
+            "num_epochs": 1,
+            "shuffled": False,
+        }
+
+    def test_a_shuffled_source_names_its_order(self):
+        source = MemorySource(MemorySourceConfig(shuffle=True), data=_data(), rngs=nnx.Rngs(0))
+        pipeline = Pipeline(source=source, stages=[], batch_size=_BATCH, rngs=nnx.Rngs(0))
+        assert _session(pipeline).get_state()["fingerprint"]["shuffled"] is True
+
+    @pytest.mark.parametrize(
+        ("field", "other"),
+        [
+            ("batch_size", 16),
+            ("length", _N + 1),
+            ("drop_last", True),
+            ("num_epochs", None),
+            ("shuffled", True),
+        ],
+    )
+    def test_set_state_refuses_a_different_configuration(self, field: str, other: object):
+        state = _session(_pipeline()).get_state()
+        state["fingerprint"][field] = other
+
+        with pytest.raises(ValueError, match=field):
+            _session(_pipeline()).set_state(state)
+
+    def test_a_version_1_state_without_a_fingerprint_is_accepted(self):
+        session = _session(_pipeline())
+        for _ in range(2):
+            next(session)
+        state = session.get_state()
+        session.close()
+        legacy = {k: v for k, v in state.items() if k != "fingerprint"}
+        legacy["version"] = 1
+
+        resumed = _session(_pipeline())
+        resumed.set_state(legacy)
+        assert resumed.get_state()["position"] == 2 * _BATCH

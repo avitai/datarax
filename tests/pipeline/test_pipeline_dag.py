@@ -248,7 +248,8 @@ def test_from_dag_returns_only_sink_output() -> None:
 
     out = pipeline.step()  # type: ignore[reportCallIssue]
     assert isinstance(out, dict)
-    assert set(out.keys()) == {"x"}  # not {"a_out", "b_out"} or anything richer
+    # The sink's output plus the pipeline's validity mask; not {"a_out", "b_out"} or richer.
+    assert set(out.keys()) == {"x", "valid_mask"}
 
 
 # ---------- C. Composition with rest of Pipeline ----------
