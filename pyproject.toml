@@ -393,6 +393,9 @@ reportIncompatibleVariableOverride = false
 # Benchmarks depend on many optional adapters/frameworks that are intentionally
 # not required in every dev environment or pre-commit hook env.
 reportMissingImports = false
+# tensorflow lives in the tfds extra, which setup.sh does not install; pyright checks its uses
+# against the stubs it bundles either way, so a stub without a source is information.
+reportMissingModuleSource = "information"
 reportMissingTypeStubs = false
 # The checkpoint package was rewritten in 0.1.6 and holds the full standard.
 strict = ["src/datarax/checkpoint"]

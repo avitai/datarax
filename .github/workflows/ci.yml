@@ -41,7 +41,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --locked --extra dev
+          # The extras setup.sh installs for every developer: pyright checks the tree against
+          # this environment, and a source module imports datasets from the data extra.
+          uv sync --locked --extra dev --extra test --extra data
 
       - name: Setup PYTHONPATH for tests
         run: |
