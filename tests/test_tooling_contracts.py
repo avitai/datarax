@@ -154,6 +154,28 @@ def test_protected_directories_are_excluded_from_tooling() -> None:
     assert all(protected in exclude for exclude in hook_excludes)
 
 
+def test_type_checking_runs_in_the_locked_environment() -> None:
+    """The pyright hook checks against the lock, not an environment resolved from PyPI.
+
+    A hook environment of its own installs the sibling packages at whatever version shipped
+    last, so a release of one of them turns the gate red on a tree the lock still pins to the
+    previous version.
+    """
+    pre_commit = yaml.safe_load(PRE_COMMIT.read_text())
+    hooks = [
+        hook
+        for repo in pre_commit["repos"]
+        for hook in repo.get("hooks", [])
+        if hook["id"] == "pyright"
+    ]
+
+    assert len(hooks) == 1
+    (hook,) = hooks
+    assert hook.get("language") == "system"
+    assert hook.get("entry", "").startswith("uv run --no-sync pyright")
+    assert "additional_dependencies" not in hook
+
+
 def test_no_deferred_modernization_ignores_remain() -> None:
     """Modernization rules covered by the audit should be active."""
     ruff_ignores = set(_pyproject()["tool"]["ruff"]["lint"].get("ignore", []))
