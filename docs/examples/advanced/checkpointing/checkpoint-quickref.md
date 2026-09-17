@@ -186,8 +186,8 @@ After restore: position=40
 |---------|-------------|
 | State Saved | RNG, position, epoch, indices |
 | Checkpoint Format | Orbax (efficient, async-capable) |
-| Retention | Configurable via `keep` parameter |
-| Metadata | Custom fields (epoch, batch, etc.) |
+| Retention | Configurable via `max_to_keep` |
+| Metadata | `epoch` is a field of the checkpoint record; `metadata` holds free keys (batch, run name, etc.) |
 
 **Key benefits:**
 
