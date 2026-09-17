@@ -11,12 +11,13 @@ from collections.abc import Callable
 from typing import Any, TypeVar
 
 from flax import nnx
+from substrax.rng import rngs_from_seed
 
 from datarax.core.batcher import BatcherModule
 from datarax.core.data_source import DataSourceModule
 from datarax.core.operator import OperatorModule
+from datarax.core.prng import DEFAULT_RNG_STREAMS
 from datarax.core.sampler import SamplerModule
-from datarax.utils.prng import create_rngs
 
 
 _T = TypeVar("_T")
@@ -66,8 +67,19 @@ def _get_constructor_signature(constructor: ComponentConstructor) -> inspect.Sig
     return inspect.signature(constructor)
 
 
+def _seeded_rngs(config: dict[str, Any]) -> nnx.Rngs:
+    """Derive the datarax streams from the configuration's ``seed``, zero when it has none."""
+    seed = config.get("seed")
+    return rngs_from_seed(0 if seed is None else int(seed), DEFAULT_RNG_STREAMS)
+
+
 def _prepare_rngs_for_nnx(config: dict[str, Any]) -> nnx.Rngs:
     """Prepare RNG configuration for NNX modules.
+
+    ``rngs`` may be an ``nnx.Rngs``, which is used as given, or a mapping from stream name
+    to a seed or key, which becomes one. Otherwise the streams in
+    :data:`datarax.core.prng.DEFAULT_RNG_STREAMS` are derived from ``seed`` (zero when
+    absent) through :func:`substrax.rng.rngs_from_seed`.
 
     Args:
         config: Configuration dictionary potentially containing RNG specs.
@@ -89,14 +101,10 @@ def _prepare_rngs_for_nnx(config: dict[str, Any]) -> nnx.Rngs:
                 else:
                     rng_dict[stream_name] = seed_value
             return nnx.Rngs(rng_dict)
-        # Use default RNGs if empty dict
-        seed = config.get("seed")
-        return create_rngs(seed=seed)
+        return _seeded_rngs(config)
     if isinstance(rngs_config, nnx.Rngs):
         return rngs_config
-    # Fallback to default
-    seed = config.get("seed")
-    return create_rngs(seed=seed)
+    return _seeded_rngs(config)
 
 
 def _prepare_config_for_nnx(

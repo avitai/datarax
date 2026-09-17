@@ -36,7 +36,7 @@ dependencies = [
   "optax>=0.2.8",
   "orbax-checkpoint>=0.11.33",
   "protobuf>=5.28.0,<6", # TFDS 4.9.9 is warning-clean with TensorFlow 2.20 protobuf runtime
-  "substrax>=0.1.7",
+  "substrax>=0.1.8",
   "tomli-w>=1",
   "numpy>=2.1",
   "psutil>=5.9.0",
@@ -215,7 +215,7 @@ test = [
   "pytest-env>=1.0.1",
   "pytest-timeout>=2.1",
   "pytest-xdist>=3.6",
-  "substrax[testing]>=0.1.7",
+  "substrax[testing]>=0.1.8",
   # Optional comparison/benchmark dependencies that are CPU-compatible.
   # spdl: Linux-only; comparison adapter for memory-efficiency benchmarks.
   "spdl>=0.1; sys_platform == 'linux'"

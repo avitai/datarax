@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A component built from a seeded configuration receives its `nnx.Rngs` from
+  `substrax.rng.rngs_from_seed(seed, DEFAULT_RNG_STREAMS)`: each of the `augment`, `dropout`,
+  `params`, `shuffling` and `default` streams is derived from the seed and the stream's name,
+  so a stream's key no longer depends on the other streams present. The keys differ from the
+  split-derived ones of earlier releases, so a recorded run seeded through the registry does
+  not reproduce bit for bit across this change. A configuration with neither `rngs` nor
+  `seed` is seeded with zero, as before. Requires `substrax>=0.1.8`.
+
+### Removed
+
+- `datarax.utils.prng`, with `create_rngs`. Build streams with
+  `substrax.rng.rngs_from_seed(seed, DEFAULT_RNG_STREAMS)`; `DEFAULT_RNG_STREAMS` is a tuple
+  in `datarax.core.prng`, beside `per_record_keys`.
+
 ## [0.1.10] - 2026-09-16
 
 ### Added

@@ -237,11 +237,11 @@ nav:
           - operator: core/operator.md
           - sampler: core/sampler.md
           - spec: core/spec.md
+          - prng: core/prng.md
           - structural: core/structural.md
       - Utilities:
           - Overview: utils/index.md
           - external: utils/external.md
-          - prng: utils/prng.md
           - pytree_utils: utils/pytree_utils.md
           - cache: utils/cache.md
           - multirate: utils/multirate.md
