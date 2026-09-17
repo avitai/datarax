@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-09-17
+
 ### Changed
 
 - `IteratorCheckpoint` writes substrax's checkpoint format 3: the state is the checkpoint's
