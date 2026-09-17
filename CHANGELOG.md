@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   GHSA-284h-m62q-gf8w, GHSA-7833-fr7j-v32q, GHSA-8mcc-hrx5-hvxc, GHSA-3wxw-xv34-2frg and
   GHSA-5xxx-qhh7-9287, and mkdocs-material (the `docs` extra) from 9.7.6 to 9.7.7 for
   GHSA-xvg9-69gf-fjrf. Nothing else moves.
+- The lock moves soupsieve to 2.8.4, mistune to 3.3.3, pymdown-extensions to 11.0.1 and ray
+  to 2.56.0, the fixed releases of their open advisories; nothing else moves. Five advisories
+  stay open with an upstream cause: aiohttp 3.10.1 and wheel 0.45.1 are held by the
+  `automation` extra, where vastai-sdk 0.2.x pins aiohttp exactly and every 1.x release of
+  the underlying `vastai` pins cryptography 49.0.0, which the `cryptography>=50` constraint
+  refuses; transformers 4.57.6 is capped below 5 by mosaicml-streaming (the `benchmark`
+  adapters); torch stays below 2.11 for CUDA 12 wheels; paramiko has no fixed release. None
+  of those packages is imported under `src/`.
 
 ## [0.1.13] - 2026-09-17
 

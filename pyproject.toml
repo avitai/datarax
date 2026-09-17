@@ -67,6 +67,9 @@ automation = [
   # uses for credential validation; pin to the 0.2.x line until SkyPilot
   # 0.12 upgrades its adapter. Bounce the SkyPilot API daemon
   # (`sky api stop`) after upgrading these so the new adapter is loaded.
+  # The 0.2.x line pins aiohttp==3.10.1 (35 open advisories); every 1.x release
+  # of the underlying `vastai` package pins cryptography==49.0.0 instead, which the
+  # cryptography>=50 constraint below refuses, so neither line is clean.
   "vastai-sdk>=0.2.6,<0.3",
   # Required by benchmarks.export when the orchestrator's --analyze step
   # imports benchmarks.cli locally (the remote VM gets matplotlib via the
