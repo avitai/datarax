@@ -145,6 +145,8 @@ jobs:
         run: |
           echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
 
+      - uses: ./.github/actions/format2-iterator-fixture
+
       - name: Run unit tests
         run: |
           # Explicitly run on CPU for GitHub workflow
@@ -250,6 +252,8 @@ jobs:
         run: |
           echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
 
+      - uses: ./.github/actions/format2-iterator-fixture
+
       - name: Restore the prepared example datasets
         uses: actions/cache/restore@v4
         with:
@@ -310,6 +314,8 @@ jobs:
       - name: Setup PYTHONPATH for tests
         run: |
           echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
+
+      - uses: ./.github/actions/format2-iterator-fixture
 
       - name: Run integration tests
         run: |
@@ -413,6 +419,8 @@ jobs:
       - name: Setup PYTHONPATH for tests
         run: |
           echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
+
+      - uses: ./.github/actions/format2-iterator-fixture
 
       - name: Run performance tests
         run: |

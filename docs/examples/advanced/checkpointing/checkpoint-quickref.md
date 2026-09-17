@@ -136,7 +136,7 @@ for epoch in range(2):
         step += 1
         # Process batch...
 
-        if checkpoint.save_if_due(pipeline, step, interval=3, metadata={"epoch": epoch}):
+        if checkpoint.save_if_due(pipeline, step, interval=3, epoch=epoch):
             print(f"Saved checkpoint at step {step}")
 ```
 

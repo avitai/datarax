@@ -193,9 +193,9 @@ for epoch in range(2):
 
         print(f"  Batch {batch_idx}: mean={batch_mean:.2f}")
 
-        # Save checkpoint every 3 steps
+        # Save checkpoint every 3 steps; the epoch is a field of the checkpoint record
         if checkpoint.save_if_due(
-            pipeline, step, interval=3, metadata={"epoch": epoch, "batch": batch_idx}
+            pipeline, step, interval=3, epoch=epoch, metadata={"batch": batch_idx}
         ):
             print(f"  -> Saved checkpoint at step {step}")
 

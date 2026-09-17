@@ -1,0 +1,14 @@
+name: Write the format-2 iterator checkpoint fixture
+description: >-
+  Writes the format-2 iterator checkpoint with the datarax and substrax releases that produced it
+  into the gitignored directory the checkpoint tests read. The tests raise, naming this command,
+  when the directory is missing, so every job that collects them writes the fixture first.
+
+runs:
+  using: composite
+  steps:
+    - name: Write the format-2 iterator checkpoint with the release that produced it
+      shell: bash
+      run: |
+        uv run --no-project --with "datarax==0.1.11" --with "substrax==0.1.9" \
+          python scripts/make_format2_iterator_fixture.py tests/checkpoint/fixtures/format2

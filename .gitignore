@@ -264,3 +264,6 @@ secrets.sh
 
 # Private working notes and per-editor assistant configuration. Local only.
 AGENTS.md
+
+# Format-2 checkpoint root the migration test reads; scripts/make_format2_iterator_fixture.py writes it.
+tests/checkpoint/fixtures/
