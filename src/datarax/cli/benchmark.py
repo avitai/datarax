@@ -7,11 +7,9 @@ import argparse
 import json
 import sys
 import time
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-import jax
 from calibrax.profiling import TimingCollector, TimingSample
 
 
@@ -22,11 +20,6 @@ def _emit(message: str = "", *, error: bool = False) -> None:
     """Write CLI output without bypassing the command output boundary."""
     stream = sys.stderr if error else sys.stdout
     stream.write(f"{message}\n")
-
-
-def _make_sync_fn() -> Callable[[Any], Any]:
-    """The sync the timing collector waits with: ``jax.block_until_ready`` over the result."""
-    return jax.block_until_ready
 
 
 def _sample_to_dict(sample: TimingSample) -> dict[str, Any]:
@@ -109,7 +102,8 @@ def run_pipeline_benchmark(args: argparse.Namespace) -> None:
 
     # Measure
     _emit(f"Measuring {args.num_batches} batches...")
-    collector = TimingCollector(sync_fn=_make_sync_fn())
+    # The collector waits for each batch's arrays with jax.block_until_ready by default.
+    collector = TimingCollector()
     sample = collector.measure_iteration(iter(pipeline), num_batches=args.num_batches)
 
     _emit()
