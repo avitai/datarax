@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-09-18
+
 ### Changed
 
 - Requires `substrax>=0.1.11`; the lock moves it from 0.1.10 and nothing else. 0.1.11 caps
