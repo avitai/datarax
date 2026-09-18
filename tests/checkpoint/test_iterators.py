@@ -312,10 +312,7 @@ class TestRestoreValidation:
 
 FORMAT2_FIXTURE = Path(__file__).with_name("fixtures") / "format2" / "iterator_state"
 FORMAT2_STEP = 6
-_MAKE_FIXTURE = (
-    'uv run --no-project --with "datarax==0.1.11" --with "substrax==0.1.9" '
-    "python scripts/make_format2_iterator_fixture.py tests/checkpoint/fixtures/format2"
-)
+_MAKE_FIXTURE = "python3 scripts/write_format2_fixture.py tests/checkpoint/fixtures/format2"
 if not FORMAT2_FIXTURE.is_dir():
     raise RuntimeError(
         f"the format-2 iterator checkpoint is missing under {FORMAT2_FIXTURE}; it is generated, "
