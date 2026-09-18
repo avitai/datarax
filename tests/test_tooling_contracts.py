@@ -504,3 +504,28 @@ def test_no_module_configures_logging_at_import() -> None:
 
     assert len(modules) > 200
     assert configured == []
+
+
+FIXTURE_SCRIPT = "scripts/write_format2_fixture.py"
+
+
+def test_the_fixture_environment_takes_its_numerical_stack_from_the_lock() -> None:
+    """The isolated fixture environment pins jax, jaxlib and flax as ``uv.lock`` holds them.
+
+    A literal version in the action or the script floats away from the lock the day the lock
+    moves, and no pin at all floats with PyPI between two jobs of one run.
+    """
+    repo_root = CI_WORKFLOW.resolve().parents[2]
+    action = yaml.safe_load(
+        (repo_root / FIXTURE_ACTION.removeprefix("./") / "action.yml").read_text()
+    )
+    runs = [str(step.get("run", "")) for step in action["runs"]["steps"]]
+    assert any(FIXTURE_SCRIPT in run for run in runs), "the action does not run the fixture script"
+
+    script = (repo_root / FIXTURE_SCRIPT).read_text()
+    assert 'LOCKED = ("jax", "jaxlib", "flax")' in script
+    assert "uv.lock" in script
+    for text in (script, *runs):
+        assert not re.search(r"\b(jax|jaxlib|flax)==\d", text), (
+            "a numerical-stack version is literal"
+        )

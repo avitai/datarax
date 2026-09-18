@@ -6,8 +6,7 @@ caller's metadata. datarax now writes format 3 and reads such a root through
 ``ITERATOR_STATE_FORMAT2``; this script writes one with the releases that produced it, so
 the test reads a real one. Run it in isolation, never from the project venv::
 
-    uv run --no-project --with "datarax==0.1.11" --with "substrax==0.1.9" \
-        python scripts/make_format2_iterator_fixture.py tests/checkpoint/fixtures/format2
+    python3 scripts/write_format2_fixture.py tests/checkpoint/fixtures/format2
 
 The fixture is a few kilobytes: a sixteen-record memory source, batch four, one epoch and a
 half in.
