@@ -2,13 +2,15 @@ name: Write the format-2 iterator checkpoint fixture
 description: >-
   Writes the format-2 iterator checkpoint with the datarax and substrax releases that produced it
   into the gitignored directory the checkpoint tests read. The tests raise, naming this command,
-  when the directory is missing, so every job that collects them writes the fixture first. The
-  isolated environment takes jax, jaxlib and flax from uv.lock, so it neither floats between jobs
-  nor drifts from the project environment.
+  when the directory is missing, so every job that collects them writes the fixture first. The environment
+  is the committed lock scripts/format2_fixture_requirements.txt, so it neither floats between
+  jobs nor drifts with the project's own lock.
 
 runs:
   using: composite
   steps:
     - name: Write the format-2 iterator checkpoint with the release that produced it
       shell: bash
-      run: python3 scripts/write_format2_fixture.py tests/checkpoint/fixtures/format2
+      run: |
+        uv run --no-project --with-requirements scripts/format2_fixture_requirements.txt \
+          python scripts/make_format2_iterator_fixture.py tests/checkpoint/fixtures/format2
