@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Requires `substrax>=0.1.11`; the lock moves it from 0.1.10 and nothing else. 0.1.11 caps
+  jax below 0.11.2, whose renamed `jax.experimental.hijax.HiPrimitive` flax 0.12.9 imports
+  at module load, and a resolver given `substrax>=0.1.10` keeps jax 0.11.2 and picks 0.1.10
+  instead, so a fresh install of datarax failed on `import datarax` until the floor moved.
+
 ### Security
 
 - The lock moves GitPython (skypilot's, in the `automation` extra) from 3.1.50 to 3.1.62 for
