@@ -30,7 +30,7 @@ Performance measurement and analysis tools for data pipelines. Use these tools t
 ```python
 from calibrax.profiling import TimingCollector
 
-# Measure throughput (CPU — pass sync_fn for GPU)
+# Measure throughput; each batch is awaited with jax.block_until_ready by default
 timer = TimingCollector()
 result = timer.measure_iteration(
     iter(pipeline),

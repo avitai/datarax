@@ -19,12 +19,13 @@ Datarax uses [calibrax](https://github.com/avitai/calibrax), an external benchma
 
 ### Measuring Throughput
 
-Use `TimingCollector` to measure samples/sec with optional GPU synchronization:
+Use `TimingCollector` to measure samples/sec. It waits for each batch's arrays with
+`jax.block_until_ready` before stopping the clock; pass `sync_fn` to wait differently:
 
 ```python
 from calibrax.profiling import TimingCollector
 
-# CPU timing (pass sync_fn for GPU — see docstring)
+# Each batch is awaited on the device before its time is taken
 timer = TimingCollector()
 result = timer.measure_iteration(
     iter(pipeline),

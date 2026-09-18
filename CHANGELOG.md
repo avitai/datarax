@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Requires `calibrax>=0.1.9`, the latest release; the lock moves it from 0.1.3 and nothing
+  else. From 0.1.7 `TimingCollector` waits for each batch's arrays with
+  `jax.block_until_ready` when no `sync_fn` is given, so `datarax-benchmark` takes that
+  default instead of passing the same wait itself, and the benchmarking guides no longer
+  say to pass `sync_fn` for GPU timing. calibrax 0.1.7 also removed
+  `profiling.measure_execution_time`, which datarax never used, and changed the
+  macro-averaged F-scores and the FID and BERTScore values, which datarax does not compute.
+
+### Removed
+
+- The test helper `measure_pipeline_throughput`, which nothing called and whose default sync
+  waited on a new scalar instead of the batch.
+
 ## [0.1.14] - 2026-09-18
 
 ### Changed

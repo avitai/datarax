@@ -143,7 +143,7 @@ stop_trace()
 ```python
 from calibrax.profiling import TimingCollector
 
-# Create a timing collector (pass sync_fn for GPU benchmarks)
+# Create a timing collector; it waits for each batch on the device by default
 timer = TimingCollector()
 
 # Warmup: exclude JIT compilation from measurements

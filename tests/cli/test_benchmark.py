@@ -4,15 +4,14 @@ Following TDD principles - tests define expected behavior.
 Updated to match refactored cli/benchmark.py (TimingCollector-based).
 """
 
+import argparse
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import jax
 import pytest
 
 from datarax.cli.benchmark import (
-    _make_sync_fn,
     main,
     run_pipeline_benchmark,
     save_benchmark_results_to_path,
@@ -164,9 +163,40 @@ class TestCLIArgumentParsing:
 class TestRunPipelineBenchmark:
     """Test the run_pipeline_benchmark function."""
 
-    def test_sync_fn_waits_with_jax_block_until_ready(self) -> None:
-        """CLI timing waits for the whole result pytree through jax's own barrier."""
-        assert _make_sync_fn() is jax.block_until_ready
+    def test_every_measured_batch_is_awaited_on_the_device(self, tmp_path: Path) -> None:
+        """Timing waits for each measured batch's leaves before stopping its clock."""
+        waits = tmp_path / "waits.log"
+        module_path = tmp_path / "awaited.py"
+        module_path.write_text(f"""
+from pathlib import Path
+
+
+class Leaf:
+    def block_until_ready(self):
+        with Path({str(waits)!r}).open("a") as log:
+            log.write("waited\\n")
+        return self
+
+
+def create_pipeline():
+    class Stream:
+        def __iter__(self):
+            for _ in range(10):
+                yield {{"data": Leaf()}}
+    return Stream()
+""")
+        args = argparse.Namespace(
+            module_path=str(module_path),
+            setup_function="create_pipeline",
+            num_batches=3,
+            warmup_batches=1,
+            seed=42,
+            output=str(tmp_path / "results.json"),
+        )
+
+        run_pipeline_benchmark(args)
+
+        assert waits.read_text().splitlines() == ["waited"] * 3
 
     def test_run_pipeline_benchmark_with_valid_module(self, tmp_path: Path) -> None:
         """Test running pipeline benchmark with a valid module."""

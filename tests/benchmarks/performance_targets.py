@@ -6,11 +6,8 @@ after. This module provides the common measurement and assertion infrastructure.
 """
 
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from typing import Any
-
-import jax.numpy as jnp
-from calibrax.profiling import TimingCollector
 
 
 def measure_adapter_throughput(
@@ -40,50 +37,6 @@ def measure_adapter_throughput(
     adapter.warmup(warmup_batches)
     result = adapter.iterate(measure_batches)
     adapter.teardown()
-    return result.num_elements / result.wall_clock_sec if result.wall_clock_sec > 0 else 0.0
-
-
-def measure_pipeline_throughput(
-    pipeline_iter: Iterator,
-    *,
-    warmup_batches: int = 5,
-    measure_batches: int = 50,
-    count_fn: Callable[[Any], int] | None = None,
-    sync_fn: Callable[[Any], None] | None = None,
-) -> float:
-    """Measure raw pipeline throughput in elements/sec.
-
-    For testing datarax internals directly (not via adapter).
-
-    Args:
-        pipeline_iter: Iterator yielding batches.
-        warmup_batches: Batches to skip for warmup.
-        measure_batches: Batches to measure.
-        count_fn: Function to count elements per batch. Default: 1 per batch.
-        sync_fn: GPU sync function. Default: JAX block_until_ready.
-
-    Returns:
-        Throughput in elements per second.
-    """
-
-    def default_sync(_result: Any) -> None:
-        jnp.array(0.0).block_until_ready()
-
-    sync = sync_fn or default_sync
-    collector = TimingCollector(sync_fn=sync)
-
-    # Warmup: consume and discard warmup_batches
-    for i, _ in enumerate(pipeline_iter):
-        if i >= warmup_batches:
-            break
-        sync(None)
-
-    # Measure
-    result = collector.measure_iteration(
-        pipeline_iter,
-        num_batches=measure_batches,
-        count_fn=count_fn,
-    )
     return result.num_elements / result.wall_clock_sec if result.wall_clock_sec > 0 else 0.0
 
 
