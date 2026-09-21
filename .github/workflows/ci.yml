@@ -154,7 +154,7 @@ jobs:
           # Note: TFDS tests are skipped on macOS due to TensorFlow ARM64 import hang issue
           # (https://github.com/tensorflow/tensorflow/issues/52138)
           # This matches the approach of major ML projects (Keras, Flax) which don't test on macOS
-          uv run pytest tests benchmarks/tests --no-integration --no-end-to-end -v -m "not slow" --cov-fail-under=0
+          uv run pytest tests benchmarks/tests --no-integration --no-end-to-end --no-benchmark -v -m "not slow" --cov-fail-under=0
 
       - name: Prepare coverage data
         run: uv run coverage combine || true
@@ -270,7 +270,7 @@ jobs:
           # so no example downloads them inside its budget.
           export JAX_PLATFORMS="cpu"
           export DATARAX_EXAMPLE_TIMEOUT_SECONDS=300
-          uv run pytest tests benchmarks/tests -m slow -v --cov-fail-under=0 --timeout=600 --durations=0
+          uv run pytest tests benchmarks/tests -m slow --no-benchmark -v --cov-fail-under=0 --timeout=600 --durations=0
 
       - name: Prepare coverage data
         run: uv run coverage combine || true

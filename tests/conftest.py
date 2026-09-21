@@ -154,6 +154,12 @@ def pytest_addoption(parser):
         default=False,
         help="skip end-to-end tests",
     )
+    parser.addoption(
+        "--no-benchmark",
+        action="store_true",
+        default=False,
+        help="skip performance benchmark tests",
+    )
 
 
 def _deselect_items(config: Any, items: list[Any], deselected: list[Any]) -> None:
@@ -202,7 +208,12 @@ def _deselect_unselected_test_types(
 
 
 def _apply_explicit_deselect_flags(
-    config: Any, items: list[Any], *, skip_integration: bool, skip_end_to_end: bool
+    config: Any,
+    items: list[Any],
+    *,
+    skip_integration: bool,
+    skip_end_to_end: bool,
+    skip_benchmark: bool,
 ) -> None:
     """Apply explicit command-line deselect flags."""
     deselected: list[Any] = []
@@ -211,6 +222,9 @@ def _apply_explicit_deselect_flags(
 
     if skip_end_to_end:
         deselected.extend(item for item in items if "end_to_end" in item.keywords)
+
+    if skip_benchmark:
+        deselected.extend(item for item in items if "benchmark" in item.keywords)
 
     _deselect_items(config, items, deselected)
 
@@ -223,6 +237,7 @@ def pytest_collection_modifyitems(config, items):
     run_benchmark = config.getoption("--benchmark")
     skip_integration = config.getoption("--no-integration")
     skip_end_to_end = config.getoption("--no-end-to-end")
+    skip_benchmark = config.getoption("--no-benchmark")
 
     _deselect_unselected_test_types(
         config,
@@ -236,6 +251,7 @@ def pytest_collection_modifyitems(config, items):
         items,
         skip_integration=skip_integration,
         skip_end_to_end=skip_end_to_end,
+        skip_benchmark=skip_benchmark,
     )
 
 
