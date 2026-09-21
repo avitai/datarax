@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Requires `calibrax>=0.1.11` and `substrax>=0.1.15`; the lock moves calibrax from 0.1.10 and
+- Requires `calibrax>=0.1.11` and `substrax>=0.1.16`; the lock moves calibrax from 0.1.10 and
   adds wandb with its dependencies, and nothing else moves. calibrax 0.1.11 replaces
   `StatisticalAnalyzer` with `summarize()`, which draws no random number, so the benchmark
   stability report takes its coefficient of variation from a function that needs no PRNG key;
@@ -50,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The test helper `measure_pipeline_throughput`, which nothing called and whose default sync
   waited on a new scalar instead of the batch.
+- `ITERATOR_STATE_FORMAT2`, and reading a checkpoint root written by datarax 0.1.11 or earlier.
+  substrax reads one format, so the layout that split an older payload into items has nothing to
+  describe. With it go the fixture generator, the pinned environment that installed an old
+  substrax to write one, the CI step that ran that before four jobs, and the tests over them.
 - `CUDA_VISIBLE_DEVICES_FOR_TF` from every example, notebook and documentation page that set it.
   TensorFlow reads `CUDA_VISIBLE_DEVICES`; nothing reads the name with the suffix. Each example
   already called `tf.config.set_visible_devices([], "GPU")`, which is what keeps TensorFlow off

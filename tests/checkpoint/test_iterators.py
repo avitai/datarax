@@ -7,18 +7,13 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import pytest
-from flax import nnx
 from hypothesis import given, settings, strategies as st
-from substrax.checkpoint import CheckpointNotFoundError, upgrade_checkpoints
+from substrax.checkpoint import CheckpointNotFoundError
 
 from datarax.checkpoint import (
-    ITERATOR_STATE_FORMAT2,
     IteratorCheckpoint,
     validate_restore_compatibility,
 )
-from datarax.pipeline import Pipeline
-from datarax.pipeline.iteration import PipelineIterator
-from datarax.sources import MemorySource, MemorySourceConfig
 from datarax.typing import CheckpointableIterator
 
 
@@ -308,70 +303,3 @@ class TestRestoreValidation:
 
     def test_validation_ignores_fields_only_one_side_has(self):
         validate_restore_compatibility({"position": 1}, {"position": 9, "shard_count": 4})
-
-
-FORMAT2_FIXTURE = Path(__file__).with_name("fixtures") / "format2" / "iterator_state"
-FORMAT2_STEP = 6
-_MAKE_FIXTURE = (
-    "uv run --no-project --with-requirements scripts/format2_fixture_requirements.txt "
-    "python scripts/make_format2_iterator_fixture.py tests/checkpoint/fixtures/format2"
-)
-if not FORMAT2_FIXTURE.is_dir():
-    raise RuntimeError(
-        f"the format-2 iterator checkpoint is missing under {FORMAT2_FIXTURE}; it is generated, "
-        f"never committed. Write it first: {_MAKE_FIXTURE}"
-    )
-
-
-def _fixture_pipeline() -> Pipeline:
-    """The pipeline ``scripts/make_format2_iterator_fixture.py`` saved its iterator from."""
-    source = MemorySource(
-        MemorySourceConfig(shuffle=True),
-        data={"x": jnp.arange(16, dtype=jnp.float32)},
-        rngs=nnx.Rngs(0, shuffle=0),
-    )
-    return Pipeline(source=source, stages=[], batch_size=4, rngs=nnx.Rngs(0))
-
-
-class TestFormat2Checkpoints:
-    """A root datarax 0.1.11 wrote (substrax format 2) restores and upgrades."""
-
-    def test_the_layout_names_the_iterator_item(self):
-        assert ITERATOR_STATE_FORMAT2.items_of({"position": 3}) == {
-            "data_iterator": {"position": 3}
-        }
-        assert ITERATOR_STATE_FORMAT2.template_of({"data_iterator": {"position": 0}}) == {
-            "position": 0
-        }
-
-    def test_restore_reads_the_old_root(self):
-        iterator = iter(_fixture_pipeline())
-        assert isinstance(iterator, PipelineIterator)
-
-        with IteratorCheckpoint(FORMAT2_FIXTURE) as checkpoint:
-            assert checkpoint.all_steps() == [FORMAT2_STEP]
-            checkpoint.restore(iterator, step=FORMAT2_STEP)
-            metadata = checkpoint.store.read_metadata(
-                FORMAT2_STEP, legacy_layout=ITERATOR_STATE_FORMAT2
-            )
-
-        state = iterator.get_state()
-        assert (int(state["position"]), int(state["epoch"])) == (8, 1)
-        assert metadata.extra["run"] == "fixture"
-        assert metadata.epoch == 1
-        assert metadata.items == ("data_iterator",)
-
-    def test_upgrade_writes_a_format_3_root(self, tmp_path):
-        destination = tmp_path / "upgraded"
-
-        steps = upgrade_checkpoints(
-            FORMAT2_FIXTURE, destination, legacy_layout=ITERATOR_STATE_FORMAT2
-        )
-
-        assert steps == [FORMAT2_STEP]
-        iterator = iter(_fixture_pipeline())
-        assert isinstance(iterator, PipelineIterator)
-        with IteratorCheckpoint(destination) as checkpoint:
-            checkpoint.restore(iterator)
-            assert checkpoint.store.read_metadata(FORMAT2_STEP).items == ("data_iterator",)
-        assert int(iterator.get_state()["position"]) == 8
