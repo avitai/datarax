@@ -39,7 +39,7 @@ from datarax.typing import Batch, Element
 from datarax.utils.multirate import multirate_align
 
 
-__version__ = "0.1.14"
+__version__ = "0.1.15"
 
 __all__ = [
     # Type aliases
