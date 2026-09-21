@@ -69,7 +69,6 @@ IMPORTANT: Configure TensorFlow to not use GPU (JAX handles GPU computation).
 # This MUST be set BEFORE importing tensorflow
 import os
 
-os.environ["CUDA_VISIBLE_DEVICES_FOR_TF"] = ""  # TF-specific GPU disable
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress all TF logs
 
 # Force TF to CPU-only mode BEFORE importing JAX
@@ -409,7 +408,6 @@ Always configure TensorFlow to use CPU only when using JAX for computation:
 
 ```python
 import os
-os.environ["CUDA_VISIBLE_DEVICES_FOR_TF"] = ""
 
 import tensorflow as tf
 tf.config.set_visible_devices([], "GPU")
