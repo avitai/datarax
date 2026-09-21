@@ -763,23 +763,27 @@ class TestFromTfdsFactoryTryGcs:
                 assert mock_prepare.call_args[0][3] == kwargs
 
     def test_try_gcs_passed_to_auto_detect_builder(self):
-        """try_gcs should be forwarded to tfds.builder() during auto-detection."""
+        """try_gcs should be forwarded to tfds.builder() during auto-detection.
+
+        Auto-detection sizes the dataset through the builder and then builds the source the
+        size implies — an eager one here — whose loader calls ``tfds.load``. That call is
+        stubbed like the sibling tests stub it: left real, it reads the whole split off any
+        machine that has one prepared.
+        """
         from unittest.mock import MagicMock, patch
 
         mock_builder = MagicMock()
         mock_builder.info.splits = {"train": MagicMock(num_bytes=100_000)}
+        mock_data = [{"image": tf.constant([[1]]), "label": tf.constant(0)}]
 
-        with patch("tensorflow_datasets.builder", return_value=mock_builder) as mock_tfds_builder:
-            # Auto-detect mode (eager=None)
-            try:
-                from_tfds("mnist", "train", try_gcs=True)
-            except TFDS_TEST_SKIP_EXCEPTIONS:
-                pass
+        with (
+            patch("tensorflow_datasets.builder", return_value=mock_builder) as mock_tfds_builder,
+            patch("tensorflow_datasets.load", return_value=mock_data),
+        ):
+            from_tfds("mnist", "train", try_gcs=True)  # auto-detect mode (eager=None)
 
-            # The auto-detect call should pass try_gcs
             assert mock_tfds_builder.called
-            call_kwargs = mock_tfds_builder.call_args
-            assert call_kwargs.kwargs.get("try_gcs") is True
+            assert mock_tfds_builder.call_args.kwargs.get("try_gcs") is True
 
 
 # =============================================================================
