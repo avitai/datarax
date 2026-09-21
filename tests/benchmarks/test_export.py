@@ -6,12 +6,12 @@ import time
 from unittest.mock import MagicMock
 
 import pytest
+import wandb
 from calibrax.core import MetricDirection, Run
 from calibrax.exporters.wandb import WandBExporter
 from calibrax.profiling import ResourceSummary, TimingSample
 from calibrax.storage import Store
 
-import wandb
 from benchmarks.core.result_model import build_benchmark_result
 from benchmarks.export import export_to_calibrax, FullExporter
 from benchmarks.runners.full_runner import ComparativeResults

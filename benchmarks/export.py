@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
+import wandb
 from calibrax.core import (
     Metric,
     MetricDef,
@@ -26,7 +27,6 @@ from calibrax.core import (
 from calibrax.exporters.wandb import WandBExporter
 from calibrax.storage import Store
 
-import wandb
 from benchmarks.analysis.comparison_report import ComparisonReportGenerator
 from benchmarks.analysis.gap_detection import GapDetector
 from benchmarks.analysis.stability import StabilityValidator

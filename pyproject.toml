@@ -477,6 +477,11 @@ XLA_PYTHON_CLIENT_PREALLOCATE = {skip_if_set = true, value = "false"}
 [tool.ruff]
 extend-include = ["*.ipynb"]
 line-length = 100
+# Only src/ is searched for first-party packages. The default also searches the repository
+# root, where a generated directory (wandb/, site/, temp/) would be read as a package and its
+# import sorted into the first-party block on the machine that has it and the third-party block
+# everywhere else. The root-level packages are named in known-first-party instead.
+src = ["src"]
 target-version = "py312"
 
 [tool.ruff.format]
@@ -515,7 +520,7 @@ select = ["E", "F", "I", "UP", "W", "ANN", "ARG", "B", "C90", "D", "PLR", "PTH",
 [tool.ruff.lint.isort]
 combine-as-imports = true
 extra-standard-library = []
-known-first-party = ["datarax"]
+known-first-party = ["benchmarks", "datarax", "tests"]
 lines-after-imports = 2
 order-by-type = false
 
