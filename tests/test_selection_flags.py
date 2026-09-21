@@ -1,9 +1,8 @@
 """The command-line flags that choose which categories of test a run collects.
 
-Each category has a flag that selects it alone and one that drops it, and the CI jobs rely on
-the pairing: the unit jobs drop the categories that need a controlled machine, while the jobs
-built for those categories select them. An unpaired flag leaves its category in every run —
-which is how 32 benchmark tests came to make wall-clock assertions in the unit gate.
+Each category has a flag that selects it alone and one that drops it. The CI jobs rely on the
+pairing: a job whose machine cannot hold a measurement steady drops that category, and the job
+built for it selects it. A category with no dropping flag is collected by every run.
 """
 
 from __future__ import annotations
