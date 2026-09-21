@@ -134,12 +134,12 @@ jobs:
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
-          uv sync --locked --extra dev --extra test --extra data
+          uv sync --locked --extra dev --extra test --extra data --extra wandb
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          uv sync --locked --extra dev --extra test --extra data
+          uv sync --locked --extra dev --extra test --extra data --extra wandb
 
       - name: Setup PYTHONPATH for tests
         run: |
@@ -154,7 +154,7 @@ jobs:
           # Note: TFDS tests are skipped on macOS due to TensorFlow ARM64 import hang issue
           # (https://github.com/tensorflow/tensorflow/issues/52138)
           # This matches the approach of major ML projects (Keras, Flax) which don't test on macOS
-          uv run pytest tests benchmarks/tests --no-integration --no-end-to-end -v -m "not slow" --cov-fail-under=0
+          uv run pytest tests benchmarks/tests --no-integration --no-end-to-end --no-benchmark -v -m "not slow" --cov-fail-under=0
 
       - name: Prepare coverage data
         run: uv run coverage combine || true
@@ -246,7 +246,7 @@ jobs:
           # tensorflow-datasets without tensorflow, so the scripts died with
           # ModuleNotFoundError. The job had been skipped behind a failing lint gate, so
           # nothing reported it.
-          uv sync --locked --extra dev --extra test --extra data --extra tfds --extra examples
+          uv sync --locked --extra dev --extra test --extra data --extra tfds --extra examples --extra wandb
 
       - name: Setup PYTHONPATH for tests
         run: |
@@ -270,7 +270,7 @@ jobs:
           # so no example downloads them inside its budget.
           export JAX_PLATFORMS="cpu"
           export DATARAX_EXAMPLE_TIMEOUT_SECONDS=300
-          uv run pytest tests benchmarks/tests -m slow -v --cov-fail-under=0 --timeout=600 --durations=0
+          uv run pytest tests benchmarks/tests -m slow --no-benchmark -v --cov-fail-under=0 --timeout=600 --durations=0
 
       - name: Prepare coverage data
         run: uv run coverage combine || true
@@ -309,7 +309,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --locked --extra dev --extra test --extra data
+          uv sync --locked --extra dev --extra test --extra data --extra wandb
 
       - name: Setup PYTHONPATH for tests
         run: |
@@ -414,7 +414,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --locked --extra dev --extra test --extra data
+          uv sync --locked --extra dev --extra test --extra data --extra wandb
 
       - name: Setup PYTHONPATH for tests
         run: |

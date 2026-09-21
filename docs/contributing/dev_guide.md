@@ -70,7 +70,7 @@ Datarax defines dependencies in `pyproject.toml` using optional dependency group
 
 # Or sync extras yourself. uv sync installs exactly the extras you name and removes
 # the others, so list every extra you need in one command:
-uv sync --extra dev --extra test --extra data --extra docs
+uv sync --extra dev --extra test --extra data --extra wandb --extra docs
 uv sync --extra all          # Linux with CUDA 12: dev, test, data, docs and cuda12
 uv sync --extra all-cpu      # every extra except a GPU backend
 ```
@@ -92,7 +92,7 @@ uv add package_name
 
 ```bash
 # ✅ Correct: multiple --extra flags for uv sync
-uv sync --extra dev --extra test --extra data
+uv sync --extra dev --extra test --extra data --extra wandb
 
 # ✅ Recommended: use compound extras defined in pyproject.toml
 uv sync --extra all      # includes dev, test, data, docs, cuda12

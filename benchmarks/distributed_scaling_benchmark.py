@@ -128,6 +128,8 @@ References
 import argparse
 import os
 
+from substrax.runtime import merge_xla_flags
+
 from datarax.utils.console import emit
 
 
@@ -139,9 +141,12 @@ _pre_args, _ = _pre_parser.parse_known_args()
 os.environ["JAX_PLATFORMS"] = _pre_args.platform
 
 if _pre_args.num_devices is not None and _pre_args.platform == "cpu":
-    os.environ["XLA_FLAGS"] = (
-        os.environ.get("XLA_FLAGS", "")
-        + f" --xla_force_host_platform_device_count={_pre_args.num_devices}"
+    # Merged by flag name rather than appended: a device count already in XLA_FLAGS and a
+    # different one here would otherwise both be present, and which one XLA honours is not
+    # something this script should leave to chance. merge_xla_flags raises instead.
+    os.environ["XLA_FLAGS"] = merge_xla_flags(
+        os.environ.get("XLA_FLAGS", ""),
+        [f"--xla_force_host_platform_device_count={_pre_args.num_devices}"],
     )
 
 # ── Regular imports (JAX now sees the configured platform & device count) ───

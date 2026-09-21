@@ -11,20 +11,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The lock moves anyio from 4.13.0 to 4.14.2 for CVE-2026-63374 and CVE-2026-64847; nothing else moves. 4.14.2 is the first fixed release; 4.15.1 needs typing-extensions 4.16.0, which a single-package upgrade does not allow to move.
 
+### Added
+
+- The `wandb` extra, which the benchmark suite's W&B export path needs. calibrax 0.1.10 turned
+  its exporter into one that raises `ImportError` naming its own extra, so `benchmarks/export.py`
+  and everything importing it stopped loading without wandb. `setup.sh` and the CI jobs that
+  collect `tests/` install it, which also makes the W&B export test run rather than skip, as it
+  had in every CI run to date.
+
 ### Changed
 
-- Requires `calibrax>=0.1.9`, the latest release; the lock moves it from 0.1.3 and nothing
-  else. From 0.1.7 `TimingCollector` waits for each batch's arrays with
+- Requires `calibrax>=0.1.11` and `substrax>=0.1.15`; the lock moves calibrax from 0.1.10 and
+  adds wandb with its dependencies, and nothing else moves. calibrax 0.1.11 replaces
+  `StatisticalAnalyzer` with `summarize()`, which draws no random number, so the benchmark
+  stability report takes its coefficient of variation from a function that needs no PRNG key;
+  record metadata is typed, so the benchmark charts read their configuration through
+  `calibrax.core.read_metadata`; and `WandBExporter.log_figures` is `log_images`, which takes
+  `wandb.Image`. substrax 0.1.15 moves `discover_examples` to `substrax.examples`.
+- From calibrax 0.1.7 `TimingCollector` waits for each batch's arrays with
   `jax.block_until_ready` when no `sync_fn` is given, so `datarax-benchmark` takes that
   default instead of passing the same wait itself, and the benchmarking guides no longer
   say to pass `sync_fn` for GPU timing. calibrax 0.1.7 also removed
   `profiling.measure_execution_time`, which datarax never used, and changed the
   macro-averaged F-scores and the FID and BERTScore values, which datarax does not compute.
+- The benchmark suite's `PipelineAdapter` no longer inherits calibrax's `BenchmarkAdapter`. That
+  base wraps a target handed to its constructor and is selected by a type predicate over it,
+  while a pipeline adapter is built with no arguments, keyed by name, and constructs the pipeline
+  under test from a scenario; nothing in this repository called `can_adapt`, `adapt`,
+  `AdapterRegistry` or `.target`.
+- The distributed scaling benchmark merges `--xla_force_host_platform_device_count` into
+  `XLA_FLAGS` by flag name through `substrax.runtime.merge_xla_flags` instead of appending it, so
+  a caller's own device count is not silently duplicated.
+- Ruff resolves first-party imports from `src` and the packages named in `known-first-party`,
+  rather than from whatever directories exist at the repository root, where a generated one
+  sorted an import differently on a developer's machine and in CI.
 
 ### Removed
 
 - The test helper `measure_pipeline_throughput`, which nothing called and whose default sync
   waited on a new scalar instead of the batch.
+- `CUDA_VISIBLE_DEVICES_FOR_TF` from every example, notebook and documentation page that set it.
+  TensorFlow reads `CUDA_VISIBLE_DEVICES`; nothing reads the name with the suffix. Each example
+  already called `tf.config.set_visible_devices([], "GPU")`, which is what keeps TensorFlow off
+  the GPU.
+
+### Fixed
+
+- The `local_files_only` and auto-detect source tests no longer read a dataset to assert that an
+  argument reaches a call. Each patched one call on the path and left the one that loads data
+  real, so on a machine with the named dataset prepared they materialised a whole split — minutes
+  of I/O inside a unit test, and instant everywhere else.
 
 ## [0.1.14] - 2026-09-18
 

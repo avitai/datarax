@@ -89,7 +89,6 @@ Fashion-MNIST contains 70,000 grayscale images of clothing items, designed as a 
 
 ```python
 import os
-os.environ["CUDA_VISIBLE_DEVICES_FOR_TF"] = ""
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import tensorflow as tf

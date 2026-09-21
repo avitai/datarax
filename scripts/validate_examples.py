@@ -30,7 +30,8 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from substrax.testing import ChildFailedError, discover_examples, ExampleTimeoutError, run_example
+from substrax.examples import discover_examples
+from substrax.testing import ChildFailedError, ExampleTimeoutError, run_example
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -229,7 +230,7 @@ def is_tutorial_example(path: Path) -> bool:
 def find_example_files(base_path: Path) -> list[Path]:
     """Find the runnable example files in the given path, or return a single file as given.
 
-    ``substrax.testing.discover_examples`` skips private names (anything starting with ``_``,
+    ``substrax.examples.discover_examples`` skips private names (anything starting with ``_``,
     such as ``_templates``), and ``is_tutorial_example`` keeps the numbered tutorials.
     """
     if base_path.is_file():

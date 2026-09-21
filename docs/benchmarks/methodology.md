@@ -50,9 +50,9 @@ Each scenario runs multiple repetitions. The **median** result is selected to re
 Statistical analysis uses:
 
 1.  **Coefficient of Variation (CV)**: Measurement stability check — CV < 10% required for publishable results
-2.  **Bootstrap CI**: 95% confidence intervals via 1000 bootstrap resamples (`calibrax.statistics.StatisticalAnalyzer`)
+2.  **Bootstrap CI**: 95% confidence intervals via 1000 bootstrap resamples (`calibrax.statistics.bootstrap_interval`)
 3.  **Threshold-based regression detection**: Direction-aware comparison against baseline (`calibrax.analysis.detect_regressions`). Default threshold is 5% — see [Dashboard & calibrax](dashboard.md#regression-detection) for details
-4.  **Modified Z-score**: Outlier detection using MAD-based robust statistics
+4.  **Modified Z-score**: Outlier detection using MAD-based robust statistics (`calibrax.statistics.outlier_mask`)
 
 ---
 

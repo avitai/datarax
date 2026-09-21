@@ -86,7 +86,6 @@ These values are computed from the training set and are widely used in literatur
 
 ```python
 import os
-os.environ["CUDA_VISIBLE_DEVICES_FOR_TF"] = ""
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import tensorflow as tf

@@ -110,7 +110,6 @@ where M is a binary mask and area_ratio ~ Beta(α, α)
 ```python
 # GPU Memory Configuration
 import os
-os.environ["CUDA_VISIBLE_DEVICES_FOR_TF"] = ""
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import tensorflow as tf

@@ -51,7 +51,6 @@ uv pip install "datarax[tfds]" matplotlib
 import os
 
 
-os.environ["CUDA_VISIBLE_DEVICES_FOR_TF"] = ""
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import tensorflow as tf

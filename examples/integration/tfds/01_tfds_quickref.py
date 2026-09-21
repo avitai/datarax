@@ -52,7 +52,6 @@ uv pip install "datarax[data]"
 import os
 
 
-os.environ["CUDA_VISIBLE_DEVICES_FOR_TF"] = ""  # TF-specific GPU disable
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress all TF logs
 
 # Force TF to CPU-only mode BEFORE importing JAX

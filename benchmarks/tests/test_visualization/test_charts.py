@@ -5,7 +5,10 @@ RED phase: defines expected behavior for ChartGenerator's 7 chart types.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
+
+import numpy as np
 
 
 class TestChartGenerator:
@@ -62,6 +65,35 @@ class TestChartGenerator:
         gen = ChartGenerator(mock_results, tmp_path)
         fig = gen.chain_depth()
         assert fig is not None
+
+    def test_chain_depth_reads_the_depth_the_config_recorded(self, tmp_path: Path):
+        """The chart plots the depth a PC scenario stored, not one parsed from its id.
+
+        ``ScenarioConfig.extra`` holds the depth, and a record's free-form fields come back
+        typed, so the value is read rather than subscripted out of a union.
+        """
+        from benchmarks.runners.full_runner import ComparativeResults
+        from benchmarks.tests.test_analysis.conftest import make_result
+        from benchmarks.visualization.charts import ChartGenerator
+
+        results = ComparativeResults(
+            results={
+                "Datarax": [
+                    make_result(
+                        scenario_id="PC-1", throughput=throughput, extra={"chain_depth": depth}
+                    )
+                    for depth, throughput in ((1, 900.0), (3, 600.0), (6, 300.0))
+                ]
+            },
+            environment={"platform": {"backend": "cpu", "device_count": 1}},
+            platform="cpu",
+            timestamp=time.time(),
+        )
+
+        figure = ChartGenerator(results, tmp_path).chain_depth()
+
+        depths = np.asarray(figure.axes[0].lines[0].get_xdata())
+        assert [int(depth) for depth in depths] == [1, 3, 6]
 
     def test_feature_heatmap_generates_file(self, mock_results, tmp_path: Path):
         """Feature heatmap chart must generate a file."""

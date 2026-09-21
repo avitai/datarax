@@ -121,7 +121,9 @@ command -v uv >/dev/null 2>&1 || die "uv is required but not installed"
 command -v python3 >/dev/null 2>&1 || die "python3 is required but not installed"
 
 BACKEND="$(resolve_backend)"
-SYNC_ARGS=(sync --extra dev --extra test --extra data)
+# wandb: tests/benchmarks/ imports the benchmark suite's W&B exporter, whose calibrax module
+# raises ImportError without it. CI installs it in every job that collects tests/.
+SYNC_ARGS=(sync --extra dev --extra test --extra data --extra wandb)
 
 case "$BACKEND" in
     cpu) ;;

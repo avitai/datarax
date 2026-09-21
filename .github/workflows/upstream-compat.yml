@@ -37,7 +37,7 @@ jobs:
       - name: Install the locked environment
         run: |
           uv venv
-          uv sync --locked --extra dev --extra test --extra data
+          uv sync --locked --extra dev --extra test --extra data --extra wandb
 
       # `uv pip install` on top of the locked environment; every later step calls the
       # environment's own binaries, because `uv run` would re-sync to the lock and undo
@@ -50,4 +50,4 @@ jobs:
       - name: Run the fast test subset
         run: |
           echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> "$GITHUB_ENV"
-          .venv/bin/pytest tests --no-integration --no-end-to-end -m "not slow" --no-cov -p no:cacheprovider
+          .venv/bin/pytest tests --no-integration --no-end-to-end --no-benchmark -m "not slow" --no-cov -p no:cacheprovider
