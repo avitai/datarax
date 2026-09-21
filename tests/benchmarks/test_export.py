@@ -7,9 +7,11 @@ from unittest.mock import MagicMock
 
 import pytest
 from calibrax.core import MetricDirection, Run
+from calibrax.exporters.wandb import WandBExporter
 from calibrax.profiling import ResourceSummary, TimingSample
 from calibrax.storage import Store
 
+import wandb
 from benchmarks.core.result_model import build_benchmark_result
 from benchmarks.export import export_to_calibrax, FullExporter
 from benchmarks.runners.full_runner import ComparativeResults
@@ -106,7 +108,7 @@ class TestFullExporter:
 
     @pytest.fixture
     def mock_wandb_exporter(self):
-        exporter = MagicMock()
+        exporter = MagicMock(spec=WandBExporter)
         exporter.export_run.return_value = "https://wandb.ai/test/run/abc"
         return exporter
 
@@ -121,7 +123,6 @@ class TestFullExporter:
         mock_store: Store,
         mock_wandb_exporter: MagicMock,
     ):
-        pytest.importorskip("wandb")
         exporter = FullExporter(mock_store)
         exporter._exporter = mock_wandb_exporter
 
@@ -130,3 +131,31 @@ class TestFullExporter:
         assert url == "https://wandb.ai/test/run/abc"
         mock_wandb_exporter.export_run.assert_called_once_with(sample_run, finish=False)
         mock_wandb_exporter.export_analysis.assert_called_once()
+
+    def test_charts_are_logged_as_images(
+        self,
+        sample_comparative: ComparativeResults,
+        sample_run: Run,
+        mock_store: Store,
+        mock_wandb_exporter: MagicMock,
+        tmp_path,
+    ):
+        """Each chart reaches W&B as an image, under the name the dashboard reads."""
+        exporter = FullExporter(mock_store)
+        exporter._exporter = mock_wandb_exporter
+
+        exporter.export(sample_comparative, sample_run, chart_dir=tmp_path)
+
+        mock_wandb_exporter.log_images.assert_called_once()
+        logged = mock_wandb_exporter.log_images.call_args.args[0]
+        assert set(logged) <= {
+            "charts/throughput_bars",
+            "charts/throughput_radar",
+            "charts/latency_cdf",
+            "charts/memory_waterfall",
+            "charts/scaling_curves",
+            "charts/chain_depth",
+            "charts/feature_heatmap",
+        }
+        assert logged, "no chart was logged"
+        assert all(isinstance(image, wandb.Image) for image in logged.values())

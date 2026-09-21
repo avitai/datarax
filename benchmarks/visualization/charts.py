@@ -8,11 +8,13 @@ Design ref: Section 10.2 of the benchmark report.
 
 from __future__ import annotations
 
+from math import prod
 from pathlib import Path
 
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+from calibrax.core import MetadataValue, read_metadata
 from matplotlib.figure import Figure
 
 from benchmarks.core.result_model import result_scenario_id, throughput_elements_per_sec
@@ -242,11 +244,11 @@ class ChartGenerator:
                 # Use config to estimate memory if no ResourceMonitor data
                 if adapter_results:
                     cfg = adapter_results[0].config
-                    ds = cfg.get("dataset_size", 0)
-                    shape = cfg.get("element_shape", [1])
-                    from math import prod
-
-                    est_mb = ds * prod(shape) * 4 / (1024**2)
+                    size = read_metadata(int, cfg.get("dataset_size", 0), "config.dataset_size")
+                    shape = read_metadata(
+                        list[int], cfg.get("element_shape", [1]), "config.element_shape"
+                    )
+                    est_mb = size * prod(shape) * 4 / (1024**2)
                     rss_values.append(est_mb)
                 else:
                     rss_values.append(0)
@@ -308,9 +310,16 @@ class ChartGenerator:
             for r in adapter_results:
                 scenario_id = result_scenario_id(r)
                 if scenario_id.startswith("PC"):
-                    depth = r.config.get("extra", {}).get("chain_depth", None)
-                    if depth is None:
-                        depth = int(scenario_id.split("-")[-1]) if "-" in scenario_id else 1
+                    extra = read_metadata(
+                        dict[str, MetadataValue], r.config.get("extra", {}), "config.extra"
+                    )
+                    stored_depth = extra.get("chain_depth")
+                    if stored_depth is not None:
+                        depth = read_metadata(int, stored_depth, "config.extra.chain_depth")
+                    elif "-" in scenario_id:
+                        depth = int(scenario_id.split("-")[-1])
+                    else:
+                        depth = 1
                     depths[depth] = throughput_elements_per_sec(r)
 
             if depths:

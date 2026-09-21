@@ -59,8 +59,9 @@ from calibrax.profiling import GPUMemoryProfiler, MemoryOptimizer
 
 # Check GPU memory usage
 profiler = GPUMemoryProfiler()
-usage = profiler.get_memory_usage()
-print(f"GPU memory: {usage['gpu_memory_used_mb']:.1f} MB used")
+usage = profiler.memory()
+if usage is not None:
+    print(f"GPU memory: {usage.used_mb:.1f} MB of {usage.total_mb:.1f} MB")
 
 # Analyze pipeline memory patterns
 optimizer = MemoryOptimizer()

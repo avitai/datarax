@@ -706,7 +706,7 @@ wheels = [
 
 [[package]]
 name = "calibrax"
-version = "0.1.9"
+version = "0.1.11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click", version = "8.1.8", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-7-datarax-automation'" },
@@ -715,14 +715,23 @@ dependencies = [
     { name = "jax" },
     { name = "jaxlib" },
     { name = "jaxtyping" },
+    { name = "lazy-loader" },
     { name = "numpy" },
     { name = "psutil" },
+    { name = "pydantic" },
+    { name = "scipy" },
     { name = "substrax" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/dc/05/58e9663923ac9447b48ad2a5b8dfd9f219c0a2809964722c697753e005b5/calibrax-0.1.9.tar.gz", hash = "sha256:5444f708ff03353cc2a3bde09bc87764b3f64fe5485a50df01cbf66ae1796d84", size = 166377, upload-time = "2026-09-18T04:30:23.959Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/82/59/2b9708a920a825d6dd1cdda3888d4925828219083ff505d6727e4599852e/calibrax-0.1.11.tar.gz", hash = "sha256:3321909f0f59c1b323480ff7ea8fa0ed30c729757534f611239caf2185438d12", size = 183654, upload-time = "2026-09-21T02:13:32.738Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7d/d5/db8e856af5d727e0ea9d196d874452d05d813a917c34b9a086c31ef0e8bf/calibrax-0.1.9-py3-none-any.whl", hash = "sha256:a2efcd06b3653ae145149ca8a158b58035cd3f9c7058b1643d2b9fc189e74cc4", size = 206341, upload-time = "2026-09-18T04:30:21.924Z" },
+    { url = "https://files.pythonhosted.org/packages/93/33/0b52efdaf98039b0224a606b101c877b8d7fe5520cca963e9d6839ee305b/calibrax-0.1.11-py3-none-any.whl", hash = "sha256:65bfc746ef8792baaa4ad93afef17f4eef900d95e5110f1ac80d0676fea1e3c9", size = 230029, upload-time = "2026-09-21T02:13:30.144Z" },
+]
+
+[package.optional-dependencies]
+wandb = [
+    { name = "wandb", version = "0.26.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-7-datarax-automation'" },
+    { name = "wandb", version = "0.30.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
 ]
 
 [[package]]
@@ -1198,6 +1207,7 @@ all = [
     { name = "bandit" },
     { name = "beartype" },
     { name = "build" },
+    { name = "calibrax", extra = ["wandb"] },
     { name = "coverage" },
     { name = "datasets" },
     { name = "deadcode" },
@@ -1263,6 +1273,7 @@ all-cpu = [
     { name = "bandit" },
     { name = "beartype" },
     { name = "build" },
+    { name = "calibrax", extra = ["wandb"] },
     { name = "coverage" },
     { name = "datasets" },
     { name = "deadcode" },
@@ -1327,6 +1338,7 @@ all-macos = [
     { name = "bandit" },
     { name = "beartype" },
     { name = "build" },
+    { name = "calibrax", extra = ["wandb"] },
     { name = "coverage" },
     { name = "datasets" },
     { name = "deadcode" },
@@ -1547,6 +1559,9 @@ tfds = [
     { name = "tensorflow" },
     { name = "tensorflow-datasets" },
 ]
+wandb = [
+    { name = "calibrax", extra = ["wandb"] },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1565,7 +1580,11 @@ requires-dist = [
     { name = "build", marker = "extra == 'all-macos'", specifier = ">=1.0.3" },
     { name = "build", marker = "extra == 'cuda-dev'", specifier = ">=1.0.3" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0.3" },
-    { name = "calibrax", specifier = ">=0.1.9" },
+    { name = "calibrax", specifier = ">=0.1.11" },
+    { name = "calibrax", extras = ["wandb"], marker = "extra == 'all'", specifier = ">=0.1.11" },
+    { name = "calibrax", extras = ["wandb"], marker = "extra == 'all-cpu'", specifier = ">=0.1.11" },
+    { name = "calibrax", extras = ["wandb"], marker = "extra == 'all-macos'", specifier = ">=0.1.11" },
+    { name = "calibrax", extras = ["wandb"], marker = "extra == 'wandb'", specifier = ">=0.1.11" },
     { name = "click", marker = "extra == 'automation'", specifier = "<8.3" },
     { name = "click", marker = "extra == 'benchmark'", specifier = ">=8.1" },
     { name = "coverage", marker = "extra == 'all'", specifier = ">=7" },
@@ -1837,7 +1856,7 @@ requires-dist = [
     { name = "spdl", marker = "sys_platform == 'linux' and extra == 'all-macos'", specifier = ">=0.1" },
     { name = "spdl", marker = "sys_platform == 'linux' and extra == 'test'", specifier = ">=0.1" },
     { name = "spdl", marker = "extra == 'benchmark'", specifier = ">=0.1" },
-    { name = "substrax", specifier = ">=0.1.11" },
+    { name = "substrax", specifier = ">=0.1.15" },
     { name = "substrax", extras = ["testing"], marker = "extra == 'all'", specifier = ">=0.1.11" },
     { name = "substrax", extras = ["testing"], marker = "extra == 'all-cpu'", specifier = ">=0.1.11" },
     { name = "substrax", extras = ["testing"], marker = "extra == 'all-macos'", specifier = ">=0.1.11" },
@@ -1890,7 +1909,7 @@ requires-dist = [
     { name = "xenon", marker = "extra == 'cuda-dev'", specifier = ">=0.9.3" },
     { name = "xenon", marker = "extra == 'dev'", specifier = ">=0.9.3" },
 ]
-provides-extras = ["all", "all-cpu", "all-macos", "automation", "benchmark", "cuda-dev", "cuda12", "data", "dev", "docs", "examples", "metal", "test", "tfds"]
+provides-extras = ["all", "all-cpu", "all-macos", "automation", "benchmark", "cuda-dev", "cuda12", "data", "dev", "docs", "examples", "metal", "test", "tfds", "wandb"]
 
 [[package]]
 name = "datasets"
@@ -2364,7 +2383,7 @@ name = "gitdb"
 version = "4.0.12"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "smmap" },
+    { name = "smmap", marker = "extra == 'extra-7-datarax-automation'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/72/94/63b0fc47eb32792c7ba1fe1b694daec9a63620db1e313033d18140c2320a/gitdb-4.0.12.tar.gz", hash = "sha256:5ef71f855d191a3326fcfbc0d5da835f26b13fbcba60c32c21091c349ffdb571", size = 394684, upload-time = "2025-01-02T07:20:46.413Z" }
 wheels = [
@@ -2376,7 +2395,7 @@ name = "gitpython"
 version = "3.1.62"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "gitdb" },
+    { name = "gitdb", marker = "extra == 'extra-7-datarax-automation'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e0/db/3ca813cbacb23ab6fe46ff38a9b5ef8e73e970c8051f2ce903aacafe0446/gitpython-3.1.62.tar.gz", hash = "sha256:1791de66309bc0c7cfca40bf8d2e3de7ca091cbf94e6051be1ad0722c61062af", size = 231728, upload-time = "2026-09-07T02:57:21.155Z" }
 wheels = [
@@ -4855,6 +4874,87 @@ wheels = [
 ]
 
 [[package]]
+name = "opentelemetry-api"
+version = "1.44.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ee/8b/aa9e2d8b8dfa7c946f7dec5d1f8f6ba8eca062f43509a06bdb5ce93d26c0/opentelemetry_api-1.44.0.tar.gz", hash = "sha256:67647e5e9566edcf421166fdf022b3537f818635daa852b289e34604dc6fb33a", size = 72406, upload-time = "2026-07-16T15:25:32.678Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ca/6f/a04e900f465ff3221ccc395522503e2d10e79fa21f2723c8e177aae1e0d1/opentelemetry_api-1.44.0-py3-none-any.whl", hash = "sha256:94b98c893a91b88657eaac1e3ba89618cdb85be6918196705354f34728b2cdef", size = 60018, upload-time = "2026-07-16T15:25:11.657Z" },
+]
+
+[[package]]
+name = "opentelemetry-exporter-otlp-proto-common"
+version = "1.44.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-proto", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/61/09/4d717852c1cf3f854b76c7110a5d00883bc3c99288b9b0dbcbeb9e306eb6/opentelemetry_exporter_otlp_proto_common-1.44.0.tar.gz", hash = "sha256:dc87a5a5bc58f149a56d1547e4691588fa12994cdc3bc039a694ccb3375862ac", size = 20202, upload-time = "2026-07-16T15:25:37.658Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5e/71/65fd9d54c10b860f87c045ccee1264cab7011268895d3528818a29c1172a/opentelemetry_exporter_otlp_proto_common-1.44.0-py3-none-any.whl", hash = "sha256:9a9fe61bba73d802904bc989f1d6b4a7b1ee40f06c40e98d6f85af65aaebb694", size = 17045, upload-time = "2026-07-16T15:25:18.201Z" },
+]
+
+[[package]]
+name = "opentelemetry-exporter-otlp-proto-http"
+version = "1.44.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "googleapis-common-protos", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+    { name = "opentelemetry-api", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+    { name = "opentelemetry-exporter-otlp-proto-common", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+    { name = "opentelemetry-proto", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+    { name = "opentelemetry-sdk", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+    { name = "requests", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+    { name = "typing-extensions", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1a/87/95e2a5aaa795b4e2260d74e16df2d5541deb2ea9de010bcd615f4dee2654/opentelemetry_exporter_otlp_proto_http-1.44.0.tar.gz", hash = "sha256:c633d7270ad6b57cd4cfbe8b0007a9e2e7c0cb50bd6c50fe2a7b245f721a09d8", size = 25806, upload-time = "2026-07-16T15:25:39.162Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cd/d0/fdeb1a98d8d3a6205f5f297c51b4a9bfe65126ab60339669bbe3dd54c2e2/opentelemetry_exporter_otlp_proto_http-1.44.0-py3-none-any.whl", hash = "sha256:838592fce774c1c8bb7b9a0a7facbfa82e17be5a8a4e94cef10cb84ae026bae3", size = 21850, upload-time = "2026-07-16T15:25:20.006Z" },
+]
+
+[[package]]
+name = "opentelemetry-proto"
+version = "1.44.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "protobuf", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/64/01/40ac4ae9a149263cc52c2cee200ddd80cb6d8db1a4610abf8eabce0fe771/opentelemetry_proto-1.44.0.tar.gz", hash = "sha256:c547a79c2f8c0c515d31509154682e5921c7cfd5ca67b70e1f9266e2c3e103f3", size = 46488, upload-time = "2026-07-16T15:25:45.34Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d1/7c/8be563d68e93bbefa5c8affb82ddcff91b3ad858ce49957ba7b16fd3e0ab/opentelemetry_proto-1.44.0-py3-none-any.whl", hash = "sha256:898b155a0e1557afd867478fb6158e8122a46329ca0bb8dc53cc55e98f017f56", size = 72483, upload-time = "2026-07-16T15:25:28.429Z" },
+]
+
+[[package]]
+name = "opentelemetry-sdk"
+version = "1.44.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+    { name = "opentelemetry-semantic-conventions", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+    { name = "typing-extensions", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5d/77/a6592cbc7c8d9bcc9d6757a9df45e04a7c585e3e6e7a13456da522b21109/opentelemetry_sdk-1.44.0.tar.gz", hash = "sha256:cebe7f65dc12f26ead75c6064de12fd2a9052e5060c0272d402cfa203aae123b", size = 208624, upload-time = "2026-07-16T15:25:46.078Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e7/23/ff077e61886ee020a17ce9c8b6fa11c601c8d8345b09ea24f605445df62a/opentelemetry_sdk-1.44.0-py3-none-any.whl", hash = "sha256:df081c4c6bcfdb1211e3e86140376792643128a25f8d72d1d27675936e7e96ad", size = 137221, upload-time = "2026-07-16T15:25:29.534Z" },
+]
+
+[[package]]
+name = "opentelemetry-semantic-conventions"
+version = "0.65b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+    { name = "typing-extensions", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8f/73/0cbdebcb4cf545fdd328da14f5137e37d0770c3f26185e478b0d15d94f50/opentelemetry_semantic_conventions-0.65b0.tar.gz", hash = "sha256:f9b2b81e9d5b64f11bc952075e7e9c7fb0aab075c7fd1c46d597f1b919852d60", size = 148774, upload-time = "2026-07-16T15:25:46.902Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a6/0e/49df70d9b81fb5cbae4bbf2a49d865b09bcbcbc4eb53f5851b1027738d78/opentelemetry_semantic_conventions-0.65b0-py3-none-any.whl", hash = "sha256:1cacde7b0ad306f84c5ef08c3dbe1bbaf20165bba6f8bff43b670e555a086bcb", size = 204645, upload-time = "2026-07-16T15:25:30.688Z" },
+]
+
+[[package]]
 name = "opt-einsum"
 version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -6607,6 +6707,19 @@ wheels = [
 ]
 
 [[package]]
+name = "sentry-sdk"
+version = "2.69.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "certifi", marker = "extra == 'extra-7-datarax-automation'" },
+    { name = "urllib3", marker = "extra == 'extra-7-datarax-automation'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cc/08/1211e4652384195ef754f8ed570566088dc848f8eda7d005abf13f05f17f/sentry_sdk-2.69.2.tar.gz", hash = "sha256:b4d8915a526e626b0b14a2925907554b722d3b8e3e3781570fc35791712af323", size = 1043564, upload-time = "2026-09-15T15:25:09.018Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ee/78/5d8b79fd60330234317aa827a1f5e445980a6f4e0ea6ed4e1187acb70a0f/sentry_sdk-2.69.2-py3-none-any.whl", hash = "sha256:25bc0a6c55bba0b83398212a7247f4f9f3190f189a1909b68e4807ef4b785895", size = 528765, upload-time = "2026-09-15T15:25:07.362Z" },
+]
+
+[[package]]
 name = "setproctitle"
 version = "1.3.7"
 source = { registry = "https://pypi.org/simple" }
@@ -7040,7 +7153,7 @@ wheels = [
 
 [[package]]
 name = "substrax"
-version = "0.1.11"
+version = "0.1.15"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "flax" },
@@ -7049,10 +7162,11 @@ dependencies = [
     { name = "numpy" },
     { name = "optax" },
     { name = "orbax-checkpoint" },
+    { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ad/17/4c2ac4ff290506f2b5e3c4378b5e364426d664e7106056e00cba226fcdf2/substrax-0.1.11.tar.gz", hash = "sha256:6397a67e6ee1f04d09522e4ba371b31e44dcc822c73ecdeee67afa25e306f97c", size = 78255, upload-time = "2026-09-18T00:41:21.101Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a0/2e/5f9116c8da2e4554ffec3ed71d0ade13ca9e629dee91e670ef882fab526f/substrax-0.1.15.tar.gz", hash = "sha256:77cb5053ba210f6859479f7a518d84722a4e40920daf64f04db739bad972900e", size = 112151, upload-time = "2026-09-20T17:01:28.817Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d9/be/ddb879145823f327c59e096163a64c05bdd61d881f850b70eff5bb32f6f7/substrax-0.1.11-py3-none-any.whl", hash = "sha256:3cde3f31ccea1bac1a4d19f87e1a0e0d25f1c4ed68e066d0e20e1e419b20cbb8", size = 95332, upload-time = "2026-09-18T00:41:19.139Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/6d/9b6858a823cc072fb9f651cb85e0aa734b3ee8ad47aa8f04e7d3be656700/substrax-0.1.15-py3-none-any.whl", hash = "sha256:d6fa03b29fc0dd307425e8429b1e5b8e93891937eddd94ddb399b5067253a5ac", size = 140107, upload-time = "2026-09-20T17:01:26.872Z" },
 ]
 
 [package.optional-dependencies]
@@ -7709,6 +7823,81 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/1e/67/cbae4bf7683a64755c2c1778c418fea96d00e34395bb91743f08bd951571/wadler_lindig-0.1.7.tar.gz", hash = "sha256:81d14d3fe77d441acf3ebd7f4aefac20c74128bf460e84b512806dccf7b2cd55", size = 15842, upload-time = "2025-06-18T07:00:42.843Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8d/96/04e7b441807b26b794da5b11e59ed7f83b2cf8af202bd7eba8ad2fa6046e/wadler_lindig-0.1.7-py3-none-any.whl", hash = "sha256:e3ec83835570fd0a9509f969162aeb9c65618f998b1f42918cfc8d45122fe953", size = 20516, upload-time = "2025-06-18T07:00:41.684Z" },
+]
+
+[[package]]
+name = "wandb"
+version = "0.26.1"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.13' and sys_platform == 'win32'",
+    "python_full_version >= '3.13' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.13' and sys_platform == 'win32'",
+    "python_full_version < '3.13' and sys_platform == 'emscripten'",
+    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+]
+dependencies = [
+    { name = "click", version = "8.1.8", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-7-datarax-automation'" },
+    { name = "gitpython", marker = "extra == 'extra-7-datarax-automation'" },
+    { name = "packaging", marker = "extra == 'extra-7-datarax-automation'" },
+    { name = "platformdirs", marker = "extra == 'extra-7-datarax-automation'" },
+    { name = "protobuf", marker = "extra == 'extra-7-datarax-automation'" },
+    { name = "pydantic", marker = "extra == 'extra-7-datarax-automation'" },
+    { name = "pyyaml", marker = "extra == 'extra-7-datarax-automation'" },
+    { name = "requests", marker = "extra == 'extra-7-datarax-automation'" },
+    { name = "sentry-sdk", marker = "extra == 'extra-7-datarax-automation'" },
+    { name = "typing-extensions", marker = "extra == 'extra-7-datarax-automation'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6a/a4/72a6640e1f566e81f184a426e3e45298d4c6672664de41adb7eb6f64370a/wandb-0.26.1.tar.gz", hash = "sha256:eef2dbaea06f0b1c0cdc5d76f544ae4c2b8848fc512442a00bd59f0502fc8aa1", size = 42159814, upload-time = "2026-04-23T16:27:34.033Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8c/09/3296235f3906e904f06f2df29eed4d672fb23c0932c9486e2af64f2f2a66/wandb-0.26.1-py3-none-macosx_12_0_arm64.whl", hash = "sha256:2955fe190c005fb83ee6d73f066c8a33f09f3212a1f2eb53faa6581440e456be", size = 24857204, upload-time = "2026-04-23T16:26:58.576Z" },
+    { url = "https://files.pythonhosted.org/packages/a1/ad/e39ca3086534129e42208ba00ed2c6247ce425f890219eeec33b4f162864/wandb-0.26.1-py3-none-macosx_12_0_x86_64.whl", hash = "sha256:55d91cabde98162d7116a5e19ddd052bd9848556243f1da4cbb9ffb7ad435bfc", size = 26014649, upload-time = "2026-04-23T16:27:02.559Z" },
+    { url = "https://files.pythonhosted.org/packages/56/af/400d84a3bdce0b062b4baa70acb6becd2c8018697f4fbf5af9a9e1e406e5/wandb-0.26.1-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:7c78bc2454cfe1ffa1c3a256060a387356eed8a4488e024d9d2eba8f2b5bd51d", size = 25421317, upload-time = "2026-04-23T16:27:06.411Z" },
+    { url = "https://files.pythonhosted.org/packages/7b/e9/b4bf8f3509dcea1cec52233a38991459654635b5a8e6a494eb912e1b9cfb/wandb-0.26.1-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:a2c8eeec8706dcd2872e69c3b4d20ec523082fdb4440295491556e219ad2aa67", size = 27192831, upload-time = "2026-04-23T16:27:10.308Z" },
+    { url = "https://files.pythonhosted.org/packages/62/cf/4a6dce0c782223ef0eeea7139daee73418a7322befcf083512c31cebaa18/wandb-0.26.1-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:2fa768ee0636a569afb7541cf996e56309c47070566a38916823f94e02afe586", size = 25593326, upload-time = "2026-04-23T16:27:14.259Z" },
+    { url = "https://files.pythonhosted.org/packages/df/99/58c3d8c36ae8e2b7d70bf6493eb5daa1cca0231a04b025717b4cd1a78f1e/wandb-0.26.1-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:5854928725cfeff1f284d5c043cd353f810e5da02eead2c120ef5056ad026fea", size = 27535542, upload-time = "2026-04-23T16:27:18.473Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/d0/4e846ffc1d0cc435518dfa581ce73ac82cfd0ebbf35f3853c9277f632e5f/wandb-0.26.1-py3-none-win32.whl", hash = "sha256:5c2bd44e575ae9944e2764d1aaa031461178276bf2636d5558399c2816ef5cfe", size = 24968151, upload-time = "2026-04-23T16:27:22.086Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/9b/487413eaccefdb58799a226726e24b486e9192d2671c75a4550c160aba23/wandb-0.26.1-py3-none-win_amd64.whl", hash = "sha256:5817785467d3f1676f1812ec19a89f77f6e56dfe67d9f47080075af95f705d3e", size = 24968155, upload-time = "2026-04-23T16:27:25.731Z" },
+    { url = "https://files.pythonhosted.org/packages/04/dc/5baf3e99b3eeb709d6f75124b5bec8cb73d4b38d2b10df7fdcfde4966200/wandb-0.26.1-py3-none-win_arm64.whl", hash = "sha256:f848b7744f896bc04cabbb28360a2814d1551a91fa2c456243e06435729c8a2e", size = 22912416, upload-time = "2026-04-23T16:27:29.456Z" },
+]
+
+[[package]]
+name = "wandb"
+version = "0.30.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.13' and sys_platform == 'win32'",
+    "python_full_version >= '3.13' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.13' and sys_platform == 'win32'",
+    "python_full_version < '3.13' and sys_platform == 'emscripten'",
+    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+]
+dependencies = [
+    { name = "click", version = "8.5.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+    { name = "opentelemetry-api", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+    { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+    { name = "opentelemetry-sdk", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+    { name = "packaging", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+    { name = "platformdirs", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+    { name = "protobuf", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+    { name = "pydantic", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+    { name = "pyyaml", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+    { name = "requests", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+    { name = "typing-extensions", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+    { name = "xxhash", marker = "extra == 'extra-7-datarax-benchmark' or extra == 'extra-7-datarax-cuda-dev' or extra == 'extra-7-datarax-cuda12' or extra == 'extra-7-datarax-data' or extra == 'extra-7-datarax-dev' or extra == 'extra-7-datarax-docs' or extra == 'extra-7-datarax-examples' or extra == 'extra-7-datarax-metal' or extra == 'extra-7-datarax-test' or extra == 'extra-7-datarax-tfds' or extra != 'extra-7-datarax-automation'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/86/10/c4481d12b26f57606d1ef7c8d56825ad6af769cbb8cd29ee501ac6bbbc2d/wandb-0.30.0.tar.gz", hash = "sha256:f2d7de3c2019204f493f3f9e9166071c2be36f74140af2e1409b4de0fd84c454", size = 40862616, upload-time = "2026-09-09T00:16:41.551Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/71/5a/83201590d1e84a3b7d0a0cc7b53ee1318def18ba5431a32b26a44e6694f6/wandb-0.30.0-py3-none-macosx_13_0_arm64.whl", hash = "sha256:f4f908ace761db42d239d100230df0b77eb9684924d962a762bba176d829a236", size = 23464329, upload-time = "2026-09-09T00:16:20.505Z" },
+    { url = "https://files.pythonhosted.org/packages/35/b6/c0acf63242a0b8a3df9f877249ca260be80b86ecb08396fc34982967a50e/wandb-0.30.0-py3-none-macosx_13_0_x86_64.whl", hash = "sha256:9cf2492acd5c66ba7217667386e2a90535ccaec08079b97c389c3da5d15cde48", size = 25250085, upload-time = "2026-09-09T00:16:23.401Z" },
+    { url = "https://files.pythonhosted.org/packages/91/69/0593b9e43cd3fc257a0f6ceaf5e078f2b28baf1968e00dfa1be98261ee68/wandb-0.30.0-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:72b564712e85e10d78d37ccdaef4a908d28cbb39240c9c00fa4dde567150c764", size = 24049519, upload-time = "2026-09-09T00:16:25.874Z" },
+    { url = "https://files.pythonhosted.org/packages/26/13/775a4c7d87fb771a2ddb104ce7c5c5d393e48720e448b4e8c43aac7cd4ce/wandb-0.30.0-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:bad9412f137d02303bf178513e0109f4fed37a6c817604085a1a4151047d8790", size = 26105520, upload-time = "2026-09-09T00:16:28.146Z" },
+    { url = "https://files.pythonhosted.org/packages/58/36/4974e9ec44c23dd28a39c8ee699f1b8911dd6619c932c3fe94b016bc8a1f/wandb-0.30.0-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:1f2cc20c033f1650d387ca073177e629f1e2a1b5c4be393698e3db4752b9cf3a", size = 24112309, upload-time = "2026-09-09T00:16:30.3Z" },
+    { url = "https://files.pythonhosted.org/packages/05/77/5eddd97f33f581f4d167f41bbf4736f2a51ad7271b9c9ed5dceb6994cbd6/wandb-0.30.0-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:e7dc3b0b1567f6a121d8f7a58131b5d085861139a653ef8bed1569c9be796721", size = 26320243, upload-time = "2026-09-09T00:16:32.878Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/e7/821c363f0a74aa9826ca058d3f6f8f8e41697001a0a869b5ccc7eca5b0e4/wandb-0.30.0-py3-none-win_amd64.whl", hash = "sha256:217bde0a7c49482f26166a1a7bee760bb9e2658135b2d45a33aacabffec68817", size = 24083356, upload-time = "2026-09-09T00:16:36.766Z" },
+    { url = "https://files.pythonhosted.org/packages/3a/60/fd40e8b1a6136f4df97739a503c239fb4dab67f093cb9cccb5a1dd9d1895/wandb-0.30.0-py3-none-win_arm64.whl", hash = "sha256:36d6d8a5b88b36ad82b0f7ffab79033a8bbba047b5a90c0b7e26d0cf3a09f0b6", size = 21788859, upload-time = "2026-09-09T00:16:39.088Z" },
 ]
 
 [[package]]

@@ -4,13 +4,13 @@ TDD: Write tests first, then implement.
 Design ref: Sections 7.1, 7.4 of the benchmark report.
 """
 
+import inspect
 from collections.abc import Iterator
 from typing import Any
 from unittest.mock import patch
 
 import numpy as np
 import pytest
-from calibrax.core import BenchmarkAdapter as CalibraxBenchmarkAdapter
 
 from benchmarks.adapters.base import (
     IterationResult,
@@ -215,9 +215,16 @@ class TestPipelineAdapterABC:
         with pytest.raises(TypeError):
             PipelineAdapter()  # type: ignore[abstract]
 
-    def test_extends_calibrax_benchmark_adapter(self):
-        """Pipeline adapter must inherit from calibrax BenchmarkAdapter."""
-        assert issubclass(PipelineAdapter, CalibraxBenchmarkAdapter)
+    def test_construction_takes_no_arguments(self):
+        """An adapter is constructible with no arguments.
+
+        The registry builds every adapter as ``cls()`` — in ``_get_registry_name``,
+        ``_check_available`` and ``_supported`` — so an adapter whose constructor
+        demands an argument, such as a target object to wrap, cannot be registered
+        at all: the ``@register`` decorator raises at import time.
+        """
+        assert list(inspect.signature(PipelineAdapter.__init__).parameters) == ["self"]
+        assert ConcreteAdapter().name == "test_adapter"
 
     def test_concrete_adapter_properties(self):
         """Test concrete adapter implements required properties."""

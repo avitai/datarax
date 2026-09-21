@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from calibrax.statistics import StatisticalAnalyzer
+from calibrax.statistics import summarize
 
 from benchmarks.core.result_model import result_scenario_id
 from benchmarks.runners.full_runner import ComparativeResults
@@ -39,8 +39,8 @@ class StabilityValidator:
     Checks that the coefficient of variation (CV) of per-batch times
     is below a configurable threshold for each (scenario, adapter) pair.
 
-    Reuses StatisticalAnalyzer.summarize() for CV computation — no
-    duplicate statistical logic.
+    Takes the CV from ``calibrax.statistics.summarize`` rather than computing one —
+    no duplicate statistical logic.
 
     Args:
         cv_threshold: Maximum acceptable CV. Default 0.10 (10%).
@@ -49,7 +49,6 @@ class StabilityValidator:
     def __init__(self, cv_threshold: float = 0.10):
         """Initialize the stability validator with a CV threshold."""
         self._threshold = cv_threshold
-        self._analyzer = StatisticalAnalyzer()
 
     def validate(self, results: ComparativeResults) -> StabilityReport:
         """Validate all results in a ComparativeResults set.
@@ -68,12 +67,13 @@ class StabilityValidator:
                 if r.timing is None or not r.timing.per_batch_times:
                     continue
 
-                stats = self._analyzer.summarize(r.timing.per_batch_times)
+                # The summary's fields are arrays; the report is host-side text and numbers.
+                cv = float(summarize(r.timing.per_batch_times).cv)
 
-                if stats.cv < self._threshold:
+                if cv < self._threshold:
                     stable.append((result_scenario_id(r), adapter_name))
                 else:
-                    unstable.append((result_scenario_id(r), adapter_name, stats.cv))
+                    unstable.append((result_scenario_id(r), adapter_name, cv))
 
         total = len(stable) + len(unstable)
         return StabilityReport(

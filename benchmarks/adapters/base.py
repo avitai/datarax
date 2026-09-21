@@ -23,8 +23,6 @@ from enum import StrEnum
 from itertools import islice
 from typing import Any
 
-from calibrax.core import BenchmarkAdapter as CalibraxBenchmarkAdapter
-
 
 class Capability(StrEnum):
     """Non-transform pipeline features a scenario may require of an adapter.
@@ -101,11 +99,19 @@ class IterationResult:
     extra_metrics: dict[str, float] = field(default_factory=dict)
 
 
-class PipelineAdapter(CalibraxBenchmarkAdapter, ABC):
+class PipelineAdapter(ABC):
     """Abstract adapter for benchmarking any data loading framework.
 
     Subclasses wrap a specific framework and expose a uniform lifecycle:
     ``setup() -> warmup() -> iterate() -> teardown()``.
+
+    This is a lifecycle harness, not a :class:`calibrax.core.BenchmarkAdapter`.
+    A calibrax adapter wraps a target object handed to its constructor and is
+    chosen by a type predicate over that target; a pipeline adapter is built
+    with no arguments, keyed in the registry by ``name``, and *constructs* the
+    pipeline under test from a :class:`ScenarioConfig`. Results still cross into
+    calibrax, as :class:`calibrax.core.BenchmarkResult` — see
+    ``benchmarks/core/result_model.py``.
 
     The ``iterate()`` and ``warmup()`` methods are concrete Template Methods
     that delegate to two abstract hooks:
@@ -153,12 +159,11 @@ class PipelineAdapter(CalibraxBenchmarkAdapter, ABC):
         self._config = None
 
     def __init__(self) -> None:
-        """Initialize the underlying calibrax adapter base.
+        """Initialize the adapter with no pipeline configured.
 
         Sets ``_config`` to ``None``.  Subclasses MUST call
         ``super().__init__()`` before setting their own attributes.
         """
-        super().__init__(target={"name": "pipeline"})
         self._config: ScenarioConfig | None = None
 
     def supports_scenario(self, scenario_id: str) -> bool:

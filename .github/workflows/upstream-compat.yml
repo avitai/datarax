@@ -37,7 +37,7 @@ jobs:
       - name: Install the locked environment
         run: |
           uv venv
-          uv sync --locked --extra dev --extra test --extra data
+          uv sync --locked --extra dev --extra test --extra data --extra wandb
 
       # `uv pip install` on top of the locked environment; every later step calls the
       # environment's own binaries, because `uv run` would re-sync to the lock and undo

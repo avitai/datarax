@@ -1,7 +1,7 @@
 """Baseline storage and comparison for benchmark regression detection.
 
-Manages JSON baselines on disk and uses StatisticalAnalyzer to compare
-current results against stored baselines.
+Manages JSON baselines on disk and compares current results against stored
+baselines with Welch's t-test.
 
 Design ref: Sections 9.1, 9.2 of the benchmark report.
 Thresholds: Welch's t-test p<0.05 → warning, p<0.01 → failure.
@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from calibrax.core import BenchmarkResult
-from calibrax.statistics import StatisticalAnalyzer, welch_t_test
+from calibrax.statistics import welch_t_test
 
 from benchmarks.core.result_model import throughput_elements_per_sec
 
@@ -61,7 +61,6 @@ class BaselineStore:
         """Initialize the baseline store with the given directory."""
         self.baselines_dir = Path(baselines_dir)
         self.baselines_dir.mkdir(parents=True, exist_ok=True)
-        self._analyzer = StatisticalAnalyzer()
 
     def save(self, name: str, result: BenchmarkResult) -> Path:
         """Save a BenchmarkResult as a baseline.

@@ -22,6 +22,7 @@ def make_result(
     cv: float = 0.05,
     num_batches: int = 20,
     batch_size: int = 32,
+    extra: dict[str, object] | None = None,
 ) -> BenchmarkResult:
     """Create a synthetic BenchmarkResult with controllable properties.
 
@@ -33,6 +34,7 @@ def make_result(
         cv: Coefficient of variation for per-batch times.
         num_batches: Number of batches in the timing sample.
         batch_size: Elements per batch.
+        extra: The scenario-specific settings the config records, such as a chain depth.
     """
     num_elements = num_batches * batch_size
     wall_clock = num_elements / throughput if throughput > 0 else 1.0
@@ -65,6 +67,7 @@ def make_result(
             "element_shape": [32, 32, 3],
             "transforms": [],
             "seed": 42,
+            **({"extra": extra} if extra is not None else {}),
         },
     )
 

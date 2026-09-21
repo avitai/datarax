@@ -1,4 +1,9 @@
-"""Adapter: convert datarax ComparativeResults -> calibrax Run, and FullExporter."""
+"""Adapter: convert datarax ComparativeResults -> calibrax Run, and FullExporter.
+
+``FullExporter`` writes to Weights & Biases through calibrax's exporter, so this module needs
+the ``wandb`` extra: ``uv sync --extra wandb``. Importing it without wandb raises ``ImportError``
+naming the extra rather than degrading to a run that silently logs nothing.
+"""
 
 from __future__ import annotations
 
@@ -21,6 +26,7 @@ from calibrax.core import (
 from calibrax.exporters.wandb import WandBExporter
 from calibrax.storage import Store
 
+import wandb
 from benchmarks.analysis.comparison_report import ComparisonReportGenerator
 from benchmarks.analysis.gap_detection import GapDetector
 from benchmarks.analysis.stability import StabilityValidator
@@ -196,7 +202,7 @@ class FullExporter:
                 figures[key] = method()
             except (ValueError, OSError, RuntimeError):
                 logger.warning("Chart generation failed for %s", key, exc_info=True)
-        self._exporter.log_figures(figures)
+        self._exporter.log_images({key: wandb.Image(figure) for key, figure in figures.items()})
         for fig in figures.values():
             plt.close(fig)
 
@@ -239,12 +245,6 @@ class FullExporter:
 
     def _upload_results_artifact(self, results_dir: Path, run: Run) -> None:
         """Upload raw results directory as a W&B Artifact."""
-        try:
-            import wandb
-        except ImportError:
-            logger.warning("wandb not installed - skipping artifact upload")
-            return
-
         if wandb.run is None:  # type: ignore[reportAttributeAccessIssue]
             logger.warning("No active W&B run - skipping artifact upload")
             return
