@@ -14,6 +14,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  already_tested:
+    name: Tree already tested
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.compare.outputs.skip }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare this tree with the pull request that produced it
+        id: compare
+        # Only a merge repeats work. A schedule re-measures the same tree against dependencies
+        # that have moved, and a manual run is asked for because someone wants the run. When
+        # this step does not run the output is empty, which every consumer reads as "test it".
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          skip=false
+          pull_request=$(git log -1 --pretty=%s | sed -n 's/.*(#\([0-9]\+\))$/\1/p')
+          if [ -n "$pull_request" ]; then
+            # Every lookup below answers "unknown" rather than failing: a subject that ends in
+            # a number naming no pull request must leave the run green and running, not red.
+            # The pull ref outlives the branch, so this still resolves after a merge deleted it.
+            git fetch --no-tags --depth=1 origin "refs/pull/$pull_request/head" || true
+            tree=$(git rev-parse "HEAD^{tree}")
+            tested=$(git rev-parse "FETCH_HEAD^{tree}" 2>/dev/null || echo unknown)
+            failed=$(gh pr view "$pull_request" --json statusCheckRollup --jq \
+              '[.statusCheckRollup[] | (.conclusion // .state)
+                | select(. == "FAILURE" or . == "TIMED_OUT" or . == "ERROR")] | length' \
+              2>/dev/null || echo unknown)
+            if [ "$tree" = "$tested" ] && [ "$failed" = "0" ]; then
+              skip=true
+            fi
+            echo "pull request #$pull_request: tree $tested, failed checks $failed"
+          fi
+          echo "this tree $(git rev-parse 'HEAD^{tree}') already tested: $skip"
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+
+  # Not gated on already_tested: performance_tests runs only on main, so it never
+  # repeats a pull request, and a skipped dependency would take it down with it.
   lint:
     name: Lint Code
     runs-on: ubuntu-latest
@@ -61,7 +103,8 @@ jobs:
 
   examples:
     name: Validate Examples
-    needs: lint
+    needs: [lint, already_tested]
+    if: needs.already_tested.outputs.skip != 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -102,14 +145,16 @@ jobs:
 
   unit_tests:
     name: Unit Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
-    needs: lint
+    needs: [lint, already_tested]
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         # The macOS-14 runners queue for hours and run the same steps; they run on
         # pushes to main only, so a branch or pull request is gated by the ubuntu
-        # jobs alone and the merge to main measures both platforms.
-        os: ${{ fromJSON(github.ref == 'refs/heads/main' && '["ubuntu-latest", "macos-14"]' || '["ubuntu-latest"]') }}
+        # jobs alone and the merge to main measures both platforms. Where the merge
+        # carries the tree the pull request already tested on ubuntu, macOS is the
+        # only platform left to measure.
+        os: ${{ fromJSON(needs.already_tested.outputs.skip == 'true' && '["macos-14"]' || (github.ref == 'refs/heads/main' && '["ubuntu-latest", "macos-14"]' || '["ubuntu-latest"]')) }}
         python-version: ['3.12', '3.13']
       fail-fast: false
 
@@ -169,7 +214,8 @@ jobs:
 
   prepare_example_datasets:
     name: Prepare Example Datasets
-    needs: lint
+    needs: [lint, already_tested]
+    if: needs.already_tested.outputs.skip != 'true'
     runs-on: ubuntu-latest
     # CIFAR-10 comes from a host that sends each connection about 100 KB/s. The script fetches it
     # over eight ranged connections in its own job and budget instead of an example's.
@@ -215,7 +261,8 @@ jobs:
     # The longest job in the run, and the one the coverage job waits on. Its only input
     # is the dataset cache prepare_example_datasets fills, so it runs beside the unit
     # matrix rather than after it.
-    needs: prepare_example_datasets
+    needs: [prepare_example_datasets, already_tested]
+    if: needs.already_tested.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -284,7 +331,8 @@ jobs:
 
   integration_tests:
     name: Integration Tests
-    needs: lint
+    needs: [lint, already_tested]
+    if: needs.already_tested.outputs.skip != 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -334,7 +382,8 @@ jobs:
 
   end_to_end_tests:
     name: End-to-End Tests
-    needs: lint
+    needs: [lint, already_tested]
+    if: needs.already_tested.outputs.skip != 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -436,7 +485,8 @@ jobs:
 
   coverage:
     name: Test Coverage
-    needs: [unit_tests, long_running_tests, integration_tests, end_to_end_tests]
+    needs: [unit_tests, long_running_tests, integration_tests, end_to_end_tests, already_tested]
+    if: needs.already_tested.outputs.skip != 'true'
     runs-on: ubuntu-latest
 
     steps:

@@ -311,7 +311,7 @@ def coverage_floor_violations(workflow: dict, pyproject: dict) -> list[str]:
         problems.append(f"[tool.coverage.report] fail_under is {floor}, not at least 80")
     if not {"push", "pull_request"} <= set(triggers):
         problems.append(f"CI runs on {sorted(triggers)}, not on both push and pull_request")
-    if "if" in job:
+    if job.get("if") not in (None, GATE_CONDITION):
         problems.append(f"the coverage job only runs when {job['if']}")
     if "coverage report" not in commands:
         problems.append("the coverage job does not run coverage report")
@@ -322,7 +322,11 @@ def coverage_floor_violations(workflow: dict, pyproject: dict) -> list[str]:
 
 
 def test_ci_fails_below_the_coverage_floor() -> None:
-    """The combined coverage report applies pyproject's floor on every push and pull request."""
+    """The combined coverage report applies pyproject's floor on every push and pull request.
+
+    The one condition the job may carry is the already-tested gate, which stands down only
+    where the same tree already reported coverage on the pull request that produced it.
+    """
     assert coverage_floor_violations(yaml.safe_load(CI_WORKFLOW.read_text()), _pyproject()) == []
 
 
@@ -475,3 +479,100 @@ def test_no_module_configures_logging_at_import() -> None:
 
     assert len(modules) > 200
     assert configured == []
+
+
+GATE_JOB = "already_tested"
+# performance_tests runs only on main and waits on lint, and GitHub skips a job whose
+# dependency skipped, so gating lint would take the one job that never repeats with it.
+UNGATED_JOBS = frozenset({GATE_JOB, "lint"})
+GATE_CONDITION = f"needs.{GATE_JOB}.outputs.skip != 'true'"
+
+
+def _jobs() -> dict[str, dict]:
+    return yaml.safe_load(CI_WORKFLOW.read_text())["jobs"]
+
+
+def _runs_only_on_main(job: dict) -> bool:
+    """Whether the job's own condition confines it to a push to main."""
+    condition = str(job.get("if", ""))
+    return "refs/heads/main" in condition
+
+
+def _consults_the_gate(job: dict) -> bool:
+    return f"needs.{GATE_JOB}.outputs.skip" in yaml.safe_dump(job)
+
+
+def _transitive_needs(name: str, jobs: dict[str, dict]) -> set[str]:
+    """Every job ``name`` waits on, directly or through another."""
+    pending, seen = [name], set()
+    while pending:
+        current = pending.pop()
+        needs = jobs.get(current, {}).get("needs", [])
+        for dependency in [needs] if isinstance(needs, str) else needs:
+            if dependency not in seen:
+                seen.add(dependency)
+                pending.append(dependency)
+    return seen
+
+
+def test_the_gate_reports_a_skip_only_for_a_push() -> None:
+    """A schedule or a manual run re-measures the tree on purpose and must not be skipped.
+
+    The daily run exists to catch a dependency moving under an unchanged tree, and a
+    ``workflow_dispatch`` is usually asked for because someone wants the run.
+    """
+    gate = _jobs()[GATE_JOB]
+    reported_by = gate["outputs"]["skip"]
+    writers = [step for step in gate["steps"] if f"steps.{step.get('id')}.outputs" in reported_by]
+
+    assert [step.get("if") for step in writers] == ["github.event_name == 'push'"]
+
+
+def test_a_job_that_repeats_the_pull_request_consults_the_gate() -> None:
+    """Work a pull request already did over the same tree does not run again on the merge."""
+    jobs = _jobs()
+    repeated = {
+        name
+        for name, job in jobs.items()
+        if name not in UNGATED_JOBS and not _runs_only_on_main(job)
+    }
+
+    ungated = sorted(name for name in repeated if not _consults_the_gate(jobs[name]))
+
+    assert ungated == [], f"these repeat the pull request without consulting the gate: {ungated}"
+
+
+def test_nothing_a_main_only_job_waits_on_consults_the_gate() -> None:
+    """A job confined to main must not be skipped because something it needs was.
+
+    GitHub skips a job whose dependency skipped, so gating a shared job would silently take
+    the main-only ones with it.
+    """
+    jobs = _jobs()
+    for name, job in jobs.items():
+        if not _runs_only_on_main(job):
+            continue
+        gated = sorted(
+            dependency
+            for dependency in _transitive_needs(name, jobs)
+            if dependency != GATE_JOB and _consults_the_gate(jobs[dependency])
+        )
+        assert gated == [], f"{name} runs only on main but waits on gated {gated}"
+
+
+def test_an_unanswered_gate_leaves_the_work_running() -> None:
+    """The gate fails safe: where it answers nothing, every job runs as it would without it.
+
+    The compare step does not run for a schedule or a manual run, and the lookups inside it
+    answer ``unknown`` rather than failing, so an empty output is an ordinary outcome. Every
+    consumer must read it as "test this tree": it may only stand work down on ``'true'``.
+    """
+    for name, job in _jobs().items():
+        if name == GATE_JOB or not _consults_the_gate(job):
+            continue
+        condition = job.get("if")
+        assert condition in (None, GATE_CONDITION), f"{name} runs only when {condition}"
+
+        pattern = rf"needs\.{GATE_JOB}\.outputs\.skip\s*(==|!=)\s*'([a-z]+)'"
+        compared = set(re.findall(pattern, yaml.safe_dump(job)))
+        assert {value for _, value in compared} == {"true"}, f"{name} compares against {compared}"
