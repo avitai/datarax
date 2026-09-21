@@ -6,9 +6,7 @@ persists such a state dictionary under an integer step as the ``data_iterator``
 item of substrax's :class:`~substrax.checkpoint.OrbaxCheckpointStore`, which
 carries arrays, typed PRNG keys and plain-Python leaves (positions, seeds, sampler
 reprs) alike, and restores it back into a freshly built object after checking
-that the object was built the same way as the one that was saved. A root written
-by datarax 0.1.11 or earlier (substrax's format 2, the state as the one payload)
-is read through :data:`ITERATOR_STATE_FORMAT2`.
+that the object was built the same way as the one that was saved.
 """
 
 from __future__ import annotations
@@ -18,7 +16,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Self
 
-from substrax.checkpoint import CheckpointStore, LegacyLayout, OrbaxCheckpointStore
+from substrax.checkpoint import CheckpointStore, OrbaxCheckpointStore
 
 from datarax.typing import Checkpointable
 
@@ -26,17 +24,6 @@ from datarax.typing import Checkpointable
 logger = logging.getLogger(__name__)
 
 ITEM = "data_iterator"
-
-ITERATOR_STATE_FORMAT2 = LegacyLayout(
-    name="datarax-iterator",
-    items_of=lambda payload: {ITEM: payload},
-    template_of=lambda templates: templates[ITEM],
-)
-"""The format-2 layout datarax 0.1.11 wrote: the state dictionary as the one payload.
-
-Pass it to ``substrax.checkpoint.upgrade_checkpoints`` to rewrite such a root in the
-current format; :meth:`IteratorCheckpoint.restore` reads one in place.
-"""
 
 # Grain-style identity fields that must stay compatible across a checkpoint
 # restore. Following Grain's checkpoint validation: sampler / data-source
@@ -249,7 +236,7 @@ class IteratorCheckpoint:
             step = self.latest_step()
             if step is None:
                 raise ValueError(f"No checkpoints found in {self.base_dir}")
-        checkpoint = self.store.restore(step, legacy_layout=ITERATOR_STATE_FORMAT2)
+        checkpoint = self.store.restore(step)
         restored = checkpoint.items[ITEM]
         validate_restore_compatibility(target.get_state(), restored)
         target.set_state(restored)

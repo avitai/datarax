@@ -18,11 +18,6 @@ Datarax's checkpointing system is built on:
    plain-Python leaves (positions, seeds, sampler reprs) alike, keeps the most recent
    `max_to_keep` steps, and records your `metadata` in the checkpoint's `extra`.
 
-A root written by datarax 0.1.11 or earlier (substrax's format 2, the state as the one
-payload) restores through `IteratorCheckpoint` unchanged, and
-`substrax.checkpoint.upgrade_checkpoints(source, destination,
-legacy_layout=ITERATOR_STATE_FORMAT2)` rewrites it in the current format into a new root.
-
 ## Saving and Restoring
 
 ```python
