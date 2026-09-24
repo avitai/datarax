@@ -27,6 +27,7 @@ from datarax.sources._grain_bridge import records_from_batched_mapping, validate
 from datarax.sources.source_ops import (
     configure_stochastic_from_shuffle,
     partition_length,
+    record_count,
     resolve_wrapped_indices,
 )
 
@@ -158,24 +159,10 @@ class MemorySource(DataSourceModule):
         self._is_random_order = config.shuffle
         self.prefetch_size = config.prefetch_size
 
-        # Calculate and validate length
-        if isinstance(data, dict):
-            # Verify all arrays have the same first dimension size
-            lengths = []
-            for _key, value in data.items():
-                if hasattr(value, "__len__"):
-                    lengths.append(len(value))
-
-            if not lengths:
-                raise ValueError("Data dictionary must contain at least one array-like value")
-            if not all(length == lengths[0] for length in lengths):
-                raise ValueError(
-                    f"All arrays in data dictionary must have the same length. "
-                    f"Got lengths: {dict(zip(data.keys(), lengths, strict=False))}"
-                )
-            self.length = lengths[0]
-        else:
-            self.length = len(data)
+        # The length is read from the data on every call; reading it here validates the data.
+        if isinstance(data, dict) and not any(hasattr(value, "__len__") for value in data.values()):
+            raise ValueError("Data dictionary must contain at least one array-like value")
+        record_count(data)
 
         # State variables for stateful iteration
         self.index = nnx.Variable(0)
@@ -198,6 +185,14 @@ class MemorySource(DataSourceModule):
             )
         else:
             self.metadata_manager = None
+
+    @property
+    def length(self) -> int:
+        """Records the data holds now, across all workers (see :func:`record_count`).
+
+        Read from ``data`` on every call, so data replaced after construction is counted.
+        """
+        return record_count(self.data)
 
     def __len__(self) -> int:
         """Return the number of records this source serves.
@@ -246,21 +241,23 @@ class MemorySource(DataSourceModule):
 
         num_workers = self.config.num_workers
         shard_id = self.config.shard_id or 0
+        # One pass serves the data as it is when the pass starts.
+        length = self.length
 
         if self.is_random_order and self.rngs is not None:
             seed, epoch = self._host_shuffle_seed(), self.epoch.get_value()
             if num_workers > 1:
                 # Partition: yield elements at global positions [shard_id::num_workers]
-                for i in range(shard_id, self.length, num_workers):
-                    yield self._get_element(index_shuffle(i, seed, self.length, epoch))
+                for i in range(shard_id, length, num_workers):
+                    yield self._get_element(index_shuffle(i, seed, length, epoch))
             else:
-                for i in range(self.length):
-                    yield self._get_element(index_shuffle(i, seed, self.length, epoch))
+                for i in range(length):
+                    yield self._get_element(index_shuffle(i, seed, length, epoch))
         elif num_workers > 1:
-            for i in range(shard_id, self.length, num_workers):
+            for i in range(shard_id, length, num_workers):
                 yield self._get_element(i)
         else:
-            for i in range(self.length):
+            for i in range(length):
                 yield self._get_element(i)
 
     def __getitem__(self, index: int) -> Any:
@@ -275,11 +272,12 @@ class MemorySource(DataSourceModule):
         Raises:
             IndexError: If index is out of bounds
         """
+        length = self.length
         if index < 0:
-            index = self.length + index
+            index = length + index
 
-        if index < 0 or index >= self.length:
-            raise IndexError(f"Index {index} out of range for source with {self.length} elements")
+        if index < 0 or index >= length:
+            raise IndexError(f"Index {index} out of range for source with {length} elements")
 
         return self._get_element(index)
 
@@ -311,32 +309,33 @@ class MemorySource(DataSourceModule):
         Returns:
             Batch of data with shape (batch_size, ...)
         """
+        length = self.length
         # Get indices for this batch
         if key is not None:
             # Stateless mode: the first records of the order ``key`` selects
             if self.is_random_order:
-                positions = jnp.arange(min(batch_size, self.length), dtype=jnp.int32)
-                indices = np.asarray(shuffle_positions(positions, self.length, key))
+                positions = jnp.arange(min(batch_size, length), dtype=jnp.int32)
+                indices = np.asarray(shuffle_positions(positions, length, key))
                 return self._gather_batch(indices)
             # Sequential: use slicing (zero-copy for arrays)
-            return self._gather_batch_slice(0, min(batch_size, self.length))
+            return self._gather_batch_slice(0, min(batch_size, length))
         # Stateful mode - use internal index
         start = self.index.get_value()
-        end = min(start + batch_size, self.length)
+        end = min(start + batch_size, length)
         epoch = self.epoch.get_value()
         if self.is_random_order:
             # The records at positions [start, end) of this batch's epoch, read before the
             # epoch advances at its end.
             positions = np.arange(start, end)
             batch = self._gather_batch(
-                shuffle_positions_host(positions, self.length, self._host_shuffle_seed(), epoch)
+                shuffle_positions_host(positions, length, self._host_shuffle_seed(), epoch)
             )
         else:
             # Sequential: use slicing (zero-copy for arrays)
             batch = self._gather_batch_slice(start, end)
 
         # Update index for next call
-        new_index = end % self.length
+        new_index = end % length
         self.index.set_value(new_index)
         if new_index == 0:
             self.epoch.set_value(epoch + 1)

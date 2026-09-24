@@ -34,6 +34,34 @@ from datarax.samplers.index_shuffle import (
 )
 
 
+def record_count(data: Any) -> int:
+    """Return how many records a source's data holds.
+
+    A mapping holds as many records as its columns -- every value with a length, arrays and
+    sequences alike -- and they must agree; a mapping with no such column holds none. Any other
+    sequence holds one record per element. In-memory sources read their length through this
+    on every call, so it follows data replaced after construction.
+
+    Args:
+        data: The data a source serves: a mapping of columns, or a sequence of records.
+
+    Returns:
+        The record count.
+
+    Raises:
+        ValueError: If the mapping's columns disagree on their length.
+    """
+    if not isinstance(data, dict):
+        return len(data)
+    counts = {len(value) for value in data.values() if hasattr(value, "__len__")}
+    if len(counts) > 1:
+        lengths = {key: len(value) for key, value in data.items() if hasattr(value, "__len__")}
+        raise ValueError(
+            f"All arrays in data dictionary must have the same length. Got lengths: {lengths}"
+        )
+    return counts.pop() if counts else 0
+
+
 def partition_length(length: int, num_workers: int = 1, shard_id: int = 0) -> int:
     """Return how many records worker ``shard_id`` of ``num_workers`` serves.
 

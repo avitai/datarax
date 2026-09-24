@@ -304,8 +304,6 @@ class TFDSEagerSource(EagerSourceBase):
         self._cleanup_tf()
 
         # State for iteration (like MemorySource)
-        first_key = next(iter(self.data.keys()))
-        self.length = self.data[first_key].shape[0]
         self.index = nnx.Variable(0)
         self.epoch = nnx.Variable(0)
 

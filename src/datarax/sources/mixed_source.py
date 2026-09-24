@@ -178,15 +178,20 @@ class MixDataSourcesNode(DataSourceModule):
         self._weights = tuple(weights)
         self.index = nnx.Variable(0)
         self.epoch = nnx.Variable(0)
-        lengths = [len(s) for s in sources]
-        self._total_len = sum(lengths)
-        # A mixed record's index is its source's offset plus its index within that source.
-        self._offsets = tuple(sum(lengths[:position]) for position in range(len(lengths)))
         self._iterator: Iterator[Any] | None = None
 
     def __len__(self) -> int:
-        """Return total elements across all child sources."""
-        return self._total_len
+        """Return total elements across all child sources, as long as they are now."""
+        return sum(len(source) for source in self._sources)
+
+    def _offsets(self) -> tuple[int, ...]:
+        """Where each source's records start in the concatenation of the sources, now.
+
+        A mixed record's index is its source's offset plus its index within that source;
+        offsets follow the sources' current lengths, as the sampling does.
+        """
+        lengths = [len(source) for source in self._sources]
+        return tuple(sum(lengths[:position]) for position in range(len(lengths)))
 
     def __repr__(self) -> str:
         """Config-identifying representation for checkpoint validation.
@@ -198,7 +203,7 @@ class MixDataSourcesNode(DataSourceModule):
         return (
             f"MixDataSourcesNode(sources=[{child_reprs}], "
             f"weights={list(self._weights)!r}, "
-            f"length={self._total_len})"
+            f"length={len(self)})"
         )
 
     def __iter__(self) -> "MixDataSourcesNode":
@@ -210,7 +215,7 @@ class MixDataSourcesNode(DataSourceModule):
 
     def __next__(self) -> Any:
         """Sample a source by weight and yield the next element from it."""
-        if self.index.get_value() >= self._total_len:
+        if self.index.get_value() >= len(self):
             raise StopIteration
 
         if self._iterator is None:
@@ -298,7 +303,7 @@ class MixDataSourcesNode(DataSourceModule):
             ValueError: If ``key is None``.
         """
         chosen_sources, local_indices, _ = self._selections(start, size, key)
-        return jnp.asarray(self._offsets, dtype=jnp.int32)[chosen_sources] + local_indices
+        return jnp.asarray(self._offsets(), dtype=jnp.int32)[chosen_sources] + local_indices
 
     def get_batch_at(  # noqa: DOC502
         self,

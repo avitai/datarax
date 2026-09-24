@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An in-memory source's length is read from its data. `MemorySource` and the eager HF and TFDS
+  sources copied it at construction while `data` stays a public attribute: after the data was
+  replaced (8 records by 12), `len(source)` stayed 8 and a pipeline served 8 records and
+  stopped. `MixDataSourcesNode` froze its total and per-source offsets while it sampled each
+  child's current length, so a child that grew produced record indices colliding with another
+  source's, and per-record randomness is keyed on them. All read the length now through
+  `datarax.sources.source_ops.record_count`, which replaces three differing implementations
+  (MemorySource's check, HF's first-column read, TFDS's first-key shape). Sources over storage
+  that cannot change while they exist (the Grain adapter's per-pass snapshot, memmaps, split
+  metadata) keep reading it once. An `EagerSourceBase` subclass no longer sets `length`.
 - A module's checkpoint (`DataraxModule.get_state`) holds its `nnx.Variable` state only. It held
   every leaf `nnx.state` reaches, including a `MemorySource`'s data arrays, so each checkpoint
   carried the whole dataset (25.6 MB for a 25.6 MB source) and `set_state` could not restore it

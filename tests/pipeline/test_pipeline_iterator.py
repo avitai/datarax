@@ -348,15 +348,18 @@ class TestSessionBehavior:
     """Sessions share compiled steps and honor structural changes."""
 
     def test_sessions_reuse_compiled_step(self):
+        # The compiled step is shared by every pipeline of this structure, across record
+        # counts (one entry per data shape), so what a second session must not do is add one.
         pipeline = _pipeline()
         first = _session(pipeline)
         next(first)
         first.close()
+        entries_after_first = first._pure_step._cache_size()
         second = _session(pipeline)
         next(second)
         second.close()
         assert second._pure_step is first._pure_step
-        assert second._pure_step._cache_size() == 1
+        assert second._pure_step._cache_size() == entries_after_first
 
     def test_a_pipeline_of_the_same_structure_reuses_the_compiled_step(self):
         """A new pipeline instance with an identical module graph compiles nothing.
@@ -366,11 +369,12 @@ class TestSessionBehavior:
         first = _session(_pipeline())
         next(first)
         first.close()
+        entries_after_first = first._pure_step._cache_size()
         second = _session(_pipeline())
         next(second)
         second.close()
         assert second._pure_step is first._pure_step
-        assert second._pure_step._cache_size() == 1
+        assert second._pure_step._cache_size() == entries_after_first
 
     def test_structural_change_compiles_fresh_session(self):
         """Static attributes (e.g. batch_size) key the compiled session."""
@@ -442,7 +446,7 @@ class TestSessionRetracing:
         next(second)
         second.close()
         assert second._pure_step is first._pure_step
-        assert second._pure_step._cache_size() == traces_after_first == 1
+        assert second._pure_step._cache_size() == traces_after_first
 
 
 class TestImmutableStaging:

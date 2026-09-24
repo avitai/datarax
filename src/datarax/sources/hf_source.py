@@ -127,14 +127,6 @@ def _hf_column_to_jax(values: Any) -> Any:
     return _stack_hf_array_columns(buffer)["column"]
 
 
-def _infer_hf_column_length(data: dict[str, Any]) -> int:
-    """Infer row count from a loaded eager HF column mapping."""
-    first_value = next(iter(data.values()))
-    if hasattr(first_value, "shape"):
-        return int(first_value.shape[0])
-    return len(first_value)
-
-
 @dataclass(frozen=True)
 class HFEagerConfig(SourceConfigBase):
     """Configuration for HFEagerSource (loads all data to JAX at init).
@@ -293,7 +285,6 @@ class HFEagerSource(EagerSourceBase):
         gc.collect()
 
         # State for iteration (like MemorySource)
-        self.length = _infer_hf_column_length(self.data)
         self.index = nnx.Variable(0)
         self.epoch = nnx.Variable(0)
 

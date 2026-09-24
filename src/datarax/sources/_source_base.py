@@ -19,6 +19,7 @@ from datarax.sources.source_ops import (
     format_source_repr,
     gather_eager_batch,
     get_eager_item,
+    record_count,
     reset_streaming_state,
     resolve_wrapped_indices,
     streaming_apply_batch,
@@ -34,7 +35,6 @@ class EagerSourceBase(DataSourceModule):
     Subclasses must define the following attributes in their ``__init__``:
 
     - ``data`` (``dict[str, Any]``): The loaded dataset as a key→array mapping.
-    - ``length`` (``int``): Total number of elements.
     - ``index`` (``nnx.Variable``): Current iteration index.
     - ``epoch`` (``nnx.Variable``): Current epoch counter.
     - ``_seed`` (``int``): Base integer seed of the shuffle.
@@ -46,7 +46,6 @@ class EagerSourceBase(DataSourceModule):
 
     # -- Abstract attribute declarations (set by concrete subclasses) --
     data: dict[str, Any]
-    length: int
     index: nnx.Variable[int]  # pyright: ignore[reportGeneralTypeIssues]
     epoch: nnx.Variable[int]  # pyright: ignore[reportGeneralTypeIssues]
     _seed: int
@@ -54,6 +53,11 @@ class EagerSourceBase(DataSourceModule):
     dataset_name: str | None
     split_name: str | None
     _dataset_info: Any
+
+    @property
+    def length(self) -> int:
+        """Records the source's data holds now, read from ``data`` (see :func:`record_count`)."""
+        return record_count(self.data)
 
     def __len__(self) -> int:
         """Return total number of elements."""
