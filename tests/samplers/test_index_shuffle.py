@@ -69,12 +69,18 @@ def _orders(length: int, seed: int, count: int) -> np.ndarray:
     )
 
 
-def _affine_orders(length: int, seed: int, count: int) -> np.ndarray:
-    """The statistics' control: a structured bijection, ``(a * i + b) mod length``, odd ``a``."""
+def _affine_orders(length: int, seed: int, count: int, served: int | None = None) -> np.ndarray:
+    """The statistics' control: a structured bijection, ``(a * i + b) mod length``, odd ``a``.
+
+    Only the first ``served`` positions are computed (all of them by default): ``count`` orders of
+    a large ``length`` in full would be ``count * length`` values, 16.8 GB for 2,000 orders of
+    2**20 records.
+    """
     rng = np.random.default_rng(seed)
     a = rng.integers(0, length // 2, count) * 2 + 1
     b = rng.integers(0, length, count)
-    return (a[:, None] * np.arange(length)[None, :] + b[:, None]) % length
+    positions = np.arange(length if served is None else served)
+    return (a[:, None] * positions[None, :] + b[:, None]) % length
 
 
 def _chi_square_p(observed: np.ndarray, expected: np.ndarray) -> float:
@@ -155,7 +161,7 @@ class TestQuality:
         assert _avalanche_p(np.asarray(outputs), bits) > 1e-4
 
     def test_the_avalanche_check_detects_a_structured_bijection(self) -> None:
-        assert _avalanche_p(_affine_orders(1 << 20, 11, 2000)[:, :256], 20) < 1e-4
+        assert _avalanche_p(_affine_orders(1 << 20, 11, 2000, served=256), 20) < 1e-4
 
     @pytest.mark.parametrize("seed", [11, 12, 13])
     def test_the_first_two_records_served_are_uniform_pairs(self, seed: int) -> None:
