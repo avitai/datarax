@@ -41,7 +41,6 @@ from datarax.sources._conversion import tf_to_jax
 from datarax.sources._source_base import EagerSourceBase, StreamingSourceBase
 from datarax.sources.source_ops import (
     converted_filtered_record,
-    EpochOrderCache,
     validate_eager_source_settings,
     validate_positive_optional_int,
     validate_streaming_source_settings,
@@ -307,7 +306,6 @@ class TFDSEagerSource(EagerSourceBase):
         # State for iteration (like MemorySource)
         first_key = next(iter(self.data.keys()))
         self.length = self.data[first_key].shape[0]
-        self._epoch_order = EpochOrderCache(self.length)
         self.index = nnx.Variable(0)
         self.epoch = nnx.Variable(0)
 

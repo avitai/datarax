@@ -39,7 +39,6 @@ from datarax.sources._conversion import hf_to_jax
 from datarax.sources._source_base import EagerSourceBase, StreamingSourceBase
 from datarax.sources.source_ops import (
     converted_filtered_record,
-    EpochOrderCache,
     validate_eager_source_settings,
     validate_streaming_source_settings,
 )
@@ -295,7 +294,6 @@ class HFEagerSource(EagerSourceBase):
 
         # State for iteration (like MemorySource)
         self.length = _infer_hf_column_length(self.data)
-        self._epoch_order = EpochOrderCache(self.length)
         self.index = nnx.Variable(0)
         self.epoch = nnx.Variable(0)
 

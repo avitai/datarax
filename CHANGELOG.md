@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A shuffled source's order is a keyed bijection computed per record,
+  `datarax.samplers.index_shuffle.shuffle_positions`: CCCL's Feistel bijection (the
+  VariablePhilox cipher of Mitchell et al., "Bandwidth-optimal random shuffling for GPUs", ACM
+  TOPC 2022, as in `thrust::shuffle`) ported to JAX, with cycle-walking into the dataset's range.
+  A shuffled batch costs O(batch) at every dataset size and a step stores and writes back no
+  order. The permutation it replaces cost O(N) per batch: a continuous stream asked a one-key
+  cache for two alternating epoch keys and recomputed the permutation four times per batch
+  (135 ms per batch of 256 at 65,536 records on CPU), and even a cache hit wrote the whole order
+  back from every step (2.0 ms per batch at 4M records). Shuffled orders differ from earlier
+  releases for the same key. `resolve_wrapped_indices` and the stateless `get_batch(key=...)` of
+  the eager sources use it.
+
+### Removed
+
+- `EpochOrderCache` and the `order=` parameter of `resolve_wrapped_indices`: no order is stored.
+
 ## [0.1.15] - 2026-09-21
 
 ### Security

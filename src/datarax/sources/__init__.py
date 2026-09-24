@@ -31,7 +31,6 @@ from datarax.sources.source_ops import (
     eager_get_batch,
     eager_iter,
     eager_reset,
-    EpochOrderCache,
     resolve_wrapped_indices,
 )
 
@@ -339,6 +338,5 @@ __all__ = [
     "eager_get_batch",
     "eager_iter",
     "eager_reset",
-    "EpochOrderCache",
     "resolve_wrapped_indices",
 ]

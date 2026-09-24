@@ -21,7 +21,6 @@ from datarax.samplers.index_shuffle import index_shuffle
 from datarax.sources._grain_bridge import records_from_batched_mapping, validate_index_batch
 from datarax.sources.source_ops import (
     configure_stochastic_from_shuffle,
-    EpochOrderCache,
     partition_length,
     resolve_wrapped_indices,
 )
@@ -176,8 +175,6 @@ class MemorySource(DataSourceModule):
         # State variables for stateful iteration
         self.index = nnx.Variable(0)
         self.epoch = nnx.Variable(0)
-        # The epoch's permutation for indexed access, computed once per epoch key.
-        self._epoch_order = EpochOrderCache(self.length)
 
         # Shuffle state (computed lazily per epoch)
         self._shuffle_seed: int | None = None  # Feistel seed, derived from RNG
@@ -360,9 +357,6 @@ class MemorySource(DataSourceModule):
         Returns:
             Int32 ``jax.Array`` of shape ``(size,)``.
         """
-        order = None
-        if self.is_random_order and key is not None:
-            order = self._epoch_order.order_for(key)
         return resolve_wrapped_indices(
             start,
             size,
@@ -371,7 +365,6 @@ class MemorySource(DataSourceModule):
             key,
             num_workers=self.config.num_workers,
             shard_id=self.config.shard_id or 0,
-            order=order,
         )
 
     def get_batch_at(
@@ -393,12 +386,12 @@ class MemorySource(DataSourceModule):
         - **Sequential** (``MemorySourceConfig(shuffle=False)``): returns
           the contiguous slice ``data[start : start + size]`` with
           wrap-around at the end of the source.
-        - **Shuffled** (``MemorySourceConfig(shuffle=True)``): applies a
-          deterministic permutation derived from ``key`` and returns the
-          slice of that permutation. Same ``(start, size, key)`` always
-          returns the same output; different ``key`` yields a different
-          permutation. The permutation is computed once per epoch key and
-          reused by every batch of the epoch (:class:`EpochOrderCache`).
+        - **Shuffled** (``MemorySourceConfig(shuffle=True)``): returns the
+          slice of the order ``key`` shuffles the records into. Same
+          ``(start, size, key)`` always returns the same output; a
+          different ``key`` gives a different order. Each record's index is
+          computed on its own, so a batch costs O(size) at every dataset
+          size and no order is stored.
 
         Args:
             start: Starting logical index (inclusive); accepts concrete

@@ -16,7 +16,6 @@ from datarax.sources.source_ops import (
     eager_get_batch_default,
     eager_iter_default,
     eager_reset,
-    EpochOrderCache,
     format_source_repr,
     gather_eager_batch,
     get_eager_item,
@@ -40,8 +39,6 @@ class EagerSourceBase(DataSourceModule):
     - ``epoch`` (``nnx.Variable``): Current epoch counter.
     - ``_seed`` (``int``): Base integer seed for Grain index_shuffle.
     - ``_is_random_order`` (``bool``): Whether to randomize iteration order.
-    - ``_epoch_order`` (``EpochOrderCache``): The epoch's permutation for indexed access,
-      built over ``length``.
     - ``dataset_name`` (``str | None``): Human-readable dataset name.
     - ``split_name`` (``str | None``): Dataset split identifier.
     - ``_dataset_info`` (``Any``): Cached backend-specific dataset metadata.
@@ -54,7 +51,6 @@ class EagerSourceBase(DataSourceModule):
     epoch: nnx.Variable[int]  # pyright: ignore[reportGeneralTypeIssues]
     _seed: int
     _is_random_order: bool
-    _epoch_order: EpochOrderCache
     dataset_name: str | None
     split_name: str | None
     _dataset_info: Any
@@ -130,12 +126,7 @@ class EagerSourceBase(DataSourceModule):
         Returns:
             Int32 ``jax.Array`` of shape ``(size,)``.
         """
-        order = None
-        if self.is_random_order and key is not None:
-            order = self._epoch_order.order_for(key)
-        return resolve_wrapped_indices(
-            start, size, self.length, self.is_random_order, key, order=order
-        )
+        return resolve_wrapped_indices(start, size, self.length, self.is_random_order, key)
 
     def get_batch_at(
         self,
@@ -156,12 +147,11 @@ class EagerSourceBase(DataSourceModule):
         - **Sequential** (``self.is_random_order == False``): returns the
           contiguous slice ``data[start : start + size]`` with
           wrap-around at the end of the source.
-        - **Shuffled** (``self.is_random_order == True``): applies a
-          deterministic permutation derived from ``key`` and returns the
-          slice of that permutation. Same ``(start, size, key)`` always
-          returns the same output. The permutation is materialized via
-          ``jax.random.permutation(key, length)`` per call — O(length)
-          per batch.
+        - **Shuffled** (``self.is_random_order == True``): returns the
+          slice of the order ``key`` shuffles the records into. Same
+          ``(start, size, key)`` always returns the same output. Each
+          record's index is computed on its own, so a batch costs O(size)
+          at every dataset size and no order is stored.
 
         Args:
             start: Starting logical index; accepts concrete int or

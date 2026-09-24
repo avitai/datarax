@@ -32,7 +32,6 @@ from flax import nnx
 
 from datarax.core.config import StructuralConfig
 from datarax.sources._source_base import EagerSourceBase
-from datarax.sources.source_ops import EpochOrderCache
 
 
 class _FakeEagerSource(EagerSourceBase):
@@ -43,7 +42,6 @@ class _FakeEagerSource(EagerSourceBase):
         self.data = nnx.data(data)
         leaves = jax.tree.leaves(data)
         self.length = int(leaves[0].shape[0]) if leaves else 0
-        self._epoch_order = EpochOrderCache(self.length)
         self.index = nnx.Variable(jnp.int32(0))
         self.epoch = nnx.Variable(jnp.int32(0))
         self._seed = seed
