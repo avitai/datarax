@@ -91,6 +91,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Batch types: sources return `DataDict` (`get_records`, `get_batch_at`); pipeline outputs are
   `PipelineBatch` (`datarax.typing`, field names to arrays or pytrees of arrays): `step()`,
   iteration, `Pipeline.__call__` and the compiled step body.
+- **A pipeline is checkpointable**: `Pipeline.get_state()`/`set_state()` implement the
+  `Checkpointable` protocol, so `IteratorCheckpoint` saves and restores a tuned pipeline -- every
+  stage's parameters, the source's state and where iteration stands, no data -- for inference or
+  further training. The guides documented `checkpoint.save(pipeline, ...)` while `Pipeline` had no
+  `get_state`. The state logic moves out of `DataraxModule` into
+  `datarax.core.module.module_state` / `restore_module_state`, which both call; each
+  `DataraxModule` in a pipeline still upgrades its own earlier layout.
 - `Pipeline.__call__(batch, records=None)`: `records` (`datarax.pipeline.dag.Records`: each
   row's index and epoch) is what the step served; a direct call without it names the records at
   the current position. A subclass overriding `__call__` accepts the argument.

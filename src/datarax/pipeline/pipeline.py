@@ -61,6 +61,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.data_source import DataSourceModule
+from datarax.core.module import module_state, restore_module_state
 from datarax.core.spec import batch_length, declared_spec, validate_batch, validate_device_dtypes
 from datarax.pipeline.dag import record_count, Records, run_dag
 from datarax.pipeline.epochs import EpochPlan
@@ -464,6 +465,31 @@ class Pipeline(nnx.Module):
         position, epoch = EpochPlan.next_epoch(self._epoch[...])
         self._position[...] = jnp.asarray(position, dtype=jnp.int32)
         self._epoch[...] = epoch
+
+    def get_state(self) -> dict[str, Any]:
+        """The pipeline's checkpoint state: its parameters, its source's and where it stands.
+
+        That is every stage's parameters and state, the source's state, and where iteration
+        stands (position, epoch, the epoch key and RNG counts); never the data. A session
+        writes its progress into the pipeline at every batch it yields, so state taken during
+        iteration holds the batches already served.
+
+        Returns:
+            The state as a pure dictionary (see :func:`~datarax.core.module.module_state`).
+        """
+        return module_state(self)
+
+    def set_state(self, state: dict[str, Any]) -> None:
+        """Restore :meth:`get_state` into this pipeline, built the way the saved one was.
+
+        A restored pipeline resumes where the saved one stood, with its tuned parameters, for
+        inference or further training. A session opened before the restore keeps its own record
+        of the position, as it does across :meth:`reset`; iterate again for a new one.
+
+        Args:
+            state: The saved state (see :func:`~datarax.core.module.restore_module_state`).
+        """
+        restore_module_state(self, state)
 
     def step(self) -> PipelineBatch:
         """Serve the next batch from the source through the DAG.
