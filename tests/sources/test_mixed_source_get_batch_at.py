@@ -215,3 +215,28 @@ def test_mixed_source_repr_lists_children_and_weights() -> None:
     assert "MemorySource" in r  # child reprs are embedded
     assert "0.25" in r and "0.75" in r
     assert "length=8" in r
+
+
+# ---------- D. Record naming ----------
+
+
+def test_mixed_record_indices_name_the_records_served_even_with_shuffled_children() -> None:
+    """A mixed record's index is its source's offset plus the child's RECORD index.
+
+    With a shuffled child, the child's record at a position is not the position, so the index
+    must name the record, or per-record randomness is keyed on the wrong record.
+    """
+    values_a = np.arange(8, dtype=np.float32)
+    values_b = 100.0 + np.arange(8, dtype=np.float32)
+    children = [
+        MemorySource(MemorySourceConfig(shuffle=True), {"x": jnp.asarray(v)}, rngs=nnx.Rngs(s))
+        for s, v in ((1, values_a), (2, values_b))
+    ]
+    mix = MixDataSourcesNode(MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)), children)
+    key = jax.random.key(5)
+
+    ids = np.asarray(mix.record_indices_at(start=0, size=64, key=key))
+    served = np.asarray(mix.get_batch_at(start=0, size=64, key=key)["x"])
+
+    np.testing.assert_array_equal(served, np.concatenate([values_a, values_b])[ids])
+    np.testing.assert_array_equal(np.asarray(mix.get_records(jnp.asarray(ids))["x"]), served)

@@ -489,11 +489,12 @@ class NewDataSource(DataSourceModule):
         # stores it as self.config
         super().__init__(config, name=name)
 
-    def get_batch_at(self, start, size, key=None):
-        """Return `size` records from `start` as JAX arrays; stateless and traceable.
+    def get_records(self, indices):
+        """Return the records at `indices` as JAX arrays; stateless and traceable.
 
-        Implementing it is what gives a source indexed access. A forward-only
-        source implements get_batch(batch_size) instead.
+        Implementing it is what gives a source indexed access (get_batch_at is
+        get_records of record_indices_at). A forward-only source implements
+        get_batch(batch_size) instead.
         """
         # Your implementation
 

@@ -372,52 +372,26 @@ class MemorySource(DataSourceModule):
             shard_id=self.config.shard_id or 0,
         )
 
-    def get_batch_at(
-        self,
-        start: int | jax.Array,
-        size: int,
-        key: jax.Array | None = None,
-    ) -> Any:
-        """Stateless indexed batch access; JIT-traceable for scan-based iteration.
+    def get_records(self, indices: jax.Array) -> Any:
+        """Gather the records at ``indices``; JIT-traceable for scan-based iteration.
 
-        Returns ``size`` records starting at logical position ``start`` of the order this
-        source serves (see :meth:`record_indices_at`).
-        Does not advance ``self.index`` or any other internal state, so
-        callers can drive iteration via their own ``nnx.Variable`` position
-        counter and trace ``get_batch_at`` under ``nnx.scan`` / ``nnx.jit``.
-
-        Two modes:
-
-        - **Sequential** (``MemorySourceConfig(shuffle=False)``): returns
-          the contiguous slice ``data[start : start + size]`` with
-          wrap-around at the end of the source.
-        - **Shuffled** (``MemorySourceConfig(shuffle=True)``): returns the
-          slice of the order ``key`` shuffles the records into. Same
-          ``(start, size, key)`` always returns the same output; a
-          different ``key`` gives a different order. Each record's index is
-          computed on its own, so a batch costs O(size) at every dataset
-          size and no order is stored.
+        Indices are global, as :meth:`record_indices_at` names them, so a record has one index on
+        every worker. Stateless, so callers can drive iteration via their own ``nnx.Variable``
+        position counter and trace it under ``nnx.scan`` / ``nnx.jit``.
 
         Args:
-            start: Starting logical index (inclusive); accepts concrete
-                int or traced ``jax.Array``.
-            size: Number of records to return (must be a Python int —
-                JAX shapes are static).
-            key: PRNG key for shuffled mode. Required when the source is
-                configured with ``shuffle=True``; ignored otherwise.
+            indices: Int32 record indices in ``[0, len(self))``; concrete or traced.
 
         Returns:
-            Batch dict with leading dim ``size``.
+            Batch dict (or array, for array data) with leading dim ``len(indices)``.
         """
-        indices = self.record_indices_at(start, size, key)
-
         data = self.data
         if isinstance(data, dict):
             return {
-                key_name: jnp.take(jnp.asarray(value), indices, axis=0, mode="wrap")
+                key_name: jnp.take(jnp.asarray(value), indices, axis=0)
                 for key_name, value in data.items()
             }
-        return jnp.take(jnp.asarray(data), indices, axis=0, mode="wrap")
+        return jnp.take(jnp.asarray(data), indices, axis=0)
 
     def _host_shuffle_seed(self) -> int:
         """The host shuffle's seed, drawn from its RNG stream on first use and kept.

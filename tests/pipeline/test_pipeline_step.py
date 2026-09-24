@@ -172,8 +172,8 @@ class TestNoCopy:
         batches = iter(iterated)
         for _ in range(5):
             expected, served = next(batches), stepped.step()
+            assert set(served) == set(expected)
             np.testing.assert_array_equal(served["x"], expected["x"])
-            np.testing.assert_array_equal(served["valid_mask"], expected["valid_mask"])
 
 
 class TestStructure:
@@ -225,7 +225,8 @@ class TestStructure:
         pipeline.step()
         next(iter(pipeline))
         pipeline.step()
-        assert _session_step(graphdef, type(pipeline)._next_batch)._cache_size() == 1
+        step = _session_step(graphdef, type(pipeline)._next_batch, pipeline.batch_size)
+        assert step._cache_size() == 1
 
     def test_a_stage_adding_state_while_it_runs_is_refused(self) -> None:
         with pytest.raises(ValueError, match="changed the module structure"):

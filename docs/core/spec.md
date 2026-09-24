@@ -10,7 +10,7 @@ Two descriptions of the same data are kept apart:
 | `device_spec` | The same data once converted to JAX arrays | `float32` |
 
 A source declares the records its batches carry. `MemorySource` converts its
-stored data to JAX arrays in `get_batch_at`, so it declares `device_spec` of its
+stored data to JAX arrays in `get_records`, so it declares `device_spec` of its
 storage. A streaming source that emits host arrays declares them as they are.
 
 ## Checking batches

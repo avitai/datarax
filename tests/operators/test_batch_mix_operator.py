@@ -396,6 +396,18 @@ class TestBatchMixOperatorStochastic:
             jax.random.key_data(pipeline_key), jax.random.key_data(direct_key)
         )
 
+    def test_a_batch_crossing_epochs_is_keyed_on_its_first_record_s_epoch(self):
+        """A boundary batch carries each record's epoch; the batch key takes the first's."""
+        operator = BatchMixOperator(
+            BatchMixOperatorConfig(mode="mixup"), rngs=nnx.Rngs({"batch_mix": 0})
+        )
+        records = jnp.array([8, 9, 0, 1], jnp.uint32)
+
+        crossing = operator._mix_key(records, jnp.array([3, 3, 4, 4], jnp.int32))
+        first = operator._mix_key(records, jnp.int32(3))
+
+        assert jnp.array_equal(jax.random.key_data(crossing), jax.random.key_data(first))
+
 
 class TestBatchMixOperatorJAX:
     """Test JAX compatibility of BatchMixOperator."""

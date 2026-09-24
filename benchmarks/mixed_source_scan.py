@@ -1,8 +1,8 @@
 """Benchmark: ``Pipeline.scan`` over a ``MixDataSourcesNode`` at varying source counts.
 
-Measures the per-step wall-clock cost of ``MixDataSourcesNode.get_batch_at``
+Measures the per-step wall-clock cost of ``MixDataSourcesNode.get_records``
 under ``Pipeline.scan`` as the number of mixed sources grows. The
-implementation uses ``jax.vmap`` over per-position ``jax.lax.switch``.
+implementation uses ``jax.vmap`` over per-record ``jax.lax.switch``.
 While ``lax.switch`` semantically traces every branch, XLA's compile-time
 dead-branch elimination means the runtime cost stays roughly constant in
 the number of mixed sources — the per-position dispatch + RNG + categorical

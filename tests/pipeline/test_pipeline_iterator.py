@@ -104,11 +104,13 @@ def _session(pipeline: Pipeline) -> PipelineIterator:
 
 
 def _epoch_via_step(pipeline: Pipeline) -> list[np.ndarray]:
-    batches = []
-    length = len(pipeline.source)
-    while int(pipeline._position[...]) < length:
-        batches.append(np.asarray(pipeline.step()["x"]))
-    return batches
+    """One epoch by ``step()``: its batches, the last cut to the rows of the epoch."""
+    extent = pipeline.epoch_plan.run_extent(0)
+    assert extent is not None
+    batches, final_size = extent
+    served = [np.asarray(pipeline.step()["x"]) for _ in range(batches)]
+    served[-1] = served[-1][:final_size]
+    return served
 
 
 # ---------------------------------------------------------------------------
@@ -137,11 +139,12 @@ class TestOutputEquivalence:
         for g, e in zip(got, expected):
             np.testing.assert_array_equal(g, e)
 
-    def test_wraparound_final_batch_matches_step(self):
-        """Non-divisible dataset sizes wrap exactly like step()."""
+    def test_the_short_final_batch_is_the_epoch_s_rows_of_step_s_batch(self):
+        """The session's final batch holds the rows step() serves before crossing the end."""
         expected = _epoch_via_step(_pipeline(n=100))
         got = [np.asarray(b["x"]) for b in _pipeline(n=100)]
         assert len(got) == len(expected) == 4  # ceil(100 / 32)
+        assert got[-1].shape[0] == 4
         for g, e in zip(got, expected):
             np.testing.assert_array_equal(g, e)
 

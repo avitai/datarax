@@ -19,18 +19,22 @@ import numpy as np
 import pytest
 from flax import nnx
 from jax.core import ShapedArray
-from jax.extend.core import ClosedJaxpr, Jaxpr
 
 from datarax.pipeline import Pipeline
-from datarax.pipeline.iteration import _is_per_batch_state, _run_tracking_writes, _Writes
 from datarax.samplers.index_shuffle import (
+    _block_bits,
+    _cycle_walk,
     _encrypt,
+    _FALLBACK_CHANCE,
+    _fixed_passes,
+    _MAX_FIXED_PASSES,
     _ROUNDS,
     index_shuffle,
     shuffle_positions,
     shuffle_positions_host,
 )
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
+from tests.test_common.step_jaxpr import sub_jaxprs, traced_step
 
 
 def _reference_encrypt(value: int, bits: int, keys: list[int]) -> int:
@@ -228,6 +232,55 @@ class TestTransforms:
         np.testing.assert_array_equal(np.asarray(jitted(jnp.int32(10))), _order(50, key)[10:18])
 
 
+class TestFixedPasses:
+    """GPU while loops read their predicate back to the host, so the walk starts with fixed passes.
+
+    A pass applies the cipher only to values still out of range, exactly as the loop does, so any
+    number of fixed passes gives the loop's order; the pass count keeps the loop to one check but
+    for a small chance. Both paths are tested on every backend: ``shuffle_positions`` picks one
+    per platform, and a CPU-only run would otherwise never execute the other.
+    """
+
+    @pytest.mark.parametrize("length", _SIZES)
+    def test_any_number_of_fixed_passes_gives_the_loop_s_order(self, length: int) -> None:
+        positions = jnp.arange(min(length, 512), dtype=jnp.int32)
+        walk = jax.jit(_cycle_walk, static_argnums=(1, 3))
+        shuffle = jax.jit(shuffle_positions, static_argnums=1)
+        for seed in range(4):
+            key = jax.random.key(seed)
+            loop = np.asarray(walk(positions, length, key, 0))
+            for fixed in (1, 2, 7, _fixed_passes(length, positions.size)):
+                np.testing.assert_array_equal(np.asarray(walk(positions, length, key, fixed)), loop)
+            np.testing.assert_array_equal(np.asarray(shuffle(positions, length, key)), loop)
+
+    @pytest.mark.parametrize("length", _SIZES)
+    @pytest.mark.parametrize("count", [1, 256, 4096])
+    def test_the_pass_count_is_the_fewest_meeting_the_fallback_bound(
+        self, length: int, count: int
+    ) -> None:
+        out_of_range = 1.0 - length / (1 << _block_bits(length))
+        passes = _fixed_passes(length, count)
+        if out_of_range == 0.0:
+            assert passes == 1
+            return
+        if passes == _MAX_FIXED_PASSES:
+            assert count * out_of_range ** (passes - 1) > _FALLBACK_CHANCE
+            return
+        assert count * out_of_range**passes <= _FALLBACK_CHANCE
+        assert passes == 1 or count * out_of_range ** (passes - 1) > _FALLBACK_CHANCE
+
+    @pytest.mark.parametrize("length", [1 << 7, (1 << 7) + 1, 255, 1000, 65537, 1_000_003])
+    def test_the_cap_does_not_bind_from_half_the_smallest_domain(self, length: int) -> None:
+        """From 2**7 records a value leaves the range with probability at most 1/2, so even
+        2**22 values meet the fallback bound within the capped passes."""
+        out_of_range = 1.0 - length / (1 << _block_bits(length))
+        count = 1 << 22
+        assert count * out_of_range ** _fixed_passes(length, count) <= _FALLBACK_CHANCE
+
+    def test_a_shorter_source_continues_in_the_loop_past_the_cap(self) -> None:
+        assert _fixed_passes(10, 256) == _MAX_FIXED_PASSES
+
+
 _LARGE = 1 << 20
 
 
@@ -240,39 +293,15 @@ def _shuffled_pipeline(num_epochs: int | None) -> Pipeline:
     return Pipeline(source=source, stages=[], batch_size=8, num_epochs=num_epochs, rngs=nnx.Rngs(0))
 
 
-def _traced_step(pipeline: Pipeline) -> tuple[ClosedJaxpr, tuple[dict, _Writes]]:
-    """The jaxpr of one batch, and the shapes of the batch and the state it writes."""
-    graphdef, per_batch, staged = nnx.split(pipeline, _is_per_batch_state, ...)
-
-    def step(per_batch: nnx.State, staged: nnx.State) -> tuple[dict, _Writes]:
-        return _run_tracking_writes(
-            graphdef, (per_batch, staged), lambda module: module._next_batch()
-        )
-
-    return jax.make_jaxpr(step)(per_batch, staged), jax.eval_shape(step, per_batch, staged)
-
-
-def _sub_jaxprs(jaxpr: Jaxpr) -> list[Jaxpr]:
-    """``jaxpr`` and every jaxpr nested in its equations (cond branches, loop bodies)."""
-    found = [jaxpr]
-    for eqn in jaxpr.eqns:
-        for param in eqn.params.values():
-            for value in param if isinstance(param, tuple | list) else (param,):
-                inner = getattr(value, "jaxpr", value)
-                if isinstance(inner, Jaxpr):
-                    found.extend(_sub_jaxprs(inner))
-    return found
-
-
 class TestBatchCost:
     """A shuffled batch does no work, and writes no state, proportional to the dataset."""
 
     @pytest.mark.parametrize("num_epochs", [1, None], ids=["bounded", "continuous"])
     def test_no_operation_produces_a_dataset_sized_array(self, num_epochs: int | None) -> None:
-        closed, _ = _traced_step(_shuffled_pipeline(num_epochs))
+        closed, _ = traced_step(_shuffled_pipeline(num_epochs))
         sizes = [
             (eqn.primitive.name, int(np.prod(var.aval.shape)))
-            for jaxpr in _sub_jaxprs(closed.jaxpr)
+            for jaxpr in sub_jaxprs(closed.jaxpr)
             for eqn in jaxpr.eqns
             for var in eqn.outvars
             if isinstance(var.aval, ShapedArray)
@@ -282,7 +311,7 @@ class TestBatchCost:
 
     @pytest.mark.parametrize("num_epochs", [1, None], ids=["bounded", "continuous"])
     def test_a_step_writes_no_dataset_sized_state(self, num_epochs: int | None) -> None:
-        _, (batch, writes) = _traced_step(_shuffled_pipeline(num_epochs))
+        _, (batch, writes) = traced_step(_shuffled_pipeline(num_epochs))
         assert batch["x"].shape == (8, 1)
         written = [int(np.prod(leaf.shape)) for leaf in jax.tree.leaves(writes)]
         assert written, "the step wrote nothing, not even its position"

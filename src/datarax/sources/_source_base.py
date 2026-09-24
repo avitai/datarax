@@ -132,46 +132,18 @@ class EagerSourceBase(DataSourceModule):
         """
         return resolve_wrapped_indices(start, size, self.length, self.is_random_order, key)
 
-    def get_batch_at(
-        self,
-        start: int | jax.Array,
-        size: int,
-        key: jax.Array | None = None,
-    ) -> dict[str, Any]:
-        """Stateless indexed batch access; JIT-traceable for scan-based iteration.
-
-        Returns ``size`` records starting at logical position ``start``.
-        Does not advance ``self.index`` or any other internal state, so
-        callers (typically ``Pipeline``) can drive iteration via their
-        own position counter and trace ``get_batch_at`` under
-        ``nnx.scan`` / ``nnx.jit``.
-
-        Two modes:
-
-        - **Sequential** (``self.is_random_order == False``): returns the
-          contiguous slice ``data[start : start + size]`` with
-          wrap-around at the end of the source.
-        - **Shuffled** (``self.is_random_order == True``): returns the
-          slice of the order ``key`` shuffles the records into. Same
-          ``(start, size, key)`` always returns the same output. Each
-          record's index is computed on its own, so a batch costs O(size)
-          at every dataset size and no order is stored.
+    def get_records(self, indices: jax.Array) -> dict[str, Any]:
+        """Gather the records at ``indices``; JIT-traceable for scan-based iteration.
 
         Args:
-            start: Starting logical index; accepts concrete int or
-                traced ``jax.Array``.
-            size: Number of records to return (Python int — JAX shapes
-                are static).
-            key: PRNG key for shuffled mode. Required when
-                ``is_random_order=True``; ignored otherwise.
+            indices: Int32 record indices in ``[0, len(self))``, as :meth:`record_indices_at`
+                names them; concrete or traced.
 
         Returns:
-            Dict mapping each data key to a JAX array with leading
-            dimension ``size``.
+            Dict mapping each data key to a JAX array with leading dimension ``len(indices)``.
         """
-        indices = self.record_indices_at(start, size, key)
         return {
-            data_key: jnp.take(jnp.asarray(value), indices, axis=0, mode="wrap")
+            data_key: jnp.take(jnp.asarray(value), indices, axis=0)
             for data_key, value in self.data.items()
         }
 

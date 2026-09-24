@@ -1,21 +1,23 @@
 """How a pipeline's records divide into batches and epochs.
 
-:class:`EpochPlan` is the one place the rule lives: batches per epoch (floor under
-``drop_last``, ceil otherwise), batches left from a position, when an epoch is exhausted, how
-a position advances -- wrapping into the next epoch for a continuous stream -- and which rows
-of a batch are records of the epoch. :class:`~datarax.pipeline.pipeline.Pipeline` builds a
-plan from its source's current length, and its length, ``batches_left``, iteration sessions
-and compiled step all read it.
+:class:`EpochPlan` is the one place the rule lives. No batch holds padding. Under
+``drop_last`` the records short of a full batch are skipped and the next batch starts the
+next epoch, tf.data's and Grain's ``batch(drop_remainder=True).repeat()``. Otherwise a batch
+reaching the epoch's end is completed from the head of the next epoch's order, their
+``repeat().batch()``, so every epoch serves each record once. A session serving a number of
+epochs stops after exactly those records, so its final batch may be short.
+:class:`~datarax.pipeline.pipeline.Pipeline` builds a plan from its source's current length,
+and its length, ``batches_left``, iteration sessions and compiled step all read it.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import math
+from typing import cast
 
 import jax
 import jax.numpy as jnp
-from jax.typing import ArrayLike
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -26,10 +28,9 @@ class EpochPlan:
         length: Records per epoch, or ``None`` for a source without a length, whose
             epochs never end.
         batch_size: Records per batch.
-        drop_last: Whether an epoch's final partial batch is skipped rather than served
-            padded, with its missing rows marked invalid.
-        num_epochs: Epochs a session serves, or ``None`` for a continuous stream whose
-            batches cross epoch boundaries without padding.
+        drop_last: Whether an epoch's records short of a full batch are skipped, rather
+            than completed from the next epoch.
+        num_epochs: Epochs a session serves, or ``None`` for a session that never stops.
     """
 
     length: int | None
@@ -42,8 +43,8 @@ class EpochPlan:
 
         Raises:
             ValueError: If ``batch_size`` is not positive, ``num_epochs`` is neither
-                ``None`` nor at least 1, or a continuous stream's batch is larger than an
-                epoch, which no single boundary batch can hold.
+                ``None`` nor at least 1, the source has no records, or ``drop_last``
+                skips every record because a batch is larger than an epoch.
         """
         if self.batch_size < 1:
             raise ValueError(f"batch_size must be at least 1; got {self.batch_size}")
@@ -51,101 +52,83 @@ class EpochPlan:
             raise ValueError(
                 f"num_epochs must be at least 1, or None for a stream; got {self.num_epochs}"
             )
-        if self.num_epochs is None and self.length is not None and self.batch_size > self.length:
+        if self.length == 0:
+            raise ValueError("the source has no records, so no batch can be served")
+        if self.drop_last and self.length is not None and self.batch_size > self.length:
             raise ValueError(
-                f"a continuous stream needs batch_size <= len(source); got batch_size "
-                f"{self.batch_size} over {self.length} records"
+                f"drop_last needs batch_size <= len(source), or every record is skipped; got "
+                f"batch_size {self.batch_size} over {self.length} records"
             )
 
     @property
-    def continuous(self) -> bool:
-        """Whether batches cross epoch boundaries: a stream over a source with a length."""
-        return self.num_epochs is None and self.length is not None
+    def crosses(self) -> bool:
+        """Whether a batch reaching an epoch's end continues in the next epoch."""
+        return not self.drop_last and self.length is not None
 
-    def batches(self, records: int) -> int:
-        """Batches ``records`` records make: floor under ``drop_last``, ceil otherwise.
+    def exhausted[T: (int, jax.Array)](self, position: T) -> bool | jax.Array:
+        """Whether the epoch cannot start another batch at ``position``.
+
+        It can while at least one record is left, or under ``drop_last`` a full batch.
 
         Args:
-            records: A record count.
+            position: Records of the epoch already served; a Python int or a traced array.
 
         Returns:
-            The batch count.
-        """
-        if self.drop_last:
-            return records // self.batch_size
-        return math.ceil(records / self.batch_size)
-
-    def batches_per_epoch(self) -> int:
-        """Batches one epoch serves.
-
-        Returns:
-            The batch count.
-
-        Raises:
-            TypeError: If the source has no length.
+            A bool for an int position, a bool array for an array; never exhausted for a
+            source without a length.
         """
         if self.length is None:
-            raise TypeError("the source has no length, so an epoch has no batch count")
-        return self.batches(self.length)
+            return False
+        needed = self.batch_size if self.drop_last else 1
+        return position + needed > self.length
 
-    def batches_left(self, position: int) -> int | None:
-        """Batches the epoch still holds from ``position``.
-
-        Args:
-            position: Records of the epoch already served.
-
-        Returns:
-            The count, or ``None`` when it is not known: a source without a length, or a
-            continuous stream, which never runs out.
-        """
-        if self.length is None or self.num_epochs is None:
-            return None
-        return self.batches(max(self.length - position, 0))
-
-    def exhausted(self, position: int) -> bool:
-        """Whether the epoch has served its last batch at ``position``.
+    def batch_start[T: (int, jax.Array)](self, position: T, epoch: T) -> tuple[T, T]:
+        """Where the next batch starts: here, or at the next epoch's start if this one is done.
 
         Args:
             position: Records of the epoch already served.
+            epoch: The epoch counter.
 
         Returns:
-            ``True`` when no batch is left; never for a stream or a source without a length.
+            ``(position, epoch)`` the batch starts at.
         """
-        return self.batches_left(position) == 0
+        done = self.exhausted(position)
+        first = position * 0  # position 0, as an int or an array of the position's dtype
+        return _select(done, first, position), _select(done, epoch + 1, epoch)
 
-    def position_after[T: (int, jax.Array)](self, position: T) -> T:
-        """The position after one batch: wrapped into the next epoch for a continuous stream.
+    def advance[T: (int, jax.Array)](self, start: T, epoch: T, size: int) -> tuple[T, T]:
+        """The position and epoch after a batch of ``size`` records starting at ``start``.
 
-        Written with operators Python integers and JAX arrays share, so the compiled step
-        and a session's host-side count advance by one rule.
+        A batch crossing the epoch's end leaves the position in the epoch it ends in (a
+        batch larger than an epoch spans several); one ending exactly at an epoch's end
+        leaves that epoch exhausted, so the next batch starts the next epoch.
 
         Args:
-            position: Records of the epoch served before the batch.
+            start: Where the batch started, as :meth:`batch_start` gives it.
+            epoch: The epoch the batch started in.
+            size: Records in the batch.
 
         Returns:
-            The position after the batch.
+            ``(position, epoch)`` after the batch.
         """
-        consumed = position + self.batch_size
-        if not self.continuous:
-            return consumed
-        assert self.length is not None  # noqa: S101 - continuous implies a length
-        return consumed % self.length
+        end = start + size
+        if self.length is None:
+            return end, epoch
+        crossed = (end - 1) // self.length  # epoch ends the batch passed, not reached
+        return end - crossed * self.length, epoch + crossed
 
-    def advance[T: (int, jax.Array)](self, position: T, epoch: T) -> tuple[T, T]:
-        """The position and epoch after one batch.
+    def epochs_touched(self, size: int) -> int:
+        """The most epochs a batch of ``size`` records starting inside an epoch holds.
 
         Args:
-            position: Records of the epoch served before the batch.
-            epoch: The epoch the batch starts in.
+            size: Records in the batch.
 
         Returns:
-            ``(position, epoch)`` after the batch: a continuous stream carries into the next
-            epoch when the batch crosses its end; otherwise the epoch is unchanged.
+            The count; 1 for a source without a length.
         """
-        if not self.continuous:
-            return self.position_after(position), epoch
-        assert self.length is not None  # noqa: S101 - continuous implies a length
-        return self.position_after(position), epoch + (position + self.batch_size) // self.length
+        if self.length is None:
+            return 1
+        return (self.length + size - 2) // self.length + 1
 
     @staticmethod
     def next_epoch[T: (int, jax.Array)](epoch: T) -> tuple[int, T]:
@@ -159,17 +142,36 @@ class EpochPlan:
         """
         return 0, epoch + 1
 
-    def valid_rows(self, position: ArrayLike) -> jax.Array:
-        """Which rows of the batch starting at ``position`` are records of the epoch.
+    def run_extent(self, position: int) -> tuple[int, int] | None:
+        """The batches a session starting at ``position`` serves, and its final batch's size.
+
+        The session finishes the current epoch, an exhausted one counting as served, then
+        serves the rest of ``num_epochs``.
 
         Args:
-            position: Where the batch starts; a Python int or a traced array.
+            position: Records of the current epoch already served.
 
         Returns:
-            Bool array of shape ``(batch_size,)``: all ``True`` for a source without a
-            length, otherwise ``True`` for the rows before the epoch ends.
+            ``(batches, final_batch_size)``, or ``None`` for a session that never stops: a
+            stream or a source without a length.
         """
-        if self.length is None:
-            return jnp.ones((self.batch_size,), dtype=jnp.bool_)
-        rows = jnp.asarray(position, dtype=jnp.int32) + jnp.arange(self.batch_size, dtype=jnp.int32)
-        return rows < jnp.int32(self.length)
+        if self.num_epochs is None or self.length is None:
+            return None
+        left = 0 if self.exhausted(position) else self.length - position
+        later = self.num_epochs - 1
+        if self.drop_last:
+            return left // self.batch_size + later * (self.length // self.batch_size), (
+                self.batch_size
+            )
+        records = left + later * self.length
+        batches = math.ceil(records / self.batch_size)
+        if batches == 0:
+            return 0, 0
+        return batches, records - (batches - 1) * self.batch_size
+
+
+def _select[T: (int, jax.Array)](condition: bool | jax.Array, if_true: T, if_false: T) -> T:
+    """``if_true`` where ``condition`` holds, else ``if_false``: on the host or traced alike."""
+    if isinstance(condition, bool):
+        return if_true if condition else if_false
+    return cast(T, jnp.where(condition, if_true, if_false))

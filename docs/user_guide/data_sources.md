@@ -163,6 +163,7 @@ import csv
 from dataclasses import dataclass
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 from flax import nnx
 
@@ -212,13 +213,12 @@ class CSVDataSource(DataSourceModule):
     def __len__(self) -> int:
         return int(self.data.shape[0])
 
-    def get_batch_at(self, start: int | Any, size: int, key: Any | None = None) -> dict[str, Any]:
-        # Return `size` rows starting at `start`, wrapping at the end.
-        indices = (jnp.arange(size) + start) % len(self)
+    def get_records(self, indices: jax.Array) -> dict[str, Any]:
+        # Return the rows at `indices`, which record_indices_at names (in order by default).
         return {"features": self.data[indices]}
 
     def element_spec(self) -> dict[str, Any]:
-        # Declare exactly what get_batch_at emits: one row of float32 features.
+        # Declare exactly what get_records emits: one row of float32 features.
         return {"features": array_to_spec_strip_leading(self.data)}
 ```
 
@@ -228,14 +228,16 @@ When creating custom data sources, ensure:
 2. You pass a `StructuralConfig`-derived config as the required first positional
    argument to `super().__init__(config, ...)`
 3. You implement the Pipeline contract: for random access, implement a stateless,
-   JAX-traceable `get_batch_at(start, size, key)`, which is what makes
+   JAX-traceable `get_records(indices)`, which is what makes
    `supports_indexed_access()` true; for forward-only streaming, implement
    `get_batch(batch_size)` instead. A source implementing neither is refused when
    iteration starts. An indexed source that shuffles, partitions or mixes records
    also overrides `record_indices_at(start, size, key)` to return the stable index
-   of each record `get_batch_at` serves; stochastic operators key each record's
-   randomness on it. The default names records by position, which is right for a
-   source that serves them in order, like the one above
+   of the record at each position; the pipeline computes those indices once per
+   batch, gathers them with `get_records`, and stochastic operators key each
+   record's randomness on the same indices. The default names records by position,
+   which is right for a source that serves them in order, like the one above.
+   `get_batch_at(start, size, key)` is the two composed
 4. `element_spec()` describes exactly the records your batches carry: the same
    keys, per-element shapes and dtypes. For a streaming source, `Pipeline` checks
    every batch against it with `datarax.core.spec.validate_batch` before running

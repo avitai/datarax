@@ -32,15 +32,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- A pipeline's epoch rule lives in one place, `datarax.pipeline.epochs.EpochPlan`: batches per
-  epoch, batches left, exhaustion, how a position advances (wrapping into the next epoch for a
-  continuous stream), where the next epoch starts, and which rows of a batch are records.
+- **No batch holds padding; epochs end the way tf.data and Grain end them.** A random-access
+  batch crossing the end of an epoch was padded with the epoch's first records and flagged in
+  a `valid_mask` leaf. Now:
+  - `drop_last=False` (the default) is `repeat().batch()`: the batch is completed from the head
+    of the next epoch's order, so every epoch serves each record exactly once, and a batch larger
+    than the source spans several epochs. A session serving `num_epochs` epochs stops after
+    exactly `num_epochs * len(source)` records; its final batch is short and compiled at its own
+    size.
+  - `drop_last=True` is `batch(drop_remainder=True).repeat()`: the records short of a full batch
+    are skipped and the next batch starts the next epoch.
+  - `step()` and `scan(length)` never run out: the compiled step starts the next epoch itself.
+    `scan` no longer refuses a length beyond the epoch.
+  - The `valid_mask` leaf is removed; drop any masking of pipeline batches.
+  - `len(pipeline)` counts the batches a whole run serves (`ceil(k*N/B)`, or `k*floor(N/B)`
+    under `drop_last`), the same number as before for one epoch. A stream (`num_epochs=None`)
+    has no length. `batches_left()` counts what a session started now would serve, and is
+    host-only.
+  - Refused at construction: a source without records, and `drop_last=True` with a
+    `batch_size` above the source's length, which serves no batch.
+  - A stochastic operator keys each record on its own epoch: `per_record_keys` takes a
+    per-record epoch array, and `BatchMixOperator` keys a batch on its first record's epoch.
+- **Indexed sources implement `get_records(indices)`, replacing `get_batch_at` as the method a
+  source defines.** `DataSourceModule.get_batch_at(start, size, key)` is now the base-class
+  composition `get_records(record_indices_at(start, size, key))`, and a source implementing
+  `get_records` is what `supports_indexed_access()` reports. The pipeline names each batch's
+  records once and hands the same indices to the gather and to the stages: before, the source's
+  shuffle ran inside both `get_batch_at` and `record_indices_at`, and only an XLA merge of the
+  two copies kept it to one evaluation per step, a merge the epoch-boundary branch defeats.
+  `StreamingDiskSource.read_batch` is renamed `get_records`.
+- The device shuffle runs faster on a GPU with the same orders. XLA drives a GPU `while_loop`
+  from the host, one predicate read per iteration, and the shuffle's cycle-walk needed about five
+  per batch: more than half of a batch's time. Off the CPU, `shuffle_positions` now runs its first
+  passes in a `fori_loop` of static trip count, enough that the loop's predicate is read once but
+  for a 1e-3 chance, chosen by `jax.lax.platform_dependent`; the CPU keeps the loop. The cipher's
+  24 rounds run in `lax.scan(unroll=True)` instead of a Python loop, so they are traced once. GPU
+  per batch: a session 140 -> 110 us, a stream 210 -> 115 us, `scan` 208 -> 101 us per step; first
+  batch trace 62 -> 41 ms and compile 713 -> 593 ms; peak device memory unchanged.
+- The step names each batch's records with one `record_indices_at` vmapped over every epoch the
+  batch can touch, with no conditional: `step()`, `scan` and iteration sessions run one program and
+  serve bit-identical batches.
+- `Pipeline.__call__(batch, records=None)`: `records` (`datarax.pipeline.dag.Records`: each
+  row's index and epoch) is what the step served; a direct call without it names the records at
+  the current position. A subclass overriding `__call__` accepts the argument.
+- `MixDataSourcesNode` names each record by its child's record index and gathers exactly that
+  record. It named the child's position, while a shuffled child served a different record at
+  that position, so per-record randomness was keyed on another record.
+- A pipeline's epoch rule lives in one place, `datarax.pipeline.epochs.EpochPlan`: exhaustion,
+  where the next batch starts, how a position advances, the most epochs a batch can hold, and
+  how many batches a run serves.
   `Pipeline.epoch_plan` builds it from the source's current length, so `len(pipeline)`,
   `batches_left()`, `reset()`, the compiled step and iteration sessions agree and follow a length
   that changed after construction; the pipeline no longer caches the length. Iteration sessions
   held a second copy of the exhaustion and rollover rules and a length frozen at session start.
 - `datarax.pipeline.iteration` no longer knows `Pipeline`: `PipelineIterator(module, body=,
-  plan=, position=, epoch=, shuffled=)`, `next_batch(module, body)` and
+  plan=, position=, epoch=, shuffled=)`, `next_batch(module, body, size)` and
   `compile_streaming_dag(stages, position, epoch, plan)` take what they use, and
   `Pipeline.session()` returns a typed, checkpointable session (`iter(pipeline)` returns it for a
   random-access source). The two modules imported each other, the cycle hidden behind a

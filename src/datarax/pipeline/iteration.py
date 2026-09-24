@@ -47,9 +47,9 @@ from datarax.pipeline.dag import record_positions, run_dag
 from datarax.pipeline.epochs import EpochPlan
 
 
-# The traceable body a session step runs on the merged module: one batch, returned after
-# the module's state has advanced (the pipeline's ``_next_batch``).
-type StepBody = Callable[[Any], dict]
+# The traceable body a session step runs on the merged module: one batch of the given number of
+# records, returned after the module's state has advanced (the pipeline's ``_next_batch``).
+type StepBody = Callable[[Any, int], dict]
 
 # A stage graph's execution plan: topological order, each node's predecessors, the sink.
 type DagPlan = tuple[tuple[str, ...], Mapping[str, tuple[str, ...]], str | None]
@@ -200,23 +200,26 @@ def _apply_writes(writes: _Writes, receivers: Sequence[Sequence[list[nnx.Variabl
                 variables[index].set_value(value)
 
 
-def _session_step(graphdef: Any, body: StepBody) -> Callable[..., Any]:
-    """The compiled step running ``body`` once on a module with this structure.
+def _session_step(graphdef: Any, body: StepBody, size: int) -> Callable[..., Any]:
+    """The compiled step running ``body`` once, for ``size`` records, on modules shaped so.
 
     Flax's functional hot-loop pattern: merge the state partitions into a module at
     trace time, run one batch, and return it with the state the step wrote. Graph
     traversal happens once per trace instead of once per batch, and structurally
-    identical modules running the same body share the step.
+    identical modules running the same body at the same size share the step.
     """
+
+    def run(graph: Any) -> dict:
+        return body(graph, size)
 
     def build() -> Callable[..., Any]:
         @jax.jit
         def session_step(mutable_state: Any, immutable_state: Any) -> tuple[dict, _Writes]:
-            return _run_tracking_writes(graphdef, (mutable_state, immutable_state), body)
+            return _run_tracking_writes(graphdef, (mutable_state, immutable_state), run)
 
         return session_step
 
-    return _cached_step(_SESSION_STEPS, (graphdef, body), build)
+    return _cached_step(_SESSION_STEPS, (graphdef, body, size), build)
 
 
 def _host_copies(module: nnx.Module) -> _HostCopies:
@@ -250,8 +253,8 @@ def _on_device(module: nnx.Module, state: Any) -> Any:
     return jax.tree.map(stage, state)
 
 
-def next_batch(module: nnx.Module, body: StepBody) -> dict:
-    """Run ``body`` once on ``module`` through the compiled session step.
+def next_batch(module: nnx.Module, body: StepBody, size: int) -> dict:
+    """Run ``body`` once, for ``size`` records, on ``module`` through the compiled session step.
 
     The body of :meth:`Pipeline.step`: split the module, stage its host arrays, run the
     step shared with iteration sessions of the same structure and body, and write back the
@@ -261,12 +264,13 @@ def next_batch(module: nnx.Module, body: StepBody) -> dict:
     Args:
         module: The module to advance.
         body: The traceable body to run on it.
+        size: The records the batch holds.
 
     Returns:
         The body's output.
     """
     graphdef, per_batch, staged = nnx.split(module, _is_per_batch_state, ..., graph=True)
-    batch, writes = _session_step(graphdef, body)(per_batch, _on_device(module, staged))
+    batch, writes = _session_step(graphdef, body, size)(per_batch, _on_device(module, staged))
     _apply_writes(writes, ((_state_leaves(per_batch),), (_state_leaves(staged),)))
     return batch
 
@@ -408,7 +412,11 @@ class PipelineIterator:
         # keeping them lets each yield sync the module in O(written leaves).
         self._live_variables = _state_leaves(mutable_state)
         self._carried_variables = _state_leaves(self._state)
-        self._pure_step = _session_step(graphdef, body)
+        self._graphdef = graphdef
+        self._body = body
+        # The step every full batch runs, shared with ``step()``; a run's short final batch
+        # looks its own up once.
+        self._pure_step = _session_step(graphdef, body, plan.batch_size)
         self._immutable_state = _on_device(module, immutable_state)
         self._receivers = (
             (self._live_variables, self._carried_variables),
@@ -416,10 +424,12 @@ class PipelineIterator:
         )
         self._plan = plan
         self._shuffled = shuffled
-        self._epochs_served = 0
-        # One host sync at session entry; termination is then pure Python
-        # arithmetic, preserving JAX's asynchronous dispatch run-ahead.
+        # One host sync at session entry; the counters are then mirrored on the host by the
+        # rule the step follows, so termination is pure Python arithmetic, preserving JAX's
+        # asynchronous dispatch run-ahead.
         self._position = int(position[...])
+        self._epoch = int(epoch[...])
+        self._batches_left, self._final_size = self._extent(self._position)
         self._rng_count_indices = [
             index
             for index, variable in enumerate(self._live_variables)
@@ -443,32 +453,35 @@ class PipelineIterator:
     def __next__(self) -> dict:
         """Produce the next batch via the compiled session step.
 
-        An epoch ends when its last batch has been served: at ``position >= N``, or at
-        ``position + B > N`` under ``drop_last``. The session then stops after
-        ``num_epochs`` epochs, or starts the next one (position 0, epoch advanced) as
-        :meth:`Pipeline.reset` does; a continuous stream never ends.
+        The step starts the next epoch itself when the current one cannot start another
+        batch (see :class:`~datarax.pipeline.epochs.EpochPlan`). The session stops after the
+        batches its epochs hold, the final one computed at its own size when the records
+        left do not fill a batch; a stream never stops.
         """
-        if self._closed:
+        if self._closed or self._batches_left == 0:
+            self.close()
             raise StopIteration
-        num_epochs = self._plan.num_epochs
-        if num_epochs is not None and self._plan.exhausted(self._position):
-            self._epochs_served += 1
-            if self._epochs_served >= num_epochs:
-                self.close()
-                raise StopIteration
-            self._start_next_epoch()
-        batch, writes = self._pure_step(self._state, self._immutable_state)
+        size = self._plan.batch_size if self._batches_left != 1 else self._final_size
+        step = (
+            self._pure_step
+            if size == self._plan.batch_size
+            else _session_step(self._graphdef, self._body, size)
+        )
+        batch, writes = step(self._state, self._immutable_state)
         # Sync the live module and the session copies at every yield boundary:
         # mid-loop checkpointing (nnx.state on the pipeline) must see the truth.
         _apply_writes(writes, self._receivers)
-        # The host mirror of the position the step just wrote, by the same rule.
-        self._position = self._plan.position_after(self._position)
+        # The host mirror of the counters the step just wrote, by the same rule.
+        start, epoch = self._plan.batch_start(self._position, self._epoch)
+        self._position, self._epoch = self._plan.advance(start, epoch, size)
+        if self._batches_left is not None:
+            self._batches_left -= 1
         return batch
 
-    def _start_next_epoch(self) -> None:
-        """Start the next epoch on the live module and the session copy."""
-        epoch = int(self._live_variables[self._epoch_index].get_value())
-        self._write_position_and_epoch(*self._plan.next_epoch(epoch))
+    def _extent(self, position: int) -> tuple[int | None, int]:
+        """Batches a session from ``position`` serves (``None``: no end) and its final size."""
+        extent = self._plan.run_extent(position)
+        return (None, self._plan.batch_size) if extent is None else extent
 
     def _write_position_and_epoch(self, position: int, epoch: int) -> None:
         carried = self._carried_variables
@@ -477,6 +490,8 @@ class PipelineIterator:
         for target in (self._live_variables[self._epoch_index], carried[self._epoch_index]):
             target.set_value(jnp.asarray(epoch, dtype=jnp.int32))
         self._position = position
+        self._epoch = epoch
+        self._batches_left, self._final_size = self._extent(position)
 
     def get_state(self) -> dict[str, Any]:
         """Return iterator state valid at the current yield boundary.
@@ -501,7 +516,7 @@ class PipelineIterator:
         counts = [int(self._live_variables[index].get_value()) for index in self._rng_count_indices]
         return {
             "position": int(self._position),
-            "epoch": int(self._live_variables[self._epoch_index].get_value()),
+            "epoch": self._epoch,
             "rng_counts": counts,
             "version": _ITERATOR_STATE_VERSION,
             "fingerprint": self._fingerprint(),

@@ -109,10 +109,10 @@ Grain shards partition the records: True
 Datarax workers partition the records: True
 ```
 
-A Datarax pipeline keeps every batch at `batch_size` so the compiled step has one shape.
-When a process's share of the records is not a multiple of the batch size, the last batch
-is padded from the start of that process's order and the padding rows are marked invalid in
-the batch's `valid_mask` (or `drop_last=True` leaves the batch out); the guide uses 64
+A Datarax pipeline never pads a batch. When a process's share of the records is not a
+multiple of the batch size, the batch reaching the end of the epoch is completed from the
+head of the next epoch's order (or `drop_last=True` skips the records short of a full batch),
+and a session serving a fixed number of epochs ends with a short batch; the guide uses 64
 records, two processes and batches of 8, so every batch is full and every record is served
 once.
 

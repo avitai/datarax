@@ -48,6 +48,18 @@ class TestPerRecordKeys:
         assert not jnp.array_equal(jax.random.key_data(epoch0), jax.random.key_data(epoch1))
         assert jnp.array_equal(jax.random.key_data(epoch1[1]), jax.random.key_data(expected))
 
+    def test_each_record_may_carry_its_own_epoch(self):
+        """A batch crossing an epoch boundary keys each record on the epoch it belongs to."""
+        base = jax.random.key(0)
+        records = jnp.array([8, 9, 0, 1])
+
+        mixed = per_record_keys(base, records, epoch=jnp.array([0, 0, 1, 1], dtype=jnp.int32))
+
+        tail = per_record_keys(base, records[:2], epoch=jnp.int32(0))
+        head = per_record_keys(base, records[2:], epoch=jnp.int32(1))
+        expected = jnp.concatenate([jax.random.key_data(tail), jax.random.key_data(head)])
+        assert jnp.array_equal(jax.random.key_data(mixed), expected)
+
 
 class TestDefaultStreams:
     """The datarax stream names, as substrax derives them."""

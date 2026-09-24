@@ -75,6 +75,6 @@ class TestSplitFieldTransforms:
     def test_in_pipeline_step_and_scan(self):
         data = {"image": jnp.ones((16, 8)), "label": jnp.zeros((16, 1))}
         step_pipe = _linear_pipeline(SplitField(["image"]), data)
-        assert sorted(step_pipe.step().keys()) == ["image", "valid_mask"]
+        assert sorted(step_pipe.step().keys()) == ["image"]
         scan_pipe = _linear_pipeline(SplitField(["image"]), data)
         assert scan_pipe.scan(_sum_step, length=2).shape == (2,)

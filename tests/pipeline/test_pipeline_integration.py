@@ -145,13 +145,17 @@ def test_pipeline_handles_batch_size_larger_than_source() -> None:
     )
 
     out = pipeline.step()
-    # batch_size=8 over a source of length 4: the rows past the end are padding, served
-    # from the start of the order and marked invalid.
+    # batch_size=8 over a source of length 4: the batch holds two epochs, each record once
+    # per epoch, and iteration serves the one epoch it runs as one batch of 4.
     np.testing.assert_array_equal(
         np.asarray(out["x"]),
         np.array([0.0, 1.0, 2.0, 3.0, 0.0, 1.0, 2.0, 3.0]),
     )
-    np.testing.assert_array_equal(np.asarray(out["valid_mask"]), [True] * 4 + [False] * 4)
+    assert int(pipeline._epoch[...]) == 1
+    assert [
+        np.asarray(batch["x"]).tolist()
+        for batch in Pipeline(source=_source(4), stages=[], batch_size=8, rngs=nnx.Rngs(0))
+    ] == [[0.0, 1.0, 2.0, 3.0]]
 
 
 def test_pipeline_handles_single_element_source() -> None:
@@ -163,9 +167,9 @@ def test_pipeline_handles_single_element_source() -> None:
     )
 
     out = pipeline.step()
-    # Source length 1: one valid row, three padding rows served from index 0
+    # Source length 1: the record of each of four epochs
     np.testing.assert_array_equal(np.asarray(out["x"]), np.array([0.0, 0.0, 0.0, 0.0]))
-    np.testing.assert_array_equal(np.asarray(out["valid_mask"]), [True, False, False, False])
+    assert (int(pipeline._position[...]), int(pipeline._epoch[...])) == (1, 3)
 
 
 def test_pipeline_iter_over_memory_source_terminates() -> None:

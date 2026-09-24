@@ -152,39 +152,51 @@ class DataSourceModule(StructuralModule):
         """
         return None
 
+    def get_records(self, indices: Any) -> Any:
+        """Gather the records at ``indices``: indexed access for ``Pipeline``-driven iteration.
+
+        ``indices`` are the stable record indices :meth:`record_indices_at` names. The pipeline
+        computes a batch's indices once and passes the same ones here and to the stages that key
+        randomness on them. Implementations must be stateless (no mutation of internal counters)
+        and JAX-traceable (``indices`` may be a traced array) so the call composes with
+        ``nnx.jit`` and ``nnx.scan``.
+
+        Args:
+            indices: Int32 array ``(n,)`` of record indices in ``[0, len(self))``.
+
+        Returns:
+            A batch dict (or PyTree) with leading dim ``n``.
+
+        Raises:
+            NotImplementedError: If the source does not support indexed access (e.g.
+                forward-only streams). Pipeline drives such a source through ``get_batch``
+                instead.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support indexed access. Implement "
+            f"get_records(indices), or get_batch(batch_size) for a forward-only stream."
+        )
+
     def get_batch_at(
         self,
         start: int | Any,
         size: int,
         key: Any | None = None,
     ) -> Any:
-        """Stateless indexed batch access for ``Pipeline``-driven iteration.
+        """The ``size`` records from position ``start`` of the order ``key`` selects.
 
-        Returns ``size`` records starting at ``start``. Implementations must
-        be stateless (no mutation of internal counters) and JAX-traceable
-        (must accept tracer values for ``start``) so the call composes with
-        ``nnx.scan``.
+        :meth:`get_records` of :meth:`record_indices_at`, so it is stateless and
+        JAX-traceable whenever those are.
 
         Args:
-            start: Starting index. Sources that support indexed access
-                accept a Python int or a traced ``jax.Array``.
-            size: Number of records to return (Python int — JAX shapes are
-                static).
+            start: Starting position; a Python int or a traced ``jax.Array``.
+            size: Number of records to return (Python int — JAX shapes are static).
             key: Optional PRNG key for shuffled or stochastic sampling.
 
         Returns:
             A batch dict (or PyTree) with leading dim ``size``.
-
-        Raises:
-            NotImplementedError: If the source does not support indexed
-                access (e.g. forward-only streams). Pipeline drives such a
-                source through ``get_batch`` instead.
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not support indexed batch access. "
-            f"Implement get_batch_at(start, size, key), or get_batch(batch_size) "
-            f"for a forward-only stream."
-        )
+        return self.get_records(self.record_indices_at(start, size, key))
 
     def record_indices_at(
         self,
@@ -192,18 +204,18 @@ class DataSourceModule(StructuralModule):
         size: int,
         key: Any | None = None,
     ) -> Any:
-        """Return the stable index of each record ``get_batch_at(start, size, key)`` returns.
+        """Return the stable index of each record at positions ``start .. start + size``.
 
-        Stochastic operators key each record's randomness on these indices, so within an
-        epoch a record keeps its augmentation however records are batched, ordered or split
-        across workers. The default names records by their wrapped position
-        ``(start + arange(size)) % len(self)``, which is right for a source that serves
-        records in order. A source that shuffles, partitions or mixes records overrides it.
+        These are the indices :meth:`get_records` gathers. Stochastic operators key each
+        record's randomness on them, so within an epoch a record keeps its augmentation however
+        records are batched, ordered or split across workers. The default names records by their
+        wrapped position ``(start + arange(size)) % len(self)``, which is right for a source that
+        serves records in order. A source that shuffles, partitions or mixes records overrides it.
 
         Args:
-            start: Starting position, as passed to ``get_batch_at``.
+            start: Starting position; a Python int or a traced ``jax.Array``.
             size: Number of records (Python int).
-            key: The key passed to ``get_batch_at``.
+            key: The key selecting the order.
 
         Returns:
             Int32 array of shape ``(size,)``.
@@ -217,18 +229,18 @@ class DataSourceModule(StructuralModule):
         return positions % jnp.int32(length)
 
     def supports_indexed_access(self) -> bool:
-        """Whether ``Pipeline`` can drive this source through ``get_batch_at``.
+        """Whether ``Pipeline`` can drive this source through ``get_records``.
 
-        ``get_batch_at`` is stateless and JAX-traceable by contract, so a source
-        whose class implements it supports indexed access: ``Pipeline`` iterates
-        it through the compiled session and drives ``step()`` and ``scan()`` with
-        it. Forward-only sources implement ``get_batch`` instead. A source whose
-        indexed access depends on how it was built overrides this.
+        ``get_records`` is stateless and JAX-traceable by contract, so a source whose class
+        implements it supports indexed access: ``Pipeline`` iterates it through the compiled
+        session and drives ``step()`` and ``scan()`` with it. Forward-only sources implement
+        ``get_batch`` instead. A source whose indexed access depends on how it was built
+        overrides this.
 
         Returns:
-            Whether the source's class implements ``get_batch_at``.
+            Whether the source's class implements ``get_records``.
         """
-        return type(self).get_batch_at is not DataSourceModule.get_batch_at
+        return type(self).get_records is not DataSourceModule.get_records
 
     def element_spec(self) -> Any:
         """Return a PyTree of ``jax.ShapeDtypeStruct`` describing per-element output.
