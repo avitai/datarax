@@ -591,7 +591,7 @@ class TestBatchMixOperatorPipelineRawPath:
         )
         pipeline = Pipeline(source=source, stages=[mixer], batch_size=4, rngs=nnx.Rngs(0))
 
-        batch = pipeline.step()  # type: ignore[reportCallIssue]
+        batch = pipeline.step()
         assert batch["image"].shape == (4, 4)
 
     def test_apply_on_raw_accepts_record_indices(self):

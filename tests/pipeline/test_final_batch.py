@@ -66,8 +66,8 @@ class TestPaddedFinalBatch:
     def test_step_attaches_the_same_mask(self) -> None:
         pipeline = _pipeline()
         for _ in range(3):
-            assert bool(pipeline.step()["valid_mask"].all())  # type: ignore[call-arg]
-        last = pipeline.step()  # type: ignore[call-arg]
+            assert bool(pipeline.step()["valid_mask"].all())
+        last = pipeline.step()
         assert int(last["valid_mask"].sum()) == _N - 3 * _BATCH
 
     def test_a_full_epoch_is_all_valid(self) -> None:
@@ -169,7 +169,7 @@ class TestContinuousStream:
             source=_source(shuffle=True), stages=[], batch_size=_BATCH, rngs=nnx.Rngs(0)
         )
         reference.reset()
-        head = np.asarray(reference.step()["x"])[:28]  # type: ignore[call-arg]
+        head = np.asarray(reference.step()["x"])[:28]
         served_epoch_0 = np.concatenate([np.asarray(b["x"]) for b in batches[:3]] + [boundary[:4]])
         assert sorted(served_epoch_0.tolist()) == list(range(_N))
         np.testing.assert_array_equal(boundary[4:], head)
@@ -203,7 +203,7 @@ class TestScanLength:
 
     def test_counts_from_the_current_position(self) -> None:
         pipeline = _pipeline()
-        pipeline.step()  # type: ignore[call-arg]
+        pipeline.step()
         with pytest.raises(ValueError, match="3 batches"):
             pipeline.scan(lambda batch: jnp.sum(batch["x"]), length=4)
 

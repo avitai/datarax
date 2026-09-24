@@ -72,7 +72,7 @@ def test_pipeline_iterates_a_get_batch_at_source_through_the_compiled_session() 
     iterator = iter(iterated)
     assert isinstance(iterator, PipelineIterator)
     batches = [np.asarray(batch["x"]) for batch in iterator]
-    expected = [np.asarray(stepped.step()["x"]) for _ in batches]  # type: ignore[call-arg]
+    expected = [np.asarray(stepped.step()["x"]) for _ in batches]
 
     assert len(batches) == 2
     for got, want in zip(batches, expected, strict=True):

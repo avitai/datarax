@@ -32,12 +32,12 @@ not force a recompile. Structurally identical pipelines share compiled steps.
 from __future__ import annotations
 
 import contextlib
-import dataclasses
 import weakref
 from typing import Any, TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from flax import nnx
 
 from datarax.core.operator import OperatorModule
@@ -60,11 +60,13 @@ _MAX_COMPILED_STEPS = 16
 _SESSION_STEPS: list[tuple[Any, Callable[..., Any]]] = []
 _DAG_STEPS: list[tuple[Any, Callable[..., Any]]] = []
 
-# Device-staged immutable state per pipeline, one entry per module structure the
-# pipeline has run with. Weak keys let entries die with their pipelines; bounded per
-# pipeline (structural variants such as train/eval flips are few; module surgery must
-# not grow this unbounded).
-_MAX_STAGED_PER_PIPELINE = 4
+# Device copies of each pipeline's host (NumPy) arrays, uploaded at first use and shared by
+# every path that stages the pipeline (``step()`` and iteration sessions). Keyed weakly by the
+# pipeline, then by the array's identity with a weak reference to the array, so a copy dies
+# with its pipeline or its array, and an array replaced by another is uploaded at its first use.
+# NumPy arrays are never tracers, so staging inside a caller's transform caches nothing traced.
+type _HostCopies = dict[int, tuple[weakref.ref[np.ndarray], jax.Array]]
+_HOST_COPIES: weakref.WeakKeyDictionary[Any, _HostCopies] = weakref.WeakKeyDictionary()
 
 # A compiled step's writes: raw values by position within each state partition,
 # per-batch state first and staged state second.
@@ -89,40 +91,6 @@ def _is_per_batch_state(path: Any, value: Any) -> bool:
     """
     del path
     return isinstance(value, nnx.RngCount) or type(value) is nnx.Variable
-
-
-def _value_ids(state: Any) -> tuple[int, ...]:
-    """Identity of every array a state pytree holds: inside its Variables, and plain leaves.
-
-    A write replaces a Variable's value and never mutates an array (JAX arrays are
-    immutable), so equal identities mean nothing was written. Comparing the Variable
-    objects instead misses every write -- a parameter updated between sessions keeps its
-    Variable -- and plain ``nnx.data`` leaves (a source's arrays) must be included too, or
-    replacing them goes unseen.
-    """
-    ids: list[int] = []
-    for leaf in jax.tree.leaves(state, is_leaf=lambda x: isinstance(x, nnx.Variable)):
-        values = jax.tree.leaves(leaf.get_raw_value()) if isinstance(leaf, nnx.Variable) else [leaf]
-        ids.extend(id(value) for value in values)
-    return tuple(ids)
-
-
-@dataclasses.dataclass(slots=True)
-class _Staged:
-    """A pipeline's immutable state as staged on the device for one module structure.
-
-    Attributes:
-        graphdef: The module structure the state was split from.
-        value_ids: :func:`_value_ids` of the live Variables when the state was staged.
-        state: The device-staged state pytree.
-    """
-
-    graphdef: Any
-    value_ids: tuple[int, ...]
-    state: Any
-
-
-_STAGED: weakref.WeakKeyDictionary[Any, list[_Staged]] = weakref.WeakKeyDictionary()
 
 
 def _cached_step(
@@ -180,7 +148,7 @@ def _written(
 
 def _state_paths(graph: Any) -> set[tuple[Any, ...]]:
     """Paths of every state leaf in ``graph``."""
-    return {path for path, _ in nnx.to_flat_state(nnx.state(graph))}
+    return {path for path, _ in nnx.to_flat_state(nnx.state(graph, graph=True))}
 
 
 def _run_tracking_writes(
@@ -205,7 +173,9 @@ def _run_tracking_writes(
             fixed module graph cannot return.
     """
     graph = nnx.merge(graphdef, *states)
-    partitions = [_state_leaves(part) for part in nnx.state(graph, _is_per_batch_state, ...)]
+    partitions = [
+        _state_leaves(part) for part in nnx.state(graph, _is_per_batch_state, ..., graph=True)
+    ]
     snapshots = [_snapshot(part) for part in partitions]
     paths = _state_paths(graph)
     output = run(graph)
@@ -247,29 +217,55 @@ def _session_step(graphdef: Any) -> Callable[..., Any]:
     return _cached_step(_SESSION_STEPS, graphdef, build)
 
 
-def _staged(pipeline: Pipeline, graphdef: Any, immutable_state: Any) -> _Staged:
-    """The pipeline's immutable state staged on the device, current with its live values.
+def _host_copies(pipeline: Pipeline) -> _HostCopies:
+    """The device copies of ``pipeline``'s host arrays, by the arrays' identities."""
+    return _HOST_COPIES.setdefault(pipeline, {})
 
-    Staging uploads source payloads, parameters and RNG keys once per pipeline and
-    reuses them across sessions; re-staging would re-upload the entire dataset on
-    every ``iter()`` call. The copy is re-staged when any value changed since it was
-    staged (:func:`_value_ids`) -- a swapped source array or a parameter written in
-    place alike -- and never otherwise.
+
+def _on_device(pipeline: Pipeline, state: Any) -> Any:
+    """``state`` with every NumPy leaf replaced by its device copy, uploaded once per array.
+
+    Device arrays and tracers pass through untouched, so a step reads the source's device
+    buffers in place and a step inside a caller's transform stages nothing. A NumPy leaf is
+    host data by construction: its copy is uploaded at first use and reused while the array
+    lives, so iteration sessions and ``step()`` share one copy, and an array replaced by
+    another is uploaded when first used. Records are immutable once given to a source: an
+    in-place edit of a staged array is not uploaded.
     """
-    value_ids = _value_ids(immutable_state)
-    entries = _STAGED.setdefault(pipeline, [])
-    for index, entry in enumerate(entries):
-        if entry.graphdef == graphdef:
-            if entry.value_ids != value_ids:
-                entry.state = jax.device_put(immutable_state)
-                entry.value_ids = value_ids
-            entries.append(entries.pop(index))
-            return entry
-    entry = _Staged(graphdef, value_ids, jax.device_put(immutable_state))
-    entries.append(entry)
-    if len(entries) > _MAX_STAGED_PER_PIPELINE:
-        entries.pop(0)
-    return entry
+    copies = _host_copies(pipeline)
+    for key in [key for key, (array, _) in copies.items() if array() is None]:
+        del copies[key]
+
+    def stage(leaf: Any) -> Any:
+        if not isinstance(leaf, np.ndarray):
+            return leaf
+        entry = copies.get(id(leaf))
+        if entry is None or entry[0]() is not leaf:
+            entry = (weakref.ref(leaf), jax.device_put(leaf))
+            copies[id(leaf)] = entry
+        return entry[1]
+
+    return jax.tree.map(stage, state)
+
+
+def next_batch(pipeline: Pipeline) -> dict:
+    """Serve one batch of a random-access pipeline through its compiled session step.
+
+    The body of :meth:`Pipeline.step`: split the pipeline, stage its host arrays, run the
+    step shared with iteration sessions of the same structure, and write back the state the
+    step changed. Splitting per call sees every structural change made between calls; the
+    step itself refuses one made while it runs.
+
+    Args:
+        pipeline: The pipeline to advance.
+
+    Returns:
+        The sink output for the batch at the current position.
+    """
+    graphdef, per_batch, staged = nnx.split(pipeline, _is_per_batch_state, ..., graph=True)
+    batch, writes = _session_step(graphdef)(per_batch, _on_device(pipeline, staged))
+    _apply_writes(writes, ((_state_leaves(per_batch),), (_state_leaves(staged),)))
+    return batch
 
 
 # Declared element specs per source, by x64 setting. Reading a spec can open a
@@ -341,7 +337,7 @@ def compile_streaming_dag(pipeline: Pipeline) -> Callable[[Any], Any]:
         A function taking a validated batch and returning the sink's output.
     """
     graph = (pipeline._stage_modules, pipeline._position, pipeline._epoch)
-    graphdef, per_batch_state, staged_state = nnx.split(graph, _is_per_batch_state, ...)
+    graphdef, per_batch_state, staged_state = nnx.split(graph, _is_per_batch_state, ..., graph=True)
     plan = (
         tuple(pipeline._exec_order),
         {name: tuple(preds) for name, preds in pipeline._predecessors.items()},
@@ -380,9 +376,9 @@ def _operator_owned_counts(
     """
     owned = {
         id(variable)
-        for _, node in nnx.iter_graph(pipeline)
+        for _, node in nnx.iter_graph(pipeline, graph=True)
         if isinstance(node, OperatorModule)
-        for variable in _state_leaves(nnx.state(node, nnx.RngCount))
+        for variable in _state_leaves(nnx.state(node, nnx.RngCount, graph=True))
     }
     return [id(live_variables[index]) in owned for index in rng_count_indices]
 
@@ -398,22 +394,21 @@ class PipelineIterator:
                 at the next yield boundary.
         """
         self._pipeline = pipeline
-        graphdef, mutable_state, immutable_state = nnx.split(pipeline, _is_per_batch_state, ...)
-        # Canonicalize per-batch leaves to device arrays so every session
-        # presents identical avals to the cached jax.jit step; host-typed
-        # leaves on a fresh module would otherwise force one re-trace per
-        # session (tens of milliseconds each).
-        self._state: Any = jax.device_put(mutable_state)
+        graphdef, mutable_state, immutable_state = nnx.split(
+            pipeline, _is_per_batch_state, ..., graph=True
+        )
+        # A session carries its own Variables for the per-batch state, holding the live values
+        # as they are: ``step()`` passes the same values, so both paths present the shared
+        # compiled step one call signature (``jax.jit`` keys its dispatch cache on arguments'
+        # shardings and committedness as well as avals, so converting a Python-int counter in
+        # one path only would add a second entry for the same executable).
+        self._state: Any = jax.tree.map(lambda leaf: leaf, mutable_state)
         # The split state holds the module's live Variables by reference;
         # keeping them lets each yield sync the module in O(written leaves).
         self._live_variables = _state_leaves(mutable_state)
         self._carried_variables = _state_leaves(self._state)
         self._pure_step = _session_step(graphdef)
-        self._staged = _staged(pipeline, graphdef, immutable_state)
-        self._immutable_state = self._staged.state
-        # The split state references the live values; the staging record is refreshed
-        # from it after a step writes staged state.
-        self._live_immutable_state = immutable_state
+        self._immutable_state = _on_device(pipeline, immutable_state)
         self._receivers = (
             (self._live_variables, self._carried_variables),
             (_state_leaves(immutable_state), _state_leaves(self._immutable_state)),
@@ -470,10 +465,6 @@ class PipelineIterator:
         # Sync the live module and the session copies at every yield boundary:
         # mid-loop checkpointing (nnx.state on the pipeline) must see the truth.
         _apply_writes(writes, self._receivers)
-        if writes[1]:
-            # The step wrote staged state (a stage's statistics, say); live and staged
-            # now hold the same values, so the next session need not re-stage them.
-            self._staged.value_ids = _value_ids(self._live_immutable_state)
         self._position += self._batch_size
         if self._num_epochs is None and self._source_length is not None:
             self._position %= self._source_length

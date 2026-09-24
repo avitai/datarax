@@ -47,7 +47,7 @@ class TestRebatchNodeTransforms:
 
     def test_in_pipeline_step_is_jitted(self):
         pipe = _linear_pipeline(RebatchNode(2), {"image": jnp.ones((16, 8))})
-        batch = pipe.step()  # type: ignore[reportCallIssue]  # nnx.jit wrapper
+        batch = pipe.step()
         assert jax.tree.leaves(batch)[0].shape == (2, 2, 8)
 
     def test_in_pipeline_scan(self):
@@ -75,6 +75,6 @@ class TestSplitFieldTransforms:
     def test_in_pipeline_step_and_scan(self):
         data = {"image": jnp.ones((16, 8)), "label": jnp.zeros((16, 1))}
         step_pipe = _linear_pipeline(SplitField(["image"]), data)
-        assert sorted(step_pipe.step().keys()) == ["image", "valid_mask"]  # type: ignore[reportCallIssue]
+        assert sorted(step_pipe.step().keys()) == ["image", "valid_mask"]
         scan_pipe = _linear_pipeline(SplitField(["image"]), data)
         assert scan_pipe.scan(_sum_step, length=2).shape == (2,)

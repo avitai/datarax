@@ -149,4 +149,4 @@ def test_pipeline_iterates_the_disk_array_in_order(tmp_path: Path) -> None:
     iterator = iter(pipeline())
     assert isinstance(iterator, PipelineIterator)
     np.testing.assert_array_equal(np.concatenate([np.asarray(b["x"]) for b in iterator]), array)
-    np.testing.assert_array_equal(np.asarray(pipeline().step()["x"]), array[:4])  # type: ignore[call-arg]
+    np.testing.assert_array_equal(np.asarray(pipeline().step()["x"]), array[:4])

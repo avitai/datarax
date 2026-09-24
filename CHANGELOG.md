@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Pipeline.step()` runs the compiled step iteration sessions use instead of `nnx.jit`, and copies
+  none of the source's arrays. The `nnx.jit` form wrote every Variable back on every call, so each
+  step copied the whole dataset on the device, and replaced a NumPy source's arrays with device
+  copies. Now device data is read in place, NumPy data is uploaded once per array and stays NumPy
+  in the source, and `step()` and iteration share one device copy and one compiled step. A
+  structural change between calls (batch size, a replaced stage, `train()`/`eval()`) is honored;
+  a stage adding state while it runs is refused, as iteration already refused it. `step()` inside
+  `nnx.jit`, `nnx.grad`, `nnx.scan`, `nnx.vmap` and a functional `jax.jit` traces into the caller's
+  program. Per batch of 256 64x64 images, before / after: GPU 0.57 / 0.47 ms at 64 MiB, 3.6 /
+  0.62 ms at 1 GiB, 3.6 / 1.24 ms with ten stages; CPU 87.8 / 4.2 ms at 1 GiB.
+- The compiled iteration and `step()` paths split the pipeline in graph mode explicitly
+  (`graph=True`), so they keep working when Flax makes tree mode the default: a pipeline whose
+  source, stages and itself are built from one `nnx.Rngs` shares Variables, which tree mode
+  rejects.
 - A shuffled source's order is a keyed bijection computed per record,
   `datarax.samplers.index_shuffle.shuffle_positions`: CCCL's Feistel bijection (the
   VariablePhilox cipher of Mitchell et al., "Bandwidth-optimal random shuffling for GPUs", ACM

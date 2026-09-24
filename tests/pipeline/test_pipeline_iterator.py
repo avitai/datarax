@@ -107,7 +107,7 @@ def _epoch_via_step(pipeline: Pipeline) -> list[np.ndarray]:
     batches = []
     length = len(pipeline.source)
     while int(pipeline._position[...]) < length:
-        batches.append(np.asarray(pipeline.step()["x"]))  # type: ignore[call-arg]
+        batches.append(np.asarray(pipeline.step()["x"]))
     return batches
 
 
@@ -194,12 +194,12 @@ class TestModuleStateWriteBack:
         for index, _ in enumerate(via_iterator):
             if index == 3:
                 break
-        continued = np.asarray(via_iterator.step()["x"])  # type: ignore[call-arg]
+        continued = np.asarray(via_iterator.step()["x"])
 
         via_step = _pipeline(stochastic=True)
         for _ in range(4):
-            via_step.step()  # type: ignore[call-arg]  # type: ignore[call-arg]
-        expected = np.asarray(via_step.step()["x"])  # type: ignore[call-arg]
+            via_step.step()
+        expected = np.asarray(via_step.step()["x"])
         np.testing.assert_array_equal(continued, expected)
 
     def test_sequential_reiteration_resumes_from_position(self):
@@ -319,7 +319,7 @@ class TestStageState:
             pass
         stepped = _pipeline_with(stepped_stage)
         for _ in range(_N // _BATCH):
-            stepped.step()  # type: ignore[call-arg]
+            stepped.step()
 
         assert float(stepped_stage.total[...]) != 0.0
         assert float(iterated_stage.total[...]) == float(stepped_stage.total[...])
@@ -461,13 +461,11 @@ class TestImmutableStaging:
         second = _session(pipeline)
         next(second)
         second.close()
-        first_leaves = jax.tree.leaves(
-            first._immutable_state, is_leaf=lambda x: isinstance(x, nnx.Variable)
-        )
-        second_leaves = jax.tree.leaves(
-            second._immutable_state, is_leaf=lambda x: isinstance(x, nnx.Variable)
-        )
-        assert all(a is b for a, b in zip(first_leaves, second_leaves, strict=True))
+        # The staged arrays themselves: the same buffers serve both sessions.
+        first_arrays = jax.tree.leaves(first._immutable_state)
+        second_arrays = jax.tree.leaves(second._immutable_state)
+        assert first_arrays
+        assert all(a is b for a, b in zip(first_arrays, second_arrays, strict=True))
 
     def test_a_value_written_into_a_stage_parameter_reaches_the_next_session(self):
         """A write keeps the Variable object and replaces its value; staging must see it.

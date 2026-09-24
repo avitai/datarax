@@ -51,7 +51,7 @@ def test_subclass_can_override_call_for_custom_topology() -> None:
             return {**batch, "x": batch["x"] + self.offset}
 
     pipeline = _CustomPipeline(source=_source(), batch_size=4, rngs=nnx.Rngs(0), offset=100.0)
-    out = pipeline.step()  # type: ignore[reportCallIssue]
+    out = pipeline.step()
 
     np.testing.assert_allclose(np.asarray(out["x"]), np.array([100.0, 101.0, 102.0, 103.0]))
 
@@ -125,8 +125,8 @@ def test_subclass_can_hold_extra_state() -> None:
             return batch
 
     pipeline = _Counter(source=_source(), batch_size=4, rngs=nnx.Rngs(0))
-    pipeline.step()  # type: ignore[reportCallIssue]
-    pipeline.step()  # type: ignore[reportCallIssue]
+    pipeline.step()
+    pipeline.step()
 
     graphdef, state = nnx.split(pipeline)
     rebuilt = nnx.merge(graphdef, state)

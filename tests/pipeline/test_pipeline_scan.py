@@ -361,7 +361,7 @@ def test_scan_total_matches_python_loop_total() -> None:
 
     loop_outputs = []
     for _ in range(4):
-        loop_outputs.append(step_fn(pipeline_loop.step()))  # type: ignore[reportCallIssue]
+        loop_outputs.append(step_fn(pipeline_loop.step()))
     loop_outputs_arr = jnp.stack(loop_outputs)
 
     np.testing.assert_allclose(np.asarray(scan_outputs), np.asarray(loop_outputs_arr))

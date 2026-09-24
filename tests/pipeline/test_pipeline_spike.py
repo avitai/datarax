@@ -155,9 +155,9 @@ def test_pipeline_step_advances_position_variable() -> None:
     )
 
     assert int(pipeline._position[...]) == 0
-    pipeline.step()  # type: ignore[reportCallIssue]
+    pipeline.step()
     assert int(pipeline._position[...]) == 4
-    pipeline.step()  # type: ignore[reportCallIssue]
+    pipeline.step()
     assert int(pipeline._position[...]) == 8
 
 
@@ -174,7 +174,7 @@ def test_pipeline_step_advances_rng_keys() -> None:
 
     # Consume directly from the rngs to demonstrate stream advancement.
     key_before = pipeline.rngs()
-    pipeline.step()  # type: ignore[reportCallIssue]
+    pipeline.step()
     key_after = pipeline.rngs()
 
     assert not bool(jnp.array_equal(key_before, key_after)), (
@@ -192,7 +192,7 @@ def test_pipeline_split_merge_round_trips_state() -> None:
         batch_size=4,
         rngs=nnx.Rngs(0),
     )
-    pipeline.step()  # type: ignore[reportCallIssue]
+    pipeline.step()
 
     graphdef, state = nnx.split(pipeline)
     rebuilt = nnx.merge(graphdef, state)
@@ -218,7 +218,7 @@ def test_pipeline_iter_protocol_yields_same_batches_as_step() -> None:
         batch_size=4,
         rngs=nnx.Rngs(0),
     )
-    step_batches = [pipeline_step.step() for _ in iter_batches]  # type: ignore[reportCallIssue]
+    step_batches = [pipeline_step.step() for _ in iter_batches]
 
     assert len(iter_batches) == len(step_batches) == 4
     for a, b in zip(iter_batches, step_batches):

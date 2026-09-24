@@ -117,7 +117,7 @@ def test_from_dag_compiles_simple_linear_chain() -> None:
         rngs=nnx.Rngs(0),
     )
 
-    out = pipeline.step()  # type: ignore[reportCallIssue]
+    out = pipeline.step()
     # First batch is arange(0, 4); * 2 + 1 = [1, 3, 5, 7]
     np.testing.assert_allclose(np.asarray(out["x"]), np.array([1.0, 3.0, 5.0, 7.0]))
 
@@ -142,7 +142,7 @@ def test_from_dag_compiles_branch_merge_topology() -> None:
         rngs=nnx.Rngs(0),
     )
 
-    out = pipeline.step()  # type: ignore[reportCallIssue]
+    out = pipeline.step()
     # arange(0, 4) * 2 = [0, 2, 4, 6]
     # b: + 1 = [1, 3, 5, 7]; c: + 10 = [10, 12, 14, 16]
     # d: b + c = [11, 15, 19, 23]
@@ -199,7 +199,7 @@ def test_from_dag_routes_source_to_root_nodes() -> None:
         rngs=nnx.Rngs(0),
     )
 
-    out = pipeline.step()  # type: ignore[reportCallIssue]
+    out = pipeline.step()
     # arange(0,4) + 1 = [1, 2, 3, 4]
     np.testing.assert_allclose(np.asarray(out["x"]), np.array([1.0, 2.0, 3.0, 4.0]))
 
@@ -229,7 +229,7 @@ def test_from_dag_threads_branch_outputs_to_merge() -> None:
         rngs=nnx.Rngs(0),
     )
 
-    out = pipeline.step()  # type: ignore[reportCallIssue]
+    out = pipeline.step()
     # a: arange(0,4) + 1 = [1,2,3,4]; b: arange(0,4) + 10 = [10,11,12,13]
     # merge: 2 * a - b = [2-10, 4-11, 6-12, 8-13] = [-8, -7, -6, -5]
     np.testing.assert_allclose(np.asarray(out["x"]), np.array([-8.0, -7.0, -6.0, -5.0]))
@@ -246,7 +246,7 @@ def test_from_dag_returns_only_sink_output() -> None:
         rngs=nnx.Rngs(0),
     )
 
-    out = pipeline.step()  # type: ignore[reportCallIssue]
+    out = pipeline.step()
     assert isinstance(out, dict)
     # The sink's output plus the pipeline's validity mask; not {"a_out", "b_out"} or richer.
     assert set(out.keys()) == {"x", "valid_mask"}
@@ -266,9 +266,9 @@ def test_from_dag_step_advances_position_like_linear() -> None:
     )
 
     assert int(pipeline._position[...]) == 0
-    pipeline.step()  # type: ignore[reportCallIssue]
+    pipeline.step()
     assert int(pipeline._position[...]) == 4
-    pipeline.step()  # type: ignore[reportCallIssue]
+    pipeline.step()
     assert int(pipeline._position[...]) == 8
 
 
@@ -324,7 +324,7 @@ def test_from_dag_gradient_flows_through_both_branches() -> None:
 
     def loss_fn(model: Pipeline) -> jax.Array:
         # Manually drive: fetch + DAG forward, sum result.
-        pipe_batch = model.step()  # type: ignore[reportCallIssue]
+        pipe_batch = model.step()
         return jnp.sum(pipe_batch["x"])
 
     grads = nnx.grad(loss_fn)(pipeline)

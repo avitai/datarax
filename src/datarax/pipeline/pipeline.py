@@ -65,7 +65,12 @@ from jax.core import Tracer
 from datarax.core.data_source import DataSourceModule
 from datarax.core.spec import batch_length, validate_batch, validate_device_dtypes
 from datarax.pipeline.dag import record_count, run_dag
-from datarax.pipeline.iteration import compile_streaming_dag, declared_spec, PipelineIterator
+from datarax.pipeline.iteration import (
+    compile_streaming_dag,
+    declared_spec,
+    next_batch,
+    PipelineIterator,
+)
 from datarax.pipeline.topo import topological_sort, validate_dag
 
 
@@ -405,17 +410,24 @@ class Pipeline(nnx.Module):
         self._position[...] = jnp.zeros((), dtype=jnp.int32)
         self._epoch[...] = self._epoch[...] + jnp.int32(1)
 
-    @nnx.jit
     def step(self) -> dict:
         """Fetch one batch from the source and run it through the DAG.
 
         Reads ``self._position``, fetches via
         ``source.get_batch_at(position, batch_size, epoch_key)``, runs
         ``__call__``, advances ``self._position`` by ``batch_size``.
-        The method is JAX-traceable; the DAG iteration unrolls during
-        tracing.
+
+        Runs the compiled step iteration sessions use, so it copies none of the source's
+        arrays: device data is read in place, and NumPy data is uploaded once per array and
+        stays NumPy in the source. Called inside a transform (``nnx.jit``, ``nnx.grad``,
+        ``nnx.scan``, ``nnx.vmap``, a functional ``jax.jit``) it traces into the caller's
+        program. A structural change made between calls (a new batch size, a replaced stage,
+        ``train()``/``eval()``) is honored; a stage adding state while it runs is refused.
+
+        Returns:
+            The sink output for the batch at the current position.
         """
-        return self._next_batch()
+        return next_batch(self)
 
     def _next_batch(self) -> dict:
         """Fetch the batch at the position, run the DAG and advance the position.
