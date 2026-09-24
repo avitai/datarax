@@ -28,6 +28,7 @@ compiled graph.
 
 from __future__ import annotations
 
+import weakref
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -37,6 +38,8 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import DTypeLike
 from numpy.typing import ArrayLike
+
+from datarax.core.data_source import DataSourceModule
 
 
 _VALID_MASK_KEY = "valid_mask"
@@ -492,6 +495,31 @@ def validate_batch(batch: Any, element_spec: Any, *, batch_size: int | None = No
         )
 
 
+# Declared element specs per source, by x64 setting. Reading a spec can open a
+# backend iterator (the TFDS and HuggingFace streaming sources peek their first
+# record, which fills a shuffle buffer), so it is read once per source and
+# precision mode instead of once per pass. Weak keys let entries die with sources.
+_DECLARED_SPECS: weakref.WeakKeyDictionary[DataSourceModule, dict[bool, Any]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def declared_spec(source: DataSourceModule) -> Any:
+    """Return ``source.element_spec()``, read once per source and x64 setting.
+
+    Args:
+        source: The data source whose declaration is needed.
+
+    Returns:
+        The element spec the source declared under the active x64 setting.
+    """
+    specs = _DECLARED_SPECS.setdefault(source, {})
+    x64 = bool(jax.config.read("jax_enable_x64"))
+    if x64 not in specs:
+        specs[x64] = source.element_spec()
+    return specs[x64]
+
+
 __all__ = [
     "SpecMismatchError",
     "add_leading_dim",
@@ -499,6 +527,7 @@ __all__ = [
     "array_to_spec_strip_leading",
     "batch_length",
     "batched_spec",
+    "declared_spec",
     "device_spec",
     "scalar_index_spec",
     "spec_mismatches",

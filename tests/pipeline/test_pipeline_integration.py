@@ -69,7 +69,7 @@ def test_pipeline_multi_epoch_resets_to_deterministic_outputs() -> None:
         return jnp.sum(batch["x"])
 
     epoch_1 = pipeline.scan(step_fn, length=4)
-    pipeline._position[...] = jnp.int32(0)
+    pipeline.reset()
     epoch_2 = pipeline.scan(step_fn, length=4)
 
     np.testing.assert_array_equal(np.asarray(epoch_1), np.asarray(epoch_2))

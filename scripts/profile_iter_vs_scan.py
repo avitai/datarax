@@ -27,7 +27,6 @@ from collections.abc import Callable
 from typing import Any
 
 import jax
-import jax.numpy as jnp
 
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.adapters.datarax_adapter import DataraxAdapter
@@ -81,7 +80,7 @@ def _profile_one(
         # cached JIT graph is keyed on initial position state.
         pipeline = getattr(adapter, "_pipeline", None)
         if pipeline is not None and hasattr(pipeline, "_position"):
-            pipeline._position[...] = jnp.int32(0)
+            pipeline.reset()
         return adapter
 
     adapter = adapter_cls()

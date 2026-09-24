@@ -53,7 +53,6 @@ Public surface:
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any
 
@@ -63,14 +62,10 @@ from flax import nnx
 from jax.core import Tracer
 
 from datarax.core.data_source import DataSourceModule
-from datarax.core.spec import batch_length, validate_batch, validate_device_dtypes
+from datarax.core.spec import batch_length, declared_spec, validate_batch, validate_device_dtypes
 from datarax.pipeline.dag import record_count, run_dag
-from datarax.pipeline.iteration import (
-    compile_streaming_dag,
-    declared_spec,
-    next_batch,
-    PipelineIterator,
-)
+from datarax.pipeline.epochs import EpochPlan
+from datarax.pipeline.iteration import compile_streaming_dag, next_batch, PipelineIterator
 from datarax.pipeline.topo import topological_sort, validate_dag
 
 
@@ -112,7 +107,7 @@ class Pipeline(nnx.Module):
     Use :meth:`from_dag` for branching / merging topologies.
     """
 
-    def __init__(  # noqa: PLR0913 - the DAG shape, the batch rule and the streams are separate
+    def __init__(  # noqa: PLR0913, DOC502 - the DAG shape, the batch rule and the streams are separate
         self,
         *,
         source: DataSourceModule,
@@ -144,19 +139,15 @@ class Pipeline(nnx.Module):
                 than the source, which no single boundary batch can hold.
         """
         super().__init__()
-        if num_epochs is not None and num_epochs < 1:
-            raise ValueError(
-                f"num_epochs must be at least 1, or None for a stream; got {num_epochs}"
-            )
-        length = _source_length(source)
-        if num_epochs is None and length is not None and batch_size > length:
-            raise ValueError(
-                f"a continuous stream needs batch_size <= len(source); got batch_size "
-                f"{batch_size} over {length} records"
-            )
+        # Refuses an epoch rule no pipeline can serve.
+        EpochPlan(
+            length=_source_length(source),
+            batch_size=batch_size,
+            drop_last=drop_last,
+            num_epochs=num_epochs,
+        )
         self.drop_last = drop_last
         self.num_epochs = num_epochs
-        self._length: int | None = length
 
         # Resolve the construction shape into the unified DAG representation.
         resolved_nodes, resolved_edges, resolved_sink = self._resolve_dag_shape(
@@ -371,6 +362,20 @@ class Pipeline(nnx.Module):
         base = jax.random.wrap_key_data(self._epoch_key_base[...])
         return jax.random.fold_in(base, self._epoch[...])
 
+    @property
+    def epoch_plan(self) -> EpochPlan:
+        """How this pipeline's records divide into batches and epochs.
+
+        Built from the source's current length and the pipeline's batch rule each time,
+        so a length or batch size changed since construction is what it reports.
+        """
+        return EpochPlan(
+            length=_source_length(self.source),
+            batch_size=self.batch_size,
+            drop_last=self.drop_last,
+            num_epochs=self.num_epochs,
+        )
+
     def __len__(self) -> int:
         """Batches per epoch: ceil(N / B), or floor(N / B) under ``drop_last``.
 
@@ -380,9 +385,10 @@ class Pipeline(nnx.Module):
         Raises:
             TypeError: If the source has no length.
         """
-        if self._length is None:
+        plan = self.epoch_plan
+        if plan.length is None:
             raise TypeError(f"{type(self.source).__name__} has no length, so the pipeline has none")
-        return _batches_in(self._length, self.batch_size, self.drop_last)
+        return plan.batches_per_epoch()
 
     def batches_left(self) -> int | None:
         """Batches the current epoch still holds from the current position.
@@ -392,13 +398,10 @@ class Pipeline(nnx.Module):
             continuous stream (which never runs out), or a call inside a traced function,
             where the position is a tracer rather than a number.
         """
-        if self._length is None or self.num_epochs is None:
-            return None
         position = self._position[...]
         if isinstance(position, Tracer):
             return None
-        remaining = max(self._length - int(position), 0)
-        return _batches_in(remaining, self.batch_size, self.drop_last)
+        return self.epoch_plan.batches_left(int(position))
 
     def reset(self) -> None:
         """Start the next epoch: position 0, epoch counter advanced.
@@ -407,8 +410,9 @@ class Pipeline(nnx.Module):
         the same order again. Sessions in progress see the change at their next
         ``iter()``.
         """
-        self._position[...] = jnp.zeros((), dtype=jnp.int32)
-        self._epoch[...] = self._epoch[...] + jnp.int32(1)
+        position, epoch = EpochPlan.next_epoch(self._epoch[...])
+        self._position[...] = jnp.asarray(position, dtype=jnp.int32)
+        self._epoch[...] = epoch
 
     def step(self) -> dict:
         """Fetch one batch from the source and run it through the DAG.
@@ -427,7 +431,7 @@ class Pipeline(nnx.Module):
         Returns:
             The sink output for the batch at the current position.
         """
-        return next_batch(self)
+        return next_batch(self, type(self)._next_batch)
 
     def _next_batch(self) -> dict:
         """Fetch the batch at the position, run the DAG and advance the position.
@@ -439,23 +443,19 @@ class Pipeline(nnx.Module):
         Returns:
             The sink output for the batch at the current position.
         """
+        plan = self.epoch_plan
         idx = self._position[...]
-        size = self.batch_size
-        if self.num_epochs is None and self._length is not None:
-            return self._continuous_batch(idx)
-        batch = self.source.get_batch_at(idx, size, self.epoch_key())
+        if plan.continuous:
+            return self._continuous_batch(idx, plan)
+        batch = self.source.get_batch_at(idx, plan.batch_size, self.epoch_key())
         # __call__ reads self._position (== idx here) to ask the source which records it
         # served, so a subclass overriding __call__ still runs; advance only afterwards.
         # Under jit XLA computes the shuffle both calls share once.
         batch = self(batch)
-        self._position[...] = idx + jnp.int32(size)
-        if self._length is None:
-            mask = jnp.ones((size,), dtype=jnp.bool_)
-        else:
-            mask = idx + jnp.arange(size, dtype=jnp.int32) < jnp.int32(self._length)
-        return _with_valid_mask(batch, mask, self._sink)
+        self._position[...] = plan.position_after(idx)
+        return _with_valid_mask(batch, plan.valid_rows(idx), self._sink)
 
-    def _continuous_batch(self, idx: jax.Array) -> dict:
+    def _continuous_batch(self, idx: jax.Array, plan: EpochPlan) -> dict:
         """One batch of the continuous stream, crossing the epoch boundary when it must.
 
         The rows before the boundary come from this epoch's order at ``idx``; the rows
@@ -464,12 +464,13 @@ class Pipeline(nnx.Module):
 
         Args:
             idx: The position the batch starts at, within this epoch.
+            plan: The pipeline's epoch plan, a continuous one.
 
         Returns:
             The sink output with an all-true ``valid_mask``.
         """
-        size, length = self.batch_size, self._length
-        assert length is not None  # noqa: S101 - the caller checked
+        size, length = plan.batch_size, plan.length
+        assert length is not None  # noqa: S101 - a continuous plan has a length
         base = jax.random.wrap_key_data(self._epoch_key_base[...])
         key_now = jax.random.fold_in(base, self._epoch[...])
         key_next = jax.random.fold_in(base, self._epoch[...] + jnp.int32(1))
@@ -499,9 +500,7 @@ class Pipeline(nnx.Module):
             record_indices,
             self._epoch[...],
         )
-        consumed = idx + jnp.int32(size)
-        self._epoch[...] = self._epoch[...] + consumed // jnp.int32(length)
-        self._position[...] = consumed % jnp.int32(length)
+        self._position[...], self._epoch[...] = plan.advance(idx, self._epoch[...])
         return _with_valid_mask(batch, jnp.ones((size,), dtype=jnp.bool_), self._sink)
 
     def scan(
@@ -551,8 +550,8 @@ class Pipeline(nnx.Module):
         if left is not None and length > left:
             raise ValueError(
                 f"scan(length={length}) exceeds the {left} batches left in the epoch "
-                f"(position {int(self._position[...])} of {self._length} records, batch_size "
-                f"{self.batch_size}); reset() starts the next epoch"
+                f"(position {int(self._position[...])} of {self.epoch_plan.length} records, "
+                f"batch_size {self.batch_size}); reset() starts the next epoch"
             )
         n_modules = len(modules)
         has_init_carry = init_carry is not None
@@ -622,6 +621,34 @@ class Pipeline(nnx.Module):
 
         return scan_body_with_carry
 
+    def session(self) -> PipelineIterator:
+        """A compiled, checkpointable iteration session over this pipeline.
+
+        The session splits the pipeline once and serves batches through the compiled step
+        :meth:`step` also runs; its :meth:`~PipelineIterator.get_state` and
+        :meth:`~PipelineIterator.set_state` resume iteration exactly.
+
+        Returns:
+            The session, iterated with ``for batch in session`` or ``next(session)``.
+
+        Raises:
+            TypeError: If the source has no indexed access (a streaming source), which a
+                session cannot drive.
+        """
+        if not self.source.supports_indexed_access():
+            raise TypeError(
+                f"{type(self.source).__name__} has no indexed access (get_batch_at), so it "
+                "cannot back a session; iterate the pipeline to stream it."
+            )
+        return PipelineIterator(
+            self,
+            body=type(self)._next_batch,
+            plan=self.epoch_plan,
+            position=self._position,
+            epoch=self._epoch,
+            shuffled=bool(getattr(self.source, "is_random_order", False)),
+        )
+
     def __iter__(self) -> PipelineIterator | Iterator[dict]:
         """Iterate batches through a compiled session (the Tier-A fast path).
 
@@ -644,7 +671,7 @@ class Pipeline(nnx.Module):
                 ``get_batch``.
         """
         if self.source.supports_indexed_access():
-            return PipelineIterator(self)
+            return self.session()
         if not callable(getattr(self.source, "get_batch", None)):
             raise TypeError(
                 f"{type(self.source).__name__} implements neither get_batch_at (indexed "
@@ -680,7 +707,12 @@ class Pipeline(nnx.Module):
         """
         element_spec = declared_spec(self.source)
         validate_device_dtypes(element_spec)
-        apply = compile_streaming_dag(self)
+        plan = (
+            tuple(self._exec_order),
+            {name: tuple(preds) for name, preds in self._predecessors.items()},
+            self._sink,
+        )
+        apply = compile_streaming_dag(self._stage_modules, self._position, self._epoch, plan)
         while True:
             batch = self.source.get_batch(self.batch_size)  # type: ignore[attr-defined]
             size = batch_length(batch)
@@ -696,11 +728,6 @@ def _source_length(source: DataSourceModule) -> int | None:
         return len(source)
     except (TypeError, NotImplementedError):
         return None
-
-
-def _batches_in(records: int, batch_size: int, drop_last: bool) -> int:
-    """Batches ``records`` records make: floor under ``drop_last``, ceil otherwise."""
-    return records // batch_size if drop_last else math.ceil(records / batch_size)
 
 
 def _with_valid_mask(batch: Any, mask: jax.Array, sink: str | None) -> dict:

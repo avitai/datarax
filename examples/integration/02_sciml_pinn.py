@@ -157,7 +157,7 @@ def main() -> None:
         return loss
 
     for epoch in range(num_epochs):
-        pipeline._position.value = jnp.int32(0)
+        pipeline.reset()
         losses = pipeline.scan(step_fn, modules=(model, optimizer), length=steps_per_epoch)
         print(f"  epoch {epoch + 1}: combined loss = {float(jnp.mean(losses)):.5f}")
 

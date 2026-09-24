@@ -86,16 +86,16 @@ def _time_pipeline(pipeline: Pipeline) -> float:
         return jnp.sum(batch["x"])
 
     # Warmup compile
-    pipeline._position.value = jnp.int32(0)
+    pipeline.reset()
     pipeline.scan(step_fn, length=STEPS_PER_EPOCH)
     jax.block_until_ready(jnp.asarray(0.0))
 
     trials = []
     for _ in range(NUM_TRIALS):
-        pipeline._position.value = jnp.int32(0)
+        pipeline.reset()
         start = time.perf_counter()
         for _ in range(NUM_EPOCHS):
-            pipeline._position.value = jnp.int32(0)
+            pipeline.reset()
             jax.block_until_ready(pipeline.scan(step_fn, length=STEPS_PER_EPOCH))
         trials.append(time.perf_counter() - start)
     return float(np.median(trials))

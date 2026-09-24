@@ -83,7 +83,7 @@ class DataraxScanAdapter(DataraxAdapter):
         leaves = jax.tree.leaves(batch)
         bytes_per_batch = sum(int(arr.nbytes) for arr in leaves)
         # Reset position so warmup proceeds from a clean state.
-        self._pipeline._position[...] = jnp.int32(0)
+        self._pipeline.reset()
         self._batch_byte_estimate = bytes_per_batch
         return bytes_per_batch
 

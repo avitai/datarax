@@ -132,3 +132,18 @@ def test_subclass_can_hold_extra_state() -> None:
     rebuilt = nnx.merge(graphdef, state)
 
     assert int(rebuilt.batches_seen[...]) == int(pipeline.batches_seen[...]) == 2
+
+
+def test_an_overridden_step_body_is_what_step_and_iteration_run() -> None:
+    """The compiled step runs the pipeline's own ``_next_batch``, override included."""
+
+    class _Offset(Pipeline):
+        def _next_batch(self) -> dict:
+            batch = super()._next_batch()
+            return {**batch, "x": batch["x"] + 100.0}
+
+    stepped = _Offset(source=_source(), batch_size=4, rngs=nnx.Rngs(0), stages=[])
+    iterated = _Offset(source=_source(), batch_size=4, rngs=nnx.Rngs(0), stages=[])
+
+    np.testing.assert_array_equal(np.asarray(stepped.step()["x"]), np.arange(4.0) + 100.0)
+    np.testing.assert_array_equal(np.asarray(next(iter(iterated))["x"]), np.arange(4.0) + 100.0)

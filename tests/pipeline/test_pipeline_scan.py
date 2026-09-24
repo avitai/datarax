@@ -390,7 +390,7 @@ def test_scan_caches_compiled_body_across_calls_with_same_step_fn() -> None:
         return jnp.sum(batch["x"])
 
     pipeline.scan(step_fn, length=4)
-    pipeline._position[...] = jnp.int32(0)
+    pipeline.reset()
     cached_count = len(pipeline._scan_body_cache)
     assert cached_count == 1
 
@@ -416,7 +416,7 @@ def test_scan_cache_key_distinguishes_different_step_fns() -> None:
         return jnp.mean(batch["x"])
 
     pipeline.scan(step_a, length=4)
-    pipeline._position[...] = jnp.int32(0)
+    pipeline.reset()
     pipeline.scan(step_b, length=4)
     assert len(pipeline._scan_body_cache) == 2
 
@@ -434,7 +434,7 @@ def test_scan_cache_key_distinguishes_different_lengths() -> None:
         return jnp.sum(batch["x"])
 
     pipeline.scan(step_fn, length=2)
-    pipeline._position[...] = jnp.int32(0)
+    pipeline.reset()
     pipeline.scan(step_fn, length=4)
     assert len(pipeline._scan_body_cache) == 2
 
@@ -452,7 +452,7 @@ def test_scan_cached_call_produces_identical_results() -> None:
         return jnp.sum(batch["x"])
 
     first = pipeline.scan(step_fn, length=4)
-    pipeline._position[...] = jnp.int32(0)
+    pipeline.reset()
     second = pipeline.scan(step_fn, length=4)
 
     np.testing.assert_allclose(np.asarray(first), np.asarray(second))
@@ -475,6 +475,6 @@ def test_scan_cache_separates_carry_and_no_carry_variants() -> None:
         return new_carry, new_carry
 
     pipeline.scan(step_no_carry, length=4)
-    pipeline._position[...] = jnp.int32(0)
+    pipeline.reset()
     pipeline.scan(step_with_carry, length=4, init_carry=jnp.float32(0.0))
     assert len(pipeline._scan_body_cache) == 2

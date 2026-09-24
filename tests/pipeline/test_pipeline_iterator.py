@@ -208,7 +208,7 @@ class TestModuleStateWriteBack:
         assert len(first) == _N // _BATCH
         again = [np.asarray(b["x"]) for b in pipeline]  # exhausted: no batches
         assert again == []
-        pipeline._position[...] = jnp.int32(0)
+        pipeline.reset()
         rewound = [np.asarray(b["x"]) for b in pipeline]
         assert len(rewound) == len(first)
 
@@ -494,7 +494,7 @@ class TestImmutableStaging:
         batch_before = np.asarray(next(first)["x"])
         first.close()
 
-        pipeline._position[...] = jnp.int32(0)
+        pipeline.reset()
         source = pipeline.source
         assert isinstance(source, MemorySource)
         source.data = {"x": np.zeros((_N, 8), dtype=np.float32)}

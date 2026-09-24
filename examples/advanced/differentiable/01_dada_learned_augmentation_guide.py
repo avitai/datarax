@@ -1198,7 +1198,7 @@ def run_dada_search(
             try:
                 val_batch = next(val_iter)
             except StopIteration:
-                val_pipeline._position.value = jnp.int32(0)
+                val_pipeline.reset()
                 val_iter = iter(val_pipeline)
                 val_batch = next(val_iter)
 

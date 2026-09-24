@@ -22,6 +22,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A pipeline's epoch rule lives in one place, `datarax.pipeline.epochs.EpochPlan`: batches per
+  epoch, batches left, exhaustion, how a position advances (wrapping into the next epoch for a
+  continuous stream), where the next epoch starts, and which rows of a batch are records.
+  `Pipeline.epoch_plan` builds it from the source's current length, so `len(pipeline)`,
+  `batches_left()`, `reset()`, the compiled step and iteration sessions agree and follow a length
+  that changed after construction; the pipeline no longer caches the length. Iteration sessions
+  held a second copy of the exhaustion and rollover rules and a length frozen at session start.
+- `datarax.pipeline.iteration` no longer knows `Pipeline`: `PipelineIterator(module, body=,
+  plan=, position=, epoch=, shuffled=)`, `next_batch(module, body)` and
+  `compile_streaming_dag(stages, position, epoch, plan)` take what they use, and
+  `Pipeline.session()` returns a typed, checkpointable session (`iter(pipeline)` returns it for a
+  random-access source). The two modules imported each other, the cycle hidden behind a
+  `TYPE_CHECKING` import; an import-linter contract now keeps `pipeline` above `iteration` above
+  `epochs`. The compiled step runs `type(pipeline)._next_batch`, so a subclass's override is
+  honored. `declared_spec` moves to `datarax.core.spec`. The persisted iterator state is
+  unchanged.
+- The examples, benchmarks and scripts start a new epoch with `Pipeline.reset()` instead of
+  writing the pipeline's private position.
 - `DataraxModule.get_state`/`set_state`/`clone` and `Pipeline.scan` name graph mode
   (`graph=True`; `graph_updates=True` for `nnx.scan`, whose `StateAxes` need it), so they keep
   working when Flax makes tree mode the default: a module built from one `nnx.Rngs` shares

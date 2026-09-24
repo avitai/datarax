@@ -159,7 +159,7 @@ on heavier workloads.
 
 # %%
 # Reset position so we start from batch 0.
-pipeline._position.value = jnp.int32(0)
+pipeline.reset()
 
 steps_per_epoch = num_samples // 32
 

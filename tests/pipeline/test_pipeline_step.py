@@ -225,7 +225,7 @@ class TestStructure:
         pipeline.step()
         next(iter(pipeline))
         pipeline.step()
-        assert _session_step(graphdef)._cache_size() == 1
+        assert _session_step(graphdef, type(pipeline)._next_batch)._cache_size() == 1
 
     def test_a_stage_adding_state_while_it_runs_is_refused(self) -> None:
         with pytest.raises(ValueError, match="changed the module structure"):
