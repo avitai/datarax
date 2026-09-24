@@ -12,8 +12,9 @@ Test contract index:
    that ignores ``stages`` and writes its own ``__call__`` produces the
    expected output.
 2. ``test_subclass_inherits_step_and_scan`` — ``step()`` and ``scan()``
-   work unchanged on subclasses (they call ``self(batch)`` which the
-   subclass overrides).
+   work unchanged on subclasses (they call ``self(batch, records)`` which the
+   subclass overrides). ``records`` names the batch's records, which the step
+   computed once; a subclass keying randomness on them uses it.
 3. ``test_subclass_with_nnx_cond_runtime_branching`` — a subclass using
    ``nnx.cond`` for runtime branching scans correctly under
    ``nnx.scan``; both branches participate in the trace.
@@ -29,6 +30,7 @@ import numpy as np
 from flax import nnx
 
 from datarax.pipeline import Pipeline
+from datarax.pipeline.dag import Records
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
 
@@ -47,23 +49,23 @@ def test_subclass_can_override_call_for_custom_topology() -> None:
             super().__init__(source=source, batch_size=batch_size, rngs=rngs, stages=[])
             self.offset = jnp.float32(offset)
 
-        def __call__(self, batch: dict) -> dict:
+        def __call__(self, batch: dict, records: Records | None = None) -> dict:
             return {**batch, "x": batch["x"] + self.offset}
 
     pipeline = _CustomPipeline(source=_source(), batch_size=4, rngs=nnx.Rngs(0), offset=100.0)
-    out = pipeline.step()  # type: ignore[reportCallIssue]
+    out = pipeline.step()
 
     np.testing.assert_allclose(np.asarray(out["x"]), np.array([100.0, 101.0, 102.0, 103.0]))
 
 
 def test_subclass_inherits_step_and_scan() -> None:
-    """``step()`` and ``scan()`` use ``self(batch)`` so subclass overrides take effect."""
+    """``step()`` and ``scan()`` use ``self(batch, records)`` so subclass overrides take effect."""
 
     class _Doubler(Pipeline):
         def __init__(self, *, source, batch_size, rngs):
             super().__init__(source=source, batch_size=batch_size, rngs=rngs, stages=[])
 
-        def __call__(self, batch: dict) -> dict:
+        def __call__(self, batch: dict, records: Records | None = None) -> dict:
             return {**batch, "x": batch["x"] * 2.0}
 
     pipeline = _Doubler(source=_source(num_elements=16), batch_size=4, rngs=nnx.Rngs(0))
@@ -84,7 +86,7 @@ def test_subclass_with_nnx_cond_runtime_branching() -> None:
             super().__init__(source=source, batch_size=batch_size, rngs=rngs, stages=[])
             self.threshold = jnp.float32(threshold)
 
-        def __call__(self, batch: dict) -> dict:
+        def __call__(self, batch: dict, records: Records | None = None) -> dict:
             mean = jnp.mean(batch["x"])
 
             def double_branch(b: dict) -> dict:
@@ -120,15 +122,47 @@ def test_subclass_can_hold_extra_state() -> None:
             super().__init__(source=source, batch_size=batch_size, rngs=rngs, stages=[])
             self.batches_seen = nnx.Variable(jnp.int32(0))
 
-        def __call__(self, batch: dict) -> dict:
+        def __call__(self, batch: dict, records: Records | None = None) -> dict:
             self.batches_seen[...] = self.batches_seen[...] + jnp.int32(1)
             return batch
 
     pipeline = _Counter(source=_source(), batch_size=4, rngs=nnx.Rngs(0))
-    pipeline.step()  # type: ignore[reportCallIssue]
-    pipeline.step()  # type: ignore[reportCallIssue]
+    pipeline.step()
+    pipeline.step()
 
     graphdef, state = nnx.split(pipeline)
     rebuilt = nnx.merge(graphdef, state)
 
     assert int(rebuilt.batches_seen[...]) == int(pipeline.batches_seen[...]) == 2
+
+
+def test_an_overridden_step_body_is_what_step_and_iteration_run() -> None:
+    """The compiled step runs the pipeline's own ``_next_batch``, override included."""
+
+    class _Offset(Pipeline):
+        def _next_batch(self, size: int) -> dict:
+            batch = super()._next_batch(size)
+            return {**batch, "x": batch["x"] + 100.0}
+
+    stepped = _Offset(source=_source(), batch_size=4, rngs=nnx.Rngs(0), stages=[])
+    iterated = _Offset(source=_source(), batch_size=4, rngs=nnx.Rngs(0), stages=[])
+
+    np.testing.assert_array_equal(np.asarray(stepped.step()["x"]), np.arange(4.0) + 100.0)
+    np.testing.assert_array_equal(np.asarray(next(iter(iterated))["x"]), np.arange(4.0) + 100.0)
+
+
+def test_the_step_passes_the_records_it_served() -> None:
+    """``records`` names the served rows: their indices and the epoch each belongs to."""
+
+    class _Names(Pipeline):
+        def __call__(self, batch: dict, records: Records | None = None) -> dict:
+            assert records is not None
+            return {"indices": records.indices, "epochs": records.epochs}
+
+    pipeline = _Names(source=_source(num_elements=10), batch_size=4, rngs=nnx.Rngs(0), stages=[])
+    pipeline.step()
+    pipeline.step()
+    crossing = pipeline.step()
+
+    np.testing.assert_array_equal(np.asarray(crossing["indices"]), [8, 9, 0, 1])
+    np.testing.assert_array_equal(np.asarray(crossing["epochs"]), [0, 0, 1, 1])

@@ -18,3 +18,11 @@ layers =
     datarax.batching
     datarax.utils
     datarax.core
+
+[importlinter:contract:pipeline-internal]
+name = Pipeline drives its iteration machinery, which knows nothing of Pipeline
+type = layers
+layers =
+    datarax.pipeline.pipeline
+    datarax.pipeline.iteration
+    datarax.pipeline.epochs

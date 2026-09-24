@@ -69,7 +69,7 @@ def test_pipeline_multi_epoch_resets_to_deterministic_outputs() -> None:
         return jnp.sum(batch["x"])
 
     epoch_1 = pipeline.scan(step_fn, length=4)
-    pipeline._position[...] = jnp.int32(0)
+    pipeline.reset()
     epoch_2 = pipeline.scan(step_fn, length=4)
 
     np.testing.assert_array_equal(np.asarray(epoch_1), np.asarray(epoch_2))
@@ -94,7 +94,7 @@ def test_pipeline_state_round_trips_through_split_merge_after_iteration() -> Non
 
     # Advance by 3 steps (positions 0, 4, 8 → next batch starts at 12)
     for _ in range(3):
-        pipeline_a.step()  # type: ignore[reportCallIssue]
+        pipeline_a.step()
 
     # Capture state as a pure-dict checkpoint (deep-copies the variable values).
     graphdef, state = nnx.split(pipeline_a)
@@ -117,7 +117,7 @@ def test_pipeline_state_round_trips_through_split_merge_after_iteration() -> Non
     assert int(pipeline_b._position[...]) == 12
 
     # Next step on the rebuilt pipeline produces the expected batch from position 12.
-    next_b = pipeline_b.step()  # type: ignore[reportCallIssue]
+    next_b = pipeline_b.step()
     np.testing.assert_array_equal(np.asarray(next_b["x"]), np.array([12.0, 13.0, 14.0, 15.0]))
 
 
@@ -132,7 +132,7 @@ def test_pipeline_handles_empty_stages() -> None:
         rngs=nnx.Rngs(0),
     )
 
-    out = pipeline.step()  # type: ignore[reportCallIssue]
+    out = pipeline.step()
     np.testing.assert_array_equal(np.asarray(out["x"]), np.array([0.0, 1.0, 2.0, 3.0]))
 
 
@@ -144,14 +144,18 @@ def test_pipeline_handles_batch_size_larger_than_source() -> None:
         rngs=nnx.Rngs(0),
     )
 
-    out = pipeline.step()  # type: ignore[reportCallIssue]
-    # batch_size=8 over a source of length 4: the rows past the end are padding, served
-    # from the start of the order and marked invalid.
+    out = pipeline.step()
+    # batch_size=8 over a source of length 4: the batch holds two epochs, each record once
+    # per epoch, and iteration serves the one epoch it runs as one batch of 4.
     np.testing.assert_array_equal(
         np.asarray(out["x"]),
         np.array([0.0, 1.0, 2.0, 3.0, 0.0, 1.0, 2.0, 3.0]),
     )
-    np.testing.assert_array_equal(np.asarray(out["valid_mask"]), [True] * 4 + [False] * 4)
+    assert int(pipeline._epoch[...]) == 1
+    assert [
+        np.asarray(batch["x"]).tolist()
+        for batch in Pipeline(source=_source(4), stages=[], batch_size=8, rngs=nnx.Rngs(0))
+    ] == [[0.0, 1.0, 2.0, 3.0]]
 
 
 def test_pipeline_handles_single_element_source() -> None:
@@ -162,10 +166,10 @@ def test_pipeline_handles_single_element_source() -> None:
         rngs=nnx.Rngs(0),
     )
 
-    out = pipeline.step()  # type: ignore[reportCallIssue]
-    # Source length 1: one valid row, three padding rows served from index 0
+    out = pipeline.step()
+    # Source length 1: the record of each of four epochs
     np.testing.assert_array_equal(np.asarray(out["x"]), np.array([0.0, 0.0, 0.0, 0.0]))
-    np.testing.assert_array_equal(np.asarray(out["valid_mask"]), [True, False, False, False])
+    assert (int(pipeline._position[...]), int(pipeline._epoch[...])) == (1, 3)
 
 
 def test_pipeline_iter_over_memory_source_terminates() -> None:
@@ -213,10 +217,10 @@ def test_pipeline_stochastic_stage_advances_across_steps() -> None:
         rngs=nnx.Rngs(0),
     )
 
-    pipeline.step()  # type: ignore[reportCallIssue]
+    pipeline.step()
     key_after_step_1 = np.asarray(stage.last_key[...]).copy()
 
-    pipeline.step()  # type: ignore[reportCallIssue]
+    pipeline.step()
     key_after_step_2 = np.asarray(stage.last_key[...]).copy()
 
     assert not np.array_equal(key_after_step_1, key_after_step_2), (

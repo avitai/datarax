@@ -29,7 +29,7 @@ def _write_npy(path: Path, array: np.ndarray) -> Path:
 
 
 def test_streaming_disk_source_reads_requested_indices(tmp_path: Path) -> None:
-    """``read_batch(indices)`` returns the rows at those indices, ``stop_gradient``-wrapped."""
+    """``get_records(indices)`` returns the rows at those indices, ``stop_gradient``-wrapped."""
     array = np.arange(40, dtype=np.float32).reshape(10, 4)
     path = _write_npy(tmp_path / "data.npy", array)
 
@@ -37,7 +37,7 @@ def test_streaming_disk_source_reads_requested_indices(tmp_path: Path) -> None:
     source = StreamingDiskSource(config, rngs=nnx.Rngs(0))
 
     indices = jnp.asarray([0, 2, 4, 9], dtype=jnp.int32)
-    out = source.read_batch(indices)
+    out = source.get_records(indices)
 
     assert isinstance(out, dict)
     assert "x" in out
@@ -92,7 +92,7 @@ def test_streaming_disk_source_usable_in_downstream_gradient(tmp_path: Path) -> 
     def loss(model_param: jax.Array) -> jax.Array:
         # Disk read with non-differentiated indices; downstream loss is
         # differentiable in model_param.
-        out = source.read_batch(indices)
+        out = source.get_records(indices)
         return jnp.sum(out["x"]) * model_param
 
     grad_fn = jax.grad(loss)
@@ -149,4 +149,4 @@ def test_pipeline_iterates_the_disk_array_in_order(tmp_path: Path) -> None:
     iterator = iter(pipeline())
     assert isinstance(iterator, PipelineIterator)
     np.testing.assert_array_equal(np.concatenate([np.asarray(b["x"]) for b in iterator]), array)
-    np.testing.assert_array_equal(np.asarray(pipeline().step()["x"]), array[:4])  # type: ignore[call-arg]
+    np.testing.assert_array_equal(np.asarray(pipeline().step()["x"]), array[:4])

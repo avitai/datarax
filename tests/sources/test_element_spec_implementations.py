@@ -14,7 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax.core.spec import validate_batch
+from datarax.core.spec import batched_spec, validate_batch
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
 
@@ -64,21 +64,16 @@ def test_memory_source_element_spec_uses_jax_dtypes() -> None:
 
 def test_memory_source_element_spec_preserves_pipeline_chain() -> None:
     """A MemorySource's spec composes with the default operator/batcher chain."""
-    from datarax.core.spec import batched_spec  # noqa: PLC0415
-
     data = {"image": jnp.ones((50, 4), dtype=jnp.float32)}
     source = MemorySource(MemorySourceConfig(), data, rngs=nnx.Rngs(0))
 
     elem_spec = source.element_spec()
     bspec = batched_spec(elem_spec, batch_size=8)
 
+    assert set(bspec) == {"image"}
     image_spec = bspec["image"]
-    valid_mask_spec = bspec["valid_mask"]
     assert isinstance(image_spec, jax.ShapeDtypeStruct)
-    assert isinstance(valid_mask_spec, jax.ShapeDtypeStruct)
     assert image_spec.shape == (8, 4)
-    assert valid_mask_spec.shape == (8,)
-    assert valid_mask_spec.dtype == jnp.bool_
 
 
 def test_memory_source_element_spec_describes_get_batch_at_output() -> None:

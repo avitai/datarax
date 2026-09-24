@@ -161,7 +161,7 @@ def train_with_iterator(
         return loss
 
     # Warm-up compile: run one step so the JIT compile is excluded from timing.
-    pipeline._position[...] = jnp.int32(0)
+    pipeline.reset()
     for batch in pipeline:
         train_step(model, optimizer, batch)
         break
@@ -169,7 +169,7 @@ def train_with_iterator(
 
     losses_per_epoch: list[float] = []
     for epoch in range(num_epochs):
-        pipeline._position[...] = jnp.int32(0)
+        pipeline.reset()
         epoch_loss = jnp.float32(0.0)
         n_steps = 0
         for batch in pipeline:
@@ -205,13 +205,13 @@ def train_with_scan(
     # Warm-up compile: scan once with the same length so the XLA compile is
     # excluded from per-epoch timing. Subsequent scan() calls with the same
     # length hit the JIT cache.
-    pipeline._position[...] = jnp.int32(0)
+    pipeline.reset()
     pipeline.scan(step_fn, modules=(model, optimizer), length=steps_per_epoch)
     jax.block_until_ready(jnp.asarray(0.0))
 
     losses_per_epoch: list[float] = []
     for epoch in range(num_epochs):
-        pipeline._position[...] = jnp.int32(0)
+        pipeline.reset()
         losses = pipeline.scan(step_fn, modules=(model, optimizer), length=steps_per_epoch)
         losses_per_epoch.append(float(jnp.mean(losses)))
         print(f"  [scan]     epoch {epoch + 1}: loss={losses_per_epoch[-1]:.4f}")

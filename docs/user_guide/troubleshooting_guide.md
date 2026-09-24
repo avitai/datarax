@@ -97,74 +97,15 @@ class CompatibleModule(DataraxModule):
 
 ### Iterator State Management
 
-**Problem**: Iterator state becomes inconsistent after checkpointing.
+**Problem**: An iterator restored from a checkpoint starts again from the beginning.
 
-```python
-# Problem: Iterator doesn't resume from correct position
-iterator = iter(pipeline)
-# ... consume some batches ...
-state = iterator.get_state()
-iterator.set_state(state)
-# Iterator might restart from beginning
-```
+**Cause**: its position is a plain Python attribute. A checkpoint holds a module's
+`nnx.Variable` state (`get_state()`), so a position kept anywhere else is not saved.
 
-**Solution**: Implement proper iterator state tracking.
-
-```python
-from datarax.core.module import CheckpointableIteratorModule
-from datarax.core import DataraxModuleConfig
-import flax.nnx as nnx
-
-class RobustIteratorModule(CheckpointableIteratorModule):
-    def __init__(self, data, name="robust_iterator"):
-        super().__init__(DataraxModuleConfig(), name=name)
-        self.data = nnx.Variable(data)
-        self.position = nnx.Variable(0)
-        self.epoch = nnx.Variable(0)
-        self._iterator = None
-
-    def create_iterator(self):
-        """Create iterator that tracks position."""
-        self.reset_iterator()
-        return self
-
-    def reset_iterator(self):
-        """Reset iterator to current position."""
-        self._iterator = iter(self.data[...][self.position[...]:])
-
-    def __next__(self):
-        if self._iterator is None:
-            self.reset_iterator()
-
-        try:
-            item = next(self._iterator)
-            self.position[...] = self.position[...] + 1
-            return item
-        except StopIteration:
-            self.epoch[...] = self.epoch[...] + 1
-            self.position[...] = 0
-            self.reset_iterator()
-            raise
-
-    def get_state(self):
-        """Include iterator position in state."""
-        state = super().get_state()
-        state.update({
-            'iterator_position': self.position[...],
-            'iterator_epoch': self.epoch[...]
-        })
-        return state
-
-    def set_state(self, state):
-        """Restore iterator position."""
-        super().set_state(state)
-        if 'iterator_position' in state:
-            self.position[...] = state['iterator_position']
-        if 'iterator_epoch' in state:
-            self.epoch[...] = state['iterator_epoch']
-        # Reset iterator to correct position
-        self.reset_iterator()
-```
+**Solution**: keep the position in an `nnx.Variable` and the records as construction data
+(`nnx.data`), as the [checkpointable iterator pattern](checkpointing_guide.md#checkpointable-iterator-pattern)
+shows. A `Pipeline` and its iteration session already do: checkpoint the pipeline with
+`IteratorCheckpoint.save(pipeline, step=...)`, which also keeps its stages' tuned parameters.
 
 ## State Management Issues
 

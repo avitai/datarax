@@ -4,7 +4,7 @@ The bundled sources (HFEagerSource, TFDSEagerSource, HFStreamingSource,
 TFDSStreamingSource, MemorySource) and sources in other packages delegate to
 these helpers for:
 - Wrapped, optionally shuffled index resolution (``resolve_wrapped_indices``)
-- Shuffled index computation (Grain's Feistel cipher)
+- Shuffled index computation (a keyed Feistel bijection, O(1) per record)
 - Iteration with O(1) memory shuffling
 - Batch retrieval (stateless and stateful)
 - Reset logic (eager and streaming)
@@ -20,14 +20,54 @@ Streaming helpers use callback parameters (convert_fn) to stay backend-agnostic.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 import jax
 import jax.numpy as jnp
-from flax import nnx
+import numpy as np
 
-from datarax.samplers.index_shuffle import index_shuffle
+from datarax.samplers.index_shuffle import (
+    index_shuffle,
+    shuffle_positions,
+    shuffle_positions_host,
+)
+
+
+def record_count(data: Any) -> int:
+    """Return how many records a source's data holds.
+
+    A mapping holds as many records as its columns -- every value with a length, arrays and
+    sequences alike -- and they must agree; a mapping with no such column holds none. Any other
+    sequence holds one record per element. In-memory sources read their length through this
+    on every call, so it follows data replaced after construction.
+
+    Args:
+        data: The data a source serves: a mapping of columns, or a sequence of records.
+
+    Returns:
+        The record count.
+
+    Raises:
+        TypeError: If a column of the mapping is itself a mapping, whose key count is not a
+            record count.
+        ValueError: If the mapping's columns disagree on their length.
+    """
+    if not isinstance(data, dict):
+        return len(data)
+    for key, value in data.items():
+        if isinstance(value, Mapping):
+            raise TypeError(
+                f"Data column {key!r} is a mapping; columns are arrays with one row per record, "
+                "in a flat mapping. Give each nested field its own top-level key."
+            )
+    counts = {len(value) for value in data.values() if hasattr(value, "__len__")}
+    if len(counts) > 1:
+        lengths = {key: len(value) for key, value in data.items() if hasattr(value, "__len__")}
+        raise ValueError(
+            f"All arrays in data dictionary must have the same length. Got lengths: {lengths}"
+        )
+    return counts.pop() if counts else 0
 
 
 def partition_length(length: int, num_workers: int = 1, shard_id: int = 0) -> int:
@@ -55,12 +95,13 @@ def resolve_wrapped_indices(  # noqa: PLR0913 - the order, its partition and the
     *,
     num_workers: int = 1,
     shard_id: int = 0,
-    order: jax.Array | None = None,
 ) -> jax.Array:
     """Return the global record indices for a wrapped slice of a worker's record order.
 
-    The dataset order is ``arange(length)``, or a full-dataset permutation derived from
-    ``key`` when ``is_random_order`` is set and a ``key`` is supplied. Worker ``shard_id`` of
+    The dataset order is ``arange(length)``, or the keyed bijection
+    :func:`~datarax.samplers.index_shuffle.shuffle_positions` of it when ``is_random_order`` is
+    set and a ``key`` is supplied; each index costs O(1), so a slice costs O(size) at every
+    dataset size and no order is stored. Worker ``shard_id`` of
     ``num_workers`` serves positions ``[shard_id::num_workers]`` of that order, and its
     logical positions ``start + arange(size)`` wrap at its own length. The same arguments
     always yield the same indices.
@@ -74,9 +115,6 @@ def resolve_wrapped_indices(  # noqa: PLR0913 - the order, its partition and the
             False or ``key`` is None.
         num_workers: Number of workers the dataset is split across.
         shard_id: This worker's index.
-        order: The epoch's permutation of ``length`` when the caller already holds it
-            (an :class:`EpochOrderCache`); ``None`` derives it from ``key`` here, which
-            costs O(length) per call.
 
     Returns:
         Int32 ``jax.Array`` of shape ``(size,)`` with the global record indices.
@@ -87,53 +125,8 @@ def resolve_wrapped_indices(  # noqa: PLR0913 - the order, its partition and the
     positions = (start_arr + offsets) % jnp.int32(worker_length)
     global_positions = jnp.int32(shard_id) + positions * jnp.int32(num_workers)
     if is_random_order and key is not None:
-        permutation = jax.random.permutation(key, length) if order is None else order
-        return permutation[global_positions]
+        return shuffle_positions(global_positions, length, key)
     return global_positions
-
-
-class EpochOrderCache(nnx.Module):
-    """The permutation one epoch serves, computed once per key and reused by every batch.
-
-    A shuffled source is asked for records position by position, with the epoch's key
-    each time; deriving the full permutation on every call is O(length) per batch. The
-    cache holds the last key's permutation and recomputes only when the key changes
-    (under ``lax.cond``, so the compiled step runs the permutation once per epoch). The
-    stored order and key are NNX state, so a compiled iteration session carries them.
-    """
-
-    def __init__(self, length: int) -> None:
-        """Start empty; the first ``order_for`` fills the cache.
-
-        Args:
-            length: Number of records the permutation covers.
-        """
-        self.length = length
-        key_shape = jax.random.key_data(jax.random.key(0)).shape
-        self._key_data = nnx.Variable(jnp.zeros(key_shape, dtype=jnp.uint32))
-        self._order = nnx.Variable(jnp.arange(length, dtype=jnp.int32))
-        self._filled = nnx.Variable(jnp.zeros((), dtype=jnp.bool_))
-
-    def order_for(self, key: jax.Array) -> jax.Array:
-        """The permutation ``jax.random.permutation(key, length)``, from the cache when it holds it.
-
-        Args:
-            key: The epoch's key.
-
-        Returns:
-            Int32 array of shape ``(length,)``.
-        """
-        key_data = jax.random.key_data(key)
-        same = jnp.logical_and(self._filled[...], jnp.all(key_data == self._key_data[...]))
-        order = jax.lax.cond(
-            same,
-            lambda: self._order[...],
-            lambda: jax.random.permutation(key, self.length).astype(jnp.int32),
-        )
-        self._order[...] = order
-        self._key_data[...] = key_data
-        self._filled[...] = jnp.ones((), dtype=jnp.bool_)
-        return order
 
 
 logger = logging.getLogger(__name__)
@@ -176,7 +169,7 @@ def validate_include_exclude_keys(
 
 
 def validate_seed_range(seed: int) -> None:
-    """Validate shuffle seed range for Grain index_shuffle compatibility."""
+    """Validate a shuffle seed is in ``[0, 2**32)``."""
     if seed < 0 or seed >= 2**32:
         raise ValueError("seed must be in [0, 2**32)")
 
@@ -194,23 +187,21 @@ def shuffled_index_for_position(
     epoch: int,
     length: int,
 ) -> int:
-    """Get shuffled index using Grain's O(1) memory Feistel cipher.
+    """Return the record at position ``index`` of the epoch's order.
 
     Args:
-        index: Original sequential index
-        shuffle: Whether shuffling is enabled
-        seed: Base integer seed for Grain's index_shuffle
-        epoch: Current epoch (used for per-epoch seeding)
-        length: Total number of elements
+        index: Position within the epoch.
+        shuffle: Whether shuffling is enabled.
+        seed: Base integer seed of the shuffle.
+        epoch: The epoch whose order is served; each epoch has its own order.
+        length: Total number of elements.
 
     Returns:
-        Shuffled index for current epoch, or original index if shuffle=False
+        ``index_shuffle(index, seed, length, epoch)``, or ``index`` if shuffle=False.
     """
     if not shuffle:
         return index
-
-    per_epoch_seed = (seed + epoch) % (2**32)
-    return index_shuffle(index=index, seed=per_epoch_seed, num_elements=length)
+    return index_shuffle(index, seed, length, epoch)
 
 
 def eager_iter(
@@ -278,7 +269,8 @@ def eager_get_batch(
     if key is not None:
         # Stateless mode
         if shuffle:
-            indices = jax.random.permutation(key, length)[:batch_size]
+            positions = jnp.arange(min(batch_size, length), dtype=jnp.int32)
+            indices = shuffle_positions(positions, length, key)
         else:
             indices = jnp.arange(batch_size)
         return gather_fn(data, indices)
@@ -288,9 +280,10 @@ def eager_get_batch(
     end = min(start + batch_size, length)
     epoch = epoch_var.get_value()
 
-    shuffled_indices = [
-        shuffled_index_for_position(i, shuffle, seed, epoch, length) for i in range(start, end)
-    ]
+    positions = np.arange(start, end)
+    shuffled_indices = (
+        shuffle_positions_host(positions, length, seed, epoch) if shuffle else positions
+    )
 
     index_var.set_value(end % length)
     if end >= length:

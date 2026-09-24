@@ -9,10 +9,21 @@ static, so tracing unrolls it into one graph.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
+
+
+class Records(NamedTuple):
+    """The records a batch holds: each row's stable index and the epoch it belongs to.
+
+    A batch crossing an epoch boundary holds records of two epochs, so the epoch is per row.
+    Stochastic operators key each record's randomness on both.
+    """
+
+    indices: jax.Array
+    epochs: jax.Array
 
 
 def record_count(batch: Any) -> int | None:

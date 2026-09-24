@@ -7,6 +7,189 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- An in-memory source's length is read from its data. `MemorySource` and the eager HF and TFDS
+  sources copied it at construction while `data` stays a public attribute: after the data was
+  replaced (8 records by 12), `len(source)` stayed 8 and a pipeline served 8 records and
+  stopped. `MixDataSourcesNode` froze its total and per-source offsets while it sampled each
+  child's current length, so a child that grew produced record indices colliding with another
+  source's, and per-record randomness is keyed on them. All read the length now through
+  `datarax.sources.source_ops.record_count`, which replaces three differing implementations
+  (MemorySource's check, HF's first-column read, TFDS's first-key shape). Sources over storage
+  that cannot change while they exist (the Grain adapter's per-pass snapshot, memmaps, split
+  metadata) keep reading it once. An `EagerSourceBase` subclass no longer sets `length`.
+- A module's checkpoint (`DataraxModule.get_state`) holds its `nnx.Variable` state only. It held
+  every leaf `nnx.state` reaches, including a `MemorySource`'s data arrays, so each checkpoint
+  carried the whole dataset (25.6 MB for a 25.6 MB source) and `set_state` could not restore it
+  ("Cannot restore state at data.x").
+- A restored `MemorySource` resumes the same records. The host shuffle's seed lived in a plain
+  attribute outside the checkpoint and each epoch drew a new one, so a restored source drew a
+  different seed; it is now drawn once, on first use, into a checkpointed Variable, and epoch `e`
+  serves the order of `(seed, e)`. The last batch of an epoch in stateful `get_batch` is taken
+  from its own epoch's order; the epoch advanced before its records were read. `reset()` returns
+  to epoch 0 and serves that epoch's order again.
+- `Pipeline.scan` reads NumPy source data from the device copy `step()` and iteration use,
+  uploaded once. It gave `nnx.scan` the live pipeline, whose NumPy arrays were call arguments, so
+  every call uploaded the whole dataset (65.6-70.7 ms per call at 1 GiB on an RTX 4090, now
+  2.1-2.3 ms). The scan now runs on a view of the pipeline that shares its Variables. With
+  device data a call costs about 0.3 ms more, for building that view.
+- A data column that is itself a mapping is refused with a `TypeError` naming the column. Its
+  key count was read as its length, so the refusal named that count as a length, and a mapping
+  with as many keys as there were records was accepted.
+- The performance page and `Pipeline`'s tiers carry measured costs, and lead with the data-loader
+  loop (`for batch in pipeline` into a train step written as Flax writes it). They state that a
+  pipeline passed into your own `nnx.jit` step copies its dataset on every call, which the page
+  previously described as absorbed by the outer trace. They also state what tree mode (FLIP 5310)
+  changes for your own transforms, and why a pipeline inside `nnx.grad` must be an argument.
+
+### Changed
+
+- **No batch holds padding; epochs end the way tf.data and Grain end them.** A random-access
+  batch crossing the end of an epoch was padded with the epoch's first records and flagged in
+  a `valid_mask` leaf. Now:
+  - `drop_last=False` (the default) is `repeat().batch()`: the batch is completed from the head
+    of the next epoch's order, so every epoch serves each record exactly once, and a batch larger
+    than the source spans several epochs. A session serving `num_epochs` epochs stops after
+    exactly `num_epochs * len(source)` records; its final batch is short and compiled at its own
+    size.
+  - `drop_last=True` is `batch(drop_remainder=True).repeat()`: the records short of a full batch
+    are skipped and the next batch starts the next epoch.
+  - `step()` and `scan(length)` never run out: the compiled step starts the next epoch itself.
+    `scan` no longer refuses a length beyond the epoch.
+  - The `valid_mask` leaf is removed; drop any masking of pipeline batches. `Batch.valid_mask`,
+    `Batch.from_parts(valid_mask=)` and the `valid_mask` leaf of `batched_spec` /
+    `BatcherModule.batch_spec` go with it: their only producer was the pipeline's padding. A
+    non-dict element spec's batch spec is now the batched spec itself, no longer wrapped under
+    `"data"`.
+  - `len(pipeline)` counts the batches a whole run serves (`ceil(k*N/B)`, or `k*floor(N/B)`
+    under `drop_last`), the same number as before for one epoch. A stream (`num_epochs=None`)
+    has no length. `batches_left()` counts what a session started now would serve, and is
+    host-only.
+  - Refused at construction: a source without records, and `drop_last=True` with a
+    `batch_size` above the source's length, which serves no batch.
+  - A stochastic operator keys each record on its own epoch: `per_record_keys` takes a
+    per-record epoch array, and `BatchMixOperator` keys a batch on its first record's epoch.
+- **Indexed sources implement `get_records(indices)`, replacing `get_batch_at` as the method a
+  source defines.** `DataSourceModule.get_batch_at(start, size, key)` is now the base-class
+  composition `get_records(record_indices_at(start, size, key))`, and a source implementing
+  `get_records` is what `supports_indexed_access()` reports. The pipeline names each batch's
+  records once and hands the same indices to the gather and to the stages: before, the source's
+  shuffle ran inside both `get_batch_at` and `record_indices_at`, and only an XLA merge of the
+  two copies kept it to one evaluation per step, a merge the epoch-boundary branch defeats.
+  `StreamingDiskSource.read_batch` is renamed `get_records`.
+- The device shuffle runs faster on a GPU with the same orders. XLA drives a GPU `while_loop`
+  from the host, one predicate read per iteration, and the shuffle's cycle-walk needed about five
+  per batch: more than half of a batch's time. Off the CPU, `shuffle_positions` now runs its first
+  passes in a `fori_loop` of static trip count, enough that the loop's predicate is read once but
+  for a 1e-3 chance, chosen by `jax.lax.platform_dependent`; the CPU keeps the loop. The cipher's
+  24 rounds run in `lax.scan(unroll=True)` instead of a Python loop, so they are traced once. GPU
+  per batch: a session 140 -> 110 us, a stream 210 -> 115 us, `scan` 208 -> 101 us per step; first
+  batch trace 62 -> 41 ms and compile 713 -> 593 ms; peak device memory unchanged.
+- The step names each batch's records with one `record_indices_at` vmapped over every epoch the
+  batch can touch, with no conditional: `step()`, `scan` and iteration sessions run one program and
+  serve bit-identical batches.
+- **A `MemorySource` batches dict-of-arrays data only.** A list of records (dicts, `Element`s,
+  strings of any length) has no columns to gather a batch from: through a pipeline a list of dicts
+  raised `ValueError`, a list of numbers became a bare-array "batch", and `element_spec()` declared
+  a dict the batches never were. List data stays a record store for indexing, iteration and the host
+  `get_batch`; `supports_indexed_access()` is `False` for it, `get_records` refuses it naming the
+  dict form, and a pipeline over it is refused when iteration starts. The user guide, installation
+  page and checkpointing guide examples that put list data into a `Pipeline` use dict data.
+- **Streaming is a declared capability**, `DataSourceModule.supports_streaming()`, like
+  `supports_indexed_access()`. The pipeline inferred it from any callable `get_batch`, and
+  `MemorySource.get_batch` (a host record API that wraps around instead of ending) would have
+  streamed forever; `MemorySource` declares `False`. A streaming source whose `get_batch` returns a
+  non-mapping is refused naming it.
+- Batch types: sources return `DataDict` (`get_records`, `get_batch_at`); pipeline outputs are
+  `PipelineBatch` (`datarax.typing`, field names to arrays or pytrees of arrays): `step()`,
+  iteration, `Pipeline.__call__` and the compiled step body.
+- **A pipeline is checkpointable**: `Pipeline.get_state()`/`set_state()` implement the
+  `Checkpointable` protocol, so `IteratorCheckpoint` saves and restores a tuned pipeline -- every
+  stage's parameters, the source's state and where iteration stands, no data -- for inference or
+  further training. The guides documented `checkpoint.save(pipeline, ...)` while `Pipeline` had no
+  `get_state`. The state logic moves out of `DataraxModule` into
+  `datarax.core.module.module_state` / `restore_module_state`, which both call; each
+  `DataraxModule` in a pipeline still upgrades its own earlier layout.
+- `CheckpointableIteratorModule` is removed. It was the base of data sources that iterate while
+  sources were iterators; `DataSourceModule`, also a checkpointable `DataraxModule`, took that role,
+  and nothing subclassed it. What it added worked against a checkpoint: four nullable fields, one
+  (`current`) holding a data item, one (`idx`) duplicating `position`, and a `reset` to `None`. A
+  resumable host iterator is a `DataSourceModule` whose position is an `nnx.Variable`; the
+  checkpointing guide shows it, replacing an example that raised `TypeError` (no config) as
+  written. The `CheckpointableIterator` protocol is unchanged.
+- `Pipeline.__call__(batch, records=None)`: `records` (`datarax.pipeline.dag.Records`: each
+  row's index and epoch) is what the step served; a direct call without it names the records at
+  the current position. A subclass overriding `__call__` accepts the argument.
+- `MixDataSourcesNode` names each record by its child's record index and gathers exactly that
+  record. It named the child's position, while a shuffled child served a different record at
+  that position, so per-record randomness was keyed on another record.
+- A pipeline's epoch rule lives in one place, `datarax.pipeline.epochs.EpochPlan`: exhaustion,
+  where the next batch starts, how a position advances, the most epochs a batch can hold, and
+  how many batches a run serves.
+  `Pipeline.epoch_plan` builds it from the source's current length, so `len(pipeline)`,
+  `batches_left()`, `reset()`, the compiled step and iteration sessions agree and follow a length
+  that changed after construction; the pipeline no longer caches the length. Iteration sessions
+  held a second copy of the exhaustion and rollover rules and a length frozen at session start.
+- `datarax.pipeline.iteration` no longer knows `Pipeline`: `PipelineIterator(module, body=,
+  plan=, position=, epoch=, shuffled=)`, `next_batch(module, body, size)` and
+  `compile_streaming_dag(stages, position, epoch, plan)` take what they use, and
+  `Pipeline.session()` returns a typed, checkpointable session (`iter(pipeline)` returns it for a
+  random-access source). The two modules imported each other, the cycle hidden behind a
+  `TYPE_CHECKING` import; an import-linter contract now keeps `pipeline` above `iteration` above
+  `epochs`. The compiled step runs `type(pipeline)._next_batch`, so a subclass's override is
+  honored. `declared_spec` moves to `datarax.core.spec`. The persisted iterator state is
+  unchanged.
+- The examples, benchmarks and scripts start a new epoch with `Pipeline.reset()` instead of
+  writing the pipeline's private position.
+- `DataraxModule.get_state`/`set_state`/`clone` and `Pipeline.scan` name graph mode
+  (`graph=True`; `graph_updates=True` for `nnx.scan`, whose `StateAxes` need it), so they keep
+  working when Flax makes tree mode the default: a module built from one `nnx.Rngs` shares
+  Variables, which tree mode rejects.
+- `Pipeline.step()` runs the compiled step iteration sessions use instead of `nnx.jit`, and copies
+  none of the source's arrays. The `nnx.jit` form wrote every Variable back on every call, so each
+  step copied the whole dataset on the device, and replaced a NumPy source's arrays with device
+  copies. Now device data is read in place, NumPy data is uploaded once per array and stays NumPy
+  in the source, and `step()` and iteration share one device copy and one compiled step. A
+  structural change between calls (batch size, a replaced stage, `train()`/`eval()`) is honored;
+  a stage adding state while it runs is refused, as iteration already refused it. `step()` inside
+  `nnx.jit`, `nnx.grad`, `nnx.scan`, `nnx.vmap` and a functional `jax.jit` traces into the caller's
+  program. Per batch of 256 64x64 images, before / after: GPU 0.57 / 0.47 ms at 64 MiB, 3.6 /
+  0.62 ms at 1 GiB, 3.6 / 1.24 ms with ten stages; CPU 87.8 / 4.2 ms at 1 GiB.
+- The compiled iteration and `step()` paths split the pipeline in graph mode explicitly
+  (`graph=True`), so they keep working when Flax makes tree mode the default: a pipeline whose
+  source, stages and itself are built from one `nnx.Rngs` shares Variables, which tree mode
+  rejects.
+- A shuffled source's order is a keyed bijection computed per record,
+  `datarax.samplers.index_shuffle.shuffle_positions`: CCCL's Feistel bijection (the
+  VariablePhilox cipher of Mitchell et al., "Bandwidth-optimal random shuffling for GPUs", ACM
+  TOPC 2022, as in `thrust::shuffle`) ported to JAX, with cycle-walking into the dataset's range.
+  A shuffled batch costs O(batch) at every dataset size and a step stores and writes back no
+  order. The permutation it replaces cost O(N) per batch: a continuous stream asked a one-key
+  cache for two alternating epoch keys and recomputed the permutation four times per batch
+  (135 ms per batch of 256 at 65,536 records on CPU), and even a cache hit wrote the whole order
+  back from every step (2.0 ms per batch at 4M records). Shuffled orders differ from earlier
+  releases for the same key. `resolve_wrapped_indices` and the stateless `get_batch(key=...)` of
+  the eager sources use it.
+- The host-side shuffles run the same cipher: `shuffle_positions_host(positions, length, seed,
+  epoch)` in NumPy, and `index_shuffle(index, seed, num_elements, epoch)` for per-element
+  callers, served from cached blocks. They replace Grain's `index_shuffle`, which extends Simon's
+  rotation constants to word sizes the cipher does not define (at 14-bit words every round is
+  linear in parity) and is not a bijection when `num_elements - 1` is a power of two (65,537
+  records serve one record twice). An epoch's order is that of `fold_in(key(seed), epoch)` --
+  the device path's key, so host and device serve one order -- where Grain's `seed + epoch`
+  made one seed's second epoch the next seed's first. `ShuffleSampler`,
+  `EpochAwareSamplerModule`, the eager sources' iteration and stateful `get_batch`, and
+  `MemorySource` use it; `MemorySource`'s stateful `get_batch` no longer materializes the
+  epoch's order.
+
+### Removed
+
+- `EpochOrderCache` and the `order=` parameter of `resolve_wrapped_indices`: no order is stored.
+- `datarax.core.element_batch.BatchView`: nothing has produced one since the executor it served
+  was replaced by `Pipeline`, which yields plain dicts.
+- The `grain` dependency of `datarax.samplers.index_shuffle`.
+
 ## [0.1.15] - 2026-09-21
 
 ### Security

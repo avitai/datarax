@@ -16,14 +16,15 @@ from datarax.sources.source_ops import (
     eager_get_batch_default,
     eager_iter_default,
     eager_reset,
-    EpochOrderCache,
     format_source_repr,
     gather_eager_batch,
     get_eager_item,
+    record_count,
     reset_streaming_state,
     resolve_wrapped_indices,
     streaming_apply_batch,
 )
+from datarax.typing import DataDict
 
 
 logger = logging.getLogger(__name__)
@@ -35,13 +36,10 @@ class EagerSourceBase(DataSourceModule):
     Subclasses must define the following attributes in their ``__init__``:
 
     - ``data`` (``dict[str, Any]``): The loaded dataset as a key→array mapping.
-    - ``length`` (``int``): Total number of elements.
     - ``index`` (``nnx.Variable``): Current iteration index.
     - ``epoch`` (``nnx.Variable``): Current epoch counter.
-    - ``_seed`` (``int``): Base integer seed for Grain index_shuffle.
+    - ``_seed`` (``int``): Base integer seed of the shuffle.
     - ``_is_random_order`` (``bool``): Whether to randomize iteration order.
-    - ``_epoch_order`` (``EpochOrderCache``): The epoch's permutation for indexed access,
-      built over ``length``.
     - ``dataset_name`` (``str | None``): Human-readable dataset name.
     - ``split_name`` (``str | None``): Dataset split identifier.
     - ``_dataset_info`` (``Any``): Cached backend-specific dataset metadata.
@@ -49,15 +47,18 @@ class EagerSourceBase(DataSourceModule):
 
     # -- Abstract attribute declarations (set by concrete subclasses) --
     data: dict[str, Any]
-    length: int
     index: nnx.Variable[int]  # pyright: ignore[reportGeneralTypeIssues]
     epoch: nnx.Variable[int]  # pyright: ignore[reportGeneralTypeIssues]
     _seed: int
     _is_random_order: bool
-    _epoch_order: EpochOrderCache
     dataset_name: str | None
     split_name: str | None
     _dataset_info: Any
+
+    @property
+    def length(self) -> int:
+        """Records the source's data holds now, read from ``data`` (see :func:`record_count`)."""
+        return record_count(self.data)
 
     def __len__(self) -> int:
         """Return total number of elements."""
@@ -130,54 +131,20 @@ class EagerSourceBase(DataSourceModule):
         Returns:
             Int32 ``jax.Array`` of shape ``(size,)``.
         """
-        order = None
-        if self.is_random_order and key is not None:
-            order = self._epoch_order.order_for(key)
-        return resolve_wrapped_indices(
-            start, size, self.length, self.is_random_order, key, order=order
-        )
+        return resolve_wrapped_indices(start, size, self.length, self.is_random_order, key)
 
-    def get_batch_at(
-        self,
-        start: int | jax.Array,
-        size: int,
-        key: jax.Array | None = None,
-    ) -> dict[str, Any]:
-        """Stateless indexed batch access; JIT-traceable for scan-based iteration.
-
-        Returns ``size`` records starting at logical position ``start``.
-        Does not advance ``self.index`` or any other internal state, so
-        callers (typically ``Pipeline``) can drive iteration via their
-        own position counter and trace ``get_batch_at`` under
-        ``nnx.scan`` / ``nnx.jit``.
-
-        Two modes:
-
-        - **Sequential** (``self.is_random_order == False``): returns the
-          contiguous slice ``data[start : start + size]`` with
-          wrap-around at the end of the source.
-        - **Shuffled** (``self.is_random_order == True``): applies a
-          deterministic permutation derived from ``key`` and returns the
-          slice of that permutation. Same ``(start, size, key)`` always
-          returns the same output. The permutation is materialized via
-          ``jax.random.permutation(key, length)`` per call — O(length)
-          per batch.
+    def get_records(self, indices: jax.Array) -> DataDict:
+        """Gather the records at ``indices``; JIT-traceable for scan-based iteration.
 
         Args:
-            start: Starting logical index; accepts concrete int or
-                traced ``jax.Array``.
-            size: Number of records to return (Python int — JAX shapes
-                are static).
-            key: PRNG key for shuffled mode. Required when
-                ``is_random_order=True``; ignored otherwise.
+            indices: Int32 record indices in ``[0, len(self))``, as :meth:`record_indices_at`
+                names them; concrete or traced.
 
         Returns:
-            Dict mapping each data key to a JAX array with leading
-            dimension ``size``.
+            Dict mapping each data key to a JAX array with leading dimension ``len(indices)``.
         """
-        indices = self.record_indices_at(start, size, key)
         return {
-            data_key: jnp.take(jnp.asarray(value), indices, axis=0, mode="wrap")
+            data_key: jnp.take(jnp.asarray(value), indices, axis=0)
             for data_key, value in self.data.items()
         }
 

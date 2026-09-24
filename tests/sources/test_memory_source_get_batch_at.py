@@ -41,6 +41,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 from flax import nnx
 
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
@@ -196,3 +197,29 @@ def test_supports_indexed_access_is_true() -> None:
         {"x": jnp.arange(8, dtype=jnp.float32)},
     )
     assert src.supports_indexed_access() is True
+
+
+# ---------- E. List data is a record store, not a batch source ----------
+
+
+def _record_list() -> list[dict]:
+    return [{"x": np.full((2,), i, np.float32), "name": f"r{i}"} for i in range(6)]
+
+
+def test_list_data_has_no_indexed_access() -> None:
+    """A batch is a gather over columns; a list of records has none, so it is not indexed."""
+    source = MemorySource(MemorySourceConfig(), _record_list())
+
+    assert source.supports_indexed_access() is False
+    with pytest.raises(TypeError, match="dict of arrays"):
+        source.get_records(jnp.arange(2, dtype=jnp.int32))
+
+
+def test_list_data_still_serves_its_records_on_the_host() -> None:
+    """Indexing, iteration and the host ``get_batch`` keep the records as they were given."""
+    records = _record_list()
+    source = MemorySource(MemorySourceConfig(), records)
+
+    assert source[3]["name"] == "r3"
+    assert [record["name"] for record in source][:2] == ["r0", "r1"]
+    assert [record["name"] for record in source.get_batch(2)] == ["r0", "r1"]

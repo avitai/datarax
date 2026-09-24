@@ -92,17 +92,16 @@ class EpochAwareSamplerModule(SamplerModule):
     def _shuffled_index(self, local_index: int) -> int:
         """Map a within-epoch position to a record index for the current epoch.
 
-        When shuffling, delegates to Grain's O(1) Feistel ``index_shuffle`` with a
-        per-epoch seed ``(base_seed + epoch) % 2**32`` — the exact formula Grain
-        uses in ``ShuffleMapDataset`` — so each epoch is a different, deterministic,
-        worker-invariant permutation with no materialized index array. When not
-        shuffling, positions map to themselves (sequential order).
+        When shuffling, maps it through ``index_shuffle`` for ``base_seed`` at the current
+        epoch, so each epoch is a different, deterministic, worker-invariant order with no
+        materialized index array. When not shuffling, positions map to themselves.
         """
         if not self.shuffle.get_value():
             return local_index
         num_records = require_record_count(self.num_records.get_value())
-        epoch_seed = (self.base_seed.get_value() + self.current_epoch.get_value()) % (2**32)
-        return index_shuffle(local_index, epoch_seed, num_records)
+        return index_shuffle(
+            local_index, self.base_seed.get_value(), num_records, self.current_epoch.get_value()
+        )
 
     def __iter__(self) -> Self:
         """Initialize iteration."""

@@ -1,8 +1,8 @@
 """Benchmark: ``Pipeline.scan`` over a ``MixDataSourcesNode`` at varying source counts.
 
-Measures the per-step wall-clock cost of ``MixDataSourcesNode.get_batch_at``
+Measures the per-step wall-clock cost of ``MixDataSourcesNode.get_records``
 under ``Pipeline.scan`` as the number of mixed sources grows. The
-implementation uses ``jax.vmap`` over per-position ``jax.lax.switch``.
+implementation uses ``jax.vmap`` over per-record ``jax.lax.switch``.
 While ``lax.switch`` semantically traces every branch, XLA's compile-time
 dead-branch elimination means the runtime cost stays roughly constant in
 the number of mixed sources — the per-position dispatch + RNG + categorical
@@ -86,16 +86,16 @@ def _time_pipeline(pipeline: Pipeline) -> float:
         return jnp.sum(batch["x"])
 
     # Warmup compile
-    pipeline._position.value = jnp.int32(0)
+    pipeline.reset()
     pipeline.scan(step_fn, length=STEPS_PER_EPOCH)
     jax.block_until_ready(jnp.asarray(0.0))
 
     trials = []
     for _ in range(NUM_TRIALS):
-        pipeline._position.value = jnp.int32(0)
+        pipeline.reset()
         start = time.perf_counter()
         for _ in range(NUM_EPOCHS):
-            pipeline._position.value = jnp.int32(0)
+            pipeline.reset()
             jax.block_until_ready(pipeline.scan(step_fn, length=STEPS_PER_EPOCH))
         trials.append(time.perf_counter() - start)
     return float(np.median(trials))

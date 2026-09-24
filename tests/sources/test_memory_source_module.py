@@ -583,7 +583,6 @@ def test_memory_source_set_random_order():
     # Disable shuffling
     source.set_random_order(False)
     assert source.is_random_order is False
-    assert source._shuffled_indices.get_value() is None  # Should clear shuffled indices
 
     # Get data - should not be shuffled
     items2 = list(source)

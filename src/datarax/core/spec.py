@@ -28,6 +28,7 @@ compiled graph.
 
 from __future__ import annotations
 
+import weakref
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -38,8 +39,8 @@ import numpy as np
 from jax.typing import DTypeLike
 from numpy.typing import ArrayLike
 
+from datarax.core.data_source import DataSourceModule
 
-_VALID_MASK_KEY = "valid_mask"
 
 # NumPy dtype kinds a JAX array can hold: bool, signed, unsigned, float, complex.
 _JAX_ARRAY_KINDS = frozenset("biufc")
@@ -72,12 +73,12 @@ def add_leading_dim(spec_leaf: jax.ShapeDtypeStruct, size: int) -> jax.ShapeDtyp
     return jax.ShapeDtypeStruct(shape=(size, *spec_leaf.shape), dtype=spec_leaf.dtype)
 
 
-def batched_spec(element_spec: Any, batch_size: int) -> dict[str, object]:
-    """Lift a per-element spec PyTree into a batch-level spec dict with ``valid_mask``.
+def batched_spec(element_spec: Any, batch_size: int) -> Any:
+    """Lift a per-element spec PyTree into the spec of a batch of ``batch_size`` records.
 
-    The returned dict has the same structure as ``element_spec`` (a leading
-    ``batch_size`` dimension prepended to every ``ShapeDtypeStruct`` leaf) plus
-    a top-level ``valid_mask`` leaf of shape ``(batch_size,)`` and dtype bool.
+    The returned PyTree has the structure of ``element_spec`` with a leading ``batch_size``
+    dimension prepended to every ``ShapeDtypeStruct`` leaf, and nothing added: every row of a
+    batch is a record, so no leaf marks padding.
 
     Args:
         element_spec: PyTree of ``jax.ShapeDtypeStruct`` describing per-element
@@ -85,9 +86,7 @@ def batched_spec(element_spec: Any, batch_size: int) -> dict[str, object]:
         batch_size: Number of elements per emitted batch.
 
     Returns:
-        A dict with the batched element spec under the original keys plus a
-        ``"valid_mask"`` key. If ``element_spec`` is itself a dict, its keys are
-        merged in; otherwise it is placed under ``"data"``.
+        The batched spec PyTree.
 
     Raises:
         ValueError: If ``batch_size`` is not positive.
@@ -95,22 +94,11 @@ def batched_spec(element_spec: Any, batch_size: int) -> dict[str, object]:
     if batch_size <= 0:
         raise ValueError(f"batch_size must be positive, got {batch_size}.")
 
-    batched = jax.tree.map(
+    return jax.tree.map(
         lambda leaf: add_leading_dim(leaf, batch_size),
         element_spec,
         is_leaf=lambda x: isinstance(x, jax.ShapeDtypeStruct),
     )
-
-    valid_mask_leaf = jax.ShapeDtypeStruct(shape=(batch_size,), dtype=jnp.bool_)
-
-    if isinstance(batched, dict):
-        if _VALID_MASK_KEY in batched:
-            raise ValueError(
-                f"element_spec already contains key '{_VALID_MASK_KEY}'; "
-                "this key is reserved for the batcher-injected validity mask."
-            )
-        return {**batched, _VALID_MASK_KEY: valid_mask_leaf}
-    return {"data": batched, _VALID_MASK_KEY: valid_mask_leaf}
 
 
 def scalar_index_spec(dtype: DTypeLike = jnp.int32) -> jax.ShapeDtypeStruct:
@@ -492,6 +480,31 @@ def validate_batch(batch: Any, element_spec: Any, *, batch_size: int | None = No
         )
 
 
+# Declared element specs per source, by x64 setting. Reading a spec can open a
+# backend iterator (the TFDS and HuggingFace streaming sources peek their first
+# record, which fills a shuffle buffer), so it is read once per source and
+# precision mode instead of once per pass. Weak keys let entries die with sources.
+_DECLARED_SPECS: weakref.WeakKeyDictionary[DataSourceModule, dict[bool, Any]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def declared_spec(source: DataSourceModule) -> Any:
+    """Return ``source.element_spec()``, read once per source and x64 setting.
+
+    Args:
+        source: The data source whose declaration is needed.
+
+    Returns:
+        The element spec the source declared under the active x64 setting.
+    """
+    specs = _DECLARED_SPECS.setdefault(source, {})
+    x64 = bool(jax.config.read("jax_enable_x64"))
+    if x64 not in specs:
+        specs[x64] = source.element_spec()
+    return specs[x64]
+
+
 __all__ = [
     "SpecMismatchError",
     "add_leading_dim",
@@ -499,6 +512,7 @@ __all__ = [
     "array_to_spec_strip_leading",
     "batch_length",
     "batched_spec",
+    "declared_spec",
     "device_spec",
     "scalar_index_spec",
     "spec_mismatches",

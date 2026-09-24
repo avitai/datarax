@@ -7,7 +7,7 @@ architectural separation between **eager** and **streaming** sources:
     - TFDSEagerSource, HFEagerSource
     - Load ALL data to JAX arrays at initialization
     - Pure JAX iteration (no external framework overhead during training)
-    - O(1) memory shuffling via Grain's index_shuffle
+    - O(1) memory shuffling via a keyed Feistel bijection
     - Ideal for: MNIST, CIFAR-10, Fashion-MNIST, small custom datasets
 
 **Streaming Sources** (for large datasets):
@@ -31,7 +31,6 @@ from datarax.sources.source_ops import (
     eager_get_batch,
     eager_iter,
     eager_reset,
-    EpochOrderCache,
     resolve_wrapped_indices,
 )
 
@@ -141,7 +140,7 @@ def from_tfds(
         split: Dataset split (e.g., "train", "test", "train[:1000]")
         eager: Force eager (True) or streaming (False). None = auto-detect.
         shuffle: Whether to shuffle the dataset
-        seed: Integer seed for shuffling (for Grain's index_shuffle)
+        seed: Integer seed of the shuffle
         rngs: Optional Flax NNX RNG state
         data_dir: Optional directory for dataset storage
         try_gcs: If True, load pre-built data from Google Cloud Storage
@@ -247,7 +246,7 @@ def from_hf(
         eager: Force eager (True) or streaming source (False). None = auto-detect.
         streaming: Use HuggingFace streaming mode (implies eager=False)
         shuffle: Whether to shuffle the dataset
-        seed: Integer seed for shuffling (for Grain's index_shuffle)
+        seed: Integer seed of the shuffle
         rngs: Optional Flax NNX RNG state
         data_dir: Optional directory for dataset storage
         include_keys: Optional set of keys to include
@@ -339,6 +338,5 @@ __all__ = [
     "eager_get_batch",
     "eager_iter",
     "eager_reset",
-    "EpochOrderCache",
     "resolve_wrapped_indices",
 ]

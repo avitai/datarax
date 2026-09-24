@@ -63,7 +63,11 @@ Datarax follows a **Flax NNX-based architecture**. All contributions must adhere
 
 ### 1. Module Inheritance
 
-All Datarax components **must** inherit from appropriate base classes:
+A configured Datarax component (an operator, source, sampler or batcher) **must** inherit from
+`DataraxModule`, which gives it config-based initialization and checkpointing. A `Pipeline` is the
+one component configured by its constructor: it inherits `nnx.Module` and implements the same
+`Checkpointable` protocol by calling `datarax.core.module.module_state` and
+`restore_module_state`, the functions `DataraxModule.get_state`/`set_state` call.
 
 ```python
 from datarax.core import DataraxModule
@@ -77,7 +81,8 @@ class MyCustomModule(DataraxModule):
         super().__init__(config, name=name)
         self.param = nnx.Variable(param)  # Use NNX Variables for state
 
-# ❌ Wrong: Direct inheritance from nnx.Module
+# ❌ Wrong: a configured component inheriting nnx.Module directly has no config and no
+# checkpointing
 class WrongModule(nnx.Module):  # Don't do this!
     pass
 ```
@@ -111,7 +116,7 @@ class StatefulModule(DataraxModule):
 All modules **must** support checkpointing:
 
 ```python
-class CheckpointableModule(DataraxModule):
+class CustomStateModule(DataraxModule):
     def get_state(self):
         """Return current state for checkpointing."""
         state = super().get_state()
@@ -489,11 +494,12 @@ class NewDataSource(DataSourceModule):
         # stores it as self.config
         super().__init__(config, name=name)
 
-    def get_batch_at(self, start, size, key=None):
-        """Return `size` records from `start` as JAX arrays; stateless and traceable.
+    def get_records(self, indices):
+        """Return the records at `indices` as JAX arrays; stateless and traceable.
 
-        Implementing it is what gives a source indexed access. A forward-only
-        source implements get_batch(batch_size) instead.
+        Implementing it is what gives a source indexed access (get_batch_at is
+        get_records of record_indices_at). A forward-only source implements
+        get_batch(batch_size) instead.
         """
         # Your implementation
 

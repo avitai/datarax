@@ -51,7 +51,9 @@ import pytest
 from flax import nnx
 
 from datarax.pipeline import Pipeline
+from datarax.pipeline.iteration import _host_copies
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
+from tests.test_common.compiles import compiled_programs
 
 
 # ---------- Helpers ----------
@@ -69,6 +71,17 @@ class _DoubleStage(nnx.Module):
 
     def __call__(self, batch: dict) -> dict:
         return {**batch, "x": batch["x"] * 2.0}
+
+
+class _Scale(nnx.Module):
+    """Multiplies x by a learnable factor, starting at 1."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.factor = nnx.Param(jnp.float32(1.0))
+
+    def __call__(self, batch: dict) -> dict:
+        return {**batch, "x": batch["x"] * self.factor[...]}
 
 
 class _Adder(nnx.Module):
@@ -361,7 +374,7 @@ def test_scan_total_matches_python_loop_total() -> None:
 
     loop_outputs = []
     for _ in range(4):
-        loop_outputs.append(step_fn(pipeline_loop.step()))  # type: ignore[reportCallIssue]
+        loop_outputs.append(step_fn(pipeline_loop.step()))
     loop_outputs_arr = jnp.stack(loop_outputs)
 
     np.testing.assert_allclose(np.asarray(scan_outputs), np.asarray(loop_outputs_arr))
@@ -390,7 +403,7 @@ def test_scan_caches_compiled_body_across_calls_with_same_step_fn() -> None:
         return jnp.sum(batch["x"])
 
     pipeline.scan(step_fn, length=4)
-    pipeline._position[...] = jnp.int32(0)
+    pipeline.reset()
     cached_count = len(pipeline._scan_body_cache)
     assert cached_count == 1
 
@@ -416,7 +429,7 @@ def test_scan_cache_key_distinguishes_different_step_fns() -> None:
         return jnp.mean(batch["x"])
 
     pipeline.scan(step_a, length=4)
-    pipeline._position[...] = jnp.int32(0)
+    pipeline.reset()
     pipeline.scan(step_b, length=4)
     assert len(pipeline._scan_body_cache) == 2
 
@@ -434,7 +447,7 @@ def test_scan_cache_key_distinguishes_different_lengths() -> None:
         return jnp.sum(batch["x"])
 
     pipeline.scan(step_fn, length=2)
-    pipeline._position[...] = jnp.int32(0)
+    pipeline.reset()
     pipeline.scan(step_fn, length=4)
     assert len(pipeline._scan_body_cache) == 2
 
@@ -452,7 +465,7 @@ def test_scan_cached_call_produces_identical_results() -> None:
         return jnp.sum(batch["x"])
 
     first = pipeline.scan(step_fn, length=4)
-    pipeline._position[...] = jnp.int32(0)
+    pipeline.reset()
     second = pipeline.scan(step_fn, length=4)
 
     np.testing.assert_allclose(np.asarray(first), np.asarray(second))
@@ -475,6 +488,96 @@ def test_scan_cache_separates_carry_and_no_carry_variants() -> None:
         return new_carry, new_carry
 
     pipeline.scan(step_no_carry, length=4)
-    pipeline._position[...] = jnp.int32(0)
+    pipeline.reset()
     pipeline.scan(step_with_carry, length=4, init_carry=jnp.float32(0.0))
     assert len(pipeline._scan_body_cache) == 2
+
+
+# ---------- F. Source data: staged once, never copied ----------
+
+
+def _host_pipeline(*, device: bool = False, stages: list[nnx.Module] | None = None) -> Pipeline:
+    """A shuffled pipeline over NumPy data (or its device copy) that never runs out."""
+    host = np.arange(64, dtype=np.float32)[:, None] + 1.0
+    data = {"x": jnp.asarray(host) if device else host}
+    source = MemorySource(MemorySourceConfig(shuffle=True), data=data, rngs=nnx.Rngs(0))
+    return Pipeline(
+        source=source, stages=stages or [], batch_size=8, num_epochs=None, rngs=nnx.Rngs(1)
+    )
+
+
+def _records(pipeline: Pipeline) -> object:
+    source = pipeline.source
+    assert isinstance(source, MemorySource)
+    assert isinstance(source.data, dict)
+    return source.data["x"]
+
+
+def _total(batch: dict) -> jax.Array:
+    return jnp.sum(batch["x"])
+
+
+def test_scan_does_not_transfer_host_data_on_every_call() -> None:
+    """NumPy data is uploaded once, as step() and iteration upload it (else the guard raises)."""
+    pipeline = _host_pipeline()
+    pipeline.scan(_total, length=3)
+    with jax.transfer_guard_host_to_device("disallow"):
+        jax.block_until_ready(pipeline.scan(_total, length=3))
+
+
+def test_scan_leaves_host_data_on_the_host() -> None:
+    pipeline = _host_pipeline()
+    pipeline.scan(_total, length=3)
+    assert isinstance(_records(pipeline), np.ndarray)
+
+
+def test_scan_and_step_share_one_device_copy_of_host_data() -> None:
+    pipeline = _host_pipeline()
+    pipeline.step()
+    after_step = dict(_host_copies(pipeline))
+    pipeline.scan(_total, length=3)
+    after_scan = _host_copies(pipeline)
+    assert len(after_step) == 1
+    assert list(after_scan) == list(after_step)
+    assert all(after_scan[key][1] is copy for key, (_, copy) in after_step.items())
+
+
+def test_scan_keeps_the_device_source_buffer() -> None:
+    pipeline = _host_pipeline(device=True)
+    before = _records(pipeline)
+    pipeline.scan(_total, length=3)
+    assert _records(pipeline) is before
+
+
+def test_scan_serves_what_step_serves_from_host_data() -> None:
+    scanned, stepped = _host_pipeline(), _host_pipeline()
+    totals = scanned.scan(_total, length=12)
+    pipeline_totals = jnp.stack([_total(stepped.step()) for _ in range(12)])
+    np.testing.assert_array_equal(np.asarray(totals), np.asarray(pipeline_totals))
+    assert int(scanned._position[...]) == int(stepped._position[...])
+
+
+def test_a_repeated_scan_compiles_nothing() -> None:
+    pipeline = _host_pipeline()
+    pipeline.scan(_total, length=3)
+    with compiled_programs() as compiled:
+        pipeline.scan(_total, length=3)
+    assert compiled == []
+
+
+def test_a_module_that_is_a_stage_and_a_scanned_module_stays_one_module() -> None:
+    """A Param written by step_fn reaches the same module running as a stage in the next step."""
+    shared = _Scale()
+    pipeline = _host_pipeline(stages=[shared])
+
+    def step_fn(scale: _Scale, batch: dict) -> jax.Array:
+        scale.factor[...] = scale.factor[...] + 1.0
+        return batch["x"][0, 0] / (scale.factor[...] - 1.0)
+
+    first_values = np.asarray(_host_pipeline().scan(lambda batch: batch["x"][0, 0], length=4))
+    ratios = pipeline.scan(step_fn, modules=(shared,), length=4)
+
+    # The stage multiplies by the factor in force when the batch is served, which the previous
+    # step wrote: 1, 2, 3, 4; step_fn divides by the same factor.
+    np.testing.assert_allclose(np.asarray(ratios), first_values)
+    assert float(shared.factor[...]) == 5.0

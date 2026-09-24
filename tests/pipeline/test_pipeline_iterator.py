@@ -26,7 +26,6 @@ from flax import nnx
 
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.pipeline import Pipeline, PipelineIterator
-from datarax.pipeline.iteration import _session_cache_size
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
 
@@ -74,6 +73,16 @@ class _RunningTotal(nnx.Module):
         return batch
 
 
+class _Scale(nnx.Module):
+    """Learnable stage multiplying ``x`` by a parameter."""
+
+    def __init__(self) -> None:
+        self.factor = nnx.Param(jnp.float32(1.0))
+
+    def __call__(self, batch: dict) -> dict:
+        return {**batch, "x": batch["x"] * self.factor[...]}
+
+
 class _GrowingStage(nnx.Module):
     """Stage adding state while it runs, which changes the module structure."""
 
@@ -95,11 +104,13 @@ def _session(pipeline: Pipeline) -> PipelineIterator:
 
 
 def _epoch_via_step(pipeline: Pipeline) -> list[np.ndarray]:
-    batches = []
-    length = len(pipeline.source)
-    while int(pipeline._position[...]) < length:
-        batches.append(np.asarray(pipeline.step()["x"]))  # type: ignore[call-arg]
-    return batches
+    """One epoch by ``step()``: its batches, the last cut to the rows of the epoch."""
+    extent = pipeline.epoch_plan.run_extent(0)
+    assert extent is not None
+    batches, final_size = extent
+    served = [np.asarray(pipeline.step()["x"]) for _ in range(batches)]
+    served[-1] = served[-1][:final_size]
+    return served
 
 
 # ---------------------------------------------------------------------------
@@ -128,11 +139,12 @@ class TestOutputEquivalence:
         for g, e in zip(got, expected):
             np.testing.assert_array_equal(g, e)
 
-    def test_wraparound_final_batch_matches_step(self):
-        """Non-divisible dataset sizes wrap exactly like step()."""
+    def test_the_short_final_batch_is_the_epoch_s_rows_of_step_s_batch(self):
+        """The session's final batch holds the rows step() serves before crossing the end."""
         expected = _epoch_via_step(_pipeline(n=100))
         got = [np.asarray(b["x"]) for b in _pipeline(n=100)]
         assert len(got) == len(expected) == 4  # ceil(100 / 32)
+        assert got[-1].shape[0] == 4
         for g, e in zip(got, expected):
             np.testing.assert_array_equal(g, e)
 
@@ -185,12 +197,12 @@ class TestModuleStateWriteBack:
         for index, _ in enumerate(via_iterator):
             if index == 3:
                 break
-        continued = np.asarray(via_iterator.step()["x"])  # type: ignore[call-arg]
+        continued = np.asarray(via_iterator.step()["x"])
 
         via_step = _pipeline(stochastic=True)
         for _ in range(4):
-            via_step.step()  # type: ignore[call-arg]  # type: ignore[call-arg]
-        expected = np.asarray(via_step.step()["x"])  # type: ignore[call-arg]
+            via_step.step()
+        expected = np.asarray(via_step.step()["x"])
         np.testing.assert_array_equal(continued, expected)
 
     def test_sequential_reiteration_resumes_from_position(self):
@@ -199,7 +211,7 @@ class TestModuleStateWriteBack:
         assert len(first) == _N // _BATCH
         again = [np.asarray(b["x"]) for b in pipeline]  # exhausted: no batches
         assert again == []
-        pipeline._position[...] = jnp.int32(0)
+        pipeline.reset()
         rewound = [np.asarray(b["x"]) for b in pipeline]
         assert len(rewound) == len(first)
 
@@ -310,7 +322,7 @@ class TestStageState:
             pass
         stepped = _pipeline_with(stepped_stage)
         for _ in range(_N // _BATCH):
-            stepped.step()  # type: ignore[call-arg]
+            stepped.step()
 
         assert float(stepped_stage.total[...]) != 0.0
         assert float(iterated_stage.total[...]) == float(stepped_stage.total[...])
@@ -339,14 +351,33 @@ class TestSessionBehavior:
     """Sessions share compiled steps and honor structural changes."""
 
     def test_sessions_reuse_compiled_step(self):
+        # The compiled step is shared by every pipeline of this structure, across record
+        # counts (one entry per data shape), so what a second session must not do is add one.
         pipeline = _pipeline()
         first = _session(pipeline)
         next(first)
         first.close()
+        entries_after_first = first._pure_step._cache_size()
         second = _session(pipeline)
         next(second)
         second.close()
-        assert _session_cache_size(pipeline) == 1
+        assert second._pure_step is first._pure_step
+        assert second._pure_step._cache_size() == entries_after_first
+
+    def test_a_pipeline_of_the_same_structure_reuses_the_compiled_step(self):
+        """A new pipeline instance with an identical module graph compiles nothing.
+
+        Building a pipeline per epoch, fold or evaluation must not recompile each time.
+        """
+        first = _session(_pipeline())
+        next(first)
+        first.close()
+        entries_after_first = first._pure_step._cache_size()
+        second = _session(_pipeline())
+        next(second)
+        second.close()
+        assert second._pure_step is first._pure_step
+        assert second._pure_step._cache_size() == entries_after_first
 
     def test_structural_change_compiles_fresh_session(self):
         """Static attributes (e.g. batch_size) key the compiled session."""
@@ -357,11 +388,11 @@ class TestSessionBehavior:
         assert first.shape[0] == _BATCH
 
         pipeline.batch_size = _BATCH // 2
-        iterator = _session(pipeline)
-        smaller = np.asarray(next(iterator)["x"])
-        iterator.close()
+        smaller_session = _session(pipeline)
+        smaller = np.asarray(next(smaller_session)["x"])
+        smaller_session.close()
         assert smaller.shape[0] == _BATCH // 2
-        assert _session_cache_size(pipeline) == 2
+        assert smaller_session._pure_step is not iterator._pure_step
 
 
 class TestMidLoopCheckpointing:
@@ -418,7 +449,7 @@ class TestSessionRetracing:
         next(second)
         second.close()
         assert second._pure_step is first._pure_step
-        assert second._pure_step._cache_size() == traces_after_first == 1
+        assert second._pure_step._cache_size() == traces_after_first
 
 
 class TestImmutableStaging:
@@ -437,13 +468,32 @@ class TestImmutableStaging:
         second = _session(pipeline)
         next(second)
         second.close()
-        first_leaves = jax.tree.leaves(
-            first._immutable_state, is_leaf=lambda x: isinstance(x, nnx.Variable)
-        )
-        second_leaves = jax.tree.leaves(
-            second._immutable_state, is_leaf=lambda x: isinstance(x, nnx.Variable)
-        )
-        assert all(a is b for a, b in zip(first_leaves, second_leaves, strict=True))
+        # The staged arrays themselves: the same buffers serve both sessions.
+        first_arrays = jax.tree.leaves(first._immutable_state)
+        second_arrays = jax.tree.leaves(second._immutable_state)
+        assert first_arrays
+        assert all(a is b for a, b in zip(first_arrays, second_arrays, strict=True))
+
+    def test_a_value_written_into_a_stage_parameter_reaches_the_next_session(self):
+        """A write keeps the Variable object and replaces its value; staging must see it.
+
+        Training updates a learnable stage's parameters between epochs; a session serving the
+        staged copy would transform every later epoch with the first epoch's parameters.
+        """
+        stage = _Scale()
+        pipeline = _pipeline_with(stage)
+        first = np.asarray(next(_session(pipeline))["x"])
+
+        pipeline.reset()
+        stage.factor[...] = jnp.float32(5.0)
+        second = np.asarray(next(_session(pipeline))["x"])
+
+        pipeline.reset()
+        stage.factor.set_value(jnp.float32(7.0))
+        third = np.asarray(next(_session(pipeline))["x"])
+
+        np.testing.assert_allclose(second, 5.0 * first, rtol=1e-6)
+        np.testing.assert_allclose(third, 7.0 * first, rtol=1e-6)
 
     def test_swapped_source_data_restages(self):
         pipeline = _pipeline()
@@ -451,7 +501,7 @@ class TestImmutableStaging:
         batch_before = np.asarray(next(first)["x"])
         first.close()
 
-        pipeline._position[...] = jnp.int32(0)
+        pipeline.reset()
         source = pipeline.source
         assert isinstance(source, MemorySource)
         source.data = {"x": np.zeros((_N, 8), dtype=np.float32)}

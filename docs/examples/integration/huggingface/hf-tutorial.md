@@ -187,7 +187,7 @@ shuffle_config = HFEagerConfig(
     name="ylecun/mnist",
     split="train[:2000]",
     shuffle=True,
-    seed=42,  # Integer seed for Grain's index_shuffle
+    seed=42,  # Integer seed of the shuffle
 )
 
 # Create source with explicit RNG for reproducibility

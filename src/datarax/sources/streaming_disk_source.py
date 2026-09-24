@@ -1,7 +1,7 @@
 """Out-of-core streaming source backed by a memory-mapped numpy array.
 
 Reads a contiguous numpy array (``.npy``) from disk via ``np.memmap`` for
-zero-copy random access, exposes a JAX-friendly ``read_batch(indices)``
+zero-copy random access, exposes a JAX-friendly ``get_records(indices)``
 that issues the disk read through ``jax.experimental.io_callback``, and
 wraps the result in ``jax.lax.stop_gradient`` so downstream gradient
 computations cannot attempt to backprop through the disk read.
@@ -31,6 +31,7 @@ from jax.experimental import io_callback
 
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
+from datarax.typing import DataDict
 
 
 @dataclass(frozen=True)
@@ -125,7 +126,7 @@ class StreamingDiskSource(DataSourceModule):
         leaf = jax.ShapeDtypeStruct(shape=self._element_shape, dtype=self._element_dtype)
         return {self._feature_key: leaf}
 
-    def read_batch(self, indices: jax.Array) -> dict[str, jax.Array]:
+    def get_records(self, indices: jax.Array) -> DataDict:
         """Fetch the rows at ``indices`` from disk and return a stop_gradient'd dict.
 
         Args:
@@ -154,34 +155,6 @@ class StreamingDiskSource(DataSourceModule):
         # explicit so downstream gradient code returns zero through the
         # boundary instead of raising a JVP error.
         return {self._feature_key: jax.lax.stop_gradient(raw)}
-
-    def get_batch_at(
-        self,
-        start: int | jax.Array,
-        size: int,
-        key: jax.Array | None = None,
-    ) -> dict[str, jax.Array]:
-        """Stateless indexed batch access for ``Pipeline``-driven iteration.
-
-        Returns ``size`` records starting at logical position ``start``,
-        wrapping at the end of the on-disk array. The actual disk read
-        is dispatched via :meth:`read_batch` (which uses
-        ``jax.experimental.io_callback`` with a ``stop_gradient`` boundary).
-
-        Random-order shuffling is not yet implemented for the streaming
-        disk source — a future enhancement could materialize the
-        permutation host-side; the ``key`` argument is currently ignored.
-
-        Args:
-            start: Starting logical index; concrete int or traced ``jax.Array``.
-            size: Number of records (Python int).
-            key: Reserved for future shuffled-mode support; currently unused.
-
-        Returns:
-            ``{feature_key: array}`` with leading dim ``size`` and
-            ``stop_gradient`` applied at the io_callback boundary.
-        """
-        return self.read_batch(self.record_indices_at(start, size, key))
 
 
 __all__ = ["StreamingDiskSource", "StreamingDiskSourceConfig"]

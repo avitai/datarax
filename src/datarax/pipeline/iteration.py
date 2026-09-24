@@ -33,33 +33,45 @@ from __future__ import annotations
 
 import contextlib
 import weakref
-from typing import Any, TYPE_CHECKING
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from flax import nnx
 
 from datarax.core.operator import OperatorModule
 from datarax.core.spec import batch_length
 from datarax.pipeline.dag import record_positions, run_dag
+from datarax.pipeline.epochs import EpochPlan
+from datarax.typing import PipelineBatch
 
 
-if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Sequence
+# The traceable body a session step runs on the merged module: one batch of the given number of
+# records, returned after the module's state has advanced (the pipeline's ``_next_batch``).
+type StepBody = Callable[[Any, int], PipelineBatch]
 
-    from datarax.pipeline.pipeline import Pipeline
+# A stage graph's execution plan: topological order, each node's predecessors, the sink.
+type DagPlan = tuple[tuple[str, ...], Mapping[str, tuple[str, ...]], str | None]
 
 
-# Compiled session steps per pipeline, keyed by graphdef structural
-# equality. Held OUTSIDE the module: storing graphdefs as module
-# attributes would embed them into the next split's graphdef, making
-# GraphDef.__eq__ recurse into itself. Weak keys let caches die with
-# their pipelines. Bounded per pipeline (structural variants such as
-# train/eval flips are few; module surgery must not grow this unbounded).
-_SESSION_STEP_CACHES: weakref.WeakKeyDictionary[Any, list[dict[str, Any]]] = (
-    weakref.WeakKeyDictionary()
-)
-_MAX_SESSIONS_PER_PIPELINE = 4
+# Compiled steps shared across pipelines, matched by structural equality of their
+# key (graphs holding lists are unhashable, so the caches are lists, not dicts).
+# The most recently used entry is kept last; the oldest is dropped past the bound.
+# Held OUTSIDE the modules: storing graphdefs as module attributes would embed them
+# into the next split's graphdef, making GraphDef.__eq__ recurse into itself.
+_MAX_COMPILED_STEPS = 16
+_SESSION_STEPS: list[tuple[Any, Callable[..., Any]]] = []
+_DAG_STEPS: list[tuple[Any, Callable[..., Any]]] = []
+
+# Device copies of each pipeline's host (NumPy) arrays, uploaded at first use and shared by
+# every path that stages the pipeline (``step()`` and iteration sessions). Keyed weakly by the
+# pipeline, then by the array's identity with a weak reference to the array, so a copy dies
+# with its pipeline or its array, and an array replaced by another is uploaded at its first use.
+# NumPy arrays are never tracers, so staging inside a caller's transform caches nothing traced.
+type _HostCopies = dict[int, tuple[weakref.ref[np.ndarray], jax.Array]]
+_HOST_COPIES: weakref.WeakKeyDictionary[Any, _HostCopies] = weakref.WeakKeyDictionary()
 
 # A compiled step's writes: raw values by position within each state partition,
 # per-batch state first and staged state second.
@@ -86,15 +98,24 @@ def _is_per_batch_state(path: Any, value: Any) -> bool:
     return isinstance(value, nnx.RngCount) or type(value) is nnx.Variable
 
 
-def _leaf_ids(state: Any) -> tuple[int, ...]:
-    """Identity fingerprint of a state pytree's leaves.
+def _cached_step(
+    cache: list[tuple[Any, Callable[..., Any]]], key: Any, build: Callable[[], Callable[..., Any]]
+) -> Callable[..., Any]:
+    """Return the compiled step cached under ``key``, building it on a miss.
 
-    Used to detect source-data swaps between sessions: identical leaf
-    objects mean the device-staged copy is still valid.
+    Keys are compared by equality, so structurally identical pipelines share one
+    compiled step. The most recently used entry moves last; the oldest is dropped past
+    :data:`_MAX_COMPILED_STEPS`.
     """
-    return tuple(
-        id(leaf) for leaf in jax.tree.leaves(state, is_leaf=lambda x: isinstance(x, nnx.Variable))
-    )
+    for index, (cached_key, step) in enumerate(cache):
+        if cached_key == key:
+            cache.append(cache.pop(index))
+            return step
+    step = build()
+    cache.append((key, step))
+    if len(cache) > _MAX_COMPILED_STEPS:
+        cache.pop(0)
+    return step
 
 
 def _state_leaves(state: Any) -> list[Any]:
@@ -132,7 +153,7 @@ def _written(
 
 def _state_paths(graph: Any) -> set[tuple[Any, ...]]:
     """Paths of every state leaf in ``graph``."""
-    return {path for path, _ in nnx.to_flat_state(nnx.state(graph))}
+    return {path for path, _ in nnx.to_flat_state(nnx.state(graph, graph=True))}
 
 
 def _run_tracking_writes(
@@ -157,7 +178,9 @@ def _run_tracking_writes(
             fixed module graph cannot return.
     """
     graph = nnx.merge(graphdef, *states)
-    partitions = [_state_leaves(part) for part in nnx.state(graph, _is_per_batch_state, ...)]
+    partitions = [
+        _state_leaves(part) for part in nnx.state(graph, _is_per_batch_state, ..., graph=True)
+    ]
     snapshots = [_snapshot(part) for part in partitions]
     paths = _state_paths(graph)
     output = run(graph)
@@ -178,113 +201,137 @@ def _apply_writes(writes: _Writes, receivers: Sequence[Sequence[list[nnx.Variabl
                 variables[index].set_value(value)
 
 
-def _session_resources(pipeline: Pipeline, graphdef: Any, immutable_state: Any) -> tuple[Any, Any]:
-    """Return the compiled session step and device-staged immutable state.
+def _session_step(graphdef: Any, body: StepBody, size: int) -> Callable[..., Any]:
+    """The compiled step running ``body`` once, for ``size`` records, on modules shaped so.
 
-    The session step is Flax's functional hot-loop pattern: merge the
-    state pytrees into a module at trace time, run one step, and return
-    the batch plus the state the step wrote. Graph traversal happens
-    once per trace instead of once per batch.
-
-    The staged state (source payloads, params, RNG keys) is placed on the
-    device once per pipeline and reused across sessions; re-staging would
-    re-upload the entire dataset on every ``iter()`` call. A leaf-identity
-    fingerprint invalidates the staged copy when the module's arrays are
-    swapped, and writes a step makes to staged state update the copy.
+    Flax's functional hot-loop pattern: merge the state partitions into a module at
+    trace time, run one batch, and return it with the state the step wrote. Graph
+    traversal happens once per trace instead of once per batch, and structurally
+    identical modules running the same body at the same size share the step.
     """
-    fingerprint = _leaf_ids(immutable_state)
-    cache = _SESSION_STEP_CACHES.setdefault(pipeline, [])
-    for entry in cache:
-        if entry["graphdef"] == graphdef:
-            if entry["immutable_ids"] != fingerprint:
-                entry["staged_immutable"] = jax.device_put(immutable_state)
-                entry["immutable_ids"] = fingerprint
-            return entry["session_step"], entry["staged_immutable"]
 
-    @jax.jit
-    def session_step(mutable_state: Any, immutable_state: Any) -> tuple[dict, _Writes]:
-        return _run_tracking_writes(
-            graphdef, (mutable_state, immutable_state), lambda module: module._next_batch()
-        )
+    def run(graph: Any) -> PipelineBatch:
+        return body(graph, size)
 
-    cache.append(
-        {
-            "graphdef": graphdef,
-            "session_step": session_step,
-            "staged_immutable": jax.device_put(immutable_state),
-            "immutable_ids": fingerprint,
-        }
-    )
-    if len(cache) > _MAX_SESSIONS_PER_PIPELINE:
-        cache.pop(0)
-    return session_step, cache[-1]["staged_immutable"]
+    def build() -> Callable[..., Any]:
+        @jax.jit
+        def session_step(mutable_state: Any, immutable_state: Any) -> tuple[PipelineBatch, _Writes]:
+            return _run_tracking_writes(graphdef, (mutable_state, immutable_state), run)
+
+        return session_step
+
+    return _cached_step(_SESSION_STEPS, (graphdef, body, size), build)
 
 
-def _session_cache_size(pipeline: Pipeline) -> int:
-    """Number of compiled session steps cached for ``pipeline`` (testing)."""
-    return len(_SESSION_STEP_CACHES.get(pipeline, []))
+def _host_copies(module: nnx.Module) -> _HostCopies:
+    """The device copies of ``module``'s host arrays, by the arrays' identities."""
+    return _HOST_COPIES.setdefault(module, {})
 
 
-# Declared element specs per source, by x64 setting. Reading a spec can open a
-# backend iterator (the TFDS and HuggingFace streaming sources peek their first
-# record, which fills a shuffle buffer), so it is read once per source and
-# precision mode instead of once per pass. Weak keys let entries die with sources.
-_DECLARED_SPECS: weakref.WeakKeyDictionary[Any, dict[bool, Any]] = weakref.WeakKeyDictionary()
+def _on_device(module: nnx.Module, state: Any) -> Any:
+    """``state`` with every NumPy leaf replaced by its device copy, uploaded once per array.
+
+    Device arrays and tracers pass through untouched, so a step reads the source's device
+    buffers in place and a step inside a caller's transform stages nothing. A NumPy leaf is
+    host data by construction: its copy is uploaded at first use and reused while the array
+    lives, so iteration sessions and ``step()`` share one copy, and an array replaced by
+    another is uploaded when first used. Records are immutable once given to a source: an
+    in-place edit of a staged array is not uploaded.
+    """
+    copies = _host_copies(module)
+    for key in [key for key, (array, _) in copies.items() if array() is None]:
+        del copies[key]
+
+    def stage(leaf: Any) -> Any:
+        if not isinstance(leaf, np.ndarray):
+            return leaf
+        entry = copies.get(id(leaf))
+        if entry is None or entry[0]() is not leaf:
+            entry = (weakref.ref(leaf), jax.device_put(leaf))
+            copies[id(leaf)] = entry
+        return entry[1]
+
+    return jax.tree.map(stage, state)
 
 
-def declared_spec(source: Any) -> Any:
-    """Return ``source.element_spec()``, read once per source and x64 setting.
+def staged_view[M: nnx.Module](module: M) -> M:
+    """``module`` rebuilt around its live Variables, with its host arrays on the device.
+
+    For a flax transform that takes the module as an argument (``nnx.scan``): given the live
+    module, it would take the module's NumPy arrays as arguments and upload them on every call.
+    The view shares every Variable object with the live module, so what the transform writes is
+    written to the module, and a Variable the module shares with other arguments stays shared.
+    Only the arrays outside Variables (a source's records) are replaced, by the copies
+    :func:`_on_device` keeps. Only ``module``'s graph is traversed, so the cost does not grow
+    with the other arguments (a model).
 
     Args:
-        source: The data source whose declaration is needed.
+        module: The module to view (the pipeline).
 
     Returns:
-        The element spec the source declared under the active x64 setting.
+        The view.
     """
-    specs = _DECLARED_SPECS.setdefault(source, {})
-    x64 = bool(jax.config.read("jax_enable_x64"))
-    if x64 not in specs:
-        specs[x64] = source.element_spec()
-    return specs[x64]
+    graphdef, variables, data = nnx.split(module, nnx.Variable, ..., graph=True)
+    return nnx.merge(graphdef, variables, _on_device(module, data), copy=False)
 
 
-# Compiled streaming DAG steps shared across pipelines, matched by equality of the
-# stage graph and the execution plan (graphs holding lists are unhashable). The
-# most recently used entry is kept last; the oldest is dropped past the bound.
-_DAG_STEPS: list[tuple[Any, Any, Callable[..., Any]]] = []
-_MAX_DAG_STEPS = 16
+def next_batch(module: nnx.Module, body: StepBody, size: int) -> PipelineBatch:
+    """Run ``body`` once, for ``size`` records, on ``module`` through the compiled session step.
+
+    The body of :meth:`Pipeline.step`: split the module, stage its host arrays, run the
+    step shared with iteration sessions of the same structure and body, and write back the
+    state the step changed. Splitting per call sees every structural change made between
+    calls; the step itself refuses one made while it runs.
+
+    Args:
+        module: The module to advance.
+        body: The traceable body to run on it.
+        size: The records the batch holds.
+
+    Returns:
+        The body's output.
+    """
+    graphdef, per_batch, staged = nnx.split(module, _is_per_batch_state, ..., graph=True)
+    batch, writes = _session_step(graphdef, body, size)(per_batch, _on_device(module, staged))
+    _apply_writes(writes, ((_state_leaves(per_batch),), (_state_leaves(staged),)))
+    return batch
 
 
-def _dag_step(graphdef: Any, plan: tuple[Any, ...]) -> Callable[..., Any]:
-    """Return the compiled step running a stage graph over one batch."""
-    for index, (cached_graphdef, cached_plan, cached_step) in enumerate(_DAG_STEPS):
-        if cached_plan == plan and cached_graphdef == graphdef:
-            _DAG_STEPS.append(_DAG_STEPS.pop(index))
-            return cached_step
+def _dag_step(graphdef: Any, plan: DagPlan) -> Callable[..., Any]:
+    """Return the compiled step running a stage graph over one batch.
+
+    Keyed by the execution plan and then the stage graph, so the cheap comparison
+    decides most misses.
+    """
     exec_order, predecessors, sink = plan
 
-    @jax.jit
-    def step(mutable_state: Any, read_only_state: Any, batch: Any) -> tuple[Any, _Writes]:
-        def run(graph: Any) -> Any:
-            stages, position, epoch = graph
-            # A stream serves records in order, so their positions name them.
-            record_indices = record_positions(batch, position[...])
-            output = run_dag(
-                stages, exec_order, predecessors, sink, batch, record_indices, epoch[...]
-            )
-            position[...] = position[...] + jnp.int32(batch_length(batch))
-            return output
+    def build() -> Callable[..., Any]:
+        @jax.jit
+        def step(mutable_state: Any, read_only_state: Any, batch: Any) -> tuple[Any, _Writes]:
+            def run(graph: Any) -> Any:
+                stages, position, epoch = graph
+                # A stream serves records in order, so their positions name them.
+                record_indices = record_positions(batch, position[...])
+                output = run_dag(
+                    stages, exec_order, predecessors, sink, batch, record_indices, epoch[...]
+                )
+                position[...] = position[...] + jnp.int32(batch_length(batch))
+                return output
 
-        return _run_tracking_writes(graphdef, (mutable_state, read_only_state), run)
+            return _run_tracking_writes(graphdef, (mutable_state, read_only_state), run)
 
-    _DAG_STEPS.append((graphdef, plan, step))
-    if len(_DAG_STEPS) > _MAX_DAG_STEPS:
-        _DAG_STEPS.pop(0)
-    return step
+        return step
+
+    return _cached_step(_DAG_STEPS, (plan, graphdef), build)
 
 
-def compile_streaming_dag(pipeline: Pipeline) -> Callable[[Any], Any]:
-    """Return a function running ``pipeline``'s stage DAG over one host batch.
+def compile_streaming_dag(
+    stages: Mapping[str, nnx.Module],
+    position: nnx.Variable[jax.Array],
+    epoch: nnx.Variable[jax.Array],
+    plan: DagPlan,
+) -> Callable[[Any], Any]:
+    """Return a function running a stage DAG over one host batch.
 
     The stage modules and the position counter are split once and each batch runs
     through a cached ``jax.jit`` step, so the module graph is not traversed per
@@ -295,18 +342,16 @@ def compile_streaming_dag(pipeline: Pipeline) -> Callable[[Any], Any]:
     tracing.
 
     Args:
-        pipeline: The pipeline whose stage DAG runs.
+        stages: The stage modules by node name.
+        position: The position counter the batch's records are numbered from.
+        epoch: The epoch counter the stages key their randomness on.
+        plan: The stage graph's execution plan.
 
     Returns:
         A function taking a validated batch and returning the sink's output.
     """
-    graph = (pipeline._stage_modules, pipeline._position, pipeline._epoch)
-    graphdef, per_batch_state, staged_state = nnx.split(graph, _is_per_batch_state, ...)
-    plan = (
-        tuple(pipeline._exec_order),
-        {name: tuple(preds) for name, preds in pipeline._predecessors.items()},
-        pipeline._sink,
-    )
+    graph = (stages, position, epoch)
+    graphdef, per_batch_state, staged_state = nnx.split(graph, _is_per_batch_state, ..., graph=True)
     step = _dag_step(graphdef, plan)
     receivers = ((_state_leaves(per_batch_state),), (_state_leaves(staged_state),))
 
@@ -319,7 +364,7 @@ def compile_streaming_dag(pipeline: Pipeline) -> Callable[[Any], Any]:
 
 
 def _operator_owned_counts(
-    pipeline: Pipeline, live_variables: list[Any], rng_count_indices: list[int]
+    module: nnx.Module, live_variables: list[Any], rng_count_indices: list[int]
 ) -> list[bool]:
     """Return whether each of a session's RNG counts belongs to an operator.
 
@@ -331,7 +376,7 @@ def _operator_owned_counts(
     saved state into it wrongly.
 
     Args:
-        pipeline: The pipeline being iterated.
+        module: The module being iterated.
         live_variables: The session's per-batch Variables, in traversal order.
         rng_count_indices: Positions of the RNG counts within ``live_variables``.
 
@@ -340,110 +385,125 @@ def _operator_owned_counts(
     """
     owned = {
         id(variable)
-        for _, node in nnx.iter_graph(pipeline)
+        for _, node in nnx.iter_graph(module, graph=True)
         if isinstance(node, OperatorModule)
-        for variable in _state_leaves(nnx.state(node, nnx.RngCount))
+        for variable in _state_leaves(nnx.state(node, nnx.RngCount, graph=True))
     }
     return [id(live_variables[index]) in owned for index in rng_count_indices]
 
 
 class PipelineIterator:
-    """Compiled iteration session over a random-access pipeline source."""
+    """Compiled iteration session over a random-access pipeline source.
 
-    def __init__(self, pipeline: Pipeline) -> None:
-        """Split the pipeline once and prepare the compiled session step.
+    Built by :meth:`Pipeline.session`, which passes the pipeline and what the session needs
+    from it; the session knows nothing else about the pipeline.
+    """
+
+    def __init__(  # noqa: PLR0913 - the module, its step, its epoch rule and its counters
+        self,
+        module: nnx.Module,
+        *,
+        body: StepBody,
+        plan: EpochPlan,
+        position: nnx.Variable[jax.Array],
+        epoch: nnx.Variable[jax.Array],
+        shuffled: bool,
+    ) -> None:
+        """Split the module once and prepare the compiled session step.
 
         Args:
-            pipeline: The pipeline to iterate. Every write a step makes reaches it
-                at the next yield boundary.
+            module: The module to iterate. Every write a step makes reaches it at the next
+                yield boundary.
+            body: The traceable body serving one batch, run by the compiled step.
+            plan: How the module's records divide into batches and epochs.
+            position: The module's position counter.
+            epoch: The module's epoch counter.
+            shuffled: Whether the source serves records in a shuffled order, recorded in
+                the state's fingerprint.
         """
-        self._pipeline = pipeline
-        graphdef, mutable_state, immutable_state = nnx.split(pipeline, _is_per_batch_state, ...)
-        # Canonicalize per-batch leaves to device arrays so every session
-        # presents identical avals to the cached jax.jit step; host-typed
-        # leaves on a fresh module would otherwise force one re-trace per
-        # session (tens of milliseconds each).
-        self._state: Any = jax.device_put(mutable_state)
+        graphdef, mutable_state, immutable_state = nnx.split(
+            module, _is_per_batch_state, ..., graph=True
+        )
+        # A session carries its own Variables for the per-batch state, holding the live values
+        # as they are: ``step()`` passes the same values, so both paths present the shared
+        # compiled step one call signature (``jax.jit`` keys its dispatch cache on arguments'
+        # shardings and committedness as well as avals, so converting a Python-int counter in
+        # one path only would add a second entry for the same executable).
+        self._state: Any = jax.tree.map(lambda leaf: leaf, mutable_state)
         # The split state holds the module's live Variables by reference;
         # keeping them lets each yield sync the module in O(written leaves).
         self._live_variables = _state_leaves(mutable_state)
         self._carried_variables = _state_leaves(self._state)
-        self._pure_step, self._immutable_state = _session_resources(
-            pipeline, graphdef, immutable_state
-        )
+        self._graphdef = graphdef
+        self._body = body
+        # The step every full batch runs, shared with ``step()``; a run's short final batch
+        # looks its own up once.
+        self._pure_step = _session_step(graphdef, body, plan.batch_size)
+        self._immutable_state = _on_device(module, immutable_state)
         self._receivers = (
             (self._live_variables, self._carried_variables),
             (_state_leaves(immutable_state), _state_leaves(self._immutable_state)),
         )
-        self._source_length: int | None = pipeline._length
-        self._batch_size = pipeline.batch_size
-        self._drop_last = pipeline.drop_last
-        self._num_epochs = pipeline.num_epochs
-        self._epochs_served = 0
-        # One host sync at session entry; termination is then pure Python
-        # arithmetic, preserving JAX's asynchronous dispatch run-ahead.
-        self._position = int(pipeline._position[...])
+        self._plan = plan
+        self._shuffled = shuffled
+        # One host sync at session entry; the counters are then mirrored on the host by the
+        # rule the step follows, so termination is pure Python arithmetic, preserving JAX's
+        # asynchronous dispatch run-ahead.
+        self._position = int(position[...])
+        self._epoch = int(epoch[...])
+        self._batches_left, self._final_size = self._extent(self._position)
         self._rng_count_indices = [
             index
             for index, variable in enumerate(self._live_variables)
             if isinstance(variable, nnx.RngCount)
         ]
         self._count_is_an_operators = _operator_owned_counts(
-            pipeline, self._live_variables, self._rng_count_indices
+            module, self._live_variables, self._rng_count_indices
         )
         self._position_index = next(
-            index
-            for index, variable in enumerate(self._live_variables)
-            if variable is pipeline._position
+            index for index, variable in enumerate(self._live_variables) if variable is position
         )
         self._epoch_index = next(
-            index
-            for index, variable in enumerate(self._live_variables)
-            if variable is pipeline._epoch
+            index for index, variable in enumerate(self._live_variables) if variable is epoch
         )
         self._closed = False
 
-    def __iter__(self) -> Iterator[dict]:
+    def __iter__(self) -> Iterator[PipelineBatch]:
         """Return self (iterator protocol)."""
         return self
 
-    def __next__(self) -> dict:
+    def __next__(self) -> PipelineBatch:
         """Produce the next batch via the compiled session step.
 
-        An epoch ends when its last batch has been served: at ``position >= N``, or at
-        ``position + B > N`` under ``drop_last``. The session then stops after
-        ``num_epochs`` epochs, or starts the next one (position 0, epoch advanced) as
-        :meth:`Pipeline.reset` does; a continuous stream never ends.
+        The step starts the next epoch itself when the current one cannot start another
+        batch (see :class:`~datarax.pipeline.epochs.EpochPlan`). The session stops after the
+        batches its epochs hold, the final one computed at its own size when the records
+        left do not fill a batch; a stream never stops.
         """
-        if self._closed:
+        if self._closed or self._batches_left == 0:
+            self.close()
             raise StopIteration
-        if self._num_epochs is not None and self._epoch_exhausted():
-            self._epochs_served += 1
-            if self._epochs_served >= self._num_epochs:
-                self.close()
-                raise StopIteration
-            self._start_next_epoch()
-        batch, writes = self._pure_step(self._state, self._immutable_state)
+        size = self._plan.batch_size if self._batches_left != 1 else self._final_size
+        step = (
+            self._pure_step
+            if size == self._plan.batch_size
+            else _session_step(self._graphdef, self._body, size)
+        )
+        batch, writes = step(self._state, self._immutable_state)
         # Sync the live module and the session copies at every yield boundary:
         # mid-loop checkpointing (nnx.state on the pipeline) must see the truth.
         _apply_writes(writes, self._receivers)
-        self._position += self._batch_size
-        if self._num_epochs is None and self._source_length is not None:
-            self._position %= self._source_length
+        # The host mirror of the counters the step just wrote, by the same rule.
+        start, epoch = self._plan.batch_start(self._position, self._epoch)
+        self._position, self._epoch = self._plan.advance(start, epoch, size)
+        if self._batches_left is not None:
+            self._batches_left -= 1
         return batch
 
-    def _epoch_exhausted(self) -> bool:
-        """Whether the current epoch has served its last batch."""
-        if self._source_length is None:
-            return False
-        if self._drop_last:
-            return self._position + self._batch_size > self._source_length
-        return self._position >= self._source_length
-
-    def _start_next_epoch(self) -> None:
-        """Position 0 and the epoch advanced, on the live module and the session copy."""
-        epoch = int(self._live_variables[self._epoch_index].get_value()) + 1
-        self._write_position_and_epoch(0, epoch)
+    def _extent(self, position: int) -> tuple[int | None, int]:
+        """Batches a session from ``position`` serves (``None``: no end) and its final size."""
+        extent = self._plan.run_extent(position)
+        return (None, self._plan.batch_size) if extent is None else extent
 
     def _write_position_and_epoch(self, position: int, epoch: int) -> None:
         carried = self._carried_variables
@@ -452,6 +512,8 @@ class PipelineIterator:
         for target in (self._live_variables[self._epoch_index], carried[self._epoch_index]):
             target.set_value(jnp.asarray(epoch, dtype=jnp.int32))
         self._position = position
+        self._epoch = epoch
+        self._batches_left, self._final_size = self._extent(position)
 
     def get_state(self) -> dict[str, Any]:
         """Return iterator state valid at the current yield boundary.
@@ -476,7 +538,7 @@ class PipelineIterator:
         counts = [int(self._live_variables[index].get_value()) for index in self._rng_count_indices]
         return {
             "position": int(self._position),
-            "epoch": int(self._live_variables[self._epoch_index].get_value()),
+            "epoch": self._epoch,
             "rng_counts": counts,
             "version": _ITERATOR_STATE_VERSION,
             "fingerprint": self._fingerprint(),
@@ -488,13 +550,12 @@ class PipelineIterator:
         Every leaf is a number or a bool (``num_epochs`` may be ``None``), so the state
         also fits a checkpoint template of arrays.
         """
-        source = self._pipeline.source
         return {
-            "batch_size": self._batch_size,
-            "length": self._source_length,
-            "drop_last": self._drop_last,
-            "num_epochs": self._num_epochs,
-            "shuffled": bool(getattr(source, "is_random_order", False)),
+            "batch_size": self._plan.batch_size,
+            "length": self._plan.length,
+            "drop_last": self._plan.drop_last,
+            "num_epochs": self._plan.num_epochs,
+            "shuffled": self._shuffled,
         }
 
     def _upgraded_rng_counts(self, state: dict[str, Any]) -> list[int]:

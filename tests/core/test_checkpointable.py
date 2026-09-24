@@ -1,5 +1,6 @@
 """Tests for checkpointable module functionality."""
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import flax.nnx as nnx
@@ -9,10 +10,12 @@ import numpy as np
 import pytest
 
 from datarax.checkpoint import IteratorCheckpoint
-from datarax.core.config import DataraxModuleConfig, ElementOperatorConfig
-from datarax.core.module import CheckpointableIteratorModule, DataraxModule
+from datarax.core.config import DataraxModuleConfig, ElementOperatorConfig, StructuralConfig
+from datarax.core.data_source import DataSourceModule
+from datarax.core.module import DataraxModule
 from datarax.core.operator import DIRECT_CALL_STREAM
 from datarax.operators import ElementOperator
+from datarax.typing import CheckpointableIterator
 
 
 class SimpleModule(DataraxModule):
@@ -32,38 +35,31 @@ class SimpleModule(DataraxModule):
         return self.linear(x)
 
 
-class SimpleIteratorModule(CheckpointableIteratorModule):
-    """Simple iterator module for testing checkpointing."""
+@dataclass(frozen=True)
+class _RecordReaderConfig(StructuralConfig):
+    """Configuration of a reader over in-memory records."""
 
-    def __init__(self, max_items: int, *, rngs: nnx.Rngs | None = None):
-        """Initialize with maximum number of items."""
-        if rngs is None:
-            rngs = nnx.Rngs(42)
-        config = DataraxModuleConfig()
-        super().__init__(config, rngs=rngs)
-        self.max_items = max_items
-        self.position.set_value(0)
 
-    def __next__(self) -> int:
-        """Get next item."""
-        pos = self.position.get_value()
-        assert pos is not None
-        if pos >= self.max_items:
-            raise StopIteration
+class _RecordReader(DataSourceModule):
+    """A checkpointable host iterator: records are construction data, the position is state."""
 
-        current = pos
-        self.position.set_value(pos + 1)
-        self.current.set_value(current)
-        return current
+    def __init__(self, records: list[str]) -> None:
+        super().__init__(_RecordReaderConfig())
+        self.records = nnx.data(records)
+        self.position = nnx.Variable(jnp.int32(0))
 
     def __len__(self) -> int:
-        """Return total number of items."""
-        return self.max_items
+        return len(self.records)
 
-    def reset(self) -> None:
-        """Reset iterator position."""
-        super().reset()
-        self.position.set_value(0)
+    def __iter__(self) -> "_RecordReader":
+        return self
+
+    def __next__(self) -> str:
+        position = int(self.position[...])
+        if position >= len(self.records):
+            raise StopIteration
+        self.position[...] = jnp.int32(position + 1)
+        return self.records[position]
 
 
 class TestDataraxModuleCheckpointing:
@@ -132,102 +128,24 @@ class TestDataraxModuleCheckpointing:
         assert module.counter.get_value() != cloned.counter.get_value()  # type: ignore[reportAttributeAccessIssue]
 
 
-class TestCheckpointableIteratorModule:
-    """Test checkpointing functionality of CheckpointableIteratorModule."""
+class TestSourceIteratorCheckpointing:
+    """A DataSourceModule that iterates on the host is the checkpointable iterator pattern."""
 
-    def test_implements_checkpointable_iterator_protocol(self):
-        """Test that CheckpointableIteratorModule implements CheckpointableIterator protocol."""
-        iterator = SimpleIteratorModule(5)
+    def test_it_is_a_checkpointable_iterator(self):
+        assert isinstance(_RecordReader(["a"]), CheckpointableIterator)
 
-        # Should implement both Iterator and Checkpointable
-        assert hasattr(iterator, "__iter__")
-        assert hasattr(iterator, "__next__")
-        assert hasattr(iterator, "__len__")
-        assert hasattr(iterator, "get_state")
-        assert hasattr(iterator, "set_state")
+    def test_its_state_holds_the_position_not_the_records(self):
+        reader = _RecordReader([f"line {i}" for i in range(5)])
+        next(reader)
 
-    def test_iterator_functionality(self):
-        """Test basic iterator functionality."""
-        iterator = SimpleIteratorModule(3)
+        state = reader.get_state()
 
-        # Test length
-        assert len(iterator) == 3
-
-        # Test iteration
-        items = list(iterator)
-        assert items == [0, 1, 2]
-
-        # Iterator should be exhausted
-        with pytest.raises(StopIteration):
-            next(iterator)
-
-    def test_iterator_state_checkpointing(self):
-        """Test that iterator state can be checkpointed and restored."""
-        iterator = SimpleIteratorModule(5)
-
-        # Consume some items
-        first = next(iterator)
-        second = next(iterator)
-        assert first == 0
-        assert second == 1
-        assert iterator.position.get_value() == 2
-
-        # Save state
-        state = iterator.get_state()
-
-        # Consume more items
-        third = next(iterator)
-        assert third == 2
-        assert iterator.position.get_value() == 3
-
-        # Restore state
-        iterator.set_state(state)
-        assert iterator.position.get_value() == 2
-
-        # Next item should be 2 again
-        restored_third = next(iterator)
-        assert restored_third == 2
-
-    def test_iterator_reset(self):
-        """Test iterator reset functionality."""
-        iterator = SimpleIteratorModule(3)
-
-        # Consume some items
-        next(iterator)
-        next(iterator)
-        assert iterator.position.get_value() == 2
-
-        # Reset
-        iterator.reset()
-        assert iterator.position.get_value() == 0
-        assert iterator.current.get_value() is None
-
-        # Should start from beginning
-        first = next(iterator)
-        assert first == 0
-
-    def test_iterator_state_variables_as_nnx_variables(self):
-        """Test that iterator state variables are properly stored as NNX Variables."""
-        iterator = SimpleIteratorModule(3)
-
-        # Check that state variables are NNX Variables
-        assert isinstance(iterator.epoch, nnx.Variable)
-        assert isinstance(iterator.position, nnx.Variable)
-        assert isinstance(iterator.idx, nnx.Variable)
-        assert isinstance(iterator.current, nnx.Variable)
-
-        # Check that they're included in the NNX state
-        state = nnx.state(iterator)
-        state_dict = nnx.to_pure_dict(state)
-
-        assert "epoch" in state_dict
-        assert "position" in state_dict
-        assert "idx" in state_dict
-        assert "current" in state_dict
+        assert "records" not in state
+        assert int(state["position"]) == 1
 
 
 class TestCheckpointRoundTrip:
-    """Modules and iterator modules round-trip through IteratorCheckpoint."""
+    """Modules and source iterators round-trip through IteratorCheckpoint."""
 
     def test_module_state_is_restored_into_a_fresh_module(self, tmp_path):
         module = SimpleModule(10, rngs=nnx.Rngs(42))
@@ -244,18 +162,18 @@ class TestCheckpointRoundTrip:
         assert fresh.counter.get_value() == original_counter
         assert jnp.array_equal(fresh.linear.kernel.get_value(), module.linear.kernel.get_value())
 
-    def test_iterator_module_position_is_restored(self, tmp_path):
-        iterator = SimpleIteratorModule(5)
-        next(iterator)
-        next(iterator)
+    def test_a_source_iterator_resumes_where_it_was_saved(self, tmp_path):
+        records = [f"line {i}" for i in range(5)]
+        reader = _RecordReader(records)
+        next(reader)
+        next(reader)
 
         with IteratorCheckpoint(tmp_path) as checkpoint:
-            checkpoint.save(iterator, step=0)
-            fresh = SimpleIteratorModule(5)
+            checkpoint.save(reader, step=0)
+            fresh = _RecordReader(records)
             checkpoint.restore(fresh, step=0)
 
-        assert fresh.position.get_value() == iterator.position.get_value()
-        assert next(fresh) == 2
+        assert next(fresh) == "line 2"
 
     def test_each_step_restores_the_state_saved_at_that_step(self, tmp_path):
         module = SimpleModule(10, rngs=nnx.Rngs(42))

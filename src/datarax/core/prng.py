@@ -35,13 +35,21 @@ def per_record_keys(
         base_key: A stable per-operator PRNG key (drawn once, not per batch).
         record_indices: Integer array ``(batch_size,)`` of stable record indices, as
             ``DataSourceModule.record_indices_at`` names them.
-        epoch: The epoch counter, or ``None`` for keys that depend on the index alone.
+        epoch: The epoch the records belong to: one counter for all of them, an array
+            ``(batch_size,)`` giving each record's own (a batch crossing an epoch boundary
+            holds records of two), or ``None`` for keys that depend on the index alone.
 
     Returns:
         A key array of shape ``(batch_size, ...)`` — one key per record, aligned
         with ``record_indices``.
     """
+    indices = jnp.asarray(record_indices, dtype=jnp.uint32)
+    if epoch is not None and jnp.ndim(epoch) == 1:
+        return jax.vmap(
+            lambda record_epoch, index: jax.random.fold_in(
+                jax.random.fold_in(base_key, record_epoch), index
+            )
+        )(jnp.asarray(epoch), indices)
     if epoch is not None:
         base_key = jax.random.fold_in(base_key, epoch)
-    indices = jnp.asarray(record_indices, dtype=jnp.uint32)
     return jax.vmap(lambda index: jax.random.fold_in(base_key, index))(indices)

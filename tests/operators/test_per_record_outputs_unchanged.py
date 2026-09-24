@@ -77,6 +77,11 @@ def assert_entry_matches(key: str, produced: np.ndarray, recorded: np.ndarray) -
         np.testing.assert_array_equal(produced, recorded, err_msg=f"{key} differs")
 
 
+def recorded_under(name: str, recorded: dict[str, np.ndarray]) -> set[str]:
+    """The fixture's keys recorded for ``name``: the name itself, or its leaves' paths under it."""
+    return {key for key in recorded if key == name or key.startswith(f"{name}[")}
+
+
 @pytest.fixture(scope="module")
 def recorded() -> dict[str, np.ndarray]:
     """Return the recorded outputs, read once for the module."""
@@ -102,8 +107,9 @@ def test_operator_output_is_unchanged(
     produced = generator.entries_for(name, out_data)
 
     assert produced, f"{name} produced no entries to compare"
-    missing = sorted(set(produced) - set(recorded))
-    assert missing == [], f"{name} produced entries the fixture does not hold: {missing}"
+    # Both directions: an entry the fixture lacks is unverified output, and a recorded entry the
+    # case no longer produces is a leaf that disappeared unnoticed.
+    assert set(produced) == recorded_under(name, recorded)
     for key, value in produced.items():
         assert_entry_matches(key, value, recorded[key])
 
@@ -113,6 +119,7 @@ def test_pipeline_outputs_are_unchanged(recorded: dict[str, np.ndarray]) -> None
     produced = generator.pipeline_entries()
 
     assert produced, "the pipeline produced no entries to compare"
+    assert set(produced) == {key for key in recorded if key.startswith("pipeline ")}
     for key, value in produced.items():
         assert_entry_matches(key, value, recorded[key])
 

@@ -157,9 +157,10 @@ class BatchMixOperator(OperatorModule):
 
         Batch mixing is inherently batch-level (it permutes across the batch), so
         it uses a single key. When the batch's record indices are known, the key is
-        derived from the operator's stable base key, the epoch when given, and the
-        batch's first record index, so a resumed run mixes the same batch the same
-        way. Otherwise it draws from the operator's own stream.
+        derived from the operator's stable base key and the batch's first record: its
+        epoch when given (one for the batch, or each record's) and its index, so a resumed
+        run mixes the same batch the same way. Otherwise it draws from the operator's own
+        stream.
 
         This operator keys one level higher than the others, on its first record rather than on
         each one, so a bare stream draw would land at the same depth as a pipeline mix key: at
@@ -169,7 +170,8 @@ class BatchMixOperator(OperatorModule):
         if record_indices is not None:
             base_key = self._base_key[...]
             if epoch is not None:
-                base_key = jax.random.fold_in(base_key, epoch)
+                first_epoch = epoch if jnp.ndim(epoch) == 0 else jnp.asarray(epoch)[0]
+                base_key = jax.random.fold_in(base_key, first_epoch)
             return jax.random.fold_in(base_key, record_indices[0])
         return jax.random.fold_in(self._rng_stream(), 0)
 
@@ -206,7 +208,6 @@ class BatchMixOperator(OperatorModule):
 
         mixed_data = jax.tree.map(mix_array, batch_data)
 
-        # Reconstruct batch with mixed data (preserve valid_mask through the mix)
         return Batch.from_parts(
             data=mixed_data,
             states=batch.states.get_value(),
@@ -214,7 +215,6 @@ class BatchMixOperator(OperatorModule):
             batch_metadata=batch._batch_metadata.get_value(),
             batch_state=batch.batch_state.get_value(),
             validate=False,
-            valid_mask=batch.valid_mask[...],
         )
 
     def _apply_on_raw(
@@ -352,7 +352,6 @@ class BatchMixOperator(OperatorModule):
             # Use stable form: labels_perm + lam * (labels - labels_perm)
             result_data[label_field] = labels_perm + lam_adjusted * (labels - labels_perm)
 
-        # Reconstruct batch with mixed data (preserve valid_mask through the mix)
         return Batch.from_parts(
             data=result_data,
             states=batch.states.get_value(),
@@ -360,7 +359,6 @@ class BatchMixOperator(OperatorModule):
             batch_metadata=batch._batch_metadata.get_value(),
             batch_state=batch.batch_state.get_value(),
             validate=False,
-            valid_mask=batch.valid_mask[...],
         )
 
     def _apply_cutmix_raw(

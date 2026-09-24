@@ -35,6 +35,9 @@ B = TypeVar("B", bound=Batch)
 
 # Common type aliases
 type DataDict = dict[str, jax.Array]
+# What a pipeline yields: field names to arrays, or to pytrees of arrays when a stage nests them.
+# A source's batch is the flat ``DataDict``.
+type PipelineBatch = dict[str, Any]
 type StateDict = dict[str, Any]
 type MetadataDict = dict[str, Any]
 
@@ -106,6 +109,7 @@ __all__ = [
     "Element",
     "Batch",
     "Metadata",
+    "PipelineBatch",
     "DataDict",
     "StateDict",
     "MetadataDict",

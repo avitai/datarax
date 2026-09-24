@@ -5,7 +5,7 @@ This module provides two distinct source types optimized for different use cases
 **TFDSEagerSource**: For small/medium datasets that fit in memory (~10% VRAM)
 - Loads ALL data to JAX arrays at initialization
 - Pure JAX iteration after init (no TensorFlow overhead during training)
-- O(1) memory shuffling via Grain's index_shuffle (Feistel cipher)
+- O(1) memory shuffling via a keyed Feistel bijection
 - Fully checkpointable (just indices, no external state)
 - Ideal for: MNIST, CIFAR-10, Fashion-MNIST, small custom datasets
 
@@ -41,7 +41,6 @@ from datarax.sources._conversion import tf_to_jax
 from datarax.sources._source_base import EagerSourceBase, StreamingSourceBase
 from datarax.sources.source_ops import (
     converted_filtered_record,
-    EpochOrderCache,
     validate_eager_source_settings,
     validate_positive_optional_int,
     validate_streaming_source_settings,
@@ -146,20 +145,20 @@ class TFDSEagerConfig(SourceConfigBase):
         split: Split of the dataset to load, e.g., "train", "test" (required)
         data_dir: Optional directory where the dataset is stored/downloaded
         shuffle: Whether to shuffle the dataset during iteration
-        seed: Integer seed for Grain's index_shuffle (default: 42)
+        seed: Integer seed of the shuffle (default: 42)
         as_supervised: If True, returns 'image'/'label' keys instead of original features
         download_and_prepare_kwargs: Optional keyword arguments for download_and_prepare
         include_keys: Optional set of keys to include in output (exclusive with exclude_keys)
         exclude_keys: Optional set of keys to exclude from output (exclusive with include_keys)
 
     Note:
-        The seed parameter is an integer (not JAX RNG key) for Grain's index_shuffle.
+        The seed parameter is an integer (not a JAX RNG key).
         This ensures O(1) memory shuffling and reproducible per-epoch seeds.
     """
 
     try_gcs: bool = False
     shuffle: bool = False
-    seed: int = 42  # Integer seed for Grain's index_shuffle
+    seed: int = 42  # Integer seed of the shuffle
     as_supervised: bool = False
     download_and_prepare_kwargs: dict[str, Any] | None = None
     beam_num_workers: int | None = None
@@ -240,7 +239,7 @@ class TFDSEagerSource(EagerSourceBase):
     Key Features:
         - One-time TF→JAX conversion at init (DLPack zero-copy when possible)
         - Pure JAX iteration after init (no TF threads during training)
-        - O(1) memory shuffling via Grain's index_shuffle (Feistel cipher)
+        - O(1) memory shuffling via a keyed Feistel bijection
         - Full checkpointing support (indices only, no external state)
         - Supports `as_supervised` mode and key filtering
 
@@ -305,9 +304,6 @@ class TFDSEagerSource(EagerSourceBase):
         self._cleanup_tf()
 
         # State for iteration (like MemorySource)
-        first_key = next(iter(self.data.keys()))
-        self.length = self.data[first_key].shape[0]
-        self._epoch_order = EpochOrderCache(self.length)
         self.index = nnx.Variable(0)
         self.epoch = nnx.Variable(0)
 

@@ -5,7 +5,7 @@ This module provides two distinct source types optimized for different use cases
 **HFEagerSource**: For small/medium datasets that fit in memory (~10% VRAM)
 - Loads ALL data to JAX arrays at initialization
 - Pure JAX iteration after init (no HuggingFace overhead during training)
-- O(1) memory shuffling via Grain's index_shuffle (Feistel cipher)
+- O(1) memory shuffling via a keyed Feistel bijection
 - Fully checkpointable (just indices, no external state)
 - Ideal for: MNIST, CIFAR-10, sentiment datasets, small custom datasets
 
@@ -39,7 +39,6 @@ from datarax.sources._conversion import hf_to_jax
 from datarax.sources._source_base import EagerSourceBase, StreamingSourceBase
 from datarax.sources.source_ops import (
     converted_filtered_record,
-    EpochOrderCache,
     validate_eager_source_settings,
     validate_streaming_source_settings,
 )
@@ -128,14 +127,6 @@ def _hf_column_to_jax(values: Any) -> Any:
     return _stack_hf_array_columns(buffer)["column"]
 
 
-def _infer_hf_column_length(data: dict[str, Any]) -> int:
-    """Infer row count from a loaded eager HF column mapping."""
-    first_value = next(iter(data.values()))
-    if hasattr(first_value, "shape"):
-        return int(first_value.shape[0])
-    return len(first_value)
-
-
 @dataclass(frozen=True)
 class HFEagerConfig(SourceConfigBase):
     """Configuration for HFEagerSource (loads all data to JAX at init).
@@ -147,18 +138,18 @@ class HFEagerConfig(SourceConfigBase):
         split: Split of the dataset to load, e.g., "train", "test" (required)
         data_dir: Optional directory where the dataset is stored/downloaded
         shuffle: Whether to shuffle the dataset during iteration
-        seed: Integer seed for Grain's index_shuffle (default: 42)
+        seed: Integer seed of the shuffle (default: 42)
         download_kwargs: Optional keyword arguments for load_dataset
         include_keys: Optional set of keys to include in output (exclusive with exclude_keys)
         exclude_keys: Optional set of keys to exclude from output (exclusive with include_keys)
 
     Note:
-        The seed parameter is an integer (not JAX RNG key) for Grain's index_shuffle.
+        The seed parameter is an integer (not a JAX RNG key).
         This ensures O(1) memory shuffling and reproducible per-epoch seeds.
     """
 
     shuffle: bool = False
-    seed: int = 42  # Integer seed for Grain's index_shuffle
+    seed: int = 42  # Integer seed of the shuffle
     download_kwargs: dict[str, Any] | None = None
     local_files_only: bool = False
 
@@ -216,7 +207,7 @@ class HFEagerSource(EagerSourceBase):
     Key Features:
         - One-time conversion at init (PIL→numpy→JAX for images)
         - Pure JAX iteration after init
-        - O(1) memory shuffling via Grain's index_shuffle (Feistel cipher)
+        - O(1) memory shuffling via a keyed Feistel bijection
         - Full checkpointing support (indices only, no external state)
         - Automatic PIL Image to JAX array conversion
 
@@ -294,8 +285,6 @@ class HFEagerSource(EagerSourceBase):
         gc.collect()
 
         # State for iteration (like MemorySource)
-        self.length = _infer_hf_column_length(self.data)
-        self._epoch_order = EpochOrderCache(self.length)
         self.index = nnx.Variable(0)
         self.epoch = nnx.Variable(0)
 

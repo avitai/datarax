@@ -81,7 +81,7 @@ def _collect(pipeline: Pipeline, n_records: int) -> jax.Array:
     collected: list[jax.Array] = []
     total = 0
     while total < n_records:
-        part = pipeline.step()["value"]  # type: ignore[reportCallIssue]
+        part = pipeline.step()["value"]
         collected.append(part)
         total += int(part.shape[0])
     return jnp.concatenate(collected, axis=0)[:n_records]
