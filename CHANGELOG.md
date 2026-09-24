@@ -66,6 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - `EpochOrderCache` and the `order=` parameter of `resolve_wrapped_indices`: no order is stored.
+- `datarax.core.element_batch.BatchView`: nothing has produced one since the executor it served
+  was replaced by `Pipeline`, which yields plain dicts.
 - The `grain` dependency of `datarax.samplers.index_shuffle`.
 
 ## [0.1.15] - 2026-09-21

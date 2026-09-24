@@ -733,11 +733,9 @@ class DataraxAdapter(PipelineAdapter):
         else:
             yield from self._pipeline
 
-    def _materialize_batch(self, batch: Any) -> list[Any]:
-        # Pipeline yields plain dicts; legacy Batch/BatchView yields a wrapper.
-        data = batch.get_data() if hasattr(batch, "get_data") else batch
-        jax.block_until_ready(data)
-        return jax.tree.leaves(data)
+    def _materialize_batch(self, batch: dict) -> list[Any]:
+        jax.block_until_ready(batch)
+        return jax.tree.leaves(batch)
 
     def teardown(self) -> None:
         """Release resources and reset adapter state."""
