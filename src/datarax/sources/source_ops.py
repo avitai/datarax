@@ -20,7 +20,7 @@ Streaming helpers use callback parameters (convert_fn) to stay backend-agnostic.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 import jax
@@ -49,10 +49,18 @@ def record_count(data: Any) -> int:
         The record count.
 
     Raises:
+        TypeError: If a column of the mapping is itself a mapping, whose key count is not a
+            record count.
         ValueError: If the mapping's columns disagree on their length.
     """
     if not isinstance(data, dict):
         return len(data)
+    for key, value in data.items():
+        if isinstance(value, Mapping):
+            raise TypeError(
+                f"Data column {key!r} is a mapping; columns are arrays with one row per record, "
+                "in a flat mapping. Give each nested field its own top-level key."
+            )
     counts = {len(value) for value in data.values() if hasattr(value, "__len__")}
     if len(counts) > 1:
         lengths = {key: len(value) for key, value in data.items() if hasattr(value, "__len__")}

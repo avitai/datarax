@@ -6,18 +6,21 @@ one batch. The pipeline drives source iteration via an ``nnx.Variable``
 position counter so a full training epoch can be expressed as a single
 ``nnx.scan`` call, producing one XLA graph per epoch.
 
-Three integration tiers (user picks based on speed/flexibility tradeoff):
+Three integration tiers (measured costs: ``docs/performance/index.md``):
 
-- **Tier A — ``for batch in pipeline:``** — compiled iteration session
-  (:class:`~datarax.pipeline.iteration.PipelineIterator`). The module
-  graph is split once per session and batches run through a cached
-  ``jax.jit`` step, so per-batch cost is one compiled dispatch. A
-  streaming source's host batches run through the stage DAG compiled the
-  same way. Works with any training framework; the recommended
-  data-loading loop.
-- **Tier B — ``Pipeline.step()``** — single JIT-traceable batch fetch
-  with live module state. For single-shot use or embedding inside your
-  own jitted train step, where the outer trace absorbs the call.
+- **Tier A — ``for batch in pipeline:``** — the data loader: a compiled
+  iteration session (:class:`~datarax.pipeline.iteration.PipelineIterator`)
+  whose batches go to a train or inference step written as the Flax and
+  JAX examples write it. The module graph is split once per session and
+  batches run through a cached ``jax.jit`` step, so per-batch cost is one
+  compiled dispatch; host data is uploaded once. A streaming source's host
+  batches run through the stage DAG compiled the same way. Works with any
+  framework that takes batches; the recommended path.
+- **Tier B — ``Pipeline.step()``** — one batch, traceable, with live
+  module state: single batches and debugging eagerly, and inside a
+  transform of your own. A pipeline passed into your own jitted step is
+  an argument of every call, so the default ``nnx.jit`` copies its
+  dataset per call; iterate instead (Tier A).
 - **Tier C — ``Pipeline.scan(step_fn, modules=(...), length=...)``** —
   the convenience wrapper. Pipeline lifts user-supplied ``nnx.Module``
   instances (typically a model and an ``nnx.Optimizer``) via
@@ -65,7 +68,12 @@ from datarax.core.module import module_state, restore_module_state
 from datarax.core.spec import batch_length, declared_spec, validate_batch, validate_device_dtypes
 from datarax.pipeline.dag import record_count, Records, run_dag
 from datarax.pipeline.epochs import EpochPlan
-from datarax.pipeline.iteration import compile_streaming_dag, next_batch, PipelineIterator
+from datarax.pipeline.iteration import (
+    compile_streaming_dag,
+    next_batch,
+    PipelineIterator,
+    staged_view,
+)
 from datarax.pipeline.topo import topological_sort, validate_dag
 from datarax.typing import DataDict, PipelineBatch
 
@@ -576,6 +584,11 @@ class Pipeline(nnx.Module):
 
         Every step serves a full batch by the rule :meth:`step` follows, starting the
         next epoch when the current one cannot start another batch, so any ``length`` runs.
+
+        The source's records are read where :meth:`step` and iteration read them: device data
+        in place, NumPy data from its device copy, uploaded once. The compiled scan is cached
+        by ``step_fn``'s identity: pass the same function on every call, since a new one (a
+        lambda written in the loop) compiles again.
         """
         n_modules = len(modules)
         has_init_carry = init_carry is not None
@@ -595,9 +608,12 @@ class Pipeline(nnx.Module):
             self._scan_body_cache[cache_key] = scan_body
 
         steps = jnp.arange(length, dtype=jnp.int32)
+        # The scan runs on a view sharing this pipeline's Variables with its host data staged
+        # once, as step() and iteration stage it, so no call uploads the records again.
+        view = staged_view(self)
         if has_init_carry:
-            return scan_body(self, *modules, init_carry, steps)
-        return scan_body(self, *modules, steps)
+            return scan_body(view, *modules, init_carry, steps)
+        return scan_body(view, *modules, steps)
 
     def _compile_scan_body(
         self,

@@ -6,10 +6,6 @@ each contract is checked in each setting. The source's arrays are never written 
 step must return and copy none of them: every call leaves the source's buffers where they are.
 """
 
-import logging
-from collections.abc import Iterator
-from contextlib import contextmanager
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -21,6 +17,7 @@ from datarax.operators.map_operator import MapOperator
 from datarax.pipeline import Pipeline
 from datarax.pipeline.iteration import _host_copies, _session_step
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
+from tests.test_common.compiles import compiled_programs
 
 
 _N = 64
@@ -103,29 +100,6 @@ def _source_records(pipeline: Pipeline) -> jax.Array:
     return records
 
 
-@contextmanager
-def _compiles() -> Iterator[list[str]]:
-    """Names of the XLA programs compiled inside the block."""
-    names: list[str] = []
-
-    class _Handler(logging.Handler):
-        def emit(self, record: logging.LogRecord) -> None:
-            message = record.getMessage()
-            if "Finished XLA compilation of" in message:
-                names.append(message.split("compilation of ")[1].split(" in ")[0])
-
-    logger = logging.getLogger("jax")
-    handler, level = _Handler(), logger.level
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
-    try:
-        with jax.log_compiles(True):
-            yield names
-    finally:
-        logger.removeHandler(handler)
-        logger.setLevel(level)
-
-
 class TestNoCopy:
     """A step returns and copies none of the source's arrays."""
 
@@ -182,7 +156,7 @@ class TestStructure:
     def test_a_repeated_step_compiles_nothing(self) -> None:
         pipeline = _pipeline(_Scale())
         pipeline.step()
-        with _compiles() as compiled:
+        with compiled_programs() as compiled:
             pipeline.step()
         assert compiled == []
 
@@ -190,7 +164,7 @@ class TestStructure:
         pipeline = _pipeline(_Scale())
         pipeline.step()
         pipeline.batch_size = _BATCH // 2
-        with _compiles() as compiled:
+        with compiled_programs() as compiled:
             smaller = pipeline.step()
             pipeline.step()
         assert smaller["x"].shape[0] == _BATCH // 2
@@ -203,7 +177,7 @@ class TestStructure:
         Python int; the step must not be traced again for it.
         """
         pipeline = _pipeline(_Counter())
-        with _compiles() as compiled:
+        with compiled_programs() as compiled:
             pipeline.step()
             pipeline.step()
             session = iter(pipeline)
@@ -289,7 +263,7 @@ class TestTransforms:
 
         with jax.checking_leaks():
             gradient = train_step(model, pipeline)
-        with _compiles() as compiled:
+        with compiled_programs() as compiled:
             train_step(model, pipeline)
         # First batch x = 1..8, scaled by 2.
         assert float(gradient) == pytest.approx(2.0 * sum(range(1, _BATCH + 1)))

@@ -254,6 +254,27 @@ def _on_device(module: nnx.Module, state: Any) -> Any:
     return jax.tree.map(stage, state)
 
 
+def staged_view[M: nnx.Module](module: M) -> M:
+    """``module`` rebuilt around its live Variables, with its host arrays on the device.
+
+    For a flax transform that takes the module as an argument (``nnx.scan``): given the live
+    module, it would take the module's NumPy arrays as arguments and upload them on every call.
+    The view shares every Variable object with the live module, so what the transform writes is
+    written to the module, and a Variable the module shares with other arguments stays shared.
+    Only the arrays outside Variables (a source's records) are replaced, by the copies
+    :func:`_on_device` keeps. Only ``module``'s graph is traversed, so the cost does not grow
+    with the other arguments (a model).
+
+    Args:
+        module: The module to view (the pipeline).
+
+    Returns:
+        The view.
+    """
+    graphdef, variables, data = nnx.split(module, nnx.Variable, ..., graph=True)
+    return nnx.merge(graphdef, variables, _on_device(module, data), copy=False)
+
+
 def next_batch(module: nnx.Module, body: StepBody, size: int) -> PipelineBatch:
     """Run ``body`` once, for ``size`` records, on ``module`` through the compiled session step.
 

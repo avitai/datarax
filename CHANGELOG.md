@@ -29,6 +29,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serves the order of `(seed, e)`. The last batch of an epoch in stateful `get_batch` is taken
   from its own epoch's order; the epoch advanced before its records were read. `reset()` returns
   to epoch 0 and serves that epoch's order again.
+- `Pipeline.scan` reads NumPy source data from the device copy `step()` and iteration use,
+  uploaded once. It gave `nnx.scan` the live pipeline, whose NumPy arrays were call arguments, so
+  every call uploaded the whole dataset (65.6-70.7 ms per call at 1 GiB on an RTX 4090, now
+  2.1-2.3 ms). The scan now runs on a view of the pipeline that shares its Variables. With
+  device data a call costs about 0.3 ms more, for building that view.
+- A data column that is itself a mapping is refused with a `TypeError` naming the column. Its
+  key count was read as its length, so the refusal named that count as a length, and a mapping
+  with as many keys as there were records was accepted.
+- The performance page and `Pipeline`'s tiers carry measured costs, and lead with the data-loader
+  loop (`for batch in pipeline` into a train step written as Flax writes it). They state that a
+  pipeline passed into your own `nnx.jit` step copies its dataset on every call, which the page
+  previously described as absorbed by the outer trace. They also state what tree mode (FLIP 5310)
+  changes for your own transforms, and why a pipeline inside `nnx.grad` must be an argument.
 
 ### Changed
 

@@ -55,6 +55,21 @@ class TestMemorySource:
         with pytest.raises(ValueError, match="same length"):
             _memory({"x": np.zeros(4), "y": np.zeros(6)})
 
+    def test_a_column_that_is_a_mapping_is_refused_by_name(self) -> None:
+        """A mapping is not a column: its key count is not a record count."""
+        with pytest.raises(TypeError, match=r"column 'a' is a mapping.*flat"):
+            _memory({"a": {"b": np.zeros((4, 2))}, "c": np.zeros(4)})
+
+    def test_a_mapping_column_whose_key_count_equals_the_records_is_refused(self) -> None:
+        """Counted by its keys, this mapping agreed with the records and passed unnoticed."""
+        nested = {"b": np.zeros(2), "d": np.zeros(2)}
+        with pytest.raises(TypeError, match="column 'a' is a mapping"):
+            _memory({"a": nested, "c": np.zeros(2)})
+
+    def test_list_records_holding_mappings_stay_host_records(self) -> None:
+        records = [{"features": {"x": i}} for i in range(3)]
+        assert len(_memory(records)) == 3
+
 
 class _Eager(EagerSourceBase):
     """Minimal eager source: data and nothing about its length."""
