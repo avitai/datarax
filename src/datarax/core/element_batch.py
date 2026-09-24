@@ -126,9 +126,6 @@ class Batch(nnx.Module):
             self._metadata_list: nnx.Variable[list[Any]] = nnx.Variable([])
             self._batch_metadata: nnx.Variable[Metadata | None] = nnx.Variable(None)
             self.batch_state = nnx.Variable({})
-            self.valid_mask: nnx.Variable[jax.Array] = nnx.Variable(
-                jnp.zeros((0,), dtype=jnp.bool_)
-            )
             return
 
         # Stack data using jax.tree.map to handle nested PyTree structures
@@ -155,14 +152,6 @@ class Batch(nnx.Module):
         # and must be part of State (not GraphDef) to avoid recompilation.
         self._metadata_list: nnx.Variable[list[Any]] = nnx.Variable(metadata_list)
         self._batch_metadata: nnx.Variable[Metadata | None] = nnx.Variable(None)
-
-        # Default validity mask: every position is valid until a batcher overrides
-        # it (e.g., with [True, ..., False] for a padded last batch). Mask-weighted
-        # loss aggregation uses this to skip padded positions without forcing
-        # variable batch shapes that would trigger JIT recompilation.
-        self.valid_mask: nnx.Variable[jax.Array] = nnx.Variable(
-            jnp.ones((self.batch_size,), dtype=jnp.bool_)
-        )
 
         if validate:
             self._validate()
@@ -219,7 +208,7 @@ class Batch(nnx.Module):
         return batch_size
 
     @classmethod
-    def from_parts(
+    def from_parts(  # noqa: DOC502 - _validate_from_parts_inputs raises the ValueError
         cls,
         data: PyTree,
         states: PyTree,
@@ -228,7 +217,6 @@ class Batch(nnx.Module):
         batch_state: PyTree | None = None,
         *,
         validate: bool = True,
-        valid_mask: jax.Array | None = None,
     ) -> "Batch":
         """Create Batch directly from pre-built parts with validation.
 
@@ -243,8 +231,6 @@ class Batch(nnx.Module):
             batch_metadata: Optional batch-level metadata (immutable)
             batch_state: Optional batch-level state PyTree (no batch dimension)
             validate: If True, validates batch axis consistency and lengths
-            valid_mask: Optional boolean array of shape ``(batch_size,)`` marking
-                real vs padded records; defaults to all-True when omitted
 
         Returns:
             New Batch instance
@@ -276,19 +262,6 @@ class Batch(nnx.Module):
             first_array = jax.tree.leaves(data)[0]
             batch_size = first_array.shape[0]
 
-        # Resolve the validity mask: caller-supplied (e.g., padded last batch) or
-        # default-all-True (no padding). Length must match the batch dimension.
-        if valid_mask is None:
-            resolved_mask = jnp.ones((batch_size,), dtype=jnp.bool_)
-        else:
-            mask_arr = jnp.asarray(valid_mask, dtype=jnp.bool_)
-            if mask_arr.shape != (batch_size,):
-                raise ValueError(
-                    f"valid_mask shape {mask_arr.shape} does not match batch_size "
-                    f"{batch_size}; expected ({batch_size},)."
-                )
-            resolved_mask = mask_arr
-
         # Create batch instance using empty init to set up NNX Module properly
         # Then replace the fields with the provided data
         batch = cls([], validate=False)  # Initialize with empty list to set up NNX state
@@ -303,7 +276,6 @@ class Batch(nnx.Module):
         batch._batch_metadata = nnx.Variable(batch_metadata)
         if batch_state is not None:
             batch.batch_state.set_value(batch_state)
-        batch.valid_mask.set_value(resolved_mask)
 
         return batch
 
@@ -365,8 +337,6 @@ class Batch(nnx.Module):
         metadata_list = self._metadata_list.get_value()
         sliced_metadata = metadata_list[start:end] if metadata_list else []
 
-        # Batch metadata, state, and valid_mask all sliced consistently.
-        sliced_mask = self.valid_mask[...][start:end]
         return Batch.from_parts(
             data=sliced_data,
             states=sliced_states,
@@ -374,7 +344,6 @@ class Batch(nnx.Module):
             batch_metadata=self._batch_metadata.get_value(),
             batch_state=self.batch_state.get_value(),
             validate=False,
-            valid_mask=sliced_mask,
         )
 
     def split_for_devices(self, num_devices: int) -> list["Batch"]:
@@ -521,12 +490,6 @@ class BatchOps:
         metadata_list = batch._metadata_list.get_value()
         filtered_metadata = [metadata_list[i] for i in indices] if metadata_list else []
 
-        # Filter valid_mask consistently with the rest of the batch. AND the
-        # filter mask with the existing validity flags so a previously-invalid
-        # padded position remains invalid (defense in depth — masks should
-        # never be silently flipped to True).
-        filtered_valid_mask = batch.valid_mask[...][mask]
-
         # Use Batch.from_parts to reconstruct (handles PyTree stacking)
         return Batch.from_parts(
             data=filtered_data,
@@ -535,7 +498,6 @@ class BatchOps:
             batch_metadata=batch._batch_metadata.get_value(),
             batch_state=batch.batch_state.get_value(),
             validate=False,
-            valid_mask=filtered_valid_mask,
         )
 
     @staticmethod
@@ -571,16 +533,12 @@ class BatchOps:
                 concatenated_metadata.extend(meta_list)
 
         # Note: Discards batch-level metadata/state from subsequent batches.
-        # valid_mask is concatenated across all batches so partial padding in
-        # any input batch propagates into the merged output.
-        concatenated_valid_mask = jnp.concatenate([b.valid_mask[...] for b in batches], axis=0)
         return Batch.from_parts(
             data=concatenated_data,
             states=concatenated_states,
             metadata_list=concatenated_metadata,
             batch_metadata=first_batch._batch_metadata.get_value(),
             batch_state=first_batch.batch_state.get_value(),
-            valid_mask=concatenated_valid_mask,
             validate=False,
         )
 

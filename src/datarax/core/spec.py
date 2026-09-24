@@ -42,8 +42,6 @@ from numpy.typing import ArrayLike
 from datarax.core.data_source import DataSourceModule
 
 
-_VALID_MASK_KEY = "valid_mask"
-
 # NumPy dtype kinds a JAX array can hold: bool, signed, unsigned, float, complex.
 _JAX_ARRAY_KINDS = frozenset("biufc")
 
@@ -75,12 +73,12 @@ def add_leading_dim(spec_leaf: jax.ShapeDtypeStruct, size: int) -> jax.ShapeDtyp
     return jax.ShapeDtypeStruct(shape=(size, *spec_leaf.shape), dtype=spec_leaf.dtype)
 
 
-def batched_spec(element_spec: Any, batch_size: int) -> dict[str, object]:
-    """Lift a per-element spec PyTree into a batch-level spec dict with ``valid_mask``.
+def batched_spec(element_spec: Any, batch_size: int) -> Any:
+    """Lift a per-element spec PyTree into the spec of a batch of ``batch_size`` records.
 
-    The returned dict has the same structure as ``element_spec`` (a leading
-    ``batch_size`` dimension prepended to every ``ShapeDtypeStruct`` leaf) plus
-    a top-level ``valid_mask`` leaf of shape ``(batch_size,)`` and dtype bool.
+    The returned PyTree has the structure of ``element_spec`` with a leading ``batch_size``
+    dimension prepended to every ``ShapeDtypeStruct`` leaf, and nothing added: every row of a
+    batch is a record, so no leaf marks padding.
 
     Args:
         element_spec: PyTree of ``jax.ShapeDtypeStruct`` describing per-element
@@ -88,9 +86,7 @@ def batched_spec(element_spec: Any, batch_size: int) -> dict[str, object]:
         batch_size: Number of elements per emitted batch.
 
     Returns:
-        A dict with the batched element spec under the original keys plus a
-        ``"valid_mask"`` key. If ``element_spec`` is itself a dict, its keys are
-        merged in; otherwise it is placed under ``"data"``.
+        The batched spec PyTree.
 
     Raises:
         ValueError: If ``batch_size`` is not positive.
@@ -98,22 +94,11 @@ def batched_spec(element_spec: Any, batch_size: int) -> dict[str, object]:
     if batch_size <= 0:
         raise ValueError(f"batch_size must be positive, got {batch_size}.")
 
-    batched = jax.tree.map(
+    return jax.tree.map(
         lambda leaf: add_leading_dim(leaf, batch_size),
         element_spec,
         is_leaf=lambda x: isinstance(x, jax.ShapeDtypeStruct),
     )
-
-    valid_mask_leaf = jax.ShapeDtypeStruct(shape=(batch_size,), dtype=jnp.bool_)
-
-    if isinstance(batched, dict):
-        if _VALID_MASK_KEY in batched:
-            raise ValueError(
-                f"element_spec already contains key '{_VALID_MASK_KEY}'; "
-                "this key is reserved for the batcher-injected validity mask."
-            )
-        return {**batched, _VALID_MASK_KEY: valid_mask_leaf}
-    return {"data": batched, _VALID_MASK_KEY: valid_mask_leaf}
 
 
 def scalar_index_spec(dtype: DTypeLike = jnp.int32) -> jax.ShapeDtypeStruct:

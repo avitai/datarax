@@ -44,7 +44,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     are skipped and the next batch starts the next epoch.
   - `step()` and `scan(length)` never run out: the compiled step starts the next epoch itself.
     `scan` no longer refuses a length beyond the epoch.
-  - The `valid_mask` leaf is removed; drop any masking of pipeline batches.
+  - The `valid_mask` leaf is removed; drop any masking of pipeline batches. `Batch.valid_mask`,
+    `Batch.from_parts(valid_mask=)` and the `valid_mask` leaf of `batched_spec` /
+    `BatcherModule.batch_spec` go with it: their only producer was the pipeline's padding. A
+    non-dict element spec's batch spec is now the batched spec itself, no longer wrapped under
+    `"data"`.
   - `len(pipeline)` counts the batches a whole run serves (`ceil(k*N/B)`, or `k*floor(N/B)`
     under `drop_last`), the same number as before for one epoch. A stream (`num_epochs=None`)
     has no length. `batches_left()` counts what a session started now would serve, and is

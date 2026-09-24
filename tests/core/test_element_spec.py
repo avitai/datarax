@@ -84,12 +84,10 @@ class _MinimalBatcher(BatcherModule):
         return []
 
 
-def test_batcher_module_batch_spec_adds_leading_dim_and_valid_mask() -> None:
-    """Batchers add a leading (batch_size,) dim to every leaf and a top-level valid_mask.
+def test_batcher_module_batch_spec_adds_the_leading_dim_and_nothing_else() -> None:
+    """Batchers add a leading (batch_size,) dim to every leaf; a batch holds records only.
 
-    The valid_mask leaf is what allows mask-weighted loss to ignore padded
-    positions in end-of-epoch partial batches without the JIT recompilation
-    that variable batch shapes would force.
+    No batch is padded, so no leaf marks padding: the batch spec has the element spec's keys.
     """
     batcher = _MinimalBatcher(_MinimalBatcherConfig(stochastic=False))
     element_spec = {
@@ -98,9 +96,7 @@ def test_batcher_module_batch_spec_adds_leading_dim_and_valid_mask() -> None:
     }
     batch_spec = batcher.batch_spec(element_spec, batch_size=32)
 
-    assert "valid_mask" in batch_spec
-    assert batch_spec["valid_mask"].shape == (32,)
-    assert batch_spec["valid_mask"].dtype == jnp.bool_
+    assert set(batch_spec) == set(element_spec)
 
     assert batch_spec["image"].shape == (32, 28, 28, 1)
     assert batch_spec["image"].dtype == jnp.float32

@@ -52,7 +52,7 @@ def test_spec_chain_source_to_operator_to_batcher() -> None:
     source: dict-of-arrays MemorySource with image (28×28×1) + label (scalar)
     op1: passthrough (default output_spec inherits identity)
     op2: passthrough
-    batcher: default batch_spec adds (batch_size,) leading dim + valid_mask
+    batcher: default batch_spec adds the (batch_size,) leading dim
     """
     data = {
         "image": jnp.ones((100, 28, 28, 1), dtype=jnp.float32),
@@ -78,10 +78,8 @@ def test_spec_chain_source_to_operator_to_batcher() -> None:
     assert batch_spec["label"].shape == (8,)
     assert batch_spec["label"].dtype == jnp.int32
 
-    # Validity mask: present, correctly typed
-    assert isinstance(batch_spec["valid_mask"], jax.ShapeDtypeStruct)
-    assert batch_spec["valid_mask"].shape == (8,)
-    assert batch_spec["valid_mask"].dtype == jnp.bool_
+    # Records only: no leaf is added
+    assert set(batch_spec) == {"image", "label"}
 
 
 def test_spec_chain_passthrough_operator_preserves_dtype_and_shape() -> None:

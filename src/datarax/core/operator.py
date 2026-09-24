@@ -527,10 +527,7 @@ class OperatorModule(DataraxModule):
             batch_data, batch_states, stats, record_indices
         )
 
-        # Reconstruct batch (preserves batch-level data, including valid_mask).
-        # Without explicit valid_mask propagation, a partial last batch's
-        # padding mask would reset to all-True here and silently corrupt
-        # mask-weighted loss downstream.
+        # Reconstruct batch (preserves batch-level metadata and state).
         return Batch.from_parts(
             data=transformed_data,
             states=transformed_states,
@@ -538,7 +535,6 @@ class OperatorModule(DataraxModule):
             batch_metadata=batch._batch_metadata.get_value(),
             batch_state=batch.batch_state.get_value(),
             validate=False,
-            valid_mask=batch.valid_mask[...],
         )
 
     @final
