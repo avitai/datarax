@@ -7,8 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A module's checkpoint (`DataraxModule.get_state`) holds its `nnx.Variable` state only. It held
+  every leaf `nnx.state` reaches, including a `MemorySource`'s data arrays, so each checkpoint
+  carried the whole dataset (25.6 MB for a 25.6 MB source) and `set_state` could not restore it
+  ("Cannot restore state at data.x").
+- A restored `MemorySource` resumes the same records. The host shuffle's seed lived in a plain
+  attribute outside the checkpoint and each epoch drew a new one, so a restored source drew a
+  different seed; it is now drawn once, on first use, into a checkpointed Variable, and epoch `e`
+  serves the order of `(seed, e)`. The last batch of an epoch in stateful `get_batch` is taken
+  from its own epoch's order; the epoch advanced before its records were read. `reset()` returns
+  to epoch 0 and serves that epoch's order again.
+
 ### Changed
 
+- `DataraxModule.get_state`/`set_state`/`clone` and `Pipeline.scan` name graph mode
+  (`graph=True`; `graph_updates=True` for `nnx.scan`, whose `StateAxes` need it), so they keep
+  working when Flax makes tree mode the default: a module built from one `nnx.Rngs` shares
+  Variables, which tree mode rejects.
 - `Pipeline.step()` runs the compiled step iteration sessions use instead of `nnx.jit`, and copies
   none of the source's arrays. The `nnx.jit` form wrote every Variable back on every call, so each
   step copied the whole dataset on the device, and replaced a NumPy source's arrays with device

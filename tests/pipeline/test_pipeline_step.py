@@ -261,6 +261,17 @@ class TestGraphMode:
             expected = next(iter(iterated))
         np.testing.assert_array_equal(np.asarray(served["x"]), np.asarray(expected["x"]))
 
+    def test_scan_runs_with_tree_mode_as_the_default(self) -> None:
+        scanned, stepped = self._sharing_rngs(), self._sharing_rngs()
+        with nnx.set_graph_mode(False), nnx.set_graph_updates(False):
+            sums = scanned.scan(lambda batch: batch["x"].sum(), length=3)
+        expected = [np.asarray(stepped.step()["x"]).sum(dtype=np.float32) for _ in range(3)]
+        # Two compiled programs may associate a float32 sum of 8 values differently: up to
+        # about 7 eps apart.
+        np.testing.assert_allclose(
+            np.asarray(sums), expected, rtol=8 * float(np.finfo(np.float32).eps)
+        )
+
 
 class TestTransforms:
     """``step()`` inside the caller's transforms."""

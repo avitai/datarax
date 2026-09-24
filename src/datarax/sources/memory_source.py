@@ -181,9 +181,13 @@ class MemorySource(DataSourceModule):
         self.index = nnx.Variable(0)
         self.epoch = nnx.Variable(0)
 
-        # Shuffle state (computed lazily per epoch)
-        self._shuffle_seed: int | None = None  # the epoch's shuffle seed, drawn from the RNG
-        self._last_shuffle_epoch = nnx.Variable(-1)
+        # The host shuffle's seed, drawn when a host shuffle first needs it (so a source served
+        # only through a pipeline draws nothing) and kept: epoch e serves the order of
+        # (seed, e), a function of checkpointed state alone, so a restored source resumes the
+        # same records. Both Variables exist from construction, so the checkpoint's layout
+        # never changes. uint32, because the seed spans [0, 2**32).
+        self._shuffle_seed = nnx.Variable(jnp.uint32(0))
+        self._shuffle_seeded = nnx.Variable(False)
 
         # Optional metadata tracking
         if config.track_metadata:
@@ -244,15 +248,14 @@ class MemorySource(DataSourceModule):
         shard_id = self.config.shard_id or 0
 
         if self.is_random_order and self.rngs is not None:
-            # Lazy shuffle: compute each index on-the-fly via Feistel cipher
-            seed = self._derive_shuffle_seed()
+            seed, epoch = self._host_shuffle_seed(), self.epoch.get_value()
             if num_workers > 1:
                 # Partition: yield elements at global positions [shard_id::num_workers]
                 for i in range(shard_id, self.length, num_workers):
-                    yield self._get_element(index_shuffle(i, seed, self.length))
+                    yield self._get_element(index_shuffle(i, seed, self.length, epoch))
             else:
                 for i in range(self.length):
-                    yield self._get_element(index_shuffle(i, seed, self.length))
+                    yield self._get_element(index_shuffle(i, seed, self.length, epoch))
         elif num_workers > 1:
             for i in range(shard_id, self.length, num_workers):
                 yield self._get_element(i)
@@ -320,22 +323,24 @@ class MemorySource(DataSourceModule):
         # Stateful mode - use internal index
         start = self.index.get_value()
         end = min(start + batch_size, self.length)
+        epoch = self.epoch.get_value()
+        if self.is_random_order:
+            # The records at positions [start, end) of this batch's epoch, read before the
+            # epoch advances at its end.
+            positions = np.arange(start, end)
+            batch = self._gather_batch(
+                shuffle_positions_host(positions, self.length, self._host_shuffle_seed(), epoch)
+            )
+        else:
+            # Sequential: use slicing (zero-copy for arrays)
+            batch = self._gather_batch_slice(start, end)
 
         # Update index for next call
         new_index = end % self.length
         self.index.set_value(new_index)
         if new_index == 0:
-            self.epoch.set_value(self.epoch.get_value() + 1)
-            # Force reshuffle on next epoch
-            self._shuffle_seed = None
-
-        if not self.is_random_order:
-            # Sequential: use slicing (zero-copy for arrays)
-            return self._gather_batch_slice(start, end)
-
-        # Shuffled: the records at positions [start, end) of this epoch's order
-        seed = self._derive_shuffle_seed()
-        return self._gather_batch(shuffle_positions_host(np.arange(start, end), self.length, seed))
+            self.epoch.set_value(epoch + 1)
+        return batch
 
     def record_indices_at(
         self,
@@ -415,28 +420,25 @@ class MemorySource(DataSourceModule):
             }
         return jnp.take(jnp.asarray(data), indices, axis=0, mode="wrap")
 
-    def _derive_shuffle_seed(self) -> int:
-        """Derive an integer seed from the JAX RNG stream for the current epoch.
+    def _host_shuffle_seed(self) -> int:
+        """The host shuffle's seed, drawn from its RNG stream on first use and kept.
 
-        The seed is cached per epoch so that iteration and stateful ``get_batch`` serve the
-        same order.
+        The stream is the configured one, ``shuffle`` by default, falling back to ``default``;
+        a source without either uses 0.
 
         Returns:
-            Integer seed for index_shuffle.
+            An integer seed in ``[0, 2**32)``.
         """
-        current_epoch = self.epoch.get_value()
-        last_shuffle_epoch = self._last_shuffle_epoch.get_value()
-
-        if self._shuffle_seed is None or last_shuffle_epoch != current_epoch:
-            # rngs is guaranteed non-None when shuffle=True (stochastic config)
-            assert self.rngs is not None  # noqa: S101 (invariant, not control flow)
-            stream_name = self.config.stream_name or "shuffle"
-            rng_stream = getattr(self.rngs, stream_name, self.rngs.default)
-            key = rng_stream()
-            self._shuffle_seed = int(jax.random.bits(key))
-            self._last_shuffle_epoch.set_value(current_epoch)
-
-        return self._shuffle_seed
+        if not self._shuffle_seeded.get_value():
+            seed = 0
+            if self.rngs is not None:
+                for stream_name in (self.config.stream_name or "shuffle", "default"):
+                    if stream_name in self.rngs:
+                        seed = int(jax.random.bits(getattr(self.rngs, stream_name)()))
+                        break
+            self._shuffle_seed.set_value(jnp.uint32(seed))
+            self._shuffle_seeded.set_value(True)
+        return int(self._shuffle_seed.get_value())
 
     def _get_element(self, index: int) -> Any:
         """Get single element at index.
@@ -524,8 +526,6 @@ class MemorySource(DataSourceModule):
         del seed
         self.index.set_value(0)
         self.epoch.set_value(0)
-        self._shuffle_seed = None
-        self._last_shuffle_epoch.set_value(-1)
         if self.metadata_manager is not None:
             self.metadata_manager.reset()
 
@@ -541,8 +541,6 @@ class MemorySource(DataSourceModule):
             enabled: Whether to randomize iteration order.
         """
         self._is_random_order = enabled
-        if not enabled:
-            self._shuffle_seed = None
 
     def get_with_metadata(self, index: int) -> tuple[Any, RecordMetadata]:  # noqa: DOC503
         """Get element at specific index with its metadata.

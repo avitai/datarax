@@ -601,7 +601,7 @@ class Pipeline(nnx.Module):
         if not has_init_carry:
             in_axes = (state_axes,) + (state_axes,) * n_modules + (0,)
 
-            @nnx.scan(in_axes=in_axes, out_axes=0)
+            @nnx.scan(in_axes=in_axes, out_axes=0, graph=True, graph_updates=True)
             def scan_body(*args: Any) -> Any:
                 pipeline, *user_modules_and_step = args
                 user_modules = user_modules_and_step[:-1]
@@ -612,7 +612,7 @@ class Pipeline(nnx.Module):
 
         in_axes = (state_axes,) + (state_axes,) * n_modules + (nnx.Carry, 0)
 
-        @nnx.scan(in_axes=in_axes, out_axes=(nnx.Carry, 0))
+        @nnx.scan(in_axes=in_axes, out_axes=(nnx.Carry, 0), graph=True, graph_updates=True)
         def scan_body_with_carry(*args: Any) -> tuple[Any, Any]:
             pipeline, *rest = args
             user_modules = rest[:n_modules]

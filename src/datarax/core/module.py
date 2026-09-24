@@ -93,14 +93,15 @@ class DataraxModule(nnx.Module):
         """Get module state for checkpointing.
 
         This method implements the Checkpointable protocol using NNX state
-        management. It extracts all state variables from the module and
-        converts them to a serializable format.
+        management. It captures the module's ``nnx.Variable`` state -- positions, epochs, RNG
+        keys and counts, parameters -- in a serializable format. Plain data leaves, such as the
+        records a source was built with, belong to the module's construction and are not
+        captured: a checkpoint of a source over N records does not hold the records.
 
         Returns:
             A dictionary containing the internal state of the component.
         """
-        # Get the NNX state (all Variables and submodule states)
-        state = nnx.state(self)
+        state = nnx.state(self, nnx.Variable, graph=True)
 
         # Convert to pure dict for serialization
         return nnx.to_pure_dict(state)
@@ -124,7 +125,7 @@ class DataraxModule(nnx.Module):
 
         state = self._upgrade_state_tree(state)
 
-        current_state = nnx.state(self)
+        current_state = nnx.state(self, nnx.Variable, graph=True)
         current_dict = nnx.to_pure_dict(current_state)
 
         try:
@@ -152,7 +153,7 @@ class DataraxModule(nnx.Module):
             The upgraded state. The argument is not modified.
         """
         upgraded = _copy_state_nodes(state)
-        for path, node in nnx.iter_graph(self):
+        for path, node in nnx.iter_graph(self, graph=True):
             if not isinstance(node, DataraxModule):
                 continue
             subtree: Any = upgraded
@@ -348,7 +349,7 @@ class DataraxModule(nnx.Module):
         Returns:
             A new module instance with the same state.
         """
-        return nnx.clone(self)
+        return nnx.clone(self, graph=True)
 
     # ========================================================================
     # RNG Stream Validation
