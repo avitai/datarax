@@ -62,13 +62,14 @@ pure dictionary and `set_state()` restores it strictly (the structure must
 match).
 
 ```python
+import jax.numpy as jnp
 from flax import nnx
 
 from datarax.checkpoint import IteratorCheckpoint
 from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
-data = [{"value": i} for i in range(100)]
+data = {"value": jnp.arange(100)}
 source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
 pipeline = Pipeline(source=source, stages=[], batch_size=10, rngs=nnx.Rngs(0))
 

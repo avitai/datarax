@@ -10,10 +10,11 @@ from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 
 from datarax.core.structural import StructuralModule
-from datarax.typing import Element
+from datarax.typing import DataDict, Element
 
 
 logger = logging.getLogger(__name__)
@@ -152,7 +153,7 @@ class DataSourceModule(StructuralModule):
         """
         return None
 
-    def get_records(self, indices: Any) -> Any:
+    def get_records(self, indices: jax.Array) -> DataDict:
         """Gather the records at ``indices``: indexed access for ``Pipeline``-driven iteration.
 
         ``indices`` are the stable record indices :meth:`record_indices_at` names. The pipeline
@@ -165,7 +166,7 @@ class DataSourceModule(StructuralModule):
             indices: Int32 array ``(n,)`` of record indices in ``[0, len(self))``.
 
         Returns:
-            A batch dict (or PyTree) with leading dim ``n``.
+            One array per field, with leading dim ``n``.
 
         Raises:
             NotImplementedError: If the source does not support indexed access (e.g.
@@ -182,7 +183,7 @@ class DataSourceModule(StructuralModule):
         start: int | Any,
         size: int,
         key: Any | None = None,
-    ) -> Any:
+    ) -> DataDict:
         """The ``size`` records from position ``start`` of the order ``key`` selects.
 
         :meth:`get_records` of :meth:`record_indices_at`, so it is stateless and
@@ -194,7 +195,7 @@ class DataSourceModule(StructuralModule):
             key: Optional PRNG key for shuffled or stochastic sampling.
 
         Returns:
-            A batch dict (or PyTree) with leading dim ``size``.
+            One array per field, with leading dim ``size``.
         """
         return self.get_records(self.record_indices_at(start, size, key))
 
@@ -241,6 +242,18 @@ class DataSourceModule(StructuralModule):
             Whether the source's class implements ``get_records``.
         """
         return type(self).get_records is not DataSourceModule.get_records
+
+    def supports_streaming(self) -> bool:
+        """Whether ``Pipeline`` can stream this source through ``get_batch(batch_size)``.
+
+        A streaming source returns one batch per call, a mapping of field names to arrays, and an
+        empty batch once exhausted. A source whose ``get_batch`` is something else (a host API
+        over stored records) overrides this.
+
+        Returns:
+            Whether the source defines a callable ``get_batch``.
+        """
+        return callable(getattr(self, "get_batch", None))
 
     def element_spec(self) -> Any:
         """Return a PyTree of ``jax.ShapeDtypeStruct`` describing per-element output.

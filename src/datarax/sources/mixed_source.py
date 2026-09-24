@@ -20,6 +20,7 @@ from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
 from datarax.core.spec import spec_mismatches, SpecMismatchError
 from datarax.sources._grain_streaming import data_source_to_iter_dataset, mix_streaming_sources
+from datarax.typing import DataDict
 
 
 logger = logging.getLogger(__name__)
@@ -304,7 +305,7 @@ class MixDataSourcesNode(DataSourceModule):
         chosen_sources, local_indices = self._selections(start, size, key)
         return jnp.asarray(self._offsets(), dtype=jnp.int32)[chosen_sources] + local_indices
 
-    def get_records(self, indices: jax.Array) -> dict[str, jax.Array]:
+    def get_records(self, indices: jax.Array) -> DataDict:
         """Gather the mixed records at ``indices``, each from the source that owns it.
 
         A mixed index is a source's offset plus a record index within that source (see

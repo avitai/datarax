@@ -76,6 +76,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The step names each batch's records with one `record_indices_at` vmapped over every epoch the
   batch can touch, with no conditional: `step()`, `scan` and iteration sessions run one program and
   serve bit-identical batches.
+- **A `MemorySource` batches dict-of-arrays data only.** A list of records (dicts, `Element`s,
+  strings of any length) has no columns to gather a batch from: through a pipeline a list of dicts
+  raised `ValueError`, a list of numbers became a bare-array "batch", and `element_spec()` declared
+  a dict the batches never were. List data stays a record store for indexing, iteration and the host
+  `get_batch`; `supports_indexed_access()` is `False` for it, `get_records` refuses it naming the
+  dict form, and a pipeline over it is refused when iteration starts. The user guide, installation
+  page and checkpointing guide examples that put list data into a `Pipeline` use dict data.
+- **Streaming is a declared capability**, `DataSourceModule.supports_streaming()`, like
+  `supports_indexed_access()`. The pipeline inferred it from any callable `get_batch`, and
+  `MemorySource.get_batch` (a host record API that wraps around instead of ending) would have
+  streamed forever; `MemorySource` declares `False`. A streaming source whose `get_batch` returns a
+  non-mapping is refused naming it.
+- Batch types: sources return `DataDict` (`get_records`, `get_batch_at`); pipeline outputs are
+  `PipelineBatch` (`datarax.typing`, field names to arrays or pytrees of arrays): `step()`,
+  iteration, `Pipeline.__call__` and the compiled step body.
 - `Pipeline.__call__(batch, records=None)`: `records` (`datarax.pipeline.dag.Records`: each
   row's index and epoch) is what the step served; a direct call without it names the records at
   the current position. A subclass overriding `__call__` accepts the argument.

@@ -167,3 +167,39 @@ def test_a_session_and_step_run_one_program_with_no_conditional() -> None:
     for _ in range(6):  # crosses two epoch boundaries
         next(session)
     assert len(iteration._SESSION_STEPS) == compiled
+
+
+def test_a_pipeline_over_record_list_data_is_refused_before_any_pull() -> None:
+    """A list of records is not a batch source, and the pipeline says so when iteration starts.
+
+    Its MemorySource has no indexed access, and its ``get_batch`` is the host record API rather
+    than a stream (``supports_streaming`` is False), so nothing is pulled before the refusal.
+    """
+    records = [{"x": np.full((2,), i, np.float32), "name": f"r{i}"} for i in range(6)]
+    source = MemorySource(MemorySourceConfig(), records)
+    pipeline = Pipeline(source=source, stages=[], batch_size=2, rngs=nnx.Rngs(0))
+
+    assert source.supports_streaming() is False
+    with pytest.raises(TypeError, match="neither indexed access"):
+        next(iter(pipeline))
+    assert source.index.get_value() == 0
+
+
+class _ListStream(DataSourceModule):
+    """A forward-only source whose batches are lists."""
+
+    def __init__(self) -> None:
+        super().__init__(_Config())
+
+    def get_batch(self, batch_size: int) -> list[float]:
+        return [1.0] * batch_size
+
+    def element_spec(self) -> dict[str, jax.ShapeDtypeStruct]:
+        return {"x": jax.ShapeDtypeStruct((), jnp.float32)}
+
+
+def test_a_streaming_source_yielding_non_mapping_batches_is_refused() -> None:
+    pipeline = Pipeline(source=_ListStream(), stages=[], batch_size=2, rngs=nnx.Rngs(0))
+
+    with pytest.raises(TypeError, match="_ListStream.get_batch returned list"):
+        next(iter(pipeline))

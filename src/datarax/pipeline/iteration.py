@@ -45,11 +45,12 @@ from datarax.core.operator import OperatorModule
 from datarax.core.spec import batch_length
 from datarax.pipeline.dag import record_positions, run_dag
 from datarax.pipeline.epochs import EpochPlan
+from datarax.typing import PipelineBatch
 
 
 # The traceable body a session step runs on the merged module: one batch of the given number of
 # records, returned after the module's state has advanced (the pipeline's ``_next_batch``).
-type StepBody = Callable[[Any, int], dict]
+type StepBody = Callable[[Any, int], PipelineBatch]
 
 # A stage graph's execution plan: topological order, each node's predecessors, the sink.
 type DagPlan = tuple[tuple[str, ...], Mapping[str, tuple[str, ...]], str | None]
@@ -209,12 +210,12 @@ def _session_step(graphdef: Any, body: StepBody, size: int) -> Callable[..., Any
     identical modules running the same body at the same size share the step.
     """
 
-    def run(graph: Any) -> dict:
+    def run(graph: Any) -> PipelineBatch:
         return body(graph, size)
 
     def build() -> Callable[..., Any]:
         @jax.jit
-        def session_step(mutable_state: Any, immutable_state: Any) -> tuple[dict, _Writes]:
+        def session_step(mutable_state: Any, immutable_state: Any) -> tuple[PipelineBatch, _Writes]:
             return _run_tracking_writes(graphdef, (mutable_state, immutable_state), run)
 
         return session_step
@@ -253,7 +254,7 @@ def _on_device(module: nnx.Module, state: Any) -> Any:
     return jax.tree.map(stage, state)
 
 
-def next_batch(module: nnx.Module, body: StepBody, size: int) -> dict:
+def next_batch(module: nnx.Module, body: StepBody, size: int) -> PipelineBatch:
     """Run ``body`` once, for ``size`` records, on ``module`` through the compiled session step.
 
     The body of :meth:`Pipeline.step`: split the module, stage its host arrays, run the
@@ -446,11 +447,11 @@ class PipelineIterator:
         )
         self._closed = False
 
-    def __iter__(self) -> Iterator[dict]:
+    def __iter__(self) -> Iterator[PipelineBatch]:
         """Return self (iterator protocol)."""
         return self
 
-    def __next__(self) -> dict:
+    def __next__(self) -> PipelineBatch:
         """Produce the next batch via the compiled session step.
 
         The step starts the next epoch itself when the current one cannot start another

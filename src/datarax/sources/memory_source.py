@@ -18,6 +18,7 @@ from datarax.config.registry import register_component
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
 from datarax.core.metadata import MetadataManager, RecordMetadata
+from datarax.core.spec import array_to_spec, array_to_spec_strip_leading, device_spec
 from datarax.samplers.index_shuffle import (
     index_shuffle,
     shuffle_positions,
@@ -30,6 +31,7 @@ from datarax.sources.source_ops import (
     record_count,
     resolve_wrapped_indices,
 )
+from datarax.typing import DataDict
 
 
 logger = logging.getLogger(__name__)
@@ -372,7 +374,29 @@ class MemorySource(DataSourceModule):
             shard_id=self.config.shard_id or 0,
         )
 
-    def get_records(self, indices: jax.Array) -> Any:
+    def supports_indexed_access(self) -> bool:
+        """Whether the data is a dict of arrays, the columns a batch is gathered from.
+
+        A list of records is a record store for indexing, iteration and the host ``get_batch``: its
+        records can be strings, ``Element`` objects or ragged, which no device gather stacks.
+
+        Returns:
+            ``True`` for dict data.
+        """
+        return isinstance(self.data, dict)
+
+    def supports_streaming(self) -> bool:
+        """``False``: ``get_batch`` is the host API over stored records, not a pipeline stream.
+
+        It returns a list of records for list data and wraps around instead of signalling the end,
+        so a pipeline drives a MemorySource only through indexed access (dict-of-arrays data).
+
+        Returns:
+            ``False``.
+        """
+        return False
+
+    def get_records(self, indices: jax.Array) -> DataDict:
         """Gather the records at ``indices``; JIT-traceable for scan-based iteration.
 
         Indices are global, as :meth:`record_indices_at` names them, so a record has one index on
@@ -383,15 +407,21 @@ class MemorySource(DataSourceModule):
             indices: Int32 record indices in ``[0, len(self))``; concrete or traced.
 
         Returns:
-            Batch dict (or array, for array data) with leading dim ``len(indices)``.
+            One array per field, with leading dim ``len(indices)``.
+
+        Raises:
+            TypeError: If the data is not a dict of arrays, which has no columns to gather.
         """
         data = self.data
-        if isinstance(data, dict):
-            return {
-                key_name: jnp.take(jnp.asarray(value), indices, axis=0)
-                for key_name, value in data.items()
-            }
-        return jnp.take(jnp.asarray(data), indices, axis=0)
+        if not isinstance(data, dict):
+            raise TypeError(
+                f"MemorySource holds {type(data).__name__} data, a record store with no columns "
+                "to gather a batch from; give it a dict of arrays, one per field, to batch it"
+            )
+        return {
+            key_name: jnp.take(jnp.asarray(value), indices, axis=0)
+            for key_name, value in data.items()
+        }
 
     def _host_shuffle_seed(self) -> int:
         """The host shuffle's seed, drawn from its RNG stream on first use and kept.
@@ -626,14 +656,15 @@ class MemorySource(DataSourceModule):
         )
 
     def element_spec(self) -> Any:
-        """Return the spec of the records ``get_batch_at`` emits.
+        """Return the spec of one record as the device holds it.
 
-        ``get_batch_at`` converts the stored data to JAX arrays, so the spec is
+        ``get_records`` converts the stored data to JAX arrays, so the spec is
         ``device_spec`` of the stored data: dict-mode sources strip the leading
-        dataset-size axis from every stored array, list-mode sources describe
-        element 0, and while x64 is off a stored ``float64`` or ``int64`` array
-        is declared as ``float32`` or ``int32``. Only array metadata is read; the
-        stored data is never converted to derive the spec. The host-side
+        dataset-size axis from every stored array; list-mode sources, record stores
+        with no batch form, describe element 0; and while x64 is off a stored
+        ``float64`` or ``int64`` array is declared as ``float32`` or ``int32``. Only
+        array metadata is read; the stored data is never converted to derive the
+        spec. The host-side
         accessors (``get_batch``, indexing, iteration) return stored values
         unconverted.
 
@@ -643,13 +674,6 @@ class MemorySource(DataSourceModule):
         Raises:
             ValueError: If the source is empty (no element to introspect).
         """
-        # Imported lazily to keep memory_source's import surface stable.
-        from datarax.core.spec import (  # noqa: PLC0415
-            array_to_spec,
-            array_to_spec_strip_leading,
-            device_spec,
-        )
-
         if self.length == 0:
             raise ValueError(
                 "MemorySource has zero elements; element_spec() cannot be "

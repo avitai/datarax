@@ -200,7 +200,7 @@ from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 # Create sample data
-data = [{"image": jnp.ones((28, 28)), "label": i % 10} for i in range(10)]
+data = {"image": jnp.ones((10, 28, 28)), "label": jnp.arange(10) % 10}
 
 # Create a simple pipeline using the DAG-based API
 config = MemorySourceConfig()

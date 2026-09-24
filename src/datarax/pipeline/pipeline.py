@@ -66,6 +66,7 @@ from datarax.pipeline.dag import record_count, Records, run_dag
 from datarax.pipeline.epochs import EpochPlan
 from datarax.pipeline.iteration import compile_streaming_dag, next_batch, PipelineIterator
 from datarax.pipeline.topo import topological_sort, validate_dag
+from datarax.typing import DataDict, PipelineBatch
 
 
 class Pipeline(nnx.Module):
@@ -309,7 +310,7 @@ class Pipeline(nnx.Module):
     # Public API
     # ------------------------------------------------------------------
 
-    def __call__(self, batch: dict, records: Records | None = None) -> dict:
+    def __call__(self, batch: DataDict, records: Records | None = None) -> PipelineBatch:
         """Run the DAG forward, returning the sink node's output.
 
         Iterates the pre-computed topological order; each node receives
@@ -464,7 +465,7 @@ class Pipeline(nnx.Module):
         self._position[...] = jnp.asarray(position, dtype=jnp.int32)
         self._epoch[...] = epoch
 
-    def step(self) -> dict:
+    def step(self) -> PipelineBatch:
         """Serve the next batch from the source through the DAG.
 
         Starts where the last batch ended, or at the next epoch when the current one cannot
@@ -485,7 +486,7 @@ class Pipeline(nnx.Module):
         """
         return next_batch(self, type(self)._next_batch, self.batch_size)
 
-    def _next_batch(self, size: int) -> dict:
+    def _next_batch(self, size: int) -> PipelineBatch:
         """Serve ``size`` records from where the next batch starts, and advance past them.
 
         The traceable body of :meth:`step`. Compiled iteration sessions call it
@@ -646,7 +647,7 @@ class Pipeline(nnx.Module):
             shuffled=bool(getattr(self.source, "is_random_order", False)),
         )
 
-    def __iter__(self) -> PipelineIterator | Iterator[dict]:
+    def __iter__(self) -> PipelineIterator | Iterator[PipelineBatch]:
         """Iterate batches through a compiled session (the Tier-A fast path).
 
         Random-access sources return a :class:`~datarax.pipeline.iteration.
@@ -669,14 +670,14 @@ class Pipeline(nnx.Module):
         """
         if self.source.supports_indexed_access():
             return self.session()
-        if not callable(getattr(self.source, "get_batch", None)):
+        if not self.source.supports_streaming():
             raise TypeError(
-                f"{type(self.source).__name__} implements neither get_records (indexed "
-                "access) nor get_batch (streaming), so Pipeline cannot iterate it."
+                f"{type(self.source).__name__} has neither indexed access (get_records) nor a "
+                "streaming get_batch, so Pipeline cannot iterate it."
             )
         return self._iter_streaming()
 
-    def _iter_streaming(self) -> Iterator[dict]:  # noqa: DOC502
+    def _iter_streaming(self) -> Iterator[PipelineBatch]:  # noqa: DOC502
         """Iterate a streaming source (sequential, no random access) through the DAG.
 
         Streaming sources have no ``get_records``, so batches are pulled on the
@@ -700,6 +701,7 @@ class Pipeline(nnx.Module):
         Raises:
             SpecMismatchError: If the declared spec, or a source batch, breaks the
                 contract above.
+            TypeError: If the source's batches are not mappings (see :meth:`_source_batches`).
             ValueError: If a stage adds or removes state while it runs.
         """
         element_spec = declared_spec(self.source)
@@ -710,13 +712,30 @@ class Pipeline(nnx.Module):
             self._sink,
         )
         apply = compile_streaming_dag(self._stage_modules, self._position, self._epoch, plan)
-        while True:
-            batch = self.source.get_batch(self.batch_size)  # type: ignore[attr-defined]
-            size = batch_length(batch)
-            if not size:
-                return
+        for batch in self._source_batches():
             validate_batch(batch, element_spec, batch_size=self.batch_size)
             yield apply(batch)
+
+    def _source_batches(self) -> Iterator[Mapping[str, Any]]:
+        """The streaming source's batches, until it returns an empty one.
+
+        Yields:
+            Each batch the source's ``get_batch`` returns.
+
+        Raises:
+            TypeError: If a batch is not a mapping of field names to arrays.
+        """
+        while True:
+            batch = self.source.get_batch(self.batch_size)  # type: ignore[attr-defined]
+            if not isinstance(batch, Mapping):
+                raise TypeError(
+                    f"{type(self.source).__name__}.get_batch returned "
+                    f"{type(batch).__name__}, but a pipeline batch is a mapping of field names "
+                    "to arrays"
+                )
+            if not batch_length(batch):
+                return
+            yield batch
 
 
 def _source_length(source: DataSourceModule) -> int | None:

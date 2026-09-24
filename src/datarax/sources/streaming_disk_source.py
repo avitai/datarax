@@ -31,6 +31,7 @@ from jax.experimental import io_callback
 
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
+from datarax.typing import DataDict
 
 
 @dataclass(frozen=True)
@@ -125,7 +126,7 @@ class StreamingDiskSource(DataSourceModule):
         leaf = jax.ShapeDtypeStruct(shape=self._element_shape, dtype=self._element_dtype)
         return {self._feature_key: leaf}
 
-    def get_records(self, indices: jax.Array) -> dict[str, jax.Array]:
+    def get_records(self, indices: jax.Array) -> DataDict:
         """Fetch the rows at ``indices`` from disk and return a stop_gradient'd dict.
 
         Args:

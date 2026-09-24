@@ -24,6 +24,7 @@ from datarax.sources.source_ops import (
     resolve_wrapped_indices,
     streaming_apply_batch,
 )
+from datarax.typing import DataDict
 
 
 logger = logging.getLogger(__name__)
@@ -132,7 +133,7 @@ class EagerSourceBase(DataSourceModule):
         """
         return resolve_wrapped_indices(start, size, self.length, self.is_random_order, key)
 
-    def get_records(self, indices: jax.Array) -> dict[str, Any]:
+    def get_records(self, indices: jax.Array) -> DataDict:
         """Gather the records at ``indices``; JIT-traceable for scan-based iteration.
 
         Args:

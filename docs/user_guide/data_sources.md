@@ -22,8 +22,8 @@ from datarax.sources import MemorySource, MemorySourceConfig
 from flax import nnx
 import jax.numpy as jnp
 
-# Create sample data
-data = [{"image": jnp.ones((28, 28)), "label": i % 10} for i in range(100)]
+# Create sample data: one array per field, records along the first axis
+data = {"image": jnp.ones((100, 28, 28)), "label": jnp.arange(100) % 10}
 
 # Create data source with config
 config = MemorySourceConfig()
@@ -39,7 +39,11 @@ for i, batch in enumerate(pipeline):
         break
 ```
 
-`MemorySource` accepts a dict of arrays or a list/sequence of elements, such as a list of dictionaries.
+`MemorySource` accepts a dict of arrays, one per field with records along the first axis, which a
+`Pipeline` batches on the device. It also accepts a list of records (dictionaries, `Element`s,
+strings of any length) as a record store for indexing, iteration and `get_batch`; a list has no
+columns to gather a batch from, so a `Pipeline` refuses it. Stack fixed-shape records into a dict of
+arrays to batch them.
 
 ### TFDSEagerSource
 
@@ -253,13 +257,15 @@ When creating custom data sources, ensure:
 Data sources plug directly into a `Pipeline`:
 
 ```python
+import jax.numpy as jnp
+
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 from flax import nnx
 
 # Create data and source
-data = [{"x": i} for i in range(100)]
+data = {"x": jnp.arange(100.0)}
 config = MemorySourceConfig()
 source = MemorySource(config, data)
 
