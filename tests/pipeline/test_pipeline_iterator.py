@@ -26,7 +26,6 @@ from flax import nnx
 
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.pipeline import Pipeline, PipelineIterator
-from datarax.pipeline.iteration import _session_cache_size
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
 
@@ -72,6 +71,16 @@ class _RunningTotal(nnx.Module):
     def __call__(self, batch: dict) -> dict:
         self.total[...] = self.total[...] + batch["x"].sum()
         return batch
+
+
+class _Scale(nnx.Module):
+    """Learnable stage multiplying ``x`` by a parameter."""
+
+    def __init__(self) -> None:
+        self.factor = nnx.Param(jnp.float32(1.0))
+
+    def __call__(self, batch: dict) -> dict:
+        return {**batch, "x": batch["x"] * self.factor[...]}
 
 
 class _GrowingStage(nnx.Module):
@@ -346,7 +355,22 @@ class TestSessionBehavior:
         second = _session(pipeline)
         next(second)
         second.close()
-        assert _session_cache_size(pipeline) == 1
+        assert second._pure_step is first._pure_step
+        assert second._pure_step._cache_size() == 1
+
+    def test_a_pipeline_of_the_same_structure_reuses_the_compiled_step(self):
+        """A new pipeline instance with an identical module graph compiles nothing.
+
+        Building a pipeline per epoch, fold or evaluation must not recompile each time.
+        """
+        first = _session(_pipeline())
+        next(first)
+        first.close()
+        second = _session(_pipeline())
+        next(second)
+        second.close()
+        assert second._pure_step is first._pure_step
+        assert second._pure_step._cache_size() == 1
 
     def test_structural_change_compiles_fresh_session(self):
         """Static attributes (e.g. batch_size) key the compiled session."""
@@ -357,11 +381,11 @@ class TestSessionBehavior:
         assert first.shape[0] == _BATCH
 
         pipeline.batch_size = _BATCH // 2
-        iterator = _session(pipeline)
-        smaller = np.asarray(next(iterator)["x"])
-        iterator.close()
+        smaller_session = _session(pipeline)
+        smaller = np.asarray(next(smaller_session)["x"])
+        smaller_session.close()
         assert smaller.shape[0] == _BATCH // 2
-        assert _session_cache_size(pipeline) == 2
+        assert smaller_session._pure_step is not iterator._pure_step
 
 
 class TestMidLoopCheckpointing:
@@ -444,6 +468,27 @@ class TestImmutableStaging:
             second._immutable_state, is_leaf=lambda x: isinstance(x, nnx.Variable)
         )
         assert all(a is b for a, b in zip(first_leaves, second_leaves, strict=True))
+
+    def test_a_value_written_into_a_stage_parameter_reaches_the_next_session(self):
+        """A write keeps the Variable object and replaces its value; staging must see it.
+
+        Training updates a learnable stage's parameters between epochs; a session serving the
+        staged copy would transform every later epoch with the first epoch's parameters.
+        """
+        stage = _Scale()
+        pipeline = _pipeline_with(stage)
+        first = np.asarray(next(_session(pipeline))["x"])
+
+        pipeline.reset()
+        stage.factor[...] = jnp.float32(5.0)
+        second = np.asarray(next(_session(pipeline))["x"])
+
+        pipeline.reset()
+        stage.factor.set_value(jnp.float32(7.0))
+        third = np.asarray(next(_session(pipeline))["x"])
+
+        np.testing.assert_allclose(second, 5.0 * first, rtol=1e-6)
+        np.testing.assert_allclose(third, 7.0 * first, rtol=1e-6)
 
     def test_swapped_source_data_restages(self):
         pipeline = _pipeline()

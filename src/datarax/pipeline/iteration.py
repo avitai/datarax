@@ -32,6 +32,7 @@ not force a recompile. Structurally identical pipelines share compiled steps.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import weakref
 from typing import Any, TYPE_CHECKING
 
@@ -50,16 +51,20 @@ if TYPE_CHECKING:
     from datarax.pipeline.pipeline import Pipeline
 
 
-# Compiled session steps per pipeline, keyed by graphdef structural
-# equality. Held OUTSIDE the module: storing graphdefs as module
-# attributes would embed them into the next split's graphdef, making
-# GraphDef.__eq__ recurse into itself. Weak keys let caches die with
-# their pipelines. Bounded per pipeline (structural variants such as
-# train/eval flips are few; module surgery must not grow this unbounded).
-_SESSION_STEP_CACHES: weakref.WeakKeyDictionary[Any, list[dict[str, Any]]] = (
-    weakref.WeakKeyDictionary()
-)
-_MAX_SESSIONS_PER_PIPELINE = 4
+# Compiled steps shared across pipelines, matched by structural equality of their
+# key (graphs holding lists are unhashable, so the caches are lists, not dicts).
+# The most recently used entry is kept last; the oldest is dropped past the bound.
+# Held OUTSIDE the modules: storing graphdefs as module attributes would embed them
+# into the next split's graphdef, making GraphDef.__eq__ recurse into itself.
+_MAX_COMPILED_STEPS = 16
+_SESSION_STEPS: list[tuple[Any, Callable[..., Any]]] = []
+_DAG_STEPS: list[tuple[Any, Callable[..., Any]]] = []
+
+# Device-staged immutable state per pipeline, one entry per module structure the
+# pipeline has run with. Weak keys let entries die with their pipelines; bounded per
+# pipeline (structural variants such as train/eval flips are few; module surgery must
+# not grow this unbounded).
+_MAX_STAGED_PER_PIPELINE = 4
 
 # A compiled step's writes: raw values by position within each state partition,
 # per-batch state first and staged state second.
@@ -86,15 +91,58 @@ def _is_per_batch_state(path: Any, value: Any) -> bool:
     return isinstance(value, nnx.RngCount) or type(value) is nnx.Variable
 
 
-def _leaf_ids(state: Any) -> tuple[int, ...]:
-    """Identity fingerprint of a state pytree's leaves.
+def _value_ids(state: Any) -> tuple[int, ...]:
+    """Identity of every array a state pytree holds: inside its Variables, and plain leaves.
 
-    Used to detect source-data swaps between sessions: identical leaf
-    objects mean the device-staged copy is still valid.
+    A write replaces a Variable's value and never mutates an array (JAX arrays are
+    immutable), so equal identities mean nothing was written. Comparing the Variable
+    objects instead misses every write -- a parameter updated between sessions keeps its
+    Variable -- and plain ``nnx.data`` leaves (a source's arrays) must be included too, or
+    replacing them goes unseen.
     """
-    return tuple(
-        id(leaf) for leaf in jax.tree.leaves(state, is_leaf=lambda x: isinstance(x, nnx.Variable))
-    )
+    ids: list[int] = []
+    for leaf in jax.tree.leaves(state, is_leaf=lambda x: isinstance(x, nnx.Variable)):
+        values = jax.tree.leaves(leaf.get_raw_value()) if isinstance(leaf, nnx.Variable) else [leaf]
+        ids.extend(id(value) for value in values)
+    return tuple(ids)
+
+
+@dataclasses.dataclass(slots=True)
+class _Staged:
+    """A pipeline's immutable state as staged on the device for one module structure.
+
+    Attributes:
+        graphdef: The module structure the state was split from.
+        value_ids: :func:`_value_ids` of the live Variables when the state was staged.
+        state: The device-staged state pytree.
+    """
+
+    graphdef: Any
+    value_ids: tuple[int, ...]
+    state: Any
+
+
+_STAGED: weakref.WeakKeyDictionary[Any, list[_Staged]] = weakref.WeakKeyDictionary()
+
+
+def _cached_step(
+    cache: list[tuple[Any, Callable[..., Any]]], key: Any, build: Callable[[], Callable[..., Any]]
+) -> Callable[..., Any]:
+    """Return the compiled step cached under ``key``, building it on a miss.
+
+    Keys are compared by equality, so structurally identical pipelines share one
+    compiled step. The most recently used entry moves last; the oldest is dropped past
+    :data:`_MAX_COMPILED_STEPS`.
+    """
+    for index, (cached_key, step) in enumerate(cache):
+        if cached_key == key:
+            cache.append(cache.pop(index))
+            return step
+    step = build()
+    cache.append((key, step))
+    if len(cache) > _MAX_COMPILED_STEPS:
+        cache.pop(0)
+    return step
 
 
 def _state_leaves(state: Any) -> list[Any]:
@@ -178,51 +226,50 @@ def _apply_writes(writes: _Writes, receivers: Sequence[Sequence[list[nnx.Variabl
                 variables[index].set_value(value)
 
 
-def _session_resources(pipeline: Pipeline, graphdef: Any, immutable_state: Any) -> tuple[Any, Any]:
-    """Return the compiled session step and device-staged immutable state.
+def _session_step(graphdef: Any) -> Callable[..., Any]:
+    """The compiled step fetching one batch of a random-access pipeline with this structure.
 
-    The session step is Flax's functional hot-loop pattern: merge the
-    state pytrees into a module at trace time, run one step, and return
-    the batch plus the state the step wrote. Graph traversal happens
-    once per trace instead of once per batch.
-
-    The staged state (source payloads, params, RNG keys) is placed on the
-    device once per pipeline and reused across sessions; re-staging would
-    re-upload the entire dataset on every ``iter()`` call. A leaf-identity
-    fingerprint invalidates the staged copy when the module's arrays are
-    swapped, and writes a step makes to staged state update the copy.
+    Flax's functional hot-loop pattern: merge the state partitions into a module at
+    trace time, run one batch, and return it with the state the step wrote. Graph
+    traversal happens once per trace instead of once per batch, and structurally
+    identical pipelines share the step.
     """
-    fingerprint = _leaf_ids(immutable_state)
-    cache = _SESSION_STEP_CACHES.setdefault(pipeline, [])
-    for entry in cache:
-        if entry["graphdef"] == graphdef:
-            if entry["immutable_ids"] != fingerprint:
-                entry["staged_immutable"] = jax.device_put(immutable_state)
-                entry["immutable_ids"] = fingerprint
-            return entry["session_step"], entry["staged_immutable"]
 
-    @jax.jit
-    def session_step(mutable_state: Any, immutable_state: Any) -> tuple[dict, _Writes]:
-        return _run_tracking_writes(
-            graphdef, (mutable_state, immutable_state), lambda module: module._next_batch()
-        )
+    def build() -> Callable[..., Any]:
+        @jax.jit
+        def session_step(mutable_state: Any, immutable_state: Any) -> tuple[dict, _Writes]:
+            return _run_tracking_writes(
+                graphdef, (mutable_state, immutable_state), lambda module: module._next_batch()
+            )
 
-    cache.append(
-        {
-            "graphdef": graphdef,
-            "session_step": session_step,
-            "staged_immutable": jax.device_put(immutable_state),
-            "immutable_ids": fingerprint,
-        }
-    )
-    if len(cache) > _MAX_SESSIONS_PER_PIPELINE:
-        cache.pop(0)
-    return session_step, cache[-1]["staged_immutable"]
+        return session_step
+
+    return _cached_step(_SESSION_STEPS, graphdef, build)
 
 
-def _session_cache_size(pipeline: Pipeline) -> int:
-    """Number of compiled session steps cached for ``pipeline`` (testing)."""
-    return len(_SESSION_STEP_CACHES.get(pipeline, []))
+def _staged(pipeline: Pipeline, graphdef: Any, immutable_state: Any) -> _Staged:
+    """The pipeline's immutable state staged on the device, current with its live values.
+
+    Staging uploads source payloads, parameters and RNG keys once per pipeline and
+    reuses them across sessions; re-staging would re-upload the entire dataset on
+    every ``iter()`` call. The copy is re-staged when any value changed since it was
+    staged (:func:`_value_ids`) -- a swapped source array or a parameter written in
+    place alike -- and never otherwise.
+    """
+    value_ids = _value_ids(immutable_state)
+    entries = _STAGED.setdefault(pipeline, [])
+    for index, entry in enumerate(entries):
+        if entry.graphdef == graphdef:
+            if entry.value_ids != value_ids:
+                entry.state = jax.device_put(immutable_state)
+                entry.value_ids = value_ids
+            entries.append(entries.pop(index))
+            return entry
+    entry = _Staged(graphdef, value_ids, jax.device_put(immutable_state))
+    entries.append(entry)
+    if len(entries) > _MAX_STAGED_PER_PIPELINE:
+        entries.pop(0)
+    return entry
 
 
 # Declared element specs per source, by x64 setting. Reading a spec can open a
@@ -248,39 +295,32 @@ def declared_spec(source: Any) -> Any:
     return specs[x64]
 
 
-# Compiled streaming DAG steps shared across pipelines, matched by equality of the
-# stage graph and the execution plan (graphs holding lists are unhashable). The
-# most recently used entry is kept last; the oldest is dropped past the bound.
-_DAG_STEPS: list[tuple[Any, Any, Callable[..., Any]]] = []
-_MAX_DAG_STEPS = 16
-
-
 def _dag_step(graphdef: Any, plan: tuple[Any, ...]) -> Callable[..., Any]:
-    """Return the compiled step running a stage graph over one batch."""
-    for index, (cached_graphdef, cached_plan, cached_step) in enumerate(_DAG_STEPS):
-        if cached_plan == plan and cached_graphdef == graphdef:
-            _DAG_STEPS.append(_DAG_STEPS.pop(index))
-            return cached_step
+    """Return the compiled step running a stage graph over one batch.
+
+    Keyed by the execution plan and then the stage graph, so the cheap comparison
+    decides most misses.
+    """
     exec_order, predecessors, sink = plan
 
-    @jax.jit
-    def step(mutable_state: Any, read_only_state: Any, batch: Any) -> tuple[Any, _Writes]:
-        def run(graph: Any) -> Any:
-            stages, position, epoch = graph
-            # A stream serves records in order, so their positions name them.
-            record_indices = record_positions(batch, position[...])
-            output = run_dag(
-                stages, exec_order, predecessors, sink, batch, record_indices, epoch[...]
-            )
-            position[...] = position[...] + jnp.int32(batch_length(batch))
-            return output
+    def build() -> Callable[..., Any]:
+        @jax.jit
+        def step(mutable_state: Any, read_only_state: Any, batch: Any) -> tuple[Any, _Writes]:
+            def run(graph: Any) -> Any:
+                stages, position, epoch = graph
+                # A stream serves records in order, so their positions name them.
+                record_indices = record_positions(batch, position[...])
+                output = run_dag(
+                    stages, exec_order, predecessors, sink, batch, record_indices, epoch[...]
+                )
+                position[...] = position[...] + jnp.int32(batch_length(batch))
+                return output
 
-        return _run_tracking_writes(graphdef, (mutable_state, read_only_state), run)
+            return _run_tracking_writes(graphdef, (mutable_state, read_only_state), run)
 
-    _DAG_STEPS.append((graphdef, plan, step))
-    if len(_DAG_STEPS) > _MAX_DAG_STEPS:
-        _DAG_STEPS.pop(0)
-    return step
+        return step
+
+    return _cached_step(_DAG_STEPS, (plan, graphdef), build)
 
 
 def compile_streaming_dag(pipeline: Pipeline) -> Callable[[Any], Any]:
@@ -368,9 +408,12 @@ class PipelineIterator:
         # keeping them lets each yield sync the module in O(written leaves).
         self._live_variables = _state_leaves(mutable_state)
         self._carried_variables = _state_leaves(self._state)
-        self._pure_step, self._immutable_state = _session_resources(
-            pipeline, graphdef, immutable_state
-        )
+        self._pure_step = _session_step(graphdef)
+        self._staged = _staged(pipeline, graphdef, immutable_state)
+        self._immutable_state = self._staged.state
+        # The split state references the live values; the staging record is refreshed
+        # from it after a step writes staged state.
+        self._live_immutable_state = immutable_state
         self._receivers = (
             (self._live_variables, self._carried_variables),
             (_state_leaves(immutable_state), _state_leaves(self._immutable_state)),
@@ -427,6 +470,10 @@ class PipelineIterator:
         # Sync the live module and the session copies at every yield boundary:
         # mid-loop checkpointing (nnx.state on the pipeline) must see the truth.
         _apply_writes(writes, self._receivers)
+        if writes[1]:
+            # The step wrote staged state (a stage's statistics, say); live and staged
+            # now hold the same values, so the next session need not re-stage them.
+            self._staged.value_ids = _value_ids(self._live_immutable_state)
         self._position += self._batch_size
         if self._num_epochs is None and self._source_length is not None:
             self._position %= self._source_length
