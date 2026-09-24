@@ -4,19 +4,14 @@ This module provides DataraxModule - the base class that all Datarax modules inh
 It provides common functionality like:
 
 - Config, RNG state and naming
-- Iteration tracking
 - Checkpointing through get_state/set_state
 - NNX compliance
 
 The checkpoint state logic is the module-level ``module_state`` / ``restore_module_state``, so a
 module that is not a DataraxModule (a ``Pipeline``) implements the same protocol with it.
-
-Also provides CheckpointableIteratorModule for data sources that need iteration
-state tracking (position, epoch) for resumable training.
 """
 
 import logging
-from collections.abc import Iterator
 from typing import Any
 
 from flax import nnx
@@ -382,88 +377,3 @@ def _restore_state(target: Any, saved: Any, path: tuple[str | int, ...] = ()) ->
         f"Cannot restore state at {_format_path(path)}: "
         f"{type(saved).__name__} into {type(target).__name__}"
     )
-
-
-class CheckpointableIteratorModule[T_co](DataraxModule):
-    """Base class for iterator modules that can be checkpointed.
-
-    This class extends DataraxModule to implement the CheckpointableIterator
-    protocol, providing unified state management for iterators that need to
-    save and restore their position and internal state for resumable training.
-
-    Useful for data sources, data loaders, and any module that iterates
-    through data and needs checkpoint/restore capability.
-
-    Attributes:
-        epoch: Current epoch (nnx.Variable)
-        position: Current position in iteration (nnx.Variable)
-        idx: Current index (nnx.Variable)
-        current: Current item being processed (nnx.Variable)
-    """
-
-    def __init__(
-        self,
-        config: DataraxModuleConfig,
-        *,
-        rngs: nnx.Rngs | None = None,
-        name: str | None = None,
-    ) -> None:
-        """Initialize the CheckpointableIteratorModule.
-
-        Args:
-            config: DataraxModuleConfig for the module
-            rngs: Optional Rngs object for randomness
-            name: Optional name for the module
-        """
-        super().__init__(config, rngs=rngs, name=name)
-
-        # Initialize iterator state variables as NNX Variables
-        self.epoch: nnx.Variable[int | None] = nnx.Variable(None)
-        self.position: nnx.Variable[int | None] = nnx.Variable(None)
-        self.idx: nnx.Variable[int | None] = nnx.Variable(None)
-        self.current: nnx.Variable[Any | None] = nnx.Variable(None)
-
-    def __iter__(self) -> Iterator[T_co]:
-        """Return the iterator object.
-
-        Returns:
-            The iterator object (usually self).
-        """
-        return self  # type: ignore[return-value]
-
-    def __next__(self) -> T_co:  # noqa: DOC503
-        """Get the next item from the iterator.
-
-        This method should be implemented by subclasses.
-
-        Returns:
-            The next item.
-
-        Raises:
-            StopIteration: When the iterator is exhausted.
-            NotImplementedError: If not implemented by subclass.
-        """
-        raise NotImplementedError("Subclasses must implement __next__")
-
-    def __len__(self) -> int:
-        """Return the number of items in the iterator.
-
-        This method should be implemented by subclasses.
-
-        Returns:
-            The total number of items.
-
-        Raises:
-            NotImplementedError: If not implemented by subclass.
-        """
-        raise NotImplementedError("Subclasses must implement __len__")
-
-    def reset(self) -> None:
-        """Reset the iterator to its initial state.
-
-        Subclasses should override this to add additional reset logic.
-        """
-        self.epoch.set_value(None)
-        self.position.set_value(None)
-        self.idx.set_value(None)
-        self.current.set_value(None)

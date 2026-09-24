@@ -98,6 +98,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `get_state`. The state logic moves out of `DataraxModule` into
   `datarax.core.module.module_state` / `restore_module_state`, which both call; each
   `DataraxModule` in a pipeline still upgrades its own earlier layout.
+- `CheckpointableIteratorModule` is removed. It was the base of data sources that iterate while
+  sources were iterators; `DataSourceModule`, also a checkpointable `DataraxModule`, took that role,
+  and nothing subclassed it. What it added worked against a checkpoint: four nullable fields, one
+  (`current`) holding a data item, one (`idx`) duplicating `position`, and a `reset` to `None`. A
+  resumable host iterator is a `DataSourceModule` whose position is an `nnx.Variable`; the
+  checkpointing guide shows it, replacing an example that raised `TypeError` (no config) as
+  written. The `CheckpointableIterator` protocol is unchanged.
 - `Pipeline.__call__(batch, records=None)`: `records` (`datarax.pipeline.dag.Records`: each
   row's index and epoch) is what the step served; a direct call without it names the records at
   the current position. A subclass overriding `__call__` accepts the argument.

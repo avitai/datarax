@@ -133,40 +133,59 @@ from counts placed wrongly.
 
 ## Checkpointable Iterator Pattern
 
-Create iterators that can be checkpointed:
+A host-side iterator that must resume is a `DataSourceModule`: it is a `DataraxModule`, so its
+`nnx.Variable` state is what `IteratorCheckpoint` saves. Keep the records as construction data
+(`nnx.data`, never checkpointed) and the position as a Variable (checkpointed):
 
 ```python
-from datarax.core.module import CheckpointableIteratorModule
-from flax import nnx
+from dataclasses import dataclass
+
 import jax.numpy as jnp
+from flax import nnx
 
-class MyCheckpointableIterator(CheckpointableIteratorModule):
-    def __init__(self, data, *, rngs: nnx.Rngs):
-        super().__init__(rngs=rngs)
-        self.data = data
-        self.position = nnx.Variable(jnp.array(0))
+from datarax.checkpoint import IteratorCheckpoint
+from datarax.core.config import StructuralConfig
+from datarax.core.data_source import DataSourceModule
 
-    def __iter__(self):
+
+@dataclass(frozen=True)
+class RecordReaderConfig(StructuralConfig):
+    """Configuration for a reader over in-memory records."""
+
+
+class RecordReader(DataSourceModule):
+    """Serves records one at a time; its position is state, so a checkpoint resumes it."""
+
+    def __init__(self, config: RecordReaderConfig, records: list[dict]) -> None:
+        super().__init__(config)
+        self.records = nnx.data(records)  # construction data: never checkpointed
+        self.position = nnx.Variable(jnp.int32(0))  # iteration state: checkpointed
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    def __iter__(self) -> "RecordReader":
         return self
 
-    def __next__(self):
-        pos = int(self.position[...])
-        if pos >= len(self.data):
+    def __next__(self) -> dict:
+        position = int(self.position[...])
+        if position >= len(self.records):
             raise StopIteration
-        item = self.data[pos]
-        self.position[...] = jnp.array(pos + 1)
-        return item
+        self.position[...] = jnp.int32(position + 1)
+        return self.records[position]
 
-# Usage
-iterator = MyCheckpointableIterator([1, 2, 3, 4, 5], rngs=nnx.Rngs(0))
-print(next(iterator))  # 1
-print(next(iterator))  # 2
+
+records = [{"text": f"line {i}"} for i in range(5)]
+reader = RecordReader(RecordReaderConfig(), records)
+print(next(reader)["text"])  # line 0
+print(next(reader)["text"])  # line 1
 
 with IteratorCheckpoint("./iterator_ckpt") as checkpoint:
-    checkpoint.save(iterator, step=2)
-    print(next(iterator))  # 3
-    checkpoint.restore(iterator, step=2)
-    print(next(iterator))  # 3 again: resumed from the checkpoint
+    checkpoint.save(reader, step=2)
+    print(next(reader)["text"])  # line 2
+    resumed = RecordReader(RecordReaderConfig(), records)
+    checkpoint.restore(resumed, step=2)
+    print(next(resumed)["text"])  # line 2 again: resumed from the checkpoint
 ```
 
 ## PRNG State Handling
