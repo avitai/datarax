@@ -1,4 +1,4 @@
-"""Grain-backed shuffle sampler for known-size datasets."""
+"""Shuffle sampler for known-size datasets."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ShuffleSamplerConfig(SamplerConfig):
-    """Configuration for Grain ``IndexSampler`` shuffling."""
+    """Configuration for :class:`ShuffleSampler`."""
 
     dataset_size: int = 0
     seed: int = 0
@@ -36,7 +36,7 @@ class ShuffleSamplerConfig(SamplerConfig):
 
 
 class ShuffleSampler(SamplerModule):
-    """Checkpointable wrapper around Grain ``IndexSampler``."""
+    """Checkpointable sampler serving a keyed shuffle of ``[0, dataset_size)``."""
 
     config: ShuffleSamplerConfig  # pyright: ignore[reportIncompatibleVariableOverride]
 
@@ -47,7 +47,7 @@ class ShuffleSampler(SamplerModule):
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
     ) -> None:
-        """Initialize a Grain-backed shuffle sampler."""
+        """Initialize the shuffle sampler."""
         super().__init__(config, rngs=rngs, name=name)
         self.dataset_size = config.dataset_size
         self.seed = config.seed
@@ -61,11 +61,9 @@ class ShuffleSampler(SamplerModule):
     def __iter__(self) -> Iterator[int]:
         """Yield shuffled dataset indices, resuming after restored checkpoints.
 
-        Each position is mapped through Grain's Feistel-cipher ``index_shuffle``
-        on demand, so a full epoch never materializes a permutation array
-        (O(1) memory). For a single epoch this reproduces exactly the order of
-        ``grain.samplers.IndexSampler(shuffle=True, seed=seed, num_epochs=1)``,
-        preserving determinism and checkpoint compatibility.
+        Each position is mapped through ``index_shuffle`` on demand, so a full epoch never
+        materializes a permutation array. The order is a function of ``seed`` alone, so a
+        restored position replays it exactly.
         """
         start = self.position.get_value() if self._resume_next_iter.get_value() else 0
         if not self._resume_next_iter.get_value():
@@ -78,7 +76,7 @@ class ShuffleSampler(SamplerModule):
         self._resume_next_iter.set_value(False)
 
     def get_state(self) -> dict[str, Any]:
-        """Return checkpoint state for replaying the current Grain order."""
+        """Return checkpoint state for replaying the current order."""
         state = super().get_state()
         state["sampler_state"] = {
             "dataset_size": self.dataset_size,

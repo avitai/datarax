@@ -324,7 +324,7 @@ for i in range(10):
 When working with data sources:
 
 1. **Use appropriate source types**: Choose the right data source for your data to optimize loading and processing
-2. **Leverage shuffling**: For training, enable shuffling on the source config, e.g. `TFDSEagerConfig(name="mnist", split="train", shuffle=True, seed=42)`. Eager sources shuffle in O(1) memory via Grain's index_shuffle (a Feistel permutation) — there is no shuffle buffer to size.
+2. **Leverage shuffling**: For training, enable shuffling on the source config, e.g. `TFDSEagerConfig(name="mnist", split="train", shuffle=True, seed=42)`. Eager sources shuffle in O(1) memory via a keyed Feistel bijection — there is no shuffle buffer to size.
 3. **Batch appropriately**: Batching is the Pipeline's job — set `Pipeline(source=source, stages=[], batch_size=N, rngs=nnx.Rngs(0))`. Sources do not expose a `.batch()` method.
 4. **Handle state properly**: Ensure your custom data sources properly manage their state
 5. **Monitor performance**: Watch for bottlenecks in data loading, especially with large datasets

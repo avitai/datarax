@@ -91,7 +91,7 @@ config = HFEagerConfig(
     name="mnist",
     split="train",
     shuffle=True,
-    seed=42,  # Integer seed for Grain's O(1)-memory index shuffle
+    seed=42,  # Integer seed of the O(1)-memory shuffle
 )
 source = HFEagerSource(config, rngs=nnx.Rngs(42))
 ```

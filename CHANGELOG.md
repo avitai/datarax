@@ -20,10 +20,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   back from every step (2.0 ms per batch at 4M records). Shuffled orders differ from earlier
   releases for the same key. `resolve_wrapped_indices` and the stateless `get_batch(key=...)` of
   the eager sources use it.
+- The host-side shuffles run the same cipher: `shuffle_positions_host(positions, length, seed,
+  epoch)` in NumPy, and `index_shuffle(index, seed, num_elements, epoch)` for per-element
+  callers, served from cached blocks. They replace Grain's `index_shuffle`, which extends Simon's
+  rotation constants to word sizes the cipher does not define (at 14-bit words every round is
+  linear in parity) and is not a bijection when `num_elements - 1` is a power of two (65,537
+  records serve one record twice). An epoch's order is that of `fold_in(key(seed), epoch)` --
+  the device path's key, so host and device serve one order -- where Grain's `seed + epoch`
+  made one seed's second epoch the next seed's first. `ShuffleSampler`,
+  `EpochAwareSamplerModule`, the eager sources' iteration and stateful `get_batch`, and
+  `MemorySource` use it; `MemorySource`'s stateful `get_batch` no longer materializes the
+  epoch's order.
 
 ### Removed
 
 - `EpochOrderCache` and the `order=` parameter of `resolve_wrapped_indices`: no order is stored.
+- The `grain` dependency of `datarax.samplers.index_shuffle`.
 
 ## [0.1.15] - 2026-09-21
 

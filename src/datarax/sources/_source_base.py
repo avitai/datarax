@@ -37,7 +37,7 @@ class EagerSourceBase(DataSourceModule):
     - ``length`` (``int``): Total number of elements.
     - ``index`` (``nnx.Variable``): Current iteration index.
     - ``epoch`` (``nnx.Variable``): Current epoch counter.
-    - ``_seed`` (``int``): Base integer seed for Grain index_shuffle.
+    - ``_seed`` (``int``): Base integer seed of the shuffle.
     - ``_is_random_order`` (``bool``): Whether to randomize iteration order.
     - ``dataset_name`` (``str | None``): Human-readable dataset name.
     - ``split_name`` (``str | None``): Dataset split identifier.

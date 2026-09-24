@@ -117,7 +117,7 @@ config = TFDSEagerConfig(
     name="cifar10",
     split="train[:1000]",  # First 1000 samples for demo
     shuffle=True,
-    seed=42,  # Integer seed for Grain's index_shuffle
+    seed=42,  # Integer seed of the shuffle
     exclude_keys={"id"},  # Exclude non-numeric fields
 )
 
@@ -290,7 +290,7 @@ def main():
         name="cifar10",
         split="train[:500]",
         shuffle=True,
-        seed=42,  # Integer seed for Grain's index_shuffle
+        seed=42,  # Integer seed of the shuffle
         exclude_keys={"id"},  # Exclude non-numeric fields
     )
     source = TFDSEagerSource(config, rngs=nnx.Rngs(42))

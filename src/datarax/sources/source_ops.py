@@ -25,8 +25,13 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
-from datarax.samplers.index_shuffle import index_shuffle, shuffle_positions
+from datarax.samplers.index_shuffle import (
+    index_shuffle,
+    shuffle_positions,
+    shuffle_positions_host,
+)
 
 
 def partition_length(length: int, num_workers: int = 1, shard_id: int = 0) -> int:
@@ -128,7 +133,7 @@ def validate_include_exclude_keys(
 
 
 def validate_seed_range(seed: int) -> None:
-    """Validate shuffle seed range for Grain index_shuffle compatibility."""
+    """Validate a shuffle seed is in ``[0, 2**32)``."""
     if seed < 0 or seed >= 2**32:
         raise ValueError("seed must be in [0, 2**32)")
 
@@ -146,23 +151,21 @@ def shuffled_index_for_position(
     epoch: int,
     length: int,
 ) -> int:
-    """Get shuffled index using Grain's O(1) memory Feistel cipher.
+    """Return the record at position ``index`` of the epoch's order.
 
     Args:
-        index: Original sequential index
-        shuffle: Whether shuffling is enabled
-        seed: Base integer seed for Grain's index_shuffle
-        epoch: Current epoch (used for per-epoch seeding)
-        length: Total number of elements
+        index: Position within the epoch.
+        shuffle: Whether shuffling is enabled.
+        seed: Base integer seed of the shuffle.
+        epoch: The epoch whose order is served; each epoch has its own order.
+        length: Total number of elements.
 
     Returns:
-        Shuffled index for current epoch, or original index if shuffle=False
+        ``index_shuffle(index, seed, length, epoch)``, or ``index`` if shuffle=False.
     """
     if not shuffle:
         return index
-
-    per_epoch_seed = (seed + epoch) % (2**32)
-    return index_shuffle(index=index, seed=per_epoch_seed, num_elements=length)
+    return index_shuffle(index, seed, length, epoch)
 
 
 def eager_iter(
@@ -241,9 +244,10 @@ def eager_get_batch(
     end = min(start + batch_size, length)
     epoch = epoch_var.get_value()
 
-    shuffled_indices = [
-        shuffled_index_for_position(i, shuffle, seed, epoch, length) for i in range(start, end)
-    ]
+    positions = np.arange(start, end)
+    shuffled_indices = (
+        shuffle_positions_host(positions, length, seed, epoch) if shuffle else positions
+    )
 
     index_var.set_value(end % length)
     if end >= length:

@@ -23,7 +23,13 @@ from jax.extend.core import ClosedJaxpr, Jaxpr
 
 from datarax.pipeline import Pipeline
 from datarax.pipeline.iteration import _is_per_batch_state, _run_tracking_writes, _Writes
-from datarax.samplers.index_shuffle import _encrypt, _ROUNDS, shuffle_positions
+from datarax.samplers.index_shuffle import (
+    _encrypt,
+    _ROUNDS,
+    index_shuffle,
+    shuffle_positions,
+    shuffle_positions_host,
+)
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
 
@@ -163,6 +169,43 @@ class TestQuality:
         positions_of_record_zero = np.argmax(_orders(64, seed, 20000) == 0, axis=1)
         observed = np.bincount(positions_of_record_zero, minlength=64).astype(float)
         assert _chi_square_p(observed, np.full(64, observed.sum() / 64)) > 1e-3
+
+
+class TestHost:
+    """The host form serves the device form's order for the same seed and epoch."""
+
+    @pytest.mark.parametrize("length", [1, 7, 257, 65537])
+    def test_the_host_order_is_the_device_order(self, length: int) -> None:
+        host = shuffle_positions_host(np.arange(length), length, seed=9, epoch=2)
+        key = jax.random.fold_in(jax.random.key(9), 2)
+        np.testing.assert_array_equal(host, _order(length, key))
+
+    @pytest.mark.parametrize("length", _SIZES)
+    def test_every_record_is_served_exactly_once(self, length: int) -> None:
+        order = shuffle_positions_host(np.arange(length), length, seed=3)
+        np.testing.assert_array_equal(np.sort(order), np.arange(length))
+
+    def test_one_index_at_a_time_matches_the_whole_order_across_blocks(self) -> None:
+        length = 10_000
+        whole = shuffle_positions_host(np.arange(length), length, seed=4, epoch=1)
+        for position in (0, 4095, 4096, 8191, 8192, length - 1):
+            assert index_shuffle(position, 4, length, epoch=1) == whole[position]
+
+    def test_epochs_give_different_orders(self) -> None:
+        first = shuffle_positions_host(np.arange(1000), 1000, seed=5, epoch=0)
+        second = shuffle_positions_host(np.arange(1000), 1000, seed=5, epoch=1)
+        assert not np.array_equal(first, second)
+
+    def test_a_seed_and_epoch_never_repeat_the_next_seeds_order(self) -> None:
+        # Grain seeds an epoch with seed + epoch, so seed 5 at epoch 1 was seed 6 at epoch 0.
+        later_epoch = shuffle_positions_host(np.arange(1000), 1000, seed=5, epoch=1)
+        next_seed = shuffle_positions_host(np.arange(1000), 1000, seed=6, epoch=0)
+        assert not np.array_equal(later_epoch, next_seed)
+
+    @pytest.mark.parametrize("index", [-1, 10])
+    def test_an_index_outside_the_records_is_refused(self, index: int) -> None:
+        with pytest.raises(IndexError, match="out of range"):
+            index_shuffle(index, 0, 10)
 
 
 class TestTransforms:

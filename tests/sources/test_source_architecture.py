@@ -7,7 +7,7 @@ Architecture Goals:
     - Eager sources load all data to JAX arrays at initialization
     - Streaming sources provide thin wrappers with DLPack conversion
     - No TensorFlow threads should remain after eager source init
-    - O(1) memory shuffling via Grain's index_shuffle
+    - O(1) memory shuffling via a keyed Feistel bijection
 """
 
 import platform
@@ -214,7 +214,7 @@ class TestTFDSEagerSource:
 
     @pytest.mark.tfds
     def test_tfds_eager_with_shuffling(self):
-        """Shuffling should work with Grain's index_shuffle."""
+        """Shuffling serves a keyed order of the records."""
         from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 
         try:

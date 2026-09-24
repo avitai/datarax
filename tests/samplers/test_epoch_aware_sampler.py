@@ -535,7 +535,7 @@ class TestEpochAwareSamplerReset:
 
 
 class TestEpochAwareGrainDelegation:
-    """SP6: per-epoch shuffle delegates to Grain's O(1) Feistel index_shuffle."""
+    """SP6: each epoch is its own O(1)-memory order from ``index_shuffle``."""
 
     def test_shuffle_order_matches_grain_index_shuffle_per_epoch(self):
         """Epoch-0 order must equal index_shuffle(i, seed, N) — no materialized list."""
