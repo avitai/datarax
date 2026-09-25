@@ -75,6 +75,7 @@ from datarax.pipeline.iteration import (
     staged_view,
 )
 from datarax.pipeline.topo import topological_sort, validate_dag
+from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.typing import DataDict, PipelineBatch
 
 
@@ -296,6 +297,52 @@ class Pipeline(nnx.Module):
             sink=sink,
             batch_size=batch_size,
             rngs=rngs,
+            drop_last=drop_last,
+            num_epochs=num_epochs,
+        )
+
+    @classmethod
+    def from_arrays(  # noqa: DOC502 - the source and the constructor raise
+        cls,
+        data: Mapping[str, Any],
+        *,
+        batch_size: int,
+        seed: int,
+        shuffle: bool = False,
+        drop_last: bool = False,
+        num_epochs: int | None = 1,
+    ) -> Pipeline:
+        """Build a Pipeline over in-memory arrays, with no stages.
+
+        The same pipeline as a ``MemorySource`` over ``data`` and the linear constructor
+        with ``stages=[]``, both seeded with ``seed``: every guarantee of a pipeline (one
+        permutation per epoch, the final-batch rule, resumable position, one compiled step)
+        holds for it.
+
+        Args:
+            data: Arrays by name, all of the same leading length (the record count).
+            batch_size: Records fetched per ``step()``.
+            seed: Seed of the source's and the pipeline's ``nnx.Rngs``; with ``shuffle``
+                it chooses each epoch's permutation.
+            shuffle: Whether each epoch serves the records in a new random order.
+            drop_last: The last-batch rule (see the class docstring).
+            num_epochs: Epochs ``iter`` serves, or ``None`` for a stream.
+
+        Raises:
+            ValueError: If the arrays differ in length or hold no records, or the epoch
+                rule serves no batch (see the constructor).
+
+        Returns:
+            A configured ``Pipeline`` instance.
+        """
+        source = MemorySource(
+            MemorySourceConfig(shuffle=shuffle), data=dict(data), rngs=nnx.Rngs(seed)
+        )
+        return cls(
+            source=source,
+            stages=[],
+            batch_size=batch_size,
+            rngs=nnx.Rngs(seed),
             drop_last=drop_last,
             num_epochs=num_epochs,
         )

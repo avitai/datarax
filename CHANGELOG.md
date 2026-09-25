@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Pipeline.from_arrays(data, *, batch_size, seed, shuffle=False, drop_last=False,
+  num_epochs=1)`: a pipeline over a dict of in-memory arrays in one call, the `MemorySource` and
+  the stage-less linear constructor seeded with `seed`. It serves the batches the two-step
+  construction serves, resumes from `get_state`, and a training step over it compiles once.
+
 ## [0.1.16] - 2026-09-24
 
 ### Fixed

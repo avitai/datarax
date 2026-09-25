@@ -45,6 +45,9 @@ strings of any length) as a record store for indexing, iteration and `get_batch`
 columns to gather a batch from, so a `Pipeline` refuses it. Stack fixed-shape records into a dict of
 arrays to batch them.
 
+`Pipeline.from_arrays(data, batch_size=..., seed=..., shuffle=...)` is this source and a pipeline
+with no stages in one call; `drop_last` and `num_epochs` reach the pipeline as in its constructor.
+
 ### TFDSEagerSource
 
 For data from TensorFlow Datasets, use `TFDSEagerSource`:
