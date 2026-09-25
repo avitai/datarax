@@ -33,6 +33,13 @@ for i, batch in enumerate(pipeline):
         break
 ```
 
+For arrays already in memory and no stages, `Pipeline.from_arrays` builds the same pipeline in
+one call, its source and its pipeline seeded with `seed`:
+
+```python
+pipeline = Pipeline.from_arrays(data, batch_size=10, seed=0, shuffle=True)
+```
+
 ## 2. Deterministic Operators & Immutability
 
 Operators in Datarax work on **Elements**. A key principle is **Immutability**: operators receive an input and return a *new* output.
