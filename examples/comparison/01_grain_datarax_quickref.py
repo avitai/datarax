@@ -207,10 +207,9 @@ print(
 ## Step 4: Resume the Datarax Pipeline
 
 The iterator's `get_state()` returns the records consumed, the epoch, one count per
-random stream, and the `version` those counts are in. A stochastic operator contributes
-one count, which stays 0: iteration keys each record on the operator's stable base key
-and never draws from the operator's own stream. The counts that move belong to the
-pipeline and the source. Position and epoch decide the batches, so a pipeline built with
+random stream, and the `version` those counts are in. The counts are the pipeline's
+and the source's: an operator keys each record on its stable base key and holds no
+count. Position and epoch decide the batches, so a pipeline built with
 the same seeds continues with the same ones.
 """
 
@@ -230,7 +229,7 @@ datarax_matches = all(
 )
 print(f"Datarax resumes exactly: {datarax_matches}")
 # Expected output:
-# Datarax checkpoint: {'position': 8, 'epoch': 0, 'rng_counts': [0, 1, 0], 'version': 2, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 1, 'shuffled': True}}  # noqa: E501
+# Datarax checkpoint: {'position': 8, 'epoch': 0, 'rng_counts': [1, 0], 'version': 2, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 1, 'shuffled': True}}  # noqa: E501
 # Datarax resumes exactly: True
 
 # %% [markdown]

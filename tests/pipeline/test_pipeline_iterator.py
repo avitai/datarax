@@ -513,12 +513,10 @@ class TestImmutableStaging:
 
 
 class TestIteratorRngCounts:
-    """``rng_counts`` holds one entry per stochastic operator and none for a deterministic one.
+    """``rng_counts`` holds the pipeline's and the source's counts, whatever the operators are.
 
-    Pipeline iteration keys each record on the operator's ``_base_key``, so an operator's own
-    stream is never drawn from and its count stays 0; the entries that move belong to the
-    pipeline and the source. The list's length therefore depends on how many operators are
-    stochastic, not on how many streams the caller's ``Rngs`` happened to carry.
+    An operator keys each record on its ``_base_key`` and holds no stream or counter, so neither
+    a stochastic operator nor the streams the caller's ``Rngs`` happened to carry add an entry.
     """
 
     @staticmethod
@@ -532,11 +530,11 @@ class TestIteratorRngCounts:
         # The pipeline's own stream, then the source's.
         assert self._counts(_pipeline()) == [1, 0]
 
-    def test_a_stochastic_operator_contributes_exactly_one(self):
-        # The operator's private stream, the pipeline's, then the source's.
-        assert self._counts(_pipeline(stochastic=True)) == [0, 1, 0]
+    def test_a_stochastic_operator_contributes_no_count(self):
+        # The pipeline's own stream, then the source's.
+        assert self._counts(_pipeline(stochastic=True)) == [1, 0]
 
-    def test_operators_sharing_one_rngs_no_longer_share_a_count(self):
+    def test_operators_built_from_one_rngs_add_no_count(self):
         shared = nnx.Rngs(jitter=0)
         stages = [
             ElementOperator(
@@ -549,7 +547,7 @@ class TestIteratorRngCounts:
         source = MemorySource(MemorySourceConfig(shuffle=False), data=_data(), rngs=nnx.Rngs(0))
         pipeline = Pipeline(source=source, stages=stages, batch_size=_BATCH, rngs=nnx.Rngs(0))
 
-        assert self._counts(pipeline) == [0, 0, 1, 0]
+        assert self._counts(pipeline) == [1, 0]
 
 
 class TestIteratorStateVersioning:

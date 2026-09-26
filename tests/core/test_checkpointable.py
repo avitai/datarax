@@ -13,7 +13,6 @@ from datarax.checkpoint import IteratorCheckpoint
 from datarax.core.config import DataraxModuleConfig, ElementOperatorConfig, StructuralConfig
 from datarax.core.data_source import DataSourceModule
 from datarax.core.module import DataraxModule
-from datarax.core.operator import DIRECT_CALL_STREAM
 from datarax.operators import ElementOperator
 from datarax.typing import CheckpointableIterator
 
@@ -389,69 +388,47 @@ class TestCheckpointEdgeCases:
         assert new_module.counter.get_value() == 0
 
 
-class TestOperatorStateUpgradeOnLoad:
-    """A module checkpoint written under the earlier operator layout still restores.
+class TestOperatorCheckpointLayout:
+    """An operator checkpoints its base key and its statistics, and nothing else.
 
-    An operator used to keep the caller's ``Rngs`` and to hold its statistics under
-    ``_computed_stats``. It now derives a private ``_rng_stream`` from ``_base_key`` and stores
-    statistics under ``_statistics``. The saved dict identifies its own layout — ``rngs`` and
-    ``_computed_stats`` appear only in the earlier one — so the upgrade needs no version field,
-    which is what keeps a variable-free module's state empty and refused.
+    A state of any other layout, such as one that also carries a stream, is structurally
+    incompatible and refused as it is.
     """
 
     @staticmethod
-    def _operator() -> ElementOperator:
+    def _operator(seed: int = 1) -> ElementOperator:
         """A stochastic operator, which is the only kind that carries RNG state."""
         return ElementOperator(
             ElementOperatorConfig(stochastic=True, stream_name="augment"),
-            fn=lambda element, key=None: element,
-            rngs=nnx.Rngs(augment=1),
+            fn=lambda element, key: element.replace(
+                data={"x": element.data["x"] + jax.random.normal(key, ())}
+            ),
+            rngs=nnx.Rngs(augment=seed),
         )
 
-    def test_the_current_layout_names_the_stream_and_the_statistics(self):
-        assert set(self._operator().get_state()) == {"_base_key", "_rng_stream", "_statistics"}
+    def test_the_layout_is_the_base_key_and_the_statistics(self):
+        assert set(self._operator().get_state()) == {"_base_key", "_statistics"}
 
-    def test_a_state_saved_under_the_earlier_layout_restores(self):
-        current = self._operator().get_state()
-        base_key = current["_base_key"]
-        legacy = {
-            "_base_key": base_key,
-            "_computed_stats": None,
-            "rngs": {"augment": {"count": jnp.zeros((), jnp.uint32), "key": base_key}},
-        }
+    def test_a_restored_operator_draws_as_the_saved_one_did(self):
+        saved = self._operator(1)
+        restored = self._operator(2)
+        restored.set_state(saved.get_state())
+        batch = {"x": jnp.zeros((4,))}
 
-        restored = self._operator()
-        restored.set_state(legacy)
+        expected, _ = saved._vmap_apply(batch, {})
+        actual, _ = restored._vmap_apply(batch, {})
 
-        assert restored.rngs is None
-        assert int(restored._rng_stream.count[...]) == 0
-        expected = jax.random.fold_in(base_key, DIRECT_CALL_STREAM)
-        np.testing.assert_array_equal(
-            jax.random.key_data(restored._rng_stream.key[...]), jax.random.key_data(expected)
-        )
+        np.testing.assert_array_equal(np.asarray(actual["x"]), np.asarray(expected["x"]))
 
-    def test_an_upgraded_state_leaves_the_operator_drawing_as_a_fresh_one_does(self):
-        reference = self._operator()
-        current = reference.get_state()
-        base_key = current["_base_key"]
-        legacy = {
-            "_base_key": base_key,
-            "_computed_stats": None,
-            "rngs": {"augment": {"count": jnp.zeros((), jnp.uint32), "key": base_key}},
-        }
+    def test_a_state_with_a_stream_is_refused(self):
+        state = self._operator().get_state()
+        state["_rng_stream"] = {"count": jnp.zeros((), jnp.uint32), "key": state["_base_key"]}
 
-        restored = self._operator()
-        restored.set_state(legacy)
+        with pytest.raises(ValueError, match="structurally incompatible"):
+            self._operator().set_state(state)
 
-        np.testing.assert_array_equal(
-            jax.random.key_data(restored._rng_stream()),
-            jax.random.key_data(reference._rng_stream()),
-        )
-
-    def test_a_deterministic_operator_carries_no_rng_state_to_upgrade(self):
+    def test_a_deterministic_operator_carries_no_rng_state(self):
         operator = ElementOperator(
             ElementOperatorConfig(stochastic=False), fn=lambda element, key=None: element
         )
-        state = operator.get_state()
-        assert "_rng_stream" not in state
-        assert "_base_key" not in state
+        assert "_base_key" not in operator.get_state()

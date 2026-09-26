@@ -77,9 +77,9 @@ _HOST_COPIES: weakref.WeakKeyDictionary[Any, _HostCopies] = weakref.WeakKeyDicti
 # per-batch state first and staged state second.
 _Writes = tuple[dict[int, Any], dict[int, Any]]
 
-# The layout of PipelineIterator.get_state(). Version 1 gives each stochastic operator one
-# private stream count and a deterministic one none; before it, an operator carried every
-# stream of the Rngs its caller passed. A state without the field predates it and is upgraded.
+# The layout of PipelineIterator.get_state(). Operators hold no RNG counts, so ``rng_counts`` is
+# the pipeline's and the source's. A state without the field keeps only its counts outside
+# operators.
 _ITERATOR_STATE_VERSION = 2
 # Version 1 carried ``rng_counts`` in the per-operator layout; version 2 adds ``fingerprint``,
 # the configuration that produced the state, which ``set_state`` checks.
@@ -525,12 +525,9 @@ class PipelineIterator:
         those counts are in. Shapes and types are stable across the
         iterator's lifetime.
 
-        ``rng_counts`` holds one count per stochastic operator, which stays
-        0 because iteration keys each record on the operator's base key and
-        never draws from its private stream, followed by the pipeline's and
-        the source's. A deterministic operator contributes none, so the
-        list's length follows how many operators are stochastic rather than
-        how many streams their caller's ``Rngs`` carried.
+        ``rng_counts`` holds the pipeline's count, then the source's. An
+        operator keys each record on its base key and holds no count, so the
+        list's length does not depend on the operators.
 
         Returns:
             JSON-serializable dict with ``position``, ``epoch``, ``rng_counts`` and ``version``.
