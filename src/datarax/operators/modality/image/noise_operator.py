@@ -157,7 +157,8 @@ class NoiseOperator(ModalityOperator):
 
     - Gaussian: output = input + N(mean, std²)
     - Salt & Pepper: Random pixels → salt_value or pepper_value
-    - Poisson: output = Poisson(input * lam_scale) / lam_scale
+    - Poisson: output = Poisson(input * lam_scale) / lam_scale. A Poisson draw is an integer
+      count, so this mode passes no gradient to its input; Gaussian and salt-and-pepper noise do.
 
     Draws per-record noise from the record's own key. ``eval()``, or
     ``nnx.view(operator, deterministic=True)``, returns the record unchanged.

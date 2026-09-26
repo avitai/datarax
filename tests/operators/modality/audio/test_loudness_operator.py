@@ -1,8 +1,10 @@
 """Tests for LoudnessOperator — pure JAX A-weighted loudness extraction.
 
-TDD RED phase: All tests written before implementation.
-The operator computes perceptual loudness from audio using STFT + A-weighting + dB,
-with learnable frequency weights and reference level (nnx.Param).
+The operator computes DDSP's perceptual loudness (magenta/ddsp ``spectral_ops.compute_loudness``,
+main at 6b6b8a31): the power spectrum weighted by the A-weighting curve in linear scale, averaged
+over frequency, then converted to dB relative to ``ref_db`` and clamped at ``-range_db``; the
+frequency weights and the reference level are learnable (``nnx.Param``). Its values are checked
+against an independent NumPy port of that reference.
 
 Test categories:
 1. A-weighting curve correctness
@@ -14,6 +16,10 @@ Test categories:
 """
 
 import jax.numpy as jnp
+import librosa
+import numpy as np
+import pytest
+import scipy.signal
 from flax import nnx
 
 from datarax.core.element_batch import Batch
@@ -74,13 +80,13 @@ class TestLoudnessConfig:
     """Validate LoudnessConfig defaults and validation."""
 
     def test_defaults(self):
-        """Config defaults match NSynth conventions (16kHz, 250Hz frame rate)."""
+        """Config defaults are DDSP's ``compute_loudness`` defaults."""
         config = LoudnessConfig()
         assert config.sample_rate == 16000
         assert config.frame_rate == 250
-        assert config.n_fft == 2048
-        assert config.ref_db == 20.7
-        assert config.range_db == 120.0
+        assert config.n_fft == 512
+        assert config.ref_db == 0.0
+        assert config.range_db == 80.0
 
     def test_hop_length_derived(self):
         """hop_length should be sample_rate // frame_rate."""
@@ -105,10 +111,10 @@ class TestLoudnessOutput:
     """Validate output shapes, keys, and structure declarations."""
 
     def test_output_shape(self):
-        """Input (64000,) audio → output (1000,) loudness for NSynth params.
+        """Input (64000,) audio → output (1001,) loudness.
 
-        64000 samples at 16kHz = 4 seconds.
-        At 250 Hz frame rate → 1000 frames.
+        64000 samples at 16kHz = 4 seconds. Center padding centres one frame on each hop
+        boundary, both ends included: 64000 // 64 + 1 frames, as DDSP's framing gives.
         """
         config = LoudnessConfig()
         op = LoudnessOperator(config, rngs=nnx.Rngs(0))
@@ -118,8 +124,8 @@ class TestLoudnessOutput:
         state = {}
 
         out_data, out_state, out_meta = op.apply(data, state, None)
-        assert out_data["loudness"].shape == (1000,), (
-            f"Expected (1000,), got {out_data['loudness'].shape}"
+        assert out_data["loudness"].shape == (1001,), (
+            f"Expected (1001,), got {out_data['loudness'].shape}"
         )
 
     def test_output_key(self):
@@ -149,10 +155,10 @@ class TestLoudnessOutput:
         config = LoudnessConfig(sample_rate=16000, frame_rate=250)
         op = LoudnessOperator(config, rngs=nnx.Rngs(0))
 
-        # 2 seconds = 32000 samples → 500 frames
+        # 2 seconds = 32000 samples → 501 frames
         audio = jnp.zeros(32000)
         out_data, _, _ = op.apply({"audio": audio}, {}, None)
-        assert out_data["loudness"].shape == (500,)
+        assert out_data["loudness"].shape == (501,)
 
 
 # ============================================================================
@@ -163,24 +169,6 @@ class TestLoudnessOutput:
 class TestLoudnessAcoustics:
     """Validate acoustic behavior with known signals."""
 
-    def test_sine_wave(self):
-        """440 Hz sine at amplitude 1.0 gives reasonable dB range."""
-        config = LoudnessConfig()
-        op = LoudnessOperator(config, rngs=nnx.Rngs(0))
-
-        t = jnp.linspace(0, 4.0, 64000, endpoint=False)
-        audio = jnp.sin(2 * jnp.pi * 440.0 * t)
-
-        out_data, _, _ = op.apply({"audio": audio}, {}, None)
-        loudness = out_data["loudness"]
-
-        # Loudness should be in a reasonable range (not -inf, not 0)
-        assert jnp.all(jnp.isfinite(loudness)), "Loudness must be finite"
-        mean_loudness = jnp.mean(loudness)
-        assert -100.0 < mean_loudness < 10.0, (
-            f"Mean loudness of 440Hz sine should be in [-100, 10] dB, got {mean_loudness}"
-        )
-
     def test_silence(self):
         """Zero audio gives loudness near -range_db (floor)."""
         config = LoudnessConfig()
@@ -190,11 +178,9 @@ class TestLoudnessAcoustics:
         out_data, _, _ = op.apply({"audio": audio}, {}, None)
         loudness = out_data["loudness"]
 
-        # Silence should be at the floor (-range_db)
+        # Silence sits exactly at the floor (-range_db)
         assert jnp.all(jnp.isfinite(loudness)), "Loudness must be finite even for silence"
-        assert jnp.mean(loudness) < -90.0, (
-            f"Silence loudness should be < -90 dB, got {jnp.mean(loudness)}"
-        )
+        assert jnp.all(loudness == -config.range_db)
 
     def test_louder_signal_higher_loudness(self):
         """Doubling amplitude should increase loudness by ~6 dB."""
@@ -222,7 +208,7 @@ class TestLoudnessJaxCompat:
     """Validate vmap, JIT, and batch processing compatibility."""
 
     def test_batch_vmap(self):
-        """apply_batch() handles (B, 64000) → (B, 1000)."""
+        """apply_batch() handles (B, 64000) → (B, 1001)."""
         config = LoudnessConfig()
         op = LoudnessOperator(config, rngs=nnx.Rngs(0))
 
@@ -235,7 +221,7 @@ class TestLoudnessJaxCompat:
 
         result = op.apply_batch(batch)
         result_data = result.data.get_value()
-        assert result_data["loudness"].shape == (B, 1000)
+        assert result_data["loudness"].shape == (B, 1001)
 
     def test_jit_compatible(self):
         """jax.jit wrapping around apply works without error."""
@@ -276,21 +262,30 @@ class TestLoudnessLearnableParams:
         config = LoudnessConfig()
         op = LoudnessOperator(config, rngs=nnx.Rngs(0))
 
-        n_bins = config.n_fft // 2 + 1  # 1025 for n_fft=2048
+        n_bins = config.n_fft // 2 + 1  # 257 for n_fft=512
         weights = op.frequency_weights[...]
         assert weights.shape == (n_bins,), f"Expected ({n_bins},), got {weights.shape}"
 
-        # Compare with A-weighting at corresponding frequencies
-        freqs = jnp.linspace(0, config.sample_rate / 2, n_bins)
-        expected = _a_weighting_jax(freqs)
-        # Should match initialization
-        assert jnp.allclose(weights, expected, atol=1e-5)
+        # The reference weights: librosa's A-weighting (floored at -80 dB) at the FFT bins.
+        frequencies = librosa.fft_frequencies(sr=16000, n_fft=config.n_fft)
+        expected = librosa.A_weighting(frequencies)
+        # The curve is 20 times a sum of six log10 terms; float32 rounds each term, so the error
+        # at a frequency is bounded by eps times 20 times the sum of the terms' magnitudes.
+        f_sq = np.maximum(frequencies, 1e-20) ** 2
+        corners = (12194.217**2, 20.598997**2, 107.65265**2, 737.86223**2)
+        terms = (
+            np.abs(np.log10(corners[0]))
+            + 2.0 * np.abs(np.log10(f_sq))
+            + sum(np.abs(np.log10(f_sq + c)) for c in corners)
+        )
+        bound = float(np.finfo(np.float32).eps) * 20.0 * terms
+        assert np.all(np.abs(np.asarray(weights) - expected) <= bound)
 
     def test_ref_db_init(self):
-        """ref_db initialized to 20.7 (NSynth convention)."""
+        """ref_db initialized to the configured reference, DDSP's 0 dB by default."""
         config = LoudnessConfig()
         op = LoudnessOperator(config, rngs=nnx.Rngs(0))
-        assert jnp.isclose(op.ref_db[...], 20.7, atol=1e-5)
+        assert op.ref_db[...] == 0.0
 
     def test_gradient_flow(self):
         """nnx.value_and_grad through loudness produces non-zero gradients."""
@@ -322,3 +317,70 @@ class TestLoudnessLearnableParams:
         config = LoudnessConfig(n_fft=1024)
         op = LoudnessOperator(config, rngs=nnx.Rngs(0))
         assert op.frequency_weights[...].shape == (513,)  # 1024 // 2 + 1
+
+
+# ============================================================================
+# The published method
+# ============================================================================
+
+
+def _ddsp_loudness(
+    audio: np.ndarray,
+    *,
+    sample_rate: int = 16000,
+    frame_rate: int = 250,
+    n_fft: int = 512,
+    range_db: float = 80.0,
+    ref_db: float = 0.0,
+) -> np.ndarray:
+    """DDSP's ``compute_loudness`` (magenta/ddsp main 6b6b8a31), ported to float64 NumPy.
+
+    ``pad(..., padding='center')`` pads ``n_fft // 2`` zeros on both ends; ``tf.signal.stft``
+    frames with a periodic Hann window and no end padding; the power is weighted by
+    ``10 ** (librosa.A_weighting(f) / 10)``, averaged over frequency and passed through
+    ``core.power_to_db`` (floor ``10 ** (-range_db / 10)``, ``10 * log10``, minus ``ref_db``,
+    clamp at ``-range_db``).
+    """
+    hop = sample_rate // frame_rate
+    padded = np.pad(audio.astype(np.float64), (n_fft // 2, n_fft // 2))
+    n_frames = (len(padded) - n_fft) // hop + 1
+    frames = np.stack([padded[i * hop : i * hop + n_fft] for i in range(n_frames)])
+    window = scipy.signal.get_window("hann", n_fft)  # periodic, as tf.signal.hann_window
+    power = np.abs(np.fft.rfft(frames * window, n=n_fft, axis=-1)) ** 2
+    weighting = librosa.A_weighting(librosa.fft_frequencies(sr=sample_rate, n_fft=n_fft))
+    average = np.mean(power * 10.0 ** (weighting / 10.0), axis=-1)
+    decibels = 10.0 * np.log10(np.maximum(10.0 ** (-range_db / 10.0), average)) - ref_db
+    return np.maximum(decibels, -range_db)
+
+
+def _signals() -> dict[str, np.ndarray]:
+    time = np.arange(16000) / 16000.0
+    rng = np.random.default_rng(0)
+    half_silent = np.concatenate([np.sin(2 * np.pi * 440.0 * time[:8000]), np.zeros(8000)])
+    return {
+        "sine mixture": 0.5 * np.sin(2 * np.pi * 440.0 * time)
+        + 0.1 * np.sin(2 * np.pi * 97 * time),
+        "white noise": 0.3 * rng.standard_normal(16000),
+        "silence": np.zeros(16000),
+        "half silent": half_silent,
+    }
+
+
+@pytest.mark.parametrize("n_fft", [512, 2048])
+@pytest.mark.parametrize("name", sorted(_signals()))
+def test_loudness_matches_the_published_method(name: str, n_fft: int) -> None:
+    """The operator computes DDSP's loudness, frame for frame.
+
+    The bound follows float32 rounding of the averaged power: a relative error ``d`` in the
+    power moves the loudness by ``10 * log10(1 + d) ~ 4.34 d`` dB, and summing ``n_bins`` float32
+    terms leaves ``d <= n_bins * eps``.
+    """
+    audio = _signals()[name]
+    operator = LoudnessOperator(LoudnessConfig(n_fft=n_fft), rngs=nnx.Rngs(0))
+
+    out, _, _ = operator.apply({"audio": jnp.asarray(audio, jnp.float32)}, {}, None)
+
+    expected = _ddsp_loudness(audio, n_fft=n_fft)
+    bound = 4.343 * (n_fft // 2 + 1) * float(np.finfo(np.float32).eps)
+    assert out["loudness"].shape == expected.shape
+    np.testing.assert_allclose(np.asarray(out["loudness"]), expected, rtol=0, atol=bound)

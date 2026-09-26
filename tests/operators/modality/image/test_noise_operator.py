@@ -930,64 +930,6 @@ class TestNoiseOperatorJAXCompatibility:
 
         assert result_images.shape == (8, 32, 32, 3)
 
-    def test_grad_compatibility_gaussian(self):
-        """Test gradient computation compatibility with Gaussian noise."""
-        config = NoiseOperatorConfig(
-            field_key="image",
-            mode="gaussian",
-            noise_std=0.1,
-        )
-        operator = NoiseOperator(config, rngs=nnx.Rngs(0))
-
-        def loss_fn(data):
-            result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
-            return jnp.sum(result["image"] ** 2)
-
-        data = {"image": jnp.ones((32, 32, 3)) * 0.5}
-        grads = jax.grad(loss_fn)(data)
-
-        assert "image" in grads
-        assert grads["image"].shape == (32, 32, 3)
-
-    def test_grad_compatibility_salt_pepper(self):
-        """Test gradient computation compatibility with salt & pepper noise."""
-        config = NoiseOperatorConfig(
-            field_key="image",
-            mode="salt_pepper",
-            salt_prob=0.05,
-            pepper_prob=0.05,
-        )
-        operator = NoiseOperator(config, rngs=nnx.Rngs(0))
-
-        def loss_fn(data):
-            result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
-            return jnp.sum(result["image"] ** 2)
-
-        data = {"image": jnp.ones((32, 32, 3)) * 0.5}
-        grads = jax.grad(loss_fn)(data)
-
-        assert "image" in grads
-        assert grads["image"].shape == (32, 32, 3)
-
-    def test_grad_compatibility_poisson(self):
-        """Test gradient computation compatibility with Poisson noise."""
-        config = NoiseOperatorConfig(
-            field_key="image",
-            mode="poisson",
-            lam_scale=1.0,
-        )
-        operator = NoiseOperator(config, rngs=nnx.Rngs(0))
-
-        def loss_fn(data):
-            result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
-            return jnp.sum(result["image"] ** 2)
-
-        data = {"image": jnp.ones((32, 32, 3)) * 0.5}
-        grads = jax.grad(loss_fn)(data)
-
-        assert "image" in grads
-        assert grads["image"].shape == (32, 32, 3)
-
 
 class TestNoiseOperatorCommonPatterns:
     """Tests for common noise operator patterns."""

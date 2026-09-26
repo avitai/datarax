@@ -31,10 +31,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `OperatorModule(config, ..., statistics={...})` stores them as arrays at their real shape, and an
   operator built without them holds no statistics leaf. `set_statistics` replaces values of the
   same structure, shapes and dtypes and refuses anything else; `reset_statistics` is removed.
+- Every operator family's input and parameter gradients are checked against finite differences
+  (`tests/operators/test_gradients.py`); a Poisson noise draw passes no gradient to its input,
+  as its docstring and the README state.
 - A deterministic `ElementOperator`, `MapOperator` or external adapter hands its function `None`
   as the key instead of a fixed key; the function type is the keyed or the keyless shape.
 
 ### Fixed
+
+- `LoudnessOperator` computes DDSP's loudness (magenta/ddsp `compute_loudness` / `power_to_db`):
+  the A-weighted power averaged over frequency, then converted to dB and clamped at `-range_db`.
+  It averaged per-bin dB before clamping, which gave near-silent bins hundreds of dB down the
+  weight of the whole spectrum and an ill-conditioned input gradient. Framing, window and the
+  A-weighting floor follow the reference too: center padding with `n_samples // hop + 1` frames,
+  a periodic Hann window, A-weighting floored at -80 dB. The defaults are DDSP's (`n_fft=512`,
+  `ref_db=0.0`, `range_db=80.0`).
 
 - A restore refused for a mismatched state no longer changes the module: validation now covers
   every level of the state (dictionaries of stages included) before any value is written.

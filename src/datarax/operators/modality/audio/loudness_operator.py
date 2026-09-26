@@ -1,8 +1,11 @@
 """LoudnessOperator — differentiable A-weighted loudness extraction.
 
-Computes perceptual loudness from audio using STFT + frequency weighting + dB.
-The frequency weights are initialized from the IEC 61672 A-weighting curve but
-stored as nnx.Param, making them learnable during end-to-end training.
+Computes DDSP's perceptual loudness (Engel et al., "DDSP: Differentiable Digital Signal
+Processing", ICLR 2020; magenta/ddsp ``spectral_ops.compute_loudness`` and ``core.power_to_db``):
+the power spectrum is weighted by the A-weighting curve in linear scale, averaged over frequency,
+and converted to dB relative to a reference level, clamped at ``-range_db``. The frequency weights
+are initialized from the IEC 61672 A-weighting curve, as librosa computes it, and stored as
+``nnx.Param`` with the reference level, so both are learnable during end-to-end training.
 
 All operations are pure JAX — fully vmap/JIT/grad compatible.
 """
@@ -23,11 +26,15 @@ from datarax.core.operator import OperatorModule
 logger = logging.getLogger(__name__)
 
 
+# librosa.A_weighting's floor, which DDSP's loudness inherits: the curve never falls below it.
+A_WEIGHTING_MIN_DB = -80.0
+
+
 def _a_weighting_jax(frequencies: jax.Array) -> jax.Array:
-    """IEC 61672 A-weighting curve in dB, ported to JAX.
+    """IEC 61672 A-weighting curve in dB, floored at ``A_WEIGHTING_MIN_DB``, ported to JAX.
 
     Standard formula: 0 dB at 1000 Hz, heavy low-frequency rolloff.
-    Matches librosa.A_weighting within floating-point tolerance.
+    Matches librosa.A_weighting (default ``min_db=-80``) within floating-point tolerance.
 
     Args:
         frequencies: Array of frequencies in Hz.
@@ -45,7 +52,7 @@ def _a_weighting_jax(frequencies: jax.Array) -> jax.Array:
     # Numerically safe frequency (avoid log(0))
     f_safe = jnp.maximum(frequencies, 1e-20)
 
-    return 2.0 + 20.0 * (
+    weights = 2.0 + 20.0 * (
         jnp.log10(c1)
         + 4.0 * jnp.log10(f_safe)
         - jnp.log10(f_sq + c1)
@@ -53,6 +60,7 @@ def _a_weighting_jax(frequencies: jax.Array) -> jax.Array:
         - 0.5 * jnp.log10(f_sq + c3)
         - 0.5 * jnp.log10(f_sq + c4)
     )
+    return jnp.maximum(weights, A_WEIGHTING_MIN_DB)
 
 
 @dataclass(frozen=True)
@@ -63,29 +71,33 @@ class LoudnessConfig(OperatorConfig):
         sample_rate: Audio sample rate in Hz.
         frame_rate: Output frame rate in Hz (loudness frames per second).
         n_fft: FFT window size for STFT.
-        ref_db: Initial reference level in dB (learnable, matches NSynth).
-        range_db: Dynamic range floor in dB (silence threshold).
+        ref_db: Initial reference level in dB (learnable); 0 dB is amplitude 1.0.
+        range_db: Dynamic range in dB: the loudness floor is ``-range_db``.
+
+    The defaults are DDSP's ``compute_loudness`` defaults.
     """
 
     sample_rate: int = 16000
     frame_rate: int = 250
-    n_fft: int = 2048
-    ref_db: float = 20.7
-    range_db: float = 120.0
+    n_fft: int = 512
+    ref_db: float = 0.0
+    range_db: float = 80.0
 
 
 class LoudnessOperator(OperatorModule):
     """Differentiable A-weighted loudness extraction operator.
 
-    Computes per-frame loudness from raw audio via:
-    1. STFT framing (overlapping windows)
+    Computes per-frame loudness from raw audio as DDSP does:
+    1. STFT framing: center padding by ``n_fft // 2``, a periodic Hann window,
+       ``n_samples // hop + 1`` frames
     2. Power spectrum
-    3. Learned frequency weighting (initialized from A-weighting)
-    4. dB conversion with learnable reference level
+    3. Learned frequency weighting in linear scale, ``power * 10 ** (weights / 10)``
+    4. Mean power over frequency, floored at ``10 ** (-range_db / 10)``
+    5. dB relative to the learnable reference level, clamped at ``-range_db``
 
     Learnable parameters (nnx.Param):
-        frequency_weights: Per-bin frequency weighting, initialized from IEC 61672.
-        ref_db: Reference level, initialized to 20.7 (NSynth convention).
+        frequency_weights: Per-bin weighting in dB, initialized from IEC 61672 A-weighting.
+        ref_db: Reference level in dB, initialized to ``config.ref_db``.
 
     Input:  data["audio"] shape (n_samples,)
     Output: data["audio"] preserved + data["loudness"] shape (n_frames,)
@@ -106,7 +118,7 @@ class LoudnessOperator(OperatorModule):
         self._hop_length = config.sample_rate // config.frame_rate
         self._n_bins = config.n_fft // 2 + 1
 
-        # Learnable frequency weights — initialized from A-weighting
+        # Learnable frequency weights — initialized from A-weighting at the FFT bin frequencies
         freqs = jnp.linspace(0, config.sample_rate / 2, self._n_bins)
         a_weights = _a_weighting_jax(freqs)
         self.frequency_weights = nnx.Param(a_weights)
@@ -114,8 +126,9 @@ class LoudnessOperator(OperatorModule):
         # Learnable reference level
         self.ref_db = nnx.Param(jnp.array(config.ref_db))
 
-        # Hann window (not learnable, used for STFT)
-        self._window = jnp.hanning(config.n_fft)
+        # Periodic Hann window, as tf.signal.stft uses: the symmetric window one sample longer,
+        # without its last sample.
+        self._window = jnp.hanning(config.n_fft + 1)[:-1]
 
     def apply(
         self,
@@ -145,9 +158,9 @@ class LoudnessOperator(OperatorModule):
         return out_data, state, metadata
 
     def _compute_loudness(self, audio: jax.Array) -> jax.Array:
-        """STFT-based A-weighted loudness computation.
+        """DDSP's loudness: A-weighted mean power per frame, in dB.
 
-        Uses center-padding (n_fft//2 on each side) so that n_frames = n_samples // hop.
+        Center padding (``n_fft // 2`` on each side) gives ``n_samples // hop + 1`` frames.
         All steps are differentiable JAX operations.
         """
         n_fft = self.config.n_fft
@@ -158,8 +171,8 @@ class LoudnessOperator(OperatorModule):
         pad = n_fft // 2
         audio_padded = jnp.pad(audio, (pad, pad), mode="constant")
 
-        # Number of frames: n_samples // hop (exact for standard configs)
-        n_frames = n_samples // hop
+        # Frames of the padded signal: (n_samples + n_fft - n_fft) // hop + 1
+        n_frames = n_samples // hop + 1
 
         # Frame audio into overlapping windows: (n_frames, n_fft)
         indices = jnp.arange(n_fft)[None, :] + (jnp.arange(n_frames) * hop)[:, None]
@@ -172,14 +185,12 @@ class LoudnessOperator(OperatorModule):
         spectrum = jnp.fft.rfft(windowed, n=n_fft, axis=-1)
         power = jnp.real(spectrum * jnp.conj(spectrum))
 
-        # Convert to dB (with floor to avoid log(0))
-        power_db = 10.0 * jnp.log10(jnp.maximum(power, 1e-20))
+        # Weight in linear scale and average the power over frequency
+        weighting = 10.0 ** (self.frequency_weights[...] / 10.0)
+        average = jnp.mean(power * weighting, axis=-1)
 
-        # Apply learned frequency weighting
-        weighted_db = power_db + self.frequency_weights[...]
-
-        # Subtract learnable reference and average across frequency bins
-        loudness_per_frame = jnp.mean(weighted_db, axis=-1) - self.ref_db[...]
-
-        # Floor at -range_db
-        return jnp.maximum(loudness_per_frame, -self.config.range_db)
+        # dB relative to the reference, within the dynamic range (DDSP's core.power_to_db)
+        range_db = self.config.range_db
+        average = jnp.maximum(average, 10.0 ** (-range_db / 10.0))
+        loudness = 10.0 * jnp.log10(average) - self.ref_db[...]
+        return jnp.maximum(loudness, -range_db)
