@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no longer restores.
 - The pipeline iterator's `rng_counts` are the pipeline's and the source's; operators contribute
   none.
+- Operators follow flax's mode convention: `eval()` / `train()` and `nnx.view(module,
+  deterministic=True)` set a `deterministic` flag, and a stochastic operator in that mode applies
+  `apply_deterministic` (the record unchanged by default; a composite runs its deterministic
+  children). Every framework path, wrappers included, applies a record through
+  `OperatorModule.apply_record`, which hands a deterministic operator no key.
+- `NoiseOperatorConfig`, `DropoutOperatorConfig` and `PatchDropoutOperatorConfig` are stochastic
+  by default (stream `augment`) and refuse `stochastic=False`: the fixed-key "deterministic noise"
+  mode is removed; evaluation mode turns them off.
+- A deterministic `ElementOperator`, `MapOperator` or external adapter hands its function `None`
+  as the key instead of a fixed key; the function type is the keyed or the keyless shape.
 
 ### Fixed
 

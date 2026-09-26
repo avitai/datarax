@@ -43,6 +43,25 @@ def validate_stochastic_config(stochastic: bool, stream_name: str | None) -> Non
         )
 
 
+def require_stochastic(config: "OperatorConfig") -> None:
+    """Refuse a deterministic configuration of an operator whose only form draws from a key.
+
+    Noise and dropout have no deterministic transform to apply; turning them off is
+    evaluation mode, which returns the record unchanged.
+
+    Args:
+        config: The operator's configuration.
+
+    Raises:
+        ValueError: If ``config.stochastic`` is False.
+    """
+    if not config.stochastic:
+        raise ValueError(
+            f"{type(config).__name__} draws from a key and has no deterministic form; build it "
+            "stochastic and turn it off with .eval() or nnx.view(module, deterministic=True)"
+        )
+
+
 @dataclass(frozen=True)
 class DataraxModuleConfig:
     """Base configuration for all Datarax modules.

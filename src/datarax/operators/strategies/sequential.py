@@ -38,7 +38,7 @@ class SequentialStrategy(CompositionStrategyImpl):
         for i, operator in enumerate(operators):
             # Each child gets its own key, folded from the record's, and the statistics the
             # composition computed for it on the composition's input.
-            result_data, result_state, result_metadata = operator.apply(
+            result_data, result_state, result_metadata = operator.apply_record(
                 result_data,
                 result_state,
                 result_metadata,

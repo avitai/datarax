@@ -6,8 +6,7 @@ Key Features:
 
 - Drops random rectangular patches from images
 - Configurable number of patches and patch size
-- Deterministic mode with fixed patch positions
-- Stochastic mode with random patch positions per sample
+- Patch positions drawn from each record's own key; ``eval()`` turns them off
 - Full JAX compatibility with JIT compilation
 
 Examples:
@@ -32,6 +31,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
+from datarax.core.config import require_stochastic
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 from datarax.core.operator import require_key
 
@@ -57,12 +57,17 @@ class PatchDropoutOperatorConfig(ModalityOperatorConfig):
 
     """
 
+    # The operator only draws, so it is stochastic by default (turned off with ``eval()``).
+    stochastic: bool = True
+    stream_name: str | None = "augment"
+
     num_patches: int = field(default=4, kw_only=True)
     patch_size: tuple[int, int] = field(default=(8, 8), kw_only=True)
     drop_value: float = field(default=0.0, kw_only=True)
 
     def __post_init__(self) -> None:
         """Validate configuration parameters."""
+        require_stochastic(self)
         super().__post_init__()
 
         # Validate num_patches
@@ -94,29 +99,13 @@ class PatchDropoutOperator(ModalityOperator):
         - Replaces each patch with drop_value
         - Useful for occlusion robustness training
 
-    Supports three modes:
-    1. **Deterministic**: Fixed patch positions using fixed seed
-    2. **Stochastic**: Per-record patch positions drawn from the record's own key
-    3. **External params**: Accept pre-generated random parameters
+    Draws per-record patch positions from the record's own key. ``eval()``, or
+    ``nnx.view(operator, deterministic=True)``, returns the record unchanged.
 
     The operator works on single elements (H, W, C images) and is composed into
     batch processing via apply_batch() from the base class.
 
     Examples:
-        Deterministic patch dropout:
-
-        ```python
-        config = PatchDropoutOperatorConfig(
-            field_key="image",
-            num_patches=4,
-            patch_size=(16, 16),
-            drop_value=0.0,
-            stochastic=False
-        )
-        operator = PatchDropoutOperator(config, rngs=nnx.Rngs(0))
-        result, state, metadata = operator.apply(data, state, metadata)
-        ```
-
         Stochastic patch dropout with random positions:
 
         ```python
@@ -179,9 +168,7 @@ class PatchDropoutOperator(ModalityOperator):
     ) -> tuple[jax.Array, jax.Array]:
         """Return ``(y_positions, x_positions)`` for the patches to drop.
 
-        Positions come from this record's key when stochastic, and from a fixed key
-        otherwise, which is what makes the deterministic pattern reproducible. One draw
-        serves both: only where the key comes from differs.
+        Positions come from this record's key, so they depend on the record alone.
 
         Args:
             h: Image height.
@@ -193,7 +180,7 @@ class PatchDropoutOperator(ModalityOperator):
         Returns:
             Tuple of ``(y_positions, x_positions)`` arrays of shape ``(num_patches,)``.
         """
-        rng_key = require_key(key, self) if self.config.stochastic else jax.random.key(0)
+        rng_key = require_key(key, self)
         rng_x, rng_y = jax.random.split(rng_key)
         x_positions = jax.random.randint(
             rng_x, shape=(self.config.num_patches,), minval=0, maxval=(w - patch_w) + 1

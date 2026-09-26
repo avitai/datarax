@@ -54,7 +54,7 @@ class BranchingStrategy(CompositionStrategyImpl):
             def branch_fn(operands: Any) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
                 d, s, m, k = operands
                 # This child's key, folded from the record's; None stays None.
-                return operator.apply(d, s, m, self._key_for_operator(k, i), child_stats)
+                return operator.apply_record(d, s, m, self._key_for_operator(k, i), child_stats)
 
             return branch_fn
 

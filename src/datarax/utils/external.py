@@ -14,7 +14,7 @@ from flax import nnx
 from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
-from datarax.core.operator import OperatorModule
+from datarax.core.operator import call_with_mode_key, OperatorModule, require_key
 
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,10 @@ class ExternalLibraryAdapter(OperatorModule):
     def __init__(
         self,
         config: ExternalAdapterConfig,
-        fn: Callable[[dict[str, Any], jax.Array], dict[str, Any]],
+        fn: (
+            Callable[[dict[str, Any], jax.Array], dict[str, Any]]
+            | Callable[[dict[str, Any], None], dict[str, Any]]
+        ),
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
@@ -103,11 +106,9 @@ class ExternalLibraryAdapter(OperatorModule):
             Tuple of (transformed_data, state, metadata)
         """
         del stats
-        # Stochastic adapters receive a per-record key; deterministic ones get none, so
-        # fall back to a fixed key for reproducible "deterministic noise" (the external fn
-        # always requires a key argument).
-        key = key if key is not None else jax.random.key(0)
-        transformed_data = self.fn(data, key)
+        if self.stochastic:
+            key = require_key(key, self)
+        transformed_data = call_with_mode_key(self.fn, data, key)
         return transformed_data, state, metadata
 
 

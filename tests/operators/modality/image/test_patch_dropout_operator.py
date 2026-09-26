@@ -123,19 +123,18 @@ class TestPatchDropoutOperatorConfig:
 class TestPatchDropoutOperatorInitialization:
     """Tests for PatchDropoutOperator initialization modes."""
 
-    def test_init_deterministic_mode(self):
-        """Test initialization in deterministic mode."""
+    def test_init_defaults_to_stochastic(self):
+        """Without an explicit mode the operator is stochastic."""
         config = PatchDropoutOperatorConfig(
             field_key="image",
             num_patches=4,
             patch_size=(8, 8),
-            stochastic=False,
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(0))
 
         assert operator.config.num_patches == 4
         assert operator.config.patch_size == (8, 8)
-        assert operator.config.stochastic is False
+        assert operator.config.stochastic is True
 
     def test_init_stochastic_mode(self):
         """Test initialization in stochastic mode."""
@@ -179,14 +178,13 @@ class TestPatchDropoutOperatorInitialization:
 class TestPatchDropoutOperatorTransformations:
     """Tests for basic patch dropout transformations."""
 
-    def test_deterministic_single_element(self):
-        """Test deterministic patch dropout on single element."""
+    def test_single_element(self):
+        """Patch dropout on a single element, drawn from a given key."""
         config = PatchDropoutOperatorConfig(
             field_key="image",
             num_patches=2,
             patch_size=(4, 4),
             drop_value=0.0,
-            stochastic=False,
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(0))
 
@@ -194,7 +192,7 @@ class TestPatchDropoutOperatorTransformations:
         image = jnp.ones((32, 32, 3))
         data = {"image": image}
 
-        result, state, metadata = operator.apply(data, {}, {})
+        result, state, metadata = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Should have some zeros (dropped patches)
         result_image = result["image"]
@@ -202,14 +200,13 @@ class TestPatchDropoutOperatorTransformations:
         assert jnp.any(result_image == 1.0)  # Some pixels kept
         assert result_image.shape == image.shape
 
-    def test_deterministic_apply_batch(self):
-        """Test deterministic patch dropout on batch."""
+    def test_apply_batch(self):
+        """Patch dropout over a batch, each record from its own key."""
         config = PatchDropoutOperatorConfig(
             field_key="image",
             num_patches=3,
             patch_size=(8, 8),
             drop_value=0.0,
-            stochastic=False,
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(0))
 
@@ -233,14 +230,13 @@ class TestPatchDropoutOperatorTransformations:
             num_patches=2,
             patch_size=(8, 8),
             drop_value=0.5,  # Gray instead of black
-            stochastic=False,
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(0))
 
         image = jnp.ones((32, 32, 3))
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Should have patches with value 0.5
         result_image = result["image"]
@@ -253,7 +249,6 @@ class TestPatchDropoutOperatorTransformations:
             num_patches=2,
             patch_size=(4, 4),
             drop_value=0.0,
-            stochastic=False,
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(0))
 
@@ -261,7 +256,7 @@ class TestPatchDropoutOperatorTransformations:
         image = jnp.ones((32, 32))
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Should still be 2D
         result_image = result["image"]
@@ -277,14 +272,13 @@ class TestPatchDropoutOperatorEdgeCases:
         config = PatchDropoutOperatorConfig(
             field_key="image",
             num_patches=0,
-            stochastic=False,
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(0))
 
         image = jnp.ones((16, 16, 3))
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Should be completely unchanged
         assert jnp.array_equal(result["image"], image)
@@ -295,14 +289,13 @@ class TestPatchDropoutOperatorEdgeCases:
             field_key="image",
             num_patches=2,
             patch_size=(64, 64),  # Larger than image
-            stochastic=False,
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(0))
 
         image = jnp.ones((32, 32, 3))  # Smaller than patch
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Should be unchanged (patches don't fit)
         assert jnp.array_equal(result["image"], image)
@@ -313,14 +306,13 @@ class TestPatchDropoutOperatorEdgeCases:
             field_key="custom_image",
             num_patches=2,
             patch_size=(4, 4),
-            stochastic=False,
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(0))
 
         image = jnp.ones((16, 16, 3))
         data = {"custom_image": image, "other": jnp.ones(10)}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Custom image should be transformed, other data unchanged
         assert "custom_image" in result
@@ -332,7 +324,6 @@ class TestPatchDropoutOperatorEdgeCases:
         config = PatchDropoutOperatorConfig(
             field_key="image",
             num_patches=2,
-            stochastic=False,
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(0))
 
@@ -340,7 +331,7 @@ class TestPatchDropoutOperatorEdgeCases:
 
         # Should raise KeyError from _extract_field
         with pytest.raises(KeyError):
-            operator.apply(data, {}, {})
+            operator.apply(data, {}, {}, key=jax.random.key(0))
 
     def test_apply_target_key(self):
         """Test operator with target_key different from field_key."""
@@ -349,14 +340,13 @@ class TestPatchDropoutOperatorEdgeCases:
             target_key="patched_image",
             num_patches=2,
             patch_size=(4, 4),
-            stochastic=False,
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(0))
 
         image = jnp.ones((16, 16, 3))
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Original image unchanged, new field created
         assert "image" in result
@@ -369,7 +359,6 @@ class TestPatchDropoutOperatorEdgeCases:
         config = PatchDropoutOperatorConfig(
             field_key="image",
             num_patches=2,
-            stochastic=False,
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(0))
 
@@ -378,7 +367,7 @@ class TestPatchDropoutOperatorEdgeCases:
         data = {"image": image}
 
         with pytest.raises(ValueError, match="Expected 2D or 3D image"):
-            operator.apply(data, {}, {})
+            operator.apply(data, {}, {}, key=jax.random.key(0))
 
 
 class TestPatchDropoutOperatorStochasticMode:
@@ -450,19 +439,18 @@ class TestPatchDropoutOperatorStochasticMode:
 class TestPatchDropoutOperatorJAXCompatibility:
     """Tests for JAX transformation compatibility (jit, vmap, grad)."""
 
-    def test_jit_compatibility_deterministic(self):
-        """Test JIT compilation with deterministic operator."""
+    def test_jit_compatibility_with_a_given_key(self):
+        """JIT compilation of a call handed its key."""
         config = PatchDropoutOperatorConfig(
             field_key="image",
             num_patches=2,
             patch_size=(4, 4),
-            stochastic=False,
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(0))
 
         @nnx.jit
         def jit_apply(op, data):
-            result, state, metadata = op.apply(data, {}, {})
+            result, state, metadata = op.apply(data, {}, {}, key=jax.random.key(0))
             return result
 
         image = jnp.ones((16, 16, 3))
@@ -502,7 +490,6 @@ class TestPatchDropoutOperatorJAXCompatibility:
             field_key="image",
             num_patches=2,
             patch_size=(4, 4),
-            stochastic=False,
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(0))
 
@@ -527,14 +514,13 @@ class TestPatchDropoutOperatorJAXCompatibility:
         config = PatchDropoutOperatorConfig(
             field_key="image",
             num_patches=0,  # Use 0 patches for meaningful gradients
-            stochastic=False,
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(0))
 
         def loss_fn(image_data):
             """Simple loss function for gradient test."""
             data = {"image": image_data}
-            result, _, _ = operator.apply(data, {}, {})
+            result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
             # Mean squared value as loss
             return jnp.sum(result["image"] ** 2)
 
@@ -559,7 +545,6 @@ class TestPatchDropoutOperatorCommonPatterns:
             num_patches=4,
             patch_size=(8, 8),
             drop_value=0.0,
-            stochastic=False,
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(42))
 
@@ -568,7 +553,7 @@ class TestPatchDropoutOperatorCommonPatterns:
         image = jnp.ones((32, 32, 3))
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Should have patches dropped
         assert result["image"].shape == image.shape
@@ -581,14 +566,13 @@ class TestPatchDropoutOperatorCommonPatterns:
             num_patches=2,
             patch_size=(4, 8),
             drop_value=0.0,
-            stochastic=False,
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(42))
 
         image = jnp.ones((32, 32, 3))
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Should have rectangular patches dropped
         assert result["image"].shape == image.shape

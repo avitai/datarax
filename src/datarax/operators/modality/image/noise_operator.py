@@ -9,8 +9,7 @@ This operator extends ModalityOperator to provide three types of noise:
 Key Features:
 
 - Three noise types via 'mode' parameter
-- Stochastic mode with pre-generated noise
-- Deterministic mode for reproducible noise patterns
+- Noise drawn from each record's own key; ``eval()`` turns it off
 - Full JAX compatibility with JIT compilation
 
 Examples:
@@ -35,6 +34,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
+from datarax.core.config import require_stochastic
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 from datarax.core.operator import require_key
 
@@ -82,6 +82,10 @@ class NoiseOperatorConfig(ModalityOperatorConfig):
         - mode="poisson": Uses lam_scale
     """
 
+    # The operator only draws, so it is stochastic by default (turned off with ``eval()``).
+    stochastic: bool = True
+    stream_name: str | None = "augment"
+
     mode: Literal["gaussian", "salt_pepper", "poisson"] = field(default="gaussian", kw_only=True)
 
     # Gaussian parameters
@@ -102,6 +106,7 @@ class NoiseOperatorConfig(ModalityOperatorConfig):
 
     def __post_init__(self) -> None:
         """Validate configuration parameters."""
+        require_stochastic(self)
         super().__post_init__()
         self._validate_mode()
         self._validate_gaussian_params()
@@ -154,30 +159,13 @@ class NoiseOperator(ModalityOperator):
     - Salt & Pepper: Random pixels → salt_value or pepper_value
     - Poisson: output = Poisson(input * lam_scale) / lam_scale
 
-    Supports three operation modes:
-
-        1. **Deterministic**: Fixed noise pattern using fixed seed
-        2. **Stochastic**: Per-record noise drawn from the record's own key
-        3. **External params**: Accept pre-generated random parameters
+    Draws per-record noise from the record's own key. ``eval()``, or
+    ``nnx.view(operator, deterministic=True)``, returns the record unchanged.
 
     The operator works on single elements (H, W, C images) and is composed into
     batch processing via apply_batch() from the base class.
 
     Examples:
-        Gaussian noise - deterministic:
-
-        ```python
-        config = NoiseOperatorConfig(
-            field_key="image",
-            mode="gaussian",
-            noise_std=0.1,
-            noise_mean=0.0,
-            stochastic=False
-        )
-        operator = NoiseOperator(config, rngs=nnx.Rngs(0))
-        result, state, metadata = operator.apply(data, state, metadata)
-        ```
-
         Salt & Pepper noise - stochastic:
 
         ```python
@@ -272,9 +260,8 @@ class NoiseOperator(ModalityOperator):
         if self.config.noise_std == 0.0:
             return value
 
-        # This record's key when stochastic; a fixed one otherwise, which makes the
-        # "deterministic noise" the class documents reproducible.
-        rng_key = require_key(key, self) if self.config.stochastic else jax.random.key(0)
+        # This record's key: the noise depends on the record alone.
+        rng_key = require_key(key, self)
         noise = (
             jax.random.normal(rng_key, shape=value.shape) * self.config.noise_std
             + self.config.noise_mean
@@ -305,8 +292,7 @@ class NoiseOperator(ModalityOperator):
 
         pepper_val = 0.0 if self.config.pepper_value is None else self.config.pepper_value
 
-        # This record's key when stochastic; a fixed one otherwise.
-        rng_key = require_key(key, self) if self.config.stochastic else jax.random.key(0)
+        rng_key = require_key(key, self)
         random_vals = jax.random.uniform(rng_key, shape=value.shape)
 
         # Apply salt and pepper
@@ -327,8 +313,7 @@ class NoiseOperator(ModalityOperator):
         # Ensure image is non-negative for Poisson
         value = jnp.maximum(value, 0)
 
-        # This record's key when stochastic; a fixed one otherwise.
-        poisson_rng = require_key(key, self) if self.config.stochastic else jax.random.key(0)
+        poisson_rng = require_key(key, self)
 
         # Apply Poisson noise based on image range
         return jax.lax.cond(

@@ -334,22 +334,33 @@ print(f"  Expected coverage: ~{coverage:.1f}% of image dropped")
 print("  (Patches may overlap, actual coverage varies)")
 
 # %%
-# Deterministic patch dropout (fixed positions)
-det_patch_dropout = PatchDropoutOperator(
+# Evaluation mode turns the augmentation off: ``eval()`` sets flax's ``deterministic`` flag, and a
+# stochastic operator in that mode returns each record unchanged.
+eval_patch_dropout = PatchDropoutOperator(
     PatchDropoutOperatorConfig(
         field_key="image",
         num_patches=2,
         patch_size=(16, 16),
         drop_value=0.5,  # Gray patches
-        stochastic=False,  # Same positions every time
+        stream_name="patch",
     ),
-    rngs=nnx.Rngs(0),
+    rngs=nnx.Rngs(patch=42),
 )
+eval_patch_dropout.eval()
 
+
+def first_batch(stages: list) -> dict:
+    """The first batch of a pipeline over the tutorial's data, with the given stages."""
+    source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(2))
+    return next(iter(Pipeline(source=source, stages=stages, batch_size=16, rngs=nnx.Rngs(0))))
+
+
+unchanged = bool(
+    np.array_equal(first_batch([eval_patch_dropout])["image"], first_batch([])["image"])
+)
 print()
-print("Deterministic patch dropout:")
-print("  Uses fixed random seed for reproducible positions")
-print(f"  Stochastic: {det_patch_dropout.config.stochastic}")
+print("Patch dropout in evaluation mode:")
+print(f"  Images unchanged: {unchanged}")
 
 # %% [markdown]
 """

@@ -173,19 +173,18 @@ class TestNoiseOperatorConfig:
 class TestNoiseOperatorInitialization:
     """Test suite for NoiseOperator initialization."""
 
-    def test_init_gaussian_deterministic(self):
-        """Test initialization with Gaussian mode (deterministic)."""
+    def test_init_gaussian_defaults_to_stochastic(self):
+        """Gaussian mode  is stochastic by default."""
         config = NoiseOperatorConfig(
             field_key="image",
             mode="gaussian",
             noise_std=0.1,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
         assert operator.config.mode == "gaussian"
         assert operator.config.noise_std == 0.1
-        assert operator.config.stochastic is False
+        assert operator.config.stochastic is True
 
     def test_init_gaussian_stochastic(self):
         """Test initialization with Gaussian mode (stochastic)."""
@@ -201,20 +200,19 @@ class TestNoiseOperatorInitialization:
         assert operator.config.stochastic is True
         assert hasattr(operator, "rngs")
 
-    def test_init_salt_pepper_deterministic(self):
-        """Test initialization with salt & pepper mode (deterministic)."""
+    def test_init_salt_pepper_defaults_to_stochastic(self):
+        """salt & pepper mode  is stochastic by default."""
         config = NoiseOperatorConfig(
             field_key="image",
             mode="salt_pepper",
             salt_prob=0.02,
             pepper_prob=0.02,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
         assert operator.config.mode == "salt_pepper"
         assert operator.config.salt_prob == 0.02
-        assert operator.config.stochastic is False
+        assert operator.config.stochastic is True
 
     def test_init_salt_pepper_stochastic(self):
         """Test initialization with salt & pepper mode (stochastic)."""
@@ -231,19 +229,18 @@ class TestNoiseOperatorInitialization:
         assert operator.config.stochastic is True
         assert hasattr(operator, "rngs")
 
-    def test_init_poisson_deterministic(self):
-        """Test initialization with Poisson mode (deterministic)."""
+    def test_init_poisson_defaults_to_stochastic(self):
+        """Poisson mode  is stochastic by default."""
         config = NoiseOperatorConfig(
             field_key="image",
             mode="poisson",
             lam_scale=1.0,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
         assert operator.config.mode == "poisson"
         assert operator.config.lam_scale == 1.0
-        assert operator.config.stochastic is False
+        assert operator.config.stochastic is True
 
     def test_init_poisson_stochastic(self):
         """Test initialization with Poisson mode (stochastic)."""
@@ -270,7 +267,6 @@ class TestNoiseOperatorGaussianTransformations:
             mode="gaussian",
             noise_std=0.1,
             noise_mean=0.0,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
@@ -279,12 +275,14 @@ class TestNoiseOperatorGaussianTransformations:
         state = {}
         metadata = {}
 
-        result, new_state, new_metadata = operator.apply(data, state, metadata)
+        result, new_state, new_metadata = operator.apply(
+            data, state, metadata, key=jax.random.key(0)
+        )
 
         assert result["image"].shape == (32, 32, 3)
         assert new_state == state
         assert new_metadata == metadata
-        # Should be different due to noise (deterministic mode uses fixed seed)
+        # Different: noise was drawn from the given key
         assert not jnp.allclose(result["image"], data["image"])
         # Should be within reasonable bounds
         assert jnp.all(result["image"] >= 0.0)
@@ -322,7 +320,6 @@ class TestNoiseOperatorGaussianTransformations:
             field_key="image",
             mode="gaussian",
             noise_std=0.0,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
@@ -330,7 +327,7 @@ class TestNoiseOperatorGaussianTransformations:
         state = {}
         metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata)
+        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
 
         # Should be unchanged with zero noise
         assert jnp.allclose(result["image"], data["image"])
@@ -342,7 +339,6 @@ class TestNoiseOperatorGaussianTransformations:
             mode="gaussian",
             noise_std=0.01,
             noise_mean=0.1,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
@@ -350,7 +346,7 @@ class TestNoiseOperatorGaussianTransformations:
         state = {}
         metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata)
+        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
 
         # Mean should be approximately increased by noise_mean
         assert jnp.mean(result["image"]) > jnp.mean(data["image"])
@@ -362,7 +358,6 @@ class TestNoiseOperatorGaussianTransformations:
             mode="gaussian",
             noise_std=2.0,  # Large std to test clipping
             clip_range=(0.0, 1.0),
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
@@ -370,7 +365,7 @@ class TestNoiseOperatorGaussianTransformations:
         state = {}
         metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata)
+        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
 
         # Values should be clipped to [0, 1]
         assert jnp.all(result["image"] >= 0.0)
@@ -387,7 +382,6 @@ class TestNoiseOperatorSaltPepperTransformations:
             mode="salt_pepper",
             salt_prob=0.05,
             pepper_prob=0.05,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
@@ -395,7 +389,9 @@ class TestNoiseOperatorSaltPepperTransformations:
         state = {}
         metadata = {}
 
-        result, new_state, new_metadata = operator.apply(data, state, metadata)
+        result, new_state, new_metadata = operator.apply(
+            data, state, metadata, key=jax.random.key(0)
+        )
 
         assert result["image"].shape == (32, 32, 3)
         assert new_state == state
@@ -435,7 +431,6 @@ class TestNoiseOperatorSaltPepperTransformations:
             mode="salt_pepper",
             salt_prob=0.0,
             pepper_prob=0.0,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
@@ -443,7 +438,7 @@ class TestNoiseOperatorSaltPepperTransformations:
         state = {}
         metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata)
+        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
 
         # Should be unchanged with zero noise
         assert jnp.allclose(result["image"], data["image"])
@@ -455,7 +450,6 @@ class TestNoiseOperatorSaltPepperTransformations:
             mode="salt_pepper",
             salt_prob=0.2,
             pepper_prob=0.0,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
@@ -463,7 +457,7 @@ class TestNoiseOperatorSaltPepperTransformations:
         state = {}
         metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata)
+        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
 
         # Should have some salt pixels (value 1.0)
         assert jnp.any(result["image"] == 1.0)
@@ -475,7 +469,6 @@ class TestNoiseOperatorSaltPepperTransformations:
             mode="salt_pepper",
             salt_prob=0.0,
             pepper_prob=0.2,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
@@ -483,7 +476,7 @@ class TestNoiseOperatorSaltPepperTransformations:
         state = {}
         metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata)
+        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
 
         # Should have some pepper pixels (value 0.0)
         assert jnp.any(result["image"] == 0.0)
@@ -498,7 +491,6 @@ class TestNoiseOperatorSaltPepperTransformations:
             salt_value=255.0,
             pepper_value=0.0,
             clip_range=None,  # Disable clipping to test custom values
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
@@ -506,7 +498,7 @@ class TestNoiseOperatorSaltPepperTransformations:
         state = {}
         metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata)
+        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
 
         # Should have pixels with custom salt/pepper values
         assert jnp.any(result["image"] == 255.0) or jnp.any(result["image"] == 0.0)
@@ -521,19 +513,18 @@ class TestNoiseOperatorSaltPepperTransformations:
             salt_value=None,  # Auto-detect
             pepper_value=None,
             clip_range=None,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
         # Test with [0, 255] range
         data_255 = {"image": jnp.ones((32, 32, 3)) * 128.0}
-        result_255, _, _ = operator.apply(data_255, {}, {})
+        result_255, _, _ = operator.apply(data_255, {}, {}, key=jax.random.key(0))
         # Auto-detect should use 255.0 for salt
         assert jnp.any(result_255["image"] == 255.0)
 
         # Test with [0, 1] range
         data_01 = {"image": jnp.ones((32, 32, 3)) * 0.5}
-        result_01, _, _ = operator.apply(data_01, {}, {})
+        result_01, _, _ = operator.apply(data_01, {}, {}, key=jax.random.key(0))
         # Auto-detect should use 1.0 for salt
         assert jnp.any(result_01["image"] == 1.0)
 
@@ -547,7 +538,6 @@ class TestNoiseOperatorPoissonTransformations:
             field_key="image",
             mode="poisson",
             lam_scale=1.0,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
@@ -555,7 +545,9 @@ class TestNoiseOperatorPoissonTransformations:
         state = {}
         metadata = {}
 
-        result, new_state, new_metadata = operator.apply(data, state, metadata)
+        result, new_state, new_metadata = operator.apply(
+            data, state, metadata, key=jax.random.key(0)
+        )
 
         assert result["image"].shape == (32, 32, 3)
         assert new_state == state
@@ -594,7 +586,6 @@ class TestNoiseOperatorPoissonTransformations:
             field_key="image",
             mode="poisson",
             lam_scale=0.1,
-            stochastic=False,
         )
         operator_low = NoiseOperator(config_low, rngs=nnx.Rngs(0))
 
@@ -603,7 +594,6 @@ class TestNoiseOperatorPoissonTransformations:
             field_key="image",
             mode="poisson",
             lam_scale=10.0,
-            stochastic=False,
         )
         operator_high = NoiseOperator(config_high, rngs=nnx.Rngs(0))
 
@@ -611,8 +601,8 @@ class TestNoiseOperatorPoissonTransformations:
         state = {}
         metadata = {}
 
-        result_low, _, _ = operator_low.apply(data, state, metadata)
-        result_high, _, _ = operator_high.apply(data, state, metadata)
+        result_low, _, _ = operator_low.apply(data, state, metadata, key=jax.random.key(0))
+        result_high, _, _ = operator_high.apply(data, state, metadata, key=jax.random.key(0))
 
         assert result_low["image"].shape == (32, 32, 3)
         assert result_high["image"].shape == (32, 32, 3)
@@ -623,7 +613,6 @@ class TestNoiseOperatorPoissonTransformations:
             field_key="image",
             mode="poisson",
             lam_scale=1.0,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
@@ -631,7 +620,7 @@ class TestNoiseOperatorPoissonTransformations:
         state = {}
         metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata)
+        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
 
         assert result["image"].shape == (32, 32, 3)
         # Should be within reasonable bounds
@@ -645,7 +634,6 @@ class TestNoiseOperatorPoissonTransformations:
             mode="poisson",
             lam_scale=1.0,
             clip_range=(0.0, 255.0),
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
@@ -653,7 +641,7 @@ class TestNoiseOperatorPoissonTransformations:
         state = {}
         metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata)
+        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
 
         assert result["image"].shape == (32, 32, 3)
         # Should be within [0, 255] range after clipping
@@ -667,7 +655,6 @@ class TestNoiseOperatorPoissonTransformations:
             mode="poisson",
             lam_scale=1.0,
             clip_range=None,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
@@ -676,7 +663,7 @@ class TestNoiseOperatorPoissonTransformations:
         state = {}
         metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata)
+        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
 
         # Output should be non-negative (clamped internally)
         assert jnp.all(result["image"] >= 0.0)
@@ -690,7 +677,6 @@ class TestNoiseOperatorEdgeCases:
         config = NoiseOperatorConfig(
             field_key="image",
             mode="gaussian",
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
@@ -700,7 +686,7 @@ class TestNoiseOperatorEdgeCases:
 
         # Should raise KeyError
         with pytest.raises(KeyError):
-            operator.apply(data, state, metadata)
+            operator.apply(data, state, metadata, key=jax.random.key(0))
 
     def test_different_image_shapes(self):
         """Test with different image shapes (grayscale, RGB, different sizes)."""
@@ -708,23 +694,22 @@ class TestNoiseOperatorEdgeCases:
             field_key="image",
             mode="gaussian",
             noise_std=0.05,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
         # Grayscale
         data_gray = {"image": jnp.ones((28, 28, 1)) * 0.5}
-        result_gray, _, _ = operator.apply(data_gray, {}, {})
+        result_gray, _, _ = operator.apply(data_gray, {}, {}, key=jax.random.key(0))
         assert result_gray["image"].shape == (28, 28, 1)
 
         # RGB
         data_rgb = {"image": jnp.ones((32, 32, 3)) * 0.5}
-        result_rgb, _, _ = operator.apply(data_rgb, {}, {})
+        result_rgb, _, _ = operator.apply(data_rgb, {}, {}, key=jax.random.key(0))
         assert result_rgb["image"].shape == (32, 32, 3)
 
         # Large image
         data_large = {"image": jnp.ones((256, 256, 3)) * 0.5}
-        result_large, _, _ = operator.apply(data_large, {}, {})
+        result_large, _, _ = operator.apply(data_large, {}, {}, key=jax.random.key(0))
         assert result_large["image"].shape == (256, 256, 3)
 
     def test_custom_field_key(self):
@@ -733,7 +718,6 @@ class TestNoiseOperatorEdgeCases:
             field_key="custom_image",
             mode="gaussian",
             noise_std=0.1,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
@@ -744,7 +728,7 @@ class TestNoiseOperatorEdgeCases:
         state = {}
         metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata)
+        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
 
         # Custom image should be transformed
         assert not jnp.allclose(result["custom_image"], data["custom_image"])
@@ -757,7 +741,6 @@ class TestNoiseOperatorEdgeCases:
             field_key="data.image",
             mode="gaussian",
             noise_std=0.1,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
@@ -765,7 +748,7 @@ class TestNoiseOperatorEdgeCases:
         state = {}
         metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata)  # type: ignore[reportArgumentType]
+        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))  # type: ignore[reportArgumentType]
 
         # Nested field should be transformed
         assert not jnp.allclose(result["data"]["image"], data["data"]["image"])  # type: ignore[reportArgumentType]
@@ -777,7 +760,6 @@ class TestNoiseOperatorEdgeCases:
             mode="gaussian",
             noise_std=2.0,
             clip_range=None,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
@@ -785,7 +767,7 @@ class TestNoiseOperatorEdgeCases:
         state = {}
         metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata)
+        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
 
         # Values might exceed [0, 1] without clipping
         assert result["image"].shape == (32, 32, 3)
@@ -876,13 +858,12 @@ class TestNoiseOperatorJAXCompatibility:
             field_key="image",
             mode="gaussian",
             noise_std=0.1,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
         @nnx.jit
         def jitted_apply(op, data, state, metadata):
-            return op.apply(data, state, metadata)
+            return op.apply(data, state, metadata, key=jax.random.key(0))
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
         result, _, _ = jitted_apply(operator, data, {}, {})
@@ -896,13 +877,12 @@ class TestNoiseOperatorJAXCompatibility:
             mode="salt_pepper",
             salt_prob=0.05,
             pepper_prob=0.05,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
         @nnx.jit
         def jitted_apply(op, data, state, metadata):
-            return op.apply(data, state, metadata)
+            return op.apply(data, state, metadata, key=jax.random.key(0))
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
         result, _, _ = jitted_apply(operator, data, {}, {})
@@ -915,13 +895,12 @@ class TestNoiseOperatorJAXCompatibility:
             field_key="image",
             mode="poisson",
             lam_scale=1.0,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
         @nnx.jit
         def jitted_apply(op, data, state, metadata):
-            return op.apply(data, state, metadata)
+            return op.apply(data, state, metadata, key=jax.random.key(0))
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
         result, _, _ = jitted_apply(operator, data, {}, {})
@@ -957,12 +936,11 @@ class TestNoiseOperatorJAXCompatibility:
             field_key="image",
             mode="gaussian",
             noise_std=0.1,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
         def loss_fn(data):
-            result, _, _ = operator.apply(data, {}, {})
+            result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
             return jnp.sum(result["image"] ** 2)
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
@@ -978,12 +956,11 @@ class TestNoiseOperatorJAXCompatibility:
             mode="salt_pepper",
             salt_prob=0.05,
             pepper_prob=0.05,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
         def loss_fn(data):
-            result, _, _ = operator.apply(data, {}, {})
+            result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
             return jnp.sum(result["image"] ** 2)
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
@@ -998,12 +975,11 @@ class TestNoiseOperatorJAXCompatibility:
             field_key="image",
             mode="poisson",
             lam_scale=1.0,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
         def loss_fn(data):
-            result, _, _ = operator.apply(data, {}, {})
+            result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
             return jnp.sum(result["image"] ** 2)
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
@@ -1024,12 +1000,11 @@ class TestNoiseOperatorCommonPatterns:
             noise_std=0.05,
             noise_mean=0.0,
             clip_range=(0.0, 1.0),
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
-        result, _, _ = operator.apply(data, {}, {})
+        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Should produce reasonable output with noise applied
         assert result["image"].shape == (32, 32, 3)
@@ -1046,12 +1021,11 @@ class TestNoiseOperatorCommonPatterns:
             pepper_prob=0.01,
             salt_value=None,  # Auto-detect
             pepper_value=None,
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
-        result, _, _ = operator.apply(data, {}, {})
+        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Should produce reasonable output with noise applied
         assert result["image"].shape == (32, 32, 3)
@@ -1064,12 +1038,11 @@ class TestNoiseOperatorCommonPatterns:
             mode="poisson",
             lam_scale=1.0,
             clip_range=(0.0, 1.0),
-            stochastic=False,
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
-        result, _, _ = operator.apply(data, {}, {})
+        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Should produce reasonable output with noise applied
         assert result["image"].shape == (32, 32, 3)

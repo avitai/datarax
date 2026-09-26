@@ -200,7 +200,7 @@ class ProbabilisticOperator(OperatorModule):
         child_stats = statistics_for_child(stats, 0)
 
         if self.probability == 1.0:
-            return self.operator.apply(data, state, metadata, child_key, child_stats)
+            return self.operator.apply_record(data, state, metadata, child_key, child_stats)
 
         # Stochastic case (0 < p < 1): decide per record, from its own key.
         should_apply = (
@@ -212,7 +212,7 @@ class ProbabilisticOperator(OperatorModule):
         def apply_fn(operands: Any) -> tuple[Any, Any, Any]:
             """Branch: apply child operator."""
             d, s, m, cp, st = operands
-            return self.operator.apply(d, s, m, cp, st)
+            return self.operator.apply_record(d, s, m, cp, st)
 
         def passthrough_fn(operands: Any) -> tuple[Any, Any, Any]:
             """Branch: return input unchanged."""
