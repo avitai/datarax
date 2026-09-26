@@ -87,7 +87,6 @@ class CrossModalOperatorConfig(OperatorConfig):
         - input_fields must be non-empty list of non-empty strings
         - output_fields must be non-empty list of non-empty strings
         - Inherits stochastic validation from OperatorConfig
-        - Inherits statistics validation from DataraxModuleConfig
 
     Examples:
         Simple fusion:

@@ -42,7 +42,11 @@ Every component - sources, operators, batchers, samplers, sharders - is a Flax N
 
 ### Differentiable Data Pipelines
 
-Because operators are NNX modules, gradients flow through the entire pipeline. This enables approaches that are not possible with standard data loaders:
+Because operators are NNX modules, gradients flow through them to their inputs and to their own
+parameters: every operator family's gradient is checked against finite differences
+(`tests/operators/test_gradients.py`). The exceptions are stated: a Poisson noise draw is an integer
+count and passes no gradient to its input. This enables approaches that are not possible with
+standard data loaders:
 
 - [Gradient-based augmentation search](examples/advanced/differentiable/01_dada_learned_augmentation_guide.py) - replacing RL-based methods like AutoAugment with direct optimization
 - [Task-optimized preprocessing](examples/advanced/differentiable/02_learned_isp_guide.py) - backpropagating task loss through every processing stage
