@@ -195,7 +195,7 @@ class CrossModalOperator(OperatorModule):
 
         - **Statistics**: apply() receives the operator's statistics through its stats
           parameter, for adaptive cross-modal operations such as batch-aware normalization
-          of fused embeddings. Set them with set_statistics(), or override
+          of fused embeddings. Give them to the constructor (``statistics=``), or override
           compute_statistics() to derive them per batch.
 
     Subclass Implementation Pattern:

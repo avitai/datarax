@@ -6,18 +6,21 @@ to normalize by, a peak to scale against, a threshold fitted to the data. Statis
 
 ## Stored statistics
 
-`set_statistics` stores the values an operator applies; `get_statistics` reads them back and
-`reset_statistics` clears them.
+Stored statistics are given when the operator is built; `get_statistics` reads them back and
+`set_statistics` replaces their values.
 
 ```python
-operator = NormalizeOperator(NormalizeConfig())
-operator.set_statistics({"mean": 0.5, "std": 0.2})
+operator = NormalizeOperator(NormalizeConfig(), statistics={"mean": 0.5, "std": 0.2})
+operator.set_statistics({"mean": 0.4, "std": 0.3})  # same entries, shapes and dtypes
 ```
 
-The store is a plain `nnx.Variable`, so the statistics are module state rather than
-configuration. Two consequences follow. They round-trip through a checkpoint with the rest of the
-operator's state, and two operators with equal configurations share one compiled trace whatever
-their statistics hold — a fitted number never becomes part of what a transform compares.
+The store is a plain `nnx.Variable` of arrays, created at its real shape in the constructor, so
+the statistics are module state rather than configuration, and the operator's state layout never
+changes after it is built. Three consequences follow. They round-trip through a checkpoint with
+the rest of the operator's state; two operators with equal configurations share one compiled trace
+whatever their statistics hold, and replacing their values compiles nothing new; and
+`set_statistics` refuses values of another structure, shape or dtype, as it refuses an operator
+built without statistics, leaving the store unchanged.
 
 ## Statistics fitted to each batch
 
@@ -39,8 +42,8 @@ class BatchNormalize(OperatorModule):
 `batch_data` carries the batch on axis 0, so a reduction over it describes the whole batch. The
 statistics are part of the traced computation, so gradients flow through them.
 
-The default `compute_statistics` returns whatever `set_statistics` stored, which is why an
-operator with fixed statistics needs no override and produces exactly what it did before.
+The default `compute_statistics` returns the stored statistics, so an operator with fixed
+statistics needs no override.
 
 A caller may also pass statistics explicitly, and an explicit argument wins:
 
