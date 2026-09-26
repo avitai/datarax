@@ -56,7 +56,6 @@ from substrax.spmd import (
     create_data_parallel_sharding,
     place_batch_on_shards,
     place_nnx_state_on_shards,
-    reduce_gradient_tree,
 )
 
 # Create a data-parallel mesh
@@ -70,10 +69,14 @@ sharded_batch = place_batch_on_shards(batch, sharding)
 
 # Place the model's NNX state on the mesh (replicated by default)
 sharded_state = place_nnx_state_on_shards(nnx.state(model), mesh)
-
-# Reduce a gradient tree across devices (inside nnx.jit with an active mesh)
-reduced_grads = reduce_gradient_tree(gradients, reduce_type="mean")
 ```
+
+Gradients need no reduction step. Under `nnx.jit` with an active mesh, the
+gradient of a sharded batch's loss is already the full gradient, and the
+compiler inserts the all-reduce. Inside `jax.shard_map`, average the loss over
+the axis before differentiating: a replicated parameter's gradient arrives
+summed over the axis, so averaging the gradients afterwards is wrong by the axis
+size.
 
 ### Metrics functions
 

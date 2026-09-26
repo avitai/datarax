@@ -706,7 +706,7 @@ wheels = [
 
 [[package]]
 name = "calibrax"
-version = "0.1.11"
+version = "0.1.14"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click", version = "8.1.8", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-7-datarax-automation'" },
@@ -721,11 +721,10 @@ dependencies = [
     { name = "pydantic" },
     { name = "scipy" },
     { name = "substrax" },
-    { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/82/59/2b9708a920a825d6dd1cdda3888d4925828219083ff505d6727e4599852e/calibrax-0.1.11.tar.gz", hash = "sha256:3321909f0f59c1b323480ff7ea8fa0ed30c729757534f611239caf2185438d12", size = 183654, upload-time = "2026-09-21T02:13:32.738Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b9/b9/c98bf82a68e7eed52b4c9a33cc4a17e6a3d5c136cafd4167b7ef458b16eb/calibrax-0.1.14.tar.gz", hash = "sha256:5445a00569cbe86083c582f2219ddac37ac5f55f711e2b9c4ed4ce4518d84757", size = 185115, upload-time = "2026-09-25T03:32:01.586Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/93/33/0b52efdaf98039b0224a606b101c877b8d7fe5520cca963e9d6839ee305b/calibrax-0.1.11-py3-none-any.whl", hash = "sha256:65bfc746ef8792baaa4ad93afef17f4eef900d95e5110f1ac80d0676fea1e3c9", size = 230029, upload-time = "2026-09-21T02:13:30.144Z" },
+    { url = "https://files.pythonhosted.org/packages/ef/67/fcd980252ccd474ba2f95925ee91c3aab7e44ec6f66e2041cc7dc3b3ca60/calibrax-0.1.14-py3-none-any.whl", hash = "sha256:7d5d4027f1302ff28ef24924f6cd21cbc5a38dd4cb7ba14a70c1a6d6149fe35a", size = 231430, upload-time = "2026-09-25T03:31:59.34Z" },
 ]
 
 [package.optional-dependencies]
@@ -1580,11 +1579,11 @@ requires-dist = [
     { name = "build", marker = "extra == 'all-macos'", specifier = ">=1.0.3" },
     { name = "build", marker = "extra == 'cuda-dev'", specifier = ">=1.0.3" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0.3" },
-    { name = "calibrax", specifier = ">=0.1.11" },
-    { name = "calibrax", extras = ["wandb"], marker = "extra == 'all'", specifier = ">=0.1.11" },
-    { name = "calibrax", extras = ["wandb"], marker = "extra == 'all-cpu'", specifier = ">=0.1.11" },
-    { name = "calibrax", extras = ["wandb"], marker = "extra == 'all-macos'", specifier = ">=0.1.11" },
-    { name = "calibrax", extras = ["wandb"], marker = "extra == 'wandb'", specifier = ">=0.1.11" },
+    { name = "calibrax", specifier = ">=0.1.14" },
+    { name = "calibrax", extras = ["wandb"], marker = "extra == 'all'", specifier = ">=0.1.14" },
+    { name = "calibrax", extras = ["wandb"], marker = "extra == 'all-cpu'", specifier = ">=0.1.14" },
+    { name = "calibrax", extras = ["wandb"], marker = "extra == 'all-macos'", specifier = ">=0.1.14" },
+    { name = "calibrax", extras = ["wandb"], marker = "extra == 'wandb'", specifier = ">=0.1.14" },
     { name = "click", marker = "extra == 'automation'", specifier = "<8.3" },
     { name = "click", marker = "extra == 'benchmark'", specifier = ">=8.1" },
     { name = "coverage", marker = "extra == 'all'", specifier = ">=7" },
@@ -1856,11 +1855,11 @@ requires-dist = [
     { name = "spdl", marker = "sys_platform == 'linux' and extra == 'all-macos'", specifier = ">=0.1" },
     { name = "spdl", marker = "sys_platform == 'linux' and extra == 'test'", specifier = ">=0.1" },
     { name = "spdl", marker = "extra == 'benchmark'", specifier = ">=0.1" },
-    { name = "substrax", specifier = ">=0.1.16" },
-    { name = "substrax", extras = ["testing"], marker = "extra == 'all'", specifier = ">=0.1.11" },
-    { name = "substrax", extras = ["testing"], marker = "extra == 'all-cpu'", specifier = ">=0.1.11" },
-    { name = "substrax", extras = ["testing"], marker = "extra == 'all-macos'", specifier = ">=0.1.11" },
-    { name = "substrax", extras = ["testing"], marker = "extra == 'test'", specifier = ">=0.1.11" },
+    { name = "substrax", specifier = ">=0.1.18" },
+    { name = "substrax", extras = ["testing"], marker = "extra == 'all'", specifier = ">=0.1.18" },
+    { name = "substrax", extras = ["testing"], marker = "extra == 'all-cpu'", specifier = ">=0.1.18" },
+    { name = "substrax", extras = ["testing"], marker = "extra == 'all-macos'", specifier = ">=0.1.18" },
+    { name = "substrax", extras = ["testing"], marker = "extra == 'test'", specifier = ">=0.1.18" },
     { name = "tabulate", marker = "extra == 'benchmark'", specifier = ">=0.9" },
     { name = "tensorflow", marker = "extra == 'tfds'", specifier = ">=2.20.0,<2.21" },
     { name = "tensorflow-datasets", marker = "extra == 'all'", specifier = ">=4.9.2" },
@@ -7153,7 +7152,7 @@ wheels = [
 
 [[package]]
 name = "substrax"
-version = "0.1.16"
+version = "0.1.18"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "flax" },
@@ -7164,9 +7163,9 @@ dependencies = [
     { name = "orbax-checkpoint" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/03/15/82e9ea0dd9efa72744c49a8cc9a1a49c6071463170e354af1372ea45f237/substrax-0.1.16.tar.gz", hash = "sha256:499a52b85e77b4553182332cfdaf67361ef6c3b97c1cb6fe640e165ac194ec5a", size = 108174, upload-time = "2026-09-21T06:01:37.84Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0c/3b/66a775b558a02cbbbd551a8d6de97d4cc68b324a9b64b2d90afb2c6a8e7c/substrax-0.1.18.tar.gz", hash = "sha256:7520d6ec42057c2899ba01d61edfa2f72fb17825889fb2726bf8cec5084c826f", size = 113094, upload-time = "2026-09-26T00:40:53.12Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/df/0e/c3aaf53ab8ba71b868f1d8ed0d1dac405949719501a0cbeea7fcae56486a/substrax-0.1.16-py3-none-any.whl", hash = "sha256:be1c5a2d8c59ebc927e6d4728e6c9032be6b57a96f373099711564fe5983867f", size = 133923, upload-time = "2026-09-21T06:01:35.537Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/1d/27a75f8e73b66b4eac8dfe144ff62782b0c9a67e85d41478b47a3ff937c6/substrax-0.1.18-py3-none-any.whl", hash = "sha256:b5427191787db20362bd8d0b7ffb468ec84147613d0607d7bdd0d9a4b9508649", size = 140570, upload-time = "2026-09-26T00:40:51.173Z" },
 ]
 
 [package.optional-dependencies]
