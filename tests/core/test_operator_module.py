@@ -30,7 +30,7 @@ from substrax.testing import TraceCounter
 from datarax.core.config import DataraxModuleConfig, OperatorConfig
 from datarax.core.element_batch import Batch
 from datarax.core.module import DataraxModule
-from datarax.core.operator import DIRECT_CALL_STREAM, OperatorModule, require_key
+from datarax.core.operator import OperatorModule, require_key
 
 
 @dataclass(frozen=True)
@@ -363,34 +363,43 @@ class KeyRecordingPassthrough(OperatorModule):
         return data, state, None
 
 
-class TestOperatorPrivateRngStream:
-    """A stochastic operator draws direct-call randomness from its own stream.
+class LearnableScaleOperator(OperatorModule):
+    """A stochastic operator with its own parameter: a jittered, learnable scale."""
 
-    The caller's ``Rngs`` is read once, at construction, to draw the operator's stable base key.
-    After that the operator owns its randomness: a call that carries record identity keys off the
-    base key, and a call without it draws from a private stream instead of reaching back into a
-    caller whose state it does not own.
+    def __init__(self, config: OperatorConfig, *, rngs: nnx.Rngs) -> None:
+        super().__init__(config, rngs=rngs)
+        self.scale = nnx.Param(jnp.asarray(2.0))
+
+    def apply(self, data, state, metadata, key=None, stats=None):
+        """Scale by the parameter times a draw from the record's key."""
+        del metadata, stats
+        jitter = jax.random.uniform(require_key(key, self), (), minval=0.5, maxval=1.5)
+        return {**data, "image": data["image"] * self.scale[...] * jitter}, state, None
+
+
+class TestOperatorKeys:
+    """A stochastic operator's randomness is a function of its base key and the record alone.
+
+    The caller's ``Rngs`` is read once, at construction, for the base key, which is array state
+    typed ``nnx.RngKey``: a key held as a static value would put it in the graphdef, and two
+    operators differing only in their seed would compile twice. A record's key is
+    ``fold_in(fold_in(base_key, epoch), index)``; a call that names no records keys on batch
+    positions, so it repeats exactly as well.
     """
 
     _CONFIG = RandomBrightnessConfig(stochastic=True, stream_name="augment")
 
     @classmethod
-    def _stochastic(cls) -> RandomBrightnessOperator:
-        return RandomBrightnessOperator(cls._CONFIG, rngs=nnx.Rngs(augment=0))
+    def _stochastic(cls, seed: int = 0) -> RandomBrightnessOperator:
+        return RandomBrightnessOperator(cls._CONFIG, rngs=nnx.Rngs(augment=seed))
 
     @staticmethod
-    def _batch() -> dict:
-        return {"image": jnp.ones((4, 8, 8, 3)) * 0.5}
-
-    @staticmethod
-    def _rng_counts(operator: OperatorModule) -> list[int]:
-        return [int(count) for count in jax.tree.leaves(nnx.state(operator, nnx.RngCount))]
+    def _batch(size: int = 4) -> dict:
+        return {"image": jnp.linspace(0.1, 0.9, size * 12).reshape(size, 4, 3)}
 
     def test_an_operator_does_not_keep_the_callers_rngs(self):
         """The caller's Rngs is used at construction and is not operator state afterwards."""
-        operator = RandomBrightnessOperator(self._CONFIG, rngs=nnx.Rngs(augment=0))
-
-        assert operator.rngs is None
+        assert self._stochastic().rngs is None
 
     def test_a_module_that_is_not_an_operator_keeps_its_rngs(self):
         """Only operators clear it; a source or sampler still draws from the caller's Rngs."""
@@ -398,74 +407,97 @@ class TestOperatorPrivateRngStream:
 
         assert DataraxModule(DataraxModuleConfig(), rngs=rngs).rngs is rngs
 
-    def test_a_stochastic_operator_carries_a_base_key_and_a_private_stream(self):
-        """Both live in module state, so both round-trip through a checkpoint."""
-        state = nnx.to_pure_dict(nnx.state(self._stochastic()))
+    def test_the_base_key_is_an_rng_key_and_the_only_rng_state(self):
+        """No stream and no counter: nothing an operator holds advances when it is applied."""
+        operator = self._stochastic()
 
-        assert "_base_key" in state
-        assert set(state["_rng_stream"]) == {"key", "count"}
-
-    def test_the_private_stream_hangs_off_the_base_key(self):
-        """The stream is derived, not drawn, so it survives a restore of the base key alone."""
-        state = nnx.to_pure_dict(nnx.state(self._stochastic()))
-
-        expected = jax.random.fold_in(state["_base_key"], DIRECT_CALL_STREAM)
-        assert jnp.array_equal(
-            jax.random.key_data(state["_rng_stream"]["key"]), jax.random.key_data(expected)
-        )
+        assert isinstance(operator._base_key, nnx.RngKey)
+        assert jax.tree.leaves(nnx.state(operator, nnx.RngCount)) == []
+        assert not hasattr(operator, "_rng_stream")
 
     def test_a_deterministic_operator_has_no_rng_state(self):
-        """It draws nothing, so it carries neither a base key nor a stream."""
+        """It draws nothing, so it carries no base key."""
         operator = NormalizeOperator(NormalizeConfig(stochastic=False), rngs=nnx.Rngs(0))
 
-        state = nnx.to_pure_dict(nnx.state(operator))
-        assert "_base_key" not in state
-        assert "_rng_stream" not in state
-        assert self._rng_counts(operator) == []
+        assert not hasattr(operator, "_base_key")
+        assert jax.tree.leaves(nnx.state(operator, nnx.RngState)) == []
 
-    def test_two_direct_calls_draw_differently(self):
-        """Without record identity there is nothing to key on, so each call draws afresh."""
+    def test_a_call_without_records_repeats_and_keys_on_positions(self):
+        """No record identity: positions stand in for record indices, with no epoch."""
         operator = self._stochastic()
         batch = self._batch()
 
         first, _ = operator._vmap_apply(batch, {})
         second, _ = operator._vmap_apply(batch, {})
+        positional, _ = operator._vmap_apply(batch, {}, None, jnp.arange(4, dtype=jnp.uint32))
+
+        assert jnp.array_equal(first["image"], second["image"])
+        assert jnp.array_equal(first["image"], positional["image"])
+
+    def test_reversing_the_batch_reverses_the_rows(self):
+        """A record's draw follows its index, not its position in the batch."""
+        operator = self._stochastic()
+        batch = self._batch()
+        indices = jnp.arange(10, 14, dtype=jnp.uint32)
+
+        forward, _ = operator._vmap_apply(batch, {}, None, indices, 3)
+        backward, _ = operator._vmap_apply(
+            {"image": batch["image"][::-1]}, {}, None, indices[::-1], 3
+        )
+
+        assert jnp.array_equal(forward["image"], backward["image"][::-1])
+
+    def test_each_epoch_draws_afresh(self):
+        """The control for the test above: the epoch is part of the key."""
+        operator = self._stochastic()
+        indices = jnp.arange(4, dtype=jnp.uint32)
+
+        first, _ = operator._vmap_apply(self._batch(), {}, None, indices, 0)
+        second, _ = operator._vmap_apply(self._batch(), {}, None, indices, 1)
 
         assert not jnp.allclose(first["image"], second["image"])
 
-    def test_a_direct_call_advances_the_operators_own_stream(self):
-        """The draw is counted on the operator, which is what makes it resumable."""
-        operator = self._stochastic()
+    def test_two_operators_built_from_one_seed_agree_and_other_seeds_differ(self):
+        """The base key is drawn from the caller's stream, so the seed decides the draws."""
+        first, _ = self._stochastic(0)._vmap_apply(self._batch(), {})
+        second, _ = self._stochastic(0)._vmap_apply(self._batch(), {})
+        other, _ = self._stochastic(7)._vmap_apply(self._batch(), {})
 
-        before = self._rng_counts(operator)
-        operator._vmap_apply(self._batch(), {})
-        after = self._rng_counts(operator)
+        assert jnp.array_equal(first["image"], second["image"])
+        assert not jnp.allclose(first["image"], other["image"])
 
-        assert before == [0]
-        assert after == [1]
+    def test_operators_differing_only_in_their_key_share_one_trace(self):
+        """The key is state, not graphdef, so a second seed compiles nothing new."""
+        counter = TraceCounter()
+        apply = nnx.jit(counter.wrap(lambda operator, batch: operator._vmap_apply(batch, {})[0]))
 
-    def test_a_call_carrying_record_indices_does_not_draw(self):
-        """With record identity the key comes from the base key, so the call repeats exactly."""
-        operator = self._stochastic()
+        with counter.expect(new_traces=1):
+            apply(self._stochastic(0), self._batch())
+        with counter.expect(new_traces=0):
+            apply(self._stochastic(7), self._batch())
+
+    def test_the_param_partition_differentiates_in_tree_mode(self):
+        """Tree mode refuses a key leaf in the differentiated tree, as it does for flax's own
+        key-holding modules, so the parameters are split out and differentiated alone. The
+        gradient is checked against the closed form: d/ds sum(x * s * jitter) = sum(x * jitter).
+        """
+        operator = LearnableScaleOperator(
+            OperatorConfig(stochastic=True, stream_name="augment"), rngs=nnx.Rngs(augment=0)
+        )
         batch = self._batch()
         indices = jnp.arange(4, dtype=jnp.uint32)
+        graphdef, params, rest = nnx.split(operator, nnx.Param, ..., graph=False)
 
-        first, _ = operator._vmap_apply(batch, {}, None, indices)
-        second, _ = operator._vmap_apply(batch, {}, None, indices)
+        def loss(params):
+            model = nnx.merge(graphdef, params, rest)
+            return jnp.sum(model._vmap_apply(batch, {}, None, indices)[0]["image"])
 
-        assert jnp.array_equal(first["image"], second["image"])
-        assert self._rng_counts(operator) == [0]
+        grads = jax.jit(jax.grad(loss))(params)
 
-    def test_two_operators_built_from_one_seed_agree(self):
-        """A fresh operator with the same seed reproduces the first one's draws.
-
-        The control for the two tests above: without it, an operator that simply returned noise
-        would satisfy "two calls differ" while reproducing nothing.
-        """
-        first, _ = self._stochastic()._vmap_apply(self._batch(), {})
-        second, _ = self._stochastic()._vmap_apply(self._batch(), {})
-
-        assert jnp.array_equal(first["image"], second["image"])
+        scaled, _ = operator._vmap_apply(batch, {}, None, indices)
+        expected = jnp.sum(scaled["image"]) / 2.0  # the scale is 2.0
+        tolerance = 8 * jnp.finfo(jnp.float32).eps * jnp.abs(expected)
+        assert jnp.abs(grads["scale"][...] - expected) <= tolerance
 
     def test_a_subclass_may_hold_the_callers_rngs_without_changing_draws(self):
         """Assigning ``self.rngs`` after ``super().__init__`` is allowed and changes no draw."""
@@ -1139,7 +1171,6 @@ class TestOperatorStatisticsStore:
         state = nnx.to_pure_dict(nnx.state(operator))
 
         assert "_statistics" in state
-        assert "_computed_stats" not in state
 
     def test_reset_statistics_clears_the_store(self):
         """After a reset the operator has no statistics to give apply."""

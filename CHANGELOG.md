@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A stochastic operator's only RNG state is its base key, an `nnx.RngKey` drawn once from the
+  caller's stream; the private direct-call stream and `datarax.core.operator.DIRECT_CALL_STREAM`
+  are removed, so applying an operator mutates nothing. A call that names no records keys on
+  batch positions and repeats exactly; two operators differing only in their key share one
+  compiled trace.
+- Checkpoints saved under an earlier module layout are refused: the upgrade hook
+  (`DataraxModule._upgrade_saved_state`) is removed, and an operator state carrying a stream
+  no longer restores.
+- The pipeline iterator's `rng_counts` are the pipeline's and the source's; operators contribute
+  none.
+
+### Fixed
+
+- A restore refused for a mismatched state no longer changes the module: validation now covers
+  every level of the state (dictionaries of stages included) before any value is written.
+  Before, a pipeline whose stage subtree did not match kept the position and the earlier
+  stages' parameters it had already written.
+
 ## [0.1.17] - 2026-09-25
 
 ### Added

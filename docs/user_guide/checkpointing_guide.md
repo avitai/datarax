@@ -117,11 +117,9 @@ iterator.set_state(data_state)
 caller has already consumed; ``set_state()`` requires a pipeline with the
 same structure and seeds as the one that produced the state.
 
-``rng_counts`` holds one count per stochastic operator, then the pipeline's
-and the source's. An operator's own count stays 0: iteration keys each
-record on the operator's stable base key and never draws from the operator's
-private stream. A deterministic operator contributes no count, so the list's
-length follows how many operators are stochastic.
+``rng_counts`` holds the pipeline's count, then the source's. An operator
+keys each record on its stable base key and holds no count, so the list's
+length does not depend on the operators.
 
 ``version`` names the layout those counts are in. A state saved before the
 field existed is upgraded when it is restored — the counts outside operators

@@ -141,7 +141,7 @@ datarax_before, datarax_payload = train_datarax(
 ```
 Latest step in each store: 20, 20
 Grain loader state keys: ['data_source', 'last_seen_indices', 'last_worker_index', 'sampler', 'version', 'worker_count']
-Datarax loader state: {'position': 32, 'epoch': 2, 'rng_counts': [0, 1, 0], 'version': 2, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 1, 'shuffled': True}}
+Datarax loader state: {'position': 32, 'epoch': 2, 'rng_counts': [1, 0], 'version': 2, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 1, 'shuffled': True}}
 ```
 
 ### Part 3: Restore into Fresh Objects and Continue
@@ -167,7 +167,7 @@ templates = {
     "data_iterator": {
         "position": 0,
         "epoch": 0,
-        "rng_counts": [0, 0, 0],
+        "rng_counts": [0, 0],
         "version": 2,
         # The state names the configuration it is valid for; the template only fixes the shape.
         "fingerprint": {

@@ -20,7 +20,6 @@ from substrax.typing import Checkpointable
 
 from datarax.checkpoint import IteratorCheckpoint
 from datarax.core.config import ElementOperatorConfig
-from datarax.core.operator import DIRECT_CALL_STREAM
 from datarax.operators import ElementOperator
 from datarax.pipeline import Pipeline
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
@@ -175,17 +174,38 @@ def test_a_pipeline_of_another_structure_is_refused() -> None:
         other.set_state(state)
 
 
-def test_an_operator_s_earlier_layout_is_upgraded_inside_a_pipeline_checkpoint() -> None:
-    """The pipeline offers each operator its own subtree, as a module checkpoint does."""
+def test_an_operator_state_carrying_a_stream_is_refused_inside_a_pipeline_checkpoint() -> None:
+    """An operator's state is its base key and statistics; a subtree holding more is refused."""
     state = copy.deepcopy(_tuned().get_state())
     operator_state = state["_stage_modules"]["stage_1"]
-    base_key = operator_state["_base_key"]
-    del operator_state["_rng_stream"]
-    operator_state["rngs"] = {"aug": {"count": jnp.zeros((), jnp.uint32), "key": base_key}}
+    operator_state["_rng_stream"] = {
+        "count": jnp.zeros((), jnp.uint32),
+        "key": operator_state["_base_key"],
+    }
 
-    restored = _build()
-    restored.set_state(state)
+    with pytest.raises(ValueError, match="structurally incompatible"):
+        _build().set_state(state)
 
-    stream = _operator(restored)._rng_stream
-    expected = jax.random.fold_in(base_key, DIRECT_CALL_STREAM)
-    assert jnp.array_equal(jax.random.key_data(stream.key[...]), jax.random.key_data(expected))
+
+def _host_values(state: dict) -> dict:
+    """The state's leaves as NumPy arrays, keys as their key data, for exact comparison."""
+
+    def to_host(leaf: jax.Array) -> np.ndarray:
+        if isinstance(leaf, jax.Array) and jnp.issubdtype(leaf.dtype, jax.dtypes.prng_key):
+            return np.asarray(jax.random.key_data(leaf))
+        return np.asarray(leaf)
+
+    return jax.tree.map(to_host, state)
+
+
+def test_a_refused_restore_changes_nothing() -> None:
+    """Validation covers every stage before any value is written, so a refusal is atomic."""
+    state = copy.deepcopy(_tuned().get_state())
+    state["_stage_modules"]["stage_1"]["unexpected"] = jnp.zeros(())
+    target = _build()
+    before = _host_values(target.get_state())
+
+    with pytest.raises(ValueError, match="structurally incompatible"):
+        target.set_state(state)
+
+    jax.tree.map(np.testing.assert_array_equal, _host_values(target.get_state()), before)

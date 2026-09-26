@@ -22,25 +22,6 @@ from datarax.core.config import DataraxModuleConfig
 logger = logging.getLogger(__name__)
 
 
-def _copy_state_nodes(value: Any) -> Any:
-    """Copy a saved state's containers while sharing its leaves.
-
-    An upgrade rewrites container entries, so the containers are copied and the array leaves
-    are not; the caller's dictionary is left as it was.
-
-    Args:
-        value: A node of a saved state tree.
-
-    Returns:
-        A copy of the node's containers, sharing every leaf.
-    """
-    if isinstance(value, dict):
-        return {key: _copy_state_nodes(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_copy_state_nodes(item) for item in value]
-    return value
-
-
 class DataraxModule(nnx.Module):
     """Base class for all Datarax modules.
 
@@ -102,16 +83,6 @@ class DataraxModule(nnx.Module):
             state: A dictionary containing the internal state to restore.
         """
         restore_module_state(self, state)
-
-    def _upgrade_saved_state(self, saved: dict[str, Any]) -> None:
-        """Rewrite this module's saved subtree from an earlier layout to the current one.
-
-        The base module's state layout has not changed, so this does nothing. A subclass whose
-        layout changed overrides it and edits ``saved`` in place.
-
-        Args:
-            saved: This module's own saved subtree.
-        """
 
     def clone(self) -> "DataraxModule":
         """Create a new instance with the same state as this module.
@@ -199,9 +170,8 @@ def module_state(module: nnx.Module) -> dict[str, Any]:
 def restore_module_state(module: nnx.Module, state: dict[str, Any]) -> None:
     """Restore ``state``, as :func:`module_state` produced it, into ``module``.
 
-    Each ``DataraxModule`` in the graph first rewrites its own subtree from an earlier layout
-    (:meth:`DataraxModule._upgrade_saved_state`). Restoration is strict: the saved structure
-    must match the module's, and array leaves their shapes and dtypes.
+    Restoration is strict: the saved structure must match the module's, and array leaves their
+    shapes and dtypes. A state of any other layout is refused as it is.
 
     Args:
         module: The module receiving the state, built the way the saved one was.
@@ -214,45 +184,14 @@ def restore_module_state(module: nnx.Module, state: dict[str, Any]) -> None:
     if not isinstance(state, dict):
         raise TypeError(f"State must be a dict, got {type(state).__name__}")
 
-    upgraded = _upgraded_state(module, state)
     try:
-        _validate_state(module, module_state(module), upgraded)
+        _validate_state(module, module_state(module), state)
     except ValueError as exc:
         raise ValueError(
             "Checkpoint state is structurally incompatible with module state. "
             "Regenerate checkpoints after architecture/config changes."
         ) from exc
-    _restore_state(module, upgraded)
-
-
-def _upgraded_state(module: nnx.Module, state: dict[str, Any]) -> dict[str, Any]:
-    """Return ``state`` with each module's earlier layout rewritten to the current one.
-
-    Every ``DataraxModule`` in the graph is offered its own subtree, so a checkpoint written
-    before a layout change restores without its reader knowing which module changed. A module
-    whose subtree the saved state does not carry is skipped, and validation reports that
-    difference as it would have anyway.
-
-    Args:
-        module: The module the state is restored into.
-        state: The saved state dictionary.
-
-    Returns:
-        The upgraded state. The argument is not modified.
-    """
-    upgraded = _copy_state_nodes(state)
-    for path, node in nnx.iter_graph(module, graph=True):
-        if not isinstance(node, DataraxModule):
-            continue
-        subtree: Any = upgraded
-        for key in path:
-            if not isinstance(subtree, dict) or key not in subtree:
-                subtree = None
-                break
-            subtree = subtree[key]
-        if isinstance(subtree, dict):
-            node._upgrade_saved_state(subtree)  # noqa: SLF001 - the hook each module overrides
-    return upgraded
+    _restore_state(module, state)
 
 
 def _format_path(path: tuple[str | int, ...]) -> str:
@@ -279,11 +218,8 @@ def _validate_state(
     if isinstance(target, nnx.Variable):
         _validate_array_leaf(current, saved, location)
         return
-    if isinstance(target, nnx.Module):
-        _validate_module_state(target, current, saved, path, location)
-        return
-    if isinstance(current, dict):
-        _validate_mapping_state(current, saved, location)
+    if isinstance(target, nnx.Module) or isinstance(current, dict):
+        _validate_container_state(target, current, saved, path, location)
         return
     _validate_array_leaf(current, saved, location)
 
@@ -317,10 +253,14 @@ def _validate_mapping_state(current: dict[Any, Any], saved: Any, location: str) 
     raise ValueError(f"State keys mismatch at {location}: missing={missing}, extra={extra}")
 
 
-def _validate_module_state(
-    target: nnx.Module, current: Any, saved: Any, path: tuple[str | int, ...], location: str
+def _validate_container_state(
+    target: Any, current: Any, saved: Any, path: tuple[str | int, ...], location: str
 ) -> None:
-    """Validate module subtree recursively against a saved subtree."""
+    """Validate a module's or a container's subtree, recursing into every child.
+
+    Every level is checked before :func:`_restore_state` writes anything, so a state that does
+    not match anywhere in the graph is refused with the module left exactly as it was.
+    """
     if not isinstance(current, dict):
         raise ValueError(
             f"Current state mismatch at {location}: expected dict, got {type(current).__name__}"
