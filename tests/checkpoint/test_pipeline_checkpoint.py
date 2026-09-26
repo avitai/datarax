@@ -16,6 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from flax import nnx
+from substrax.typing import Checkpointable
 
 from datarax.checkpoint import IteratorCheckpoint
 from datarax.core.config import ElementOperatorConfig
@@ -23,7 +24,6 @@ from datarax.core.operator import DIRECT_CALL_STREAM
 from datarax.operators import ElementOperator
 from datarax.pipeline import Pipeline
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
-from datarax.typing import Checkpointable
 
 
 _RECORDS = 20

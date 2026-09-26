@@ -1,7 +1,7 @@
 """Step-addressed checkpoints for objects that expose ``get_state`` / ``set_state``.
 
 Data iterators, pipelines and Datarax modules all implement the
-:class:`~datarax.typing.Checkpointable` protocol. :class:`IteratorCheckpoint`
+:class:`~substrax.typing.Checkpointable` protocol. :class:`IteratorCheckpoint`
 persists such a state dictionary under an integer step as the ``data_iterator``
 item of substrax's :class:`~substrax.checkpoint.OrbaxCheckpointStore`, which
 carries arrays, typed PRNG keys and plain-Python leaves (positions, seeds, sampler
@@ -17,8 +17,7 @@ from pathlib import Path
 from typing import Any, Self
 
 from substrax.checkpoint import CheckpointStore, OrbaxCheckpointStore
-
-from datarax.typing import Checkpointable
+from substrax.typing import Checkpointable
 
 
 logger = logging.getLogger(__name__)

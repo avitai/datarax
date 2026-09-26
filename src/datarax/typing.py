@@ -1,7 +1,8 @@
 """Type definitions for Datarax.
 
-Provides common type aliases, functional interface definitions, and
-checkpointing protocols used throughout the codebase.
+Provides common type aliases, functional interface definitions, and the
+checkpointable-iterator protocol used throughout the codebase. The checkpoint-state
+protocol itself is substrax's :class:`~substrax.typing.Checkpointable`.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable, TypeVar
 
 import jax
+from substrax.typing import Checkpointable
 
 # Import concrete implementations
 from datarax.core.element_batch import Batch as BatchImpl, Element as ElementImpl
@@ -60,38 +62,11 @@ type CondFn = Callable[[Any], bool]
 type WhileBodyFn = Callable[[Any], Any]
 
 
-# Checkpointing protocol
-@runtime_checkable
-class Checkpointable(Protocol):
-    """Protocol for objects that can be checkpointed via state dictionaries.
-
-    This protocol defines the interface for objects that support state-based
-    checkpointing, where state is extracted to a dictionary and restored from
-    a dictionary. This aligns with NNX state management patterns.
-    """
-
-    def get_state(self) -> dict[str, Any]:
-        """Get object state for checkpointing.
-
-        Returns:
-            Dictionary containing all state needed to restore the object.
-        """
-        ...
-
-    def set_state(self, state: dict[str, Any]) -> None:
-        """Restore object state from a checkpoint.
-
-        Args:
-            state: Dictionary containing state to restore.
-        """
-        ...
-
-
 @runtime_checkable
 class CheckpointableIterator(Checkpointable, Protocol[T_co]):
     """Protocol for iterators that can be checkpointed.
 
-    Combines Iterator behavior with Checkpointable state management.
+    Combines Iterator behavior with substrax's ``Checkpointable`` state management.
     """
 
     def __iter__(self) -> CheckpointableIterator[T_co]:
@@ -125,6 +100,5 @@ __all__ = [
     "ScanFn",
     "CondFn",
     "WhileBodyFn",
-    "Checkpointable",
     "CheckpointableIterator",
 ]
