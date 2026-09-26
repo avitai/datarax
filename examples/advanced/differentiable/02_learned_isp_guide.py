@@ -642,8 +642,8 @@ def create_isp_pipeline(
     isp_composite = CompositeOperatorModule(
         CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
-            operators=[ccm, desat, tonemap, gamma, sharpen],
-        )
+        ),
+        operators=[ccm, desat, tonemap, gamma, sharpen],
     )
 
     # Inference demo: Pipeline with the chained ISP stages.
@@ -953,8 +953,8 @@ def run_training(
     isp_composite = CompositeOperatorModule(
         CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
-            operators=[ccm, desat, tonemap, gamma_op, sharpen],
-        )
+        ),
+        operators=[ccm, desat, tonemap, gamma_op, sharpen],
     )
 
     # Create detector

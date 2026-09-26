@@ -178,11 +178,11 @@ The 15 augmentation operators are composed into a single
 aug_composite = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-        operators=[op for _, op in AUGMENTATION_OPS],
         weight_key="op_weights",
         mix_fields=("image",),
-    )
-)
+    ),
+operators=[op for _, op in AUGMENTATION_OPS],
+        )
 ```
 
 !!! tip "Three Weight Modes"

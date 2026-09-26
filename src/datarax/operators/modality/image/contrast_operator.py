@@ -101,12 +101,12 @@ class ContrastOperator(ModalityOperator):
         ```
     """
 
-    def __init__(self, config: ContrastOperatorConfig, *, rngs: nnx.Rngs) -> None:
+    def __init__(self, config: ContrastOperatorConfig, *, rngs: nnx.Rngs | None = None) -> None:
         """Initialize ContrastOperator with configuration.
 
         Args:
             config: ContrastOperatorConfig specifying transformation parameters
-            rngs: Flax NNX random number generator state
+            rngs: Random number generators (required when the config is stochastic)
         """
         super().__init__(config, rngs=rngs)
         self.config: ContrastOperatorConfig = config  # Type narrowing for pyright

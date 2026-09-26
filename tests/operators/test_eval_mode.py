@@ -136,10 +136,10 @@ _STOCHASTIC_FAMILIES: dict[str, Callable[[], OperatorModule]] = {
         rngs=_rngs(),
     ),
     "probabilistic": lambda: ProbabilisticOperator(
-        ProbabilisticOperatorConfig(operator=_brightness(), probability=0.5), rngs=_rngs()
+        ProbabilisticOperatorConfig(probability=0.5), operator=_brightness(), rngs=_rngs()
     ),
     "selector": lambda: SelectorOperator(
-        SelectorOperatorConfig(operators=[_brightness(), _contrast()]), rngs=_rngs()
+        SelectorOperatorConfig(), operators=[_brightness(), _contrast()], rngs=_rngs()
     ),
 }
 
@@ -216,10 +216,10 @@ class TestComposite:
         return CompositeOperatorModule(
             CompositeOperatorConfig(
                 strategy=CompositionStrategy.SEQUENTIAL,
-                operators=[shift, _noise()],
                 stochastic=True,
                 stream_name="augment",
             ),
+            operators=[shift, _noise()],
             rngs=_rngs(),
         )
 

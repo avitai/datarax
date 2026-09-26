@@ -218,7 +218,6 @@ applying them sequentially to each element.
 # CompositeOperatorConfig requires strategy and operators in the config
 augmentation_config = CompositeOperatorConfig(
     strategy=CompositionStrategy.SEQUENTIAL,  # Apply operators in sequence
-    operators=[flipper, noise_adder],  # List of operators to chain
     stochastic=True,
     stream_name="augment",
 )
@@ -226,6 +225,7 @@ augmentation_config = CompositeOperatorConfig(
 # Build composite operator from config
 augmentation_pipeline = CompositeOperatorModule(
     augmentation_config,
+    operators=[flipper, noise_adder],  # List of operators to chain
     rngs=nnx.Rngs(augment=999),
 )
 

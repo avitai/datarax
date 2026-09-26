@@ -49,10 +49,12 @@ class TestBranchingBasics:
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.BRANCHING,
-            operators=[branch_a, branch_b],  # List of operators, indexed by router
             router=router,
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[branch_a, branch_b],  # List of operators, indexed by router
+        )
 
         # Test data that routes to branch "a" (value < 5)
         batch_a = Batch([Element(data={"value": jnp.array([2.0])})])
@@ -89,10 +91,12 @@ class TestBranchingBasics:
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.BRANCHING,
-            operators=[branch_small, branch_medium, branch_large],  # Indexed 0, 1, 2
             router=router,
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[branch_small, branch_medium, branch_large],  # Indexed 0, 1, 2
+        )
 
         # Test small branch
         batch_small = Batch([Element(data={"value": jnp.array([1.0])})])
@@ -134,10 +138,12 @@ class TestBranchingRouters:
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.BRANCHING,
-            operators=[branch_small, branch_large],  # Indexed 0=small, 1=large
             router=router,
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[branch_small, branch_large],  # Indexed 0=small, 1=large
+        )
 
         # Test small shape (2 elements)
         batch_small = Batch([Element(data={"value": jnp.array([1.0, 2.0])})])
@@ -175,10 +181,12 @@ class TestBranchingRouters:
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.BRANCHING,
-            operators=[branch_low, branch_medium, branch_high],  # Indexed 0, 1, 2
             router=router,
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[branch_low, branch_medium, branch_high],  # Indexed 0, 1, 2
+        )
 
         # Test low values (mean < 0.3)
         batch_low = Batch([Element(data={"value": jnp.array([0.1, 0.2])})])
@@ -220,10 +228,12 @@ class TestBranchingAdvanced:
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.BRANCHING,
-            operators=[branch_a, branch_b],  # Indexed 0, 1
             router=router,
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[branch_a, branch_b],  # Indexed 0, 1
+        )
 
         # Apply multiple times to track statistics
         # Note: MapOperator doesn't populate statistics by default,
@@ -255,9 +265,11 @@ class TestBranchingAdvanced:
 
         config_seq = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
+        )
+        branch_b = CompositeOperatorModule(
+            config_seq,
             operators=[op_b1, op_b2],
         )
-        branch_b = CompositeOperatorModule(config_seq)
 
         # Create branching composite with different operator types
         def router(data):
@@ -266,10 +278,12 @@ class TestBranchingAdvanced:
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.BRANCHING,
-            operators=[branch_a, branch_b],  # Indexed 0=simple, 1=sequential
             router=router,
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[branch_a, branch_b],  # Indexed 0=simple, 1=sequential
+        )
 
         # Test simple branch (MapOperator)
         batch_simple = Batch([Element(data={"value": jnp.array([2.0])})])

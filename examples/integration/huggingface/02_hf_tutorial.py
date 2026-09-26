@@ -264,10 +264,10 @@ flipper = ElementOperator(
 augmentation = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.SEQUENTIAL,
-        operators=[normalizer, flipper],
         stochastic=True,
         stream_name="augment",
     ),
+    operators=[normalizer, flipper],
     rngs=nnx.Rngs(augment=999),
 )
 

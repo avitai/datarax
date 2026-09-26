@@ -580,10 +580,10 @@ NUM_OPS = len(AUGMENTATION_OPS)
 aug_composite = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-        operators=[op for _, op in AUGMENTATION_OPS],
         weight_key="op_weights",
         mix_fields=("image",),
-    )
+    ),
+    operators=[op for _, op in AUGMENTATION_OPS],
 )
 
 print(f"Defined {NUM_OPS} augmentation operations: {[name for name, _ in AUGMENTATION_OPS]}")

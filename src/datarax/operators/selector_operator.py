@@ -15,16 +15,13 @@ Examples:
     Basic usage:
 
     ```python
-    config = SelectorOperatorConfig(
-        operators=[op1, op2, op3],
-        weights=[0.5, 0.3, 0.2]
-    )
-    op = SelectorOperator(config, rngs=rngs)
+    config = SelectorOperatorConfig(weights=[0.5, 0.3, 0.2])
+    op = SelectorOperator(config, operators=[op1, op2, op3], rngs=rngs)
     ```
 """
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -49,58 +46,61 @@ logger = logging.getLogger(__name__)
 class SelectorOperatorConfig(OperatorConfig):
     """Configuration for SelectorOperator.
 
-    Extends OperatorConfig with operators list and optional weights.
+    Extends OperatorConfig with optional selection weights. The operators to select from are a
+    constructor argument of ``SelectorOperator``, never configuration: a configuration is static
+    metadata a transform compares, and a module in it would compare by identity.
 
     Attributes:
-        operators: List of operators to select from (minimum 1)
-        weights: Optional weights for random selection (defaults to uniform)
-                 Will be normalized to sum to 1.0
-        normalized_weights: The weights normalized to sum to 1.0, as a tuple of floats.
-                 Derived in __post_init__; a config is graphdef metadata, which jit
-                 dispatch compares, so it holds no array.
+        weights: Optional weights for random selection (defaults to uniform), one per operator;
+            normalized to sum to 1.0 when the selector is built. Stored as a tuple, so the
+            configuration stays hashable.
 
     Note:
         - stochastic is always True (always makes random choice)
         - stream_name defaults to "augment" for random selection
     """
 
-    operators: list[OperatorModule] = field(kw_only=True)
-    weights: list[float] | None = field(default=None, kw_only=True)
-    normalized_weights: tuple[float, ...] = field(init=False, repr=False)
+    weights: Sequence[float] | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
-        """Validate configuration and normalize weights."""
-        # Validate at least one operator
-        if not self.operators:
-            raise ValueError("Must provide at least one operator")
-
-        n_operators = len(self.operators)
-
-        # Validate or create weights
-        if self.weights is None:
-            # Uniform weights by default
-            weights = [1.0 / n_operators] * n_operators
-        else:
-            if len(self.weights) != n_operators:
+        """Validate the weights and set the random mode."""
+        if self.weights is not None:
+            if any(weight < 0 for weight in self.weights) or sum(self.weights) <= 0:
                 raise ValueError(
-                    f"Number of weights ({len(self.weights)}) must match "
-                    f"number of operators ({n_operators})"
+                    f"weights must be non-negative with a positive sum, got {self.weights}"
                 )
-            weights = self.weights
-
-        # Normalize weights to sum to 1.0
-        total = sum(weights)
-        normalized = [w / total for w in weights]
-        object.__setattr__(self, "normalized_weights", tuple(normalized))
+            object.__setattr__(self, "weights", tuple(float(weight) for weight in self.weights))
 
         # SelectorOperator is ALWAYS stochastic (always makes random choice)
         object.__setattr__(self, "stochastic", True)
-
-        # Set stream_name for random selection
         if self.stream_name is None:
             object.__setattr__(self, "stream_name", "augment")
 
         super().__post_init__()
+
+    def normalized_weights(self, n_operators: int) -> tuple[float, ...]:
+        """Return the selection weights for ``n_operators`` operators, summing to 1.0.
+
+        Args:
+            n_operators: How many operators the selector chooses among.
+
+        Returns:
+            One weight per operator.
+
+        Raises:
+            ValueError: If there are no operators, or the weights name a different number.
+        """
+        if n_operators < 1:
+            raise ValueError("Must provide at least one operator")
+        if self.weights is None:
+            return (1.0 / n_operators,) * n_operators
+        if len(self.weights) != n_operators:
+            raise ValueError(
+                f"Number of weights ({len(self.weights)}) must match "
+                f"number of operators ({n_operators})"
+            )
+        total = sum(self.weights)
+        return tuple(weight / total for weight in self.weights)
 
 
 class SelectorOperator(OperatorModule):
@@ -117,11 +117,11 @@ class SelectorOperator(OperatorModule):
         op1 = BrightnessOperator(brightness_config, rngs=nnx.Rngs(0))  # Different transforms
         op2 = NoiseOperator(noise_config, rngs=nnx.Rngs(0))
         op3 = RotationOperator(rotation_config, rngs=nnx.Rngs(0))
-        selector_config = SelectorOperatorConfig(  # 50% brightness, 30% noise, 20% rotation
+        selector = SelectorOperator(  # 50% brightness, 30% noise, 20% rotation
+            SelectorOperatorConfig(weights=(0.5, 0.3, 0.2)),
             operators=[op1, op2, op3],
-            weights=[0.5, 0.3, 0.2]
+            rngs=nnx.Rngs(0),
         )
-        selector = SelectorOperator(selector_config, rngs=nnx.Rngs(0))
         result_batch = selector(batch)  # Each element gets one randomly selected operator
         ```
     """
@@ -129,23 +129,25 @@ class SelectorOperator(OperatorModule):
     def __init__(
         self,
         config: SelectorOperatorConfig,
+        operators: Sequence[OperatorModule],
         *,
         rngs: nnx.Rngs | None = None,
     ) -> None:
         """Initialize selector operator.
 
         Args:
-            config: SelectorOperatorConfig with operators list and optional weights
+            config: SelectorOperatorConfig with optional selection weights
+            operators: The operators to select among, held as graph children
             rngs: Random number generators (required for random selection)
         """
+        weights = config.normalized_weights(len(operators))
         super().__init__(config, rngs=rngs)
 
         # Type narrowing for pyright
         self.config: SelectorOperatorConfig = config
 
-        # Store operators in NNX List for proper state management
-        self.operators = nnx.List(config.operators)
-        self.weights = nnx.static(config.normalized_weights)
+        self.operators = nnx.List(operators)
+        self.weights = nnx.static(weights)
 
     def compute_statistics(self, batch_data: PyTree) -> dict[str, Any] | None:
         """Return one entry per child, each computed on this selector's input.

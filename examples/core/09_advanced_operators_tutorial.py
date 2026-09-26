@@ -150,9 +150,9 @@ brightness_op = BrightnessOperator(
 # Wrap with 50% probability
 prob_brightness = ProbabilisticOperator(
     ProbabilisticOperatorConfig(
-        operator=brightness_op,
         probability=0.5,  # Apply to ~50% of samples
     ),
+    operator=brightness_op,
     rngs=nnx.Rngs(augment=42),
 )
 
@@ -185,9 +185,9 @@ for p in [0.0, 0.25, 0.5, 0.75, 1.0]:
     # Create operator with specific probability
     prob_op = ProbabilisticOperator(
         ProbabilisticOperatorConfig(
-            operator=brightness_op,
             probability=p,
         ),
+        operator=brightness_op,
         rngs=nnx.Rngs(augment=42),
     )
 
@@ -242,9 +242,9 @@ op_noise = NoiseOperator(
 # Create selector with custom weights
 selector = SelectorOperator(
     SelectorOperatorConfig(
-        operators=[op_bright, op_contrast, op_noise],
         weights=[0.5, 0.3, 0.2],  # 50% brightness, 30% contrast, 20% noise
     ),
+    operators=[op_bright, op_contrast, op_noise],
     rngs=nnx.Rngs(augment=100),
 )
 
@@ -270,9 +270,9 @@ print(f"  Output range: [{batch2['image'].min():.3f}, {batch2['image'].max():.3f
 # Create a uniform selector (equal weights)
 uniform_selector = SelectorOperator(
     SelectorOperatorConfig(
-        operators=[op_bright, op_contrast, op_noise],
         weights=None,  # Defaults to uniform [1/3, 1/3, 1/3]
     ),
+    operators=[op_bright, op_contrast, op_noise],
     rngs=nnx.Rngs(augment=200),
 )
 
@@ -426,21 +426,23 @@ def create_autoaugment_pipeline():
 
     # Wrap with probabilistic application
     prob_bright = ProbabilisticOperator(
-        ProbabilisticOperatorConfig(operator=bright, probability=0.6, stream_name="augment"),
+        ProbabilisticOperatorConfig(probability=0.6, stream_name="augment"),
+        operator=bright,
         rngs=nnx.Rngs(augment=100),
     )
 
     prob_contrast = ProbabilisticOperator(
-        ProbabilisticOperatorConfig(operator=contrast, probability=0.6, stream_name="augment"),
+        ProbabilisticOperatorConfig(probability=0.6, stream_name="augment"),
+        operator=contrast,
         rngs=nnx.Rngs(augment=200),
     )
 
     # Create selector for final augmentation
     final_selector = SelectorOperator(
         SelectorOperatorConfig(
-            operators=[noise, patch],
             weights=[0.7, 0.3],  # 70% noise, 30% patch dropout
         ),
+        operators=[noise, patch],
         rngs=nnx.Rngs(augment=300),
     )
 
@@ -566,7 +568,8 @@ def main():
         rngs=nnx.Rngs(0),
     )
     prob = ProbabilisticOperator(
-        ProbabilisticOperatorConfig(operator=bright, probability=0.5),
+        ProbabilisticOperatorConfig(probability=0.5),
+        operator=bright,
         rngs=nnx.Rngs(augment=0),
     )
     source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
@@ -586,7 +589,8 @@ def main():
         rngs=nnx.Rngs(2),
     )
     selector = SelectorOperator(
-        SelectorOperatorConfig(operators=[op1, op2]),
+        SelectorOperatorConfig(),
+        operators=[op1, op2],
         rngs=nnx.Rngs(augment=10),
     )
     source2 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(1))

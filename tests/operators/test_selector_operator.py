@@ -30,7 +30,7 @@ class TestSelectorOperatorConfig:
     def test_config_requires_at_least_one_operator(self):
         """Empty operators list should raise ValueError."""
         with pytest.raises(ValueError, match="at least one operator"):
-            SelectorOperatorConfig(operators=[])
+            SelectorOperator(SelectorOperatorConfig(), operators=[])
 
     def test_config_weights_must_match_operators_count(self):
         """Weights list length must match operators count."""
@@ -40,50 +40,34 @@ class TestSelectorOperatorConfig:
         op2 = MapOperator(config, fn=lambda x, _key: x * 3, rngs=rngs)
 
         with pytest.raises(ValueError, match="must match"):
-            SelectorOperatorConfig(operators=[op1, op2], weights=[0.5])
+            SelectorOperator(
+                SelectorOperatorConfig(weights=[0.5]),
+                operators=[op1, op2],
+            )
 
     def test_config_normalizes_weights(self):
         """Weights should be normalized to sum to 1.0."""
-        rngs = nnx.Rngs(0)
-        config = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config, fn=lambda x, _key: x * 2, rngs=rngs)
-        op2 = MapOperator(config, fn=lambda x, _key: x * 3, rngs=rngs)
-
-        selector_config = SelectorOperatorConfig(operators=[op1, op2], weights=[2.0, 8.0])
+        selector_config = SelectorOperatorConfig(weights=[2.0, 8.0])
 
         # Weights should be normalized to [0.2, 0.8]
-        assert selector_config.normalized_weights == pytest.approx((0.2, 0.8))
+        assert selector_config.normalized_weights(2) == pytest.approx((0.2, 0.8))
 
     def test_config_uniform_weights_by_default(self):
         """Default weights should be uniform."""
-        rngs = nnx.Rngs(0)
-        config = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config, fn=lambda x, _key: x * 2, rngs=rngs)
-        op2 = MapOperator(config, fn=lambda x, _key: x * 3, rngs=rngs)
-
-        selector_config = SelectorOperatorConfig(operators=[op1, op2])
+        selector_config = SelectorOperatorConfig()
 
         # Uniform weights: [0.5, 0.5]
-        assert selector_config.normalized_weights == pytest.approx((0.5, 0.5))
+        assert selector_config.normalized_weights(2) == pytest.approx((0.5, 0.5))
 
     def test_config_is_always_stochastic(self):
         """Verify the operator is always stochastic (always makes random choice)."""
-        rngs = nnx.Rngs(0)
-        config = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config, fn=lambda x, _key: x * 2, rngs=rngs)
-
-        selector_config = SelectorOperatorConfig(operators=[op1])
+        selector_config = SelectorOperatorConfig()
         assert selector_config.stochastic is True
 
     def test_equal_configs_compare_equal(self):
         """Two configs built the same way compare equal, with no array truth value."""
-        rngs = nnx.Rngs(0)
-        config = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config, fn=lambda x, _key: x * 2, rngs=rngs)
-        op2 = MapOperator(config, fn=lambda x, _key: x * 3, rngs=rngs)
-
-        first = SelectorOperatorConfig(operators=[op1, op2], weights=[2.0, 8.0])
-        second = SelectorOperatorConfig(operators=[op1, op2], weights=[2.0, 8.0])
+        first = SelectorOperatorConfig(weights=[2.0, 8.0])
+        second = SelectorOperatorConfig(weights=[2.0, 8.0])
 
         assert first == second
 
@@ -94,10 +78,10 @@ class TestSelectorOperatorConfig:
         op1 = MapOperator(config, fn=lambda x, _key: x * 2, rngs=rngs)
         op2 = MapOperator(config, fn=lambda x, _key: x * 3, rngs=rngs)
         first = SelectorOperator(
-            SelectorOperatorConfig(operators=[op1, op2], weights=[2.0, 8.0]), rngs=nnx.Rngs(1)
+            SelectorOperatorConfig(weights=[2.0, 8.0]), operators=[op1, op2], rngs=nnx.Rngs(1)
         )
         second = SelectorOperator(
-            SelectorOperatorConfig(operators=[op1, op2], weights=[2.0, 8.0]), rngs=nnx.Rngs(2)
+            SelectorOperatorConfig(weights=[2.0, 8.0]), operators=[op1, op2], rngs=nnx.Rngs(2)
         )
 
         @nnx.jit
@@ -120,8 +104,8 @@ class TestSelectorOperatorInit:
         op2 = MapOperator(config, fn=lambda x, _key: x * 3, rngs=rngs)
         op3 = MapOperator(config, fn=lambda x, _key: x * 4, rngs=rngs)
 
-        selector_config = SelectorOperatorConfig(operators=[op1, op2, op3])
-        selector = SelectorOperator(selector_config, rngs=rngs)
+        selector_config = SelectorOperatorConfig()
+        selector = SelectorOperator(selector_config, operators=[op1, op2, op3], rngs=rngs)
 
         assert len(selector.operators) == 3
         assert selector.config.stochastic is True
@@ -132,8 +116,8 @@ class TestSelectorOperatorInit:
         config = MapOperatorConfig(stochastic=False)
         op = MapOperator(config, fn=lambda x, _key: x * 2, rngs=rngs)
 
-        selector_config = SelectorOperatorConfig(operators=[op])
-        selector = SelectorOperator(selector_config, rngs=rngs)
+        selector_config = SelectorOperatorConfig()
+        selector = SelectorOperator(selector_config, operators=[op], rngs=rngs)
 
         assert len(selector.operators) == 1
 
@@ -144,8 +128,8 @@ class TestSelectorOperatorInit:
         op1 = MapOperator(config, fn=lambda x, _key: x + 1, rngs=rngs)
         op2 = MapOperator(config, fn=lambda x, _key: x + 10, rngs=rngs)
 
-        selector_config = SelectorOperatorConfig(operators=[op1, op2], weights=[0.9, 0.1])
-        selector = SelectorOperator(selector_config, rngs=rngs)
+        selector_config = SelectorOperatorConfig(weights=[0.9, 0.1])
+        selector = SelectorOperator(selector_config, operators=[op1, op2], rngs=rngs)
 
         assert jnp.allclose(jnp.asarray(selector.weights), jnp.array([0.9, 0.1]))
 
@@ -162,8 +146,8 @@ class TestSelectorOperatorBasic:
         op2 = MapOperator(config, fn=lambda x, _key: x + 10, rngs=rngs)
         op3 = MapOperator(config, fn=lambda x, _key: x + 100, rngs=rngs)
 
-        selector_config = SelectorOperatorConfig(operators=[op1, op2, op3])
-        selector = SelectorOperator(selector_config, rngs=rngs)
+        selector_config = SelectorOperatorConfig()
+        selector = SelectorOperator(selector_config, operators=[op1, op2, op3], rngs=rngs)
 
         batch = Batch([Element(data={"value": jnp.array([5.0])})])
         result_batch = selector(batch)
@@ -181,14 +165,16 @@ class TestSelectorOperatorBasic:
         op2 = MapOperator(config, fn=lambda x, _key: x + 10, rngs=rngs)
         op3 = MapOperator(config, fn=lambda x, _key: x + 100, rngs=rngs)
 
-        selector_config = SelectorOperatorConfig(operators=[op1, op2, op3])
-        selector = SelectorOperator(selector_config, rngs=nnx.Rngs(0))
+        selector_config = SelectorOperatorConfig()
+        selector = SelectorOperator(selector_config, operators=[op1, op2, op3], rngs=nnx.Rngs(0))
 
         # Run many times and count selections
         counts = {1.0: 0, 10.0: 0, 100.0: 0}
         for i in range(300):
             # Create new selector with different seed each time
-            selector = SelectorOperator(selector_config, rngs=nnx.Rngs(i))
+            selector = SelectorOperator(
+                selector_config, operators=[op1, op2, op3], rngs=nnx.Rngs(i)
+            )
             batch = Batch([Element(data={"value": jnp.array([0.0])})])
             result_batch = selector(batch)
             result_value = float(result_batch.get_data()["value"][0, 0])
@@ -207,12 +193,12 @@ class TestSelectorOperatorBasic:
         op2 = MapOperator(config, fn=lambda x, _key: x + 10, rngs=rngs)
 
         # 90% weight on op1, 10% on op2
-        selector_config = SelectorOperatorConfig(operators=[op1, op2], weights=[0.9, 0.1])
+        selector_config = SelectorOperatorConfig(weights=[0.9, 0.1])
 
         # Run many times and count selections
         counts = {1.0: 0, 10.0: 0}
         for i in range(1000):
-            selector = SelectorOperator(selector_config, rngs=nnx.Rngs(i))
+            selector = SelectorOperator(selector_config, operators=[op1, op2], rngs=nnx.Rngs(i))
             batch = Batch([Element(data={"value": jnp.array([0.0])})])
             result_batch = selector(batch)
             result_value = float(result_batch.get_data()["value"][0, 0])
@@ -232,8 +218,8 @@ class TestSelectorOperatorEdgeCases:
         rngs = nnx.Rngs(0)
         op = MapOperator(config, fn=lambda x, _key: x * 3, rngs=rngs)
 
-        selector_config = SelectorOperatorConfig(operators=[op])
-        selector = SelectorOperator(selector_config, rngs=rngs)
+        selector_config = SelectorOperatorConfig()
+        selector = SelectorOperator(selector_config, operators=[op], rngs=rngs)
 
         batch = Batch([Element(data={"value": jnp.array([5.0])})])
         result_batch = selector(batch)
@@ -249,11 +235,11 @@ class TestSelectorOperatorEdgeCases:
         op2 = MapOperator(config, fn=lambda x, _key: x + 100, rngs=rngs)
 
         # Weight 1.0 on op1, 0 on op2 - should always select op1
-        selector_config = SelectorOperatorConfig(operators=[op1, op2], weights=[1.0, 0.0])
+        selector_config = SelectorOperatorConfig(weights=[1.0, 0.0])
 
         # Run multiple times
         for i in range(50):
-            selector = SelectorOperator(selector_config, rngs=nnx.Rngs(i))
+            selector = SelectorOperator(selector_config, operators=[op1, op2], rngs=nnx.Rngs(i))
             batch = Batch([Element(data={"value": jnp.array([0.0])})])
             result_batch = selector(batch)
             result_value = float(result_batch.get_data()["value"][0, 0])
@@ -271,11 +257,13 @@ class TestSelectorOperatorStochastic:
         op2 = MapOperator(config, fn=lambda x, _key: x + 10, rngs=rngs)
         op3 = MapOperator(config, fn=lambda x, _key: x + 100, rngs=rngs)
 
-        selector_config = SelectorOperatorConfig(operators=[op1, op2, op3])
+        selector_config = SelectorOperatorConfig()
 
         values_seen = set()
         for i in range(50):
-            selector = SelectorOperator(selector_config, rngs=nnx.Rngs(i))
+            selector = SelectorOperator(
+                selector_config, operators=[op1, op2, op3], rngs=nnx.Rngs(i)
+            )
             batch = Batch([Element(data={"value": jnp.array([0.0])})])
             result_batch = selector(batch)
             result_value = float(result_batch.get_data()["value"][0, 0])
@@ -291,11 +279,11 @@ class TestSelectorOperatorStochastic:
         op1 = MapOperator(config, fn=lambda x, _key: x + 1, rngs=rngs)
         op2 = MapOperator(config, fn=lambda x, _key: x + 10, rngs=rngs)
 
-        selector_config = SelectorOperatorConfig(operators=[op1, op2])
+        selector_config = SelectorOperatorConfig()
 
         # Same seed should produce same result
-        selector1 = SelectorOperator(selector_config, rngs=nnx.Rngs(42))
-        selector2 = SelectorOperator(selector_config, rngs=nnx.Rngs(42))
+        selector1 = SelectorOperator(selector_config, operators=[op1, op2], rngs=nnx.Rngs(42))
+        selector2 = SelectorOperator(selector_config, operators=[op1, op2], rngs=nnx.Rngs(42))
 
         batch = Batch([Element(data={"value": jnp.array([0.0])})])
 
@@ -315,8 +303,8 @@ class TestSelectorOperatorJAX:
         op1 = MapOperator(config, fn=lambda x, _key: x + 1, rngs=rngs)
         op2 = MapOperator(config, fn=lambda x, _key: x + 10, rngs=rngs)
 
-        selector_config = SelectorOperatorConfig(operators=[op1, op2])
-        selector = SelectorOperator(selector_config, rngs=rngs)
+        selector_config = SelectorOperatorConfig()
+        selector = SelectorOperator(selector_config, operators=[op1, op2], rngs=rngs)
 
         @nnx.jit
         def apply_selector(model, batch):
@@ -337,7 +325,7 @@ class TestSelectorOperatorJAX:
         op2 = MapOperator(config, fn=lambda x, _key: x + 10, rngs=rngs)
         op3 = MapOperator(config, fn=lambda x, _key: x + 100, rngs=rngs)
 
-        selector_config = SelectorOperatorConfig(operators=[op1, op2, op3])
+        selector_config = SelectorOperatorConfig()
 
         @nnx.jit
         def apply_selector(model, batch):
@@ -347,7 +335,9 @@ class TestSelectorOperatorJAX:
 
         values_seen = set()
         for i in range(50):
-            selector = SelectorOperator(selector_config, rngs=nnx.Rngs(i))
+            selector = SelectorOperator(
+                selector_config, operators=[op1, op2, op3], rngs=nnx.Rngs(i)
+            )
             result_batch = apply_selector(selector, batch)
             result_value = float(result_batch.get_data()["value"][0, 0])
             values_seen.add(result_value)
@@ -362,8 +352,8 @@ class TestSelectorOperatorJAX:
         op1 = MapOperator(config, fn=lambda x, _key: x + 1, rngs=rngs)
         op2 = MapOperator(config, fn=lambda x, _key: x + 10, rngs=rngs)
 
-        selector_config = SelectorOperatorConfig(operators=[op1, op2])
-        selector = SelectorOperator(selector_config, rngs=rngs)
+        selector_config = SelectorOperatorConfig()
+        selector = SelectorOperator(selector_config, operators=[op1, op2], rngs=rngs)
 
         # Multi-element batch
         batch = Batch(
@@ -397,7 +387,8 @@ class TestSelectorOperatorDifferentiability:
         op2 = MapOperator(config, fn=lambda x, _key: 5.0 * x + 1.0, rngs=rngs)
 
         selector = SelectorOperator(
-            SelectorOperatorConfig(operators=[op1, op2], weights=[1.0, 0.0]),
+            SelectorOperatorConfig(weights=[1.0, 0.0]),
+            operators=[op1, op2],
             rngs=nnx.Rngs(0),
         )
 

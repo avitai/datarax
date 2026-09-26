@@ -542,14 +542,11 @@ class TestTracingIsDecidedByTheConfiguration:
         with counter.expect(new_traces=0):
             traced(AddKeyOperator(config, rngs=rngs), data)
 
-    def test_a_wrapper_rebuilt_from_new_children_traces_again(self, config, rngs):
-        """A wrapper rebuilt over fresh children traces again, unlike a plain operator.
+    def test_a_wrapper_rebuilt_from_new_children_shares_its_trace(self, config, rngs):
+        """A wrapper rebuilt over fresh, equally configured children shares the trace.
 
-        A wrapper's configuration holds the child module itself, and flax defines no
-        ``__eq__`` on ``Module``, so two wrappers built over freshly constructed children
-        carry different graphdef metadata however equal their configurations look. Removing
-        the per-operator identity does not change that, and this test measures it rather
-        than leaving it to be met later as a surprise.
+        The child is a graph child, not part of the wrapper's configuration, so the
+        wrapper's graphdef compares the child's structure rather than its identity.
         """
         counter = TraceCounter()
 
@@ -562,12 +559,12 @@ class TestTracingIsDecidedByTheConfiguration:
         def wrapper():
             child = AddKeyOperator(config, rngs=rngs)
             return ProbabilisticOperator(
-                ProbabilisticOperatorConfig(operator=child, probability=1.0), rngs=nnx.Rngs(0)
+                ProbabilisticOperatorConfig(probability=1.0), operator=child, rngs=nnx.Rngs(0)
             )
 
         with counter.expect(new_traces=1):
             traced(wrapper(), data)
-        with counter.expect(new_traces=1):
+        with counter.expect(new_traces=0):
             traced(wrapper(), data)
 
 

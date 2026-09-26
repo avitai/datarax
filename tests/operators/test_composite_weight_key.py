@@ -30,16 +30,8 @@ class TestWeightKeyConfig:
 
     def test_weight_key_valid_config(self):
         """weight_key alone creates valid WEIGHTED_PARALLEL config."""
-        rngs = nnx.Rngs(0)
-        config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
-        config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
-
-        # Should not raise — weight_key is a valid way to supply weights
         config = CompositeOperatorConfig(
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-            operators=[op1, op2],
             weight_key="op_weights",
             mix_fields=("value",),
         )
@@ -56,12 +48,14 @@ class TestWeightKeyConfig:
         op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         with pytest.raises(ValueError, match="weight_key.*learnable_weights"):
-            CompositeOperatorConfig(
-                strategy=CompositionStrategy.WEIGHTED_PARALLEL,
+            CompositeOperatorModule(
+                CompositeOperatorConfig(
+                    strategy=CompositionStrategy.WEIGHTED_PARALLEL,
+                    weight_key="op_weights",
+                    mix_fields=("value",),
+                    learnable_weights=True,
+                ),
                 operators=[op1, op2],
-                weight_key="op_weights",
-                mix_fields=("value",),
-                learnable_weights=True,
             )
 
     def test_weight_key_with_explicit_weights_raises(self):
@@ -73,12 +67,14 @@ class TestWeightKeyConfig:
         op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
 
         with pytest.raises(ValueError, match="weight_key.*explicit weights"):
-            CompositeOperatorConfig(
-                strategy=CompositionStrategy.WEIGHTED_PARALLEL,
+            CompositeOperatorModule(
+                CompositeOperatorConfig(
+                    strategy=CompositionStrategy.WEIGHTED_PARALLEL,
+                    weight_key="op_weights",
+                    mix_fields=("value",),
+                    weights=[0.5, 0.5],
+                ),
                 operators=[op1, op2],
-                weight_key="op_weights",
-                mix_fields=("value",),
-                weights=[0.5, 0.5],
             )
 
 
@@ -100,11 +96,13 @@ class TestWeightKeyBasic:
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-            operators=[op1, op2],
             weight_key="op_weights",
             mix_fields=("value",),
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         data = {
             "value": jnp.array(10.0),
@@ -136,11 +134,13 @@ class TestWeightKeyBasic:
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-            operators=[op1, op2],
             weight_key="op_weights",
             mix_fields=("value",),
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         data = {
             "value": jnp.array(1.0),
@@ -164,11 +164,13 @@ class TestWeightKeyBasic:
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-            operators=[op1, op2],
             weight_key="op_weights",
             mix_fields=("value",),
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         # Data dict missing the weight_key
         data = {"value": jnp.array(10.0)}
@@ -190,11 +192,13 @@ class TestWeightKeyAdvanced:
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-            operators=[op1, op2],
             weight_key="op_weights",
             mix_fields=("value",),
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         @nnx.jit
         def jit_apply(model, data):
@@ -222,11 +226,13 @@ class TestWeightKeyAdvanced:
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-            operators=[op1, op2],
             weight_key="op_weights",
             mix_fields=("value",),
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         # Simulate policy logits as upstream learnable parameter
         logits = jnp.array([1.0, 0.0])  # Will softmax to ~[0.731, 0.269]
@@ -261,11 +267,13 @@ class TestWeightKeyAdvanced:
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-            operators=[op1, op2],
             weight_key="op_weights",
             mix_fields=("value",),
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         # Create batch with weight_key in each element's data
         batch = Batch(

@@ -45,14 +45,16 @@ class TestConditionalSequential:
         # Create conditional sequential with always-true conditions
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.CONDITIONAL_SEQUENTIAL,
-            operators=[op1, op2, op3],
             conditions=[
                 lambda _data: jnp.array(True),  # Always execute op1
                 lambda _data: jnp.array(True),  # Always execute op2
                 lambda _data: jnp.array(True),  # Always execute op3
             ],
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2, op3],
+        )
 
         # Create batch
         batch = Batch(
@@ -88,14 +90,16 @@ class TestConditionalSequential:
         # Create conditional sequential with [True, False, True] conditions
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.CONDITIONAL_SEQUENTIAL,
-            operators=[op1, op2, op3],
             conditions=[
                 lambda _data: jnp.array(True),  # Execute op1
                 lambda _data: jnp.array(False),  # Skip op2
                 lambda _data: jnp.array(True),  # Execute op3
             ],
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2, op3],
+        )
 
         # Create batch
         batch = Batch(
@@ -131,14 +135,16 @@ class TestConditionalSequential:
         # Create conditional sequential with all-false conditions
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.CONDITIONAL_SEQUENTIAL,
-            operators=[op1, op2, op3],
             conditions=[
                 lambda _data: jnp.array(False),  # Skip op1
                 lambda _data: jnp.array(False),  # Skip op2
                 lambda _data: jnp.array(False),  # Skip op3
             ],
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2, op3],
+        )
 
         # Create batch
         batch = Batch(
@@ -172,7 +178,6 @@ class TestConditionalSequential:
         # op2's condition checks transformed data (after op1)
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.CONDITIONAL_SEQUENTIAL,
-            operators=[op1, op2],
             conditions=[
                 lambda _data: jnp.array(True),  # Always execute op1
                 lambda data: (
@@ -180,7 +185,10 @@ class TestConditionalSequential:
                 ).all(),  # Execute op2 if transformed value > 5 (JAX comparison, no indexing)
             ],
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         # Test data: input is 1.0, after op1 becomes 10.0 (> 5.0)
         batch = Batch([Element(data={"value": jnp.array([1.0])})])
@@ -223,7 +231,6 @@ class TestConditionalParallel:
         # Create conditional parallel with always-true conditions
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.CONDITIONAL_PARALLEL,
-            operators=[op1, op2, op3],
             conditions=[
                 lambda _data: jnp.array(True),  # Always execute op1
                 lambda _data: jnp.array(True),  # Always execute op2
@@ -231,7 +238,10 @@ class TestConditionalParallel:
             ],
             merge_strategy="concat",  # Concatenate outputs
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2, op3],
+        )
 
         # Create batch
         batch = Batch(
@@ -268,7 +278,6 @@ class TestConditionalParallel:
         # Create conditional parallel with [True, False, True] conditions
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.CONDITIONAL_PARALLEL,
-            operators=[op1, op2, op3],
             conditions=[
                 lambda _data: jnp.array(True),  # Execute op1
                 lambda _data: jnp.array(False),  # Skip op2
@@ -276,7 +285,10 @@ class TestConditionalParallel:
             ],
             merge_strategy="concat",
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2, op3],
+        )
 
         # Create batch
         batch = Batch(
@@ -314,7 +326,6 @@ class TestConditionalParallel:
         # Create conditional parallel with all-false conditions
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.CONDITIONAL_PARALLEL,
-            operators=[op1, op2, op3],
             conditions=[
                 lambda _data: jnp.array(False),  # Skip op1
                 lambda _data: jnp.array(False),  # Skip op2
@@ -322,7 +333,10 @@ class TestConditionalParallel:
             ],
             merge_strategy="concat",
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2, op3],
+        )
 
         # Create batch
         batch = Batch(
@@ -362,7 +376,6 @@ class TestConditionalAdvanced:
         # Note: MapOperator doesn't use state, so we pass it through for testing
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.CONDITIONAL_SEQUENTIAL,
-            operators=[op1, op2],
             conditions=[
                 lambda _data: jnp.array(True),  # Always execute op1
                 lambda _data: jnp.array(
@@ -370,7 +383,10 @@ class TestConditionalAdvanced:
                 ),  # Always execute op2 (state doesn't affect data-based conditions)
             ],
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         # Create batch with state
         batch = Batch(
@@ -407,13 +423,15 @@ class TestConditionalAdvanced:
         # Note: MapOperator doesn't modify metadata, so we test pass-through
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.CONDITIONAL_SEQUENTIAL,
-            operators=[op1, op2],
             conditions=[
                 lambda _data: jnp.array(True),  # Always execute op1
                 lambda _data: jnp.array(True),  # Always execute op2
             ],
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         # Create batch with metadata
         batch = Batch(

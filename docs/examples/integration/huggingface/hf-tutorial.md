@@ -346,11 +346,11 @@ from datarax.operators.composite_operator import (
 augmentation = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.SEQUENTIAL,
-        operators=[normalizer, flipper],
         stochastic=True,
         stream_name="augment",
     ),
-    rngs=nnx.Rngs(augment=999),
+    operators=[normalizer, flipper],
+        rngs=nnx.Rngs(augment=999),
 )
 
 # Build the complete pipeline

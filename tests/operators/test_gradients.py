@@ -183,22 +183,22 @@ _INPUT_FAMILIES: dict[str, Family] = {
     ),
     "probabilistic": Family(
         lambda: ProbabilisticOperator(
-            ProbabilisticOperatorConfig(operator=_brightness(), probability=0.5), rngs=_rngs()
+            ProbabilisticOperatorConfig(probability=0.5), operator=_brightness(), rngs=_rngs()
         )
     ),
     "selector": Family(
         lambda: SelectorOperator(
-            SelectorOperatorConfig(operators=[_brightness(), _contrast()]), rngs=_rngs()
+            SelectorOperatorConfig(), operators=[_brightness(), _contrast()], rngs=_rngs()
         )
     ),
     "composite sequential": Family(
         lambda: CompositeOperatorModule(
             CompositeOperatorConfig(
                 strategy=CompositionStrategy.SEQUENTIAL,
-                operators=[_map_scale(2.0), _brightness()],
                 stochastic=True,
                 stream_name="augment",
             ),
+            operators=[_map_scale(2.0), _brightness()],
             rngs=_rngs(),
         )
     ),
@@ -206,18 +206,18 @@ _INPUT_FAMILIES: dict[str, Family] = {
         lambda: CompositeOperatorModule(
             CompositeOperatorConfig(
                 strategy=CompositionStrategy.ENSEMBLE_MEAN,
-                operators=[_map_scale(2.0), _map_scale(3.0)],
-            )
+            ),
+            operators=[_map_scale(2.0), _map_scale(3.0)],
         )
     ),
     "composite weighted parallel": Family(
         lambda: CompositeOperatorModule(
             CompositeOperatorConfig(
                 strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-                operators=[_map_scale(2.0), _map_scale(3.0)],
                 weights=[0.3, 0.7],
                 mix_fields=("image",),
-            )
+            ),
+            operators=[_map_scale(2.0), _map_scale(3.0)],
         )
     ),
     "external adapter": Family(
@@ -361,11 +361,11 @@ def test_learnable_composite_weights_have_the_finite_difference_gradient() -> No
     composite = CompositeOperatorModule(
         CompositeOperatorConfig(
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-            operators=[_map_scale(2.0), _map_scale(3.0)],
             weights=[0.3, 0.7],
             learnable_weights=True,
             mix_fields=("image",),
-        )
+        ),
+        operators=[_map_scale(2.0), _map_scale(3.0)],
     )
     weights = _weights(_image().shape)
 

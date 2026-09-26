@@ -4,6 +4,7 @@ This test validates that the core implementation works before we implement
 all 94 detailed tests. Tests config, sequential, parallel, and ensemble.
 """
 
+import jax
 import jax.numpy as jnp
 import pytest
 from flax import nnx
@@ -35,9 +36,11 @@ class TestCompositeQuickIntegration:
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Test data
         batch = Batch(
@@ -70,11 +73,13 @@ class TestCompositeQuickIntegration:
         # Create parallel composite with concat
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.PARALLEL,
-            operators=[op1, op2],
             merge_strategy="concat",
             merge_axis=0,
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         # Test data
         batch = Batch(
@@ -105,11 +110,13 @@ class TestCompositeQuickIntegration:
         # Create parallel composite with stack
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.PARALLEL,
-            operators=[op1, op2],
             merge_strategy="stack",
             merge_axis=0,
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         # Test data
         batch = Batch(
@@ -143,9 +150,11 @@ class TestCompositeQuickIntegration:
         # Create ensemble composite with mean
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.ENSEMBLE_MEAN,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2, op3],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Test data
         batch = Batch([Element(data={"value": jnp.array([10.0])})])
@@ -172,9 +181,11 @@ class TestCompositeQuickIntegration:
         # Create ensemble composite with sum
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.ENSEMBLE_SUM,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Test data
         batch = Batch([Element(data={"value": jnp.array([5.0])})])
@@ -190,8 +201,10 @@ class TestCompositeQuickIntegration:
     def test_config_validation_empty_operators_fails(self):
         """Test that empty operators list raises ValueError."""
         with pytest.raises(ValueError, match="operators list cannot be empty"):
-            CompositeOperatorConfig(
-                strategy=CompositionStrategy.SEQUENTIAL,
+            CompositeOperatorModule(
+                CompositeOperatorConfig(
+                    strategy=CompositionStrategy.SEQUENTIAL,
+                ),
                 operators=[],
             )
 
@@ -207,25 +220,25 @@ class TestCompositeQuickIntegration:
 
         # Should raise if router is missing
         with pytest.raises(ValueError, match="BRANCHING strategy requires router"):
-            CompositeOperatorConfig(
-                strategy=CompositionStrategy.BRANCHING,
+            CompositeOperatorModule(
+                CompositeOperatorConfig(
+                    strategy=CompositionStrategy.BRANCHING,
+                ),
                 operators=[op1, op2],  # List without router
             )
 
     def test_config_auto_stochastic_detection(self):
-        """Test that config auto-detects stochastic from children."""
-        rngs = nnx.Rngs(0)
-
-        # Create one deterministic and one stochastic operator
-        det_config = MapOperatorConfig(stochastic=False)
-        det_op = MapOperator(det_config, fn=lambda x, _key: x, rngs=rngs)
-
-        # Note: MapOperator doesn't support stochastic yet, so we'll just
-        # test with deterministic for now
-        composite_config = CompositeOperatorConfig(
-            strategy=CompositionStrategy.SEQUENTIAL,
-            operators=[det_op, det_op],
+        """A composite is stochastic exactly when one of its operators is."""
+        deterministic = MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, _key: x)
+        stochastic = MapOperator(
+            MapOperatorConfig(stochastic=True, stream_name="augment"),
+            fn=lambda x, key: x + jax.random.normal(key, x.shape),
+            rngs=nnx.Rngs(augment=0),
         )
+        config = CompositeOperatorConfig(strategy=CompositionStrategy.SEQUENTIAL)
 
-        # Should auto-detect as False (all deterministic)
-        assert not composite_config.stochastic
+        assert not CompositeOperatorModule(config, operators=[deterministic]).config.stochastic
+        mixed = CompositeOperatorModule(
+            config, operators=[deterministic, stochastic], rngs=nnx.Rngs(composite=0)
+        )
+        assert mixed.config.stochastic

@@ -634,7 +634,8 @@ class DataraxAdapter(PipelineAdapter):
             )
             stages.append(
                 ProbabilisticOperator(
-                    ProbabilisticOperatorConfig(operator=augment, probability=probability),
+                    ProbabilisticOperatorConfig(probability=probability),
+                    operator=augment,
                     rngs=rngs,
                 )
             )
@@ -649,7 +650,8 @@ class DataraxAdapter(PipelineAdapter):
             ]
             stages.append(
                 SelectorOperator(
-                    SelectorOperatorConfig(operators=choices, stream_name="augment"),
+                    SelectorOperatorConfig(stream_name="augment"),
+                    operators=choices,
                     rngs=rngs,
                 )
             )

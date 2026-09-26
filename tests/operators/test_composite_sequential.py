@@ -45,9 +45,11 @@ class TestSequentialBasics:
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Create batch from Elements
         batch = Batch(
@@ -84,9 +86,11 @@ class TestSequentialBasics:
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2, op3],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Create batch from Element
         batch = Batch([Element(data={"value": jnp.array([5.0])})])
@@ -113,9 +117,11 @@ class TestSequentialBasics:
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Create batch
         batch = Batch([Element(data={"value": jnp.array([3.0])})])
@@ -149,11 +155,10 @@ class TestSequentialBasics:
         # Create composite
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
-            operators=[op1, op2],
             stochastic=True,
             stream_name="augment",
         )
-        composite = CompositeOperatorModule(composite_config, rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
 
         # Test with batch
         batch = Batch([Element(data={"value": jnp.array([1.0, 2.0, 3.0])})])
@@ -184,9 +189,11 @@ class TestSequentialDataFlow:
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Create batch with state (MapOperator passes through unchanged)
         batch = Batch([Element(data={"value": jnp.array([1.0])}, state={"counter": jnp.array(5)})])
@@ -213,9 +220,11 @@ class TestSequentialDataFlow:
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Create batch with metadata (MapOperator passes through unchanged)
         batch = Batch(
@@ -246,9 +255,11 @@ class TestSequentialDataFlow:
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2, op3],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Create batch for data transformation
         batch = Batch([Element(data={"value": jnp.array([10.0])})])
@@ -279,9 +290,11 @@ class TestSequentialJIT:
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # JIT compile the __call__ method (pass module as argument, not closure)
         @nnx.jit
@@ -319,9 +332,11 @@ class TestSequentialJIT:
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Create batch (Batch handles vmap internally via apply_batch)
         batch = Batch(
@@ -358,9 +373,11 @@ class TestSequentialAdvanced:
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Create batch for integration test
         batch = Batch([Element(data={"value": jnp.array([2.0])})])
@@ -387,9 +404,11 @@ class TestSequentialAdvanced:
         # Create sequential composite
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Create batch to trigger statistics collection
         batch = Batch([Element(data={"value": jnp.array([1.0])})])
@@ -409,9 +428,11 @@ class TestSequentialAdvanced:
 
         inner_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
+        )
+        inner_composite = CompositeOperatorModule(
+            inner_config,
             operators=[op1, op2],
         )
-        inner_composite = CompositeOperatorModule(inner_config)
 
         # Create outer sequential composite (inner + one more operator)
         config3 = MapOperatorConfig(stochastic=False)
@@ -419,9 +440,11 @@ class TestSequentialAdvanced:
 
         outer_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
+        )
+        outer_composite = CompositeOperatorModule(
+            outer_config,
             operators=[inner_composite, op3],
         )
-        outer_composite = CompositeOperatorModule(outer_config)
 
         # Create batch for nested composition test
         batch = Batch([Element(data={"value": jnp.array([5.0])})])

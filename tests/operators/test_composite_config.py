@@ -40,11 +40,13 @@ class TestConfigValidation:
         # Create valid sequential config
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
-            operators=[op1, op2],
         )
 
         # Should not raise - validation passes
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
         assert composite.config.strategy == CompositionStrategy.SEQUENTIAL
 
     def test_valid_parallel_config(self):
@@ -61,12 +63,14 @@ class TestConfigValidation:
         # Create valid parallel config with merge strategy
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.PARALLEL,
-            operators=[op1, op2],
             merge_strategy="concat",
         )
 
         # Should not raise - validation passes
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
         assert composite.config.strategy == CompositionStrategy.PARALLEL
         assert composite.config.merge_strategy == "concat"
 
@@ -84,15 +88,17 @@ class TestConfigValidation:
         # Create valid weighted parallel config
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-            operators=[op1, op2],
             weights=[0.3, 0.7],
             mix_fields=("value",),
         )
 
         # Should not raise - validation passes
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
         assert composite.config.strategy == CompositionStrategy.WEIGHTED_PARALLEL
-        assert composite.config.weights == [0.3, 0.7]
+        assert composite.config.weights == (0.3, 0.7)
 
     def test_valid_ensemble_mean_config(self):
         """Test valid ensemble configuration with mean reduction."""
@@ -111,11 +117,13 @@ class TestConfigValidation:
         # Create valid ensemble mean config
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.ENSEMBLE_MEAN,
-            operators=[op1, op2, op3],
         )
 
         # Should not raise - validation passes
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2, op3],
+        )
         assert composite.config.strategy == CompositionStrategy.ENSEMBLE_MEAN
 
     def test_valid_ensemble_sum_config(self):
@@ -132,11 +140,13 @@ class TestConfigValidation:
         # Create valid ensemble sum config
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.ENSEMBLE_SUM,
-            operators=[op1, op2],
         )
 
         # Should not raise - validation passes
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
         assert composite.config.strategy == CompositionStrategy.ENSEMBLE_SUM
 
     def test_valid_conditional_sequential_config(self):
@@ -159,12 +169,14 @@ class TestConfigValidation:
         # Create valid conditional sequential config
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.CONDITIONAL_SEQUENTIAL,
-            operators=[op1, op2],
             conditions=conditions,
         )
 
         # Should not raise - validation passes
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
         assert composite.config.strategy == CompositionStrategy.CONDITIONAL_SEQUENTIAL
         assert composite.config.conditions is not None
         assert len(composite.config.conditions) == 2
@@ -189,13 +201,15 @@ class TestConfigValidation:
         # Create valid conditional parallel config
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.CONDITIONAL_PARALLEL,
-            operators=[op1, op2],
             conditions=conditions,
             merge_strategy="stack",
         )
 
         # Should not raise - validation passes
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
         assert composite.config.strategy == CompositionStrategy.CONDITIONAL_PARALLEL
 
     def test_valid_branching_config(self):
@@ -217,12 +231,14 @@ class TestConfigValidation:
         # Create valid branching config
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.BRANCHING,
-            operators=[op1, op2],  # List of operators
             router=router,
         )
 
         # Should not raise - validation passes
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],  # List of operators
+        )
         assert composite.config.strategy == CompositionStrategy.BRANCHING
         assert composite.config.router is not None
 
@@ -240,11 +256,13 @@ class TestConfigValidation:
         # Create valid dynamic sequential config (same as sequential)
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.DYNAMIC_SEQUENTIAL,
-            operators=[op1, op2],
         )
 
         # Should not raise - validation passes
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
         assert composite.config.strategy == CompositionStrategy.DYNAMIC_SEQUENTIAL
 
 
@@ -254,8 +272,10 @@ class TestConfigValidationFailures:
     def test_empty_operators_list_fails(self):
         """Test that empty operators list raises ValueError."""
         with pytest.raises(ValueError, match="operators list cannot be empty"):
-            CompositeOperatorConfig(
-                strategy=CompositionStrategy.SEQUENTIAL,
+            CompositeOperatorModule(
+                CompositeOperatorConfig(
+                    strategy=CompositionStrategy.SEQUENTIAL,
+                ),
                 operators=[],
             )
 
@@ -272,11 +292,13 @@ class TestConfigValidationFailures:
         # Branching requires list with router (this should pass validation)
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.BRANCHING,
-            operators=[op1, op2],  # List is required
             router=lambda _data: 0,  # Router returns integer index
         )
         # Should not raise - branching with list and router is valid
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],  # List is required
+        )
         assert composite.config.strategy == CompositionStrategy.BRANCHING
 
     def test_conditional_without_conditions_fails(self):
@@ -288,8 +310,10 @@ class TestConfigValidationFailures:
 
         # Conditional requires conditions parameter
         with pytest.raises(ValueError, match="requires conditions"):
-            CompositeOperatorConfig(
-                strategy=CompositionStrategy.CONDITIONAL_SEQUENTIAL,
+            CompositeOperatorModule(
+                CompositeOperatorConfig(
+                    strategy=CompositionStrategy.CONDITIONAL_SEQUENTIAL,
+                ),
                 operators=[op1],
                 # Missing conditions parameter
             )
@@ -306,10 +330,12 @@ class TestConfigValidationFailures:
 
         # Conditions length must match operators length
         with pytest.raises(ValueError, match="Number of conditions must match number of operators"):
-            CompositeOperatorConfig(
-                strategy=CompositionStrategy.CONDITIONAL_SEQUENTIAL,
+            CompositeOperatorModule(
+                CompositeOperatorConfig(
+                    strategy=CompositionStrategy.CONDITIONAL_SEQUENTIAL,
+                    conditions=[lambda _data: True],  # Only 1 condition for 2 operators
+                ),
                 operators=[op1, op2],
-                conditions=[lambda _data: True],  # Only 1 condition for 2 operators
             )
 
     def test_weighted_parallel_mismatched_weights_fails(self):
@@ -324,11 +350,13 @@ class TestConfigValidationFailures:
 
         # Weights length must match operators length
         with pytest.raises(ValueError, match="Number of weights must match number of operators"):
-            CompositeOperatorConfig(
-                strategy=CompositionStrategy.WEIGHTED_PARALLEL,
+            CompositeOperatorModule(
+                CompositeOperatorConfig(
+                    strategy=CompositionStrategy.WEIGHTED_PARALLEL,
+                    weights=[0.5],  # Only 1 weight for 2 operators
+                    mix_fields=("value",),
+                ),
                 operators=[op1, op2],
-                weights=[0.5],  # Only 1 weight for 2 operators
-                mix_fields=("value",),
             )
 
     def test_branching_without_router_fails(self):
@@ -343,8 +371,10 @@ class TestConfigValidationFailures:
 
         # Branching requires router function
         with pytest.raises(ValueError, match="BRANCHING strategy requires router"):
-            CompositeOperatorConfig(
-                strategy=CompositionStrategy.BRANCHING,
+            CompositeOperatorModule(
+                CompositeOperatorConfig(
+                    strategy=CompositionStrategy.BRANCHING,
+                ),
                 operators=[op1, op2],  # List is correct, but missing router
                 # Missing router parameter
             )
@@ -367,9 +397,11 @@ class TestConfigAutoStochasticDetection:
         # Create composite - should auto-detect stochastic=False
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Verify auto-detection
         assert composite.config.stochastic is False
@@ -390,11 +422,10 @@ class TestConfigAutoStochasticDetection:
         # Composite should be stochastic if any child is stochastic
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
-            operators=[op1, op2],
             stochastic=True,  # Explicitly set (auto-detection not required)
             stream_name="augment",
         )
-        composite = CompositeOperatorModule(composite_config, rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
 
         assert composite.config.stochastic is True
 
@@ -416,10 +447,9 @@ class TestConfigAutoStochasticDetection:
         # Composite should be stochastic when all children are stochastic
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
-            operators=[op1, op2],
             stochastic=True,
             stream_name="augment",
         )
-        composite = CompositeOperatorModule(composite_config, rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
 
         assert composite.config.stochastic is True

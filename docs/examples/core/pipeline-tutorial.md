@@ -27,8 +27,8 @@ handle different data modalities, and build production-ready pipelines.
 
 | PyTorch | Datarax |
 |---------|---------|
-| `transforms.Compose([T1, T2, T3])` | `CompositeOperatorModule(CompositeOperatorConfig(operators=[op1, op2, op3]), rngs=...)` |
-| `transforms.RandomApply([t], p=0.5)` | `ProbabilisticOperator(ProbabilisticOperatorConfig(operator=t, probability=0.5), rngs=...)` |
+| `transforms.Compose([T1, T2, T3])` | `CompositeOperatorModule(CompositeOperatorConfig(strategy=CompositionStrategy.SEQUENTIAL), operators=[op1, op2, op3], rngs=...)` |
+| `transforms.RandomApply([t], p=0.5)` | `ProbabilisticOperator(ProbabilisticOperatorConfig(probability=0.5), operator=t, rngs=...)` |
 | `DataLoader(shuffle=True)` | `MemorySourceConfig(shuffle=True)` |
 | Manual seed setting | `nnx.Rngs(seed)` with stream names |
 
@@ -203,13 +203,13 @@ from datarax.operators.composite_operator import (
 
 augmentation_config = CompositeOperatorConfig(
     strategy=CompositionStrategy.SEQUENTIAL,
-    operators=[flipper, noise_adder],
     stochastic=True,
     stream_name="augment",
 )
 
 augmentation_pipeline = CompositeOperatorModule(
     augmentation_config,
+    operators=[flipper, noise_adder],
     rngs=nnx.Rngs(augment=999),
 )
 ```

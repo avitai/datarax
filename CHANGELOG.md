@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `NoiseOperatorConfig`, `DropoutOperatorConfig` and `PatchDropoutOperatorConfig` are stochastic
   by default (stream `augment`) and refuse `stochastic=False`: the fixed-key "deterministic noise"
   mode is removed; evaluation mode turns them off.
+- Wrapper children are constructor arguments held as graph children, never configuration:
+  `ProbabilisticOperator(config, operator=...)`, `SelectorOperator(config, operators=...)`,
+  `CompositeOperatorModule(config, operators=...)`. The configs keep hyperparameters only (their
+  sequences stored as tuples), `resolved_for` / `for_child` / `normalized_weights(n)` complete them
+  for the children, and a composite derives its strategy from the configuration on demand. Wrappers
+  built the same way share one compiled trace in graph and tree mode; they compiled once per
+  instance before.
+- `BrightnessOperator` and `ContrastOperator` take `rngs` only when stochastic.
 - Operator statistics are fixed-shape state given at construction:
   `OperatorModule(config, ..., statistics={...})` stores them as arrays at their real shape, and an
   operator built without them holds no statistics leaf. `set_statistics` replaces values of the

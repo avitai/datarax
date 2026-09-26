@@ -43,9 +43,11 @@ class TestCompositeWithMapOperator:
         # Compose sequentially
         config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
+        )
+        composite = CompositeOperatorModule(
+            config,
             operators=[op1, op2, op3],
         )
-        composite = CompositeOperatorModule(config)
 
         # Test: ((x * 2) + 5) * 3
         batch = Batch(
@@ -72,10 +74,12 @@ class TestCompositeWithMapOperator:
         # Compose in parallel
         config = CompositeOperatorConfig(
             strategy=CompositionStrategy.PARALLEL,
-            operators=[op1, op2, op3],
             merge_strategy="concat",
         )
-        composite = CompositeOperatorModule(config)
+        composite = CompositeOperatorModule(
+            config,
+            operators=[op1, op2, op3],
+        )
 
         # Test: concat([x*2, x*3, x*4])
         batch = Batch([Element(data={"value": jnp.array([2.0])})])
@@ -97,7 +101,10 @@ class TestNestedComposites:
             MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, _key: x + 1, rngs=rngs),
         ]
         branch1 = CompositeOperatorModule(
-            CompositeOperatorConfig(strategy=CompositionStrategy.SEQUENTIAL, operators=seq1_ops)
+            CompositeOperatorConfig(
+                strategy=CompositionStrategy.SEQUENTIAL,
+            ),
+            operators=seq1_ops,
         )
 
         seq2_ops = [
@@ -105,16 +112,21 @@ class TestNestedComposites:
             MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, _key: x + 10, rngs=rngs),
         ]
         branch2 = CompositeOperatorModule(
-            CompositeOperatorConfig(strategy=CompositionStrategy.SEQUENTIAL, operators=seq2_ops)
+            CompositeOperatorConfig(
+                strategy=CompositionStrategy.SEQUENTIAL,
+            ),
+            operators=seq2_ops,
         )
 
         # Compose in parallel
         parallel_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.PARALLEL,
-            operators=[branch1, branch2],
             merge_strategy="concat",
         )
-        composite = CompositeOperatorModule(parallel_config)
+        composite = CompositeOperatorModule(
+            parallel_config,
+            operators=[branch1, branch2],
+        )
 
         # Test: concat([(x*2)+1, (x*3)+10])
         batch = Batch([Element(data={"value": jnp.array([5.0])})])
@@ -136,9 +148,9 @@ class TestNestedComposites:
         parallel = CompositeOperatorModule(
             CompositeOperatorConfig(
                 strategy=CompositionStrategy.PARALLEL,
-                operators=par_ops,
                 merge_strategy="concat",
-            )
+            ),
+            operators=par_ops,
         )
 
         # Wrap in sequential with another operator
@@ -148,9 +160,11 @@ class TestNestedComposites:
 
         seq_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
+        )
+        composite = CompositeOperatorModule(
+            seq_config,
             operators=[parallel, final_op],
         )
-        composite = CompositeOperatorModule(seq_config)
 
         # Test: concat([x*2, x*3]) then +100 to all
         batch = Batch([Element(data={"value": jnp.array([1.0])})])
@@ -168,42 +182,42 @@ class TestNestedComposites:
         inner_seq = CompositeOperatorModule(
             CompositeOperatorConfig(
                 strategy=CompositionStrategy.SEQUENTIAL,
-                operators=[
-                    MapOperator(
-                        MapOperatorConfig(stochastic=False), fn=lambda x, _key: x + 1, rngs=rngs
-                    ),
-                    MapOperator(
-                        MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 2, rngs=rngs
-                    ),
-                ],
-            )
+            ),
+            operators=[
+                MapOperator(
+                    MapOperatorConfig(stochastic=False), fn=lambda x, _key: x + 1, rngs=rngs
+                ),
+                MapOperator(
+                    MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 2, rngs=rngs
+                ),
+            ],
         )
 
         # Level 2: Parallel (middle)
         middle_par = CompositeOperatorModule(
             CompositeOperatorConfig(
                 strategy=CompositionStrategy.PARALLEL,
-                operators=[
-                    inner_seq,
-                    MapOperator(
-                        MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 10, rngs=rngs
-                    ),
-                ],
                 merge_strategy="concat",
-            )
+            ),
+            operators=[
+                inner_seq,
+                MapOperator(
+                    MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 10, rngs=rngs
+                ),
+            ],
         )
 
         # Level 1: Sequential (outer)
         outer_seq = CompositeOperatorModule(
             CompositeOperatorConfig(
                 strategy=CompositionStrategy.SEQUENTIAL,
-                operators=[
-                    middle_par,
-                    MapOperator(
-                        MapOperatorConfig(stochastic=False), fn=lambda x, _key: x + 100, rngs=rngs
-                    ),
-                ],
-            )
+            ),
+            operators=[
+                middle_par,
+                MapOperator(
+                    MapOperatorConfig(stochastic=False), fn=lambda x, _key: x + 100, rngs=rngs
+                ),
+            ],
         )
 
         # Test: concat([(x+1)*2, x*10]) then +100
@@ -234,11 +248,12 @@ class TestMixedModes:
         # Build sequential pipeline
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
-            operators=[stoch_op, det_op],
             stochastic=True,
             stream_name="augment",
         )
-        composite = CompositeOperatorModule(composite_config, rngs=rngs)
+        composite = CompositeOperatorModule(
+            composite_config, operators=[stoch_op, det_op], rngs=rngs
+        )
 
         # Test with batch
         batch = Batch(
@@ -278,9 +293,11 @@ class TestRealWorldUseCases:
 
         config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
+        )
+        pipeline = CompositeOperatorModule(
+            config,
             operators=[normalize, crop, brightness, contrast],
         )
-        pipeline = CompositeOperatorModule(config)
 
         # Test augmentation pipeline
         batch = Batch(
@@ -313,9 +330,11 @@ class TestRealWorldUseCases:
 
         config = CompositeOperatorConfig(
             strategy=CompositionStrategy.ENSEMBLE_MEAN,
+        )
+        ensemble = CompositeOperatorModule(
+            config,
             operators=[model1, model2, model3],
         )
-        ensemble = CompositeOperatorModule(config)
 
         # Test ensemble prediction (mean of 3 models)
         batch = Batch([Element(data={"value": jnp.array([10.0])})])
@@ -333,30 +352,30 @@ class TestRealWorldUseCases:
         small_path = CompositeOperatorModule(
             CompositeOperatorConfig(
                 strategy=CompositionStrategy.SEQUENTIAL,
-                operators=[
-                    MapOperator(
-                        MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 1.1, rngs=rngs
-                    ),
-                    MapOperator(
-                        MapOperatorConfig(stochastic=False), fn=lambda x, _key: x + 5, rngs=rngs
-                    ),
-                ],
-            )
+            ),
+            operators=[
+                MapOperator(
+                    MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 1.1, rngs=rngs
+                ),
+                MapOperator(
+                    MapOperatorConfig(stochastic=False), fn=lambda x, _key: x + 5, rngs=rngs
+                ),
+            ],
         )
 
         # Large images: heavy augmentation
         large_path = CompositeOperatorModule(
             CompositeOperatorConfig(
                 strategy=CompositionStrategy.SEQUENTIAL,
-                operators=[
-                    MapOperator(
-                        MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 0.8, rngs=rngs
-                    ),
-                    MapOperator(
-                        MapOperatorConfig(stochastic=False), fn=lambda x, _key: x + 20, rngs=rngs
-                    ),
-                ],
-            )
+            ),
+            operators=[
+                MapOperator(
+                    MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 0.8, rngs=rngs
+                ),
+                MapOperator(
+                    MapOperatorConfig(stochastic=False), fn=lambda x, _key: x + 20, rngs=rngs
+                ),
+            ],
         )
 
         # Router based on value magnitude (returns integer index, vmap compatible)
@@ -366,10 +385,12 @@ class TestRealWorldUseCases:
 
         config = CompositeOperatorConfig(
             strategy=CompositionStrategy.BRANCHING,
-            operators=[small_path, large_path],  # List indexed 0=small, 1=large
             router=router,
         )
-        branching = CompositeOperatorModule(config)
+        branching = CompositeOperatorModule(
+            config,
+            operators=[small_path, large_path],  # List indexed 0=small, 1=large
+        )
 
         # Test small path
         small_batch = Batch([Element(data={"value": jnp.array([50.0])})])
@@ -394,6 +415,9 @@ class TestBatchIntegration:
         # Create simple sequential composite
         config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
+        )
+        composite = CompositeOperatorModule(
+            config,
             operators=[
                 MapOperator(
                     MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 2, rngs=rngs
@@ -403,7 +427,6 @@ class TestBatchIntegration:
                 ),
             ],
         )
-        composite = CompositeOperatorModule(config)
 
         # Create batch from list of Elements
         elements = [

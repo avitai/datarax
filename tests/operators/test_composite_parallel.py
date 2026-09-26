@@ -44,11 +44,13 @@ class TestParallelMergeStrategies:
         # Create parallel composite with concat merge
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.PARALLEL,
-            operators=[op1, op2],
             merge_strategy="concat",
             merge_axis=0,
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         # Create batch
         batch = Batch(
@@ -82,11 +84,13 @@ class TestParallelMergeStrategies:
         # Create parallel composite with stack merge
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.PARALLEL,
-            operators=[op1, op2],
             merge_strategy="stack",
             merge_axis=0,
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         # Create batch
         batch = Batch(
@@ -120,10 +124,12 @@ class TestParallelMergeStrategies:
         # Create parallel composite with sum merge
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.PARALLEL,
-            operators=[op1, op2],
             merge_strategy="sum",
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         # Create batch
         batch = Batch(
@@ -155,10 +161,12 @@ class TestParallelMergeStrategies:
         # Create parallel composite with mean merge
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.PARALLEL,
-            operators=[op1, op2],
             merge_strategy="mean",
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         # Create batch
         batch = Batch(
@@ -190,10 +198,12 @@ class TestParallelMergeStrategies:
         # Create parallel composite with dict merge
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.PARALLEL,
-            operators=[op1, op2],
             merge_strategy="dict",
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         # Create batch
         batch = Batch([Element(data={"value": jnp.array([1.0])})])
@@ -240,10 +250,12 @@ class TestParallelMergeStrategies:
         # Create parallel composite with custom merge
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.PARALLEL,
-            operators=[op1, op2],
             merge_fn=custom_merge,
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         # Create batch
         batch = Batch([Element(data={"value": jnp.array([10.0])})])
@@ -274,10 +286,12 @@ class TestParallelExecution:
         # Create parallel composite
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.PARALLEL,
-            operators=[op1, op2],
             merge_strategy="sum",
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         # Create batch
         batch = Batch([Element(data={"value": jnp.array([3.0])})])
@@ -312,12 +326,11 @@ class TestParallelExecution:
         # Create parallel composite with sum merge
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.PARALLEL,
-            operators=[op1, op2],
             merge_strategy="sum",
             stochastic=True,
             stream_name="augment",
         )
-        composite = CompositeOperatorModule(composite_config, rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
 
         # Test with batch
         batch = Batch([Element(data={"value": jnp.array([1.0, 2.0])})])
@@ -347,10 +360,12 @@ class TestParallelJIT:
         # Create parallel composite
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.PARALLEL,
-            operators=[op1, op2],
             merge_strategy="sum",
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         # JIT compile with nnx.jit (pass module as argument, not closure)
         @nnx.jit
@@ -387,10 +402,12 @@ class TestParallelJIT:
         # Create parallel composite
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.PARALLEL,
-            operators=[op1, op2],
             merge_strategy="sum",
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         # Create batch (Batch handles vmap internally via apply_batch)
         batch = Batch(
@@ -427,10 +444,12 @@ class TestParallelAdvanced:
         # Create parallel composite
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.PARALLEL,
-            operators=[op1, op2],
             merge_strategy="sum",
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         batch = Batch([Element(data={"value": jnp.array([1.0])})])
 
@@ -450,11 +469,13 @@ class TestParallelAdvanced:
         # Create weighted parallel composite
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-            operators=[op1, op2],
             weights=[0.7, 0.3],
             mix_fields=("value",),
         )
-        composite = CompositeOperatorModule(composite_config)
+        composite = CompositeOperatorModule(
+            composite_config,
+            operators=[op1, op2],
+        )
 
         # Create batch
         batch = Batch([Element(data={"value": jnp.array([10.0])})])

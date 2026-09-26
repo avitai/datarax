@@ -332,11 +332,11 @@ flip_op = ElementOperator(
 sequential_augment = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.SEQUENTIAL,
-        operators=[norm_op, flip_op],
         stochastic=True,
         stream_name="seq_augment",
     ),
-    rngs=nnx.Rngs(seq_augment=500),
+    operators=[norm_op, flip_op],
+        rngs=nnx.Rngs(seq_augment=500),
 )
 ```
 

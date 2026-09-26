@@ -1246,16 +1246,16 @@ def create_synth_composite(
     synth_parallel = CompositeOperatorModule(
         CompositeOperatorConfig(
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-            operators=[harmonic_synth, noise_synth],
             weights=[1.0, 0.1],
             mix_fields=("audio",),
-        )
+        ),
+        operators=[harmonic_synth, noise_synth],
     )
     return CompositeOperatorModule(
         CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
-            operators=[synth_parallel, reverb],
-        )
+        ),
+        operators=[synth_parallel, reverb],
     )
 
 

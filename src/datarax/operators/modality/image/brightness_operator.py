@@ -124,12 +124,12 @@ class BrightnessOperator(ModalityOperator):
         ```
     """
 
-    def __init__(self, config: BrightnessOperatorConfig, *, rngs: nnx.Rngs) -> None:
+    def __init__(self, config: BrightnessOperatorConfig, *, rngs: nnx.Rngs | None = None) -> None:
         """Initialize BrightnessOperator with configuration.
 
         Args:
             config: BrightnessOperatorConfig specifying transformation parameters
-            rngs: Flax NNX random number generator state
+            rngs: Random number generators (required when the config is stochastic)
 
         Note:
             For learnable transformations, create a subclass that:

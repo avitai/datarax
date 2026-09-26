@@ -358,11 +358,10 @@ def mixture(weights: list[float], learnable: bool) -> CompositeOperatorModule:
     """Mix the two image operators' outputs with ``weights``."""
     config = CompositeOperatorConfig(
         strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-        operators=image_operators(),
         weights=weights,
         learnable_weights=learnable,
     )
-    return CompositeOperatorModule(config, rngs=nnx.Rngs(0))
+    return CompositeOperatorModule(config, operators=image_operators(), rngs=nnx.Rngs(0))
 
 
 target_mixture = mixture([0.25, 0.75], learnable=False)

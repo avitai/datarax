@@ -114,7 +114,11 @@ def _values(batch: Batch) -> list[float]:
 def _composite(strategy: CompositionStrategy, operators: list[OperatorModule]) -> OperatorModule:
     """A composite over the given children."""
     return CompositeOperatorModule(
-        CompositeOperatorConfig(strategy=strategy, operators=operators), rngs=nnx.Rngs(0)
+        CompositeOperatorConfig(
+            strategy=strategy,
+        ),
+        operators=operators,
+        rngs=nnx.Rngs(0),
     )
 
 
@@ -139,7 +143,9 @@ def test_a_child_does_not_receive_the_statistics_of_a_sibling() -> None:
 
 def test_the_selected_child_receives_the_statistic_it_computed() -> None:
     """A selector with one child always applies it, with that child's own statistics."""
-    selector = SelectorOperator(SelectorOperatorConfig(operators=[_adds("max")]), rngs=nnx.Rngs(0))
+    selector = SelectorOperator(
+        SelectorOperatorConfig(), operators=[_adds("max")], rngs=nnx.Rngs(0)
+    )
 
     result = selector(_batch())
 
@@ -149,7 +155,8 @@ def test_the_selected_child_receives_the_statistic_it_computed() -> None:
 def test_an_always_applied_child_receives_the_statistic_it_computed() -> None:
     """A probability of one reaches the child, which draws on its own statistics."""
     wrapper = ProbabilisticOperator(
-        ProbabilisticOperatorConfig(operator=_adds("mean"), probability=1.0)
+        ProbabilisticOperatorConfig(probability=1.0),
+        operator=_adds("mean"),
     )
 
     result = wrapper(_batch())

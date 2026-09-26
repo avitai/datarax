@@ -74,10 +74,10 @@ from datarax.operators.probabilistic_operator import (
 # Wrap operator with 50% probability
 prob_brightness = ProbabilisticOperator(
     ProbabilisticOperatorConfig(
-        operator=brightness_op,
         probability=0.5,
     ),
-    rngs=nnx.Rngs(augment=42),
+    operator=brightness_op,
+        rngs=nnx.Rngs(augment=42),
 )
 ```
 
@@ -111,10 +111,10 @@ from datarax.operators.selector_operator import (
 
 selector = SelectorOperator(
     SelectorOperatorConfig(
-        operators=[op_bright, op_contrast, op_noise],
         weights=[0.5, 0.3, 0.2],  # 50%, 30%, 20%
     ),
-    rngs=nnx.Rngs(augment=100),
+    operators=[op_bright, op_contrast, op_noise],
+        rngs=nnx.Rngs(augment=100),
 )
 ```
 
@@ -164,23 +164,23 @@ Combine operators to build sophisticated augmentation pipelines:
 ```python
 # 1. Probabilistically apply brightness (60%)
 prob_bright = ProbabilisticOperator(
-    ProbabilisticOperatorConfig(operator=bright, probability=0.6, stream_name="augment"),
-    rngs=nnx.Rngs(augment=100),
+    ProbabilisticOperatorConfig(probability=0.6, stream_name="augment"),
+    operator=bright, rngs=nnx.Rngs(augment=100),
 )
 
 # 2. Probabilistically apply contrast (60%)
 prob_contrast = ProbabilisticOperator(
-    ProbabilisticOperatorConfig(operator=contrast, probability=0.6, stream_name="augment"),
-    rngs=nnx.Rngs(augment=200),
+    ProbabilisticOperatorConfig(probability=0.6, stream_name="augment"),
+    operator=contrast, rngs=nnx.Rngs(augment=200),
 )
 
 # 3. Randomly select: noise (70%) or patch dropout (30%)
 final_selector = SelectorOperator(
     SelectorOperatorConfig(
-        operators=[noise, patch],
         weights=[0.7, 0.3],
     ),
-    rngs=nnx.Rngs(augment=300),
+    operators=[noise, patch],
+        rngs=nnx.Rngs(augment=300),
 )
 
 # Build pipeline

@@ -34,10 +34,12 @@ class TestBoundaryConditions:
     def test_empty_operators_list_fails_at_config(self):
         """Test that empty operators list fails at config construction."""
         with pytest.raises(ValueError, match="operators list cannot be empty"):
-            CompositeOperatorConfig(
-                strategy=CompositionStrategy.SEQUENTIAL,
+            CompositeOperatorModule(
+                CompositeOperatorConfig(
+                    strategy=CompositionStrategy.SEQUENTIAL,
+                    stochastic=False,
+                ),
                 operators=[],  # Empty list should fail validation
-                stochastic=False,
             )
 
     def test_single_operator_trivial_composition(self):
@@ -51,10 +53,9 @@ class TestBoundaryConditions:
         # Create composite with single operator (trivial composition)
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
-            operators=[op],
             stochastic=False,
         )
-        composite = CompositeOperatorModule(composite_config, rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=[op], rngs=rngs)
 
         # Test with batch
         batch = Batch([Element(data={"value": jnp.array([5.0])})])
@@ -78,10 +79,9 @@ class TestBoundaryConditions:
         # Create composite
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
-            operators=operators,
             stochastic=False,
         )
-        composite = CompositeOperatorModule(composite_config, rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=operators, rngs=rngs)
 
         # Test with batch
         batch = Batch([Element(data={"value": jnp.array([0.0])})])
@@ -106,11 +106,10 @@ class TestBoundaryConditions:
         # Create parallel composite with concat merge
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.PARALLEL,
-            operators=[op1, op2],
             merge_strategy="concat",
             stochastic=False,
         )
-        composite = CompositeOperatorModule(composite_config, rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
 
         # This works! Concat along axis 0: shape (1,) + (2,) = (3,)
         batch = Batch([Element(data={"value": jnp.array([5.0])})])
@@ -141,10 +140,9 @@ class TestNumericalEdgeCases:
         # Create ensemble with mean reduction
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.ENSEMBLE_MEAN,
-            operators=[op1, op2],
             stochastic=False,
         )
-        composite = CompositeOperatorModule(composite_config, rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
 
         # Test with batch
         batch = Batch([Element(data={"value": jnp.array([5.0])})])
@@ -169,11 +167,10 @@ class TestNumericalEdgeCases:
         # Create parallel with sum merge
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.PARALLEL,
-            operators=[op1, op2],
             merge_strategy="sum",
             stochastic=False,
         )
-        composite = CompositeOperatorModule(composite_config, rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
 
         # Test with batch
         batch = Batch([Element(data={"value": jnp.array([5.0])})])
@@ -199,12 +196,11 @@ class TestWeightingEdgeCases:
         # Zero weights should produce zero output (not an error, just degenerate)
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-            operators=[op1, op2],
             weights=[0.0, 0.0],
             mix_fields=("value",),
             stochastic=False,
         )
-        composite = CompositeOperatorModule(composite_config, rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
 
         batch = Batch([Element(data={"value": jnp.array([5.0])})])
         result_batch = composite(batch)
@@ -225,12 +221,11 @@ class TestWeightingEdgeCases:
         # Negative weights should work (for subtraction/cancellation effects)
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-            operators=[op1, op2],
             weights=[1.0, -0.5],  # 1.0 * (x*2) + (-0.5) * (x*3)
             mix_fields=("value",),
             stochastic=False,
         )
-        composite = CompositeOperatorModule(composite_config, rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
 
         batch = Batch([Element(data={"value": jnp.array([2.0])})])
         result_batch = composite(batch)
@@ -261,11 +256,10 @@ class TestBranchingEdgeCases:
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.BRANCHING,
-            operators=[op1, op2],
             router=router,
             stochastic=False,
         )
-        composite = CompositeOperatorModule(composite_config, rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
 
         # Test with value < 5.0 -> should use op1 (x * 2)
         batch1 = Batch([Element(data={"value": jnp.array([3.0])})])
@@ -296,11 +290,10 @@ class TestConditionalEdgeCases:
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.CONDITIONAL_SEQUENTIAL,
-            operators=[op1],
             conditions=[bad_condition],
             stochastic=False,
         )
-        composite = CompositeOperatorModule(composite_config, rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=[op1], rngs=rngs)
 
         batch = Batch([Element(data={"value": jnp.array([5.0])})])
 
