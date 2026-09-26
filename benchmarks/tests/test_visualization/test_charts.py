@@ -5,10 +5,13 @@ RED phase: defines expected behavior for ChartGenerator's 7 chart types.
 
 from __future__ import annotations
 
+import dataclasses
 import time
 from pathlib import Path
 
 import numpy as np
+from calibrax.core import BenchmarkResult
+from matplotlib.patches import Rectangle
 
 
 class TestChartGenerator:
@@ -94,6 +97,32 @@ class TestChartGenerator:
 
         depths = np.asarray(figure.axes[0].lines[0].get_xdata())
         assert [int(depth) for depth in depths] == [1, 3, 6]
+
+    def test_memory_waterfall_estimates_from_the_recorded_size_and_shape(self, tmp_path: Path):
+        """Without resource data the bar is the recorded records times shape, 4 bytes each.
+
+        A size recorded as ``None`` was not measured, and counts as the default of none.
+        """
+        from benchmarks.runners.full_runner import ComparativeResults
+        from benchmarks.tests.test_analysis.conftest import make_result
+        from benchmarks.visualization.charts import ChartGenerator
+
+        def recorded(framework: str, size: int | None) -> BenchmarkResult:
+            result = make_result(framework=framework)
+            config = {**result.config, "dataset_size": size, "element_shape": [256, 1024]}
+            return dataclasses.replace(result, config=config)
+
+        results = ComparativeResults(
+            results={"Datarax": [recorded("Datarax", 8)], "Grain": [recorded("Grain", None)]},
+            environment={"platform": {"backend": "cpu", "device_count": 1}},
+            platform="cpu",
+            timestamp=time.time(),
+        )
+
+        figure = ChartGenerator(results, tmp_path).memory_waterfall()
+
+        bars = [patch for patch in figure.axes[0].patches if isinstance(patch, Rectangle)]
+        assert [bar.get_height() for bar in bars] == [8.0, 0.0]
 
     def test_feature_heatmap_generates_file(self, mock_results, tmp_path: Path):
         """Feature heatmap chart must generate a file."""

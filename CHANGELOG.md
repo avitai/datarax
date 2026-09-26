@@ -14,6 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the stage-less linear constructor seeded with `seed`. It serves the batches the two-step
   construction serves, resumes from `get_state`, and a training step over it compiles once.
 
+### Changed
+
+- Requires substrax 0.1.18 and calibrax 0.1.14, the latest releases.
+
+### Fixed
+
+- The distributed-training guide no longer imports `substrax.spmd.reduce_gradient_tree`, which
+  substrax 0.1.17 removed; it says what replaces it: no reduction under `nnx.jit` with a mesh,
+  and the loss averaged before differentiating inside `jax.shard_map`.
+
 ## [0.1.16] - 2026-09-24
 
 ### Fixed

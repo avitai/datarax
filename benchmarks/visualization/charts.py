@@ -14,7 +14,7 @@ from pathlib import Path
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-from calibrax.core import MetadataValue, read_metadata
+from calibrax.core import MetadataValue, read_metadata, read_metadata_entry
 from matplotlib.figure import Figure
 
 from benchmarks.core.result_model import result_scenario_id, throughput_elements_per_sec
@@ -244,9 +244,11 @@ class ChartGenerator:
                 # Use config to estimate memory if no ResourceMonitor data
                 if adapter_results:
                     cfg = adapter_results[0].config
-                    size = read_metadata(int, cfg.get("dataset_size", 0), "config.dataset_size")
-                    shape = read_metadata(
-                        list[int], cfg.get("element_shape", [1]), "config.element_shape"
+                    size = read_metadata_entry(
+                        int, cfg, "dataset_size", default=0, name="config.dataset_size"
+                    )
+                    shape = read_metadata_entry(
+                        list[int], cfg, "element_shape", default=[1], name="config.element_shape"
                     )
                     est_mb = size * prod(shape) * 4 / (1024**2)
                     rss_values.append(est_mb)
@@ -310,8 +312,8 @@ class ChartGenerator:
             for r in adapter_results:
                 scenario_id = result_scenario_id(r)
                 if scenario_id.startswith("PC"):
-                    extra = read_metadata(
-                        dict[str, MetadataValue], r.config.get("extra", {}), "config.extra"
+                    extra = read_metadata_entry(
+                        dict[str, MetadataValue], r.config, "extra", default={}, name="config.extra"
                     )
                     stored_depth = extra.get("chain_depth")
                     if stored_depth is not None:
