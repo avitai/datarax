@@ -21,11 +21,11 @@ def test_learnable_weighted_parallel_uses_param_indexing(monkeypatch: pytest.Mon
     composite = CompositeOperatorModule(
         CompositeOperatorConfig(
             strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-            operators=[op1, op2],
             weights=[0.7, 0.3],
             learnable_weights=True,
             mix_fields=("value",),
-        )
+        ),
+        operators=[op1, op2],
     )
 
     original_get_value = nnx.Param.get_value

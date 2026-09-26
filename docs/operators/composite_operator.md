@@ -41,9 +41,9 @@ augment = create_augment_op()
 
 config = CompositeOperatorConfig(
     strategy=CompositionStrategy.SEQUENTIAL,
-    operators=[normalize, augment],
+    )
+pipeline = CompositeOperatorModule(config, operators=[normalize, augment],
 )
-pipeline = CompositeOperatorModule(config)
 ```
 
 ### Parallel Composition
@@ -53,11 +53,11 @@ Apply multiple operators to the same input and merge results:
 ```python
 config = CompositeOperatorConfig(
     strategy=CompositionStrategy.PARALLEL,
-    operators=[op_a, op_b, op_c],
     merge_strategy="concat",  # or "stack", "sum", "mean", "dict"
     merge_axis=-1,
 )
-parallel_op = CompositeOperatorModule(config)
+parallel_op = CompositeOperatorModule(config, operators=[op_a, op_b, op_c],
+    )
 ```
 
 ### Ensemble with Reduction
@@ -67,9 +67,9 @@ Combine multiple model outputs with reduction:
 ```python
 config = CompositeOperatorConfig(
     strategy=CompositionStrategy.ENSEMBLE_MEAN,
-    operators=[model_a, model_b, model_c],
+    )
+ensemble = CompositeOperatorModule(config, operators=[model_a, model_b, model_c],
 )
-ensemble = CompositeOperatorModule(config)
 # Output is element-wise mean of all operator outputs
 ```
 
@@ -85,10 +85,10 @@ def router(data):
 
 config = CompositeOperatorConfig(
     strategy=CompositionStrategy.BRANCHING,
-    operators=[image_processor, text_processor],
     router=router,
 )
-branched = CompositeOperatorModule(config)
+branched = CompositeOperatorModule(config, operators=[image_processor, text_processor],
+    )
 ```
 
 ## Weighted Parallel
@@ -104,7 +104,6 @@ Static weights form a linear combination, such as DDSP's harmonic-plus-noise sum
 ```python
 config = CompositeOperatorConfig(
     strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-    operators=[harmonic, noise],
     weights=[1.0, 0.1],
     mix_fields=("audio",),
 )
@@ -117,12 +116,12 @@ operation to apply:
 ```python
 config = CompositeOperatorConfig(
     strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-    operators=[brightness, contrast],  # both declare field_key="image"
     weights=[0.5, 0.5],
     learnable_weights=True,
     temperature=1.0,
 )
-weighted = CompositeOperatorModule(config, rngs=nnx.Rngs(0))
+weighted = CompositeOperatorModule(config, operators=[brightness, contrast],  # both declare field_key="image"
+    rngs=nnx.Rngs(0))
 
 # The mixture the composite currently applies: softmax(weight_logits / temperature)
 current_weights = weighted.mixture_weights()
@@ -138,9 +137,9 @@ Modify the operator chain at runtime:
 ```python
 config = CompositeOperatorConfig(
     strategy=CompositionStrategy.DYNAMIC_SEQUENTIAL,
-    operators=[op_a, op_b],
+    )
+dynamic = CompositeOperatorModule(config, operators=[op_a, op_b],
 )
-dynamic = CompositeOperatorModule(config)
 
 # Modify at runtime
 dynamic.add_operator(op_c)

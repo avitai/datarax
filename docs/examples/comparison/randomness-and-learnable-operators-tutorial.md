@@ -191,11 +191,11 @@ static weights `[0.25, 0.75]`.
 def mixture(weights: list[float], learnable: bool) -> CompositeOperatorModule:
     config = CompositeOperatorConfig(
         strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-        operators=image_operators(),  # a BrightnessOperator and a ContrastOperator
         weights=weights,
         learnable_weights=learnable,
     )
-    return CompositeOperatorModule(config, rngs=nnx.Rngs(0))
+    return CompositeOperatorModule(config, operators=image_operators(),  # a BrightnessOperator and a ContrastOperator
+        rngs=nnx.Rngs(0))
 
 
 learned_mixture = mixture([0.5, 0.5], learnable=True)

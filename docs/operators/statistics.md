@@ -61,9 +61,9 @@ computed on the wrapper's input. A wrapper whose children all compute none passe
 composite = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.SEQUENTIAL,
-        operators=[BatchNormalize(config), Brighten(config)],
-    ),
-)
+        ),
+operators=[BatchNormalize(config), Brighten(config)],
+    )
 ```
 
 Here `BatchNormalize` receives the statistics it computed on the composition's input, and

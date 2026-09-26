@@ -209,7 +209,7 @@ def composite(strategy: CompositionStrategy, **extra: Any) -> CompositeOperatorM
     """Return a composite over one deterministic and one stochastic child."""
     children = [brightness(False), noise()]
     return CompositeOperatorModule(
-        CompositeOperatorConfig(strategy=strategy, operators=children, **extra), rngs=rngs()
+        CompositeOperatorConfig(strategy=strategy, **extra), operators=children, rngs=rngs()
     )
 
 
@@ -221,7 +221,7 @@ def bright_mean(data: dict[str, Any]) -> jax.Array:
 def always_on(operator: OperatorModule) -> ProbabilisticOperator:
     """Wrap an operator in a wrapper that always applies it."""
     return ProbabilisticOperator(
-        ProbabilisticOperatorConfig(operator=operator, probability=1.0), rngs=rngs()
+        ProbabilisticOperatorConfig(probability=1.0), operator=operator, rngs=rngs()
     )
 
 
@@ -378,21 +378,21 @@ CASES: list[tuple[str, Callable[[], OperatorModule], dict[str, jax.Array]]] = [
     (
         "selector over two stochastic children",
         lambda: SelectorOperator(
-            SelectorOperatorConfig(operators=[brightness(True), noise()]), rngs=rngs()
+            SelectorOperatorConfig(), operators=[brightness(True), noise()], rngs=rngs()
         ),
         IMAGE_LABEL,
     ),
     (
         "probabilistic p=0.5",
         lambda: ProbabilisticOperator(
-            ProbabilisticOperatorConfig(operator=noise(), probability=0.5), rngs=rngs()
+            ProbabilisticOperatorConfig(probability=0.5), operator=noise(), rngs=rngs()
         ),
         IMAGE_LABEL,
     ),
     (
         "probabilistic p=0",
         lambda: ProbabilisticOperator(
-            ProbabilisticOperatorConfig(operator=brightness(False), probability=0.0), rngs=rngs()
+            ProbabilisticOperatorConfig(probability=0.0), operator=brightness(False), rngs=rngs()
         ),
         IMAGE_LABEL,
     ),
@@ -412,8 +412,8 @@ CASES: list[tuple[str, Callable[[], OperatorModule], dict[str, jax.Array]]] = [
         lambda: CompositeOperatorModule(
             CompositeOperatorConfig(
                 strategy=CompositionStrategy.SEQUENTIAL,
-                operators=[brightness(False), always_on(noise())],
             ),
+            operators=[brightness(False), always_on(noise())],
             rngs=rngs(),
         ),
         IMAGE_LABEL,
@@ -423,13 +423,13 @@ CASES: list[tuple[str, Callable[[], OperatorModule], dict[str, jax.Array]]] = [
         lambda: CompositeOperatorModule(
             CompositeOperatorConfig(
                 strategy=CompositionStrategy.SEQUENTIAL,
-                operators=[
-                    ExternalLibraryAdapter(
-                        ExternalAdapterConfig(stochastic=False, stream_name=None), external_scale
-                    ),
-                    noise(),
-                ],
             ),
+            operators=[
+                ExternalLibraryAdapter(
+                    ExternalAdapterConfig(stochastic=False, stream_name=None), external_scale
+                ),
+                noise(),
+            ],
             rngs=rngs(),
         ),
         IMAGE_LABEL,

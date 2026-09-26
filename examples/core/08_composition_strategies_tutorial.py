@@ -179,8 +179,8 @@ contrast_op = make_contrast_op(1.2, seed=2)
 sequential_composite = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.SEQUENTIAL,
-        operators=[bright_op, contrast_op],
     ),
+    operators=[bright_op, contrast_op],
     rngs=nnx.Rngs(0),
 )
 
@@ -215,9 +215,9 @@ contrast_op2 = make_contrast_op(1.1, seed=4)
 conditional_seq = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.CONDITIONAL_SEQUENTIAL,
-        operators=[bright_op2, contrast_op2],
         conditions=[is_dark, always_true],  # Brightness only if dark
     ),
+    operators=[bright_op2, contrast_op2],
     rngs=nnx.Rngs(0),
 )
 
@@ -255,9 +255,9 @@ op_noise = make_noise_op(0.05, seed=12)
 parallel_mean = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.PARALLEL,
-        operators=[op_bright, op_contrast, op_noise],
         merge_strategy="mean",  # Average the three versions
     ),
+    operators=[op_bright, op_contrast, op_noise],
     rngs=nnx.Rngs(0),
 )
 
@@ -275,9 +275,9 @@ print("  Output is the mean of all three augmented versions")
 parallel_dict = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.PARALLEL,
-        operators=[op_bright, op_contrast],
         merge_strategy="dict",  # Keep outputs separate
     ),
+    operators=[op_bright, op_contrast],
     rngs=nnx.Rngs(0),
 )
 
@@ -307,10 +307,10 @@ op3 = make_noise_op(0.03, seed=42)
 weighted_parallel = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.WEIGHTED_PARALLEL,
-        operators=[op1, op2, op3],
         weights=[0.5, 0.3, 0.2],  # 50% brightness, 30% contrast, 20% noise
         learnable_weights=False,  # Set True for gradient-based learning
     ),
+    operators=[op1, op2, op3],
     rngs=nnx.Rngs(0),
 )
 
@@ -351,8 +351,8 @@ ensemble_ops = [
 ensemble_mean = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.ENSEMBLE_MEAN,
-        operators=ensemble_ops,
     ),
+    operators=ensemble_ops,
     rngs=nnx.Rngs(0),
 )
 
@@ -370,11 +370,11 @@ print("  Output: element-wise mean of 3 versions")
 ensemble_max = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.ENSEMBLE_MAX,
-        operators=[
-            make_brightness_op(0.0, seed=60),  # Original
-            make_brightness_op(0.2, seed=61),  # Brighter
-        ],
     ),
+    operators=[
+        make_brightness_op(0.0, seed=60),  # Original
+        make_brightness_op(0.2, seed=61),  # Brighter
+    ],
     rngs=nnx.Rngs(0),
 )
 
@@ -430,10 +430,10 @@ branch_ops = [
 branching = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.BRANCHING,
-        operators=branch_ops,
         router=label_router,
         default_branch=0,  # Fallback if router fails
     ),
+    operators=branch_ops,
     rngs=nnx.Rngs(0),
 )
 
@@ -470,13 +470,13 @@ def has_low_mean(data_dict):
 cond_parallel = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.CONDITIONAL_PARALLEL,
-        operators=[
-            make_noise_op(0.02, seed=80),  # Smoothing noise (low std)
-            make_brightness_op(0.15, seed=81),  # Brightening
-        ],
         conditions=[has_high_variance, has_low_mean],
         merge_strategy="mean",
     ),
+    operators=[
+        make_noise_op(0.02, seed=80),  # Smoothing noise (low std)
+        make_brightness_op(0.15, seed=81),  # Brightening
+    ],
     rngs=nnx.Rngs(0),
 )
 
@@ -519,11 +519,11 @@ def normalize_op():
 aug_ensemble = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.ENSEMBLE_MEAN,
-        operators=[
-            make_brightness_op(0.1, seed=90),
-            make_contrast_op(1.1, seed=91),
-        ],
     ),
+    operators=[
+        make_brightness_op(0.1, seed=90),
+        make_contrast_op(1.1, seed=91),
+    ],
     rngs=nnx.Rngs(0),
 )
 
@@ -531,8 +531,8 @@ aug_ensemble = CompositeOperatorModule(
 full_pipeline_op = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.SEQUENTIAL,
-        operators=[normalize_op(), aug_ensemble],
     ),
+    operators=[normalize_op(), aug_ensemble],
     rngs=nnx.Rngs(0),
 )
 
@@ -608,11 +608,11 @@ def main():
     seq = CompositeOperatorModule(
         CompositeOperatorConfig(
             strategy=CompositionStrategy.SEQUENTIAL,
-            operators=[
-                make_brightness_op(0.1, seed=1),
-                make_contrast_op(1.2, seed=2),
-            ],
         ),
+        operators=[
+            make_brightness_op(0.1, seed=1),
+            make_contrast_op(1.2, seed=2),
+        ],
         rngs=nnx.Rngs(0),
     )
     pipeline = example_pipeline(source, batch_size=16, stages=[seq])
@@ -626,11 +626,11 @@ def main():
     ens = CompositeOperatorModule(
         CompositeOperatorConfig(
             strategy=CompositionStrategy.ENSEMBLE_MEAN,
-            operators=[
-                make_brightness_op(0.1, seed=3),
-                make_brightness_op(-0.1, seed=4),
-            ],
         ),
+        operators=[
+            make_brightness_op(0.1, seed=3),
+            make_brightness_op(-0.1, seed=4),
+        ],
         rngs=nnx.Rngs(0),
     )
     pipeline = example_pipeline(source2, batch_size=16, stages=[ens])
@@ -644,13 +644,13 @@ def main():
     branch = CompositeOperatorModule(
         CompositeOperatorConfig(
             strategy=CompositionStrategy.BRANCHING,
-            operators=[
-                make_brightness_op(0.2, seed=5),
-                make_contrast_op(1.3, seed=6),
-            ],
             router=label_router,
             default_branch=0,
         ),
+        operators=[
+            make_brightness_op(0.2, seed=5),
+            make_contrast_op(1.3, seed=6),
+        ],
         rngs=nnx.Rngs(0),
     )
     pipeline = example_pipeline(source3, batch_size=16, stages=[branch])

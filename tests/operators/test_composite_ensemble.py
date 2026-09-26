@@ -44,9 +44,11 @@ class TestEnsembleReductions:
         # Create ensemble with mean reduction
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.ENSEMBLE_MEAN,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2, op3],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Create batch
         batch = Batch(
@@ -83,9 +85,11 @@ class TestEnsembleReductions:
         # Create ensemble with sum reduction
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.ENSEMBLE_SUM,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2, op3],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Create batch
         batch = Batch(
@@ -122,9 +126,11 @@ class TestEnsembleReductions:
         # Create ensemble with max reduction
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.ENSEMBLE_MAX,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2, op3],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Create batch
         batch = Batch(
@@ -161,9 +167,11 @@ class TestEnsembleReductions:
         # Create ensemble with min reduction
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.ENSEMBLE_MIN,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2, op3],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Create batch
         batch = Batch(
@@ -201,9 +209,11 @@ class TestEnsembleAdvanced:
         # Create ensemble with mean reduction
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.ENSEMBLE_MEAN,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=operators,
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Create batch
         batch = Batch([Element(data={"value": jnp.array([10.0])})])
@@ -233,9 +243,11 @@ class TestEnsembleAdvanced:
         # Create ensemble
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.ENSEMBLE_MEAN,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2, op3],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # JIT compile using nnx.jit (pass module as argument, not closure)
         @nnx.jit
@@ -275,9 +287,11 @@ class TestEnsembleAdvanced:
         # Create ensemble
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.ENSEMBLE_MEAN,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2, op3],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Create batch (Batch handles vmap internally via apply_batch)
         batch = Batch(
@@ -313,9 +327,11 @@ class TestEnsembleAdvanced:
         # Create ensemble
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.ENSEMBLE_MEAN,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2, op3],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         batch = Batch([Element(data={"value": jnp.array([1.0])})])
 

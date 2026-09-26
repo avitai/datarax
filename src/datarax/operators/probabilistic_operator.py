@@ -15,11 +15,12 @@ Examples:
     Basic usage:
 
     ```python
-    config = ProbabilisticOperatorConfig(operator=child_op, probability=0.5)
-    op = ProbabilisticOperator(config, rngs=rngs)
+    config = ProbabilisticOperatorConfig(probability=0.5)
+    op = ProbabilisticOperator(config, operator=child_op, rngs=rngs)
     ```
 """
 
+import dataclasses
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -44,54 +45,56 @@ logger = logging.getLogger(__name__)
 class ProbabilisticOperatorConfig(OperatorConfig):
     """Configuration for ProbabilisticOperator.
 
-    Extends OperatorConfig with probability parameter and child operator.
+    Extends OperatorConfig with the application probability. The child operator is a
+    constructor argument of ``ProbabilisticOperator``, never configuration: a configuration is
+    static metadata a transform compares, and a module in it would compare by identity.
 
     Attributes:
-        operator: Child operator to wrap with probabilistic application
         probability: Probability of applying the operator (0.0 to 1.0)
                     - 0.0: never apply (deterministic)
                     - 1.0: always apply (deterministic)
                     - 0 < p < 1: probabilistic (stochastic)
 
     Note:
-        - stochastic is automatically set based on probability
-        - stream_name is inherited from child operator if stochastic
+        - stochastic and stream_name are derived for the child by ``for_child``
     """
 
-    operator: OperatorModule = field(kw_only=True)
     probability: float = field(default=0.5, kw_only=True)
 
     def __post_init__(self) -> None:
-        """Validate configuration and infer stochastic mode."""
-        # Validate probability range
+        """Validate the probability; a random decision (0 < p < 1) makes the config stochastic."""
         if not isinstance(self.probability, int | float):
             raise TypeError(f"probability must be a number, got {type(self.probability)}")
         if not 0.0 <= self.probability <= 1.0:
             raise ValueError(f"probability must be in [0.0, 1.0], got {self.probability}")
+        if 0.0 < self.probability < 1.0:
+            object.__setattr__(self, "stochastic", True)
+            if self.stream_name is None:
+                object.__setattr__(self, "stream_name", "augment")
+        super().__post_init__()
 
+    def for_child(self, operator: OperatorModule) -> "ProbabilisticOperatorConfig":
+        """Return this configuration with its mode derived for wrapping ``operator``.
+
+        Args:
+            operator: The child operator the wrapper applies.
+
+        Returns:
+            The configuration with ``stochastic`` and ``stream_name`` set.
+        """
         # A wrapper needs a key when it makes a random decision (0 < p < 1) AND when it has a
         # stochastic child to hand one to. At p == 1 the decision is fixed but the child still
         # draws, so a wrapper that is deterministic on its own account would receive no key and
         # silence the operator it wraps. At p == 0 the child is never reached, so nothing draws.
         decides_randomly = 0.0 < self.probability < 1.0
-        child_is_stochastic = bool(getattr(self.operator.config, "stochastic", False))
-        is_stochastic = decides_randomly or (child_is_stochastic and self.probability > 0.0)
-        object.__setattr__(self, "stochastic", is_stochastic)
-
-        # Set stream_name BEFORE calling super().__post_init__() for validation
-        if is_stochastic:
-            # Stochastic mode needs stream_name for the decision, the child's draw, or both.
-            # Use provided stream_name, or inherit from child, or default to "augment"
-            if self.stream_name is None:
-                if hasattr(self.operator, "stream_name") and self.operator.stream_name is not None:
-                    object.__setattr__(self, "stream_name", self.operator.stream_name)
-                else:
-                    object.__setattr__(self, "stream_name", "augment")
-        else:
+        is_stochastic = decides_randomly or (operator.stochastic and self.probability > 0.0)
+        if not is_stochastic:
             # Nothing downstream draws: p == 0, or a fixed decision over a deterministic child.
-            object.__setattr__(self, "stream_name", None)
-
-        super().__post_init__()
+            return dataclasses.replace(self, stochastic=False, stream_name=None)
+        # The decision, the child's draw, or both need a stream: the configured one, else the
+        # child's, else "augment".
+        stream = self.stream_name or operator.stream_name or "augment"
+        return dataclasses.replace(self, stochastic=True, stream_name=stream)
 
 
 class ProbabilisticOperator(OperatorModule):
@@ -113,11 +116,9 @@ class ProbabilisticOperator(OperatorModule):
         child_config = BrightnessOperatorConfig(field_key="image", brightness_delta=0.2)
         child_op = BrightnessOperator(child_config, rngs=nnx.Rngs(0))
 
-        prob_config = ProbabilisticOperatorConfig(
-            operator=child_op,
-            probability=0.5
+        prob_op = ProbabilisticOperator(
+            ProbabilisticOperatorConfig(probability=0.5), operator=child_op, rngs=nnx.Rngs(0)
         )
-        prob_op = ProbabilisticOperator(prob_config, rngs=nnx.Rngs(0))
 
         # Apply to batch - each element has 50% chance of brightness adjustment
         result_batch = prob_op(batch)
@@ -127,23 +128,25 @@ class ProbabilisticOperator(OperatorModule):
     def __init__(
         self,
         config: ProbabilisticOperatorConfig,
+        operator: OperatorModule,
         *,
         rngs: nnx.Rngs | None = None,
     ) -> None:
         """Initialize probabilistic operator.
 
         Args:
-            config: ProbabilisticOperatorConfig with child operator and probability
-            rngs: Random number generators (required if stochastic=True)
+            config: ProbabilisticOperatorConfig with the application probability
+            operator: The child operator, held as a graph child
+            rngs: Random number generators (required if the wrapper is stochastic)
         """
-        super().__init__(config, rngs=rngs)
+        resolved = config.for_child(operator)
+        super().__init__(resolved, rngs=rngs)
 
         # Type narrowing for pyright
-        self.config: ProbabilisticOperatorConfig = config
+        self.config: ProbabilisticOperatorConfig = resolved
 
-        # Store child operator
-        self.operator = config.operator
-        self.probability = config.probability
+        self.operator = operator
+        self.probability = resolved.probability
 
     def compute_statistics(self, batch_data: PyTree) -> dict[str, Any] | None:
         """Return the child's statistics for this batch, computed on this wrapper's input.

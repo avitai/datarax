@@ -9,6 +9,8 @@ Faster AutoAugment use.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -16,6 +18,7 @@ import pytest
 from flax import nnx
 
 from datarax.core.element_batch import Batch, Element
+from datarax.core.operator import OperatorModule
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.composite_operator import (
     CompositeOperatorConfig,
@@ -46,9 +49,10 @@ def _record() -> dict[str, jax.Array]:
     }
 
 
-def _weighted(**config) -> CompositeOperatorModule:
+def _weighted(operators: Sequence[OperatorModule], **config) -> CompositeOperatorModule:
     return CompositeOperatorModule(
         CompositeOperatorConfig(strategy=CompositionStrategy.WEIGHTED_PARALLEL, **config),
+        operators=operators,
         rngs=nnx.Rngs(0),
     )
 
@@ -86,10 +90,12 @@ def test_mixed_fields_default_to_the_fields_the_operators_declare() -> None:
 
 def test_operators_that_declare_no_field_need_mix_fields() -> None:
     with pytest.raises(ValueError, match="mix_fields"):
-        CompositeOperatorConfig(
-            strategy=CompositionStrategy.WEIGHTED_PARALLEL,
+        CompositeOperatorModule(
+            CompositeOperatorConfig(
+                strategy=CompositionStrategy.WEIGHTED_PARALLEL,
+                weights=[0.5, 0.5],
+            ),
             operators=[_scale(2.0), _scale(3.0)],
-            weights=[0.5, 0.5],
         )
 
 
@@ -118,23 +124,27 @@ def test_learnable_weights_start_at_the_configured_mixture_and_sharpen_with_temp
 @pytest.mark.parametrize("weights", [[1.0, 0.0], [1.0, -0.5]])
 def test_learnable_weights_need_positive_initial_weights(weights: list[float]) -> None:
     with pytest.raises(ValueError, match="positive"):
-        CompositeOperatorConfig(
-            strategy=CompositionStrategy.WEIGHTED_PARALLEL,
+        CompositeOperatorModule(
+            CompositeOperatorConfig(
+                strategy=CompositionStrategy.WEIGHTED_PARALLEL,
+                weights=weights,
+                learnable_weights=True,
+                mix_fields=("signal",),
+            ),
             operators=[_scale(2.0), _scale(3.0)],
-            weights=weights,
-            learnable_weights=True,
-            mix_fields=("signal",),
         )
 
 
 def test_temperature_must_be_positive() -> None:
     with pytest.raises(ValueError, match="temperature"):
-        CompositeOperatorConfig(
-            strategy=CompositionStrategy.WEIGHTED_PARALLEL,
+        CompositeOperatorModule(
+            CompositeOperatorConfig(
+                strategy=CompositionStrategy.WEIGHTED_PARALLEL,
+                learnable_weights=True,
+                temperature=0.0,
+                mix_fields=("signal",),
+            ),
             operators=[_scale(2.0), _scale(3.0)],
-            learnable_weights=True,
-            temperature=0.0,
-            mix_fields=("signal",),
         )
 
 
@@ -206,7 +216,10 @@ def test_mixture_weights_come_from_each_record_under_weight_key() -> None:
 
 def test_only_weighted_parallel_composites_have_mixture_weights() -> None:
     sequential = CompositeOperatorModule(
-        CompositeOperatorConfig(strategy=CompositionStrategy.SEQUENTIAL, operators=[_scale(2.0)]),
+        CompositeOperatorConfig(
+            strategy=CompositionStrategy.SEQUENTIAL,
+        ),
+        operators=[_scale(2.0)],
         rngs=nnx.Rngs(0),
     )
 

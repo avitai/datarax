@@ -60,6 +60,7 @@ This module implements several critical patterns for vmap and JIT compatibility:
 These patterns ensure all strategies work correctly inside jax.vmap and jax.jit.
 """
 
+import dataclasses
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -73,6 +74,17 @@ from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
 from datarax.core.operator import child_statistics, OperatorModule, require_key
+from datarax.operators.strategies import (
+    BranchingStrategy,
+    CompositionStrategyImpl,
+    ConditionalParallelStrategy,
+    ConditionalSequentialStrategy,
+    EnsembleStrategy,
+    ParallelStrategy,
+    SequentialStrategy,
+    StrategyContext,
+    WeightedParallelStrategy,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -126,9 +138,15 @@ class CompositeOperatorConfig(OperatorConfig):
     When ``weight_key`` is set, the key is stripped from the data dict before
     passing to child operators, so children only see the actual data fields.
 
+    The operators are a constructor argument of ``CompositeOperatorModule``, never
+    configuration: a configuration is static metadata a transform compares, and a module in it
+    would compare by identity. ``resolved_for`` completes the configuration for them. The user
+    callables (``merge_fn``, ``conditions``, ``router``) are static and compare by identity, as
+    any ``jax.jit`` static argument does: a composite rebuilt with the same function objects
+    shares its compiled trace.
+
     Attributes:
         strategy: Composition strategy to use.
-        operators: List of operators for all strategies.
         merge_strategy: How to merge parallel outputs ("concat", "stack", "sum", "mean", "dict").
         merge_fn: Custom merge function (overrides merge_strategy).
         merge_axis: Axis for stack/concat operations.
@@ -152,7 +170,6 @@ class CompositeOperatorConfig(OperatorConfig):
 
     # Core composition settings
     strategy: CompositionStrategy | None = field(default=None)
-    operators: Sequence[OperatorModule] | None = field(default=None)
 
     # Merge settings (for parallel/ensemble strategies)
     merge_strategy: str | None = None  # "concat", "stack", "sum", "mean", "dict"
@@ -160,18 +177,14 @@ class CompositeOperatorConfig(OperatorConfig):
     merge_axis: int = 0  # Axis for stack/concat
 
     # Weights (for weighted parallel)
-    weights: list[float] | None = None
+    weights: Sequence[float] | None = None
     learnable_weights: bool = False
     weight_key: str | None = None  # Key in data dict for external dynamic weights
     mix_fields: Sequence[str] | None = None  # Fields combined; others pass through
     temperature: float = 1.0  # Softmax temperature for learnable weights
 
-    # Conditions (for conditional strategies)
-    # Conditions can return Python bool or JAX scalar (converted automatically)
+    # Conditions (for conditional strategies): each returns a Python bool or a JAX scalar
     conditions: Sequence[Callable[[PyTree], bool | jax.Array]] | None = None
-    # Note: require_at_least_one feature removed - incompatible with vmap tracing
-    # Future: Could validate static conditions at config time, but dynamic
-    # data-dependent conditions cannot be checked inside vmap
 
     # Router (for branching strategy)
     # Router returns integer index (Python int or JAX scalar) of operator to use
@@ -179,103 +192,114 @@ class CompositeOperatorConfig(OperatorConfig):
     default_branch: int | None = None  # Default branch index (fallback if needed)
 
     def __post_init__(self) -> None:
-        """Validate configuration."""
+        """Validate what the configuration fixes on its own; store its sequences as tuples."""
         super().__post_init__()
-        self._validate_required_fields()
-        self._validate_conditional_strategies()
-        self._validate_weighted_parallel_strategy()
-        self._validate_branching_strategy()
-        has_stochastic_child = self._has_stochastic_child()
-        if has_stochastic_child and self.stream_name is None:
-            object.__setattr__(self, "stream_name", "composite")
-        object.__setattr__(self, "stochastic", has_stochastic_child)
-
-    def _validate_required_fields(self) -> None:
-        """Validate required fields and operator container basics."""
         if self.strategy is None:
             raise ValueError("strategy is required")
-        if self.operators is None:
-            raise ValueError("operators is required")
-        if not isinstance(self.operators, list):
-            raise ValueError("operators must be a list")
-        if not self.operators:
-            raise ValueError("operators list cannot be empty")
+        for name in ("weights", "conditions", "mix_fields"):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, tuple(value))
+        self._validate_strategy_callables()
+        if self.strategy == CompositionStrategy.WEIGHTED_PARALLEL:
+            self._validate_weight_source()
 
-    def _validate_conditional_strategies(self) -> None:
-        """Validate conditions for conditional composition strategies."""
-        if self.strategy in [
+    def _validate_strategy_callables(self) -> None:
+        """Conditional strategies need conditions; branching needs a router."""
+        conditional = (
             CompositionStrategy.CONDITIONAL_SEQUENTIAL,
             CompositionStrategy.CONDITIONAL_PARALLEL,
-        ]:
-            if self.conditions is None:
-                raise ValueError(f"{self.strategy.name} requires conditions")
-            if self.operators is None:
-                raise ValueError("operators is required")
-            if len(self.conditions) != len(self.operators):
-                raise ValueError("Number of conditions must match number of operators")
-
-    def _validate_weighted_parallel_strategy(self) -> None:
-        """Validate weighted-parallel configuration and resolve its defaults."""
-        if self.strategy != CompositionStrategy.WEIGHTED_PARALLEL:
-            return
-        if self.operators is None:
-            raise ValueError("operators is required")
-        self._validate_weight_mode(self.operators)
-        self._resolve_mix_fields(self.operators)
-
-    def _validate_weight_mode(self, operators: Sequence[OperatorModule]) -> None:
-        """Validate the weight source: an external key, learnable logits or static weights."""
-        if self.weight_key is not None:
-            if self.learnable_weights:
-                raise ValueError("Cannot combine weight_key with learnable_weights")
-            if self.weights is not None:
-                raise ValueError("Cannot combine weight_key with explicit weights")
-            return
-        if self.weights is None:
-            object.__setattr__(self, "weights", [1.0 / len(operators)] * len(operators))
-        elif len(self.weights) != len(operators):
-            raise ValueError("Number of weights must match number of operators")
-        if not self.learnable_weights:
-            return
-        if self.temperature <= 0:
-            raise ValueError(f"temperature must be positive, got {self.temperature}")
-        if any(weight <= 0 for weight in cast(list[float], self.weights)):
-            raise ValueError(
-                "learnable_weights needs positive initial weights: the logits start at "
-                f"log(weights / sum(weights)), got {self.weights}"
-            )
-
-    def _resolve_mix_fields(self, operators: Sequence[OperatorModule]) -> None:
-        """Default ``mix_fields`` to the fields the operators declare they write."""
-        if self.mix_fields is not None:
-            if not self.mix_fields:
-                raise ValueError("mix_fields must name at least one field")
-            object.__setattr__(self, "mix_fields", tuple(self.mix_fields))
-            return
-        declared: list[str] = []
-        for index, operator in enumerate(operators):
-            written = getattr(operator.config, "target_key", None) or getattr(
-                operator.config, "field_key", None
-            )
-            if written is None:
-                raise ValueError(
-                    f"WEIGHTED_PARALLEL needs mix_fields: operator {index} "
-                    f"({type(operator).__name__}) declares no field_key, so the fields to "
-                    "combine cannot be inferred"
-                )
-            declared.append(written)
-        object.__setattr__(self, "mix_fields", tuple(dict.fromkeys(declared)))
-
-    def _validate_branching_strategy(self) -> None:
-        """Validate branching strategy requirements."""
+        )
+        if self.strategy in conditional and self.conditions is None:
+            raise ValueError(f"{cast(CompositionStrategy, self.strategy).name} requires conditions")
         if self.strategy == CompositionStrategy.BRANCHING and self.router is None:
             raise ValueError("BRANCHING strategy requires router function")
 
-    def _has_stochastic_child(self) -> bool:
-        """Infer whether any child operator is stochastic."""
-        if self.operators is None:
-            return False
-        return any(getattr(op.config, "stochastic", False) for op in self.operators)
+    def _validate_weight_source(self) -> None:
+        """Validate the weight source: an external key, learnable logits or static weights."""
+        if self.mix_fields is not None and not self.mix_fields:
+            raise ValueError("mix_fields must name at least one field")
+        if self.weight_key is not None:
+            self._validate_external_weights()
+        elif self.learnable_weights:
+            self._validate_learnable_weights()
+
+    def _validate_external_weights(self) -> None:
+        """Weights read from the data exclude configured and learnable ones."""
+        if self.learnable_weights:
+            raise ValueError("Cannot combine weight_key with learnable_weights")
+        if self.weights is not None:
+            raise ValueError("Cannot combine weight_key with explicit weights")
+
+    def _validate_learnable_weights(self) -> None:
+        """Learnable logits need a positive temperature and positive initial weights."""
+        if self.temperature <= 0:
+            raise ValueError(f"temperature must be positive, got {self.temperature}")
+        if self.weights is not None and any(weight <= 0 for weight in self.weights):
+            raise ValueError(
+                "learnable_weights needs positive initial weights: the logits start at "
+                f"log(weights / sum(weights)), got {list(self.weights)}"
+            )
+
+    def resolved_for(self, operators: Sequence[OperatorModule]) -> "CompositeOperatorConfig":
+        """Return this configuration completed for ``operators``.
+
+        Checks what depends on the operators (their number against conditions and weights),
+        fills in the uniform weights and the inferred ``mix_fields`` of a weighted parallel, and
+        derives ``stochastic`` and ``stream_name`` from the children.
+
+        Args:
+            operators: The operators the composite applies.
+
+        Returns:
+            The completed configuration.
+
+        Raises:
+            ValueError: If there are no operators, or they do not match the configuration.
+        """
+        if not operators:
+            raise ValueError("operators list cannot be empty")
+        if self.conditions is not None and len(self.conditions) != len(operators):
+            raise ValueError("Number of conditions must match number of operators")
+        stochastic = any(operator.stochastic for operator in operators)
+        return dataclasses.replace(
+            self,
+            **self._weighted_defaults(operators),
+            stochastic=stochastic,
+            stream_name=(self.stream_name or "composite") if stochastic else None,
+        )
+
+    def _weighted_defaults(self, operators: Sequence[OperatorModule]) -> dict[str, Any]:
+        """A weighted parallel's uniform weights and inferred ``mix_fields``, where unset."""
+        if self.strategy != CompositionStrategy.WEIGHTED_PARALLEL:
+            return {}
+        defaults: dict[str, Any] = {}
+        if self.mix_fields is None:
+            defaults["mix_fields"] = _declared_fields(operators)
+        if self.weight_key is not None:
+            return defaults
+        if self.weights is None:
+            defaults["weights"] = (1.0 / len(operators),) * len(operators)
+        elif len(self.weights) != len(operators):
+            raise ValueError("Number of weights must match number of operators")
+        return defaults
+
+
+def _declared_fields(operators: Sequence[OperatorModule]) -> tuple[str, ...]:
+    """The fields the operators declare they write (``target_key`` or ``field_key``), in order."""
+    declared: list[str] = []
+    for index, operator in enumerate(operators):
+        written = getattr(operator.config, "target_key", None) or getattr(
+            operator.config, "field_key", None
+        )
+        if written is None:
+            raise ValueError(
+                f"WEIGHTED_PARALLEL needs mix_fields: operator {index} "
+                f"({type(operator).__name__}) declares no field_key, so the fields to "
+                "combine cannot be inferred"
+            )
+        declared.append(written)
+    return tuple(dict.fromkeys(declared))
 
 
 class CompositeOperatorModule(OperatorModule):
@@ -295,6 +319,7 @@ class CompositeOperatorModule(OperatorModule):
     def __init__(
         self,
         config: CompositeOperatorConfig,
+        operators: Sequence[OperatorModule],
         *,
         rngs: nnx.Rngs | None = None,
     ) -> None:
@@ -302,18 +327,16 @@ class CompositeOperatorModule(OperatorModule):
 
         Args:
             config: Composite operator configuration
+            operators: The operators to compose, held as graph children
             rngs: Optional RNGs for stochastic operators
         """
+        config = config.resolved_for(operators)
         super().__init__(config, rngs=rngs)
 
         # Type narrowing for pyright - config is CompositeOperatorConfig
         self.config: CompositeOperatorConfig = config
 
-        # Store operators in appropriate container
-        if isinstance(config.operators, dict):
-            self.operators = nnx.Dict(config.operators)
-        else:
-            self.operators = nnx.List(config.operators)
+        self.operators = nnx.List(operators)
 
         # Learnable weights are logits; the mixture is softmax(logits / temperature), which
         # starts at the configured weights normalized to sum to one.
@@ -321,18 +344,31 @@ class CompositeOperatorModule(OperatorModule):
             initial = jnp.asarray(config.weights)
             self.weight_logits = nnx.Param(jnp.log(initial / jnp.sum(initial)))
 
-        # Initialize strategy implementation
-        self._init_strategy()
+        # Fail at construction for a strategy with no implementation.
+        self._strategy_impl()
 
-    def _init_strategy(self) -> None:
-        """Initialize the composition strategy implementation."""
+    def _strategy_impl(self) -> CompositionStrategyImpl:
+        """Build the strategy implementation the configuration names.
+
+        It is derived from the static configuration on every call (in Python, while tracing),
+        never stored: an implementation object held as an attribute would compare by identity,
+        and every composite would compile its own trace.
+
+        Returns:
+            The strategy implementation.
+
+        Raises:
+            ValueError: If the strategy has no implementation.
+        """
         strategy = self.config.strategy
         builder = self._strategy_builders().get(strategy) if strategy is not None else None
         if builder is None:
             raise ValueError(f"Unknown strategy: {strategy}")
-        self.strategy_impl = builder()
+        return builder()
 
-    def _strategy_builders(self) -> dict[CompositionStrategy, Callable[[], Any]]:
+    def _strategy_builders(
+        self,
+    ) -> dict[CompositionStrategy, Callable[[], CompositionStrategyImpl]]:
         """Map each composition strategy to a zero-arg factory for its implementation.
 
         ``conditions``/``router`` are guaranteed non-``None`` by the config's
@@ -343,19 +379,9 @@ class CompositeOperatorModule(OperatorModule):
         Returns:
             Mapping from strategy enum to a callable building its ``CompositionStrategyImpl``.
         """
-        from datarax.operators.strategies import (
-            BranchingStrategy,
-            ConditionalParallelStrategy,
-            ConditionalSequentialStrategy,
-            EnsembleStrategy,
-            ParallelStrategy,
-            SequentialStrategy,
-            WeightedParallelStrategy,
-        )
-
         cfg = self.config
 
-        def build_ensemble() -> Any:
+        def build_ensemble() -> CompositionStrategyImpl:
             # Only reached for ENSEMBLE_* keys, so strategy is a concrete enum here.
             # Extract mode from enum name, e.g. ENSEMBLE_MEAN -> "mean".
             strategy = cast(CompositionStrategy, cfg.strategy)
@@ -451,8 +477,6 @@ class CompositeOperatorModule(OperatorModule):
         stats: dict[str, Any] | None,
     ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
         """Apply the strategy to the children with ``key`` as the record's key."""
-        from datarax.operators.strategies.base import StrategyContext
-
         extra_params, clean_data = self._resolve_weighted_params(data)
 
         context = StrategyContext(
@@ -464,7 +488,7 @@ class CompositeOperatorModule(OperatorModule):
             extra_params=extra_params if extra_params else None,
         )
 
-        return self.strategy_impl.apply(self._get_operators_list(), context)
+        return self._strategy_impl().apply(self._get_operators_list(), context)
 
     def _resolve_weighted_params(self, data: PyTree) -> tuple[dict[str, Any], PyTree]:
         """Resolve ``extra_params`` weights and strip ``weight_key`` from data.
@@ -530,8 +554,6 @@ class CompositeOperatorModule(OperatorModule):
 
     def _get_operators_list(self) -> list[OperatorModule]:
         """Get list of operators."""
-        if isinstance(self.operators, nnx.Dict):
-            return list(self.operators.values())
         return list(self.operators)
 
     # Dynamic sequential methods

@@ -43,9 +43,11 @@ class TestDynamicSequential:
         # Create dynamic sequential
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.DYNAMIC_SEQUENTIAL,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Test before adding: (x * 2) + 10
         batch = Batch([Element(data={"value": jnp.array([5.0])})])
@@ -81,9 +83,11 @@ class TestDynamicSequential:
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.DYNAMIC_SEQUENTIAL,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2, op3],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Test before removing: ((x * 2) + 100) * 3
         batch = Batch([Element(data={"value": jnp.array([1.0])})])
@@ -118,9 +122,11 @@ class TestDynamicSequential:
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.DYNAMIC_SEQUENTIAL,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2, op3],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         assert len(composite.operators) == 3
 
@@ -151,9 +157,11 @@ class TestDynamicSequential:
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.DYNAMIC_SEQUENTIAL,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op_a, op_b, op_c],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Test original order [A, B, C]: ((x + 1) * 10) + 100
         batch = Batch([Element(data={"value": jnp.array([2.0])})])
@@ -185,9 +193,11 @@ class TestDynamicSequential:
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.DYNAMIC_SEQUENTIAL,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         # Check initial count
         assert len(composite.operators) == 2
@@ -214,9 +224,11 @@ class TestDynamicSequential:
 
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.DYNAMIC_SEQUENTIAL,
+        )
+        composite = CompositeOperatorModule(
+            composite_config,
             operators=[op1, op2],
         )
-        composite = CompositeOperatorModule(composite_config)
 
         batch = Batch([Element(data={"value": jnp.array([5.0])})])
         composite(batch)

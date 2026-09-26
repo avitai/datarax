@@ -31,18 +31,14 @@ class TestProbabilisticOperatorConfig:
 
     def test_valid_probability_values(self):
         """Test that valid probability values are accepted."""
-        # Create a simple child operator config
-        child_config = MapOperatorConfig(stochastic=False)
-        child_op = MapOperator(child_config, fn=lambda x, _key: x * 2, rngs=nnx.Rngs(0))
-
         # Test boundary values
-        config_zero = ProbabilisticOperatorConfig(operator=child_op, probability=0.0)
+        config_zero = ProbabilisticOperatorConfig(probability=0.0)
         assert config_zero.probability == 0.0
 
-        config_half = ProbabilisticOperatorConfig(operator=child_op, probability=0.5)
+        config_half = ProbabilisticOperatorConfig(probability=0.5)
         assert config_half.probability == 0.5
 
-        config_one = ProbabilisticOperatorConfig(operator=child_op, probability=1.0)
+        config_one = ProbabilisticOperatorConfig(probability=1.0)
         assert config_one.probability == 1.0
 
     def test_invalid_probability_too_high(self):
@@ -51,7 +47,10 @@ class TestProbabilisticOperatorConfig:
         child_op = MapOperator(child_config, fn=lambda x, _key: x * 2, rngs=nnx.Rngs(0))
 
         with pytest.raises(ValueError, match="probability must be in \\[0.0, 1.0\\]"):
-            ProbabilisticOperatorConfig(operator=child_op, probability=1.5)
+            ProbabilisticOperator(
+                ProbabilisticOperatorConfig(probability=1.5),
+                operator=child_op,
+            )
 
     def test_invalid_probability_negative(self):
         """Test that probability < 0.0 raises ValueError."""
@@ -59,24 +58,26 @@ class TestProbabilisticOperatorConfig:
         child_op = MapOperator(child_config, fn=lambda x, _key: x * 2, rngs=nnx.Rngs(0))
 
         with pytest.raises(ValueError, match="probability must be in \\[0.0, 1.0\\]"):
-            ProbabilisticOperatorConfig(operator=child_op, probability=-0.1)
+            ProbabilisticOperator(
+                ProbabilisticOperatorConfig(probability=-0.1),
+                operator=child_op,
+            )
 
     def test_stochastic_inferred_from_probability(self):
-        """Test that stochastic=True when probability is not 0.0 or 1.0."""
+        """Over a deterministic child the wrapper is stochastic only when 0 < p < 1."""
         child_config = MapOperatorConfig(stochastic=False)
         child_op = MapOperator(child_config, fn=lambda x, _key: x * 2, rngs=nnx.Rngs(0))
 
-        # Stochastic when 0 < p < 1
-        config_stochastic = ProbabilisticOperatorConfig(operator=child_op, probability=0.5)
-        assert config_stochastic.stochastic is True
+        def wrapper(probability: float) -> ProbabilisticOperator:
+            return ProbabilisticOperator(
+                ProbabilisticOperatorConfig(probability=probability),
+                operator=child_op,
+                rngs=nnx.Rngs(0),
+            )
 
-        # Deterministic when p = 0.0
-        config_never = ProbabilisticOperatorConfig(operator=child_op, probability=0.0)
-        assert config_never.stochastic is False
-
-        # Deterministic when p = 1.0
-        config_always = ProbabilisticOperatorConfig(operator=child_op, probability=1.0)
-        assert config_always.stochastic is False
+        assert wrapper(0.5).config.stochastic is True
+        assert wrapper(0.0).config.stochastic is False
+        assert wrapper(1.0).config.stochastic is False
 
 
 class TestProbabilisticOperatorApplication:
@@ -91,8 +92,8 @@ class TestProbabilisticOperatorApplication:
         child_op = MapOperator(child_config, fn=lambda x, _key: x * 10, rngs=rngs)
 
         # Probabilistic wrapper with p=0.0
-        prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=0.0)
-        prob_op = ProbabilisticOperator(prob_config, rngs=rngs)
+        prob_config = ProbabilisticOperatorConfig(probability=0.0)
+        prob_op = ProbabilisticOperator(prob_config, operator=child_op, rngs=rngs)
 
         # Create batch
         batch = Batch(
@@ -120,8 +121,8 @@ class TestProbabilisticOperatorApplication:
         child_op = MapOperator(child_config, fn=lambda x, _key: x * 10, rngs=rngs)
 
         # Probabilistic wrapper with p=1.0
-        prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=1.0)
-        prob_op = ProbabilisticOperator(prob_config, rngs=rngs)
+        prob_config = ProbabilisticOperatorConfig(probability=1.0)
+        prob_op = ProbabilisticOperator(prob_config, operator=child_op, rngs=rngs)
 
         # Create batch
         batch = Batch(
@@ -155,8 +156,8 @@ class TestProbabilisticOperatorApplication:
         child_op = MapOperator(child_config, fn=lambda x, _key: x + 100, rngs=rngs)
 
         # Probabilistic wrapper with p=0.5
-        prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=0.5)
-        prob_op = ProbabilisticOperator(prob_config, rngs=nnx.Rngs(42))
+        prob_config = ProbabilisticOperatorConfig(probability=0.5)
+        prob_op = ProbabilisticOperator(prob_config, operator=child_op, rngs=nnx.Rngs(42))
 
         # One batch of 100 distinct records (global indices 0..99 via the
         # positional fallback), each starting at value 1.0.
@@ -182,7 +183,7 @@ class TestProbabilisticOperatorStochastic:
             MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 2, rngs=rngs
         )
         prob_op = ProbabilisticOperator(
-            ProbabilisticOperatorConfig(operator=child_op, probability=probability), rngs=rngs
+            ProbabilisticOperatorConfig(probability=probability), operator=child_op, rngs=rngs
         )
 
         batch = {"value": jnp.ones((n_samples, 1))}
@@ -217,8 +218,8 @@ class TestProbabilisticOperatorJAXCompatibility:
         child_op = MapOperator(child_config, fn=lambda x, _key: x * 2, rngs=rngs)
 
         # Probabilistic wrapper
-        prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=1.0)
-        prob_op = ProbabilisticOperator(prob_config, rngs=rngs)
+        prob_config = ProbabilisticOperatorConfig(probability=1.0)
+        prob_op = ProbabilisticOperator(prob_config, operator=child_op, rngs=rngs)
 
         # JIT compile
         @nnx.jit
@@ -243,8 +244,8 @@ class TestProbabilisticOperatorJAXCompatibility:
         child_op = MapOperator(child_config, fn=lambda x, _key: x + 10, rngs=rngs)
 
         # Probabilistic wrapper with p=1.0 (always apply for deterministic test)
-        prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=1.0)
-        prob_op = ProbabilisticOperator(prob_config, rngs=rngs)
+        prob_config = ProbabilisticOperatorConfig(probability=1.0)
+        prob_op = ProbabilisticOperator(prob_config, operator=child_op, rngs=rngs)
 
         # Create batch with multiple elements
         batch = Batch(
@@ -273,8 +274,8 @@ class TestProbabilisticOperatorDifferentiability:
         child_config = MapOperatorConfig(stochastic=False)
         child_op = MapOperator(child_config, fn=lambda x, _key: 4.0 * x, rngs=rngs)
 
-        prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=1.0)
-        prob_op = ProbabilisticOperator(prob_config, rngs=rngs)
+        prob_config = ProbabilisticOperatorConfig(probability=1.0)
+        prob_op = ProbabilisticOperator(prob_config, operator=child_op, rngs=rngs)
 
         def loss(x):
             output_data, _, _ = prob_op.apply({"value": x}, {}, None)
@@ -298,8 +299,8 @@ class TestProbabilisticOperatorEdgeCases:
         child_op = MapOperator(child_config, fn=lambda x, _key: x * 2, rngs=rngs)
 
         # Probabilistic wrapper
-        prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=1.0)
-        prob_op = ProbabilisticOperator(prob_config, rngs=rngs)
+        prob_config = ProbabilisticOperatorConfig(probability=1.0)
+        prob_op = ProbabilisticOperator(prob_config, operator=child_op, rngs=rngs)
 
         # Create batch with state
         batch = Batch(
@@ -325,8 +326,8 @@ class TestProbabilisticOperatorEdgeCases:
         child_op = MapOperator(child_config, fn=lambda x, _key: x * 2, rngs=rngs)
 
         # Probabilistic wrapper
-        prob_config = ProbabilisticOperatorConfig(operator=child_op, probability=1.0)
-        prob_op = ProbabilisticOperator(prob_config, rngs=rngs)
+        prob_config = ProbabilisticOperatorConfig(probability=1.0)
+        prob_op = ProbabilisticOperator(prob_config, operator=child_op, rngs=rngs)
 
         # Create batch with metadata
         batch = Batch(

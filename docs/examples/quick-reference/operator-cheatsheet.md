@@ -180,8 +180,8 @@ from datarax.operators import (
 composite = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.SEQUENTIAL,
-        operators=[brightness, contrast, noise],
-    ),
+        ),
+    operators=[brightness, contrast, noise],
     rngs=nnx.Rngs(0),
 )
 
@@ -189,8 +189,8 @@ composite = CompositeOperatorModule(
 from datarax.operators import ProbabilisticOperator, ProbabilisticOperatorConfig
 
 maybe_noise = ProbabilisticOperator(
-    ProbabilisticOperatorConfig(operator=noise, probability=0.5),
-    rngs=nnx.Rngs(0),
+    ProbabilisticOperatorConfig(probability=0.5),
+    operator=noise, rngs=nnx.Rngs(0),
 )
 ```
 
