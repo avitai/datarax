@@ -5,8 +5,7 @@ This operator extends ModalityOperator to provide pixel-wise and channel-wise dr
 Key Features:
 
 - Two dropout modes: 'pixel' (element-wise) and 'channel' (entire channels)
-- Stochastic mode with per-sample dropout masks
-- Deterministic mode for fixed dropout pattern
+- Per-record dropout masks drawn from each record's own key; ``eval()`` turns them off
 - Full JAX compatibility with JIT compilation
 
 Examples:
@@ -30,6 +29,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
+from datarax.core.config import require_stochastic
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 from datarax.core.operator import require_key
 
@@ -45,7 +45,7 @@ class DropoutOperatorConfig(ModalityOperatorConfig):
 
     Attributes:
         dropout_rate: Probability of dropping pixels/channels (0.0 to 1.0).
-                     Used in deterministic mode or as default. Default: 0.1
+                     Default: 0.1
         mode: Dropout mode. Either "pixel" for pixel-wise dropout or
               "channel" for channel-wise dropout. Default: "pixel"
         clip_range: Range for clipping output values. None means no clipping.
@@ -55,11 +55,16 @@ class DropoutOperatorConfig(ModalityOperatorConfig):
         Use dropout_rate and mode parameters to configure the dropout behavior.
     """
 
+    # The operator only draws, so it is stochastic by default (turned off with ``eval()``).
+    stochastic: bool = True
+    stream_name: str | None = "augment"
+
     dropout_rate: float = field(default=0.1, kw_only=True)
     mode: Literal["pixel", "channel"] = field(default="pixel", kw_only=True)
 
     def __post_init__(self) -> None:
         """Validate configuration parameters."""
+        require_stochastic(self)
         super().__post_init__()
 
         # Validate dropout_rate
@@ -81,28 +86,13 @@ class DropoutOperator(ModalityOperator):
         - Pixel mode: Each pixel independently dropped with probability dropout_rate
         - Channel mode: Entire channels dropped with probability dropout_rate
 
-    Supports three modes:
-    1. **Deterministic**: Fixed dropout pattern using fixed seed
-    2. **Stochastic**: Per-record dropout masks drawn from the record's own key
-    3. **External params**: Accept pre-generated random parameters
+    Draws per-record dropout masks from the record's own key. ``eval()``, or
+    ``nnx.view(operator, deterministic=True)``, returns the record unchanged.
 
     The operator works on single elements (H, W, C images) and is composed into
     batch processing via apply_batch() from the base class.
 
     Examples:
-        Deterministic dropout:
-
-        ```python
-        config = DropoutOperatorConfig(
-            field_key="image",
-            dropout_rate=0.2,
-            mode="pixel",
-            stochastic=False
-        )
-        operator = DropoutOperator(config, rngs=nnx.Rngs(0))
-        result, state, metadata = operator.apply(data, state, metadata)
-        ```
-
         Stochastic dropout with random masks:
 
         ```python
@@ -171,10 +161,8 @@ class DropoutOperator(ModalityOperator):
         if self.config.dropout_rate == 0.0:
             return data, state, metadata
 
-        # This record's key when stochastic; a fixed one otherwise, which is what makes the
-        # deterministic dropout pattern the class documents reproducible. One dispatch serves
-        # both: only where the key comes from differs.
-        rng_key = require_key(key, self) if self.config.stochastic else jax.random.key(0)
+        # This record's key: the mask depends on the record alone.
+        rng_key = require_key(key, self)
 
         if self.config.mode == "pixel":
             # Pixel-wise dropout: each pixel independently dropped

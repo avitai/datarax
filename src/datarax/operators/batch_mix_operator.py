@@ -136,8 +136,8 @@ class BatchMixOperator(OperatorModule):
             Mixed batch with same structure
         """
         del stats
-        # Handle edge cases: empty or single-element batch
-        if batch.batch_size < 2:
+        # Deterministic mode mixes nothing; nor can a batch of fewer than two records.
+        if self.deterministic or batch.batch_size < 2:
             return batch
 
         # Batch-level mix key, keyed on the batch's global record indices when
@@ -228,8 +228,7 @@ class BatchMixOperator(OperatorModule):
         """
         del stats
 
-        batch_size = self._batch_size_from_raw_data(batch_data)
-        if batch_size < 2:
+        if self.deterministic or self._batch_size_from_raw_data(batch_data) < 2:
             return batch_data, batch_states
 
         key = self._mix_key(record_indices, epoch)

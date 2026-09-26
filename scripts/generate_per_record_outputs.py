@@ -139,12 +139,11 @@ def brightness(stochastic: bool) -> BrightnessOperator:
     return BrightnessOperator(config, rngs=rngs())
 
 
-def noise(
-    stochastic: bool, mode: Literal["gaussian", "salt_pepper", "poisson"] = "gaussian"
-) -> NoiseOperator:
-    """Return a noise operator in the requested mode."""
-    extra = stochastic_kwargs(stochastic)
-    return NoiseOperator(NoiseOperatorConfig(field_key="image", mode=mode, **extra), rngs=rngs())
+def noise(mode: Literal["gaussian", "salt_pepper", "poisson"] = "gaussian") -> NoiseOperator:
+    """Return a noise operator in the requested mode (noise is always stochastic)."""
+    return NoiseOperator(
+        NoiseOperatorConfig(field_key="image", mode=mode, **stochastic_kwargs(True)), rngs=rngs()
+    )
 
 
 class ShiftToTarget(ModalityOperator):
@@ -189,6 +188,18 @@ def element_noise(element: Any, key: jax.Array) -> Any:
     return element.update_data({"image": image + 0.1 * jax.random.normal(key, image.shape)})
 
 
+def element_scale(element: Any, key: None) -> Any:
+    """Scale an element's image: a deterministic function, handed no key."""
+    del key
+    return element.update_data({"image": element.data["image"] * 2.0})
+
+
+def external_scale(data: dict[str, Any], key: None) -> dict[str, Any]:
+    """Scale a raw data dict's image: a deterministic function, handed no key."""
+    del key
+    return {**data, "image": data["image"] * 2.0}
+
+
 def external_noise(data: dict[str, Any], key: jax.Array) -> dict[str, Any]:
     """Add drawn noise to a raw data dict's image."""
     return {**data, "image": data["image"] + 0.1 * jax.random.normal(key, data["image"].shape)}
@@ -196,7 +207,7 @@ def external_noise(data: dict[str, Any], key: jax.Array) -> dict[str, Any]:
 
 def composite(strategy: CompositionStrategy, **extra: Any) -> CompositeOperatorModule:
     """Return a composite over one deterministic and one stochastic child."""
-    children = [brightness(False), noise(True)]
+    children = [brightness(False), noise()]
     return CompositeOperatorModule(
         CompositeOperatorConfig(strategy=strategy, operators=children, **extra), rngs=rngs()
     )
@@ -257,13 +268,6 @@ CASES: list[tuple[str, Callable[[], OperatorModule], dict[str, jax.Array]]] = [
         IMAGE_LABEL,
     ),
     (
-        "dropout pixel deterministic",
-        lambda: DropoutOperator(
-            DropoutOperatorConfig(field_key="image", dropout_rate=0.3), rngs=rngs()
-        ),
-        IMAGE_LABEL,
-    ),
-    (
         "dropout pixel stochastic",
         lambda: DropoutOperator(
             DropoutOperatorConfig(field_key="image", dropout_rate=0.3, **stochastic_kwargs(True)),
@@ -281,18 +285,9 @@ CASES: list[tuple[str, Callable[[], OperatorModule], dict[str, jax.Array]]] = [
         ),
         IMAGE_LABEL,
     ),
-    ("noise gaussian deterministic", lambda: noise(False), IMAGE_LABEL),
-    ("noise gaussian stochastic", lambda: noise(True), IMAGE_LABEL),
-    ("noise salt_pepper stochastic", lambda: noise(True, "salt_pepper"), IMAGE_LABEL),
-    ("noise poisson stochastic", lambda: noise(True, "poisson"), IMAGE_LABEL),
-    (
-        "patch dropout deterministic",
-        lambda: PatchDropoutOperator(
-            PatchDropoutOperatorConfig(field_key="image", num_patches=2, patch_size=(4, 4)),
-            rngs=rngs(),
-        ),
-        IMAGE_LABEL,
-    ),
+    ("noise gaussian stochastic", lambda: noise(), IMAGE_LABEL),
+    ("noise salt_pepper stochastic", lambda: noise("salt_pepper"), IMAGE_LABEL),
+    ("noise poisson stochastic", lambda: noise("poisson"), IMAGE_LABEL),
     (
         "patch dropout stochastic",
         lambda: PatchDropoutOperator(
@@ -340,7 +335,7 @@ CASES: list[tuple[str, Callable[[], OperatorModule], dict[str, jax.Array]]] = [
     ),
     (
         "element deterministic",
-        lambda: ElementOperator(ElementOperatorConfig(), fn=element_noise),
+        lambda: ElementOperator(ElementOperatorConfig(), fn=element_scale),
         IMAGE_LABEL,
     ),
     (
@@ -368,7 +363,7 @@ CASES: list[tuple[str, Callable[[], OperatorModule], dict[str, jax.Array]]] = [
     (
         "external adapter deterministic",
         lambda: ExternalLibraryAdapter(
-            ExternalAdapterConfig(stochastic=False, stream_name=None), external_noise
+            ExternalAdapterConfig(stochastic=False, stream_name=None), external_scale
         ),
         IMAGE_LABEL,
     ),
@@ -383,14 +378,14 @@ CASES: list[tuple[str, Callable[[], OperatorModule], dict[str, jax.Array]]] = [
     (
         "selector over two stochastic children",
         lambda: SelectorOperator(
-            SelectorOperatorConfig(operators=[brightness(True), noise(True)]), rngs=rngs()
+            SelectorOperatorConfig(operators=[brightness(True), noise()]), rngs=rngs()
         ),
         IMAGE_LABEL,
     ),
     (
         "probabilistic p=0.5",
         lambda: ProbabilisticOperator(
-            ProbabilisticOperatorConfig(operator=noise(True), probability=0.5), rngs=rngs()
+            ProbabilisticOperatorConfig(operator=noise(), probability=0.5), rngs=rngs()
         ),
         IMAGE_LABEL,
     ),
@@ -406,10 +401,10 @@ CASES: list[tuple[str, Callable[[], OperatorModule], dict[str, jax.Array]]] = [
         lambda: always_on(brightness(False)),
         IMAGE_LABEL,
     ),
-    ("probabilistic p=1 over a stochastic child", lambda: always_on(noise(True)), IMAGE_LABEL),
+    ("probabilistic p=1 over a stochastic child", lambda: always_on(noise()), IMAGE_LABEL),
     (
         "probabilistic p=1 nested in another p=1 wrapper",
-        lambda: always_on(always_on(noise(True))),
+        lambda: always_on(always_on(noise())),
         IMAGE_LABEL,
     ),
     (
@@ -417,7 +412,7 @@ CASES: list[tuple[str, Callable[[], OperatorModule], dict[str, jax.Array]]] = [
         lambda: CompositeOperatorModule(
             CompositeOperatorConfig(
                 strategy=CompositionStrategy.SEQUENTIAL,
-                operators=[brightness(False), always_on(noise(True))],
+                operators=[brightness(False), always_on(noise())],
             ),
             rngs=rngs(),
         ),
@@ -430,9 +425,9 @@ CASES: list[tuple[str, Callable[[], OperatorModule], dict[str, jax.Array]]] = [
                 strategy=CompositionStrategy.SEQUENTIAL,
                 operators=[
                     ExternalLibraryAdapter(
-                        ExternalAdapterConfig(stochastic=False, stream_name=None), external_noise
+                        ExternalAdapterConfig(stochastic=False, stream_name=None), external_scale
                     ),
-                    noise(True),
+                    noise(),
                 ],
             ),
             rngs=rngs(),

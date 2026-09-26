@@ -21,14 +21,13 @@ import logging
 from collections.abc import Callable
 from typing import Any, cast
 
-import jax
 from flax import nnx
 from jaxtyping import PyTree
 
 from datarax.core.config import ElementOperatorConfig
 from datarax.core.element_batch import Element
 from datarax.core.metadata import Metadata
-from datarax.core.operator import OperatorModule
+from datarax.core.operator import call_with_mode_key, OperatorModule
 from datarax.typing import PRNGKey
 
 
@@ -45,10 +44,11 @@ class ElementOperator(OperatorModule):
 
     User Function Signature:
 
-        fn(element: Element, key: jax.Array) -> Element
+        fn(element: Element, key: jax.Array | None) -> Element
 
         - element: Element with .data, .state, .metadata attributes
-        - key: JAX random key (use for stochastic ops, ignore for deterministic)
+        - key: the record's PRNG key when the operator is stochastic, ``None`` when it is
+          deterministic
         - Returns: New Element (use element.replace() for immutable updates)
 
     Use Cases:
@@ -86,7 +86,7 @@ class ElementOperator(OperatorModule):
     def __init__(
         self,
         config: ElementOperatorConfig,
-        fn: Callable[[Element, PRNGKey], Element],
+        fn: Callable[[Element, PRNGKey], Element] | Callable[[Element, None], Element],
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
@@ -136,12 +136,7 @@ class ElementOperator(OperatorModule):
         # Cast metadata to Metadata | None for Element constructor
         element = Element(data=data, state=state, metadata=cast(Metadata | None, metadata))
 
-        # The user function always takes a key, so a deterministic operator passes a fixed
-        # one rather than None: its "random" values are then reproducible constants.
-        key = key if key is not None else jax.random.key(0)
-
-        # Apply user function
-        transformed_element = self.fn(element, key)
+        transformed_element = call_with_mode_key(self.fn, element, key)
 
         # Extract results - cast metadata back to dict type for base class compatibility
         return (

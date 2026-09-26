@@ -93,17 +93,16 @@ class TestDropoutOperatorConfig:
 class TestDropoutOperatorInitialization:
     """Tests for DropoutOperator initialization modes."""
 
-    def test_init_deterministic_mode(self):
-        """Test initialization in deterministic mode."""
+    def test_init_defaults_to_stochastic(self):
+        """Without an explicit mode the operator is stochastic."""
         config = DropoutOperatorConfig(
             field_key="image",
             dropout_rate=0.2,
-            stochastic=False,
         )
         operator = DropoutOperator(config, rngs=nnx.Rngs(0))
 
         assert operator.config.dropout_rate == 0.2
-        assert operator.config.stochastic is False
+        assert operator.config.stochastic is True
 
     def test_init_stochastic_mode(self):
         """Test initialization in stochastic mode."""
@@ -145,13 +144,12 @@ class TestDropoutOperatorInitialization:
 class TestDropoutOperatorTransformations:
     """Tests for basic dropout transformations."""
 
-    def test_deterministic_pixel_mode_single_element(self):
-        """Test deterministic pixel dropout on single element."""
+    def test_pixel_mode_single_element(self):
+        """Pixel dropout on a single element, drawn from a given key."""
         config = DropoutOperatorConfig(
             field_key="image",
             dropout_rate=0.5,
             mode="pixel",
-            stochastic=False,
         )
         operator = DropoutOperator(config, rngs=nnx.Rngs(0))
 
@@ -159,7 +157,7 @@ class TestDropoutOperatorTransformations:
         image = jnp.ones((32, 32, 3))
         data = {"image": image}
 
-        result, state, metadata = operator.apply(data, {}, {})
+        result, state, metadata = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Should have some zeros (dropped pixels) and some ones (kept pixels)
         result_image = result["image"]
@@ -167,13 +165,12 @@ class TestDropoutOperatorTransformations:
         assert jnp.any(result_image == 1.0)  # Some kept
         assert result_image.shape == image.shape
 
-    def test_deterministic_channel_mode_single_element(self):
-        """Test deterministic channel dropout on single element."""
+    def test_channel_mode_single_element(self):
+        """Channel dropout on a single element, drawn from a given key."""
         config = DropoutOperatorConfig(
             field_key="image",
             dropout_rate=0.5,
             mode="channel",
-            stochastic=False,
         )
         operator = DropoutOperator(config, rngs=nnx.Rngs(0))
 
@@ -181,7 +178,7 @@ class TestDropoutOperatorTransformations:
         image = jnp.ones((32, 32, 3))
         data = {"image": image}
 
-        result, state, metadata = operator.apply(data, {}, {})
+        result, state, metadata = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # In channel mode, entire channels are dropped
         result_image = result["image"]
@@ -193,13 +190,12 @@ class TestDropoutOperatorTransformations:
         # With dropout_rate=0.5 and 3 channels, likely at least one channel dropped
         assert jnp.any(channel_sums == 0.0) or jnp.all(channel_sums > 0.0)
 
-    def test_deterministic_apply_batch_pixel_mode(self):
-        """Test deterministic pixel dropout on batch."""
+    def test_apply_batch_pixel_mode(self):
+        """Pixel dropout over a batch, each record from its own key."""
         config = DropoutOperatorConfig(
             field_key="image",
             dropout_rate=0.3,
             mode="pixel",
-            stochastic=False,
         )
         operator = DropoutOperator(config, rngs=nnx.Rngs(0))
 
@@ -216,13 +212,12 @@ class TestDropoutOperatorTransformations:
         # Should have some dropout
         assert jnp.any(result_images < images)
 
-    def test_deterministic_apply_batch_channel_mode(self):
-        """Test deterministic channel dropout on batch."""
+    def test_apply_batch_channel_mode(self):
+        """Channel dropout over a batch, each record from its own key."""
         config = DropoutOperatorConfig(
             field_key="image",
             dropout_rate=0.3,
             mode="channel",
-            stochastic=False,
         )
         operator = DropoutOperator(config, rngs=nnx.Rngs(0))
 
@@ -245,14 +240,13 @@ class TestDropoutOperatorEdgeCases:
         config = DropoutOperatorConfig(
             field_key="image",
             dropout_rate=0.0,
-            stochastic=False,
         )
         operator = DropoutOperator(config, rngs=nnx.Rngs(0))
 
         image = jnp.ones((16, 16, 3))
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Should be completely unchanged
         assert jnp.array_equal(result["image"], image)
@@ -263,14 +257,13 @@ class TestDropoutOperatorEdgeCases:
             field_key="image",
             dropout_rate=1.0,
             mode="pixel",
-            stochastic=False,
         )
         operator = DropoutOperator(config, rngs=nnx.Rngs(0))
 
         image = jnp.ones((16, 16, 3))
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Should be all zeros
         assert jnp.all(result["image"] == 0.0)
@@ -280,14 +273,13 @@ class TestDropoutOperatorEdgeCases:
         config = DropoutOperatorConfig(
             field_key="custom_image",
             dropout_rate=0.2,
-            stochastic=False,
         )
         operator = DropoutOperator(config, rngs=nnx.Rngs(0))
 
         image = jnp.ones((16, 16, 3))
         data = {"custom_image": image, "other": jnp.ones(10)}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Custom image should be transformed, other data unchanged
         assert "custom_image" in result
@@ -299,7 +291,6 @@ class TestDropoutOperatorEdgeCases:
         config = DropoutOperatorConfig(
             field_key="image",
             dropout_rate=0.2,
-            stochastic=False,
         )
         operator = DropoutOperator(config, rngs=nnx.Rngs(0))
 
@@ -307,7 +298,7 @@ class TestDropoutOperatorEdgeCases:
 
         # Should raise KeyError from _extract_field
         with pytest.raises(KeyError):
-            operator.apply(data, {}, {})
+            operator.apply(data, {}, {}, key=jax.random.key(0))
 
     def test_apply_target_key(self):
         """Test operator with target_key different from field_key."""
@@ -315,14 +306,13 @@ class TestDropoutOperatorEdgeCases:
             field_key="image",
             target_key="dropout_image",
             dropout_rate=0.2,
-            stochastic=False,
         )
         operator = DropoutOperator(config, rngs=nnx.Rngs(0))
 
         image = jnp.ones((16, 16, 3))
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Original image unchanged, new field created
         assert "image" in result
@@ -336,7 +326,6 @@ class TestDropoutOperatorEdgeCases:
             field_key="image",
             dropout_rate=0.3,
             mode="channel",
-            stochastic=False,
         )
         operator = DropoutOperator(config, rngs=nnx.Rngs(0))
 
@@ -344,7 +333,7 @@ class TestDropoutOperatorEdgeCases:
         image = jnp.ones((16, 16))
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Should still work (fallback to pixel mode)
         assert result["image"].shape == image.shape
@@ -419,19 +408,18 @@ class TestDropoutOperatorStochasticMode:
 class TestDropoutOperatorJAXCompatibility:
     """Tests for JAX transformation compatibility (jit, vmap, grad)."""
 
-    def test_jit_compatibility_deterministic(self):
-        """Test JIT compilation with deterministic operator."""
+    def test_jit_compatibility_with_a_given_key(self):
+        """JIT compilation of a call handed its key."""
         config = DropoutOperatorConfig(
             field_key="image",
             dropout_rate=0.3,
             mode="pixel",
-            stochastic=False,
         )
         operator = DropoutOperator(config, rngs=nnx.Rngs(0))
 
         @nnx.jit
         def jit_apply(op, data):
-            result, state, metadata = op.apply(data, {}, {})
+            result, state, metadata = op.apply(data, {}, {}, key=jax.random.key(0))
             return result
 
         image = jnp.ones((16, 16, 3))
@@ -471,7 +459,6 @@ class TestDropoutOperatorJAXCompatibility:
             field_key="image",
             dropout_rate=0.2,
             mode="pixel",
-            stochastic=False,
         )
         operator = DropoutOperator(config, rngs=nnx.Rngs(0))
 
@@ -498,14 +485,13 @@ class TestDropoutOperatorJAXCompatibility:
             field_key="image",
             dropout_rate=0.0,  # Use 0 dropout for meaningful gradients
             mode="pixel",
-            stochastic=False,
         )
         operator = DropoutOperator(config, rngs=nnx.Rngs(0))
 
         def loss_fn(image_data):
             """Simple loss function for gradient test."""
             data = {"image": image_data}
-            result, _, _ = operator.apply(data, {}, {})
+            result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
             # Mean squared value as loss
             return jnp.sum(result["image"] ** 2)
 
@@ -528,14 +514,13 @@ class TestDropoutOperatorJAXCompatibility:
             field_key="image",
             dropout_rate=0.5,
             mode="pixel",
-            stochastic=False,
         )
         operator = DropoutOperator(config, rngs=nnx.Rngs(0))
 
         def loss_fn(image_data):
             """Loss function that uses dropout."""
             data = {"image": image_data}
-            result, _, _ = operator.apply(data, {}, {})
+            result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
             return jnp.sum(result["image"] ** 2)
 
         image = jnp.ones((8, 8, 3))
@@ -561,14 +546,13 @@ class TestDropoutOperatorCommonPatterns:
             field_key="image",
             dropout_rate=0.2,
             mode="pixel",
-            stochastic=False,
         )
         operator = DropoutOperator(config, rngs=nnx.Rngs(42))
 
         image = jnp.ones((32, 32, 3))
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Should have dropout applied
         assert result["image"].shape == image.shape
@@ -581,14 +565,13 @@ class TestDropoutOperatorCommonPatterns:
             field_key="image",
             dropout_rate=0.3,
             mode="channel",
-            stochastic=False,
         )
         operator = DropoutOperator(config, rngs=nnx.Rngs(42))
 
         image = jnp.ones((32, 32, 3))
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
 
         # Should have channel dropout applied
         assert result["image"].shape == image.shape

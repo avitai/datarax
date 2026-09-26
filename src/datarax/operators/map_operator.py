@@ -10,9 +10,8 @@ Key Features:
 - Stochastic mode: key parameter provides per-leaf randomness
 - Full-tree mode: Apply fn to all array leaves
 - Subtree mode: Apply fn only to specified subtree leaves
-- Uses jax.tree.map_with_path for unified implementation
-
-BREAKING CHANGE: User functions MUST accept key parameter even in deterministic mode.
+- One function signature, ``fn(leaf, key)``, in both modes: ``key`` is ``None`` when the
+  operator is deterministic
 """
 
 import logging
@@ -24,7 +23,7 @@ from flax import nnx
 from jaxtyping import PyTree
 
 from datarax.core.config import MapOperatorConfig
-from datarax.core.operator import OperatorModule
+from datarax.core.operator import call_with_mode_key, OperatorModule
 
 
 logger = logging.getLogger(__name__)
@@ -45,7 +44,7 @@ class MapOperator(OperatorModule):
 
     Two operational modes:
     1. **Full-tree mode** (subtree=None): Apply fn to all array leaves
-       - Unified implementation with jax.tree.map_with_path
+       - One traversal of the leaves with their key paths
 
     2. **Subtree mode** (subtree specified): Apply fn only to subtree leaves
        - Path-based filtering via keypath matching
@@ -80,7 +79,7 @@ class MapOperator(OperatorModule):
     def __init__(
         self,
         config: MapOperatorConfig,
-        fn: Callable[[jax.Array, jax.Array], jax.Array],
+        fn: Callable[[jax.Array, jax.Array], jax.Array] | Callable[[jax.Array, None], jax.Array],
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
@@ -89,10 +88,9 @@ class MapOperator(OperatorModule):
 
         Args:
             config: Operator configuration
-            fn: User function with signature: fn(x: Array, key: Array) -> Array
-                BREAKING CHANGE: Must accept key parameter even for deterministic mode
-                - Deterministic: ignore key parameter
-                - Stochastic: use key for randomness
+            fn: User function with signature ``fn(x: Array, key: Array | None) -> Array``;
+                ``key`` is the leaf's own key when the operator is stochastic and ``None``
+                when it is deterministic.
             rngs: Random number generators (required if stochastic=True, optional otherwise)
             name: Optional name for the operator
         """
@@ -166,7 +164,7 @@ class MapOperator(OperatorModule):
         - Subtree × deterministic
         - Subtree × stochastic
 
-        Uses jax.tree.map_with_path for unified traversal with keypath filtering.
+        Traverses the leaves with their key paths once, filtering by subtree.
 
         Args:
             data: Element data PyTree
@@ -182,16 +180,15 @@ class MapOperator(OperatorModule):
         del stats
         # One key per data leaf, folded out of this record's key, so each leaf draws
         # independently while still depending only on the record. A deterministic operator
-        # maps a fixed key over the same structure, since the mapped function always takes one.
-        if key is None:
-            keys = jax.tree.map(lambda _: jax.random.key(0), data)
-        else:
-            leaves, tree_def = jax.tree.flatten(data)
-            keys = jax.tree.unflatten(
-                tree_def, [jax.random.fold_in(key, index) for index in range(len(leaves))]
-            )
+        # hands the function no key.
+        leaves, tree_def = jax.tree.flatten(data)
+        leaf_keys = [
+            None if key is None else jax.random.fold_in(key, index) for index in range(len(leaves))
+        ]
 
-        def transform_leaf(keypath: Any, leaf: Any, key: Any) -> Any:
+        def transform_leaf(
+            keypath: tuple[jax.tree_util.KeyEntry, ...], leaf: jax.Array, key: jax.Array | None
+        ) -> jax.Array:
             """Transform leaf if it should be transformed."""
             # Check subtree filter (full-tree mode: always transform)
             if self._is_subtree_mode:
@@ -199,8 +196,14 @@ class MapOperator(OperatorModule):
                     return leaf  # Pass through unchanged
 
             # Apply user function (always with key parameter)
-            return self.fn(leaf, key)
+            return call_with_mode_key(self.fn, leaf, key)
 
-        # Single transformation call (works for all 4 cases!)
-        transformed_data = jax.tree.map_with_path(transform_leaf, data, keys)
+        paths = [path for path, _ in jax.tree.flatten_with_path(data)[0]]
+        transformed_data = jax.tree.unflatten(
+            tree_def,
+            [
+                transform_leaf(path, leaf, leaf_key)
+                for path, leaf, leaf_key in zip(paths, leaves, leaf_keys, strict=True)
+            ],
+        )
         return transformed_data, state, metadata

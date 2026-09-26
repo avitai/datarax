@@ -77,18 +77,14 @@ class TestExternalLibraryAdapter:
         assert new_state == state
         assert new_metadata == metadata
 
-    def test_apply_falls_back_to_fixed_key_without_params(self, mock_external_fn):
-        """Without a per-record key (deterministic mode), apply uses a fixed key.
+    def test_a_stochastic_adapter_refuses_a_call_without_a_key(self, mock_external_fn):
+        """A stochastic adapter's function draws from the record's key; none is refused."""
+        adapter = ExternalLibraryAdapter(
+            ExternalAdapterConfig(), mock_external_fn, rngs=nnx.Rngs(augment=42)
+        )
 
-        The wrapped external fn always needs a key, so instead of raising, apply
-        falls back to a fixed key — producing reproducible "deterministic noise".
-        """
-        config = ExternalAdapterConfig()
-        rngs = nnx.Rngs(augment=42)
-        adapter = ExternalLibraryAdapter(config, mock_external_fn, rngs=rngs)
-
-        out_data, _, _ = adapter.apply({"x": jnp.zeros(1)}, {}, None, key=None)
-        assert out_data is not None
+        with pytest.raises(ValueError, match="ExternalLibraryAdapter is stochastic"):
+            adapter.apply({"x": jnp.zeros(1)}, {}, None, key=None)
 
     def test_integration_with_batch(self, mock_external_fn):
         """Test full pipeline execution via __call__ with a Batch object."""
@@ -126,33 +122,25 @@ class TestExternalLibraryAdapter:
         output_batch = jitted_apply(adapter, batch)
         assert output_batch.data.get_value()["x"].shape == (2, 5)
 
-    def test_stochastic_false_config(self, mock_external_fn):
-        """Test with stochastic=False.
+    def test_a_deterministic_adapter_hands_its_function_no_key(self):
+        """A deterministic adapter's function takes ``None`` and gives the same output each call."""
+        seen: list[jax.Array | None] = []
 
-        Note: Even if stochastic=False, the logic in ExternalLibraryAdapter.generate_random_params
-        doesn't explicitly forbid splitting keys if called. However, OperatorModule.apply_batch
-        handles the conditional logic. If stochastic=False, it passes a dummy RNG.
-        The external adapter will still split this dummy RNG and pass keys to the function.
-        Effectively, it becomes deterministic noise.
-        """
-        config = ExternalAdapterConfig(stochastic=False, stream_name=None)
-        # rngs not required if stochastic=False
-        adapter = ExternalLibraryAdapter(config, mock_external_fn)
+        def scale(data: dict, key: None) -> dict:
+            seen.append(key)
+            return {**data, "x": data["x"] * 2.0}
 
-        batch_size = 2
-        data = {"x": jnp.zeros((batch_size, 5))}
-        batch = Batch.from_parts(data=data, states={}, validate=False)
+        adapter = ExternalLibraryAdapter(
+            ExternalAdapterConfig(stochastic=False, stream_name=None), scale
+        )
+        batch = Batch.from_parts(data={"x": jnp.ones((2, 5))}, states={}, validate=False)
 
-        # Should run without error
-        output_batch = adapter(batch)
-        output_data = output_batch.data.get_value()
+        first = adapter(batch).data.get_value()["x"]
+        second = adapter(batch).data.get_value()["x"]
 
-        # Verify result is deterministic
-        adapter2 = ExternalLibraryAdapter(config, mock_external_fn)
-        output_batch2 = adapter2(batch)
-        output_data2 = output_batch2.data.get_value()
-
-        assert jnp.array_equal(output_data["x"], output_data2["x"])
+        assert seen and all(key is None for key in seen)
+        assert jnp.array_equal(first, jnp.full((2, 5), 2.0))
+        assert jnp.array_equal(first, second)
 
     def test_missing_rngs_error(self, mock_external_fn):
         """Test that missing rngs raises ValueError when stochastic=True."""

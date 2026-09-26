@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import jax
 import jax.numpy as jnp
 
+from datarax.core.config import OperatorConfig
 from datarax.core.operator import OperatorModule
 from datarax.operators.strategies.base import StrategyContext
 from datarax.operators.strategies.sequential import (
@@ -43,7 +44,7 @@ class TestSequentialStrategy:
     def test_each_child_is_given_its_own_key(self):
         # Verify the child's key is folded from the record's, by its position
         op1 = MagicMock(spec=OperatorModule)
-        op1.apply.return_value = (jnp.array([1]), {}, {})
+        op1.apply_record.return_value = (jnp.array([1]), {}, {})
 
         strategy = SequentialStrategy()
         key = jax.random.key(42)
@@ -51,8 +52,8 @@ class TestSequentialStrategy:
 
         strategy.apply([op1], context)
 
-        # Check that apply was called with this child's derived key
-        args, _ = op1.apply.call_args
+        # Check that the child was applied with its derived key
+        args, _ = op1.apply_record.call_args
         assert jnp.array_equal(
             jax.random.key_data(args[3]), jax.random.key_data(jax.random.fold_in(key, 0))
         )
@@ -70,15 +71,12 @@ class TestConditionalSequentialStrategy:
         # Simulating simple operators that work with JAX tracing
         class AddOperator(OperatorModule):
             def __init__(self, value):
+                super().__init__(OperatorConfig(stochastic=False))
                 self.value = value
 
-            def apply(self, data, state, meta, rp=None, stats=None):
-                del rp, stats
+            def apply(self, data, state, meta, key=None, stats=None):
+                del key, stats
                 return data + self.value, state, meta
-
-            def generate_random_params(self, rng, shapes):
-                del rng, shapes
-                return {}
 
         op1 = AddOperator(10.0)
         op2 = AddOperator(100.0)

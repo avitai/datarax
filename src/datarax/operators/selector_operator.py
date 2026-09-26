@@ -203,7 +203,7 @@ class SelectorOperator(OperatorModule):
 
             def branch_fn(operands: Any) -> tuple[Any, Any, Any]:
                 d, s, m, k = operands
-                return operator.apply(d, s, m, jax.random.fold_in(k, i + 1), child_stats)
+                return operator.apply_record(d, s, m, jax.random.fold_in(k, i + 1), child_stats)
 
             return branch_fn
 

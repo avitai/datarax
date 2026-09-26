@@ -69,7 +69,7 @@ class CompositionStrategyImpl(abc.ABC):
             operands: tuple[PyTree, PyTree, dict[str, Any], jax.Array | None],
         ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
             d, s, m, k = operands
-            return operator.apply(d, s, m, k, stats)
+            return operator.apply_record(d, s, m, k, stats)
 
         def noop_fn(
             operands: tuple[PyTree, PyTree, dict[str, Any], jax.Array | None],
@@ -100,7 +100,7 @@ class CompositionStrategyImpl(abc.ABC):
         """
         outputs, states, metadatas = [], [], []
         for operator, key, stats in self._with_key_and_stats(operators, context):
-            out_data, out_state, out_metadata = operator.apply(
+            out_data, out_state, out_metadata = operator.apply_record(
                 context.data, context.state, context.metadata, key, stats
             )
             outputs.append(out_data)

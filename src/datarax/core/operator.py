@@ -14,8 +14,8 @@ Key Features:
 """
 
 import logging
-from collections.abc import Sequence
-from typing import Any, final
+from collections.abc import Callable, Sequence
+from typing import Any, cast, final
 
 import jax
 import jax.numpy as jnp
@@ -83,6 +83,30 @@ def require_key(key: jax.Array | None, operator: "OperatorModule") -> jax.Array:
             "apply_batch, _apply_on_raw and Pipeline pass one, or call apply(..., key=...)"
         )
     return key
+
+
+def call_with_mode_key[In, Out](
+    fn: Callable[[In, jax.Array], Out] | Callable[[In, None], Out],
+    value: In,
+    key: jax.Array | None,
+) -> Out:
+    """Call a user function in the shape the operator's mode gives it.
+
+    A stochastic operator's function takes the record's key and a deterministic one's takes
+    ``None``; which one ``fn`` is follows the operator's configuration, which the type system
+    cannot see, so the call narrows on the key it was handed.
+
+    Args:
+        fn: The user function, keyed or keyless.
+        value: What the function transforms.
+        key: The record's key, or ``None`` for a deterministic operator.
+
+    Returns:
+        The function's result.
+    """
+    if key is None:
+        return cast(Callable[[In, None], Out], fn)(value, None)
+    return cast(Callable[[In, jax.Array], Out], fn)(value, key)
 
 
 # The name a wrapper's statistics carry their children's entries under. A wrapper applies no
@@ -202,6 +226,11 @@ class OperatorModule(DataraxModule):
         # Without nnx.static(), Orbax checkpointing fails on non-JAX types
         self.stochastic = nnx.static(config.stochastic)
         self.stream_name = nnx.static(config.stream_name)
+        # Flax's mode flag: ``eval()`` sets it, ``train()`` clears it, and ``nnx.view(module,
+        # deterministic=True)`` sets it on a view through ``set_view``. A stochastic operator in
+        # deterministic mode draws nothing and applies ``apply_deterministic``. A plain attribute,
+        # as in ``nnx.Dropout``, so training and evaluation each compile one trace.
+        self.deterministic = False
 
         # Stable per-operator base key, drawn ONCE (not per batch). Per-record keys are
         # fold_in(fold_in(base_key, epoch), record_index), so within an epoch a record's
@@ -221,6 +250,77 @@ class OperatorModule(DataraxModule):
         # equal configurations share one compiled trace whatever their statistics hold, and the
         # store round-trips through a checkpoint.
         self._statistics: nnx.Variable[dict[str, Any] | None] = nnx.Variable(None)
+
+    # ========================================================================
+    # Mode
+    # ========================================================================
+
+    def set_view(self, deterministic: bool | None = None) -> None:
+        """Set the mode for ``nnx.view``, as flax's own stochastic layers do.
+
+        Args:
+            deterministic: ``True`` turns this operator's randomness off, ``False`` on;
+                ``None`` leaves it as it is.
+        """
+        if deterministic is not None:
+            self.deterministic = deterministic
+
+    def apply_deterministic(
+        self,
+        data: PyTree,
+        state: PyTree,
+        metadata: dict[str, Any] | None,
+        stats: dict[str, Any] | None = None,
+    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
+        """Transform one record in deterministic mode: the record, unchanged, by default.
+
+        A stochastic operator is an augmentation unless it says otherwise, and evaluation
+        applies no augmentation. An operator whose deterministic form does something (a
+        composition running its deterministic children) overrides this.
+
+        Args:
+            data: Element data PyTree (no batch dimension).
+            state: Element state PyTree.
+            metadata: Element metadata.
+            stats: This batch's statistics.
+
+        Returns:
+            Tuple of (data, state, metadata).
+        """
+        del stats
+        return data, state, metadata
+
+    @final
+    def apply_record(
+        self,
+        data: PyTree,
+        state: PyTree,
+        metadata: dict[str, Any] | None,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
+        """Transform one record in this operator's mode; every framework path calls this.
+
+        A stochastic operator in deterministic mode applies ``apply_deterministic``; otherwise
+        ``apply`` runs, with the record's key for a stochastic operator and no key for a
+        deterministic one, whatever its parent was handed. Wrappers call their children through
+        this, so a child's mode holds wherever it sits.
+
+        Args:
+            data: Element data PyTree (no batch dimension).
+            state: Element state PyTree.
+            metadata: Element metadata.
+            key: This record's PRNG key, or ``None`` for a deterministic operator.
+            stats: This batch's statistics.
+
+        Returns:
+            Tuple of (transformed_data, new_state, new_metadata).
+        """
+        if not self.stochastic:
+            return self.apply(data, state, metadata, None, stats)
+        if self.deterministic:
+            return self.apply_deterministic(data, state, metadata, stats)
+        return self.apply(data, state, metadata, key, stats)
 
     # ========================================================================
     # Statistics
@@ -361,7 +461,7 @@ class OperatorModule(DataraxModule):
         # === PER-RECORD RNG KEYS ===
         # Derive one stateless key per record from the operator's stable base key
         # and the record's global index — never from a per-batch stream draw.
-        if self.stochastic:
+        if self.stochastic and not self.deterministic:
             # The keys are a function of the base key and the records alone, so a batch applied
             # twice draws the same values. A call that names no records keys on positions.
             indices = (
@@ -371,7 +471,8 @@ class OperatorModule(DataraxModule):
             )
             element_keys = per_record_keys(self._base_key[...], indices, epoch)
         else:
-            # A deterministic operator has nothing to draw, so it is handed no key.
+            # A deterministic operator, or a stochastic one in deterministic mode, draws nothing,
+            # so it is handed no key.
             element_keys = None
 
         # === PER-ELEMENT FUNCTION + INPUTS (unified — DRY) ===
@@ -379,7 +480,7 @@ class OperatorModule(DataraxModule):
         if has_keys:
 
             def _apply_with_key(data: Any, state: Any, key: Any) -> tuple[Any, Any]:
-                out_data, out_state, _ = self.apply(data, state, None, key, _stats)
+                out_data, out_state, _ = self.apply_record(data, state, None, key, _stats)
                 return out_data, out_state
 
             apply_one = _apply_with_key
@@ -387,7 +488,7 @@ class OperatorModule(DataraxModule):
         else:
 
             def _apply_no_key(data: Any, state: Any) -> tuple[Any, Any]:
-                out_data, out_state, _ = self.apply(data, state, None, None, _stats)
+                out_data, out_state, _ = self.apply_record(data, state, None, None, _stats)
                 return out_data, out_state
 
             apply_one = _apply_no_key

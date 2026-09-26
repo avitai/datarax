@@ -7,6 +7,7 @@ test_ensemble_strategy, test_sequential_strategy, and test_parallel_strategy.
 import jax
 import jax.numpy as jnp
 
+from datarax.core.config import OperatorConfig
 from datarax.core.operator import OperatorModule
 
 
@@ -17,8 +18,8 @@ class ConstantMockOperator(OperatorModule):
     """
 
     def __init__(self, value: float, name: str = "mock"):
+        super().__init__(OperatorConfig(stochastic=False), name=name)
         self.value = value
-        self.name = name
 
     def apply(self, data, state, metadata, key=None, stats=None):
         del key, stats
@@ -33,8 +34,8 @@ class MultiplierMockOperator(OperatorModule):
     """
 
     def __init__(self, multiplier: float = 2.0, name: str = "mock"):
+        super().__init__(OperatorConfig(stochastic=False), name=name)
         self.multiplier = multiplier
-        self.name = name
 
     def apply(self, data, state, metadata, key=None, stats=None):
         del key, stats

@@ -424,6 +424,33 @@ class CompositeOperatorModule(OperatorModule):
         ``data[weight_key]``, strips the key from data, and passes clean data
         to the strategy. Raises ``ValueError`` if the key is missing from data.
         """
+        return self._compose(
+            data, state, metadata, require_key(key, self) if self.stochastic else key, stats
+        )
+
+    def apply_deterministic(
+        self,
+        data: PyTree,
+        state: PyTree,
+        metadata: dict[str, Any] | None,
+        stats: dict[str, Any] | None = None,
+    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
+        """Run the composition without a key: each child applies in its own mode.
+
+        ``eval()`` and ``nnx.view`` reach every child, so deterministic children still
+        transform the record and stochastic ones return it unchanged.
+        """
+        return self._compose(data, state, metadata, None, stats)
+
+    def _compose(
+        self,
+        data: PyTree,
+        state: PyTree,
+        metadata: dict[str, Any] | None,
+        key: jax.Array | None,
+        stats: dict[str, Any] | None,
+    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
+        """Apply the strategy to the children with ``key`` as the record's key."""
         from datarax.operators.strategies.base import StrategyContext
 
         extra_params, clean_data = self._resolve_weighted_params(data)
@@ -432,7 +459,7 @@ class CompositeOperatorModule(OperatorModule):
             data=clean_data,
             state=state,
             metadata=metadata if metadata is not None else {},
-            key=require_key(key, self) if self.stochastic else key,
+            key=key,
             stats=stats,
             extra_params=extra_params if extra_params else None,
         )
