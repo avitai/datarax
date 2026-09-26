@@ -36,7 +36,8 @@ config = DataraxModuleConfig()
 
 !!! note "A configuration holds no fitted values"
     A configuration is static metadata that a transform compares, so statistics belong to the
-    operator that applies them: `operator.set_statistics({"mean": 0.5, "std": 0.2})`.
+    operator that applies them, given when it is built:
+    `NormalizeOperator(config, statistics={"mean": 0.5, "std": 0.2})`.
 
 ## Operator Configuration
 

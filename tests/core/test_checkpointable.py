@@ -389,7 +389,7 @@ class TestCheckpointEdgeCases:
 
 
 class TestOperatorCheckpointLayout:
-    """An operator checkpoints its base key and its statistics, and nothing else.
+    """An operator checkpoints its base key and the statistics it was built with, nothing else.
 
     A state of any other layout, such as one that also carries a stream, is structurally
     incompatible and refused as it is.
@@ -406,8 +406,8 @@ class TestOperatorCheckpointLayout:
             rngs=nnx.Rngs(augment=seed),
         )
 
-    def test_the_layout_is_the_base_key_and_the_statistics(self):
-        assert set(self._operator().get_state()) == {"_base_key", "_statistics"}
+    def test_a_stochastic_operator_without_statistics_checkpoints_its_base_key(self):
+        assert set(self._operator().get_state()) == {"_base_key"}
 
     def test_a_restored_operator_draws_as_the_saved_one_did(self):
         saved = self._operator(1)

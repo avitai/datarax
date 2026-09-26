@@ -14,12 +14,13 @@ Key Features:
 """
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast, final
 
 import jax
 import jax.numpy as jnp
 from flax import nnx
+from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
@@ -109,6 +110,11 @@ def call_with_mode_key[In, Out](
     return cast(Callable[[In, jax.Array], Out], fn)(value, key)
 
 
+def _statistics_arrays(statistics: Mapping[str, ArrayLike]) -> dict[str, jax.Array]:
+    """Return ``statistics`` with every leaf an array, so no Python value becomes state."""
+    return jax.tree.map(jnp.asarray, statistics)
+
+
 # The name a wrapper's statistics carry their children's entries under. A wrapper applies no
 # statistics of its own: what it holds is what each child computed on the wrapper's input, in
 # child order.
@@ -195,6 +201,7 @@ class OperatorModule(DataraxModule):
         *,
         rngs: nnx.Rngs | None = None,
         name: str | None = None,
+        statistics: Mapping[str, ArrayLike] | None = None,
     ) -> None:
         """Initialize OperatorModule with config.
 
@@ -202,6 +209,9 @@ class OperatorModule(DataraxModule):
             config: Operator configuration (already validated)
             rngs: Random number generators (required if stochastic=True)
             name: Optional operator name
+            statistics: Fitted or fixed statistics every record's ``apply`` receives, stored as
+                arrays at their real shape. ``set_statistics`` may later replace their values,
+                never their layout. An operator built without them holds none.
 
         Raises:
             ValueError: If stochastic=True but rngs is None
@@ -245,11 +255,13 @@ class OperatorModule(DataraxModule):
                 raise ValueError("Stochastic operators require config.stream_name to be set.")
             self._base_key = nnx.RngKey(rngs[config.stream_name]())
 
-        # Fitted or fixed statistics, which every record's apply receives. A plain nnx.Variable,
-        # so the statistics are module state rather than graphdef metadata: two operators with
-        # equal configurations share one compiled trace whatever their statistics hold, and the
-        # store round-trips through a checkpoint.
-        self._statistics: nnx.Variable[dict[str, Any] | None] = nnx.Variable(None)
+        # Fitted or fixed statistics, which every record's apply receives. A plain nnx.Variable of
+        # arrays created here at its real shape, so the operator's state layout never changes after
+        # construction: the statistics are module state rather than graphdef metadata, two operators
+        # with equal configurations share one compiled trace whatever their statistics hold, and
+        # the store round-trips through a checkpoint.
+        if statistics is not None:
+            self._statistics = nnx.Variable(_statistics_arrays(statistics))
 
     # ========================================================================
     # Mode
@@ -339,28 +351,56 @@ class OperatorModule(DataraxModule):
             The statistics to give ``apply``, or None when the operator has none.
         """
         del batch_data
-        return self._statistics.get_value()
+        return self.get_statistics()
 
-    def get_statistics(self) -> dict[str, Any] | None:
-        """Return the stored statistics, or None when the operator has none.
+    def get_statistics(self) -> dict[str, jax.Array] | None:
+        """Return the stored statistics, or None when the operator was built without them.
 
         Returns:
             The statistics this operator applies, or None.
         """
-        return self._statistics.get_value()
+        store = getattr(self, "_statistics", None)
+        return None if store is None else store.get_value()
 
-    def set_statistics(self, stats: dict[str, Any]) -> None:
-        """Store the statistics this operator applies.
+    def set_statistics(self, stats: Mapping[str, ArrayLike]) -> None:
+        """Replace the stored statistics' values; their layout is fixed at construction.
 
         Args:
-            stats: The statistics to store. An operator that constrains them validates here, by
-                overriding this method and calling ``super().set_statistics``.
-        """
-        self._statistics.set_value(stats)
+            stats: The new values, with the stored tree structure and each leaf's shape and
+                dtype. An operator that constrains them validates here, by overriding this method
+                and calling ``super().set_statistics``.
 
-    def reset_statistics(self) -> None:
-        """Forget the stored statistics, so the operator applies none."""
-        self._statistics.set_value(None)
+        Raises:
+            ValueError: If the operator was built without statistics, or ``stats`` differs from
+                the stored ones in structure, shape or dtype. Nothing is changed.
+        """
+        current = self.get_statistics()
+        if current is None:
+            raise ValueError(
+                f"{type(self).__name__} was built without statistics; pass statistics= to its "
+                "constructor to give it a store of fixed layout"
+            )
+        replacement = _statistics_arrays(stats)
+        if jax.tree.structure(replacement) != jax.tree.structure(current):
+            raise ValueError(
+                f"{type(self).__name__} statistics have the structure "
+                f"{jax.tree.structure(current)}; got {jax.tree.structure(replacement)}"
+            )
+        mismatched = [
+            jax.tree_util.keystr(path)
+            for (path, new), old in zip(
+                jax.tree_util.tree_leaves_with_path(replacement),
+                jax.tree.leaves(current),
+                strict=True,
+            )
+            if new.shape != old.shape or new.dtype != old.dtype
+        ]
+        if mismatched:
+            raise ValueError(
+                f"{type(self).__name__} statistics keep their shapes and dtypes; "
+                f"{', '.join(mismatched)} differ"
+            )
+        self._statistics.set_value(replacement)
 
     # ========================================================================
     # Abstract Methods (must be implemented by subclasses)

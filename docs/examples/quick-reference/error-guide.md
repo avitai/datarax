@@ -58,15 +58,15 @@ config = StructuralConfig(stochastic=False)
 
 ### `TypeError: __init__() got an unexpected keyword argument 'precomputed_stats'`
 
-**Cause**: Statistics are no longer configuration. They live on the operator that applies them.
+**Cause**: Statistics are not configuration. They are state of the operator that applies them,
+given when it is built.
 
 ```python
 # Wrong
 config = OperatorConfig(precomputed_stats={"mean": 0.5, "std": 0.2})
 
-# Fix: store them on the operator
-operator = MyOperator(OperatorConfig())
-operator.set_statistics({"mean": 0.5, "std": 0.2})
+# Fix: give them to the operator
+operator = MyOperator(OperatorConfig(), statistics={"mean": 0.5, "std": 0.2})
 ```
 
 To fit statistics to each batch instead, override `compute_statistics(batch_data)`.

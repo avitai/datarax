@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `NoiseOperatorConfig`, `DropoutOperatorConfig` and `PatchDropoutOperatorConfig` are stochastic
   by default (stream `augment`) and refuse `stochastic=False`: the fixed-key "deterministic noise"
   mode is removed; evaluation mode turns them off.
+- Operator statistics are fixed-shape state given at construction:
+  `OperatorModule(config, ..., statistics={...})` stores them as arrays at their real shape, and an
+  operator built without them holds no statistics leaf. `set_statistics` replaces values of the
+  same structure, shapes and dtypes and refuses anything else; `reset_statistics` is removed.
 - A deterministic `ElementOperator`, `MapOperator` or external adapter hands its function `None`
   as the key instead of a fixed key; the function type is the keyed or the keyless shape.
 
