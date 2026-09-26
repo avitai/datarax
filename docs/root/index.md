@@ -10,7 +10,7 @@ Core type definitions and protocols used throughout Datarax. These provide type 
 | **Dict Aliases** | `DataDict`, `StateDict`, `MetadataDict` | Dictionary type shortcuts |
 | **JAX Types** | `ArrayShape`, `PRNGKey` | JAX-specific type aliases |
 | **Function Types** | `ElementTransform`, `BatchTransform`, etc. | Callable signatures |
-| **Protocols** | `Checkpointable`, `CheckpointableIterator` | Interface definitions |
+| **Protocols** | `CheckpointableIterator` (built on substrax's `Checkpointable`) | Interface definitions |
 
 !!! note "Key points"
 
@@ -73,9 +73,10 @@ def scale(arr: jax.Array) -> jax.Array:
 ### Protocols
 
 ```python
-from datarax.typing import Checkpointable
+from substrax.typing import Checkpointable
 
-# Implement the Checkpointable protocol
+# Implement the Checkpointable protocol (substrax owns it; every Datarax
+# module, pipeline and iterator satisfies it)
 class MyModule:
     def get_state(self) -> dict[str, Any]:
         return {"data": self.data}

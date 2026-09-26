@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Requires substrax 0.1.18 and calibrax 0.1.14, the latest releases.
+- The checkpoint-state protocol is substrax's `substrax.typing.Checkpointable`, the same
+  `get_state()`/`set_state(state)` contract; `datarax.typing.Checkpointable` is removed, so a
+  training loop checkpoints a pipeline, its callbacks and extensions through one protocol.
+  `CheckpointableIterator` builds on it.
 
 ### Fixed
 
