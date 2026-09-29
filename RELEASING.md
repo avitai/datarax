@@ -30,7 +30,15 @@ PyPI directly. Release timing and versioning stay under operator control.
 
 5. Commit the version and changelog updates, push, and read CI at the job level
    for that commit. Every workflow must be green before the tag exists.
-6. Create and push an annotated tag from the exact release commit.
+6. Run the macOS workflow on the release commit on `main` and wait for it to pass. No push or pull
+   request runs on macOS, so this is the release's macOS check.
+
+   ```bash
+   gh workflow run macos.yml --ref main
+   gh run watch "$(gh run list --workflow macos.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+   ```
+
+7. Create and push an annotated tag from the exact release commit.
 
    ```bash
    target_sha=$(git rev-parse HEAD)
@@ -38,7 +46,7 @@ PyPI directly. Release timing and versioning stay under operator control.
    git push origin main vX.Y.Z
    ```
 
-7. Create the GitHub Release from the tag with generated notes.
+8. Create the GitHub Release from the tag with generated notes.
 
    ```bash
    gh release create vX.Y.Z --target "$target_sha" --generate-notes
@@ -46,7 +54,7 @@ PyPI directly. Release timing and versioning stay under operator control.
 
    Publishing the release triggers the build and the PyPI upload.
 
-8. Confirm the upload from a throwaway environment.
+9. Confirm the upload from a throwaway environment.
 
    ```bash
    uv venv /tmp/datarax-smoke && uv pip install --python /tmp/datarax-smoke datarax==X.Y.Z

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Requires substrax 0.1.20. The version has one source, `pyproject.toml`; `datarax.__version__`
+  reads the installed package's metadata.
+- CI runs only what a change needs. A merge whose tree its pull request already tested, with every
+  check of that pull request succeeded, stands the repeating jobs down through substrax's
+  `already-tested` action (a pending or cancelled check keeps the merge tested). macOS runs in
+  `macos.yml` nightly when `main` has moved, on demand, and on the release commit before its tag,
+  never on a push or pull request. A pull request's changed lines need 80% coverage
+  (`diff-cover`); coverage counts bare `pass` statements; the ruff hooks run the lock's ruff.
 - A stochastic operator's only RNG state is its base key, an `nnx.RngKey` drawn once from the
   caller's stream; the private direct-call stream and `datarax.core.operator.DIRECT_CALL_STREAM`
   are removed, so applying an operator mutates nothing. A call that names no records keys on

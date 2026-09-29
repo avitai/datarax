@@ -23,36 +23,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # A merge repeats the pull request; a schedule re-measures the tree against dependencies that
+      # have moved, and a manual run is asked for. When this step does not run the output is empty,
+      # which every consumer reads as "test it". The compare lives in substrax, the stack's base
+      # layer: skip only when this tree is the pull request's and every check of it succeeded.
       - name: Compare this tree with the pull request that produced it
         id: compare
-        # Only a merge repeats work. A schedule re-measures the same tree against dependencies
-        # that have moved, and a manual run is asked for because someone wants the run. When
-        # this step does not run the output is empty, which every consumer reads as "test it".
         if: github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          skip=false
-          pull_request=$(git log -1 --pretty=%s | sed -n 's/.*(#\([0-9]\+\))$/\1/p')
-          if [ -n "$pull_request" ]; then
-            # Every lookup below answers "unknown" rather than failing: a subject that ends in
-            # a number naming no pull request must leave the run green and running, not red.
-            # The pull ref outlives the branch, so this still resolves after a merge deleted it.
-            git fetch --no-tags --depth=1 origin "refs/pull/$pull_request/head" || true
-            tree=$(git rev-parse "HEAD^{tree}")
-            tested=$(git rev-parse "FETCH_HEAD^{tree}" 2>/dev/null || echo unknown)
-            failed=$(gh pr view "$pull_request" --json statusCheckRollup --jq \
-              '[.statusCheckRollup[] | (.conclusion // .state)
-                | select(. == "FAILURE" or . == "TIMED_OUT" or . == "ERROR")] | length' \
-              2>/dev/null || echo unknown)
-            if [ "$tree" = "$tested" ] && [ "$failed" = "0" ]; then
-              skip=true
-            fi
-            echo "pull request #$pull_request: tree $tested, failed checks $failed"
-          fi
-          echo "this tree $(git rev-parse 'HEAD^{tree}') already tested: $skip"
-          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+        uses: avitai/substrax/.github/actions/already-tested@v0.1.20
 
   # Not gated on already_tested: performance_tests runs only on main, so it never
   # repeats a pull request, and a skipped dependency would take it down with it.
@@ -64,7 +42,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -111,7 +89,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -144,17 +122,13 @@ jobs:
           uv run pytest tests/examples/ -v -m "not slow" --no-cov
 
   unit_tests:
-    name: Unit Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    name: Unit Tests (Python ${{ matrix.python-version }})
     needs: [lint, already_tested]
-    runs-on: ${{ matrix.os }}
+    if: needs.already_tested.outputs.skip != 'true'
+    # macOS runs nightly and before a release, in macos.yml.
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        # The macOS-14 runners queue for hours and run the same steps; they run on
-        # pushes to main only, so a branch or pull request is gated by the ubuntu
-        # jobs alone and the merge to main measures both platforms. Where the merge
-        # carries the tree the pull request already tested on ubuntu, macOS is the
-        # only platform left to measure.
-        os: ${{ fromJSON(needs.already_tested.outputs.skip == 'true' && '["macos-14"]' || (github.ref == 'refs/heads/main' && '["ubuntu-latest", "macos-14"]' || '["ubuntu-latest"]')) }}
         python-version: ['3.12', '3.13']
       fail-fast: false
 
@@ -162,7 +136,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -170,19 +144,13 @@ jobs:
         uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
-          cache-suffix: "unit-${{ matrix.python-version }}-${{ matrix.os }}"
+          cache-suffix: "unit-${{ matrix.python-version }}"
 
       - name: Create virtual environment
         run: |
           uv venv
 
-      - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          uv sync --locked --extra dev --extra test --extra data --extra wandb
-
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
+      - name: Install dependencies
         run: |
           uv sync --locked --extra dev --extra test --extra data --extra wandb
 
@@ -195,9 +163,6 @@ jobs:
         run: |
           # Explicitly run on CPU for GitHub workflow
           export JAX_PLATFORMS="cpu"
-          # Note: TFDS tests are skipped on macOS due to TensorFlow ARM64 import hang issue
-          # (https://github.com/tensorflow/tensorflow/issues/52138)
-          # This matches the approach of major ML projects (Keras, Flax) which don't test on macOS
           uv run pytest tests benchmarks/tests --no-integration --no-end-to-end --no-benchmark -v -m "not slow" --cov-fail-under=0
 
       - name: Prepare coverage data
@@ -207,7 +172,7 @@ jobs:
       - name: Upload coverage data
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-unit-${{ matrix.os }}-py${{ matrix.python-version }}
+          name: coverage-unit-py${{ matrix.python-version }}
           path: .coverage
           include-hidden-files: true
         if: always()
@@ -235,7 +200,7 @@ jobs:
 
       - name: Set up Python
         if: steps.datasets.outputs.cache-hit != 'true'
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -270,7 +235,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -339,7 +304,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -390,7 +355,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -444,7 +409,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -496,7 +461,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
