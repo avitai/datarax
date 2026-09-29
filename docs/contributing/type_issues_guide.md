@@ -83,20 +83,11 @@ class MyModule(nnx.Module):
 
         # Option 2: get_value/set_value methods
         self.count.set_value(self.count.get_value() + 1)
-
-# ✅ For Datarax Batch objects
-batch = Batch(elements)
-data = batch.data.get_value()  # Returns the PyTree
-batch.data.set_value(new_data)  # Updates the Variable
 ```
 
-**Variable Types in Datarax**:
-
-The `Batch` class stores data in `nnx.Variable`:
-
-- `batch.data` → `nnx.Variable[PyTree]` (use `.get_value()`)
-- `batch.states` → `nnx.Variable[PyTree]` (use `.get_value()`)
-- `batch.batch_state` → `nnx.Variable[dict]` (use `.get_value()`)
+A Datarax `Batch` holds no Variables: it is a frozen dataclass of arrays, so `batch.data`,
+`batch.states` and `batch.batch_state` are the pytrees themselves, and an update is
+`batch.replace(data=...)`.
 
 ### 3. JAX Array vs Python Bool
 
@@ -361,24 +352,17 @@ see the [DAG construction guide](../user_guide/dag_construction.md).
 Datarax batch operations expect arrays with explicit batch dimensions:
 
 ```python
-# ❌ Error: Scalar has no batch dimension
-element = Element(data={"value": jnp.array(5)})  # Shape ()
-batch = Batch([element, element])  # Will fail to stack
-
-# ❌ Error: Inconsistent batch dimensions in Batch.from_parts
+# ❌ Error: inconsistent record axes
 data = {
     "image": jnp.ones((32, 224, 224, 3)),
     "label": jnp.ones((16,))  # Wrong batch size!
 }
-batch = Batch.from_parts(data, states={})  # Validation error
+batch = batch_ops.from_arrays(data)  # ValueError: no one record axis
 ```
 
 **Solution**: Ensure all arrays have consistent batch dimensions:
 
 ```python
-# ✅ Correct: Use explicit dimensions
-element = Element(data={"value": jnp.array([5])})  # Shape (1,)
-
 # ✅ Correct: Consistent batch dimensions
 data = {
     "image": jnp.ones((32, 224, 224, 3)),  # (batch, H, W, C)
@@ -386,29 +370,23 @@ data = {
     "mask": jnp.ones((32, 224, 224))        # (batch, H, W)
 }
 states = {"count": jnp.zeros((32,))}        # (batch,)
-batch = Batch.from_parts(data, states)
+batch = batch_ops.from_arrays(data, states=states)
 ```
 
-**Validation**: `Batch.from_parts(..., validate=True)` checks:
-
-- All data arrays have same batch size (axis 0)
-- All state arrays have same batch size
-- Metadata list length matches batch size
+**Validation**: `batch_ops.from_arrays` and `batch_ops.from_stacked` check that every data
+and state leaf shares one leading record axis. The `Batch` constructor itself checks nothing,
+because jax rebuilds a `Batch` from tracers and axis prefixes inside every transform.
 
 ### 7. Element/Batch PyTree Access
 
 **Issue**: Type errors when accessing nested PyTree structures.
 
-`Element.data` is typed as `PyTree` and `Batch.data` is an `nnx.Variable` wrapping a PyTree. Both can contain arbitrarily nested structures, causing type errors on access:
+`Element.data` and `Batch.data` are typed as `PyTree`. Both can contain arbitrarily nested structures, causing type errors on access:
 
 ```python
 # ❌ Error: Nested access without type narrowing
 element = Element(data={"features": {"visual": jnp.ones((224, 224, 3))}})
 shape = element.data["features"]["visual"].shape  # Multiple type errors
-
-# ❌ Error: Batch.data is nnx.Variable, not dict
-batch = Batch(elements)
-batch.data["image"]  # Wrong: data is Variable, not dict
 ```
 
 **Solution for Element**: Extract and narrow at each level, or use `jax.tree.map`:
@@ -430,40 +408,29 @@ def normalize(x):
 normalized_data = jax.tree.map(normalize, element.data)
 ```
 
-**Solution for Batch**: Use the provided access methods:
+**Solution for Batch**: read fields by name, and map over `batch.data` for its values:
 
 ```python
-batch = Batch(elements)
+batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-# ✅ Option 1: Dict-like access for flat structures (most common)
-image = batch["image"]  # Uses __getitem__, returns jax.Array directly
-label = batch["label"]
+# ✅ Dict-style reads of the data (most common)
+image = batch["image"]
+label = batch.get("label")
 
-# ✅ Option 2: get_data() convenience method
-data_dict = batch.get_data()  # Returns PyTree, same as batch.data.get_value()
-
-# ✅ Option 3: Direct Variable access for NNX compatibility
-data_pytree = batch.data.get_value()  # Returns PyTree
-# Or with slice notation:
-data_pytree = batch.data[...]
-
-# ✅ Option 4: jax.tree.map for nested PyTree operations
-def get_shape(x):
-    return x.shape if isinstance(x, jax.Array) else None
-
-shapes = jax.tree.map(get_shape, batch.get_data())
+# ✅ Map over the values only: jax.tree.map(f, batch) also reaches indices and states
+shapes = jax.tree.map(lambda x: x.shape, batch.data)
 ```
 
 **Batch Access Pattern Reference**:
 
 | Pattern | Returns | Use When |
 |---------|---------|----------|
-| `batch["key"]` | `jax.Array` | Simple flat dict access |
-| `batch.get_data()` | `PyTree` | Need full data dict |
-| `batch.data.get_value()` | `PyTree` | NNX-style, same as get_data() |
-| `batch.data[...]` | `PyTree` | NNX slice notation |
-| `batch.get_states()` | `PyTree` | Access state arrays |
-| `batch.get_element(i)` | `Element` | Extract single element |
+| `batch["key"]`, `batch.get("key")` | `PyTree` | A data field |
+| `batch.data` | `PyTree` | The whole data pytree |
+| `batch.states`, `batch.batch_state` | `PyTree` | Per-record and batch-level state |
+| `batch.indices`, `batch.epochs`, `batch.draws` | `jax.Array` | Record identities |
+| `batch.batch_size` | `int` | The number of rows, static |
+| `batch_ops.element(batch, i)` | `Element` | One record |
 
 ---
 
@@ -683,10 +650,11 @@ DataraxModule (base, extends nnx.Module)
    ) -> dict[str, jax.Array]:
    ```
 
-2. **Import from datarax.typing** for consistency:
+2. **Import the record and batch types from datarax** for consistency:
 
    ```python
-   from datarax.typing import Element, Batch, PRNGKey, DataDict
+   from datarax import Batch, Element
+   from datarax.typing import PRNGKey, DataDict
    ```
 
 3. **Use Protocol types** for interface definitions

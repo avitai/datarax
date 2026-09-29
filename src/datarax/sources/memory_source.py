@@ -17,7 +17,6 @@ from flax import nnx
 from datarax.config.registry import register_component
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
-from datarax.core.metadata import MetadataManager, RecordMetadata
 from datarax.core.spec import array_to_spec, array_to_spec_strip_leading, device_spec
 from datarax.samplers.index_shuffle import (
     index_shuffle,
@@ -45,7 +44,6 @@ class MemorySourceConfig(StructuralConfig):
         shuffle: Whether to shuffle data on each epoch
         cache_size: Number of batches to cache (0 = no caching)
         prefetch_size: Number of items to prefetch (0 = no prefetching)
-        track_metadata: Whether to track metadata for each record
         shard_id: Optional shard identifier for distributed processing
         num_workers: Number of parallel workers (default 1). When > 1,
             each worker (identified by shard_id) receives a disjoint
@@ -57,7 +55,6 @@ class MemorySourceConfig(StructuralConfig):
     shuffle: bool = False
     cache_size: int = 0
     prefetch_size: int = 0
-    track_metadata: bool = False
     shard_id: int | None = None
     num_workers: int = 1
 
@@ -177,16 +174,6 @@ class MemorySource(DataSourceModule):
         # never changes. uint32, because the seed spans [0, 2**32).
         self._shuffle_seed = nnx.Variable(jnp.uint32(0))
         self._shuffle_seeded = nnx.Variable(False)
-
-        # Optional metadata tracking
-        if config.track_metadata:
-            self.metadata_manager = MetadataManager(
-                rngs=rngs,
-                track_batches=True,
-                shard_id=config.shard_id,
-            )
-        else:
-            self.metadata_manager = None
 
     @property
     def length(self) -> int:
@@ -529,8 +516,6 @@ class MemorySource(DataSourceModule):
         del seed
         self.index.set_value(0)
         self.epoch.set_value(0)
-        if self.metadata_manager is not None:
-            self.metadata_manager.reset()
 
     @property
     def is_random_order(self) -> bool:
@@ -544,101 +529,6 @@ class MemorySource(DataSourceModule):
             enabled: Whether to randomize iteration order.
         """
         self._is_random_order = enabled
-
-    def get_with_metadata(self, index: int) -> tuple[Any, RecordMetadata]:  # noqa: DOC503
-        """Get element at specific index with its metadata.
-
-        This method is only available when track_metadata=True was set
-        during initialization.
-
-        Args:
-            index: Index of element to retrieve
-
-        Returns:
-            Tuple of (data_element, metadata)
-
-        Raises:
-            RuntimeError: If metadata tracking is not enabled
-            IndexError: If index is out of bounds
-        """
-        if self.metadata_manager is None:
-            raise RuntimeError(
-                "Metadata tracking is not enabled. "
-                "Initialize with track_metadata=True to use this method."
-            )
-
-        # Get the data element
-        data = self[index]
-
-        # Create metadata for this record
-        source_info = {
-            "source": "memory",
-            "index": index,
-            "random_order_enabled": self.is_random_order,
-        }
-        metadata = self.metadata_manager.create_metadata(
-            record_key=index,
-            source_info=source_info,
-        )
-
-        return data, metadata
-
-    def get_batch_with_metadata(
-        self, batch_size: int, key: jax.Array | None = None
-    ) -> tuple[Any, list[RecordMetadata]]:
-        """Get next batch of data with metadata for each element.
-
-        This method is only available when track_metadata=True was set
-        during initialization.
-
-        Args:
-            batch_size: Number of elements in the batch
-            key: Optional RNG key for shuffling (stateless mode)
-
-        Returns:
-            Tuple of (batch_data, list_of_metadata)
-
-        Raises:
-            RuntimeError: If metadata tracking is not enabled
-        """
-        if self.metadata_manager is None:
-            raise RuntimeError(
-                "Metadata tracking is not enabled. "
-                "Initialize with track_metadata=True to use this method."
-            )
-
-        # Get the batch data
-        batch = self.get_batch(batch_size, key)
-
-        # Create metadata for each element in the batch
-        metadata_list = []
-        for i in range(
-            min(batch_size, len(batch) if isinstance(batch, list | tuple) else batch_size)
-        ):
-            source_info = {
-                "source": "memory",
-                "batch_position": i,
-                "random_order_enabled": self.is_random_order,
-            }
-            metadata = self.metadata_manager.create_metadata(
-                record_key=f"batch_{self.metadata_manager.state.get_value()['batch_idx']}_{i}",
-                source_info=source_info,
-            )
-            metadata_list.append(metadata)
-
-        # Advance batch counter
-        self.metadata_manager.next_batch()
-
-        return batch, metadata_list
-
-    @property
-    def has_metadata(self) -> bool:
-        """Check if this source is tracking metadata.
-
-        Returns:
-            True if metadata tracking is enabled, False otherwise
-        """
-        return self.metadata_manager is not None
 
     # get_state/set_state inherited from TransformBase - handles all nnx.Variables automatically
 

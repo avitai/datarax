@@ -21,6 +21,7 @@ import jax.numpy as jnp
 from flax import nnx
 from jaxtyping import PyTree
 
+from datarax.core import batch_ops
 from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import Batch, Element
 from datarax.core.operator import OperatorModule
@@ -103,12 +104,14 @@ def _adds(statistic: str) -> AddStatistic:
 
 def _batch() -> Batch:
     """The three-record batch every test applies."""
-    return Batch([Element(data={"value": jnp.array([value])}) for value in VALUES])
+    return batch_ops.from_stacked(
+        batch_ops.stack([Element(data={"value": jnp.array([value])}) for value in VALUES])
+    )
 
 
 def _values(batch: Batch) -> list[float]:
     """The batch's ``value`` field as plain floats."""
-    return [float(v) for v in batch.get_data()["value"].reshape(-1)]
+    return [float(v) for v in batch.data["value"].reshape(-1)]
 
 
 def _composite(strategy: CompositionStrategy, operators: list[OperatorModule]) -> OperatorModule:

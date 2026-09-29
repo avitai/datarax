@@ -16,7 +16,8 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
-from datarax.core.element_batch import Batch, Element
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 from datarax.operators.map_operator import MapOperator, MapOperatorConfig
 from datarax.operators.selector_operator import (
     SelectorOperator,
@@ -149,9 +150,9 @@ class TestSelectorOperatorBasic:
         selector_config = SelectorOperatorConfig()
         selector = SelectorOperator(selector_config, operators=[op1, op2, op3], rngs=rngs)
 
-        batch = Batch([Element(data={"value": jnp.array([5.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
         result_batch = selector(batch)
-        result_value = float(result_batch.get_data()["value"][0, 0])
+        result_value = float(result_batch.data["value"][0, 0])
 
         # Should be exactly one of: 6 (5+1), 15 (5+10), 105 (5+100)
         assert result_value in [6.0, 15.0, 105.0]
@@ -175,9 +176,11 @@ class TestSelectorOperatorBasic:
             selector = SelectorOperator(
                 selector_config, operators=[op1, op2, op3], rngs=nnx.Rngs(i)
             )
-            batch = Batch([Element(data={"value": jnp.array([0.0])})])
+            batch = batch_ops.from_stacked(
+                batch_ops.stack([Element(data={"value": jnp.array([0.0])})])
+            )
             result_batch = selector(batch)
-            result_value = float(result_batch.get_data()["value"][0, 0])
+            result_value = float(result_batch.data["value"][0, 0])
             counts[result_value] += 1
 
         # Each should be selected roughly 100 times (±50 for statistical variance)
@@ -199,9 +202,11 @@ class TestSelectorOperatorBasic:
         counts = {1.0: 0, 10.0: 0}
         for i in range(1000):
             selector = SelectorOperator(selector_config, operators=[op1, op2], rngs=nnx.Rngs(i))
-            batch = Batch([Element(data={"value": jnp.array([0.0])})])
+            batch = batch_ops.from_stacked(
+                batch_ops.stack([Element(data={"value": jnp.array([0.0])})])
+            )
             result_batch = selector(batch)
-            result_value = float(result_batch.get_data()["value"][0, 0])
+            result_value = float(result_batch.data["value"][0, 0])
             counts[result_value] += 1
 
         # op1 (+1) should be selected ~90% of the time
@@ -221,9 +226,9 @@ class TestSelectorOperatorEdgeCases:
         selector_config = SelectorOperatorConfig()
         selector = SelectorOperator(selector_config, operators=[op], rngs=rngs)
 
-        batch = Batch([Element(data={"value": jnp.array([5.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
         result_batch = selector(batch)
-        result_value = float(result_batch.get_data()["value"][0, 0])
+        result_value = float(result_batch.data["value"][0, 0])
 
         assert result_value == 15.0  # 5 * 3
 
@@ -240,9 +245,11 @@ class TestSelectorOperatorEdgeCases:
         # Run multiple times
         for i in range(50):
             selector = SelectorOperator(selector_config, operators=[op1, op2], rngs=nnx.Rngs(i))
-            batch = Batch([Element(data={"value": jnp.array([0.0])})])
+            batch = batch_ops.from_stacked(
+                batch_ops.stack([Element(data={"value": jnp.array([0.0])})])
+            )
             result_batch = selector(batch)
-            result_value = float(result_batch.get_data()["value"][0, 0])
+            result_value = float(result_batch.data["value"][0, 0])
             assert result_value == 1.0, "Op2 was selected unexpectedly"
 
 
@@ -264,9 +271,11 @@ class TestSelectorOperatorStochastic:
             selector = SelectorOperator(
                 selector_config, operators=[op1, op2, op3], rngs=nnx.Rngs(i)
             )
-            batch = Batch([Element(data={"value": jnp.array([0.0])})])
+            batch = batch_ops.from_stacked(
+                batch_ops.stack([Element(data={"value": jnp.array([0.0])})])
+            )
             result_batch = selector(batch)
-            result_value = float(result_batch.get_data()["value"][0, 0])
+            result_value = float(result_batch.data["value"][0, 0])
             values_seen.add(result_value)
 
         # Should see multiple different selections
@@ -285,12 +294,12 @@ class TestSelectorOperatorStochastic:
         selector1 = SelectorOperator(selector_config, operators=[op1, op2], rngs=nnx.Rngs(42))
         selector2 = SelectorOperator(selector_config, operators=[op1, op2], rngs=nnx.Rngs(42))
 
-        batch = Batch([Element(data={"value": jnp.array([0.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([0.0])})]))
 
         result1 = selector1(batch)
         result2 = selector2(batch)
 
-        assert jnp.allclose(result1.get_data()["value"], result2.get_data()["value"])
+        assert jnp.allclose(result1.data["value"], result2.data["value"])
 
 
 class TestSelectorOperatorJAX:
@@ -310,9 +319,9 @@ class TestSelectorOperatorJAX:
         def apply_selector(model, batch):
             return model(batch)
 
-        batch = Batch([Element(data={"value": jnp.array([5.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
         result_batch = apply_selector(selector, batch)
-        result_value = float(result_batch.get_data()["value"][0, 0])
+        result_value = float(result_batch.data["value"][0, 0])
 
         # Should be either 6 (5+1) or 15 (5+10)
         assert result_value in [6.0, 15.0]
@@ -331,7 +340,7 @@ class TestSelectorOperatorJAX:
         def apply_selector(model, batch):
             return model(batch)
 
-        batch = Batch([Element(data={"value": jnp.array([0.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([0.0])})]))
 
         values_seen = set()
         for i in range(50):
@@ -339,7 +348,7 @@ class TestSelectorOperatorJAX:
                 selector_config, operators=[op1, op2, op3], rngs=nnx.Rngs(i)
             )
             result_batch = apply_selector(selector, batch)
-            result_value = float(result_batch.get_data()["value"][0, 0])
+            result_value = float(result_batch.data["value"][0, 0])
             values_seen.add(result_value)
 
         # Should see multiple different selections
@@ -356,16 +365,18 @@ class TestSelectorOperatorJAX:
         selector = SelectorOperator(selector_config, operators=[op1, op2], rngs=rngs)
 
         # Multi-element batch
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-                Element(data={"value": jnp.array([3.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                    Element(data={"value": jnp.array([3.0])}),
+                ]
+            )
         )
 
         result_batch = selector(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # Each element should have been transformed
         assert result_data["value"].shape == (3, 1)

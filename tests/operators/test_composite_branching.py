@@ -16,7 +16,8 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax.core.element_batch import Batch, Element
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 
 # GREEN phase - imports enabled
 from datarax.operators.composite_operator import (
@@ -57,15 +58,19 @@ class TestBranchingBasics:
         )
 
         # Test data that routes to branch "a" (value < 5)
-        batch_a = Batch([Element(data={"value": jnp.array([2.0])})])
+        batch_a = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([2.0])})])
+        )
         result_batch_a = composite(batch_a)
-        result_data_a = result_batch_a.get_data()
+        result_data_a = result_batch_a.data
         assert jnp.allclose(result_data_a["value"], jnp.array([[4.0]]))  # 2 * 2
 
         # Test data that routes to branch "b" (value >= 5)
-        batch_b = Batch([Element(data={"value": jnp.array([7.0])})])
+        batch_b = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([7.0])})])
+        )
         result_batch_b = composite(batch_b)
-        result_data_b = result_batch_b.get_data()
+        result_data_b = result_batch_b.data
         assert jnp.allclose(result_data_b["value"], jnp.array([[70.0]]))  # 7 * 10
 
     def test_branching_with_many_branches(self):
@@ -99,21 +104,27 @@ class TestBranchingBasics:
         )
 
         # Test small branch
-        batch_small = Batch([Element(data={"value": jnp.array([1.0])})])
+        batch_small = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([1.0])})])
+        )
         result_batch_small = composite(batch_small)
-        result_data_small = result_batch_small.get_data()
+        result_data_small = result_batch_small.data
         assert jnp.allclose(result_data_small["value"], jnp.array([[2.0]]))  # 1 + 1
 
         # Test medium branch
-        batch_medium = Batch([Element(data={"value": jnp.array([5.0])})])
+        batch_medium = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([5.0])})])
+        )
         result_batch_medium = composite(batch_medium)
-        result_data_medium = result_batch_medium.get_data()
+        result_data_medium = result_batch_medium.data
         assert jnp.allclose(result_data_medium["value"], jnp.array([[15.0]]))  # 5 + 10
 
         # Test large branch
-        batch_large = Batch([Element(data={"value": jnp.array([10.0])})])
+        batch_large = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([10.0])})])
+        )
         result_batch_large = composite(batch_large)
-        result_data_large = result_batch_large.get_data()
+        result_data_large = result_batch_large.data
         assert jnp.allclose(result_data_large["value"], jnp.array([[110.0]]))  # 10 + 100
 
 
@@ -146,15 +157,19 @@ class TestBranchingRouters:
         )
 
         # Test small shape (2 elements)
-        batch_small = Batch([Element(data={"value": jnp.array([1.0, 2.0])})])
+        batch_small = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([1.0, 2.0])})])
+        )
         result_batch_small = composite(batch_small)
-        result_data_small = result_batch_small.get_data()
+        result_data_small = result_batch_small.data
         assert jnp.allclose(result_data_small["value"], jnp.array([[2.0, 3.0]]))  # +1
 
         # Test large shape (5 elements)
-        batch_large = Batch([Element(data={"value": jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])})])
+        batch_large = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])})])
+        )
         result_batch_large = composite(batch_large)
-        result_data_large = result_batch_large.get_data()
+        result_data_large = result_batch_large.data
         expected = jnp.array([[101.0, 102.0, 103.0, 104.0, 105.0]])  # +100
         assert jnp.allclose(result_data_large["value"], expected)
 
@@ -189,21 +204,27 @@ class TestBranchingRouters:
         )
 
         # Test low values (mean < 0.3)
-        batch_low = Batch([Element(data={"value": jnp.array([0.1, 0.2])})])
+        batch_low = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([0.1, 0.2])})])
+        )
         result_batch_low = composite(batch_low)
-        result_data_low = result_batch_low.get_data()
+        result_data_low = result_batch_low.data
         assert jnp.allclose(result_data_low["value"], jnp.array([[0.2, 0.4]]))  # *2
 
         # Test medium values (0.3 <= mean < 0.7)
-        batch_medium = Batch([Element(data={"value": jnp.array([0.4, 0.6])})])
+        batch_medium = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([0.4, 0.6])})])
+        )
         result_batch_medium = composite(batch_medium)
-        result_data_medium = result_batch_medium.get_data()
+        result_data_medium = result_batch_medium.data
         assert jnp.allclose(result_data_medium["value"], jnp.array([[2.0, 3.0]]))  # *5
 
         # Test high values (mean >= 0.7)
-        batch_high = Batch([Element(data={"value": jnp.array([0.8, 0.9])})])
+        batch_high = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([0.8, 0.9])})])
+        )
         result_batch_high = composite(batch_high)
-        result_data_high = result_batch_high.get_data()
+        result_data_high = result_batch_high.data
         assert jnp.allclose(result_data_high["value"], jnp.array([[8.0, 9.0]]))  # *10
 
 
@@ -238,14 +259,18 @@ class TestBranchingAdvanced:
         # Apply multiple times to track statistics
         # Note: MapOperator doesn't populate statistics by default,
         # but we can verify the composite doesn't error
-        batch_a = Batch([Element(data={"value": jnp.array([2.0])})])
+        batch_a = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([2.0])})])
+        )
         result_batch_a = composite(batch_a)
-        result_data_a = result_batch_a.get_data()
+        result_data_a = result_batch_a.data
         assert jnp.allclose(result_data_a["value"], jnp.array([[4.0]]))
 
-        batch_b = Batch([Element(data={"value": jnp.array([7.0])})])
+        batch_b = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([7.0])})])
+        )
         result_batch_b = composite(batch_b)
-        result_data_b = result_batch_b.get_data()
+        result_data_b = result_batch_b.data
         assert jnp.allclose(result_data_b["value"], jnp.array([[70.0]]))
 
     def test_branching_different_operator_types_per_branch(self):
@@ -286,13 +311,17 @@ class TestBranchingAdvanced:
         )
 
         # Test simple branch (MapOperator)
-        batch_simple = Batch([Element(data={"value": jnp.array([2.0])})])
+        batch_simple = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([2.0])})])
+        )
         result_batch_simple = composite(batch_simple)
-        result_data_simple = result_batch_simple.get_data()
+        result_data_simple = result_batch_simple.data
         assert jnp.allclose(result_data_simple["value"], jnp.array([[4.0]]))  # 2 * 2
 
         # Test sequential branch (CompositeOperator)
-        batch_seq = Batch([Element(data={"value": jnp.array([7.0])})])
+        batch_seq = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([7.0])})])
+        )
         result_batch_seq = composite(batch_seq)
-        result_data_seq = result_batch_seq.get_data()
+        result_data_seq = result_batch_seq.data
         assert jnp.allclose(result_data_seq["value"], jnp.array([[51.0]]))  # (7 + 10) * 3

@@ -17,7 +17,8 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax.core.element_batch import Batch, Element
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 
 # GREEN phase - imports enabled
 from datarax.operators.composite_operator import (
@@ -50,14 +51,16 @@ class TestCompositeWithMapOperator:
         )
 
         # Test: ((x * 2) + 5) * 3
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                ]
+            )
         )
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         assert jnp.allclose(
             result_data["value"], jnp.array([[21.0], [27.0]])
         )  # ((1*2)+5)*3=21, ((2*2)+5)*3=27
@@ -82,9 +85,9 @@ class TestCompositeWithMapOperator:
         )
 
         # Test: concat([x*2, x*3, x*4])
-        batch = Batch([Element(data={"value": jnp.array([2.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([2.0])})]))
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         assert jnp.allclose(result_data["value"], jnp.array([[4.0, 6.0, 8.0]]))
 
 
@@ -129,9 +132,9 @@ class TestNestedComposites:
         )
 
         # Test: concat([(x*2)+1, (x*3)+10])
-        batch = Batch([Element(data={"value": jnp.array([5.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         assert jnp.allclose(
             result_data["value"], jnp.array([[11.0, 25.0]])
         )  # (5*2)+1=11, (5*3)+10=25
@@ -167,9 +170,9 @@ class TestNestedComposites:
         )
 
         # Test: concat([x*2, x*3]) then +100 to all
-        batch = Batch([Element(data={"value": jnp.array([1.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([1.0])})]))
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         assert jnp.allclose(
             result_data["value"], jnp.array([[102.0, 103.0]])
         )  # (1*2)+100=102, (1*3)+100=103
@@ -221,9 +224,9 @@ class TestNestedComposites:
         )
 
         # Test: concat([(x+1)*2, x*10]) then +100
-        batch = Batch([Element(data={"value": jnp.array([3.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([3.0])})]))
         result_batch = outer_seq(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         # (3+1)*2=8, 3*10=30, then +100 to both: 108, 130
         assert jnp.allclose(result_data["value"], jnp.array([[108.0, 130.0]]))
 
@@ -256,11 +259,16 @@ class TestMixedModes:
         )
 
         # Test with batch
-        batch = Batch(
-            [Element(data={"value": jnp.array([1.0])}), Element(data={"value": jnp.array([2.0])})]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                ]
+            )
         )
         result = composite(batch)
-        result_data = result.get_data()
+        result_data = result.data
 
         # Output should differ from deterministic (x * 2) due to added noise
         # But should be roughly 2x the input
@@ -300,14 +308,16 @@ class TestRealWorldUseCases:
         )
 
         # Test augmentation pipeline
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([128.0])}),
-                Element(data={"value": jnp.array([255.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([128.0])}),
+                    Element(data={"value": jnp.array([255.0])}),
+                ]
+            )
         )
         result_batch = pipeline(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # (x/255)*0.9+0.1)*1.2: (128/255)*0.9+0.1)*1.2 ≈ 0.659, (255/255)*0.9+0.1)*1.2 = 1.2
         assert result_data["value"].shape == (2, 1)
@@ -337,9 +347,11 @@ class TestRealWorldUseCases:
         )
 
         # Test ensemble prediction (mean of 3 models)
-        batch = Batch([Element(data={"value": jnp.array([10.0])})])
+        batch = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([10.0])})])
+        )
         result_batch = ensemble(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # Mean of [10*1.1, 10*0.9, 10*1.0] = mean of [11, 9, 10] = 10.0
         assert jnp.allclose(result_data["value"], jnp.array([[10.0]]))
@@ -393,15 +405,19 @@ class TestRealWorldUseCases:
         )
 
         # Test small path
-        small_batch = Batch([Element(data={"value": jnp.array([50.0])})])
+        small_batch = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([50.0])})])
+        )
         small_result_batch = branching(small_batch)
-        small_result_data = small_result_batch.get_data()
+        small_result_data = small_result_batch.data
         assert jnp.allclose(small_result_data["value"], jnp.array([[60.0]]))  # (50*1.1)+5=60
 
         # Test large path
-        large_batch = Batch([Element(data={"value": jnp.array([200.0])})])
+        large_batch = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([200.0])})])
+        )
         large_result_batch = branching(large_batch)
-        large_result_data = large_result_batch.get_data()
+        large_result_data = large_result_batch.data
         assert jnp.allclose(large_result_data["value"], jnp.array([[180.0]]))  # (200*0.8)+20=180
 
 
@@ -434,7 +450,7 @@ class TestBatchIntegration:
             Element(data={"value": jnp.array([2.0])}),
             Element(data={"value": jnp.array([3.0])}),
         ]
-        batch = Batch(elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         # Apply composite using __call__ (which calls apply_batch with vmap)
         result_batch = composite(batch)
@@ -442,9 +458,9 @@ class TestBatchIntegration:
         # Verify batch structure and results: (x * 2) + 10
         assert result_batch.batch_size == 3
         # Extract results from batch
-        elem0 = result_batch.get_element(0)
-        elem1 = result_batch.get_element(1)
-        elem2 = result_batch.get_element(2)
+        elem0 = batch_ops.element(result_batch, 0)
+        elem1 = batch_ops.element(result_batch, 1)
+        elem2 = batch_ops.element(result_batch, 2)
         assert jnp.allclose(elem0.data["value"], jnp.array([12.0]))  # (1*2)+10
         assert jnp.allclose(elem1.data["value"], jnp.array([14.0]))  # (2*2)+10
         assert jnp.allclose(elem2.data["value"], jnp.array([16.0]))  # (3*2)+10

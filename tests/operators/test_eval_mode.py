@@ -15,6 +15,7 @@ import pytest
 from flax import nnx
 from substrax.testing import TraceCounter
 
+from datarax.core import batch_ops
 from datarax.core.config import ElementOperatorConfig, MapOperatorConfig, OperatorConfig
 from datarax.core.element_batch import Batch, Element
 from datarax.core.operator import OperatorModule
@@ -59,10 +60,6 @@ _BATCH = 6
 def _images() -> dict[str, jax.Array]:
     values = jnp.linspace(0.2, 0.8, _BATCH * 8 * 8 * 3)
     return {"image": values.reshape(_BATCH, 8, 8, 3)}
-
-
-def _records() -> tuple[jax.Array, int]:
-    return jnp.arange(_BATCH, dtype=jnp.uint32), 0
 
 
 def _rngs() -> nnx.Rngs:
@@ -145,8 +142,7 @@ _STOCHASTIC_FAMILIES: dict[str, Callable[[], OperatorModule]] = {
 
 
 def _apply(operator: OperatorModule) -> jax.Array:
-    indices, epoch = _records()
-    return operator._vmap_apply(_images(), {}, None, indices, epoch)[0]["image"]
+    return operator(batch_ops.from_arrays(_images()))["image"]
 
 
 @pytest.mark.parametrize("family", sorted(_STOCHASTIC_FAMILIES))
@@ -188,19 +184,21 @@ class TestBatchMix:
 
     @staticmethod
     def _batch() -> Batch:
-        return Batch([Element(data={"value": jnp.array([float(i)])}) for i in range(4)])
+        return batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([float(i)])}) for i in range(4)])
+        )
 
     def test_train_mode_mixes(self) -> None:
         mixed = self._operator().apply_batch(self._batch())
-        assert not jnp.array_equal(mixed.get_data()["value"], self._batch().get_data()["value"])
+        assert not jnp.array_equal(mixed.data["value"], self._batch().data["value"])
 
     def test_eval_leaves_the_batch_on_both_paths(self) -> None:
         operator = self._operator()
         operator.eval()
         batch = self._batch()
-        raw = {"value": batch.get_data()["value"]}
+        raw = {"value": batch.data["value"]}
 
-        assert jnp.array_equal(operator.apply_batch(batch).get_data()["value"], raw["value"])
+        assert jnp.array_equal(operator.apply_batch(batch).data["value"], raw["value"])
         assert jnp.array_equal(operator._apply_on_raw(raw, {})[0]["value"], raw["value"])
 
 

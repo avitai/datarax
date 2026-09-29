@@ -15,7 +15,8 @@ Test Coverage:
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax.core.element_batch import Batch, Element
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 
 # GREEN phase - imports enabled
 from datarax.operators.composite_operator import (
@@ -50,9 +51,9 @@ class TestDynamicSequential:
         )
 
         # Test before adding: (x * 2) + 10
-        batch = Batch([Element(data={"value": jnp.array([5.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         assert jnp.allclose(result_data["value"], jnp.array([[20.0]]))  # (5 * 2) + 10
         assert len(composite.operators) == 2
 
@@ -63,7 +64,7 @@ class TestDynamicSequential:
 
         # Test after adding: ((x * 2) + 10) * 3
         result_batch2 = composite(batch)
-        result_data2 = result_batch2.get_data()
+        result_data2 = result_batch2.data
         assert jnp.allclose(result_data2["value"], jnp.array([[60.0]]))  # ((5 * 2) + 10) * 3
         assert len(composite.operators) == 3
 
@@ -90,9 +91,9 @@ class TestDynamicSequential:
         )
 
         # Test before removing: ((x * 2) + 100) * 3
-        batch = Batch([Element(data={"value": jnp.array([1.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([1.0])})]))
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         assert jnp.allclose(result_data["value"], jnp.array([[306.0]]))  # ((1 * 2) + 100) * 3
         assert len(composite.operators) == 3
 
@@ -102,7 +103,7 @@ class TestDynamicSequential:
 
         # Test after removing: (x * 2) * 3
         result_batch2 = composite(batch)
-        result_data2 = result_batch2.get_data()
+        result_data2 = result_batch2.data
         assert jnp.allclose(result_data2["value"], jnp.array([[6.0]]))  # (1 * 2) * 3
         assert len(composite.operators) == 2
 
@@ -136,9 +137,9 @@ class TestDynamicSequential:
         assert len(composite.operators) == 0
 
         # After clearing, apply should pass data through unchanged (no ops to run)
-        batch = Batch([Element(data={"value": jnp.array([5.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         assert jnp.allclose(result_data["value"], jnp.array([[5.0]]))  # Unchanged
 
     def test_reorder_operators(self):
@@ -164,9 +165,9 @@ class TestDynamicSequential:
         )
 
         # Test original order [A, B, C]: ((x + 1) * 10) + 100
-        batch = Batch([Element(data={"value": jnp.array([2.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([2.0])})]))
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         assert jnp.allclose(
             result_data["value"], jnp.array([[130.0]])
         )  # ((2 + 1) * 10) + 100 = 130
@@ -176,7 +177,7 @@ class TestDynamicSequential:
 
         # Test new order
         result_batch2 = composite(batch)
-        result_data2 = result_batch2.get_data()
+        result_data2 = result_batch2.data
         assert jnp.allclose(
             result_data2["value"], jnp.array([[1030.0]])
         )  # ((2 + 100) + 1) * 10 = 1030
@@ -230,7 +231,7 @@ class TestDynamicSequential:
             operators=[op1, op2],
         )
 
-        batch = Batch([Element(data={"value": jnp.array([5.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
         composite(batch)
 
         # Modify operators
@@ -240,5 +241,5 @@ class TestDynamicSequential:
 
         # Apply again to verify it still works
         result_batch2 = composite(batch)
-        result_data2 = result_batch2.get_data()
+        result_data2 = result_batch2.data
         assert jnp.allclose(result_data2["value"], jnp.array([[60.0]]))  # ((5 * 2) + 10) * 3

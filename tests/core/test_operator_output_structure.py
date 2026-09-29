@@ -20,8 +20,9 @@ import pytest
 from flax import nnx
 from substrax.testing import TraceCounter
 
+from datarax.core import batch_ops
 from datarax.core.config import OperatorConfig
-from datarax.core.element_batch import Batch, Element
+from datarax.core.element_batch import Element
 from datarax.core.operator import OperatorModule
 from datarax.operators.probabilistic_operator import (
     ProbabilisticOperator,
@@ -118,10 +119,10 @@ class TestDynamicOutputStructure:
             Element(data={"input": jnp.array([1.0, 2.0])}, state={}),
             Element(data={"input": jnp.array([3.0, 4.0])}, state={}),
         ]
-        batch = Batch(elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result = op.apply_batch(batch)
-        result_data = result.data.get_value()
+        result_data = result.data
 
         # Original key preserved
         assert "input" in result_data
@@ -147,10 +148,10 @@ class TestDynamicOutputStructure:
                 state={},
             ),
         ]
-        batch = Batch(elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result = op.apply_batch(batch)
-        result_data = result.data.get_value()
+        result_data = result.data
 
         # All original keys preserved
         assert "a" in result_data
@@ -178,10 +179,10 @@ class TestDynamicOutputStructure:
                 state={},
             ),
         ]
-        batch = Batch(elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result = op.apply_batch(batch)
-        result_data = result.data.get_value()
+        result_data = result.data
 
         # Same keys as input
         assert set(result_data.keys()) == {"x", "y"}
@@ -216,11 +217,11 @@ class TestDynamicOutputStructure:
             Element(data={"input": jnp.array([1.0])}, state={}),
             Element(data={"input": jnp.array([2.0])}, state={}),
         ]
-        batch = Batch(elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result = op.apply_batch(batch)
-        result_data = result.data.get_value()
-        result_states = result.states.get_value()
+        result_data = result.data
+        result_states = result.states
 
         # Data has new key
         assert "input" in result_data
@@ -257,10 +258,10 @@ class TestNestedOutputStructure:
             Element(data={"nested": {"value": jnp.array([1.0])}}, state={}),
             Element(data={"nested": {"value": jnp.array([2.0])}}, state={}),
         ]
-        batch = Batch(elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result = op.apply_batch(batch)
-        result_data = result.data.get_value()
+        result_data = result.data
 
         assert "nested" in result_data
         assert "value" in result_data["nested"]
@@ -291,10 +292,10 @@ class TestNestedOutputStructure:
                 state={},
             ),
         ]
-        batch = Batch(elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result = op.apply_batch(batch)
-        result_data = result.data.get_value()
+        result_data = result.data
 
         assert result_data["level1"]["level2"]["value"].shape == (1, 1)
         assert "derived" in result_data["level1"]["level2"]
@@ -328,7 +329,7 @@ class TestEdgeCases:
             Element(data={"placeholder": jnp.array([0.0])}, state={}),
             Element(data={"placeholder": jnp.array([0.0])}, state={}),
         ]
-        Batch(elements)
+        batch_ops.from_stacked(batch_ops.stack(elements))
 
         # This tests that an operator can return a completely different structure
         # Note: The input still needs batch dimension for vmap to work
@@ -338,10 +339,10 @@ class TestEdgeCases:
         op = AddKeyOperator(config, rngs=rngs)
 
         elements = [Element(data={"input": jnp.array([5.0])}, state={})]
-        batch = Batch(elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result = op.apply_batch(batch)
-        result_data = result.data.get_value()
+        result_data = result.data
 
         assert result.batch_size == 1
         assert "computed" in result_data
@@ -355,10 +356,10 @@ class TestEdgeCases:
         elements = [
             Element(data={"input": jnp.array([float(i)])}, state={}) for i in range(batch_size)
         ]
-        batch = Batch(elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result = op.apply_batch(batch)
-        result_data = result.data.get_value()
+        result_data = result.data
 
         assert result.batch_size == batch_size
         assert result_data["computed"].shape == (batch_size, 1)
@@ -382,8 +383,10 @@ class AddDataAndStateOperator(OperatorModule):
 
 def _batch_of(values, state=None):
     """Return a batch of single-value records, each carrying ``state``."""
-    return Batch(
-        [Element(data={"input": jnp.asarray([v])}, state=dict(state or {})) for v in values]
+    return batch_ops.from_stacked(
+        batch_ops.stack(
+            [Element(data={"input": jnp.asarray([v])}, state=dict(state or {})) for v in values]
+        )
     )
 
 
@@ -396,8 +399,8 @@ class TestAddedFieldsSurviveEveryPath:
 
         result = op.apply_batch(_batch_of([1.0, 2.0]))
 
-        assert "computed" in result.data.get_value()
-        assert "seen" in result.states.get_value()
+        assert "computed" in result.data
+        assert "seen" in result.states
 
     def test_raw_path(self, config, rngs):
         """The raw path returns both added fields."""
@@ -441,8 +444,8 @@ class TestStateStructureOrderDoesNotMatter:
         op._apply_on_raw({"input": jnp.ones((2, 1))}, {})
         result = op.apply_batch(_batch_of([1.0, 2.0], state={"count": jnp.asarray(0)}))
 
-        assert "computed" in result.data.get_value()
-        assert "count" in result.states.get_value()
+        assert "computed" in result.data
+        assert "count" in result.states
 
     def test_batch_with_state_then_raw_path_without_state(self, config, rngs):
         """The reverse order works as well."""
@@ -465,7 +468,7 @@ class TestCompiledAndBranchingCallers:
 
         @jax.jit
         def run(values):
-            return op.apply_batch(_batch_of([1.0, 2.0])).data.get_value()["computed"] + values
+            return op.apply_batch(_batch_of([1.0, 2.0])).data["computed"] + values
 
         first = run(jnp.zeros((2, 1)))
         second = run(jnp.ones((2, 1)))
@@ -592,9 +595,11 @@ class TestStochasticOutputStructure:
         operator = MaskWhenDrawnOperator(
             OperatorConfig(stochastic=True, stream_name="aug"), rngs=nnx.Rngs(aug=0)
         )
-        batch = Batch([Element(data={"x": jnp.ones(3)}, state={}) for _ in range(4)])
+        batch = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"x": jnp.ones(3)}, state={}) for _ in range(4)])
+        )
 
-        result_data = operator.apply_batch(batch).data.get_value()
+        result_data = operator.apply_batch(batch).data
 
         assert set(result_data) == {"x", "mask"}
         assert result_data["mask"].shape == (4, 3)

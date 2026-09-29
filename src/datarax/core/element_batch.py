@@ -1,679 +1,194 @@
-"""Element and Batch modules following JAX and Flax NNX best practices.
+"""``Element`` and ``Batch``: a record and a batch of records, as frozen pytrees of arrays.
 
-Key design decisions:
+Both are dataclasses registered with ``jax.tree_util.register_dataclass`` whose every field is a
+pytree child. Nothing that is not an array is part of them, so they pass through every JAX and
+Flax NNX transform, a batch's values never enter a treedef (two batches differing only in their
+values share one compiled program), and a ``Batch`` of axis values or shardings is a prefix for
+``vmap``, ``shard_map`` and placement. Provenance such as file names stays on the host with the
+source; a record is named by its index.
 
-- Element uses flax.struct for immutability and automatic pytree registration
-- Batch uses Flax NNX Module pattern for state management
-- No object dtype arrays (JAX limitation)
-- Proper handling of static arguments in JIT compilation
-- Efficient vectorized operations without Python loops
+A record's identity is a 64-bit index held as two uint32 words ``(hi, lo)``, the epoch it is
+served in and its draw within that epoch. Together with an operator's base key they decide the
+record's randomness (``datarax.core.prng.per_record_keys``). The all-ones index,
+``PADDING_INDEX``, marks a row that is not a record.
+
+Operations over batches are pure functions in ``datarax.core.batch_ops``.
 """
 
-import logging
-from collections.abc import Callable, Iterator
-from typing import Any
+from collections.abc import Mapping
+from dataclasses import dataclass, field, KW_ONLY, replace as dataclass_replace
+from typing import Self
 
 import jax
-import jax.numpy as jnp
-from flax import nnx, struct
+import numpy as np
 from jaxtyping import PyTree
 
-from .metadata import Metadata
+
+type ArrayValue = jax.Array | np.ndarray
+"""An array on the device or the host: what every identity field of a record or batch holds."""
+
+PADDING_INDEX: np.ndarray = np.full(2, np.iinfo(np.uint32).max, dtype=np.uint32)
+"""The index of a row that is not a record: both uint32 words all ones."""
+PADDING_INDEX.setflags(write=False)
 
 
-logger = logging.getLogger(__name__)
+def _zero_ordinal() -> np.ndarray:
+    return np.zeros((), dtype=np.int32)
 
 
-@struct.dataclass
+def _empty() -> dict[str, PyTree]:
+    return {}
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True, slots=True)
 class Element:
-    """Immutable data element with JAX-compatible operations.
+    """One record: its values, its processing state and its identity.
 
-    Element represents a single data point with:
-
-    - data: PyTree structure containing JAX arrays (supports nested dicts)
-    - state: Dictionary of arbitrary Python values
-    - metadata: Optional Metadata instance
-
-    All operations return new instances (immutable design).
+    Attributes:
+        data: The record's values and their intrinsic structure (masks, lengths, segment ids).
+        state: What processing records about the record.
+        index: The record's identity in its source, uint32 ``(2,)`` as ``(hi, lo)``, or
+            ``None`` for a record built without one: stacked into a batch, such records are
+            named by their rows (``batch_ops.from_stacked``), so no two share a key.
+        epoch: int32 scalar, the pass over the data the record is served in.
+        draw: int32 scalar, which draw of the record within its epoch (0 unless served again).
     """
 
-    data: PyTree = struct.field(default_factory=dict)
-    state: dict[str, Any] = struct.field(default_factory=dict)
-    metadata: Metadata | None = struct.field(default=None)
+    data: PyTree
+    _: KW_ONLY
+    state: PyTree = field(default_factory=_empty)
+    index: ArrayValue | None = None
+    epoch: ArrayValue = field(default_factory=_zero_ordinal)
+    draw: ArrayValue = field(default_factory=_zero_ordinal)
 
-    def update_state(self, updates: dict[str, Any]) -> "Element":
-        """Update state with partial updates (merge behavior)."""
-        new_state = dict(self.state)
-        new_state.update(updates)
-        return self.replace(state=new_state)
-
-    def update_data(self, updates: dict[str, jax.Array]) -> "Element":
-        """Update data with partial updates (merge behavior)."""
-        new_data = dict(self.data)
-        new_data.update(updates)
-        return self.replace(data=new_data)
-
-    def transform(self, fn: Callable[[jax.Array], jax.Array]) -> "Element":
-        """Transform all data arrays with a function.
-
-        Note: Cannot be directly JIT compiled as fn must be static.
-        Use transform_element_jit with static function IDs instead.
-        """
-        new_data = jax.tree.map(fn, self.data)
-        return self.replace(data=new_data)
-
-    def with_metadata(self, metadata: Metadata) -> "Element":
-        """Return new Element with updated metadata."""
-        return self.replace(metadata=metadata)
-
-    def apply_to_data(self, fn: Callable[[jax.Array], jax.Array]) -> "Element":
-        """Apply differentiable transformation to all data arrays.
-
-        This method preserves gradients through JAX transformations by applying
-        the function directly to each array in the data dictionary using jax.tree.map.
+    def replace(self, **fields: PyTree) -> Self:
+        """Return a copy with ``fields`` replaced.
 
         Args:
-            fn: Differentiable function to apply to each array
+            **fields: New values, by field name.
 
         Returns:
-            New Element with transformed data, preserving state and metadata
-
-        Examples:
-            element = Element(data={"x": jnp.array([1.0, 2.0])})
-            scaled = element.apply_to_data(lambda x: x * 2.0)
-            # Gradients flow through the scaling operation
+            The new element; this one is unchanged.
         """
-        transformed_data = jax.tree.map(fn, self.data)
-        return self.replace(data=transformed_data)
+        return dataclass_replace(self, **fields)
 
-    def replace(self, **kwargs: Any) -> "Element":
-        """Return a new Element with specified fields replaced.
-
-        This method is provided by ``@struct.dataclass`` at runtime.
-        The stub exists solely for static type-checking support.
-        """
-        ...  # Implemented by @struct.dataclass decorator
-
-
-class Batch(nnx.Module):
-    """Batch container using Flax NNX patterns.
-
-    Design rationale:
-
-    - Stores data as stacked JAX PyTrees for efficiency
-    - Stores states as stacked JAX PyTrees (enables vmap)
-    - Stores metadata as Python list (immutable, not vmapped)
-    - Uses NNX Variables for mutable state management
-    - All operations are JAX-compatible for JIT compilation
-    """
-
-    def __init__(self, elements: list[Element], validate: bool = True) -> None:
-        """Initialize batch from list of Elements.
+    def update_data(self, updates: Mapping[str, PyTree]) -> Self:
+        """Return a copy whose data mapping has ``updates`` merged in.
 
         Args:
-            elements: List of Element instances
-            validate: Whether to validate consistency
-        """
-        super().__init__()
-
-        self.batch_size = len(elements)
-
-        if not elements:
-            # Empty batch initialization
-            self.data = nnx.Variable({})
-            self.states = nnx.Variable([])
-            # Use nnx.Variable for metadata to ensure it's treated as state (contains JAX arrays)
-            self._metadata_list: nnx.Variable[list[Any]] = nnx.Variable([])
-            self._batch_metadata: nnx.Variable[Metadata | None] = nnx.Variable(None)
-            self.batch_state = nnx.Variable({})
-            return
-
-        # Stack data using jax.tree.map to handle nested PyTree structures
-        # This works for both flat dicts and nested structures
-        element_data_list = [elem.data for elem in elements]
-        batched_data = jax.tree.map(lambda *arrays: jnp.stack(arrays, axis=0), *element_data_list)
-
-        # Stack states using jax.tree.map (same as data)
-        # States must be JAX-compatible PyTrees for efficient vmap operations
-        element_states_list = [elem.state for elem in elements]
-        batched_states = jax.tree.map(
-            lambda *arrays: jnp.stack(arrays, axis=0), *element_states_list
-        )
-
-        # Store metadata as list (immutable, not vmapped)
-        metadata_list = [elem.metadata for elem in elements]
-
-        # Initialize NNX Variables for mutable state
-        self.data = nnx.Variable(batched_data)
-        self.states = nnx.Variable(batched_states)
-        self.batch_state = nnx.Variable({})
-
-        # Store metadata in Variables because they contain JAX arrays (_encoded_key)
-        # and must be part of State (not GraphDef) to avoid recompilation.
-        self._metadata_list: nnx.Variable[list[Any]] = nnx.Variable(metadata_list)
-        self._batch_metadata: nnx.Variable[Metadata | None] = nnx.Variable(None)
-
-        if validate:
-            self._validate()
-
-    @staticmethod
-    def _validate_from_parts_inputs(
-        data: PyTree,
-        states: PyTree,
-        metadata_list: list[Any] | None,
-    ) -> int:
-        """Validate batch dimensions across data, states, and metadata.
-
-        Returns the consistent batch size. Raises ``ValueError`` if any
-        leaf disagrees on the leading dim or if metadata length is wrong.
-        """
-        data_batch_sizes: set[int] = set()
-        states_batch_sizes: set[int] = set()
-
-        def _record_data(x: Any) -> Any:
-            if isinstance(x, jax.Array):
-                data_batch_sizes.add(x.shape[0])
-            return x
-
-        def _record_states(x: Any) -> Any:
-            if isinstance(x, jax.Array):
-                states_batch_sizes.add(x.shape[0])
-            return x
-
-        jax.tree.map(_record_data, data)
-        if not data_batch_sizes:
-            raise ValueError("Data PyTree contains no arrays")
-        if len(data_batch_sizes) > 1:
-            raise ValueError(
-                f"Inconsistent batch dimensions: {data_batch_sizes}. "
-                "All arrays must have same size for axis 0."
-            )
-        batch_size = data_batch_sizes.pop()
-
-        jax.tree.map(_record_states, states)
-        if states_batch_sizes and len(states_batch_sizes) > 1:
-            raise ValueError(
-                f"Inconsistent batch dimensions in states: {states_batch_sizes}. "
-                "All state arrays must have same size for axis 0."
-            )
-        if states_batch_sizes and states_batch_sizes.pop() != batch_size:
-            raise ValueError(f"states batch dimension doesn't match data batch size ({batch_size})")
-
-        if metadata_list is not None and len(metadata_list) != batch_size:
-            raise ValueError(
-                f"metadata_list length ({len(metadata_list)}) doesn't match "
-                f"batch size ({batch_size})"
-            )
-
-        return batch_size
-
-    @classmethod
-    def from_parts(  # noqa: DOC502 - _validate_from_parts_inputs raises the ValueError
-        cls,
-        data: PyTree,
-        states: PyTree,
-        metadata_list: list[Any] | None = None,
-        batch_metadata: Any | None = None,
-        batch_state: PyTree | None = None,
-        *,
-        validate: bool = True,
-    ) -> "Batch":
-        """Create Batch directly from pre-built parts with validation.
-
-        This is the recommended way to construct batches from transformed data
-        in operators, as it avoids Python loops and validates structure.
-
-        Args:
-            data: PyTree with arrays having batch dimension as axis 0
-            states: PyTree with arrays having batch dimension as axis 0
-                   (same structure as data, all leaves must have matching batch size)
-            metadata_list: Optional list of metadata, length must match batch size
-            batch_metadata: Optional batch-level metadata (immutable)
-            batch_state: Optional batch-level state PyTree (no batch dimension)
-            validate: If True, validates batch axis consistency and lengths
+            updates: Fields to add or replace in ``data``.
 
         Returns:
-            New Batch instance
+            The new element; this one is unchanged.
 
         Raises:
-            ValueError: If validation fails (mismatched batch sizes, inconsistent shapes)
-
-        Examples:
-            # Simple flat PyTrees
-            data = {"image": jnp.ones((32, 224, 224, 3))}
-            states = {"count": jnp.zeros((32,)), "flag": jnp.ones((32,), dtype=bool)}
-            batch = Batch.from_parts(data, states)
-
-            # Nested PyTrees
-            data = {
-                "vision": {"image": jnp.ones((32, 224, 224, 3))},
-                "text": jnp.ones((32, 512))
-            }
-            states = {
-                "counters": {"augment": jnp.zeros((32,)), "transform": jnp.zeros((32,))},
-                "score": jnp.ones((32,))
-            }
-            batch = Batch.from_parts(data, states)
+            TypeError: If ``data`` is not a mapping.
         """
-        if validate:
-            batch_size = cls._validate_from_parts_inputs(data, states, metadata_list)
-        else:
-            # Non-validated path: extract batch size from first array
-            first_array = jax.tree.leaves(data)[0]
-            batch_size = first_array.shape[0]
-
-        # Create batch instance using empty init to set up NNX Module properly
-        # Then replace the fields with the provided data
-        batch = cls([], validate=False)  # Initialize with empty list to set up NNX state
-
-        # Replace fields with provided data
-        batch.batch_size = batch_size
-        batch.data.set_value(data)
-        batch.states.set_value(states)
-        batch._metadata_list = nnx.Variable(
-            metadata_list if metadata_list is not None else [None] * batch_size
-        )
-        batch._batch_metadata = nnx.Variable(batch_metadata)
-        if batch_state is not None:
-            batch.batch_state.set_value(batch_state)
-
-        return batch
-
-    def _validate(self) -> None:
-        """Validate batch consistency."""
-        if self.batch_size == 0:
-            return
-
-        # Check batch dimensions using tree.map to handle nested PyTrees
-        def check_batch_size(x: Any) -> Any:
-            if isinstance(x, jax.Array) and x.shape[0] != self.batch_size:
-                raise ValueError(f"Array has batch size {x.shape[0]}, expected {self.batch_size}")
-            return x
-
-        jax.tree.map(check_batch_size, self.data.get_value())
-        jax.tree.map(check_batch_size, self.states.get_value())
-
-    def get_element(self, index: int) -> Element:
-        """Extract single element at index."""
-        if not (0 <= index < self.batch_size):
-            raise IndexError(f"Index {index} out of range [0, {self.batch_size})")
-
-        # Extract data for this index using tree.map (handles nested PyTrees)
-        data_val = self.data.get_value()
-        elem_data = jax.tree.map(lambda x: x[index], data_val)
-
-        # Extract state for this index using tree.map (states are PyTrees like data)
-        states_val = self.states.get_value()
-        elem_state = jax.tree.map(lambda x: x[index], states_val) if states_val else {}
-
-        # Get metadata (stored in nnx.Variable)
-        metadata_list = self._metadata_list.get_value()
-        elem_metadata = (
-            metadata_list[index] if metadata_list and index < len(metadata_list) else None
-        )
-
-        return Element(data=elem_data, state=elem_state, metadata=elem_metadata)
-
-    def get_elements(self, indices: slice | list[int]) -> list[Element]:
-        """Get multiple elements by indices or slice."""
-        resolved: list[int] | range
-        if isinstance(indices, slice):
-            resolved = range(*indices.indices(self.batch_size))
-        else:
-            resolved = indices
-        return [self.get_element(i) for i in resolved]
-
-    def slice(self, start: int, end: int) -> "Batch":
-        """Create new batch from slice of elements (O(1) view)."""
-        # Ensure indices are within bounds
-        start = max(0, min(start, self.batch_size))
-        end = max(0, min(end, self.batch_size))
-
-        # Optimize: Slice data and states arrays directly
-        sliced_data = jax.tree.map(lambda x: x[start:end], self.data.get_value())
-        sliced_states = jax.tree.map(lambda x: x[start:end], self.states.get_value())
-
-        # Slice metadata list
-        metadata_list = self._metadata_list.get_value()
-        sliced_metadata = metadata_list[start:end] if metadata_list else []
-
-        return Batch.from_parts(
-            data=sliced_data,
-            states=sliced_states,
-            metadata_list=sliced_metadata,
-            batch_metadata=self._batch_metadata.get_value(),
-            batch_state=self.batch_state.get_value(),
-            validate=False,
-        )
-
-    def split_for_devices(self, num_devices: int) -> list["Batch"]:
-        """Split batch evenly across devices."""
-        if self.batch_size % num_devices != 0:
-            raise ValueError(f"Batch size {self.batch_size} not divisible by {num_devices}")
-
-        split_size = self.batch_size // num_devices
-        # Note: slice() is now optimized, so this is efficient
-        return [self.slice(i * split_size, (i + 1) * split_size) for i in range(num_devices)]
-
-    def compute_stats(self) -> dict[str, jax.Array]:
-        """Compute statistics over batch dimension."""
-        stats = {}
-
-        data_val = self.data.get_value()
-        for key, array in data_val.items():
-            stats[f"{key}_mean"] = jnp.mean(array, axis=0)
-            stats[f"{key}_std"] = jnp.std(array, axis=0)
-            stats[f"{key}_min"] = jnp.min(array, axis=0)
-            stats[f"{key}_max"] = jnp.max(array, axis=0)
-
-        return stats
-
-    def get_data(self) -> dict[str, jax.Array]:
-        """Get batched data dictionary."""
-        return self.data.get_value()
-
-    def __getitem__(self, key: str) -> jax.Array:
-        """Get data array by key for dict-like access."""
-        return self.data.get_value()[key]
-
-    def __contains__(self, key: str) -> bool:
-        """Check if key exists in data for dict-like containment check."""
-        return key in self.data.get_value()
-
-    def __iter__(self) -> Iterator[str]:
-        """Iterate over data keys for dict-like iteration."""
-        return iter(self.data.get_value())
-
-    def get_states(self) -> list[dict[str, Any]]:
-        """Get list of all states."""
-        return self.states.get_value()
-
-    def get_batch_state(self) -> dict[str, Any]:
-        """Get batch-level state."""
-        return self.batch_state.get_value()
-
-    def get_batch_metadata(self) -> Metadata | None:
-        """Get batch-level metadata."""
-        return self._batch_metadata.get_value()
-
-    def set_batch_metadata(self, metadata: Metadata) -> None:
-        """Set batch-level metadata."""
-        self._batch_metadata.set_value(metadata)
-
-    def update_batch_state(self, updates: dict[str, Any]) -> None:
-        """Update batch-level state (merge behavior)."""
-        current = dict(self.batch_state.get_value())
-        current.update(updates)
-        self.batch_state.set_value(current)
-
-
-def _scan_batch_elements(batch: Batch, fn: Callable[[Element], Element]) -> Batch:
-    """Scan-based batch element processing for stateful operations.
-
-    Uses JAX scan for sequential processing when state dependencies prevent
-    full vectorization. More efficient than Python loops while preserving
-    state semantics.
-
-    Args:
-        batch: Input batch to transform
-        fn: Function to apply to each element (may modify state)
-
-    Returns:
-        New batch with transformed elements
-    """
-    if batch.batch_size == 0:
-        return Batch([])
-
-    def scan_fn(carry: Any, elem_idx: Any) -> tuple[Any, Any]:
-        # Get element at index
-        elem = batch.get_element(elem_idx)
-        # Apply transformation
-        transformed = fn(elem)
-        return carry, transformed
-
-    # Use scan for sequential processing
-    indices = jnp.arange(batch.batch_size)
-    _, transformed_elements = jax.lax.scan(scan_fn, None, indices)
-
-    # Convert scan results back to batch
-    # Note: This still requires some Python processing for complex state handling
-    elements = []
-    for i in range(batch.batch_size):
-        # Extract transformed element data
-        if hasattr(transformed_elements, "data"):
-            # If scan preserved structure
-            elem_data = jax.tree.map(lambda x, i=i: x[i], transformed_elements.data)
-            # Scan returns batched state/metadata; index with int
-            raw_state = getattr(transformed_elements, "state", None)
-            raw_metadata = getattr(transformed_elements, "metadata", None)
-            elem = Element(
-                data=elem_data,
-                state=raw_state[i] if raw_state is not None else {},
-                metadata=raw_metadata[i] if raw_metadata is not None else None,
+        if not isinstance(self.data, Mapping):
+            raise TypeError(
+                f"update_data merges into a mapping; this element's data is "
+                f"{type(self.data).__name__}. Use replace(data=...) instead."
             )
-            elements.append(elem)
-        else:
-            # Fallback to element-wise processing
-            elem = batch.get_element(i)
-            elements.append(fn(elem))
+        return self.replace(data={**self.data, **updates})
 
-    new_batch = Batch(elements, validate=False)
-    new_batch.batch_state.set_value(batch.batch_state.get_value())
-    new_batch._batch_metadata = nnx.Variable(batch._batch_metadata.get_value())
+    def update_state(self, updates: Mapping[str, PyTree]) -> Self:
+        """Return a copy whose state mapping has ``updates`` merged in.
 
-    return new_batch
+        Args:
+            updates: Entries to add or replace in ``state``.
 
-
-# Batch operations
-class BatchOps:
-    """Utility operations for batches."""
-
-    @staticmethod
-    def select_batch_rows(batch: Batch, mask: jax.Array) -> Batch:
-        """Filter batch using boolean mask.
-
-        Uses JAX indexing on PyTree structures for efficiency.
+        Returns:
+            The new element; this one is unchanged.
         """
-        if mask.shape[0] != batch.batch_size:
-            raise ValueError(
-                f"Mask shape {mask.shape} incompatible with batch size {batch.batch_size}"
-            )
-
-        # Filter data PyTree using mask (handles nested structures)
-        filtered_data = jax.tree.map(lambda x: x[mask], batch.data.get_value())
-
-        # Filter states PyTree using mask (handles nested structures)
-        filtered_states = jax.tree.map(lambda x: x[mask], batch.states.get_value())
-
-        # Filter metadata list (convert JAX indices to Python list for indexing)
-        indices = jnp.where(mask)[0].tolist()  # Convert to Python list of ints
-        metadata_list = batch._metadata_list.get_value()
-        filtered_metadata = [metadata_list[i] for i in indices] if metadata_list else []
-
-        # Use Batch.from_parts to reconstruct (handles PyTree stacking)
-        return Batch.from_parts(
-            data=filtered_data,
-            states=filtered_states,
-            metadata_list=filtered_metadata,
-            batch_metadata=batch._batch_metadata.get_value(),
-            batch_state=batch.batch_state.get_value(),
-            validate=False,
-        )
-
-    @staticmethod
-    def concatenate_batch_sequence(batches: list[Batch]) -> Batch:
-        """Concatenate multiple batches."""
-        if not batches:
-            return Batch([])
-
-        if len(batches) == 1:
-            return batches[0]
-
-        # Use JAX concatenation for data and states (much faster than Python loops)
-        first_batch = batches[0]
-
-        # Concatenate data PyTrees
-        # We assume consistent structure across batches (standard assumption)
-        all_data_vals = [b.data.get_value() for b in batches]
-        concatenated_data = jax.tree.map(
-            lambda *arrays: jnp.concatenate(arrays, axis=0), *all_data_vals
-        )
-
-        # Concatenate states PyTrees
-        all_states_vals = [b.states.get_value() for b in batches]
-        concatenated_states = jax.tree.map(
-            lambda *arrays: jnp.concatenate(arrays, axis=0), *all_states_vals
-        )
-
-        # Concatenate metadata lists
-        concatenated_metadata = []
-        for b in batches:
-            meta_list = b._metadata_list.get_value()
-            if meta_list:
-                concatenated_metadata.extend(meta_list)
-
-        # Note: Discards batch-level metadata/state from subsequent batches.
-        return Batch.from_parts(
-            data=concatenated_data,
-            states=concatenated_states,
-            metadata_list=concatenated_metadata,
-            batch_metadata=first_batch._batch_metadata.get_value(),
-            batch_state=first_batch.batch_state.get_value(),
-            validate=False,
-        )
-
-    @staticmethod
-    def update_batch_inplace(batch: Batch, data_updates: dict[str, jax.Array]) -> Batch:
-        """Update batch data in place."""
-        current = dict(batch.data.get_value())
-        current.update(data_updates)
-        batch.data.set_value(current)
-        return batch
+        return self.replace(state={**self.state, **updates})
 
 
-# JAX control flow operations
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True, slots=True)
+class Batch:
+    """A batch of records: the fields of ``Element`` with a leading record axis ``B``.
 
+    ``batch["image"]``, ``batch.get("mask")`` and ``"mask" in batch`` read ``data``; a key that
+    is not a string raises. A batch is not a mapping: ``dict``, ``**``, iteration and ``len``
+    raise rather than return the data keys alone, which would silently drop the other fields.
+    A computation over the batch's values maps over ``batch.data``; ``jax.tree.map`` over the
+    whole batch also reaches its identities and state.
 
-def conditional_transform(
-    batch: Batch,
-    true_fn: Callable[[Batch], Batch],
-    false_fn: Callable[[Batch], Batch],
-    condition: jax.Array,
-) -> Batch:
-    """Conditional transformation with dynamic condition.
+    The constructor validates nothing: jax builds a ``Batch`` from tracers and from axis or
+    sharding prefixes. ``batch_ops.from_arrays`` and ``batch_ops.from_stacked`` build one from
+    host or device arrays and check the record axis.
 
-    Uses jax.lax.cond for traced boolean conditions.
+    Attributes:
+        data: The records' values, leading axis ``B``, static shapes.
+        states: Per-record processing state, leading axis ``B``.
+        indices: uint32 ``(B, 2)``, each record's 64-bit index as ``(hi, lo)``.
+        epochs: int32 ``(B,)``, each record's epoch.
+        draws: int32 ``(B,)``, each record's draw within its epoch.
+        batch_state: Batch-level arrays, without a record axis.
     """
-    return jax.lax.cond(condition, true_fn, false_fn, batch)
+
+    data: PyTree
+    _: KW_ONLY
+    states: PyTree
+    indices: ArrayValue
+    epochs: ArrayValue
+    draws: ArrayValue
+    batch_state: PyTree
+
+    __iter__ = None  # a Batch is not iterable; iterate over batch.data
+
+    def __getitem__(self, name: str) -> PyTree:
+        """Return the data field ``name``.
+
+        Args:
+            name: A key of ``data``.
+
+        Returns:
+            ``data[name]``.
+
+        Raises:
+            TypeError: If ``name`` is not a string (``batch[0]`` has no meaning: see
+                ``batch_ops.element``).
+        """
+        if not isinstance(name, str):
+            raise TypeError(
+                f"a Batch is read by field name, got {type(name).__name__}; "
+                "use batch_ops.element(batch, i) for a record"
+            )
+        return self.data[name]
+
+    def get(self, name: str, default: PyTree | None = None) -> PyTree | None:
+        """Return the data field ``name``, or ``default`` when there is none.
+
+        Args:
+            name: A key of ``data``.
+            default: What to return when ``data`` has no ``name``.
+
+        Returns:
+            ``data[name]`` or ``default``.
+        """
+        return self.data[name] if name in self else default
+
+    def __contains__(self, name: object) -> bool:
+        """Whether ``data`` has the field ``name``."""
+        return isinstance(name, str) and name in self.data
+
+    @property
+    def batch_size(self) -> int:
+        """The number of rows, ``B``: static, also under tracing."""
+        return self.indices.shape[0]
+
+    def replace(self, **fields: PyTree) -> Self:
+        """Return a copy with ``fields`` replaced.
+
+        Args:
+            **fields: New values, by field name.
+
+        Returns:
+            The new batch; this one is unchanged.
+        """
+        return dataclass_replace(self, **fields)
 
 
-def iterative_transform(
-    batch: Batch, fn: Callable[[Batch, int], Batch], num_iterations: int
-) -> Batch:
-    """Apply iterative transformation."""
-    result = batch
-    for i in range(num_iterations):
-        result = fn(result, i)
-    return result
-
-
-def while_transform(
-    batch: Batch,
-    cond_fn: Callable[[Batch], bool],
-    body_fn: Callable[[Batch], Batch],
-    max_iterations: int = 100,
-) -> Batch:
-    """Apply while loop transformation using nnx.while_loop."""
-
-    def loop_cond(state: tuple[Batch, int]) -> Any:
-        batch_state, iteration = state
-        return cond_fn(batch_state) & (iteration < max_iterations)
-
-    def loop_body(state: tuple[Batch, int]) -> tuple[Batch, int]:
-        batch_state, iteration = state
-        new_batch = body_fn(batch_state)
-        return (new_batch, iteration + 1)
-
-    initial_state = (batch, 0)
-    final_batch, _ = nnx.while_loop(loop_cond, loop_body, initial_state)
-    return final_batch
-
-
-# Factory functions
-
-
-def create_element(
-    data: dict[str, jax.Array] | None = None,
-    state: dict[str, Any] | None = None,
-    metadata: Metadata | None = None,
-) -> Element:
-    """Create element with defaults."""
-    return Element(data=data or {}, state=state or {}, metadata=metadata)
-
-
-def create_batch_from_arrays(
-    data: dict[str, jax.Array],
-    states: list[dict[str, Any]] | None = None,
-    metadata_list: list[Metadata] | None = None,
-) -> Batch:
-    """Create batch directly from pre-stacked arrays."""
-    if not data:
-        return Batch([])
-
-    # If states is provided as list of dicts, we must stack it. This is the slow part.
-    batched_states = {}
-    if states:
-        # Check if states is actually already a dict of arrays (optimization used by some callers?)
-        # No, type hint says list[dict].
-
-        # We have to stack.
-        # Check keys from first state
-        first_state = states[0]
-        keys = first_state.keys()
-
-        # Stack each key
-        for k in keys:
-            # We assume all states have same keys and values are arrays or stackable
-            # This might fail if states are heterogeneous.
-            # Fallback to naive creation if complex, but here we optimize for common case.
-            try:
-                batched_states[k] = jnp.stack([s[k] for s in states], axis=0)
-            except (TypeError, ValueError, KeyError):
-                # Fallback to slow path if stacking fails (e.g. different structures)
-                return _create_batch_naive(data, states, metadata_list)
-
-    return Batch.from_parts(
-        data=data,
-        states=batched_states,
-        metadata_list=metadata_list,
-        validate=False,  # We trust arrays match if they came from reliable source
-    )
-
-
-def _create_batch_naive(
-    data: dict[str, jax.Array],
-    states: list[dict[str, Any]] | None,
-    metadata_list: list[Metadata] | None,
-) -> Batch:
-    """Fallback naive creation."""
-    batch_size = next(iter(data.values())).shape[0]
-    elements = []
-    for i in range(batch_size):
-        elem_data = {key: arr[i] for key, arr in data.items()}
-        elem_state = states[i] if states and i < len(states) else {}
-        elem_metadata = metadata_list[i] if metadata_list and i < len(metadata_list) else None
-        elements.append(Element(data=elem_data, state=elem_state, metadata=elem_metadata))
-    return Batch(elements, validate=False)
-
-
-# Export public API
-__all__ = [
-    "Element",
-    "Batch",
-    "BatchOps",
-    "conditional_transform",
-    "iterative_transform",
-    "while_transform",
-    "create_element",
-    "create_batch_from_arrays",
-]
+__all__ = ["PADDING_INDEX", "ArrayValue", "Batch", "Element"]

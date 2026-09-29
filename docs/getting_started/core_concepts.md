@@ -97,10 +97,10 @@ augment_op = RandomFlipOperator(
 
 ### Per-Record Determinism
 
-Stochastic operators key their randomness on the **epoch** and each record's
-**stable index**, not on batch position or how many batches have been consumed.
-Each operator draws one base key at construction and derives a per-record key as
-`fold_in(fold_in(base_key, epoch), record_index)`. Within an epoch a record is
+Stochastic operators key their randomness on the **epoch**, the record's **draw**
+within it and its **stable index**, not on batch position or how many batches have
+been consumed. Each operator draws one base key at construction and folds the three
+into it for each record (`per_record_keys`). Within an epoch a record is
 augmented **identically** regardless of batch size, shuffle order, how records are
 split across workers, or resume point, and every epoch draws fresh augmentation —
 while gradients still flow through the transformation. The `Pipeline` asks its

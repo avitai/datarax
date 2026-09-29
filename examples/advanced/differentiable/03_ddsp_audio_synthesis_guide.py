@@ -87,8 +87,8 @@ import optax
 from flax import nnx
 from substrax.artifacts import resolve_output_dir
 
+from datarax.core import batch_ops
 from datarax.core.config import OperatorConfig
-from datarax.core.element_batch import Batch
 from datarax.core.operator import OperatorModule
 from datarax.operators import (
     CompositeOperatorConfig,
@@ -517,13 +517,13 @@ def load_nsynth(
         for start in range(0, len(audio_arr), extract_batch_size):
             end = min(start + extract_batch_size, len(audio_arr))
             audio_batch = jnp.array(audio_arr[start:end])
-            batch = Batch.from_parts(data={"audio": audio_batch}, states={})
+            batch = batch_ops.from_arrays({"audio": audio_batch})
 
             loud_out = loudness_op(batch)
-            loudness_list.append(np.array(loud_out.get_data()["loudness"]))
+            loudness_list.append(np.array(loud_out.data["loudness"]))
 
             f0_out = f0_op(batch)
-            f0_list.append(np.array(f0_out.get_data()["f0_hz"]))
+            f0_list.append(np.array(f0_out.data["f0_hz"]))
 
             if end % 50 == 0 or end == len(audio_arr):
                 print(f"    Processed {end}/{len(audio_arr)} samples")
@@ -915,37 +915,30 @@ print("Verifying DDSP operators...")
 # Test harmonic synth (per-frame inputs)
 h_config = HarmonicSynthConfig()
 h_op = HarmonicSynthOperator(h_config)
-h_batch = Batch.from_parts(
-    data={
+h_batch = batch_ops.from_arrays(
+    {
         "amplitudes": jnp.ones((1, N_FRAMES, N_HARMONICS)) * 0.1,
         "f0_hz": jnp.ones((1, N_FRAMES)) * 440.0,
-    },
-    states={},
+    }
 )
 h_result = h_op(h_batch)
-h_out = h_result.get_data()
+h_out = h_result.data
 print(f"  HarmonicSynth: output keys={list(h_out.keys())}, audio shape={h_out['audio'].shape}")
 
 # Test filtered noise (per-frame input)
 n_config = FilteredNoiseConfig()
 n_op = FilteredNoiseOperator(n_config)
-n_batch = Batch.from_parts(
-    data={"noise_magnitudes": jnp.ones((1, N_FRAMES, N_NOISE_BANDS))},
-    states={},
-)
+n_batch = batch_ops.from_arrays({"noise_magnitudes": jnp.ones((1, N_FRAMES, N_NOISE_BANDS))})
 n_result = n_op(n_batch)
-n_out = n_result.get_data()
+n_out = n_result.data
 print(f"  FilteredNoise: output keys={list(n_out.keys())}, audio shape={n_out['audio'].shape}")
 
 # Test reverb
 r_config = ReverbConfig()
 r_op = ReverbOperator(r_config)
-r_batch = Batch.from_parts(
-    data={"audio": jnp.sin(jnp.linspace(0, 10, AUDIO_LENGTH))[None]},
-    states={},
-)
+r_batch = batch_ops.from_arrays({"audio": jnp.sin(jnp.linspace(0, 10, AUDIO_LENGTH))[None]})
 r_result = r_op(r_batch)
-r_out = r_result.get_data()
+r_out = r_result.data
 print(
     f"  Reverb: IR params={r_op.impulse_response[...].shape[0]}, audio shape={r_out['audio'].shape}"
 )
@@ -1286,16 +1279,15 @@ def synthesize_batch(
     # amps_batch: (B, n_frames, n_harmonics), noise_batch: (B, n_frames, n_noise_bands)
 
     # Pass full time-varying f0 — NO averaging
-    batch = Batch.from_parts(
-        data={
+    batch = batch_ops.from_arrays(
+        {
             "amplitudes": amps_batch,  # (B, n_frames, n_harmonics)
             "f0_hz": f0_hz_batch,  # (B, n_frames)
             "noise_magnitudes": noise_batch,  # (B, n_frames, n_noise_bands)
-        },
-        states={},
+        }
     )
     result = synth_composite(batch)
-    return result.get_data()["audio"]
+    return result.data["audio"]
 
 
 # Create composite and test synthesis
@@ -1598,16 +1590,15 @@ demo_amps = jnp.ones((1, N_FRAMES, N_HARMONICS)) * 0.1
 demo_f0 = jnp.ones((1, N_FRAMES)) * 440.0
 demo_noise_mags = jnp.ones((1, N_FRAMES, N_NOISE_BANDS)) * 0.5
 
-demo_batch = Batch.from_parts(
-    data={
+demo_batch = batch_ops.from_arrays(
+    {
         "amplitudes": demo_amps,
         "f0_hz": demo_f0,
         "noise_magnitudes": demo_noise_mags,
-    },
-    states={},
+    }
 )
 result = synth_composite(demo_batch)
-result_audio = result.get_data()["audio"]
+result_audio = result.data["audio"]
 
 print(
     f"Input: amplitudes={demo_amps.shape}, f0_hz={demo_f0.shape}, "

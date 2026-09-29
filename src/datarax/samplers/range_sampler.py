@@ -12,8 +12,8 @@ from typing import Any
 from flax import nnx
 
 from datarax.core.config import SamplerConfig
+from datarax.core.element_batch import Element
 from datarax.core.sampler import SamplerModule
-from datarax.typing import Element
 
 
 logger = logging.getLogger(__name__)

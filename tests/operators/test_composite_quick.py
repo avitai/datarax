@@ -9,7 +9,8 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
-from datarax.core.element_batch import Batch, Element
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 from datarax.operators.composite_operator import (
     CompositeOperatorConfig,
     CompositeOperatorModule,
@@ -43,17 +44,19 @@ class TestCompositeQuickIntegration:
         )
 
         # Test data
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-                Element(data={"value": jnp.array([3.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                    Element(data={"value": jnp.array([3.0])}),
+                ]
+            )
         )
 
         # Apply composite (should be (x * 2) + 10)
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # Verify result
         expected = jnp.array([[12.0], [14.0], [16.0]])  # (1*2+10, 2*2+10, 3*2+10)
@@ -82,15 +85,17 @@ class TestCompositeQuickIntegration:
         )
 
         # Test data
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0, 2.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0, 2.0])}),
+                ]
+            )
         )
 
         # Apply composite
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # Verify result (concat of [2, 4] and [3, 6])
         expected = jnp.array([[2.0, 4.0, 3.0, 6.0]])
@@ -119,15 +124,17 @@ class TestCompositeQuickIntegration:
         )
 
         # Test data
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0, 2.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0, 2.0])}),
+                ]
+            )
         )
 
         # Apply composite
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # Verify result (stack of [[2, 4], [3, 6]])
         expected = jnp.array([[[2.0, 4.0], [3.0, 6.0]]])
@@ -157,11 +164,13 @@ class TestCompositeQuickIntegration:
         )
 
         # Test data
-        batch = Batch([Element(data={"value": jnp.array([10.0])})])
+        batch = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([10.0])})])
+        )
 
         # Apply composite
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # Verify result (mean of [10, 20, 30] = 20)
         expected = jnp.array([[20.0]])
@@ -188,11 +197,11 @@ class TestCompositeQuickIntegration:
         )
 
         # Test data
-        batch = Batch([Element(data={"value": jnp.array([5.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
 
         # Apply composite
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # Verify result (sum of [10, 15] = 25)
         expected = jnp.array([[25.0]])

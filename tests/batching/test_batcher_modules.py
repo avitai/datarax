@@ -7,6 +7,7 @@ import numpy as np
 from flax import nnx
 
 from datarax.batching import DefaultBatcher, DefaultBatcherConfig
+from datarax.core.element_batch import Element
 
 
 def test_default_batcher_basic():
@@ -16,7 +17,7 @@ def test_default_batcher_basic():
     batcher = DefaultBatcher(config, rngs=nnx.Rngs(0))
 
     # Create some elements to batch
-    elements = [{"x": np.array([i]), "y": np.array([i * 2])} for i in range(5)]
+    elements = [Element({"x": np.array([i]), "y": np.array([i * 2])}) for i in range(5)]
 
     # Test batching with batch_size=2
     batched_elements = list(batcher(iter(elements), batch_size=2))
@@ -48,7 +49,7 @@ def test_default_batcher_drop_remainder():
     batcher = DefaultBatcher(config, rngs=nnx.Rngs(0))
 
     # Create some elements to batch
-    elements = [{"x": np.array([i]), "y": np.array([i * 2])} for i in range(5)]
+    elements = [Element({"x": np.array([i]), "y": np.array([i * 2])}) for i in range(5)]
 
     # Test batching with batch_size=2 and drop_remainder=True
     batched_elements = list(batcher(iter(elements), batch_size=2, drop_remainder=True))
@@ -69,8 +70,8 @@ def test_default_batcher_custom_collate():
     # Create a custom collate function that concatenates instead of stacking
     def custom_collate(elements):
         result = {}
-        for key in elements[0]:
-            result[key] = np.concatenate([element[key] for element in elements])
+        for key in elements[0].data:
+            result[key] = np.concatenate([element.data[key] for element in elements])
         return result
 
     # Create a default batcher module with the custom collate function
@@ -78,7 +79,7 @@ def test_default_batcher_custom_collate():
     batcher = DefaultBatcher(config, collate_fn=custom_collate, rngs=nnx.Rngs(0))  # type: ignore[reportArgumentType]
 
     # Create some elements to batch
-    elements = [{"x": np.array([i, i + 1]), "y": np.array([i * 2])} for i in range(3)]
+    elements = [Element({"x": np.array([i, i + 1]), "y": np.array([i * 2])}) for i in range(3)]
 
     # Test batching with batch_size=3
     batched_elements = list(batcher(iter(elements), batch_size=3))

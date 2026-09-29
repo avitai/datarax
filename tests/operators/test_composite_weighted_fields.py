@@ -17,7 +17,8 @@ import numpy as np
 import pytest
 from flax import nnx
 
-from datarax.core.element_batch import Batch, Element
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 from datarax.core.operator import OperatorModule
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.composite_operator import (
@@ -62,7 +63,7 @@ def test_static_weights_sum_the_named_field_and_pass_every_other_field_through()
         operators=[_scale(2.0), _scale(3.0)], weights=[1.0, 0.1], mix_fields=("signal",)
     )
 
-    out = mix(Batch([Element(data=_record())])).get_data()
+    out = mix(batch_ops.from_stacked(batch_ops.stack([Element(data=_record())]))).data
 
     np.testing.assert_allclose(np.asarray(out["signal"]), [[23.0]], rtol=1e-6)  # 20 + 0.1 * 30
     np.testing.assert_array_equal(np.asarray(out["f0_hz"]), [[440.0]])
@@ -81,7 +82,7 @@ def test_mixed_fields_default_to_the_fields_the_operators_declare() -> None:
     mix = _weighted(operators=operators, weights=[0.75, 0.25])
     record = {"image": jnp.full((2, 2, 1), 0.5), "label": jnp.array(1, dtype=jnp.int32)}
 
-    out = mix(Batch([Element(data=record)])).get_data()
+    out = mix(batch_ops.from_stacked(batch_ops.stack([Element(data=record)]))).data
 
     assert mix.config.mix_fields == ("image",)
     np.testing.assert_allclose(np.asarray(out["image"]), 0.6, rtol=1e-6)  # 0.75*0.7 + 0.25*0.3
@@ -102,7 +103,7 @@ def test_operators_that_declare_no_field_need_mix_fields() -> None:
 def test_learnable_weights_start_at_the_configured_mixture_and_sharpen_with_temperature() -> None:
     """Logits start at ``log(weights / sum)``, so ``softmax(logits / T)`` is proportional to
     ``weights ** (1 / T)``."""
-    batch = Batch([Element(data=_record())])
+    batch = batch_ops.from_stacked(batch_ops.stack([Element(data=_record())]))
     common = {
         "operators": [_scale(2.0), _scale(3.0)],
         "weights": [0.7, 0.3],
@@ -113,9 +114,9 @@ def test_learnable_weights_start_at_the_configured_mixture_and_sharpen_with_temp
     cold = _weighted(**common, temperature=0.5)
 
     sharpened = np.array([0.49, 0.09]) / 0.58
-    np.testing.assert_allclose(np.asarray(warm(batch).get_data()["signal"]), [[23.0]], rtol=1e-6)
+    np.testing.assert_allclose(np.asarray(warm(batch).data["signal"]), [[23.0]], rtol=1e-6)
     np.testing.assert_allclose(
-        np.asarray(cold(batch).get_data()["signal"]),
+        np.asarray(cold(batch).data["signal"]),
         [[float(sharpened @ np.array([20.0, 30.0]))]],
         rtol=1e-6,
     )

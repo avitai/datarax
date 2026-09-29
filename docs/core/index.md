@@ -6,15 +6,16 @@ Core abstractions and building blocks that form the foundation of Datarax pipeli
 
 | Component | Purpose | Key Classes |
 |-----------|---------|-------------|
-| **Element & Batch** | Data containers | `Element`, `Batch`, `Metadata` |
+| **Element & Batch** | Data containers | `Element`, `Batch`, `batch_ops` |
 | **Config** | Typed configuration | `OperatorConfig`, `StructuralConfig` |
 | **Modules** | Base abstractions | `DataraxModule`, `OperatorModule` |
 | **Protocols** | Interface contracts | `DataSourceModule`, `SamplerModule` |
 
 !!! note "Key points"
 
-    - **Element** wraps a single data sample with state and metadata
-    - **Batch** wraps batched JAX arrays with dict-style access plus per-element state
+    - **Element** is one record: its values, its state and its identity (index, epoch, draw)
+    - **Batch** holds records along a leading axis; `batch["image"]` reads its data
+    - **batch_ops** builds, slices, regroups and pads batches, as pure functions
     - All modules inherit from `DataraxModule` for consistent behavior
     - Protocols enable duck-typing with `isinstance()` checks
 
@@ -33,21 +34,15 @@ DataraxModule (base)
 
 ```python
 import jax.numpy as jnp
-from datarax.core import Element, Batch
-from datarax.core.config import OperatorConfig
-from datarax.core.metadata import Metadata
+from datarax.core import Element, batch_ops
 
-# Create an element
-element = Element(
-    data={"image": jnp.zeros((32, 32, 3))},
-    state={"step": 0},
-    metadata=Metadata(index=0),
-)
+# A record, and an immutable update of it
+element = Element({"image": jnp.zeros((32, 32, 3))}, state={"step": jnp.int32(0)})
+new_element = element.update_data({"image": element.data["image"] / 255.0})
 
-# Access and update immutably
-new_element = element.replace(
-    data={"image": element.data["image"] / 255.0}
-)
+# Records stacked into a batch; each row is keyed by its identity
+batch = batch_ops.from_stacked(batch_ops.stack([element, new_element]))
+assert batch["image"].shape == (2, 32, 32, 3)
 ```
 
 ## Modules
@@ -55,7 +50,8 @@ new_element = element.replace(
 ### Data Structures
 
 - [element_batch](element_batch.md) - `Element` and `Batch` data containers
-- [metadata](metadata.md) - Metadata handling and field selection
+- [batch_ops](batch_ops.md) - Building, slicing, regrouping and padding batches
+- [state_keys](state_keys.md) - The per-record state entries datarax writes
 - [spec](spec.md) - Element specs: data as given or as JAX arrays, and batch validation
 - [prng](prng.md) - The named `nnx.Rngs` streams and per-record key derivation
 

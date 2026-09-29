@@ -16,7 +16,8 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
-from datarax.core.element_batch import Batch, Element
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 from datarax.operators.map_operator import MapOperator, MapOperatorConfig
 
 # TDD RED phase - imports will fail until implementation exists
@@ -96,17 +97,19 @@ class TestProbabilisticOperatorApplication:
         prob_op = ProbabilisticOperator(prob_config, operator=child_op, rngs=rngs)
 
         # Create batch
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-                Element(data={"value": jnp.array([3.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                    Element(data={"value": jnp.array([3.0])}),
+                ]
+            )
         )
 
         # Apply - should NOT transform (p=0.0)
         result_batch = prob_op(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # Values should be unchanged
         expected = jnp.array([[1.0], [2.0], [3.0]])
@@ -125,17 +128,19 @@ class TestProbabilisticOperatorApplication:
         prob_op = ProbabilisticOperator(prob_config, operator=child_op, rngs=rngs)
 
         # Create batch
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-                Element(data={"value": jnp.array([3.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                    Element(data={"value": jnp.array([3.0])}),
+                ]
+            )
         )
 
         # Apply - should ALWAYS transform (p=1.0)
         result_batch = prob_op(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # Values should all be multiplied by 10
         expected = jnp.array([[10.0], [20.0], [30.0]])
@@ -162,10 +167,12 @@ class TestProbabilisticOperatorApplication:
         # One batch of 100 distinct records (global indices 0..99 via the
         # positional fallback), each starting at value 1.0.
         n_records = 100
-        batch = Batch([Element(data={"value": jnp.array([1.0])}) for _ in range(n_records)])
+        batch = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([1.0])}) for _ in range(n_records)])
+        )
 
         result_batch = prob_op(batch)
-        values = result_batch.get_data()["value"][:, 0]
+        values = result_batch.data["value"][:, 0]
         applied_count = int(jnp.sum(jnp.isclose(values, 101.0)))
 
         # Should be roughly 50% (allow 30-70% range for randomness)
@@ -227,11 +234,11 @@ class TestProbabilisticOperatorJAXCompatibility:
             return op(batch)
 
         # Create batch
-        batch = Batch([Element(data={"value": jnp.array([5.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
 
         # Apply jitted function
         result_batch = apply_jitted(prob_op, batch)
-        result_value = float(result_batch.get_data()["value"][0, 0])
+        result_value = float(result_batch.data["value"][0, 0])
 
         assert jnp.isclose(result_value, 10.0)
 
@@ -248,17 +255,19 @@ class TestProbabilisticOperatorJAXCompatibility:
         prob_op = ProbabilisticOperator(prob_config, operator=child_op, rngs=rngs)
 
         # Create batch with multiple elements
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-                Element(data={"value": jnp.array([3.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                    Element(data={"value": jnp.array([3.0])}),
+                ]
+            )
         )
 
         # Apply operator (uses vmap internally via apply_batch)
         result_batch = prob_op(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # All values should have +10
         expected = jnp.array([[11.0], [12.0], [13.0]])
@@ -303,22 +312,24 @@ class TestProbabilisticOperatorEdgeCases:
         prob_op = ProbabilisticOperator(prob_config, operator=child_op, rngs=rngs)
 
         # Create batch with state
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}, state={"counter": 10}),
-                Element(data={"value": jnp.array([2.0])}, state={"counter": 20}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}, state={"counter": 10}),
+                    Element(data={"value": jnp.array([2.0])}, state={"counter": 20}),
+                ]
+            )
         )
 
         # Apply operator
         result_batch = prob_op(batch)
 
         # State should pass through unchanged (MapOperator doesn't modify state)
-        result_states = result_batch.states.get_value()
+        result_states = result_batch.states
         assert jnp.array_equal(result_states["counter"], jnp.array([10, 20]))  # type: ignore[reportCallIssue, reportArgumentType]
 
-    def test_child_operator_metadata_passthrough(self):
-        """Test that metadata is correctly passed through to child operator."""
+    def test_child_operator_identity_passthrough(self):
+        """Record identities pass through the wrapper and its child unchanged."""
         rngs = nnx.Rngs(0)
 
         # Child operator
@@ -329,17 +340,17 @@ class TestProbabilisticOperatorEdgeCases:
         prob_config = ProbabilisticOperatorConfig(probability=1.0)
         prob_op = ProbabilisticOperator(prob_config, operator=child_op, rngs=rngs)
 
-        # Create batch with metadata
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}, metadata={"source": "test1"}),  # type: ignore[reportArgumentType]
-                Element(data={"value": jnp.array([2.0])}, metadata={"source": "test2"}),  # type: ignore[reportArgumentType]
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),  # type: ignore[reportArgumentType]
+                    Element(data={"value": jnp.array([2.0])}),  # type: ignore[reportArgumentType]
+                ]
+            )
         )
 
         # Apply operator
         result_batch = prob_op(batch)
 
-        # Metadata should pass through unchanged
-        assert result_batch._metadata_list[0] == {"source": "test1"}
-        assert result_batch._metadata_list[1] == {"source": "test2"}
+        assert jnp.array_equal(result_batch.indices, batch.indices)
+        assert jnp.allclose(result_batch["value"], jnp.array([[2.0], [4.0]]))

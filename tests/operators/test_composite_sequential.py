@@ -17,7 +17,8 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax.core.element_batch import Batch, Element
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 
 # GREEN phase - imports enabled
 from datarax.operators.composite_operator import (
@@ -52,12 +53,14 @@ class TestSequentialBasics:
         )
 
         # Create batch from Elements
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-                Element(data={"value": jnp.array([3.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                    Element(data={"value": jnp.array([3.0])}),
+                ]
+            )
         )
 
         # Apply composite using __call__ (should be (x * 2) + 10)
@@ -65,7 +68,7 @@ class TestSequentialBasics:
 
         # Verify: op2(op1(input)) = (input * 2) + 10
         assert result_batch.batch_size == 3
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[12.0], [14.0], [16.0]])  # Shape (3, 1) to match batched Elements
         assert jnp.allclose(result_data["value"], expected)
 
@@ -93,14 +96,14 @@ class TestSequentialBasics:
         )
 
         # Create batch from Element
-        batch = Batch([Element(data={"value": jnp.array([5.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
 
         # Apply composite using __call__
         result_batch = composite(batch)
 
         # Verify: op3(op2(op1(5))) = ((5 + 1) * 2) + 3 = 15
         assert result_batch.batch_size == 1
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         assert jnp.allclose(result_data["value"], jnp.array([[15.0]]))
 
     def test_sequential_deterministic_operators(self):
@@ -124,15 +127,15 @@ class TestSequentialBasics:
         )
 
         # Create batch
-        batch = Batch([Element(data={"value": jnp.array([3.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([3.0])})]))
 
         # Apply twice - should give same result
         result_batch1 = composite(batch)
         result_batch2 = composite(batch)
 
         # Verify deterministic: same input -> same output
-        result1 = result_batch1.get_data()
-        result2 = result_batch2.get_data()
+        result1 = result_batch1.data
+        result2 = result_batch2.data
         assert jnp.allclose(result1["value"], result2["value"])
         expected = jnp.array([[11.0]])  # (3 * 2) + 5
         assert jnp.allclose(result1["value"], expected)
@@ -161,9 +164,11 @@ class TestSequentialBasics:
         composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
 
         # Test with batch
-        batch = Batch([Element(data={"value": jnp.array([1.0, 2.0, 3.0])})])
+        batch = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([1.0, 2.0, 3.0])})])
+        )
         result = composite(batch)
-        result_data = result.get_data()
+        result_data = result.data
 
         # Output should differ from input due to stochastic transformations
         original_data = jnp.array([[1.0, 2.0, 3.0]])
@@ -196,18 +201,22 @@ class TestSequentialDataFlow:
         )
 
         # Create batch with state (MapOperator passes through unchanged)
-        batch = Batch([Element(data={"value": jnp.array([1.0])}, state={"counter": jnp.array(5)})])
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [Element(data={"value": jnp.array([1.0])}, state={"counter": jnp.array(5)})]
+            )
+        )
 
         # Apply composite
         result_batch = composite(batch)
 
         # Verify state threading (passed through unchanged by MapOperator)
-        result_elem = result_batch.get_element(0)
+        result_elem = batch_ops.element(result_batch, 0)
         assert "counter" in result_elem.state
         assert jnp.allclose(result_elem.state["counter"], jnp.array(5))
 
-    def test_sequential_metadata_threading(self):
-        """Test that metadata is threaded correctly through sequential operators."""
+    def test_sequential_keeps_record_identities(self):
+        """Each record's identity passes through every operator of the chain."""
         rngs = nnx.Rngs(0)
 
         # Create operators
@@ -226,17 +235,19 @@ class TestSequentialDataFlow:
             operators=[op1, op2],
         )
 
-        # Create batch with metadata (MapOperator passes through unchanged)
-        batch = Batch(
-            [Element(data={"value": jnp.array([1.0])}, metadata={"source": "test", "version": 1})]  # type: ignore[reportArgumentType]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [Element({"value": jnp.array([1.0])}, index=jnp.array([2, 7], jnp.uint32))]
+            )
         )
 
         # Apply composite
         result_batch = composite(batch)
 
-        # Verify metadata threading (passed through unchanged by MapOperator)
-        result_elem = result_batch.get_element(0)
-        assert result_elem.metadata == {"source": "test", "version": 1}
+        result_elem = batch_ops.element(result_batch, 0)
+        assert result_elem.index is not None
+        assert jnp.array_equal(result_elem.index, jnp.array([2, 7], jnp.uint32))
+        assert jnp.allclose(result_elem.data["value"], jnp.array([7.0]))
 
     def test_sequential_data_transformation(self):
         """Test data transformation through sequential chain."""
@@ -262,13 +273,15 @@ class TestSequentialDataFlow:
         )
 
         # Create batch for data transformation
-        batch = Batch([Element(data={"value": jnp.array([10.0])})])
+        batch = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([10.0])})])
+        )
 
         # Apply composite
         result_batch = composite(batch)
 
         # Verify: ((10 + 1) * 2) + 3 = 25
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[25.0]])
         assert jnp.allclose(result_data["value"], expected)
 
@@ -302,19 +315,21 @@ class TestSequentialJIT:
             return model(batch)
 
         # Create batch
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-                Element(data={"value": jnp.array([3.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                    Element(data={"value": jnp.array([3.0])}),
+                ]
+            )
         )
 
         # Apply JIT-compiled version
         result_batch = jit_apply(composite, batch)
 
         # Verify: (x * 2) + 10
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[12.0], [14.0], [16.0]])
         assert jnp.allclose(result_data["value"], expected)
 
@@ -339,19 +354,21 @@ class TestSequentialJIT:
         )
 
         # Create batch (Batch handles vmap internally via apply_batch)
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-                Element(data={"value": jnp.array([3.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                    Element(data={"value": jnp.array([3.0])}),
+                ]
+            )
         )
 
         # Apply composite (vmap is handled internally)
         result_batch = composite(batch)
 
         # Verify results: (x * 2) + 5
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[7.0], [9.0], [11.0]])  # (1*2+5), (2*2+5), (3*2+5)
         assert jnp.allclose(result_data["value"], expected)
 
@@ -380,13 +397,13 @@ class TestSequentialAdvanced:
         )
 
         # Create batch for integration test
-        batch = Batch([Element(data={"value": jnp.array([2.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([2.0])})]))
 
         # Apply composite
         result_batch = composite(batch)
 
         # Verify: (2 * 3) + 7 = 13
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[13.0]])
         assert jnp.allclose(result_data["value"], expected)
 
@@ -411,7 +428,7 @@ class TestSequentialAdvanced:
         )
 
         # Create batch to trigger statistics collection
-        batch = Batch([Element(data={"value": jnp.array([1.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([1.0])})]))
 
         composite(batch)
 
@@ -447,12 +464,12 @@ class TestSequentialAdvanced:
         )
 
         # Create batch for nested composition test
-        batch = Batch([Element(data={"value": jnp.array([5.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
 
         # Apply outer composite
         result_batch = outer_composite(batch)
 
         # Verify: op3(inner(5)) = op3(op2(op1(5))) = ((5+1)*2)+3 = 15
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[15.0]])
         assert jnp.allclose(result_data["value"], expected)

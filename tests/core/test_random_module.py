@@ -10,6 +10,7 @@ import jax
 import numpy as np
 import pytest
 
+from datarax.core import batch_ops
 from datarax.core.config import DataraxModuleConfig, OperatorConfig, StructuralConfig
 from datarax.core.data_source import DataSourceModule
 from datarax.core.module import DataraxModule
@@ -161,9 +162,7 @@ def test_random_integration(test_seed):
         source = RandomArraySourceModule(config, num_items=3, rngs=rngs)
         operator = RandomOperatorModule(rngs=rngs)
         values = jax.numpy.stack(list(source))
-        data, _ = operator._vmap_apply(
-            {"value": values}, {}, None, jax.numpy.arange(3, dtype=jax.numpy.uint32)
-        )
+        data = operator(batch_ops.from_arrays({"value": values})).data
         return np.asarray(data["value"])
 
     # The same seed reproduces, a different seed does not

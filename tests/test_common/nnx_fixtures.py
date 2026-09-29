@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from datarax.typing import Batch, Element
+from datarax.core.element_batch import Batch, Element
 
 
 class SimpleDataSourceModule(nnx.Module):

@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
+from datarax.core import batch_ops
 from datarax.core.element_batch import Batch, Element
 from datarax.operators.modality.audio.f0_operator import (
     CrepeF0Config,
@@ -90,9 +91,11 @@ class TestCrepeF0Output:
     def test_batch_gains_f0_hz_and_f0_confidence(self):
         """A batch comes back carrying the two fields the operator adds, and its audio."""
         op = CrepeF0Operator(CrepeF0Config(capacity="tiny"), rngs=nnx.Rngs(0))
-        batch = Batch([Element(data={"audio": jnp.zeros(16000)}, state={}) for _ in range(2)])
+        batch = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"audio": jnp.zeros(16000)}, state={}) for _ in range(2)])
+        )
 
-        result_data = op.apply_batch(batch).data.get_value()
+        result_data = op.apply_batch(batch).data
 
         assert "f0_hz" in result_data
         assert "f0_confidence" in result_data
@@ -352,7 +355,11 @@ class TestCrepeF0Transforms:
     def _audio_batch(n: int = 2, samples: int = 4096) -> Batch:
         """Return a batch of ``n`` random audio records of ``samples`` each."""
         keys = jax.random.split(jax.random.key(0), n)
-        return Batch([Element(data={"audio": jax.random.normal(key, (samples,))}) for key in keys])
+        return batch_ops.from_stacked(
+            batch_ops.stack(
+                [Element(data={"audio": jax.random.normal(key, (samples,))}) for key in keys]
+            )
+        )
 
     def test_apply_under_jit(self):
         """A jitted call extracts f0, so the pad width stays concrete."""
@@ -375,7 +382,7 @@ class TestCrepeF0Transforms:
 
         result = op(self._audio_batch())
 
-        assert result.get_data()["f0_hz"].shape == (2, 64)
+        assert result.data["f0_hz"].shape == (2, 64)
 
     def test_batch_under_the_scan_strategy(self):
         """The scan strategy the config recommends for memory runs."""
@@ -386,4 +393,4 @@ class TestCrepeF0Transforms:
 
         result = op(self._audio_batch())
 
-        assert result.get_data()["f0_hz"].shape == (2, 64)
+        assert result.data["f0_hz"].shape == (2, 64)

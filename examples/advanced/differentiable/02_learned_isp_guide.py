@@ -89,7 +89,7 @@ import optax
 from flax import nnx
 from substrax.artifacts import resolve_output_dir
 
-from datarax.core.element_batch import Batch
+from datarax.core import batch_ops
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 from datarax.operators import (
     CompositeOperatorConfig,
@@ -801,9 +801,9 @@ def apply_isp_composite(
     The sequential strategy chains all 5 operators internally — no manual
     loop or intermediate Batch objects needed.
     """
-    batch = Batch.from_parts(data={"image": images}, states={})
+    batch = batch_ops.from_arrays({"image": images})
     result = isp_composite(batch)
-    return result.get_data()["image"]
+    return result.data["image"]
 
 
 @nnx.jit

@@ -26,7 +26,9 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 from substrax.testing import TraceCounter
+from substrax.testing.compiles import expect_compiles
 
+from datarax.core import batch_ops
 from datarax.core.config import DataraxModuleConfig, OperatorConfig
 from datarax.core.element_batch import Batch
 from datarax.core.module import DataraxModule
@@ -123,7 +125,7 @@ def create_test_batch(data, states=None, metadata_list=None, batch_size=None):
     if metadata_list is None:
         metadata_list = [None] * batch_size
 
-    return Batch.from_parts(data, states, metadata_list, validate=False)
+    return batch_ops.from_arrays(data, states=states)
 
 
 # ========================================================================
@@ -381,8 +383,8 @@ class TestOperatorKeys:
 
     The caller's ``Rngs`` is read once, at construction, for the base key, which is array state
     typed ``nnx.RngKey``: a key held as a static value would put it in the graphdef, and two
-    operators differing only in their seed would compile twice. A record's key is
-    ``fold_in(fold_in(base_key, epoch), index)``; a call that names no records keys on batch
+    operators differing only in their seed would compile twice. A record's key folds
+    its epoch, draw and index into the base key; a call that names no records keys on batch
     positions, so it repeats exactly as well.
     """
 
@@ -395,6 +397,15 @@ class TestOperatorKeys:
     @staticmethod
     def _batch(size: int = 4) -> dict:
         return {"image": jnp.linspace(0.1, 0.9, size * 12).reshape(size, 4, 3)}
+
+    @staticmethod
+    def _identified(data: dict, rows: jax.Array, epoch: int = 0) -> Batch:
+        """``data`` as a batch of the records ``rows`` (low index words) in ``epoch``."""
+        size = rows.shape[0]
+        return batch_ops.from_arrays(data).replace(
+            indices=jnp.stack([jnp.zeros(size, jnp.uint32), rows.astype(jnp.uint32)], -1),
+            epochs=jnp.full((size,), epoch, jnp.int32),
+        )
 
     def test_an_operator_does_not_keep_the_callers_rngs(self):
         """The caller's Rngs is used at construction and is not operator state afterwards."""
@@ -422,39 +433,51 @@ class TestOperatorKeys:
         assert jax.tree.leaves(nnx.state(operator, nnx.RngState)) == []
 
     def test_a_call_without_records_repeats_and_keys_on_positions(self):
-        """No record identity: positions stand in for record indices, with no epoch."""
+        """No record identity: row ``i`` is record ``(0, i)`` of epoch 0, draw 0."""
         operator = self._stochastic()
         batch = self._batch()
 
         first, _ = operator._vmap_apply(batch, {})
         second, _ = operator._vmap_apply(batch, {})
-        positional, _ = operator._vmap_apply(batch, {}, None, jnp.arange(4, dtype=jnp.uint32))
+        positional = operator(self._identified(batch, jnp.arange(4)))
 
         assert jnp.array_equal(first["image"], second["image"])
         assert jnp.array_equal(first["image"], positional["image"])
+        assert jnp.array_equal(operator(batch_ops.from_arrays(batch))["image"], first["image"])
 
     def test_reversing_the_batch_reverses_the_rows(self):
         """A record's draw follows its index, not its position in the batch."""
         operator = self._stochastic()
         batch = self._batch()
-        indices = jnp.arange(10, 14, dtype=jnp.uint32)
+        rows = jnp.arange(10, 14)
 
-        forward, _ = operator._vmap_apply(batch, {}, None, indices, 3)
-        backward, _ = operator._vmap_apply(
-            {"image": batch["image"][::-1]}, {}, None, indices[::-1], 3
-        )
+        forward = operator(self._identified(batch, rows, epoch=3))
+        backward = operator(self._identified({"image": batch["image"][::-1]}, rows[::-1], 3))
 
         assert jnp.array_equal(forward["image"], backward["image"][::-1])
 
     def test_each_epoch_draws_afresh(self):
         """The control for the test above: the epoch is part of the key."""
         operator = self._stochastic()
-        indices = jnp.arange(4, dtype=jnp.uint32)
 
-        first, _ = operator._vmap_apply(self._batch(), {}, None, indices, 0)
-        second, _ = operator._vmap_apply(self._batch(), {}, None, indices, 1)
+        first = operator(self._identified(self._batch(), jnp.arange(4), epoch=0))
+        second = operator(self._identified(self._batch(), jnp.arange(4), epoch=1))
 
         assert not jnp.allclose(first["image"], second["image"])
+
+    def test_each_draw_of_a_record_is_a_fresh_draw(self):
+        """Two copies of one record in one batch differ by their draw ordinal alone."""
+        operator = self._stochastic()
+        batch = self._identified(self._batch(2), jnp.array([6, 6]))
+
+        out = operator(batch.replace(draws=jnp.array([0, 1], jnp.int32)))
+        same = operator(batch)
+
+        # Brightness scales a record by one drawn factor, so output / input is that factor.
+        factors = out["image"] / batch["image"]
+        same_factors = same["image"] / batch["image"]
+        assert jnp.allclose(same_factors[0], same_factors[1])
+        assert not jnp.allclose(factors[0], factors[1])
 
     def test_two_operators_built_from_one_seed_agree_and_other_seeds_differ(self):
         """The base key is drawn from the caller's stream, so the seed decides the draws."""
@@ -464,6 +487,26 @@ class TestOperatorKeys:
 
         assert jnp.array_equal(first["image"], second["image"])
         assert not jnp.allclose(first["image"], other["image"])
+
+    @pytest.mark.parametrize("graph", [True, False], ids=["graph", "tree"])
+    def test_batches_differing_in_their_identities_share_one_program(self, graph):
+        """A record's identity is array data, never part of what the program is keyed on."""
+        operator = self._stochastic()
+        apply = nnx.jit(lambda op, batch: op(batch)["image"], graph=graph)
+        first = self._identified(self._batch(), jnp.arange(4))
+        apply(operator, first)
+        others = [
+            self._identified(self._batch(), jnp.arange(4, dtype=jnp.uint32) + jnp.uint32(2**31), 5),
+            first.replace(draws=jnp.arange(4, dtype=jnp.int32)),
+            first.replace(
+                indices=jnp.stack([jnp.full(4, 7, jnp.uint32), jnp.arange(4, dtype=jnp.uint32)], -1)
+            ),
+        ]
+
+        with expect_compiles(0):
+            outputs = [apply(operator, batch) for batch in others]
+
+        assert all(not jnp.allclose(out, apply(operator, first)) for out in outputs)
 
     def test_operators_differing_only_in_their_key_share_one_trace(self):
         """The key is state, not graphdef, so a second seed compiles nothing new."""
@@ -483,17 +526,16 @@ class TestOperatorKeys:
         operator = LearnableScaleOperator(
             OperatorConfig(stochastic=True, stream_name="augment"), rngs=nnx.Rngs(augment=0)
         )
-        batch = self._batch()
-        indices = jnp.arange(4, dtype=jnp.uint32)
+        batch = self._identified(self._batch(), jnp.arange(4))
         graphdef, params, rest = nnx.split(operator, nnx.Param, ..., graph=False)
 
         def loss(params):
             model = nnx.merge(graphdef, params, rest)
-            return jnp.sum(model._vmap_apply(batch, {}, None, indices)[0]["image"])
+            return jnp.sum(model(batch)["image"])
 
         grads = jax.jit(jax.grad(loss))(params)
 
-        scaled, _ = operator._vmap_apply(batch, {}, None, indices)
+        scaled = operator(batch)
         expected = jnp.sum(scaled["image"]) / 2.0  # the scale is 2.0
         tolerance = 8 * jnp.finfo(jnp.float32).eps * jnp.abs(expected)
         assert jnp.abs(grads["scale"][...] - expected) <= tolerance
@@ -559,11 +601,11 @@ class TestOperatorKeyContract:
 
     def test_a_record_keeps_its_draw_across_batch_position(self):
         """The same record index draws the same factor whatever else shares its batch."""
-        whole, _ = self._stochastic()._vmap_apply(
-            {"image": jnp.ones((8, 4))}, {}, None, jnp.arange(8)
+        whole = self._stochastic()(
+            TestOperatorKeys._identified({"image": jnp.ones((8, 4))}, jnp.arange(8))
         )
-        tail, _ = self._stochastic()._vmap_apply(
-            {"image": jnp.ones((3, 4))}, {}, None, jnp.arange(5, 8)
+        tail = self._stochastic()(
+            TestOperatorKeys._identified({"image": jnp.ones((3, 4))}, jnp.arange(5, 8))
         )
 
         assert jnp.allclose(whole["image"][5:], tail["image"])

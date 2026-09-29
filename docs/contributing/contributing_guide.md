@@ -517,8 +517,8 @@ When adding data transformation operators:
 
 ```python
 from flax import nnx
+from datarax import Element
 from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.typing import Element
 
 # Option 1: Use ElementOperator with a custom function
 def my_transform(element: Element, key=None) -> Element:

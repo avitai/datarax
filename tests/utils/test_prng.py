@@ -3,62 +3,109 @@
 import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
+import numpy as np
 from substrax.rng import rngs_from_seed
+from substrax.testing.compiles import expect_compiles
 
 from datarax.core.prng import DEFAULT_RNG_STREAMS, per_record_keys
 
 
+def _two_words(indices: list[int]) -> jax.Array:
+    """64-bit record indices as the ``(hi, lo)`` uint32 words a ``Batch`` holds."""
+    return jnp.asarray([[i >> 32, i & 0xFFFFFFFF] for i in indices], dtype=jnp.uint32)
+
+
+def _key_data(keys: jax.Array) -> np.ndarray:
+    return np.asarray(jax.random.key_data(keys))
+
+
+def _keys(base: jax.Array, indices: list[int], epoch: int = 0, draw: int = 0) -> np.ndarray:
+    n = len(indices)
+    return _key_data(
+        per_record_keys(
+            base,
+            _two_words(indices),
+            jnp.full((n,), epoch, jnp.int32),
+            jnp.full((n,), draw, jnp.int32),
+        )
+    )
+
+
 class TestPerRecordKeys:
-    """Per-record key derivation: randomness keyed on stable global index."""
+    """A record's key is a function of (base, epoch, draw, index) and of nothing else."""
 
-    def test_shape_and_one_key_per_record(self):
+    def test_the_key_folds_epoch_draw_and_both_index_words_in_that_order(self) -> None:
         base = jax.random.key(0)
-        keys = per_record_keys(base, jnp.arange(8))
-        assert keys.shape[0] == 8
+        index = 2**32 * 3 + 17
 
-    def test_same_index_same_key_regardless_of_position(self):
-        """A record's key depends only on its global index, not its batch slot."""
+        expected = jax.random.fold_in(
+            jax.random.fold_in(jax.random.fold_in(jax.random.fold_in(base, 5), 2), 3), 17
+        )
+
+        np.testing.assert_array_equal(_keys(base, [index], epoch=5, draw=2)[0], _key_data(expected))
+
+    def test_a_record_keeps_its_key_in_any_batch_position_or_size(self) -> None:
         base = jax.random.key(0)
-        # Global index 5 appears at different positions in two different "batches".
-        batch_a = per_record_keys(base, jnp.array([3, 4, 5, 6]))
-        batch_b = per_record_keys(base, jnp.array([5, 9, 10, 11]))
-        # index 5 -> position 2 in batch_a, position 0 in batch_b; keys must match.
-        assert jnp.array_equal(jax.random.key_data(batch_a[2]), jax.random.key_data(batch_b[0]))
 
-    def test_distinct_indices_give_distinct_keys(self):
+        first = _keys(base, [3, 4, 5, 6], epoch=1)
+        second = _keys(base, [5, 9], epoch=1)
+
+        np.testing.assert_array_equal(first[2], second[0])
+
+    def test_the_word_boundary_gives_distinct_keys(self) -> None:
+        """``2^32 - 1`` and ``2^32`` differ only across the word boundary; an int32 index wraps."""
+        keys = _keys(jax.random.key(0), [2**32 - 1, 2**32, 0, 1])
+
+        assert len({row.tobytes() for row in keys}) == 4
+
+    def test_each_epoch_and_each_draw_is_a_fresh_key(self) -> None:
         base = jax.random.key(0)
-        keys = per_record_keys(base, jnp.array([0, 1, 2]))
-        data = [tuple(jax.random.key_data(keys[i]).tolist()) for i in range(3)]
-        assert len(set(data)) == 3
 
-    def test_different_base_key_changes_keys(self):
-        keys0 = per_record_keys(jax.random.key(0), jnp.array([7]))
-        keys1 = per_record_keys(jax.random.key(1), jnp.array([7]))
-        assert not jnp.array_equal(jax.random.key_data(keys0[0]), jax.random.key_data(keys1[0]))
+        plain = _keys(base, [7])[0]
 
-    def test_the_epoch_folds_in_before_the_record(self):
-        """Each epoch derives its own key for a record: fold_in(fold_in(base, epoch), record)."""
+        assert not np.array_equal(plain, _keys(base, [7], epoch=1)[0])
+        assert not np.array_equal(plain, _keys(base, [7], draw=1)[0])
+        assert not np.array_equal(_keys(base, [7], epoch=1)[0], _keys(base, [7], draw=1)[0])
+
+    def test_two_draws_of_one_record_in_one_batch_differ(self) -> None:
+        """A record served twice in one batch draws twice: the draw ordinal separates the keys."""
+        keys = per_record_keys(
+            jax.random.key(0),
+            _two_words([9, 9]),
+            jnp.zeros(2, jnp.int32),
+            jnp.array([0, 1], jnp.int32),
+        )
+
+        assert not np.array_equal(_key_data(keys)[0], _key_data(keys)[1])
+
+    def test_keys_do_not_depend_on_how_many_processes_share_the_batch(self) -> None:
+        """Each process keys its own rows; together they equal one process keying the whole."""
+        base = jax.random.key(3)
+        indices = list(range(100, 108))
+
+        whole = _keys(base, indices, epoch=2)
+        halves = np.concatenate(
+            [_keys(base, indices[:4], epoch=2), _keys(base, indices[4:], epoch=2)]
+        )
+        quarters = np.concatenate(
+            [_keys(base, indices[i : i + 2], epoch=2) for i in range(0, 8, 2)]
+        )
+
+        np.testing.assert_array_equal(whole, halves)
+        np.testing.assert_array_equal(whole, quarters)
+
+    def test_a_different_base_key_changes_every_key(self) -> None:
+        assert not np.array_equal(_keys(jax.random.key(0), [7]), _keys(jax.random.key(1), [7]))
+
+    def test_keys_trace_once_for_any_values(self) -> None:
+        derive = jax.jit(per_record_keys)
         base = jax.random.key(0)
-        records = jnp.array([4, 9])
+        epochs, draws = jnp.zeros(4, jnp.int32), jnp.zeros(4, jnp.int32)
+        derive(base, _two_words([0, 1, 2, 3]), epochs, draws)
+        other = (_two_words([2**40, 5, 6, 7]), jnp.full(4, 3, jnp.int32), jnp.ones(4, jnp.int32))
 
-        epoch0 = per_record_keys(base, records, epoch=jnp.int32(0))
-        epoch1 = per_record_keys(base, records, epoch=jnp.int32(1))
-
-        expected = jax.random.fold_in(jax.random.fold_in(base, 1), 9)
-        assert not jnp.array_equal(jax.random.key_data(epoch0), jax.random.key_data(epoch1))
-        assert jnp.array_equal(jax.random.key_data(epoch1[1]), jax.random.key_data(expected))
-
-    def test_each_record_may_carry_its_own_epoch(self):
-        """A batch crossing an epoch boundary keys each record on the epoch it belongs to."""
-        base = jax.random.key(0)
-        records = jnp.array([8, 9, 0, 1])
-
-        mixed = per_record_keys(base, records, epoch=jnp.array([0, 0, 1, 1], dtype=jnp.int32))
-
-        tail = per_record_keys(base, records[:2], epoch=jnp.int32(0))
-        head = per_record_keys(base, records[2:], epoch=jnp.int32(1))
-        expected = jnp.concatenate([jax.random.key_data(tail), jax.random.key_data(head)])
-        assert jnp.array_equal(jax.random.key_data(mixed), expected)
+        with expect_compiles(0):
+            derive(base, *other)
 
 
 class TestDefaultStreams:

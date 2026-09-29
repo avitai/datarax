@@ -28,8 +28,9 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
+from datarax.core import batch_ops
 from datarax.core.config import ElementOperatorConfig
-from datarax.core.element_batch import Batch, Element
+from datarax.core.element_batch import Element
 from datarax.operators.element_operator import ElementOperator
 
 
@@ -49,7 +50,7 @@ def create_test_batch(data, states=None, metadata_list=None, batch_size=None):
     if metadata_list is None:
         metadata_list = [None] * batch_size
 
-    return Batch.from_parts(data, states, metadata_list, validate=False)
+    return batch_ops.from_arrays(data, states=states)
 
 
 # ========================================================================
@@ -178,7 +179,7 @@ class TestElementOperatorBasicTransformations:
 
         result = op(batch)
 
-        assert jnp.allclose(result.get_data()["image"], batch_data["image"])
+        assert jnp.allclose(result.data["image"], batch_data["image"])
 
     def test_data_multiplication(self):
         """Function can multiply data fields."""
@@ -198,7 +199,7 @@ class TestElementOperatorBasicTransformations:
         result = op(batch)
 
         expected = jnp.array([[2.0, 4.0, 6.0]])
-        assert jnp.allclose(result.get_data()["image"], expected)
+        assert jnp.allclose(result.data["image"], expected)
 
     def test_data_addition(self):
         """Function can add constants to data."""
@@ -218,7 +219,7 @@ class TestElementOperatorBasicTransformations:
         result = op(batch)
 
         expected = jnp.array([[11.0, 21.0]])
-        assert jnp.allclose(result.get_data()["value"], expected)
+        assert jnp.allclose(result.data["value"], expected)
 
     def test_multiple_fields(self):
         """Function can transform multiple fields."""
@@ -242,7 +243,7 @@ class TestElementOperatorBasicTransformations:
         batch = create_test_batch(batch_data)
 
         result = op(batch)
-        result_data = result.get_data()
+        result_data = result.data
 
         assert jnp.allclose(result_data["image"], jnp.array([[1.0, 0.5]]))
         assert jnp.allclose(result_data["mask"], jnp.array([[1.0, 2.0]]))
@@ -266,16 +267,16 @@ class TestElementOperatorBasicTransformations:
         result = op(batch)
 
         expected = jnp.ones((4, 3)) * 3.0
-        assert jnp.allclose(result.get_data()["value"], expected)
+        assert jnp.allclose(result.data["value"], expected)
 
 
 # ========================================================================
-# Test Category 4: State and Metadata Access
+# Test Category 4: State and Identity
 # ========================================================================
 
 
-class TestElementOperatorStateMetadata:
-    """Test state and metadata access and modification."""
+class TestElementOperatorStateAndIdentity:
+    """State access and modification; record identities pass through."""
 
     def test_state_passthrough(self):
         """State passes through when not modified."""
@@ -291,12 +292,12 @@ class TestElementOperatorStateMetadata:
 
         batch_data = {"value": jnp.array([[1.0]])}
         batch_states = {"counter": jnp.array([[100.0]])}
-        batch = Batch.from_parts(batch_data, batch_states, [None], validate=False)
+        batch = batch_ops.from_arrays(batch_data, states=batch_states)
 
         result = op(batch)
 
         # State should be unchanged
-        states = cast(dict[str, Any], result.get_states())
+        states = cast(dict[str, Any], result.states)
         assert jnp.allclose(states["counter"], jnp.array([[100.0]]))
 
     def test_state_modification(self):
@@ -313,16 +314,16 @@ class TestElementOperatorStateMetadata:
 
         batch_data = {"value": jnp.array([[1.0]])}
         batch_states = {"counter": jnp.array([[0.0]])}
-        batch = Batch.from_parts(batch_data, batch_states, [None], validate=False)
+        batch = batch_ops.from_arrays(batch_data, states=batch_states)
 
         result = op(batch)
 
         # State should be incremented
-        states = cast(dict[str, Any], result.get_states())
+        states = cast(dict[str, Any], result.states)
         assert jnp.allclose(states["counter"], jnp.array([[1.0]]))
 
-    def test_metadata_passthrough(self):
-        """Metadata passes through unchanged (not vmapped)."""
+    def test_identity_passthrough(self):
+        """Each record's identity passes through; the function sees data and state."""
 
         def identity(element, key):
             del key
@@ -333,13 +334,14 @@ class TestElementOperatorStateMetadata:
         op = ElementOperator(config, fn=identity, rngs=rngs)
 
         batch_data = {"value": jnp.array([[1.0]])}
-        metadata_list = [{"filename": "test.jpg", "index": 42}]
-        batch = Batch.from_parts(batch_data, {}, metadata_list, validate=False)
+        batch = batch_ops.from_arrays(batch_data).replace(
+            indices=jnp.array([[3, 42]], jnp.uint32), epochs=jnp.array([5], jnp.int32)
+        )
 
         result = op(batch)
 
-        # Metadata should be unchanged
-        assert result._metadata_list[0] == {"filename": "test.jpg", "index": 42}
+        assert jnp.array_equal(result.indices, batch.indices)
+        assert jnp.array_equal(result.epochs, batch.epochs)
 
     def test_coordinated_transformation(self):
         """Function can coordinate transformation across data/state."""
@@ -358,14 +360,14 @@ class TestElementOperatorStateMetadata:
 
         batch_data = {"image": jnp.array([[1.0, 2.0]])}
         batch_states = {"flipped": jnp.array([[0.0]])}
-        batch = Batch.from_parts(batch_data, batch_states, [None], validate=False)
+        batch = batch_ops.from_arrays(batch_data, states=batch_states)
 
         result = op(batch)
 
         # Data should be flipped
-        assert jnp.allclose(result.get_data()["image"], jnp.array([[-1.0, -2.0]]))
+        assert jnp.allclose(result.data["image"], jnp.array([[-1.0, -2.0]]))
         # State should track the flip
-        states = cast(dict[str, Any], result.get_states())
+        states = cast(dict[str, Any], result.states)
         assert jnp.allclose(states["flipped"], jnp.array([[1.0]]))
 
 
@@ -396,9 +398,9 @@ class TestElementOperatorStochastic:
         result = op(batch)
 
         # Output should differ from input (noise added)
-        assert not jnp.allclose(result.get_data()["value"], original)
+        assert not jnp.allclose(result.data["value"], original)
         # But should be close (noise is small)
-        assert jnp.allclose(result.get_data()["value"], original, atol=0.5)
+        assert jnp.allclose(result.data["value"], original, atol=0.5)
 
     def test_stochastic_reproducibility(self):
         """Same seed produces same output."""
@@ -424,7 +426,7 @@ class TestElementOperatorStochastic:
         result2 = op2(batch)
 
         # Should produce identical outputs
-        assert jnp.allclose(result1.get_data()["value"], result2.get_data()["value"])
+        assert jnp.allclose(result1.data["value"], result2.data["value"])
 
     def test_stochastic_different_seeds_differ(self):
         """Different seeds produce different outputs."""
@@ -450,7 +452,7 @@ class TestElementOperatorStochastic:
         result2 = op2(batch)
 
         # Should produce different outputs
-        assert not jnp.allclose(result1.get_data()["value"], result2.get_data()["value"])
+        assert not jnp.allclose(result1.data["value"], result2.data["value"])
 
     def test_deterministic_ignores_key(self):
         """Deterministic mode ignores key (always same output)."""
@@ -478,8 +480,8 @@ class TestElementOperatorStochastic:
 
         # Should produce identical deterministic outputs
         expected = jnp.array([[2.0, 4.0]])
-        assert jnp.allclose(result1.get_data()["value"], expected)
-        assert jnp.allclose(result2.get_data()["value"], expected)
+        assert jnp.allclose(result1.data["value"], expected)
+        assert jnp.allclose(result2.data["value"], expected)
 
 
 # ========================================================================
@@ -501,12 +503,12 @@ class TestElementOperatorEdgeCases:
         rngs = nnx.Rngs(0)
         op = ElementOperator(config, fn=identity, rngs=rngs)
 
-        batch = Batch([Element(data={}, state={}, metadata=None)])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={}, state={})]))
 
         result = op(batch)
 
-        assert result.get_data() == {}
-        assert result.get_states() == {}
+        assert result.data == {}
+        assert result.states == {}
 
     def test_nested_data_structure(self):
         """Handles nested data structures (preserving structure)."""
@@ -532,7 +534,7 @@ class TestElementOperatorEdgeCases:
         batch = create_test_batch(batch_data)
 
         result = op(batch)
-        result_data = result.get_data()
+        result_data = result.data
 
         assert jnp.allclose(result_data["features"]["image"], jnp.array([[2.0, 4.0]]))
         assert jnp.allclose(result_data["features"]["depth"], jnp.array([[4.0, 5.0]]))
@@ -554,7 +556,7 @@ class TestElementOperatorEdgeCases:
 
         result = op(batch)
 
-        assert jnp.allclose(result.get_data()["value"], jnp.array([[-5.0]]))
+        assert jnp.allclose(result.data["value"], jnp.array([[-5.0]]))
 
     def test_large_batch(self):
         """Works with large batch."""
@@ -573,7 +575,7 @@ class TestElementOperatorEdgeCases:
 
         result = op(batch)
 
-        assert jnp.allclose(result.get_data()["value"], jnp.ones((100, 50)) * 10.0)
+        assert jnp.allclose(result.data["value"], jnp.ones((100, 50)) * 10.0)
 
 
 # ========================================================================
@@ -607,7 +609,7 @@ class TestElementOperatorJAXCompatibility:
         result = jitted_apply(op, batch)
 
         expected = (jnp.ones((2, 3)) - 0.5) / 0.5
-        assert jnp.allclose(result.data.get_value()["value"], expected)
+        assert jnp.allclose(result.data["value"], expected)
 
     def test_jit_stochastic(self):
         """JIT compilation works in stochastic mode."""
@@ -632,7 +634,7 @@ class TestElementOperatorJAXCompatibility:
         result = apply_op(op, batch)
 
         # Should produce noise
-        assert not jnp.allclose(result.data.get_value()["value"], jnp.ones((2, 3)))
+        assert not jnp.allclose(result.data["value"], jnp.ones((2, 3)))
 
     def test_function_purity(self):
         """User function can be pure (no side effects)."""
@@ -651,7 +653,7 @@ class TestElementOperatorJAXCompatibility:
 
         result = op(batch)
 
-        assert jnp.allclose(result.get_data()["value"], jnp.array([[4.0, 9.0]]))
+        assert jnp.allclose(result.data["value"], jnp.array([[4.0, 9.0]]))
 
 
 # ========================================================================
@@ -717,7 +719,7 @@ class TestElementOperatorIntegration:
 
         # 255/255 - 0.5 = 0.5, 127.5/255 - 0.5 = 0.0
         expected = jnp.array([[0.5, 0.0]])
-        assert jnp.allclose(result.get_data()["value"], expected, atol=1e-5)
+        assert jnp.allclose(result.data["value"], expected, atol=1e-5)
 
     def test_coordinated_augmentation(self):
         """Real-world coordinated augmentation pattern."""
@@ -746,7 +748,7 @@ class TestElementOperatorIntegration:
         batch = create_test_batch(batch_data)
 
         result = op(batch)
-        result_data = result.get_data()
+        result_data = result.data
 
         # Both should be flipped
         assert jnp.allclose(result_data["image"], jnp.array([[[3.0, 2.0, 1.0]]]))
@@ -775,6 +777,6 @@ class TestElementOperatorIntegration:
         result = op(batch)
 
         # Should add noise
-        assert not jnp.allclose(result.get_data()["image"], jnp.ones((4, 8, 8, 3)))
+        assert not jnp.allclose(result.data["image"], jnp.ones((4, 8, 8, 3)))
         # But stay close
-        assert jnp.allclose(result.get_data()["image"], jnp.ones((4, 8, 8, 3)), atol=0.1)
+        assert jnp.allclose(result.data["image"], jnp.ones((4, 8, 8, 3)), atol=0.1)

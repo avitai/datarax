@@ -285,30 +285,6 @@ pipeline = (
 
 ## Data Source Features
 
-### Metadata Support
-
-Datarax data sources support metadata tracking through the `RecordMetadata` system:
-
-```python
-import jax.numpy as jnp
-from datarax.sources import MemorySource, MemorySourceConfig
-
-# Create sample images and labels
-images = [jnp.ones((28, 28)) for _ in range(10)]
-labels = [i % 10 for i in range(10)]
-
-# Create source with metadata tracking (opt-in)
-data = [{"image": image, "label": label} for image, label in zip(images, labels)]
-config = MemorySourceConfig(track_metadata=True)
-source = MemorySource(config, data)
-
-# Metadata tracking is opt-in via track_metadata=True; when enabled, each
-# element carries associated metadata (index, source info, etc.)
-for element in source:
-    # Element has associated metadata (index, source info, etc.)
-    pass
-```
-
 ### State Management
 
 All data sources inherit state management from `DataSourceModule`:

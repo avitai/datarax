@@ -3,7 +3,6 @@
 This module exposes common utility submodules for working with:
 
 - External library integration (`external`)
-- PyTree and Batch manipulation (`pytree_utils`)
 - Two-tier dataset cache layout (`cache`)
 - Multirate signal alignment (`multirate`)
 
@@ -13,7 +12,7 @@ the named ``nnx.Rngs`` streams live in :mod:`datarax.core.spec` and
 depend on).
 """
 
-from . import cache, external, multirate, pytree_utils
+from . import cache, external, multirate
 
 
-__all__ = ["cache", "external", "multirate", "pytree_utils"]
+__all__ = ["cache", "external", "multirate"]

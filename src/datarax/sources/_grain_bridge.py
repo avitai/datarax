@@ -6,10 +6,6 @@ from collections.abc import Sequence
 from operator import index as to_index
 from typing import Any, SupportsIndex
 
-import jax
-
-from datarax.core.element_batch import Batch, Element
-
 
 def validate_index_batch(indices: Sequence[int], length: int) -> list[int]:
     """Validate Grain-style non-negative batched random-access indices."""
@@ -23,53 +19,6 @@ def validate_index_batch(indices: Sequence[int], length: int) -> list[int]:
 def records_from_batched_mapping(batch: dict[str, Any], count: int) -> list[dict[str, Any]]:
     """Convert a vectorized mapping gather into ordered individual records."""
     return [{key: value[row] for key, value in batch.items()} for row in range(count)]
-
-
-def record_to_element(record: Any) -> Element:
-    """Convert one Grain record into a Datarax Element."""
-    if isinstance(record, Element):
-        return record
-    if isinstance(record, dict):
-        is_element_shape = (
-            "data" in record and "state" in record and isinstance(record.get("data"), dict)
-        )
-        if is_element_shape:
-            return Element(
-                data=record["data"],
-                state=record.get("state", {}),
-                metadata=record.get("metadata"),
-            )
-        return Element(data=record, state={}, metadata=None)
-    return Element(data=record, state={}, metadata=None)
-
-
-def records_to_batch(records: Any) -> Element | Batch:
-    """Convert Grain loader outputs into native Datarax Element or Batch values."""
-    if isinstance(records, Batch | Element):
-        return records
-
-    if isinstance(records, dict):
-        return Batch.from_parts(
-            data=records,
-            states={},
-            metadata_list=None,
-            batch_state={},
-            validate=False,
-        )
-
-    if isinstance(records, list | tuple):
-        return Batch([record_to_element(record) for record in records], validate=False)
-
-    leaves = jax.tree.leaves(records)
-    if leaves and hasattr(leaves[0], "shape") and leaves[0].shape:
-        return Batch.from_parts(
-            data=records,
-            states={},
-            metadata_list=None,
-            batch_state={},
-            validate=False,
-        )
-    return record_to_element(records)
 
 
 class _DataraxRandomAccessBase:

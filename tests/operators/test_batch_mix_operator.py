@@ -18,7 +18,8 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
-from datarax.core.element_batch import Batch, Element
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 from datarax.operators.batch_mix_operator import (
     BatchMixOperator,
     BatchMixOperatorConfig,
@@ -117,17 +118,19 @@ class TestBatchMixOperatorMixUp:
         op = BatchMixOperator(config, rngs=rngs)
 
         # Create batch with distinct values
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([0.0])}),
-                Element(data={"value": jnp.array([10.0])}),
-                Element(data={"value": jnp.array([20.0])}),
-                Element(data={"value": jnp.array([30.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([0.0])}),
+                    Element(data={"value": jnp.array([10.0])}),
+                    Element(data={"value": jnp.array([20.0])}),
+                    Element(data={"value": jnp.array([30.0])}),
+                ]
+            )
         )
 
         result = op(batch)
-        result_data = result.get_data()
+        result_data = result.data
 
         # Results should be in the range [0, 30] (linear combinations)
         assert jnp.all(result_data["value"] >= 0.0)
@@ -141,15 +144,17 @@ class TestBatchMixOperatorMixUp:
         config = BatchMixOperatorConfig(mode="mixup")
         op = BatchMixOperator(config, rngs=rngs)
 
-        batch = Batch(
-            [
-                Element(data={"arr": jnp.ones((3, 4))}),
-                Element(data={"arr": jnp.zeros((3, 4))}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"arr": jnp.ones((3, 4))}),
+                    Element(data={"arr": jnp.zeros((3, 4))}),
+                ]
+            )
         )
 
         result = op(batch)
-        assert result.get_data()["arr"].shape == (2, 3, 4)
+        assert result.data["arr"].shape == (2, 3, 4)
 
     def test_mixup_mixes_multiple_fields(self):
         """Verify mixup mixes all data fields."""
@@ -157,15 +162,17 @@ class TestBatchMixOperatorMixUp:
         config = BatchMixOperatorConfig(mode="mixup")
         op = BatchMixOperator(config, rngs=rngs)
 
-        batch = Batch(
-            [
-                Element(data={"x": jnp.array([0.0]), "y": jnp.array([100.0])}),
-                Element(data={"x": jnp.array([10.0]), "y": jnp.array([0.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"x": jnp.array([0.0]), "y": jnp.array([100.0])}),
+                    Element(data={"x": jnp.array([10.0]), "y": jnp.array([0.0])}),
+                ]
+            )
         )
 
         result = op(batch)
-        result_data = result.get_data()
+        result_data = result.data
 
         # Both fields should be mixed
         assert result_data["x"].shape == (2, 1)
@@ -194,10 +201,10 @@ class TestBatchMixOperatorMixUp:
         config = BatchMixOperatorConfig(mode="mixup")
         op = BatchMixOperator(config, rngs=rngs)
 
-        batch = Batch([Element(data={"value": jnp.array([5.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
 
         result = op(batch)
-        assert jnp.allclose(result.get_data()["value"], jnp.array([[5.0]]))
+        assert jnp.allclose(result.data["value"], jnp.array([[5.0]]))
 
 
 class TestBatchMixOperatorCutMix:
@@ -210,15 +217,17 @@ class TestBatchMixOperatorCutMix:
         op = BatchMixOperator(config, rngs=rngs)
 
         # Create batch with distinct images (white and black)
-        batch = Batch(
-            [
-                Element(data={"image": jnp.ones((32, 32, 3))}),
-                Element(data={"image": jnp.zeros((32, 32, 3))}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"image": jnp.ones((32, 32, 3))}),
+                    Element(data={"image": jnp.zeros((32, 32, 3))}),
+                ]
+            )
         )
 
         result = op(batch)
-        result_data = result.get_data()
+        result_data = result.data
 
         # Result should contain both 0s and 1s (mixed patches)
         assert result_data["image"].shape == (2, 32, 32, 3)
@@ -232,15 +241,17 @@ class TestBatchMixOperatorCutMix:
         config = BatchMixOperatorConfig(mode="cutmix")
         op = BatchMixOperator(config, rngs=rngs)
 
-        batch = Batch(
-            [
-                Element(data={"image": jnp.ones((64, 64, 3))}),
-                Element(data={"image": jnp.zeros((64, 64, 3))}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"image": jnp.ones((64, 64, 3))}),
+                    Element(data={"image": jnp.zeros((64, 64, 3))}),
+                ]
+            )
         )
 
         result = op(batch)
-        assert result.get_data()["image"].shape == (2, 64, 64, 3)
+        assert result.data["image"].shape == (2, 64, 64, 3)
 
     def test_cutmix_raw_path_preserves_batch_shape(self):
         """Verify DAG fused raw-batch path uses batch-level CutMix."""
@@ -265,15 +276,17 @@ class TestBatchMixOperatorCutMix:
         config = BatchMixOperatorConfig(mode="cutmix")
         op = BatchMixOperator(config, rngs=rngs)
 
-        batch = Batch(
-            [
-                Element(data={"image": jnp.ones((32, 32, 3)), "label": jnp.array([1.0])}),
-                Element(data={"image": jnp.zeros((32, 32, 3)), "label": jnp.array([0.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"image": jnp.ones((32, 32, 3)), "label": jnp.array([1.0])}),
+                    Element(data={"image": jnp.zeros((32, 32, 3)), "label": jnp.array([0.0])}),
+                ]
+            )
         )
 
         result = op(batch)
-        result_data = result.get_data()
+        result_data = result.data
 
         # Labels should be mixed (between 0 and 1)
         assert jnp.all(result_data["label"] >= 0.0)
@@ -286,10 +299,10 @@ class TestBatchMixOperatorCutMix:
         op = BatchMixOperator(config, rngs=rngs)
 
         original_image = jnp.ones((32, 32, 3)) * 0.5
-        batch = Batch([Element(data={"image": original_image})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"image": original_image})]))
 
         result = op(batch)
-        assert jnp.allclose(result.get_data()["image"], original_image[None, ...])
+        assert jnp.allclose(result.data["image"], original_image[None, ...])
 
     def test_cutmix_missing_image_field_unchanged(self):
         """Verify cutmix without image field returns unchanged."""
@@ -297,16 +310,18 @@ class TestBatchMixOperatorCutMix:
         config = BatchMixOperatorConfig(mode="cutmix", data_field="image")
         op = BatchMixOperator(config, rngs=rngs)
 
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                ]
+            )
         )
 
         result = op(batch)
         # Should return unchanged when image field is missing
-        assert jnp.allclose(result.get_data()["value"], jnp.array([[1.0], [2.0]]))
+        assert jnp.allclose(result.data["value"], jnp.array([[1.0], [2.0]]))
 
     def test_cutmix_invalid_image_shape_unchanged(self):
         """Verify cutmix with non-4D image returns unchanged."""
@@ -314,16 +329,18 @@ class TestBatchMixOperatorCutMix:
         config = BatchMixOperatorConfig(mode="cutmix")
         op = BatchMixOperator(config, rngs=rngs)
 
-        batch = Batch(
-            [
-                Element(data={"image": jnp.array([1.0, 2.0])}),
-                Element(data={"image": jnp.array([3.0, 4.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"image": jnp.array([1.0, 2.0])}),
+                    Element(data={"image": jnp.array([3.0, 4.0])}),
+                ]
+            )
         )
 
         result = op(batch)
         # Should return unchanged for invalid shape
-        assert result.get_data()["image"].shape == (2, 2)
+        assert result.data["image"].shape == (2, 2)
 
 
 class TestBatchMixOperatorStochastic:
@@ -338,16 +355,18 @@ class TestBatchMixOperatorStochastic:
             rngs = nnx.Rngs({"batch_mix": seed})
             op = BatchMixOperator(config, rngs=rngs)
 
-            batch = Batch(
-                [
-                    Element(data={"value": jnp.array([0.0])}),
-                    Element(data={"value": jnp.array([100.0])}),
-                ]
+            batch = batch_ops.from_stacked(
+                batch_ops.stack(
+                    [
+                        Element(data={"value": jnp.array([0.0])}),
+                        Element(data={"value": jnp.array([100.0])}),
+                    ]
+                )
             )
 
             result = op(batch)
             # Round to avoid floating point precision issues
-            val = round(float(result.get_data()["value"][0, 0]), 2)
+            val = round(float(result.data["value"][0, 0]), 2)
             results.add(val)
 
         # Should see variation in results
@@ -363,17 +382,19 @@ class TestBatchMixOperatorStochastic:
         op1 = BatchMixOperator(config, rngs=rngs1)
         op2 = BatchMixOperator(config, rngs=rngs2)
 
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([0.0])}),
-                Element(data={"value": jnp.array([100.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([0.0])}),
+                    Element(data={"value": jnp.array([100.0])}),
+                ]
+            )
         )
 
         result1 = op1(batch)
         result2 = op2(batch)
 
-        assert jnp.allclose(result1.get_data()["value"], result2.get_data()["value"])
+        assert jnp.allclose(result1.data["value"], result2.data["value"])
 
     def test_a_direct_call_mixes_the_same_batch_the_same_way(self):
         """Without record indices the batch is keyed on its first position, with no epoch."""
@@ -381,27 +402,33 @@ class TestBatchMixOperatorStochastic:
             BatchMixOperatorConfig(mode="mixup"), rngs=nnx.Rngs({"batch_mix": 0})
         )
 
-        direct = operator._mix_key(None)
+        values = {"value": jnp.arange(8.0).reshape(4, 2)}
+        rows = jnp.arange(4, dtype=jnp.uint32)
+        named = batch_ops.from_arrays(values).replace(
+            indices=jnp.stack([jnp.zeros_like(rows), rows], -1)
+        )
 
-        assert jnp.array_equal(
-            jax.random.key_data(direct), jax.random.key_data(operator._mix_key(None))
-        )
-        assert jnp.array_equal(
-            jax.random.key_data(direct),
-            jax.random.key_data(operator._mix_key(jnp.zeros((1,), jnp.uint32))),
-        )
+        direct = operator(batch_ops.from_arrays(values))
+
+        assert jnp.array_equal(direct["value"], operator(batch_ops.from_arrays(values))["value"])
+        assert jnp.array_equal(direct["value"], operator(named)["value"])
 
     def test_a_batch_crossing_epochs_is_keyed_on_its_first_record_s_epoch(self):
         """A boundary batch carries each record's epoch; the batch key takes the first's."""
         operator = BatchMixOperator(
             BatchMixOperatorConfig(mode="mixup"), rngs=nnx.Rngs({"batch_mix": 0})
         )
-        records = jnp.array([8, 9, 0, 1], jnp.uint32)
+        rows = jnp.array([8, 9, 0, 1], jnp.uint32)
+        batch = batch_ops.from_arrays({"value": jnp.arange(8.0).reshape(4, 2)}).replace(
+            indices=jnp.stack([jnp.zeros_like(rows), rows], -1)
+        )
 
-        crossing = operator._mix_key(records, jnp.array([3, 3, 4, 4], jnp.int32))
-        first = operator._mix_key(records, jnp.int32(3))
+        crossing = operator(batch.replace(epochs=jnp.array([3, 3, 4, 4], jnp.int32)))
+        first = operator(batch.replace(epochs=jnp.full(4, 3, jnp.int32)))
+        other = operator(batch.replace(epochs=jnp.full(4, 4, jnp.int32)))
 
-        assert jnp.array_equal(jax.random.key_data(crossing), jax.random.key_data(first))
+        assert jnp.array_equal(crossing["value"], first["value"])
+        assert not jnp.array_equal(crossing["value"], other["value"])
 
 
 class TestBatchMixOperatorJAX:
@@ -417,15 +444,17 @@ class TestBatchMixOperatorJAX:
         def apply_op(model, batch):
             return model(batch)
 
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([0.0])}),
-                Element(data={"value": jnp.array([10.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([0.0])}),
+                    Element(data={"value": jnp.array([10.0])}),
+                ]
+            )
         )
 
         result = apply_op(op, batch)
-        assert result.get_data()["value"].shape == (2, 1)
+        assert result.data["value"].shape == (2, 1)
 
     def test_jit_compilation_cutmix(self):
         """Verify cutmix works with JIT compilation."""
@@ -437,15 +466,17 @@ class TestBatchMixOperatorJAX:
         def apply_op(model, batch):
             return model(batch)
 
-        batch = Batch(
-            [
-                Element(data={"image": jnp.ones((32, 32, 3))}),
-                Element(data={"image": jnp.zeros((32, 32, 3))}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"image": jnp.ones((32, 32, 3))}),
+                    Element(data={"image": jnp.zeros((32, 32, 3))}),
+                ]
+            )
         )
 
         result = apply_op(op, batch)
-        assert result.get_data()["image"].shape == (2, 32, 32, 3)
+        assert result.data["image"].shape == (2, 32, 32, 3)
 
     def test_jit_preserves_randomness(self):
         """JIT should preserve random behavior across calls."""
@@ -455,11 +486,13 @@ class TestBatchMixOperatorJAX:
         def apply_op(model, batch):
             return model(batch)
 
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([0.0])}),
-                Element(data={"value": jnp.array([100.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([0.0])}),
+                    Element(data={"value": jnp.array([100.0])}),
+                ]
+            )
         )
 
         results = set()
@@ -467,7 +500,7 @@ class TestBatchMixOperatorJAX:
             rngs = nnx.Rngs({"batch_mix": seed})
             op = BatchMixOperator(config, rngs=rngs)
             result = apply_op(op, batch)
-            val = round(float(result.get_data()["value"][0, 0]), 2)
+            val = round(float(result.data["value"][0, 0]), 2)
             results.add(val)
 
         assert len(results) > 1, "JIT should preserve randomness"
@@ -482,14 +515,7 @@ class TestBatchMixOperatorDifferentiability:
         op = BatchMixOperator(config, rngs=nnx.Rngs({"batch_mix": 0}))
 
         def loss(values):
-            batch = Batch.from_parts(
-                data={"value": values},
-                states={},
-                metadata_list=[None] * values.shape[0],
-                validate=False,
-            )
-            mixed = op._apply_mixup(batch, jax.random.key(0))
-            return jnp.sum(mixed.get_data()["value"])
+            return jnp.sum(op(batch_ops.from_arrays({"value": values}))["value"])
 
         inputs = jnp.array([[1.0], [3.0]], dtype=jnp.float32)
         grad = jax.grad(loss)(inputs)
@@ -507,8 +533,7 @@ class TestBatchMixOperatorEdgeCases:
         config = BatchMixOperatorConfig(mode="mixup")
         op = BatchMixOperator(config, rngs=rngs)
 
-        # Create empty batch
-        batch = Batch([])
+        batch = batch_ops.from_arrays({"value": jnp.zeros((0, 1))})
 
         result = op(batch)
         assert result.batch_size == 0
@@ -519,16 +544,18 @@ class TestBatchMixOperatorEdgeCases:
         config = BatchMixOperatorConfig(mode="mixup", alpha=10.0)
         op = BatchMixOperator(config, rngs=rngs)
 
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([0.0])}),
-                Element(data={"value": jnp.array([100.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([0.0])}),
+                    Element(data={"value": jnp.array([100.0])}),
+                ]
+            )
         )
 
         result = op(batch)
         # With large alpha, lambda tends toward 0.5, so values near 50
-        result_values = result.get_data()["value"]
+        result_values = result.data["value"]
         # Just verify it runs without error and produces valid output
         assert jnp.all(result_values >= 0.0)
         assert jnp.all(result_values <= 100.0)
@@ -539,16 +566,18 @@ class TestBatchMixOperatorEdgeCases:
         config = BatchMixOperatorConfig(mode="mixup", alpha=0.1)
         op = BatchMixOperator(config, rngs=rngs)
 
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([0.0])}),
-                Element(data={"value": jnp.array([100.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([0.0])}),
+                    Element(data={"value": jnp.array([100.0])}),
+                ]
+            )
         )
 
         result = op(batch)
         # With small alpha, values tend toward extremes (0 or 100)
-        result_values = result.get_data()["value"]
+        result_values = result.data["value"]
         assert jnp.all(result_values >= 0.0)
         assert jnp.all(result_values <= 100.0)
 
@@ -567,15 +596,17 @@ class TestBatchMixOperatorEdgeCases:
         config = BatchMixOperatorConfig(mode="cutmix")
         op = BatchMixOperator(config, rngs=rngs)
 
-        batch = Batch(
-            [
-                Element(data={"image": jnp.ones((32, 32, 1))}),
-                Element(data={"image": jnp.zeros((32, 32, 1))}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"image": jnp.ones((32, 32, 1))}),
+                    Element(data={"image": jnp.zeros((32, 32, 1))}),
+                ]
+            )
         )
 
         result = op(batch)
-        assert result.get_data()["image"].shape == (2, 32, 32, 1)
+        assert result.data["image"].shape == (2, 32, 32, 1)
 
 
 class TestBatchMixOperatorPipelineRawPath:

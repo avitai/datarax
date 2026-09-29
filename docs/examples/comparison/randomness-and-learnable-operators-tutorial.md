@@ -29,7 +29,7 @@ state, and its computation is JAX code.
 
 | Grain | Datarax |
 |-------|---------|
-| `IndexSampler(seed=...)` gives each draw `np.random.Generator(np.random.Philox(key=seed + draw_index))` | A stochastic operator holds one base key; each record gets `fold_in(fold_in(base_key, epoch), record_index)` |
+| `IndexSampler(seed=...)` gives each draw `np.random.Generator(np.random.Philox(key=seed + draw_index))` | A stochastic operator holds one base key; each record's epoch, draw and index are folded into it |
 | The generator belongs to the draw: another shuffle order gives a record different noise | The key belongs to the record: the same noise under any shuffle order, batch size, worker split or resume point |
 | The draw index keeps counting across epochs, so each epoch draws afresh | The epoch is folded in, so each epoch draws afresh |
 | A transform runs as Python and NumPy code outside any JAX trace; a learnable step belongs in the model | Any `nnx.Param` in a stage is trained through `Pipeline.scan` with `nnx.value_and_grad` |
@@ -105,8 +105,8 @@ Grain: record 35 was drawn first; Philox(seed + 0) rebuilds it: True
 ```
 
 **Datarax: a key per record.** A stochastic operator holds one stable base key, and
-iteration gives each record `fold_in(fold_in(base_key, epoch), record_index)`
-(`datarax.core.prng.per_record_keys`). The key belongs to the record, so its noise is the
+iteration gives each record a key folding its epoch, its draw and its index into that base
+key (`datarax.core.prng.per_record_keys`). The key belongs to the record, so its noise is the
 same under another shuffle seed and under a different batch size. The epoch is folded in,
 so every epoch draws fresh noise, as Grain's draw index continuing across epochs does.
 
@@ -229,7 +229,7 @@ flowchart LR
 
     subgraph Datarax["Datarax Pipeline (nnx.Module)"]
         DS["MemorySource<br/>record_index"]
-        DK["per_record_keys<br/>fold_in(fold_in(base_key, epoch), index)"]
+        DK["per_record_keys<br/>epoch, draw, index into base_key"]
         DO["Stage<br/>ElementOperator / LearnableScale / WEIGHTED_PARALLEL"]
         DB["Batched output"]
         DS --> DK --> DO --> DB
@@ -243,7 +243,7 @@ flowchart LR
 
 | | Grain | Datarax |
 |---|---|---|
-| Randomness for a record | `Philox(seed + draw_index)` from the sampler: belongs to the draw | `fold_in(fold_in(base_key, epoch), record_index)`: belongs to the record |
+| Randomness for a record | `Philox(seed + draw_index)` from the sampler: belongs to the draw | the record's epoch, draw and index folded into the base key: belongs to the record |
 | Changes it | Shuffle order, worker split | The epoch |
 | Learnable transform | Not reachable: Python code outside JAX; put it in the model | Any `nnx.Param` in a stage, through `Pipeline.scan` |
 | Mixture of operators | A `Map` that applies fixed weights | `WEIGHTED_PARALLEL` with `learnable_weights=True` |

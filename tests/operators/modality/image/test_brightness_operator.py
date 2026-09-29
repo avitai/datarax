@@ -18,7 +18,8 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
-from datarax.core.element_batch import Batch, Element
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 from datarax.operators.modality.image.brightness_operator import (
     BrightnessOperator,
     BrightnessOperatorConfig,
@@ -152,13 +153,13 @@ class TestBrightnessOperatorTransformations:
         # Create batch of elements
         images = jnp.ones((4, 32, 32, 3)) * 0.5
         elements = [Element(data={"image": img}, state={}) for img in images]
-        batch = Batch(elements=elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result_batch = operator.apply_batch(batch)
 
         # All should be brightened by exactly 0.1
         # Access stacked data directly
-        result_images = result_batch.data.get_value()["image"]
+        result_images = result_batch.data["image"]
         expected_images = images + 0.1
         assert jnp.allclose(result_images, expected_images)
 
@@ -176,12 +177,12 @@ class TestBrightnessOperatorTransformations:
         # Create batch with values that will exceed [0,1] after adjustment
         images = jnp.ones((2, 16, 16, 3)) * 0.9
         elements = [Element(data={"image": img}, state={}) for img in images]
-        batch = Batch(elements=elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result_batch = operator.apply_batch(batch)
 
         # Values should be clipped to [0, 1]
-        result_images = result_batch.data.get_value()["image"]
+        result_images = result_batch.data["image"]
         assert jnp.all(result_images >= 0.0)
         assert jnp.all(result_images <= 1.0)
 
@@ -197,11 +198,11 @@ class TestBrightnessOperatorTransformations:
 
         images = jnp.ones((2, 16, 16, 3)) * 0.8
         elements = [Element(data={"image": img}, state={}) for img in images]
-        batch = Batch(elements=elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result_batch = operator.apply_batch(batch)
 
-        result_images = result_batch.data.get_value()["image"]
+        result_images = result_batch.data["image"]
         assert result_images.shape == (2, 16, 16, 3)
         assert jnp.allclose(result_images, 1.3)
 
@@ -327,12 +328,12 @@ class TestBrightnessOperatorStochasticMode:
         # Create batch with identical images
         images = jnp.ones((4, 16, 16, 3)) * 0.5
         elements = [Element(data={"image": img}, state={}) for img in images]
-        batch = Batch(elements=elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result_batch = operator.apply_batch(batch)
 
         # Results should differ between elements (high probability with range)
-        result_images = result_batch.data.get_value()["image"]
+        result_images = result_batch.data["image"]
         # At least one pair should be different
         found_difference = False
         for i in range(len(result_images) - 1):
@@ -381,7 +382,7 @@ class TestBrightnessOperatorJAXCompatibility:
 
         images = jnp.ones((2, 16, 16, 3)) * 0.5
         elements = [Element(data={"image": img}, state={}) for img in images]
-        batch = Batch(elements=elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result_batch = jit_apply_batch(operator, batch)
         assert result_batch.batch_size == 2
@@ -398,13 +399,13 @@ class TestBrightnessOperatorJAXCompatibility:
         # apply_batch uses vmap internally
         images = jnp.ones((4, 32, 32, 3)) * 0.5
         elements = [Element(data={"image": img}, state={}) for img in images]
-        batch = Batch(elements=elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result_batch = operator.apply_batch(batch)
 
         # All elements should be transformed correctly
         assert result_batch.batch_size == 4
-        result_images = result_batch.data.get_value()["image"]
+        result_images = result_batch.data["image"]
         assert result_images.shape == (4, 32, 32, 3)
 
 

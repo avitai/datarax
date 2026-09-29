@@ -9,9 +9,9 @@ import logging
 from collections.abc import Iterator
 from typing import Any
 
+from datarax.core.element_batch import Batch, Element
 from datarax.core.spec import batched_spec
 from datarax.core.structural import StructuralModule
-from datarax.typing import Batch, Element
 
 
 logger = logging.getLogger(__name__)

@@ -118,8 +118,8 @@ once.
 
 ### Part 2: A Record's Randomness Does Not Depend on the Process
 
-Datarax keys each record's randomness as `fold_in(fold_in(base_key, epoch), record_index)`
-with the record's global index, which a partitioned source keeps: a record has one index on
+Datarax keys each record's randomness on its epoch, its draw and its global index
+(`per_record_keys`), which a partitioned source keeps: a record has one index on
 every worker. So the noise a record receives is the same whether one process serves all 64
 records or two processes serve 32 each. Grain's generator belongs to the draw index within
 each shard, so the same record gets different noise under a different partition.

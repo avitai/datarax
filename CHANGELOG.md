@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Element` and `Batch` are frozen dataclasses registered as pytrees, every field an array: they
+  pass through `jax.jit`, `nnx.jit` in graph and tree mode, `nnx.jit_partial`, `vmap`, `scan`,
+  `checkpoint`, `cond` and `shard_map`, and batches differing only in their values share one
+  compiled program. A `Batch` holds `data`, `states`, `indices` (uint32 `(B, 2)`, each record's
+  64-bit index as two words), `epochs`, `draws` and `batch_state`; `batch["image"]`,
+  `batch.get(...)` and `in` read its data, and `dict`, `**`, iteration, `len` and `batch[0]` raise.
+  An `Element` holds `data`, `state`, `index`, `epoch` and `draw`; `Element(x)` names no index,
+  and records stacked without one are keyed by their rows. `Batch` is no longer an `nnx.Module`:
+  its getters (`get_data`, `get_element(s)`, `get_states`, `get_batch_state`,
+  `get/set_batch_metadata`, `update_batch_state`), `Batch.from_parts`, `slice`,
+  `split_for_devices` and `compute_stats` are removed.
+- Batch operations are pure functions in `datarax.core.batch_ops`: `from_arrays`, `from_stacked`,
+  `stack`, `element`, `slice_rows`, `take`, `split`, `concatenate`, `mask`, `compact`,
+  `record_count` and `shardings`. A padding row carries `PADDING_INDEX` (both words all ones) and
+  `state_keys.WEIGHT` 0; `mask` and `compact` keep the batch's shape.
+- A record's key is `per_record_keys(base_key, indices, epochs, draws)`: its epoch, its draw and
+  both words of its index folded into the operator's base key, so indices past `2^32` keep
+  distinct keys and a record served twice in one epoch draws twice. Every stochastic operator's
+  draws change; `BatchMixOperator` mixes with its batch's first record's key.
+- `DefaultBatcher` yields `Batch`es built with `batch_ops.from_stacked`, each record keeping its
+  identity; a record holding a string is refused.
+- Removed: `datarax.core.metadata` (`Metadata`, `RecordMetadata`, `MetadataManager` and their
+  helpers), `MemorySourceConfig.track_metadata` and `MemorySource.get_with_metadata` /
+  `get_batch_with_metadata` / `has_metadata`, `BatchOps`, `conditional_transform`,
+  `iterative_transform`, `while_transform`, `create_element`, `create_batch_from_arrays`,
+  `datarax.utils.pytree_utils`, `records_to_batch` and `record_to_element`, and from
+  `datarax.typing` the re-exports of `Element`, `Batch` and `Metadata` (import them from
+  `datarax`) and the aliases `StateDict`, `MetadataDict`, `ElementTransform`, `BatchTransform`,
+  `DataProcessor`, `StateProcessor`, `MetadataProcessor`, `ScanFn`, `CondFn`, `WhileBodyFn`.
 - Requires substrax 0.1.20. The version has one source, `pyproject.toml`; `datarax.__version__`
   reads the installed package's metadata.
 - CI runs only what a change needs. A merge whose tree its pull request already tested, with every

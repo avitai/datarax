@@ -18,7 +18,6 @@ The `ElementOperator` is Datarax's most commonly used operator for element-level
 | **Coordinated transformations** | Flip an image AND its segmentation mask together |
 | **Multi-field processing** | Normalize image based on mask statistics |
 | **State tracking** | Update element state based on transformation |
-| **Metadata-aware processing** | Apply different augmentations based on metadata |
 
 ## Quick Start
 

@@ -18,6 +18,7 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
+from datarax.core import batch_ops
 from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import Batch
 from datarax.core.operator import OperatorModule
@@ -93,7 +94,7 @@ def sample_batch():
     """Create a sample Batch with image-like data."""
     data = {"image": jnp.ones((4, 8, 8, 3), dtype=jnp.float32)}
     states = {}
-    return Batch.from_parts(data=data, states=states, validate=False)
+    return batch_ops.from_arrays(data, states=states)
 
 
 @pytest.fixture
@@ -101,7 +102,7 @@ def sample_batch_with_states():
     """Create a sample Batch with both data and states."""
     data = {"image": jnp.ones((4, 8, 8, 3), dtype=jnp.float32)}
     states = {"count": jnp.zeros((4,), dtype=jnp.int32)}
-    return Batch.from_parts(data=data, states=states, validate=False)
+    return batch_ops.from_arrays(data, states=states)
 
 
 # ========================================================================
@@ -116,12 +117,12 @@ class TestVmapApplyMatchesApplyBatch:
         """_vmap_apply output matches apply_batch for deterministic ops."""
         # Get apply_batch result (existing behavior)
         result_batch = deterministic_op.apply_batch(sample_batch)
-        expected_data = result_batch.data.get_value()
-        result_batch.states.get_value()
+        expected_data = result_batch.data
+        result_batch.states
 
         # Get _vmap_apply result (new method)
-        batch_data = sample_batch.data.get_value()
-        batch_states = sample_batch.states.get_value()
+        batch_data = sample_batch.data
+        batch_states = sample_batch.states
         actual_data, actual_states = deterministic_op._vmap_apply(batch_data, batch_states)
 
         # Verify numerical equivalence
@@ -133,10 +134,10 @@ class TestVmapApplyMatchesApplyBatch:
     def test_with_states(self, deterministic_op, sample_batch_with_states):
         """_vmap_apply handles batches with both data and states."""
         result_batch = deterministic_op.apply_batch(sample_batch_with_states)
-        expected_data = result_batch.data.get_value()
+        expected_data = result_batch.data
 
-        batch_data = sample_batch_with_states.data.get_value()
-        batch_states = sample_batch_with_states.states.get_value()
+        batch_data = sample_batch_with_states.data
+        batch_states = sample_batch_with_states.states
         actual_data, actual_states = deterministic_op._vmap_apply(batch_data, batch_states)
 
         for key in expected_data:
@@ -148,8 +149,8 @@ class TestVmapApplyMatchesApplyBatch:
         Note: We can't compare outputs directly because RNG state advances,
         but we verify both paths produce valid (non-NaN, non-zero) output.
         """
-        batch_data = sample_batch.data.get_value()
-        batch_states = sample_batch.states.get_value()
+        batch_data = sample_batch.data
+        batch_states = sample_batch.states
 
         actual_data, actual_states = stochastic_op._vmap_apply(batch_data, batch_states)
 
@@ -172,8 +173,8 @@ class TestVmapApplyRng:
 
     def test_deterministic_no_dummy_rng_side_effect(self, deterministic_op, sample_batch):
         """Deterministic ops should produce consistent results without RNG."""
-        batch_data = sample_batch.data.get_value()
-        batch_states = sample_batch.states.get_value()
+        batch_data = sample_batch.data
+        batch_states = sample_batch.states
 
         result1_data, _ = deterministic_op._vmap_apply(batch_data, batch_states)
         result2_data, _ = deterministic_op._vmap_apply(batch_data, batch_states)
@@ -190,16 +191,17 @@ class TestVmapApplyRng:
         produce the same output (invariant to call order / resume), while
         different indices produce different augmentation.
         """
-        batch_data = sample_batch.data.get_value()
-        batch_states = sample_batch.states.get_value()
+        batch_data = sample_batch.data
+        batch_states = sample_batch.states
         batch_size = jax.tree.leaves(batch_data)[0].shape[0]
 
-        indices_a = jnp.arange(batch_size)
-        indices_b = jnp.arange(batch_size) + 1000  # different global records
+        rows = jnp.arange(batch_size, dtype=jnp.uint32)
+        indices_a = jnp.stack([jnp.zeros_like(rows), rows], -1)
+        indices_b = indices_a.at[:, 1].add(1000)  # different global records
 
-        result1, _ = stochastic_op._vmap_apply(batch_data, batch_states, None, indices_a)
-        result2, _ = stochastic_op._vmap_apply(batch_data, batch_states, None, indices_a)
-        result3, _ = stochastic_op._vmap_apply(batch_data, batch_states, None, indices_b)
+        result1, _ = stochastic_op._vmap_apply(batch_data, batch_states, indices=indices_a)
+        result2, _ = stochastic_op._vmap_apply(batch_data, batch_states, indices=indices_a)
+        result3, _ = stochastic_op._vmap_apply(batch_data, batch_states, indices=indices_b)
 
         # Same global indices -> identical output (per-record determinism).
         assert jnp.allclose(result1["image"], result2["image"]), (
@@ -221,8 +223,8 @@ class TestApplyOnRaw:
 
     def test_returns_tuple_of_dicts(self, deterministic_op, sample_batch):
         """_apply_on_raw returns (data_dict, states_dict) not Batch."""
-        batch_data = sample_batch.data.get_value()
-        batch_states = sample_batch.states.get_value()
+        batch_data = sample_batch.data
+        batch_states = sample_batch.states
 
         result = deterministic_op._apply_on_raw(batch_data, batch_states)
 
@@ -238,11 +240,11 @@ class TestApplyOnRaw:
         """_apply_on_raw produces same values as apply_batch."""
         # apply_batch result
         result_batch = deterministic_op.apply_batch(sample_batch)
-        expected_data = result_batch.data.get_value()
+        expected_data = result_batch.data
 
         # _apply_on_raw result
-        batch_data = sample_batch.data.get_value()
-        batch_states = sample_batch.states.get_value()
+        batch_data = sample_batch.data
+        batch_states = sample_batch.states
         actual_data, actual_states = deterministic_op._apply_on_raw(batch_data, batch_states)
 
         for key in expected_data:
@@ -250,8 +252,8 @@ class TestApplyOnRaw:
 
     def test_chainable_raw_dicts(self, deterministic_op, sample_batch):
         """_apply_on_raw output can be fed into another _apply_on_raw call."""
-        batch_data = sample_batch.data.get_value()
-        batch_states = sample_batch.states.get_value()
+        batch_data = sample_batch.data
+        batch_states = sample_batch.states
 
         # Chain two calls
         data1, states1 = deterministic_op._apply_on_raw(batch_data, batch_states)
@@ -273,8 +275,8 @@ class TestApplyOnRaw:
 
     def test_stochastic_on_raw(self, stochastic_op, sample_batch):
         """_apply_on_raw works with stochastic operators."""
-        batch_data = sample_batch.data.get_value()
-        batch_states = sample_batch.states.get_value()
+        batch_data = sample_batch.data
+        batch_states = sample_batch.states
 
         result_data, result_states = stochastic_op._apply_on_raw(batch_data, batch_states)
 
@@ -301,19 +303,20 @@ class TestApplyBatchPreserved:
         """apply_batch produces correct values after refactor."""
         result = deterministic_op.apply_batch(sample_batch)
         expected = jnp.ones((4, 8, 8, 3)) * 2.0
-        assert jnp.allclose(result.data.get_value()["image"], expected)
+        assert jnp.allclose(result.data["image"], expected)
 
     def test_apply_batch_empty_batch(self, deterministic_op):
         """apply_batch handles empty batch."""
-        batch = Batch([], validate=False)
-        # Empty batch passthrough (existing behavior)
+        batch = batch_ops.from_arrays({"image": jnp.zeros((0, 4, 4, 3), jnp.float32)})
+        # A batch of no rows has nothing to apply: it passes through.
         result = deterministic_op.apply_batch(batch)
-        assert result is batch  # Should return same object
+        assert result is batch
 
-    def test_apply_batch_preserves_metadata(self, deterministic_op):
-        """apply_batch preserves metadata after refactor."""
+    def test_apply_batch_keeps_identities(self, deterministic_op):
+        """apply_batch changes data and states only; each record keeps its identity."""
         data = {"image": jnp.ones((2, 4, 4, 3), dtype=jnp.float32)}
-        metadata_list = [{"source": "a"}, {"source": "b"}]
-        batch = Batch.from_parts(data=data, states={}, metadata_list=metadata_list, validate=False)
+        batch = batch_ops.from_arrays(data).replace(
+            indices=jnp.array([[0, 9], [1, 3]], jnp.uint32), draws=jnp.array([0, 2], jnp.int32)
+        )
         result = deterministic_op.apply_batch(batch)
-        assert result._metadata_list.get_value() == metadata_list
+        assert result.indices is batch.indices and result.draws is batch.draws

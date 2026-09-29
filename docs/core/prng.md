@@ -17,9 +17,11 @@ rngs = rngs_from_seed(42, DEFAULT_RNG_STREAMS)
 key = rngs.augment()  # a raw key for an external library
 ```
 
-A stochastic operator draws one key per record with `per_record_keys`, so a
-record's randomness depends only on the operator's base key, the epoch and the
-record's stable index, never on batch size, batch position or shuffle order.
+A stochastic operator draws one key per record with `per_record_keys`, which
+folds the record's epoch, its draw within the epoch and its 64-bit index (two
+uint32 words) into the operator's base key. A record's randomness depends only
+on those, never on batch size, batch position, shuffle order or the number of
+processes; indices past `2^32` keep distinct keys.
 
 ## See Also
 

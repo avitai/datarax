@@ -15,7 +15,8 @@ import numpy as np
 import pytest
 from flax import nnx
 
-from datarax.core.element_batch import Batch, Element
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 from datarax.operators.modality.image import (
     BrightnessOperator,
     BrightnessOperatorConfig,
@@ -211,9 +212,11 @@ def test_a_stochastic_batch_changes_every_record(
         ),
         rngs=nnx.Rngs(augment=0),
     )
-    batch = Batch([Element(data={"image": image}) for image in IMAGES])
+    batch = batch_ops.from_stacked(
+        batch_ops.stack([Element(data={"image": image}) for image in IMAGES])
+    )
 
-    out = np.asarray(operator.apply_batch(batch).get_data()["image"])
+    out = np.asarray(operator.apply_batch(batch).data["image"])
 
     assert out.shape == IMAGES.shape
     assert all(not np.allclose(got, given) for got, given in zip(out, np.asarray(IMAGES)))

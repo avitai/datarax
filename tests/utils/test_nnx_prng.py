@@ -10,7 +10,7 @@ import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
 
-from datarax.typing import Element
+from datarax.core.element_batch import Element
 
 
 def test_with_jax_key_wrapper():

@@ -104,10 +104,9 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax import Pipeline
+from datarax import Element, Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.sources import MemorySource, MemorySourceConfig
-from datarax.typing import Element
 
 
 def normalize(element: Element, key: jax.Array | None = None) -> Element:

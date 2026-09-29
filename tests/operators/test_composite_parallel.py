@@ -16,7 +16,8 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax.core.element_batch import Batch, Element
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 
 # GREEN phase - imports enabled
 from datarax.operators.composite_operator import (
@@ -53,11 +54,13 @@ class TestParallelMergeStrategies:
         )
 
         # Create batch
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                ]
+            )
         )
 
         # Apply composite
@@ -66,7 +69,7 @@ class TestParallelMergeStrategies:
         # Verify: parallel concat merges outputs within each element
         # Element 0: concat([2], [3]) = [2, 3]
         # Element 1: concat([4], [6]) = [4, 6]
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[2.0, 3.0], [4.0, 6.0]])  # Shape (2, 2)
         assert jnp.allclose(result_data["value"], expected)
 
@@ -93,11 +96,13 @@ class TestParallelMergeStrategies:
         )
 
         # Create batch
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                ]
+            )
         )
 
         # Apply composite
@@ -106,7 +111,7 @@ class TestParallelMergeStrategies:
         # Verify: parallel stack merges outputs within each element
         # Element 0: stack([2], [3]) along axis 0 = [[2], [3]]
         # Element 1: stack([4], [6]) along axis 0 = [[4], [6]]
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[[2.0], [3.0]], [[4.0], [6.0]]])  # Shape (2, 2, 1)
         assert jnp.allclose(result_data["value"], expected)
 
@@ -132,18 +137,20 @@ class TestParallelMergeStrategies:
         )
 
         # Create batch
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                ]
+            )
         )
 
         # Apply composite
         result_batch = composite(batch)
 
         # Verify: [2] + [3] = [5], [4] + [6] = [10]
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[5.0], [10.0]])
         assert jnp.allclose(result_data["value"], expected)
 
@@ -169,18 +176,20 @@ class TestParallelMergeStrategies:
         )
 
         # Create batch
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                ]
+            )
         )
 
         # Apply composite
         result_batch = composite(batch)
 
         # Verify: ([2] + [4]) / 2 = [3], ([4] + [8]) / 2 = [6]
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[3.0], [6.0]])
         assert jnp.allclose(result_data["value"], expected)
 
@@ -206,14 +215,14 @@ class TestParallelMergeStrategies:
         )
 
         # Create batch
-        batch = Batch([Element(data={"value": jnp.array([1.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([1.0])})]))
 
         # Apply composite
         result_batch = composite(batch)
 
         # Verify: dict merge preserves top-level keys but nests operator outputs
         # Structure: {"value": {"operator_0": array, "operator_1": array}}
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         assert "value" in result_data
         assert isinstance(result_data["value"], dict)
         assert "operator_0" in result_data["value"]
@@ -258,13 +267,15 @@ class TestParallelMergeStrategies:
         )
 
         # Create batch
-        batch = Batch([Element(data={"value": jnp.array([10.0])})])
+        batch = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([10.0])})])
+        )
 
         # Apply composite
         result_batch = composite(batch)
 
         # Verify: 0.7*20 + 0.3*30 = 14 + 9 = 23
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[23.0]])
         assert jnp.allclose(result_data["value"], expected)
 
@@ -294,15 +305,15 @@ class TestParallelExecution:
         )
 
         # Create batch
-        batch = Batch([Element(data={"value": jnp.array([3.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([3.0])})]))
 
         # Apply twice - should give same result
         result_batch1 = composite(batch)
         result_batch2 = composite(batch)
 
         # Verify deterministic: same input -> same output
-        result1 = result_batch1.get_data()
-        result2 = result_batch2.get_data()
+        result1 = result_batch1.data
+        result2 = result_batch2.data
         assert jnp.allclose(result1["value"], result2["value"])
         # (3*2) = 6, (3+5) = 8, sum = 14
         expected = jnp.array([[14.0]])
@@ -333,9 +344,11 @@ class TestParallelExecution:
         composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
 
         # Test with batch
-        batch = Batch([Element(data={"value": jnp.array([1.0, 2.0])})])
+        batch = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([1.0, 2.0])})])
+        )
         result = composite(batch)
-        result_data = result.get_data()
+        result_data = result.data
 
         # Output should differ from simple sum due to stochastic transformations
         # But should be in reasonable range
@@ -373,18 +386,20 @@ class TestParallelJIT:
             return model(batch)
 
         # Create batch
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                ]
+            )
         )
 
         # Apply JIT-compiled version
         result_batch = jit_apply(composite, batch)
 
         # Verify: [2] + [3] = [5], [4] + [6] = [10]
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[5.0], [10.0]])
         assert jnp.allclose(result_data["value"], expected)
 
@@ -410,19 +425,21 @@ class TestParallelJIT:
         )
 
         # Create batch (Batch handles vmap internally via apply_batch)
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-                Element(data={"value": jnp.array([3.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                    Element(data={"value": jnp.array([3.0])}),
+                ]
+            )
         )
 
         # Apply composite (vmap is handled internally)
         result_batch = composite(batch)
 
         # Verify: sum([x*2, x*3]) = 5x
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[5.0], [10.0], [15.0]])
         assert jnp.allclose(result_data["value"], expected)
 
@@ -451,7 +468,7 @@ class TestParallelAdvanced:
             operators=[op1, op2],
         )
 
-        batch = Batch([Element(data={"value": jnp.array([1.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([1.0])})]))
 
         composite(batch)
 
@@ -478,12 +495,14 @@ class TestParallelAdvanced:
         )
 
         # Create batch
-        batch = Batch([Element(data={"value": jnp.array([10.0])})])
+        batch = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([10.0])})])
+        )
 
         # Apply composite
         result_batch = composite(batch)
 
         # Verify: 0.7*(10*2) + 0.3*(10*3) = 0.7*20 + 0.3*30 = 14 + 9 = 23
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[23.0]])
         assert jnp.allclose(result_data["value"], expected)

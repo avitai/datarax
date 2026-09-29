@@ -15,11 +15,18 @@ from flax import nnx
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
 
+class _SharingSource(MemorySource):
+    """A source holding its ``Rngs`` under a second name: one RNG count on two graph paths."""
+
+    def __init__(self) -> None:
+        config = MemorySourceConfig(shuffle=True)
+        data = {"x": np.arange(16, dtype=np.float32)}
+        super().__init__(config, data=data, rngs=nnx.Rngs(0, shuffle=1))
+        self.shared_rngs = self.rngs
+
+
 def _sharing_source() -> MemorySource:
-    """A source whose metadata manager takes the source's ``Rngs``: one shared RNG count."""
-    config = MemorySourceConfig(shuffle=True, track_metadata=True)
-    data = {"x": np.arange(16, dtype=np.float32)}
-    return MemorySource(config, data=data, rngs=nnx.Rngs(0, shuffle=1))
+    return _SharingSource()
 
 
 def test_the_fixture_shares_variables() -> None:
