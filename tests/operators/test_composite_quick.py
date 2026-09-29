@@ -4,7 +4,6 @@ This test validates that the core implementation works before we implement
 all 94 detailed tests. Tests config, sequential, parallel, and ensemble.
 """
 
-import jax
 import jax.numpy as jnp
 import pytest
 from flax import nnx
@@ -235,19 +234,3 @@ class TestCompositeQuickIntegration:
                 ),
                 operators=[op1, op2],  # List without router
             )
-
-    def test_config_auto_stochastic_detection(self):
-        """A composite is stochastic exactly when one of its operators is."""
-        deterministic = MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, _key: x)
-        stochastic = MapOperator(
-            MapOperatorConfig(stochastic=True, stream_name="augment"),
-            fn=lambda x, key: x + jax.random.normal(key, x.shape),
-            rngs=nnx.Rngs(augment=0),
-        )
-        config = CompositeOperatorConfig(strategy=CompositionStrategy.SEQUENTIAL)
-
-        assert not CompositeOperatorModule(config, operators=[deterministic]).config.stochastic
-        mixed = CompositeOperatorModule(
-            config, operators=[deterministic, stochastic], rngs=nnx.Rngs(composite=0)
-        )
-        assert mixed.config.stochastic

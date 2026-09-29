@@ -210,7 +210,6 @@ augmentation_config = CompositeOperatorConfig(
 augmentation_pipeline = CompositeOperatorModule(
     augmentation_config,
     operators=[flipper, noise_adder],
-    rngs=nnx.Rngs(augment=999),
 )
 ```
 

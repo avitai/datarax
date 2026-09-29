@@ -181,7 +181,6 @@ sequential_composite = CompositeOperatorModule(
         strategy=CompositionStrategy.SEQUENTIAL,
     ),
     operators=[bright_op, contrast_op],
-    rngs=nnx.Rngs(0),
 )
 
 # Test it
@@ -218,7 +217,6 @@ conditional_seq = CompositeOperatorModule(
         conditions=[is_dark, always_true],  # Brightness only if dark
     ),
     operators=[bright_op2, contrast_op2],
-    rngs=nnx.Rngs(0),
 )
 
 print()
@@ -258,7 +256,6 @@ parallel_mean = CompositeOperatorModule(
         merge_strategy="mean",  # Average the three versions
     ),
     operators=[op_bright, op_contrast, op_noise],
-    rngs=nnx.Rngs(0),
 )
 
 source2 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(20))
@@ -278,7 +275,6 @@ parallel_dict = CompositeOperatorModule(
         merge_strategy="dict",  # Keep outputs separate
     ),
     operators=[op_bright, op_contrast],
-    rngs=nnx.Rngs(0),
 )
 
 source3 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(30))
@@ -311,7 +307,6 @@ weighted_parallel = CompositeOperatorModule(
         learnable_weights=False,  # Set True for gradient-based learning
     ),
     operators=[op1, op2, op3],
-    rngs=nnx.Rngs(0),
 )
 
 source4 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(40))
@@ -353,7 +348,6 @@ ensemble_mean = CompositeOperatorModule(
         strategy=CompositionStrategy.ENSEMBLE_MEAN,
     ),
     operators=ensemble_ops,
-    rngs=nnx.Rngs(0),
 )
 
 source5 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(50))
@@ -375,7 +369,6 @@ ensemble_max = CompositeOperatorModule(
         make_brightness_op(0.0, seed=60),  # Original
         make_brightness_op(0.2, seed=61),  # Brighter
     ],
-    rngs=nnx.Rngs(0),
 )
 
 source6 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(60))
@@ -434,7 +427,6 @@ branching = CompositeOperatorModule(
         default_branch=0,  # Fallback if router fails
     ),
     operators=branch_ops,
-    rngs=nnx.Rngs(0),
 )
 
 source7 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(70))
@@ -477,7 +469,6 @@ cond_parallel = CompositeOperatorModule(
         make_noise_op(0.02, seed=80),  # Smoothing noise (low std)
         make_brightness_op(0.15, seed=81),  # Brightening
     ],
-    rngs=nnx.Rngs(0),
 )
 
 print("CONDITIONAL_PARALLEL Strategy:")
@@ -524,7 +515,6 @@ aug_ensemble = CompositeOperatorModule(
         make_brightness_op(0.1, seed=90),
         make_contrast_op(1.1, seed=91),
     ],
-    rngs=nnx.Rngs(0),
 )
 
 # Full pipeline: normalize → augment
@@ -533,7 +523,6 @@ full_pipeline_op = CompositeOperatorModule(
         strategy=CompositionStrategy.SEQUENTIAL,
     ),
     operators=[normalize_op(), aug_ensemble],
-    rngs=nnx.Rngs(0),
 )
 
 source8 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(90))
@@ -613,7 +602,6 @@ def main():
             make_brightness_op(0.1, seed=1),
             make_contrast_op(1.2, seed=2),
         ],
-        rngs=nnx.Rngs(0),
     )
     pipeline = example_pipeline(source, batch_size=16, stages=[seq])
     batch = next(iter(pipeline))
@@ -631,7 +619,6 @@ def main():
             make_brightness_op(0.1, seed=3),
             make_brightness_op(-0.1, seed=4),
         ],
-        rngs=nnx.Rngs(0),
     )
     pipeline = example_pipeline(source2, batch_size=16, stages=[ens])
     batch = next(iter(pipeline))
@@ -651,7 +638,6 @@ def main():
             make_brightness_op(0.2, seed=5),
             make_contrast_op(1.3, seed=6),
         ],
-        rngs=nnx.Rngs(0),
     )
     pipeline = example_pipeline(source3, batch_size=16, stages=[branch])
     batch = next(iter(pipeline))

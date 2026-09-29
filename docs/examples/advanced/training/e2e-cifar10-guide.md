@@ -129,10 +129,10 @@ def create_train_pipeline(seed=42):
         rngs=nnx.Rngs(seed),
     )
 
-    # Preprocessing (normalize + one-hot labels for MixUp)
+    # Preprocessing (normalize; labels stay integer class indices)
     prep = ElementOperator(
         ElementOperatorConfig(stochastic=False),
-        fn=preprocess_train,
+        fn=preprocess,
         rngs=nnx.Rngs(0),
     )
 
@@ -176,7 +176,6 @@ def create_train_pipeline(seed=42):
                 mode="mixup",
                 alpha=MIXUP_ALPHA,
                 data_field="image",
-                label_field="label",
                 stochastic=True,
                 stream_name="mixup",
             ),
@@ -188,9 +187,10 @@ def create_train_pipeline(seed=42):
 ```
 
 The training source uses a `train[:{TRAIN_SAMPLES}]` split so the QUICK_MODE
-configuration stays within the test timeout. `preprocess_train` normalizes with
-the CIFAR-10 statistics and produces one-hot labels (plus a `label_idx` field)
-so MixUp can blend soft labels.
+configuration stays within the test timeout. `preprocess` normalizes with the
+CIFAR-10 statistics and leaves the labels as integer class indices. MixUp mixes the
+images only; it writes each record's partner to `states[MIX_PARTNER]` and the mixing
+ratio to `batch_state[MIX_LAMBDA]`, which the loss reads.
 
 ## Part 2: Model Architecture
 
@@ -285,23 +285,31 @@ optimizer = nnx.Optimizer(
 )
 
 
+def training_loss(logits, batch):
+    """Cross-entropy of the batch; for mixed records, lam CE(y) + (1 - lam) CE(y[partner])."""
+    labels = batch["label"]
+    loss = optax.softmax_cross_entropy_with_integer_labels(logits, labels)
+    if MIX_LAMBDA not in batch.batch_state:
+        return loss.mean()
+    lam = batch.batch_state[MIX_LAMBDA]
+    partner_labels = labels[batch.states[MIX_PARTNER]]
+    partner_loss = optax.softmax_cross_entropy_with_integer_labels(logits, partner_labels)
+    return (lam * loss + (1 - lam) * partner_loss).mean()
+
+
 @nnx.jit
-def train_step(model, optimizer, images, labels):
-    """Single training step with soft (MixUp) labels."""
+def train_step(model, optimizer, batch):
+    """Single training step on a batch, mixed or not."""
 
     def loss_fn(model):
-        logits = model(images)
-        # Soft cross-entropy for MixUp
-        return -jnp.sum(labels * jax.nn.log_softmax(logits), axis=-1).mean()
+        return training_loss(model(batch["image"]), batch)
 
     loss, grads = nnx.value_and_grad(loss_fn)(model)
     optimizer.update(model, grads)
 
-    # Accuracy from argmax of soft labels
-    logits = model(images)
-    predictions = jnp.argmax(logits, axis=-1)
-    targets = jnp.argmax(labels, axis=-1)
-    accuracy = (predictions == targets).mean()
+    # Accuracy against each record's own label
+    predictions = jnp.argmax(model(batch["image"]), axis=-1)
+    accuracy = (predictions == batch["label"]).mean()
 
     return loss, accuracy
 
@@ -312,7 +320,7 @@ for epoch in range(NUM_EPOCHS):
     epoch_accs = []
 
     for batch in train_pipeline:
-        loss, acc = train_step(model, optimizer, batch["image"], batch["label"])
+        loss, acc = train_step(model, optimizer, batch)
         epoch_losses.append(float(loss))
         epoch_accs.append(float(acc))
 
@@ -320,9 +328,10 @@ for epoch in range(NUM_EPOCHS):
           f"loss={np.mean(epoch_losses):.4f}, acc={np.mean(epoch_accs):.2%}")
 ```
 
-`train_step` returns both the loss and the batch accuracy. Because MixUp emits
-soft labels, the loss uses `log_softmax` against the blended targets rather than
-`softmax_cross_entropy_with_integer_labels`. A fresh pipeline is created each
+`train_step` returns both the loss and the batch accuracy. MixUp leaves the labels
+as integers, so the loss is the published MixUp loss (`mixup_criterion` in
+facebookresearch/mixup-cifar10 `train.py`): `λ·CE(y) + (1 − λ)·CE(y[partner])`, read
+from the batch's partner and λ. A fresh pipeline is created each
 epoch (seeded by the epoch index) so the shuffle order differs per epoch.
 
 ## Part 4: Evaluation
@@ -355,8 +364,7 @@ for batch in val_pipeline:
 print(f"Val accuracy: {np.mean(val_accs_epoch):.2%}")
 ```
 
-Validation labels come straight from `batch["label"]` (integers, since the
-validation pipeline skips the one-hot preprocessing used for MixUp).
+Validation labels come straight from `batch["label"]`: integers, as in training.
 
 ## Part 5: Visualization
 

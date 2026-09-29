@@ -42,9 +42,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-import jax
 from flax import nnx
-from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
 from datarax.core.operator import OperatorModule
@@ -205,18 +203,10 @@ class CrossModalOperator(OperatorModule):
                 # Add learnable fusion parameters
                 self.fusion_weights = nnx.Param(jnp.ones(len(config.input_fields)))
 
-            def apply(self, data, state, metadata, key=None, stats=None):
-                # Extract inputs
-                inputs = self._extract_inputs(data)
-
-                # Fuse with learnable weights
+            def apply(self, element, key=None, stats=None):
+                inputs = self._extract_inputs(element.data)
                 fused = sum(w * emb for w, emb in zip(self.fusion_weights[...], inputs))
-
-                # Store outputs
-                outputs = [fused]
-                result = self._store_outputs(data, outputs)
-
-                return result, state, metadata
+                return element.replace(data=self._store_outputs(element.data, [fused]))
         ```
 
     Subclasses provide specific cross-modal operations:
@@ -244,15 +234,15 @@ class CrossModalOperator(OperatorModule):
                 self.num_heads = num_heads
         ```
 
-        Batch-level contrastive operator:
+        Whole-batch operator (each record compared with every other record), which overrides
+        ``apply_batch`` instead of implementing ``apply``:
 
         ```python
-        class BatchContrastiveOperator(CrossModalOperator):
-            def apply_batch(self, batch, stats=None):
-                # Override for batch-level contrastive loss
-                # Compute pairwise similarities across entire batch
-                # Call apply() for final per-element outputs
-                pass
+        class BatchSimilarity(CrossModalOperator):
+            def apply_batch(self, batch, keys, stats):
+                first, second = self._extract_inputs(batch.data)
+                similarity = first @ second.T  # (B, B): every pair in the batch
+                return batch.replace(data=self._store_outputs(batch.data, [similarity]))
         ```
     """
 
@@ -276,56 +266,6 @@ class CrossModalOperator(OperatorModule):
         super().__init__(config, rngs=rngs, name=name)
         self.config: CrossModalOperatorConfig = config
         # Subclasses add learnable parameters here
-
-    def apply(
-        self,
-        data: PyTree,
-        state: PyTree,
-        metadata: dict[str, Any] | None,
-        key: jax.Array | None = None,
-        stats: dict[str, Any] | None = None,
-    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
-        """Apply cross-modal operation to element.
-
-        MUST be implemented by subclasses to provide cross-modal behavior.
-
-        This is a PURE FUNCTION that transforms a single data element. It does not read
-        ``self.rngs``: every random value it applies is drawn from ``key``, this record's
-        own PRNG key.
-
-        Args:
-            data: Element data PyTree (contains fields specified by config.input_fields)
-                 Typically dict[str, Array] with no batch dimension
-            state: Element state PyTree (typically dict[str, Any])
-            metadata: Element metadata dict
-            key: This record's PRNG key, or ``None`` for a deterministic operator
-            stats: This batch's statistics (from compute_statistics() or passed explicitly)
-
-        Returns:
-            Tuple of (transformed_data, new_state, new_metadata)
-            - transformed_data: PyTree with original fields + new output fields
-            - new_state: Updated state PyTree
-            - new_metadata: Updated metadata dict
-
-        Implementation Pattern:
-            ```python
-            def apply(self, data, state, metadata, key=None, stats=None):
-                # 1. Extract input fields
-                inputs = self._extract_inputs(data)
-
-                # 2. Perform cross-modal operation
-                outputs = self._cross_modal_transform(inputs, key, stats)
-
-                # 3. Store outputs in data
-                result = self._store_outputs(data, outputs)
-
-                return result, state, metadata
-            ```
-
-        Raises:
-            NotImplementedError: If not implemented by subclass
-        """
-        raise NotImplementedError(f"{self.__class__.__name__} must implement apply()")
 
     def _extract_inputs(self, data: dict) -> list[Any]:  # noqa: DOC502
         """Extract all input fields from data.

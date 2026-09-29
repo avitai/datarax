@@ -44,7 +44,7 @@ class SequentialSamplerConfig(SamplerConfig):
         validate_sampler_bounds(self.num_records, self.num_epochs)
 
 
-class SequentialSamplerModule(SamplerModule):
+class SequentialSamplerModule(SamplerModule[int]):
     """Sequential sampler that iterates through indices in order.
 
     This sampler provides deterministic sequential iteration through

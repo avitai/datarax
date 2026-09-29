@@ -1,13 +1,14 @@
 """Unit tests for sequential strategy."""
 
+from typing import Any
 from unittest.mock import MagicMock
 
 import jax
 import jax.numpy as jnp
 
 from datarax.core.config import OperatorConfig
+from datarax.core.element_batch import Element
 from datarax.core.operator import OperatorModule
-from datarax.operators.strategies.base import StrategyContext
 from datarax.operators.strategies.sequential import (
     ConditionalSequentialStrategy,
     SequentialStrategy,
@@ -15,92 +16,61 @@ from datarax.operators.strategies.sequential import (
 from tests.test_common.mock_operators import MultiplierMockOperator as MockOperator
 
 
+class AddOperator(OperatorModule):
+    """Adds a constant to the data."""
+
+    def __init__(self, value: float) -> None:
+        super().__init__(OperatorConfig(stochastic=False))
+        self.value = value
+
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        del key, stats
+        return element.replace(data=element.data + self.value)
+
+
 class TestSequentialStrategy:
-    def test_apply_chaining(self):
-        op1 = MockOperator(multiplier=2.0, name="op1")
-        op2 = MockOperator(multiplier=3.0, name="op2")
-        strategy = SequentialStrategy()
+    def test_apply_chaining(self) -> None:
+        element = Element(jnp.array([1.0, 2.0]), state={"count": 0})
 
-        data = jnp.array([1.0, 2.0])
-        state = {"count": 0}
-        metadata = {}
-        context = StrategyContext(data, state, metadata)
+        result = SequentialStrategy().apply([MockOperator(2.0), MockOperator(3.0)], element, None)
 
-        # Apply: data * 2 * 3 = data * 6
-        result_data, result_state, result_metadata = strategy.apply([op1, op2], context)
+        assert jnp.array_equal(result.data, jnp.array([6.0, 12.0]))
+        assert result.state["count"] == 2
 
-        assert jnp.array_equal(result_data, jnp.array([6.0, 12.0]))
-        assert result_state["count"] == 2
-        assert result_metadata["visited"] == ["op1", "op2"]
+    def test_operators_apply_in_order(self) -> None:
+        operators = [AddOperator(1.0), MockOperator(10.0)]
 
-    def test_apply_empty_list(self):
-        strategy = SequentialStrategy()
-        data = jnp.array([1.0])
-        context = StrategyContext(data, {}, {})
+        result = SequentialStrategy().apply(operators, Element(jnp.array([1.0])), None)
 
-        result_data, _, _ = strategy.apply([], context)
-        assert jnp.array_equal(result_data, data)
+        assert result.data[0] == 20.0  # (1 + 1) * 10, not 1 * 10 + 1
 
-    def test_each_child_is_given_its_own_key(self):
-        # Verify the child's key is folded from the record's, by its position
-        op1 = MagicMock(spec=OperatorModule)
-        op1.apply_record.return_value = (jnp.array([1]), {}, {})
+    def test_apply_empty_list(self) -> None:
+        element = Element(jnp.array([1.0]))
+        assert SequentialStrategy().apply([], element, None) is element
 
-        strategy = SequentialStrategy()
-        key = jax.random.key(42)
-        context = StrategyContext(jnp.array([1]), {}, {}, key=key)
+    def test_each_child_gets_the_record_and_its_own_statistics(self) -> None:
+        child = MagicMock(spec=OperatorModule)
+        element = Element(jnp.array([1.0]))
+        child.apply_record.return_value = element
 
-        strategy.apply([op1], context)
+        SequentialStrategy().apply([child], element, {"children": ({"mean": 1.0},)})
 
-        # Check that the child was applied with its derived key
-        args, _ = op1.apply_record.call_args
-        assert jnp.array_equal(
-            jax.random.key_data(args[3]), jax.random.key_data(jax.random.fold_in(key, 0))
-        )
+        child.apply_record.assert_called_once_with(element, {"mean": 1.0})
 
 
 class TestConditionalSequentialStrategy:
-    def test_apply_conditional(self):
-        # Use JAX-compatible mock logic as control flow requires tracing
-        # We can't use python branching inside jit/vmap, but strategy handles that.
-        # But here we are testing strategy logic itself.
+    def test_each_condition_reads_the_record_as_it_reaches_its_operator(self) -> None:
+        # Input 1.0 -> +10 -> 11.0 -> (11 > 5) -> +100 -> 111.0
+        # Input -20.0 -> +10 -> -10.0 -> (-10 > 5 is False) -> -10.0
+        strategy = ConditionalSequentialStrategy(
+            [lambda _x: jnp.array(True), lambda x: jnp.sum(x) > 5.0]
+        )
+        operators = [AddOperator(10.0), AddOperator(100.0)]
 
-        # Op1: adds 10 (always run)
-        # Op2: adds 100 (run if data > 5)
-
-        # Simulating simple operators that work with JAX tracing
-        class AddOperator(OperatorModule):
-            def __init__(self, value):
-                super().__init__(OperatorConfig(stochastic=False))
-                self.value = value
-
-            def apply(self, data, state, meta, key=None, stats=None):
-                del key, stats
-                return data + self.value, state, meta
-
-        op1 = AddOperator(10.0)
-        op2 = AddOperator(100.0)
-
-        # Condition: data > 5
-        # Since Sequential strategy re-assigns data,
-        # op2 condition sees output of op1.
-
-        # Input: 1.0 -> Op1 -> 11.0 -> (11 > 5 is True) -> Op2 -> 111.0
-        # Input: -20.0 -> Op1 -> -10.0 -> (-10 > 5 is False) -> Op2 skipped -> -10.0
-
-        conditions = [
-            lambda _x: jnp.array(True),  # Always run op1
-            lambda x: jnp.sum(x) > 5.0,  # Run op2 if sum(x) > 5
-        ]
-
-        strategy = ConditionalSequentialStrategy(conditions)
-
-        # Case 1: Trigger Op2
-        data1 = jnp.array([1.0])
-        res1, _, _ = strategy.apply([op1, op2], StrategyContext(data1, {}, {}))
-        assert res1[0] == 111.0
-
-        # Case 2: Skip Op2
-        data2 = jnp.array([-20.0])
-        res2, _, _ = strategy.apply([op1, op2], StrategyContext(data2, {}, {}))
-        assert res2[0] == -10.0
+        assert strategy.apply(operators, Element(jnp.array([1.0])), None).data[0] == 111.0
+        assert strategy.apply(operators, Element(jnp.array([-20.0])), None).data[0] == -10.0

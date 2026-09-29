@@ -193,7 +193,7 @@ class TestPatchDropoutOperatorTransformations:
         image = jnp.ones((32, 32, 3))
         data = {"image": image}
 
-        result, state, metadata = operator.apply(data, {}, {}, key=jax.random.key(0))
+        result = operator.apply(Element(data), key=jax.random.key(0)).data
 
         # Should have some zeros (dropped patches)
         result_image = result["image"]
@@ -216,7 +216,7 @@ class TestPatchDropoutOperatorTransformations:
         elements = [Element(data={"image": img}, state={}) for img in images]
         batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-        result_batch = operator.apply_batch(batch)
+        result_batch = operator(batch)
 
         # Check batch processing
         result_images = result_batch.data["image"]
@@ -237,7 +237,7 @@ class TestPatchDropoutOperatorTransformations:
         image = jnp.ones((32, 32, 3))
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
+        result = operator.apply(Element(data), key=jax.random.key(0)).data
 
         # Should have patches with value 0.5
         result_image = result["image"]
@@ -257,7 +257,7 @@ class TestPatchDropoutOperatorTransformations:
         image = jnp.ones((32, 32))
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
+        result = operator.apply(Element(data), key=jax.random.key(0)).data
 
         # Should still be 2D
         result_image = result["image"]
@@ -279,7 +279,7 @@ class TestPatchDropoutOperatorEdgeCases:
         image = jnp.ones((16, 16, 3))
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
+        result = operator.apply(Element(data), key=jax.random.key(0)).data
 
         # Should be completely unchanged
         assert jnp.array_equal(result["image"], image)
@@ -296,7 +296,7 @@ class TestPatchDropoutOperatorEdgeCases:
         image = jnp.ones((32, 32, 3))  # Smaller than patch
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
+        result = operator.apply(Element(data), key=jax.random.key(0)).data
 
         # Should be unchanged (patches don't fit)
         assert jnp.array_equal(result["image"], image)
@@ -313,7 +313,7 @@ class TestPatchDropoutOperatorEdgeCases:
         image = jnp.ones((16, 16, 3))
         data = {"custom_image": image, "other": jnp.ones(10)}
 
-        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
+        result = operator.apply(Element(data), key=jax.random.key(0)).data
 
         # Custom image should be transformed, other data unchanged
         assert "custom_image" in result
@@ -332,7 +332,7 @@ class TestPatchDropoutOperatorEdgeCases:
 
         # Should raise KeyError from _extract_field
         with pytest.raises(KeyError):
-            operator.apply(data, {}, {}, key=jax.random.key(0))
+            operator.apply(Element(data), key=jax.random.key(0))
 
     def test_apply_target_key(self):
         """Test operator with target_key different from field_key."""
@@ -347,7 +347,7 @@ class TestPatchDropoutOperatorEdgeCases:
         image = jnp.ones((16, 16, 3))
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
+        result = operator.apply(Element(data), key=jax.random.key(0)).data
 
         # Original image unchanged, new field created
         assert "image" in result
@@ -368,7 +368,7 @@ class TestPatchDropoutOperatorEdgeCases:
         data = {"image": image}
 
         with pytest.raises(ValueError, match="Expected 2D or 3D image"):
-            operator.apply(data, {}, {}, key=jax.random.key(0))
+            operator.apply(Element(data), key=jax.random.key(0))
 
 
 class TestPatchDropoutOperatorStochasticMode:
@@ -386,7 +386,9 @@ class TestPatchDropoutOperatorStochasticMode:
             stream_name="augment",
         )
         operator = PatchDropoutOperator(config, rngs=nnx.Rngs(42, augment=1))
-        data, _ = operator._vmap_apply({"image": jnp.ones((batch_size, 32, 32, 3))}, {})
+        data = operator(
+            batch_ops.from_arrays({"image": jnp.ones((batch_size, 32, 32, 3))}, states={})
+        ).data
         return data["image"]
 
     def test_each_record_gets_its_own_patch_positions(self):
@@ -423,7 +425,7 @@ class TestPatchDropoutOperatorStochasticMode:
         elements = [Element(data={"image": img}, state={}) for img in images]
         batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-        result_batch = operator.apply_batch(batch)
+        result_batch = operator(batch)
 
         # Due to randomness, patch positions should vary between samples
         result_images = result_batch.data["image"]
@@ -451,7 +453,7 @@ class TestPatchDropoutOperatorJAXCompatibility:
 
         @nnx.jit
         def jit_apply(op, data):
-            result, state, metadata = op.apply(data, {}, {}, key=jax.random.key(0))
+            result = op.apply(Element(data), key=jax.random.key(0)).data
             return result
 
         image = jnp.ones((16, 16, 3))
@@ -476,7 +478,7 @@ class TestPatchDropoutOperatorJAXCompatibility:
 
         @nnx.jit
         def jit_apply_batch(op, batch):
-            return op.apply_batch(batch)
+            return op(batch)
 
         images = jnp.ones((2, 16, 16, 3))
         elements = [Element(data={"image": img}, state={}) for img in images]
@@ -499,7 +501,7 @@ class TestPatchDropoutOperatorJAXCompatibility:
         elements = [Element(data={"image": img}, state={}) for img in images]
         batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-        result_batch = operator.apply_batch(batch)
+        result_batch = operator(batch)
 
         # All elements should be transformed correctly
         assert result_batch.batch_size == 4
@@ -521,7 +523,7 @@ class TestPatchDropoutOperatorJAXCompatibility:
         def loss_fn(image_data):
             """Simple loss function for gradient test."""
             data = {"image": image_data}
-            result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
+            result = operator.apply(Element(data), key=jax.random.key(0)).data
             # Mean squared value as loss
             return jnp.sum(result["image"] ** 2)
 
@@ -554,7 +556,7 @@ class TestPatchDropoutOperatorCommonPatterns:
         image = jnp.ones((32, 32, 3))
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
+        result = operator.apply(Element(data), key=jax.random.key(0)).data
 
         # Should have patches dropped
         assert result["image"].shape == image.shape
@@ -573,7 +575,7 @@ class TestPatchDropoutOperatorCommonPatterns:
         image = jnp.ones((32, 32, 3))
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
+        result = operator.apply(Element(data), key=jax.random.key(0)).data
 
         # Should have rectangular patches dropped
         assert result["image"].shape == image.shape

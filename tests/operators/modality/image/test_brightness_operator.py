@@ -136,7 +136,7 @@ class TestBrightnessOperatorTransformations:
         image = jnp.ones((32, 32, 3)) * 0.5
         data = {"image": image}
 
-        result, state, metadata = operator.apply(data, {}, {})
+        result = operator.apply(Element(data)).data
 
         # Should be brightened by exactly 0.1
         assert jnp.allclose(result["image"], image + 0.1)
@@ -155,7 +155,7 @@ class TestBrightnessOperatorTransformations:
         elements = [Element(data={"image": img}, state={}) for img in images]
         batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-        result_batch = operator.apply_batch(batch)
+        result_batch = operator(batch)
 
         # All should be brightened by exactly 0.1
         # Access stacked data directly
@@ -179,7 +179,7 @@ class TestBrightnessOperatorTransformations:
         elements = [Element(data={"image": img}, state={}) for img in images]
         batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-        result_batch = operator.apply_batch(batch)
+        result_batch = operator(batch)
 
         # Values should be clipped to [0, 1]
         result_images = result_batch.data["image"]
@@ -200,7 +200,7 @@ class TestBrightnessOperatorTransformations:
         elements = [Element(data={"image": img}, state={}) for img in images]
         batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-        result_batch = operator.apply_batch(batch)
+        result_batch = operator(batch)
 
         result_images = result_batch.data["image"]
         assert result_images.shape == (2, 16, 16, 3)
@@ -222,7 +222,7 @@ class TestBrightnessOperatorEdgeCases:
         image = jnp.ones((16, 16, 3)) * 0.5
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result = operator.apply(Element(data)).data
 
         # Should be unchanged
         assert jnp.allclose(result["image"], image)
@@ -239,7 +239,7 @@ class TestBrightnessOperatorEdgeCases:
         image = jnp.ones((16, 16, 3)) * 0.5
         data = {"custom_image": image, "other": jnp.zeros(10)}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result = operator.apply(Element(data)).data
 
         # Custom image should be transformed, other data unchanged
         assert jnp.allclose(result["custom_image"], image + 0.1)
@@ -258,7 +258,7 @@ class TestBrightnessOperatorEdgeCases:
 
         # Should raise KeyError from _extract_field
         with pytest.raises(KeyError):
-            operator.apply(data, {}, {})
+            operator.apply(Element(data))
 
     def test_apply_target_key(self):
         """Test operator with target_key different from field_key."""
@@ -273,7 +273,7 @@ class TestBrightnessOperatorEdgeCases:
         image = jnp.ones((16, 16, 3)) * 0.5
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result = operator.apply(Element(data)).data
 
         # Original image unchanged, new field created
         assert "image" in result
@@ -298,7 +298,7 @@ class TestBrightnessOperatorStochasticMode:
         operator = BrightnessOperator(config, rngs=nnx.Rngs(42, augment=1))
 
         batch = {"image": jnp.ones((batch_size, 8, 8, 3)) * 0.5}
-        data, _ = operator._vmap_apply(batch, {})
+        data = operator(batch_ops.from_arrays(batch, states={})).data
         return jnp.mean(data["image"], axis=(1, 2, 3)) - 0.5
 
     def test_one_delta_is_drawn_per_record(self):
@@ -330,7 +330,7 @@ class TestBrightnessOperatorStochasticMode:
         elements = [Element(data={"image": img}, state={}) for img in images]
         batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-        result_batch = operator.apply_batch(batch)
+        result_batch = operator(batch)
 
         # Results should differ between elements (high probability with range)
         result_images = result_batch.data["image"]
@@ -357,7 +357,7 @@ class TestBrightnessOperatorJAXCompatibility:
 
         @nnx.jit
         def jit_apply(op, data):
-            result, state, metadata = op.apply(data, {}, {})
+            result = op.apply(Element(data)).data
             return result
 
         image = jnp.ones((16, 16, 3)) * 0.5
@@ -378,7 +378,7 @@ class TestBrightnessOperatorJAXCompatibility:
 
         @nnx.jit
         def jit_apply_batch(op, batch):
-            return op.apply_batch(batch)
+            return op(batch)
 
         images = jnp.ones((2, 16, 16, 3)) * 0.5
         elements = [Element(data={"image": img}, state={}) for img in images]
@@ -401,7 +401,7 @@ class TestBrightnessOperatorJAXCompatibility:
         elements = [Element(data={"image": img}, state={}) for img in images]
         batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-        result_batch = operator.apply_batch(batch)
+        result_batch = operator(batch)
 
         # All elements should be transformed correctly
         assert result_batch.batch_size == 4
@@ -432,7 +432,7 @@ class TestBrightnessOperatorCommonPatterns:
 
         # Many records, to check the distribution the draws span
         batch = {"image": jnp.ones((1000, 4, 4, 3)) * 0.5}
-        data, _ = operator._vmap_apply(batch, {})
+        data = operator(batch_ops.from_arrays(batch, states={})).data
         brightness_values = jnp.mean(data["image"], axis=(1, 2, 3)) - 0.5
 
         # Mean should be near 0, values should span the range
@@ -453,7 +453,7 @@ class TestBrightnessOperatorCommonPatterns:
         image = jnp.ones((16, 16, 3)) * 0.9
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result = operator.apply(Element(data)).data
 
         # Should be clipped to [0, 1]
         assert jnp.all(result["image"] >= 0.0)

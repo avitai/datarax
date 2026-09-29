@@ -117,7 +117,7 @@ flowchart LR
     B --> C["op_weights (B, 15)"]
     C --> D["batch_ops.from_arrays()\ndata={image, magnitude, op_weights}"]
     D --> E["aug_composite(batch)"]
-    E --> F["__call__ → apply_batch → _vmap_apply"]
+    E --> F["__call__ → apply_batch → apply per record"]
     F --> G["WeightedParallelStrategy\nextracts weights, strips key"]
 
     style E fill:#e3f2fd,stroke:#1976d2
@@ -220,7 +220,7 @@ result_batch = aug_composite(batch)
 ```
 
 !!! info "No Manual vmap"
-    `aug_composite(batch)` calls `__call__` → `apply_batch` → `_vmap_apply`,
+    `aug_composite(batch)` calls `__call__` → `apply_batch`, which maps `apply`,
     which handles all batch parallelism internally. No manual `jax.vmap` or
     `nnx.vmap` is required in user code.
 

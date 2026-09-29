@@ -12,12 +12,15 @@ Test Categories:
 6. Integration with actual transformation logic
 """
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core import batch_ops
 from datarax.core.config import OperatorConfig
+from datarax.core.element_batch import Element
 from datarax.core.operator import OperatorModule
 
 
@@ -25,17 +28,30 @@ from datarax.core.operator import OperatorModule
 class IncrementCountOperator(OperatorModule):
     """Deterministic operator that increments state counter."""
 
-    def apply(self, data, state, metadata, random_params=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
         # Increment count in state
-        del random_params, stats
+        state = element.state
+        del key, stats
         new_state = {"count": state["count"] + 1}
-        return data, new_state, metadata
+        return element.replace(state=new_state)
 
 
 class RandomScaleWithStateOperator(OperatorModule):
     """Stochastic operator that scales data and updates state."""
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        data = element.data
+        state = element.state
         del stats
         # This record's scale factor, drawn from its own key.
         scale_factor = (
@@ -49,15 +65,21 @@ class RandomScaleWithStateOperator(OperatorModule):
             "last_scale": scale_factor,
         }
 
-        return scaled_data, new_state, metadata
+        return element.replace(data=scaled_data, state=new_state)
 
 
 class NestedStatOperator(OperatorModule):
     """Operator that works with nested PyTree states."""
 
-    def apply(self, data, state, metadata, random_params=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
         # Update nested state structure
-        del random_params, stats
+        state = element.state
+        del key, stats
         new_state = {
             "counters": {
                 "augment": state["counters"]["augment"] + 1,
@@ -65,7 +87,7 @@ class NestedStatOperator(OperatorModule):
             },
             "score": state["score"] * 1.1,
         }
-        return data, new_state, metadata
+        return element.replace(state=new_state)
 
 
 class TestOperatorWithSimplePyTreeStates:
@@ -82,7 +104,7 @@ class TestOperatorWithSimplePyTreeStates:
         )
 
         # Apply operator
-        result = operator.apply_batch(batch)
+        result = operator(batch)
 
         # States should be incremented
         assert result.batch_size == 4
@@ -104,7 +126,7 @@ class TestOperatorWithSimplePyTreeStates:
         )
 
         # Apply operator
-        result = operator.apply_batch(batch)
+        result = operator(batch)
 
         # Count should be incremented
         assert jnp.array_equal(result.states["count"], jnp.ones((4,), dtype=jnp.int32))  # type: ignore[reportCallIssue]
@@ -126,7 +148,7 @@ class TestOperatorWithSimplePyTreeStates:
             batch_state={"step": jnp.array(7)},
         ).replace(epochs=jnp.array([4, 4, 5], jnp.int32))
 
-        result = operator.apply_batch(batch)
+        result = operator(batch)
 
         assert result.indices is batch.indices
         assert result.epochs is batch.epochs
@@ -153,7 +175,7 @@ class TestOperatorWithNestedPyTreeStates:
             },
         )
 
-        result = operator.apply_batch(batch)
+        result = operator(batch)
 
         # Augment counter should be incremented
         assert jnp.array_equal(
@@ -175,8 +197,14 @@ class TestOperatorWithNestedPyTreeStates:
         """Test operator with deeply nested state structure."""
 
         class DeepNestedOperator(OperatorModule):
-            def apply(self, data, state, metadata, random_params=None, stats=None):
-                del random_params, stats
+            def apply(
+                self,
+                element: Element,
+                key: jax.Array | None = None,
+                stats: dict[str, Any] | None = None,
+            ) -> Element:
+                state = element.state
+                del key, stats
                 new_state = {
                     "level1": {
                         "level2": {
@@ -184,7 +212,7 @@ class TestOperatorWithNestedPyTreeStates:
                         }
                     }
                 }
-                return data, new_state, metadata
+                return element.replace(state=new_state)
 
         config = OperatorConfig(stochastic=False)
         operator = DeepNestedOperator(config)
@@ -194,7 +222,7 @@ class TestOperatorWithNestedPyTreeStates:
             states={"level1": {"level2": {"level3": {"value": jnp.array([0, 1])}}}},
         )
 
-        result = operator.apply_batch(batch)
+        result = operator(batch)
 
         assert jnp.array_equal(
             result.states["level1"]["level2"]["level3"]["value"],  # type: ignore[reportCallIssue]
@@ -209,10 +237,15 @@ class TestOperatorStatePreservation:
         """Test operator that returns state unchanged."""
 
         class IdentityStateOperator(OperatorModule):
-            def apply(self, data, state, metadata, random_params=None, stats=None):
+            def apply(
+                self,
+                element: Element,
+                key: jax.Array | None = None,
+                stats: dict[str, Any] | None = None,
+            ) -> Element:
                 # Don't modify state at all
-                del random_params, stats
-                return data, state, metadata
+                del key, stats
+                return element
 
         config = OperatorConfig(stochastic=False)
         operator = IdentityStateOperator(config)
@@ -222,7 +255,7 @@ class TestOperatorStatePreservation:
             states={"count": jnp.array([5, 10, 15]), "flag": jnp.array([True, False, True])},
         )
 
-        result = operator.apply_batch(batch)
+        result = operator(batch)
 
         # States should be identical
         assert jnp.array_equal(
@@ -239,16 +272,21 @@ class TestOperatorEdgeCases:
         """Test operator with empty state dicts."""
 
         class NoOpOperator(OperatorModule):
-            def apply(self, data, state, metadata, random_params=None, stats=None):
-                del random_params, stats
-                return data, state, metadata
+            def apply(
+                self,
+                element: Element,
+                key: jax.Array | None = None,
+                stats: dict[str, Any] | None = None,
+            ) -> Element:
+                del key, stats
+                return element
 
         config = OperatorConfig(stochastic=False)
         operator = NoOpOperator(config)
 
         batch = batch_ops.from_arrays({"x": jnp.ones((3, 2))})
 
-        result = operator.apply_batch(batch)
+        result = operator(batch)
 
         assert result.states == {}
         assert result.batch_size == 3
@@ -257,15 +295,21 @@ class TestOperatorEdgeCases:
         """Test operator with different types in state (arrays, primitives)."""
 
         class MixedStateOperator(OperatorModule):
-            def apply(self, data, state, metadata, random_params=None, stats=None):
-                del random_params, stats
+            def apply(
+                self,
+                element: Element,
+                key: jax.Array | None = None,
+                stats: dict[str, Any] | None = None,
+            ) -> Element:
+                state = element.state
+                del key, stats
                 new_state = {
                     "jax_array": state["jax_array"] + 1,
                     "python_int": state["python_int"] + 1,
                     "python_float": state["python_float"] * 2,
                     "python_bool": ~state["python_bool"],  # Use JAX logical not
                 }
-                return data, new_state, metadata
+                return element.replace(state=new_state)
 
         config = OperatorConfig(stochastic=False)
         operator = MixedStateOperator(config)
@@ -280,7 +324,7 @@ class TestOperatorEdgeCases:
             },
         )
 
-        result = operator.apply_batch(batch)
+        result = operator(batch)
 
         assert jnp.array_equal(result.states["jax_array"], jnp.array([2, 3]))  # type: ignore[reportCallIssue]
         assert jnp.array_equal(result.states["python_int"], jnp.array([11, 21]))  # type: ignore[reportCallIssue]
@@ -292,7 +336,7 @@ class TestOperatorEdgeCases:
 
         batch = batch_ops.from_arrays({"x": jnp.ones((1, 3))}, states={"count": jnp.array([0])})
 
-        result = operator.apply_batch(batch)
+        result = operator(batch)
 
         assert result.batch_size == 1
         assert result.states["count"].shape == (1,)  # type: ignore[reportCallIssue]
@@ -309,7 +353,7 @@ class TestOperatorJITCompilation:
 
         @jax.jit
         def process_batch(batch):
-            return operator.apply_batch(batch)
+            return operator(batch)
 
         batch = batch_ops.from_arrays(
             {"x": jnp.ones((4, 3))}, states={"count": jnp.array([0, 1, 2, 3])}
@@ -335,7 +379,7 @@ class TestOperatorJITCompilation:
         )
 
         # Should work (nnx.jit handles stateful operations)
-        result = operator.apply_batch(batch)
+        result = operator(batch)
 
         assert result.states["count"].shape == (4,)  # type: ignore[reportCallIssue]
         assert result.states["last_scale"].shape == (4,)  # type: ignore[reportCallIssue]
@@ -348,11 +392,17 @@ class TestOperatorBatchStateVsBatchedStates:
         """Test that batch_state is separate from element states."""
 
         class BatchStateOperator(OperatorModule):
-            def apply(self, data, state, metadata, random_params=None, stats=None):
+            def apply(
+                self,
+                element: Element,
+                key: jax.Array | None = None,
+                stats: dict[str, Any] | None = None,
+            ) -> Element:
                 # Only modify element state
-                del random_params, stats
+                state = element.state
+                del key, stats
                 new_state = {"count": state["count"] + 1}
-                return data, new_state, metadata
+                return element.replace(state=new_state)
 
         config = OperatorConfig(stochastic=False)
         operator = BatchStateOperator(config)
@@ -363,7 +413,7 @@ class TestOperatorBatchStateVsBatchedStates:
             batch_state={"total_processed": jnp.array(100)},
         )
 
-        result = operator.apply_batch(batch)
+        result = operator(batch)
 
         # Element states should be modified
         assert jnp.array_equal(result.states["count"], jnp.array([1, 2, 3]))  # type: ignore[reportCallIssue]

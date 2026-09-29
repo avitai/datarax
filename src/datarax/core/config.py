@@ -233,8 +233,8 @@ class BatchMixOperatorConfig(OperatorConfig):
     Attributes:
         mode: Mixing mode - "mixup" or "cutmix"
         alpha: Beta distribution parameter for mixing ratio (default: 1.0)
-        data_field: Field name containing data to mix (default: "image" for cutmix)
-        label_field: Field name containing labels to mix (default: "label")
+        data_field: Field name containing the data to mix (default: "image"); labels are left
+            untouched and the loss reads ``MIX_PARTNER`` and ``MIX_LAMBDA`` from the batch
 
     Validation Rules:
 
@@ -261,7 +261,6 @@ class BatchMixOperatorConfig(OperatorConfig):
     mode: str = "mixup"
     alpha: float = 1.0
     data_field: str = "image"
-    label_field: str = "label"
     # Override defaults: BatchMixOperator is always stochastic
     stochastic: bool = True
     stream_name: str | None = "batch_mix"

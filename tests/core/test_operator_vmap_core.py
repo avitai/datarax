@@ -7,6 +7,7 @@ Test categories:
 """
 
 from dataclasses import dataclass
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -15,7 +16,7 @@ from flax import nnx
 
 from datarax.core import batch_ops
 from datarax.core.config import OperatorConfig
-from datarax.core.element_batch import Batch
+from datarax.core.element_batch import Batch, Element
 from datarax.core.operator import OperatorModule
 
 
@@ -34,10 +35,16 @@ class ScaleConfig(OperatorConfig):  # type: ignore[reportGeneralTypeIssues]
 class ScaleOperator(OperatorModule):
     """Deterministic operator: multiplies data by a factor."""
 
-    def apply(self, data, state, metadata, random_params=None, stats=None):
-        del random_params, stats
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        data = element.data
+        del key, stats
         new_data = jax.tree.map(lambda x: x * self.config.factor, data)  # type: ignore[reportAttributeAccessIssue]
-        return new_data, state, metadata
+        return element.replace(data=new_data)
 
 
 @dataclass(frozen=True)
@@ -56,13 +63,19 @@ class StochasticNoiseConfig(OperatorConfig):  # type: ignore[reportGeneralTypeIs
 class StochasticNoiseOperator(OperatorModule):
     """Stochastic operator: adds random noise to data."""
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        data = element.data
         del stats
         # This record's noise sample, drawn from its own key.
         scale = self.config.noise_scale  # type: ignore[reportAttributeAccessIssue]
         noise = jax.random.normal(key, shape=()) * scale if key is not None else 0.0
         new_data = jax.tree.map(lambda x: x + noise, data)
-        return new_data, state, metadata
+        return element.replace(data=new_data)
 
 
 # ========================================================================
@@ -111,14 +124,14 @@ class TestVmapApplyMatchesApplyBatch:
     def test_deterministic_output_matches(self, deterministic_op, sample_batch):
         """_vmap_apply output matches apply_batch for deterministic ops."""
         # Get apply_batch result (existing behavior)
-        result_batch = deterministic_op.apply_batch(sample_batch)
+        result_batch = deterministic_op(sample_batch)
         expected_data = result_batch.data
         result_batch.states
 
         # Get _vmap_apply result (new method)
         batch_data = sample_batch.data
         batch_states = sample_batch.states
-        actual_data, actual_states = deterministic_op._vmap_apply(batch_data, batch_states)
+        actual_data = deterministic_op(batch_ops.from_arrays(batch_data, states=batch_states)).data
 
         # Verify numerical equivalence
         for key in expected_data:
@@ -128,12 +141,12 @@ class TestVmapApplyMatchesApplyBatch:
 
     def test_with_states(self, deterministic_op, sample_batch_with_states):
         """_vmap_apply handles batches with both data and states."""
-        result_batch = deterministic_op.apply_batch(sample_batch_with_states)
+        result_batch = deterministic_op(sample_batch_with_states)
         expected_data = result_batch.data
 
         batch_data = sample_batch_with_states.data
         batch_states = sample_batch_with_states.states
-        actual_data, actual_states = deterministic_op._vmap_apply(batch_data, batch_states)
+        actual_data = deterministic_op(batch_ops.from_arrays(batch_data, states=batch_states)).data
 
         for key in expected_data:
             assert jnp.allclose(actual_data[key], expected_data[key])
@@ -147,7 +160,7 @@ class TestVmapApplyMatchesApplyBatch:
         batch_data = sample_batch.data
         batch_states = sample_batch.states
 
-        actual_data, actual_states = stochastic_op._vmap_apply(batch_data, batch_states)
+        actual_data = stochastic_op(batch_ops.from_arrays(batch_data, states=batch_states)).data
 
         # Should have same keys as input
         assert set(actual_data.keys()) == set(batch_data.keys())
@@ -171,8 +184,8 @@ class TestVmapApplyRng:
         batch_data = sample_batch.data
         batch_states = sample_batch.states
 
-        result1_data, _ = deterministic_op._vmap_apply(batch_data, batch_states)
-        result2_data, _ = deterministic_op._vmap_apply(batch_data, batch_states)
+        result1_data = deterministic_op(batch_ops.from_arrays(batch_data, states=batch_states)).data
+        result2_data = deterministic_op(batch_ops.from_arrays(batch_data, states=batch_states)).data
 
         for key in result1_data:
             assert jnp.allclose(result1_data[key], result2_data[key]), (
@@ -186,17 +199,13 @@ class TestVmapApplyRng:
         produce the same output (invariant to call order / resume), while
         different indices produce different augmentation.
         """
-        batch_data = sample_batch.data
-        batch_states = sample_batch.states
-        batch_size = jax.tree.leaves(batch_data)[0].shape[0]
-
-        rows = jnp.arange(batch_size, dtype=jnp.uint32)
+        rows = jnp.arange(sample_batch.batch_size, dtype=jnp.uint32)
         indices_a = jnp.stack([jnp.zeros_like(rows), rows], -1)
         indices_b = indices_a.at[:, 1].add(1000)  # different global records
 
-        result1, _ = stochastic_op._vmap_apply(batch_data, batch_states, indices=indices_a)
-        result2, _ = stochastic_op._vmap_apply(batch_data, batch_states, indices=indices_a)
-        result3, _ = stochastic_op._vmap_apply(batch_data, batch_states, indices=indices_b)
+        result1 = stochastic_op(sample_batch.replace(indices=indices_a)).data
+        result2 = stochastic_op(sample_batch.replace(indices=indices_a)).data
+        result3 = stochastic_op(sample_batch.replace(indices=indices_b)).data
 
         # Same global indices -> identical output (per-record determinism).
         assert jnp.allclose(result1["image"], result2["image"]), (
@@ -218,12 +227,12 @@ class TestApplyBatchPreserved:
 
     def test_apply_batch_returns_batch(self, deterministic_op, sample_batch):
         """apply_batch still returns a Batch object."""
-        result = deterministic_op.apply_batch(sample_batch)
+        result = deterministic_op(sample_batch)
         assert isinstance(result, Batch)
 
     def test_apply_batch_correct_values(self, deterministic_op, sample_batch):
         """apply_batch produces correct values after refactor."""
-        result = deterministic_op.apply_batch(sample_batch)
+        result = deterministic_op(sample_batch)
         expected = jnp.ones((4, 8, 8, 3)) * 2.0
         assert jnp.allclose(result.data["image"], expected)
 
@@ -231,7 +240,7 @@ class TestApplyBatchPreserved:
         """apply_batch handles empty batch."""
         batch = batch_ops.from_arrays({"image": jnp.zeros((0, 4, 4, 3), jnp.float32)})
         # A batch of no rows has nothing to apply: it passes through.
-        result = deterministic_op.apply_batch(batch)
+        result = deterministic_op(batch)
         assert result is batch
 
     def test_apply_batch_keeps_identities(self, deterministic_op):
@@ -240,5 +249,5 @@ class TestApplyBatchPreserved:
         batch = batch_ops.from_arrays(data).replace(
             indices=jnp.array([[0, 9], [1, 3]], jnp.uint32), draws=jnp.array([0, 2], jnp.int32)
         )
-        result = deterministic_op.apply_batch(batch)
+        result = deterministic_op(batch)
         assert result.indices is batch.indices and result.draws is batch.draws

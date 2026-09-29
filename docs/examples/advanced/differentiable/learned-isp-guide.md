@@ -99,13 +99,19 @@ class GammaCorrectionOperator(ModalityOperator):
         super().__init__(config, rngs=rngs)
         self.log_gamma = nnx.Param(jnp.array(0.0))  # Learnable!
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        data = element.data
         image = self._extract_field(data, self.config.field_key)
         gamma = jnp.exp(self.log_gamma[...])
         gamma = jnp.clip(gamma, 0.1, 5.0)  # Reasonable range
         transformed = jnp.power(jnp.clip(image, 1e-6, 1.0), gamma)
         result = self._remap_field(data, self._apply_clip_range(transformed))
-        return result, state, metadata
+        return element.replace(data=result)
 ```
 
 ### CNN Detector (Artifex-Style Layer Construction)

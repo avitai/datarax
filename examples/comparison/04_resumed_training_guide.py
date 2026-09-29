@@ -200,7 +200,11 @@ class Records(grain.sources.RandomAccessDataSource):
 class AddNoise(grain.transforms.RandomMap):
     """Add Gaussian noise drawn from the generator Grain passes with each record."""
 
-    def random_map(self, element: dict, rng: np.random.Generator) -> dict:
+    # Grain declares RandomMap.random_map with no return annotation, so a type checker infers
+    # None; its own documented override annotates the return as this one does.
+    def random_map(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self, element: dict, rng: np.random.Generator
+    ) -> dict:
         """Return the record with noise added to ``x``."""
         noise = rng.normal(scale=NOISE_SCALE, size=element["x"].shape).astype(np.float32)
         return {**element, "x": element["x"] + noise}

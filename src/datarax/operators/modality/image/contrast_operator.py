@@ -29,6 +29,7 @@ from typing import Any, cast
 import jax
 from flax import nnx
 
+from datarax.core.element_batch import Element
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 from datarax.core.operator import require_key
 from datarax.operators.modality.image import functional
@@ -113,24 +114,21 @@ class ContrastOperator(ModalityOperator):
 
     def apply(
         self,
-        data: dict[str, Any],
-        state: dict[str, Any],
-        metadata: dict[str, Any],
+        element: Element,
         key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    ) -> Element:
         """Apply contrast transformation to data.
 
         Args:
-            data: Input data dictionary containing the image field
-            state: Operator state
-            metadata: Metadata dictionary
+            element: The record, without a batch axis.
             key: This record's PRNG key, required in stochastic mode
             stats: Optional statistics dictionary
 
         Returns:
-            Tuple of (transformed_data, state, metadata)
+            The transformed record.
         """
+        data = element.data
         del stats
         # 1. Extract field using base class helper
         image = self._extract_field(data, self.config.field_key)
@@ -155,4 +153,4 @@ class ContrastOperator(ModalityOperator):
         # 5. Remap field using base class helper
         result = self._remap_field(data, transformed)
 
-        return result, state, metadata
+        return element.replace(data=result)

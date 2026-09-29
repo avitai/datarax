@@ -8,12 +8,16 @@ TransformerModule was unified with AugmenterModule into OperatorModule.
 See tests/operators/ for thorough OperatorModule tests (432+ tests).
 """
 
+from typing import Any
+
 import flax.nnx as nnx
+import jax
 import jax.numpy as jnp
 
 from datarax.core.batcher import BatcherModule
 from datarax.core.config import OperatorConfig, StructuralConfig
 from datarax.core.data_source import DataSourceModule
+from datarax.core.element_batch import Element
 from datarax.core.operator import OperatorModule
 
 
@@ -79,11 +83,17 @@ def test_operator_interface():
             config = OperatorConfig(stochastic=False)
             super().__init__(config, rngs=rngs)
 
-        def apply(self, data, state, metadata, random_params=None, stats=None):
+        def apply(
+            self,
+            element: Element,
+            key: jax.Array | None = None,
+            stats: dict[str, Any] | None = None,
+        ) -> Element:
             # Double the values in the data
-            del random_params, stats
+            data = element.data
+            del key, stats
             new_data = {k: v * 2 for k, v in data.items()}
-            return new_data, state, metadata
+            return element.replace(data=new_data)
 
     # Test the implementation
     operator = MinimalOperator()
@@ -91,7 +101,7 @@ def test_operator_interface():
 
     # Test apply method with sample element
     data = {"value": jnp.array([1, 2, 3])}
-    new_data, _, _ = operator.apply(data, {}, None)
+    new_data = operator.apply(Element(data)).data
     assert jnp.array_equal(new_data["value"], jnp.array([2, 4, 6]))
 
 
@@ -181,10 +191,16 @@ def test_operator_extensibility():
             super().__init__(config, rngs=rngs)
             self.factor = nnx.Param(factor)
 
-        def apply(self, data, state, metadata, random_params=None, stats=None):
-            del random_params, stats
+        def apply(
+            self,
+            element: Element,
+            key: jax.Array | None = None,
+            stats: dict[str, Any] | None = None,
+        ) -> Element:
+            data = element.data
+            del key, stats
             new_data = {k: v * self.factor.get_value() for k, v in data.items()}
-            return new_data, state, metadata
+            return element.replace(data=new_data)
 
         def get_factor(self):
             """Custom method to get the multiplication factor."""
@@ -205,7 +221,7 @@ def test_operator_extensibility():
     operator.set_factor(4)
     assert operator.get_factor() == 4
     data = {"value": jnp.array(5.0)}
-    new_data, _, _ = operator.apply(data, {}, None)
+    new_data = operator.apply(Element(data)).data
     assert new_data["value"] == 20.0
 
 
@@ -275,10 +291,16 @@ def test_nnx_module_integration():
             config = OperatorConfig(stochastic=False)
             super().__init__(config, rngs=rngs)
 
-        def apply(self, data, state, metadata, random_params=None, stats=None):
-            del random_params, stats
+        def apply(
+            self,
+            element: Element,
+            key: jax.Array | None = None,
+            stats: dict[str, Any] | None = None,
+        ) -> Element:
+            data = element.data
+            del key, stats
             new_data = {k: v * 2 for k, v in data.items()}
-            return new_data, state, metadata
+            return element.replace(data=new_data)
 
     # Test pipeline flow
     source = SimpleSource(StructuralConfig(), [1, 2, 3])
@@ -288,7 +310,7 @@ def test_nnx_module_integration():
     transformed_items = []
     for item in source:
         data = {"value": jnp.array(item)}
-        new_data, _, _ = operator.apply(data, {}, None)
+        new_data = operator.apply(Element(data)).data
         transformed_items.append(int(new_data["value"]))
 
     assert transformed_items == [2, 4, 6]

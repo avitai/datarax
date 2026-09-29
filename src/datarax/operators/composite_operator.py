@@ -51,7 +51,7 @@ This module implements several critical patterns for vmap and JIT compatibility:
 
 5. **weight_key Data Stripping**:
 
-   - When ``weight_key`` is set, it is stripped from ``data`` in ``apply()`` before any
+   - When ``weight_key`` is set, it is stripped from the record's ``data`` before any
      child runs
    - Why: children see the fields the composite promises them; the weight is the
      composite's own input, not theirs
@@ -73,7 +73,13 @@ from flax import nnx
 from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
-from datarax.core.operator import child_statistics, OperatorModule, require_key
+from datarax.core.element_batch import Batch, Element
+from datarax.core.operator import (
+    child_statistics,
+    OperatorModule,
+    require_distinct,
+    require_record_form,
+)
 from datarax.operators.strategies import (
     BranchingStrategy,
     CompositionStrategyImpl,
@@ -82,7 +88,6 @@ from datarax.operators.strategies import (
     EnsembleStrategy,
     ParallelStrategy,
     SequentialStrategy,
-    StrategyContext,
     WeightedParallelStrategy,
 )
 
@@ -113,15 +118,19 @@ class CompositionStrategy(Enum):
     BRANCHING = auto()  # Route through different paths
 
 
+# The strategies that call each child on the whole batch in turn; every other strategy decides
+# or merges per record.
+BATCH_LEVEL_STRATEGIES = frozenset(
+    {CompositionStrategy.SEQUENTIAL, CompositionStrategy.DYNAMIC_SEQUENTIAL}
+)
+
+
 @dataclass(frozen=True)
 class CompositeOperatorConfig(OperatorConfig):
     """Configuration for composite operators.
 
-    Inherits from OperatorConfig:
-
-        - name: str | None
-        - stochastic: bool (whether any child is stochastic)
-        - stream_name: str (for RNG if stochastic)
+    A composite draws no randomness of its own: each child keys a record from its own base key,
+    so ``resolved_for`` makes the configuration deterministic whatever its children are.
 
     WEIGHTED_PARALLEL supports three mutually exclusive weight modes:
 
@@ -245,8 +254,8 @@ class CompositeOperatorConfig(OperatorConfig):
         """Return this configuration completed for ``operators``.
 
         Checks what depends on the operators (their number against conditions and weights),
-        fills in the uniform weights and the inferred ``mix_fields`` of a weighted parallel, and
-        derives ``stochastic`` and ``stream_name`` from the children.
+        and fills in the uniform weights and the inferred ``mix_fields`` of a weighted parallel.
+        The composite itself draws nothing, so it is deterministic.
 
         Args:
             operators: The operators the composite applies.
@@ -261,12 +270,8 @@ class CompositeOperatorConfig(OperatorConfig):
             raise ValueError("operators list cannot be empty")
         if self.conditions is not None and len(self.conditions) != len(operators):
             raise ValueError("Number of conditions must match number of operators")
-        stochastic = any(operator.stochastic for operator in operators)
         return dataclasses.replace(
-            self,
-            **self._weighted_defaults(operators),
-            stochastic=stochastic,
-            stream_name=(self.stream_name or "composite") if stochastic else None,
+            self, **self._weighted_defaults(operators), stochastic=False, stream_name=None
         )
 
     def _weighted_defaults(self, operators: Sequence[OperatorModule]) -> dict[str, Any]:
@@ -302,6 +307,28 @@ def _declared_fields(operators: Sequence[OperatorModule]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(declared))
 
 
+def _require_first_fits_statistics(operators: Sequence[OperatorModule]) -> None:
+    """Refuse a conditional chain whose later operator fits statistics per batch.
+
+    A conditional chain runs per record, so every child's statistics are computed on the chain's
+    input; for an operator after the first they would describe the wrong values.
+
+    Args:
+        operators: The chain's operators, in order.
+
+    Raises:
+        TypeError: Naming the operator.
+    """
+    for operator in operators[1:]:
+        if operator.fits_statistics_per_batch():
+            raise TypeError(
+                f"{type(operator).__name__} fits its statistics per batch and follows another "
+                "operator of a CONDITIONAL_SEQUENTIAL chain, which runs per record, so its "
+                "statistics would describe the chain's input; apply it in a SEQUENTIAL "
+                "composite instead"
+            )
+
+
 class CompositeOperatorModule(OperatorModule):
     """Unified composite operator supporting all composition strategies.
 
@@ -316,22 +343,34 @@ class CompositeOperatorModule(OperatorModule):
     supplies per-call weights with full gradient flow.
     """
 
-    def __init__(
+    def __init__(  # noqa: DOC503 - require_record_form and _require_first_fits_statistics raise TypeError
         self,
         config: CompositeOperatorConfig,
         operators: Sequence[OperatorModule],
-        *,
-        rngs: nnx.Rngs | None = None,
     ) -> None:
         """Initialize composite operator.
 
+        The composite draws no randomness of its own, so it takes no ``rngs``: each child keys a
+        record from its own base key.
+
         Args:
             config: Composite operator configuration
-            operators: The operators to compose, held as graph children
-            rngs: Optional RNGs for stochastic operators
+            operators: The operators to compose, held as graph children. A strategy deciding or
+                merging per record takes per-record operators only.
+
+        Raises:
+            ValueError: If an operator instance appears twice.
+            TypeError: If a per-record strategy is given an operator that works on the whole
+                batch, or a conditional chain a later operator fitting statistics per batch.
         """
         config = config.resolved_for(operators)
-        super().__init__(config, rngs=rngs)
+        require_distinct(operators)
+        if config.strategy not in BATCH_LEVEL_STRATEGIES:
+            for operator in operators:
+                require_record_form(operator, self)
+        if config.strategy == CompositionStrategy.CONDITIONAL_SEQUENTIAL:
+            _require_first_fits_statistics(operators)
+        super().__init__(config)
 
         # Type narrowing for pyright - config is CompositeOperatorConfig
         self.config: CompositeOperatorConfig = config
@@ -345,14 +384,18 @@ class CompositeOperatorModule(OperatorModule):
             self.weight_logits = nnx.Param(jnp.log(initial / jnp.sum(initial)))
 
         # Fail at construction for a strategy with no implementation.
-        self._strategy_impl()
+        if config.strategy not in self._strategy_builders(None):
+            raise ValueError(f"Unknown strategy: {config.strategy}")
 
-    def _strategy_impl(self) -> CompositionStrategyImpl:
+    def _strategy_impl(self, weights: jax.Array | None) -> CompositionStrategyImpl:
         """Build the strategy implementation the configuration names.
 
         It is derived from the static configuration on every call (in Python, while tracing),
         never stored: an implementation object held as an attribute would compare by identity,
         and every composite would compile its own trace.
+
+        Args:
+            weights: This call's weights, for WEIGHTED_PARALLEL; ``None`` otherwise.
 
         Returns:
             The strategy implementation.
@@ -361,13 +404,13 @@ class CompositeOperatorModule(OperatorModule):
             ValueError: If the strategy has no implementation.
         """
         strategy = self.config.strategy
-        builder = self._strategy_builders().get(strategy) if strategy is not None else None
+        builder = self._strategy_builders(weights).get(strategy) if strategy is not None else None
         if builder is None:
             raise ValueError(f"Unknown strategy: {strategy}")
         return builder()
 
     def _strategy_builders(
-        self,
+        self, weights: jax.Array | None
     ) -> dict[CompositionStrategy, Callable[[], CompositionStrategyImpl]]:
         """Map each composition strategy to a zero-arg factory for its implementation.
 
@@ -375,6 +418,9 @@ class CompositeOperatorModule(OperatorModule):
         ``__post_init__`` for the strategies that require them, so they are narrowed
         with ``cast`` rather than re-validated here. The four ``ENSEMBLE_*`` strategies
         share one factory that reads the reduction mode from the enum name.
+
+        Args:
+            weights: This call's weights, for WEIGHTED_PARALLEL; ``None`` otherwise.
 
         Returns:
             Mapping from strategy enum to a callable building its ``CompositionStrategyImpl``.
@@ -399,7 +445,7 @@ class CompositeOperatorModule(OperatorModule):
                 merge_fn=cfg.merge_fn,
             ),
             CompositionStrategy.WEIGHTED_PARALLEL: lambda: WeightedParallelStrategy(
-                cast(Sequence[str], cfg.mix_fields)
+                cast(Sequence[str], cfg.mix_fields), cast(jax.Array, weights)
             ),
             CompositionStrategy.CONDITIONAL_PARALLEL: lambda: ConditionalParallelStrategy(
                 conditions=cast(Sequence[Callable], cfg.conditions),
@@ -416,100 +462,114 @@ class CompositeOperatorModule(OperatorModule):
             ),
         }
 
-    def compute_statistics(self, batch_data: PyTree) -> dict[str, Any] | None:
+    def whole_batch_reason(self) -> str | None:
+        """Say why this composite has no per-record form, or return ``None``.
+
+        A per-record strategy has one (its children were checked at construction). A sequential
+        chain has one when every child has one and no child after the first fits statistics per
+        batch: in the per-record form those statistics are computed on the chain's input, not
+        on the child's.
+
+        Returns:
+            The reason, naming the child, or ``None``.
+        """
+        if self.config.strategy not in BATCH_LEVEL_STRATEGIES:
+            return None
+        for position, operator in enumerate(self.operators):
+            reason = operator.whole_batch_reason()
+            if reason is not None:
+                return reason
+            if position > 0 and operator.fits_statistics_per_batch():
+                return (
+                    f"{type(operator).__name__} fits its statistics per batch after another "
+                    "operator of the chain, so one record alone cannot give them"
+                )
+        return None
+
+    def fits_statistics_per_batch(self) -> bool:
+        """Whether a child computes its statistics from each batch."""
+        return any(operator.fits_statistics_per_batch() for operator in self.operators)
+
+    def compute_statistics(self, batch: Batch) -> dict[str, Any] | None:
         """Return one entry per child, each computed on this composition's input.
 
-        A composite applies no statistics of its own; it carries what its children computed, in
-        child order, so each child receives its own. ``weight_key`` is stripped first, because a
-        weighted composite removes it before any child runs and a child's statistics must
-        describe the fields it is actually given.
+        The per-record form applies them (a sequential chain's batch form lets each child compute
+        its own on its own input). ``weight_key`` is stripped first, because a weighted
+        composite removes it before any child runs.
 
         Args:
-            batch_data: The batch about to be applied, with the batch on axis 0.
+            batch: The batch about to be applied.
 
         Returns:
             The children's statistics, or ``None`` when no child has any.
         """
-        _, clean_data = self._resolve_weighted_params(batch_data)
-        return child_statistics(self._get_operators_list(), clean_data)
+        _, clean_data = self._resolve_weighted_params(batch.data)
+        return child_statistics(list(self.operators), batch.replace(data=clean_data))
 
-    def apply(
-        self,
-        data: PyTree,
-        state: PyTree,
-        metadata: dict[str, Any] | None,
-        key: jax.Array | None = None,
-        stats: dict[str, Any] | None = None,
-    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
-        """Apply composition based on the configured strategy.
+    def apply_batch(
+        self, batch: Batch, keys: jax.Array | None, stats: dict[str, Any] | None
+    ) -> Batch:
+        """Apply the composition to a batch.
 
-        The record's key travels to the strategy, which folds each child's position into it
-        so every child draws independently while still depending only on the record.
-
-        For ``WEIGHTED_PARALLEL`` with ``weight_key``, extracts weights from
-        ``data[weight_key]``, strips the key from data, and passes clean data
-        to the strategy. Raises ``ValueError`` if the key is missing from data.
-        """
-        return self._compose(
-            data, state, metadata, require_key(key, self) if self.stochastic else key, stats
-        )
-
-    def apply_deterministic(
-        self,
-        data: PyTree,
-        state: PyTree,
-        metadata: dict[str, Any] | None,
-        stats: dict[str, Any] | None = None,
-    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
-        """Run the composition without a key: each child applies in its own mode.
-
-        ``eval()`` and ``nnx.view`` reach every child, so deterministic children still
-        transform the record and stochastic ones return it unchanged.
-        """
-        return self._compose(data, state, metadata, None, stats)
-
-    def _compose(
-        self,
-        data: PyTree,
-        state: PyTree,
-        metadata: dict[str, Any] | None,
-        key: jax.Array | None,
-        stats: dict[str, Any] | None,
-    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
-        """Apply the strategy to the children with ``key`` as the record's key."""
-        extra_params, clean_data = self._resolve_weighted_params(data)
-
-        context = StrategyContext(
-            data=clean_data,
-            state=state,
-            metadata=metadata if metadata is not None else {},
-            key=key,
-            stats=stats,
-            extra_params=extra_params if extra_params else None,
-        )
-
-        return self._strategy_impl().apply(self._get_operators_list(), context)
-
-    def _resolve_weighted_params(self, data: PyTree) -> tuple[dict[str, Any], PyTree]:
-        """Resolve ``extra_params`` weights and strip ``weight_key`` from data.
-
-        Only ``WEIGHTED_PARALLEL`` consumes weights; every other strategy returns the
-        data unchanged with no extra params. For ``WEIGHTED_PARALLEL`` the weights come
-        from (in priority order) a dynamic ``data[weight_key]`` entry, the softmax of the
-        learnable ``weight_logits`` at ``temperature``, or the static ``config.weights``.
+        A sequential strategy calls each child on the whole batch in turn (``child(batch)``),
+        so it holds per-record and whole-batch children alike and each child computes its
+        statistics on its own input. Every other strategy maps its per-record form.
 
         Args:
-            data: Input pytree passed to :meth:`apply`.
+            batch: The batch.
+            keys: Unused: the composite draws nothing; each child keys its own records.
+            stats: The children's statistics, for the per-record strategies.
 
         Returns:
-            Tuple of (extra_params, clean_data) where ``clean_data`` has ``weight_key``
-            removed when dynamic weights were extracted from it.
+            The transformed batch.
+        """
+        if self.config.strategy in BATCH_LEVEL_STRATEGIES:
+            for operator in self.operators:
+                batch = operator(batch)
+            return batch
+        return super().apply_batch(batch, keys, stats)
+
+    def apply(
+        self, element: Element, key: jax.Array | None = None, stats: dict[str, Any] | None = None
+    ) -> Element:
+        """Apply the composition to one record.
+
+        For ``WEIGHTED_PARALLEL`` with ``weight_key``, the weights are read from the record's
+        ``data[weight_key]``, which is stripped before any child runs.
+
+        Args:
+            element: The record.
+            key: Unused: the composite draws nothing.
+            stats: The children's statistics, as ``compute_statistics`` built them.
+
+        Returns:
+            The record.
+        """
+        del key
+        weights, clean_data = self._resolve_weighted_params(element.data)
+        return self._strategy_impl(weights).apply(
+            list(self.operators), element.replace(data=clean_data), stats
+        )
+
+    def _resolve_weighted_params(self, data: PyTree) -> tuple[jax.Array | None, PyTree]:
+        """Resolve a weighted parallel's weights and strip ``weight_key`` from ``data``.
+
+        Only ``WEIGHTED_PARALLEL`` consumes weights; every other strategy returns the data
+        unchanged with no weights. The weights come from (in priority order) a dynamic
+        ``data[weight_key]`` entry, the softmax of the learnable ``weight_logits`` at
+        ``temperature``, or the static ``config.weights``.
+
+        Args:
+            data: The record's or the batch's data.
+
+        Returns:
+            The weights (or ``None``) and the data with ``weight_key`` removed.
 
         Raises:
             ValueError: If ``weight_key`` is configured but absent from ``data``.
         """
         if self.config.strategy != CompositionStrategy.WEIGHTED_PARALLEL:
-            return {}, data
+            return None, data
 
         if self.config.weight_key is not None:
             # Dynamic mode: extract weights from data dict.
@@ -521,9 +581,9 @@ class CompositeOperatorModule(OperatorModule):
                 )
             # Strip weight_key so child operators don't receive it.
             clean_data = {k: v for k, v in data.items() if k != self.config.weight_key}
-            return {"weights": data[self.config.weight_key]}, clean_data
+            return data[self.config.weight_key], clean_data
 
-        return {"weights": self.mixture_weights()}, data
+        return self.mixture_weights(), data
 
     def mixture_weights(self) -> jax.Array:
         """Return the weights a ``WEIGHTED_PARALLEL`` composite applies to its operators' outputs.
@@ -566,21 +626,11 @@ class CompositeOperatorModule(OperatorModule):
 
         Raises:
             ValueError: If the strategy is not ``DYNAMIC_SEQUENTIAL``, or the operator is
-                stochastic while this composite is not.
+                already in the composite.
         """
         if self.config.strategy != CompositionStrategy.DYNAMIC_SEQUENTIAL:
             raise ValueError("add_operator only available for DYNAMIC_SEQUENTIAL")
-
-        # A composite's own mode is fixed when its config is built, and only a stochastic
-        # composite is handed a key to fold for its children. Adding a stochastic child to a
-        # deterministic composite would leave that child with no key, raising at apply time
-        # far from the call that caused it.
-        if getattr(operator.config, "stochastic", False) and not self.config.stochastic:
-            raise ValueError(
-                f"{type(operator).__name__} is stochastic but this composite is not, so it has "
-                "no key to give it; construct the composite with a stochastic operator among "
-                "its initial operators"
-            )
+        require_distinct([*self.operators, operator])
 
         if index is None:
             self.operators.append(operator)

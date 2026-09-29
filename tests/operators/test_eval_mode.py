@@ -8,6 +8,7 @@ stochastic ones.
 """
 
 from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -180,7 +181,9 @@ class TestBatchMix:
 
     @staticmethod
     def _operator() -> BatchMixOperator:
-        return BatchMixOperator(BatchMixOperatorConfig(mode="mixup"), rngs=nnx.Rngs(batch_mix=0))
+        return BatchMixOperator(
+            BatchMixOperatorConfig(mode="mixup", data_field="value"), rngs=nnx.Rngs(batch_mix=0)
+        )
 
     @staticmethod
     def _batch() -> Batch:
@@ -189,7 +192,7 @@ class TestBatchMix:
         )
 
     def test_train_mode_mixes(self) -> None:
-        mixed = self._operator().apply_batch(self._batch())
+        mixed = self._operator()(self._batch())
         assert not jnp.array_equal(mixed.data["value"], self._batch().data["value"])
 
     def test_eval_leaves_the_batch_on_both_paths(self) -> None:
@@ -198,7 +201,7 @@ class TestBatchMix:
         batch = self._batch()
         raw = {"value": batch.data["value"]}
 
-        assert jnp.array_equal(operator.apply_batch(batch).data["value"], raw["value"])
+        assert jnp.array_equal(operator(batch).data["value"], raw["value"])
         assert jnp.array_equal(operator(batch_ops.from_arrays(raw)).data["value"], raw["value"])
 
 
@@ -218,7 +221,6 @@ class TestComposite:
                 stream_name="augment",
             ),
             operators=[shift, _noise()],
-            rngs=_rngs(),
         )
 
     def test_train_mode_shifts_and_augments(self) -> None:
@@ -238,10 +240,15 @@ _SEEN_KEYS: list[jax.Array | None] = []
 class _KeySpy(OperatorModule):
     """Records every key it is handed and returns its record unchanged."""
 
-    def apply(self, data, state, metadata, key=None, stats=None):
-        del metadata, stats
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        del stats
         _SEEN_KEYS.append(key)
-        return data, state, None
+        return element
 
 
 class TestDispatch:
@@ -252,15 +259,15 @@ class TestDispatch:
         spy = _KeySpy(OperatorConfig(stochastic=True, stream_name="augment"), rngs=_rngs())
         spy.eval()
 
-        spy._vmap_apply(_images(), {})
+        spy(batch_ops.from_arrays(_images(), states={}))
 
         assert _SEEN_KEYS == []
 
     def test_the_spy_is_applied_in_train_mode(self) -> None:
         """The control for the test above."""
         _SEEN_KEYS.clear()
-        _KeySpy(OperatorConfig(stochastic=True, stream_name="augment"), rngs=_rngs())._vmap_apply(
-            _images(), {}
+        _KeySpy(OperatorConfig(stochastic=True, stream_name="augment"), rngs=_rngs())(
+            batch_ops.from_arrays(_images(), states={})
         )
 
         assert _SEEN_KEYS
@@ -281,15 +288,17 @@ class TestDispatch:
             seen.append(key)
             return element
 
-        ElementOperator(ElementOperatorConfig(stochastic=False), fn=record)._vmap_apply(
-            _images(), {}
+        ElementOperator(ElementOperatorConfig(stochastic=False), fn=record)(
+            batch_ops.from_arrays(_images(), states={})
         )
 
         assert seen and all(key is None for key in seen)
 
     def test_train_and_eval_each_compile_once(self) -> None:
         counter = TraceCounter()
-        apply = nnx.jit(counter.wrap(lambda operator, batch: operator._vmap_apply(batch, {})[0]))
+        apply = nnx.jit(
+            counter.wrap(lambda operator, data: operator(batch_ops.from_arrays(data)).data)
+        )
         operator = _noise()
 
         with counter.expect(new_traces=1):

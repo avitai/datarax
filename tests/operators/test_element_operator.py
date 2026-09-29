@@ -675,7 +675,7 @@ class TestElementOperatorDifferentiability:
         op = ElementOperator(config, fn=affine_transform, rngs=nnx.Rngs(0))
 
         def loss(x):
-            output_data, _, _ = op.apply({"value": x}, {}, None)
+            output_data = op.apply(Element({"value": x})).data
             return jnp.sum(output_data["value"])
 
         inputs = jnp.array([1.0, -2.0, 4.0], dtype=jnp.float32)

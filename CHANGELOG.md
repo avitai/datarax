@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- An operator implements one method, `apply(element, key, stats) -> Element`: one record, its
+  key and the batch's statistics. `__call__(batch)` is the one entry: it computes the statistics
+  (`compute_statistics(batch)`, which takes the `Batch`), derives one key per record, applies the
+  mode (a stochastic operator in eval mode maps `apply_deterministic`, the record unchanged by
+  default) and calls `apply_batch(batch, keys, stats)`, which maps `apply` by the operator's
+  `batch_strategy`. A whole-batch operator overrides `apply_batch` alone and draws from its first
+  record's key. `apply_record(element, stats)` applies one record in the operator's mode; an
+  `apply` that writes module state (a BatchNorm in training) or changes the record's identity is
+  refused, naming the fix. Removed: the positional `apply(data, state, metadata, key, stats)`,
+  `_vmap_apply`, `extract_batch_size`, `StrategyContext` and
+  `ProbabilisticOperatorConfig.for_child`; a strategy is applied as
+  `strategy.apply(operators, element, stats)`, and `WeightedParallelStrategy` takes its weights
+  in its constructor.
+- An operator keys a record from its own base key and the record's identity wherever it sits
+  (`prng.record_key`, mapped as `per_record_keys`); no wrapper derives a key for a child, and a
+  wrapper's own key serves only its own decision. A child draws the same values at top level, in a
+  sequential composite and inside a per-record wrapper. Draws of every wrapper with a stochastic
+  child change. The same operator instance twice in one wrapper is refused.
+- A SEQUENTIAL or DYNAMIC_SEQUENTIAL composite calls each child on the whole batch in turn, so it
+  holds whole-batch children and each child fits its statistics on its own input. Every other
+  composite strategy, `ProbabilisticOperator` and `SelectorOperator` decide or merge per record and
+  refuse a child that works on the whole batch, or a chain whose later child fits statistics per
+  batch. A composite draws nothing itself: it is deterministic and takes no `rngs`; a
+  `ProbabilisticOperator` is stochastic only when `0 < probability < 1`.
+- `BatchMixOperator` mixes `data_field` only and leaves labels untouched: it writes each record's
+  partner row to `states[MIX_PARTNER]` and the mixing ratio (MixUp's `lam`, CutMix's fraction of
+  the image kept) to `batch_state[MIX_LAMBDA]` (`datarax.core.state_keys`), and the loss reads
+  them, `lam * CE(y) + (1 - lam) * CE(y[partner])`. Integer class labels are no longer averaged.
+  `label_field` is removed; a batch without `data_field`, or a CutMix field that is not
+  `(B, H, W, C)`, is refused.
+- `SamplerModule` is generic in the index it emits (`SamplerModule[int]`,
+  `SlidingWindowSampler` a `SamplerModule[jax.Array]`); a data source's `__iter__`, `__next__`
+  and `__getitem__` are declared as yielding the PyTrees they return. Pyright's
+  `reportIncompatibleMethodOverride` is enabled.
+
 - A pipeline's stage graph is `pipe.dag`, an `OperatorDag` (`datarax.pipeline.dag`): an
   `nnx.Module` holding the nodes and a static plan, mapping a `Batch` to a `Batch`, with no source,
   position or `Rngs`, so it runs inside a differentiated train step and its operators' parameters

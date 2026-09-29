@@ -243,6 +243,9 @@ For modules that need persistent random state, use `nnx.Rngs`:
 # ✅ Datarax operator pattern - pass rngs to super().__init__()
 from datarax.core import OperatorModule
 from datarax.core.operator import OperatorConfig, require_key
+from datarax.core.element_batch import Element
+import jax
+from typing import Any
 
 class StochasticOperator(OperatorModule):
     def __init__(
@@ -255,7 +258,12 @@ class StochasticOperator(OperatorModule):
         # The base reads rngs once, for this operator's base key, and does not keep it.
         super().__init__(config, rngs=rngs, name=name)
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
         # Every draw comes from this record's key, so the same record draws the same
         # values whatever batch it arrives in.
         dropout_key, noise_key = jax.random.split(require_key(key, self))
@@ -474,8 +482,13 @@ class MyOperator(OperatorModule):
         self.batches_seen[...] += 1
         return self.get_statistics()
 
-    def apply(self, data, state, metadata, key=None, stats=None):
-        return data, state, metadata
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        return element
 ```
 
 ### 9. Custom Variable Types and Filtering

@@ -10,6 +10,7 @@ JAX-friendly ``ShapeDtypeStruct`` leaves with consistent shapes and dtypes.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -17,6 +18,7 @@ from flax import nnx
 
 from datarax.core.batcher import BatcherModule
 from datarax.core.config import OperatorConfig, StructuralConfig
+from datarax.core.element_batch import Element
 from datarax.core.operator import OperatorModule
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
@@ -29,8 +31,10 @@ class _PassthroughOperatorConfig(OperatorConfig):
 class _PassthroughOperator(OperatorModule):
     """Operator that doesn't change shape — uses base class output_spec default."""
 
-    def apply(self, data, state, metadata, random_params=None, stats=None):  # type: ignore[override]
-        return data, state, metadata
+    def apply(
+        self, element: Element, key: jax.Array | None = None, stats: dict[str, Any] | None = None
+    ) -> Element:
+        return element
 
 
 @dataclass(frozen=True)

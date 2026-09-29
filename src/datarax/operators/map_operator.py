@@ -23,6 +23,7 @@ from flax import nnx
 from jaxtyping import PyTree
 
 from datarax.core.config import MapOperatorConfig
+from datarax.core.element_batch import Element
 from datarax.core.operator import call_with_mode_key, OperatorModule
 
 
@@ -149,12 +150,10 @@ class MapOperator(OperatorModule):
 
     def apply(
         self,
-        data: PyTree,
-        state: PyTree,
-        metadata: dict[str, Any] | None,
+        element: Element,
         key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
+    ) -> Element:
         """Apply array transformation to element (unified implementation).
 
         Single method handles all four modes:
@@ -167,16 +166,14 @@ class MapOperator(OperatorModule):
         Traverses the leaves with their key paths once, filtering by subtree.
 
         Args:
-            data: Element data PyTree
-            state: Element state PyTree (unchanged)
-            metadata: Element metadata dict (unchanged)
+            element: The record, without a batch axis.
             key: This record's PRNG key, or ``None`` for a deterministic operator
             stats: Optional batch statistics (unused)
 
         Returns:
-            Tuple of (transformed_data, state, metadata)
-            where state and metadata are unchanged
+            The transformed record.
         """
+        data = element.data
         del stats
         # One key per data leaf, folded out of this record's key, so each leaf draws
         # independently while still depending only on the record. A deterministic operator
@@ -206,4 +203,4 @@ class MapOperator(OperatorModule):
                 for path, leaf, leaf_key in zip(paths, leaves, leaf_keys, strict=True)
             ],
         )
-        return transformed_data, state, metadata
+        return element.replace(data=transformed_data)

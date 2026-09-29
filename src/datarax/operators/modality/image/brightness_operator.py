@@ -29,6 +29,7 @@ from typing import Any, cast
 import jax
 from flax import nnx
 
+from datarax.core.element_batch import Element
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 from datarax.core.operator import require_key
 from datarax.operators.modality.image import functional
@@ -107,7 +108,7 @@ class BrightnessOperator(ModalityOperator):
             stochastic=False
         )
         operator = BrightnessOperator(config, rngs=nnx.Rngs(0))
-        result, _, _ = operator.apply(data, {}, {})
+        result = operator.apply(Element(data)).data
         ```
 
         Stochastic mode:
@@ -120,7 +121,7 @@ class BrightnessOperator(ModalityOperator):
             stream_name="augment"
         )
         operator = BrightnessOperator(config, rngs=nnx.Rngs(0, augment=1))
-        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
+        result = operator.apply(Element(data), key=jax.random.key(0)).data
         ```
     """
 
@@ -141,12 +142,10 @@ class BrightnessOperator(ModalityOperator):
 
     def apply(
         self,
-        data: dict[str, Any],
-        state: dict[str, Any],
-        metadata: dict[str, Any],
+        element: Element,
         key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    ) -> Element:
         """Apply brightness transformation to data.
 
         This method demonstrates the standard pattern for using base class helpers:
@@ -156,15 +155,14 @@ class BrightnessOperator(ModalityOperator):
         4. Remap field using _remap_field (handles target_key logic)
 
         Args:
-            data: Input data dictionary containing the image field
-            state: Operator state (unused for stateless transformations)
-            metadata: Metadata dictionary (passed through unchanged)
+            element: The record, without a batch axis.
             key: This record's PRNG key, required in stochastic mode
             stats: Optional statistics dictionary (unused)
 
         Returns:
-            Tuple of (transformed_data, state, metadata)
+            The transformed record.
         """
+        data = element.data
         del stats
         # 1. Extract field using base class helper (handles validation)
         image = self._extract_field(data, self.config.field_key)
@@ -190,4 +188,4 @@ class BrightnessOperator(ModalityOperator):
         # 5. Remap field using base class helper (handles target_key logic)
         result = self._remap_field(data, transformed)
 
-        return result, state, metadata
+        return element.replace(data=result)

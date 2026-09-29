@@ -20,7 +20,7 @@ from substrax.testing.compiles import expect_compiles
 from datarax.core import batch_ops
 from datarax.core.config import OperatorConfig, StructuralConfig
 from datarax.core.data_source import DataSourceModule
-from datarax.core.element_batch import Batch
+from datarax.core.element_batch import Batch, Element
 from datarax.core.operator import OperatorModule, require_key
 from datarax.operators.batch_mix_operator import BatchMixOperator, BatchMixOperatorConfig
 from datarax.pipeline.dag import OperatorDag
@@ -39,9 +39,15 @@ class _Scale(OperatorModule):
         super().__init__(OperatorConfig(stochastic=False))
         self.scale = nnx.Param(jnp.asarray(value))
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        data = element.data
         del key, stats
-        return {**data, "image": data["image"] * self.scale[...]}, state, metadata
+        return element.replace(data={**data, "image": data["image"] * self.scale[...]})
 
 
 class _JitteredScale(OperatorModule):
@@ -53,10 +59,16 @@ class _JitteredScale(OperatorModule):
         )
         self.scale = nnx.Param(jnp.asarray(0.75))
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        data = element.data
         del stats
         jitter = jax.random.uniform(require_key(key, self), (), minval=0.5, maxval=1.5)
-        return {**data, "image": data["image"] * self.scale[...] * jitter}, state, metadata
+        return element.replace(data={**data, "image": data["image"] * self.scale[...] * jitter})
 
 
 class _CountWrite(OperatorModule):
@@ -65,9 +77,15 @@ class _CountWrite(OperatorModule):
     def __init__(self) -> None:
         super().__init__(OperatorConfig(stochastic=False))
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        state = element.state
         del key, stats
-        return data, {**state, "seen": jnp.ones((), jnp.float32)}, metadata
+        return element.replace(state={**state, "seen": jnp.ones((), jnp.float32)})
 
 
 class _CountRead(OperatorModule):
@@ -76,9 +94,16 @@ class _CountRead(OperatorModule):
     def __init__(self) -> None:
         super().__init__(OperatorConfig(stochastic=False))
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        data = element.data
+        state = element.state
         del key, stats
-        return {**data, "image": data["image"] + state["seen"]}, state, metadata
+        return element.replace(data={**data, "image": data["image"] + state["seen"]})
 
 
 class _Merge(nnx.Module):

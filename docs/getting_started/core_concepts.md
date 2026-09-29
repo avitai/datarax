@@ -64,6 +64,8 @@ This abstraction simplifies the mental model: everything that *changes* data val
 from datarax.core.operator import OperatorModule, OperatorConfig
 import flax.nnx as nnx
 import jax
+from datarax.core.element_batch import Element
+from typing import Any
 
 # Defining a custom Deterministic Operator
 class NormalizeOperator(OperatorModule):
@@ -72,15 +74,25 @@ class NormalizeOperator(OperatorModule):
         self.mean = mean
         self.std = std
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
         # Simplified implementation
-        return data, state, metadata
+        return element
 
 # Defining a custom Stochastic Operator
 class RandomFlipOperator(OperatorModule):
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
         # key is this record's PRNG key; draw whatever randomness you apply from it
-        return data, state, metadata
+        return element
 
 # Instantiation
 norm_op = NormalizeOperator(

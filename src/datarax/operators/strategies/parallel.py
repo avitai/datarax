@@ -8,9 +8,10 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import PyTree
 
+from datarax.core.element_batch import Element
 from datarax.core.field_paths import get_field, set_field
-from datarax.core.operator import OperatorModule
-from datarax.operators.strategies.base import CompositionStrategyImpl, StrategyContext
+from datarax.core.operator import apply_where, OperatorModule, statistics_for_child
+from datarax.operators.strategies.base import CompositionStrategyImpl
 from datarax.operators.strategies.merging import merge_output_sequence, merge_outputs_conditional
 
 
@@ -62,33 +63,28 @@ class ParallelStrategy(CompositionStrategyImpl):
 
     def apply(
         self,
-        operators: list[OperatorModule],
-        context: StrategyContext,
-    ) -> tuple[PyTree, PyTree, dict[str, Any]]:
-        """Apply all operators on the same input and merge their outputs.
+        operators: Sequence[OperatorModule],
+        element: Element,
+        stats: dict[str, Any] | None,
+    ) -> Element:
+        """Apply all operators to the same record and merge their data.
 
         Args:
-            operators: Operators to execute in parallel on identical input.
-            context: Execution context with input data, state, and RNG params.
+            operators: Operators to apply to the record.
+            element: The record.
+            stats: One entry per child, or ``None``.
 
         Returns:
-            Tuple of (merged_data, last_state, last_metadata).
+            The record with the merged data and the last operator's state.
         """
-        outputs, states, metadatas = self._execute_operators(operators, context)
-
-        # Merge outputs
-        merged_data = merge_output_sequence(
-            outputs,
+        outputs = self._apply_each(operators, element, stats)
+        merged = merge_output_sequence(
+            [output.data for output in outputs],
             self.merge_strategy,
             self.merge_axis,
             self.merge_fn,
         )
-
-        # For state and metadata, take the last one for now (as per original logic)
-        merged_state = states[-1] if states else context.state
-        merged_metadata = metadatas[-1] if metadatas else context.metadata
-
-        return merged_data, merged_state, merged_metadata
+        return element.replace(data=merged, state=outputs[-1].state)
 
 
 class WeightedParallelStrategy(CompositionStrategyImpl):
@@ -100,47 +96,41 @@ class WeightedParallelStrategy(CompositionStrategyImpl):
     do not transform alone.
     """
 
-    def __init__(self, mix_fields: Sequence[str]) -> None:
-        """Initialize with the fields to combine.
+    def __init__(self, mix_fields: Sequence[str], weights: jax.Array) -> None:
+        """Initialize with the fields to combine and the weights to combine them with.
 
         Args:
             mix_fields: Dotted paths of the data fields to combine.
+            weights: One weight per operator, for this call: static, the softmax of learnable
+                logits, or read from the record.
         """
         self.mix_fields = tuple(mix_fields)
+        self.weights = weights
 
     def apply(
         self,
-        operators: list[OperatorModule],
-        context: StrategyContext,
-    ) -> tuple[PyTree, PyTree, dict[str, Any]]:
-        """Apply operators in parallel and combine their ``mix_fields`` with weights.
+        operators: Sequence[OperatorModule],
+        element: Element,
+        stats: dict[str, Any] | None,
+    ) -> Element:
+        """Apply the operators to the same record and combine their ``mix_fields`` with weights.
 
         Args:
-            operators: Operators to execute in parallel.
-            context: Must include ``extra_params["weights"]`` JAX array.
+            operators: Operators to apply to the record.
+            element: The record.
+            stats: One entry per child, or ``None``.
 
         Returns:
-            Tuple of (the input data with each mix field replaced by its weighted sum,
-            last_state, last_metadata).
-
-        Raises:
-            ValueError: If ``weights`` not found in ``context.extra_params``.
+            The record with each mix field replaced by its weighted sum and the last operator's
+            state.
         """
-        outputs, states, metadatas = self._execute_operators(operators, context)
-
-        if not context.extra_params or "weights" not in context.extra_params:
-            raise ValueError("WeightedParallelStrategy requires 'weights' in extra_params")
-
-        weights = jnp.asarray(context.extra_params["weights"])
-        mixed_data = context.data
+        outputs = self._apply_each(operators, element, stats)
+        weights = jnp.asarray(self.weights)
+        mixed = element.data
         for path in self.mix_fields:
-            stacked = jnp.stack([get_field(output, path) for output in outputs])
-            mixed_data = set_field(mixed_data, path, jnp.tensordot(weights, stacked, axes=1))
-
-        merged_state = states[-1] if states else context.state
-        merged_metadata = metadatas[-1] if metadatas else context.metadata
-
-        return mixed_data, merged_state, merged_metadata
+            stacked = jnp.stack([get_field(output.data, path) for output in outputs])
+            mixed = set_field(mixed, path, jnp.tensordot(weights, stacked, axes=1))
+        return element.replace(data=mixed, state=outputs[-1].state)
 
 
 class ConditionalParallelStrategy(CompositionStrategyImpl):
@@ -168,54 +158,34 @@ class ConditionalParallelStrategy(CompositionStrategyImpl):
 
     def apply(
         self,
-        operators: list[OperatorModule],
-        context: StrategyContext,
-    ) -> tuple[PyTree, PyTree, dict[str, Any]]:
-        """Apply operators conditionally in parallel and merge active outputs.
+        operators: Sequence[OperatorModule],
+        element: Element,
+        stats: dict[str, Any] | None,
+    ) -> Element:
+        """Apply each operator where its condition holds for the record, and merge the outputs.
 
-        Uses ``jax.lax.cond`` per operator for vmap/JIT compatibility.
+        Every condition reads the record as it reached the composite; ``jax.lax.cond`` keeps
+        each traceable.
 
         Args:
-            operators: Operators to evaluate (must match length of conditions).
-            context: Execution context with input data, state, and RNG params.
+            operators: Operators to evaluate (as many as there are conditions).
+            element: The record.
+            stats: One entry per child, or ``None``.
 
         Returns:
-            Tuple of (merged_data, last_state, last_metadata).
+            The record with the merged data of the operators whose condition held and the last
+            operator's state.
         """
-        outputs = []
-        # First pass: evaluate all conditions
-        condition_results = [condition(context.data) for condition in self.conditions]
-
-        # Second pass: apply operators with jax.lax.cond, each with its own key
-        outputs, states, metadatas = [], [], []
-        for (operator, key, child_stats), cond_result in zip(
-            self._with_key_and_stats(operators, context), condition_results, strict=False
-        ):
-            out_data, out_state, out_metadata = self._apply_operator_conditionally(
-                operator,
-                cond_result,
-                context.data,
-                context.state,
-                context.metadata,
-                key,
-                child_stats,
-            )
-            outputs.append(out_data)
-            states.append(out_state)
-            metadatas.append(out_metadata)
-
-        if not outputs:
-            return context.data, context.state, context.metadata
-
-        merged_data = merge_outputs_conditional(
-            outputs,
-            condition_results,
+        conditions = [condition(element.data) for condition in self.conditions]
+        outputs = [
+            apply_where(operator, condition, element, statistics_for_child(stats, index))
+            for index, (operator, condition) in enumerate(zip(operators, conditions, strict=True))
+        ]
+        merged = merge_outputs_conditional(
+            [output.data for output in outputs],
+            conditions,
             self.merge_strategy,
             self.merge_axis,
             self.merge_fn,
         )
-
-        merged_state = states[-1] if states else context.state
-        merged_metadata = metadatas[-1] if metadatas else context.metadata
-
-        return merged_data, merged_state, merged_metadata
+        return element.replace(data=merged, state=outputs[-1].state)

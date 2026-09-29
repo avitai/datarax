@@ -3,7 +3,7 @@
 import jax
 import jax.numpy as jnp
 
-from datarax.operators.strategies.base import StrategyContext
+from datarax.core.element_batch import Element
 from datarax.operators.strategies.branching import BranchingStrategy
 from tests.test_common.mock_operators import ConstantMockOperator as MockOperator
 
@@ -20,13 +20,13 @@ class TestBranchingStrategy:
         strategy = BranchingStrategy(router=router)
 
         # Case 1: Value < 5 -> select op1 (value 1.0)
-        context1 = StrategyContext(jnp.array([1.0]), {}, {})
-        res1, _, _ = strategy.apply([op1, op2], context1)
+        context1 = Element(jnp.array([1.0]))
+        res1 = strategy.apply([op1, op2], context1, None).data
         assert res1[0] == 1.0
 
         # Case 2: Value >= 5 -> select op2 (value 2.0)
-        context2 = StrategyContext(jnp.array([10.0]), {}, {})
-        res2, _, _ = strategy.apply([op1, op2], context2)
+        context2 = Element(jnp.array([10.0]))
+        res2 = strategy.apply([op1, op2], context2, None).data
         assert res2[0] == 2.0
 
     def test_branching_out_of_bounds(self):
@@ -43,9 +43,9 @@ class TestBranchingStrategy:
             return 10  # Out of bounds
 
         strategy = BranchingStrategy(router=router_invalid)
-        context = StrategyContext(jnp.array([0.0]), {}, {})
+        context = Element(jnp.array([0.0]))
 
-        res, _, _ = strategy.apply([op1, op2], context)
+        res = strategy.apply([op1, op2], context, None).data
 
         # Expected: Last branch taken (op2 -> 2.0)
         assert res[0] == 2.0

@@ -7,11 +7,16 @@ Validates that:
 3. The 2-argument vmap path is used when there is no key to map over
 """
 
+from typing import Any
+
+import jax
 import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
+from datarax.core import batch_ops
 from datarax.core.config import ElementOperatorConfig, OperatorConfig
+from datarax.core.element_batch import Element
 from datarax.core.operator import OperatorModule
 from datarax.operators.element_operator import ElementOperator
 
@@ -35,7 +40,7 @@ class TestVmapPathSelection:
         states: dict = {}
 
         # _vmap_apply should work without deriving any key
-        result_data, result_states = op._vmap_apply(data, states)
+        result_data = op(batch_ops.from_arrays(data, states=states)).data
         assert "value" in result_data
         np.testing.assert_array_equal(result_data["value"], data["value"])
 
@@ -46,11 +51,16 @@ _SEEN_KEYS: list = []
 class _RecordingOperator(OperatorModule):
     """An operator that records the fourth argument each apply call is given."""
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
         """Record the key and return the record unchanged."""
-        del metadata, stats
+        del stats
         _SEEN_KEYS.append(key)
-        return data, state, None
+        return element
 
 
 class TestDeterministicApplyReceivesNoKey:
@@ -61,7 +71,7 @@ class TestDeterministicApplyReceivesNoKey:
         _SEEN_KEYS.clear()
         op = _RecordingOperator(OperatorConfig(stochastic=False))
 
-        op._vmap_apply({"value": jnp.ones((4, 8))}, {})
+        op(batch_ops.from_arrays({"value": jnp.ones((4, 8))}, states={}))
 
         assert _SEEN_KEYS, "the framework never called apply"
         assert all(key is None for key in _SEEN_KEYS)
@@ -80,7 +90,7 @@ class TestDeterministicApplyReceivesNoKey:
             rngs=nnx.Rngs(augment=0),
         )
 
-        op._vmap_apply({"value": jnp.ones((4, 8))}, {})
+        op(batch_ops.from_arrays({"value": jnp.ones((4, 8))}, states={}))
 
         assert _SEEN_KEYS, "the framework never called apply"
         assert all(key is not None for key in _SEEN_KEYS)

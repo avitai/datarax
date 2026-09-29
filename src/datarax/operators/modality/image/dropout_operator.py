@@ -30,6 +30,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.config import require_stochastic
+from datarax.core.element_batch import Element
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 from datarax.core.operator import require_key
 
@@ -127,39 +128,33 @@ class DropoutOperator(ModalityOperator):
 
     def apply(
         self,
-        data: dict[str, jax.Array],
-        state: dict[str, Any],
-        metadata: dict[str, Any],
+        element: Element,
         key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[dict[str, jax.Array], dict[str, Any], dict[str, Any]]:
+    ) -> Element:
         """Apply dropout transformation to a single element.
 
         This operates on single elements (e.g., one image of shape [H, W, C]).
 
         Args:
-            data: Input data dictionary. Must contain field specified by config.field_key
-            state: Operator state (unused for dropout, passed through)
-            metadata: Metadata dictionary (passed through unchanged)
+            element: The record, without a batch axis.
             key: This record's PRNG key, required in stochastic mode
             stats: Optional statistics dictionary (unused)
 
         Returns:
-            Tuple of (transformed_data, state, metadata)
-                - transformed_data: Data dict with dropout applied to target field
-                - state: Unchanged state dict
-                - metadata: Unchanged metadata dict
+            The transformed record.
 
         Raises:
             ValueError: If ``config.mode`` is not a known dropout mode.
         """
+        data = element.data
         del stats
         # Extract the field to transform using base class helper
         value = self._extract_field(data, self.config.field_key)
 
         # Short-circuit if dropout rate is zero
         if self.config.dropout_rate == 0.0:
-            return data, state, metadata
+            return element
 
         # This record's key: the mask depends on the record alone.
         rng_key = require_key(key, self)
@@ -199,4 +194,4 @@ class DropoutOperator(ModalityOperator):
         # Remap the transformed value back into the data dictionary
         result = self._remap_field(data, transformed)
 
-        return result, state, metadata
+        return element.replace(data=result)

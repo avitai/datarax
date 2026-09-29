@@ -18,7 +18,7 @@ from datarax.core.structural import StructuralModule
 logger = logging.getLogger(__name__)
 
 
-class SamplerModule(StructuralModule):
+class SamplerModule[Index](StructuralModule):
     """Enhanced base module for all Datarax sampler components.
 
     A SamplerModule determines the order in which records are accessed and
@@ -27,6 +27,10 @@ class SamplerModule(StructuralModule):
 
     This class extends StructuralModule for non-parametric structural processing.
     Concrete samplers define their own config classes extending SamplerConfig.
+
+    ``Index`` is what the sampler emits for one step, as its ``index_spec`` describes: an
+    ``int`` for the samplers that emit one record index, an array of indices for a windowed
+    sampler, a chunk of records for a replay buffer.
 
     A sampler is the only module kind that caches its result: ``cacheable`` memoizes each
     sampled list by request size.
@@ -42,7 +46,7 @@ class SamplerModule(StructuralModule):
             num_epochs: int = 1
         SequentialSamplerConfig = dataclass(frozen=True)(SequentialSamplerConfig)
 
-        class SequentialSamplerModule(SamplerModule):
+        class SequentialSamplerModule(SamplerModule[int]):
             def process(self, dataset_size):
                 return list(range(min(self.config.num_records, dataset_size)))
             def __iter__(self):
@@ -73,7 +77,7 @@ class SamplerModule(StructuralModule):
 
         # The sampled-result cache: internal state rather than parameters, marked static
         # so it stays out of checkpoints.
-        self._cache: dict[int, Any] | None = nnx.static({} if config.cacheable else None)
+        self._cache: dict[int, list[Index]] | None = nnx.static({} if config.cacheable else None)
 
     def requires_rng_streams(self) -> list[str] | None:
         """Get the list of RNG streams required by this module.
@@ -85,7 +89,7 @@ class SamplerModule(StructuralModule):
             return None
         return [self.stream_name]
 
-    def __call__(self, n: int, *_args: Any, **_kwargs: Any) -> list[int]:  # type: ignore[override]
+    def __call__(self, n: int, *_args: Any, **_kwargs: Any) -> list[Index]:  # type: ignore[override]
         """Enhanced sampling interface with caching.
 
         Args:
@@ -115,7 +119,7 @@ class SamplerModule(StructuralModule):
         self._maybe_store_in_cache(cache_key, result)
         return result
 
-    def _cache_lookup(self, n: int) -> tuple[int | None, list[int] | None]:
+    def _cache_lookup(self, n: int) -> tuple[int | None, list[Index] | None]:
         """Compute the cache key for ``n`` and look up any cached result.
 
         Args:
@@ -130,7 +134,7 @@ class SamplerModule(StructuralModule):
         cache_key = self._compute_cache_key(n)
         return cache_key, self._cache.get(cache_key)
 
-    def _maybe_store_in_cache(self, cache_key: int | None, result: list[int]) -> None:
+    def _maybe_store_in_cache(self, cache_key: int | None, result: list[Index]) -> None:
         """Store ``result`` under ``cache_key`` when caching is enabled and keyed."""
         if self.config.cacheable and self._cache is not None and cache_key is not None:
             self._cache[cache_key] = result
@@ -209,7 +213,7 @@ class SamplerModule(StructuralModule):
             # Clear all entries from the cache
             self._cache.clear()
 
-    def _sample_impl(self, n: int) -> list[int]:
+    def _sample_impl(self, n: int) -> list[Index]:
         """Implementation method for sampling.
 
         Subclasses should override this method to provide their specific
@@ -224,11 +228,11 @@ class SamplerModule(StructuralModule):
         # Default implementation uses the sample method
         return self.sample(n)
 
-    def __iter__(self) -> Iterator[int]:
-        """Return an iterator over indices into the dataset.
+    def __iter__(self) -> Iterator[Index]:
+        """Return an iterator over what the sampler emits, one step at a time.
 
         Returns:
-            An iterator that yields indices for data access.
+            An iterator over the sampler's indices, as ``index_spec`` describes them.
 
         Raises:
             NotImplementedError: If a subclass does not override this method.
@@ -247,7 +251,7 @@ class SamplerModule(StructuralModule):
         msg = "Length determination not supported."
         raise NotImplementedError(msg)
 
-    def sample(self, n: int) -> list[int]:
+    def sample(self, n: int) -> list[Index]:
         """Return a list of sampled indices.
 
         This method returns all indices that would be yielded by the iterator,

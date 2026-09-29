@@ -11,10 +11,12 @@ Test Coverage:
 """
 
 import jax
+import jax.numpy as jnp
 import pytest
 from flax import nnx
 
 # GREEN phase - imports enabled
+from datarax.core import batch_ops
 from datarax.operators.composite_operator import (
     CompositeOperatorConfig,
     CompositeOperatorModule,
@@ -380,76 +382,44 @@ class TestConfigValidationFailures:
             )
 
 
-class TestConfigAutoStochasticDetection:
-    """Test automatic stochastic detection from child operators."""
+class TestACompositeDrawsNothingItself:
+    """A composite is deterministic whatever its children; each child keys its own records."""
 
-    def test_auto_stochastic_all_deterministic(self):
-        """Test stochastic=False when all children are deterministic."""
-        rngs = nnx.Rngs(0)
-
-        # Create all deterministic operators
-        config1 = MapOperatorConfig(stochastic=False)
-        op1 = MapOperator(config1, fn=lambda x, _key: x * 2, rngs=rngs)
-
-        config2 = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(config2, fn=lambda x, _key: x * 3, rngs=rngs)
-
-        # Create composite - should auto-detect stochastic=False
-        composite_config = CompositeOperatorConfig(
-            strategy=CompositionStrategy.SEQUENTIAL,
+    @staticmethod
+    def _noisy() -> MapOperator:
+        return MapOperator(
+            MapOperatorConfig(stochastic=True, stream_name="augment"),
+            fn=lambda x, key: x + jax.random.normal(key, x.shape) * 0.1,
+            rngs=nnx.Rngs(augment=1),
         )
+
+    def test_a_composite_over_stochastic_children_is_deterministic(self):
+        doubled = MapOperator(MapOperatorConfig(stochastic=False), fn=lambda x, _key: x * 2)
+        for config in (
+            CompositeOperatorConfig(strategy=CompositionStrategy.SEQUENTIAL),
+            CompositeOperatorConfig(
+                strategy=CompositionStrategy.SEQUENTIAL, stochastic=True, stream_name="augment"
+            ),
+        ):
+            composite = CompositeOperatorModule(config, operators=[self._noisy(), doubled])
+            assert composite.config.stochastic is False
+            assert composite.config.stream_name is None
+
+    def test_its_stochastic_children_still_draw(self):
         composite = CompositeOperatorModule(
-            composite_config,
-            operators=[op1, op2],
+            CompositeOperatorConfig(strategy=CompositionStrategy.SEQUENTIAL),
+            operators=[self._noisy()],
         )
+        batch = batch_ops.from_arrays({"x": jnp.zeros((4, 3), jnp.float32)})
 
-        # Verify auto-detection
-        assert composite.config.stochastic is False
+        assert not jnp.array_equal(composite(batch).data["x"], batch.data["x"])
 
-    def test_auto_stochastic_some_stochastic(self):
-        """Test stochastic=True when any child is stochastic."""
-        rngs = nnx.Rngs(0, augment=1)
 
-        # Mix of stochastic and deterministic operators
-        op1_config = MapOperatorConfig(stochastic=True, stream_name="augment")
-        op1 = MapOperator(
-            op1_config, fn=lambda x, key: x + jax.random.normal(key, x.shape) * 0.1, rngs=rngs
-        )
+def test_a_configuration_without_a_strategy_is_refused():
+    with pytest.raises(ValueError, match="strategy is required"):
+        CompositeOperatorConfig()
 
-        op2_config = MapOperatorConfig(stochastic=False)
-        op2 = MapOperator(op2_config, fn=lambda x, _key: x * 2, rngs=rngs)
 
-        # Composite should be stochastic if any child is stochastic
-        composite_config = CompositeOperatorConfig(
-            strategy=CompositionStrategy.SEQUENTIAL,
-            stochastic=True,  # Explicitly set (auto-detection not required)
-            stream_name="augment",
-        )
-        composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
-
-        assert composite.config.stochastic is True
-
-    def test_auto_stochastic_all_stochastic(self):
-        """Test stochastic=True when all children are stochastic."""
-        rngs = nnx.Rngs(0, augment=1)
-
-        # All stochastic operators
-        op1_config = MapOperatorConfig(stochastic=True, stream_name="augment")
-        op1 = MapOperator(
-            op1_config, fn=lambda x, key: x + jax.random.normal(key, x.shape) * 0.1, rngs=rngs
-        )
-
-        op2_config = MapOperatorConfig(stochastic=True, stream_name="augment")
-        op2 = MapOperator(
-            op2_config, fn=lambda x, key: x + jax.random.normal(key, x.shape) * 0.2, rngs=rngs
-        )
-
-        # Composite should be stochastic when all children are stochastic
-        composite_config = CompositeOperatorConfig(
-            strategy=CompositionStrategy.SEQUENTIAL,
-            stochastic=True,
-            stream_name="augment",
-        )
-        composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
-
-        assert composite.config.stochastic is True
+def test_a_weighted_parallel_with_no_mix_fields_is_refused():
+    with pytest.raises(ValueError, match="mix_fields must name at least one field"):
+        CompositeOperatorConfig(strategy=CompositionStrategy.WEIGHTED_PARALLEL, mix_fields=())

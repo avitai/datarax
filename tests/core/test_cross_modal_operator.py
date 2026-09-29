@@ -4,33 +4,49 @@ Tests the base class for cross-modal operators.
 Follows TDD approach - tests written first (RED phase).
 """
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
 from flax import nnx
 
+from datarax.core import batch_ops
 from datarax.core.cross_modal import CrossModalOperator, CrossModalOperatorConfig
+from datarax.core.element_batch import Element
 
 
 class ConcreteFusionOperator(CrossModalOperator):
     """Concrete fusion implementation for testing."""
 
-    def apply(self, data, state, metadata, random_params=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
         """Simple fusion - concatenate inputs."""
-        del random_params, stats
+        data = element.data
+        del key, stats
         inputs = self._extract_inputs(data)
         # Simple concatenation fusion
         fused = jnp.concatenate(inputs, axis=-1)
         outputs = [fused]
         result = self._store_outputs(data, outputs)
-        return result, state, metadata
+        return element.replace(data=result)
 
 
 class StochasticContrastiveOperator(CrossModalOperator):
     """Stochastic contrastive implementation for testing."""
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
         """Compute similarity with noise drawn from this record's key."""
+        data = element.data
         del stats
         inputs = self._extract_inputs(data)
         noise = jax.random.normal(key, ()) * 0.01 if key is not None else 0.0
@@ -42,7 +58,7 @@ class StochasticContrastiveOperator(CrossModalOperator):
 
         outputs = [similarity]
         result = self._store_outputs(data, outputs)
-        return result, state, metadata
+        return element.replace(data=result)
 
 
 class TestCrossModalOperatorInitialization:
@@ -115,10 +131,9 @@ class TestCrossModalOperatorAbstractMethods:
 
         data = {"input1": jnp.ones((128,)), "input2": jnp.ones((128,))}
         state = {}
-        metadata = None
 
         with pytest.raises(NotImplementedError, match="must implement apply"):
-            operator.apply(data, state, metadata)
+            operator.apply(Element(data, state=state))
 
 
 class TestCrossModalOperatorHelperMethods:
@@ -233,9 +248,8 @@ class TestCrossModalOperatorApply:
             "emb2": jnp.array([3.0, 4.0]),
         }
         state = {}
-        metadata = None
 
-        result_data, result_state, result_metadata = operator.apply(data, state, metadata)
+        result_data = operator.apply(Element(data, state=state)).data
 
         # Should concatenate embeddings
         expected = jnp.array([1.0, 2.0, 3.0, 4.0])
@@ -259,9 +273,8 @@ class TestCrossModalOperatorApply:
             "positive": jnp.array([0.0, 1.0]),
         }
         state = {}
-        metadata = None
 
-        result_data, result_state, result_metadata = operator.apply(data, state, metadata)
+        result_data = operator.apply(Element(data, state=state)).data
 
         # Similarity should be close to 0
         assert jnp.allclose(result_data["similarity"], 0.0, atol=0.01)
@@ -286,7 +299,7 @@ class TestCrossModalOperatorStochastic:
             "positive": jnp.tile(jnp.array([0.0, 1.0]), (8, 1)),
         }
 
-        data, _ = operator._vmap_apply(batch, {})
+        data = operator(batch_ops.from_arrays(batch, states={})).data
 
         assert data["similarity"].shape == (8,)
         assert not jnp.allclose(data["similarity"][0], data["similarity"][1])
@@ -307,9 +320,9 @@ class TestCrossModalOperatorStochastic:
             "positive": jnp.array([0.0, 1.0]),
         }
 
-        first, _, _ = operator.apply(data, {}, None, key=jax.random.key(0))
-        again, _, _ = operator.apply(data, {}, None, key=jax.random.key(0))
-        other, _, _ = operator.apply(data, {}, None, key=jax.random.key(1))
+        first = operator.apply(Element(data), key=jax.random.key(0)).data
+        again = operator.apply(Element(data), key=jax.random.key(0)).data
+        other = operator.apply(Element(data), key=jax.random.key(1)).data
 
         assert jnp.allclose(first["similarity"], again["similarity"])
         assert not jnp.allclose(first["similarity"], other["similarity"])
@@ -330,17 +343,14 @@ class TestCrossModalOperatorJAXCompatibility:
         operator = ConcreteFusionOperator(config, rngs=rngs)
 
         @jax.jit
-        def jitted_apply(data, state, metadata):
-            return operator.apply(data, state, metadata)
+        def jitted_apply(element: Element) -> Element:
+            return operator.apply(element)
 
         data = {
             "emb1": jnp.array([1.0, 2.0]),
             "emb2": jnp.array([3.0, 4.0]),
         }
-        state = {}
-        metadata = None
-
-        result_data, _, _ = jitted_apply(data, state, metadata)
+        result_data = jitted_apply(Element(data)).data
 
         expected = jnp.array([1.0, 2.0, 3.0, 4.0])
         assert jnp.allclose(result_data["fused"], expected)
@@ -363,7 +373,8 @@ class TestCrossModalOperatorJAXCompatibility:
 
         def apply_single(emb1, emb2, state):
             data_dict = {"emb1": emb1, "emb2": emb2}
-            result_data, result_state, _ = operator.apply(data_dict, state, None)
+            applied = operator.apply(Element(data_dict, state=state))
+            result_data, result_state = applied.data, applied.state
             return result_data["fused"], result_state
 
         vmapped_apply = jax.vmap(apply_single, in_axes=(0, 0, 0))

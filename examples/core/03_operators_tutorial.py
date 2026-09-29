@@ -301,7 +301,6 @@ sequential_augment = CompositeOperatorModule(
         stream_name="seq_augment",
     ),
     operators=[norm_op, flip_op],
-    rngs=nnx.Rngs(seq_augment=500),
 )
 
 print("Created SEQUENTIAL composite: normalize → flip")

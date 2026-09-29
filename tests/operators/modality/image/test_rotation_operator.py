@@ -12,6 +12,8 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 from datarax.operators.modality.image.rotation_operator import (
     RotationOperator,
     RotationOperatorConfig,
@@ -163,7 +165,7 @@ class TestRotationOperatorTransformations:
         image = image.at[:, 16, :].set(1.0)
         data = {"image": image}
 
-        result, state, metadata = operator.apply(data, {}, {}, key=jax.random.key(0))
+        result = operator.apply(Element(data), key=jax.random.key(0)).data
 
         # Result should have same shape
         assert result["image"].shape == (32, 32, 3)
@@ -182,7 +184,7 @@ class TestRotationOperatorTransformations:
         image = jnp.ones((16, 16, 3)) * 0.5
         data = {"image": image}
 
-        result, state, metadata = operator.apply(data, {}, {})
+        result = operator.apply(Element(data)).data
 
         # Should be unchanged with zero angle
         assert jnp.allclose(result["image"], image)
@@ -201,7 +203,7 @@ class TestRotationOperatorTransformations:
         image = jnp.ones((32, 32, 3)) * 0.5
         data = {"image": image}
 
-        result, state, metadata = operator.apply(data, {}, {}, key=jax.random.key(0))
+        result = operator.apply(Element(data), key=jax.random.key(0)).data
 
         assert result["image"].shape == (32, 32, 3)
         # A small rotation moves edge pixels outside the frame, where fill_value shows
@@ -223,7 +225,7 @@ class TestRotationOperatorTransformations:
         image = jnp.ones((16, 16, 3)) * 0.5
         data = {"image": image}
 
-        result, state, metadata = operator.apply(data, {}, {}, key=jax.random.key(0))
+        result = operator.apply(Element(data), key=jax.random.key(0)).data
 
         # Should handle large angles without errors
         assert result["image"].shape == (16, 16, 3)
@@ -241,7 +243,7 @@ class TestRotationOperatorTransformations:
         image = jnp.ones((8, 8, 3)) * 0.2
         data = {"image": image}
 
-        result, state, metadata = operator.apply(data, {}, {})
+        result = operator.apply(Element(data)).data
 
         assert result["image"].shape == (8, 8, 3)
         # With significant rotation, some pixels should have the fill value
@@ -265,7 +267,7 @@ class TestRotationOperatorTransformations:
         image = jnp.ones((32, 32, 3)) * 0.5
         data = {"image": image}
 
-        result, state, metadata = operator.apply(data, {}, {}, key=jax.random.key(0))
+        result = operator.apply(Element(data), key=jax.random.key(0)).data
 
         assert result["image"].shape == (32, 32, 3)
 
@@ -283,7 +285,7 @@ class TestRotationOperatorTransformations:
         image = jnp.ones((24, 32, 3)) * 0.5
         data = {"image": image}
 
-        result, state, metadata = operator.apply(data, {}, {}, key=jax.random.key(0))
+        result = operator.apply(Element(data), key=jax.random.key(0)).data
 
         assert result["image"].shape == (24, 32, 3)
 
@@ -302,7 +304,7 @@ class TestRotationOperatorTransformations:
         image = jnp.ones((28, 28)) * 0.5
         data = {"image": image}
 
-        result, state, metadata = operator.apply(data, {}, {}, key=jax.random.key(0))
+        result = operator.apply(Element(data), key=jax.random.key(0)).data
 
         assert result["image"].shape == (28, 28)
 
@@ -319,7 +321,7 @@ class TestRotationOperatorEdgeCases:
 
         # Should raise KeyError
         with pytest.raises(KeyError):
-            operator.apply(data, {}, {})
+            operator.apply(Element(data))
 
     def test_nested_field_access(self):
         """Test rotation with nested field access."""
@@ -336,7 +338,7 @@ class TestRotationOperatorEdgeCases:
             }
         }
 
-        result, state, metadata = operator.apply(data, {}, {})
+        result = operator.apply(Element(data)).data
 
         # Result should have nested structure
         assert "data" in result
@@ -360,13 +362,13 @@ class TestRotationOperatorEdgeCases:
         # Test with 4x4 image
         image_4x4 = jnp.ones((4, 4, 3)) * 0.5
         data_4x4 = {"image": image_4x4}
-        result_4x4, _, _ = operator.apply(data_4x4, {}, {}, key=jax.random.key(0))
+        result_4x4 = operator.apply(Element(data_4x4), key=jax.random.key(0)).data
         assert result_4x4["image"].shape == (4, 4, 3)
 
         # Test with 1x1 "image"
         image_1x1 = jnp.ones((1, 1, 3)) * 0.5
         data_1x1 = {"image": image_1x1}
-        result_1x1, _, _ = operator.apply(data_1x1, {}, {}, key=jax.random.key(0))
+        result_1x1 = operator.apply(Element(data_1x1), key=jax.random.key(0)).data
         assert result_1x1["image"].shape == (1, 1, 3)
 
     def test_negative_angle_range_handling(self):
@@ -383,7 +385,7 @@ class TestRotationOperatorEdgeCases:
         data = {"image": image}
 
         # Should not raise an error
-        result, state, metadata = operator.apply(data, {}, {}, key=jax.random.key(0))
+        result = operator.apply(Element(data), key=jax.random.key(0)).data
         assert result["image"].shape == (16, 16, 3)
 
 
@@ -404,9 +406,9 @@ class TestRotationOperatorStochasticMode:
         image = jnp.zeros((16, 16, 3)).at[:, 8, :].set(1.0)
         data = {"image": image}
 
-        first, _, _ = operator.apply(data, {}, {}, key=jax.random.key(42))
-        again, _, _ = operator.apply(data, {}, {}, key=jax.random.key(42))
-        other, _, _ = operator.apply(data, {}, {}, key=jax.random.key(43))
+        first = operator.apply(Element(data), key=jax.random.key(42)).data
+        again = operator.apply(Element(data), key=jax.random.key(42)).data
+        other = operator.apply(Element(data), key=jax.random.key(43)).data
 
         assert first["image"].shape == (16, 16, 3)
         assert jnp.array_equal(first["image"], again["image"])
@@ -432,8 +434,8 @@ class TestRotationOperatorStochasticMode:
         # angles, so two same-seeded operators agreeing means something here.
         batch = {"image": jnp.zeros((4, 16, 16, 3)).at[:, :, 8, :].set(1.0)}
 
-        result1, _ = operator1._vmap_apply(batch, {})
-        result2, _ = operator2._vmap_apply(batch, {})
+        result1 = operator1(batch_ops.from_arrays(batch, states={})).data
+        result2 = operator2(batch_ops.from_arrays(batch, states={})).data
 
         # Should produce same results with same seed
         assert jnp.allclose(result1["image"], result2["image"], atol=1e-6)
@@ -453,7 +455,7 @@ class TestRotationOperatorStochasticMode:
         # in the outputs comes from the per-record angle.
         batch = {"image": jnp.zeros((4, 16, 16, 3)).at[:, :, 8, :].set(1.0)}
 
-        result, _ = operator._vmap_apply(batch, {})
+        result = operator(batch_ops.from_arrays(batch, states={})).data
 
         assert result["image"].shape == (4, 16, 16, 3)
         assert not jnp.allclose(result["image"][0], result["image"][1])
@@ -471,13 +473,13 @@ class TestRotationOperatorJAXCompatibility:
         operator = RotationOperator(config)
 
         @nnx.jit
-        def jit_apply(op, data, state, metadata):
-            return op.apply(data, state, metadata)
+        def jit_apply(op: RotationOperator, element: Element) -> Element:
+            return op.apply(element)
 
         image = jnp.ones((16, 16, 3)) * 0.5
         data = {"image": image}
 
-        result, state, metadata = jit_apply(operator, data, {}, {})
+        result = jit_apply(operator, Element(data)).data
 
         assert result["image"].shape == (16, 16, 3)
 
@@ -495,7 +497,7 @@ class TestRotationOperatorJAXCompatibility:
         # Define vmapped apply function
         def apply_single(image):
             data = {"image": image}
-            result, _, _ = operator.apply(data, {}, {})
+            result = operator.apply(Element(data)).data
             return result["image"]
 
         vmapped_apply = jax.vmap(apply_single)
@@ -513,7 +515,7 @@ class TestRotationOperatorJAXCompatibility:
 
         def loss_fn(image):
             data = {"image": image}
-            result, _, _ = operator.apply(data, {}, {})
+            result = operator.apply(Element(data)).data
             return jnp.sum(result["image"] ** 2)
 
         image = jnp.ones((16, 16, 3)) * 0.5
@@ -535,8 +537,8 @@ class TestRotationOperatorJAXCompatibility:
         data = {"image": image}
 
         # Call multiple times
-        result1, _, _ = operator.apply(data, {}, {})
-        result2, _, _ = operator.apply(data, {}, {})
+        result1 = operator.apply(Element(data)).data
+        result2 = operator.apply(Element(data)).data
 
         # Should produce identical results (pure function)
         assert jnp.allclose(result1["image"], result2["image"])
@@ -575,7 +577,7 @@ class TestRotationOperatorCommonPatterns:
         image = jnp.ones((32, 32, 3)) * 0.7
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result = operator.apply(Element(data)).data
 
         # The mean might change slightly due to interpolation and fill values,
         # but should be reasonably close for small rotations

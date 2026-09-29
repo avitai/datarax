@@ -59,7 +59,7 @@ class SlidingWindowSamplerConfig(SamplerConfig):
             )
 
 
-class SlidingWindowSampler(SamplerModule):
+class SlidingWindowSampler(SamplerModule[jax.Array]):
     """Emit windows of ``window_size`` consecutive indices at ``stride`` step.
 
     Each call to ``__next__`` returns a ``jax.Array`` of shape

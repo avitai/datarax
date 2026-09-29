@@ -16,21 +16,43 @@ DEFAULT_RNG_STREAMS: tuple[str, ...] = ("augment", "dropout", "params", "shuffli
 """The streams a component built from a seeded configuration receives."""
 
 
+def record_key(
+    base_key: jax.Array,
+    index: ArrayLike,
+    epoch: ArrayLike,
+    draw: ArrayLike,
+) -> jax.Array:
+    """Derive one record's stateless PRNG key from its epoch, draw and 64-bit index.
+
+    The key is ``fold_in(fold_in(fold_in(fold_in(base_key, epoch), draw), hi), lo)``. It depends
+    only on ``(base_key, epoch, draw, index)``: not on batch size, batch position, shuffle order,
+    padding, how records are split across workers or processes, where a run resumed, or which
+    wrapper the operator sits in. The same record draws afresh in every epoch (the epoch), and
+    twice in one epoch when a sampler serves it twice (the draw). The index is folded as two
+    uint32 words, since ``fold_in`` takes 32-bit data, so indices past ``2^32`` keep distinct
+    keys. Every key hangs off one parent, the wide key tree jax recommends.
+
+    Args:
+        base_key: A stable per-operator PRNG key (drawn once, not per batch).
+        index: uint32 ``(2,)``, the record's index as ``(hi, lo)``.
+        epoch: int32 scalar, the record's epoch.
+        draw: int32 scalar, the record's draw within its epoch.
+
+    Returns:
+        The record's key.
+    """
+    words = jnp.asarray(index, jnp.uint32)
+    key = jax.random.fold_in(jax.random.fold_in(base_key, epoch), draw)
+    return jax.random.fold_in(jax.random.fold_in(key, words[0]), words[1])
+
+
 def per_record_keys(
     base_key: jax.Array,
     indices: ArrayLike,
     epochs: ArrayLike,
     draws: ArrayLike,
 ) -> jax.Array:
-    """Derive one stateless PRNG key per record from its epoch, draw and 64-bit index.
-
-    Record ``r``'s key is ``fold_in(fold_in(fold_in(fold_in(base_key, epoch), draw), hi), lo)``.
-    It depends only on ``(base_key, epoch, draw, index)``: not on batch size, batch position,
-    shuffle order, padding, how records are split across workers or processes, or where a run
-    resumed. The same record draws afresh in every epoch (the epoch), and twice in one epoch
-    when a sampler serves it twice (the draw). The index is folded as two uint32 words, since
-    ``fold_in`` takes 32-bit data, so indices past ``2^32`` keep distinct keys. Every key hangs
-    off one parent, the wide key tree jax recommends.
+    """Derive every record's key, ``record_key`` mapped over a batch's identities.
 
     Args:
         base_key: A stable per-operator PRNG key (drawn once, not per batch).
@@ -41,11 +63,6 @@ def per_record_keys(
     Returns:
         A key array of shape ``(B,)``, one key per record, aligned with ``indices``.
     """
-
-    def record_key(index: jax.Array, epoch: jax.Array, draw: jax.Array) -> jax.Array:
-        key = jax.random.fold_in(jax.random.fold_in(base_key, epoch), draw)
-        return jax.random.fold_in(jax.random.fold_in(key, index[0]), index[1])
-
-    return jax.vmap(record_key)(
-        jnp.asarray(indices, jnp.uint32), jnp.asarray(epochs), jnp.asarray(draws)
+    return jax.vmap(record_key, in_axes=(None, 0, 0, 0))(
+        base_key, jnp.asarray(indices, jnp.uint32), jnp.asarray(epochs), jnp.asarray(draws)
     )

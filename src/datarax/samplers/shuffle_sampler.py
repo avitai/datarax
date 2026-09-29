@@ -35,7 +35,7 @@ class ShuffleSamplerConfig(SamplerConfig):
         validate_seed(self.seed)
 
 
-class ShuffleSampler(SamplerModule):
+class ShuffleSampler(SamplerModule[int]):
     """Checkpointable sampler serving a keyed shuffle of ``[0, dataset_size)``."""
 
     config: ShuffleSamplerConfig  # pyright: ignore[reportIncompatibleVariableOverride]

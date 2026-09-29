@@ -37,7 +37,7 @@ config = ElementOperatorConfig(stochastic=False)
 op = ElementOperator(config, fn=normalize, rngs=nnx.Rngs(0))
 
 # Apply to an element
-result = op.apply(element.data, element.state, element.metadata)
+result = op.apply(element)
 ```
 
 ## Stochastic Transformations

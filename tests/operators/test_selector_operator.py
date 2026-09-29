@@ -406,7 +406,7 @@ class TestSelectorOperatorDifferentiability:
         # Weights [1.0, 0.0] select operator 0 for any key, so the branch under test is fixed
         # while the selection still comes from the key as it does in production.
         def loss(x):
-            output_data, _, _ = selector.apply({"value": x}, {}, None, key=jax.random.key(0))
+            output_data = selector.apply(Element({"value": x}), key=jax.random.key(0)).data
             return jnp.sum(output_data["value"])
 
         inputs = jnp.array([1.0, -3.0, 2.5], dtype=jnp.float32)

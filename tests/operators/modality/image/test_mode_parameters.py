@@ -156,7 +156,7 @@ def test_a_deterministic_operator_applies_its_fixed_value(
         rngs=nnx.Rngs(0),
     )
 
-    out, _, _ = operator.apply({"image": IMAGES[0]}, {}, {})
+    out = operator.apply(Element({"image": IMAGES[0]})).data
 
     assert not np.allclose(np.asarray(out["image"]), np.asarray(IMAGES[0]))
 
@@ -186,7 +186,7 @@ def test_a_stochastic_operator_without_a_key_is_refused(
     )
 
     with pytest.raises(ValueError, match="stochastic and needs a per-record key"):
-        operator.apply({"image": IMAGES[0]}, {}, {})
+        operator.apply(Element({"image": IMAGES[0]}))
 
 
 @MODE_CASES
@@ -216,7 +216,7 @@ def test_a_stochastic_batch_changes_every_record(
         batch_ops.stack([Element(data={"image": image}) for image in IMAGES])
     )
 
-    out = np.asarray(operator.apply_batch(batch).data["image"])
+    out = np.asarray(operator(batch).data["image"])
 
     assert out.shape == IMAGES.shape
     assert all(not np.allclose(got, given) for got, given in zip(out, np.asarray(IMAGES)))

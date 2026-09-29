@@ -350,7 +350,6 @@ augmentation = CompositeOperatorModule(
         stream_name="augment",
     ),
     operators=[normalizer, flipper],
-        rngs=nnx.Rngs(augment=999),
 )
 
 # Build the complete pipeline

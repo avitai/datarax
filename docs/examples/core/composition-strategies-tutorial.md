@@ -153,7 +153,6 @@ sequential_composite = CompositeOperatorModule(
         strategy=CompositionStrategy.SEQUENTIAL,
         ),
     operators=[bright_op, contrast_op],
-    rngs=nnx.Rngs(0),
 )
 ```
 
@@ -189,7 +188,6 @@ parallel_mean = CompositeOperatorModule(
         merge_strategy="mean",
     ),
     operators=[op_bright, op_contrast, op_noise],
-        rngs=nnx.Rngs(0),
 )
 ```
 
@@ -217,7 +215,6 @@ weighted_parallel = CompositeOperatorModule(
         learnable_weights=False,  # Set True for gradient-based learning
     ),
     operators=[op1, op2, op3],
-        rngs=nnx.Rngs(0),
 )
 ```
 
@@ -244,7 +241,6 @@ ensemble_mean = CompositeOperatorModule(
         strategy=CompositionStrategy.ENSEMBLE_MEAN,
         ),
     operators=ensemble_ops,
-    rngs=nnx.Rngs(0),
 )
 ```
 
@@ -270,7 +266,6 @@ branching = CompositeOperatorModule(
         default_branch=0,
     ),
     operators=branch_ops,
-        rngs=nnx.Rngs(0),
 )
 ```
 
