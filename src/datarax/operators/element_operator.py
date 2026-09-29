@@ -1,7 +1,7 @@
 """ElementOperator - operator for element-level transformations.
 
 This module provides ElementOperator, which applies user-provided element
-transformation functions to entire Element structures (data + state + metadata).
+transformation functions to whole records (``Element``: data and state).
 
 Key Difference from MapOperator:
 
@@ -10,7 +10,7 @@ Key Difference from MapOperator:
 
 Key Features:
 
-- Full element access: User function sees entire Element, can modify data/state/metadata
+- Full element access: User function sees the entire Element and can modify data and state
 - Coordinated transformations: Transform multiple fields together
 - Deterministic mode: key parameter ignored
 - Stochastic mode: key parameter provides per-element randomness
@@ -19,14 +19,13 @@ Key Features:
 
 import logging
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any
 
 from flax import nnx
 from jaxtyping import PyTree
 
 from datarax.core.config import ElementOperatorConfig
 from datarax.core.element_batch import Element
-from datarax.core.metadata import Metadata
 from datarax.core.operator import call_with_mode_key, OperatorModule
 from datarax.typing import PRNGKey
 
@@ -39,14 +38,14 @@ class ElementOperator(OperatorModule):
 
     Applies user-provided element transformation function to entire Element
     structures. Unlike MapOperator (which transforms array leaves), ElementOperator
-    provides access to the full element (data + state + metadata), enabling
+    provides access to the full element (data and state), enabling
     coordinated transformations.
 
     User Function Signature:
 
         fn(element: Element, key: jax.Array | None) -> Element
 
-        - element: Element with .data, .state, .metadata attributes
+        - element: Element with .data and .state
         - key: the record's PRNG key when the operator is stochastic, ``None`` when it is
           deterministic
         - Returns: New Element (use element.replace() for immutable updates)
@@ -55,7 +54,6 @@ class ElementOperator(OperatorModule):
     1. **Coordinated transformations**: Flip image AND mask together
     2. **State tracking**: Update state based on transformation applied
     3. **Complex augmentation pipelines**: Access multiple fields at once
-    4. **Metadata-aware processing**: Transform based on metadata values
 
     Examples:
         ```python
@@ -118,7 +116,7 @@ class ElementOperator(OperatorModule):
     ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
         """Apply element transformation.
 
-        Constructs an Element from data/state/metadata, passes to user function,
+        Constructs an Element from data and state, passes it to the user function,
         and extracts results back.
 
         Args:
@@ -132,15 +130,5 @@ class ElementOperator(OperatorModule):
             Tuple of (transformed_data, transformed_state, transformed_metadata)
         """
         del stats
-        # Construct Element for user function
-        # Cast metadata to Metadata | None for Element constructor
-        element = Element(data=data, state=state, metadata=cast(Metadata | None, metadata))
-
-        transformed_element = call_with_mode_key(self.fn, element, key)
-
-        # Extract results - cast metadata back to dict type for base class compatibility
-        return (
-            transformed_element.data,
-            transformed_element.state,
-            cast(dict[str, Any] | None, transformed_element.metadata),
-        )
+        transformed = call_with_mode_key(self.fn, Element(data, state=state), key)
+        return transformed.data, transformed.state, metadata

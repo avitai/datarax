@@ -123,8 +123,8 @@ Grain resumes exactly: True
 ### Step 3: A Datarax Pipeline
 
 A Datarax `Pipeline` is an `nnx.Module`. The source shuffles, and the stochastic operator
-draws each record's key from its own stable base key, as
-`fold_in(fold_in(base_key, epoch), record_index)`. The operator is a JAX function of one
+draws each record's key from its own stable base key, folding in the record's epoch, draw
+and index (`per_record_keys`). The operator is a JAX function of one
 record, and iteration runs source, stages and batching as one compiled step.
 
 ```python
@@ -213,7 +213,7 @@ flowchart LR
 |---|---|---|
 | Loop object | `DataLoader` iterator | `Pipeline` (an `nnx.Module`) iterator |
 | Checkpoint | JSON bytes: last index per worker, sampler and source description | `position`, `epoch`, one count per random stream, and their `version` |
-| Per-record randomness | `np.random.Generator(Philox(key=seed + draw index))` from the sampler | `fold_in(fold_in(base_key, epoch), record_index)` from the operator's stable base key |
+| Per-record randomness | `np.random.Generator(Philox(key=seed + draw index))` from the sampler | the record's epoch, draw and index folded into the operator's stable base key |
 | Where transforms run | Python, per record, optionally in worker processes | Inside one `jax.jit` step with batching |
 
 Both loops resume mid-epoch exactly. The difference is where the work runs: Grain keeps

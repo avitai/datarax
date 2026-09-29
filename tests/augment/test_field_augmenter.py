@@ -9,8 +9,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from datarax.core import batch_ops
 from datarax.core.config import MapOperatorConfig
-from datarax.core.element_batch import create_batch_from_arrays
 from datarax.operators import MapOperator
 
 
@@ -71,12 +71,12 @@ class TestFieldOperations:
         )
         operator = MapOperator(config, fn=add_one)
 
-        batch = create_batch_from_arrays(
+        batch = batch_ops.from_arrays(
             {"value": jnp.array([1.0, 2.0]), "other": jnp.array([10.0, 20.0])}
         )
 
         result = operator(batch)
-        result_data = result.get_data()
+        result_data = result.data
 
         np.testing.assert_array_equal(result_data["value"], [2.0, 3.0])
         np.testing.assert_array_equal(result_data["other"], [10.0, 20.0])  # Unchanged
@@ -94,12 +94,12 @@ class TestFieldOperations:
         )
         operator = MapOperator(config, fn=multiply_by_two)
 
-        batch = create_batch_from_arrays(
+        batch = batch_ops.from_arrays(
             {"value": jnp.array([1.0, 2.0]), "other": jnp.array([10.0, 20.0])}
         )
 
         result = operator(batch)
-        result_data = result.get_data()
+        result_data = result.data
 
         np.testing.assert_array_equal(result_data["value"], [2.0, 4.0])
         np.testing.assert_array_equal(result_data["other"], [20.0, 40.0])
@@ -117,10 +117,10 @@ class TestFieldOperations:
         )
         operator = MapOperator(config, fn=add_one)
 
-        batch = create_batch_from_arrays({"value": jnp.array([1.0, 2.0])})
+        batch = batch_ops.from_arrays({"value": jnp.array([1.0, 2.0])})
 
         result = operator(batch)
-        result_data = result.get_data()
+        result_data = result.data
 
         # Should be unchanged since field doesn't exist
         np.testing.assert_array_equal(result_data["value"], [1.0, 2.0])
@@ -141,10 +141,10 @@ class TestFieldOperations:
         )
         operator = MapOperator(config, fn=add_noise, rngs=rngs)
 
-        batch = create_batch_from_arrays({"value": jnp.array([1.0, 2.0])})
+        batch = batch_ops.from_arrays({"value": jnp.array([1.0, 2.0])})
 
         result = operator(batch)
-        result_data = result.get_data()
+        result_data = result.data
 
         # Results should be different from input due to noise
         assert not np.allclose(result_data["value"], [1.0, 2.0])
@@ -162,13 +162,13 @@ class TestFieldOperations:
         )
         operator = MapOperator(config, fn=scale)
 
-        batch = create_batch_from_arrays({"value": jnp.array([1.0, 2.0, 3.0])})
+        batch = batch_ops.from_arrays({"value": jnp.array([1.0, 2.0, 3.0])})
 
         result1 = operator(batch)
         result2 = operator(batch)
 
         # Deterministic operations should give same results
-        np.testing.assert_array_equal(result1.get_data()["value"], result2.get_data()["value"])
+        np.testing.assert_array_equal(result1.data["value"], result2.data["value"])
 
     def test_with_batch_dimension(self):
         """Test operator with batch dimension."""
@@ -183,13 +183,13 @@ class TestFieldOperations:
         )
         operator = MapOperator(config, fn=augment_fn)
 
-        batch = create_batch_from_arrays(
+        batch = batch_ops.from_arrays(
             {"data": jnp.ones((4, 3))}
         )  # Batch of 4, each with 3 features
         result = operator(batch)
 
         assert result.batch_size == 4
-        assert jnp.allclose(result.get_data()["data"], jnp.ones((4, 3)) + 1)
+        assert jnp.allclose(result.data["data"], jnp.ones((4, 3)) + 1)
 
     def test_custom_stream_name(self):
         """Test operator with custom RNG stream name."""
@@ -206,9 +206,9 @@ class TestFieldOperations:
         )
         operator = MapOperator(config, fn=augment_fn, rngs=rngs)
 
-        batch = create_batch_from_arrays({"data": jnp.array([1.0, 2.0, 3.0])})
+        batch = batch_ops.from_arrays({"data": jnp.array([1.0, 2.0, 3.0])})
         result = operator(batch)
-        assert result.get_data()["data"].shape == batch.get_data()["data"].shape
+        assert result.data["data"].shape == batch.data["data"].shape
 
     def test_nested_field_access(self):
         """Test that subtree mode filters by field name correctly."""
@@ -224,7 +224,7 @@ class TestFieldOperations:
         operator = MapOperator(config, fn=transform_fn)
 
         # Test that only 'data' field is transformed
-        batch = create_batch_from_arrays(
+        batch = batch_ops.from_arrays(
             {
                 "data": jnp.array([1.0, 2.0, 3.0]),
                 "label": jnp.array([0, 1, 2]),
@@ -232,7 +232,7 @@ class TestFieldOperations:
         )
 
         result = operator(batch)
-        result_data = result.get_data()
+        result_data = result.data
 
         np.testing.assert_array_equal(result_data["data"], [3.0, 6.0, 9.0])
         np.testing.assert_array_equal(result_data["label"], [0, 1, 2])  # Unchanged

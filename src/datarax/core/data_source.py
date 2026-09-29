@@ -13,8 +13,9 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
+from datarax.core.element_batch import Element
 from datarax.core.structural import StructuralModule
-from datarax.typing import DataDict, Element
+from datarax.typing import DataDict
 
 
 logger = logging.getLogger(__name__)

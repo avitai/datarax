@@ -12,7 +12,7 @@ import jax.numpy as jnp
 
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
-from datarax.typing import Element
+from datarax.core.element_batch import Element
 
 
 class MockDataSourceModule(DataSourceModule):

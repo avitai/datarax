@@ -231,7 +231,8 @@ nav:
           - cross_modal: core/cross_modal.md
           - data_source: core/data_source.md
           - element_batch: core/element_batch.md
-          - metadata: core/metadata.md
+          - batch_ops: core/batch_ops.md
+          - state_keys: core/state_keys.md
           - modality: core/modality.md
           - module: core/module.md
           - operator: core/operator.md
@@ -242,7 +243,6 @@ nav:
       - Utilities:
           - Overview: utils/index.md
           - external: utils/external.md
-          - pytree_utils: utils/pytree_utils.md
           - cache: utils/cache.md
           - multirate: utils/multirate.md
       - Command Line Interface:

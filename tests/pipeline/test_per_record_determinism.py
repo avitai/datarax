@@ -1,10 +1,10 @@
 """End-to-end per-record RNG determinism for stochastic pipelines.
 
-A stochastic operator keys each record's randomness on the record itself and on the epoch:
-``fold_in(fold_in(base_key, epoch), record_id)``, where ``record_id`` is the stable index of the
-record the source served. So within an epoch a record is augmented identically regardless of
-batch size, shuffle order, how the records are split across workers, or where a run resumed,
-and every epoch draws fresh augmentation.
+A stochastic operator keys each record's randomness on the record itself, its epoch and its draw
+(``per_record_keys``), the record being named by the stable index the source served. So within
+an epoch a record is augmented identically regardless of batch size, shuffle order, how the
+records are split across workers, or where a run resumed, and every epoch draws fresh
+augmentation.
 """
 
 from __future__ import annotations

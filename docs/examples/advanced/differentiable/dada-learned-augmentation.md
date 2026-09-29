@@ -115,7 +115,7 @@ augmentation policy at each forward call:
 flowchart LR
     A["Policy logits"] --> B["Gumbel-Softmax"]
     B --> C["op_weights (B, 15)"]
-    C --> D["Batch.from_parts()\ndata={image, magnitude, op_weights}"]
+    C --> D["batch_ops.from_arrays()\ndata={image, magnitude, op_weights}"]
     D --> E["aug_composite(batch)"]
     E --> F["__call__ → apply_batch → _vmap_apply"]
     F --> G["WeightedParallelStrategy\nextracts weights, strips key"]
@@ -203,19 +203,18 @@ At each forward call, the composite:
 
 Gradients flow back through the weights to the upstream policy parameters.
 
-### Batch Processing via `Batch.from_parts()`
+### Batch Processing via `batch_ops.from_arrays()`
 
 The augmentation pipeline constructs batches with pre-stacked arrays
 and delegates to the composite's native batch processing:
 
 ```python
-batch = Batch.from_parts(
-    data={
+batch = batch_ops.from_arrays(
+    {
         "image": images,           # (B, H, W, C)
         "magnitude": magnitudes,   # (B,)
         "op_weights": op_weights,  # (B, 15)
-    },
-    states={},
+    }
 )
 result_batch = aug_composite(batch)
 ```
@@ -322,7 +321,7 @@ magnitudes and probabilities.
 
 - [`CompositeOperatorModule`](../../../operators/composite_operator.md): Unified composite operator
 - [`ElementOperator`](../../../operators/element_operator.md): Element-level transformation wrapper
-- [`Batch.from_parts()`](../../../core/element_batch.md): Construct batch from pre-stacked arrays
+- [`batch_ops.from_arrays()`](../../../core/batch_ops.md): Construct a batch from pre-stacked arrays
 
 ### Further Reading
 

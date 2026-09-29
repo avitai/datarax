@@ -14,7 +14,8 @@ Test Coverage:
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax.core.element_batch import Batch, Element
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 
 # GREEN phase - imports enabled
 from datarax.operators.composite_operator import (
@@ -57,19 +58,21 @@ class TestConditionalSequential:
         )
 
         # Create batch
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-                Element(data={"value": jnp.array([3.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                    Element(data={"value": jnp.array([3.0])}),
+                ]
+            )
         )
 
         # Apply composite (all should execute: ((x * 2) + 10) * 3)
         result_batch = composite(batch)
 
         # Verify: ((input * 2) + 10) * 3
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[36.0], [42.0], [48.0]])
         assert jnp.allclose(result_data["value"], expected)
 
@@ -102,19 +105,21 @@ class TestConditionalSequential:
         )
 
         # Create batch
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-                Element(data={"value": jnp.array([3.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                    Element(data={"value": jnp.array([3.0])}),
+                ]
+            )
         )
 
         # Apply composite (op1 and op3 execute, op2 skipped: (x * 2) + 10)
         result_batch = composite(batch)
 
         # Verify: (input * 2) + 10 (op2 skipped)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[12.0], [14.0], [16.0]])
         assert jnp.allclose(result_data["value"], expected)
 
@@ -147,20 +152,22 @@ class TestConditionalSequential:
         )
 
         # Create batch
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-                Element(data={"value": jnp.array([3.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                    Element(data={"value": jnp.array([3.0])}),
+                ]
+            )
         )
 
         # Apply composite (no operators execute, data passes through)
         result_batch = composite(batch)
 
         # Verify: data unchanged
-        result_data = result_batch.get_data()
-        original_data = batch.get_data()
+        result_data = result_batch.data
+        original_data = batch.data
         assert jnp.allclose(result_data["value"], original_data["value"])
 
     def test_conditional_sequential_condition_on_transformed_data(self):
@@ -191,22 +198,24 @@ class TestConditionalSequential:
         )
 
         # Test data: input is 1.0, after op1 becomes 10.0 (> 5.0)
-        batch = Batch([Element(data={"value": jnp.array([1.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([1.0])})]))
 
         # Apply composite (op1: 1.0 * 10 = 10.0, then op2: 10.0 + 1000 = 1010.0)
         result_batch = composite(batch)
 
         # Verify: condition checked transformed data (10.0 > 5.0), so op2 executed
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[1010.0]])
         assert jnp.allclose(result_data["value"], expected)
 
         # Test with input that won't trigger op2 after transformation
-        batch2 = Batch([Element(data={"value": jnp.array([0.1])})])
+        batch2 = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([0.1])})])
+        )
         result_batch2 = composite(batch2)
 
         # After op1: 0.1 * 10 = 1.0 (< 5.0), so op2 should NOT execute
-        result_data2 = result_batch2.get_data()
+        result_data2 = result_batch2.data
         expected2 = jnp.array([[1.0]])
         assert jnp.allclose(result_data2["value"], expected2)
 
@@ -244,16 +253,18 @@ class TestConditionalParallel:
         )
 
         # Create batch
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                ]
+            )
         )
 
         # Apply composite (all execute in parallel, outputs concatenated)
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # Verify: concat([x*2, x*3, x*4])
         # Each element: [1.0] -> [2.0, 3.0, 4.0] and [2.0] -> [4.0, 6.0, 8.0]
@@ -291,16 +302,18 @@ class TestConditionalParallel:
         )
 
         # Create batch
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                ]
+            )
         )
 
         # Apply composite (op1 and op3 execute, op2 returns identity)
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # Verify: concat([x*2, x (identity), x*4])
         # Concat includes ALL outputs - transformed AND identity
@@ -339,17 +352,19 @@ class TestConditionalParallel:
         )
 
         # Create batch
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-                Element(data={"value": jnp.array([3.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                    Element(data={"value": jnp.array([3.0])}),
+                ]
+            )
         )
 
         # Apply composite (no operators execute, all return identity via noop)
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # Verify: concat of 3 identity outputs = original data repeated 3 times
         # Concat includes ALL outputs - even when conditions are False
@@ -389,17 +404,19 @@ class TestConditionalAdvanced:
         )
 
         # Create batch with state
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}, state={"counter": 10}),
-                Element(data={"value": jnp.array([2.0])}, state={"counter": 10}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}, state={"counter": 10}),
+                    Element(data={"value": jnp.array([2.0])}, state={"counter": 10}),
+                ]
+            )
         )
 
         # Apply composite
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
-        result_states = result_batch.states.get_value()  # Access states via nnx.Variable
+        result_data = result_batch.data
+        result_states = result_batch.states  # Access states via nnx.Variable
 
         # Verify: (x * 2) + 100
         expected = jnp.array([[102.0], [104.0]])
@@ -408,8 +425,8 @@ class TestConditionalAdvanced:
         # Note: States are now PyTree format {key: array([val1, val2])}
         assert jnp.array_equal(result_states["counter"], jnp.array([10, 10]))  # type: ignore[reportCallIssue, reportArgumentType]
 
-    def test_conditional_with_metadata_based_conditions(self):
-        """Test conditions that depend on metadata values."""
+    def test_conditional_keeps_record_identities(self):
+        """Both branches run; each record's identity passes through unchanged."""
         rngs = nnx.Rngs(0)
 
         # Create 2 map operators
@@ -420,7 +437,6 @@ class TestConditionalAdvanced:
         op2 = MapOperator(config2, fn=lambda x, _key: x + 100, rngs=rngs)
 
         # Create conditional sequential
-        # Note: MapOperator doesn't modify metadata, so we test pass-through
         composite_config = CompositeOperatorConfig(
             strategy=CompositionStrategy.CONDITIONAL_SEQUENTIAL,
             conditions=[
@@ -433,22 +449,21 @@ class TestConditionalAdvanced:
             operators=[op1, op2],
         )
 
-        # Create batch with metadata
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}, metadata={"quality": 0.95}),  # type: ignore[reportArgumentType]
-                Element(data={"value": jnp.array([2.0])}, metadata={"quality": 0.95}),  # type: ignore[reportArgumentType]
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),  # type: ignore[reportArgumentType]
+                    Element(data={"value": jnp.array([2.0])}),  # type: ignore[reportArgumentType]
+                ]
+            )
         )
 
         # Apply composite
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
-        result_metadata_list = result_batch._metadata_list
+        result_data = result_batch.data
 
         # Verify: (x * 2) + 100
         expected = jnp.array([[102.0], [104.0]])
         assert jnp.allclose(result_data["value"], expected)
-        # Metadata should pass through unchanged (MapOperator doesn't modify metadata)
-        assert result_metadata_list[0] == {"quality": 0.95}
-        assert result_metadata_list[1] == {"quality": 0.95}
+        assert jnp.array_equal(result_batch.indices, batch.indices)
+        assert jnp.array_equal(result_batch.epochs, batch.epochs)

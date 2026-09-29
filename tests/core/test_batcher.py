@@ -16,7 +16,7 @@ import pytest
 
 from datarax.core.batcher import BatcherModule
 from datarax.core.config import StructuralConfig
-from datarax.typing import Batch, Element
+from datarax.core.element_batch import Batch, Element
 
 
 @dataclass(frozen=True)
@@ -244,53 +244,51 @@ class TestDefaultBatcherImplementation:
         batcher = DefaultBatcher(config, collate_fn=custom_collate)
         assert batcher.collate_fn is not None
 
-    def test_default_batcher_with_arrays(self):
-        """Test DefaultBatcher with array elements."""
+    def test_default_batcher_yields_batches_of_the_records(self):
+        """Records become a ``Batch``: each leaf stacked, each record keeping its identity."""
         from datarax.batching.default_batcher import DefaultBatcher, DefaultBatcherConfig
 
-        config = DefaultBatcherConfig()
-        batcher = DefaultBatcher(config)
-        elements = [jnp.array([1.0, 2.0]), jnp.array([3.0, 4.0]), jnp.array([5.0, 6.0])]
-
-        # DefaultBatcher.batch returns an iterator
-        batches = list(batcher(iter(elements), batch_size=2))
-        assert len(batches) == 2  # 2 batches (2 + 1)
-        assert batches[0].shape == (2, 2)  # First batch has 2 elements
-        assert batches[1].shape == (1, 2)  # Second batch has 1 element
-
-    def test_default_batcher_with_dicts(self):
-        """Test DefaultBatcher with dictionary elements."""
-        from datarax.batching.default_batcher import DefaultBatcher, DefaultBatcherConfig
-
-        config = DefaultBatcherConfig()
-        batcher = DefaultBatcher(config)
+        batcher = DefaultBatcher(DefaultBatcherConfig())
         elements = [
-            {"x": jnp.array([1.0]), "y": jnp.array([2.0])},
-            {"x": jnp.array([3.0]), "y": jnp.array([4.0])},
+            Element(
+                {"x": jnp.array([2.0 * i]), "y": {"z": jnp.array(i)}},
+                index=np.array([0, 40 + i], np.uint32),
+                epoch=np.array(1, np.int32),
+            )
+            for i in range(3)
         ]
 
         batches = list(batcher(iter(elements), batch_size=2))
-        assert len(batches) == 1
-        assert "x" in batches[0] and "y" in batches[0]
-        assert batches[0]["x"].shape == (2, 1)
-        assert batches[0]["y"].shape == (2, 1)
+
+        assert [type(batch) for batch in batches] == [Batch, Batch]
+        assert [batch.batch_size for batch in batches] == [2, 1]
+        np.testing.assert_array_equal(batches[0]["x"], [[0.0], [2.0]])
+        np.testing.assert_array_equal(batches[0]["y"]["z"], [0, 1])
+        np.testing.assert_array_equal(batches[0].indices, [[0, 40], [0, 41]])
+        np.testing.assert_array_equal(batches[1].indices, [[0, 42]])
+        np.testing.assert_array_equal(batches[0].epochs, [1, 1])
 
     def test_default_batcher_drop_remainder(self):
         """Test DefaultBatcher with drop_remainder flag."""
         from datarax.batching.default_batcher import DefaultBatcher, DefaultBatcherConfig
 
-        config = DefaultBatcherConfig()
-        batcher = DefaultBatcher(config)
-        elements = [jnp.array([i]) for i in range(5)]
+        batcher = DefaultBatcher(DefaultBatcherConfig())
 
-        # Without drop_remainder
-        batches = list(batcher(iter(elements), batch_size=2, drop_remainder=False))
-        assert len(batches) == 3  # 2 full + 1 partial
+        def elements():
+            return iter([Element({"x": jnp.array([i])}) for i in range(5)])
 
-        # With drop_remainder - need fresh iterator
-        elements = [jnp.array([i]) for i in range(5)]
-        batches = list(batcher(iter(elements), batch_size=2, drop_remainder=True))
-        assert len(batches) == 2  # Only full batches
+        assert len(list(batcher(elements(), batch_size=2, drop_remainder=False))) == 3
+        assert len(list(batcher(elements(), batch_size=2, drop_remainder=True))) == 2
+
+    def test_default_batcher_refuses_records_of_different_structure(self):
+        """No silent fallback to a list of values: a batch holds arrays only."""
+        from datarax.batching.default_batcher import DefaultBatcher, DefaultBatcherConfig
+
+        batcher = DefaultBatcher(DefaultBatcherConfig())
+        elements = [Element({"x": jnp.ones(2)}), Element({"y": jnp.ones(2)})]
+
+        with pytest.raises(ValueError):
+            list(batcher(iter(elements), batch_size=2))
 
     def test_default_batcher_with_custom_collate(self):
         """Test DefaultBatcher with custom collate function."""
@@ -510,43 +508,20 @@ class TestBatcherModuleWithPRNGKeys:
     """Test batching with PRNG keys."""
 
     def test_batching_with_prng_keys(self):
-        """Test batching elements containing PRNG keys."""
+        """Typed PRNG keys in a record's data stack like any other array."""
         from datarax.batching.default_batcher import DefaultBatcher, DefaultBatcherConfig
 
-        config = DefaultBatcherConfig()
-        batcher = DefaultBatcher(config)
+        batcher = DefaultBatcher(DefaultBatcherConfig())
+        elements = [Element({"key": jax.random.key(i), "data": jnp.array([i])}) for i in range(3)]
 
-        # Create elements with PRNG keys
-        elements = [{"key": jax.random.key(i), "data": jnp.array([i])} for i in range(3)]
-
-        # Should handle PRNG keys properly
         batches = list(batcher(iter(elements), batch_size=2))
+
         assert len(batches) == 2
-
-        # First batch should have stacked keys
-        first_batch = batches[0]
-        assert "key" in first_batch
-        assert "data" in first_batch
-        assert first_batch["data"].shape == (2, 1)
-
-    def test_default_batcher_safe_tree_map(self):
-        """Test the _safe_tree_map method with PRNG keys."""
-        from datarax.batching.default_batcher import DefaultBatcher, DefaultBatcherConfig
-
-        config = DefaultBatcherConfig()
-        batcher = DefaultBatcher(config)
-
-        # Test with PRNG keys
-        key1 = jax.random.key(42)
-        key2 = jax.random.key(43)
-
-        # Function to stack arrays
-        def stack_fn(*xs):
-            return jnp.stack(xs)
-
-        # Should handle PRNG keys without error
-        result = batcher._safe_tree_map(stack_fn, key1, key2)
-        assert result is not None
+        np.testing.assert_array_equal(
+            jax.random.key_data(batches[0]["key"]),
+            jax.random.key_data(jnp.stack([jax.random.key(0), jax.random.key(1)])),
+        )
+        assert batches[0]["data"].shape == (2, 1)
 
 
 class TestBatcherModuleIntegrationAdvanced:

@@ -5,6 +5,7 @@ import pytest
 from flax import nnx
 
 from datarax.batching import DefaultBatcher, DefaultBatcherConfig
+from datarax.core.element_batch import Element
 
 
 class TestDefaultBatcher:
@@ -30,32 +31,32 @@ class TestDefaultBatcher:
         """Test batching simple arrays."""
         config = DefaultBatcherConfig(stochastic=False)
         batcher = DefaultBatcher(config, rngs=nnx.Rngs(0))
-        data = [jnp.array(i) for i in range(10)]
+        data = [Element(jnp.array(i)) for i in range(10)]
 
         batches = list(batcher(iter(data), batch_size=3))
         assert len(batches) == 4  # 10 items / 3 batch_size = 3 full + 1 partial
-        assert jnp.array_equal(batches[0], jnp.array([0, 1, 2]))
-        assert jnp.array_equal(batches[1], jnp.array([3, 4, 5]))
-        assert jnp.array_equal(batches[2], jnp.array([6, 7, 8]))
-        assert jnp.array_equal(batches[3], jnp.array([9]))
+        assert jnp.array_equal(batches[0].data, jnp.array([0, 1, 2]))
+        assert jnp.array_equal(batches[1].data, jnp.array([3, 4, 5]))
+        assert jnp.array_equal(batches[2].data, jnp.array([6, 7, 8]))
+        assert jnp.array_equal(batches[3].data, jnp.array([9]))
 
     def test_batch_with_drop_remainder(self):
         """Test batching with drop_remainder=True."""
         config = DefaultBatcherConfig(stochastic=False)
         batcher = DefaultBatcher(config, rngs=nnx.Rngs(0))
-        data = [jnp.array(i) for i in range(10)]
+        data = [Element(jnp.array(i)) for i in range(10)]
 
         batches = list(batcher(iter(data), batch_size=3, drop_remainder=True))
         assert len(batches) == 3  # Last incomplete batch dropped
-        assert jnp.array_equal(batches[0], jnp.array([0, 1, 2]))
-        assert jnp.array_equal(batches[1], jnp.array([3, 4, 5]))
-        assert jnp.array_equal(batches[2], jnp.array([6, 7, 8]))
+        assert jnp.array_equal(batches[0].data, jnp.array([0, 1, 2]))
+        assert jnp.array_equal(batches[1].data, jnp.array([3, 4, 5]))
+        assert jnp.array_equal(batches[2].data, jnp.array([6, 7, 8]))
 
     def test_batch_dicts(self):
         """Test batching dictionaries."""
         config = DefaultBatcherConfig(stochastic=False)
         batcher = DefaultBatcher(config, rngs=nnx.Rngs(0))
-        data = [{"x": jnp.array(i), "y": jnp.array(i * 2)} for i in range(5)]
+        data = [Element({"x": jnp.array(i), "y": jnp.array(i * 2)}) for i in range(5)]
 
         batches = list(batcher(iter(data), batch_size=2))
         assert len(batches) == 3
@@ -74,27 +75,29 @@ class TestDefaultBatcher:
         """Test batching tuples."""
         config = DefaultBatcherConfig(stochastic=False)
         batcher = DefaultBatcher(config, rngs=nnx.Rngs(0))
-        data = [(jnp.array(i), jnp.array(i * 2)) for i in range(4)]
+        data = [Element((jnp.array(i), jnp.array(i * 2))) for i in range(4)]
 
         batches = list(batcher(iter(data), batch_size=2))
         assert len(batches) == 2
 
         # First batch
-        assert isinstance(batches[0], tuple)
-        assert len(batches[0]) == 2
-        assert jnp.array_equal(batches[0][0], jnp.array([0, 1]))
-        assert jnp.array_equal(batches[0][1], jnp.array([0, 2]))
+        assert isinstance(batches[0].data, tuple)
+        assert len(batches[0].data) == 2
+        assert jnp.array_equal(batches[0].data[0], jnp.array([0, 1]))
+        assert jnp.array_equal(batches[0].data[1], jnp.array([0, 2]))
 
     def test_batch_nested_structures(self):
         """Test batching nested data structures."""
         config = DefaultBatcherConfig(stochastic=False)
         batcher = DefaultBatcher(config, rngs=nnx.Rngs(0))
         data = [
-            {
-                "image": jnp.ones((3, 3)) * i,
-                "label": jnp.array(i),
-                "metadata": {"id": jnp.array(i * 10), "name": f"item_{i}"},
-            }
+            Element(
+                {
+                    "image": jnp.ones((3, 3)) * i,
+                    "label": jnp.array(i),
+                    "extra": {"id": jnp.array(i * 10)},
+                }
+            )
             for i in range(4)
         ]
 
@@ -105,19 +108,26 @@ class TestDefaultBatcher:
         batch = batches[0]
         assert batch["image"].shape == (2, 3, 3)
         assert jnp.array_equal(batch["label"], jnp.array([0, 1]))
-        assert jnp.array_equal(batch["metadata"]["id"], jnp.array([0, 10]))
-        assert batch["metadata"]["name"] == ["item_0", "item_1"]
+        assert jnp.array_equal(batch["extra"]["id"], jnp.array([0, 10]))
+
+    def test_a_string_in_a_record_is_refused(self):
+        """A batch holds arrays only; a name or file path stays with the source on the host."""
+        batcher = DefaultBatcher(DefaultBatcherConfig(stochastic=False), rngs=nnx.Rngs(0))
+        data = [Element({"x": jnp.array(i), "name": f"item_{i}"}) for i in range(2)]
+
+        with pytest.raises(TypeError):
+            list(batcher(iter(data), batch_size=2))
 
     def test_batch_with_custom_collate(self):
         """Test batching with custom collate function."""
 
         def custom_collate(batch):
             # Sum all elements in batch
-            return jnp.sum(jnp.stack(batch))
+            return jnp.sum(jnp.stack([element.data for element in batch]))
 
         config = DefaultBatcherConfig(stochastic=False)
         batcher = DefaultBatcher(config, collate_fn=custom_collate, rngs=nnx.Rngs(0))  # type: ignore[reportArgumentType]
-        data = [jnp.array(i) for i in range(9)]
+        data = [Element(jnp.array(i)) for i in range(9)]
 
         batches = list(batcher(iter(data), batch_size=3))
         assert len(batches) == 3
@@ -138,50 +148,44 @@ class TestDefaultBatcher:
         """Test batching single element."""
         config = DefaultBatcherConfig(stochastic=False)
         batcher = DefaultBatcher(config, rngs=nnx.Rngs(0))
-        data = [jnp.array(42)]
+        data = [Element(jnp.array(42))]
 
         batches = list(batcher(iter(data), batch_size=5))
         assert len(batches) == 1
-        assert jnp.array_equal(batches[0], jnp.array([42]))
+        assert jnp.array_equal(batches[0].data, jnp.array([42]))
 
     def test_batch_exactly_divisible(self):
         """Test when data size is exactly divisible by batch size."""
         config = DefaultBatcherConfig(stochastic=False)
         batcher = DefaultBatcher(config, rngs=nnx.Rngs(0))
-        data = [jnp.array(i) for i in range(9)]
+        data = [Element(jnp.array(i)) for i in range(9)]
 
         batches = list(batcher(iter(data), batch_size=3))
         assert len(batches) == 3
         for batch in batches:
-            assert len(batch) == 3
+            assert batch.batch_size == 3
 
-    def test_batch_mixed_types_error(self):
-        """Test that batching handles mixed types appropriately."""
+    def test_batches_are_yielded_one_at_a_time(self):
+        """The batcher is lazy: each batch is built when it is asked for."""
         config = DefaultBatcherConfig(stochastic=False)
         batcher = DefaultBatcher(config, rngs=nnx.Rngs(0))
-        # Create data with mixed types - DefaultBatcher may handle this gracefully
-        data = [jnp.array(1), jnp.array(2), jnp.array(3)]
+        data = [Element(jnp.array(1)), Element(jnp.array(2)), Element(jnp.array(3))]
 
         batches_iter = batcher(iter(data), batch_size=2)
-        # First batch should work (two arrays)
-        batch1 = next(batches_iter)
-        assert jnp.array_equal(batch1, jnp.array([1, 2]))
-
-        # Second batch with single element
-        batch2 = next(batches_iter)
-        assert jnp.array_equal(batch2, jnp.array([3]))
+        assert jnp.array_equal(next(batches_iter).data, jnp.array([1, 2]))
+        assert jnp.array_equal(next(batches_iter).data, jnp.array([3]))
 
     def test_batch_multidimensional_arrays(self):
         """Test batching multidimensional arrays."""
         config = DefaultBatcherConfig(stochastic=False)
         batcher = DefaultBatcher(config, rngs=nnx.Rngs(0))
-        data = [jnp.ones((3, 4)) * i for i in range(5)]
+        data = [Element(jnp.ones((3, 4)) * i) for i in range(5)]
 
         batches = list(batcher(iter(data), batch_size=2))
         assert len(batches) == 3
-        assert batches[0].shape == (2, 3, 4)
-        assert batches[1].shape == (2, 3, 4)
-        assert batches[2].shape == (1, 3, 4)
+        assert batches[0].data.shape == (2, 3, 4)
+        assert batches[1].data.shape == (2, 3, 4)
+        assert batches[2].data.shape == (1, 3, 4)
 
     def test_invalid_batch_size(self):
         """Test that invalid batch size raises error."""

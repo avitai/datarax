@@ -9,14 +9,12 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
-import jax
-import jax.numpy as jnp
-import numpy as np
 from flax import nnx
 
+from datarax.core import batch_ops
 from datarax.core.batcher import BatcherModule
 from datarax.core.config import StructuralConfig
-from datarax.typing import Batch, Element
+from datarax.core.element_batch import Batch, Element
 
 
 logger = logging.getLogger(__name__)
@@ -40,9 +38,9 @@ class DefaultBatcherConfig(StructuralConfig):
 class DefaultBatcher(BatcherModule):
     """Default implementation of the BatcherModule interface.
 
-    This batcher module accumulates individual data elements and forms batches
-    by stacking arrays along a new leading dimension. It handles PyTrees of
-    arbitrary structure, maintaining the same structure in the batched output.
+    This batcher module accumulates records and forms batches by stacking every leaf along a
+    new leading record axis (``batch_ops.from_stacked``). Each record's identity comes with it,
+    so its randomness in later operators does not depend on the batch it lands in.
     """
 
     def __init__(
@@ -106,76 +104,15 @@ class DefaultBatcher(BatcherModule):
         if batch_buffer and not drop_remainder:
             yield self._collate_batch(batch_buffer)
 
-    def _safe_tree_map(self, f: Callable[..., Any], *trees: Any) -> Any:
-        """Handle PRNGKey dtypes in tree_map operations.
-
-        This traverses the tree and pre-processes any PRNGKey dtypes before
-        applying the function f.
-
-        Args:
-            f: Function to apply to leaves
-            *trees: PyTrees to process
-
-        Returns:
-            A PyTree with the same structure as the input trees
-        """
-        from datarax.utils.pytree_utils import is_batch_leaf
-
-        def is_prng_key(x: Any) -> bool:
-            return hasattr(x, "dtype") and str(x.dtype) == "prng_key"
-
-        def pre_process_leaf(*xs: Any) -> Any:
-            # Convert any PRNGKey values to their underlying integer data
-            processed_xs: list[Any] = []
-            for x in xs:
-                if is_prng_key(x):
-                    processed_xs.append(jax.random.key_data(x))
-                else:
-                    processed_xs.append(x)
-            return f(*processed_xs)
-
-        return jax.tree.map(pre_process_leaf, *trees, is_leaf=is_batch_leaf)
-
     def _collate_batch(self, elements: list[Element]) -> Batch:
-        """Combine a list of elements into a batch.
+        """Combine records into a batch: every leaf stacked along a new record axis.
 
         Args:
-            elements: A list of data elements to combine.
+            elements: The records, with one structure.
 
         Returns:
-            A batch containing the combined elements.
+            The batch, each record keeping its own identity.
         """
         if self.collate_fn is not None:
             return self.collate_fn(elements)
-
-        # Use our safe tree_map implementation that handles PRNGKey dtypes
-        return self._safe_tree_map(self._stack_leaf_values, *elements)
-
-    @staticmethod
-    def _stack_leaf_values(
-        *leaves: jax.Array | np.ndarray | Any,
-    ) -> jax.Array | list:
-        """Stack leaf values from multiple elements.
-
-        Args:
-            *leaves: Leaf values from multiple elements to stack.
-
-        Returns:
-            A stacked JAX array or a list if the leaves cannot be stacked.
-        """
-        # If all leaves are arrays, stack them as JAX arrays
-        if all(isinstance(leaf, jax.Array | np.ndarray) for leaf in leaves):
-            try:
-                # Always return JAX arrays for consistency
-                return jnp.stack(leaves)
-            except (TypeError, ValueError, RuntimeError):
-                # If stacking fails, fall back to a list
-                return list(leaves)
-
-        # If leaves are scalars of the same type, convert to JAX array
-        scalar_types = (int, float, bool, np.integer, np.floating, np.bool_)
-        if all(isinstance(leaf, scalar_types) for leaf in leaves):
-            return jnp.array(leaves)
-
-        # If nothing else works, just return a list
-        return list(leaves)
+        return batch_ops.from_stacked(batch_ops.stack(elements))

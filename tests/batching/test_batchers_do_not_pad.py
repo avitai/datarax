@@ -12,7 +12,8 @@ import numpy as np
 from flax import nnx
 
 from datarax.batching.default_batcher import DefaultBatcher, DefaultBatcherConfig
-from datarax.core.element_batch import Batch, Element
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 
 
 def test_default_batcher_partial_batch_returns_shape_honest_output() -> None:
@@ -22,7 +23,7 @@ def test_default_batcher_partial_batch_returns_shape_honest_output() -> None:
     """
     config = DefaultBatcherConfig(stochastic=False)
     batcher = DefaultBatcher(config, rngs=nnx.Rngs(0))
-    elements = [{"x": np.array([i], dtype=np.float32)} for i in range(5)]
+    elements = [Element({"x": np.array([i], dtype=np.float32)}) for i in range(5)]
 
     batched = list(batcher(iter(elements), batch_size=2))
 
@@ -34,9 +35,9 @@ def test_default_batcher_partial_batch_returns_shape_honest_output() -> None:
 def test_a_batch_carries_its_records_and_no_padding_mask() -> None:
     """A ``Batch`` built from elements or parts holds records only: nothing marks padding."""
     elements = [Element(data={"x": jnp.asarray(i, dtype=jnp.float32)}) for i in range(3)]
-    batch = Batch(elements, validate=False)
-    parts = Batch.from_parts({"x": jnp.arange(3.0)}, {})
+    batch = batch_ops.from_stacked(batch_ops.stack(elements))
+    parts = batch_ops.from_arrays({"x": jnp.arange(3.0)})
 
     assert not hasattr(batch, "valid_mask")
     assert not hasattr(parts, "valid_mask")
-    np.testing.assert_array_equal(np.asarray(batch.get_data()["x"]), [0.0, 1.0, 2.0])
+    np.testing.assert_array_equal(np.asarray(batch.data["x"]), [0.0, 1.0, 2.0])

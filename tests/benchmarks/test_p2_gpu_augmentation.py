@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from datarax.core import batch_ops
 from datarax.core.element_batch import Batch
 
 
@@ -25,7 +26,7 @@ class TestP2GPUAugmentation:
         data = jnp.ones((batch_size, *shape), dtype=jnp.float32)
         gpu = jax.devices("gpu")[0]
         data = jax.device_put(data, gpu)
-        return Batch.from_parts(data={"image": data}, states={}, validate=False)
+        return batch_ops.from_arrays({"image": data})
 
     def test_normalize_on_gpu(self):
         """Verify normalize transform runs on GPU without host roundtrip."""

@@ -85,7 +85,8 @@ import optax
 from flax import nnx
 from substrax.artifacts import resolve_output_dir
 
-from datarax.core.element_batch import Batch, Element
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 from datarax.operators import (
     CompositeOperatorConfig,
     CompositeOperatorModule,
@@ -885,16 +886,15 @@ def apply_augmentation_slot(
     #   1. Extracting op_weights from data[weight_key] per element
     #   2. Stripping weight_key so children only see {image, magnitude}
     #   3. Replacing "image" with the weighted sum of all 15 augmented images
-    batch = Batch.from_parts(
-        data={
+    batch = batch_ops.from_arrays(
+        {
             "image": images,
             "magnitude": magnitudes_batch,
             "op_weights": op_weights_batch,
-        },
-        states={},
+        }
     )
     result_batch = aug_composite(batch)
-    result_data = result_batch.get_data()
+    result_data = result_batch.data
 
     # Blend: image * (1 - prob) + augmented * prob
     probs = probs_batch.reshape(-1, *([1] * (images.ndim - 1)))

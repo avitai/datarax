@@ -198,7 +198,9 @@ _INPUT_FAMILIES: dict[str, Family] = {
                 stochastic=True,
                 stream_name="augment",
             ),
-            operators=[_map_scale(2.0), _brightness()],
+            # 1.2 keeps [0.3, 0.7] inside Brightness's clip range after its +-0.1 shift; a larger
+            # scale puts values beside the clip, where finite differences cross the kink.
+            operators=[_map_scale(1.2), _brightness()],
             rngs=_rngs(),
         )
     ),

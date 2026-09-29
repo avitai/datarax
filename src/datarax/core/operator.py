@@ -25,7 +25,6 @@ from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import Batch
-from datarax.core.metadata import Metadata
 from datarax.core.module import DataraxModule
 from datarax.core.prng import per_record_keys
 
@@ -162,25 +161,29 @@ def statistics_for_child(stats: dict[str, Any] | None, index: int) -> dict[str, 
     return children[index]
 
 
-def _record_indices_from_metadata(metadata_list: Any) -> jax.Array | None:
-    """Extract per-record global indices from a batch's metadata list.
+def _raw_identity(
+    size: int, record_indices: jax.Array | None, epoch: jax.Array | int | None
+) -> tuple[jax.Array | None, jax.Array | None]:
+    """The two-word indices and per-record epochs of the raw-dict path's ``(B,)`` identity.
 
-    Returns a ``(batch_size,)`` array of ``Metadata.index`` values, or ``None``
-    when the metadata is absent or not a list of ``Metadata`` (in which case the
-    caller falls back to a positional ``arange``). Requiring genuine ``Metadata``
-    instances avoids mistaking unrelated objects for records — e.g. a plain
-    ``str`` has a built-in ``.index`` *method*, which must not be treated as a
-    record index. Safe under tracing: ``Metadata.index`` may be a JAX tracer.
+    The pipeline's raw path names records by int32 positions below ``2^31`` and one epoch for
+    the batch or one per record; each becomes the low index word and a per-record epoch.
     """
-    if not metadata_list or not all(isinstance(meta, Metadata) for meta in metadata_list):
-        return None
-    return jnp.asarray([meta.index for meta in metadata_list], dtype=jnp.uint32)
+    indices = (
+        None
+        if record_indices is None
+        else jnp.stack(
+            [jnp.zeros(size, jnp.uint32), jnp.asarray(record_indices).astype(jnp.uint32)], -1
+        )
+    )
+    epochs = None if epoch is None else jnp.broadcast_to(jnp.asarray(epoch, jnp.int32), (size,))
+    return indices, epochs
 
 
 class OperatorModule(DataraxModule):
     """Base class for parametric, differentiable operators.
 
-    Operators work on Batch[Element] data and can have learnable parameters.
+    Operators transform batches of records and can have learnable parameters.
     They support both stochastic (random) and deterministic modes.
 
     The operator pattern keeps every transformation a pure function of its own record:
@@ -242,10 +245,10 @@ class OperatorModule(DataraxModule):
         # as in ``nnx.Dropout``, so training and evaluation each compile one trace.
         self.deterministic = False
 
-        # Stable per-operator base key, drawn ONCE (not per batch). Per-record keys are
-        # fold_in(fold_in(base_key, epoch), record_index), so within an epoch a record's
-        # randomness does not depend on batch composition, shuffle order, worker split or resume
-        # point, and each epoch draws fresh randomness. It is array state typed nnx.RngKey, never
+        # Stable per-operator base key, drawn ONCE (not per batch). A record's key folds in its
+        # epoch, draw and index (``per_record_keys``), so a record's randomness does not depend on
+        # batch composition, shuffle order, worker split or resume point, and each epoch and each
+        # draw is fresh. It is array state typed nnx.RngKey, never
         # a static value: a static key would sit in the graphdef, and two operators differing
         # only in their seed would compile twice. Nothing else of the operator's randomness is
         # state, so applying an operator mutates nothing.
@@ -459,8 +462,9 @@ class OperatorModule(DataraxModule):
         batch_data: PyTree,
         batch_states: PyTree,
         stats: dict[str, Any] | None = None,
-        record_indices: jax.Array | None = None,
-        epoch: jax.Array | int | None = None,
+        indices: ArrayLike | None = None,
+        epochs: ArrayLike | None = None,
+        draws: ArrayLike | None = None,
     ) -> tuple[PyTree, PyTree]:
         """Apply operator over batch via vmap (parallel) or scan (sequential).
 
@@ -471,10 +475,10 @@ class OperatorModule(DataraxModule):
         This is the computational heart shared by apply_batch(), _apply_on_raw(),
         and the DAG executor's fused chain.
 
-        Randomness is keyed per record: each element's PRNG key is
-        ``fold_in(fold_in(self._base_key, epoch), record_index)`` (see
-        ``per_record_keys``), so within an epoch augmentation does not depend on
-        batch composition, shuffle order, worker split or resume point.
+        Randomness is keyed per record: each element's PRNG key folds the record's epoch,
+        draw and two-word index into the operator's base key (see ``per_record_keys``), so
+        augmentation does not depend on batch composition, shuffle order, worker split or
+        resume point.
 
         Args:
             batch_data: PyTree with arrays having batch dimension as axis 0.
@@ -482,12 +486,12 @@ class OperatorModule(DataraxModule):
             stats: The statistics to give every record. When ``None`` the operator computes
                 them for this batch with ``compute_statistics``, which is what lets an
                 operator fit statistics to each batch it is given.
-            record_indices: Optional int array ``(batch_size,)`` of stable record
-                indices for per-record RNG. When ``None`` (no record information
-                available), batch positions stand in for them with no epoch, so the
-                call repeats exactly but a record's draw follows its position.
-            epoch: The epoch the records belong to, or ``None`` when the keys
-                depend on the record index alone.
+            indices: uint32 ``(batch_size, 2)``, each record's index as ``(hi, lo)``. When
+                ``None`` (no record information), row ``i`` is record ``(0, i)``, as in
+                ``batch_ops.from_arrays``: the call repeats exactly but a record's draw follows
+                its position.
+            epochs: int32 ``(batch_size,)``, each record's epoch; zeros when ``None``.
+            draws: int32 ``(batch_size,)``, each record's draw; zeros when ``None``.
 
         Returns:
             Tuple of (transformed_data, transformed_states) as raw PyTrees.
@@ -504,12 +508,16 @@ class OperatorModule(DataraxModule):
         if self.stochastic and not self.deterministic:
             # The keys are a function of the base key and the records alone, so a batch applied
             # twice draws the same values. A call that names no records keys on positions.
-            indices = (
-                jnp.arange(extract_batch_size(data_shapes), dtype=jnp.uint32)
-                if record_indices is None
-                else record_indices
+            size = extract_batch_size(data_shapes)
+            if indices is None:
+                rows = jnp.arange(size, dtype=jnp.uint32)
+                indices = jnp.stack([jnp.zeros_like(rows), rows], -1)
+            element_keys = per_record_keys(
+                self._base_key[...],
+                indices,
+                jnp.zeros(size, jnp.int32) if epochs is None else epochs,
+                jnp.zeros(size, jnp.int32) if draws is None else draws,
             )
-            element_keys = per_record_keys(self._base_key[...], indices, epoch)
         else:
             # A deterministic operator, or a stochastic one in deterministic mode, draws nothing,
             # so it is handed no key.
@@ -566,15 +574,17 @@ class OperatorModule(DataraxModule):
             batch_data: Dict of batched arrays (axis 0 is batch).
             batch_states: Dict of batched state arrays.
             stats: Optional statistics.
-            record_indices: Optional ``(batch_size,)`` stable record indices for
-                per-record RNG (see ``_vmap_apply``). The Pipeline threads the
-                indices its source names for the batch.
-            epoch: The epoch the records belong to (see ``_vmap_apply``).
+            record_indices: Optional ``(batch_size,)`` record indices below ``2^31``, as the
+                Pipeline's raw path names them; each is the low word of the record's index.
+                ``None`` keys on positions (see ``_vmap_apply``).
+            epoch: The epoch of the batch, or of each record ``(batch_size,)``; ``None`` is 0.
 
         Returns:
             Tuple of (transformed_data, transformed_states) as raw dicts.
         """
-        return self._vmap_apply(batch_data, batch_states, stats, record_indices, epoch)
+        size = extract_batch_size(jax.tree.map(lambda x: x.shape, batch_data))
+        indices, epochs = _raw_identity(size, record_indices, epoch)
+        return self._vmap_apply(batch_data, batch_states, stats, indices, epochs)
 
     def apply_batch(
         self,
@@ -591,7 +601,7 @@ class OperatorModule(DataraxModule):
         computational core, then wraps the result in a Batch object.
 
         Args:
-            batch: Input batch (Batch[Element] structure)
+            batch: The batch; its identities key each record's randomness.
             stats: Optional statistics (if None, uses compute_statistics() on this batch)
 
         Returns:
@@ -601,39 +611,14 @@ class OperatorModule(DataraxModule):
             This method is concrete (not abstract). Subclasses typically don't
             override it, but can if they need custom batch processing logic.
         """
-        # Extract batch components for vmap processing
-        batch_data = batch.data.get_value()
-        batch_states = batch.states.get_value()
-        batch_metadata = batch._metadata_list
-
-        # Check for empty PyTree edge case (vmap requires at least one array)
-        has_data_arrays = len(jax.tree.leaves(batch_data)) > 0
-        has_state_arrays = len(jax.tree.leaves(batch_states)) > 0
-
-        if not has_data_arrays and not has_state_arrays:
+        # vmap needs at least one array, and a batch of no rows has nothing to apply.
+        if batch.batch_size == 0 or not jax.tree.leaves((batch.data, batch.states)):
             return batch
 
-        if batch.batch_size == 0:
-            return batch
-
-        # Per-record RNG: use the batch's stable global record indices when the
-        # metadata carries them; otherwise _vmap_apply falls back to arange.
-        record_indices = _record_indices_from_metadata(batch_metadata.get_value())
-
-        # Delegate to shared vmap core
-        transformed_data, transformed_states = self._vmap_apply(
-            batch_data, batch_states, stats, record_indices
+        data, states = self._vmap_apply(
+            batch.data, batch.states, stats, batch.indices, batch.epochs, batch.draws
         )
-
-        # Reconstruct batch (preserves batch-level metadata and state).
-        return Batch.from_parts(
-            data=transformed_data,
-            states=transformed_states,
-            metadata_list=batch_metadata.get_value(),
-            batch_metadata=batch._batch_metadata.get_value(),
-            batch_state=batch.batch_state.get_value(),
-            validate=False,
-        )
+        return batch.replace(data=data, states=states)
 
     @final
     def __call__(self, batch: Batch) -> Batch:

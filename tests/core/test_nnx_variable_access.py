@@ -4,7 +4,8 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
-from datarax.core.element_batch import Batch, Element
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 from datarax.operators.composite_operator import (
     CompositeOperatorConfig,
     CompositeOperatorModule,
@@ -37,7 +38,7 @@ def test_learnable_weighted_parallel_uses_param_indexing(monkeypatch: pytest.Mon
 
     monkeypatch.setattr(nnx.Param, "get_value", fail_direct_get_value)
 
-    batch = Batch([Element(data={"value": jnp.array([10.0])})])
+    batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([10.0])})]))
     result = composite(batch)
 
-    assert jnp.allclose(result.get_data()["value"], jnp.array([[23.0]]))
+    assert jnp.allclose(result.data["value"], jnp.array([[23.0]]))

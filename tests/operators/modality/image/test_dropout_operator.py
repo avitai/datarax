@@ -22,7 +22,8 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
-from datarax.core.element_batch import Batch, Element
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 from datarax.operators.modality.image.dropout_operator import (
     DropoutOperator,
     DropoutOperatorConfig,
@@ -202,12 +203,12 @@ class TestDropoutOperatorTransformations:
         # Create batch of elements
         images = jnp.ones((4, 16, 16, 3))
         elements = [Element(data={"image": img}, state={}) for img in images]
-        batch = Batch(elements=elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result_batch = operator.apply_batch(batch)
 
         # Check batch processing
-        result_images = result_batch.data.get_value()["image"]
+        result_images = result_batch.data["image"]
         assert result_images.shape == (4, 16, 16, 3)
         # Should have some dropout
         assert jnp.any(result_images < images)
@@ -224,11 +225,11 @@ class TestDropoutOperatorTransformations:
         # Create batch of elements
         images = jnp.ones((2, 16, 16, 3))
         elements = [Element(data={"image": img}, state={}) for img in images]
-        batch = Batch(elements=elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result_batch = operator.apply_batch(batch)
 
-        result_images = result_batch.data.get_value()["image"]
+        result_images = result_batch.data["image"]
         assert result_images.shape == (2, 16, 16, 3)
 
 
@@ -389,12 +390,12 @@ class TestDropoutOperatorStochasticMode:
         # Create batch with identical images
         images = jnp.ones((4, 16, 16, 3))
         elements = [Element(data={"image": img}, state={}) for img in images]
-        batch = Batch(elements=elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result_batch = operator.apply_batch(batch)
 
         # Due to randomness, results should vary between samples
-        result_images = result_batch.data.get_value()["image"]
+        result_images = result_batch.data["image"]
         # Check if different samples have different dropout masks
         # (high probability with stochastic mode)
         found_difference = False
@@ -448,7 +449,7 @@ class TestDropoutOperatorJAXCompatibility:
 
         images = jnp.ones((2, 16, 16, 3))
         elements = [Element(data={"image": img}, state={}) for img in images]
-        batch = Batch(elements=elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result_batch = jit_apply_batch(operator, batch)
         assert result_batch.batch_size == 2
@@ -465,13 +466,13 @@ class TestDropoutOperatorJAXCompatibility:
         # apply_batch uses vmap internally
         images = jnp.ones((4, 32, 32, 3))
         elements = [Element(data={"image": img}, state={}) for img in images]
-        batch = Batch(elements=elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result_batch = operator.apply_batch(batch)
 
         # All elements should be transformed correctly
         assert result_batch.batch_size == 4
-        result_images = result_batch.data.get_value()["image"]
+        result_images = result_batch.data["image"]
         assert result_images.shape == (4, 32, 32, 3)
 
     def test_grad_compatibility(self):

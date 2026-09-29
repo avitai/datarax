@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
-from datarax.core.batcher import Batch
+from datarax.core import batch_ops
 from datarax.utils.external import (
     ExternalAdapterConfig,
     ExternalLibraryAdapter,
@@ -95,12 +95,12 @@ class TestExternalLibraryAdapter:
         batch_size = 4
         # Create a batch of data
         data = {"x": jnp.zeros((batch_size, 10))}
-        batch = Batch.from_parts(data=data, states={}, validate=False)
+        batch = batch_ops.from_arrays(data)
 
         # Apply adapter
         output_batch = adapter(batch)
 
-        output_data = output_batch.data.get_value()
+        output_data = output_batch.data
         # Verify noise added
         assert not jnp.allclose(output_data["x"], 0.0)
         # Verify shape preserved
@@ -116,11 +116,11 @@ class TestExternalLibraryAdapter:
             return adapter(batch)
 
         data = {"x": jnp.zeros((2, 5))}
-        batch = Batch.from_parts(data=data, states={}, validate=False)
+        batch = batch_ops.from_arrays(data)
 
         # Should run without error
         output_batch = jitted_apply(adapter, batch)
-        assert output_batch.data.get_value()["x"].shape == (2, 5)
+        assert output_batch.data["x"].shape == (2, 5)
 
     def test_a_deterministic_adapter_hands_its_function_no_key(self):
         """A deterministic adapter's function takes ``None`` and gives the same output each call."""
@@ -133,10 +133,10 @@ class TestExternalLibraryAdapter:
         adapter = ExternalLibraryAdapter(
             ExternalAdapterConfig(stochastic=False, stream_name=None), scale
         )
-        batch = Batch.from_parts(data={"x": jnp.ones((2, 5))}, states={}, validate=False)
+        batch = batch_ops.from_arrays({"x": jnp.ones((2, 5))})
 
-        first = adapter(batch).data.get_value()["x"]
-        second = adapter(batch).data.get_value()["x"]
+        first = adapter(batch).data["x"]
+        second = adapter(batch).data["x"]
 
         assert seen and all(key is None for key in seen)
         assert jnp.array_equal(first, jnp.full((2, 5), 2.0))
@@ -157,10 +157,10 @@ class TestExternalLibraryAdapter:
         # Empty data with valid structure but 0 batch size
         data = {"x": jnp.zeros((0, 10))}
         # Note: Batch.from_parts might validate batch size consistency, assuming it passes
-        batch = Batch.from_parts(data=data, states={}, validate=False)
+        batch = batch_ops.from_arrays(data)
 
         output_batch = adapter(batch)
-        assert output_batch.data.get_value()["x"].shape == (0, 10)
+        assert output_batch.data["x"].shape == (0, 10)
 
     def test_nested_data_structure(self):
         """Test with deep nested data structure."""
@@ -178,10 +178,10 @@ class TestExternalLibraryAdapter:
 
         batch_size = 3
         data = {"a": {"b": jnp.zeros((batch_size, 4))}}
-        batch = Batch.from_parts(data=data, states={}, validate=False)
+        batch = batch_ops.from_arrays(data)
 
         output = adapter(batch)
-        out_data = output.data.get_value()
+        out_data = output.data
 
         assert "a" in out_data
         assert "b" in out_data["a"]
@@ -220,10 +220,10 @@ class TestPureJaxAdapter:
         adapter = PureJaxAdapter(config, mock_pure_fn)
 
         data = {"x": jnp.zeros((3, 1))}
-        batch = Batch.from_parts(data=data, states={}, validate=False)
+        batch = batch_ops.from_arrays(data)
 
         output = adapter(batch)
-        assert jnp.all(output.data.get_value()["x"] == 1.0)
+        assert jnp.all(output.data["x"] == 1.0)
 
 
 class TestWrappers:

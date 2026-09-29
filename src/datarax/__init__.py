@@ -14,6 +14,9 @@ from datarax.control.prefetcher import prefetch_to_device
 # Core modules
 from datarax.core.batcher import BatcherModule
 from datarax.core.data_source import DataSourceModule
+
+# Record and batch types
+from datarax.core.element_batch import Batch, Element
 from datarax.core.operator import OperatorModule
 from datarax.core.sampler import SamplerModule
 from datarax.core.temporal import TimeSeriesSpec
@@ -34,9 +37,6 @@ from datarax.sources.streaming_disk_source import (
     StreamingDiskSourceConfig,
 )
 
-# Types
-from datarax.typing import Batch, Element
-
 # Utilities
 from datarax.utils.multirate import multirate_align
 
@@ -44,7 +44,7 @@ from datarax.utils.multirate import multirate_align
 __version__ = _installed_version("datarax")
 
 __all__ = [
-    # Type aliases
+    # Record and batch types
     "Batch",
     "Element",
     # Core modules

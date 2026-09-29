@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
+from datarax.core import batch_ops
 from datarax.operators.modality.image.noise_operator import (
     NoiseOperator,
     NoiseOperatorConfig,
@@ -300,15 +301,15 @@ class TestNoiseOperatorGaussianTransformations:
         operator = NoiseOperator(config, rngs=nnx.Rngs(augment=42))
 
         # Create batch of elements
-        from datarax.core.element_batch import Batch, Element
+        from datarax.core.element_batch import Element
 
         images = jnp.ones((4, 32, 32, 3)) * 0.5
         elements = [Element(data={"image": img}, state={}) for img in images]
-        batch = Batch(elements=elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result_batch = operator.apply_batch(batch)
 
-        result_images = result_batch.data.get_value()["image"]
+        result_images = result_batch.data["image"]
         assert result_images.shape == (4, 32, 32, 3)
         assert not jnp.allclose(result_images, images)
         # Each image should have different noise
@@ -412,15 +413,15 @@ class TestNoiseOperatorSaltPepperTransformations:
         operator = NoiseOperator(config, rngs=nnx.Rngs(augment=42))
 
         # Create batch of elements
-        from datarax.core.element_batch import Batch, Element
+        from datarax.core.element_batch import Element
 
         images = jnp.ones((4, 32, 32, 3)) * 0.5
         elements = [Element(data={"image": img}, state={}) for img in images]
-        batch = Batch(elements=elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result_batch = operator.apply_batch(batch)
 
-        result_images = result_batch.data.get_value()["image"]
+        result_images = result_batch.data["image"]
         assert result_images.shape == (4, 32, 32, 3)
         assert not jnp.allclose(result_images, images)
 
@@ -567,15 +568,15 @@ class TestNoiseOperatorPoissonTransformations:
         operator = NoiseOperator(config, rngs=nnx.Rngs(augment=42))
 
         # Create batch of elements
-        from datarax.core.element_batch import Batch, Element
+        from datarax.core.element_batch import Element
 
         images = jnp.ones((4, 32, 32, 3)) * 0.5
         elements = [Element(data={"image": img}, state={}) for img in images]
-        batch = Batch(elements=elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result_batch = operator.apply_batch(batch)
 
-        result_images = result_batch.data.get_value()["image"]
+        result_images = result_batch.data["image"]
         assert result_images.shape == (4, 32, 32, 3)
         assert not jnp.allclose(result_images, images)
 
@@ -835,14 +836,14 @@ class TestNoiseOperatorStochasticMode:
         operator = NoiseOperator(config, rngs=nnx.Rngs(augment=42))
 
         # Create batch of elements
-        from datarax.core.element_batch import Batch, Element
+        from datarax.core.element_batch import Element
 
         images = jnp.ones((4, 32, 32, 3)) * 0.5
         elements = [Element(data={"image": img}, state={}) for img in images]
-        batch = Batch(elements=elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result_batch = operator.apply_batch(batch)
-        result_images = result_batch.data.get_value()["image"]
+        result_images = result_batch.data["image"]
 
         # Each batch element should have different noise
         assert not jnp.allclose(result_images[0], result_images[1])
@@ -919,14 +920,14 @@ class TestNoiseOperatorJAXCompatibility:
         operator = NoiseOperator(config, rngs=nnx.Rngs(augment=42))
 
         # Create batch of elements
-        from datarax.core.element_batch import Batch, Element
+        from datarax.core.element_batch import Element
 
         images = jnp.ones((8, 32, 32, 3)) * 0.5
         elements = [Element(data={"image": img}, state={}) for img in images]
-        batch = Batch(elements=elements)
+        batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
         result_batch = operator.apply_batch(batch)
-        result_images = result_batch.data.get_value()["image"]
+        result_images = result_batch.data["image"]
 
         assert result_images.shape == (8, 32, 32, 3)
 

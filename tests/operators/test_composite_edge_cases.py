@@ -19,7 +19,8 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
-from datarax.core.element_batch import Batch, Element
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 from datarax.operators.composite_operator import (
     CompositeOperatorConfig,
     CompositeOperatorModule,
@@ -58,9 +59,9 @@ class TestBoundaryConditions:
         composite = CompositeOperatorModule(composite_config, operators=[op], rngs=rngs)
 
         # Test with batch
-        batch = Batch([Element(data={"value": jnp.array([5.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # Should be equivalent to calling operator directly
         assert jnp.allclose(result_data["value"], jnp.array([[10.0]]))
@@ -84,9 +85,9 @@ class TestBoundaryConditions:
         composite = CompositeOperatorModule(composite_config, operators=operators, rngs=rngs)
 
         # Test with batch
-        batch = Batch([Element(data={"value": jnp.array([0.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([0.0])})]))
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # Should be 0 + 100 = 100
         assert jnp.allclose(result_data["value"], jnp.array([[100.0]]))
@@ -112,9 +113,9 @@ class TestBoundaryConditions:
         composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
 
         # This works! Concat along axis 0: shape (1,) + (2,) = (3,)
-        batch = Batch([Element(data={"value": jnp.array([5.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # Concatenated result should have shape (batch_size=1, 3)
         assert result_data["value"].shape == (1, 3)
@@ -145,9 +146,9 @@ class TestNumericalEdgeCases:
         composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
 
         # Test with batch
-        batch = Batch([Element(data={"value": jnp.array([5.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # NaN should propagate: mean([10.0, NaN]) = NaN
         assert jnp.isnan(result_data["value"]).all()
@@ -173,9 +174,9 @@ class TestNumericalEdgeCases:
         composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
 
         # Test with batch
-        batch = Batch([Element(data={"value": jnp.array([5.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # Inf should propagate: sum([10.0, Inf]) = Inf
         assert jnp.isinf(result_data["value"]).all()
@@ -202,9 +203,9 @@ class TestWeightingEdgeCases:
         )
         composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
 
-        batch = Batch([Element(data={"value": jnp.array([5.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # All zero weights should give zero output
         assert jnp.allclose(result_data["value"], jnp.array([[0.0]]))
@@ -227,9 +228,9 @@ class TestWeightingEdgeCases:
         )
         composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
 
-        batch = Batch([Element(data={"value": jnp.array([2.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([2.0])})]))
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # 1.0 * (2*2) + (-0.5) * (2*3) = 4 - 3 = 1
         assert jnp.allclose(result_data["value"], jnp.array([[1.0]]))
@@ -262,14 +263,18 @@ class TestBranchingEdgeCases:
         composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
 
         # Test with value < 5.0 -> should use op1 (x * 2)
-        batch1 = Batch([Element(data={"value": jnp.array([3.0])})])
+        batch1 = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([3.0])})])
+        )
         result1 = composite(batch1)
-        assert jnp.allclose(result1.get_data()["value"], jnp.array([[6.0]]))
+        assert jnp.allclose(result1.data["value"], jnp.array([[6.0]]))
 
         # Test with value >= 5.0 -> should use op2 (x * 3)
-        batch2 = Batch([Element(data={"value": jnp.array([10.0])})])
+        batch2 = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([10.0])})])
+        )
         result2 = composite(batch2)
-        assert jnp.allclose(result2.get_data()["value"], jnp.array([[30.0]]))
+        assert jnp.allclose(result2.data["value"], jnp.array([[30.0]]))
 
 
 class TestConditionalEdgeCases:
@@ -295,7 +300,7 @@ class TestConditionalEdgeCases:
         )
         composite = CompositeOperatorModule(composite_config, operators=[op1], rngs=rngs)
 
-        batch = Batch([Element(data={"value": jnp.array([5.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
 
         # Exception should propagate
         with pytest.raises(RuntimeError, match="Condition evaluation failed"):

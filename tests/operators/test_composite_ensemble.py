@@ -13,7 +13,8 @@ Test Coverage:
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax.core.element_batch import Batch, Element
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 
 # GREEN phase - imports enabled
 from datarax.operators.composite_operator import (
@@ -51,11 +52,13 @@ class TestEnsembleReductions:
         )
 
         # Create batch
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                ]
+            )
         )
 
         # Apply composite
@@ -64,7 +67,7 @@ class TestEnsembleReductions:
         # Verify: mean([x*2, x*3, x*4]) for each element
         # Element 0: mean([2, 3, 4]) = 3
         # Element 1: mean([4, 6, 8]) = 6
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[3.0], [6.0]])
         assert jnp.allclose(result_data["value"], expected)
 
@@ -92,11 +95,13 @@ class TestEnsembleReductions:
         )
 
         # Create batch
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                ]
+            )
         )
 
         # Apply composite
@@ -105,7 +110,7 @@ class TestEnsembleReductions:
         # Verify: sum([x*2, x*3, x*4]) for each element
         # Element 0: 2 + 3 + 4 = 9
         # Element 1: 4 + 6 + 8 = 18
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[9.0], [18.0]])
         assert jnp.allclose(result_data["value"], expected)
 
@@ -133,11 +138,13 @@ class TestEnsembleReductions:
         )
 
         # Create batch
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                ]
+            )
         )
 
         # Apply composite
@@ -146,7 +153,7 @@ class TestEnsembleReductions:
         # Verify: max([x*2, x*5, x*3]) for each element
         # Element 0: max([2, 5, 3]) = 5
         # Element 1: max([4, 10, 6]) = 10
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[5.0], [10.0]])
         assert jnp.allclose(result_data["value"], expected)
 
@@ -174,11 +181,13 @@ class TestEnsembleReductions:
         )
 
         # Create batch
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                ]
+            )
         )
 
         # Apply composite
@@ -187,7 +196,7 @@ class TestEnsembleReductions:
         # Verify: min([x*5, x*2, x*3]) for each element
         # Element 0: min([5, 2, 3]) = 2
         # Element 1: min([10, 4, 6]) = 4
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[2.0], [4.0]])
         assert jnp.allclose(result_data["value"], expected)
 
@@ -216,13 +225,15 @@ class TestEnsembleAdvanced:
         )
 
         # Create batch
-        batch = Batch([Element(data={"value": jnp.array([10.0])})])
+        batch = batch_ops.from_stacked(
+            batch_ops.stack([Element(data={"value": jnp.array([10.0])})])
+        )
 
         # Apply composite
         result_batch = composite(batch)
 
         # Verify: mean([10, 20, 30, 40, 50]) = 150 / 5 = 30
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[30.0]])
         assert jnp.allclose(result_data["value"], expected)
 
@@ -255,18 +266,20 @@ class TestEnsembleAdvanced:
             return model(batch)
 
         # Create batch
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                ]
+            )
         )
 
         # Apply JIT-compiled version
         result_batch = jit_apply(composite, batch)
 
         # Verify: mean([x*2, x*3, x*4]) for each element = 3x
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[3.0], [6.0]])
         assert jnp.allclose(result_data["value"], expected)
 
@@ -294,19 +307,21 @@ class TestEnsembleAdvanced:
         )
 
         # Create batch (Batch handles vmap internally via apply_batch)
-        batch = Batch(
-            [
-                Element(data={"value": jnp.array([1.0])}),
-                Element(data={"value": jnp.array([2.0])}),
-                Element(data={"value": jnp.array([3.0])}),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(data={"value": jnp.array([1.0])}),
+                    Element(data={"value": jnp.array([2.0])}),
+                    Element(data={"value": jnp.array([3.0])}),
+                ]
+            )
         )
 
         # Apply composite (vmap is handled internally)
         result_batch = composite(batch)
 
         # Verify: mean([x*2, x*4, x*6]) = 4x for each element
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
         expected = jnp.array([[4.0], [8.0], [12.0]])
         assert jnp.allclose(result_data["value"], expected)
 
@@ -333,6 +348,6 @@ class TestEnsembleAdvanced:
             operators=[op1, op2, op3],
         )
 
-        batch = Batch([Element(data={"value": jnp.array([1.0])})])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([1.0])})]))
 
         composite(batch)

@@ -98,10 +98,10 @@ print(f"images={images.shape}, index={index.shape}")
 
 | | Grain | Datarax |
 |---|---|---|
-| Randomness for a record | `np.random.Generator(np.random.Philox(key=seed + draw_index))`, made by the sampler for each draw | `fold_in(fold_in(base_key, epoch), record_index)`, derived by iteration from the operator's stable base key |
+| Randomness for a record | `np.random.Generator(np.random.Philox(key=seed + draw_index))`, made by the sampler for each draw | the epoch, the draw and the record's index folded into the operator's stable base key |
 | Belongs to | The draw: the position in the sampled sequence | The record: its stable index in the source |
-| Changes it | The shuffle order, the worker split | The epoch |
-| Reproduce it | Rebuild the generator for that draw index | `datarax.core.prng.per_record_keys(base_key, indices, epoch)` |
+| Changes it | The shuffle order, the worker split | The epoch, and the draw when a record is served twice |
+| Reproduce it | Rebuild the generator for that draw index | `datarax.core.prng.per_record_keys(base_key, indices, epochs, draws)` |
 
 ### A transform is code, or a module
 
@@ -202,7 +202,8 @@ print(
 ### Datarax: a key per record
 
 A stochastic Datarax operator holds one stable base key, and iteration gives each record
-the key `fold_in(fold_in(base_key, epoch), record_index)` (`datarax.core.prng.per_record_keys`).
+a key folding its epoch, its draw and its index into that base key
+(`datarax.core.prng.per_record_keys`).
 The key belongs to the record: within an epoch its noise is the same under any shuffle order,
 batch size, worker split or resume point. The epoch is folded in, so every epoch draws fresh
 noise, as Grain's draw index continuing across epochs does.
@@ -394,7 +395,7 @@ print(f"Learned mixture weights: {np.round(learned_weights, 3)} (target [0.25 0.
 
 | | Grain | Datarax |
 |---|---|---|
-| Randomness for a record | `Philox(seed + draw_index)` from the sampler: belongs to the draw | `fold_in(fold_in(base_key, epoch), record_index)`: belongs to the record |
+| Randomness for a record | `Philox(seed + draw_index)` from the sampler: belongs to the draw | the record's epoch, draw and index folded into the base key: belongs to the record |
 | Changes it | Shuffle order, worker split | The epoch |
 | Learnable transform | Not reachable: Python code outside JAX; put it in the model | Any `nnx.Param` in a stage, through `Pipeline.scan` |
 | Mixture of operators | A `Map` that applies fixed weights | `WEIGHTED_PARALLEL` with `learnable_weights=True` |

@@ -22,7 +22,7 @@ import pytest
 import scipy.signal
 from flax import nnx
 
-from datarax.core.element_batch import Batch
+from datarax.core import batch_ops
 from datarax.operators.modality.audio.loudness_operator import (
     _a_weighting_jax,
     LoudnessConfig,
@@ -143,9 +143,9 @@ class TestLoudnessOutput:
     def test_batch_gains_the_loudness_field(self):
         """A batch comes back carrying the loudness the operator adds, and its audio."""
         op = LoudnessOperator(LoudnessConfig(), rngs=nnx.Rngs(0))
-        batch = Batch.from_parts(data={"audio": jnp.zeros((2, 32000))}, states={}, validate=False)
+        batch = batch_ops.from_arrays({"audio": jnp.zeros((2, 32000))})
 
-        result_data = op.apply_batch(batch).data.get_value()
+        result_data = op.apply_batch(batch).data
 
         assert "loudness" in result_data, "the batch must carry the loudness the operator adds"
         assert "audio" in result_data, "the original audio must be preserved"
@@ -214,13 +214,10 @@ class TestLoudnessJaxCompat:
 
         B = 4
         audio = jnp.zeros((B, 64000))
-        batch = Batch.from_parts(
-            data={"audio": audio},
-            states={"_dummy": jnp.zeros((B,))},
-        )
+        batch = batch_ops.from_arrays({"audio": audio}, states={"_dummy": jnp.zeros((B,))})
 
         result = op.apply_batch(batch)
-        result_data = result.data.get_value()
+        result_data = result.data
         assert result_data["loudness"].shape == (B, 1001)
 
     def test_jit_compatible(self):

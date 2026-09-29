@@ -16,7 +16,8 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
-from datarax.core.element_batch import Batch, Element
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 from datarax.operators.composite_operator import (
     CompositeOperatorConfig,
     CompositeOperatorModule,
@@ -276,25 +277,27 @@ class TestWeightKeyAdvanced:
         )
 
         # Create batch with weight_key in each element's data
-        batch = Batch(
-            [
-                Element(
-                    data={
-                        "value": jnp.array([1.0]),
-                        "op_weights": jnp.array([0.7, 0.3]),
-                    }
-                ),
-                Element(
-                    data={
-                        "value": jnp.array([2.0]),
-                        "op_weights": jnp.array([0.3, 0.7]),
-                    }
-                ),
-            ]
+        batch = batch_ops.from_stacked(
+            batch_ops.stack(
+                [
+                    Element(
+                        data={
+                            "value": jnp.array([1.0]),
+                            "op_weights": jnp.array([0.7, 0.3]),
+                        }
+                    ),
+                    Element(
+                        data={
+                            "value": jnp.array([2.0]),
+                            "op_weights": jnp.array([0.3, 0.7]),
+                        }
+                    ),
+                ]
+            )
         )
 
         result_batch = composite(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # Element 0: 0.7*(1*2) + 0.3*(1*3) = 1.4 + 0.9 = 2.3
         # Element 1: 0.3*(2*2) + 0.7*(2*3) = 1.2 + 4.2 = 5.4

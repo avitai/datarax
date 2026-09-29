@@ -35,7 +35,7 @@ from datarax.core.element_batch import Element
 def sample_element():
     """Create a sample Element with float32 image data."""
     data = {"image": jnp.ones((8, 8, 3), dtype=jnp.float32) * 0.5}
-    return Element(data=data, state={}, metadata=None)
+    return Element(data=data, state={})
 
 
 @pytest.fixture

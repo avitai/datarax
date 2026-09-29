@@ -21,8 +21,9 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
+from datarax.core import batch_ops
 from datarax.core.config import MapOperatorConfig
-from datarax.core.element_batch import Batch, Element
+from datarax.core.element_batch import Element
 from datarax.operators.map_operator import MapOperator
 
 
@@ -42,7 +43,7 @@ def create_test_batch(data, states=None, metadata_list=None, batch_size=None):
     if metadata_list is None:
         metadata_list = [None] * batch_size
 
-    return Batch.from_parts(data, states, metadata_list, validate=False)
+    return batch_ops.from_arrays(data, states=states)
 
 
 # ========================================================================
@@ -269,10 +270,10 @@ class TestMapOperatorFullTree:
         result_batch = op(batch)
 
         expected = jnp.array([[2.0, 4.0, 6.0]])
-        assert jnp.allclose(result_batch.get_data()["image"], expected)
-        # State and metadata preserved (empty in this case)
-        assert result_batch.get_states() == {}
-        assert result_batch._metadata_list[0] is None
+        assert jnp.allclose(result_batch.data["image"], expected)
+        # State and identity preserved
+        assert result_batch.states == {}
+        assert jnp.array_equal(result_batch.indices, batch.indices)
 
     def test_apply_to_multiple_fields(self):
         """Full-tree mode applies fn to all fields."""
@@ -289,7 +290,7 @@ class TestMapOperatorFullTree:
         batch = create_test_batch(batch_data)
 
         result_batch = op(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         assert jnp.allclose(result_data["image"], jnp.array([[2.0, 3.0]]))
         assert jnp.allclose(result_data["mask"], jnp.array([[1.0, 2.0]]))
@@ -311,7 +312,7 @@ class TestMapOperatorFullTree:
         batch = create_test_batch(batch_data)
 
         result_batch = op(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         assert jnp.allclose(result_data["features"]["image"], jnp.array([[-1.0, -2.0]]))
         assert jnp.allclose(result_data["features"]["depth"], jnp.array([[-3.0, -4.0]]))
@@ -334,7 +335,7 @@ class TestMapOperatorFullTree:
         result = op(batch)
 
         expected = (jnp.ones((3, 4, 4, 1)) - 0.5) / 0.5
-        assert jnp.allclose(result.data.get_value()["image"], expected)
+        assert jnp.allclose(result.data["image"], expected)
 
 
 # ========================================================================
@@ -360,7 +361,7 @@ class TestMapOperatorSubtree:
         batch = create_test_batch(batch_data)
 
         result_batch = op(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # Only "image" should be doubled
         assert jnp.allclose(result_data["image"], jnp.array([[2.0, 4.0]]))
@@ -386,7 +387,7 @@ class TestMapOperatorSubtree:
         batch = create_test_batch(batch_data)
 
         result_batch = op(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # "image" and "mask" transformed
         assert jnp.allclose(result_data["image"], jnp.array([[11.0]]))
@@ -412,7 +413,7 @@ class TestMapOperatorSubtree:
         batch = create_test_batch(batch_data)
 
         result_batch = op(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # Only features.image transformed
         assert jnp.allclose(result_data["features"]["image"], jnp.array([[4.0, 9.0]]))
@@ -436,7 +437,7 @@ class TestMapOperatorSubtree:
         batch = create_test_batch(batch_data)
 
         result_batch = op(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         # Structure preserved
         assert set(result_data.keys()) == {"a", "b", "c"}
@@ -503,7 +504,7 @@ class TestMapOperatorStochastic:
 
         # Apply operator
         result = op(batch)
-        result_data = result.get_data()
+        result_data = result.data
 
         # Output should differ from input (noise added)
         assert not jnp.allclose(result_data["image"], jnp.ones((3, 4, 4, 1)))
@@ -529,7 +530,7 @@ class TestMapOperatorStochastic:
 
         # Apply operator
         result = op(batch)
-        result_data = result.get_data()
+        result_data = result.data
 
         # image should be modified (in subtree)
         assert not jnp.allclose(result_data["image"], original_image)
@@ -559,7 +560,7 @@ class TestMapOperatorStochastic:
         result2 = op2(batch)
 
         # Should produce identical outputs (same seed)
-        assert jnp.allclose(result1.get_data()["image"], result2.get_data()["image"])
+        assert jnp.allclose(result1.data["image"], result2.data["image"])
 
     def test_stochastic_different_seeds_differ(self):
         """Different RNG seeds produce different stochastic outputs."""
@@ -584,7 +585,7 @@ class TestMapOperatorStochastic:
         result2 = op2(batch)
 
         # Should produce different outputs (different seeds)
-        assert not jnp.allclose(result1.get_data()["image"], result2.get_data()["image"])
+        assert not jnp.allclose(result1.data["image"], result2.data["image"])
 
     def test_deterministic_mode_ignores_key(self):
         """Deterministic mode ignores key parameter (always same output)."""
@@ -611,8 +612,8 @@ class TestMapOperatorStochastic:
         result2 = op2(batch)
 
         expected = jnp.ones((2, 3, 3, 1)) * 2.0
-        assert jnp.allclose(result1.get_data()["image"], expected)
-        assert jnp.allclose(result2.get_data()["image"], expected)
+        assert jnp.allclose(result1.data["image"], expected)
+        assert jnp.allclose(result2.data["image"], expected)
 
 
 # ========================================================================
@@ -635,13 +636,13 @@ class TestMapOperatorEdgeCases:
         op = MapOperator(config, fn=double, rngs=rngs)
 
         # Create batch with empty data using Element constructor
-        batch = Batch([Element(data={}, state={}, metadata=None)])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={}, state={})]))
 
         result_batch = op(batch)
 
-        assert result_batch.get_data() == {}
-        assert result_batch.get_states() == {}
-        assert result_batch._metadata_list == [None]
+        assert result_batch.data == {}
+        assert result_batch.states == {}
+        assert result_batch.batch_size == 1
 
     def test_state_unchanged(self):
         """State PyTree is never modified."""
@@ -656,16 +657,16 @@ class TestMapOperatorEdgeCases:
 
         batch_data = {"image": jnp.array([[1.0]])}
         batch_states = {"model_state": jnp.array([[100.0]])}
-        batch = Batch.from_parts(batch_data, batch_states, [None], validate=False)
+        batch = batch_ops.from_arrays(batch_data, states=batch_states)
 
         result_batch = op(batch)
 
         # State completely unchanged
-        result_states = result_batch.get_states()
+        result_states = result_batch.states
         assert jnp.allclose(result_states["model_state"], jnp.array([[100.0]]))  # type: ignore[reportCallIssue, reportArgumentType]
 
-    def test_metadata_unchanged(self):
-        """Metadata dict is never modified."""
+    def test_identity_unchanged(self):
+        """Record identities are never modified."""
 
         def double(x, key):
             del key
@@ -676,13 +677,14 @@ class TestMapOperatorEdgeCases:
         op = MapOperator(config, fn=double, rngs=rngs)
 
         batch_data = {"image": jnp.array([[1.0]])}
-        metadata_list = [{"filename": "test.jpg", "index": 42}]
-        batch = Batch.from_parts(batch_data, {}, metadata_list, validate=False)
+        batch = batch_ops.from_arrays(batch_data).replace(
+            indices=jnp.array([[3, 42]], jnp.uint32), epochs=jnp.array([5], jnp.int32)
+        )
 
         result_batch = op(batch)
 
-        # Metadata completely unchanged
-        assert result_batch._metadata_list[0] == {"filename": "test.jpg", "index": 42}
+        assert jnp.array_equal(result_batch.indices, batch.indices)
+        assert jnp.array_equal(result_batch.epochs, batch.epochs)
 
     def test_different_array_shapes(self):
         """Handles arrays of different shapes."""
@@ -703,7 +705,7 @@ class TestMapOperatorEdgeCases:
         batch = create_test_batch(batch_data)
 
         result_batch = op(batch)
-        result_data = result_batch.get_data()
+        result_data = result_batch.data
 
         assert jnp.allclose(result_data["small"], jnp.array([[2.0]]))
         assert jnp.allclose(result_data["medium"], jnp.array([[[3.0, 4.0]]]))
@@ -742,7 +744,7 @@ class TestMapOperatorJIT:
 
         # Verify
         expected = (jnp.ones((2, 3, 3, 1)) - 0.5) / 0.5
-        assert jnp.allclose(result.data.get_value()["image"], expected)
+        assert jnp.allclose(result.data["image"], expected)
 
     def test_jit_subtree_mode(self):
         """JIT compilation works in subtree mode."""
@@ -767,8 +769,8 @@ class TestMapOperatorJIT:
         result = jitted_apply(op, batch)
 
         # Verify: only image doubled
-        assert jnp.allclose(result.data.get_value()["image"], jnp.array([[2.0], [4.0]]))
-        assert jnp.allclose(result.data.get_value()["label"], jnp.array([[3.0], [4.0]]))
+        assert jnp.allclose(result.data["image"], jnp.array([[2.0], [4.0]]))
+        assert jnp.allclose(result.data["label"], jnp.array([[3.0], [4.0]]))
 
     def test_jit_stochastic_mode(self):
         """JIT compilation works with stochastic operators and produces deterministic results."""
@@ -798,10 +800,10 @@ class TestMapOperatorJIT:
         result2 = apply_op(op2, batch)
 
         # Verify: output differs from input due to noise
-        assert not jnp.allclose(result1.data.get_value()["image"], jnp.ones((2, 3, 3, 1)))
+        assert not jnp.allclose(result1.data["image"], jnp.ones((2, 3, 3, 1)))
 
         # Verify: same seed produces same output (deterministic)
-        assert jnp.allclose(result1.data.get_value()["image"], result2.data.get_value()["image"])
+        assert jnp.allclose(result1.data["image"], result2.data["image"])
 
     def test_jit_empty_pytree(self):
         """JIT compilation handles empty PyTree edge case."""
@@ -815,7 +817,7 @@ class TestMapOperatorJIT:
         op = MapOperator(config, fn=double, rngs=rngs)
 
         # Create batch with empty data
-        batch = Batch([Element(data={}, state={}, metadata=None)])
+        batch = batch_ops.from_stacked(batch_ops.stack([Element(data={}, state={})]))
 
         # JIT compile with nnx.jit (pass module as argument, not closure)
         @nnx.jit
@@ -826,8 +828,8 @@ class TestMapOperatorJIT:
         result = jitted_apply(op, batch)
 
         # Verify: batch passes through unchanged
-        assert result.get_data() == {}
-        assert result.get_states() == {}
+        assert result.data == {}
+        assert result.states == {}
 
     def test_jit_apply_batch_directly(self):
         """JIT compilation of apply_batch method directly."""
@@ -851,7 +853,7 @@ class TestMapOperatorJIT:
 
         # Verify
         expected = (jnp.ones((2, 3, 3, 1)) - 0.5) / 0.5
-        assert jnp.allclose(result.data.get_value()["image"], expected)
+        assert jnp.allclose(result.data["image"], expected)
 
 
 # ========================================================================
@@ -913,7 +915,7 @@ class TestMapOperatorIntegration:
         # First op normalizes: [0.0, 0.5, 1.0] -> [-1.0, 0.0, 1.0]
         # Second op clips (already in range)
         expected = jnp.array([[-1.0, 0.0, 1.0]])
-        assert jnp.allclose(batch2.get_data()["image"], expected)
+        assert jnp.allclose(batch2.data["image"], expected)
 
     def test_different_functions_per_field(self):
         """Can apply different functions to different fields using multiple operators."""
@@ -940,6 +942,6 @@ class TestMapOperatorIntegration:
         batch1 = op_image(batch)
         batch2 = op_mask(batch1)
 
-        result_data = batch2.get_data()
+        result_data = batch2.data
         assert jnp.allclose(result_data["image"], jnp.array([[4.0]]))  # doubled
         assert jnp.allclose(result_data["mask"], jnp.array([[9.0]]))  # squared

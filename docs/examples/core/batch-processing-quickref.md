@@ -14,13 +14,19 @@ Batching is fundamental to efficient data processing in Datarax. This reference 
 
 ## What is a Batch?
 
-A `Batch` is a Flax NNX Module that holds a collection of data samples stacked along axis 0. It contains three parts:
+A `Batch` is a frozen pytree of arrays holding records stacked along axis 0. Every field is an
+array, so a batch passes through `jax.jit`, `vmap`, `scan` and sharding like a dict of arrays:
 
-| Component | Type | Description |
-|-----------|------|-------------|
-| `data` | `dict[str, jax.Array]` | Stacked data arrays (images, labels, etc.) |
-| `states` | `dict[str, jax.Array]` | Per-element state arrays (vmapped with data) |
-| `metadata` | `list[Metadata]` | Per-element metadata (Python objects, not JIT-compiled) |
+| Field | Type | Description |
+|-------|------|-------------|
+| `data` | pytree, leading axis `B` | The records' values (images, labels, etc.) |
+| `states` | pytree, leading axis `B` | Per-record processing state |
+| `indices` | `uint32 (B, 2)` | Each record's 64-bit index, as two words |
+| `epochs`, `draws` | `int32 (B,)` | Each record's epoch and draw within it |
+| `batch_state` | pytree | Batch-level arrays, without a record axis |
+
+A record's identity keys its randomness in every stochastic operator. File names and other
+strings stay with the source on the host.
 
 ## Iterating a Pipeline
 
@@ -54,22 +60,30 @@ for batch in pipeline:
 
 ### From pre-built arrays (direct construction)
 
-When you need an explicit `Batch` object -- for example to pass through code
-that expects the `Batch` API -- build one with `Batch.from_parts`:
+When you need an explicit `Batch` -- for example to call an operator directly -- build one
+from arrays with `batch_ops.from_arrays`. Row `i` is named record `(0, i)`, so each row draws
+its own randomness:
 
 ```python
-from datarax.core.element_batch import Batch
 import jax.numpy as jnp
+from datarax.core import batch_ops
 
-batch = Batch.from_parts(
-    data={"image": jnp.ones((8, 32, 32, 3)), "label": jnp.zeros((8,))},
-    states={},
-)
+batch = batch_ops.from_arrays({"image": jnp.ones((8, 32, 32, 3)), "label": jnp.zeros((8,))})
+```
+
+Records built as `Element`s are stacked and then turned into a batch:
+
+```python
+from datarax.core import Element, batch_ops
+
+records = [Element({"x": jnp.full(3, i)}) for i in range(4)]
+batch = batch_ops.from_stacked(batch_ops.stack(records))
 ```
 
 ## Accessing Batch Data
 
-The `Batch` object supports dict-like access plus a few helpers:
+A `Batch` reads its data by field name; it is not a mapping itself, so `dict(batch)`,
+`**batch`, `len(batch)` and iterating over it raise rather than drop its other fields:
 
 ```python
 # Dict-like access (recommended)
@@ -80,11 +94,14 @@ labels = batch["label"]           # jax.Array, shape (B,)
 if "mask" in batch:
     mask = batch["mask"]
 
-# Get full data dict
-data_dict = batch.get_data()      # {"image": ..., "label": ...}
+# The whole data pytree
+data_dict = batch.data            # {"image": ..., "label": ...}
 
-# Batch size
+# Batch size, static under jit
 n = batch.batch_size              # int
+
+# One record, with its identity
+first = batch_ops.element(batch, 0)
 ```
 
 ## Iteration Patterns
