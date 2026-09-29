@@ -33,6 +33,7 @@ from flax import nnx
 
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
+from datarax.core.element_batch import Batch
 from datarax.core.spec import SpecMismatchError
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.pipeline.pipeline import Pipeline
@@ -92,7 +93,7 @@ class _CountingStage(nnx.Module):
     def __init__(self) -> None:
         self.calls = nnx.Variable(jnp.zeros((), jnp.int32))
 
-    def __call__(self, batch: dict[str, jax.Array]) -> dict[str, jax.Array]:
+    def __call__(self, batch: Batch) -> Batch:
         self.calls[...] = self.calls[...] + 1
         return batch
 
@@ -103,8 +104,13 @@ class _NoiseStage(nnx.Module):
     def __init__(self) -> None:
         self.rngs = nnx.Rngs(noise=0)
 
-    def __call__(self, batch: dict[str, jax.Array]) -> dict[str, jax.Array]:
-        return {**batch, "x": batch["x"] + jax.random.normal(self.rngs.noise(), batch["x"].shape)}
+    def __call__(self, batch: Batch) -> Batch:
+        return batch.replace(
+            data={
+                **batch.data,
+                "x": batch["x"] + jax.random.normal(self.rngs.noise(), batch["x"].shape),
+            }
+        )
 
 
 class _StatisticsStage(nnx.Module):
@@ -113,7 +119,7 @@ class _StatisticsStage(nnx.Module):
     def __init__(self) -> None:
         self.total = nnx.BatchStat(jnp.zeros((), jnp.float32))
 
-    def __call__(self, batch: dict[str, jax.Array]) -> dict[str, jax.Array]:
+    def __call__(self, batch: Batch) -> Batch:
         self.total[...] = self.total[...] + batch["x"].sum()
         return batch
 
@@ -121,7 +127,7 @@ class _StatisticsStage(nnx.Module):
 class _GrowingStage(nnx.Module):
     """Stage adding state while it runs, which changes the module structure."""
 
-    def __call__(self, batch: dict[str, jax.Array]) -> dict[str, jax.Array]:
+    def __call__(self, batch: Batch) -> Batch:
         self.seen = nnx.Variable(jnp.zeros((), jnp.int32))
         return batch
 
@@ -133,7 +139,7 @@ _TRACED_SHAPES: list[tuple[int, ...]] = []
 class _TracingStage(nnx.Module):
     """Identity stage recording the batch shape each time its Python body runs."""
 
-    def __call__(self, batch: dict[str, jax.Array]) -> dict[str, jax.Array]:
+    def __call__(self, batch: Batch) -> Batch:
         _TRACED_SHAPES.append(tuple(batch["x"].shape))
         return batch
 

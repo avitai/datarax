@@ -61,6 +61,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
+from datarax.core.element_batch import Batch
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.composite_operator import (
     CompositeOperatorConfig,
@@ -273,9 +274,9 @@ class LearnableScale(nnx.Module):
         """Start every scale at one."""
         self.scale = nnx.Param(jnp.ones(3))
 
-    def __call__(self, batch: dict) -> dict:
+    def __call__(self, batch: Batch) -> Batch:
         """Return the batch with ``image`` rescaled."""
-        return {**batch, "image": batch["image"] * self.scale[...]}
+        return batch.replace(data={**batch.data, "image": batch["image"] * self.scale[...]})
 
 
 def build_training_pipeline(stage: nnx.Module, target: np.ndarray) -> Pipeline:

@@ -42,7 +42,9 @@ Two construction shapes (both produce identical internal execution plans):
 Public surface:
 
 - ``__init__`` and ``from_dag`` — see above.
-- ``__call__(batch)`` — runs the DAG forward; returns the sink output.
+- ``dag`` — the stage graph (:class:`~datarax.pipeline.dag.OperatorDag`), ``Batch`` to
+  ``Batch``: what runs inside a differentiated train step.
+- ``__call__(data, records)`` — names the gathered records and runs ``dag``; returns a ``Batch``.
   JAX-traceable.
 - ``step()`` — fetches one batch from the source, runs ``__call__``,
   advances ``_position`` and ``rngs``. JAX-traceable.
@@ -63,10 +65,12 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
+from datarax.core import batch_ops
 from datarax.core.data_source import DataSourceModule
+from datarax.core.element_batch import Batch
 from datarax.core.module import module_state, restore_module_state
 from datarax.core.spec import declared_spec, validate_batch, validate_device_dtypes
-from datarax.pipeline.dag import record_count, Records, run_dag
+from datarax.pipeline.dag import name_records, OperatorDag, Records
 from datarax.pipeline.epochs import EpochPlan
 from datarax.pipeline.iteration import (
     compile_streaming_dag,
@@ -74,9 +78,8 @@ from datarax.pipeline.iteration import (
     PipelineIterator,
     staged_view,
 )
-from datarax.pipeline.topo import topological_sort, validate_dag
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
-from datarax.typing import DataDict, PipelineBatch
+from datarax.typing import DataDict
 
 
 class Pipeline(nnx.Module):
@@ -157,27 +160,10 @@ class Pipeline(nnx.Module):
         self.drop_last = drop_last
         self.num_epochs = num_epochs
 
-        # Resolve the construction shape into the unified DAG representation.
-        resolved_nodes, resolved_edges, resolved_sink = self._resolve_dag_shape(
-            stages, nodes, edges, sink
-        )
-
-        if resolved_sink is not None:
-            validate_dag(resolved_nodes, resolved_edges, resolved_sink)
-            exec_order = topological_sort(resolved_edges)
-        else:
-            exec_order = []
-
+        self.dag = self._build_dag(stages, nodes, edges, sink)
         self.source = source
         self.batch_size = batch_size
         self.rngs = rngs
-        # Modules holding state across iterations must be marked as data.
-        self._stage_modules = nnx.data(resolved_nodes)
-        # The exec plan and predecessor map are static structure; they
-        # do not change after construction.
-        self._exec_order: list[str] = list(exec_order)
-        self._predecessors: dict[str, list[str]] = resolved_edges
-        self._sink: str | None = resolved_sink
         self._position: nnx.Variable[jax.Array] = nnx.Variable(jnp.zeros((), dtype=jnp.int32))
         self._epoch: nnx.Variable[jax.Array] = nnx.Variable(jnp.zeros((), dtype=jnp.int32))
         # The epoch key is derived from this base and the epoch counter, so
@@ -189,42 +175,17 @@ class Pipeline(nnx.Module):
         # every scan() call defeats the cache and forces re-tracing. The
         # cache is a plain dict (not nnx.Variable) so it stays static
         # under nnx.split/merge — it lives on the Python side of the
-        # module boundary alongside _exec_order and _predecessors.
+        # module boundary.
         self._scan_body_cache: dict[Any, Any] = {}
 
     @staticmethod
-    def _linear_shape(
-        stages: Sequence[nnx.Module],
-    ) -> tuple[dict[str, nnx.Module], dict[str, list[str]], str | None]:
-        """Expand a linear stage sequence into (nodes, edges, sink).
-
-        Stage ``i`` reads the source when ``i == 0`` and stage ``i - 1`` otherwise;
-        the sink is the final stage (``None`` for an empty sequence).
-
-        Args:
-            stages: Ordered stages of the linear pipeline.
-
-        Returns:
-            Tuple of (node map, predecessor-edge map, sink name).
-        """
-        resolved_nodes: dict[str, nnx.Module] = {f"stage_{i}": s for i, s in enumerate(stages)}
-        resolved_edges: dict[str, list[str]] = {
-            f"stage_{i}": ([f"stage_{i - 1}"] if i > 0 else []) for i in range(len(stages))
-        }
-        resolved_sink = f"stage_{len(stages) - 1}" if stages else None
-        return resolved_nodes, resolved_edges, resolved_sink
-
-    @staticmethod
-    def _resolve_dag_shape(
+    def _build_dag(
         stages: Sequence[nnx.Module] | None,
         nodes: Mapping[str, nnx.Module] | None,
         edges: Mapping[str, Sequence[str]] | None,
         sink: str | None,
-    ) -> tuple[dict[str, nnx.Module], dict[str, list[str]], str | None]:
-        """Normalize the two mutually exclusive construction shapes into one DAG.
-
-        Accepts either ``stages=`` (linear) or ``nodes=+edges=+sink=`` (explicit DAG)
-        and returns the unified representation used internally.
+    ) -> OperatorDag:
+        """Build the DAG from one of the two mutually exclusive construction shapes.
 
         Args:
             stages: Linear stage sequence, or ``None`` for the DAG shape.
@@ -233,25 +194,21 @@ class Pipeline(nnx.Module):
             sink: Explicit sink node name (required with ``nodes``).
 
         Returns:
-            Tuple of (node map, predecessor-edge map, sink name).
+            The pipeline's DAG.
 
         Raises:
-            ValueError: If neither shape or both shapes are supplied.
+            ValueError: If neither shape or both shapes are supplied, or the DAG shape is
+                incomplete.
         """
         if stages is not None and nodes is not None:
             raise ValueError(
                 "Provide either stages= (linear) or nodes=+edges=+sink= (DAG); not both."
             )
-        if stages is None and nodes is None:
-            raise ValueError("Provide either stages= (linear) or nodes=+edges=+sink= (DAG).")
-
         if stages is not None:
-            return Pipeline._linear_shape(stages)
-
-        assert nodes is not None and edges is not None and sink is not None  # noqa: S101
-        resolved_nodes = dict(nodes)
-        resolved_edges = {name: list(preds) for name, preds in edges.items()}
-        return resolved_nodes, resolved_edges, sink
+            return OperatorDag.from_stages(stages)
+        if nodes is None or edges is None or sink is None:
+            raise ValueError("Provide either stages= (linear) or nodes=+edges=+sink= (DAG).")
+        return OperatorDag(nodes=nodes, edges=edges, sink=sink)
 
     @classmethod
     def from_dag(  # noqa: DOC502
@@ -347,71 +304,36 @@ class Pipeline(nnx.Module):
             num_epochs=num_epochs,
         )
 
-    # ------------------------------------------------------------------
-    # Linear-stages compatibility shim
-    # ------------------------------------------------------------------
-
     @property
     def stages(self) -> list[nnx.Module]:
-        """Ordered list of stages for the linear-pipeline shape.
-
-        Reconstructed from the underlying execution plan in topological
-        order. For DAG-shaped pipelines (``from_dag``), this returns the
-        nodes in their compiled order; the order is well-defined but the
-        list does not preserve "linear chain" semantics.
-        """
-        return [self._stage_modules[name] for name in self._exec_order]
+        """The DAG's nodes in topological order: the stages, for a linear pipeline."""
+        return [self.dag.stages[name] for name in self.dag.order]
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def __call__(self, batch: DataDict, records: Records | None = None) -> PipelineBatch:
-        """Run the DAG forward, returning the sink node's output.
+    def __call__(self, data: DataDict, records: Records | None = None) -> Batch:
+        """Run the DAG over the gathered ``data``, its rows named as ``records``.
 
-        Iterates the pre-computed topological order; each node receives
-        either the source ``batch`` (if it has no predecessors) or the
-        outputs of its predecessor nodes as positional arguments.
-        JAX/XLA traces the static composition; no runtime tree-walking.
-
-        Stage dispatch handles two stage shapes uniformly:
-
-        - ``OperatorModule`` subclasses (and any module exposing
-          ``_apply_on_raw(data, states)``) are called via the raw
-          dict-based path so they integrate without a ``Batch``
-          wrapper allocation per step. States are threaded but
-          discarded at the sink (consistent with the legacy
-          fused-step semantics).
-        - Plain ``nnx.Module`` stages with ``__call__(batch) -> batch``
-          are called directly. This is the recommended shape for new
-          pipelines.
-
-        Per-record RNG: stochastic operators key each record on its index and epoch,
-        ``records``. ``step()`` passes the records it served, computed once for the gather and
-        the stages; a direct call without them names the records served at the current position
-        by the same rule. A subclass overriding ``__call__`` accepts ``records`` and passes it on
-        where it keys randomness. Traceable under ``nnx.jit``/``nnx.scan``.
+        The data becomes a ``Batch`` whose rows carry their records' indices and epochs, which
+        stochastic operators key each record's randomness on, and :attr:`dag` runs over it.
+        ``step()`` passes the records it served, named once for the gather and the DAG; a direct
+        call without them names the records served at the current position by the same rule.
+        Traceable under ``nnx.jit``/``nnx.scan``.
 
         Args:
-            batch: The source batch.
+            data: The source's values for the batch, record axis first.
             records: The batch's records, or ``None`` to name them from the position.
 
         Returns:
-            The sink node's output.
+            The DAG's output.
         """
-        size = record_count(batch)
-        if records is None and size is not None:
+        batch = batch_ops.from_arrays(data)
+        if records is None:
             start, epoch = self.epoch_plan.batch_start(self._position[...], self._epoch[...])
-            records = self._records_at(start, epoch, size)
-        return run_dag(
-            self._stage_modules,
-            self._exec_order,
-            self._predecessors,
-            self._sink,
-            batch,
-            None if records is None else records.indices,
-            self._epoch[...] if records is None else records.epochs,
-        )
+            records = self._records_at(start, epoch, batch.batch_size)
+        return self.dag(name_records(batch, records.indices, records.epochs))
 
     def epoch_key(self) -> jax.Array:
         """The key the current epoch's records are ordered by (``record_indices_at``).
@@ -546,7 +468,7 @@ class Pipeline(nnx.Module):
         """
         restore_module_state(self, state)
 
-    def step(self) -> PipelineBatch:
+    def step(self) -> Batch:
         """Serve the next batch from the source through the DAG.
 
         Starts where the last batch ended, or at the next epoch when the current one cannot
@@ -567,7 +489,7 @@ class Pipeline(nnx.Module):
         """
         return next_batch(self, type(self)._next_batch, self.batch_size)
 
-    def _next_batch(self, size: int) -> PipelineBatch:
+    def _next_batch(self, size: int) -> Batch:
         """Serve ``size`` records from where the next batch starts, and advance past them.
 
         The traceable body of :meth:`step`. Compiled iteration sessions call it
@@ -579,7 +501,10 @@ class Pipeline(nnx.Module):
             size: Records to serve.
 
         Returns:
-            The sink output for the batch.
+            The DAG's output for the batch.
+
+        Raises:
+            TypeError: If ``__call__`` (overridden by a subclass) returns anything but a ``Batch``.
         """
         plan = self.epoch_plan
         start, epoch = plan.batch_start(self._position[...], self._epoch[...])
@@ -589,6 +514,11 @@ class Pipeline(nnx.Module):
         self._position[...], self._epoch[...] = start, epoch
         records = self._records_at(start, epoch, size)
         batch = self(self.source.get_records(records.indices), records)
+        if not isinstance(batch, Batch):
+            raise TypeError(
+                f"{type(self).__name__}.__call__ returned {type(batch).__name__}; a pipeline "
+                "serves Batches: build on super().__call__(data, records) and transform the Batch"
+            )
         self._position[...], self._epoch[...] = plan.advance(start, epoch, size)
         return batch
 
@@ -736,7 +666,7 @@ class Pipeline(nnx.Module):
             shuffled=bool(getattr(self.source, "is_random_order", False)),
         )
 
-    def __iter__(self) -> PipelineIterator | Iterator[PipelineBatch]:
+    def __iter__(self) -> PipelineIterator | Iterator[Batch]:
         """Iterate batches through a compiled session (the Tier-A fast path).
 
         Random-access sources return a :class:`~datarax.pipeline.iteration.
@@ -766,7 +696,7 @@ class Pipeline(nnx.Module):
             )
         return self._iter_streaming()
 
-    def _iter_streaming(self) -> Iterator[PipelineBatch]:  # noqa: DOC502
+    def _iter_streaming(self) -> Iterator[Batch]:  # noqa: DOC502
         """Iterate a streaming source (sequential, no random access) through the DAG.
 
         Streaming sources have no ``get_records``, so batches are pulled on the
@@ -785,7 +715,7 @@ class Pipeline(nnx.Module):
         is current at every yield.
 
         Yields:
-            One transformed batch dict per source batch, until exhaustion.
+            The DAG's ``Batch`` for each source batch, until exhaustion.
 
         Raises:
             SpecMismatchError: If the declared spec, or a source batch, breaks the
@@ -795,12 +725,7 @@ class Pipeline(nnx.Module):
         """
         element_spec = declared_spec(self.source)
         validate_device_dtypes(element_spec)
-        plan = (
-            tuple(self._exec_order),
-            {name: tuple(preds) for name, preds in self._predecessors.items()},
-            self._sink,
-        )
-        apply = compile_streaming_dag(self._stage_modules, self._position, self._epoch, plan)
+        apply = compile_streaming_dag(self.dag, self._position, self._epoch)
         for batch in self._source_batches():
             validate_batch(batch, element_spec, batch_size=self.batch_size)
             yield apply(batch)

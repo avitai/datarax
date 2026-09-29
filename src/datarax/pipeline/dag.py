@@ -1,95 +1,153 @@
-"""Run a pipeline's stage DAG over one batch.
+"""A pipeline's stage graph as one module, and the raw ``Batch`` it runs over.
 
-``Pipeline.__call__``, the indexed step and the compiled streaming step all execute the plan
-that :func:`~datarax.pipeline.topo.topological_sort` builds: each node receives the source
-batch, or its predecessors' outputs as positional arguments, in topological order. The plan is
-static, so tracing unrolls it into one graph.
+:class:`OperatorDag` is the part of a pipeline that transforms data: its stages and the static
+plan :func:`~datarax.pipeline.topo.topological_sort` builds, and nothing else (no source, no
+position, no ``Rngs``). It maps a ``Batch`` to a ``Batch``, so it runs inside a differentiated
+train step over a raw batch whose records carry their identities, and its operators' parameters
+train with the model. The pipeline applies it to every batch it serves.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
+from flax import nnx
+from jax.typing import ArrayLike
+
+from datarax.core.element_batch import Batch
+from datarax.pipeline.topo import topological_sort, validate_dag
 
 
 class Records(NamedTuple):
     """The records a batch holds: each row's stable index and the epoch it belongs to.
 
     A batch crossing an epoch boundary holds records of two epochs, so the epoch is per row.
-    Stochastic operators key each record's randomness on both.
     """
 
     indices: jax.Array
     epochs: jax.Array
 
 
-def record_count(batch: Any) -> int | None:
-    """Number of records in ``batch``: the leading axis of its first leaf, or None without leaves.
+def record_positions(size: int, start: jax.Array | int) -> jax.Array:
+    """Positions ``start + arange(size)``: a stream serves records in order, so these name them.
 
-    The leading axis is static under tracing.
+    ``start`` may be a traced scalar.
     """
-    leaves = jax.tree.leaves(batch)
-    return leaves[0].shape[0] if leaves else None
-
-
-def record_positions(batch: Any, start: jax.Array | int) -> jax.Array | None:
-    """Positions ``start + arange(n)`` of ``batch``'s records, or None without leaves.
-
-    A stream serves records in order, so these positions name its records. ``start`` may be
-    a traced scalar.
-    """
-    size = record_count(batch)
-    if size is None:
-        return None
     return jnp.asarray(start, dtype=jnp.int32) + jnp.arange(size, dtype=jnp.int32)
 
 
-def run_dag(  # noqa: PLR0913 - the static plan is four separate pipeline attributes
-    stages: Mapping[str, Any],
-    exec_order: Sequence[str],
-    predecessors: Mapping[str, Sequence[str]],
-    sink: str | None,
-    batch: Any,
-    record_indices: jax.Array | None,
-    epoch: jax.Array | int | None,
-) -> Any:
-    """Run the stages over ``batch`` in ``exec_order`` and return the sink's output.
+def name_records(batch: Batch, indices: ArrayLike, epochs: ArrayLike) -> Batch:
+    """``batch`` with its rows named as records ``indices`` (below ``2^31``) of ``epochs``.
 
-    Stages exposing ``_apply_on_raw(data, states, stats, record_indices, epoch)``
-    (every ``OperatorModule``) take the raw dict path with states threaded
-    between them and discarded at the sink; any other ``nnx.Module`` is called
-    with its inputs. Stochastic operators key each record on ``epoch`` and its
-    entry in ``record_indices``, so within an epoch a record's augmentation does
-    not depend on how records are batched, ordered or split across workers.
+    Each index is the low word of the record's 64-bit index. ``epochs`` is one epoch for the
+    batch or one per row.
 
     Args:
-        stages: Stage modules by node name.
-        exec_order: Node names in topological order.
-        predecessors: Predecessor node names for each node; an empty list means
-            the node consumes the source batch.
-        sink: Node whose output is returned, or None for a pipeline without stages.
-        batch: Source batch.
-        record_indices: Stable index of each record in ``batch``.
-        epoch: The epoch the records belong to.
+        batch: The batch, from ``batch_ops.from_arrays`` over gathered or streamed values.
+        indices: int ``(B,)``, each row's record index.
+        epochs: The epoch of the batch, or of each row ``(B,)``.
 
     Returns:
-        The sink node's output, or ``batch`` unchanged when there are no stages.
+        The batch with ``indices`` and ``epochs`` set and ``draws`` 0.
     """
-    if not exec_order or sink is None:
-        return batch
-    outputs: dict[str, Any] = {}
-    states: dict[str, Any] = {}
-    for name in exec_order:
-        preds = predecessors[name]
-        inputs = (batch,) if not preds else tuple(outputs[p] for p in preds)
-        stage = stages[name]
-        apply_on_raw = getattr(stage, "_apply_on_raw", None)
-        if callable(apply_on_raw) and len(inputs) == 1:
-            data, states = apply_on_raw(inputs[0], states, None, record_indices, epoch)  # type: ignore[reportGeneralTypeIssues]
-            outputs[name] = data
-        else:
-            outputs[name] = stage(*inputs)
-    return outputs[sink]
+    rows = jnp.asarray(indices).astype(jnp.uint32)
+    return batch.replace(
+        indices=jnp.stack([jnp.zeros_like(rows), rows], axis=-1),
+        epochs=jnp.broadcast_to(jnp.asarray(epochs, jnp.int32), (batch.batch_size,)),
+        draws=jnp.zeros((batch.batch_size,), jnp.int32),
+    )
+
+
+class OperatorDag(nnx.Module):
+    """A graph of stages from ``Batch`` to ``Batch``.
+
+    Each node's ``__call__`` receives the input batch when it has no predecessors, otherwise its
+    predecessors' outputs as positional arguments, in topological order, and returns a ``Batch``.
+    An operator is a node; so is any ``nnx.Module`` taking and returning batches (field
+    selection, a merge of branches). The plan (order, predecessors, sink) is static and
+    hashable, so identically built DAGs share one compiled program, and tracing unrolls it into
+    one graph.
+
+    Attributes:
+        stages: The nodes by name, graph children.
+        order: Node names in topological order.
+        predecessors: Each node's predecessor names, in ``order``.
+        sink: The node whose output is the DAG's, or ``None`` for a DAG without stages.
+    """
+
+    stages: nnx.Dict
+    order: tuple[str, ...]
+    predecessors: tuple[tuple[str, ...], ...]
+    sink: str | None
+
+    def __init__(
+        self,
+        nodes: Mapping[str, nnx.Module],
+        edges: Mapping[str, Sequence[str]],
+        sink: str | None,
+    ) -> None:
+        """Validate and sort the graph.
+
+        Args:
+            nodes: The nodes by name.
+            edges: Each node's predecessor names; an empty list reads the input batch.
+            sink: The node whose output is returned, or ``None`` when there are no nodes.
+        """
+        order: tuple[str, ...] = ()
+        if sink is not None:
+            validate_dag(nodes, edges, sink)
+            order = tuple(topological_sort(edges))
+        self.stages = nnx.Dict(dict(nodes))
+        self.order = order
+        self.predecessors = tuple(tuple(edges[name]) for name in order)
+        self.sink = sink
+
+    @classmethod
+    def from_stages(cls, stages: Sequence[nnx.Module]) -> OperatorDag:
+        """A linear DAG: stage ``i`` reads stage ``i - 1``'s output, the first the input.
+
+        Args:
+            stages: The stages in order.
+
+        Returns:
+            The DAG; its nodes are named ``stage_0``, ``stage_1``, ...
+        """
+        names = [f"stage_{i}" for i in range(len(stages))]
+        return cls(
+            nodes=dict(zip(names, stages, strict=True)),
+            edges={name: names[i - 1 : i] for i, name in enumerate(names)},
+            sink=names[-1] if names else None,
+        )
+
+    def __call__(self, batch: Batch) -> Batch:
+        """Run every node over ``batch`` and return the sink's output.
+
+        Args:
+            batch: The input batch.
+
+        Returns:
+            The sink node's output, or ``batch`` for a DAG without stages.
+
+        Raises:
+            TypeError: If a node returns anything but a ``Batch``.
+        """
+        if self.sink is None:
+            return batch
+        outputs: dict[str, Batch] = {}
+        for name, predecessors in zip(self.order, self.predecessors, strict=True):
+            inputs = tuple(outputs[p] for p in predecessors) if predecessors else (batch,)
+            output = self.stages[name](*inputs)
+            if not isinstance(output, Batch):
+                raise TypeError(
+                    f"DAG node {name!r} ({type(self.stages[name]).__name__}) returned "
+                    f"{type(output).__name__}; a node returns a Batch, e.g. "
+                    "batch.replace(data={**batch.data, ...})"
+                )
+            outputs[name] = output
+        return outputs[self.sink]
+
+
+__all__ = ["OperatorDag", "Records", "name_records", "record_positions"]

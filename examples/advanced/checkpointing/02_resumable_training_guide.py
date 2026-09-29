@@ -67,6 +67,7 @@ import orbax.checkpoint as ocp
 from flax import nnx
 from substrax.artifacts import resolve_output_dir
 
+from datarax.core.element_batch import Batch
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
@@ -125,7 +126,7 @@ class TinyCNN(nnx.Module):
         return self.head(x)
 
 
-def cross_entropy_loss(model: TinyCNN, batch: dict) -> jax.Array:
+def cross_entropy_loss(model: TinyCNN, batch: Batch) -> jax.Array:
     """Run cross_entropy_loss."""
     logits = model(batch["image"])
     return optax.softmax_cross_entropy_with_integer_labels(logits, batch["label"]).mean()
@@ -278,7 +279,7 @@ batch.
 
 # %%
 @nnx.jit
-def train_step(model: TinyCNN, optimizer: nnx.Optimizer, batch: dict) -> jax.Array:
+def train_step(model: TinyCNN, optimizer: nnx.Optimizer, batch: Batch) -> jax.Array:
     """Run train_step."""
     loss_and_grad = nnx.value_and_grad(cross_entropy_loss)
     loss, grads = loss_and_grad(model, batch)

@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A pipeline's stage graph is `pipe.dag`, an `OperatorDag` (`datarax.pipeline.dag`): an
+  `nnx.Module` holding the nodes and a static plan, mapping a `Batch` to a `Batch`, with no source,
+  position or `Rngs`, so it runs inside a differentiated train step and its operators' parameters
+  train with the model. Every node takes and returns `Batch`es; a node returning anything else is
+  refused. `Pipeline.step()`, `scan` and iteration yield `Batch`es whose rows carry their records'
+  indices and epochs; `Pipeline.__call__(data, records)` names the gathered records and runs the
+  DAG, and a subclass overriding it returns a `Batch`.
+- One operator path: `OperatorModule._apply_on_raw` is removed; an operator is called on a
+  `Batch`. `BatchMixOperator` mixes through `apply_batch` alone.
+- Removed: `RebatchNode` (a `(K, B, ...)` chunk is `batch_ops.stack(batch_ops.split(batch, K))`;
+  the benchmark's rebatching scenario serves each batch as `batch_ops.split` parts),
+  `datarax.pipeline.dag.run_dag` and `record_count`, and `datarax.typing.PipelineBatch`.
+  `SplitField` takes and returns a `Batch`.
+
 - `Element` and `Batch` are frozen dataclasses registered as pytrees, every field an array: they
   pass through `jax.jit`, `nnx.jit` in graph and tree mode, `nnx.jit_partial`, `vmap`, `scan`,
   `checkpoint`, `cond` and `shard_map`, and batches differing only in their values share one

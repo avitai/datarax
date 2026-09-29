@@ -106,7 +106,7 @@ example_iter = iter(pipeline)
 
 for i in range(3):
     batch = next(example_iter)
-    data = batch
+    data = batch.data
 
     print(f"\nExample {i + 1}:")
     print(f"  Keys: {list(data.keys())}")

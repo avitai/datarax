@@ -110,14 +110,14 @@ class _Brighten(nnx.Module):
     """Add a fixed +0.1 brightness, clipped to [0, 1]."""
 
     def __call__(self, batch):
-        return {**batch, "image": jnp.clip(batch["image"] + 0.1, 0.0, 1.0)}
+        return batch.replace(data={**batch.data, "image": jnp.clip(batch["image"] + 0.1, 0.0, 1.0)})
 
 
 class _Invert(nnx.Module):
     """Photographic negative."""
 
     def __call__(self, batch):
-        return {**batch, "image": 1.0 - batch["image"]}
+        return batch.replace(data={**batch.data, "image": 1.0 - batch["image"]})
 
 
 # %% [markdown]
@@ -144,13 +144,15 @@ class _Stack(nnx.Module):
     """
 
     def __call__(self, normalized, inverted):
-        return {
-            "image": jnp.stack(
-                [normalized["image"], inverted["image"]],
-                axis=1,
-            ),
-            "label": normalized["label"],
-        }
+        return normalized.replace(
+            data={
+                "image": jnp.stack(
+                    [normalized["image"], inverted["image"]],
+                    axis=1,
+                ),
+                "label": normalized["label"],
+            }
+        )
 
 
 parallel_pipeline = Pipeline.from_dag(
@@ -194,10 +196,12 @@ class _Average(nnx.Module):
     """Merge: element-wise mean of two branches."""
 
     def __call__(self, brightened, inverted):
-        return {
-            "image": (brightened["image"] + inverted["image"]) / 2,
-            "label": brightened["label"],
-        }
+        return brightened.replace(
+            data={
+                "image": (brightened["image"] + inverted["image"]) / 2,
+                "label": brightened["label"],
+            }
+        )
 
 
 average_pipeline = Pipeline.from_dag(
@@ -244,7 +248,7 @@ class _BrightenIfDark(nnx.Module):
             lambda img: img,
             batch["image"],
         )
-        return {**batch, "image": new_image}
+        return batch.replace(data={**batch.data, "image": new_image})
 
 
 branch_pipeline = Pipeline(
@@ -278,13 +282,15 @@ class _Concat3(nnx.Module):
     """Merge: concatenate three branches along the channel axis."""
 
     def __call__(self, normalized, brightened, inverted):
-        return {
-            "image": jnp.concatenate(
-                [normalized["image"], brightened["image"], inverted["image"]],
-                axis=-1,
-            ),
-            "label": normalized["label"],
-        }
+        return normalized.replace(
+            data={
+                "image": jnp.concatenate(
+                    [normalized["image"], brightened["image"], inverted["image"]],
+                    axis=-1,
+                ),
+                "label": normalized["label"],
+            }
+        )
 
 
 triple_branch = Pipeline.from_dag(

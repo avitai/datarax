@@ -44,6 +44,7 @@ import numpy as np
 import pytest
 from flax import nnx
 
+from datarax.core.element_batch import Batch
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
 
@@ -57,8 +58,8 @@ class _FactorStage(nnx.Module):
         super().__init__()
         self.factor = jnp.float32(factor)
 
-    def __call__(self, batch: dict) -> dict:
-        return jax.tree.map(lambda x: x * self.factor, batch)
+    def __call__(self, batch: Batch) -> Batch:
+        return batch.replace(data=jax.tree.map(lambda x: x * self.factor, batch.data))
 
 
 class _OffsetStage(nnx.Module):
@@ -68,8 +69,8 @@ class _OffsetStage(nnx.Module):
         super().__init__()
         self.offset = jnp.float32(offset)
 
-    def __call__(self, batch: dict) -> dict:
-        return jax.tree.map(lambda x: x + self.offset, batch)
+    def __call__(self, batch: Batch) -> Batch:
+        return batch.replace(data=jax.tree.map(lambda x: x + self.offset, batch.data))
 
 
 class _LearnableScale(nnx.Module):
@@ -79,8 +80,8 @@ class _LearnableScale(nnx.Module):
         super().__init__()
         self.factor = nnx.Param(jnp.float32(init_factor))
 
-    def __call__(self, batch: dict) -> dict:
-        return jax.tree.map(lambda x: x * self.factor[...], batch)
+    def __call__(self, batch: Batch) -> Batch:
+        return batch.replace(data=jax.tree.map(lambda x: x * self.factor[...], batch.data))
 
 
 # ---------- Helpers ----------

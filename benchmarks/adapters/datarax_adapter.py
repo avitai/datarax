@@ -24,9 +24,10 @@ from benchmarks.adapters import register
 from benchmarks.adapters._utils import cast_to_float32, normalize_uint8
 from benchmarks.adapters.base import Capability, PipelineAdapter, ScenarioConfig
 from datarax import Pipeline
+from datarax.core import batch_ops
 from datarax.core.config import BatchMixOperatorConfig, ElementOperatorConfig
 from datarax.core.data_source import DataSourceModule
-from datarax.core.element_batch import Element
+from datarax.core.element_batch import Batch, Element
 from datarax.core.operator import OperatorModule
 from datarax.operators.batch_mix_operator import BatchMixOperator
 from datarax.operators.element_operator import ElementOperator
@@ -35,7 +36,7 @@ from datarax.operators.probabilistic_operator import (
     ProbabilisticOperatorConfig,
 )
 from datarax.operators.selector_operator import SelectorOperator, SelectorOperatorConfig
-from datarax.pipeline.nodes import CachingIterator, RebatchNode
+from datarax.pipeline.nodes import CachingIterator
 from datarax.sources import (
     MemorySource,
     MemorySourceConfig,
@@ -446,8 +447,7 @@ class _LearnableAugmentOperator(nnx.Module):
     so ``jax.grad`` flows end-to-end through the pipeline) followed by dropout.
     ``nnx.Dropout`` honours ``nnx.Module.train()``/``eval()`` — the jitter is active
     while training and becomes identity in eval — so the whole stage is both
-    learnable and train/eval aware. Consumes the raw batch dict the Pipeline
-    threads between stages.
+    learnable and train/eval aware. Takes and returns a ``Batch``.
     """
 
     def __init__(self, num_channels: int, *, rngs: nnx.Rngs) -> None:
@@ -457,27 +457,27 @@ class _LearnableAugmentOperator(nnx.Module):
         self.dropout = nnx.Dropout(rate=0.1, rngs=rngs)
         self._num_channels = num_channels
 
-    def __call__(self, batch: dict[str, Any]) -> dict[str, Any]:
-        """Apply the learnable affine (where channels match) then dropout."""
+    def __call__(self, batch: Batch) -> Batch:
+        """Apply the learnable affine (where channels match) then dropout to the batch's data."""
 
         def apply(x: jax.Array) -> jax.Array:
             if x.ndim >= 1 and x.shape[-1] == self._num_channels:
-                x = x * self.scale.value + self.bias.value
+                x = x * self.scale[...] + self.bias[...]
             return self.dropout(x)
 
-        return jax.tree.map(apply, batch)
+        return batch.replace(data=jax.tree.map(apply, batch.data))
 
 
 class _MergeModule(nnx.Module):
     """DAG merge node: averages two branch outputs element-wise (PC-2).
 
-    Receives its two predecessors' batch dicts as positional args (the
-    ``Pipeline.from_dag`` multi-input path) and returns their mean.
+    Receives its two predecessors' batches as positional args (the ``Pipeline.from_dag``
+    multi-input path) and returns the mean of their data; the records are the first's.
     """
 
-    def __call__(self, a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
-        """Average the two branch outputs leaf-wise."""
-        return jax.tree.map(lambda x, y: (x + y) * 0.5, a, b)
+    def __call__(self, a: Batch, b: Batch) -> Batch:
+        """Average the two branch outputs' data leaf-wise."""
+        return a.replace(data=jax.tree.map(lambda x, y: (x + y) * 0.5, a.data, b.data))
 
 
 @register
@@ -494,6 +494,7 @@ class DataraxAdapter(PipelineAdapter):
         self._pipeline: Any = None
         self._cached_iter: CachingIterator[Any] | None = None
         self._buffer_depth: int = 2
+        self._rebatch_parts: int = 1
 
     @property
     def name(self) -> str:
@@ -660,12 +661,6 @@ class DataraxAdapter(PipelineAdapter):
             num_channels = config.element_shape[-1] if config.element_shape else 1
             stages.append(_LearnableAugmentOperator(num_channels, rngs=rngs))
 
-        if Capability.REBATCHING in caps:
-            # Differentiable in-DAG rebatch from batch_size down to target_batch_size.
-            target = int(config.extra.get("target_batch_size", config.batch_size))
-            group_size = max(1, config.batch_size // target)
-            stages.append(RebatchNode(group_size))
-
     def _build_branching_pipeline(self, source: Any, config: ScenarioConfig, rngs: nnx.Rngs) -> Any:
         """Build a two-branch parallel DAG that merges by averaging (PC-2).
 
@@ -695,6 +690,12 @@ class DataraxAdapter(PipelineAdapter):
         """Set up the Datarax pipeline for the given scenario configuration."""
         self._config = config
         self._cached_iter = None
+        # Rebatching serves each loaded batch as smaller batches of the target size, its rows
+        # split in order (batch_ops.split); every part keeps its records' identities.
+        self._rebatch_parts = 1
+        if Capability.REBATCHING in set(config.required_capabilities):
+            target = int(config.extra.get("target_batch_size", config.batch_size))
+            self._rebatch_parts = max(1, config.batch_size // target)
         self._buffer_depth = int(config.extra.get("prefetch_size", 2)) if config.extra else 2
         rngs = nnx.Rngs(config.seed, augment=config.seed + 1, batch_mix=config.seed + 2)
 
@@ -730,14 +731,17 @@ class DataraxAdapter(PipelineAdapter):
         # prefetch stage is needed (unlike host-loader frameworks). ``_buffer_depth``
         # records the requested prefetch policy for parity/metadata; the pipeline keeps
         # data on device inherently.
-        if self._cached_iter is not None:
-            yield from iter(self._cached_iter)
-        else:
-            yield from self._pipeline
+        batches = iter(self._cached_iter) if self._cached_iter is not None else self._pipeline
+        for batch in batches:
+            if self._rebatch_parts > 1:
+                yield from batch_ops.split(batch, self._rebatch_parts)
+            else:
+                yield batch
 
-    def _materialize_batch(self, batch: dict) -> list[Any]:
-        jax.block_until_ready(batch)
-        return jax.tree.leaves(batch)
+    def _materialize_batch(self, batch: Batch) -> list[Any]:
+        # The batch's values: its identities and state are not part of the measured payload.
+        jax.block_until_ready(batch.data)
+        return jax.tree.leaves(batch.data)
 
     def teardown(self) -> None:
         """Release resources and reset adapter state."""

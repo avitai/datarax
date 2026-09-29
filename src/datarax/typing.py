@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Any, Protocol, runtime_checkable, TypeVar
+from typing import Protocol, runtime_checkable, TypeVar
 
 import jax
 from substrax.typing import Checkpointable
@@ -24,9 +24,6 @@ T_co = TypeVar("T_co", covariant=True)
 
 # Common type aliases
 type DataDict = dict[str, jax.Array]
-# What a pipeline yields: field names to arrays, or to pytrees of arrays when a stage nests them.
-# A source's batch is the flat ``DataDict``.
-type PipelineBatch = dict[str, Any]
 
 # JAX types
 
@@ -56,7 +53,6 @@ class CheckpointableIterator(Checkpointable, Protocol[T_co]):
 # Export public API
 __all__ = [
     # Type aliases
-    "PipelineBatch",
     "DataDict",
     "ArrayShape",
     "PRNGKey",

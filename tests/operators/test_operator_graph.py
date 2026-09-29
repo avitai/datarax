@@ -13,6 +13,7 @@ import pytest
 from flax import nnx
 from substrax.testing import TraceCounter
 
+from datarax.core import batch_ops
 from datarax.core.config import MapOperatorConfig, OperatorConfig
 from datarax.core.operator import OperatorModule
 from datarax.operators import MapOperator
@@ -34,6 +35,7 @@ from datarax.operators.probabilistic_operator import (
     ProbabilisticOperatorConfig,
 )
 from datarax.operators.selector_operator import SelectorOperator, SelectorOperatorConfig
+from datarax.pipeline.dag import name_records
 
 
 def _rngs() -> nnx.Rngs:
@@ -103,7 +105,9 @@ def test_identically_built_wrappers_share_one_trace(name: str, graph: bool) -> N
     counter = TraceCounter()
     indices = jnp.arange(4, dtype=jnp.uint32)
     apply = nnx.jit(
-        counter.wrap(lambda op, batch: op._apply_on_raw(batch, {}, None, indices, 0)[0]),
+        counter.wrap(
+            lambda op, batch: op(name_records(batch_ops.from_arrays(batch), indices, 0)).data
+        ),
         graph=graph,
     )
 
@@ -130,7 +134,8 @@ def test_a_composite_applies_the_operator_added_to_it() -> None:
     )
     composite.add_operator(_scale())
 
-    out, _ = composite._apply_on_raw(_batch(), {})
+    out = composite(batch_ops.from_arrays(_batch()))
+    out = out.data
 
     assert jnp.allclose(out["image"], _batch()["image"] * 4.0)
 
@@ -148,7 +153,8 @@ def test_a_composite_applies_the_operator_added_to_it() -> None:
 def test_a_deterministic_image_operator_needs_no_rngs(build: Callable[[], OperatorModule]) -> None:
     operator = build()
 
-    out, _ = operator._apply_on_raw(_batch(), {})
+    out = operator(batch_ops.from_arrays(_batch()))
+    out = out.data
 
     assert out["image"].shape == _batch()["image"].shape
 

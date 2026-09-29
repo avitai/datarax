@@ -83,12 +83,12 @@ from datarax.pipeline import Pipeline
 
 class _Normalize(nnx.Module):
     def __call__(self, batch):
-        return {**batch, "image": batch["image"] / 255.0}
+        return batch.replace(data={**batch.data, "image": batch["image"] / 255.0})
 
 
 class _Invert(nnx.Module):
     def __call__(self, batch):
-        return {**batch, "image": 1.0 - batch["image"]}
+        return batch.replace(data={**batch.data, "image": 1.0 - batch["image"]})
 
 
 class _Stack(nnx.Module):
@@ -102,10 +102,10 @@ class _Stack(nnx.Module):
     """
 
     def __call__(self, normalized, inverted):
-        return {
+        return normalized.replace(data={
             "image": jnp.stack([normalized["image"], inverted["image"]], axis=1),
             "label": normalized["label"],
-        }
+        })
 
 
 pipeline = Pipeline.from_dag(
@@ -134,17 +134,17 @@ class _Brighten(nnx.Module):
     """Add a fixed brightness offset."""
 
     def __call__(self, batch):
-        return {**batch, "image": jnp.clip(batch["image"] + 0.1, 0.0, 1.0)}
+        return batch.replace(data={**batch.data, "image": jnp.clip(batch["image"] + 0.1, 0.0, 1.0)})
 
 
 class _Average(nnx.Module):
     """Element-wise mean of two branches."""
 
     def __call__(self, brightened, inverted):
-        return {
+        return brightened.replace(data={
             "image": (brightened["image"] + inverted["image"]) / 2,
             "label": brightened["label"],
-        }
+        })
 
 
 pipeline = Pipeline.from_dag(
@@ -181,7 +181,7 @@ class _BrightenIfDark(nnx.Module):
             lambda img: img / 255.0,
             batch["image"],
         )
-        return {**batch, "image": new_image}
+        return batch.replace(data={**batch.data, "image": new_image})
 
 
 pipeline = Pipeline(
@@ -213,25 +213,31 @@ Each stage is also automatically checkpointable (it is an
 The `datarax.pipeline.nodes` package provides ready-made nodes for common
 structural transforms:
 
-- **`RebatchNode(group_size)`** — regroups elements within a batch (for
-  example, forming windows or n-grams). Differentiable and scan-safe.
 - **`SplitField(fields)`** — selects a subset of fields from the batch,
   routing only the named keys downstream.
 - **`CachingIterator(source)`** — wraps an iterator and memoizes its
   elements at iteration boundaries, mirroring grain's `CacheIterDataset`.
 
 ```python
-from datarax.pipeline.nodes import RebatchNode, SplitField
+from datarax.core import batch_ops
+from datarax.pipeline.nodes import SplitField
 
 pipeline = Pipeline.from_dag(
     source=source,
-    nodes={"select": SplitField(["image", "label"]), "regroup": RebatchNode(4)},
-    edges={"select": [], "regroup": ["select"]},
-    sink="regroup",
+    nodes={"select": SplitField(["image", "label"])},
+    edges={"select": []},
+    sink="select",
     batch_size=8,
     rngs=nnx.Rngs(0),
 )
+# A (K, B, ...) chunk of K smaller batches, for a scan over steps:
+chunk = batch_ops.stack(batch_ops.split(next(iter(pipeline)), 4))
 ```
+
+Every node takes and returns a `Batch`: it reads fields with `batch["image"]` and returns
+`batch.replace(data={**batch.data, ...})`, so each record keeps its identity (the index and
+epoch its randomness is keyed on) through the graph. A node returning anything else is refused
+with that fix named.
 
 ## Whole-epoch JIT with `pipeline.scan`
 

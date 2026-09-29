@@ -24,6 +24,7 @@ import numpy as np
 import pytest
 from flax import nnx
 
+from datarax.core.element_batch import Batch
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.pipeline import Pipeline, PipelineIterator
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
@@ -68,7 +69,7 @@ class _RunningTotal(nnx.Module):
     def __init__(self) -> None:
         self.total = nnx.BatchStat(jnp.zeros((), jnp.float32))
 
-    def __call__(self, batch: dict) -> dict:
+    def __call__(self, batch: Batch) -> Batch:
         self.total[...] = self.total[...] + batch["x"].sum()
         return batch
 
@@ -79,14 +80,14 @@ class _Scale(nnx.Module):
     def __init__(self) -> None:
         self.factor = nnx.Param(jnp.float32(1.0))
 
-    def __call__(self, batch: dict) -> dict:
-        return {**batch, "x": batch["x"] * self.factor[...]}
+    def __call__(self, batch: Batch) -> Batch:
+        return batch.replace(data={**batch.data, "x": batch["x"] * self.factor[...]})
 
 
 class _GrowingStage(nnx.Module):
     """Stage adding state while it runs, which changes the module structure."""
 
-    def __call__(self, batch: dict) -> dict:
+    def __call__(self, batch: Batch) -> Batch:
         self.seen = nnx.Variable(jnp.zeros((), jnp.int32))
         return batch
 

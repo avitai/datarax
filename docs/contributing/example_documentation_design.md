@@ -1920,7 +1920,7 @@ print(f"Memory: {jax.devices()[0].memory_stats()}")
 ```python
 # Check available keys
 for batch in pipeline:
-    print(f"Keys: {batch.keys()}")
+    print(f"Keys: {list(batch.data)}")
     break
 
 # Ensure operator uses correct field names

@@ -21,6 +21,7 @@ from flax import nnx
 
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
+from datarax.core.element_batch import Batch
 from datarax.pipeline import iteration, Pipeline, PipelineIterator
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from tests.test_common.step_jaxpr import compiled_step
@@ -128,7 +129,7 @@ def test_the_step_names_its_records_once(stochastic_stage: bool) -> None:
     """
 
     class _Keyed(nnx.Module):
-        def __call__(self, batch: dict) -> dict:
+        def __call__(self, batch: Batch) -> Batch:
             return batch
 
     source = _Counted()

@@ -61,6 +61,7 @@ uv pip install datarax
 import json
 import shutil
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 
 import grain
@@ -71,6 +72,7 @@ from calibrax.metrics.functional import mse
 from flax import nnx
 from substrax.checkpoint import Checkpoint, OrbaxCheckpointStore
 
+from datarax.core.element_batch import Batch
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.pipeline import Pipeline, PipelineIterator
 from datarax.sources import MemorySource, MemorySourceConfig
@@ -139,7 +141,9 @@ def build_model() -> tuple[LinearRegression, nnx.Optimizer]:
 
 
 @nnx.jit
-def train_step(model: LinearRegression, optimizer: nnx.Optimizer, batch: dict) -> jax.Array:
+def train_step(
+    model: LinearRegression, optimizer: nnx.Optimizer, batch: Batch | Mapping[str, jax.Array]
+) -> jax.Array:
     """One SGD step on the batch, returning its loss."""
 
     def loss_fn(module: LinearRegression) -> jax.Array:

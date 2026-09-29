@@ -94,10 +94,10 @@ def dataset_compatibility_test(
             # Analyze structure if needed
             if analyze_structure and examples_processed == 1:
                 # Log keys
-                logger.info(f"Keys: {list(element.keys())}")
+                logger.info(f"Keys: {list(element.data)}")
 
                 # Analyze data types and shapes
-                for key, value in element.items():
+                for key, value in element.data.items():
                     if hasattr(value, "dtype"):
                         data_types[key] = str(value.dtype)
                         shapes[key] = str(value.shape) if hasattr(value, "shape") else "scalar"

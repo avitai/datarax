@@ -51,6 +51,7 @@ import numpy as np
 import pytest
 from flax import nnx
 
+from datarax.core.element_batch import Batch
 from datarax.pipeline import Pipeline
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
@@ -68,29 +69,29 @@ def _source(num_elements: int = 16) -> MemorySource:
 class _Double(nnx.Module):
     """Single-input stage: x → x * 2."""
 
-    def __call__(self, batch: dict) -> dict:
-        return {**batch, "x": batch["x"] * 2.0}
+    def __call__(self, batch: Batch) -> Batch:
+        return batch.replace(data={**batch.data, "x": batch["x"] * 2.0})
 
 
 class _AddOne(nnx.Module):
     """Single-input stage: x → x + 1."""
 
-    def __call__(self, batch: dict) -> dict:
-        return {**batch, "x": batch["x"] + 1.0}
+    def __call__(self, batch: Batch) -> Batch:
+        return batch.replace(data={**batch.data, "x": batch["x"] + 1.0})
 
 
 class _AddTen(nnx.Module):
     """Single-input stage: x → x + 10."""
 
-    def __call__(self, batch: dict) -> dict:
-        return {**batch, "x": batch["x"] + 10.0}
+    def __call__(self, batch: Batch) -> Batch:
+        return batch.replace(data={**batch.data, "x": batch["x"] + 10.0})
 
 
 class _SumMerge(nnx.Module):
     """Two-input merge: (a, b) → a["x"] + b["x"]."""
 
-    def __call__(self, a: dict, b: dict) -> dict:
-        return {"x": a["x"] + b["x"]}
+    def __call__(self, a: Batch, b: Batch) -> Batch:
+        return a.replace(data={"x": a["x"] + b["x"]})
 
 
 class _LearnableScale(nnx.Module):
@@ -100,8 +101,8 @@ class _LearnableScale(nnx.Module):
         super().__init__()
         self.factor = nnx.Param(jnp.float32(init))
 
-    def __call__(self, batch: dict) -> dict:
-        return {**batch, "x": batch["x"] * self.factor[...]}
+    def __call__(self, batch: Batch) -> Batch:
+        return batch.replace(data={**batch.data, "x": batch["x"] * self.factor[...]})
 
 
 # ---------- A. Topo-sort and validation ----------
@@ -208,9 +209,9 @@ def test_from_dag_threads_branch_outputs_to_merge() -> None:
     """Merge node receives branch outputs in declared edge order."""
 
     class _OrderSensitiveMerge(nnx.Module):
-        def __call__(self, first: dict, second: dict) -> dict:
+        def __call__(self, first: Batch, second: Batch) -> Batch:
             # 2 * first - second; non-commutative so order matters
-            return {"x": 2.0 * first["x"] - second["x"]}
+            return first.replace(data={"x": 2.0 * first["x"] - second["x"]})
 
     pipeline = Pipeline.from_dag(
         source=_source(),
@@ -236,7 +237,7 @@ def test_from_dag_threads_branch_outputs_to_merge() -> None:
 
 
 def test_from_dag_returns_only_sink_output() -> None:
-    """__call__/step return just the sink's output, not the intermediate dict."""
+    """__call__/step return just the sink's output, not the intermediate outputs."""
     pipeline = Pipeline.from_dag(
         source=_source(),
         nodes={"a": _Double(), "b": _AddOne()},
@@ -247,9 +248,9 @@ def test_from_dag_returns_only_sink_output() -> None:
     )
 
     out = pipeline.step()
-    assert isinstance(out, dict)
+    assert isinstance(out, Batch)
     # The sink's output alone; not {"a_out", "b_out"} or richer.
-    assert set(out.keys()) == {"x"}
+    assert set(out.data) == {"x"}
 
 
 # ---------- C. Composition with rest of Pipeline ----------

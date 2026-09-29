@@ -206,7 +206,7 @@ for i, batch in enumerate(pipeline):
     if i >= num_batches:
         break
 
-    data = batch
+    data = batch.data
 
     batch_size = len(data["label"]) if hasattr(data["label"], "__len__") else 1
     total_reviews += batch_size
@@ -303,7 +303,7 @@ def main():
         if i >= 10:  # Process 10 batches
             break
 
-        data = batch
+        data = batch.data
         batch_size = len(data["label"]) if hasattr(data["label"], "__len__") else 1
         total_reviews += batch_size
 

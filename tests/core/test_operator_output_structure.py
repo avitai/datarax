@@ -406,7 +406,8 @@ class TestAddedFieldsSurviveEveryPath:
         """The raw path returns both added fields."""
         op = AddDataAndStateOperator(config, rngs=rngs)
 
-        out_data, out_state = op._apply_on_raw({"input": jnp.ones((2, 1))}, {})
+        out = op(batch_ops.from_arrays({"input": jnp.ones((2, 1))}))
+        out_data, out_state = out.data, out.states
 
         assert "computed" in out_data
         assert "seen" in out_state
@@ -417,9 +418,10 @@ class TestAddedFieldsSurviveEveryPath:
 
         @nnx.jit
         def run(operator, data):
-            return operator._apply_on_raw(data, {})
+            return operator(batch_ops.from_arrays(data))
 
-        out_data, out_state = run(op, {"input": jnp.ones((2, 1))})
+        out = run(op, {"input": jnp.ones((2, 1))})
+        out_data, out_state = out.data, out.states
 
         assert "computed" in out_data
         assert "seen" in out_state
@@ -428,7 +430,8 @@ class TestAddedFieldsSurviveEveryPath:
         """The sequential strategy returns the same added fields as vmap."""
         op = AddDataAndStateOperator(OperatorConfig(batch_strategy="scan"), rngs=rngs)
 
-        out_data, out_state = op._apply_on_raw({"input": jnp.ones((2, 1))}, {})
+        out = op(batch_ops.from_arrays({"input": jnp.ones((2, 1))}))
+        out_data, out_state = out.data, out.states
 
         assert "computed" in out_data
         assert "seen" in out_state
@@ -441,7 +444,7 @@ class TestStateStructureOrderDoesNotMatter:
         """A call with empty states does not decide the axes of a later call that carries one."""
         op = AddDataAndStateOperator(config, rngs=rngs)
 
-        op._apply_on_raw({"input": jnp.ones((2, 1))}, {})
+        op(batch_ops.from_arrays({"input": jnp.ones((2, 1))}))
         result = op.apply_batch(_batch_of([1.0, 2.0], state={"count": jnp.asarray(0)}))
 
         assert "computed" in result.data
@@ -452,7 +455,8 @@ class TestStateStructureOrderDoesNotMatter:
         op = AddDataAndStateOperator(config, rngs=rngs)
 
         op.apply_batch(_batch_of([1.0, 2.0], state={"count": jnp.asarray(0)}))
-        out_data, out_state = op._apply_on_raw({"input": jnp.ones((2, 1))}, {})
+        out = op(batch_ops.from_arrays({"input": jnp.ones((2, 1))}))
+        out_data, out_state = out.data, out.states
 
         assert "computed" in out_data
         assert "seen" in out_state
@@ -483,10 +487,10 @@ class TestCompiledAndBranchingCallers:
         data = {"input": jnp.ones((2, 1))}
 
         def use_left(batch_data):
-            return left._apply_on_raw(batch_data, {})[0]
+            return left(batch_ops.from_arrays(batch_data)).data
 
         def use_right(batch_data):
-            return right._apply_on_raw(batch_data, {})[0]
+            return right(batch_ops.from_arrays(batch_data)).data
 
         chosen = nnx.cond(jnp.mean(data["input"]) > 0.0, use_left, use_right, data)
 
@@ -497,7 +501,8 @@ class TestCompiledAndBranchingCallers:
         operators = [AddKeyOperator(config, rngs=rngs) for _ in range(3)]
         data = {"input": jnp.ones((2, 1))}
         branches = [
-            (lambda batch_data, op=op: op._apply_on_raw(batch_data, {})[0]) for op in operators
+            (lambda batch_data, op=op: op(batch_ops.from_arrays(batch_data)).data)
+            for op in operators
         ]
 
         chosen = nnx.switch(jnp.asarray(1), branches, data)
@@ -514,7 +519,8 @@ class TestCompiledAndBranchingCallers:
                 else AddKeyOperator(config, rngs=rngs)
             )
 
-            out_data, out_state = operator._apply_on_raw({"input": jnp.ones((2, 1))}, {})
+            out = operator(batch_ops.from_arrays({"input": jnp.ones((2, 1))}))
+            out_data, out_state = out.data, out.states
 
             assert "computed" in out_data, f"iteration {index} lost its data field"
             assert ("seen" in out_state) == adds_state, f"iteration {index} got another structure"
@@ -535,7 +541,7 @@ class TestTracingIsDecidedByTheConfiguration:
         counter = TraceCounter()
 
         def run(operator, data):
-            return operator._apply_on_raw(data, {})[0]
+            return operator(batch_ops.from_arrays(data)).data
 
         traced = nnx.jit(counter.wrap(run))
         data = {"input": jnp.ones((2, 1))}
@@ -554,7 +560,7 @@ class TestTracingIsDecidedByTheConfiguration:
         counter = TraceCounter()
 
         def run(operator, data):
-            return operator._apply_on_raw(data, {})[0]
+            return operator(batch_ops.from_arrays(data)).data
 
         traced = nnx.jit(counter.wrap(run))
         data = {"input": jnp.ones((2, 1))}

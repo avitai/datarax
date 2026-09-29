@@ -1150,14 +1150,15 @@ class TestOperatorStatisticsStore:
         assert jnp.allclose(result.data["image"], jnp.ones((1, 4, 4, 3)))
 
     def test_statistics_reach_apply_through_the_raw_path(self):
-        out_data, _ = self._fitted()._apply_on_raw({"image": jnp.ones((2, 4, 4, 3)) * 0.7}, {})
+        out = self._fitted()(batch_ops.from_arrays({"image": jnp.ones((2, 4, 4, 3)) * 0.7}))
+        out_data = out.data
 
         assert jnp.allclose(out_data["image"], jnp.ones((2, 4, 4, 3)))
 
     def test_statistics_reach_apply_under_nnx_jit(self):
         @nnx.jit
         def run(op, data):
-            return op._apply_on_raw(data, {})[0]
+            return op(batch_ops.from_arrays(data)).data
 
         out_data = run(self._fitted(), {"image": jnp.ones((2, 4, 4, 3)) * 0.7})
 
@@ -1166,7 +1167,7 @@ class TestOperatorStatisticsStore:
     def test_replacing_values_of_the_same_shape_applies_them_without_a_new_trace(self):
         """The counter wraps the function and the transform wraps the counter."""
         counter = TraceCounter()
-        traced = nnx.jit(counter.wrap(lambda op, data: op._apply_on_raw(data, {})[0]))
+        traced = nnx.jit(counter.wrap(lambda op, data: op(batch_ops.from_arrays(data)).data))
         operator = self._fitted()
         data = {"image": jnp.ones((2, 4, 4, 3)) * 0.7}
 
@@ -1286,7 +1287,8 @@ class TestComputeStatisticsReachesApply:
     def test_the_raw_path_normalizes_with_the_batch_statistics(self):
         operator = self._batch_fitted()
 
-        out_data, _ = operator._apply_on_raw({"image": self.IMAGE}, {})
+        out = operator(batch_ops.from_arrays({"image": self.IMAGE}))
+        out_data = out.data
 
         assert jnp.allclose(out_data["image"], self._normalized(self.IMAGE), atol=1e-6)
 
@@ -1295,7 +1297,7 @@ class TestComputeStatisticsReachesApply:
 
         @nnx.jit
         def run(op, data):
-            return op._apply_on_raw(data, {})[0]
+            return op(batch_ops.from_arrays(data)).data
 
         out_data = run(operator, {"image": self.IMAGE})
 
@@ -1304,7 +1306,8 @@ class TestComputeStatisticsReachesApply:
     def test_the_scan_strategy_normalizes_with_the_batch_statistics(self):
         operator = self._batch_fitted(batch_strategy="scan")
 
-        out_data, _ = operator._apply_on_raw({"image": self.IMAGE}, {})
+        out = operator(batch_ops.from_arrays({"image": self.IMAGE}))
+        out_data = out.data
 
         assert jnp.allclose(out_data["image"], self._normalized(self.IMAGE), atol=1e-6)
 
@@ -1312,7 +1315,7 @@ class TestComputeStatisticsReachesApply:
         """Statistics describe the batch, so they are computed before it is vectorized."""
         operator, calls = self._counting()
 
-        operator._apply_on_raw({"image": jnp.ones((8, 2, 2, 1), jnp.float32)}, {})
+        operator(batch_ops.from_arrays({"image": jnp.ones((8, 2, 2, 1), jnp.float32)}))
 
         assert len(calls) == 1
 
@@ -1320,9 +1323,10 @@ class TestComputeStatisticsReachesApply:
         """An explicit argument still wins, so a caller can supply statistics of its own."""
         operator, calls = self._counting()
 
-        out_data, _ = operator._apply_on_raw(
-            {"image": jnp.ones((4, 1, 1, 1), jnp.float32)}, {}, {"mean": 0.25, "std": 1.0}
-        )
+        out_data = operator.apply_batch(
+            batch_ops.from_arrays({"image": jnp.ones((4, 1, 1, 1), jnp.float32)}),
+            {"mean": 0.25, "std": 1.0},
+        ).data
 
         assert calls == []
         assert jnp.allclose(out_data["image"], 0.75)
@@ -1332,7 +1336,8 @@ class TestComputeStatisticsReachesApply:
         operator = self._batch_fitted()
 
         def loss(image):
-            out_data, _ = operator._apply_on_raw({"image": image}, {})
+            out = operator(batch_ops.from_arrays({"image": image}))
+            out_data = out.data
             return jnp.sum(out_data["image"] ** 2)
 
         gradient = jax.grad(loss)(self.IMAGE)

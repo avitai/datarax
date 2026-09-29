@@ -24,6 +24,7 @@ from datarax.operators.batch_mix_operator import (
     BatchMixOperator,
     BatchMixOperatorConfig,
 )
+from datarax.pipeline.dag import name_records
 
 
 class TestBatchMixOperatorConfig:
@@ -189,7 +190,8 @@ class TestBatchMixOperatorMixUp:
             "label": jax.nn.one_hot(jnp.arange(4), 4),
         }
 
-        result_data, result_states = op._apply_on_raw(batch_data, {})
+        out = op(batch_ops.from_arrays(batch_data))
+        result_data, result_states = out.data, out.states
 
         assert result_states == {}
         assert result_data["image"].shape == batch_data["image"].shape
@@ -264,7 +266,8 @@ class TestBatchMixOperatorCutMix:
             "label": jax.nn.one_hot(jnp.arange(4), 4),
         }
 
-        result_data, result_states = op._apply_on_raw(batch_data, {})
+        out = op(batch_ops.from_arrays(batch_data))
+        result_data, result_states = out.data, out.states
 
         assert result_states == {}
         assert result_data["image"].shape == batch_data["image"].shape
@@ -609,13 +612,18 @@ class TestBatchMixOperatorEdgeCases:
         assert result.data["image"].shape == (2, 32, 32, 1)
 
 
-class TestBatchMixOperatorPipelineRawPath:
-    """Regression: BatchMixOperator must work through the Pipeline fused raw path.
+def test_cutmix_leaves_data_that_is_not_a_mapping_unchanged():
+    """CutMix pastes into a named image field; a batch whose data is one array has none."""
+    mixer = BatchMixOperator(
+        BatchMixOperatorConfig(mode="cutmix", data_field="image"), rngs=nnx.Rngs(batch_mix=0)
+    )
+    batch = batch_ops.from_arrays(jnp.arange(4 * 8 * 8 * 3, dtype=jnp.float32).reshape(4, 8, 8, 3))
 
-    The Pipeline calls ``_apply_on_raw(data, states, stats, record_indices)``; a
-    stale override signature previously broke mixup/cutmix pipelines (caught only
-    by example execution). These tests exercise that path directly.
-    """
+    assert jnp.array_equal(mixer(batch).data, batch.data)
+
+
+class TestBatchMixOperatorInAPipeline:
+    """BatchMixOperator as a pipeline stage and on a batch named by its records."""
 
     def test_batch_mix_runs_through_pipeline_step(self):
         from datarax.pipeline import Pipeline
@@ -632,12 +640,12 @@ class TestBatchMixOperatorPipelineRawPath:
         batch = pipeline.step()
         assert batch["image"].shape == (4, 4)
 
-    def test_apply_on_raw_accepts_record_indices(self):
-        """The raw path accepts the Pipeline's 4th positional (record_indices)."""
+    def test_mixes_a_batch_named_by_its_records(self):
+        """A batch whose rows carry record indices mixes like any other."""
         mixer = BatchMixOperator(
             BatchMixOperatorConfig(mode="cutmix", data_field="image"),
             rngs=nnx.Rngs(batch_mix=0),
         )
         data = {"image": jnp.ones((4, 8, 8, 3), dtype=jnp.float32)}
-        out_data, _ = mixer._apply_on_raw(data, {}, None, jnp.arange(4, dtype=jnp.int32))
-        assert out_data["image"].shape == (4, 8, 8, 3)
+        out = mixer(name_records(batch_ops.from_arrays(data), jnp.arange(4, dtype=jnp.int32), 0))
+        assert out.data["image"].shape == (4, 8, 8, 3)

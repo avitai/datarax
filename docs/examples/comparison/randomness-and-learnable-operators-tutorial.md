@@ -141,12 +141,13 @@ transform runs as Python and NumPy code outside any JAX trace, so `jax.grad` can
 parameter inside it: with Grain, a learnable preprocessing step belongs in the model.
 
 ```python
+from datarax.core.element_batch import Batch
 class LearnableScale(nnx.Module):
     def __init__(self) -> None:
         self.scale = nnx.Param(jnp.ones(3))
 
-    def __call__(self, batch: dict) -> dict:
-        return {**batch, "image": batch["image"] * self.scale[...]}
+    def __call__(self, batch: Batch) -> Batch:
+        return batch.replace(data={**batch.data, "image": batch["image"] * self.scale[...]})
 
 
 def epoch_loss(pipeline: Pipeline) -> jax.Array:

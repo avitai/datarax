@@ -135,7 +135,7 @@ pipeline = Pipeline(source=filtered_source, stages=[], batch_size=1, rngs=nnx.Rn
 batch = next(iter(pipeline))
 
 print("Filtered fields:")
-for key in batch.keys():
+for key in batch.data:
     print(f"  - {key}: shape={batch[key].shape}")
 ```
 

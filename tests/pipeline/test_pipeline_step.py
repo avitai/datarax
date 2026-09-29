@@ -13,6 +13,7 @@ import pytest
 from flax import nnx
 
 from datarax.core.config import MapOperatorConfig
+from datarax.core.element_batch import Batch
 from datarax.operators.map_operator import MapOperator
 from datarax.pipeline import Pipeline
 from datarax.pipeline.iteration import _host_copies, _session_step
@@ -30,8 +31,8 @@ class _Scale(nnx.Module):
     def __init__(self, factor: float = 2.0) -> None:
         self.factor = nnx.Param(jnp.float32(factor))
 
-    def __call__(self, batch: dict) -> dict:
-        return {**batch, "x": batch["x"] * self.factor[...]}
+    def __call__(self, batch: Batch) -> Batch:
+        return batch.replace(data={**batch.data, "x": batch["x"] * self.factor[...]})
 
 
 class _Shift(nnx.Module):
@@ -40,8 +41,8 @@ class _Shift(nnx.Module):
     def __init__(self) -> None:
         self.offset = nnx.Param(jnp.float32(1.0))
 
-    def __call__(self, batch: dict) -> dict:
-        return {**batch, "x": batch["x"] + self.offset[...]}
+    def __call__(self, batch: Batch) -> Batch:
+        return batch.replace(data={**batch.data, "x": batch["x"] + self.offset[...]})
 
 
 class _Counter(nnx.Module):
@@ -50,7 +51,7 @@ class _Counter(nnx.Module):
     def __init__(self) -> None:
         self.seen = nnx.Variable(0)
 
-    def __call__(self, batch: dict) -> dict:
+    def __call__(self, batch: Batch) -> Batch:
         self.seen[...] = self.seen[...] + 1
         return batch
 
@@ -58,7 +59,7 @@ class _Counter(nnx.Module):
 class _GrowingStage(nnx.Module):
     """Stage adding state while it runs, which changes the module structure."""
 
-    def __call__(self, batch: dict) -> dict:
+    def __call__(self, batch: Batch) -> Batch:
         self.seen = nnx.Variable(jnp.zeros((), jnp.int32))
         return batch
 
@@ -146,8 +147,10 @@ class TestNoCopy:
         batches = iter(iterated)
         for _ in range(5):
             expected, served = next(batches), stepped.step()
-            assert set(served) == set(expected)
+            assert set(served.data) == set(expected.data)
             np.testing.assert_array_equal(served["x"], expected["x"])
+            np.testing.assert_array_equal(served.indices, expected.indices)
+            np.testing.assert_array_equal(served.epochs, expected.epochs)
 
 
 class TestStructure:
@@ -273,7 +276,7 @@ class TestTransforms:
     def test_the_gradient_reaches_a_replaced_stage_only(self) -> None:
         pipeline = _pipeline(_Scale(2.0))
         original = pipeline.stages[0]
-        pipeline._stage_modules[pipeline._exec_order[0]] = _Shift()
+        pipeline.dag.stages[pipeline.dag.order[0]] = _Shift()
 
         grads = nnx.grad(lambda pipeline: pipeline.step()["x"].sum())(pipeline)
 

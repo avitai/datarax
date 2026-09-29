@@ -1,20 +1,11 @@
 """Record the per-record outputs of every operator kind, as a fixture to compare against.
 
-The redesign of the operator framework changes how a record's PRNG key reaches ``apply`` and how
-``_vmap_apply`` vectorizes. Neither is meant to change what an operator produces. This script
-records what every operator kind produces today, so that a later commit that alters the machinery
-has to show the outputs unchanged, entry by entry, rather than assert it.
-
-Every entry calls ``_apply_on_raw(data, {}, None, INDICES, EPOCH)`` with fixed record indices and a
-fixed epoch, which is the path the pipeline's fused chain takes, and the shipped operators reach
-through their own overrides where they have one. A second group runs two epochs of a shuffled
-pipeline, so the fixture also pins what shuffling and the epoch counter feed the stages.
-
-Entries named in ``INTENDED_CHANGE`` are expected to differ after the record key reaches stochastic
-children: each is a case where a ``probability=1.0`` wrapper is classified deterministic
-(``ProbabilisticOperatorConfig`` sets ``stochastic`` from ``0 < probability < 1``) and therefore
-passes no random parameters to a stochastic child. They are recorded so the change is visible and
-deliberate, not so it is forbidden.
+A change to how a record's PRNG key reaches ``apply`` or how a batch is vectorized must not change
+what an operator produces; this fixture makes that checkable entry by entry. Every entry calls the
+operator on a batch whose rows are records ``INDICES`` of epoch ``EPOCH``, the path a pipeline
+takes, and the shipped operators reach through their own overrides where they have one. A second
+group runs two epochs of a shuffled pipeline, so the fixture also pins what shuffling and the
+epoch counter feed the stages.
 
 ``CrepeF0Operator`` is deliberately absent: it needs pretrained weights that the test environment
 does not carry, which would make this fixture depend on a download. ``tests/fixtures/crepe/``
@@ -41,6 +32,7 @@ import numpy as np
 from flax import nnx
 
 import datarax
+from datarax.core import batch_ops
 from datarax.core.config import (
     BatchMixOperatorConfig,
     ElementOperatorConfig,
@@ -81,6 +73,7 @@ from datarax.operators.probabilistic_operator import (
     ProbabilisticOperatorConfig,
 )
 from datarax.operators.selector_operator import SelectorOperator, SelectorOperatorConfig
+from datarax.pipeline.dag import name_records
 from datarax.pipeline.pipeline import Pipeline
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.utils.external import ExternalAdapterConfig, ExternalLibraryAdapter, PureJaxAdapter
@@ -112,12 +105,6 @@ AUDIO: dict[str, jax.Array] = {"audio": _AUDIO_TONES + _AUDIO_NOISE}
 
 PIPELINE_RECORDS = 16
 PIPELINE_BATCH = 4
-
-INTENDED_CHANGE = (
-    "probabilistic p=1 over a stochastic child",
-    "probabilistic p=1 nested in another p=1 wrapper",
-    "composite whose only stochastic descendant is behind a p=1 wrapper",
-)
 
 
 def rngs() -> nnx.Rngs:
@@ -534,7 +521,8 @@ def operator_entries() -> dict[str, np.ndarray]:
     recorded: dict[str, np.ndarray] = {}
     for name, build, data in CASES:
         operator = build()
-        out_data, _ = operator._apply_on_raw(data, {}, None, INDICES, EPOCH)  # noqa: SLF001
+        out = operator(name_records(batch_ops.from_arrays(data), INDICES, EPOCH))
+        out_data = out.data
         recorded.update(entries_for(name, out_data))
         print(f"  recorded {name}")
     return recorded
@@ -565,7 +553,7 @@ def pipeline_entries() -> dict[str, np.ndarray]:
     recorded: dict[str, np.ndarray] = {}
     for epoch in range(2):
         for index, batch in enumerate(iter(pipeline)):
-            recorded.update(entries_for(f"pipeline epoch {epoch} batch {index}", batch))
+            recorded.update(entries_for(f"pipeline epoch {epoch} batch {index}", batch.data))
         pipeline.reset()
         print(f"  recorded pipeline epoch {epoch}")
     return recorded
@@ -592,7 +580,6 @@ def main() -> None:
     recorded = operator_entries()
     recorded.update(pipeline_entries())
     recorded["case names"] = np.array([name for name, _, _ in CASES])
-    recorded["intended change"] = np.array(INTENDED_CHANGE)
 
     arguments.out.parent.mkdir(parents=True, exist_ok=True)
     # The archive writer declares a named `allow_pickle` parameter, so a type checker reads
