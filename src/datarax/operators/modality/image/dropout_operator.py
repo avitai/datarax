@@ -26,7 +26,6 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import jax
-import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.config import require_stochastic
@@ -126,6 +125,14 @@ class DropoutOperator(ModalityOperator):
         # Type narrowing for better IDE support
         self.config: DropoutOperatorConfig = config
 
+    def _keep_mask(self, key: jax.Array, shape: tuple[int, ...]) -> jax.Array:
+        """A boolean keep-mask of ``shape``, each entry kept with ``1 - dropout_rate``.
+
+        Boolean, as ``nnx.Dropout``'s mask: applying it keeps the value's dtype.
+        """
+        keep = 1.0 - self.config.dropout_rate
+        return jax.random.bernoulli(key, keep, shape=shape)
+
     def apply(
         self,
         element: Element,
@@ -161,28 +168,16 @@ class DropoutOperator(ModalityOperator):
 
         if self.config.mode == "pixel":
             # Pixel-wise dropout: each pixel independently dropped
-            keep_mask = jax.random.bernoulli(
-                rng_key, 1.0 - self.config.dropout_rate, shape=value.shape
-            )
-            transformed = value * keep_mask
+            transformed = value * self._keep_mask(rng_key, value.shape)
 
         elif self.config.mode == "channel":
             # Channel-wise dropout: entire channels dropped
             if value.ndim == 3:
-                h, w, c = value.shape
-                # Generate channel mask
-                channel_mask = jax.random.bernoulli(
-                    rng_key, 1.0 - self.config.dropout_rate, shape=(c,)
-                )
-                # Broadcast to full image shape (H, W, C)
-                keep_mask = jnp.ones((h, w, 1)) * channel_mask[None, None, :]
-                transformed = value * keep_mask
+                # One keep per channel, broadcast over the image's last axis
+                transformed = value * self._keep_mask(rng_key, value.shape[-1:])
             else:
                 # Fallback to pixel-wise for non-3D images
-                keep_mask = jax.random.bernoulli(
-                    rng_key, 1.0 - self.config.dropout_rate, shape=value.shape
-                )
-                transformed = value * keep_mask
+                transformed = value * self._keep_mask(rng_key, value.shape)
         else:
             # Should never reach here due to config validation
             raise ValueError(f"Unknown dropout mode: {self.config.mode}")

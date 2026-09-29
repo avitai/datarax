@@ -259,9 +259,9 @@ def adjust_brightness(
         factor: Brightness adjustment factor. Values > 1 increase brightness, < 1 decrease it.
 
     Returns:
-        ``image * factor``.
+        ``image * factor``, in the image's dtype.
     """
-    return image * factor
+    return image * jnp.asarray(factor, image.dtype)
 
 
 def adjust_brightness_delta(
@@ -278,9 +278,9 @@ def adjust_brightness_delta(
             Values > 0 increase brightness, < 0 decrease it.
 
     Returns:
-        ``image + delta``.
+        ``image + delta``, in the image's dtype.
     """
-    return image + delta
+    return image + jnp.asarray(delta, image.dtype)
 
 
 def adjust_contrast(
@@ -298,10 +298,10 @@ def adjust_contrast(
         factor: Contrast adjustment factor. Values > 1 increase contrast, < 1 decrease it.
 
     Returns:
-        ``mean + factor * (image - mean)`` per channel, with the input's shape.
+        ``mean + factor * (image - mean)`` per channel, with the input's shape and dtype.
     """
     mean = jnp.mean(image, axis=(0, 1), keepdims=True)
-    return mean + factor * (image - mean)
+    return mean + jnp.asarray(factor, image.dtype) * (image - mean)
 
 
 def rgb_to_hsv(rgb: jax.Array) -> jax.Array:
@@ -493,8 +493,8 @@ def adjust_saturation(
     # Convert to HSV color space
     hsv = rgb_to_hsv(image)
 
-    # Adjust saturation channel (index 1)
-    hsv = hsv.at[..., 1].set(jnp.clip(hsv[..., 1] * factor, 0.0, 1.0))
+    # Adjust saturation channel (index 1), the factor in the image's dtype
+    hsv = hsv.at[..., 1].set(jnp.clip(hsv[..., 1] * jnp.asarray(factor, image.dtype), 0.0, 1.0))
 
     # Convert back to RGB
     return hsv_to_rgb(hsv)
@@ -521,7 +521,7 @@ def adjust_hue(
         raise ValueError("Hue adjustment requires RGB images with shape [H, W, 3]")
 
     # Ensure delta is in valid range
-    clamped_delta = jnp.clip(delta, -jnp.pi, jnp.pi)
+    clamped_delta = jnp.clip(jnp.asarray(delta, image.dtype), -jnp.pi, jnp.pi)
 
     # Convert to HSV color space
     hsv = rgb_to_hsv(image)
@@ -555,9 +555,11 @@ def _adjust_hsv(
     """
     hsv = rgb_to_hsv(image)
     if saturation_factor is not None:
-        hsv = hsv.at[..., 1].set(jnp.clip(hsv[..., 1] * saturation_factor, 0.0, 1.0))
+        factor = jnp.asarray(saturation_factor, image.dtype)
+        hsv = hsv.at[..., 1].set(jnp.clip(hsv[..., 1] * factor, 0.0, 1.0))
     if hue_delta is not None:
-        hsv = hsv.at[..., 0].set((hsv[..., 0] + hue_delta) % (2 * jnp.pi))
+        delta = jnp.asarray(hue_delta, image.dtype)
+        hsv = hsv.at[..., 0].set((hsv[..., 0] + delta) % (2 * jnp.pi))
     return hsv_to_rgb(hsv)
 
 
@@ -585,6 +587,11 @@ def _apply_static_hsv_adjustment(image: jax.Array, saturation: float, hue: float
     return image
 
 
+def _uniform(key: jax.Array, half_width: float) -> jax.Array:
+    """One value drawn uniformly from ``[-half_width, half_width]``."""
+    return jax.random.uniform(key, (), minval=-half_width, maxval=half_width)
+
+
 def _advance_rng_state(key: jax.Array) -> jax.Array:
     """Advance RNG key deterministically using split semantics."""
     key, _ = jax.random.split(key)
@@ -599,19 +606,19 @@ def _apply_random_hsv_adjustment(
     has_hue = hue != 0.0
 
     if has_saturation and has_hue:
-        sat_factor = 1.0 + jax.random.uniform(key, (), minval=-saturation, maxval=saturation)
+        sat_factor = 1.0 + _uniform(key, saturation)
         key = _advance_rng_state(key)
-        h_delta = jax.random.uniform(key, (), minval=-hue, maxval=hue)
+        h_delta = _uniform(key, hue)
         key = _advance_rng_state(key)
         return _adjust_hsv(image, saturation_factor=sat_factor, hue_delta=h_delta), key
 
     if has_saturation:
-        sat_factor = 1.0 + jax.random.uniform(key, (), minval=-saturation, maxval=saturation)
+        sat_factor = 1.0 + _uniform(key, saturation)
         key = _advance_rng_state(key)
         return adjust_saturation(image, sat_factor), key
 
     if has_hue:
-        h_delta = jax.random.uniform(key, (), minval=-hue, maxval=hue)
+        h_delta = _uniform(key, hue)
         key = _advance_rng_state(key)
         return adjust_hue(image, h_delta), key
 
@@ -641,11 +648,11 @@ def _apply_color_jitter_random(
     """Apply random color jitter sampled from the provided RNG key."""
     result = image
     if brightness != 0.0:
-        brightness_factor = 1.0 + jax.random.uniform(key, (), minval=-brightness, maxval=brightness)
+        brightness_factor = 1.0 + _uniform(key, brightness)
         key = _advance_rng_state(key)
         result = adjust_brightness(result, brightness_factor)
     if contrast != 0.0:
-        contrast_factor = 1.0 + jax.random.uniform(key, (), minval=-contrast, maxval=contrast)
+        contrast_factor = 1.0 + _uniform(key, contrast)
         key = _advance_rng_state(key)
         result = adjust_contrast(result, contrast_factor)
     result, _ = _apply_random_hsv_adjustment(result, saturation, hue, key)
@@ -695,7 +702,7 @@ def convert_rgb_to_grayscale(image: jax.Array) -> jax.Array:
         Grayscale image with shape [height, width].
     """
     # Use standard RGB to grayscale conversion weights
-    weights = jnp.array([0.299, 0.587, 0.114])
+    weights = jnp.asarray([0.299, 0.587, 0.114], image.dtype)
     return jnp.dot(image, weights)
 
 
@@ -729,17 +736,22 @@ def rotate(
     else:
         h, w, c = image.shape
 
+    # Geometry in at least float32 (bfloat16 coordinates would misplace pixels), float64 for a
+    # float64 image; the angle joins it, so a float64 draw cannot promote a float32 image.
+    geometry = jnp.promote_types(image.dtype, jnp.float32)
+    angle = jnp.asarray(angle_rad, geometry)
+
     # Create rotation matrix (inverse transformation)
-    cos_angle = jnp.cos(angle_rad)
-    sin_angle = jnp.sin(angle_rad)
+    cos_angle = jnp.cos(angle)
+    sin_angle = jnp.sin(angle)
 
     # Center coordinates
     center_y, center_x = h / 2.0, w / 2.0
 
     # Create coordinate grids for output image
     y_coords, x_coords = jnp.meshgrid(
-        jnp.arange(h, dtype=jnp.float32),
-        jnp.arange(w, dtype=jnp.float32),
+        jnp.arange(h, dtype=geometry),
+        jnp.arange(w, dtype=geometry),
         indexing="ij",
     )
 
@@ -759,8 +771,8 @@ def rotate(
     x1 = x0 + 1
 
     # Compute interpolation weights
-    wy1 = y_rotated - y0.astype(jnp.float32)
-    wx1 = x_rotated - x0.astype(jnp.float32)
+    wy1 = y_rotated - y0.astype(geometry)
+    wx1 = x_rotated - x0.astype(geometry)
     wy0 = 1.0 - wy1
     wx0 = 1.0 - wx1
 
@@ -800,4 +812,7 @@ def rotate(
     if len(original_shape) == 2:
         rotated_image = rotated_image[..., 0]
 
+    # A floating image gets its own dtype back
+    if jnp.issubdtype(image.dtype, jnp.floating):
+        rotated_image = rotated_image.astype(image.dtype)
     return rotated_image

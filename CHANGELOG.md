@@ -147,6 +147,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Before, a pipeline whose stage subtree did not match kept the position and the earlier
   stages' parameters it had already written.
 
+- Operators follow JAX's and Flax NNX's dtype rules, with `jax_enable_x64` on or off. An operator
+  without parameters returns each field in the field's dtype: a value it draws or a constant it
+  holds is applied in the data's dtype. Under x64, a float32 input came back float64 from 32 of
+  the 51 operator kinds the per-record fixture records, and 5 raised (patch dropout; the branches
+  of `ProbabilisticOperator`, CONDITIONAL and BRANCHING composites); `MemorySource`'s shuffle
+  seed raised `OverflowError`. `LoudnessConfig` and `CompositeOperatorConfig` (for learnable
+  weights) take Flax's `dtype` and `param_dtype`: parameters are created in `param_dtype`
+  (float32) and the computation runs in `dtype`, or the promotion of input and parameters, so
+  bfloat16 audio computes loudness in float32 (JAX's FFT needs it) and float64 in float64.
+  `functional.rotate` computes its geometry in at least float32 and in float64 for a float64
+  image. With x64 off, every value is unchanged.
+
 ## [0.1.17] - 2026-09-25
 
 ### Added

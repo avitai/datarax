@@ -1,9 +1,12 @@
-"""Gradients through every operator family, checked against finite differences.
+"""Gradients through every operator family, exact in float64.
 
-``jax.test_util.check_grads`` compares forward- and reverse-mode derivatives with finite
-differences along a random direction, at JAX's own tolerances for the dtype, so no bound here is
-chosen by hand. It passes trivially on a function whose derivative is zero everywhere, so every
-family whose output depends on its input or its parameters also asserts a non-zero gradient.
+Each input family's derivative is checked against finite differences in float64
+(``substrax.testing.gradients.check_input_gradients``: ``check_grads`` at its float64 tolerance,
+1e-5, refusing a gradient that is zero everywhere). Correctness is a property of the code path,
+so the float64 run checks it on whatever it draws, as JAX's own x64 test leg does. The shipped
+float32 gradient is checked to be finite and non-zero: a float32 finite difference on these
+losses (a sum against random-sign weights) carries 1e-3 to 3e-3 of rounding by construction, so
+it cannot measure a float32 gradient's accuracy at any step.
 
 Randomness is fixed by naming the records, so each check differentiates one fixed draw. Inputs sit
 away from clipping boundaries, where the transforms are smooth.
@@ -228,7 +231,10 @@ _INPUT_FAMILIES: dict[str, Family] = {
     "external adapter": Family(
         lambda: ExternalLibraryAdapter(
             ExternalAdapterConfig(),
-            lambda data, key: {**data, "image": data["image"] * jax.random.uniform(key, ())},
+            lambda data, key: {
+                **data,
+                "image": data["image"] * jax.random.uniform(key, ()),
+            },
             rngs=_rngs(),
         )
     ),
@@ -245,33 +251,38 @@ def _weights(shape: tuple[int, ...]) -> jax.Array:
     return jax.random.normal(jax.random.key(7), shape)
 
 
-def _input_loss(family: Family) -> Callable[[jax.Array], jax.Array]:
-    operator = family.build()
+def _family_loss(family: Family) -> Callable[[OperatorModule, jax.Array], jax.Array]:
     weights = _weights(family.data().shape)
 
-    def loss(value: jax.Array) -> jax.Array:
-        out = operator(name_records(batch_ops.from_arrays({family.field: value}), _RECORDS, 0))
-        out = out.data
-        return jnp.sum(out[family.field] * weights)
+    def loss(model: OperatorModule, value: jax.Array) -> jax.Array:
+        out = model(name_records(batch_ops.from_arrays({family.field: value}), _RECORDS, 0))
+        return jnp.sum(out.data[family.field] * weights)
 
     return loss
 
 
+def _input_loss(family: Family) -> Callable[[jax.Array], jax.Array]:
+    operator = family.build()
+    loss = _family_loss(family)
+    return lambda value: loss(operator, value)
+
+
 @pytest.mark.parametrize("name", sorted(_INPUT_FAMILIES))
-def test_the_input_gradient_matches_finite_differences(name: str) -> None:
+def test_the_input_gradient_matches_finite_differences_in_float64(name: str) -> None:
+    """The derivative, against finite differences at ``check_grads``' float64 tolerance."""
     family = _INPUT_FAMILIES[name]
-    loss = _input_loss(family)
 
-    check_grads(jax.jit(loss), (family.data(),), order=1, modes=("fwd", "rev"))
+    check_input_gradients(family.build(), _family_loss(family), family.data())
 
 
 @pytest.mark.parametrize("name", sorted(_INPUT_FAMILIES))
-def test_the_input_gradient_is_not_zero(name: str) -> None:
-    """The control ``check_grads`` lacks: a zero derivative would pass it trivially."""
+def test_the_float32_input_gradient_is_finite_and_not_zero(name: str) -> None:
+    """The shipped dtype's gradient: finite everywhere, and not zero everywhere."""
     family = _INPUT_FAMILIES[name]
 
     gradient = jax.jit(jax.grad(_input_loss(family)))(family.data())
 
+    assert gradient.dtype == jnp.float32
     assert jnp.all(jnp.isfinite(gradient))
     assert jnp.any(gradient != 0.0)
 

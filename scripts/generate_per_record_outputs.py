@@ -148,7 +148,9 @@ class ShiftToTarget(ModalityOperator):
         del stats
         image = self._extract_field(data, self.config.field_key)
         shift = jax.random.uniform(require_key(key, self), ()) if self.config.stochastic else 0.05
-        return element.replace(data=self._remap_field(data, image + shift))
+        return element.replace(
+            data=self._remap_field(data, image + jnp.asarray(shift, image.dtype))
+        )
 
 
 class Fuse(CrossModalOperator):
@@ -164,14 +166,15 @@ class Fuse(CrossModalOperator):
         data = element.data
         del key, stats
         image, label = self._extract_inputs(data)
-        fused = jnp.mean(image) + label.astype(jnp.float32)
+        fused = jnp.mean(image) + label.astype(image.dtype)
         return element.replace(data=self._store_outputs(data, [fused]))
 
 
 def element_noise(element: Any, key: jax.Array) -> Any:
     """Add drawn noise to an element's image."""
     image = element.data["image"]
-    return element.update_data({"image": image + 0.1 * jax.random.normal(key, image.shape)})
+    noise = jax.random.normal(key, image.shape, dtype=image.dtype)
+    return element.update_data({"image": image + 0.1 * noise})
 
 
 def element_scale(element: Any, key: None) -> Any:
@@ -188,7 +191,9 @@ def external_scale(data: dict[str, Any], key: None) -> dict[str, Any]:
 
 def external_noise(data: dict[str, Any], key: jax.Array) -> dict[str, Any]:
     """Add drawn noise to a raw data dict's image."""
-    return {**data, "image": data["image"] + 0.1 * jax.random.normal(key, data["image"].shape)}
+    image = data["image"]
+    noise = jax.random.normal(key, image.shape, dtype=image.dtype)
+    return {**data, "image": image + 0.1 * noise}
 
 
 def composite(strategy: CompositionStrategy, **extra: Any) -> CompositeOperatorModule:
@@ -305,7 +310,7 @@ CASES: list[tuple[str, Callable[[], OperatorModule], dict[str, jax.Array]]] = [
         "map full-tree stochastic",
         lambda: MapOperator(
             MapOperatorConfig(**stochastic_kwargs(True)),
-            fn=lambda x, key: x + 0.1 * jax.random.normal(key, x.shape),
+            fn=lambda x, key: x + 0.1 * jax.random.normal(key, x.shape, dtype=x.dtype),
             rngs=rngs(),
         ),
         IMAGE_ONLY,
@@ -314,7 +319,7 @@ CASES: list[tuple[str, Callable[[], OperatorModule], dict[str, jax.Array]]] = [
         "map subtree stochastic",
         lambda: MapOperator(
             MapOperatorConfig(subtree={"image": None}, **stochastic_kwargs(True)),
-            fn=lambda x, key: x + 0.1 * jax.random.normal(key, x.shape),
+            fn=lambda x, key: x + 0.1 * jax.random.normal(key, x.shape, dtype=x.dtype),
             rngs=rngs(),
         ),
         IMAGE_LABEL,
@@ -540,7 +545,10 @@ def pipeline_entries() -> dict[str, np.ndarray]:
         fn=lambda element, key: element.update_data(
             {
                 "value": element.data["value"]
-                + 0.1 * jax.random.normal(key, element.data["value"].shape)
+                + 0.1
+                * jax.random.normal(
+                    key, element.data["value"].shape, dtype=element.data["value"].dtype
+                )
             }
         ),
         rngs=nnx.Rngs(0, jitter=2),

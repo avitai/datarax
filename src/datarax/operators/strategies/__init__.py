@@ -5,6 +5,7 @@ from datarax.operators.strategies.branching import BranchingStrategy
 from datarax.operators.strategies.ensemble import EnsembleStrategy
 from datarax.operators.strategies.parallel import (
     ConditionalParallelStrategy,
+    MixtureWeights,
     ParallelStrategy,
     WeightedParallelStrategy,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "SequentialStrategy",
     "ConditionalSequentialStrategy",
     "ParallelStrategy",
+    "MixtureWeights",
     "WeightedParallelStrategy",
     "ConditionalParallelStrategy",
     "EnsembleStrategy",

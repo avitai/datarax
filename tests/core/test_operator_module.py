@@ -438,7 +438,9 @@ class TestOperatorKeys:
 
     @staticmethod
     def _batch(size: int = 4) -> dict:
-        return {"image": jnp.linspace(0.1, 0.9, size * 12).reshape(size, 4, 3)}
+        # At most 0.8, below 1 / max_factor (1 / 1.2): no draw is clipped, so output / input is
+        # the record's factor in every element, whatever the draw.
+        return {"image": jnp.linspace(0.1, 0.8, size * 12).reshape(size, 4, 3)}
 
     @staticmethod
     def _identified(data: dict, rows: jax.Array, epoch: int = 0) -> Batch:

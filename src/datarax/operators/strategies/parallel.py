@@ -6,6 +6,8 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+from flax.nnx.nn.dtypes import promote_dtype
+from flax.typing import Dtype
 from jaxtyping import PyTree
 
 from datarax.core.element_batch import Element
@@ -87,6 +89,10 @@ class ParallelStrategy(CompositionStrategyImpl):
         return element.replace(data=merged, state=outputs[-1].state)
 
 
+type MixtureWeights = jax.Array | tuple[float, ...]
+"""A weighted parallel's weights: fixed Python numbers, or an array (learned or per record)."""
+
+
 class WeightedParallelStrategy(CompositionStrategyImpl):
     """Applies operators in parallel and combines the fields they write with weights.
 
@@ -96,16 +102,24 @@ class WeightedParallelStrategy(CompositionStrategyImpl):
     do not transform alone.
     """
 
-    def __init__(self, mix_fields: Sequence[str], weights: jax.Array) -> None:
+    def __init__(
+        self,
+        mix_fields: Sequence[str],
+        weights: MixtureWeights,
+        dtype: Dtype | None = None,
+    ) -> None:
         """Initialize with the fields to combine and the weights to combine them with.
 
         Args:
             mix_fields: Dotted paths of the data fields to combine.
-            weights: One weight per operator, for this call: static, the softmax of learnable
-                logits, or read from the record.
+            weights: One weight per operator, for this call: fixed Python numbers, or an array
+                (the softmax of learnable logits, or read from the record).
+            dtype: The dtype array weights mix in, ``None`` for the promotion of the field and
+                the weights, as ``nnx.Linear``'s ``dtype``.
         """
         self.mix_fields = tuple(mix_fields)
         self.weights = weights
+        self.dtype = dtype
 
     def apply(
         self,
@@ -125,10 +139,15 @@ class WeightedParallelStrategy(CompositionStrategyImpl):
             state.
         """
         outputs = self._apply_each(operators, element, stats)
-        weights = jnp.asarray(self.weights)
         mixed = element.data
         for path in self.mix_fields:
             stacked = jnp.stack([get_field(output.data, path) for output in outputs])
+            if isinstance(self.weights, tuple):
+                # Fixed weights are constants, not parameters: they mix in the field's dtype
+                weights = jnp.asarray(self.weights, stacked.dtype)
+            else:
+                # Learnable or per-record weights mix as a Flax layer does
+                stacked, weights = promote_dtype((stacked, self.weights), dtype=self.dtype)
             mixed = set_field(mixed, path, jnp.tensordot(weights, stacked, axes=1))
         return element.replace(data=mixed, state=outputs[-1].state)
 

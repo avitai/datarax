@@ -25,7 +25,16 @@ logger = logging.getLogger(__name__)
 # CREPE pitch bins: 360 bins spanning 1997.38 cents to 9177.38 cents
 # Each bin is 20 cents wide. Cents = 1200 * log2(f / f_ref)
 CENTS_PER_BIN = 20
-CENTS_MAPPING = jnp.linspace(0, 7180, 360) + 1997.3794084376191
+
+
+def cents_mapping(dtype: jnp.dtype) -> jax.Array:
+    """The 360 bins' pitches in cents, in ``dtype``: the dtype of the probabilities they weight.
+
+    Built where it is used, not at import, where it would take the default dtype of the mode
+    the process started in (float64 under x64) and promote float32 probabilities.
+    """
+    return jnp.linspace(0, 7180, 360, dtype=dtype) + 1997.3794084376191
+
 
 # Model capacity multipliers (scale channel counts)
 _CAPACITY_MULTIPLIERS = {
@@ -226,7 +235,7 @@ def decode_pitch_local(probs: jax.Array, window: int = 9) -> tuple[jax.Array, ja
 
     # Weighted average of cents values
     total_weight = jnp.sum(local_probs) + 1e-8
-    f0_cents = jnp.sum(local_probs * CENTS_MAPPING) / total_weight
+    f0_cents = jnp.sum(local_probs * cents_mapping(local_probs.dtype)) / total_weight
 
     # Convert cents to Hz
     f0_hz = 10.0 * 2.0 ** (f0_cents / 1200.0)
@@ -253,7 +262,7 @@ def decode_pitch_differentiable(
     sharpened = jax.nn.softmax(jnp.log(probs + 1e-8) / temperature, axis=-1)
 
     # Global weighted average
-    f0_cents = jnp.sum(sharpened * CENTS_MAPPING, axis=-1)
+    f0_cents = jnp.sum(sharpened * cents_mapping(sharpened.dtype), axis=-1)
     f0_hz = 10.0 * 2.0 ** (f0_cents / 1200.0)
 
     # Entropy-based confidence (low entropy = high confidence)

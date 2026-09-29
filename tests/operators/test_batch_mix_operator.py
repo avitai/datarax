@@ -155,20 +155,27 @@ class TestBatchMixOperatorMixUp:
         assert result.data["arr"].shape == (2, 3, 4)
 
     def test_mixup_mixes_only_its_data_field(self):
-        """Every other field, labels included, is left as it was."""
+        """Its data field is lam * x + (1 - lam) * x[partner]; every other field is as it was.
+
+        Asserted through the partner and lambda the operator records, so it holds for every draw:
+        the partner is a permutation, and the identity permutation is a legal one (each record
+        mixed with itself), as in the reference's ``torch.randperm``.
+        """
         rngs = nnx.Rngs({"batch_mix": 42})
         op = BatchMixOperator(BatchMixOperatorConfig(mode="mixup", data_field="x"), rngs=rngs)
-        batch = batch_ops.from_arrays(
-            {
-                "x": jnp.array([[0.0], [10.0], [20.0], [30.0]]),
-                "y": jnp.array([[1.0], [2.0], [3.0], [4.0]]),
-            }
-        )
+        x = jnp.array([[0.0], [10.0], [20.0], [30.0]])
+        batch = batch_ops.from_arrays({"x": x, "y": jnp.array([[1.0], [2.0], [3.0], [4.0]])})
 
         result = op(batch)
+        partner, lam = result.states[MIX_PARTNER], result.batch_state[MIX_LAMBDA]
 
+        assert jnp.array_equal(jnp.sort(partner), jnp.arange(4))
+        # Two float32 roundings of values up to 30: a few ULP at the data's scale.
+        tolerance = 4 * float(jnp.finfo(jnp.float32).eps) * float(jnp.max(jnp.abs(x)))
+        assert jnp.allclose(
+            result.data["x"], lam * x + (1 - lam) * x[partner], rtol=0, atol=tolerance
+        )
         assert jnp.array_equal(result.data["y"], batch.data["y"])
-        assert not jnp.array_equal(result.data["x"], batch.data["x"])
 
     def test_mixup_raw_path_preserves_batch_shape(self):
         """Verify DAG fused raw-batch path uses batch-level MixUp."""

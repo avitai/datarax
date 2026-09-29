@@ -237,7 +237,7 @@ class PatchDropoutOperator(ModalityOperator):
             y = y_positions[i]
             # Create patch filled with drop_value
             patch_shape = (patch_h, patch_w, c)
-            patch = jnp.full(patch_shape, self.config.drop_value)
+            patch = jnp.full(patch_shape, self.config.drop_value, dtype=img.dtype)
             # Use dynamic_update_slice to insert patch
             return jax.lax.dynamic_update_slice(img, patch, (y, x, 0))
 

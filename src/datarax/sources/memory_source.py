@@ -424,7 +424,10 @@ class MemorySource(DataSourceModule):
             if self.rngs is not None:
                 for stream_name in (self.config.stream_name or "shuffle", "default"):
                     if stream_name in self.rngs:
-                        seed = int(jax.random.bits(getattr(self.rngs, stream_name)()))
+                        # uint32 draws: x64 would widen bits to uint64, past the seed's range
+                        seed = int(
+                            jax.random.bits(getattr(self.rngs, stream_name)(), dtype=jnp.uint32)
+                        )
                         break
             self._shuffle_seed.set_value(jnp.uint32(seed))
             self._shuffle_seeded.set_value(True)

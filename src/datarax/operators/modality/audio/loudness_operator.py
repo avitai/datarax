@@ -17,6 +17,8 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 from flax import nnx
+from flax.nnx.nn.dtypes import promote_dtype
+from flax.typing import Dtype
 
 from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import Element
@@ -43,11 +45,12 @@ def _a_weighting_jax(frequencies: jax.Array) -> jax.Array:
         A-weighting values in dB, same shape as input.
     """
     f_sq = frequencies**2
-    # IEC 61672 corner frequencies squared
-    c1 = 12194.217**2
-    c2 = 20.598997**2
-    c3 = 107.65265**2
-    c4 = 737.86223**2
+    # IEC 61672 corner frequencies squared, in the frequencies' dtype (a Python float through
+    # jnp.log10 is the default float dtype, float64 under x64)
+    c1, c2, c3, c4 = (
+        jnp.asarray(corner**2, frequencies.dtype)
+        for corner in (12194.217, 20.598997, 107.65265, 737.86223)
+    )
 
     # Numerically safe frequency (avoid log(0))
     f_safe = jnp.maximum(frequencies, 1e-20)
@@ -73,6 +76,11 @@ class LoudnessConfig(OperatorConfig):
         n_fft: FFT window size for STFT.
         ref_db: Initial reference level in dB (learnable); 0 dB is amplitude 1.0.
         range_db: Dynamic range in dB: the loudness floor is ``-range_db``.
+        dtype: The computation dtype, ``None`` for the promotion of the audio and the
+            parameters (``nnx.Linear``'s ``dtype``): bfloat16 audio computes in float32, which
+            JAX's FFT needs, and float64 audio in float64.
+        param_dtype: The dtype the parameters and the window are created in
+            (``nnx.Linear``'s ``param_dtype``).
 
     The defaults are DDSP's ``compute_loudness`` defaults.
     """
@@ -82,6 +90,8 @@ class LoudnessConfig(OperatorConfig):
     n_fft: int = 512
     ref_db: float = 0.0
     range_db: float = 80.0
+    dtype: Dtype | None = None
+    param_dtype: Dtype = jnp.float32
 
 
 class LoudnessOperator(OperatorModule):
@@ -119,16 +129,19 @@ class LoudnessOperator(OperatorModule):
         self._n_bins = config.n_fft // 2 + 1
 
         # Learnable frequency weights — initialized from A-weighting at the FFT bin frequencies
-        freqs = jnp.linspace(0, config.sample_rate / 2, self._n_bins)
+        freqs = jnp.linspace(0, config.sample_rate / 2, self._n_bins, dtype=config.param_dtype)
         a_weights = _a_weighting_jax(freqs)
         self.frequency_weights = nnx.Param(a_weights)
 
         # Learnable reference level
-        self.ref_db = nnx.Param(jnp.array(config.ref_db))
+        self.ref_db = nnx.Param(jnp.asarray(config.ref_db, config.param_dtype))
 
-        # Periodic Hann window, as tf.signal.stft uses: the symmetric window one sample longer,
-        # without its last sample.
-        self._window = jnp.hanning(config.n_fft + 1)[:-1]
+        # Periodic Hann window, as tf.signal.stft uses: 0.5 - 0.5 cos(2 pi n / n_fft), the
+        # symmetric window one sample longer without its last sample, in param_dtype
+        # (jnp.hanning takes no dtype).
+        n = jnp.arange(config.n_fft, dtype=config.param_dtype)
+        pi = jnp.asarray(jnp.pi, config.param_dtype)
+        self._window = 0.5 - 0.5 * jnp.cos(2 * pi * n / config.n_fft)
 
     def apply(
         self,
@@ -157,8 +170,13 @@ class LoudnessOperator(OperatorModule):
         """DDSP's loudness: A-weighted mean power per frame, in dB.
 
         Center padding (``n_fft // 2`` on each side) gives ``n_samples // hop + 1`` frames.
-        All steps are differentiable JAX operations.
+        All steps are differentiable JAX operations, in ``config.dtype`` or the promotion of the
+        audio and the parameters, as a Flax layer computes.
         """
+        audio, window, frequency_weights, ref_db = promote_dtype(
+            (audio, self._window, self.frequency_weights[...], self.ref_db[...]),
+            dtype=self.config.dtype,
+        )
         n_fft = self.config.n_fft
         hop = self._hop_length
         n_samples = audio.shape[0]
@@ -175,18 +193,18 @@ class LoudnessOperator(OperatorModule):
         frames = audio_padded[indices]
 
         # Apply Hann window
-        windowed = frames * self._window
+        windowed = frames * window
 
         # FFT → power spectrum
         spectrum = jnp.fft.rfft(windowed, n=n_fft, axis=-1)
         power = jnp.real(spectrum * jnp.conj(spectrum))
 
         # Weight in linear scale and average the power over frequency
-        weighting = 10.0 ** (self.frequency_weights[...] / 10.0)
+        weighting = 10.0 ** (frequency_weights / 10.0)
         average = jnp.mean(power * weighting, axis=-1)
 
         # dB relative to the reference, within the dynamic range (DDSP's core.power_to_db)
         range_db = self.config.range_db
         average = jnp.maximum(average, 10.0 ** (-range_db / 10.0))
-        loudness = 10.0 * jnp.log10(average) - self.ref_db[...]
+        loudness = 10.0 * jnp.log10(average) - ref_db
         return jnp.maximum(loudness, -range_db)

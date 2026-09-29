@@ -263,7 +263,7 @@ class NoiseOperator(ModalityOperator):
             + self.config.noise_mean
         )
 
-        return value + noise
+        return value + noise.astype(value.dtype)
 
     def _apply_salt_pepper_noise(
         self,
@@ -321,9 +321,14 @@ class NoiseOperator(ModalityOperator):
     def _poisson_255_range(self, image: jax.Array, rng: jax.Array) -> jax.Array:
         """Apply Poisson noise to [0, 255] range image."""
         lam = image * self.config.lam_scale / 255.0
-        return jax.random.poisson(rng, lam=lam, shape=image.shape) * 255.0 / self.config.lam_scale
+        return self._counts(rng, lam) * 255.0 / self.config.lam_scale
 
     def _poisson_01_range(self, image: jax.Array, rng: jax.Array) -> jax.Array:
         """Apply Poisson noise to [0, 1] range image."""
         lam = image * self.config.lam_scale
-        return jax.random.poisson(rng, lam=lam, shape=image.shape) / self.config.lam_scale
+        return self._counts(rng, lam) / self.config.lam_scale
+
+    @staticmethod
+    def _counts(rng: jax.Array, lam: jax.Array) -> jax.Array:
+        """Poisson counts of rate ``lam``, drawn as integers, in ``lam``'s dtype."""
+        return jax.random.poisson(rng, lam=lam, shape=lam.shape).astype(lam.dtype)
