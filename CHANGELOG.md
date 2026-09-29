@@ -159,6 +159,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `functional.rotate` computes its geometry in at least float32 and in float64 for a float64
   image. With x64 off, every value is unchanged.
 
+- `scripts/check_sync.py` compares markdown cells as well as code cells, reading the script
+  with jupytext. A notebook whose prose was stale reported as synced, and `--fix` left it
+  stale.
+
 ## [0.1.17] - 2026-09-25
 
 ### Added
