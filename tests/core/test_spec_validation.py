@@ -23,7 +23,6 @@ from flax import nnx
 from datarax.core.spec import (
     array_to_spec,
     array_to_spec_strip_leading,
-    batch_length,
     device_spec,
     spec_mismatches,
     SpecMismatchError,
@@ -220,36 +219,6 @@ class TestSpecMismatches:
         assert "structure" in problems[0]
 
 
-class TestBatchLength:
-    """``batch_length`` returns the one leading-axis length every leaf shares."""
-
-    def test_returns_the_shared_leading_axis(self) -> None:
-        assert batch_length({"x": np.zeros((5, 3)), "y": {"z": jnp.zeros((5,))}}) == 5
-
-    def test_a_batch_without_leaves_has_no_length(self) -> None:
-        assert batch_length({}) is None
-
-    def test_leaves_that_disagree_are_named(self) -> None:
-        with pytest.raises(SpecMismatchError) as caught:
-            batch_length({"x": np.zeros((2, 3)), "y": np.zeros((5,))})
-        message = str(caught.value)
-        assert "['x']" in message
-        assert "2" in message
-        assert "['y']" in message
-        assert "5" in message
-
-    def test_a_leaf_without_a_leading_axis_is_rejected(self) -> None:
-        with pytest.raises(SpecMismatchError, match=r"\['scalar'\]"):
-            batch_length({"x": np.zeros((2,)), "scalar": np.float32(1.0)})
-
-    def test_non_array_values_are_rejected_once_per_field(self) -> None:
-        with pytest.raises(SpecMismatchError) as caught:
-            batch_length({"x": np.zeros((2,)), "text": ["a", "b"]})
-        assert len(caught.value.problems) == 1
-        assert "['text']" in caught.value.problems[0]
-        assert "str" in caught.value.problems[0]
-
-
 class TestValidateBatch:
     """``validate_batch`` checks structure, per-element shapes, dtypes and batch length."""
 
@@ -304,6 +273,25 @@ class TestValidateBatch:
             validate_batch(_batch(2, x_shape=(4,)), _ELEMENT_SPEC)
         assert isinstance(caught.value, SpecMismatchError)
         assert isinstance(caught.value.problems, tuple)
+
+    def test_leaves_whose_record_counts_disagree_are_named(self) -> None:
+        batch = {"x": np.zeros((2, 3), np.float32), "y": np.zeros((5,), np.int32)}
+
+        with pytest.raises(SpecMismatchError) as caught:
+            validate_batch(batch, _ELEMENT_SPEC)
+
+        message = str(caught.value)
+        assert "['x'] has 2" in message and "['y'] has 5" in message
+
+    def test_a_field_that_is_not_an_array_is_reported_once(self) -> None:
+        spec = {**_ELEMENT_SPEC, "text": _spec((), np.dtype("<U8"))}
+        batch = {**_batch(2), "text": ["a", "b"]}
+
+        with pytest.raises(SpecMismatchError) as caught:
+            validate_batch(batch, spec)
+
+        text_problems = [problem for problem in caught.value.problems if "['text']" in problem]
+        assert len(text_problems) == 1
 
     def test_a_scalar_leaf_is_rejected_even_when_the_structure_matches(self) -> None:
         batch = {"x": np.zeros((2, 3), np.float32), "y": np.int32(0)}
