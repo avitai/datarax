@@ -17,7 +17,7 @@ import pytest
 from flax import nnx
 
 from datarax.operators.modality.audio.crepe_model import (
-    CENTS_MAPPING,
+    cents_mapping,
     CrepeModel,
     decode_pitch_differentiable,
     decode_pitch_local,
@@ -233,14 +233,14 @@ class TestPitchDecoding:
     def test_decode_local_known_peak(self):
         """Known single-peak distribution → correct f0_hz."""
         # Create probability distribution with clear peak at bin 180
-        # Bin 180 corresponds to CENTS_MAPPING[180]
+        # Bin 180 corresponds to cents_mapping(...)[180]
         probs = jnp.zeros(360)
         probs = probs.at[179:182].set(jnp.array([0.2, 0.9, 0.3]))
 
         f0_hz, confidence = decode_pitch_local(probs)
 
         # Should be near the frequency for the peak bin
-        expected_cents = CENTS_MAPPING[180]
+        expected_cents = cents_mapping(jnp.float32)[180]
         expected_hz = 10.0 * 2.0 ** (expected_cents / 1200.0)
         assert jnp.abs(f0_hz - expected_hz) < 5.0, (
             f"Expected ~{expected_hz:.1f} Hz, got {f0_hz:.1f}"

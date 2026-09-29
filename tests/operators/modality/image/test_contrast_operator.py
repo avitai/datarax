@@ -8,6 +8,7 @@ Tests cover:
 """
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 from flax import nnx
 
@@ -174,14 +175,17 @@ class TestContrastOperatorStochastic:
         operator = ContrastOperator(config, rngs=nnx.Rngs(0, augment=1))
 
         batch_size = 10
-        # A two-tone image, so a change of contrast is visible in the output
-        image = jnp.zeros((32, 32, 3)).at[:16].set(1.0)
+        # A two-tone image inside the clip range: every factor in (0.5, 1.5) maps 0.25 and 0.75 to
+        # distinct values in [0, 1], so each record's factor is visible. Tones of 0 and 1 would
+        # clip every factor >= 1 back to the input and hide it.
+        image = jnp.full((32, 32, 3), 0.25).at[:16].set(0.75)
         data = operator(
             batch_ops.from_arrays({"image": jnp.stack([image] * batch_size)}, states={})
         ).data
 
         assert data["image"].shape == (batch_size, 32, 32, 3)
-        assert not jnp.allclose(data["image"][0], data["image"][1])
+        distinct = {np.asarray(record).tobytes() for record in data["image"]}
+        assert len(distinct) == batch_size
 
 
 class TestContrastOperatorJIT:

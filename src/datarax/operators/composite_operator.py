@@ -70,6 +70,7 @@ from typing import Any, cast
 import jax
 import jax.numpy as jnp
 from flax import nnx
+from flax.typing import Dtype
 from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
@@ -86,6 +87,7 @@ from datarax.operators.strategies import (
     ConditionalParallelStrategy,
     ConditionalSequentialStrategy,
     EnsembleStrategy,
+    MixtureWeights,
     ParallelStrategy,
     SequentialStrategy,
     WeightedParallelStrategy,
@@ -172,6 +174,11 @@ class CompositeOperatorConfig(OperatorConfig):
             operators declare they write (``target_key`` or ``field_key``); required when an
             operator declares none.
         temperature: Softmax temperature for learnable weights; must be positive.
+        dtype: The dtype learnable or per-record weights are mixed in, ``None`` for the
+            promotion of the field and the weights (``nnx.Linear``'s ``dtype``). Fixed
+            weights are constants and mix in the field's dtype.
+        param_dtype: The dtype learnable weights are created in (``nnx.Linear``'s
+            ``param_dtype``).
         conditions: Conditions for conditional strategies (returns JAX arrays).
         router: Router function for branching (returns integer index).
         default_branch: Default branch index for fallback behavior.
@@ -191,6 +198,8 @@ class CompositeOperatorConfig(OperatorConfig):
     weight_key: str | None = None  # Key in data dict for external dynamic weights
     mix_fields: Sequence[str] | None = None  # Fields combined; others pass through
     temperature: float = 1.0  # Softmax temperature for learnable weights
+    dtype: Dtype | None = None
+    param_dtype: Dtype = jnp.float32
 
     # Conditions (for conditional strategies): each returns a Python bool or a JAX scalar
     conditions: Sequence[Callable[[PyTree], bool | jax.Array]] | None = None
@@ -380,14 +389,14 @@ class CompositeOperatorModule(OperatorModule):
         # Learnable weights are logits; the mixture is softmax(logits / temperature), which
         # starts at the configured weights normalized to sum to one.
         if config.strategy == CompositionStrategy.WEIGHTED_PARALLEL and config.learnable_weights:
-            initial = jnp.asarray(config.weights)
+            initial = jnp.asarray(config.weights, config.param_dtype)
             self.weight_logits = nnx.Param(jnp.log(initial / jnp.sum(initial)))
 
         # Fail at construction for a strategy with no implementation.
         if config.strategy not in self._strategy_builders(None):
             raise ValueError(f"Unknown strategy: {config.strategy}")
 
-    def _strategy_impl(self, weights: jax.Array | None) -> CompositionStrategyImpl:
+    def _strategy_impl(self, weights: MixtureWeights | None) -> CompositionStrategyImpl:
         """Build the strategy implementation the configuration names.
 
         It is derived from the static configuration on every call (in Python, while tracing),
@@ -410,7 +419,7 @@ class CompositeOperatorModule(OperatorModule):
         return builder()
 
     def _strategy_builders(
-        self, weights: jax.Array | None
+        self, weights: MixtureWeights | None
     ) -> dict[CompositionStrategy, Callable[[], CompositionStrategyImpl]]:
         """Map each composition strategy to a zero-arg factory for its implementation.
 
@@ -445,7 +454,9 @@ class CompositeOperatorModule(OperatorModule):
                 merge_fn=cfg.merge_fn,
             ),
             CompositionStrategy.WEIGHTED_PARALLEL: lambda: WeightedParallelStrategy(
-                cast(Sequence[str], cfg.mix_fields), cast(jax.Array, weights)
+                cast(Sequence[str], cfg.mix_fields),
+                cast(MixtureWeights, weights),
+                dtype=cfg.dtype,
             ),
             CompositionStrategy.CONDITIONAL_PARALLEL: lambda: ConditionalParallelStrategy(
                 conditions=cast(Sequence[Callable], cfg.conditions),
@@ -551,7 +562,7 @@ class CompositeOperatorModule(OperatorModule):
             list(self.operators), element.replace(data=clean_data), stats
         )
 
-    def _resolve_weighted_params(self, data: PyTree) -> tuple[jax.Array | None, PyTree]:
+    def _resolve_weighted_params(self, data: PyTree) -> tuple[MixtureWeights | None, PyTree]:
         """Resolve a weighted parallel's weights and strip ``weight_key`` from ``data``.
 
         Only ``WEIGHTED_PARALLEL`` consumes weights; every other strategy returns the data
@@ -583,7 +594,10 @@ class CompositeOperatorModule(OperatorModule):
             clean_data = {k: v for k, v in data.items() if k != self.config.weight_key}
             return data[self.config.weight_key], clean_data
 
-        return self.mixture_weights(), data
+        if self.config.learnable_weights:
+            return self.mixture_weights(), data
+        # Fixed weights stay Python numbers: constants the strategy applies in the field's dtype
+        return cast(tuple[float, ...], self.config.weights), data
 
     def mixture_weights(self) -> jax.Array:
         """Return the weights a ``WEIGHTED_PARALLEL`` composite applies to its operators' outputs.

@@ -126,6 +126,7 @@ class BatchMixOperator(OperatorModule):
         lam = jax.random.beta(k_lambda, self.config.alpha, self.config.alpha)
         partner = jax.random.permutation(k_partner, jnp.arange(batch.batch_size, dtype=jnp.int32))
         values = data[field]
+        lam = lam.astype(values.dtype)
         if box_keys is None:
             # values[partner] + lam * (values - values[partner]) equals
             # lam * values + (1 - lam) * values[partner] without lam + (1 - lam) != 1 rounding.
