@@ -639,3 +639,89 @@ def test_pull_requests_gate_coverage_on_changed_lines() -> None:
     assert diff_cover[0].get("if") == "github.event_name == 'pull_request'"
     assert "--compare-branch=origin/main --fail-under=80" in diff_cover[0]["run"]
     assert "diff-cover" in test_extra
+
+
+# The stack's gate lives in substrax, the base layer, pinned to a release: one implementation,
+# whose filter treats a pending or cancelled check as unproven.
+GATE_ACTION = "avitai/substrax/.github/actions/already-tested@v0.1.20"
+WORKFLOWS = REPO_ROOT / ".github" / "workflows"
+MACOS_WORKFLOW = WORKFLOWS / "macos.yml"
+
+
+def _on_macos(job: dict) -> bool:
+    """Whether the job runs on macOS: its runner, the matrix its runner reads, or the runner it
+    passes a called workflow."""
+    runner = [
+        job.get("runs-on", ""),
+        job.get("strategy", {}).get("matrix", {}),
+        job.get("with", {}),
+    ]
+    return "macos" in yaml.safe_dump(runner).lower()
+
+
+def _workflow_triggers(workflow: dict) -> set[str]:
+    # PyYAML reads the `on:` key as the boolean True.
+    on = workflow.get("on") or workflow.get(True) or {}
+    return {on} if isinstance(on, str) else set(on)
+
+
+def test_the_gate_uses_the_stacks_released_action() -> None:
+    gate = _jobs()[GATE_JOB]
+    compare = next(step for step in gate["steps"] if step.get("id") == "compare")
+
+    assert compare.get("uses") == GATE_ACTION
+    assert "run" not in compare
+
+
+def test_no_workflow_run_by_a_push_or_pull_request_uses_macos() -> None:
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        workflow = yaml.safe_load(path.read_text())
+        if not _workflow_triggers(workflow) & {"push", "pull_request"}:
+            continue
+        on_macos = sorted(name for name, job in workflow["jobs"].items() if _on_macos(job))
+        assert on_macos == [], f"{path.name} runs macOS on a push or pull request: {on_macos}"
+
+
+def _run_jobs(job: dict) -> list[dict]:
+    """The jobs that run for ``job``: itself, or those of the workflow it calls."""
+    called = job.get("uses")
+    if called is None:
+        return [job]
+    return list(
+        yaml.safe_load((REPO_ROOT / called.removeprefix("./")).read_text())["jobs"].values()
+    )
+
+
+def test_the_macos_workflow_runs_nightly_on_demand_and_under_a_runner_cap() -> None:
+    workflow = yaml.safe_load(MACOS_WORKFLOW.read_text())
+    macos_jobs = {name: job for name, job in workflow["jobs"].items() if _on_macos(job)}
+    running = [run for job in macos_jobs.values() for run in _run_jobs(job)]
+    commands = "\n".join(str(step.get("run", "")) for job in running for step in job["steps"])
+
+    assert _workflow_triggers(workflow) == {"schedule", "workflow_dispatch"}
+    assert set(macos_jobs) == {"unit_tests", "build"}
+    for job in running:
+        assert int(job["strategy"]["max-parallel"]) <= 2, "a macOS job without a runner cap"
+    assert "pytest tests benchmarks/tests" in commands
+    assert "python -m build" in commands
+
+
+def test_a_quiet_night_runs_no_macos_job() -> None:
+    """A scheduled run stands down when main has not moved since the last green scheduled run;
+    a manual run, such as the release checklist's, always runs."""
+    workflow = yaml.safe_load(MACOS_WORKFLOW.read_text())
+    compare = next(s for s in workflow["jobs"]["main_moved"]["steps"] if s.get("id") == "compare")
+
+    assert compare.get("if") == "github.event_name == 'schedule'"
+    assert "--status success" in compare["run"]
+    assert "--event schedule" in compare["run"]
+    for name, job in workflow["jobs"].items():
+        if name != "main_moved":
+            assert job.get("if") == "needs.main_moved.outputs.unchanged != 'true'", name
+
+
+def test_the_release_checklist_runs_macos_before_the_tag() -> None:
+    releasing = (REPO_ROOT / "RELEASING.md").read_text()
+
+    assert "gh workflow run macos.yml" in releasing
+    assert releasing.index("gh workflow run macos.yml") < releasing.index("git tag -a")

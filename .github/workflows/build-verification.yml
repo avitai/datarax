@@ -6,28 +6,37 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+  # macos.yml builds on macOS through this workflow.
+  workflow_call:
+    inputs:
+      os:
+        description: The runner to build on.
+        type: string
+        default: ubuntu-latest
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Called from macos.yml, github.workflow names the caller; the suffix keeps this group apart
+  # from the caller's own, which would otherwise cancel the call as a deadlock.
+  group: ${{ github.workflow }}-build-verification-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Package Build Verification (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Package Build Verification (${{ inputs.os || 'ubuntu-latest' }}, Python ${{ matrix.python-version }})
+    # A push or pull request builds on ubuntu; macos.yml passes macos-14 nightly and before a
+    # release.
+    runs-on: ${{ inputs.os || 'ubuntu-latest' }}
     strategy:
+      # At most two runners at a time, so a macOS build leaves the other repositories' jobs room.
+      max-parallel: 2
       matrix:
-        # The macOS-14 runners queue for hours and run the same steps; they run on
-        # pushes to main only, so a branch or pull request is gated by the ubuntu
-        # jobs alone and the merge to main measures both platforms.
-        os: ${{ fromJSON(github.ref == 'refs/heads/main' && '["ubuntu-latest", "macos-14"]' || '["ubuntu-latest"]') }}
         python-version: ['3.12', '3.13']
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -35,23 +44,16 @@ jobs:
         uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
-          cache-suffix: "${{ matrix.os }}-${{ matrix.python-version }}"
+          cache-suffix: "${{ inputs.os || 'ubuntu-latest' }}-${{ matrix.python-version }}"
 
       - name: Create virtual environment
         run: |
           uv venv
 
-      - name: Install build dependencies (Linux)
-        if: runner.os == 'Linux'
+      - name: Install build dependencies
         run: |
           uv sync --locked --extra dev --extra data
           # Install type stubs for common libraries
-          uv pip install types-requests types-setuptools
-
-      - name: Install build dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          uv sync --locked --extra dev --extra data
           uv pip install types-requests types-setuptools
 
       - name: Setup PYTHONPATH for tests
@@ -85,5 +87,5 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: package-artifacts-${{ matrix.os }}-py${{ matrix.python-version }}
+          name: package-artifacts-${{ inputs.os || 'ubuntu-latest' }}-py${{ matrix.python-version }}
           path: dist/
