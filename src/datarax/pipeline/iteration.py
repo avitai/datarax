@@ -42,8 +42,7 @@ import numpy as np
 from flax import nnx
 
 from datarax.core.operator import OperatorModule
-from datarax.core.spec import batch_length
-from datarax.pipeline.dag import record_positions, run_dag
+from datarax.pipeline.dag import record_count, record_positions, run_dag
 from datarax.pipeline.epochs import EpochPlan
 from datarax.typing import PipelineBatch
 
@@ -315,7 +314,7 @@ def _dag_step(graphdef: Any, plan: DagPlan) -> Callable[..., Any]:
                 output = run_dag(
                     stages, exec_order, predecessors, sink, batch, record_indices, epoch[...]
                 )
-                position[...] = position[...] + jnp.int32(batch_length(batch))
+                position[...] = position[...] + jnp.int32(record_count(batch))
                 return output
 
             return _run_tracking_writes(graphdef, (mutable_state, read_only_state), run)

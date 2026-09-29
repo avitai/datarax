@@ -34,7 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   helpers), `MemorySourceConfig.track_metadata` and `MemorySource.get_with_metadata` /
   `get_batch_with_metadata` / `has_metadata`, `BatchOps`, `conditional_transform`,
   `iterative_transform`, `while_transform`, `create_element`, `create_batch_from_arrays`,
-  `datarax.utils.pytree_utils`, `records_to_batch` and `record_to_element`, and from
+  `datarax.utils.pytree_utils`, `records_to_batch`, `record_to_element`,
+  `datarax.core.spec.batch_length` (a stream's batch is checked by `validate_batch`), and from
   `datarax.typing` the re-exports of `Element`, `Batch` and `Metadata` (import them from
   `datarax`) and the aliases `StateDict`, `MetadataDict`, `ElementTransform`, `BatchTransform`,
   `DataProcessor`, `StateProcessor`, `MetadataProcessor`, `ScanFn`, `CondFn`, `WhileBodyFn`.

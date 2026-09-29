@@ -382,36 +382,6 @@ def _record_axis_problems(fields: _BatchFields) -> list[str]:
     return problems
 
 
-def batch_length(batch: Any) -> int | None:
-    """Return the leading-axis length every leaf of ``batch`` shares.
-
-    The common case is a flat pass over the leaves; the field-level report is
-    built only when a leaf fails, the way JAX compares tree definitions before
-    it explains a structure error.
-
-    Args:
-        batch: PyTree of arrays sharing a leading record axis.
-
-    Returns:
-        The shared length, or None when the batch has no leaves (an exhausted
-        streaming source may return ``{}``).
-
-    Raises:
-        SpecMismatchError: If a leaf is not an array, has no leading axis, or the
-            leaves disagree on the leading-axis length.
-    """
-    leaves = jax.tree.leaves(batch)
-    if not leaves:
-        return None
-    counts = {_record_count(leaf) for leaf in leaves}
-    if len(counts) == 1 and None not in counts:
-        return counts.pop()
-    raise SpecMismatchError(
-        "The batch does not have one leading record axis.",
-        _record_axis_problems(_batch_fields(batch)),
-    )
-
-
 def _record_count(leaf: Any) -> int | None:
     """Leading-axis length of a leaf that can hold records, or None for any other leaf."""
     if isinstance(leaf, _BATCHABLE_TYPES) and leaf.ndim:
@@ -510,7 +480,6 @@ __all__ = [
     "add_leading_dim",
     "array_to_spec",
     "array_to_spec_strip_leading",
-    "batch_length",
     "batched_spec",
     "declared_spec",
     "device_spec",

@@ -65,7 +65,7 @@ from flax import nnx
 
 from datarax.core.data_source import DataSourceModule
 from datarax.core.module import module_state, restore_module_state
-from datarax.core.spec import batch_length, declared_spec, validate_batch, validate_device_dtypes
+from datarax.core.spec import declared_spec, validate_batch, validate_device_dtypes
 from datarax.pipeline.dag import record_count, Records, run_dag
 from datarax.pipeline.epochs import EpochPlan
 from datarax.pipeline.iteration import (
@@ -822,7 +822,7 @@ class Pipeline(nnx.Module):
                     f"{type(batch).__name__}, but a pipeline batch is a mapping of field names "
                     "to arrays"
                 )
-            if not batch_length(batch):
+            if not jax.tree.leaves(batch):  # an exhausted stream returns an empty batch
                 return
             yield batch
 
