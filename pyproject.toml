@@ -36,7 +36,7 @@ dependencies = [
   "optax>=0.2.8",
   "orbax-checkpoint>=0.11.33",
   "protobuf>=5.28.0,<6", # TFDS 4.9.9 is warning-clean with TensorFlow 2.20 protobuf runtime
-  "substrax>=0.1.18",
+  "substrax>=0.1.20",
   "tomli-w>=1",
   "numpy>=2.1",
   "psutil>=5.9.0",
@@ -44,12 +44,12 @@ dependencies = [
   "grain>=0.2.18"
 ]
 description = "Differentiable data pipelines for JAX/Flax NNX: HuggingFace, TFDS and ArrayRecord sources, augmentation stages, scan-based epochs, exact mid-epoch resume"
-dynamic = ["version"]
 keywords = ["jax", "flax", "nnx", "data-loading", "machine-learning", "workshop"]
 license = {file = "LICENSE"}
 name = "datarax"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
+version = "0.1.17"
 
 [project.optional-dependencies]
 # Platform-specific installation:
@@ -208,6 +208,8 @@ metal = [
 test = [
   "beartype>=0.14.1",
   "coverage>=7",
+  # The changed-line coverage gate in CI (ci.yml, the coverage job on a pull request).
+  "diff-cover>=10.6.0",
   "hypothesis>=6.100",
   "matplotlib>=3.8",
   "pytest>=8.3.5",
@@ -217,7 +219,7 @@ test = [
   "pytest-env>=1.0.1",
   "pytest-timeout>=2.1",
   "pytest-xdist>=3.6",
-  "substrax[testing]>=0.1.18",
+  "substrax[testing]>=0.1.20",
   # Optional comparison/benchmark dependencies that are CPU-compatible.
   # spdl: Linux-only; comparison adapter for memory-efficiency benchmarks.
   "spdl>=0.1; sys_platform == 'linux'"
@@ -272,7 +274,6 @@ exclude_lines = [
   "if __name__ == .__main__.:",
   "class .*\\bProtocol\\):",
   "@(abc\\.)?abstractmethod",
-  "pass",
   "raise ImportError"
 ]
 # Adjusted for large codebase with focused testing approach
@@ -355,9 +356,6 @@ packages = ["src/datarax"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
-
-[tool.hatch.version]
-path = "src/datarax/__init__.py"
 
 [tool.mypy]
 # This project uses pyright as its type checker (see [tool.pyright] below).

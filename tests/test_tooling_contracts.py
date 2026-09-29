@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import re
+import subprocess  # nosec B404
 import tomllib
 from collections.abc import Callable
 from pathlib import Path
@@ -576,3 +577,65 @@ def test_an_unanswered_gate_leaves_the_work_running() -> None:
         pattern = rf"needs\.{GATE_JOB}\.outputs\.skip\s*(==|!=)\s*'([a-z]+)'"
         compared = set(re.findall(pattern, yaml.safe_dump(job)))
         assert {value for _, value in compared} == {"true"}, f"{name} compares against {compared}"
+
+
+def test_the_version_is_the_one_pyproject_declares() -> None:
+    """``pyproject.toml`` is the version's one source; the package reads it once installed."""
+    import datarax
+
+    project = _pyproject()["project"]
+
+    assert "version" not in project.get("dynamic", [])
+    assert datarax.__version__ == project["version"]
+
+
+def test_ruff_hooks_run_the_locked_ruff() -> None:
+    """One ruff version: the hooks run the lock's ruff, not a separately pinned hook repository."""
+    pre_commit = yaml.safe_load(PRE_COMMIT.read_text())
+    hooks = [
+        hook
+        for repo in pre_commit["repos"]
+        for hook in repo.get("hooks", [])
+        if hook["id"] in {"ruff", "ruff-format"}
+    ]
+
+    assert {hook["id"] for hook in hooks} == {"ruff", "ruff-format"}
+    assert [repo["repo"] for repo in pre_commit["repos"] if "ruff-pre-commit" in repo["repo"]] == []
+    for hook in hooks:
+        assert hook.get("language") == "system", hook["id"]
+        assert hook.get("entry", "").startswith("uv run --no-sync ruff"), hook["id"]
+
+
+def test_coverage_measures_pass_statements() -> None:
+    """A bare ``pass`` exclusion drops executable statements from the measurement."""
+    exclusions = _pyproject()["tool"]["coverage"]["report"]["exclude_lines"]
+
+    assert "pass" not in exclusions
+
+
+def test_the_global_pre_commit_exclude_names_tracked_files() -> None:
+    """An exclude that matches no tracked file is stale."""
+    exclude = yaml.safe_load(PRE_COMMIT.read_text()).get("exclude")
+    if exclude is None:
+        return
+    tracked = subprocess.run(  # noqa: S603  # nosec B603 B607 - git on this repository
+        ["git", "ls-files"], cwd=REPO_ROOT, capture_output=True, text=True, check=True
+    ).stdout.splitlines()
+
+    assert any(re.search(exclude, path) for path in tracked), f"{exclude} matches no tracked file"
+
+
+def test_pull_requests_gate_coverage_on_changed_lines() -> None:
+    """The combined coverage report checks the lines a pull request changes at 80%."""
+    job = yaml.safe_load(CI_WORKFLOW.read_text())["jobs"]["coverage"]
+    checkout = next(
+        s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/checkout@")
+    )
+    diff_cover = [s for s in job["steps"] if "diff-cover" in str(s.get("run", ""))]
+    test_extra = _dependency_names(_pyproject()["project"]["optional-dependencies"]["test"])
+
+    assert checkout.get("with", {}).get("fetch-depth") == 0
+    assert len(diff_cover) == 1
+    assert diff_cover[0].get("if") == "github.event_name == 'pull_request'"
+    assert "--compare-branch=origin/main --fail-under=80" in diff_cover[0]["run"]
+    assert "diff-cover" in test_extra

@@ -13,8 +13,8 @@ PyPI directly. Release timing and versioning stay under operator control.
    source activate.sh
    ```
 
-2. Bump the package version in `src/datarax/__init__.py`. The version is dynamic,
-   so `uv.lock` does not change with the bump.
+2. Bump `version` in `pyproject.toml` (the one source of the version; `datarax.__version__`
+   reads it from the installed package) and run `uv lock`, which records the project's version.
 3. Update `CHANGELOG.md` by moving unreleased entries under the new version and
    date.
 4. Run the release checks.

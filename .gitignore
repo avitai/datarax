@@ -264,5 +264,3 @@ secrets.sh
 
 # Private working notes and per-editor assistant configuration. Local only.
 AGENTS.md
-
-tests/checkpoint/fixtures/

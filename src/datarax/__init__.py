@@ -6,6 +6,8 @@ Just-In-Time (JIT) compilation, automatic differentiation, and hardware
 acceleration capabilities.
 """
 
+from importlib.metadata import version as _installed_version
+
 # Host-to-device prefetching
 from datarax.control.prefetcher import prefetch_to_device
 
@@ -39,7 +41,7 @@ from datarax.typing import Batch, Element
 from datarax.utils.multirate import multirate_align
 
 
-__version__ = "0.1.17"
+__version__ = _installed_version("datarax")
 
 __all__ = [
     # Type aliases
