@@ -2,8 +2,8 @@
 """Check synchronization between Python scripts and Jupyter notebooks.
 
 This script verifies that .py and .ipynb file pairs are properly synchronized
-using jupytext's py:percent format. It compares the actual content, not just
-modification times.
+using jupytext's py:percent format. It compares every code and markdown cell's
+type and text, not modification times.
 
 Usage:
     python scripts/check_sync.py                     # Check all examples
@@ -20,9 +20,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
+
+import jupytext
 
 
 # Allow importing sibling scripts (validate_examples lives in the same directory)
@@ -31,56 +32,50 @@ from jupytext_converter import convert_py_to_nb
 from validate_examples import find_example_files
 
 
-def extract_code_from_py(py_path: Path) -> list[str]:
-    """Extract code cells from a Python percent-format file.
+type Cell = tuple[str, str]
+"""A notebook cell as its type (``code`` or ``markdown``) and its text."""
+
+
+def cells_from_py(py_path: Path) -> list[Cell]:
+    """The cells of a percent-format example, as jupytext reads them for the notebook.
+
+    jupytext writes the pairs, so its reading is the one that counts: it parses the
+    ``# %% [markdown]`` cells written as string literals, and follows ``.jupytext.toml``.
 
     Args:
         py_path: Path to the Python file.
 
     Returns:
-        List of code cell contents (stripped).
+        The non-empty cells, in order.
     """
-    content = py_path.read_text()
-    cells = []
-
-    # Split on cell markers
-    parts = re.split(r"^# %%.*$", content, flags=re.MULTILINE)
-
-    for part in parts[1:]:  # Skip content before first cell marker
-        # Skip markdown cells (they start with triple quotes after the marker)
-        # Also handle raw strings (r""") used for markdown with special characters
-        stripped = part.strip()
-        if stripped.startswith(('"""', "'''", 'r"""', "r'''")):
-            continue
-        if stripped:
-            cells.append(stripped)
-
-    return cells
+    return [
+        (cell.cell_type, cell.source.strip())
+        for cell in jupytext.read(py_path).cells
+        if cell.source.strip()
+    ]
 
 
-def extract_code_from_ipynb(ipynb_path: Path) -> list[str]:
-    """Extract code cells from a Jupyter notebook.
+def cells_from_ipynb(ipynb_path: Path) -> list[Cell]:
+    """The code and markdown cells of a notebook.
+
+    Read as JSON: the notebooks carry no cell ids (the converter strips them), which
+    jupytext's reader would warn about through nbformat.
 
     Args:
         ipynb_path: Path to the notebook file.
 
     Returns:
-        List of code cell contents (stripped).
+        The non-empty cells, in order.
     """
-    with open(ipynb_path) as f:
+    with ipynb_path.open() as f:
         notebook = json.load(f)
 
     cells = []
     for cell in notebook.get("cells", []):
-        if cell.get("cell_type") == "code":
-            source = cell.get("source", [])
-            if isinstance(source, list):
-                content = "".join(source).strip()
-            else:
-                content = source.strip()
-            if content:
-                cells.append(content)
-
+        source = cell.get("source", [])
+        content = ("".join(source) if isinstance(source, list) else source).strip()
+        if cell.get("cell_type") in {"code", "markdown"} and content:
+            cells.append((cell["cell_type"], content))
     return cells
 
 
@@ -129,29 +124,27 @@ def compare_files(py_path: Path, ipynb_path: Path) -> tuple[bool, str]:
         return False, "notebook missing"
 
     try:
-        py_cells = extract_code_from_py(py_path)
-        nb_cells = extract_code_from_ipynb(ipynb_path)
+        py_cells = cells_from_py(py_path)
+        nb_cells = cells_from_ipynb(ipynb_path)
     except Exception as e:
         return False, f"parse error: {e}"
 
-    # Normalize and compare
-    py_normalized = [normalize_code(c) for c in py_cells]
-    nb_normalized = [normalize_code(c) for c in nb_cells]
+    if len(py_cells) != len(nb_cells):
+        return False, f"cell count mismatch (py: {len(py_cells)}, nb: {len(nb_cells)})"
 
-    if len(py_normalized) != len(nb_normalized):
-        return False, f"cell count mismatch (py: {len(py_normalized)}, nb: {len(nb_normalized)})"
-
-    for i, (py_cell, nb_cell) in enumerate(zip(py_normalized, nb_normalized)):
-        if py_cell != nb_cell:
-            # Find first difference
-            py_lines = py_cell.split("\n")
-            nb_lines = nb_cell.split("\n")
-            for j, (pl, nl) in enumerate(zip(py_lines, nb_lines)):
-                if pl != nl:
-                    return False, f"content differs at cell {i + 1}, line {j + 1}"
-            if len(py_lines) != len(nb_lines):
-                return False, f"line count differs at cell {i + 1}"
-            return False, f"content differs at cell {i + 1}"
+    for i, ((py_type, py_text), (nb_type, nb_text)) in enumerate(
+        zip(py_cells, nb_cells, strict=True), start=1
+    ):
+        if py_type != nb_type:
+            return False, f"cell {i} is {py_type} in the script and {nb_type} in the notebook"
+        py_lines = normalize_code(py_text).split("\n")
+        nb_lines = normalize_code(nb_text).split("\n")
+        if py_lines != nb_lines:
+            line = next(
+                (j for j, (a, b) in enumerate(zip(py_lines, nb_lines), start=1) if a != b),
+                min(len(py_lines), len(nb_lines)) + 1,
+            )
+            return False, f"{py_type} cell {i} differs at line {line}"
 
     return True, "synced"
 
