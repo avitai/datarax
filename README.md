@@ -167,10 +167,10 @@ inverter = ElementOperator(
 # - merge takes both outputs and averages them
 class Merge(nnx.Module):
     def __call__(self, augmented, clean):
-        return {
+        return augmented.replace(data={
             "image": (augmented["image"] + clean["image"]) / 2,
             "label": clean["label"],
-        }
+        })
 
 complex_pipeline = Pipeline.from_dag(
     source=source,

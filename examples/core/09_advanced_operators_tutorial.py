@@ -71,6 +71,7 @@ import jax
 import numpy as np
 from flax import nnx
 
+from datarax.core.element_batch import Batch
 from datarax.operators.modality.image import (
     BrightnessOperator,
     BrightnessOperatorConfig,
@@ -349,7 +350,7 @@ eval_patch_dropout = PatchDropoutOperator(
 eval_patch_dropout.eval()
 
 
-def first_batch(stages: list) -> dict:
+def first_batch(stages: list) -> Batch:
     """The first batch of a pipeline over the tutorial's data, with the given stages."""
     source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(2))
     return next(iter(Pipeline(source=source, stages=stages, batch_size=16, rngs=nnx.Rngs(0))))

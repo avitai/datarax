@@ -31,10 +31,11 @@ import jax.numpy as jnp
 from benchmarks.adapters import register
 from benchmarks.adapters.base import IterationResult
 from benchmarks.adapters.datarax_adapter import DataraxAdapter
+from datarax.core.element_batch import Batch
 
 
-def _reducing_step(batch: Any) -> jax.Array:
-    """Step function that touches every leaf and returns one scalar.
+def _reducing_step(batch: Batch) -> jax.Array:
+    """Step function that touches every leaf of the batch's data and returns one scalar.
 
     The ``.sum()`` ensures XLA cannot elide the upstream work, and
     the cast to float32 keeps the output dtype consistent regardless
@@ -42,7 +43,7 @@ def _reducing_step(batch: Any) -> jax.Array:
     keeps ``Pipeline.scan``'s cache key stable across warmup and
     timed calls.
     """
-    leaves = jax.tree.leaves(batch)
+    leaves = jax.tree.leaves(batch.data)
     if not leaves:
         return jnp.asarray(0.0, dtype=jnp.float32)
     total = jnp.asarray(0.0, dtype=jnp.float32)
@@ -79,8 +80,8 @@ class DataraxScanAdapter(DataraxAdapter):
             return self._batch_byte_estimate
         # Run one step explicitly to measure batch size.
         batch = self._pipeline.step()
-        jax.block_until_ready(batch)
-        leaves = jax.tree.leaves(batch)
+        jax.block_until_ready(batch.data)
+        leaves = jax.tree.leaves(batch.data)
         bytes_per_batch = sum(int(arr.nbytes) for arr in leaves)
         # Reset position so warmup proceeds from a clean state.
         self._pipeline.reset()

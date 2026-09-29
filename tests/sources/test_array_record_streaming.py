@@ -51,8 +51,8 @@ def _source(
         )
 
 
-def _labels(batch: dict[str, Any]) -> list[int]:
-    return [int(label) for label in batch["label"]]
+def _labels(labels: np.ndarray | jax.Array) -> list[int]:
+    return [int(label) for label in labels]
 
 
 def _pass(source: ArrayRecordSourceModule, batch_size: int) -> list[dict[str, Any]]:
@@ -67,7 +67,7 @@ def test_get_batch_decodes_and_stacks_records() -> None:
 
     assert batch["x"].shape == (4, 3)
     assert batch["x"].dtype == np.float32
-    assert _labels(batch) == [0, 1, 2, 3]
+    assert _labels(batch["label"]) == [0, 1, 2, 3]
 
 
 def test_a_pass_ends_at_the_epoch_boundary_and_the_next_pass_starts_the_next_epoch() -> None:
@@ -76,8 +76,8 @@ def test_a_pass_ends_at_the_epoch_boundary_and_the_next_pass_starts_the_next_epo
     first = _pass(source, 4)
     second = _pass(source, 4)
 
-    assert [len(_labels(b)) for b in first] == [4, 4, 2]
-    assert [len(_labels(b)) for b in second] == [4, 4, 2]
+    assert [len(_labels(b["label"])) for b in first] == [4, 4, 2]
+    assert [len(_labels(b["label"])) for b in second] == [4, 4, 2]
     assert int(source.current_epoch.get_value()) == 2
 
 
@@ -91,8 +91,8 @@ def test_num_epochs_bounds_the_passes() -> None:
 def test_shuffle_serves_a_permutation_each_epoch() -> None:
     source = _source(ArrayRecordSourceConfig(shuffle_files=True, seed=3))
 
-    first = [label for batch in _pass(source, 4) for label in _labels(batch)]
-    second = [label for batch in _pass(source, 4) for label in _labels(batch)]
+    first = [label for batch in _pass(source, 4) for label in _labels(batch["label"])]
+    second = [label for batch in _pass(source, 4) for label in _labels(batch["label"])]
 
     assert sorted(first) == sorted(second) == list(range(_RECORDS))
     assert first != second
@@ -121,8 +121,8 @@ def test_array_record_is_a_streaming_source() -> None:
 def test_pipeline_iterates_decoded_batches_one_epoch_per_pass() -> None:
     pipeline = Pipeline(source=_source(), stages=[], batch_size=4, rngs=nnx.Rngs(0))
 
-    first = [label for batch in pipeline for label in _labels(batch)]
-    second = [label for batch in pipeline for label in _labels(batch)]
+    first = [label for batch in pipeline for label in _labels(batch["label"])]
+    second = [label for batch in pipeline for label in _labels(batch["label"])]
 
     assert first == second == list(range(_RECORDS))
 

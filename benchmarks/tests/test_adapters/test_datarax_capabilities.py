@@ -13,6 +13,7 @@ from flax import nnx
 
 from benchmarks.adapters.base import Capability, ScenarioConfig
 from benchmarks.adapters.datarax_adapter import _LearnableAugmentOperator, DataraxAdapter
+from datarax.core import batch_ops
 
 
 def _image_data(n: int = 32) -> dict[str, np.ndarray]:
@@ -34,7 +35,7 @@ def _config(caps: list[Capability], batch: int = 8, **extra: object) -> Scenario
 def _run(adapter: DataraxAdapter, config: ScenarioConfig, data: dict) -> list:
     adapter.setup(config, data)
     result = adapter.iterate(num_batches=2)
-    first_batch = next(iter(adapter._pipeline))  # type: ignore[reportAttributeAccessIssue]
+    first_batch = next(adapter._iterate_batches())  # what the adapter serves, rebatching included
     adapter.teardown()
     return [result, first_batch]
 
@@ -104,8 +105,8 @@ class TestRebatchCapability:
     def test_rebatch_reduces_batch_dimension(self):
         config = _config([Capability.REBATCHING], batch=8, target_batch_size=2)
         _, first_batch = _run(DataraxAdapter(), config, _image_data())
-        # 8 records grouped by 8 // 2 == 4 -> leading dim 2.
-        assert jax.tree.leaves(first_batch)[0].shape[0] == 2
+        # A loaded batch of 8 is served as 8 // 2 == 4 batches of 2 records each.
+        assert first_batch.batch_size == 2
 
 
 class TestLearnableOperatorIsDifferentiable:
@@ -116,7 +117,7 @@ class TestLearnableOperatorIsDifferentiable:
         op.eval()
 
         def loss(module, x):
-            return jnp.sum(module({"image": x})["image"] ** 2)
+            return jnp.sum(module(batch_ops.from_arrays({"image": x}))["image"] ** 2)
 
         grads = nnx.grad(loss)(op, jnp.ones((4, 8, 8, 3)))
         leaves = jax.tree.leaves(nnx.state(grads))

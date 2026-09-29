@@ -15,6 +15,7 @@ import numpy as np
 import optax
 from flax import nnx
 
+from datarax.core.element_batch import Batch
 from datarax.pipeline import Pipeline
 from datarax.sources import HFEagerConfig, HFEagerSource, MemorySource, MemorySourceConfig
 
@@ -100,7 +101,7 @@ def make_pipeline(
     return Pipeline(source=source, stages=[], batch_size=batch_size, rngs=nnx.Rngs(seed))
 
 
-def loss_fn(model: TextClassifier, batch: dict[str, jax.Array]) -> tuple[jax.Array, jax.Array]:
+def loss_fn(model: TextClassifier, batch: Batch) -> tuple[jax.Array, jax.Array]:
     """Softmax cross-entropy and the logits it was computed from."""
     logits = model(batch["tokens"], training=True)
     one_hot = jax.nn.one_hot(batch["label"], num_classes=2)
@@ -112,7 +113,7 @@ def train_step(
     model: TextClassifier,
     optimizer: nnx.Optimizer,
     metrics: nnx.MultiMetric,
-    batch: dict[str, jax.Array],
+    batch: Batch,
 ) -> None:
     """One gradient step; the metrics accumulate the batch's loss and accuracy."""
     (loss, logits), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model, batch)
@@ -121,7 +122,7 @@ def train_step(
 
 
 @nnx.jit
-def eval_step(model: TextClassifier, metrics: nnx.MultiMetric, batch: dict[str, jax.Array]) -> None:
+def eval_step(model: TextClassifier, metrics: nnx.MultiMetric, batch: Batch) -> None:
     """Accumulate the batch's loss and accuracy without updating the model."""
     logits = model(batch["tokens"], training=False)
     one_hot = jax.nn.one_hot(batch["label"], num_classes=2)

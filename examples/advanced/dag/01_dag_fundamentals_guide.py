@@ -148,24 +148,26 @@ class _Augment(nnx.Module):
         self.factor = jnp.float32(factor)
 
     def __call__(self, batch):
-        return {**batch, "image": batch["image"] * self.factor}
+        return batch.replace(data={**batch.data, "image": batch["image"] * self.factor})
 
 
 class _Normalize(nnx.Module):
     """Standardise to zero-mean unit-variance."""
 
     def __call__(self, batch):
-        return {**batch, "image": (batch["image"] - 0.5) / 0.5}
+        return batch.replace(data={**batch.data, "image": (batch["image"] - 0.5) / 0.5})
 
 
 class _StackBranches(nnx.Module):
     """Merge two batches by stacking the image fields along a new axis."""
 
     def __call__(self, augmented, clean):
-        return {
-            "image": jnp.stack([augmented["image"], clean["image"]], axis=1),
-            "label": augmented["label"],
-        }
+        return augmented.replace(
+            data={
+                "image": jnp.stack([augmented["image"], clean["image"]], axis=1),
+                "label": augmented["label"],
+            }
+        )
 
 
 # Build a branching DAG:

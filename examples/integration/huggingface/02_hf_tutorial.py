@@ -122,7 +122,7 @@ filtered_source = HFEagerSource(filtered_config, rngs=nnx.Rngs(1))
 # Check what fields are available
 pipeline = Pipeline(source=filtered_source, stages=[], batch_size=1, rngs=nnx.Rngs(0))
 batch = next(iter(pipeline))
-data = batch
+data = batch.data
 
 print("Filtered fields:")
 for key in data.keys():

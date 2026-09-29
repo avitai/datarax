@@ -23,7 +23,7 @@ Semantics:
   yield boundary, for exact mid-epoch resume without touching the module.
 
 Streaming sources pull batches on the host, so :func:`compile_streaming_dag`
-applies the same pattern to the stage modules and the position counter only.
+applies the same pattern to the pipeline's DAG and the position counter only.
 The source never enters the compiled step: its state stays with the live
 module, and a source that replaces its backend iterator between passes does
 not force a recompile. Structurally identical pipelines share compiled steps.
@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import contextlib
 import weakref
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any
 
 import jax
@@ -41,18 +41,16 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
+from datarax.core import batch_ops
+from datarax.core.element_batch import Batch
 from datarax.core.operator import OperatorModule
-from datarax.pipeline.dag import record_count, record_positions, run_dag
+from datarax.pipeline.dag import name_records, OperatorDag, record_positions
 from datarax.pipeline.epochs import EpochPlan
-from datarax.typing import PipelineBatch
 
 
 # The traceable body a session step runs on the merged module: one batch of the given number of
 # records, returned after the module's state has advanced (the pipeline's ``_next_batch``).
-type StepBody = Callable[[Any, int], PipelineBatch]
-
-# A stage graph's execution plan: topological order, each node's predecessors, the sink.
-type DagPlan = tuple[tuple[str, ...], Mapping[str, tuple[str, ...]], str | None]
+type StepBody = Callable[[Any, int], Batch]
 
 
 # Compiled steps shared across pipelines, matched by structural equality of their
@@ -209,12 +207,12 @@ def _session_step(graphdef: Any, body: StepBody, size: int) -> Callable[..., Any
     identical modules running the same body at the same size share the step.
     """
 
-    def run(graph: Any) -> PipelineBatch:
+    def run(graph: Any) -> Batch:
         return body(graph, size)
 
     def build() -> Callable[..., Any]:
         @jax.jit
-        def session_step(mutable_state: Any, immutable_state: Any) -> tuple[PipelineBatch, _Writes]:
+        def session_step(mutable_state: Any, immutable_state: Any) -> tuple[Batch, _Writes]:
             return _run_tracking_writes(graphdef, (mutable_state, immutable_state), run)
 
         return session_step
@@ -274,7 +272,7 @@ def staged_view[M: nnx.Module](module: M) -> M:
     return nnx.merge(graphdef, variables, _on_device(module, data), copy=False)
 
 
-def next_batch(module: nnx.Module, body: StepBody, size: int) -> PipelineBatch:
+def next_batch(module: nnx.Module, body: StepBody, size: int) -> Batch:
     """Run ``body`` once, for ``size`` records, on ``module`` through the compiled session step.
 
     The body of :meth:`Pipeline.step`: split the module, stage its host arrays, run the
@@ -296,43 +294,39 @@ def next_batch(module: nnx.Module, body: StepBody, size: int) -> PipelineBatch:
     return batch
 
 
-def _dag_step(graphdef: Any, plan: DagPlan) -> Callable[..., Any]:
-    """Return the compiled step running a stage graph over one batch.
+def _dag_step(graphdef: Any) -> Callable[..., Any]:
+    """Return the compiled step running a DAG over one streamed batch.
 
-    Keyed by the execution plan and then the stage graph, so the cheap comparison
-    decides most misses.
+    Keyed by the graph definition, which holds the DAG's static plan.
     """
-    exec_order, predecessors, sink = plan
 
     def build() -> Callable[..., Any]:
         @jax.jit
-        def step(mutable_state: Any, read_only_state: Any, batch: Any) -> tuple[Any, _Writes]:
-            def run(graph: Any) -> Any:
-                stages, position, epoch = graph
+        def step(mutable_state: Any, read_only_state: Any, data: Any) -> tuple[Batch, _Writes]:
+            def run(graph: Any) -> Batch:
+                dag, position, epoch = graph
+                batch = batch_ops.from_arrays(data)
                 # A stream serves records in order, so their positions name them.
-                record_indices = record_positions(batch, position[...])
-                output = run_dag(
-                    stages, exec_order, predecessors, sink, batch, record_indices, epoch[...]
-                )
-                position[...] = position[...] + jnp.int32(record_count(batch))
+                names = record_positions(batch.batch_size, position[...])
+                output = dag(name_records(batch, names, epoch[...]))
+                position[...] = position[...] + jnp.int32(batch.batch_size)
                 return output
 
             return _run_tracking_writes(graphdef, (mutable_state, read_only_state), run)
 
         return step
 
-    return _cached_step(_DAG_STEPS, (plan, graphdef), build)
+    return _cached_step(_DAG_STEPS, graphdef, build)
 
 
 def compile_streaming_dag(
-    stages: Mapping[str, nnx.Module],
+    dag: OperatorDag,
     position: nnx.Variable[jax.Array],
     epoch: nnx.Variable[jax.Array],
-    plan: DagPlan,
-) -> Callable[[Any], Any]:
-    """Return a function running a stage DAG over one host batch.
+) -> Callable[[Any], Batch]:
+    """Return a function running a pipeline's DAG over one host batch.
 
-    The stage modules and the position counter are split once and each batch runs
+    The DAG and the position counter are split once and each batch runs
     through a cached ``jax.jit`` step, so the module graph is not traversed per
     batch. The split state references the live Variables: every call reads their
     current values, including changes made between batches, and writes every
@@ -341,20 +335,19 @@ def compile_streaming_dag(
     tracing.
 
     Args:
-        stages: The stage modules by node name.
-        position: The position counter the batch's records are numbered from.
-        epoch: The epoch counter the stages key their randomness on.
-        plan: The stage graph's execution plan.
+        dag: The pipeline's DAG.
+        position: The position counter the batch's records are named from.
+        epoch: The epoch counter the operators key their randomness on.
 
     Returns:
-        A function taking a validated batch and returning the sink's output.
+        A function taking a validated batch of host arrays and returning the DAG's ``Batch``.
     """
-    graph = (stages, position, epoch)
+    graph = (dag, position, epoch)
     graphdef, per_batch_state, staged_state = nnx.split(graph, _is_per_batch_state, ..., graph=True)
-    step = _dag_step(graphdef, plan)
+    step = _dag_step(graphdef)
     receivers = ((_state_leaves(per_batch_state),), (_state_leaves(staged_state),))
 
-    def apply(batch: Any) -> Any:
+    def apply(batch: Any) -> Batch:
         output, writes = step(per_batch_state, staged_state, batch)
         _apply_writes(writes, receivers)
         return output
@@ -369,7 +362,8 @@ def _operator_owned_counts(
 
     Ownership is decided by Variable identity rather than by state path, so the answer does not
     depend on how a path happens to be spelled. An operator's counts precede the pipeline's and
-    the source's, because flax orders attributes by name and ``_stage_modules`` sorts first; an
+    the source's, because flax orders attributes by name and ``dag`` sorts before ``rngs`` and
+    ``source``; an
     operator reached through some other attribute, such as one a source holds, would not, and
     :meth:`PipelineIterator._upgraded_rng_counts` refuses such a pipeline rather than placing a
     saved state into it wrongly.
@@ -467,11 +461,11 @@ class PipelineIterator:
         )
         self._closed = False
 
-    def __iter__(self) -> Iterator[PipelineBatch]:
+    def __iter__(self) -> Iterator[Batch]:
         """Return self (iterator protocol)."""
         return self
 
-    def __next__(self) -> PipelineBatch:
+    def __next__(self) -> Batch:
         """Produce the next batch via the compiled session step.
 
         The step starts the next epoch itself when the current one cannot start another

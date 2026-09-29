@@ -25,6 +25,7 @@ import pytest
 from flax import nnx
 
 from datarax.core.config import ElementOperatorConfig
+from datarax.core.element_batch import Batch
 from datarax.operators import ElementOperator
 from datarax.pipeline import iteration, Pipeline, PipelineIterator
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
@@ -55,7 +56,7 @@ def _pipeline(
     )
 
 
-def _rows(batches: list[dict]) -> np.ndarray:
+def _rows(batches: list[Batch]) -> np.ndarray:
     return np.concatenate([np.asarray(batch["x"]) for batch in batches])
 
 
@@ -67,9 +68,9 @@ class TestNoPadding:
         np.testing.assert_array_equal(_rows(batches), np.arange(_N, dtype=np.float32))
 
     def test_no_batch_carries_a_mask(self) -> None:
-        assert set(_pipeline().step()) == {"x"}
-        assert all(set(batch) == {"x"} for batch in _pipeline())
-        keys = _pipeline().scan(lambda batch: jnp.asarray(len(batch)), length=5)
+        assert set(_pipeline().step().data) == {"x"}
+        assert all(set(batch.data) == {"x"} for batch in _pipeline())
+        keys = _pipeline().scan(lambda batch: jnp.asarray(len(batch.data)), length=5)
         np.testing.assert_array_equal(np.asarray(keys), [1] * 5)
 
     def test_a_streaming_source_carries_no_mask(self) -> None:
@@ -81,7 +82,7 @@ class TestNoPadding:
         source = _ListStream(batches, {"x": jax.ShapeDtypeStruct((), jnp.float32)})
         pipeline = Pipeline(source=source, stages=[], batch_size=2, rngs=nnx.Rngs(0))
 
-        assert [set(batch) for batch in pipeline] == [{"x"}] * 3
+        assert [set(batch.data) for batch in pipeline] == [{"x"}] * 3
 
     def test_drop_last_refuses_a_batch_larger_than_the_source(self) -> None:
         with pytest.raises(ValueError, match="batch_size <= len"):
@@ -174,7 +175,7 @@ class _Counter(nnx.Module):
     def __init__(self) -> None:
         self.seen = nnx.Variable(jnp.zeros((), jnp.int32))
 
-    def __call__(self, batch: dict) -> dict:
+    def __call__(self, batch: Batch) -> Batch:
         self.seen[...] += batch["x"].shape[0]
         return batch
 
@@ -215,8 +216,8 @@ class _Scale(nnx.Module):
     def __init__(self) -> None:
         self.factor = nnx.Param(jnp.float32(2.0))
 
-    def __call__(self, batch: dict) -> dict:
-        return {**batch, "x": batch["x"] * self.factor[...]}
+    def __call__(self, batch: Batch) -> Batch:
+        return batch.replace(data={**batch.data, "x": batch["x"] * self.factor[...]})
 
 
 class _Model(nnx.Module):

@@ -80,7 +80,7 @@ def require_key(key: jax.Array | None, operator: "OperatorModule") -> jax.Array:
     if key is None:
         raise ValueError(
             f"{type(operator).__name__} is stochastic and needs a per-record key; "
-            "apply_batch, _apply_on_raw and Pipeline pass one, or call apply(..., key=...)"
+            "apply_batch and the Pipeline pass one, or call apply(..., key=...)"
         )
     return key
 
@@ -159,25 +159,6 @@ def statistics_for_child(stats: dict[str, Any] | None, index: int) -> dict[str, 
     if children is None:
         return None
     return children[index]
-
-
-def _raw_identity(
-    size: int, record_indices: jax.Array | None, epoch: jax.Array | int | None
-) -> tuple[jax.Array | None, jax.Array | None]:
-    """The two-word indices and per-record epochs of the raw-dict path's ``(B,)`` identity.
-
-    The pipeline's raw path names records by int32 positions below ``2^31`` and one epoch for
-    the batch or one per record; each becomes the low index word and a per-record epoch.
-    """
-    indices = (
-        None
-        if record_indices is None
-        else jnp.stack(
-            [jnp.zeros(size, jnp.uint32), jnp.asarray(record_indices).astype(jnp.uint32)], -1
-        )
-    )
-    epochs = None if epoch is None else jnp.broadcast_to(jnp.asarray(epoch, jnp.int32), (size,))
-    return indices, epochs
 
 
 class OperatorModule(DataraxModule):
@@ -472,8 +453,7 @@ class OperatorModule(DataraxModule):
         - "vmap": jax.vmap — fast, O(batch_size) memory
         - "scan": jax.lax.scan — sequential, O(1) memory per element
 
-        This is the computational heart shared by apply_batch(), _apply_on_raw(),
-        and the DAG executor's fused chain.
+        This is the computational heart of apply_batch().
 
         Randomness is keyed per record: each element's PRNG key folds the record's epoch,
         draw and two-word index into the operator's base key (see ``per_record_keys``), so
@@ -555,36 +535,6 @@ class OperatorModule(DataraxModule):
         in_axes = (in_data_axes, in_state_axes, 0) if has_keys else (in_data_axes, in_state_axes)
 
         return jax.vmap(apply_one, in_axes=in_axes, out_axes=0)(*inputs)
-
-    def _apply_on_raw(
-        self,
-        batch_data: PyTree,
-        batch_states: PyTree,
-        stats: dict[str, Any] | None = None,
-        record_indices: jax.Array | None = None,
-        epoch: jax.Array | int | None = None,
-    ) -> tuple[PyTree, PyTree]:
-        """Apply operator on raw dicts without Batch object creation.
-
-        Thin wrapper around _vmap_apply for use in the fused operator chain.
-        Returns raw (data_dict, states_dict) instead of a Batch object,
-        enabling chaining without intermediate Batch construction.
-
-        Args:
-            batch_data: Dict of batched arrays (axis 0 is batch).
-            batch_states: Dict of batched state arrays.
-            stats: Optional statistics.
-            record_indices: Optional ``(batch_size,)`` record indices below ``2^31``, as the
-                Pipeline's raw path names them; each is the low word of the record's index.
-                ``None`` keys on positions (see ``_vmap_apply``).
-            epoch: The epoch of the batch, or of each record ``(batch_size,)``; ``None`` is 0.
-
-        Returns:
-            Tuple of (transformed_data, transformed_states) as raw dicts.
-        """
-        size = extract_batch_size(jax.tree.map(lambda x: x.shape, batch_data))
-        indices, epochs = _raw_identity(size, record_indices, epoch)
-        return self._vmap_apply(batch_data, batch_states, stats, indices, epochs)
 
     def apply_batch(
         self,

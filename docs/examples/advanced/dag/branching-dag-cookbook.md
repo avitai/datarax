@@ -53,13 +53,13 @@ stacks both outputs along a new axis.
 ```python
 class _Stack(nnx.Module):
     def __call__(self, normalized, inverted):
-        return {
+        return normalized.replace(data={
             "image": jnp.stack(
                 [normalized["image"], inverted["image"]],
                 axis=1,
             ),
             "label": normalized["label"],
-        }
+        })
 
 
 pipeline = Pipeline.from_dag(
@@ -94,10 +94,10 @@ topology declaration is unchanged.
 ```python
 class _Average(nnx.Module):
     def __call__(self, brightened, inverted):
-        return {
+        return brightened.replace(data={
             "image": (brightened["image"] + inverted["image"]) / 2,
             "label": brightened["label"],
-        }
+        })
 ```
 
 ### 3. Branch (conditional routing)
@@ -112,7 +112,7 @@ class _BrightenIfDark(nnx.Module):
             lambda img: img,
             batch["image"],
         )
-        return {**batch, "image": new_image}
+        return batch.replace(data={**batch.data, "image": new_image})
 
 
 pipeline = Pipeline(
@@ -135,13 +135,13 @@ source, plus a merge that takes them as N positional arguments.
 ```python
 class _Concat3(nnx.Module):
     def __call__(self, normalized, brightened, inverted):
-        return {
+        return normalized.replace(data={
             "image": jnp.concatenate(
                 [normalized["image"], brightened["image"], inverted["image"]],
                 axis=-1,
             ),
             "label": normalized["label"],
-        }
+        })
 ```
 
 ## Verified Outputs

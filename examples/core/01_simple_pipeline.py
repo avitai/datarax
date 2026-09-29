@@ -166,7 +166,7 @@ print("Pipeline created with batch_size=32")
 """
 ## Step 5: Iterate Through Data
 
-The pipeline is iterable. Each iteration yields a batch dictionary.
+The pipeline is iterable. Each iteration yields a `Batch`, read by field name.
 """
 
 # %%

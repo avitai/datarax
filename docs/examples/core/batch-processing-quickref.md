@@ -52,7 +52,7 @@ source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
 pipeline = Pipeline(source=source, stages=[], batch_size=16, rngs=nnx.Rngs(0))
 
 for batch in pipeline:
-    print(batch["image"].shape)  # (16, 32, 32, 3)  -- batch is a plain dict
+    print(batch["image"].shape)  # (16, 32, 32, 3)  -- read by field name
     break
 ```
 

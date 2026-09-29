@@ -1,14 +1,9 @@
-"""Tests for _vmap_apply and _apply_on_raw extraction from apply_batch().
-
-TDD RED phase: These tests define the contract for the new private methods
-that extract the shared vmap core from OperatorModule.apply_batch().
+"""Tests for _vmap_apply, the vectorised core of OperatorModule.apply_batch().
 
 Test categories:
 1. _vmap_apply produces identical output to apply_batch (shared core)
 2. _vmap_apply handles deterministic ops (no dummy RNG overhead)
 3. _vmap_apply handles stochastic ops (real RNG generation)
-4. _apply_on_raw returns raw dicts (not Batch objects)
-5. _apply_on_raw matches apply_batch numerically
 """
 
 from dataclasses import dataclass
@@ -214,85 +209,12 @@ class TestVmapApplyRng:
 
 
 # ========================================================================
-# Tests: _apply_on_raw returns raw dicts
-# ========================================================================
-
-
-class TestApplyOnRaw:
-    """_apply_on_raw returns (dict, dict) not Batch objects."""
-
-    def test_returns_tuple_of_dicts(self, deterministic_op, sample_batch):
-        """_apply_on_raw returns (data_dict, states_dict) not Batch."""
-        batch_data = sample_batch.data
-        batch_states = sample_batch.states
-
-        result = deterministic_op._apply_on_raw(batch_data, batch_states)
-
-        assert isinstance(result, tuple), "Should return a tuple"
-        assert len(result) == 2, "Should return (data, states)"
-        result_data, result_states = result
-        assert isinstance(result_data, dict), "data should be a dict"
-        assert isinstance(result_states, dict), "states should be a dict"
-        # Verify it's NOT a Batch
-        assert not isinstance(result_data, Batch)
-
-    def test_matches_apply_batch_numerically(self, deterministic_op, sample_batch):
-        """_apply_on_raw produces same values as apply_batch."""
-        # apply_batch result
-        result_batch = deterministic_op.apply_batch(sample_batch)
-        expected_data = result_batch.data
-
-        # _apply_on_raw result
-        batch_data = sample_batch.data
-        batch_states = sample_batch.states
-        actual_data, actual_states = deterministic_op._apply_on_raw(batch_data, batch_states)
-
-        for key in expected_data:
-            assert jnp.allclose(actual_data[key], expected_data[key])
-
-    def test_chainable_raw_dicts(self, deterministic_op, sample_batch):
-        """_apply_on_raw output can be fed into another _apply_on_raw call."""
-        batch_data = sample_batch.data
-        batch_states = sample_batch.states
-
-        # Chain two calls
-        data1, states1 = deterministic_op._apply_on_raw(batch_data, batch_states)
-        data2, states2 = deterministic_op._apply_on_raw(data1, states1)
-
-        # ScaleOperator with factor=2.0, applied twice = 4.0x
-        expected = jnp.ones((4, 8, 8, 3)) * 4.0
-        assert jnp.allclose(data2["image"], expected)
-
-    def test_with_empty_states(self, deterministic_op):
-        """_apply_on_raw works with empty states dict."""
-        data = {"image": jnp.ones((4, 8, 8, 3), dtype=jnp.float32)}
-        states = {}
-
-        result_data, result_states = deterministic_op._apply_on_raw(data, states)
-
-        assert "image" in result_data
-        assert jnp.allclose(result_data["image"], jnp.ones((4, 8, 8, 3)) * 2.0)
-
-    def test_stochastic_on_raw(self, stochastic_op, sample_batch):
-        """_apply_on_raw works with stochastic operators."""
-        batch_data = sample_batch.data
-        batch_states = sample_batch.states
-
-        result_data, result_states = stochastic_op._apply_on_raw(batch_data, batch_states)
-
-        assert isinstance(result_data, dict)
-        assert "image" in result_data
-        # Stochastic: output should differ from input
-        assert not jnp.allclose(result_data["image"], batch_data["image"])
-
-
-# ========================================================================
-# Tests: apply_batch still works after refactor
+# Tests: apply_batch
 # ========================================================================
 
 
 class TestApplyBatchPreserved:
-    """Verify apply_batch still works identically after refactor."""
+    """apply_batch over the shared vmap core."""
 
     def test_apply_batch_returns_batch(self, deterministic_op, sample_batch):
         """apply_batch still returns a Batch object."""

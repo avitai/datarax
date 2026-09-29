@@ -20,6 +20,7 @@ from substrax.typing import Checkpointable
 
 from datarax.checkpoint import IteratorCheckpoint
 from datarax.core.config import ElementOperatorConfig
+from datarax.core.element_batch import Batch
 from datarax.operators import ElementOperator
 from datarax.pipeline import Pipeline
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
@@ -34,8 +35,8 @@ class _Scale(nnx.Module):
     def __init__(self) -> None:
         self.factor = nnx.Param(jnp.float32(1.0))
 
-    def __call__(self, batch: dict) -> dict:
-        return {**batch, "x": batch["x"] * self.factor[...]}
+    def __call__(self, batch: Batch) -> Batch:
+        return batch.replace(data={**batch.data, "x": batch["x"] * self.factor[...]})
 
 
 def _jitter(element, key):
@@ -86,7 +87,7 @@ def _loss(pipeline: Pipeline) -> jax.Array:
 @nnx.jit
 def _train_step(pipeline: Pipeline) -> None:
     grads = nnx.grad(_loss, argnums=nnx.DiffState(0, nnx.Param))(pipeline)
-    _scale(pipeline).factor[...] -= 1e-4 * grads["_stage_modules"]["stage_0"]["factor"][...]
+    _scale(pipeline).factor[...] -= 1e-4 * grads["dag"]["stages"]["stage_0"]["factor"][...]
 
 
 def test_a_pipeline_is_checkpointable() -> None:
@@ -98,7 +99,7 @@ def test_the_state_holds_parameters_and_iteration_but_no_data() -> None:
     leaves = jax.tree_util.tree_flatten_with_path(state)[0]
     paths = {jax.tree_util.keystr(path) for path, _ in leaves}
 
-    assert "['_stage_modules']['stage_0']['factor']" in paths
+    assert "['dag']['stages']['stage_0']['factor']" in paths
     assert {"['_position']", "['_epoch']", "['_epoch_key_base']"} <= paths
     assert not any(getattr(leaf, "shape", ())[:1] == (_RECORDS,) for _, leaf in leaves)
 
@@ -177,7 +178,7 @@ def test_a_pipeline_of_another_structure_is_refused() -> None:
 def test_an_operator_state_carrying_a_stream_is_refused_inside_a_pipeline_checkpoint() -> None:
     """An operator's state is its base key and statistics; a subtree holding more is refused."""
     state = copy.deepcopy(_tuned().get_state())
-    operator_state = state["_stage_modules"]["stage_1"]
+    operator_state = state["dag"]["stages"]["stage_1"]
     operator_state["_rng_stream"] = {
         "count": jnp.zeros((), jnp.uint32),
         "key": operator_state["_base_key"],
@@ -201,7 +202,7 @@ def _host_values(state: dict) -> dict:
 def test_a_refused_restore_changes_nothing() -> None:
     """Validation covers every stage before any value is written, so a refusal is atomic."""
     state = copy.deepcopy(_tuned().get_state())
-    state["_stage_modules"]["stage_1"]["unexpected"] = jnp.zeros(())
+    state["dag"]["stages"]["stage_1"]["unexpected"] = jnp.zeros(())
     target = _build()
     before = _host_values(target.get_state())
 

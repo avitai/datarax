@@ -43,6 +43,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
+from datarax.core.element_batch import Batch
 from datarax.pipeline import Pipeline
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
@@ -203,7 +204,7 @@ def test_pipeline_stochastic_stage_advances_across_steps() -> None:
             self.rngs = rngs
             self.last_key = nnx.Variable(jnp.zeros((2,), dtype=jnp.uint32))
 
-        def __call__(self, batch: dict) -> dict:
+        def __call__(self, batch: Batch) -> Batch:
             k = self.rngs()
             # Capture the raw key bits as a u32[2] so we can compare across steps.
             self.last_key[...] = jax.random.key_data(k)

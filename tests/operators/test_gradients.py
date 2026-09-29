@@ -21,7 +21,7 @@ from flax import nnx
 from jax.test_util import check_grads
 
 import datarax.operators as operators_package
-from datarax.core import cross_modal, modality
+from datarax.core import batch_ops, cross_modal, modality
 from datarax.core.config import (
     ElementOperatorConfig,
     MapOperatorConfig,
@@ -64,6 +64,7 @@ from datarax.operators.probabilistic_operator import (
     ProbabilisticOperatorConfig,
 )
 from datarax.operators.selector_operator import SelectorOperator, SelectorOperatorConfig
+from datarax.pipeline.dag import name_records
 from datarax.utils import external
 from datarax.utils.external import ExternalAdapterConfig, ExternalLibraryAdapter, PureJaxAdapter
 
@@ -247,7 +248,8 @@ def _input_loss(family: Family) -> Callable[[jax.Array], jax.Array]:
     weights = _weights(family.data().shape)
 
     def loss(value: jax.Array) -> jax.Array:
-        out, _ = operator._apply_on_raw({family.field: value}, {}, None, _RECORDS, 0)
+        out = operator(name_records(batch_ops.from_arrays({family.field: value}), _RECORDS, 0))
+        out = out.data
         return jnp.sum(out[family.field] * weights)
 
     return loss
@@ -278,7 +280,8 @@ def test_a_poisson_sample_passes_no_gradient_to_its_input() -> None:
     weights = _weights(_image().shape)
 
     def loss(value: jax.Array) -> jax.Array:
-        out, _ = operator._apply_on_raw({"image": value}, {}, None, _RECORDS, 0)
+        out = operator(name_records(batch_ops.from_arrays({"image": value}), _RECORDS, 0))
+        out = out.data
         return jnp.sum(out["image"] * weights)
 
     gradient = jax.jit(jax.grad(loss))(_image())
@@ -351,7 +354,8 @@ def test_a_cross_modal_parameter_gradient_matches_finite_differences() -> None:
     weights = _weights(_image().shape)
 
     def loss(model: OperatorModule) -> jax.Array:
-        out, _ = model._apply_on_raw(data, {}, None, _RECORDS, 0)
+        out = model(name_records(batch_ops.from_arrays(data), _RECORDS, 0))
+        out = out.data
         return jnp.sum(out["fused"] * weights)
 
     gradient = _parameter_check(fuse, loss)
@@ -372,7 +376,8 @@ def test_learnable_composite_weights_have_the_finite_difference_gradient() -> No
     weights = _weights(_image().shape)
 
     def loss(model: OperatorModule) -> jax.Array:
-        out, _ = model._apply_on_raw({"image": _image()}, {}, None, _RECORDS, 0)
+        out = model(name_records(batch_ops.from_arrays({"image": _image()}), _RECORDS, 0))
+        out = out.data
         return jnp.sum(out["image"] * weights)
 
     gradient = _parameter_check(composite, loss)

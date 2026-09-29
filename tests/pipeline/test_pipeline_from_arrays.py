@@ -16,6 +16,7 @@ import pytest
 from flax import nnx
 
 from datarax import Pipeline
+from datarax.core.element_batch import Batch
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -108,7 +109,7 @@ def test_a_training_step_over_it_compiles_once() -> None:
     traces = {"count": 0}
 
     @nnx.jit
-    def step(model: nnx.Linear, optimizer: nnx.Optimizer, batch: dict[str, jax.Array]) -> jax.Array:
+    def step(model: nnx.Linear, optimizer: nnx.Optimizer, batch: Batch) -> jax.Array:
         traces["count"] += 1
 
         def loss(model: nnx.Linear) -> jax.Array:
@@ -133,7 +134,7 @@ def test_it_scans_an_epoch_with_modules() -> None:
     model = nnx.Linear(2, 1, rngs=nnx.Rngs(0))
     pipeline = Pipeline.from_arrays(_data(), batch_size=_BATCH, seed=0, drop_last=True)
 
-    def step(model: nnx.Linear, batch: dict[str, jax.Array]) -> jax.Array:
+    def step(model: nnx.Linear, batch: Batch) -> jax.Array:
         return jnp.sum(model(batch["x"]))
 
     outputs = pipeline.scan(step, length=2, modules=(model,))

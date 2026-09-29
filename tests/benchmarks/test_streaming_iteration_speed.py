@@ -21,6 +21,7 @@ from flax import nnx
 
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
+from datarax.core.element_batch import Batch
 from datarax.pipeline.pipeline import Pipeline
 from tests.benchmarks.performance_targets import measure_latency
 
@@ -67,8 +68,13 @@ class _Noise(nnx.Module):
     def __init__(self) -> None:
         self.rngs = nnx.Rngs(noise=0)
 
-    def __call__(self, batch: dict[str, jax.Array]) -> dict[str, jax.Array]:
-        return {**batch, "x": batch["x"] + jax.random.normal(self.rngs.noise(), batch["x"].shape)}
+    def __call__(self, batch: Batch) -> Batch:
+        return batch.replace(
+            data={
+                **batch.data,
+                "x": batch["x"] + jax.random.normal(self.rngs.noise(), batch["x"].shape),
+            }
+        )
 
 
 def _pipeline() -> tuple[Pipeline, _Stream]:

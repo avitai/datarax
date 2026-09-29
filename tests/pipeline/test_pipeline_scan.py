@@ -50,6 +50,7 @@ import optax
 import pytest
 from flax import nnx
 
+from datarax.core.element_batch import Batch
 from datarax.pipeline import Pipeline
 from datarax.pipeline.iteration import _host_copies
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
@@ -69,8 +70,8 @@ def _source(num_elements: int = 16) -> MemorySource:
 class _DoubleStage(nnx.Module):
     """Multiplies x by 2.0."""
 
-    def __call__(self, batch: dict) -> dict:
-        return {**batch, "x": batch["x"] * 2.0}
+    def __call__(self, batch: Batch) -> Batch:
+        return batch.replace(data={**batch.data, "x": batch["x"] * 2.0})
 
 
 class _Scale(nnx.Module):
@@ -80,8 +81,8 @@ class _Scale(nnx.Module):
         super().__init__()
         self.factor = nnx.Param(jnp.float32(1.0))
 
-    def __call__(self, batch: dict) -> dict:
-        return {**batch, "x": batch["x"] * self.factor[...]}
+    def __call__(self, batch: Batch) -> Batch:
+        return batch.replace(data={**batch.data, "x": batch["x"] * self.factor[...]})
 
 
 class _Adder(nnx.Module):
@@ -91,7 +92,7 @@ class _Adder(nnx.Module):
         super().__init__()
         self.bias = nnx.Param(jnp.float32(init_bias))
 
-    def __call__(self, batch: dict) -> jax.Array:
+    def __call__(self, batch: Batch) -> jax.Array:
         return jnp.sum(batch["x"]) + self.bias[...]
 
 
@@ -106,7 +107,7 @@ def test_scan_no_carry_no_modules_returns_stacked_outputs() -> None:
         rngs=nnx.Rngs(0),
     )
 
-    def step_fn(batch: dict) -> jax.Array:
+    def step_fn(batch: Batch) -> jax.Array:
         return jnp.sum(batch["x"])
 
     outputs = pipeline.scan(step_fn, length=4)
@@ -125,7 +126,7 @@ def test_scan_no_carry_with_one_module_passes_module_to_step_fn() -> None:
     )
     adder = _Adder(init_bias=10.0)
 
-    def step_fn(adder: _Adder, batch: dict) -> jax.Array:
+    def step_fn(adder: _Adder, batch: Batch) -> jax.Array:
         return adder(batch)
 
     outputs = pipeline.scan(step_fn, modules=(adder,), length=4)
@@ -144,7 +145,7 @@ def test_scan_no_carry_with_multiple_modules_threads_all_through() -> None:
     adder_a = _Adder(init_bias=1.0)
     adder_b = _Adder(init_bias=2.0)
 
-    def step_fn(a: _Adder, b: _Adder, batch: dict) -> jax.Array:
+    def step_fn(a: _Adder, b: _Adder, batch: Batch) -> jax.Array:
         return a(batch) + b(batch)
 
     outputs = pipeline.scan(step_fn, modules=(adder_a, adder_b), length=4)
@@ -164,7 +165,7 @@ def test_scan_with_carry_no_modules_returns_pair() -> None:
         rngs=nnx.Rngs(0),
     )
 
-    def step_fn(carry: jax.Array, batch: dict) -> tuple[jax.Array, jax.Array]:
+    def step_fn(carry: jax.Array, batch: Batch) -> tuple[jax.Array, jax.Array]:
         s = jnp.sum(batch["x"])
         return carry + s, s
 
@@ -184,7 +185,7 @@ def test_scan_with_carry_and_modules_threads_both() -> None:
     )
     adder = _Adder(init_bias=10.0)
 
-    def step_fn(carry: jax.Array, adder: _Adder, batch: dict) -> tuple[jax.Array, jax.Array]:
+    def step_fn(carry: jax.Array, adder: _Adder, batch: Batch) -> tuple[jax.Array, jax.Array]:
         out = adder(batch)
         return carry + out, out
 
@@ -213,7 +214,7 @@ def test_scan_lifts_model_param_mutations_across_steps() -> None:
     )
     adder = _Adder(init_bias=0.0)
 
-    def step_fn(adder: _Adder, batch: dict) -> jax.Array:
+    def step_fn(adder: _Adder, batch: Batch) -> jax.Array:
         # Mutate the parameter — additions accumulate across iterations.
         adder.bias[...] = adder.bias[...] + jnp.float32(1.0)
         return adder.bias[...]
@@ -233,7 +234,7 @@ def test_scan_with_optimizer_module_persists_optimizer_state() -> None:
             super().__init__()
             self.lin = nnx.Linear(1, 1, rngs=rngs)
 
-        def __call__(self, batch: dict) -> jax.Array:
+        def __call__(self, batch: Batch) -> jax.Array:
             x = batch["x"].reshape(-1, 1)
             return jnp.mean(self.lin(x))
 
@@ -247,7 +248,7 @@ def test_scan_with_optimizer_module_persists_optimizer_state() -> None:
         rngs=nnx.Rngs(0),
     )
 
-    def step_fn(model: _Linear, optimizer: nnx.Optimizer, batch: dict) -> jax.Array:
+    def step_fn(model: _Linear, optimizer: nnx.Optimizer, batch: Batch) -> jax.Array:
         def loss_fn(m: _Linear) -> jax.Array:
             return model(batch) ** 2
 
@@ -270,7 +271,7 @@ def test_scan_gradient_flows_to_lifted_module_params() -> None:
             super().__init__()
             self.factor = nnx.Param(jnp.float32(2.0))
 
-        def __call__(self, batch: dict) -> jax.Array:
+        def __call__(self, batch: Batch) -> jax.Array:
             return jnp.sum(batch["x"] * self.factor[...])
 
     model = _LearnableScale()
@@ -281,7 +282,7 @@ def test_scan_gradient_flows_to_lifted_module_params() -> None:
         rngs=nnx.Rngs(0),
     )
 
-    def step_fn(m: _LearnableScale, batch: dict) -> jax.Array:
+    def step_fn(m: _LearnableScale, batch: Batch) -> jax.Array:
         def loss_fn(model: _LearnableScale) -> jax.Array:
             return model(batch)
 
@@ -316,7 +317,7 @@ def test_scan_with_shuffled_source_differentiates_through_data() -> None:
             super().__init__()
             self.factor = nnx.Param(jnp.float32(2.0))
 
-        def __call__(self, batch: dict) -> jax.Array:
+        def __call__(self, batch: Batch) -> jax.Array:
             return jnp.sum(batch["x"] * self.factor[...])
 
     shuffled_source = MemorySource(
@@ -332,7 +333,7 @@ def test_scan_with_shuffled_source_differentiates_through_data() -> None:
     )
     model = _LearnableScale()
 
-    def step_fn(m: _LearnableScale, batch: dict) -> jax.Array:
+    def step_fn(m: _LearnableScale, batch: Batch) -> jax.Array:
         def loss_fn(model: _LearnableScale) -> jax.Array:
             return model(batch)
 
@@ -367,7 +368,7 @@ def test_scan_total_matches_python_loop_total() -> None:
         rngs=nnx.Rngs(0),
     )
 
-    def step_fn(batch: dict) -> jax.Array:
+    def step_fn(batch: Batch) -> jax.Array:
         return jnp.sum(batch["x"])
 
     scan_outputs = pipeline_scan.scan(step_fn, length=4)
@@ -399,7 +400,7 @@ def test_scan_caches_compiled_body_across_calls_with_same_step_fn() -> None:
         rngs=nnx.Rngs(0),
     )
 
-    def step_fn(batch: dict) -> jax.Array:
+    def step_fn(batch: Batch) -> jax.Array:
         return jnp.sum(batch["x"])
 
     pipeline.scan(step_fn, length=4)
@@ -422,10 +423,10 @@ def test_scan_cache_key_distinguishes_different_step_fns() -> None:
         rngs=nnx.Rngs(0),
     )
 
-    def step_a(batch: dict) -> jax.Array:
+    def step_a(batch: Batch) -> jax.Array:
         return jnp.sum(batch["x"])
 
-    def step_b(batch: dict) -> jax.Array:
+    def step_b(batch: Batch) -> jax.Array:
         return jnp.mean(batch["x"])
 
     pipeline.scan(step_a, length=4)
@@ -443,7 +444,7 @@ def test_scan_cache_key_distinguishes_different_lengths() -> None:
         rngs=nnx.Rngs(0),
     )
 
-    def step_fn(batch: dict) -> jax.Array:
+    def step_fn(batch: Batch) -> jax.Array:
         return jnp.sum(batch["x"])
 
     pipeline.scan(step_fn, length=2)
@@ -461,7 +462,7 @@ def test_scan_cached_call_produces_identical_results() -> None:
         rngs=nnx.Rngs(0),
     )
 
-    def step_fn(batch: dict) -> jax.Array:
+    def step_fn(batch: Batch) -> jax.Array:
         return jnp.sum(batch["x"])
 
     first = pipeline.scan(step_fn, length=4)
@@ -480,10 +481,10 @@ def test_scan_cache_separates_carry_and_no_carry_variants() -> None:
         rngs=nnx.Rngs(0),
     )
 
-    def step_no_carry(batch: dict) -> jax.Array:
+    def step_no_carry(batch: Batch) -> jax.Array:
         return jnp.sum(batch["x"])
 
-    def step_with_carry(carry: jax.Array, batch: dict) -> tuple[jax.Array, jax.Array]:
+    def step_with_carry(carry: jax.Array, batch: Batch) -> tuple[jax.Array, jax.Array]:
         new_carry = carry + jnp.sum(batch["x"])
         return new_carry, new_carry
 
@@ -513,7 +514,7 @@ def _records(pipeline: Pipeline) -> object:
     return source.data["x"]
 
 
-def _total(batch: dict) -> jax.Array:
+def _total(batch: Batch) -> jax.Array:
     return jnp.sum(batch["x"])
 
 
@@ -570,7 +571,7 @@ def test_a_module_that_is_a_stage_and_a_scanned_module_stays_one_module() -> Non
     shared = _Scale()
     pipeline = _host_pipeline(stages=[shared])
 
-    def step_fn(scale: _Scale, batch: dict) -> jax.Array:
+    def step_fn(scale: _Scale, batch: Batch) -> jax.Array:
         scale.factor[...] = scale.factor[...] + 1.0
         return batch["x"][0, 0] / (scale.factor[...] - 1.0)
 

@@ -199,7 +199,7 @@ class TestBatchMix:
         raw = {"value": batch.data["value"]}
 
         assert jnp.array_equal(operator.apply_batch(batch).data["value"], raw["value"])
-        assert jnp.array_equal(operator._apply_on_raw(raw, {})[0]["value"], raw["value"])
+        assert jnp.array_equal(operator(batch_ops.from_arrays(raw)).data["value"], raw["value"])
 
 
 class TestComposite:

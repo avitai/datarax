@@ -1,19 +1,12 @@
 """Every operator kind produces what it produced when the fixture was recorded.
 
-The operator framework's redesign changes how a record's PRNG key reaches ``apply`` and how a
-batch is vectorized. Neither is meant to change what an operator produces, and this module is what
-makes that claim testable: ``scripts/generate_per_record_outputs.py`` recorded the output of every
-operator kind, and each case here recomputes it and compares.
+How a record's PRNG key reaches ``apply`` and how a batch is vectorized must not change what an
+operator produces: ``scripts/generate_per_record_outputs.py`` records the output of every operator
+kind, and each case here recomputes it and compares. A case fails by name, so a change to the
+machinery learns which operator it changed. A change meant to alter outputs regenerates the
+fixture, and the regeneration is visible in its diff.
 
-A case fails loudly and by name, so a commit that changes the machinery learns which operator it
-changed rather than that something, somewhere, moved.
-
-The generator also records which entries are expected to change once a stochastic child receives
-the record key through a ``probability=1.0`` wrapper. Those entries are pinned here like the
-others: the commit that makes the change regenerates the fixture, and that regeneration is visible
-in its diff.
-
-What is compared exactly, and what is not. Record indices, labels, masks and the case and marker
+What is compared exactly, and what is not. Record indices, labels, masks and the case
 names are integers or strings, and every one of them must match exactly: a change in which record
 gets which augmentation shows up there immediately. Float entries are compared within float32
 rounding, because a reduction reassociates differently on different architectures and the fixture
@@ -39,6 +32,8 @@ from typing import Any
 import numpy as np
 import pytest
 
+from datarax.core import batch_ops
+from datarax.pipeline.dag import name_records
 from tests.scripts.script_loader import load_script
 
 
@@ -103,7 +98,8 @@ def test_operator_output_is_unchanged(
     """The operator produces the arrays recorded for it."""
     operator = build()
 
-    out_data, _ = operator._apply_on_raw(data, {}, None, generator.INDICES, generator.EPOCH)
+    out = operator(name_records(batch_ops.from_arrays(data), generator.INDICES, generator.EPOCH))
+    out_data = out.data
     produced = generator.entries_for(name, out_data)
 
     assert produced, f"{name} produced no entries to compare"
@@ -131,12 +127,3 @@ def test_fixture_covers_every_case(recorded: dict[str, np.ndarray]) -> None:
     unread, and the suite would report a coverage it no longer has.
     """
     assert list(recorded["case names"]) == [name for name, _, _ in generator.CASES]
-
-
-def test_intended_change_entries_name_recorded_cases(recorded: dict[str, np.ndarray]) -> None:
-    """Each entry marked as intended to change is a case the fixture actually records."""
-    names = set(recorded["case names"].tolist())
-    marked = set(recorded["intended change"].tolist())
-
-    assert marked, "no entries are marked, so the marking would silently verify nothing"
-    assert marked <= names, f"marked entries that are not cases: {sorted(marked - names)}"

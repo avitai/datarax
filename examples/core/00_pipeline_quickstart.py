@@ -59,6 +59,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
+from datarax.core.element_batch import Batch
 from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
@@ -101,17 +102,17 @@ class Brightness(nnx.Module):
         super().__init__()
         self.factor = jnp.float32(factor)
 
-    def __call__(self, batch: dict) -> dict:
+    def __call__(self, batch: Batch) -> Batch:
         """Run __call__."""
-        return {**batch, "image": batch["image"] * self.factor}
+        return batch.replace(data={**batch.data, "image": batch["image"] * self.factor})
 
 
 class Normalize(nnx.Module):
     """Standardize images to roughly zero-mean, unit-variance."""
 
-    def __call__(self, batch: dict) -> dict:
+    def __call__(self, batch: Batch) -> Batch:
         """Run __call__."""
-        return {**batch, "image": (batch["image"] - 0.5) / 0.5}
+        return batch.replace(data={**batch.data, "image": (batch["image"] - 0.5) / 0.5})
 
 
 # %% [markdown]

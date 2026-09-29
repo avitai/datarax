@@ -26,7 +26,7 @@ source = MemorySource(config, data=data, rngs=nnx.Rngs(0))
 # 3. Build the pipeline. Pipeline auto-batches via batch_size.
 pipeline = Pipeline(source=source, stages=[], batch_size=10, rngs=nnx.Rngs(0))
 
-# 4. Iterate. Pipeline yields plain dicts of jax.Array.
+# 4. Iterate. Pipeline yields Batches; batch["image"] reads a field.
 for i, batch in enumerate(pipeline):
     print(f"Batch {i}: image shape = {batch['image'].shape}")
     if i >= 2:
@@ -146,10 +146,10 @@ class StackBranches(nnx.Module):
     """Merge the normalized and inverted streams along a new axis."""
 
     def __call__(self, normalized, inverted):
-        return {
+        return normalized.replace(data={
             "image": jnp.stack([normalized["image"], inverted["image"]], axis=1),
             "label": normalized["label"],
-        }
+        })
 
 
 pipeline_dag = Pipeline.from_dag(

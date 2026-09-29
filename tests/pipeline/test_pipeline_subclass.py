@@ -3,8 +3,9 @@
 When the linear (``stages=...``) and DAG (``from_dag``) constructors are
 not flexible enough — for runtime conditional branching, dynamic
 dispatch, or composing multiple sub-pipelines — users subclass
-``Pipeline`` and override ``__call__``. Pipeline is a regular
-``nnx.Module``, so subclassing follows the standard Flax NNX pattern.
+``Pipeline`` and override ``__call__(data, records) -> Batch``, usually on the
+batch ``super().__call__`` names. Pipeline is a regular ``nnx.Module``, so
+subclassing follows the standard Flax NNX pattern.
 
 Test contract index:
 
@@ -12,7 +13,7 @@ Test contract index:
    that ignores ``stages`` and writes its own ``__call__`` produces the
    expected output.
 2. ``test_subclass_inherits_step_and_scan`` — ``step()`` and ``scan()``
-   work unchanged on subclasses (they call ``self(batch, records)`` which the
+   work unchanged on subclasses (they call ``self(data, records)`` which the
    subclass overrides). ``records`` names the batch's records, which the step
    computed once; a subclass keying randomness on them uses it.
 3. ``test_subclass_with_nnx_cond_runtime_branching`` — a subclass using
@@ -27,8 +28,10 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 from flax import nnx
 
+from datarax.core.element_batch import Batch
 from datarax.pipeline import Pipeline
 from datarax.pipeline.dag import Records
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
@@ -49,8 +52,9 @@ def test_subclass_can_override_call_for_custom_topology() -> None:
             super().__init__(source=source, batch_size=batch_size, rngs=rngs, stages=[])
             self.offset = jnp.float32(offset)
 
-        def __call__(self, batch: dict, records: Records | None = None) -> dict:
-            return {**batch, "x": batch["x"] + self.offset}
+        def __call__(self, data: dict, records: Records | None = None) -> Batch:
+            batch = super().__call__(data, records)
+            return batch.replace(data={**batch.data, "x": batch["x"] + self.offset})
 
     pipeline = _CustomPipeline(source=_source(), batch_size=4, rngs=nnx.Rngs(0), offset=100.0)
     out = pipeline.step()
@@ -59,18 +63,19 @@ def test_subclass_can_override_call_for_custom_topology() -> None:
 
 
 def test_subclass_inherits_step_and_scan() -> None:
-    """``step()`` and ``scan()`` use ``self(batch, records)`` so subclass overrides take effect."""
+    """``step()`` and ``scan()`` use ``self(data, records)`` so subclass overrides take effect."""
 
     class _Doubler(Pipeline):
         def __init__(self, *, source, batch_size, rngs):
             super().__init__(source=source, batch_size=batch_size, rngs=rngs, stages=[])
 
-        def __call__(self, batch: dict, records: Records | None = None) -> dict:
-            return {**batch, "x": batch["x"] * 2.0}
+        def __call__(self, data: dict, records: Records | None = None) -> Batch:
+            batch = super().__call__(data, records)
+            return batch.replace(data={**batch.data, "x": batch["x"] * 2.0})
 
     pipeline = _Doubler(source=_source(num_elements=16), batch_size=4, rngs=nnx.Rngs(0))
 
-    def step_fn(batch: dict) -> jax.Array:
+    def step_fn(batch: Batch) -> jax.Array:
         return jnp.sum(batch["x"])
 
     outputs = pipeline.scan(step_fn, length=4)
@@ -86,14 +91,15 @@ def test_subclass_with_nnx_cond_runtime_branching() -> None:
             super().__init__(source=source, batch_size=batch_size, rngs=rngs, stages=[])
             self.threshold = jnp.float32(threshold)
 
-        def __call__(self, batch: dict, records: Records | None = None) -> dict:
+        def __call__(self, data: dict, records: Records | None = None) -> Batch:
+            batch = super().__call__(data, records)
             mean = jnp.mean(batch["x"])
 
-            def double_branch(b: dict) -> dict:
-                return {**b, "x": b["x"] * 2.0}
+            def double_branch(b: Batch) -> Batch:
+                return b.replace(data={**b.data, "x": b["x"] * 2.0})
 
-            def half_branch(b: dict) -> dict:
-                return {**b, "x": b["x"] * 0.5}
+            def half_branch(b: Batch) -> Batch:
+                return b.replace(data={**b.data, "x": b["x"] * 0.5})
 
             new_batch = nnx.cond(mean > self.threshold, double_branch, half_branch, batch)
             return new_batch
@@ -105,7 +111,7 @@ def test_subclass_with_nnx_cond_runtime_branching() -> None:
         threshold=5.0,
     )
 
-    def step_fn(batch: dict) -> jax.Array:
+    def step_fn(batch: Batch) -> jax.Array:
         return jnp.mean(batch["x"])
 
     outputs = pipeline.scan(step_fn, length=4)
@@ -122,9 +128,9 @@ def test_subclass_can_hold_extra_state() -> None:
             super().__init__(source=source, batch_size=batch_size, rngs=rngs, stages=[])
             self.batches_seen = nnx.Variable(jnp.int32(0))
 
-        def __call__(self, batch: dict, records: Records | None = None) -> dict:
+        def __call__(self, data: dict, records: Records | None = None) -> Batch:
             self.batches_seen[...] = self.batches_seen[...] + jnp.int32(1)
-            return batch
+            return super().__call__(data, records)
 
     pipeline = _Counter(source=_source(), batch_size=4, rngs=nnx.Rngs(0))
     pipeline.step()
@@ -140,9 +146,9 @@ def test_an_overridden_step_body_is_what_step_and_iteration_run() -> None:
     """The compiled step runs the pipeline's own ``_next_batch``, override included."""
 
     class _Offset(Pipeline):
-        def _next_batch(self, size: int) -> dict:
+        def _next_batch(self, size: int) -> Batch:
             batch = super()._next_batch(size)
-            return {**batch, "x": batch["x"] + 100.0}
+            return batch.replace(data={**batch.data, "x": batch["x"] + 100.0})
 
     stepped = _Offset(source=_source(), batch_size=4, rngs=nnx.Rngs(0), stages=[])
     iterated = _Offset(source=_source(), batch_size=4, rngs=nnx.Rngs(0), stages=[])
@@ -152,17 +158,28 @@ def test_an_overridden_step_body_is_what_step_and_iteration_run() -> None:
 
 
 def test_the_step_passes_the_records_it_served() -> None:
-    """``records`` names the served rows: their indices and the epoch each belongs to."""
+    """``records`` names the served rows: their indices and the epoch each belongs to.
 
-    class _Names(Pipeline):
-        def __call__(self, batch: dict, records: Records | None = None) -> dict:
-            assert records is not None
-            return {"indices": records.indices, "epochs": records.epochs}
-
-    pipeline = _Names(source=_source(num_elements=10), batch_size=4, rngs=nnx.Rngs(0), stages=[])
+    The batch the step serves carries them: each row's index as the low word, its epoch.
+    """
+    pipeline = Pipeline(source=_source(num_elements=10), batch_size=4, rngs=nnx.Rngs(0), stages=[])
     pipeline.step()
     pipeline.step()
     crossing = pipeline.step()
 
-    np.testing.assert_array_equal(np.asarray(crossing["indices"]), [8, 9, 0, 1])
-    np.testing.assert_array_equal(np.asarray(crossing["epochs"]), [0, 0, 1, 1])
+    np.testing.assert_array_equal(np.asarray(crossing.indices), [[0, 8], [0, 9], [0, 0], [0, 1]])
+    np.testing.assert_array_equal(np.asarray(crossing.epochs), [0, 0, 1, 1])
+    np.testing.assert_array_equal(np.asarray(crossing["x"]), [8.0, 9.0, 0.0, 1.0])
+
+
+def test_a_call_returning_something_other_than_a_batch_is_refused() -> None:
+    """A pipeline serves ``Batch``es; an override returning a dict is named with the fix."""
+
+    class _Dict(Pipeline):
+        def __call__(self, data: dict, records: Records | None = None) -> Batch:
+            return data  # type: ignore[return-value]  # the misuse under test
+
+    pipeline = _Dict(source=_source(), batch_size=4, rngs=nnx.Rngs(0), stages=[])
+
+    with pytest.raises(TypeError, match=r"returned dict.*Batch"):
+        pipeline.step()

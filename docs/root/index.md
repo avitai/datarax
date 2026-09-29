@@ -7,7 +7,7 @@ Core type definitions and protocols used throughout Datarax. These provide type 
 | Category | Types | Purpose |
 |----------|-------|---------|
 | **Data Containers** | `Element`, `Batch` (from `datarax`) | A record and a batch of records |
-| **Dict Aliases** | `DataDict`, `PipelineBatch` | Dictionary type shortcuts |
+| **Dict Aliases** | `DataDict` | A source's field-name-to-array mapping |
 | **JAX Types** | `ArrayShape`, `PRNGKey` | JAX-specific type aliases |
 | **Function Types** | `ArrayTransform` | Callable signatures |
 | **Protocols** | `CheckpointableIterator` (built on substrax's `Checkpointable`) | Interface definitions |
