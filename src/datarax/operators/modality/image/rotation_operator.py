@@ -16,6 +16,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
+from datarax.core.element_batch import Element
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 from datarax.core.operator import require_key
 from datarax.operators.modality.image import functional
@@ -111,7 +112,7 @@ class RotationOperator(ModalityOperator):
 
         ```python
         data = {"image": jnp.ones((32, 32, 3))}
-        result, state, metadata = operator.apply(data, {}, {})
+        result = operator.apply(Element(data), key=jax.random.key(0)).data
         ```
     """
 
@@ -136,31 +137,24 @@ class RotationOperator(ModalityOperator):
 
     def apply(
         self,
-        data: dict[str, Any],
-        state: dict[str, Any],
-        metadata: dict[str, Any],
+        element: Element,
         key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    ) -> Element:
         """Apply rotation to image data.
 
         Args:
-            data: Input data dict containing image to rotate.
-            state: State dict (passed through unchanged).
-            metadata: Metadata dict (passed through unchanged).
+            element: The record, without a batch axis.
             key: This record's PRNG key, required in stochastic mode.
             stats: Optional statistics dict (unused).
 
         Returns:
-            Tuple of (transformed_data, state, metadata).
+            The transformed record.
         """
+        data = element.data
         del stats
-        # Extract image from data
+        # Extract image from data (a missing field raises KeyError)
         value = self._extract_field(data, self.config.field_key)
-
-        # If field is missing, return data unchanged
-        if value is None:
-            return data, state, metadata
 
         # Determine rotation angle
         if self.config.stochastic:
@@ -184,4 +178,4 @@ class RotationOperator(ModalityOperator):
         # Remap field in data
         result = self._remap_field(data, rotated_value)
 
-        return result, state, metadata
+        return element.replace(data=result)

@@ -39,8 +39,9 @@ from datarax.core.config import (
     MapOperatorConfig,
 )
 from datarax.core.cross_modal import CrossModalOperator, CrossModalOperatorConfig
+from datarax.core.element_batch import Element
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
-from datarax.core.operator import OperatorModule
+from datarax.core.operator import OperatorModule, require_key
 from datarax.operators.batch_mix_operator import BatchMixOperator
 from datarax.operators.composite_operator import (
     CompositeOperatorConfig,
@@ -138,17 +139,16 @@ class ShiftToTarget(ModalityOperator):
 
     def apply(
         self,
-        data: Any,
-        state: Any,
-        metadata: Any,
-        key: Any = None,
-        stats: Any = None,
-    ) -> tuple[Any, Any, Any]:
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
         """Shift the field by a drawn amount, or by a fixed amount when deterministic."""
+        data = element.data
         del stats
         image = self._extract_field(data, self.config.field_key)
-        shift = jax.random.uniform(key, ()) if self.config.stochastic else 0.05
-        return self._remap_field(data, image + shift), state, metadata
+        shift = jax.random.uniform(require_key(key, self), ()) if self.config.stochastic else 0.05
+        return element.replace(data=self._remap_field(data, image + shift))
 
 
 class Fuse(CrossModalOperator):
@@ -156,17 +156,16 @@ class Fuse(CrossModalOperator):
 
     def apply(
         self,
-        data: Any,
-        state: Any,
-        metadata: Any,
-        key: Any = None,
-        stats: Any = None,
-    ) -> tuple[Any, Any, Any]:
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
         """Combine the two input fields into the declared output field."""
+        data = element.data
         del key, stats
         image, label = self._extract_inputs(data)
         fused = jnp.mean(image) + label.astype(jnp.float32)
-        return self._store_outputs(data, [fused]), state, metadata
+        return element.replace(data=self._store_outputs(data, [fused]))
 
 
 def element_noise(element: Any, key: jax.Array) -> Any:
@@ -196,7 +195,7 @@ def composite(strategy: CompositionStrategy, **extra: Any) -> CompositeOperatorM
     """Return a composite over one deterministic and one stochastic child."""
     children = [brightness(False), noise()]
     return CompositeOperatorModule(
-        CompositeOperatorConfig(strategy=strategy, **extra), operators=children, rngs=rngs()
+        CompositeOperatorConfig(strategy=strategy, **extra), operators=children
     )
 
 
@@ -401,7 +400,6 @@ CASES: list[tuple[str, Callable[[], OperatorModule], dict[str, jax.Array]]] = [
                 strategy=CompositionStrategy.SEQUENTIAL,
             ),
             operators=[brightness(False), always_on(noise())],
-            rngs=rngs(),
         ),
         IMAGE_LABEL,
     ),
@@ -417,7 +415,6 @@ CASES: list[tuple[str, Callable[[], OperatorModule], dict[str, jax.Array]]] = [
                 ),
                 noise(),
             ],
-            rngs=rngs(),
         ),
         IMAGE_LABEL,
     ),

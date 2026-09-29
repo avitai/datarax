@@ -71,6 +71,9 @@ from datarax.core.operator import OperatorModule
 from datarax.core.config import OperatorConfig
 import jax.numpy as jnp
 import flax.nnx as nnx
+from datarax.core.element_batch import Element
+import jax
+from typing import Any
 
 class MyOperator(OperatorModule):
     def __init__(self, config, *, rngs):
@@ -79,9 +82,15 @@ class MyOperator(OperatorModule):
 
     # apply() is a pure per-element function operating on raw PyTrees.
     # It returns a (data, state, metadata) tuple.
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        data = element.data
         scaled = data["image"] * self.scale.value
-        return {**data, "image": scaled}, state, metadata
+        return element.replace(data={**data, "image": scaled})
 
 op = MyOperator(OperatorConfig(), rngs=nnx.Rngs(0))
 ```
@@ -182,7 +191,6 @@ composite = CompositeOperatorModule(
         strategy=CompositionStrategy.SEQUENTIAL,
         ),
     operators=[brightness, contrast, noise],
-    rngs=nnx.Rngs(0),
 )
 
 # Apply with probability

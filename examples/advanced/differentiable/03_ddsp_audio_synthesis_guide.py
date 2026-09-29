@@ -123,6 +123,8 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 
+from datarax.core.element_batch import Element
+
 
 # Output directory for saved figures
 OUTPUT_DIR = resolve_output_dir("examples").path
@@ -252,7 +254,7 @@ Each sample produces:
 - `loudness`: (1000,) — A-weighted loudness in dB
 
 **Why datarax operators instead of crepe + librosa?**
-- Same `apply(data, state, metadata)` contract as the synthesis operators below
+- Same `apply(element, key, stats)` contract as the synthesis operators below
 - Pure JAX — vmap/JIT/grad compatible, GPU-accelerated
 - No external Python dependencies (crepe, librosa) needed at runtime
 """
@@ -651,7 +653,7 @@ extensibility: you can build operators for any data type.
 Each operator follows the standard contract:
 - `OperatorConfig` subclass for configuration
 - `nnx.Param` for learnable parameters
-- `apply(data, state, metadata, key, stats) → (data, state, metadata)`
+- `apply(element, key, stats) → element`: one record in, one record out
 
 **Critical design choices**: The harmonic synthesizer uses **per-frame synthesis**
 with upsampling from frame rate (250 Hz) to sample rate (16 kHz) via linear
@@ -706,12 +708,10 @@ class HarmonicSynthOperator(OperatorModule):
 
     def apply(
         self,
-        data: dict[str, Any],
-        state: dict[str, Any],
-        metadata: dict[str, Any] | None,
-        key: Any = None,
+        element: Element,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+    ) -> Element:
         """Synthesize audio from per-frame harmonic amplitudes and f0.
 
         Upsamples frame-rate controls to sample-rate via linear interpolation,
@@ -725,6 +725,7 @@ class HarmonicSynthOperator(OperatorModule):
         Output data keys (added/updated):
             - 'audio': (audio_length,) — synthesized waveform
         """
+        data = element.data
         amplitudes = data["amplitudes"]  # (n_frames, n_harmonics)
         f0_hz = data["f0_hz"]  # (n_frames,)
         n_harmonics = self.config.n_harmonics
@@ -761,7 +762,7 @@ class HarmonicSynthOperator(OperatorModule):
         audio = jnp.sum(amp_upsampled * harmonics, axis=1)  # (audio_length,)
 
         out_data = {**data, "audio": audio}
-        return out_data, state, metadata
+        return element.replace(data=out_data)
 
 
 # --- Operator 2: Filtered Noise ---
@@ -801,12 +802,10 @@ class FilteredNoiseOperator(OperatorModule):
 
     def apply(
         self,
-        data: dict[str, Any],
-        state: dict[str, Any],
-        metadata: dict[str, Any] | None,
-        key: Any = None,
+        element: Element,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+    ) -> Element:
         """Filter noise using learned frequency magnitudes.
 
         Expected data keys:
@@ -815,6 +814,7 @@ class FilteredNoiseOperator(OperatorModule):
         Output data keys (added/updated):
             - 'audio': (audio_length,) — filtered noise waveform
         """
+        data = element.data
         noise_magnitudes = data["noise_magnitudes"]  # (n_frames, n_noise_bands)
 
         # Average over time frames (simplification — paper uses per-frame overlap-add)
@@ -836,7 +836,7 @@ class FilteredNoiseOperator(OperatorModule):
         audio = jnp.fft.irfft(filtered_fft, n=self.config.audio_length)
 
         out_data = {**data, "audio": audio}
-        return out_data, state, metadata
+        return element.replace(data=out_data)
 
 
 # --- Operator 3: Reverb ---
@@ -876,12 +876,10 @@ class ReverbOperator(OperatorModule):
 
     def apply(
         self,
-        data: dict[str, Any],
-        state: dict[str, Any],
-        metadata: dict[str, Any] | None,
-        key: Any = None,
+        element: Element,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+    ) -> Element:
         """Apply reverb to audio via FFT-based convolution.
 
         Expected data keys:
@@ -890,6 +888,7 @@ class ReverbOperator(OperatorModule):
         Output data keys (updated):
             - 'audio': (audio_length,) — reverbed audio (same length)
         """
+        data = element.data
         audio = data["audio"]  # (audio_length,)
         ir = self.impulse_response[...]  # (ir_length,)
 
@@ -906,7 +905,7 @@ class ReverbOperator(OperatorModule):
         reverbed = convolved[: audio.shape[0]]
 
         out_data = {**data, "audio": reverbed}
-        return out_data, state, metadata
+        return element.replace(data=out_data)
 
 
 # Verify operators

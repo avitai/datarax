@@ -531,23 +531,30 @@ operator = ElementOperator(config, fn=my_transform, rngs=nnx.Rngs(0))
 
 # Option 2: Create a custom operator class
 from datarax.core.operator import OperatorModule
+import jax
+from typing import Any
 
 class CustomOperator(OperatorModule):
     """Template for custom operators."""
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
         """Transform one record.
 
         ``key`` is the record's PRNG key when the operator is stochastic, else ``None``;
-        ``stats`` is what ``compute_statistics(batch_data)`` returned for the batch.
+        ``stats`` is what ``compute_statistics(batch)`` returned for the batch.
         """
         # Your implementation
-        return transformed_data, state, metadata
+        return element.replace(data=transformed_data)
 ```
 
 `apply` is a pure function of one record: the batch path runs it under `vmap` with one key
 per record, so it reads no `self.rngs` (an operator keeps none) and writes no module state.
-Statistics an operator fits per batch belong in `compute_statistics(batch_data)`, which runs
+Statistics an operator fits per batch belong in `compute_statistics(batch)`, which runs
 once per batch before the records are vectorized.
 
 ### 3. Performance Optimizations

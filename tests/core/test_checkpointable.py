@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from datarax.checkpoint import IteratorCheckpoint
+from datarax.core import batch_ops
 from datarax.core.config import DataraxModuleConfig, ElementOperatorConfig, StructuralConfig
 from datarax.core.data_source import DataSourceModule
 from datarax.core.module import DataraxModule
@@ -415,8 +416,8 @@ class TestOperatorCheckpointLayout:
         restored.set_state(saved.get_state())
         batch = {"x": jnp.zeros((4,))}
 
-        expected, _ = saved._vmap_apply(batch, {})
-        actual, _ = restored._vmap_apply(batch, {})
+        expected = saved(batch_ops.from_arrays(batch, states={})).data
+        actual = restored(batch_ops.from_arrays(batch, states={})).data
 
         np.testing.assert_array_equal(np.asarray(actual["x"]), np.asarray(expected["x"]))
 

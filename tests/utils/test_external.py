@@ -4,6 +4,7 @@ import pytest
 from flax import nnx
 
 from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 from datarax.utils.external import (
     ExternalAdapterConfig,
     ExternalLibraryAdapter,
@@ -52,7 +53,7 @@ class TestExternalLibraryAdapter:
 
         batch_size = 5
         # Identical inputs, so any difference between records is their own key
-        data, _ = adapter._vmap_apply({"x": jnp.ones((batch_size, 8))}, {})
+        data = adapter(batch_ops.from_arrays({"x": jnp.ones((batch_size, 8))}, states={})).data
 
         assert data["x"].shape == (batch_size, 8)
         assert not jnp.array_equal(data["x"][0], data["x"][1])
@@ -64,18 +65,17 @@ class TestExternalLibraryAdapter:
 
         data = {"x": jnp.ones((10,))}
         state = {}
-        metadata = None
         key = jax.random.key(123)
 
-        transformed_data, new_state, new_metadata = adapter.apply(data, state, metadata, key=key)
+        applied = adapter.apply(Element(data, state=state), key=key)
+        transformed_data, new_state = applied.data, applied.state
 
         # Check that noise was added (unlikely to equal exactly 1.0 everywhere)
         assert not jnp.allclose(transformed_data["x"], data["x"])
         # Check output shape preserved
         assert transformed_data["x"].shape == data["x"].shape
-        # State and metadata passed through
+        # State passed through
         assert new_state == state
-        assert new_metadata == metadata
 
     def test_a_stochastic_adapter_refuses_a_call_without_a_key(self, mock_external_fn):
         """A stochastic adapter's function draws from the record's key; none is refused."""
@@ -84,7 +84,7 @@ class TestExternalLibraryAdapter:
         )
 
         with pytest.raises(ValueError, match="ExternalLibraryAdapter is stochastic"):
-            adapter.apply({"x": jnp.zeros(1)}, {}, None, key=None)
+            adapter.apply(Element({"x": jnp.zeros(1)}), key=None)
 
     def test_integration_with_batch(self, mock_external_fn):
         """Test full pipeline execution via __call__ with a Batch object."""
@@ -211,7 +211,7 @@ class TestPureJaxAdapter:
         adapter = PureJaxAdapter(config, mock_pure_fn)
 
         data = {"x": jnp.array([1.0])}
-        transformed_data, _, _ = adapter.apply(data, {}, None)
+        transformed_data = adapter.apply(Element(data)).data
 
         assert transformed_data["x"][0] == 2.0
 

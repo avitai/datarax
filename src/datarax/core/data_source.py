@@ -12,8 +12,8 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+from jaxtyping import PyTree
 
-from datarax.core.element_batch import Element
 from datarax.core.structural import StructuralModule
 from datarax.typing import DataDict
 
@@ -102,7 +102,7 @@ class DataSourceModule(StructuralModule):
     structure as trainable parameters.
     """
 
-    def __iter__(self) -> Iterator[Element]:
+    def __iter__(self) -> Iterator[PyTree]:
         """Return an iterator over individual data elements.
 
         Returns:
@@ -113,7 +113,7 @@ class DataSourceModule(StructuralModule):
         """
         raise NotImplementedError("Subclasses must implement __iter__")
 
-    def __next__(self) -> Element:  # noqa: DOC503
+    def __next__(self) -> PyTree:  # noqa: DOC503
         """Get the next element from this data source.
 
         Returns:
@@ -140,7 +140,7 @@ class DataSourceModule(StructuralModule):
         """
         raise NotImplementedError("This DataSourceModule does not support length determination.")
 
-    def __getitem__(self, idx: int) -> Element | None:
+    def __getitem__(self, idx: int) -> PyTree | None:
         """Get element by index.
 
         This method provides subscriptable access to data elements.

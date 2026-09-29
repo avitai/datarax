@@ -194,7 +194,7 @@ class TestProbabilisticOperatorStochastic:
         )
 
         batch = {"value": jnp.ones((n_samples, 1))}
-        data, _ = prob_op._vmap_apply(batch, {})
+        data = prob_op(batch_ops.from_arrays(batch, states={})).data
 
         # The child doubles, so an applied record reads 2.0 and a skipped one 1.0.
         return float(jnp.mean(data["value"] == 2.0))
@@ -287,7 +287,7 @@ class TestProbabilisticOperatorDifferentiability:
         prob_op = ProbabilisticOperator(prob_config, operator=child_op, rngs=rngs)
 
         def loss(x):
-            output_data, _, _ = prob_op.apply({"value": x}, {}, None)
+            output_data = prob_op.apply(Element({"value": x})).data
             return jnp.sum(output_data["value"])
 
         inputs = jnp.array([0.5, -1.0, 2.0], dtype=jnp.float32)

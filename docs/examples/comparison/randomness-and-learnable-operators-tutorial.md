@@ -196,7 +196,7 @@ def mixture(weights: list[float], learnable: bool) -> CompositeOperatorModule:
         learnable_weights=learnable,
     )
     return CompositeOperatorModule(config, operators=image_operators(),  # a BrightnessOperator and a ContrastOperator
-        rngs=nnx.Rngs(0))
+        )
 
 
 learned_mixture = mixture([0.5, 0.5], learnable=True)

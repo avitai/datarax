@@ -1,7 +1,7 @@
 """SelectorOperator - Random selection from multiple operators.
 
 This operator wraps multiple OperatorModules and randomly selects ONE to apply
-per batch element.
+per record, each child drawing from its own key.
 
 Key Features:
 
@@ -21,21 +21,23 @@ Examples:
 """
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 import jax
 import jax.numpy as jnp
 from flax import nnx
-from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
+from datarax.core.element_batch import Batch, Element
 from datarax.core.operator import (
+    apply_selected,
     child_statistics,
     OperatorModule,
+    require_distinct,
     require_key,
-    statistics_for_child,
+    require_record_form,
 )
 
 
@@ -107,7 +109,7 @@ class SelectorOperator(OperatorModule):
     """Wrapper operator that randomly selects ONE operator to apply.
 
     Wraps multiple OperatorModules and uses weighted random selection to
-    choose which one to apply per batch element.
+    choose which one to apply per record, each child drawing from its own key.
 
     Uses jax.lax.switch for JIT-compatible operator selection with the
     unified operator interface.
@@ -141,6 +143,9 @@ class SelectorOperator(OperatorModule):
             rngs: Random number generators (required for random selection)
         """
         weights = config.normalized_weights(len(operators))
+        require_distinct(operators)
+        for operator in operators:
+            require_record_form(operator, self)
         super().__init__(config, rngs=rngs)
 
         # Type narrowing for pyright
@@ -149,74 +154,43 @@ class SelectorOperator(OperatorModule):
         self.operators = nnx.List(operators)
         self.weights = nnx.static(weights)
 
-    def compute_statistics(self, batch_data: PyTree) -> dict[str, Any] | None:
+    def fits_statistics_per_batch(self) -> bool:
+        """Whether a child computes its statistics from each batch."""
+        return any(operator.fits_statistics_per_batch() for operator in self.operators)
+
+    def compute_statistics(self, batch: Batch) -> dict[str, Any] | None:
         """Return one entry per child, each computed on this selector's input.
 
         Every child's statistics are computed, not only the selected one's: which child a record
         gets is decided per record inside the vectorized call, long after the batch is gone.
 
         Args:
-            batch_data: The batch about to be applied, with the batch on axis 0.
+            batch: The batch about to be applied.
 
         Returns:
             The children's statistics, or ``None`` when no child has any.
         """
-        return child_statistics(list(self.operators), batch_data)
+        return child_statistics(list(self.operators), batch)
 
     def apply(
-        self,
-        data: PyTree,
-        state: PyTree,
-        metadata: dict[str, Any] | None,
-        key: jax.Array | None = None,
-        stats: dict[str, Any] | None = None,
-    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
-        """Apply one child operator, chosen for this record from its own key.
+        self, element: Element, key: jax.Array | None = None, stats: dict[str, Any] | None = None
+    ) -> Element:
+        """Apply one child, chosen for this record from the selector's key for it.
 
-        The choice and every child's randomness are folded out of this record's key — index
-        0 for the selection, ``i + 1`` for child ``i`` — so which operator a record gets, and
-        what that operator draws, depend on the record alone. ``jax.lax.switch`` keeps the
-        choice traceable and executes only the branch taken.
+        The choice is drawn from this record's key; the chosen child draws from its own key for
+        the record (``apply_record``), as it would at top level. ``jax.lax.switch`` keeps the
+        choice traceable and runs only the branch taken (``apply_selected``).
 
         Args:
-            data: Element data PyTree (no batch dimension)
-            state: Element state PyTree
-            metadata: Element metadata
-            key: This record's PRNG key
-            stats: Optional statistics
+            element: The record.
+            key: This record's key for the selection.
+            stats: The children's statistics, as ``compute_statistics`` built them.
 
         Returns:
-            Tuple of (transformed_data, state, metadata) from selected operator
+            The record, transformed by the chosen child.
         """
-        record_key = require_key(key, self)
-        weights = jnp.asarray(self.weights)
-
-        # Which child this record gets (fold index 0 is reserved for the selection).
-        selected_idx = jax.random.choice(
-            jax.random.fold_in(record_key, 0), len(self.operators), shape=(), p=weights
+        selected = jax.random.choice(
+            require_key(key, self), len(self.operators), shape=(), p=jnp.asarray(self.weights)
         )
 
-        # Create branch functions for each operator
-        # Each branch applies its operator with its own key, folded from the record's
-        def make_branch_fn(i: int, operator: OperatorModule) -> Callable:
-            # This child's statistics are fixed for the batch, so they are captured here
-            # rather than carried through the switch's operands.
-            child_stats = statistics_for_child(stats, i)
-
-            def branch_fn(operands: Any) -> tuple[Any, Any, Any]:
-                d, s, m, k = operands
-                return operator.apply_record(d, s, m, jax.random.fold_in(k, i + 1), child_stats)
-
-            return branch_fn
-
-        branches = [make_branch_fn(i, op) for i, op in enumerate(self.operators)]
-
-        # Use jax.lax.switch for JIT-compatible selection
-        # This compiles efficiently and only executes the selected branch
-        result_data, result_state, result_metadata = jax.lax.switch(
-            selected_idx,
-            branches,
-            (data, state, metadata, record_key),
-        )
-
-        return result_data, result_state, result_metadata
+        return apply_selected(list(self.operators), selected, element, stats)

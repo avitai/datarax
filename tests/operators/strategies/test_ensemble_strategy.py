@@ -3,7 +3,7 @@
 import jax.numpy as jnp
 import pytest
 
-from datarax.operators.strategies.base import StrategyContext
+from datarax.core.element_batch import Element
 from datarax.operators.strategies.ensemble import EnsembleStrategy
 from tests.test_common.mock_operators import ConstantMockOperator as MockOperator
 
@@ -14,8 +14,8 @@ class TestEnsembleStrategy:
         op2 = MockOperator(20.0)
         strategy = EnsembleStrategy(mode="mean")
 
-        context = StrategyContext(jnp.array([0.0]), {}, {})
-        result_data, _, _ = strategy.apply([op1, op2], context)
+        context = Element(jnp.array([0.0]))
+        result_data = strategy.apply([op1, op2], context, None).data
 
         # Mean of 10 and 20 is 15
         assert jnp.array_equal(result_data, jnp.array([15.0]))
@@ -25,8 +25,8 @@ class TestEnsembleStrategy:
         op2 = MockOperator(20.0)
         strategy = EnsembleStrategy(mode="sum")
 
-        context = StrategyContext(jnp.array([0.0]), {}, {})
-        result_data, _, _ = strategy.apply([op1, op2], context)
+        context = Element(jnp.array([0.0]))
+        result_data = strategy.apply([op1, op2], context, None).data
 
         assert jnp.array_equal(result_data, jnp.array([30.0]))
 
@@ -35,8 +35,8 @@ class TestEnsembleStrategy:
         op2 = MockOperator(20.0)
         strategy = EnsembleStrategy(mode="max")
 
-        context = StrategyContext(jnp.array([0.0]), {}, {})
-        result_data, _, _ = strategy.apply([op1, op2], context)
+        context = Element(jnp.array([0.0]))
+        result_data = strategy.apply([op1, op2], context, None).data
 
         assert jnp.array_equal(result_data, jnp.array([20.0]))
 
@@ -45,15 +45,15 @@ class TestEnsembleStrategy:
         op2 = MockOperator(20.0)
         strategy = EnsembleStrategy(mode="min")
 
-        context = StrategyContext(jnp.array([0.0]), {}, {})
-        result_data, _, _ = strategy.apply([op1, op2], context)
+        context = Element(jnp.array([0.0]))
+        result_data = strategy.apply([op1, op2], context, None).data
 
         assert jnp.array_equal(result_data, jnp.array([10.0]))
 
     def test_invalid_mode(self):
         strategy = EnsembleStrategy(mode="invalid")
-        context = StrategyContext(jnp.array([0.0]), {}, {})
+        context = Element(jnp.array([0.0]))
         op1 = MockOperator(10.0)
 
         with pytest.raises(ValueError, match="Unknown ensemble mode"):
-            strategy.apply([op1], context)
+            strategy.apply([op1], context, None)

@@ -25,7 +25,7 @@ class SimpleTestSamplerConfig(SamplerConfig):  # type: ignore[reportGeneralTypeI
     dataset_size: int = 10
 
 
-class SimpleTestSampler(SamplerModule):
+class SimpleTestSampler(SamplerModule[int]):
     """Simple sampler for testing enhanced functionality."""
 
     def __init__(
@@ -520,7 +520,7 @@ class TestSamplerModuleAdditionalCoverage:
 
             dataset_size: int = 10
 
-        class IteratorOnlySampler(SamplerModule):
+        class IteratorOnlySampler(SamplerModule[int]):
             """Sampler that only implements iterator protocol."""
 
             def __init__(

@@ -17,9 +17,9 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 from flax import nnx
-from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
+from datarax.core.element_batch import Element
 from datarax.core.operator import OperatorModule
 
 
@@ -132,30 +132,26 @@ class LoudnessOperator(OperatorModule):
 
     def apply(
         self,
-        data: PyTree,
-        state: PyTree,
-        metadata: dict[str, Any] | None,
+        element: Element,
         key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
+    ) -> Element:
         """Compute loudness from audio.
 
         Args:
-            data: Must contain "audio" key with shape (n_samples,).
-            state: Passed through unchanged.
-            metadata: Passed through unchanged.
+            element: The record, without a batch axis.
             key: Unused (deterministic operator).
             stats: Unused.
 
         Returns:
-            (data_with_loudness, state, metadata) where data_with_loudness
-            has original keys plus "loudness" with shape (n_frames,).
+            The transformed record.
         """
+        data = element.data
         del key, stats
         audio = data["audio"]
         loudness = self._compute_loudness(audio)
         out_data = {**data, "loudness": loudness}
-        return out_data, state, metadata
+        return element.replace(data=out_data)
 
     def _compute_loudness(self, audio: jax.Array) -> jax.Array:
         """DDSP's loudness: A-weighted mean power per frame, in dB.

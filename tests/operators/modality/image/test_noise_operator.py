@@ -14,6 +14,7 @@ import pytest
 from flax import nnx
 
 from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 from datarax.operators.modality.image.noise_operator import (
     NoiseOperator,
     NoiseOperatorConfig,
@@ -274,15 +275,12 @@ class TestNoiseOperatorGaussianTransformations:
         # Single image (H, W, C)
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
         state = {}
-        metadata = {}
 
-        result, new_state, new_metadata = operator.apply(
-            data, state, metadata, key=jax.random.key(0)
-        )
+        applied = operator.apply(Element(data, state=state), key=jax.random.key(0))
+        result, new_state = applied.data, applied.state
 
         assert result["image"].shape == (32, 32, 3)
         assert new_state == state
-        assert new_metadata == metadata
         # Different: noise was drawn from the given key
         assert not jnp.allclose(result["image"], data["image"])
         # Should be within reasonable bounds
@@ -307,7 +305,7 @@ class TestNoiseOperatorGaussianTransformations:
         elements = [Element(data={"image": img}, state={}) for img in images]
         batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-        result_batch = operator.apply_batch(batch)
+        result_batch = operator(batch)
 
         result_images = result_batch.data["image"]
         assert result_images.shape == (4, 32, 32, 3)
@@ -326,9 +324,8 @@ class TestNoiseOperatorGaussianTransformations:
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
         state = {}
-        metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
+        result = operator.apply(Element(data, state=state), key=jax.random.key(0)).data
 
         # Should be unchanged with zero noise
         assert jnp.allclose(result["image"], data["image"])
@@ -345,9 +342,8 @@ class TestNoiseOperatorGaussianTransformations:
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
         state = {}
-        metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
+        result = operator.apply(Element(data, state=state), key=jax.random.key(0)).data
 
         # Mean should be approximately increased by noise_mean
         assert jnp.mean(result["image"]) > jnp.mean(data["image"])
@@ -364,9 +360,8 @@ class TestNoiseOperatorGaussianTransformations:
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.9}
         state = {}
-        metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
+        result = operator.apply(Element(data, state=state), key=jax.random.key(0)).data
 
         # Values should be clipped to [0, 1]
         assert jnp.all(result["image"] >= 0.0)
@@ -388,15 +383,12 @@ class TestNoiseOperatorSaltPepperTransformations:
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
         state = {}
-        metadata = {}
 
-        result, new_state, new_metadata = operator.apply(
-            data, state, metadata, key=jax.random.key(0)
-        )
+        applied = operator.apply(Element(data, state=state), key=jax.random.key(0))
+        result, new_state = applied.data, applied.state
 
         assert result["image"].shape == (32, 32, 3)
         assert new_state == state
-        assert new_metadata == metadata
         # Should have some pixels at extremes (0 or 1)
         assert not jnp.allclose(result["image"], data["image"])
 
@@ -419,7 +411,7 @@ class TestNoiseOperatorSaltPepperTransformations:
         elements = [Element(data={"image": img}, state={}) for img in images]
         batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-        result_batch = operator.apply_batch(batch)
+        result_batch = operator(batch)
 
         result_images = result_batch.data["image"]
         assert result_images.shape == (4, 32, 32, 3)
@@ -437,9 +429,8 @@ class TestNoiseOperatorSaltPepperTransformations:
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
         state = {}
-        metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
+        result = operator.apply(Element(data, state=state), key=jax.random.key(0)).data
 
         # Should be unchanged with zero noise
         assert jnp.allclose(result["image"], data["image"])
@@ -456,9 +447,8 @@ class TestNoiseOperatorSaltPepperTransformations:
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
         state = {}
-        metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
+        result = operator.apply(Element(data, state=state), key=jax.random.key(0)).data
 
         # Should have some salt pixels (value 1.0)
         assert jnp.any(result["image"] == 1.0)
@@ -475,9 +465,8 @@ class TestNoiseOperatorSaltPepperTransformations:
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
         state = {}
-        metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
+        result = operator.apply(Element(data, state=state), key=jax.random.key(0)).data
 
         # Should have some pepper pixels (value 0.0)
         assert jnp.any(result["image"] == 0.0)
@@ -497,9 +486,8 @@ class TestNoiseOperatorSaltPepperTransformations:
 
         data = {"image": jnp.ones((32, 32, 3)) * 128.0}
         state = {}
-        metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
+        result = operator.apply(Element(data, state=state), key=jax.random.key(0)).data
 
         # Should have pixels with custom salt/pepper values
         assert jnp.any(result["image"] == 255.0) or jnp.any(result["image"] == 0.0)
@@ -519,13 +507,13 @@ class TestNoiseOperatorSaltPepperTransformations:
 
         # Test with [0, 255] range
         data_255 = {"image": jnp.ones((32, 32, 3)) * 128.0}
-        result_255, _, _ = operator.apply(data_255, {}, {}, key=jax.random.key(0))
+        result_255 = operator.apply(Element(data_255), key=jax.random.key(0)).data
         # Auto-detect should use 255.0 for salt
         assert jnp.any(result_255["image"] == 255.0)
 
         # Test with [0, 1] range
         data_01 = {"image": jnp.ones((32, 32, 3)) * 0.5}
-        result_01, _, _ = operator.apply(data_01, {}, {}, key=jax.random.key(0))
+        result_01 = operator.apply(Element(data_01), key=jax.random.key(0)).data
         # Auto-detect should use 1.0 for salt
         assert jnp.any(result_01["image"] == 1.0)
 
@@ -544,15 +532,12 @@ class TestNoiseOperatorPoissonTransformations:
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
         state = {}
-        metadata = {}
 
-        result, new_state, new_metadata = operator.apply(
-            data, state, metadata, key=jax.random.key(0)
-        )
+        applied = operator.apply(Element(data, state=state), key=jax.random.key(0))
+        result, new_state = applied.data, applied.state
 
         assert result["image"].shape == (32, 32, 3)
         assert new_state == state
-        assert new_metadata == metadata
         # Should be different due to Poisson noise
         assert not jnp.allclose(result["image"], data["image"])
 
@@ -574,7 +559,7 @@ class TestNoiseOperatorPoissonTransformations:
         elements = [Element(data={"image": img}, state={}) for img in images]
         batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-        result_batch = operator.apply_batch(batch)
+        result_batch = operator(batch)
 
         result_images = result_batch.data["image"]
         assert result_images.shape == (4, 32, 32, 3)
@@ -600,10 +585,9 @@ class TestNoiseOperatorPoissonTransformations:
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
         state = {}
-        metadata = {}
 
-        result_low, _, _ = operator_low.apply(data, state, metadata, key=jax.random.key(0))
-        result_high, _, _ = operator_high.apply(data, state, metadata, key=jax.random.key(0))
+        result_low = operator_low.apply(Element(data, state=state), key=jax.random.key(0)).data
+        result_high = operator_high.apply(Element(data, state=state), key=jax.random.key(0)).data
 
         assert result_low["image"].shape == (32, 32, 3)
         assert result_high["image"].shape == (32, 32, 3)
@@ -619,9 +603,8 @@ class TestNoiseOperatorPoissonTransformations:
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
         state = {}
-        metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
+        result = operator.apply(Element(data, state=state), key=jax.random.key(0)).data
 
         assert result["image"].shape == (32, 32, 3)
         # Should be within reasonable bounds
@@ -640,9 +623,8 @@ class TestNoiseOperatorPoissonTransformations:
 
         data = {"image": jnp.ones((32, 32, 3)) * 128.0}
         state = {}
-        metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
+        result = operator.apply(Element(data, state=state), key=jax.random.key(0)).data
 
         assert result["image"].shape == (32, 32, 3)
         # Should be within [0, 255] range after clipping
@@ -662,9 +644,8 @@ class TestNoiseOperatorPoissonTransformations:
         # Poisson requires non-negative values, operator should clamp to 0
         data = {"image": jnp.ones((32, 32, 3)) * -0.5}
         state = {}
-        metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
+        result = operator.apply(Element(data, state=state), key=jax.random.key(0)).data
 
         # Output should be non-negative (clamped internally)
         assert jnp.all(result["image"] >= 0.0)
@@ -683,11 +664,10 @@ class TestNoiseOperatorEdgeCases:
 
         data = {"other_field": jnp.ones((32, 32, 3))}
         state = {}
-        metadata = {}
 
         # Should raise KeyError
         with pytest.raises(KeyError):
-            operator.apply(data, state, metadata, key=jax.random.key(0))
+            operator.apply(Element(data, state=state), key=jax.random.key(0))
 
     def test_different_image_shapes(self):
         """Test with different image shapes (grayscale, RGB, different sizes)."""
@@ -700,17 +680,17 @@ class TestNoiseOperatorEdgeCases:
 
         # Grayscale
         data_gray = {"image": jnp.ones((28, 28, 1)) * 0.5}
-        result_gray, _, _ = operator.apply(data_gray, {}, {}, key=jax.random.key(0))
+        result_gray = operator.apply(Element(data_gray), key=jax.random.key(0)).data
         assert result_gray["image"].shape == (28, 28, 1)
 
         # RGB
         data_rgb = {"image": jnp.ones((32, 32, 3)) * 0.5}
-        result_rgb, _, _ = operator.apply(data_rgb, {}, {}, key=jax.random.key(0))
+        result_rgb = operator.apply(Element(data_rgb), key=jax.random.key(0)).data
         assert result_rgb["image"].shape == (32, 32, 3)
 
         # Large image
         data_large = {"image": jnp.ones((256, 256, 3)) * 0.5}
-        result_large, _, _ = operator.apply(data_large, {}, {}, key=jax.random.key(0))
+        result_large = operator.apply(Element(data_large), key=jax.random.key(0)).data
         assert result_large["image"].shape == (256, 256, 3)
 
     def test_custom_field_key(self):
@@ -727,9 +707,8 @@ class TestNoiseOperatorEdgeCases:
             "other": jnp.ones((10,)),
         }
         state = {}
-        metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
+        result = operator.apply(Element(data, state=state), key=jax.random.key(0)).data
 
         # Custom image should be transformed
         assert not jnp.allclose(result["custom_image"], data["custom_image"])
@@ -747,9 +726,8 @@ class TestNoiseOperatorEdgeCases:
 
         data = {"data": {"image": jnp.ones((32, 32, 3)) * 0.5}}
         state = {}
-        metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))  # type: ignore[reportArgumentType]
+        result = operator.apply(Element(data, state=state), key=jax.random.key(0)).data  # type: ignore[reportArgumentType]
 
         # Nested field should be transformed
         assert not jnp.allclose(result["data"]["image"], data["data"]["image"])  # type: ignore[reportArgumentType]
@@ -766,9 +744,8 @@ class TestNoiseOperatorEdgeCases:
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.9}
         state = {}
-        metadata = {}
 
-        result, _, _ = operator.apply(data, state, metadata, key=jax.random.key(0))
+        result = operator.apply(Element(data, state=state), key=jax.random.key(0)).data
 
         # Values might exceed [0, 1] without clipping
         assert result["image"].shape == (32, 32, 3)
@@ -785,7 +762,7 @@ class TestNoiseOperatorStochasticMode:
         )
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
         batch = {"image": jnp.ones((4, 32, 32, 3)) * 0.5}
-        data, _ = operator._vmap_apply(batch, {})
+        data = operator(batch_ops.from_arrays(batch, states={})).data
         return data["image"], batch["image"]
 
     def test_gaussian_noise_is_drawn_per_record(self):
@@ -822,7 +799,7 @@ class TestNoiseOperatorStochasticMode:
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
         with pytest.raises(KeyError):
-            operator.apply({"other": jnp.ones((32, 32, 3))}, {}, {}, key=jax.random.key(42))
+            operator.apply(Element({"other": jnp.ones((32, 32, 3))}), key=jax.random.key(42))
 
     def test_stochastic_batch_different_noise(self):
         """Test that stochastic mode produces different noise for each batch element."""
@@ -842,7 +819,7 @@ class TestNoiseOperatorStochasticMode:
         elements = [Element(data={"image": img}, state={}) for img in images]
         batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-        result_batch = operator.apply_batch(batch)
+        result_batch = operator(batch)
         result_images = result_batch.data["image"]
 
         # Each batch element should have different noise
@@ -863,11 +840,11 @@ class TestNoiseOperatorJAXCompatibility:
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
         @nnx.jit
-        def jitted_apply(op, data, state, metadata):
-            return op.apply(data, state, metadata, key=jax.random.key(0))
+        def jitted_apply(op: NoiseOperator, element: Element) -> Element:
+            return op.apply(element, key=jax.random.key(0))
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
-        result, _, _ = jitted_apply(operator, data, {}, {})
+        result = jitted_apply(operator, Element(data)).data
 
         assert result["image"].shape == (32, 32, 3)
 
@@ -882,11 +859,11 @@ class TestNoiseOperatorJAXCompatibility:
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
         @nnx.jit
-        def jitted_apply(op, data, state, metadata):
-            return op.apply(data, state, metadata, key=jax.random.key(0))
+        def jitted_apply(op: NoiseOperator, element: Element) -> Element:
+            return op.apply(element, key=jax.random.key(0))
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
-        result, _, _ = jitted_apply(operator, data, {}, {})
+        result = jitted_apply(operator, Element(data)).data
 
         assert result["image"].shape == (32, 32, 3)
 
@@ -900,11 +877,11 @@ class TestNoiseOperatorJAXCompatibility:
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
         @nnx.jit
-        def jitted_apply(op, data, state, metadata):
-            return op.apply(data, state, metadata, key=jax.random.key(0))
+        def jitted_apply(op: NoiseOperator, element: Element) -> Element:
+            return op.apply(element, key=jax.random.key(0))
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
-        result, _, _ = jitted_apply(operator, data, {}, {})
+        result = jitted_apply(operator, Element(data)).data
 
         assert result["image"].shape == (32, 32, 3)
 
@@ -926,7 +903,7 @@ class TestNoiseOperatorJAXCompatibility:
         elements = [Element(data={"image": img}, state={}) for img in images]
         batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-        result_batch = operator.apply_batch(batch)
+        result_batch = operator(batch)
         result_images = result_batch.data["image"]
 
         assert result_images.shape == (8, 32, 32, 3)
@@ -947,7 +924,7 @@ class TestNoiseOperatorCommonPatterns:
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
-        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
+        result = operator.apply(Element(data), key=jax.random.key(0)).data
 
         # Should produce reasonable output with noise applied
         assert result["image"].shape == (32, 32, 3)
@@ -968,7 +945,7 @@ class TestNoiseOperatorCommonPatterns:
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
-        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
+        result = operator.apply(Element(data), key=jax.random.key(0)).data
 
         # Should produce reasonable output with noise applied
         assert result["image"].shape == (32, 32, 3)
@@ -985,7 +962,7 @@ class TestNoiseOperatorCommonPatterns:
         operator = NoiseOperator(config, rngs=nnx.Rngs(0))
 
         data = {"image": jnp.ones((32, 32, 3)) * 0.5}
-        result, _, _ = operator.apply(data, {}, {}, key=jax.random.key(0))
+        result = operator.apply(Element(data), key=jax.random.key(0)).data
 
         # Should produce reasonable output with noise applied
         assert result["image"].shape == (32, 32, 3)

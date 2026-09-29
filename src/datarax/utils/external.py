@@ -11,9 +11,9 @@ from typing import Any, TypeVar
 
 import jax
 from flax import nnx
-from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
+from datarax.core.element_batch import Element
 from datarax.core.operator import call_with_mode_key, OperatorModule, require_key
 
 
@@ -87,29 +87,26 @@ class ExternalLibraryAdapter(OperatorModule):
 
     def apply(
         self,
-        data: PyTree,
-        state: PyTree,
-        metadata: dict[str, Any] | None,
+        element: Element,
         key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
+    ) -> Element:
         """Apply the external function to a single element.
 
         Args:
-            data: Element data dictionary
-            state: Element state (passed through)
-            metadata: Element metadata (passed through)
+            element: The record, without a batch axis.
             key: This record's PRNG key, or ``None`` for a deterministic adapter
             stats: Statistics (unused)
 
         Returns:
-            Tuple of (transformed_data, state, metadata)
+            The transformed record.
         """
+        data = element.data
         del stats
         if self.stochastic:
             key = require_key(key, self)
         transformed_data = call_with_mode_key(self.fn, data, key)
-        return transformed_data, state, metadata
+        return element.replace(data=transformed_data)
 
 
 class PureJaxAdapter(OperatorModule):
@@ -153,16 +150,15 @@ class PureJaxAdapter(OperatorModule):
 
     def apply(
         self,
-        data: PyTree,
-        state: PyTree,
-        metadata: dict[str, Any] | None,
+        element: Element,
         key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
+    ) -> Element:
         """Apply pure function."""
+        data = element.data
         del key, stats
         transformed_data = self.fn(data)
-        return transformed_data, state, metadata
+        return element.replace(data=transformed_data)
 
 
 def to_datarax_operator(

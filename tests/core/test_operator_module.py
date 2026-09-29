@@ -20,6 +20,7 @@ Test Categories (from operator-module-api.md):
 # ========================================================================
 # Example 1: Simple stochastic operator (random brightness)
 from dataclasses import dataclass, fields
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -30,7 +31,7 @@ from substrax.testing.compiles import expect_compiles
 
 from datarax.core import batch_ops
 from datarax.core.config import DataraxModuleConfig, OperatorConfig
-from datarax.core.element_batch import Batch
+from datarax.core.element_batch import Batch, Element
 from datarax.core.module import DataraxModule
 from datarax.core.operator import OperatorModule, require_key
 
@@ -53,7 +54,13 @@ class RandomBrightnessConfig(OperatorConfig):  # type: ignore[reportGeneralTypeI
 class RandomBrightnessOperator(OperatorModule):
     """Stochastic operator that adjusts brightness randomly."""
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        data = element.data
         del stats
         # This record's brightness factor, drawn from its own key.
         record_key = require_key(key, self)
@@ -64,7 +71,7 @@ class RandomBrightnessOperator(OperatorModule):
             maxval=self.config.max_factor,  # type: ignore[reportAttributeAccessIssue]
         )
         transformed_data = {**data, "image": jnp.clip(data["image"] * factor, 0.0, 1.0)}
-        return transformed_data, state, metadata
+        return element.replace(data=transformed_data)
 
 
 @dataclass(frozen=True)
@@ -78,21 +85,27 @@ class NormalizeConfig(OperatorConfig):  # type: ignore[reportGeneralTypeIssues]
 class NormalizeOperator(OperatorModule):
     """Deterministic operator that normalizes data using statistics."""
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
         # Get stats from config
+        data = element.data
         del key
         if stats is None:
             stats = self.get_statistics()
 
         if stats is None:
             # No normalization if no stats available
-            return data, state, metadata
+            return element
 
         mean = stats.get("mean", 0.0)
         std = stats.get("std", 1.0)
 
         transformed_data = {**data, "image": (data["image"] - mean) / std}
-        return transformed_data, state, metadata
+        return element.replace(data=transformed_data)
 
 
 # ========================================================================
@@ -241,7 +254,9 @@ class TestOperatorModuleStochasticMode:
         )
 
         for batch_size in (1, 8, 32):
-            data, _ = operator._vmap_apply({"image": jnp.ones((batch_size, 8, 8, 3)) * 0.5}, {})
+            data = operator(
+                batch_ops.from_arrays({"image": jnp.ones((batch_size, 8, 8, 3)) * 0.5}, states={})
+            ).data
 
             assert self._factors_from(data).shape == (batch_size,)
 
@@ -254,7 +269,9 @@ class TestOperatorModuleStochasticMode:
             rngs=nnx.Rngs(42),
         )
 
-        data, _ = operator._vmap_apply({"image": jnp.ones((100, 8, 8, 3)) * 0.5}, {})
+        data = operator(
+            batch_ops.from_arrays({"image": jnp.ones((100, 8, 8, 3)) * 0.5}, states={})
+        ).data
 
         factors = self._factors_from(data)
         assert jnp.all(factors >= 0.5)
@@ -267,9 +284,9 @@ class TestOperatorModuleStochasticMode:
         )
         data = {"image": jnp.ones((8, 8, 3)) * 0.5}
 
-        first, _, _ = operator.apply(data, {}, None, key=jax.random.key(0))
-        again, _, _ = operator.apply(data, {}, None, key=jax.random.key(0))
-        other, _, _ = operator.apply(data, {}, None, key=jax.random.key(1))
+        first = operator.apply(Element(data), key=jax.random.key(0)).data
+        again = operator.apply(Element(data), key=jax.random.key(0)).data
+        other = operator.apply(Element(data), key=jax.random.key(1)).data
 
         assert jnp.array_equal(first["image"], again["image"])
         assert not jnp.allclose(first["image"], other["image"])
@@ -280,7 +297,9 @@ class TestOperatorModuleStochasticMode:
             RandomBrightnessConfig(stochastic=True, stream_name="augment"), rngs=nnx.Rngs(42)
         )
 
-        data, _ = operator._vmap_apply({"image": jnp.ones((10, 8, 8, 3)) * 0.5}, {})
+        data = operator(
+            batch_ops.from_arrays({"image": jnp.ones((10, 8, 8, 3)) * 0.5}, states={})
+        ).data
 
         # All 10 values should be different (with high probability)
         assert len(jnp.unique(self._factors_from(data))) >= 8
@@ -290,9 +309,15 @@ class TestOperatorModuleStochasticMode:
         config = RandomBrightnessConfig(stochastic=True, stream_name="augment")
         batch = {"image": jnp.ones((32, 8, 8, 3)) * 0.5}
 
-        first, _ = RandomBrightnessOperator(config, rngs=nnx.Rngs(42))._vmap_apply(batch, {})
-        second, _ = RandomBrightnessOperator(config, rngs=nnx.Rngs(42))._vmap_apply(batch, {})
-        other, _ = RandomBrightnessOperator(config, rngs=nnx.Rngs(7))._vmap_apply(batch, {})
+        first = RandomBrightnessOperator(config, rngs=nnx.Rngs(42))(
+            batch_ops.from_arrays(batch, states={})
+        ).data
+        second = RandomBrightnessOperator(config, rngs=nnx.Rngs(42))(
+            batch_ops.from_arrays(batch, states={})
+        ).data
+        other = RandomBrightnessOperator(config, rngs=nnx.Rngs(7))(
+            batch_ops.from_arrays(batch, states={})
+        ).data
 
         assert jnp.array_equal(first["image"], second["image"])
         assert not jnp.allclose(first["image"], other["image"])
@@ -310,7 +335,7 @@ class TestOperatorModuleStochasticMode:
         batch = create_test_batch(data={"image": jnp.ones((8, 64, 64, 3)) * 0.5})
 
         # Apply operator
-        transformed = operator.apply_batch(batch)
+        transformed = operator(batch)
 
         # Should have same batch structure
         assert transformed.batch_size == 8
@@ -335,7 +360,7 @@ class TestOperatorModuleStochasticMode:
         )
 
         # Should not raise (stream exists in rngs)
-        transformed = operator.apply_batch(batch)
+        transformed = operator(batch)
         assert transformed.batch_size == 4
 
 
@@ -345,23 +370,34 @@ _SEEN_KEYS: list = []
 class KeyDrawingOperator(OperatorModule):
     """An operator written to the key contract: it draws from the record's own key."""
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
         """Record what the framework passed, then scale by a draw from that key."""
-        del metadata, stats
+        data = element.data
+        del stats
         _SEEN_KEYS.append(key)
         record_key = require_key(key, self)
         factor = jax.random.uniform(record_key, (), minval=0.5, maxval=1.5)
-        return {**data, "image": data["image"] * factor}, state, None
+        return element.replace(data={**data, "image": data["image"] * factor})
 
 
 class KeyRecordingPassthrough(OperatorModule):
     """A spy that records its fourth argument and draws nothing, in either mode."""
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
         """Record what the framework passed and return the record unchanged."""
-        del metadata, stats
+        del stats
         _SEEN_KEYS.append(key)
-        return data, state, None
+        return element
 
 
 class LearnableScaleOperator(OperatorModule):
@@ -371,11 +407,17 @@ class LearnableScaleOperator(OperatorModule):
         super().__init__(config, rngs=rngs)
         self.scale = nnx.Param(jnp.asarray(2.0))
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
         """Scale by the parameter times a draw from the record's key."""
-        del metadata, stats
+        data = element.data
+        del stats
         jitter = jax.random.uniform(require_key(key, self), (), minval=0.5, maxval=1.5)
-        return {**data, "image": data["image"] * self.scale[...] * jitter}, state, None
+        return element.replace(data={**data, "image": data["image"] * self.scale[...] * jitter})
 
 
 class TestOperatorKeys:
@@ -437,8 +479,8 @@ class TestOperatorKeys:
         operator = self._stochastic()
         batch = self._batch()
 
-        first, _ = operator._vmap_apply(batch, {})
-        second, _ = operator._vmap_apply(batch, {})
+        first = operator(batch_ops.from_arrays(batch, states={})).data
+        second = operator(batch_ops.from_arrays(batch, states={})).data
         positional = operator(self._identified(batch, jnp.arange(4)))
 
         assert jnp.array_equal(first["image"], second["image"])
@@ -481,9 +523,9 @@ class TestOperatorKeys:
 
     def test_two_operators_built_from_one_seed_agree_and_other_seeds_differ(self):
         """The base key is drawn from the caller's stream, so the seed decides the draws."""
-        first, _ = self._stochastic(0)._vmap_apply(self._batch(), {})
-        second, _ = self._stochastic(0)._vmap_apply(self._batch(), {})
-        other, _ = self._stochastic(7)._vmap_apply(self._batch(), {})
+        first = self._stochastic(0)(batch_ops.from_arrays(self._batch(), states={})).data
+        second = self._stochastic(0)(batch_ops.from_arrays(self._batch(), states={})).data
+        other = self._stochastic(7)(batch_ops.from_arrays(self._batch(), states={})).data
 
         assert jnp.array_equal(first["image"], second["image"])
         assert not jnp.allclose(first["image"], other["image"])
@@ -511,7 +553,9 @@ class TestOperatorKeys:
     def test_operators_differing_only_in_their_key_share_one_trace(self):
         """The key is state, not graphdef, so a second seed compiles nothing new."""
         counter = TraceCounter()
-        apply = nnx.jit(counter.wrap(lambda operator, batch: operator._vmap_apply(batch, {})[0]))
+        apply = nnx.jit(
+            counter.wrap(lambda operator, data: operator(batch_ops.from_arrays(data)).data)
+        )
 
         with counter.expect(new_traces=1):
             apply(self._stochastic(0), self._batch())
@@ -548,10 +592,10 @@ class TestOperatorKeys:
                 super().__init__(config, rngs=rngs)
                 self.rngs = rngs
 
-        plain, _ = self._stochastic()._vmap_apply(self._batch(), {})
-        keeping, _ = KeepsRngs(self._CONFIG, rngs=nnx.Rngs(augment=0))._vmap_apply(
-            self._batch(), {}
-        )
+        plain = self._stochastic()(batch_ops.from_arrays(self._batch(), states={})).data
+        keeping = KeepsRngs(self._CONFIG, rngs=nnx.Rngs(augment=0))(
+            batch_ops.from_arrays(self._batch(), states={})
+        ).data
 
         assert jnp.array_equal(plain["image"], keeping["image"])
 
@@ -576,7 +620,7 @@ class TestOperatorKeyContract:
 
         KeyRecordingPassthrough(
             OperatorConfig(stochastic=True, stream_name="augment"), rngs=nnx.Rngs(augment=0)
-        )._vmap_apply({"image": jnp.ones((8, 4))}, {})
+        )(batch_ops.from_arrays({"image": jnp.ones((8, 4))}, states={}))
 
         assert _SEEN_KEYS, "the framework never called apply"
         assert all(key is not None for key in _SEEN_KEYS)
@@ -585,8 +629,8 @@ class TestOperatorKeyContract:
         """The mirror of the case above: without it, a spy recording nothing would pass both."""
         _SEEN_KEYS.clear()
 
-        KeyRecordingPassthrough(OperatorConfig(stochastic=False))._vmap_apply(
-            {"image": jnp.ones((8, 4))}, {}
+        KeyRecordingPassthrough(OperatorConfig(stochastic=False))(
+            batch_ops.from_arrays({"image": jnp.ones((8, 4))}, states={})
         )
 
         assert _SEEN_KEYS, "the framework never called apply"
@@ -594,7 +638,9 @@ class TestOperatorKeyContract:
 
     def test_each_record_is_transformed_by_its_own_draw(self):
         """Eight records give eight different factors, so no draw is shared across the batch."""
-        data, _ = self._stochastic()._vmap_apply({"image": jnp.ones((8, 4))}, {})
+        data = self._stochastic()(
+            batch_ops.from_arrays({"image": jnp.ones((8, 4))}, states={})
+        ).data
 
         means = {float(jnp.mean(data["image"][index])) for index in range(8)}
         assert len(means) == 8
@@ -624,16 +670,15 @@ class TestOperatorKeyContract:
 class TestOperatorModuleDeterministicMode:
     """Test deterministic operator functionality."""
 
-    def test_apply_without_random_params(self):
-        """Test apply() in deterministic mode (no random_params)."""
+    def test_apply_without_a_key(self):
+        """Test apply() in deterministic mode (no key)."""
         config = NormalizeConfig(stochastic=False)
         operator = NormalizeOperator(config, statistics={"mean": 0.5, "std": 0.2})
 
         data = {"image": jnp.ones((64, 64, 3)) * 0.7}
         state = {}
-        metadata = None
 
-        transformed_data, new_state, new_metadata = operator.apply(data, state, metadata, key=None)
+        transformed_data = operator.apply(Element(data, state=state), key=None).data
 
         # Should normalize: (0.7 - 0.5) / 0.2 = 1.0
         expected = jnp.ones((64, 64, 3)) * 1.0
@@ -646,11 +691,10 @@ class TestOperatorModuleDeterministicMode:
 
         data = {"image": jnp.array([[[0.3, 0.7, 0.9]]])}
         state = {}
-        metadata = None
 
         # Apply twice
-        result1, _, _ = operator.apply(data, state, metadata)
-        result2, _, _ = operator.apply(data, state, metadata)
+        result1 = operator.apply(Element(data, state=state)).data
+        result2 = operator.apply(Element(data, state=state)).data
 
         # Results should be identical
         assert jnp.array_equal(result1["image"], result2["image"])
@@ -666,7 +710,7 @@ class TestOperatorModuleDeterministicMode:
             metadata_list=[None] * 8,
         )
 
-        transformed = operator.apply_batch(batch)
+        transformed = operator(batch)
 
         # All elements should be normalized to 1.0
         expected = jnp.ones((8, 64, 64, 3)) * 1.0
@@ -685,7 +729,7 @@ class TestOperatorModuleDeterministicMode:
         )
 
         # Should work fine without rngs
-        transformed = operator.apply_batch(batch)
+        transformed = operator(batch)
         assert transformed.batch_size == 4
 
 
@@ -707,7 +751,7 @@ class TestOperatorModuleBatchProcessing:
             data={"image": jnp.zeros((0, 64, 64, 3))}, states={}, metadata_list=[]
         )
 
-        transformed = operator.apply_batch(batch)
+        transformed = operator(batch)
 
         # Should return unchanged empty batch
         assert transformed.batch_size == 0
@@ -726,7 +770,7 @@ class TestOperatorModuleBatchProcessing:
             data={"image": jnp.ones((1, 64, 64, 3)) * 0.5}, states={}, metadata_list=[None]
         )
 
-        transformed = operator.apply_batch(batch)
+        transformed = operator(batch)
 
         assert transformed.batch_size == 1
         assert transformed.data["image"].shape == (1, 64, 64, 3)
@@ -747,7 +791,7 @@ class TestOperatorModuleBatchProcessing:
             metadata_list=[None] * batch_size,
         )
 
-        transformed = operator.apply_batch(batch)
+        transformed = operator(batch)
 
         assert transformed.batch_size == batch_size
         # Each element should have different brightness (with high probability)
@@ -767,7 +811,7 @@ class TestOperatorModuleBatchProcessing:
             metadata_list=[None] * batch_size,
         )
 
-        transformed = operator.apply_batch(batch)
+        transformed = operator(batch)
 
         assert transformed.batch_size == batch_size
         # All elements should be normalized identically
@@ -795,7 +839,7 @@ class TestOperatorModuleBatchProcessing:
             data={"image": batch_data}, states={}, metadata_list=[None, None, None]
         )
 
-        transformed = operator.apply_batch(batch)
+        transformed = operator(batch)
 
         # Each element should maintain its relative brightness pattern
         # (element 2 should still be brighter than element 0)
@@ -829,7 +873,7 @@ class TestOperatorModuleJITCompatibility:
         )
 
         # Should compile without errors (already decorated with @nnx.jit)
-        transformed = operator.apply_batch(batch)
+        transformed = operator(batch)
         assert transformed.batch_size == 4
 
     def test_apply_batch_compiles_deterministic(self):
@@ -844,7 +888,7 @@ class TestOperatorModuleJITCompatibility:
         )
 
         # Should compile without errors
-        transformed = operator.apply_batch(batch)
+        transformed = operator(batch)
         assert transformed.batch_size == 4
 
     def test_static_branch_compilation(self):
@@ -869,16 +913,14 @@ class TestOperatorModuleJITCompatibility:
         config = NormalizeConfig(stochastic=False)
         operator = NormalizeOperator(config, statistics={"mean": 0.5, "std": 0.2})
 
-        data = {"image": jnp.array([[[0.3, 0.7]]])}
-        state = {}
-        metadata = None
+        element = Element({"image": jnp.array([[[0.3, 0.7]]])})
 
         # Call multiple times
-        results = [operator.apply(data, state, metadata) for _ in range(5)]
+        results = [operator.apply(element) for _ in range(5)]
 
         # All results should be identical
         for result in results[1:]:
-            assert jnp.array_equal(result[0]["image"], results[0][0]["image"])
+            assert jnp.array_equal(result.data["image"], results[0].data["image"])
 
 
 # ========================================================================
@@ -889,7 +931,7 @@ class TestOperatorModuleJITCompatibility:
 class TestOperatorModuleRandomParams:
     """Test random parameter generation and distribution."""
 
-    def test_random_params_distributed_via_vmap(self):
+    def test_keys_distributed_via_vmap(self):
         """Test that random params are correctly distributed to elements via vmap."""
         config = RandomBrightnessConfig(
             stochastic=True,
@@ -905,7 +947,7 @@ class TestOperatorModuleRandomParams:
             metadata_list=[None] * 8,
         )
 
-        transformed = operator.apply_batch(batch)
+        transformed = operator(batch)
 
         # Each element should have received different random param
         # (resulting in different brightness values)
@@ -924,7 +966,7 @@ class TestOperatorModuleRandomParams:
             NormalizeConfig(stochastic=False), statistics={"mean": 0.5, "std": 0.2}
         )
 
-        data, _, _ = operator.apply({"image": jnp.ones((4, 4, 3)) * 0.7}, {}, None)
+        data = operator.apply(Element({"image": jnp.ones((4, 4, 3)) * 0.7})).data
 
         assert jnp.allclose(data["image"], jnp.ones((4, 4, 3)))
 
@@ -953,7 +995,9 @@ class TestOperatorModuleStatistics:
             NormalizeConfig(stochastic=False), statistics={"mean": 0.5, "std": 0.2}
         )
 
-        computed = operator.compute_statistics({"image": jnp.ones((4, 8, 8, 3))})
+        computed = operator.compute_statistics(
+            batch_ops.from_arrays({"image": jnp.ones((4, 8, 8, 3))})
+        )
 
         assert computed is not None
         assert {name: float(value) for name, value in computed.items()} == pytest.approx(
@@ -964,14 +1008,17 @@ class TestOperatorModuleStatistics:
         """An operator that fits statistics to each batch overrides compute_statistics."""
 
         class BatchFittedNormalize(NormalizeOperator):
-            def compute_statistics(self, batch_data):
-                image = batch_data["image"]
+            def compute_statistics(self, batch: Batch) -> dict[str, Any] | None:
+                image = batch.data["image"]
                 return {"mean": jnp.mean(image), "std": jnp.std(image) + 1e-6}
 
         operator = BatchFittedNormalize(NormalizeConfig(stochastic=False))
 
-        stats = operator.compute_statistics({"image": jnp.ones((4, 64, 64, 3)) * 0.7})
+        stats = operator.compute_statistics(
+            batch_ops.from_arrays({"image": jnp.ones((4, 64, 64, 3)) * 0.7})
+        )
 
+        assert stats is not None
         assert jnp.isclose(stats["mean"], 0.7, rtol=1e-4)
 
     def test_compute_statistics_is_not_memoized(self):
@@ -979,15 +1026,15 @@ class TestOperatorModuleStatistics:
         call_count = 0
 
         class CountingNormalize(NormalizeOperator):
-            def compute_statistics(self, batch_data):
+            def compute_statistics(self, batch: Batch) -> dict[str, Any] | None:
                 nonlocal call_count
                 call_count += 1
-                return {"mean": jnp.mean(batch_data["image"]), "std": 1.0}
+                return {"mean": jnp.mean(batch.data["image"]), "std": 1.0}
 
         operator = CountingNormalize(NormalizeConfig(stochastic=False))
 
-        operator.compute_statistics({"image": jnp.ones((4, 8, 8, 3))})
-        operator.compute_statistics({"image": jnp.zeros((4, 8, 8, 3))})
+        operator.compute_statistics(batch_ops.from_arrays({"image": jnp.ones((4, 8, 8, 3))}))
+        operator.compute_statistics(batch_ops.from_arrays({"image": jnp.zeros((4, 8, 8, 3))}))
 
         assert call_count == 2
 
@@ -1063,8 +1110,8 @@ class TestOperatorModuleScanBatchStrategy:
             metadata_list=[None] * 4,
         )
 
-        result_vmap = op_vmap.apply_batch(batch)
-        result_scan = op_scan.apply_batch(batch)
+        result_vmap = op_vmap(batch)
+        result_scan = op_scan(batch)
 
         assert jnp.allclose(result_vmap.data["image"], result_scan.data["image"]), (
             "Scan and vmap should produce identical results for deterministic ops"
@@ -1086,7 +1133,7 @@ class TestOperatorModuleScanBatchStrategy:
             metadata_list=[None] * 4,
         )
 
-        result = operator.apply_batch(batch)
+        result = operator(batch)
         assert result.batch_size == 4
         assert result.data["image"].shape == (4, 32, 32, 3)
 
@@ -1101,7 +1148,7 @@ class TestOperatorModuleScanBatchStrategy:
             metadata_list=[None],
         )
 
-        result = op.apply_batch(batch)
+        result = op(batch)
         assert result.batch_size == 1
         expected = jnp.ones((1, 32, 32, 3)) * 1.0  # (0.7 - 0.5) / 0.2
         assert jnp.allclose(result.data["image"], expected)
@@ -1145,7 +1192,7 @@ class TestOperatorStatisticsStore:
             data={"image": jnp.ones((1, 4, 4, 3)) * 0.7}, states={}, metadata_list=[None]
         )
 
-        result = self._fitted().apply_batch(batch)
+        result = self._fitted()(batch)
 
         assert jnp.allclose(result.data["image"], jnp.ones((1, 4, 4, 3)))
 
@@ -1245,16 +1292,22 @@ class TestComputeStatisticsReachesApply:
         """
 
         class BatchFitted(NormalizeOperator):
-            def compute_statistics(self, batch_data):
-                image = batch_data["image"]
+            def compute_statistics(self, batch: Batch) -> dict[str, Any] | None:
+                image = batch.data["image"]
                 return {"mean": jnp.mean(image), "std": jnp.std(image) + 1e-6}
 
-            def apply(self, data, state, metadata, key=None, stats=None):
+            def apply(
+                self,
+                element: Element,
+                key: jax.Array | None = None,
+                stats: dict[str, Any] | None = None,
+            ) -> Element:
+                data = element.data
                 del key
                 if stats is None:
                     raise AssertionError("the batch path passed no statistics")
                 normalized = (data["image"] - stats["mean"]) / stats["std"]
-                return {**data, "image": normalized}, state, metadata
+                return element.replace(data={**data, "image": normalized})
 
         return BatchFitted(NormalizeConfig(stochastic=False, batch_strategy=batch_strategy))
 
@@ -1264,15 +1317,21 @@ class TestComputeStatisticsReachesApply:
         calls: list[int] = []
 
         class Counting(NormalizeOperator):
-            def compute_statistics(self, batch_data):
+            def compute_statistics(self, batch: Batch) -> dict[str, Any] | None:
                 calls.append(1)
-                return {"mean": jnp.mean(batch_data["image"]), "std": 1.0}
+                return {"mean": jnp.mean(batch.data["image"]), "std": 1.0}
 
-            def apply(self, data, state, metadata, key=None, stats=None):
+            def apply(
+                self,
+                element: Element,
+                key: jax.Array | None = None,
+                stats: dict[str, Any] | None = None,
+            ) -> Element:
+                data = element.data
                 del key
                 if stats is None:
                     raise AssertionError("the batch path passed no statistics")
-                return {**data, "image": data["image"] - stats["mean"]}, state, metadata
+                return element.replace(data={**data, "image": data["image"] - stats["mean"]})
 
         return Counting(NormalizeConfig(stochastic=False)), calls
 
@@ -1325,6 +1384,7 @@ class TestComputeStatisticsReachesApply:
 
         out_data = operator.apply_batch(
             batch_ops.from_arrays({"image": jnp.ones((4, 1, 1, 1), jnp.float32)}),
+            None,
             {"mean": 0.25, "std": 1.0},
         ).data
 

@@ -20,6 +20,7 @@ from typing import Any, Literal
 import jax
 import jax.numpy as jnp
 from flax import nnx
+from jaxtyping import PyTree
 
 from datarax.core.config import SamplerConfig
 from datarax.core.sampler import SamplerModule
@@ -96,7 +97,7 @@ def _gather_many(buffer: Any, indices: jax.Array) -> Any:
     return jax.tree.map(gather_leaf, buffer)
 
 
-class BufferSampler(SamplerModule):
+class BufferSampler(SamplerModule[PyTree]):
     """Stateful replay buffer with atomic write+sample per ``next`` call."""
 
     config: BufferSamplerConfig  # pyright: ignore[reportIncompatibleVariableOverride]

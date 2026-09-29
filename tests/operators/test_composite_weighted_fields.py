@@ -54,7 +54,6 @@ def _weighted(operators: Sequence[OperatorModule], **config) -> CompositeOperato
     return CompositeOperatorModule(
         CompositeOperatorConfig(strategy=CompositionStrategy.WEIGHTED_PARALLEL, **config),
         operators=operators,
-        rngs=nnx.Rngs(0),
     )
 
 
@@ -159,7 +158,7 @@ def test_gradients_reach_the_weight_logits() -> None:
     record = _record()
 
     def loss(model: CompositeOperatorModule) -> jax.Array:
-        data, _, _ = model.apply(record, {}, None)
+        data = model.apply(Element(record)).data
         return jnp.sum(data["signal"])
 
     grads = nnx.grad(loss, argnums=nnx.DiffState(0, nnx.Param))(mix)
@@ -174,7 +173,7 @@ def test_weight_key_mixes_only_the_named_fields() -> None:
         operators=[_scale(2.0), _scale(3.0)], weight_key="op_weights", mix_fields=("signal",)
     )
 
-    data, _, _ = mix.apply({**_record(), "op_weights": jnp.array([0.7, 0.3])}, {}, None)
+    data = mix.apply(Element({**_record(), "op_weights": jnp.array([0.7, 0.3])})).data
 
     np.testing.assert_allclose(np.asarray(data["signal"]), [23.0], rtol=1e-6)
     np.testing.assert_array_equal(np.asarray(data["f0_hz"]), [440.0])
@@ -221,7 +220,6 @@ def test_only_weighted_parallel_composites_have_mixture_weights() -> None:
             strategy=CompositionStrategy.SEQUENTIAL,
         ),
         operators=[_scale(2.0)],
-        rngs=nnx.Rngs(0),
     )
 
     with pytest.raises(ValueError, match="WEIGHTED_PARALLEL"):

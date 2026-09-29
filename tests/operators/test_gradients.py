@@ -13,12 +13,14 @@ import importlib
 import pkgutil
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 import pytest
 from flax import nnx
 from jax.test_util import check_grads
+from substrax.testing.gradients import check_input_gradients, check_parameter_gradients
 
 import datarax.operators as operators_package
 from datarax.core import batch_ops, cross_modal, modality
@@ -27,6 +29,7 @@ from datarax.core.config import (
     MapOperatorConfig,
 )
 from datarax.core.cross_modal import CrossModalOperator, CrossModalOperatorConfig
+from datarax.core.element_batch import Element
 from datarax.core.operator import OperatorModule
 from datarax.operators import ElementOperator, MapOperator
 from datarax.operators.batch_mix_operator import BatchMixOperator, BatchMixOperatorConfig
@@ -202,7 +205,6 @@ _INPUT_FAMILIES: dict[str, Family] = {
             # 1.2 keeps [0.3, 0.7] inside Brightness's clip range after its +-0.1 shift; a larger
             # scale puts values beside the clip, where finite differences cross the kink.
             operators=[_map_scale(1.2), _brightness()],
-            rngs=_rngs(),
         )
     ),
     "composite ensemble mean": Family(
@@ -289,52 +291,6 @@ def test_a_poisson_sample_passes_no_gradient_to_its_input() -> None:
     assert jnp.all(gradient == 0.0)
 
 
-def _float64(tree: nnx.State) -> nnx.State:
-    return jax.tree.map(
-        lambda leaf: leaf.astype(jnp.float64) if jnp.issubdtype(leaf.dtype, jnp.floating) else leaf,
-        tree,
-    )
-
-
-def _input_check_in_float64(
-    module: OperatorModule,
-    loss: Callable[[OperatorModule, jax.Array], jax.Array],
-    value: jax.Array,
-) -> None:
-    """Check ``loss``'s input gradient on a float64 copy of the module."""
-    graphdef, state = nnx.split(module, graph=False)
-    with jax.enable_x64(True):
-        copy = nnx.merge(graphdef, _float64(state))
-        check_grads(
-            jax.jit(lambda value: loss(copy, value)),
-            (value.astype(jnp.float64),),
-            order=1,
-            modes=("fwd", "rev"),
-        )
-
-
-def _parameter_check(
-    module: OperatorModule, loss: Callable[[OperatorModule], jax.Array]
-) -> nnx.State:
-    """Check the gradient of ``loss`` in the module's parameters, in float64; return it.
-
-    A parameter's derivative is a sum over every output element, which a float32 finite
-    difference cannot resolve at JAX's float32 tolerance: measured for the learnable composite
-    weights and the loudness parameters, float32 missed by 0.5% and 1.8% while float64 matched to
-    1e-9 at every step from 1e-3 to 1e-6. The derivative is the same code in either precision.
-    """
-    graphdef, params, rest = nnx.split(module, nnx.Param, ..., graph=False)
-
-    with jax.enable_x64(True):
-        params64, rest64 = _float64(params), _float64(rest)
-
-        def of_params(params: nnx.State) -> jax.Array:
-            return loss(nnx.merge(graphdef, params, rest64))
-
-        check_grads(jax.jit(of_params), (params64,), order=1, modes=("fwd", "rev"))
-        return jax.jit(jax.grad(of_params))(params64)
-
-
 class _Fuse(CrossModalOperator):
     """Mixes two fields with a learnable weight."""
 
@@ -342,10 +298,16 @@ class _Fuse(CrossModalOperator):
         super().__init__(config)
         self.mix = nnx.Param(jnp.asarray(0.3))
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        data = element.data
         del key, stats
         fused = self.mix[...] * data["image"] + (1.0 - self.mix[...]) * data["mask"]
-        return {**data, "fused": fused}, state, metadata
+        return element.replace(data={**data, "fused": fused})
 
 
 def test_a_cross_modal_parameter_gradient_matches_finite_differences() -> None:
@@ -358,9 +320,7 @@ def test_a_cross_modal_parameter_gradient_matches_finite_differences() -> None:
         out = out.data
         return jnp.sum(out["fused"] * weights)
 
-    gradient = _parameter_check(fuse, loss)
-
-    assert gradient["mix"][...] != 0.0
+    check_parameter_gradients(fuse, loss)
 
 
 def test_learnable_composite_weights_have_the_finite_difference_gradient() -> None:
@@ -380,9 +340,7 @@ def test_learnable_composite_weights_have_the_finite_difference_gradient() -> No
         out = out.data
         return jnp.sum(out["image"] * weights)
 
-    gradient = _parameter_check(composite, loss)
-
-    assert jnp.any(jax.tree.leaves(gradient)[0] != 0.0)
+    check_parameter_gradients(composite, loss)
 
 
 def _audio(seconds: float = 1.0) -> jax.Array:
@@ -394,20 +352,18 @@ def test_loudness_input_and_parameter_gradients_match_finite_differences() -> No
     operator = LoudnessOperator(LoudnessConfig(), rngs=nnx.Rngs(0))
 
     def from_input(model: OperatorModule, audio: jax.Array) -> jax.Array:
-        out, _, _ = model.apply({"audio": audio}, {}, None)
+        out = model.apply(Element({"audio": audio})).data
         return jnp.mean(out["loudness"])
 
     # A derivative summed over 16000 samples: checked in float64, as the parameters are (a float64
     # probe converged to 1.7e-9 as the step shrank from 1e-3 to 1e-5).
-    _input_check_in_float64(operator, from_input, _audio())
-    assert jnp.any(jax.grad(lambda audio: from_input(operator, audio))(_audio()) != 0.0)
+    check_input_gradients(operator, from_input, _audio())
 
     def loss(model: OperatorModule) -> jax.Array:
-        out, _, _ = model.apply({"audio": _audio()}, {}, None)
+        out = model.apply(Element({"audio": _audio()})).data
         return jnp.mean(out["loudness"])
 
-    gradient = _parameter_check(operator, loss)
-    assert any(jnp.any(leaf != 0.0) for leaf in jax.tree.leaves(gradient))
+    check_parameter_gradients(operator, loss)
 
 
 def test_the_differentiable_pitch_decoder_matches_finite_differences() -> None:
@@ -439,7 +395,7 @@ def test_crepe_f0_parameter_gradients_are_finite_and_reach_the_network() -> None
     graphdef, params, rest = nnx.split(operator, nnx.Param, ..., graph=False)
 
     def loss(params: nnx.State) -> jax.Array:
-        out, _, _ = nnx.merge(graphdef, params, rest).apply({"audio": _audio()}, {}, None)
+        out = nnx.merge(graphdef, params, rest).apply(Element({"audio": _audio()})).data
         return jnp.mean(out["f0_hz"])
 
     leaves = jax.tree.leaves(jax.jit(jax.grad(loss))(params))

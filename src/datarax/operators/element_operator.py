@@ -21,8 +21,8 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+import jax
 from flax import nnx
-from jaxtyping import PyTree
 
 from datarax.core.config import ElementOperatorConfig
 from datarax.core.element_batch import Element
@@ -108,27 +108,19 @@ class ElementOperator(OperatorModule):
 
     def apply(
         self,
-        data: PyTree,
-        state: PyTree,
-        metadata: dict[str, Any] | None,
-        key: PRNGKey | None = None,
+        element: Element,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
-        """Apply element transformation.
-
-        Constructs an Element from data and state, passes it to the user function,
-        and extracts results back.
+    ) -> Element:
+        """Apply the user function to the record.
 
         Args:
-            data: Element data PyTree
-            state: Element state PyTree
-            metadata: Element metadata dict (unchanged - not vmapped)
+            element: The record, without a batch axis.
             key: This record's PRNG key, or ``None`` for a deterministic operator
             stats: Optional batch statistics (unused)
 
         Returns:
-            Tuple of (transformed_data, transformed_state, transformed_metadata)
+            The transformed record.
         """
         del stats
-        transformed = call_with_mode_key(self.fn, Element(data, state=state), key)
-        return transformed.data, transformed.state, metadata
+        return call_with_mode_key(self.fn, element, key)

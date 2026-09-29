@@ -121,7 +121,7 @@ config = CompositeOperatorConfig(
     temperature=1.0,
 )
 weighted = CompositeOperatorModule(config, operators=[brightness, contrast],  # both declare field_key="image"
-    rngs=nnx.Rngs(0))
+    )
 
 # The mixture the composite currently applies: softmax(weight_logits / temperature)
 current_weights = weighted.mixture_weights()

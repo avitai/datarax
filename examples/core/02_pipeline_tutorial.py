@@ -226,7 +226,6 @@ augmentation_config = CompositeOperatorConfig(
 augmentation_pipeline = CompositeOperatorModule(
     augmentation_config,
     operators=[flipper, noise_adder],  # List of operators to chain
-    rngs=nnx.Rngs(augment=999),
 )
 
 print("Created composite operator with SEQUENTIAL strategy (2 operators)")

@@ -7,7 +7,8 @@ This module tests the BatchMixOperator, which performs batch-level sample mixing
 Test Coverage:
 - Config validation (mode, alpha, field names)
 - MixUp mode (linear interpolation, batch mixing)
-- CutMix mode (patch mixing, label adjustment)
+- CutMix mode (patch mixing; the fraction kept as lambda)
+- Labels untouched; partner and lambda written for the loss
 - Batch size edge cases (single element, empty batch)
 - JAX compatibility (JIT, reproducibility)
 - Stochastic behavior (different keys, deterministic with same seed)
@@ -19,7 +20,8 @@ import pytest
 from flax import nnx
 
 from datarax.core import batch_ops
-from datarax.core.element_batch import Element
+from datarax.core.element_batch import Batch, Element
+from datarax.core.state_keys import MIX_LAMBDA, MIX_PARTNER
 from datarax.operators.batch_mix_operator import (
     BatchMixOperator,
     BatchMixOperatorConfig,
@@ -75,11 +77,6 @@ class TestBatchMixOperatorConfig:
         config = BatchMixOperatorConfig(mode="cutmix", data_field="pixels")
         assert config.data_field == "pixels"
 
-    def test_config_custom_label_field(self):
-        """Custom label field should be accepted."""
-        config = BatchMixOperatorConfig(mode="cutmix", label_field="targets")
-        assert config.label_field == "targets"
-
 
 class TestBatchMixOperatorInit:
     """Test BatchMixOperator initialization."""
@@ -115,7 +112,7 @@ class TestBatchMixOperatorMixUp:
     def test_mixup_produces_mixed_values(self):
         """Verify mixup produces linear combinations of samples."""
         rngs = nnx.Rngs({"batch_mix": 42})
-        config = BatchMixOperatorConfig(mode="mixup", alpha=1.0)
+        config = BatchMixOperatorConfig(mode="mixup", alpha=1.0, data_field="value")
         op = BatchMixOperator(config, rngs=rngs)
 
         # Create batch with distinct values
@@ -142,7 +139,7 @@ class TestBatchMixOperatorMixUp:
     def test_mixup_preserves_shape(self):
         """Verify mixup preserves batch shape."""
         rngs = nnx.Rngs({"batch_mix": 42})
-        config = BatchMixOperatorConfig(mode="mixup")
+        config = BatchMixOperatorConfig(mode="mixup", data_field="arr")
         op = BatchMixOperator(config, rngs=rngs)
 
         batch = batch_ops.from_stacked(
@@ -157,27 +154,21 @@ class TestBatchMixOperatorMixUp:
         result = op(batch)
         assert result.data["arr"].shape == (2, 3, 4)
 
-    def test_mixup_mixes_multiple_fields(self):
-        """Verify mixup mixes all data fields."""
+    def test_mixup_mixes_only_its_data_field(self):
+        """Every other field, labels included, is left as it was."""
         rngs = nnx.Rngs({"batch_mix": 42})
-        config = BatchMixOperatorConfig(mode="mixup")
-        op = BatchMixOperator(config, rngs=rngs)
-
-        batch = batch_ops.from_stacked(
-            batch_ops.stack(
-                [
-                    Element(data={"x": jnp.array([0.0]), "y": jnp.array([100.0])}),
-                    Element(data={"x": jnp.array([10.0]), "y": jnp.array([0.0])}),
-                ]
-            )
+        op = BatchMixOperator(BatchMixOperatorConfig(mode="mixup", data_field="x"), rngs=rngs)
+        batch = batch_ops.from_arrays(
+            {
+                "x": jnp.array([[0.0], [10.0], [20.0], [30.0]]),
+                "y": jnp.array([[1.0], [2.0], [3.0], [4.0]]),
+            }
         )
 
         result = op(batch)
-        result_data = result.data
 
-        # Both fields should be mixed
-        assert result_data["x"].shape == (2, 1)
-        assert result_data["y"].shape == (2, 1)
+        assert jnp.array_equal(result.data["y"], batch.data["y"])
+        assert not jnp.array_equal(result.data["x"], batch.data["x"])
 
     def test_mixup_raw_path_preserves_batch_shape(self):
         """Verify DAG fused raw-batch path uses batch-level MixUp."""
@@ -193,14 +184,14 @@ class TestBatchMixOperatorMixUp:
         out = op(batch_ops.from_arrays(batch_data))
         result_data, result_states = out.data, out.states
 
-        assert result_states == {}
+        assert set(result_states) == {MIX_PARTNER}
         assert result_data["image"].shape == batch_data["image"].shape
         assert result_data["label"].shape == batch_data["label"].shape
 
     def test_mixup_single_element_unchanged(self):
         """Verify mixup with single element returns unchanged."""
         rngs = nnx.Rngs({"batch_mix": 42})
-        config = BatchMixOperatorConfig(mode="mixup")
+        config = BatchMixOperatorConfig(mode="mixup", data_field="value")
         op = BatchMixOperator(config, rngs=rngs)
 
         batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
@@ -269,31 +260,9 @@ class TestBatchMixOperatorCutMix:
         out = op(batch_ops.from_arrays(batch_data))
         result_data, result_states = out.data, out.states
 
-        assert result_states == {}
+        assert set(result_states) == {MIX_PARTNER}
         assert result_data["image"].shape == batch_data["image"].shape
         assert result_data["label"].shape == batch_data["label"].shape
-
-    def test_cutmix_mixes_labels_when_present(self):
-        """Verify cutmix mixes labels proportionally to cut area."""
-        rngs = nnx.Rngs({"batch_mix": 42})
-        config = BatchMixOperatorConfig(mode="cutmix")
-        op = BatchMixOperator(config, rngs=rngs)
-
-        batch = batch_ops.from_stacked(
-            batch_ops.stack(
-                [
-                    Element(data={"image": jnp.ones((32, 32, 3)), "label": jnp.array([1.0])}),
-                    Element(data={"image": jnp.zeros((32, 32, 3)), "label": jnp.array([0.0])}),
-                ]
-            )
-        )
-
-        result = op(batch)
-        result_data = result.data
-
-        # Labels should be mixed (between 0 and 1)
-        assert jnp.all(result_data["label"] >= 0.0)
-        assert jnp.all(result_data["label"] <= 1.0)
 
     def test_cutmix_single_element_unchanged(self):
         """Verify cutmix with single element returns unchanged."""
@@ -307,43 +276,26 @@ class TestBatchMixOperatorCutMix:
         result = op(batch)
         assert jnp.allclose(result.data["image"], original_image[None, ...])
 
-    def test_cutmix_missing_image_field_unchanged(self):
-        """Verify cutmix without image field returns unchanged."""
+    def test_a_batch_without_the_data_field_is_refused(self):
+        """A misspelt or absent field is an error, never a batch passed through unmixed."""
         rngs = nnx.Rngs({"batch_mix": 42})
         config = BatchMixOperatorConfig(mode="cutmix", data_field="image")
         op = BatchMixOperator(config, rngs=rngs)
 
-        batch = batch_ops.from_stacked(
-            batch_ops.stack(
-                [
-                    Element(data={"value": jnp.array([1.0])}),
-                    Element(data={"value": jnp.array([2.0])}),
-                ]
-            )
-        )
+        batch = batch_ops.from_arrays({"value": jnp.array([[1.0], [2.0]])})
 
-        result = op(batch)
-        # Should return unchanged when image field is missing
-        assert jnp.allclose(result.data["value"], jnp.array([[1.0], [2.0]]))
+        with pytest.raises(ValueError, match="data\\['image'\\].*lacks: \\['value'\\]"):
+            op(batch)
 
-    def test_cutmix_invalid_image_shape_unchanged(self):
-        """Verify cutmix with non-4D image returns unchanged."""
+    def test_cutmix_refuses_a_field_that_is_not_a_batch_of_images(self):
+        """CutMix pastes boxes into (B, H, W, C) images; any other shape is refused."""
         rngs = nnx.Rngs({"batch_mix": 42})
-        config = BatchMixOperatorConfig(mode="cutmix")
-        op = BatchMixOperator(config, rngs=rngs)
+        op = BatchMixOperator(BatchMixOperatorConfig(mode="cutmix"), rngs=rngs)
 
-        batch = batch_ops.from_stacked(
-            batch_ops.stack(
-                [
-                    Element(data={"image": jnp.array([1.0, 2.0])}),
-                    Element(data={"image": jnp.array([3.0, 4.0])}),
-                ]
-            )
-        )
+        batch = batch_ops.from_arrays({"image": jnp.array([[1.0, 2.0], [3.0, 4.0]])})
 
-        result = op(batch)
-        # Should return unchanged for invalid shape
-        assert result.data["image"].shape == (2, 2)
+        with pytest.raises(ValueError, match="B, H, W, C"):
+            op(batch)
 
 
 class TestBatchMixOperatorStochastic:
@@ -351,7 +303,7 @@ class TestBatchMixOperatorStochastic:
 
     def test_different_keys_produce_different_results(self):
         """Different RNG keys should produce different mixing."""
-        config = BatchMixOperatorConfig(mode="mixup")
+        config = BatchMixOperatorConfig(mode="mixup", data_field="value")
 
         results = set()
         for seed in range(20):
@@ -377,7 +329,7 @@ class TestBatchMixOperatorStochastic:
 
     def test_same_key_produces_same_result(self):
         """Same RNG key should produce identical mixing."""
-        config = BatchMixOperatorConfig(mode="mixup")
+        config = BatchMixOperatorConfig(mode="mixup", data_field="value")
 
         rngs1 = nnx.Rngs({"batch_mix": 42})
         rngs2 = nnx.Rngs({"batch_mix": 42})
@@ -402,7 +354,8 @@ class TestBatchMixOperatorStochastic:
     def test_a_direct_call_mixes_the_same_batch_the_same_way(self):
         """Without record indices the batch is keyed on its first position, with no epoch."""
         operator = BatchMixOperator(
-            BatchMixOperatorConfig(mode="mixup"), rngs=nnx.Rngs({"batch_mix": 0})
+            BatchMixOperatorConfig(mode="mixup", data_field="value"),
+            rngs=nnx.Rngs({"batch_mix": 0}),
         )
 
         values = {"value": jnp.arange(8.0).reshape(4, 2)}
@@ -419,7 +372,8 @@ class TestBatchMixOperatorStochastic:
     def test_a_batch_crossing_epochs_is_keyed_on_its_first_record_s_epoch(self):
         """A boundary batch carries each record's epoch; the batch key takes the first's."""
         operator = BatchMixOperator(
-            BatchMixOperatorConfig(mode="mixup"), rngs=nnx.Rngs({"batch_mix": 0})
+            BatchMixOperatorConfig(mode="mixup", data_field="value"),
+            rngs=nnx.Rngs({"batch_mix": 0}),
         )
         rows = jnp.array([8, 9, 0, 1], jnp.uint32)
         batch = batch_ops.from_arrays({"value": jnp.arange(8.0).reshape(4, 2)}).replace(
@@ -440,7 +394,7 @@ class TestBatchMixOperatorJAX:
     def test_jit_compilation_mixup(self):
         """Verify mixup works with JIT compilation."""
         rngs = nnx.Rngs({"batch_mix": 42})
-        config = BatchMixOperatorConfig(mode="mixup")
+        config = BatchMixOperatorConfig(mode="mixup", data_field="value")
         op = BatchMixOperator(config, rngs=rngs)
 
         @nnx.jit
@@ -483,7 +437,7 @@ class TestBatchMixOperatorJAX:
 
     def test_jit_preserves_randomness(self):
         """JIT should preserve random behavior across calls."""
-        config = BatchMixOperatorConfig(mode="mixup")
+        config = BatchMixOperatorConfig(mode="mixup", data_field="value")
 
         @nnx.jit
         def apply_op(model, batch):
@@ -514,7 +468,7 @@ class TestBatchMixOperatorDifferentiability:
 
     def test_mixup_is_differentiable_wrt_inputs(self):
         """MixUp path should produce finite gradients for input arrays."""
-        config = BatchMixOperatorConfig(mode="mixup", alpha=1.0)
+        config = BatchMixOperatorConfig(mode="mixup", alpha=1.0, data_field="value")
         op = BatchMixOperator(config, rngs=nnx.Rngs({"batch_mix": 0}))
 
         def loss(values):
@@ -533,7 +487,7 @@ class TestBatchMixOperatorEdgeCases:
     def test_empty_batch_handling(self):
         """Empty batch should be handled gracefully."""
         rngs = nnx.Rngs({"batch_mix": 42})
-        config = BatchMixOperatorConfig(mode="mixup")
+        config = BatchMixOperatorConfig(mode="mixup", data_field="value")
         op = BatchMixOperator(config, rngs=rngs)
 
         batch = batch_ops.from_arrays({"value": jnp.zeros((0, 1))})
@@ -544,7 +498,7 @@ class TestBatchMixOperatorEdgeCases:
     def test_large_alpha_parameter(self):
         """Large alpha should produce more uniform mixing ratios."""
         rngs = nnx.Rngs({"batch_mix": 42})
-        config = BatchMixOperatorConfig(mode="mixup", alpha=10.0)
+        config = BatchMixOperatorConfig(mode="mixup", alpha=10.0, data_field="value")
         op = BatchMixOperator(config, rngs=rngs)
 
         batch = batch_ops.from_stacked(
@@ -566,7 +520,7 @@ class TestBatchMixOperatorEdgeCases:
     def test_small_alpha_parameter(self):
         """Small alpha should produce more extreme mixing ratios."""
         rngs = nnx.Rngs({"batch_mix": 42})
-        config = BatchMixOperatorConfig(mode="mixup", alpha=0.1)
+        config = BatchMixOperatorConfig(mode="mixup", alpha=0.1, data_field="value")
         op = BatchMixOperator(config, rngs=rngs)
 
         batch = batch_ops.from_stacked(
@@ -584,14 +538,14 @@ class TestBatchMixOperatorEdgeCases:
         assert jnp.all(result_values >= 0.0)
         assert jnp.all(result_values <= 100.0)
 
-    def test_apply_refuses_a_single_record(self):
-        """Mixing needs the whole batch, so the per-record entry point refuses."""
+    def test_it_has_no_per_record_form(self):
+        """Mixing needs the whole batch, so the per-record form is refused."""
         rngs = nnx.Rngs({"batch_mix": 42})
-        config = BatchMixOperatorConfig(mode="mixup")
-        op = BatchMixOperator(config, rngs=rngs)
+        op = BatchMixOperator(BatchMixOperatorConfig(mode="mixup"), rngs=rngs)
 
-        with pytest.raises(NotImplementedError, match="apply_batch"):
-            op.apply({"value": jnp.array([1.0])}, {}, {})
+        assert not op.has_record_form
+        with pytest.raises(TypeError, match="apply_batch"):
+            op.apply_record(Element({"image": jnp.ones((2, 2, 1))}, index=jnp.zeros(2, jnp.uint32)))
 
     def test_cutmix_grayscale_image(self):
         """Verify cutmix works with grayscale images (H, W, 1)."""
@@ -612,14 +566,15 @@ class TestBatchMixOperatorEdgeCases:
         assert result.data["image"].shape == (2, 32, 32, 1)
 
 
-def test_cutmix_leaves_data_that_is_not_a_mapping_unchanged():
+def test_cutmix_refuses_data_that_is_not_a_mapping():
     """CutMix pastes into a named image field; a batch whose data is one array has none."""
     mixer = BatchMixOperator(
         BatchMixOperatorConfig(mode="cutmix", data_field="image"), rngs=nnx.Rngs(batch_mix=0)
     )
     batch = batch_ops.from_arrays(jnp.arange(4 * 8 * 8 * 3, dtype=jnp.float32).reshape(4, 8, 8, 3))
 
-    assert jnp.array_equal(mixer(batch).data, batch.data)
+    with pytest.raises(ValueError, match="lacks"):
+        mixer(batch)
 
 
 class TestBatchMixOperatorInAPipeline:
@@ -649,3 +604,74 @@ class TestBatchMixOperatorInAPipeline:
         data = {"image": jnp.ones((4, 8, 8, 3), dtype=jnp.float32)}
         out = mixer(name_records(batch_ops.from_arrays(data), jnp.arange(4, dtype=jnp.int32), 0))
         assert out.data["image"].shape == (4, 8, 8, 3)
+
+
+class TestMixingWritesPartnerAndLambda:
+    """MixUp and CutMix leave labels untouched and tell the loss what they mixed (design D7)."""
+
+    @staticmethod
+    def _batch(labels: jax.Array) -> Batch:
+        images = jax.random.uniform(jax.random.key(0), (6, 8, 8, 3))
+        return name_records(
+            batch_ops.from_arrays({"image": images, "label": labels}), jnp.arange(6) + 20, 0
+        )
+
+    @pytest.mark.parametrize("mode", ["mixup", "cutmix"])
+    @pytest.mark.parametrize(
+        "labels",
+        [jnp.array([0, 3, 7, 9, 1, 2], jnp.int32), jax.nn.one_hot(jnp.arange(6) % 4, 4)],
+        ids=["integer", "one-hot"],
+    )
+    def test_labels_are_untouched(self, mode: str, labels: jax.Array) -> None:
+        op = BatchMixOperator(BatchMixOperatorConfig(mode=mode), rngs=nnx.Rngs(batch_mix=1))
+        batch = self._batch(labels)
+        out = op(batch)
+        assert out.data["label"].dtype == labels.dtype
+        assert jnp.array_equal(out.data["label"], labels)
+
+    @pytest.mark.parametrize("mode", ["mixup", "cutmix"])
+    def test_the_partner_is_a_permutation_and_lambda_a_fraction(self, mode: str) -> None:
+        op = BatchMixOperator(BatchMixOperatorConfig(mode=mode), rngs=nnx.Rngs(batch_mix=1))
+        out = op(self._batch(jnp.arange(6, dtype=jnp.int32)))
+        partner = out.states[MIX_PARTNER]
+        assert partner.dtype == jnp.int32
+        assert sorted(partner.tolist()) == list(range(6))
+        lam = out.batch_state[MIX_LAMBDA]
+        assert lam.shape == ()
+        assert 0.0 <= float(lam) <= 1.0
+
+    def test_mixup_mixes_the_image_with_its_partner_by_lambda(self) -> None:
+        op = BatchMixOperator(BatchMixOperatorConfig(mode="mixup"), rngs=nnx.Rngs(batch_mix=1))
+        batch = self._batch(jnp.arange(6, dtype=jnp.int32))
+        out = op(batch)
+        lam, partner = out.batch_state[MIX_LAMBDA], out.states[MIX_PARTNER]
+        image = batch.data["image"]
+        expected = lam * image + (1 - lam) * image[partner]
+        assert jnp.allclose(out.data["image"], expected, rtol=0, atol=1e-6)
+
+    def test_cutmix_lambda_is_the_fraction_of_each_image_kept(self) -> None:
+        op = BatchMixOperator(BatchMixOperatorConfig(mode="cutmix"), rngs=nnx.Rngs(batch_mix=1))
+        batch = self._batch(jnp.arange(6, dtype=jnp.int32))
+        out = op(batch)
+        partner = out.states[MIX_PARTNER]
+        row = next(i for i in range(6) if int(partner[i]) != i)  # a record mixed with another
+        kept = jnp.mean(out.data["image"][row] == batch.data["image"][row])
+        assert jnp.allclose(out.batch_state[MIX_LAMBDA], kept, atol=1e-6)
+
+    @pytest.mark.parametrize("mode", ["mixup", "cutmix"])
+    def test_a_loss_reading_partner_and_lambda_equals_the_closed_form(self, mode: str) -> None:
+        op = BatchMixOperator(BatchMixOperatorConfig(mode=mode), rngs=nnx.Rngs(batch_mix=1))
+        labels = jnp.array([0, 3, 7, 9, 1, 2], jnp.int32)
+        out = op(self._batch(labels))
+        logits = jax.random.normal(jax.random.key(3), (6, 10))
+
+        def cross_entropy(targets: jax.Array) -> jax.Array:
+            return -jnp.take_along_axis(jax.nn.log_softmax(logits), targets[:, None], 1)[:, 0]
+
+        lam, partner = out.batch_state[MIX_LAMBDA], out.states[MIX_PARTNER]
+        loss = lam * cross_entropy(out.data["label"]) + (1 - lam) * cross_entropy(
+            out.data["label"][partner]
+        )
+        soft = lam * jax.nn.one_hot(labels, 10) + (1 - lam) * jax.nn.one_hot(labels[partner], 10)
+        closed = -jnp.sum(soft * jax.nn.log_softmax(logits), axis=1)
+        assert jnp.allclose(loss, closed, atol=1e-5)

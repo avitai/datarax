@@ -1,14 +1,12 @@
-"""Each child of a wrapper receives the statistics it computed on the wrapper's input.
+"""Each child of a wrapper receives the statistics it computed, on the input it sees.
 
-A wrapper -- a composite, a selector, a probabilistic wrapper -- applies its children inside one
-vectorized call, so a child cannot compute statistics of its own while it runs: by then the batch
-is gone. The wrapper computes each child's statistics once per batch, before the batch is
-vectorized, and gives each child its own.
+A wrapper deciding per record -- a selector, a probabilistic wrapper, a parallel composite --
+applies its children inside one vectorized call, so a child cannot compute statistics of its own
+while it runs: by then the batch is gone. The wrapper computes each child's statistics once per
+batch, on its own input (which is each child's input), and gives each child its own.
 
-What that cannot give a child is statistics of the input it actually sees. A sequential
-composite's second child runs on the first child's output, which does not exist when the
-statistics are computed, so every child sees statistics of the wrapper's input. Exact per-stage
-statistics come from separate Pipeline stages.
+A sequential composite calls each child on the whole batch in turn, so each child computes its
+statistics on the input it actually receives: the second child's are of the first child's output.
 """
 
 from __future__ import annotations
@@ -19,7 +17,6 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 from flax import nnx
-from jaxtyping import PyTree
 
 from datarax.core import batch_ops
 from datarax.core.config import OperatorConfig
@@ -62,23 +59,22 @@ class AddStatistic(OperatorModule):
 
     config: AddStatisticConfig  # pyright: ignore[reportIncompatibleVariableOverride]
 
-    def compute_statistics(self, batch_data: PyTree) -> dict[str, Any] | None:
+    def compute_statistics(self, batch: Batch) -> dict[str, Any] | None:
         """Reduce the batch to this child's own statistic."""
-        return {"offset": _REDUCERS[self.config.statistic](batch_data["value"])}
+        return {"offset": _REDUCERS[self.config.statistic](batch.data["value"])}
 
     def apply(
         self,
-        data: PyTree,
-        state: PyTree,
-        metadata: dict[str, Any] | None,
+        element: Element,
         key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
+    ) -> Element:
         """Add this child's statistic to the record."""
+        data = element.data
         del key
         if stats is None:
             raise AssertionError(f"the {self.config.statistic} child received no statistics")
-        return {**data, "value": data["value"] + stats["offset"]}, state, metadata
+        return element.replace(data={**data, "value": data["value"] + stats["offset"]})
 
 
 class PassThrough(OperatorModule):
@@ -86,15 +82,13 @@ class PassThrough(OperatorModule):
 
     def apply(
         self,
-        data: PyTree,
-        state: PyTree,
-        metadata: dict[str, Any] | None,
+        element: Element,
         key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
+    ) -> Element:
         """Return the record unchanged."""
         del key, stats
-        return data, state, metadata
+        return element
 
 
 def _adds(statistic: str) -> AddStatistic:
@@ -121,18 +115,18 @@ def _composite(strategy: CompositionStrategy, operators: list[OperatorModule]) -
             strategy=strategy,
         ),
         operators=operators,
-        rngs=nnx.Rngs(0),
     )
 
 
-def test_each_sequential_child_receives_the_statistic_it_computed() -> None:
-    """Two children reducing the same batch differently each get their own result."""
+def test_each_sequential_child_fits_its_statistic_on_its_own_input() -> None:
+    """A later child's statistic describes the earlier child's output, not the chain's input."""
     composite = _composite(CompositionStrategy.SEQUENTIAL, [_adds("mean"), _adds("max")])
 
     result = composite(_batch())
 
-    # Both statistics are of the composite's input, so each record gains mean + max.
-    assert _values(result) == [value + MEAN + MAXIMUM for value in VALUES]
+    # The first child adds the input's mean; the second adds the max of that output,
+    # MAXIMUM + MEAN.
+    assert _values(result) == [value + MEAN + (MAXIMUM + MEAN) for value in VALUES]
 
 
 def test_a_child_does_not_receive_the_statistics_of_a_sibling() -> None:
@@ -175,7 +169,7 @@ def test_a_wrapper_whose_children_compute_none_passes_none() -> None:
         [PassThrough(deterministic), PassThrough(deterministic)],
     )
 
-    assert composite.compute_statistics({"value": jnp.asarray(VALUES).reshape(3, 1)}) is None
+    assert composite.compute_statistics(_batch()) is None
 
 
 def test_a_wrapper_computes_statistics_for_the_children_that_have_them() -> None:

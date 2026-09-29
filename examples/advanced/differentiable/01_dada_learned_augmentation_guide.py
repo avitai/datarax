@@ -882,7 +882,7 @@ def apply_augmentation_slot(
     op_weights_batch = gumbel_softmax(logits_batch, key, temperature)  # (B, 15)
 
     # Build Batch and delegate to CompositeOperatorModule's native processing.
-    # The composite's __call__ → apply_batch → _vmap_apply handles:
+    # The composite's __call__ → apply_batch, mapping apply per record, handles:
     #   1. Extracting op_weights from data[weight_key] per element
     #   2. Stripping weight_key so children only see {image, magnitude}
     #   3. Replacing "image" with the weighted sum of all 15 augmented images

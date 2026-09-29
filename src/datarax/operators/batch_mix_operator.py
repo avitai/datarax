@@ -1,39 +1,30 @@
 """BatchMixOperator - MixUp and CutMix batch augmentation.
 
-This module provides BatchMixOperator, which performs batch-level sample mixing
-that cannot be decomposed into element-level operations.
+Mixing pairs each record with another record of the same batch, so the operator has no per-record
+form: it overrides ``apply_batch`` alone and draws from its first record's key.
 
-Key Difference from Other Operators:
+Supported modes:
 
-- Standard operators use vmap to process elements independently
-- BatchMixOperator overrides apply_batch() to access full batch
-- Mixing requires cross-element access (sample A mixed with sample B)
+- mixup: each image becomes ``lam * x + (1 - lam) * x[partner]`` (Zhang et al. 2018)
+- cutmix: a box of the partner's image is pasted into each image (Yun et al. 2019)
 
-Supported Modes:
-
-- mixup: Linear interpolation between pairs of samples
-- cutmix: Cut and paste rectangular patches between images
-
-Key Features:
-
-- Unified API for both MixUp and CutMix
-- Beta distribution for mixing ratio (alpha parameter)
-- Optional label mixing (proportional to mixed area)
-- Full JAX compatibility (JIT, grad)
+Labels are left untouched. The operator writes what it did for the loss to read: each record's
+partner row in ``states[MIX_PARTNER]`` and the fraction of each image kept in
+``batch_state[MIX_LAMBDA]``, so ``lam * loss(y) + (1 - lam) * loss(y[partner])`` is the mixed
+loss for integer and one-hot labels alike.
 """
 
 import logging
-from typing import Any, NoReturn
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 from flax import nnx
-from jaxtyping import PyTree
 
 from datarax.core.config import BatchMixOperatorConfig
 from datarax.core.element_batch import Batch
 from datarax.core.operator import OperatorModule
-from datarax.core.prng import per_record_keys
+from datarax.core.state_keys import MIX_LAMBDA, MIX_PARTNER
 
 
 logger = logging.getLogger(__name__)
@@ -43,8 +34,8 @@ class BatchMixOperator(OperatorModule):
     """Unified operator for batch-level MixUp and CutMix augmentation.
 
     Performs batch-level sample mixing that requires access to multiple
-    samples simultaneously. This operator overrides apply_batch() to
-    work at the batch level instead of using vmap.
+    samples simultaneously. It overrides apply_batch() alone and has no
+    per-record form.
 
     Modes:
 
@@ -56,7 +47,10 @@ class BatchMixOperator(OperatorModule):
     CutMix Mode:
         Cuts rectangular patches and pastes between images:
         x_mixed = mask * x_a + (1 - mask) * x_b
-        Labels are mixed proportionally to the cut area.
+        λ is the fraction of each image kept.
+
+    Labels are untouched; ``states[MIX_PARTNER]`` and ``batch_state[MIX_LAMBDA]`` tell the loss
+    how the records were mixed.
 
     Examples:
         ```python
@@ -88,136 +82,105 @@ class BatchMixOperator(OperatorModule):
         # Type narrowing for pyright
         self.config: BatchMixOperatorConfig = config
 
-    def apply(
-        self,
-        data: PyTree,
-        state: PyTree,
-        metadata: dict[str, Any] | None,
-        key: jax.Array | None = None,
-        stats: dict[str, Any] | None = None,
-    ) -> NoReturn:
-        """Refuse the per-record call: batch mixing has no element-level form.
-
-        The operator mixes each record with another record of the same batch, which a
-        single record cannot do, so it overrides ``apply_batch`` instead. This method exists
-        to satisfy the element-level interface.
-
-        Args:
-            data: Element data PyTree
-            state: Element state PyTree
-            metadata: Element metadata
-            key: Unused
-            stats: Unused
-
-        Raises:
-            NotImplementedError: Always; mixing needs the whole batch.
-        """
-        del data, state, metadata, key, stats
-        raise NotImplementedError(
-            "BatchMixOperator mixes each record with another record of the same batch, "
-            "so it has no per-record form; call apply_batch(batch) or the operator itself."
-        )
-
     def apply_batch(
-        self,
-        batch: Batch,
-        stats: dict[str, Any] | None = None,
+        self, batch: Batch, keys: jax.Array | None, stats: dict[str, Any] | None
     ) -> Batch:
-        """Apply batch-level mixing augmentation.
-
-        This method overrides the base class to work at batch level
-        instead of using vmap. Batch mixing requires cross-element
-        access that cannot be expressed with vmap.
+        """Mix every record with a partner record of the batch.
 
         Args:
-            batch: Input batch to mix
-            stats: Optional statistics (unused)
+            batch: The batch.
+            keys: One key per record; the whole batch mixes with the first record's, so a
+                resumed run mixes the same batch the same way on any number of hosts.
+            stats: Unused.
 
         Returns:
-            Mixed batch with same structure
+            The batch with ``data_field`` mixed, labels untouched, each record's partner row in
+            ``states[MIX_PARTNER]`` and the kept fraction in ``batch_state[MIX_LAMBDA]``.
+
+        Raises:
+            ValueError: If the data has no ``data_field``, or CutMix's field is not a batch of
+                images ``(B, H, W, C)``.
         """
         del stats
-        # Deterministic mode mixes nothing; nor can a batch of fewer than two records.
-        if self.deterministic or batch.batch_size < 2:
-            return batch
-
-        # The whole batch mixes with one key: its first record's, so a resumed run mixes the
-        # same batch the same way on any number of hosts.
-        key = per_record_keys(
-            self._base_key[...],
-            jnp.asarray(batch.indices)[:1],
-            jnp.asarray(batch.epochs)[:1],
-            jnp.asarray(batch.draws)[:1],
-        )[0]
+        assert keys is not None  # a stochastic operator is always handed keys
+        data = batch.data
+        field = self.config.data_field
+        if not isinstance(data, dict) or field not in data:
+            available = sorted(data) if isinstance(data, dict) else type(data).__name__
+            raise ValueError(
+                f"BatchMixOperator mixes data[{field!r}], which this batch lacks: {available}"
+            )
+        if batch.batch_size == 0:
+            # No record to mix and no first record's key: every (absent) record keeps all of
+            # itself, which the state says as it would for any batch.
+            return batch.replace(
+                states={**batch.states, MIX_PARTNER: jnp.zeros((0,), jnp.int32)},
+                batch_state={**batch.batch_state, MIX_LAMBDA: jnp.ones((), data[field].dtype)},
+            )
         if self.config.mode == "mixup":
-            return batch.replace(data=self._mixup(batch.data, batch.batch_size, key))
-        return batch.replace(data=self._cutmix(batch.data, key))
+            k_lambda, k_partner = jax.random.split(keys[0])
+            box_keys = None
+        else:
+            k_lambda, k_partner, k_x, k_y = jax.random.split(keys[0], 4)
+            box_keys = (k_x, k_y)
+        lam = jax.random.beta(k_lambda, self.config.alpha, self.config.alpha)
+        partner = jax.random.permutation(k_partner, jnp.arange(batch.batch_size, dtype=jnp.int32))
+        values = data[field]
+        if box_keys is None:
+            # values[partner] + lam * (values - values[partner]) equals
+            # lam * values + (1 - lam) * values[partner] without lam + (1 - lam) != 1 rounding.
+            mixed, kept = values[partner] + lam * (values - values[partner]), lam
+        else:
+            mixed, kept = _cutmix(values, values[partner], lam, box_keys, field)
+        return batch.replace(
+            data={**data, field: mixed},
+            states={**batch.states, MIX_PARTNER: partner},
+            batch_state={**batch.batch_state, MIX_LAMBDA: kept},
+        )
 
-    def _mixup(self, data: PyTree, batch_size: int, key: jax.Array) -> PyTree:
-        """Mix every field with a batch axis with a permutation of the batch (MixUp)."""
-        key1, key2 = jax.random.split(key)
-        lam = jax.random.beta(key1, self.config.alpha, self.config.alpha)
-        perm = jax.random.permutation(key2, jnp.arange(batch_size, dtype=jnp.int32))
 
-        def mix_array(arr: jax.Array) -> jax.Array:
-            if not hasattr(arr, "shape") or len(arr.shape) == 0 or arr.shape[0] != batch_size:
-                return arr
-            arr_perm = arr[perm]
-            # arr_perm + lam * (arr - arr_perm) == lam * arr + (1 - lam) * arr_perm, without
-            # lam + (1 - lam) != 1 in floating point.
-            return arr_perm + lam * (arr - arr_perm)
+def _cutmix(
+    images: jax.Array,
+    partners: jax.Array,
+    lam: jax.Array,
+    box_keys: tuple[jax.Array, jax.Array],
+    field: str,
+) -> tuple[jax.Array, jax.Array]:
+    """Paste a box of each partner image into each image; return them and the fraction kept.
 
-        return jax.tree.map(mix_array, data)
+    The box covers ``1 - lam`` of the image before clipping at the border (Yun et al. 2019); the
+    fraction kept is measured after clipping.
 
-    def _cutmix(self, data: PyTree, key: jax.Array) -> PyTree:
-        """Paste a box of a permuted image into each image and mix labels by area (CutMix)."""
-        if not isinstance(data, dict):
-            return data
+    Args:
+        images: The batch's images, ``(B, H, W, C)``.
+        partners: Each image's partner image, the same shape.
+        lam: The drawn mixing ratio.
+        box_keys: The keys for the box centre's column and row.
+        field: The data field's name, for the error.
 
-        data_field = self.config.data_field
-        label_field = self.config.label_field
-        if data_field not in data:
-            return data
+    Returns:
+        The mixed images and the fraction of each image kept.
 
-        images = data[data_field]
-        if len(images.shape) < 4:
-            return data
-
-        batch_size, height, width = images.shape[:3]
-
-        key1, key2, key3, key4 = jax.random.split(key, 4)
-        lam = jax.random.beta(key1, self.config.alpha, self.config.alpha)
-        perm = jax.random.permutation(key2, batch_size)
-
-        cut_ratio = jnp.sqrt(1.0 - lam)
-        cut_h = height * cut_ratio
-        cut_w = width * cut_ratio
-
-        cx = jax.random.randint(key3, (), 0, width).astype(jnp.float32)
-        cy = jax.random.randint(key4, (), 0, height).astype(jnp.float32)
-
-        x1 = jnp.clip(cx - cut_w / 2, 0, width)
-        x2 = jnp.clip(cx + cut_w / 2, 0, width)
-        y1 = jnp.clip(cy - cut_h / 2, 0, height)
-        y2 = jnp.clip(cy + cut_h / 2, 0, height)
-
-        # A mask from coordinate grids, not a dynamic slice, so the box may be traced.
-        y_coords = jnp.arange(height, dtype=jnp.float32)
-        x_coords = jnp.arange(width, dtype=jnp.float32)
-        yy, xx = jnp.meshgrid(y_coords, x_coords, indexing="ij")
-        inside_box = (yy >= y1) & (yy < y2) & (xx >= x1) & (xx < x2)
-        mask = jnp.where(inside_box, 0.0, 1.0)[None, :, :, None]
-
-        result = dict(data)
-        images_perm = images[perm]
-        result[data_field] = mask * images + (1 - mask) * images_perm
-
-        if label_field in data:
-            labels = data[label_field]
-            labels_perm = labels[perm]
-            box_area = (x2 - x1) * (y2 - y1)
-            total_area = height * width
-            lam_adjusted = 1 - (box_area / total_area)
-            result[label_field] = labels_perm + lam_adjusted * (labels - labels_perm)
-
-        return result
+    Raises:
+        ValueError: If ``images`` is not ``(B, H, W, C)``.
+    """
+    if images.ndim != 4:
+        raise ValueError(
+            f"CutMix pastes boxes into images (B, H, W, C); data[{field!r}] has shape "
+            f"{images.shape}"
+        )
+    height, width = images.shape[1:3]
+    k_x, k_y = box_keys
+    cut_ratio = jnp.sqrt(1.0 - lam)
+    cut_h, cut_w = height * cut_ratio, width * cut_ratio
+    cx = jax.random.randint(k_x, (), 0, width).astype(jnp.float32)
+    cy = jax.random.randint(k_y, (), 0, height).astype(jnp.float32)
+    x1, x2 = jnp.clip(cx - cut_w / 2, 0, width), jnp.clip(cx + cut_w / 2, 0, width)
+    y1, y2 = jnp.clip(cy - cut_h / 2, 0, height), jnp.clip(cy + cut_h / 2, 0, height)
+    # A mask from coordinate grids, not a dynamic slice, so the box may be traced.
+    yy, xx = jnp.meshgrid(
+        jnp.arange(height, dtype=jnp.float32), jnp.arange(width, dtype=jnp.float32), indexing="ij"
+    )
+    inside = (yy >= y1) & (yy < y2) & (xx >= x1) & (xx < x2)
+    keep = jnp.where(inside, 0.0, 1.0)[None, :, :, None]
+    return keep * images + (1 - keep) * partners, jnp.mean(keep)

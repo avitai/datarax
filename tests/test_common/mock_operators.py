@@ -4,10 +4,13 @@ Eliminates duplicate MockOperator definitions across
 test_ensemble_strategy, test_sequential_strategy, and test_parallel_strategy.
 """
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 from datarax.core.config import OperatorConfig
+from datarax.core.element_batch import Element
 from datarax.core.operator import OperatorModule
 
 
@@ -21,23 +24,36 @@ class ConstantMockOperator(OperatorModule):
         super().__init__(OperatorConfig(stochastic=False), name=name)
         self.value = value
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        data = element.data
         del key, stats
-        return jnp.full_like(data, self.value), state, metadata
+        return element.replace(data=jnp.full_like(data, self.value))
 
 
 class MultiplierMockOperator(OperatorModule):
     """Mock operator that multiplies input data by a constant.
 
-    Used by sequential strategy tests. Also tracks state (count)
-    and metadata (visited list).
+    Used by sequential strategy tests. Also increments a ``count`` state entry when the
+    record carries one.
     """
 
     def __init__(self, multiplier: float = 2.0, name: str = "mock"):
         super().__init__(OperatorConfig(stochastic=False), name=name)
         self.multiplier = multiplier
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        data = element.data
+        state = element.state
         del key, stats
         new_data = jax.tree.map(lambda x: x * self.multiplier, data)
 
@@ -45,7 +61,4 @@ class MultiplierMockOperator(OperatorModule):
         if "count" in new_state:
             new_state["count"] += 1
 
-        new_metadata = metadata.copy() if metadata else {}
-        new_metadata["visited"] = [*new_metadata.get("visited", []), self.name]
-
-        return new_data, new_state, new_metadata
+        return element.replace(data=new_data, state=new_state)

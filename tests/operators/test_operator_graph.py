@@ -81,7 +81,6 @@ _WRAPPERS: dict[str, Callable[[], OperatorModule]] = {
             strategy=CompositionStrategy.SEQUENTIAL, stochastic=True, stream_name="augment"
         ),
         operators=[_scale(), _brightness()],
-        rngs=_rngs(),
     ),
     "composite weighted parallel": lambda: CompositeOperatorModule(
         CompositeOperatorConfig(

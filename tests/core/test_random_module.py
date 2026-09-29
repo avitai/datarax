@@ -5,6 +5,8 @@ This module tests random key generation, seed reproduction, key splitting,
 and random number usage in pipeline contexts with NNX modules.
 """
 
+from typing import Any
+
 import flax.nnx as nnx
 import jax
 import numpy as np
@@ -13,6 +15,7 @@ import pytest
 from datarax.core import batch_ops
 from datarax.core.config import DataraxModuleConfig, OperatorConfig, StructuralConfig
 from datarax.core.data_source import DataSourceModule
+from datarax.core.element_batch import Element
 from datarax.core.module import DataraxModule
 from datarax.core.operator import OperatorModule, require_key
 
@@ -57,12 +60,18 @@ class RandomOperatorModule(OperatorModule):
         config = OperatorConfig(stochastic=True, stream_name="transform")
         super().__init__(config, rngs=rngs)
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
         """Scale the input data by a factor drawn from this record's key."""
+        data = element.data
         del stats
         scale = jax.random.uniform(require_key(key, self), minval=0.5, maxval=1.5)
         new_data = {k: v * scale for k, v in data.items()}
-        return new_data, state, metadata
+        return element.replace(data=new_data)
 
 
 def test_random_key_generation(test_seed):

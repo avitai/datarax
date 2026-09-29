@@ -1,6 +1,6 @@
 """Composition strategies package."""
 
-from datarax.operators.strategies.base import CompositionStrategyImpl, StrategyContext
+from datarax.operators.strategies.base import CompositionStrategyImpl
 from datarax.operators.strategies.branching import BranchingStrategy
 from datarax.operators.strategies.ensemble import EnsembleStrategy
 from datarax.operators.strategies.parallel import (
@@ -16,7 +16,6 @@ from datarax.operators.strategies.sequential import (
 
 __all__ = [
     "CompositionStrategyImpl",
-    "StrategyContext",
     "SequentialStrategy",
     "ConditionalSequentialStrategy",
     "ParallelStrategy",

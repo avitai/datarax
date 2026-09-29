@@ -11,6 +11,8 @@ Test Coverage:
 - Advanced scenarios (JIT compatibility, gradient flow, batch processing via __call__)
 """
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -109,7 +111,7 @@ class TestWeightKeyBasic:
             "value": jnp.array(10.0),
             "op_weights": jnp.array([0.7, 0.3]),
         }
-        result_data, _, _ = composite.apply(data, {}, None)
+        result_data = composite.apply(Element(data)).data
 
         assert jnp.isclose(result_data["value"], 23.0)
 
@@ -123,9 +125,14 @@ class TestWeightKeyBasic:
         class RecordingOperator(MapOperator):
             """MapOperator that records data keys it receives."""
 
-            def apply(self, data, state, metadata, random_params=None, stats=None):
-                received_keys.append(set(data.keys()))
-                return super().apply(data, state, metadata, random_params, stats)
+            def apply(
+                self,
+                element: Element,
+                key: jax.Array | None = None,
+                stats: dict[str, Any] | None = None,
+            ) -> Element:
+                received_keys.append(set(element.data.keys()))
+                return super().apply(element, key, stats)
 
         rngs = nnx.Rngs(0)
         config1 = MapOperatorConfig(stochastic=False)
@@ -147,7 +154,7 @@ class TestWeightKeyBasic:
             "value": jnp.array(1.0),
             "op_weights": jnp.array([0.5, 0.5]),
         }
-        composite.apply(data, {}, None)
+        composite.apply(Element(data))
 
         # Both operators should have received data WITHOUT op_weights
         assert len(received_keys) == 2
@@ -177,7 +184,7 @@ class TestWeightKeyBasic:
         data = {"value": jnp.array(10.0)}
 
         with pytest.raises(ValueError, match="weight_key.*op_weights.*not found"):
-            composite.apply(data, {}, None)
+            composite.apply(Element(data))
 
 
 class TestWeightKeyAdvanced:
@@ -203,7 +210,7 @@ class TestWeightKeyAdvanced:
 
         @nnx.jit
         def jit_apply(model, data):
-            result, _, _ = model.apply(data, {}, None)
+            result = model.apply(Element(data)).data
             return result
 
         data = {
@@ -246,7 +253,7 @@ class TestWeightKeyAdvanced:
             }
             graphdef, state = nnx.split(composite)
             model = nnx.merge(graphdef, state)
-            result, _, _ = model.apply(data, {}, None)
+            result = model.apply(Element(data)).data
             return result["value"]  # Loss = weighted sum output
 
         grad_fn = jax.grad(loss_fn)

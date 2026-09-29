@@ -7,98 +7,78 @@ from typing import Any
 import jax
 from jaxtyping import PyTree
 
-from datarax.core.operator import OperatorModule, statistics_for_child
-from datarax.operators.strategies.base import CompositionStrategyImpl, StrategyContext
+from datarax.core.element_batch import Element
+from datarax.core.operator import apply_where, OperatorModule, statistics_for_child
+from datarax.operators.strategies.base import CompositionStrategyImpl
 
 
 logger = logging.getLogger(__name__)
 
 
 class SequentialStrategy(CompositionStrategyImpl):
-    """Applies operators in sequence (chain)."""
+    """Applies operators in order to one record, piping each output to the next."""
 
     def apply(
         self,
-        operators: list[OperatorModule],
-        context: StrategyContext,
-    ) -> tuple[PyTree, PyTree, dict[str, Any]]:
-        """Apply operators sequentially, piping each output to the next.
+        operators: Sequence[OperatorModule],
+        element: Element,
+        stats: dict[str, Any] | None,
+    ) -> Element:
+        """Apply the operators in order.
 
         Args:
-            operators: Ordered list of operators to chain.
-            context: Execution context with input data, state, and RNG params.
+            operators: Ordered operators to chain.
+            element: The record.
+            stats: One entry per child, or ``None``.
 
         Returns:
-            Tuple of (data, state, metadata) after all operators have run.
+            The record after every operator has run.
         """
-        result_data: PyTree = context.data
-        result_state: PyTree = context.state
-        result_metadata: dict[str, Any] | None = context.metadata
-
-        for i, operator in enumerate(operators):
-            # Each child gets its own key, folded from the record's, and the statistics the
-            # composition computed for it on the composition's input.
-            result_data, result_state, result_metadata = operator.apply_record(
-                result_data,
-                result_state,
-                result_metadata,
-                self._key_for_operator(context.key, i),
-                statistics_for_child(context.stats, i),
-            )
-
-        return result_data, result_state, result_metadata or {}
+        for index, operator in enumerate(operators):
+            element = operator.apply_record(element, statistics_for_child(stats, index))
+        return element
 
 
 class ConditionalSequentialStrategy(CompositionStrategyImpl):
-    """Applies operators sequentially with conditions.
-
-    Only applies operators where condition evaluates to True.
-    """
+    """Applies operators in order, each only where its condition holds for the record."""
 
     def __init__(self, conditions: Sequence[Callable[[PyTree], bool | jax.Array]]) -> None:
         """Initialize ConditionalSequentialStrategy.
 
         Args:
-            conditions: List of callables that determine whether each operator is applied.
+            conditions: One per operator, each reading the record's data as it reaches that
+                operator.
         """
         self.conditions = conditions
 
     def apply(
         self,
-        operators: list[OperatorModule],
-        context: StrategyContext,
-    ) -> tuple[PyTree, PyTree, dict[str, Any]]:
-        """Apply operators sequentially, skipping those whose condition is False.
+        operators: Sequence[OperatorModule],
+        element: Element,
+        stats: dict[str, Any] | None,
+    ) -> Element:
+        """Apply the operators in order, skipping those whose condition is False.
 
-        Uses ``jax.lax.cond`` for vmap-compatible conditional execution.
+        Uses ``jax.lax.cond`` so the condition may depend on traced values.
 
         Args:
-            operators: Operators to apply (must match length of conditions).
-            context: Execution context with input data, state, and RNG params.
+            operators: Operators to apply (as many as there are conditions).
+            element: The record.
+            stats: One entry per child, or ``None``.
 
         Returns:
-            Tuple of (data, state, metadata) after conditional execution.
+            The record after the conditional chain.
 
         Raises:
-            ValueError: If operator count doesn't match condition count.
+            ValueError: If the operator count does not match the condition count.
         """
-        result_data, result_state, result_metadata = context.data, context.state, context.metadata
-
         if len(operators) != len(self.conditions):
             raise ValueError(
                 f"Number of operators ({len(operators)}) does not match "
                 f"number of conditions ({len(self.conditions)})"
             )
-
-        for i, (operator, condition) in enumerate(zip(operators, self.conditions, strict=False)):
-            result_data, result_state, result_metadata = self._apply_operator_conditionally(
-                operator,
-                condition(result_data),
-                result_data,
-                result_state,
-                result_metadata,
-                self._key_for_operator(context.key, i),
-                statistics_for_child(context.stats, i),
+        for index, (operator, condition) in enumerate(zip(operators, self.conditions, strict=True)):
+            element = apply_where(
+                operator, condition(element.data), element, statistics_for_child(stats, index)
             )
-
-        return result_data, result_state, result_metadata
+        return element

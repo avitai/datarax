@@ -135,7 +135,7 @@ from datarax.core.config import BatchMixOperatorConfig
 config = BatchMixOperatorConfig(
     mode="mixup",
     alpha=0.4,
-    label_field="label",
+    data_field="image",  # labels are left untouched; the loss reads MIX_PARTNER and MIX_LAMBDA
 )
 
 # CutMix

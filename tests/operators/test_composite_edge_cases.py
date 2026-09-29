@@ -56,7 +56,7 @@ class TestBoundaryConditions:
             strategy=CompositionStrategy.SEQUENTIAL,
             stochastic=False,
         )
-        composite = CompositeOperatorModule(composite_config, operators=[op], rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=[op])
 
         # Test with batch
         batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
@@ -82,7 +82,7 @@ class TestBoundaryConditions:
             strategy=CompositionStrategy.SEQUENTIAL,
             stochastic=False,
         )
-        composite = CompositeOperatorModule(composite_config, operators=operators, rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=operators)
 
         # Test with batch
         batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([0.0])})]))
@@ -110,7 +110,7 @@ class TestBoundaryConditions:
             merge_strategy="concat",
             stochastic=False,
         )
-        composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=[op1, op2])
 
         # This works! Concat along axis 0: shape (1,) + (2,) = (3,)
         batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
@@ -143,7 +143,7 @@ class TestNumericalEdgeCases:
             strategy=CompositionStrategy.ENSEMBLE_MEAN,
             stochastic=False,
         )
-        composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=[op1, op2])
 
         # Test with batch
         batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
@@ -171,7 +171,7 @@ class TestNumericalEdgeCases:
             merge_strategy="sum",
             stochastic=False,
         )
-        composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=[op1, op2])
 
         # Test with batch
         batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
@@ -201,7 +201,7 @@ class TestWeightingEdgeCases:
             mix_fields=("value",),
             stochastic=False,
         )
-        composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=[op1, op2])
 
         batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
         result_batch = composite(batch)
@@ -226,7 +226,7 @@ class TestWeightingEdgeCases:
             mix_fields=("value",),
             stochastic=False,
         )
-        composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=[op1, op2])
 
         batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([2.0])})]))
         result_batch = composite(batch)
@@ -260,7 +260,7 @@ class TestBranchingEdgeCases:
             router=router,
             stochastic=False,
         )
-        composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=[op1, op2])
 
         # Test with value < 5.0 -> should use op1 (x * 2)
         batch1 = batch_ops.from_stacked(
@@ -298,7 +298,7 @@ class TestConditionalEdgeCases:
             conditions=[bad_condition],
             stochastic=False,
         )
-        composite = CompositeOperatorModule(composite_config, operators=[op1], rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=[op1])
 
         batch = batch_ops.from_stacked(batch_ops.stack([Element(data={"value": jnp.array([5.0])})]))
 

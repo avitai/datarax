@@ -24,58 +24,63 @@ built without statistics, leaving the store unchanged.
 
 ## Statistics fitted to each batch
 
-An operator that derives its statistics from the data overrides `compute_statistics`. The batch
-path calls it **once per batch, before the batch is vectorized**, and gives every record in that
-batch the same result:
+An operator that derives its statistics from the data overrides `compute_statistics`. `__call__`
+calls it **once per batch, before the records are mapped**, and gives every record in that batch
+the same result:
 
 ```python
 class BatchNormalize(OperatorModule):
-    def compute_statistics(self, batch_data):
-        image = batch_data["image"]
+    def compute_statistics(self, batch: Batch) -> dict[str, Any] | None:
+        image = batch.data["image"]
         return {"mean": jnp.mean(image), "std": jnp.std(image) + 1e-6}
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        data = element.data
         normalized = (data["image"] - stats["mean"]) / stats["std"]
-        return {**data, "image": normalized}, state, metadata
+        return element.replace(data={**data, "image": normalized})
 ```
 
-`batch_data` carries the batch on axis 0, so a reduction over it describes the whole batch. The
+`batch.data` carries the batch on axis 0, so a reduction over it describes the whole batch. The
 statistics are part of the traced computation, so gradients flow through them.
 
 The default `compute_statistics` returns the stored statistics, so an operator with fixed
 statistics needs no override.
 
-A caller may also pass statistics explicitly, and an explicit argument wins:
+A caller may also pass statistics explicitly by calling `apply_batch` with them; for a
+deterministic operator the keys are `None`:
 
 ```python
-operator.apply_batch(batch, stats={"mean": 0.0, "std": 1.0})
+operator.apply_batch(batch, None, {"mean": 0.0, "std": 1.0})
 ```
 
 ## Wrappers and their children
 
-A composite, a selector and a probabilistic wrapper apply no statistics of their own. Each
-computes one entry per child, once per batch, and gives every child the statistics that child
-computed on the wrapper's input. A wrapper whose children all compute none passes none.
+A wrapper applies no statistics of its own; how its children get theirs follows how it applies
+them.
+
+A **sequential** composite calls each child on the whole batch in turn, so each child computes its
+statistics on the input it actually receives: a later child's describe the earlier child's output.
 
 ```python
 composite = CompositeOperatorModule(
-    CompositeOperatorConfig(
-        strategy=CompositionStrategy.SEQUENTIAL,
-        ),
-operators=[BatchNormalize(config), Brighten(config)],
-    )
+    CompositeOperatorConfig(strategy=CompositionStrategy.SEQUENTIAL),
+    operators=[BatchNormalize(config), Brighten(config)],
+)
 ```
 
-Here `BatchNormalize` receives the statistics it computed on the composition's input, and
-`Brighten` receives its own.
-
-!!! note "Children see the composition's input"
-
-    A wrapper applies its children inside one vectorized call, so a child cannot compute
-    statistics of its own while it runs — by then the batch is gone. A sequential composition's
-    later children therefore see the statistics of the **composition's** input, not of the
-    previous child's output. Where a stage needs statistics of exactly what reaches it, give it
-    its own `Pipeline` stage.
+A wrapper that decides or merges **per record** (a selector, a probabilistic wrapper, a parallel,
+weighted, ensemble, conditional or branching composite) applies its children inside one
+vectorized call, so a child cannot compute statistics while it runs. The wrapper computes one
+entry per child, once per batch, on its own input, which is each child's input, and gives every
+child its own. A wrapper whose children all compute none passes none. A chain applied per record
+(a sequential composite inside such a wrapper, or a conditional sequential composite) refuses a
+later child that fits statistics per batch, since those would describe the chain's input rather
+than the child's.
 
 A weighted-parallel composite strips `weight_key` from the data before any child runs, and it is
 stripped before the children's statistics are computed too, so a child's statistics describe the

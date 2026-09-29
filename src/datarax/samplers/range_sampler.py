@@ -59,7 +59,7 @@ class RangeSamplerConfig(SamplerConfig):
             raise ValueError(msg)
 
 
-class RangeSampler(SamplerModule):
+class RangeSampler(SamplerModule[int]):
     """Unified range sampler implementation for Datarax.
 
     This class provides methods for generating a sequence of integers,

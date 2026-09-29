@@ -390,7 +390,6 @@ pythonVersion = "3.12"
 # JAX/Flax/NNX ecosystem requires these specific suppressions due to
 # dynamic attribute access patterns and type stub limitations.
 reportFunctionMemberAccess = false
-reportIncompatibleMethodOverride = false
 reportIncompatibleVariableOverride = false
 # Benchmarks depend on many optional adapters/frameworks that are intentionally
 # not required in every dev environment or pre-commit hook env.

@@ -13,6 +13,7 @@ with different state structures in either order.
 """
 
 import gc
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -38,43 +39,68 @@ from datarax.operators.probabilistic_operator import (
 class AddKeyOperator(OperatorModule):
     """Test operator that adds a single key to output."""
 
-    def apply(self, data, state, metadata, random_params=None, stats=None):
-        del random_params, stats
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        data = element.data
+        del key, stats
         out_data = {
             **data,
             "computed": data["input"] * 2,
         }
-        return out_data, state, metadata
+        return element.replace(data=out_data)
 
 
 class AddMultipleKeysOperator(OperatorModule):
     """Test operator that adds multiple keys to output."""
 
-    def apply(self, data, state, metadata, random_params=None, stats=None):
-        del random_params, stats
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        data = element.data
+        del key, stats
         out_data = {
             **data,
             "sum": data["a"] + data["b"],
             "product": data["a"] * data["b"],
             "difference": data["a"] - data["b"],
         }
-        return out_data, state, metadata
+        return element.replace(data=out_data)
 
 
 class StructurePreservingOperator(OperatorModule):
     """Test operator that preserves input structure (existing behavior)."""
 
-    def apply(self, data, state, metadata, random_params=None, stats=None):
-        del random_params, stats
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        data = element.data
+        del key, stats
         out_data = {k: v * 2 for k, v in data.items()}
-        return out_data, state, metadata
+        return element.replace(data=out_data)
 
 
 class StateModifyingOperator(OperatorModule):
     """Test operator that adds keys to both data and state."""
 
-    def apply(self, data, state, metadata, random_params=None, stats=None):
-        del random_params, stats
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        data = element.data
+        state = element.state
+        del key, stats
         out_data = {
             **data,
             "processed": data["input"] + 1,
@@ -83,7 +109,7 @@ class StateModifyingOperator(OperatorModule):
             **state,
             "was_processed": jnp.array(True),
         }
-        return out_data, out_state, metadata
+        return element.replace(data=out_data, state=out_state)
 
 
 # =============================================================================
@@ -121,7 +147,7 @@ class TestDynamicOutputStructure:
         ]
         batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-        result = op.apply_batch(batch)
+        result = op(batch)
         result_data = result.data
 
         # Original key preserved
@@ -150,7 +176,7 @@ class TestDynamicOutputStructure:
         ]
         batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-        result = op.apply_batch(batch)
+        result = op(batch)
         result_data = result.data
 
         # All original keys preserved
@@ -181,7 +207,7 @@ class TestDynamicOutputStructure:
         ]
         batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-        result = op.apply_batch(batch)
+        result = op(batch)
         result_data = result.data
 
         # Same keys as input
@@ -197,7 +223,7 @@ class TestDynamicOutputStructure:
         def loss_fn(input_val):
             data = {"input": input_val}
             state = {}
-            out_data, _, _ = op.apply(data, state, None)
+            out_data = op.apply(Element(data, state=state)).data
             return jnp.sum(out_data["computed"])
 
         input_val = jnp.array([1.0, 2.0, 3.0])
@@ -219,7 +245,7 @@ class TestDynamicOutputStructure:
         ]
         batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-        result = op.apply_batch(batch)
+        result = op(batch)
         result_data = result.data
         result_states = result.states
 
@@ -242,15 +268,21 @@ class TestNestedOutputStructure:
         """Operator adds keys to nested input structure."""
 
         class NestedAddKeyOperator(OperatorModule):
-            def apply(self, data, state, metadata, random_params=None, stats=None):
-                del random_params, stats
+            def apply(
+                self,
+                element: Element,
+                key: jax.Array | None = None,
+                stats: dict[str, Any] | None = None,
+            ) -> Element:
+                data = element.data
+                del key, stats
                 out_data = {
                     "nested": {
                         **data["nested"],
                         "computed": data["nested"]["value"] * 2,
                     },
                 }
-                return out_data, state, metadata
+                return element.replace(data=out_data)
 
         op = NestedAddKeyOperator(config, rngs=rngs)
 
@@ -260,7 +292,7 @@ class TestNestedOutputStructure:
         ]
         batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-        result = op.apply_batch(batch)
+        result = op(batch)
         result_data = result.data
 
         assert "nested" in result_data
@@ -272,8 +304,14 @@ class TestNestedOutputStructure:
         """Operator handles deeply nested PyTree structures."""
 
         class DeeplyNestedOperator(OperatorModule):
-            def apply(self, data, state, metadata, random_params=None, stats=None):
-                del random_params, stats
+            def apply(
+                self,
+                element: Element,
+                key: jax.Array | None = None,
+                stats: dict[str, Any] | None = None,
+            ) -> Element:
+                data = element.data
+                del key, stats
                 out_data = {
                     "level1": {
                         "level2": {
@@ -282,7 +320,7 @@ class TestNestedOutputStructure:
                         },
                     },
                 }
-                return out_data, state, metadata
+                return element.replace(data=out_data)
 
         op = DeeplyNestedOperator(config, rngs=rngs)
 
@@ -294,7 +332,7 @@ class TestNestedOutputStructure:
         ]
         batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-        result = op.apply_batch(batch)
+        result = op(batch)
         result_data = result.data
 
         assert result_data["level1"]["level2"]["value"].shape == (1, 1)
@@ -314,11 +352,16 @@ class TestEdgeCases:
         """Operator can add keys to empty input data."""
 
         class EmptyToNonEmptyOperator(OperatorModule):
-            def apply(self, data, state, metadata, random_params=None, stats=None):
+            def apply(
+                self,
+                element: Element,
+                key: jax.Array | None = None,
+                stats: dict[str, Any] | None = None,
+            ) -> Element:
                 # Input is empty, but we add a key
-                del data, random_params, stats
+                del key, stats
                 out_data = {"generated": jnp.array([1.0, 2.0, 3.0])}
-                return out_data, state, metadata
+                return element.replace(data=out_data)
 
         EmptyToNonEmptyOperator(config, rngs=rngs)
 
@@ -341,7 +384,7 @@ class TestEdgeCases:
         elements = [Element(data={"input": jnp.array([5.0])}, state={})]
         batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-        result = op.apply_batch(batch)
+        result = op(batch)
         result_data = result.data
 
         assert result.batch_size == 1
@@ -358,7 +401,7 @@ class TestEdgeCases:
         ]
         batch = batch_ops.from_stacked(batch_ops.stack(elements))
 
-        result = op.apply_batch(batch)
+        result = op(batch)
         result_data = result.data
 
         assert result.batch_size == batch_size
@@ -373,12 +416,19 @@ class TestEdgeCases:
 class AddDataAndStateOperator(OperatorModule):
     """Adds one data field and one state field."""
 
-    def apply(self, data, state, metadata, random_params=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
         """Add a computed field and record that the record was seen."""
-        del random_params, stats
+        data = element.data
+        state = element.state
+        del key, stats
         out_data = {**data, "computed": data["input"] * 2}
         out_state = {**state, "seen": jnp.asarray(True)}
-        return out_data, out_state, metadata
+        return element.replace(data=out_data, state=out_state)
 
 
 def _batch_of(values, state=None):
@@ -397,7 +447,7 @@ class TestAddedFieldsSurviveEveryPath:
         """apply_batch returns both added fields."""
         op = AddDataAndStateOperator(config, rngs=rngs)
 
-        result = op.apply_batch(_batch_of([1.0, 2.0]))
+        result = op(_batch_of([1.0, 2.0]))
 
         assert "computed" in result.data
         assert "seen" in result.states
@@ -445,7 +495,7 @@ class TestStateStructureOrderDoesNotMatter:
         op = AddDataAndStateOperator(config, rngs=rngs)
 
         op(batch_ops.from_arrays({"input": jnp.ones((2, 1))}))
-        result = op.apply_batch(_batch_of([1.0, 2.0], state={"count": jnp.asarray(0)}))
+        result = op(_batch_of([1.0, 2.0], state={"count": jnp.asarray(0)}))
 
         assert "computed" in result.data
         assert "count" in result.states
@@ -454,7 +504,7 @@ class TestStateStructureOrderDoesNotMatter:
         """The reverse order works as well."""
         op = AddDataAndStateOperator(config, rngs=rngs)
 
-        op.apply_batch(_batch_of([1.0, 2.0], state={"count": jnp.asarray(0)}))
+        op(_batch_of([1.0, 2.0], state={"count": jnp.asarray(0)}))
         out = op(batch_ops.from_arrays({"input": jnp.ones((2, 1))}))
         out_data, out_state = out.data, out.states
 
@@ -472,7 +522,7 @@ class TestCompiledAndBranchingCallers:
 
         @jax.jit
         def run(values):
-            return op.apply_batch(_batch_of([1.0, 2.0])).data["computed"] + values
+            return op(_batch_of([1.0, 2.0])).data["computed"] + values
 
         first = run(jnp.zeros((2, 1)))
         second = run(jnp.ones((2, 1)))
@@ -580,13 +630,19 @@ class TestTracingIsDecidedByTheConfiguration:
 class MaskWhenDrawnOperator(OperatorModule):
     """Stochastic operator whose drawn branch adds a ``mask`` field."""
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
         """Add a mask drawn from the record's key, refusing to run without one."""
+        data = element.data
         del stats
         if key is None:
             raise ValueError("MaskWhenDrawnOperator draws its mask from a random key")
         mask = jax.random.bernoulli(key, 0.5, data["x"].shape)
-        return {**data, "mask": mask}, state, metadata
+        return element.replace(data={**data, "mask": mask})
 
 
 class TestStochasticOutputStructure:
@@ -605,7 +661,7 @@ class TestStochasticOutputStructure:
             batch_ops.stack([Element(data={"x": jnp.ones(3)}, state={}) for _ in range(4)])
         )
 
-        result_data = operator.apply_batch(batch).data
+        result_data = operator(batch).data
 
         assert set(result_data) == {"x", "mask"}
         assert result_data["mask"].shape == (4, 3)

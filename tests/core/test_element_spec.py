@@ -9,6 +9,7 @@ buffers, auto-size learnable layers, and statically validate operator chains.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -18,6 +19,7 @@ from flax import nnx
 from datarax.core.batcher import BatcherModule
 from datarax.core.config import OperatorConfig, SamplerConfig, StructuralConfig
 from datarax.core.data_source import DataSourceModule
+from datarax.core.element_batch import Element
 from datarax.core.operator import OperatorModule
 from datarax.core.sampler import SamplerModule
 
@@ -50,8 +52,10 @@ class _IdentityOperatorConfig(OperatorConfig):
 class _IdentityOperator(OperatorModule):
     """Operator that does not change shape — should pass spec through unchanged."""
 
-    def apply(self, data, state, metadata, random_params=None, stats=None):  # type: ignore[override]
-        return data, state, metadata
+    def apply(
+        self, element: Element, key: jax.Array | None = None, stats: dict[str, Any] | None = None
+    ) -> Element:
+        return element
 
 
 def test_operator_module_output_spec_default_passthrough() -> None:
@@ -109,7 +113,7 @@ class _MinimalSamplerConfig(SamplerConfig):
     pass
 
 
-class _MinimalSampler(SamplerModule):
+class _MinimalSampler(SamplerModule[int]):
     """Concrete sampler that uses the base class's default index_spec."""
 
 

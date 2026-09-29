@@ -268,7 +268,6 @@ augmentation = CompositeOperatorModule(
         stream_name="augment",
     ),
     operators=[normalizer, flipper],
-    rngs=nnx.Rngs(augment=999),
 )
 
 print("Created operators: normalizer, flipper, augmentation")

@@ -23,6 +23,7 @@ import scipy.signal
 from flax import nnx
 
 from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 from datarax.operators.modality.audio.loudness_operator import (
     _a_weighting_jax,
     LoudnessConfig,
@@ -123,7 +124,7 @@ class TestLoudnessOutput:
         data = {"audio": audio}
         state = {}
 
-        out_data, out_state, out_meta = op.apply(data, state, None)
+        out_data = op.apply(Element(data, state=state)).data
         assert out_data["loudness"].shape == (1001,), (
             f"Expected (1001,), got {out_data['loudness'].shape}"
         )
@@ -136,7 +137,7 @@ class TestLoudnessOutput:
         audio = jnp.zeros(64000)
         data = {"audio": audio}
 
-        out_data, _, _ = op.apply(data, {}, None)
+        out_data = op.apply(Element(data)).data
         assert "loudness" in out_data
         assert "audio" in out_data, "Original audio key should be preserved"
 
@@ -145,7 +146,7 @@ class TestLoudnessOutput:
         op = LoudnessOperator(LoudnessConfig(), rngs=nnx.Rngs(0))
         batch = batch_ops.from_arrays({"audio": jnp.zeros((2, 32000))})
 
-        result_data = op.apply_batch(batch).data
+        result_data = op(batch).data
 
         assert "loudness" in result_data, "the batch must carry the loudness the operator adds"
         assert "audio" in result_data, "the original audio must be preserved"
@@ -157,7 +158,7 @@ class TestLoudnessOutput:
 
         # 2 seconds = 32000 samples → 501 frames
         audio = jnp.zeros(32000)
-        out_data, _, _ = op.apply({"audio": audio}, {}, None)
+        out_data = op.apply(Element({"audio": audio})).data
         assert out_data["loudness"].shape == (501,)
 
 
@@ -175,7 +176,7 @@ class TestLoudnessAcoustics:
         op = LoudnessOperator(config, rngs=nnx.Rngs(0))
 
         audio = jnp.zeros(64000)
-        out_data, _, _ = op.apply({"audio": audio}, {}, None)
+        out_data = op.apply(Element({"audio": audio})).data
         loudness = out_data["loudness"]
 
         # Silence sits exactly at the floor (-range_db)
@@ -191,8 +192,8 @@ class TestLoudnessAcoustics:
         audio_quiet = 0.1 * jnp.sin(2 * jnp.pi * 440.0 * t)
         audio_loud = 0.5 * jnp.sin(2 * jnp.pi * 440.0 * t)
 
-        out_quiet, _, _ = op.apply({"audio": audio_quiet}, {}, None)
-        out_loud, _, _ = op.apply({"audio": audio_loud}, {}, None)
+        out_quiet = op.apply(Element({"audio": audio_quiet})).data
+        out_loud = op.apply(Element({"audio": audio_loud})).data
 
         mean_quiet = jnp.mean(out_quiet["loudness"])
         mean_loud = jnp.mean(out_loud["loudness"])
@@ -216,7 +217,7 @@ class TestLoudnessJaxCompat:
         audio = jnp.zeros((B, 64000))
         batch = batch_ops.from_arrays({"audio": audio}, states={"_dummy": jnp.zeros((B,))})
 
-        result = op.apply_batch(batch)
+        result = op(batch)
         result_data = result.data
         assert result_data["loudness"].shape == (B, 1001)
 
@@ -227,7 +228,8 @@ class TestLoudnessJaxCompat:
 
         @nnx.jit
         def jitted_apply(op, data, state):
-            out_data, out_state, _ = op.apply(data, state, None)
+            applied = op.apply(Element(data, state=state))
+            out_data, out_state = applied.data, applied.state
             return out_data, out_state
 
         audio = jnp.zeros(64000)
@@ -293,7 +295,7 @@ class TestLoudnessLearnableParams:
         audio = jnp.sin(2 * jnp.pi * 440.0 * t)
 
         def loss_fn(op):
-            out_data, _, _ = op.apply({"audio": audio}, {}, None)
+            out_data = op.apply(Element({"audio": audio})).data
             return jnp.mean(out_data["loudness"])
 
         loss, grads = nnx.value_and_grad(loss_fn)(op)
@@ -375,7 +377,7 @@ def test_loudness_matches_the_published_method(name: str, n_fft: int) -> None:
     audio = _signals()[name]
     operator = LoudnessOperator(LoudnessConfig(n_fft=n_fft), rngs=nnx.Rngs(0))
 
-    out, _, _ = operator.apply({"audio": jnp.asarray(audio, jnp.float32)}, {}, None)
+    out = operator.apply(Element({"audio": jnp.asarray(audio, jnp.float32)})).data
 
     expected = _ddsp_loudness(audio, n_fft=n_fft)
     bound = 4.343 * (n_fft // 2 + 1) * float(np.finfo(np.float32).eps)

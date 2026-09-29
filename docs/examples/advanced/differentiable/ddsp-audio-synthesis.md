@@ -128,7 +128,13 @@ class ReverbOperator(OperatorModule):
         decay = jnp.exp(-jnp.arange(config.ir_length) * 5.0 / config.ir_length)
         self.impulse_response = nnx.Param(decay * 0.1)
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        data = element.data
         audio = data["audio"]
         ir = self.impulse_response[...]
         # FFT-based convolution
@@ -139,7 +145,7 @@ class ReverbOperator(OperatorModule):
         ir_fft = jnp.fft.rfft(ir, n=n_fft_padded)
         convolved = jnp.fft.irfft(audio_fft * ir_fft, n=n_fft_padded)
         reverbed = convolved[: audio.shape[0]]
-        return {**data, "audio": reverbed}, state, metadata
+        return element.replace(data={**data, "audio": reverbed})
 ```
 
 ### 3 Custom Operators

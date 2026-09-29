@@ -70,6 +70,8 @@ from flax import nnx
 from substrax.artifacts import resolve_output_dir
 
 from datarax.core.config import BatchMixOperatorConfig
+from datarax.core.element_batch import Batch
+from datarax.core.state_keys import MIX_LAMBDA, MIX_PARTNER
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.batch_mix_operator import BatchMixOperator
 from datarax.operators.modality.image import (
@@ -147,52 +149,20 @@ print(f"  MixUp: {USE_MIXUP} (alpha={MIXUP_ALPHA})")
 - Standard CIFAR-10 normalization
 - Random brightness/contrast
 - Light Gaussian noise
-- MixUp for regularization
+- MixUp for regularization: labels stay integers; the operator writes each record's partner
+  and the mixing ratio, and the loss reads them
 
 ### Validation Pipeline (no augmentation)
 - Normalization only
-- Hard labels for evaluation
 """
 
 
 # %%
-def preprocess_train(element, key=None):  # noqa: ARG001
-    """Preprocess for training with one-hot labels for MixUp."""
+def preprocess(element, key=None):  # noqa: ARG001
+    """Normalize the image; the label stays an integer class index."""
     del key
-    image = element.data["image"]
-
-    # Normalize
-    image = image.astype(jnp.float32) / 255.0
-    image = (image - CIFAR10_MEAN) / CIFAR10_STD
-
-    # One-hot labels for MixUp
-    label = element.data["label"]
-    label_onehot = jnp.eye(NUM_CLASSES, dtype=jnp.float32)[label]
-
-    return element.update_data(
-        {
-            "image": image,
-            "label": label_onehot,
-            "label_idx": label,
-        }
-    )
-
-
-def preprocess_val(element, key=None):  # noqa: ARG001
-    """Preprocess for validation with integer labels."""
-    del key
-    image = element.data["image"]
-
-    # Normalize
-    image = image.astype(jnp.float32) / 255.0
-    image = (image - CIFAR10_MEAN) / CIFAR10_STD
-
-    return element.update_data(
-        {
-            "image": image,
-            "label": element.data["label"],
-        }
-    )
+    image = element.data["image"].astype(jnp.float32) / 255.0
+    return element.update_data({"image": (image - CIFAR10_MEAN) / CIFAR10_STD})
 
 
 print("Preprocessing functions defined")
@@ -216,7 +186,7 @@ def create_train_pipeline(seed=42):
     # Preprocessor
     prep = ElementOperator(
         ElementOperatorConfig(stochastic=False),
-        fn=preprocess_train,
+        fn=preprocess,
         rngs=nnx.Rngs(0),
     )
 
@@ -260,7 +230,6 @@ def create_train_pipeline(seed=42):
                 mode="mixup",
                 alpha=MIXUP_ALPHA,
                 data_field="image",
-                label_field="label",
                 stochastic=True,
                 stream_name="mixup",
             ),
@@ -285,7 +254,7 @@ def create_val_pipeline():
 
     prep = ElementOperator(
         ElementOperatorConfig(stochastic=False),
-        fn=preprocess_val,
+        fn=preprocess,
         rngs=nnx.Rngs(0),
     )
 
@@ -423,24 +392,35 @@ optimizer = nnx.Optimizer(
 )
 
 
+def training_loss(logits: jax.Array, batch: Batch) -> jax.Array:
+    """Cross-entropy of the batch; for mixed records, lam CE(y) + (1 - lam) CE(y[partner]).
+
+    The MixUp loss of the published implementation (`mixup_criterion` in
+    facebookresearch/mixup-cifar10, `train.py:137-138`): the labels are never mixed.
+    """
+    labels = batch["label"]
+    loss = optax.softmax_cross_entropy_with_integer_labels(logits, labels)
+    if MIX_LAMBDA not in batch.batch_state:
+        return loss.mean()
+    lam = batch.batch_state[MIX_LAMBDA]
+    partner_labels = labels[batch.states[MIX_PARTNER]]
+    partner_loss = optax.softmax_cross_entropy_with_integer_labels(logits, partner_labels)
+    return (lam * loss + (1 - lam) * partner_loss).mean()
+
+
 @nnx.jit
-def train_step(model: CIFAR10Net, optimizer: nnx.Optimizer, images: jax.Array, labels: jax.Array):
-    """Single training step with soft labels."""
+def train_step(model: CIFAR10Net, optimizer: nnx.Optimizer, batch: Batch):
+    """Single training step on a batch, mixed or not."""
 
     def loss_fn(model):
-        logits = model(images)
-        # Soft cross-entropy for MixUp
-        loss = -jnp.sum(labels * jax.nn.log_softmax(logits), axis=-1).mean()
-        return loss
+        return training_loss(model(batch["image"]), batch)
 
     loss, grads = nnx.value_and_grad(loss_fn)(model)
     optimizer.update(model, grads)
 
-    # Compute accuracy (argmax of soft labels)
-    logits = model(images)
-    predictions = jnp.argmax(logits, axis=-1)
-    targets = jnp.argmax(labels, axis=-1)
-    accuracy = (predictions == targets).mean()
+    # Accuracy against each record's own label
+    predictions = jnp.argmax(model(batch["image"]), axis=-1)
+    accuracy = (predictions == batch["label"]).mean()
 
     return loss, accuracy
 
@@ -491,14 +471,11 @@ for epoch in range(NUM_EPOCHS):
     samples_processed = 0
 
     for batch in train_pipeline:
-        images = batch["image"]
-        labels = batch["label"]
-
-        loss, acc = train_step(model, optimizer, images, labels)
+        loss, acc = train_step(model, optimizer, batch)
 
         epoch_losses.append(float(loss))
         epoch_accs.append(float(acc))
-        samples_processed += images.shape[0]
+        samples_processed += batch.batch_size
 
     train_loss = np.mean(epoch_losses)
     train_acc = np.mean(epoch_accs)
@@ -714,7 +691,8 @@ TFDSEagerSource → Preprocess → Model
 ### Key Takeaways
 
 1. **Separate pipelines**: Train with augmentation, validate without
-2. **MixUp**: Creates soft labels, requires adapted loss function
+2. **MixUp**: Leaves labels as integers and writes each record's partner and the mixing
+   ratio; the loss reads them (λ·CE(y) + (1 − λ)·CE(y[partner]))
 3. **BatchNorm**: Use in eval mode for validation
 4. **Fresh pipelines**: Create new pipeline each epoch for shuffling
 5. **Throughput tracking**: Monitor for optimization opportunities
@@ -746,9 +724,7 @@ def main():
     for i, batch in enumerate(pipeline):
         if i >= 20:
             break
-        images = batch["image"]
-        labels = batch["label"]
-        _, _ = train_step(model, optimizer, images, labels)
+        train_step(model, optimizer, batch)
 
     # Validate
     val_pipeline = create_val_pipeline()

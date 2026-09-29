@@ -11,6 +11,8 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 from datarax.operators.modality.image.contrast_operator import (
     ContrastOperator,
     ContrastOperatorConfig,
@@ -99,10 +101,9 @@ class TestContrastOperatorTransformations:
         image = image[..., None]  # (2, 2, 1)
         data = {"image": image}
         state = {}
-        metadata = {}
 
         # Apply transformation
-        result, _, _ = operator.apply(data, state, metadata)
+        result = operator.apply(Element(data, state=state)).data
 
         # Verify contrast adjustment (around mean 0.5)
         # Expected: 0.5 + 1.5 * (val - 0.5)
@@ -117,7 +118,7 @@ class TestContrastOperatorTransformations:
         operator = ContrastOperator(config, rngs=nnx.Rngs(0))
         image = jnp.full((4, 4, 1), 0.5)
 
-        result, _, _ = operator.apply({"image": image}, {}, {})
+        result = operator.apply(Element({"image": image})).data
 
         assert result["image"].shape == image.shape
         assert jnp.array_equal(result["image"], image)
@@ -137,7 +138,7 @@ class TestContrastOperatorTransformations:
         image = jnp.array([[[0.0, 0.5, 1.0]]])
         data = {"image": image}
 
-        result, _, _ = operator.apply(data, {}, {})
+        result = operator.apply(Element(data)).data
 
         assert jnp.all(result["image"] >= 0.0)
         assert jnp.all(result["image"] <= 1.0)
@@ -153,7 +154,7 @@ class TestContrastOperatorTransformations:
         operator = ContrastOperator(config, rngs=nnx.Rngs(0))
 
         # Two pixels per channel, so the channel has a mean and a contrast to scale
-        result, _, _ = operator.apply({"image": jnp.array([[[0.0], [1.0]]])}, {}, {})
+        result = operator.apply(Element({"image": jnp.array([[[0.0], [1.0]]])})).data
 
         assert float(result["image"].min()) < 0.0
         assert float(result["image"].max()) > 1.0
@@ -175,7 +176,9 @@ class TestContrastOperatorStochastic:
         batch_size = 10
         # A two-tone image, so a change of contrast is visible in the output
         image = jnp.zeros((32, 32, 3)).at[:16].set(1.0)
-        data, _ = operator._vmap_apply({"image": jnp.stack([image] * batch_size)}, {})
+        data = operator(
+            batch_ops.from_arrays({"image": jnp.stack([image] * batch_size)}, states={})
+        ).data
 
         assert data["image"].shape == (batch_size, 32, 32, 3)
         assert not jnp.allclose(data["image"][0], data["image"][1])
@@ -194,9 +197,9 @@ class TestContrastOperatorJIT:
         operator = ContrastOperator(config, rngs=rngs)
 
         @nnx.jit
-        def apply_jit(op, data):
-            return op.apply(data, {}, {})
+        def apply_jit(op: ContrastOperator, element: Element) -> Element:
+            return op.apply(element)
 
         data = {"image": jnp.ones((1, 4, 4, 3)) * 0.5}
-        result = apply_jit(operator, data)
-        assert result[0]["image"].shape == (1, 4, 4, 3)
+        result = apply_jit(operator, Element(data))
+        assert result.data["image"].shape == (1, 4, 4, 3)

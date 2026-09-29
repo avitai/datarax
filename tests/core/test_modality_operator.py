@@ -4,11 +4,15 @@ Tests the base class for modality-specific operators.
 Follows TDD approach - tests written first (RED phase).
 """
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
 from flax import nnx
 
+from datarax.core import batch_ops
+from datarax.core.element_batch import Element
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 
 
@@ -20,22 +24,34 @@ class ConcreteModalityOperator(ModalityOperator):
         super().__init__(config, rngs=rngs, name=name)
         self.factor = factor
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
         """Simple test implementation - multiply image by the configured factor."""
+        data = element.data
         del key, stats
         factor = self.factor
         field = self._extract_field(data, self.config.field_key)
         transformed = field * factor
         transformed = self._apply_clip_range(transformed)
         result = self._remap_field(data, transformed)
-        return result, state, metadata
+        return element.replace(data=result)
 
 
 class StochasticModalityOperator(ModalityOperator):
     """Stochastic implementation for testing."""
 
-    def apply(self, data, state, metadata, key=None, stats=None):
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
         """Apply a brightness adjustment drawn from this record's key."""
+        data = element.data
         del stats
         brightness_factor = (
             jax.random.uniform(key, (), minval=0.8, maxval=1.2) if key is not None else 1.0
@@ -44,7 +60,7 @@ class StochasticModalityOperator(ModalityOperator):
         transformed = field * brightness_factor
         transformed = self._apply_clip_range(transformed)
         result = self._remap_field(data, transformed)
-        return result, state, metadata
+        return element.replace(data=result)
 
 
 class TestModalityOperatorInitialization:
@@ -104,10 +120,9 @@ class TestModalityOperatorAbstractMethods:
 
         data = {"image": jnp.ones((224, 224, 3))}
         state = {}
-        metadata = None
 
         with pytest.raises(NotImplementedError, match="must implement apply"):
-            operator.apply(data, state, metadata)
+            operator.apply(Element(data, state=state))
 
 
 class TestModalityOperatorHelperMethods:
@@ -197,15 +212,12 @@ class TestModalityOperatorApply:
         operator = ConcreteModalityOperator(config, rngs=rngs, factor=2.0)
 
         data = {"image": jnp.array([1.0, 2.0, 3.0])}
-        state = {}
-        metadata = None
 
-        result_data, result_state, result_metadata = operator.apply(data, state, metadata)
+        result = operator.apply(Element(data))
 
         expected = jnp.array([2.0, 4.0, 6.0])
-        assert jnp.allclose(result_data["image"], expected)
-        assert result_state == {}
-        assert result_metadata is None
+        assert jnp.allclose(result.data["image"], expected)
+        assert result.state == {}
 
     def test_apply_with_clip_range(self):
         """Apply should clip values when clip_range is set."""
@@ -215,9 +227,8 @@ class TestModalityOperatorApply:
 
         data = {"image": jnp.array([1.0, 2.0, 3.0])}
         state = {}
-        metadata = None
 
-        result_data, result_state, result_metadata = operator.apply(data, state, metadata)
+        result_data = operator.apply(Element(data, state=state)).data
 
         expected = jnp.array([3.0, 5.0, 5.0])  # 6.0 and 9.0 clipped to 5.0
         assert jnp.allclose(result_data["image"], expected)
@@ -233,9 +244,8 @@ class TestModalityOperatorApply:
 
         data = {"image": jnp.array([1.0, 2.0, 3.0])}
         state = {}
-        metadata = None
 
-        result_data, result_state, result_metadata = operator.apply(data, state, metadata)
+        result_data = operator.apply(Element(data, state=state)).data
 
         # Original should be preserved
         assert jnp.allclose(result_data["image"], jnp.array([1.0, 2.0, 3.0]))
@@ -255,7 +265,7 @@ class TestModalityOperatorStochastic:
         )
         operator = StochasticModalityOperator(config, rngs=nnx.Rngs(0, augment=1))
 
-        data, _ = operator._vmap_apply({"image": jnp.ones((4, 8))}, {})
+        data = operator(batch_ops.from_arrays({"image": jnp.ones((4, 8))}, states={})).data
 
         factors = data["image"][:, 0]
         assert factors.shape == (4,)
@@ -273,9 +283,9 @@ class TestModalityOperatorStochastic:
         operator = StochasticModalityOperator(config, rngs=nnx.Rngs(0, augment=1))
         data = {"image": jnp.array([1.0, 2.0, 3.0])}
 
-        first, _, _ = operator.apply(data, {}, None, key=jax.random.key(0))
-        again, _, _ = operator.apply(data, {}, None, key=jax.random.key(0))
-        other, _, _ = operator.apply(data, {}, None, key=jax.random.key(1))
+        first = operator.apply(Element(data), key=jax.random.key(0)).data
+        again = operator.apply(Element(data), key=jax.random.key(0)).data
+        other = operator.apply(Element(data), key=jax.random.key(1)).data
 
         assert jnp.array_equal(first["image"], again["image"])
         assert not jnp.allclose(first["image"], other["image"])
@@ -294,14 +304,12 @@ class TestModalityOperatorJAXCompatibility:
         operator = ConcreteModalityOperator(config, rngs=rngs, factor=2.0)
 
         @jax.jit
-        def jitted_apply(data, state, metadata):
-            return operator.apply(data, state, metadata)
+        def jitted_apply(element: Element) -> Element:
+            return operator.apply(element)
 
         data = {"image": jnp.array([1.0, 2.0, 3.0])}
-        state = {}
-        metadata = None
 
-        result_data, _, _ = jitted_apply(data, state, metadata)
+        result_data = jitted_apply(Element(data)).data
 
         expected = jnp.array([2.0, 4.0, 6.0])
         assert jnp.allclose(result_data["image"], expected)
@@ -318,7 +326,8 @@ class TestModalityOperatorJAXCompatibility:
 
         def apply_single(data, state):
             data_dict = {"image": data}
-            result_data, result_state, _ = operator.apply(data_dict, state, None)
+            applied = operator.apply(Element(data_dict, state=state))
+            result_data, result_state = applied.data, applied.state
             return result_data["image"], result_state
 
         vmapped_apply = jax.vmap(apply_single, in_axes=(0, 0))

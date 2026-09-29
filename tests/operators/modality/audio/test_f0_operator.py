@@ -68,7 +68,7 @@ class TestCrepeF0Output:
         op = CrepeF0Operator(CrepeF0Config(capacity="tiny"), rngs=nnx.Rngs(0))
         op.eval()
         data = {"audio": jnp.zeros(64000)}
-        out_data, state, meta = op.apply(data, {}, None)
+        out_data = op.apply(Element(data)).data
         assert "audio" in out_data, "Original 'audio' key must be preserved"
         assert "f0_hz" in out_data, "Output must have 'f0_hz' key"
         assert "f0_confidence" in out_data, "Output must have 'f0_confidence' key"
@@ -80,7 +80,7 @@ class TestCrepeF0Output:
         op.eval()
         # 64000 samples at sr=16000, frame_rate=250 → 1000 frames
         data = {"audio": jnp.zeros(64000)}
-        out_data, _, _ = op.apply(data, {}, None)
+        out_data = op.apply(Element(data)).data
         assert out_data["f0_hz"].shape == (1000,), (
             f"Expected (1000,), got {out_data['f0_hz'].shape}"
         )
@@ -95,7 +95,7 @@ class TestCrepeF0Output:
             batch_ops.stack([Element(data={"audio": jnp.zeros(16000)}, state={}) for _ in range(2)])
         )
 
-        result_data = op.apply_batch(batch).data
+        result_data = op(batch).data
 
         assert "f0_hz" in result_data
         assert "f0_confidence" in result_data
@@ -108,7 +108,7 @@ class TestCrepeF0Output:
         op.eval()
         # 16000 samples → 250 frames
         data = {"audio": jnp.zeros(16000)}
-        out_data, _, _ = op.apply(data, {}, None)
+        out_data = op.apply(Element(data)).data
         assert out_data["f0_hz"].shape == (250,)
 
 
@@ -129,7 +129,7 @@ class TestCrepeF0Framing:
         hop = cfg.sample_rate // cfg.frame_rate
         expected_frames = n_samples // hop
         data = {"audio": jnp.zeros(n_samples)}
-        out_data, _, _ = op.apply(data, {}, None)
+        out_data = op.apply(Element(data)).data
         assert out_data["f0_hz"].shape[0] == expected_frames
 
     def test_f0_output_range(self):
@@ -138,7 +138,7 @@ class TestCrepeF0Framing:
         op = CrepeF0Operator(cfg, rngs=nnx.Rngs(0))
         op.eval()
         data = {"audio": jax.random.normal(jax.random.key(42), (16000,))}
-        out_data, _, _ = op.apply(data, {}, None)
+        out_data = op.apply(Element(data)).data
         assert jnp.all(out_data["f0_hz"] > 0), "f0 must be positive"
 
     def test_confidence_range(self):
@@ -147,7 +147,7 @@ class TestCrepeF0Framing:
         op = CrepeF0Operator(cfg, rngs=nnx.Rngs(0))
         op.eval()
         data = {"audio": jax.random.normal(jax.random.key(42), (16000,))}
-        out_data, _, _ = op.apply(data, {}, None)
+        out_data = op.apply(Element(data)).data
         assert jnp.all(out_data["f0_confidence"] >= 0.0)
         assert jnp.all(out_data["f0_confidence"] <= 1.0)
 
@@ -198,7 +198,7 @@ class TestCrepeF0Differentiable:
         data = {"audio": audio}
 
         def loss_fn(op):
-            out_data, _, _ = op.apply(data, {}, None)
+            out_data = op.apply(Element(data)).data
             return jnp.mean(out_data["f0_hz"])
 
         _, grads = nnx.value_and_grad(loss_fn)(op)
@@ -212,7 +212,7 @@ class TestCrepeF0Differentiable:
         op = CrepeF0Operator(cfg, rngs=nnx.Rngs(0))
         op.eval()
         data = {"audio": jnp.zeros(16000)}
-        out_data, _, _ = op.apply(data, {}, None)
+        out_data = op.apply(Element(data)).data
         assert out_data["f0_hz"].shape == (250,)
 
 
@@ -233,13 +233,13 @@ class TestCrepeF0Chunking:
         cfg_full = CrepeF0Config(capacity="tiny", batch_frames=0)
         op_full = CrepeF0Operator(cfg_full, rngs=nnx.Rngs(0))
         op_full.eval()
-        out_full, _, _ = op_full.apply(data, {}, None)
+        out_full = op_full.apply(Element(data)).data
 
         # Chunked (batch_frames=64 forces multiple chunks for 250 frames)
         cfg_chunked = CrepeF0Config(capacity="tiny", batch_frames=64)
         op_chunked = CrepeF0Operator(cfg_chunked, rngs=nnx.Rngs(0))
         op_chunked.eval()
-        out_chunked, _, _ = op_chunked.apply(data, {}, None)
+        out_chunked = op_chunked.apply(Element(data)).data
 
         # Floating-point non-associativity means different chunk sizes produce
         # slightly different results (different addition order in matmuls).
@@ -264,7 +264,7 @@ class TestCrepeF0Chunking:
         op = CrepeF0Operator(cfg, rngs=nnx.Rngs(0))
         op.eval()
         data = {"audio": jnp.zeros(16000)}
-        out_data, _, _ = op.apply(data, {}, None)
+        out_data = op.apply(Element(data)).data
         assert out_data["f0_hz"].shape == (250,)
 
 
@@ -303,7 +303,7 @@ class TestCrepeF0PitchAccuracy:
         audio = (audio - jnp.mean(audio)) / jnp.maximum(jnp.std(audio), 1e-8)
 
         data = {"audio": audio}
-        out_data, _, _ = pretrained_op.apply(data, {}, None)
+        out_data = pretrained_op.apply(Element(data)).data
 
         # Median f0 should be near 440 Hz (some edge frames may be off)
         median_f0 = jnp.median(out_data["f0_hz"])
@@ -318,7 +318,7 @@ class TestCrepeF0PitchAccuracy:
         audio = (audio - jnp.mean(audio)) / jnp.maximum(jnp.std(audio), 1e-8)
 
         data = {"audio": audio}
-        out_data, _, _ = pretrained_op.apply(data, {}, None)
+        out_data = pretrained_op.apply(Element(data)).data
 
         median_f0 = jnp.median(out_data["f0_hz"])
         assert jnp.abs(median_f0 - 880.0) < 15.0, f"Expected ~880 Hz, got {median_f0:.1f} Hz"
@@ -338,7 +338,7 @@ class TestCrepeF0PitchAccuracy:
         op.eval()
 
         data = {"audio": jnp.zeros(16000)}
-        out_data, _, _ = op.apply(data, {}, None)
+        out_data = op.apply(Element(data)).data
         mean_conf = jnp.mean(out_data["f0_confidence"])
         assert mean_conf < 0.5, f"Silence should have low confidence, got {mean_conf:.3f}"
 
@@ -368,7 +368,7 @@ class TestCrepeF0Transforms:
 
         @nnx.jit
         def extract(operator: CrepeF0Operator, data: dict) -> jnp.ndarray:
-            out_data, _, _ = operator.apply(data, {}, None)
+            out_data = operator.apply(Element(data)).data
             return out_data["f0_hz"]
 
         f0 = extract(op, {"audio": jnp.zeros(4096)})

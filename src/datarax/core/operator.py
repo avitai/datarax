@@ -20,44 +20,17 @@ from typing import Any, cast, final
 import jax
 import jax.numpy as jnp
 from flax import nnx
+from flax.errors import TraceContextError
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
-from datarax.core.element_batch import Batch
+from datarax.core.element_batch import ArrayValue, Batch, Element
 from datarax.core.module import DataraxModule
-from datarax.core.prng import per_record_keys
+from datarax.core.prng import per_record_keys, record_key
 
 
 logger = logging.getLogger(__name__)
-
-
-def extract_batch_size(data_shapes: PyTree) -> int:
-    """Extract batch size from a PyTree of shape tuples.
-
-    Traverses the PyTree treating tuples as atomic leaves (since JAX
-    normally unfolds tuples as nodes) and returns the first axis of
-    the first leaf shape.
-
-    Args:
-        data_shapes: PyTree with same structure as batch data, where each
-                     leaf is a shape tuple (e.g. ``(batch_size, H, W, C)``).
-
-    Returns:
-        The batch size (first element of the first shape found).
-
-    Raises:
-        ValueError: If the shape tree has no leaves.
-    """
-    batch_sizes = jax.tree.map(
-        lambda shape: shape[0], data_shapes, is_leaf=lambda x: isinstance(x, tuple)
-    )
-    batch_size_leaves = jax.tree.leaves(batch_sizes)
-
-    if not batch_size_leaves:
-        raise ValueError("Cannot extract batch size from an empty shape tree")
-
-    return batch_size_leaves[0]
 
 
 def require_key(key: jax.Array | None, operator: "OperatorModule") -> jax.Array:
@@ -120,24 +93,22 @@ def _statistics_arrays(statistics: Mapping[str, ArrayLike]) -> dict[str, jax.Arr
 CHILD_STATISTICS = "children"
 
 
-def child_statistics(
-    operators: Sequence["OperatorModule"], batch_data: PyTree
-) -> dict[str, Any] | None:
+def child_statistics(operators: Sequence["OperatorModule"], batch: Batch) -> dict[str, Any] | None:
     """Return what each child computes for this batch, or ``None`` when no child has any.
 
-    A child cannot compute statistics of its own while it runs: a wrapper applies its children
-    inside one vectorized call, by which point the batch is gone. So the wrapper computes them
-    once per batch, before the batch is vectorized.
+    A child cannot compute statistics of its own while it runs: a per-record wrapper applies its
+    children inside one vectorized call, by which point the batch is gone. So the wrapper computes
+    them once per batch, before the batch is vectorized.
 
     Args:
         operators: The wrapper's children, in the order it applies them.
-        batch_data: The batch the wrapper is about to apply, with the batch on axis 0.
+        batch: The batch the wrapper is about to apply.
 
     Returns:
         One entry per child, or ``None`` when every child computed ``None`` — so a wrapper
         over children with no statistics passes nothing down rather than an empty shell.
     """
-    computed = tuple(operator.compute_statistics(batch_data) for operator in operators)
+    computed = tuple(operator.compute_statistics(batch) for operator in operators)
     if all(entry is None for entry in computed):
         return None
     return {CHILD_STATISTICS: computed}
@@ -159,6 +130,141 @@ def statistics_for_child(stats: dict[str, Any] | None, index: int) -> dict[str, 
     if children is None:
         return None
     return children[index]
+
+
+def _on_values(
+    child: "OperatorModule", element: Element, stats: dict[str, Any] | None
+) -> Callable[[tuple[PyTree, PyTree]], tuple[PyTree, PyTree]]:
+    """``child`` applied to a record's ``(data, state)``, the record's identity held fixed.
+
+    ``jax.lax.cond`` and ``switch`` return new arrays for everything that passes through them, so a
+    wrapper passes only the record's data and state through its branches and keeps its identity.
+
+    Args:
+        child: The operator a branch applies, in its own mode.
+        element: The record, whose identity the branch keeps.
+        stats: The child's statistics.
+
+    Returns:
+        A branch function from ``(data, state)`` to ``(data, state)``.
+    """
+
+    def run(values: tuple[PyTree, PyTree]) -> tuple[PyTree, PyTree]:
+        out = child.apply_record(element.replace(data=values[0], state=values[1]), stats)
+        return out.data, out.state
+
+    return run
+
+
+def apply_where(
+    child: "OperatorModule",
+    should_apply: bool | jax.Array,
+    element: Element,
+    stats: dict[str, Any] | None,
+) -> Element:
+    """Apply ``child`` to the record where ``should_apply`` holds, else return it unchanged.
+
+    Args:
+        child: The operator to apply, in its own mode (``apply_record``).
+        should_apply: Whether to apply it; a traced boolean is decided by ``jax.lax.cond``.
+        element: The record.
+        stats: The child's statistics.
+
+    Returns:
+        The record, transformed or not.
+    """
+    data, state = jax.lax.cond(
+        should_apply,
+        _on_values(child, element, stats),
+        lambda values: values,
+        (element.data, element.state),
+    )
+    return element.replace(data=data, state=state)
+
+
+def apply_selected(
+    children: Sequence["OperatorModule"],
+    selected: int | jax.Array,
+    element: Element,
+    stats: dict[str, Any] | None,
+) -> Element:
+    """Apply the child at ``selected`` to the record; ``jax.lax.switch`` runs only that branch.
+
+    Args:
+        children: The candidate operators.
+        selected: The index of the one to apply; out of range is clamped, as ``switch`` does.
+        element: The record.
+        stats: One entry per child (``child_statistics``), or ``None``.
+
+    Returns:
+        The record, transformed by the selected child.
+    """
+    branches = [
+        _on_values(child, element, statistics_for_child(stats, index))
+        for index, child in enumerate(children)
+    ]
+    data, state = jax.lax.switch(selected, branches, (element.data, element.state))
+    return element.replace(data=data, state=state)
+
+
+def _require_identity_kept(element: Element, out: Element, operator: "OperatorModule") -> None:
+    """Refuse a transformed record whose identity is not the one it arrived with.
+
+    The check is by object identity, at trace time: ``Element.replace`` keeps the fields it is
+    not given, so a record built with ``element.replace(data=..., state=...)`` passes, and the
+    check costs nothing at run time.
+
+    Args:
+        element: The record as it was handed over.
+        out: The record the transform returned.
+        operator: The operator whose ``apply`` ran; its class is named in the error.
+
+    Raises:
+        ValueError: If ``index``, ``epoch`` or ``draw`` is not the one handed over.
+    """
+    if not (out.index is element.index and out.epoch is element.epoch and out.draw is element.draw):
+        raise ValueError(
+            f"{type(operator).__name__}.apply changed the record's identity; return "
+            "element.replace(data=..., state=...) and keep index, epoch and draw"
+        )
+
+
+def require_record_form(child: "OperatorModule", wrapper: "OperatorModule") -> None:
+    """Refuse a child a per-record wrapper cannot apply to one record.
+
+    Args:
+        child: The child operator.
+        wrapper: The wrapper deciding or merging per record.
+
+    Raises:
+        TypeError: If the child works on the whole batch.
+    """
+    reason = child.whole_batch_reason()
+    if reason is not None:
+        raise TypeError(
+            f"{type(wrapper).__name__} applies its children one record at a time, and "
+            f"{type(child).__name__} works on the whole batch: {reason}. Apply it before or "
+            "after the wrapper, or in a SEQUENTIAL composite."
+        )
+
+
+def require_distinct(operators: Sequence["OperatorModule"]) -> None:
+    """Refuse the same operator instance twice among a wrapper's children.
+
+    An operator keys each record from its own base key, so one instance at two places would
+    draw the same values at both; two instances draw independently.
+
+    Args:
+        operators: The wrapper's children.
+
+    Raises:
+        ValueError: If an instance appears more than once.
+    """
+    if len({id(operator) for operator in operators}) != len(operators):
+        raise ValueError(
+            "the same operator instance appears twice; it would draw the same values at each "
+            "place. Build one instance per place."
+        )
 
 
 class OperatorModule(DataraxModule):
@@ -261,80 +367,124 @@ class OperatorModule(DataraxModule):
         if deterministic is not None:
             self.deterministic = deterministic
 
-    def apply_deterministic(
-        self,
-        data: PyTree,
-        state: PyTree,
-        metadata: dict[str, Any] | None,
-        stats: dict[str, Any] | None = None,
-    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
+    def apply_deterministic(self, element: Element, stats: dict[str, Any] | None = None) -> Element:
         """Transform one record in deterministic mode: the record, unchanged, by default.
 
         A stochastic operator is an augmentation unless it says otherwise, and evaluation
-        applies no augmentation. An operator whose deterministic form does something (a
-        composition running its deterministic children) overrides this.
+        applies no augmentation. An operator whose deterministic form does something overrides
+        this.
 
         Args:
-            data: Element data PyTree (no batch dimension).
-            state: Element state PyTree.
-            metadata: Element metadata.
+            element: The record, without a batch axis.
             stats: This batch's statistics.
 
         Returns:
-            Tuple of (data, state, metadata).
+            The record.
         """
         del stats
-        return data, state, metadata
+        return element
 
-    @final
-    def apply_record(
-        self,
-        data: PyTree,
-        state: PyTree,
-        metadata: dict[str, Any] | None,
-        key: jax.Array | None = None,
-        stats: dict[str, Any] | None = None,
-    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
-        """Transform one record in this operator's mode; every framework path calls this.
+    # ========================================================================
+    # The per-record form
+    # ========================================================================
 
-        A stochastic operator in deterministic mode applies ``apply_deterministic``; otherwise
-        ``apply`` runs, with the record's key for a stochastic operator and no key for a
-        deterministic one, whatever its parent was handed. Wrappers call their children through
-        this, so a child's mode holds wherever it sits.
+    def whole_batch_reason(self) -> str | None:
+        """Say why this operator has no per-record form, or return ``None`` when it has one.
 
-        Args:
-            data: Element data PyTree (no batch dimension).
-            state: Element state PyTree.
-            metadata: Element metadata.
-            key: This record's PRNG key, or ``None`` for a deterministic operator.
-            stats: This batch's statistics.
+        An operator has a per-record form when it implements ``apply``; one that overrides
+        ``apply_batch`` alone works on the whole batch. A wrapper derives its answer from its
+        children.
 
         Returns:
-            Tuple of (transformed_data, new_state, new_metadata).
+            The reason, naming the operator, or ``None``.
         """
+        if type(self).apply is OperatorModule.apply:
+            return f"{type(self).__name__} overrides apply_batch and implements no apply"
+        return None
+
+    @property
+    def has_record_form(self) -> bool:
+        """Whether this operator can be applied to one record (``apply_record``)."""
+        return self.whole_batch_reason() is None
+
+    def fits_statistics_per_batch(self) -> bool:
+        """Whether this operator computes its statistics from each batch it is given.
+
+        True when it overrides ``compute_statistics``; a wrapper, whose statistics are its
+        children's, answers for its children.
+
+        Returns:
+            Whether the statistics depend on the batch.
+        """
+        return type(self).compute_statistics is not OperatorModule.compute_statistics
+
+    def record_key(self, element: Element) -> jax.Array:
+        """Return the record's key: this operator's base key folded with the record's identity.
+
+        Equal to the key ``__call__`` gives the same record in any batch, and independent of any
+        wrapper the operator sits in.
+
+        Args:
+            element: The record.
+
+        Returns:
+            The record's PRNG key.
+
+        Raises:
+            ValueError: If the record has no identity to key on.
+        """
+        if element.index is None:
+            raise ValueError(
+                f"{type(self).__name__} keys each record by its identity, and this Element has "
+                "none: build it with index=..., or call apply(element, key, stats) with a key"
+            )
+        return record_key(self._base_key[...], element.index, element.epoch, element.draw)
+
+    @final
+    def apply_record(self, element: Element, stats: dict[str, Any] | None = None) -> Element:
+        """Transform one record in this operator's mode; wrappers apply their children with it.
+
+        A deterministic operator's ``apply`` gets no key; a stochastic one in deterministic
+        mode applies ``apply_deterministic``; otherwise ``apply`` gets the record's key
+        (``record_key``), so a child draws what it draws at top level.
+
+        Args:
+            element: The record, without a batch axis.
+            stats: This batch's statistics for this operator.
+
+        Returns:
+            The transformed record.
+
+        Raises:
+            TypeError: If the operator works on the whole batch.
+        """
+        reason = self.whole_batch_reason()
+        if reason is not None:
+            raise TypeError(f"no per-record form: {reason}; apply it to a batch (apply_batch)")
         if not self.stochastic:
-            return self.apply(data, state, metadata, None, stats)
+            return self.apply(element, None, stats)
         if self.deterministic:
-            return self.apply_deterministic(data, state, metadata, stats)
-        return self.apply(data, state, metadata, key, stats)
+            return self.apply_deterministic(element, stats)
+        return self.apply(element, self.record_key(element), stats)
 
     # ========================================================================
     # Statistics
     # ========================================================================
 
-    def compute_statistics(self, batch_data: PyTree) -> dict[str, Any] | None:
+    def compute_statistics(self, batch: Batch) -> dict[str, Any] | None:
         """Return the statistics every record of this batch passes to ``apply``.
 
         The default is whatever was stored with ``set_statistics``. An operator that fits
-        statistics to each batch overrides this.
+        statistics to each batch overrides this; it runs once per batch, outside the per-record
+        map.
 
         Args:
-            batch_data: The batch about to be applied, with the batch on axis 0.
+            batch: The batch about to be applied.
 
         Returns:
             The statistics to give ``apply``, or None when the operator has none.
         """
-        del batch_data
+        del batch
         return self.get_statistics()
 
     def get_statistics(self) -> dict[str, jax.Array] | None:
@@ -387,204 +537,149 @@ class OperatorModule(DataraxModule):
         self._statistics.set_value(replacement)
 
     # ========================================================================
-    # Abstract Methods (must be implemented by subclasses)
+    # The one method an operator implements
     # ========================================================================
 
     def apply(
         self,
-        data: PyTree,
-        state: PyTree,
-        metadata: dict[str, Any] | None,
+        element: Element,
         key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
-        """Apply operator to single element (no batch dimension).
+    ) -> Element:
+        """Transform one record: a pure function of the record, its key and the statistics.
 
-        This is a PURE FUNCTION that transforms a single data element. It does not read
-        ``self.rngs``: every random value it applies is drawn from ``key``, the record's own
-        PRNG key, so the same record draws the same values whatever batch it arrives in.
+        Every random value is drawn from ``key``, so the same record draws the same values
+        whatever batch it arrives in. ``apply`` writes no module state (a write inside the
+        per-record map is refused) and returns the record's identity unchanged: build the result
+        with ``element.replace(data=..., state=...)``.
 
-        Subclasses MUST implement this method.
+        Subclasses implement this, or override ``apply_batch`` alone for an operator with no
+        per-record form.
 
         Args:
-            data: Element data PyTree (typically dict[str, Array], no batch dim)
-            state: Element state PyTree (typically dict[str, Any])
-            metadata: Element metadata as structured dict
-            key: This record's PRNG key for a stochastic operator, ``None`` for a
-                deterministic one. Pass it through ``require_key`` before drawing.
-            stats: This batch's statistics (from compute_statistics() or passed explicitly)
+            element: The record, without a batch axis.
+            key: The record's PRNG key for a stochastic operator, ``None`` for a deterministic
+                one. Pass it through ``require_key`` before drawing.
+            stats: This batch's statistics (``compute_statistics``).
 
         Returns:
-            Tuple of (transformed_data, new_state, new_metadata)
-            All return values are PyTrees matching input structure
+            The transformed record.
 
         Raises:
             NotImplementedError: If a subclass does not override this method.
 
         Examples:
-            Example implementation:
-
             ```python
-            def apply(self, data, state, metadata, key=None, stats=None):
-                # Draw this record's brightness from its own key
+            def apply(self, element, key=None, stats=None):
                 factor = jax.random.uniform(require_key(key, self), (), minval=0.8, maxval=1.2)
-                transformed = {"image": data["image"] * factor}
-                return transformed, state, metadata
+                return element.update_data({"image": element.data["image"] * factor})
             ```
         """
-        raise NotImplementedError(f"{self.__class__.__name__} must implement apply() method")
+        raise NotImplementedError(f"{self.__class__.__name__} must implement apply()")
 
     # ========================================================================
-    # Concrete Methods (implemented by base class)
+    # The batch form
     # ========================================================================
-
-    def _vmap_apply(
-        self,
-        batch_data: PyTree,
-        batch_states: PyTree,
-        stats: dict[str, Any] | None = None,
-        indices: ArrayLike | None = None,
-        epochs: ArrayLike | None = None,
-        draws: ArrayLike | None = None,
-    ) -> tuple[PyTree, PyTree]:
-        """Apply operator over batch via vmap (parallel) or scan (sequential).
-
-        Strategy is controlled by config.batch_strategy:
-        - "vmap": jax.vmap — fast, O(batch_size) memory
-        - "scan": jax.lax.scan — sequential, O(1) memory per element
-
-        This is the computational heart of apply_batch().
-
-        Randomness is keyed per record: each element's PRNG key folds the record's epoch,
-        draw and two-word index into the operator's base key (see ``per_record_keys``), so
-        augmentation does not depend on batch composition, shuffle order, worker split or
-        resume point.
-
-        Args:
-            batch_data: PyTree with arrays having batch dimension as axis 0.
-            batch_states: PyTree with arrays having batch dimension as axis 0.
-            stats: The statistics to give every record. When ``None`` the operator computes
-                them for this batch with ``compute_statistics``, which is what lets an
-                operator fit statistics to each batch it is given.
-            indices: uint32 ``(batch_size, 2)``, each record's index as ``(hi, lo)``. When
-                ``None`` (no record information), row ``i`` is record ``(0, i)``, as in
-                ``batch_ops.from_arrays``: the call repeats exactly but a record's draw follows
-                its position.
-            epochs: int32 ``(batch_size,)``, each record's epoch; zeros when ``None``.
-            draws: int32 ``(batch_size,)``, each record's draw; zeros when ``None``.
-
-        Returns:
-            Tuple of (transformed_data, transformed_states) as raw PyTrees.
-        """
-        if stats is None:
-            stats = self.compute_statistics(batch_data)
-        _stats = stats
-
-        data_shapes = jax.tree.map(lambda x: x.shape, batch_data)
-
-        # === PER-RECORD RNG KEYS ===
-        # Derive one stateless key per record from the operator's stable base key
-        # and the record's global index — never from a per-batch stream draw.
-        if self.stochastic and not self.deterministic:
-            # The keys are a function of the base key and the records alone, so a batch applied
-            # twice draws the same values. A call that names no records keys on positions.
-            size = extract_batch_size(data_shapes)
-            if indices is None:
-                rows = jnp.arange(size, dtype=jnp.uint32)
-                indices = jnp.stack([jnp.zeros_like(rows), rows], -1)
-            element_keys = per_record_keys(
-                self._base_key[...],
-                indices,
-                jnp.zeros(size, jnp.int32) if epochs is None else epochs,
-                jnp.zeros(size, jnp.int32) if draws is None else draws,
-            )
-        else:
-            # A deterministic operator, or a stochastic one in deterministic mode, draws nothing,
-            # so it is handed no key.
-            element_keys = None
-
-        # === PER-ELEMENT FUNCTION + INPUTS (unified — DRY) ===
-        has_keys = element_keys is not None
-        if has_keys:
-
-            def _apply_with_key(data: Any, state: Any, key: Any) -> tuple[Any, Any]:
-                out_data, out_state, _ = self.apply_record(data, state, None, key, _stats)
-                return out_data, out_state
-
-            apply_one = _apply_with_key
-            inputs = (batch_data, batch_states, element_keys)
-        else:
-
-            def _apply_no_key(data: Any, state: Any) -> tuple[Any, Any]:
-                out_data, out_state, _ = self.apply_record(data, state, None, None, _stats)
-                return out_data, out_state
-
-            apply_one = _apply_no_key
-            inputs = (batch_data, batch_states)
-
-        # === SCAN BRANCH (sequential, O(1) memory per element) ===
-        if self.config.batch_strategy == "scan":
-            _, result = jax.lax.scan(lambda carry, x: (carry, apply_one(*x)), None, inputs)
-            return result
-
-        # === VMAP BRANCH (parallel) ===
-        # Every leaf apply returns carries the batch on axis 0, whatever fields it adds, so the
-        # integer 0 is a tree prefix of any output and no structure has to be discovered first.
-        in_data_axes = jax.tree.map(lambda _: 0, batch_data)
-        in_state_axes = jax.tree.map(lambda _: 0, batch_states)
-        in_axes = (in_data_axes, in_state_axes, 0) if has_keys else (in_data_axes, in_state_axes)
-
-        return jax.vmap(apply_one, in_axes=in_axes, out_axes=0)(*inputs)
 
     def apply_batch(
-        self,
-        batch: Batch,
-        stats: dict[str, Any] | None = None,
+        self, batch: Batch, keys: jax.Array | None, stats: dict[str, Any] | None
     ) -> Batch:
-        """Process entire batch with vmap and optional RNG generation.
+        """Apply the operator to a batch: ``apply`` mapped over its records by default.
 
-        This method implements the batch processing logic for both stochastic
-        and deterministic modes. It uses static branching on self.stochastic
-        for JIT compilation efficiency.
-
-        The implementation delegates to _vmap_apply() for the shared
-        computational core, then wraps the result in a Batch object.
+        The records are mapped with ``jax.vmap``, or ``jax.lax.scan`` (O(1) memory per record)
+        when ``config.batch_strategy`` is ``"scan"``. A whole-batch operator (one record mixed
+        with another, a batch-dependent model in training) overrides this instead of
+        implementing ``apply``, and draws from its first record's key, ``keys[0]``.
 
         Args:
-            batch: The batch; its identities key each record's randomness.
-            stats: Optional statistics (if None, uses compute_statistics() on this batch)
+            batch: The batch.
+            keys: One key per record from ``__call__``, or ``None`` for a deterministic operator.
+            stats: This batch's statistics.
 
         Returns:
-            Transformed batch with same structure
+            The transformed batch.
+        """
+        return self._map_records(batch, keys, lambda element, key: self.apply(element, key, stats))
 
-        Note:
-            This method is concrete (not abstract). Subclasses typically don't
-            override it, but can if they need custom batch processing logic.
+    def _map_records(  # noqa: DOC503 - _require_identity_kept raises the ValueError
+        self,
+        batch: Batch,
+        keys: jax.Array | None,
+        transform: Callable[[Element, jax.Array | None], Element],
+    ) -> Batch:
+        """Apply ``transform`` to every record of ``batch`` by the configured batch strategy.
+
+        Args:
+            batch: The batch.
+            keys: One key per record, or ``None`` when no record draws.
+            transform: Maps a record and its key to the transformed record.
+
+        Returns:
+            The batch with every record's data and state transformed.
+
+        Raises:
+            ValueError: If ``transform`` changes a record's identity.
+            TypeError: If ``transform`` writes module state, which a per-record map cannot do.
         """
         # vmap needs at least one array, and a batch of no rows has nothing to apply.
         if batch.batch_size == 0 or not jax.tree.leaves((batch.data, batch.states)):
             return batch
 
-        data, states = self._vmap_apply(
-            batch.data, batch.states, stats, batch.indices, batch.epochs, batch.draws
-        )
+        def one(
+            data: PyTree,
+            state: PyTree,
+            index: ArrayValue,
+            epoch: ArrayValue,
+            draw: ArrayValue,
+            key: jax.Array | None,
+        ) -> tuple[PyTree, PyTree]:
+            element = Element(data, state=state, index=index, epoch=epoch, draw=draw)
+            out = transform(element, key)
+            _require_identity_kept(element, out, self)
+            return out.data, out.state
+
+        inputs = (batch.data, batch.states, batch.indices, batch.epochs, batch.draws, keys)
+        try:
+            if self.config.batch_strategy == "scan":
+                _, (data, states) = jax.lax.scan(lambda carry, x: (carry, one(*x)), None, inputs)
+            else:
+                data, states = jax.vmap(one)(*inputs)
+        except TraceContextError as error:
+            raise TypeError(
+                f"{type(self).__name__}.apply wrote module state, which one record cannot do "
+                "inside the per-record map (a BatchNorm in training does). Make it a whole-batch "
+                "operator: override apply_batch(batch, keys, stats) instead of apply."
+            ) from error
         return batch.replace(data=data, states=states)
 
     @final
     def __call__(self, batch: Batch) -> Batch:
-        """Main entry point for operator application.
+        """Apply the operator to a batch: the one entry point.
 
-        This method handles caching, statistics, and iteration tracking,
-        then delegates to apply_batch().
+        Computes the batch's statistics, derives one key per record from its identity (none for
+        a deterministic operator), and applies the mode: a stochastic operator in deterministic
+        mode maps ``apply_deterministic`` (the batch unchanged by default); otherwise
+        ``apply_batch``.
 
         Args:
-            batch: Input batch
+            batch: Input batch.
 
         Returns:
-            Transformed batch
+            Transformed batch.
         """
-        # Delegate to apply_batch
-        return self.apply_batch(batch)
+        stats = self.compute_statistics(batch)
+        if self.stochastic and self.deterministic:
+            if type(self).apply_deterministic is OperatorModule.apply_deterministic:
+                return batch
+            return self._map_records(
+                batch, None, lambda element, _: self.apply_deterministic(element, stats)
+            )
+        keys = (
+            per_record_keys(self._base_key[...], batch.indices, batch.epochs, batch.draws)
+            if self.stochastic
+            else None
+        )
+        return self.apply_batch(batch, keys, stats)
 
     def output_spec(self, input_spec: PyTree) -> PyTree:
         """Return the operator's output spec given an input spec.

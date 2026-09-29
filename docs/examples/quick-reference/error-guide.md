@@ -69,7 +69,7 @@ config = OperatorConfig(precomputed_stats={"mean": 0.5, "std": 0.2})
 operator = MyOperator(OperatorConfig(), statistics={"mean": 0.5, "std": 0.2})
 ```
 
-To fit statistics to each batch instead, override `compute_statistics(batch_data)`.
+To fit statistics to each batch instead, override `compute_statistics(batch)`.
 
 ## Operator Errors
 
@@ -85,8 +85,13 @@ class MyOp(OperatorModule):
 # Fix: implement apply with the real 5-parameter signature.
 # It is a pure per-element function returning a (data, state, metadata) tuple.
 class MyOp(OperatorModule):
-    def apply(self, data, state, metadata, key=None, stats=None):
-        return data, state, metadata  # your logic here
+    def apply(
+        self,
+        element: Element,
+        key: jax.Array | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Element:
+        return element  # your logic here
 ```
 
 ## Memory Errors

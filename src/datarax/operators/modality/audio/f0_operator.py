@@ -14,9 +14,9 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 from flax import nnx
-from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
+from datarax.core.element_batch import Element
 from datarax.core.operator import OperatorModule
 from datarax.operators.modality.audio.crepe_model import (
     CrepeModel,
@@ -102,30 +102,26 @@ class CrepeF0Operator(OperatorModule):
 
     def apply(
         self,
-        data: PyTree,
-        state: PyTree,
-        metadata: dict[str, Any] | None,
+        element: Element,
         key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
+    ) -> Element:
         """Extract f0 and confidence from audio.
 
         Args:
-            data: Must contain "audio" key with shape (n_samples,).
-            state: Passed through unchanged.
-            metadata: Passed through unchanged.
+            element: The record, without a batch axis.
             key: Unused (deterministic operator in eval mode).
             stats: Unused.
 
         Returns:
-            (data_with_f0, state, metadata) where data_with_f0 has original
-            keys plus "f0_hz" and "f0_confidence" with shape (n_frames,).
+            The transformed record.
         """
+        data = element.data
         del key, stats
         audio = data["audio"]
         f0_hz, confidence = self._extract_f0(audio)
         out_data = {**data, "f0_hz": f0_hz, "f0_confidence": confidence}
-        return out_data, state, metadata
+        return element.replace(data=out_data)
 
     def _extract_f0(self, audio: jax.Array) -> tuple[jax.Array, jax.Array]:
         """Frame, normalize, run CREPE, and decode pitch.

@@ -161,7 +161,11 @@ class ImageRecords(grain.sources.RandomAccessDataSource):
 class AddNoise(grain.transforms.RandomMap):
     """Add Gaussian noise drawn from the generator Grain passes with each record."""
 
-    def random_map(self, element: dict, rng: np.random.Generator) -> dict:
+    # Grain declares RandomMap.random_map with no return annotation, so a type checker infers
+    # None; its own documented override annotates the return as this one does.
+    def random_map(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self, element: dict, rng: np.random.Generator
+    ) -> dict:
         """Return the record with noise added to ``image``."""
         noise = rng.normal(scale=NOISE_SCALE, size=IMAGE_SHAPE).astype(np.float32)
         return {**element, "image": element["image"] + noise}
@@ -363,7 +367,7 @@ def mixture(weights: list[float], learnable: bool) -> CompositeOperatorModule:
         weights=weights,
         learnable_weights=learnable,
     )
-    return CompositeOperatorModule(config, operators=image_operators(), rngs=nnx.Rngs(0))
+    return CompositeOperatorModule(config, operators=image_operators())
 
 
 target_mixture = mixture([0.25, 0.75], learnable=False)

@@ -104,6 +104,8 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 
+from datarax.core.element_batch import Element
+
 
 # Output directory for saved figures
 OUTPUT_DIR = resolve_output_dir("examples").path
@@ -346,19 +348,18 @@ class CCMOperator(ModalityOperator):
 
     def apply(
         self,
-        data: dict[str, Any],
-        state: dict[str, Any],
-        metadata: dict[str, Any] | None,
-        key: Any = None,
+        element: Element,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+    ) -> Element:
         """Apply learnable color correction matrix to the image."""
+        data = element.data
         image = self._extract_field(data, self.config.field_key)
         # Apply color correction: output_rgb = input_rgb @ CCM
         transformed = jnp.einsum("...c,cd->...d", image, self.ccm[...])
         transformed = self._apply_clip_range(transformed)
         result = self._remap_field(data, transformed)
-        return result, state, metadata
+        return element.replace(data=result)
 
 
 # --- Operator 2: Desaturation ---
@@ -387,13 +388,12 @@ class DesaturationOperator(ModalityOperator):
 
     def apply(
         self,
-        data: dict[str, Any],
-        state: dict[str, Any],
-        metadata: dict[str, Any] | None,
-        key: Any = None,
+        element: Element,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+    ) -> Element:
         """Apply learnable desaturation blending color with grayscale."""
+        data = element.data
         image = self._extract_field(data, self.config.field_key)
         strength = jax.nn.sigmoid(self.strength[...])  # Constrain to [0, 1]
         gray = jnp.mean(image, axis=-1, keepdims=True)
@@ -401,7 +401,7 @@ class DesaturationOperator(ModalityOperator):
         transformed = image * (1.0 - strength) + gray * strength
         transformed = self._apply_clip_range(transformed)
         result = self._remap_field(data, transformed)
-        return result, state, metadata
+        return element.replace(data=result)
 
 
 # --- Operator 3: Tone Mapping ---
@@ -432,13 +432,12 @@ class ToneMappingOperator(ModalityOperator):
 
     def apply(
         self,
-        data: dict[str, Any],
-        state: dict[str, Any],
-        metadata: dict[str, Any] | None,
-        key: Any = None,
+        element: Element,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+    ) -> Element:
         """Apply piecewise-linear tone mapping curve to the image."""
+        data = element.data
         image = self._extract_field(data, self.config.field_key)
         # Apply piecewise-linear tone curve per channel
         n = self.config.num_control_points
@@ -452,7 +451,7 @@ class ToneMappingOperator(ModalityOperator):
         transformed = jnp.interp(image.ravel(), x_points, y_sorted).reshape(image.shape)
         transformed = self._apply_clip_range(transformed)
         result = self._remap_field(data, transformed)
-        return result, state, metadata
+        return element.replace(data=result)
 
 
 # --- Operator 4: Gamma Correction ---
@@ -482,20 +481,19 @@ class GammaCorrectionOperator(ModalityOperator):
 
     def apply(
         self,
-        data: dict[str, Any],
-        state: dict[str, Any],
-        metadata: dict[str, Any] | None,
-        key: Any = None,
+        element: Element,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+    ) -> Element:
         """Apply learnable gamma correction to the image."""
+        data = element.data
         image = self._extract_field(data, self.config.field_key)
         gamma = jnp.exp(self.log_gamma[...])  # Always positive
         gamma = jnp.clip(gamma, 0.1, 5.0)  # Reasonable range
         transformed = jnp.power(jnp.clip(image, 1e-6, 1.0), gamma)
         transformed = self._apply_clip_range(transformed)
         result = self._remap_field(data, transformed)
-        return result, state, metadata
+        return element.replace(data=result)
 
 
 # --- Operator 5: Sharpening ---
@@ -537,13 +535,12 @@ class SharpeningOperator(ModalityOperator):
 
     def apply(
         self,
-        data: dict[str, Any],
-        state: dict[str, Any],
-        metadata: dict[str, Any] | None,
-        key: Any = None,
+        element: Element,
+        key: jax.Array | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+    ) -> Element:
         """Apply learnable unsharp mask sharpening to the image."""
+        data = element.data
         image = self._extract_field(data, self.config.field_key)
         strength = jax.nn.sigmoid(self.strength[...])
 
@@ -569,7 +566,7 @@ class SharpeningOperator(ModalityOperator):
         transformed = image + strength * detail
         transformed = self._apply_clip_range(transformed)
         result = self._remap_field(data, transformed)
-        return result, state, metadata
+        return element.replace(data=result)
 
 
 # Verify operators
@@ -586,7 +583,7 @@ for OpClass, ConfigClass, name in [
 ]:
     config = ConfigClass(field_key="image")
     op = OpClass(config, rngs=rngs)
-    out_data, _, _ = op.apply(test_image_data, {}, {})
+    out_data = op.apply(Element(test_image_data)).data
     n_params = sum(p.size for p in jax.tree.leaves(nnx.state(op, nnx.Param)))
     print(
         f"  {name:15s} | params: {n_params:4d} | "

@@ -341,7 +341,7 @@ class TestParallelExecution:
             stochastic=True,
             stream_name="augment",
         )
-        composite = CompositeOperatorModule(composite_config, operators=[op1, op2], rngs=rngs)
+        composite = CompositeOperatorModule(composite_config, operators=[op1, op2])
 
         # Test with batch
         batch = batch_ops.from_stacked(

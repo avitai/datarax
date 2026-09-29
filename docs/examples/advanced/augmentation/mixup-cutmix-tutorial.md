@@ -9,15 +9,15 @@
 
 ## Overview
 
-MixUp and CutMix are powerful batch-level augmentation techniques that mix pairs of samples to create virtual training examples. Unlike element-level augmentations (rotation, brightness, noise), these require access to multiple samples simultaneously and produce soft labels for improved model calibration.
+MixUp and CutMix are powerful batch-level augmentation techniques that mix pairs of samples to create virtual training examples. Unlike element-level augmentations (rotation, brightness, noise), these require access to multiple samples simultaneously. The operator leaves labels untouched and records each sample's partner and the mixing ratio, which the loss reads.
 
 ## What You'll Learn
 
 1. Understand MixUp and CutMix augmentation techniques and their mathematical formulations
 2. Use `BatchMixOperator` for both MixUp and CutMix modes
-3. Understand soft label generation for mixed samples
+3. Train on mixed samples with the loss the MixUp and CutMix papers use, reading each sample's partner and the mixing ratio from the batch
 4. Tune the alpha parameter to control mixing strength
-5. Visualize mixed samples and label distributions
+5. Visualize mixed samples and the mixing ratios
 6. Compare MixUp vs CutMix trade-offs for different use cases
 
 ## Coming from PyTorch?
@@ -29,7 +29,7 @@ If you're familiar with PyTorch augmentations, here's how Datarax batch mixing c
 | `Mixup(mixup_alpha=0.4)` | `BatchMixOperator(mode="mixup", alpha=0.4)` |
 | `CutMix(cutmix_alpha=1.0)` | `BatchMixOperator(mode="cutmix", alpha=1.0)` |
 | Applied in training loop | Applied as pipeline operator |
-| Manual soft label handling | Automatic label mixing |
+| Mixed (soft) targets | Labels untouched; partner and λ in the batch for the loss |
 | `mix_batch(images, labels)` | `apply_batch(batch)` with RNG |
 
 **Key difference:** Datarax integrates mixing into the pipeline DAG with explicit RNG management.
@@ -74,7 +74,7 @@ Standard augmentations (rotation, brightness, noise) operate on individual sampl
 | Aspect | Element-Level | Batch-Level |
 |--------|---------------|-------------|
 | **Scope** | Single sample | Sample pairs |
-| **Labels** | Unchanged | Mixed (soft labels) |
+| **Labels** | Unchanged | Unchanged; the loss mixes |
 | **Examples** | Rotation, Noise, Brightness | MixUp, CutMix |
 | **Implementation** | `apply()` with vmap | `apply_batch()` on full batch |
 | **Dependencies** | None | Requires batch access |
@@ -84,8 +84,8 @@ Standard augmentations (rotation, brightness, noise) operate on individual sampl
 MixUp creates linear interpolations between pairs of samples:
 
 ```
-x_mixed = λ * x_a + (1 - λ) * x_b
-y_mixed = λ * y_a + (1 - λ) * y_b
+x_mixed = λ * x + (1 - λ) * x[partner]
+loss    = λ * CE(pred, y) + (1 - λ) * CE(pred, y[partner])
 
 where λ ~ Beta(α, α)
 ```
@@ -97,11 +97,17 @@ where λ ~ Beta(α, α)
 CutMix cuts a rectangular patch from one image and pastes it onto another:
 
 ```
-x_mixed = M ⊙ x_a + (1 - M) ⊙ x_b
-y_mixed = (1 - area_ratio) * y_a + area_ratio * y_b
+x_mixed = M ⊙ x + (1 - M) ⊙ x[partner]
+loss    = λ * CE(pred, y) + (1 - λ) * CE(pred, y[partner])
 
-where M is a binary mask and area_ratio ~ Beta(α, α)
+where M is a binary mask whose box covers about 1 - λ of the image, λ ~ Beta(α, α),
+and λ is then the fraction of the image actually kept
 ```
+
+The labels themselves are never mixed. The operator records each sample's partner row in
+`states[MIX_PARTNER]` and λ in `batch_state[MIX_LAMBDA]`, and the loss reads them, as the
+published implementations do (`mixup_criterion` in facebookresearch/mixup-cifar10 `train.py`; the
+CutMix branch of clovaai/CutMix-PyTorch `train.py`). Integer class labels stay integers.
 
 **Visual effect:** Sharp boundary between two images
 
@@ -117,6 +123,7 @@ tf.config.set_visible_devices([], "GPU")
 
 # Core imports
 from pathlib import Path
+import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
@@ -125,6 +132,7 @@ from flax import nnx
 # Datarax imports
 from datarax.pipeline import Pipeline
 from datarax.core.config import BatchMixOperatorConfig
+from datarax.core.state_keys import MIX_LAMBDA, MIX_PARTNER
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.batch_mix_operator import BatchMixOperator
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
@@ -147,22 +155,14 @@ BATCH_SIZE = 32
 NUM_CLASSES = 10
 
 def preprocess_cifar10(element, key=None):
-    """Preprocess CIFAR-10 with one-hot labels for mixing."""
+    """Normalize CIFAR-10 images; labels stay integer class indices."""
     image = element.data["image"]
 
     # Normalize to [0, 1] then standardize
     image = image.astype(jnp.float32) / 255.0
     image = (image - CIFAR10_MEAN) / CIFAR10_STD
 
-    # Convert labels to float32 one-hot for mixing
-    label = element.data["label"]
-    label_onehot = jnp.eye(NUM_CLASSES)[label].astype(jnp.float32)
-
-    return element.update_data({
-        "image": image,
-        "label": label_onehot,  # Replace with one-hot for mixing
-        "label_idx": label,     # Keep original for visualization
-    })
+    return element.update_data({"image": image})
 
 preprocessor = ElementOperator(
     ElementOperatorConfig(stochastic=False),
@@ -210,7 +210,6 @@ mixup_op = BatchMixOperator(
         mode="mixup",
         alpha=0.4,  # Beta distribution parameter
         data_field="image",
-        label_field="label",
         stochastic=True,
         stream_name="mixup",
     ),
@@ -220,8 +219,7 @@ mixup_op = BatchMixOperator(
 print("MixUp operator created:")
 print("  mode: mixup")
 print("  alpha: 0.4 (moderate mixing)")
-print("  data_field: image")
-print("  label_field: label")
+print("  data_field: image (labels are left as they are)")
 ```
 
 **Terminal Output:**
@@ -229,8 +227,7 @@ print("  label_field: label")
 MixUp operator created:
   mode: mixup
   alpha: 0.4 (moderate mixing)
-  data_field: image
-  label_field: label
+  data_field: image (labels are left as they are)
 ```
 
 ### Build MixUp Pipeline
@@ -260,7 +257,6 @@ def create_mixup_pipeline(alpha=0.4, seed=42):
             mode="mixup",
             alpha=alpha,
             data_field="image",
-            label_field="label",
             stochastic=True,
             stream_name="mixup",
         ),
@@ -277,8 +273,9 @@ mixup_batch = next(iter(mixup_pipeline))
 
 print("\nMixUp batch:")
 print(f"  Image shape: {mixup_batch['image'].shape}")
-print(f"  Label shape: {mixup_batch['label'].shape}")
-print(f"  Label is soft: {mixup_batch['label'].max() < 1.0}")  # Soft labels < 1
+print(f"  Labels (unchanged integers): {mixup_batch['label'][:8]}")
+print(f"  Partner of each record: {mixup_batch.states[MIX_PARTNER][:8]}")
+print(f"  Mixing ratio λ: {float(mixup_batch.batch_state[MIX_LAMBDA]):.3f}")
 ```
 
 **Terminal Output:**
@@ -303,6 +300,13 @@ def denormalize_cifar10(images):
     images = images * np.array(CIFAR10_STD) + np.array(CIFAR10_MEAN)
     return np.clip(images, 0, 1)
 
+def mixed_title(batch, i):
+    """Record ``i``'s class and its partner's, each with its weight in the loss."""
+    lam = float(batch.batch_state[MIX_LAMBDA])
+    own = CIFAR10_CLASSES[int(batch["label"][i])][:3]
+    other = CIFAR10_CLASSES[int(batch["label"][batch.states[MIX_PARTNER][i]])][:3]
+    return f"{own}:{lam:.1f} {other}:{1 - lam:.1f}"
+
 # Get original batch for comparison
 base_pipeline = create_base_pipeline(seed=42)
 original_batch = next(iter(base_pipeline))
@@ -316,20 +320,15 @@ for i in range(8):
     img_orig = denormalize_cifar10(original_batch["image"][i])
     axes[0, i].imshow(img_orig)
     axes[0, i].axis("off")
-    label_idx = int(original_batch["label_idx"][i])
-    axes[0, i].set_title(CIFAR10_CLASSES[label_idx], fontsize=8)
+    axes[0, i].set_title(CIFAR10_CLASSES[int(original_batch["label"][i])], fontsize=8)
 
     # Mixed
     img_mixed = denormalize_cifar10(mixup_batch["image"][i])
     axes[1, i].imshow(img_mixed)
     axes[1, i].axis("off")
 
-    # Show soft label distribution
-    soft_label = mixup_batch["label"][i]
-    top_classes = jnp.argsort(soft_label)[-2:][::-1]
-    top_probs = soft_label[top_classes]
-    label_str = f"{CIFAR10_CLASSES[int(top_classes[0])][:3]}:{top_probs[0]:.1f}"
-    axes[1, i].set_title(label_str, fontsize=8)
+    # The record's own class with weight λ, its partner's with 1 - λ
+    axes[1, i].set_title(mixed_title(mixup_batch, i), fontsize=8)
 
 axes[0, 0].set_ylabel("Original", fontsize=10)
 axes[1, 0].set_ylabel("MixUp", fontsize=10)
@@ -362,7 +361,6 @@ cutmix_op = BatchMixOperator(
         mode="cutmix",
         alpha=1.0,  # Uniform cut sizes
         data_field="image",
-        label_field="label",
         stochastic=True,
         stream_name="cutmix",
     ),
@@ -408,7 +406,6 @@ def create_cutmix_pipeline(alpha=1.0, seed=42):
             mode="cutmix",
             alpha=alpha,
             data_field="image",
-            label_field="label",
             stochastic=True,
             stream_name="cutmix",
         ),
@@ -425,7 +422,7 @@ cutmix_batch = next(iter(cutmix_pipeline))
 
 print("\nCutMix batch:")
 print(f"  Image shape: {cutmix_batch['image'].shape}")
-print(f"  Label shape: {cutmix_batch['label'].shape}")
+print(f"  Fraction of each image kept, λ: {float(cutmix_batch.batch_state[MIX_LAMBDA]):.3f}")
 ```
 
 **Terminal Output:**
@@ -447,20 +444,15 @@ for i in range(8):
     img_orig = denormalize_cifar10(original_batch["image"][i])
     axes[0, i].imshow(img_orig)
     axes[0, i].axis("off")
-    label_idx = int(original_batch["label_idx"][i])
-    axes[0, i].set_title(CIFAR10_CLASSES[label_idx], fontsize=8)
+    axes[0, i].set_title(CIFAR10_CLASSES[int(original_batch["label"][i])], fontsize=8)
 
     # CutMix
     img_cut = denormalize_cifar10(cutmix_batch["image"][i])
     axes[1, i].imshow(img_cut)
     axes[1, i].axis("off")
 
-    # Show soft label
-    soft_label = cutmix_batch["label"][i]
-    top_classes = jnp.argsort(soft_label)[-2:][::-1]
-    top_probs = soft_label[top_classes]
-    label_str = f"{CIFAR10_CLASSES[int(top_classes[0])][:3]}:{top_probs[0]:.1f}"
-    axes[1, i].set_title(label_str, fontsize=8)
+    # The record's own class with weight λ, its partner's with 1 - λ
+    axes[1, i].set_title(mixed_title(cutmix_batch, i), fontsize=8)
 
 axes[0, 0].set_ylabel("Original", fontsize=10)
 axes[1, 0].set_ylabel("CutMix", fontsize=10)
@@ -523,71 +515,63 @@ Saved: docs/assets/images/examples/cv-cifar-mix-alpha.png
 
 ![Alpha Comparison](../../../assets/images/examples/cv-cifar-mix-alpha.png)
 
-## Part 5: Label Distribution Visualization
+## Part 5: The Loss for Mixed Samples
 
-Soft labels are crucial - the model learns that mixed samples have uncertain class membership.
+The loss reads what the operator wrote: each sample's partner and λ. This is the loss the papers
+train with (`mixup_criterion` in facebookresearch/mixup-cifar10, commit `eaff31a`,
+`train.py:137-138`; clovaai/CutMix-PyTorch, commit `2d8eb68`, `train.py:237-240`). For integer
+labels it equals cross-entropy against the soft label `λ * onehot(y) + (1 - λ) * onehot(y[partner])`,
+which the cell checks.
 
 ```python
-# Collect label distributions from multiple batches
-mixup_labels = []
-cutmix_labels = []
+def mixed_cross_entropy(logits, batch):
+    """Cross-entropy of mixed records: λ CE(y) + (1 - λ) CE(y[partner]), per record."""
+    lam = batch.batch_state[MIX_LAMBDA]
+    partner = batch.states[MIX_PARTNER]
+    labels = batch["label"]
+    log_probs = jax.nn.log_softmax(logits)
+    own = -jnp.take_along_axis(log_probs, labels[:, None], axis=1)[:, 0]
+    other = -jnp.take_along_axis(log_probs, labels[partner][:, None], axis=1)[:, 0]
+    return lam * own + (1 - lam) * other
 
-for i in range(5):
-    mixup_pipe = create_mixup_pipeline(alpha=0.4, seed=i)
-    cutmix_pipe = create_cutmix_pipeline(alpha=1.0, seed=i + 100)
+logits = jax.random.normal(jax.random.key(0), (BATCH_SIZE, NUM_CLASSES))
+for name, batch in (("MixUp", mixup_batch), ("CutMix", cutmix_batch)):
+    lam = batch.batch_state[MIX_LAMBDA]
+    soft = lam * jax.nn.one_hot(batch["label"], NUM_CLASSES) + (1 - lam) * jax.nn.one_hot(
+        batch["label"][batch.states[MIX_PARTNER]], NUM_CLASSES
+    )
+    soft_ce = -jnp.sum(soft * jax.nn.log_softmax(logits), axis=1)
+    difference = float(jnp.max(jnp.abs(mixed_cross_entropy(logits, batch) - soft_ce)))
+    print(f"{name}: mixed loss vs soft-label cross-entropy, max difference {difference:.2e}")
+```
 
-    mixup_batch = next(iter(mixup_pipe))
-    cutmix_batch = next(iter(cutmix_pipe))
+### How strongly samples are mixed
 
-    mixup_labels.append(np.array(mixup_batch["label"]))
-    cutmix_labels.append(np.array(cutmix_batch["label"]))
+Each batch draws one λ. A mixed sample's weight on its own label is λ, so the distribution of λ
+over batches shows how "hard" the targets are: near 1, samples are mostly themselves.
 
-mixup_labels = np.concatenate(mixup_labels, axis=0)
-cutmix_labels = np.concatenate(cutmix_labels, axis=0)
+```python
+mixup_lambdas = []
+cutmix_lambdas = []
 
-# Compute max probability per sample (measure of label "hardness")
-mixup_max_probs = mixup_labels.max(axis=1)
-cutmix_max_probs = cutmix_labels.max(axis=1)
+for i in range(20):
+    mixup_lambdas.append(float(next(iter(create_mixup_pipeline(alpha=0.4, seed=i))).batch_state[MIX_LAMBDA]))
+    cutmix_lambdas.append(float(next(iter(create_cutmix_pipeline(alpha=1.0, seed=i + 100))).batch_state[MIX_LAMBDA]))
 
-# Plot label distribution comparison
-fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-
-# Histogram of max probabilities
-axes[0].hist(mixup_max_probs, bins=30, alpha=0.7, label="MixUp (α=0.4)", color="blue")
-axes[0].hist(cutmix_max_probs, bins=30, alpha=0.7, label="CutMix (α=1.0)", color="orange")
-axes[0].set_xlabel("Max Class Probability")
-axes[0].set_ylabel("Count")
-axes[0].set_title("Label Hardness Distribution")
-axes[0].legend()
-axes[0].axvline(x=1.0, color="red", linestyle="--", label="Hard label")
-
-# Example soft label vectors
-sample_mixup = mixup_labels[0]
-sample_cutmix = cutmix_labels[0]
-
-x = np.arange(NUM_CLASSES)
-width = 0.35
-
-axes[1].bar(x - width / 2, sample_mixup, width, label="MixUp", color="blue", alpha=0.7)
-axes[1].bar(x + width / 2, sample_cutmix, width, label="CutMix", color="orange", alpha=0.7)
-axes[1].set_xlabel("Class")
-axes[1].set_ylabel("Probability")
-axes[1].set_title("Example Soft Label Vectors")
-axes[1].set_xticks(x)
-axes[1].set_xticklabels([c[:3] for c in CIFAR10_CLASSES], rotation=45)
-axes[1].legend()
+fig, ax = plt.subplots(figsize=(6, 4))
+ax.hist(mixup_lambdas, bins=10, range=(0, 1), alpha=0.7, label="MixUp (α=0.4)", color="blue")
+ax.hist(cutmix_lambdas, bins=10, range=(0, 1), alpha=0.7, label="CutMix (α=1.0)", color="orange")
+ax.set_xlabel("λ, the weight of each sample's own label")
+ax.set_ylabel("Batches")
+ax.set_title("Mixing ratio over 20 batches")
+ax.legend()
 
 plt.tight_layout()
 plt.savefig(output_dir / "cv-cifar-mix-labels.png", dpi=150, bbox_inches="tight", facecolor="white")
 plt.close()
 ```
 
-**Terminal Output:**
-```
-Saved: docs/assets/images/examples/cv-cifar-mix-labels.png
-```
-
-![Label Distribution](../../../assets/images/examples/cv-cifar-mix-labels.png)
+![Mixing ratios](../../../assets/images/examples/cv-cifar-mix-labels.png)
 
 ## Architecture Diagram
 
@@ -599,25 +583,24 @@ flowchart TB
 
     subgraph Preprocess["Preprocessing"]
         Norm[Normalize<br/>μ, σ per channel]
-        OneHot[One-Hot Encode<br/>10 classes]
     end
 
     subgraph BatchMix["Batch Mixing"]
         Mode{Mode?}
         MixUp[MixUp<br/>Linear blend<br/>λ ~ Beta(α, α)]
-        CutMix[CutMix<br/>Rectangular patch<br/>area ~ Beta(α, α)]
-        SoftLabel[Soft Label Mixing<br/>y = λ·y₁ + (1-λ)·y₂]
+        CutMix[CutMix<br/>Rectangular patch<br/>λ = fraction kept]
+        State[Partner per sample<br/>λ per batch]
     end
 
     subgraph Output["Output"]
-        Mixed[Mixed Images<br/>+ Soft Labels]
+        Mixed[Mixed Images<br/>+ integer labels]
+        Loss[Loss<br/>λ·CE(y) + (1-λ)·CE(y[partner])]
     end
 
-    TFDS --> Norm --> OneHot
-    OneHot --> Mode
-    Mode -->|mixup| MixUp --> SoftLabel
-    Mode -->|cutmix| CutMix --> SoftLabel
-    SoftLabel --> Mixed
+    TFDS --> Norm --> Mode
+    Mode -->|mixup| MixUp --> State
+    Mode -->|cutmix| CutMix --> State
+    State --> Mixed --> Loss
 
     style Source fill:#e1f5ff
     style Preprocess fill:#fff4e1
@@ -632,7 +615,7 @@ flowchart TB
 | **Operation** | Linear blend: `λ·x₁ + (1-λ)·x₂` | Patch paste: `M⊙x₁ + (1-M)⊙x₂` |
 | **Visual effect** | Ghostly overlap of images | Sharp boundary between regions |
 | **Information** | Global features from both | Local features preserved |
-| **Label mixing** | Smooth blending | Proportional to area |
+| **λ in the loss** | Blend ratio | Fraction of the image kept |
 | **Best for** | General regularization | Object detection, localization |
 | **Typical α** | 0.2 - 0.4 | 1.0 |
 | **Computation** | Element-wise multiply + add | Mask generation + multiply + add |
@@ -659,12 +642,13 @@ flowchart TB
 
 ### Key Takeaways
 
-1. **Soft labels required**: Both techniques produce mixed labels for cross-entropy loss
+1. **Mixed loss, not mixed labels**: the operator writes each sample's partner and λ; the loss is
+   λ·CE(y) + (1 − λ)·CE(y[partner]), as in the published implementations
 2. **Alpha matters**: Lower α = more "pure" samples, higher α = more mixing
 3. **Batch-level operation**: Uses `apply_batch()` instead of per-element `apply()`
 4. **Pipeline order**: Apply after preprocessing, before model forward pass
 5. **Training only**: Never use during evaluation/inference
-6. **One-hot encoding**: Labels must be one-hot encoded before batch mixing
+6. **Integer labels**: labels stay class indices; nothing averages two indices into a third
 
 ### Integration into Training Loop
 
@@ -673,40 +657,31 @@ flowchart TB
 def create_training_pipeline():
     source = TFDSEagerSource(train_config, rngs=nnx.Rngs(42))
 
-    # Element-level preprocessing
+    # Element-level preprocessing; labels stay integer class indices
     preprocessor = ElementOperator(
         ElementOperatorConfig(stochastic=False),
-        fn=preprocess_with_onehot,  # Must one-hot encode!
+        fn=preprocess_cifar10,
         rngs=nnx.Rngs(0),
     )
 
-    # Batch-level mixing
+    # Batch-level mixing, after preprocessing and before the model
     mixup = BatchMixOperator(
-        BatchMixOperatorConfig(
-            mode="mixup",
-            alpha=0.4,
-            data_field="image",
-            label_field="label",  # Must be one-hot!
-            stochastic=True,
-            stream_name="mixup",
-        ),
+        BatchMixOperatorConfig(mode="mixup", alpha=0.4, data_field="image", stream_name="mixup"),
         rngs=nnx.Rngs(mixup=100),
     )
 
-    return (
-        Pipeline(source=source, stages=[preprocessor, mixup], batch_size=128, rngs=nnx.Rngs(0))  # After preprocessing, before training
-    )
+    return Pipeline(source=source, stages=[preprocessor, mixup], batch_size=128, rngs=nnx.Rngs(0))
 
-# Use soft labels in loss function
+# The loss reads each sample's partner and λ from the batch
 @nnx.jit
 def train_step(model, batch):
-    images = batch["image"]
-    soft_labels = batch["label"]  # Soft labels from MixUp/CutMix
-
-    logits = model(images)
-    # Soft cross-entropy loss
-    loss = optax.softmax_cross_entropy(logits, soft_labels).mean()
-    return loss
+    logits = model(batch["image"])
+    labels = batch["label"]
+    lam = batch.batch_state[MIX_LAMBDA]
+    partner_labels = labels[batch.states[MIX_PARTNER]]
+    own = optax.softmax_cross_entropy_with_integer_labels(logits, labels)
+    other = optax.softmax_cross_entropy_with_integer_labels(logits, partner_labels)
+    return (lam * own + (1 - lam) * other).mean()
 ```
 
 ## Next Steps

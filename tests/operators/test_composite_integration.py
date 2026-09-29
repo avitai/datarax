@@ -254,9 +254,7 @@ class TestMixedModes:
             stochastic=True,
             stream_name="augment",
         )
-        composite = CompositeOperatorModule(
-            composite_config, operators=[stoch_op, det_op], rngs=rngs
-        )
+        composite = CompositeOperatorModule(composite_config, operators=[stoch_op, det_op])
 
         # Test with batch
         batch = batch_ops.from_stacked(

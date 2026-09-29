@@ -20,20 +20,21 @@ Examples:
     ```
 """
 
-import dataclasses
 import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 import jax
 from flax import nnx
-from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
+from datarax.core.element_batch import Batch, Element
 from datarax.core.operator import (
+    apply_where,
     child_statistics,
     OperatorModule,
     require_key,
+    require_record_form,
     statistics_for_child,
 )
 
@@ -56,45 +57,24 @@ class ProbabilisticOperatorConfig(OperatorConfig):
                     - 0 < p < 1: probabilistic (stochastic)
 
     Note:
-        - stochastic and stream_name are derived for the child by ``for_child``
+        The wrapper draws a key only for its own decision (0 < p < 1); the child keys each record
+        from its own base key, so it draws the same values here as at top level.
     """
 
     probability: float = field(default=0.5, kw_only=True)
 
     def __post_init__(self) -> None:
-        """Validate the probability; a random decision (0 < p < 1) makes the config stochastic."""
+        """Validate the probability; only a random decision (0 < p < 1) draws a key."""
         if not isinstance(self.probability, int | float):
             raise TypeError(f"probability must be a number, got {type(self.probability)}")
         if not 0.0 <= self.probability <= 1.0:
             raise ValueError(f"probability must be in [0.0, 1.0], got {self.probability}")
-        if 0.0 < self.probability < 1.0:
-            object.__setattr__(self, "stochastic", True)
-            if self.stream_name is None:
-                object.__setattr__(self, "stream_name", "augment")
-        super().__post_init__()
-
-    def for_child(self, operator: OperatorModule) -> "ProbabilisticOperatorConfig":
-        """Return this configuration with its mode derived for wrapping ``operator``.
-
-        Args:
-            operator: The child operator the wrapper applies.
-
-        Returns:
-            The configuration with ``stochastic`` and ``stream_name`` set.
-        """
-        # A wrapper needs a key when it makes a random decision (0 < p < 1) AND when it has a
-        # stochastic child to hand one to. At p == 1 the decision is fixed but the child still
-        # draws, so a wrapper that is deterministic on its own account would receive no key and
-        # silence the operator it wraps. At p == 0 the child is never reached, so nothing draws.
         decides_randomly = 0.0 < self.probability < 1.0
-        is_stochastic = decides_randomly or (operator.stochastic and self.probability > 0.0)
-        if not is_stochastic:
-            # Nothing downstream draws: p == 0, or a fixed decision over a deterministic child.
-            return dataclasses.replace(self, stochastic=False, stream_name=None)
-        # The decision, the child's draw, or both need a stream: the configured one, else the
-        # child's, else "augment".
-        stream = self.stream_name or operator.stream_name or "augment"
-        return dataclasses.replace(self, stochastic=True, stream_name=stream)
+        object.__setattr__(self, "stochastic", decides_randomly)
+        object.__setattr__(
+            self, "stream_name", (self.stream_name or "augment") if decides_randomly else None
+        )
+        super().__post_init__()
 
 
 class ProbabilisticOperator(OperatorModule):
@@ -139,93 +119,55 @@ class ProbabilisticOperator(OperatorModule):
             operator: The child operator, held as a graph child
             rngs: Random number generators (required if the wrapper is stochastic)
         """
-        resolved = config.for_child(operator)
-        super().__init__(resolved, rngs=rngs)
+        require_record_form(operator, self)
+        super().__init__(config, rngs=rngs)
 
         # Type narrowing for pyright
-        self.config: ProbabilisticOperatorConfig = resolved
+        self.config: ProbabilisticOperatorConfig = config
 
         self.operator = operator
-        self.probability = resolved.probability
+        self.probability = config.probability
 
-    def compute_statistics(self, batch_data: PyTree) -> dict[str, Any] | None:
+    def fits_statistics_per_batch(self) -> bool:
+        """Whether the child computes its statistics from each batch."""
+        return self.operator.fits_statistics_per_batch()
+
+    def compute_statistics(self, batch: Batch) -> dict[str, Any] | None:
         """Return the child's statistics for this batch, computed on this wrapper's input.
 
         They are computed whatever the probability: whether a given record reaches the child is
         decided per record inside the vectorized call, long after the batch is gone.
 
         Args:
-            batch_data: The batch about to be applied, with the batch on axis 0.
+            batch: The batch about to be applied.
 
         Returns:
             The child's statistics, or ``None`` when it has none.
         """
-        return child_statistics([self.operator], batch_data)
+        return child_statistics([self.operator], batch)
 
     def apply(
-        self,
-        data: PyTree,
-        state: PyTree,
-        metadata: dict[str, Any] | None,
-        key: jax.Array | None = None,
-        stats: dict[str, Any] | None = None,
-    ) -> tuple[PyTree, PyTree, dict[str, Any] | None]:
-        """Apply the child operator with probability ``p``, decided for this record.
+        self, element: Element, key: jax.Array | None = None, stats: dict[str, Any] | None = None
+    ) -> Element:
+        """Apply the child with probability ``p``, decided for this record from its own key.
 
-        The decision and the child's randomness come from two keys folded out of this
-        record's key, so whether a record is augmented — and how — depends on the record
-        alone, not on the batch it arrives in. Uses ``jax.lax.cond`` so the choice survives
-        tracing.
-
-        At ``p == 1`` the child is still handed its own key. Passing the wrapper's fourth
-        argument straight through, as this did before, gave a deterministic wrapper's child
-        ``None`` and silently turned a stochastic child into a fixed one.
+        The child draws from its own key for the record (``apply_record``), so whether a record
+        is augmented depends on this wrapper's key and how it is augmented on the child's.
+        ``jax.lax.cond`` keeps the choice traceable (``apply_where``).
 
         Args:
-            data: Element data PyTree (no batch dimension)
-            state: Element state PyTree
-            metadata: Element metadata
-            key: This record's PRNG key, or ``None`` for a deterministic wrapper
-            stats: Optional statistics
+            element: The record.
+            key: This record's key when 0 < p < 1, else ``None``.
+            stats: The child's statistics, as ``compute_statistics`` built them.
 
         Returns:
-            Tuple of (transformed_data, state, metadata)
-            - If applied: child operator's output
-            - If not applied: input data/state/metadata unchanged
+            The record, transformed by the child or unchanged.
         """
-        # Never applied: the child is not reached, so no key is needed.
         if self.probability == 0.0:
-            return data, state, metadata
-
-        # The child's key is independent of the decision key drawn below.
-        child_key = None if key is None else jax.random.fold_in(key, 1)
-        # The child applies what it computed on this wrapper's input, not the wrapper's own.
+            return element
         child_stats = statistics_for_child(stats, 0)
-
         if self.probability == 1.0:
-            return self.operator.apply_record(data, state, metadata, child_key, child_stats)
+            return self.operator.apply_record(element, child_stats)
 
-        # Stochastic case (0 < p < 1): decide per record, from its own key.
-        should_apply = (
-            jax.random.uniform(jax.random.fold_in(require_key(key, self), 0), shape=())
-            < self.probability
-        )
-
-        # Define branch functions for jax.lax.cond
-        def apply_fn(operands: Any) -> tuple[Any, Any, Any]:
-            """Branch: apply child operator."""
-            d, s, m, cp, st = operands
-            return self.operator.apply_record(d, s, m, cp, st)
-
-        def passthrough_fn(operands: Any) -> tuple[Any, Any, Any]:
-            """Branch: return input unchanged."""
-            d, s, m, _, _ = operands
-            return d, s, m
-
-        # Use jax.lax.cond for JIT-compatible branching
-        return jax.lax.cond(
-            should_apply,
-            apply_fn,
-            passthrough_fn,
-            (data, state, metadata, child_key, child_stats),
-        )
+        should_apply = jax.random.uniform(require_key(key, self), shape=()) < self.probability
+        return apply_where(self.operator, should_apply, element, child_stats)

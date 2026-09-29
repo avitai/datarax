@@ -466,7 +466,7 @@ class TestMapOperatorStochastic:
             "mask": jnp.zeros((batch_size, 8, 8)),
         }
 
-        data, _ = op._vmap_apply(batch, {})
+        data = op(batch_ops.from_arrays(batch, states={})).data
 
         assert set(data.keys()) == {"image", "mask"}
         # Both leaves started identical, so any difference is the per-leaf key.
@@ -482,7 +482,7 @@ class TestMapOperatorStochastic:
         op = MapOperator(config, fn=add_noise, rngs=nnx.Rngs(0, augment=1))
 
         for batch_size in [2, 8, 16]:
-            data, _ = op._vmap_apply({"data": jnp.zeros((batch_size, 10))}, {})
+            data = op(batch_ops.from_arrays({"data": jnp.zeros((batch_size, 10))}, states={})).data
 
             assert data["data"].shape == (batch_size, 10)
             assert not jnp.allclose(data["data"][0], data["data"][1])
@@ -846,7 +846,7 @@ class TestMapOperatorJIT:
         batch = create_test_batch(batch_data)
 
         # JIT compile apply_batch directly
-        jitted_apply_batch = jax.jit(lambda b: op.apply_batch(b))
+        jitted_apply_batch = jax.jit(lambda b: op(b))
 
         # Transform
         result = jitted_apply_batch(batch)
@@ -875,7 +875,7 @@ class TestMapOperatorDifferentiability:
         op = MapOperator(config, fn=affine, rngs=nnx.Rngs(0))
 
         def loss(x):
-            output_data, _, _ = op.apply({"value": x}, {}, None)
+            output_data = op.apply(Element({"value": x})).data
             return jnp.sum(output_data["value"])
 
         inputs = jnp.array([1.0, 2.0, -1.0], dtype=jnp.float32)

@@ -55,7 +55,7 @@ class EpochAwareSamplerConfig(SamplerConfig):
             validate_seed(self.seed)
 
 
-class EpochAwareSamplerModule(SamplerModule):
+class EpochAwareSamplerModule(SamplerModule[int]):
     """Sampler with explicit epoch boundary handling.
 
     Manages epochs with different shuffling per epoch while
