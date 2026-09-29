@@ -2,9 +2,6 @@
 # Enhanced with workshop insights for thorough code quality
 # Optimized for performance and reduced package installations
 
-# Orbax-written checkpoint fixtures: binary and generated, never linted or reformatted.
-exclude: ^tests/checkpoint/fixtures/
-
 repos:
   # Workshop-inspired TOML formatting
   - repo: local
@@ -45,14 +42,19 @@ repos:
         exclude: ^(documents|custom_modes|notebooks|example_data)/
 
   # Workshop-inspired thorough Python linting and formatting with auto-fix
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.8
+  # The lock's ruff, so the hook and `uv run ruff` are one version.
+  - repo: local
     hooks:
       - id: ruff # linter with automatic fixes including whitespace and unused variables
-        args: [--fix, --unsafe-fixes]
+        name: ruff
+        entry: uv run --no-sync ruff check --force-exclude --fix --unsafe-fixes
+        language: system
         exclude: ^(documents|custom_modes|notebooks|example_data)/
         types_or: [python, pyi, jupyter]
       - id: ruff-format # formatter
+        name: ruff-format
+        entry: uv run --no-sync ruff format --force-exclude
+        language: system
         types_or: [python, pyi, jupyter]
         exclude: ^(documents|custom_modes|notebooks|example_data)/
 

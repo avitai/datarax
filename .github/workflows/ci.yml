@@ -491,6 +491,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The changed-line coverage gate diffs against origin/main.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -545,3 +548,9 @@ jobs:
           name: combined-coverage-report
           path: coverage.xml
         if: always()
+
+      # The package-wide floor lets a pull request add an untested module; this gates the lines
+      # the pull request changes, from the coverage every test job measured.
+      - name: Coverage on changed lines (at least 80%)
+        if: github.event_name == 'pull_request'
+        run: uv run --no-sync diff-cover coverage.xml --compare-branch=origin/main --fail-under=80 --show-uncovered

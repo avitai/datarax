@@ -26,7 +26,7 @@ def test_importing_the_runner_leaves_the_root_logger_alone() -> None:
     """Logging is configured by the entry point, not as a side effect of importing the module."""
     result = run_python(_LOGGING_PROBE, timeout=180.0, cwd=REPO_ROOT)
 
-    before, after = result.check().last_json()
+    before, after = result.check().last_json_as(tuple[int, int])
     assert after == before
 
 
