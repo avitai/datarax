@@ -348,8 +348,17 @@ class TestAFill:
 
         out = CrossModalFill(rngs=nnx.Rngs(0), strategy=strategy)(batch)
 
+        # The strategies agree to float32 rounding at the array's scale, not bit for bit: a
+        # batched product under vmap and per-record products under scan may sum in a different
+        # order, as XLA's CPU backend picks kernels by CPU features. Measured: bit-identical over
+        # 432 leaf comparisons (8 model seeds x 6 batches) on one x86 host; 4.56e-08 at an array
+        # scale of 1.44 (below one float32 ULP there) on GitHub's Python 3.13 runner, where a
+        # relative tolerance alone failed on the element nearest zero.
         for got, want in zip(jax.tree.leaves(out), jax.tree.leaves(reference), strict=True):
-            np.testing.assert_allclose(got, want, rtol=1e-6)
+            scale = max(1.0, float(np.max(np.abs(want))))
+            np.testing.assert_allclose(
+                got, want, rtol=0, atol=4 * float(np.finfo(np.float32).eps) * scale
+            )
 
 
 def _depth_sum(batch: Batch) -> jax.Array:
