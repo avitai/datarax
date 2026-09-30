@@ -164,6 +164,15 @@ def router(x): return 0 if condition else 1
 def router(x): return "path_a" if condition else "path_b"
 ```
 
+## Missing Values
+
+A merge or reduction combines its operators' data leaf by leaf, so the `PARALLEL` and
+`CONDITIONAL_PARALLEL` merges (`concat`, `stack`, `sum`, `mean`, `dict`), the `ENSEMBLE_*`
+reductions and `WEIGHTED_PARALLEL`'s mixed fields refuse a `Maybe` field with a `TypeError`
+naming it: combining presence flags as numbers has no meaning. A `merge_fn` receives the outputs
+as they are and decides. Sequential, branching and dynamic composites carry a `Maybe` unchanged
+([missing values](../core/maybe.md)).
+
 ## See Also
 
 - [Element Operator](element_operator.md) - Single-element transformations

@@ -23,6 +23,7 @@ from flax import nnx
 
 from datarax.core.config import BatchMixOperatorConfig
 from datarax.core.element_batch import Batch
+from datarax.core.maybe import refuse_maybe
 from datarax.core.operator import OperatorModule
 from datarax.core.state_keys import MIX_LAMBDA, MIX_PARTNER
 
@@ -82,7 +83,7 @@ class BatchMixOperator(OperatorModule):
         # Type narrowing for pyright
         self.config: BatchMixOperatorConfig = config
 
-    def apply_batch(
+    def apply_batch(  # noqa: DOC503 - refuse_maybe raises the TypeError
         self, batch: Batch, keys: jax.Array | None, stats: dict[str, Any] | None
     ) -> Batch:
         """Mix every record with a partner record of the batch.
@@ -100,6 +101,7 @@ class BatchMixOperator(OperatorModule):
         Raises:
             ValueError: If the data has no ``data_field``, or CutMix's field is not a batch of
                 images ``(B, H, W, C)``.
+            TypeError: If ``data_field`` is a ``Maybe``: a missing value has nothing to mix.
         """
         del stats
         assert keys is not None  # a stochastic operator is always handed keys
@@ -110,6 +112,11 @@ class BatchMixOperator(OperatorModule):
             raise ValueError(
                 f"BatchMixOperator mixes data[{field!r}], which this batch lacks: {available}"
             )
+        refuse_maybe(
+            data[field],
+            "BatchMixOperator mixes a field's values between records",
+            f"data[{field!r}]",
+        )
         if batch.batch_size == 0:
             # No record to mix and no first record's key: every (absent) record keeps all of
             # itself, which the state says as it would for any batch.

@@ -6,7 +6,7 @@ Core abstractions and building blocks that form the foundation of Datarax pipeli
 
 | Component | Purpose | Key Classes |
 |-----------|---------|-------------|
-| **Element & Batch** | Data containers | `Element`, `Batch`, `batch_ops` |
+| **Element & Batch** | Data containers | `Element`, `Batch`, `Maybe`, `batch_ops` |
 | **Config** | Typed configuration | `OperatorConfig`, `StructuralConfig` |
 | **Modules** | Base abstractions | `DataraxModule`, `OperatorModule` |
 | **Protocols** | Interface contracts | `DataSourceModule`, `SamplerModule` |
@@ -15,6 +15,7 @@ Core abstractions and building blocks that form the foundation of Datarax pipeli
 
     - **Element** is one record: its values, its state and its identity (index, epoch, draw)
     - **Batch** holds records along a leading axis; `batch["image"]` reads its data
+    - **Maybe** is a field a record may lack: its values and a `present` flag per record
     - **batch_ops** builds, slices, regroups and pads batches, as pure functions
     - All modules inherit from `DataraxModule` for consistent behavior
     - Protocols enable duck-typing with `isinstance()` checks
@@ -51,6 +52,7 @@ assert batch["image"].shape == (2, 32, 32, 3)
 
 - [element_batch](element_batch.md) - `Element` and `Batch` data containers
 - [batch_ops](batch_ops.md) - Building, slicing, regrouping and padding batches
+- [maybe](maybe.md) - Missing (`Maybe`), masked (`MASKED`) and padded values
 - [state_keys](state_keys.md) - The per-record state entries datarax writes
 - [spec](spec.md) - Element specs: data as given or as JAX arrays, and batch validation
 - [prng](prng.md) - The named `nnx.Rngs` streams and per-record key derivation

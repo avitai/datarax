@@ -233,6 +233,7 @@ nav:
           - element_batch: core/element_batch.md
           - batch_ops: core/batch_ops.md
           - state_keys: core/state_keys.md
+          - maybe: core/maybe.md
           - modality: core/modality.md
           - module: core/module.md
           - operator: core/operator.md

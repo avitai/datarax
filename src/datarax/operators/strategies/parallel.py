@@ -12,6 +12,7 @@ from jaxtyping import PyTree
 
 from datarax.core.element_batch import Element
 from datarax.core.field_paths import get_field, set_field
+from datarax.core.maybe import refuse_maybe
 from datarax.core.operator import apply_where, OperatorModule, statistics_for_child
 from datarax.operators.strategies.base import CompositionStrategyImpl
 from datarax.operators.strategies.merging import merge_output_sequence, merge_outputs_conditional
@@ -141,7 +142,12 @@ class WeightedParallelStrategy(CompositionStrategyImpl):
         outputs = self._apply_each(operators, element, stats)
         mixed = element.data
         for path in self.mix_fields:
-            stacked = jnp.stack([get_field(output.data, path) for output in outputs])
+            fields = [get_field(output.data, path) for output in outputs]
+            for field in fields:
+                refuse_maybe(
+                    field, "WEIGHTED_PARALLEL mixes its fields as arrays", f"data field {path!r}"
+                )
+            stacked = jnp.stack(fields)
             if isinstance(self.weights, tuple):
                 # Fixed weights are constants, not parameters: they mix in the field's dtype
                 weights = jnp.asarray(self.weights, stacked.dtype)

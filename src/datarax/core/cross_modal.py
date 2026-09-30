@@ -45,6 +45,7 @@ from typing import Any
 from flax import nnx
 
 from datarax.core.config import OperatorConfig
+from datarax.core.maybe import refuse_maybe
 from datarax.core.operator import OperatorModule
 
 
@@ -280,6 +281,7 @@ class CrossModalOperator(OperatorModule):
 
         Raises:
             KeyError: If any input field not found in data
+            TypeError: If an input field is a ``Maybe``: fusing would use its fill value.
 
         Examples:
             ```python
@@ -288,7 +290,12 @@ class CrossModalOperator(OperatorModule):
             image_emb, text_emb, audio_emb = self._extract_inputs(data)  # Three inputs
             ```
         """
-        return [data[field] for field in self.config.input_fields]
+        inputs = [data[name] for name in self.config.input_fields]
+        for name, value in zip(self.config.input_fields, inputs, strict=True):
+            refuse_maybe(
+                value, f"{type(self).__name__} fuses its input fields as arrays", f"data[{name!r}]"
+            )
+        return inputs
 
     def _store_outputs(self, data: dict, outputs: list[Any]) -> dict:
         """Store output values in target fields.

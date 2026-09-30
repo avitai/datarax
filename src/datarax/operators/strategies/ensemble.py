@@ -8,6 +8,7 @@ import jax
 import jax.numpy as jnp
 
 from datarax.core.element_batch import Element
+from datarax.core.maybe import refuse_maybe
 from datarax.core.operator import OperatorModule
 from datarax.operators.strategies.base import CompositionStrategyImpl
 
@@ -47,6 +48,10 @@ class EnsembleStrategy(CompositionStrategyImpl):
         """
         outputs = self._apply_each(operators, element, stats)
         datas = [output.data for output in outputs]
+        for data in datas:
+            refuse_maybe(
+                data, f"an ensemble {self.mode} reduces the operators' data leaf by leaf", "data"
+            )
         if self.mode == "mean":
             reduced = jax.tree.map(lambda *args: jnp.mean(jnp.stack(args), axis=0), *datas)
         elif self.mode == "sum":

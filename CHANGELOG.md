@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `datarax.core.Maybe(value, present)`: a data field a record may lack, at any depth in `data`.
+  `value` holds zeros where a record has no value and `present` is a bool per record. It is a
+  frozen registered pytree node of the two arrays, so batch operations, placement, specs and
+  every transform carry it with its rows, and batches differing only in presence compile once.
+  It has no arithmetic: `*`, `+`, `==` against a number, `jnp` reductions and `np.asarray` raise
+  `TypeError`; `value_or(fill)` reads it, broadcasting `present` over the value's trailing axes.
+- `state_keys.MASKED` (`state[MASKED][field]`: a present value an operator hides and keeps as the
+  target) and `state_keys.IMPUTED` (`state[IMPUTED][field]`: a missing value an operator filled,
+  with the field's `present` set).
 - `RandomCropOperator` pads each record and crops it at an offset drawn from the record's own
   key, with torchvision's `RandomCrop` semantics: padding as one int, (left/right, top/bottom) or
   (left, top, right, bottom); modes constant (with `fill`), edge, reflect and symmetric; top and
@@ -31,6 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Operators that treat a field as an array refuse a `Maybe` field with a `TypeError` naming it:
+  `MapOperator` over the field (a `Maybe` outside its subtree passes through), the parallel
+  merges and ensemble reductions of `CompositeOperatorModule` (a `merge_fn` receives the outputs
+  as they are), `WEIGHTED_PARALLEL`'s mixed fields, `BatchMixOperator`'s mixed field, the image
+  operators and `RandomCropOperator.output_spec`, `LoudnessOperator`, `CrepeF0Operator` and
+  `CrossModalOperator` inputs.
 - Configuration environment overrides are `DATARAX_CONFIG__<KEY>[__<KEY>...]`, apart from the
   operational `DATARAX_*` variables, and replace only values the configuration already has: the
   string is read as the replaced value's type (only `true`/`false` are booleans, so

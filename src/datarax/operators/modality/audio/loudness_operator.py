@@ -22,6 +22,7 @@ from flax.typing import Dtype
 
 from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import Element
+from datarax.core.maybe import refuse_maybe
 from datarax.core.operator import OperatorModule
 
 
@@ -162,6 +163,7 @@ class LoudnessOperator(OperatorModule):
         data = element.data
         del key, stats
         audio = data["audio"]
+        refuse_maybe(audio, f"{type(self).__name__} reads its audio as an array", "data['audio']")
         loudness = self._compute_loudness(audio)
         out_data = {**data, "loudness": loudness}
         return element.replace(data=out_data)

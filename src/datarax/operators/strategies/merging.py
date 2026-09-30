@@ -8,6 +8,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import PyTree
 
+from datarax.core.maybe import refuse_maybe
+
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,7 @@ def merge_output_sequence(
     if merge_fn is not None:
         # Use custom merge function
         return merge_fn(outputs)
+    _refuse_missing_values(outputs, merge_strategy)
 
     if merge_strategy is None or merge_strategy == "concat":
         # Concatenate along merge_axis
@@ -104,6 +107,7 @@ def merge_outputs_conditional(
 
     if merge_fn is not None:
         return merge_fn(outputs)
+    _refuse_missing_values(outputs, merge_strategy)
 
     if merge_strategy is None or merge_strategy == "concat":
         return jax.tree.map(lambda *args: jnp.concatenate(args, axis=merge_axis), *outputs)
@@ -122,6 +126,27 @@ def merge_outputs_conditional(
         return merge_output_sequence(outputs, merge_strategy, merge_axis, merge_fn)
 
     raise ValueError(f"Unknown merge_strategy: {merge_strategy}")
+
+
+def _refuse_missing_values(  # noqa: DOC502 - refuse_maybe raises the TypeError
+    outputs: list[PyTree], merge_strategy: str | None
+) -> None:
+    """Refuse a ``Maybe`` in any output: a merge would combine its presence as data.
+
+    Args:
+        outputs: The operators' data, about to be merged.
+        merge_strategy: The merge, for the message.
+
+    Raises:
+        TypeError: Naming the field, when an output holds a ``Maybe``.
+    """
+    for output in outputs:
+        refuse_maybe(
+            output,
+            f"a {merge_strategy or 'concat'} merge combines the operators' data leaf by leaf "
+            "(pass merge_fn to decide what a missing value means)",
+            "data",
+        )
 
 
 def _masked_stack(values: tuple[jax.Array, ...], cond_mask: jax.Array) -> jax.Array:

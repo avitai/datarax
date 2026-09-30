@@ -12,6 +12,11 @@ served in and its draw within that epoch. Together with an operator's base key t
 record's randomness (``datarax.core.prng.per_record_keys``). The all-ones index,
 ``PADDING_INDEX``, marks a row that is not a record.
 
+A field whose value a record may lack is a ``datarax.core.Maybe`` in ``data``, at any depth: a
+pytree node of the values and a ``present`` flag per record, which every batch operation and
+placement moves with its rows. What processing did to a value is recorded in ``state`` under the
+names in ``datarax.core.state_keys`` (``MASKED``, ``IMPUTED``, ``WEIGHT``).
+
 Operations over batches are pure functions in ``datarax.core.batch_ops``.
 """
 
@@ -46,7 +51,8 @@ class Element:
     """One record: its values, its processing state and its identity.
 
     Attributes:
-        data: The record's values and their intrinsic structure (masks, lengths, segment ids).
+        data: The record's values and their intrinsic structure (masks, lengths, segment ids);
+            a field the record may lack is a ``Maybe``.
         state: What processing records about the record.
         index: The record's identity in its source, uint32 ``(2,)`` as ``(hi, lo)``, or
             ``None`` for a record built without one: stacked into a batch, such records are
