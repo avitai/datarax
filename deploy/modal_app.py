@@ -90,7 +90,7 @@ outputs = modal.Volume.from_name(OUTPUT_VOLUME, create_if_missing=True)
 # Pin uv to the version that wrote uv.lock, for build stability. `--frozen` installs the
 # exact pinned versions without re-resolving; `--locked` re-checks consistency, which fails
 # spuriously on Modal because its managed Python differs from the local interpreter.
-_UV_VERSION = "0.11.25"
+_UV_VERSION = "0.12.21"
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
