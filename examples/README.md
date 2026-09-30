@@ -19,7 +19,6 @@ examples/
 ├── _templates/                   # Example templates
 ├── custom_benchmark.py           # Benchmarking utilities
 ├── hf_model_training_example.py  # Full HF model training workflow
-├── hf_datasets_test.py           # HuggingFace datasets testing
 ├── run_all_examples_on_gpu.sh    # Run every example on GPU
 └── run_gpu_examples.sh           # Run the selected GPU example set
 ```
