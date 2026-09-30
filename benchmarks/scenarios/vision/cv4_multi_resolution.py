@@ -27,10 +27,8 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=["MultiScaleResize", "Normalize"],
             extra={"variant_name": "default"},
         ),
-        data_generator=lambda: {
-            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(
-                2_000, 128, 128, 3, dtype="uint8"
-            )
+        data_generator=lambda n: {
+            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(n, 128, 128, 3, dtype="uint8")
         },
     ),
     "large": ScenarioVariant(
@@ -42,10 +40,8 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=["MultiScaleResize", "Normalize"],
             extra={"variant_name": "large"},
         ),
-        data_generator=lambda: {
-            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(
-                50_000, 512, 512, 3, dtype="uint8"
-            )
+        data_generator=lambda n: {
+            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(n, 512, 512, 3, dtype="uint8")
         },
     ),
 }

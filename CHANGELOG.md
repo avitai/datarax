@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `datasets.load_dataset`.
 - `datarax.config` exports `load_config_from_path_with_includes`, `deep_merge_dict`,
   `SchemaField`, `ValidationError` and `CONFIG_ENV_PREFIX`.
+- Benchmarks: a structural gate, `benchmarks/tests/test_structural_counters.py`, runs every
+  Tier-1 scenario through the Datarax adapter at its own batch size, element shape and
+  transforms, over a dataset of exactly the batches iterated, and requires that nothing compiles
+  after warmup. It runs in the unit lane on every pull request. `ScenarioVariant.generate_data()`
+  generates a variant's data at its configured size and `ScenarioVariant.with_dataset_size(n)`
+  sets that size; every `data_generator` takes the number of records to generate.
 
 ### Changed
 
@@ -36,6 +42,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `create_component_from_config` re-raises a constructor's `TypeError` or `ValueError` as itself,
   with a note naming the component, instead of wrapping every exception in `TypeError`; `seed`
   seeds the derived `rngs` and is not passed to a constructor that does not take it.
+- Benchmarks: a batch's time spans the iterator's `next()`, where the framework produces the
+  batch, as well as its materialization, so per-batch times and their percentiles include the
+  pipeline's own work and add up to the timed wall clock. Every reported per-batch time moves
+  up by the `next()` share; compare timings only against runs of the same instrument.
+- Benchmarks: `run_scenario` refuses a compile inside the timed iteration with
+  `substrax.testing.compiles.CompileCountError`, noted with the adapter, scenario and variant,
+  and tears the adapter down whether or not the repetition succeeds. `PipelineAdapter.warmup`
+  takes `timed_batches`, the count the next `iterate` serves: the Datarax-scan adapter compiles
+  its scan at that length in warmup, where a timed call of another length compiled inside the
+  timed region on every repetition. The Datarax adapter serves full batches only
+  (`drop_last=True`), so a timed run reaching the end of an epoch stops there instead of serving
+  a short final batch compiled inside the timed region.
+- Tests count compiles with `substrax.testing.compiles` only; `tests/test_common/compiles.py`,
+  which parsed JAX's compile log, is removed.
 - An operator implements one method, `apply(element, key, stats) -> Element`: one record, its
   key and the batch's statistics. `__call__(batch)` is the one entry: it computes the statistics
   (`compute_statistics(batch)`, which takes the `Batch`), derives one key per record, applies the

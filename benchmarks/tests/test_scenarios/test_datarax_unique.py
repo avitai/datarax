@@ -55,7 +55,7 @@ class TestNNX1Scenario:
         """Both variants produce (50K, 224, 224, 3) float32 images."""
         for name in ("nnx_module", "plain_function"):
             variant = self.mod.get_variant(name)
-            data = variant.data_generator()
+            data = variant.generate_data()
             assert "image" in data
             img = data["image"]
             assert isinstance(img, np.ndarray)
@@ -129,7 +129,7 @@ class TestXFMR1Scenario:
     def test_data_generation_shapes(self):
         """Generated image data must have correct NHWC float32 shape."""
         variant = self.mod.get_variant("32x32")
-        data = variant.data_generator()
+        data = variant.generate_data()
         assert "image" in data
         img = data["image"]
         assert isinstance(img, np.ndarray)

@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 from flax import nnx
 from PIL import Image
+from substrax.testing.compiles import compiled_programs
 
 
 # Skip tests if datasets is not available
@@ -472,8 +473,6 @@ def test_from_hf_with_shuffling(mock_numeric_dataset, monkeypatch):
 # Image columns: loaded once per column
 # =============================================================================
 
-_BACKEND_COMPILE_EVENT = "/jax/core/compile/backend_compile_duration"
-
 
 @pytest.fixture
 def image_dataset():
@@ -506,30 +505,20 @@ def test_hf_eager_source_construction_stacks_no_device_array_per_row(image_datas
     """A column is built once, not by stacking one device array per row.
 
     Stacking per-row JAX arrays compiles a ``jit(stack)`` program whose input count is the row
-    count, which made building MNIST's training split take tens of minutes. jax records every
-    backend compile, with the program's name, as a duration event.
+    count, which made building MNIST's training split take tens of minutes.
     """
     dataset, _ = image_dataset
     monkeypatch.setattr(datasets, "load_dataset", lambda name, split=None, **kwargs: dataset)
-    compiled: list[str] = []
 
-    def record(event: str, duration_secs: float, **kwargs: str | int) -> None:
-        del duration_secs
-        if event == _BACKEND_COMPILE_EVENT:
-            compiled.append(str(kwargs.get("fun_name")))
-
-    jax.monitoring.register_event_duration_secs_listener(record)
-    try:
-        # An earlier test may have compiled the same programs; clearing the in-memory caches makes
-        # every program this test needs compile here, whatever ran before.
-        jax.clear_caches()
+    # An earlier test may have compiled the same programs; clearing the in-memory caches makes
+    # every program this test needs compile here, whatever ran before.
+    jax.clear_caches()
+    with compiled_programs() as control:
         jnp.stack([jnp.arange(3), jnp.arange(3)])
-        assert "jit(stack)" in compiled, "positive control: a device stack must be recorded"
-        compiled.clear()
-        jax.clear_caches()
+    assert "jit(stack)" in control, "positive control: a device stack must be recorded"
+    jax.clear_caches()
 
+    with compiled_programs() as compiled:
         HFEagerSource(HFEagerConfig(name="images", split="train"), rngs=nnx.Rngs(0))
-    finally:
-        jax.monitoring.unregister_event_duration_listener(record)
 
     assert "jit(stack)" not in compiled

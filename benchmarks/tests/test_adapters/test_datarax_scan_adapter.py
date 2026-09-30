@@ -9,6 +9,8 @@ contract (distinct ``name``, valid ``IterationResult`` shape, scan
 mode marker in extra metrics).
 """
 
+from substrax.testing.compiles import expect_compiles
+
 from benchmarks.adapters.datarax_scan_adapter import DataraxScanAdapter
 from benchmarks.tests.test_adapters.conftest import assert_valid_iteration_result
 
@@ -68,4 +70,19 @@ class TestDataraxScanAdapterLifecycle:
         adapter.iterate(num_batches=4)
         # Same (step_fn, length) — cache should not grow.
         assert len(adapter._pipeline._scan_body_cache) == cache_size_after_warmup
+        adapter.teardown()
+
+
+class TestDataraxScanAdapterSteadyState:
+    """The timed scan runs the program warmup compiled: nothing compiles in the timed call."""
+
+    def test_warmup_told_the_timed_length_leaves_nothing_to_compile(
+        self, nlp1_small_config, small_token_data
+    ) -> None:
+        adapter = DataraxScanAdapter()
+        adapter.setup(nlp1_small_config, small_token_data)
+        adapter.warmup(num_batches=2, timed_batches=4)
+        with expect_compiles(0):
+            result = adapter.iterate(num_batches=4)
+        assert result.num_batches == 4
         adapter.teardown()

@@ -40,15 +40,14 @@ _BATCH_SIZE: int = 64
 
 
 def _make_data_generator(
-    dataset_size: int,
     h: int,
     w: int,
     c: int,
     seed: int,
-) -> Callable[[], dict[str, Any]]:
+) -> Callable[[int], dict[str, Any]]:
     """Return a lazy data generator for float32 images."""
 
-    def _generate() -> dict[str, Any]:
+    def _generate(dataset_size: int) -> dict[str, Any]:
         gen = SyntheticDataGenerator(seed=seed)
         return {"image": gen.images(dataset_size, h, w, c, dtype="float32")}
 
@@ -71,7 +70,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
             seed=DEFAULT_SEED,
             extra={"topology": "parallel_dag", "variant_name": "default"},
         ),
-        data_generator=_make_data_generator(_DATASET_SIZE, *_ELEMENT_SHAPE, DEFAULT_SEED),
+        data_generator=_make_data_generator(*_ELEMENT_SHAPE, DEFAULT_SEED),
     ),
 }
 """Single default variant for DAG topology benchmarking."""

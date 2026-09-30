@@ -54,7 +54,7 @@ class TestDIST1Scenario:
     def test_data_generation_shapes(self):
         """Generated image data must have correct NHWC float32 shape."""
         variant = self.mod.get_variant("1_device")
-        data = variant.data_generator()
+        data = variant.generate_data()
         assert "image" in data
         img = data["image"]
         assert isinstance(img, np.ndarray)
@@ -110,7 +110,7 @@ class TestDIST2Scenario:
     def test_data_generation_shapes(self):
         """Generated image data must have correct NHWC float32 shape."""
         variant = self.mod.get_variant("mesh_1d")
-        data = variant.data_generator()
+        data = variant.generate_data()
         assert "image" in data
         img = data["image"]
         assert isinstance(img, np.ndarray)

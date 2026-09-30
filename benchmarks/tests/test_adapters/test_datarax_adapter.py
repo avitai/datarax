@@ -8,6 +8,9 @@ small_image_data, nlp1_small_config, small_token_data) and
 benchmarks/tests/test_adapters/conftest.py (mm1_small_config, etc.).
 """
 
+import numpy as np
+from substrax.testing.compiles import expect_compiles
+
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.adapters.datarax_adapter import DataraxAdapter
 from benchmarks.tests.test_adapters.conftest import (
@@ -148,4 +151,48 @@ class TestDataraxAdapterPrefetchPolicy:
         )
         adapter.setup(override_config, small_image_data)
         assert adapter._buffer_depth == 4  # type: ignore[reportAttributeAccessIssue]
+        adapter.teardown()
+
+
+class TestDataraxAdapterSteadyState:
+    """At the end of an epoch the adapter stops with full batches and compiles nothing new."""
+
+    def test_iterate_reaching_the_epoch_end_serves_only_full_batches(self, synth_gen):
+        # 25 records in batches of 10: the epoch ends mid-batch. A short final batch would be a
+        # second shape, compiled inside the timed region.
+        config = ScenarioConfig(
+            scenario_id="CV-1",
+            dataset_size=25,
+            element_shape=(32, 32, 3),
+            batch_size=10,
+            transforms=["Normalize", "CastToFloat32"],
+        )
+        adapter = DataraxAdapter()
+        adapter.setup(config, {"image": synth_gen.images(25, 32, 32, 3, dtype="uint8")})
+        adapter.warmup(num_batches=1)
+        with expect_compiles(0):
+            result = adapter.iterate(num_batches=6)
+        assert result.num_batches == 1
+        assert result.num_elements == config.batch_size
+        adapter.teardown()
+
+
+class TestDataraxAdapterFieldRanks:
+    """Spatial transforms act on image-like fields; a token field passes through (HMM-1)."""
+
+    def test_random_resized_crop_passes_a_token_field_through(self, synth_gen):
+        images = synth_gen.images(8, 16, 16, 3, dtype="uint8")
+        tokens = synth_gen.token_sequences(8, 7)
+        config = ScenarioConfig(
+            scenario_id="HMM-1",
+            dataset_size=8,
+            element_shape=(16, 16, 3),
+            batch_size=4,
+            transforms=["RandomResizedCrop"],
+        )
+        adapter = DataraxAdapter()
+        adapter.setup(config, {"image": images, "tokens": tokens})
+        batch = next(iter(adapter._iterate_batches()))
+        assert batch["image"].shape == (4, 16, 16, 3)
+        np.testing.assert_array_equal(np.asarray(batch["tokens"]), tokens[:4])
         adapter.teardown()

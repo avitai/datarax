@@ -200,9 +200,9 @@ class DaliAdapter(PipelineAdapter):
         )
         self._config = config
 
-    def warmup(self, num_batches: int = 3) -> None:
+    def warmup(self, num_batches: int = 3, *, timed_batches: int | None = None) -> None:
         """DALI requires an iterator reset after warmup."""
-        super().warmup(num_batches)
+        super().warmup(num_batches, timed_batches=timed_batches)
         self._iterator.reset()
 
     def _iterate_batches(self) -> Iterator[Any]:

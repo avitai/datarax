@@ -27,8 +27,8 @@ def cv1_variant() -> ScenarioVariant:
     )
     return ScenarioVariant(
         config=config,
-        data_generator=lambda: {
-            "image": np.random.randint(0, 255, (200, 32, 32, 3), dtype=np.uint8)
+        data_generator=lambda dataset_size: {
+            "image": np.random.randint(0, 255, (dataset_size, 32, 32, 3), dtype=np.uint8)
         },
     )
 

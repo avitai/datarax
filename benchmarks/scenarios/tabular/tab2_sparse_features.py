@@ -35,14 +35,13 @@ _VARIANT_SPECS: dict[str, dict[str, Any]] = {
 
 
 def _make_data_generator(
-    dataset_size: int,
     num_dense: int,
     num_sparse: int,
     seed: int = DEFAULT_SEED,
-) -> Callable[[], dict[str, Any]]:
+) -> Callable[[int], dict[str, Any]]:
     """Create a lazy data generator for sparse feature data."""
 
-    def generate() -> dict[str, Any]:
+    def generate(dataset_size: int) -> dict[str, Any]:
         gen = SyntheticDataGenerator(seed=seed)
         dense, sparse_list = gen.sparse_features(
             dataset_size, num_dense=num_dense, num_sparse=num_sparse
@@ -68,7 +67,7 @@ def _build_variants() -> dict[str, ScenarioVariant]:
         )
         variants[name] = ScenarioVariant(
             config=config,
-            data_generator=_make_data_generator(spec["dataset_size"], _NUM_DENSE, _NUM_SPARSE),
+            data_generator=_make_data_generator(_NUM_DENSE, _NUM_SPARSE),
         )
     return variants
 

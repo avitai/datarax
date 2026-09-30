@@ -45,7 +45,7 @@ class TestMM1Scenario:
     def test_data_generation_shapes(self):
         """Generated data must have image and tokens arrays."""
         variant = self.mod.get_variant("default")
-        data = variant.data_generator()
+        data = variant.generate_data()
 
         assert "image" in data
         assert "tokens" in data
@@ -88,9 +88,9 @@ class TestMM1Scenario:
                 transforms=["Normalize"],
                 extra={"variant_name": "test_tiny"},
             ),
-            data_generator=lambda: {
-                "image": rng.standard_normal((n, 8, 8, 3)).astype(np.float32),
-                "tokens": rng.integers(0, 32000, (n, 16), dtype=np.int32),
+            data_generator=lambda dataset_size: {
+                "image": rng.standard_normal((dataset_size, 8, 8, 3)).astype(np.float32),
+                "tokens": rng.integers(0, 32000, (dataset_size, 16), dtype=np.int32),
             },
         )
         result = run_quick_scenario(datarax_adapter, tiny_variant)
@@ -129,7 +129,7 @@ class TestMM2Scenario:
     def test_data_generation_shapes(self):
         """Generated data must have waveform and tokens arrays."""
         variant = self.mod.get_variant("default")
-        data = variant.data_generator()
+        data = variant.generate_data()
 
         assert "waveform" in data
         assert "tokens" in data
@@ -173,9 +173,9 @@ class TestMM2Scenario:
                 transforms=[],
                 extra={"variant_name": "test_tiny"},
             ),
-            data_generator=lambda: {
-                "waveform": rng.standard_normal((n, 160)).astype(np.float32),
-                "tokens": rng.integers(0, 32000, (n, 16), dtype=np.int32),
+            data_generator=lambda dataset_size: {
+                "waveform": rng.standard_normal((dataset_size, 160)).astype(np.float32),
+                "tokens": rng.integers(0, 32000, (dataset_size, 16), dtype=np.int32),
             },
         )
         result = run_quick_scenario(datarax_adapter, tiny_variant)

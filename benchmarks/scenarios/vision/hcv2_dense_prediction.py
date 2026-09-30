@@ -43,7 +43,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
             ],
             extra={"variant_name": "seg_small"},
         ),
-        data_generator=lambda: _seg_data(10_000, 256, 256),
+        data_generator=lambda n: _seg_data(n, 256, 256),
     ),
     "seg_medium": ScenarioVariant(
         config=ScenarioConfig(
@@ -60,7 +60,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
             ],
             extra={"variant_name": "seg_medium"},
         ),
-        data_generator=lambda: _seg_data(50_000, 640, 640),
+        data_generator=lambda n: _seg_data(n, 640, 640),
     ),
 }
 

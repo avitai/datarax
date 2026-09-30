@@ -34,12 +34,12 @@ _ELEMENT_SHAPE: tuple[int, int, int] = (64, 64, 3)
 _BATCH_SIZE: int = 64
 
 
-def _make_data_generator(seed: int) -> Callable[[], dict[str, Any]]:
+def _make_data_generator(seed: int) -> Callable[[int], dict[str, Any]]:
     """Return a lazy data generator for uint8 images."""
 
-    def _generate() -> dict[str, Any]:
+    def _generate(dataset_size: int) -> dict[str, Any]:
         gen = SyntheticDataGenerator(seed=seed)
-        return {"image": gen.images(_DATASET_SIZE, *_ELEMENT_SHAPE, dtype="uint8")}
+        return {"image": gen.images(dataset_size, *_ELEMENT_SHAPE, dtype="uint8")}
 
     return _generate
 

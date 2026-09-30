@@ -35,13 +35,12 @@ _VARIANT_SPECS: dict[str, dict[str, Any]] = {
 
 
 def _make_data_generator(
-    dataset_size: int,
     max_len: int,
     seed: int = DEFAULT_SEED,
-) -> Callable[[], dict[str, Any]]:
+) -> Callable[[int], dict[str, Any]]:
     """Create a lazy data generator for padded variable-length sequences."""
 
-    def generate() -> dict[str, Any]:
+    def generate(dataset_size: int) -> dict[str, Any]:
         gen = SyntheticDataGenerator(seed=seed)
         var_seqs = gen.variable_length_tokens(dataset_size, min_len=10, max_len=max_len)
         padded = np.zeros((dataset_size, max_len), dtype=np.int32)
@@ -69,7 +68,7 @@ def _build_variants() -> dict[str, ScenarioVariant]:
         )
         variants[name] = ScenarioVariant(
             config=config,
-            data_generator=_make_data_generator(spec["dataset_size"], spec["max_len"]),
+            data_generator=_make_data_generator(spec["max_len"]),
         )
     return variants
 

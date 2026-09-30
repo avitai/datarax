@@ -49,7 +49,7 @@ class TestPR1Scenario:
         variant = self.mod.get_variant("small")
         assert variant.config.dataset_size == 10_000
         assert variant.config.element_shape == (32, 32, 3)
-        data = variant.data_generator()
+        data = variant.generate_data()
         assert "image" in data
         img = data["image"]
         assert isinstance(img, np.ndarray)
@@ -61,7 +61,7 @@ class TestPR1Scenario:
         variant = self.mod.get_variant("large")
         assert variant.config.dataset_size == 500
         assert variant.config.element_shape == (64, 64, 64)
-        data = variant.data_generator()
+        data = variant.generate_data()
         assert "volume" in data
         vol = data["volume"]
         assert isinstance(vol, np.ndarray)
@@ -122,7 +122,7 @@ class TestPR2Scenario:
     def test_data_generation_shapes(self):
         """Generated image data must have correct NHWC uint8 shape."""
         variant = self.mod.get_variant("small")
-        data = variant.data_generator()
+        data = variant.generate_data()
         assert "image" in data
         img = data["image"]
         assert isinstance(img, np.ndarray)

@@ -88,21 +88,29 @@ class DataraxScanAdapter(DataraxAdapter):
         self._batch_byte_estimate = bytes_per_batch
         return bytes_per_batch
 
-    def warmup(self, num_batches: int = 3) -> None:
-        """Trigger compilation of the scan body and prime its cache.
+    def warmup(self, num_batches: int = 3, *, timed_batches: int | None = None) -> None:
+        """Compile the scan the timed call runs, and prime its cache.
 
-        ``Pipeline.scan`` caches the compiled body keyed on
-        ``(step_fn, length)``. Calling it once during warmup with the
-        same arguments the timed call will use ensures the timed call
-        hits the cache.
+        ``Pipeline.scan`` compiles one program per ``(step_fn, length)``, and ``length`` is
+        the number of batches the call serves. Warmup therefore runs the scan at the
+        timed length (``timed_batches``) so the timed :meth:`iterate` reuses that program;
+        without it, the scan runs at ``num_batches`` and a timed call of another length
+        compiles inside the timed region.
+
+        Args:
+            num_batches: Batches to scan when the timed length is not given.
+            timed_batches: The ``num_batches`` of the next :meth:`iterate` call.
         """
         self._per_batch_byte_estimate()
-        outputs = self._pipeline.scan(_reducing_step, length=num_batches)
+        length = num_batches if timed_batches is None else timed_batches
+        outputs = self._pipeline.scan(_reducing_step, length=length)
         jax.block_until_ready(outputs)
 
     def iterate(self, num_batches: int) -> IterationResult:
         """Run the entire epoch via ``Pipeline.scan`` and time the call.
 
+        The timed span is the whole scan call, which produces every batch
+        (the scan's steps are the iterator's ``next()``) and reduces it.
         Per-batch latencies are not directly observable in scan mode
         (the loop runs inside one XLA graph). ``per_batch_times`` is
         therefore reported as the wall clock divided across batches —

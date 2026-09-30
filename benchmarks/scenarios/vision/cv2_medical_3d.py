@@ -27,8 +27,8 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=["Normalize"],
             extra={"variant_name": "default"},
         ),
-        data_generator=lambda: {
-            "volume": SyntheticDataGenerator(seed=DEFAULT_SEED).volumes_3d(500, 64, 64, 64)
+        data_generator=lambda n: {
+            "volume": SyntheticDataGenerator(seed=DEFAULT_SEED).volumes_3d(n, 64, 64, 64)
         },
     ),
     "large": ScenarioVariant(
@@ -40,8 +40,8 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=["Normalize"],
             extra={"variant_name": "large"},
         ),
-        data_generator=lambda: {
-            "volume": SyntheticDataGenerator(seed=DEFAULT_SEED).volumes_3d(5_000, 128, 128, 128)
+        data_generator=lambda n: {
+            "volume": SyntheticDataGenerator(seed=DEFAULT_SEED).volumes_3d(n, 128, 128, 128)
         },
     ),
 }

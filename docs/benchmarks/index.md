@@ -9,7 +9,7 @@ Per-adapter scenario coverage is recorded empirically in the [Coverage Matrix](h
 The benchmark suite evaluates:
 
 1.  **Throughput**: Elements processed per second
-2.  **Latency**: Per-batch processing time distribution (p50, p95, p99)
+2.  **Latency**: Per-batch time distribution (p50, p95, p99), each batch timed from the `next()` that produces it through its materialization ([methodology](methodology.md#what-a-batchs-time-spans))
 3.  **Memory**: Peak RSS and GPU memory usage
 4.  **Scaling**: Performance across batch sizes, workers, and devices
 5.  **Feature coverage**: Which scenarios each framework supports

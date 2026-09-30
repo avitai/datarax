@@ -34,7 +34,7 @@ def measure_adapter_throughput(
         Throughput in elements per second.
     """
     adapter.setup(config, data)
-    adapter.warmup(warmup_batches)
+    adapter.warmup(warmup_batches, timed_batches=measure_batches)
     result = adapter.iterate(measure_batches)
     adapter.teardown()
     return result.num_elements / result.wall_clock_sec if result.wall_clock_sec > 0 else 0.0

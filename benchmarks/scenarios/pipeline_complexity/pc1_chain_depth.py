@@ -56,13 +56,12 @@ def _build_transform_chain(depth: int) -> list[str]:
 
 
 def _make_data_generator(
-    dataset_size: int,
     shape: tuple[int, int],
     seed: int,
-) -> Callable[[], dict[str, Any]]:
+) -> Callable[[int], dict[str, Any]]:
     """Return a lazy data generator for the given shape."""
 
-    def _generate() -> dict[str, Any]:
+    def _generate(dataset_size: int) -> dict[str, Any]:
         rng = np.random.default_rng(seed)
         return {"data": rng.standard_normal((dataset_size, *shape)).astype(np.float32)}
 
@@ -82,7 +81,7 @@ def _build_variant(depth: int) -> ScenarioVariant:
             seed=DEFAULT_SEED,
             extra={"chain_depth": depth, "variant_name": name},
         ),
-        data_generator=_make_data_generator(_DATASET_SIZE, _ELEMENT_SHAPE, DEFAULT_SEED),
+        data_generator=_make_data_generator(_ELEMENT_SHAPE, DEFAULT_SEED),
     )
 
 

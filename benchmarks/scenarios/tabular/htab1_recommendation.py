@@ -49,7 +49,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
                 "num_sparse": _NUM_SPARSE,
             },
         ),
-        data_generator=lambda: _rec_data(1_000_000),
+        data_generator=lambda n: _rec_data(n),
     ),
     "medium": ScenarioVariant(
         config=ScenarioConfig(
@@ -64,7 +64,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
                 "num_sparse": _NUM_SPARSE,
             },
         ),
-        data_generator=lambda: _rec_data(10_000_000),
+        data_generator=lambda n: _rec_data(n),
     ),
     "real_criteo": ScenarioVariant(
         config=ScenarioConfig(
@@ -79,7 +79,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
                 "num_sparse": _NUM_SPARSE,
             },
         ),
-        data_generator=criteo_recommendation_data(1_000_000),
+        data_generator=criteo_recommendation_data(),
     ),
 }
 

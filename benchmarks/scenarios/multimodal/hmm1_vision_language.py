@@ -42,7 +42,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=["RandomResizedCrop", "Normalize", "CastToFloat32"],
             extra={"variant_name": "clip_small", "text_len": _TEXT_LEN},
         ),
-        data_generator=lambda: _clip_data(50_000, 224, 224),
+        data_generator=lambda n: _clip_data(n, 224, 224),
     ),
     "clip_medium": ScenarioVariant(
         config=ScenarioConfig(
@@ -53,7 +53,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=["RandomResizedCrop", "Normalize", "CastToFloat32"],
             extra={"variant_name": "clip_medium", "text_len": _TEXT_LEN},
         ),
-        data_generator=lambda: _clip_data(500_000, 224, 224),
+        data_generator=lambda n: _clip_data(n, 224, 224),
     ),
     "real_coco": ScenarioVariant(
         config=ScenarioConfig(
@@ -65,7 +65,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
             extra={"variant_name": "real_coco", "text_len": _TEXT_LEN},
         ),
         data_generator=coco_pair_data(
-            50_000, h=224, w=224, text_len=_TEXT_LEN, vocab_size=49408, image_dtype="uint8"
+            h=224, w=224, text_len=_TEXT_LEN, vocab_size=49408, image_dtype="uint8"
         ),
     ),
 }

@@ -44,10 +44,8 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=_SSL_TRANSFORMS,
             extra={"variant_name": "ssl_small", "chain_depth": 8},
         ),
-        data_generator=lambda: {
-            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(
-                10_000, 224, 224, 3, dtype="uint8"
-            )
+        data_generator=lambda n: {
+            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(n, 224, 224, 3, dtype="uint8")
         },
     ),
     "ssl_medium": ScenarioVariant(
@@ -59,10 +57,8 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=_SSL_TRANSFORMS,
             extra={"variant_name": "ssl_medium", "chain_depth": 8},
         ),
-        data_generator=lambda: {
-            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(
-                50_000, 224, 224, 3, dtype="uint8"
-            )
+        data_generator=lambda n: {
+            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(n, 224, 224, 3, dtype="uint8")
         },
     ),
     "ssl_large": ScenarioVariant(
@@ -74,10 +70,8 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=_SSL_TRANSFORMS,
             extra={"variant_name": "ssl_large", "chain_depth": 8},
         ),
-        data_generator=lambda: {
-            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(
-                200_000, 224, 224, 3, dtype="uint8"
-            )
+        data_generator=lambda n: {
+            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(n, 224, 224, 3, dtype="uint8")
         },
     ),
 }

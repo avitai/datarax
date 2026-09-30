@@ -29,10 +29,8 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=["RandomResizedCrop", "Normalize", "CastToFloat32"],
             extra={"variant_name": "shard_small"},
         ),
-        data_generator=lambda: {
-            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(
-                50_000, 224, 224, 3, dtype="uint8"
-            )
+        data_generator=lambda n: {
+            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(n, 224, 224, 3, dtype="uint8")
         },
     ),
     "shard_medium": ScenarioVariant(
@@ -44,10 +42,8 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=["RandomResizedCrop", "Normalize", "CastToFloat32"],
             extra={"variant_name": "shard_medium"},
         ),
-        data_generator=lambda: {
-            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(
-                200_000, 224, 224, 3, dtype="uint8"
-            )
+        data_generator=lambda n: {
+            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(n, 224, 224, 3, dtype="uint8")
         },
     ),
 }

@@ -108,9 +108,9 @@ class TestPC1Scenario:
                 transforms=["Normalize"],
                 extra={"variant_name": "test_tiny", "chain_depth": 1},
             ),
-            data_generator=lambda: {
+            data_generator=lambda dataset_size: {
                 "data": np.random.default_rng(42)
-                .standard_normal((_TINY_N, 64, 64))
+                .standard_normal((dataset_size, 64, 64))
                 .astype(np.float32)
             },
         )
@@ -177,9 +177,9 @@ class TestPC2Scenario:
                 required_capabilities=[Capability.DAG_BRANCHING],
                 extra={"variant_name": "test_tiny", "topology": "parallel_dag"},
             ),
-            data_generator=lambda: {
+            data_generator=lambda dataset_size: {
                 "image": np.random.default_rng(42)
-                .standard_normal((_TINY_N, 32, 32, 3))
+                .standard_normal((dataset_size, 32, 32, 3))
                 .astype(np.float32)
             },
         )
@@ -248,9 +248,9 @@ class TestPC3Scenario:
                     "target_batch_size": 32,
                 },
             ),
-            data_generator=lambda: {
+            data_generator=lambda dataset_size: {
                 "image": np.random.default_rng(42)
-                .standard_normal((_TINY_N, 32, 32, 3))
+                .standard_normal((dataset_size, 32, 32, 3))
                 .astype(np.float32)
             },
         )
@@ -320,9 +320,9 @@ class TestPC4Scenario:
                     "probability": 0.5,
                 },
             ),
-            data_generator=lambda: {
+            data_generator=lambda dataset_size: {
                 "image": np.random.default_rng(42)
-                .standard_normal((_TINY_N, 32, 32, 3))
+                .standard_normal((dataset_size, 32, 32, 3))
                 .astype(np.float32)
             },
         )
@@ -392,9 +392,9 @@ class TestPC5Scenario:
                     "differentiable": True,
                 },
             ),
-            data_generator=lambda: {
+            data_generator=lambda dataset_size: {
                 "image": np.random.default_rng(42)
-                .standard_normal((_TINY_N, 32, 32, 3))
+                .standard_normal((dataset_size, 32, 32, 3))
                 .astype(np.float32)
             },
         )

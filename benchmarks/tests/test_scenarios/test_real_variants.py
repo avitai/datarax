@@ -140,15 +140,15 @@ class TestCifar10ImageData:
 
     def test_contract(self, fake_cifar: np.ndarray):
         """Images are (n, h, w, 3) uint8 under the 'image' key."""
-        data = real_data_variants.cifar10_image_data(8, h=64, w=64)()
+        data = real_data_variants.cifar10_image_data(h=64, w=64)(8)
         assert set(data) == {"image"}
         assert data["image"].shape == (8, 64, 64, 3)
         assert data["image"].dtype == np.uint8
 
     def test_deterministic(self, fake_cifar: np.ndarray):
         """Two invocations produce byte-identical data."""
-        generate = real_data_variants.cifar10_image_data(8)
-        np.testing.assert_array_equal(generate()["image"], generate()["image"])
+        generate = real_data_variants.cifar10_image_data()
+        np.testing.assert_array_equal(generate(8)["image"], generate(8)["image"])
 
 
 class TestWikitextTokenData:
@@ -156,15 +156,15 @@ class TestWikitextTokenData:
 
     def test_contract(self, fake_wikitext: list[str]):
         """Tokens are (n, seq_len) int32 under the 'tokens' key."""
-        data = real_data_variants.wikitext_token_data(4, seq_len=16)()
+        data = real_data_variants.wikitext_token_data(seq_len=16)(4)
         assert set(data) == {"tokens"}
         assert data["tokens"].shape == (4, 16)
         assert data["tokens"].dtype == np.int32
 
     def test_deterministic(self, fake_wikitext: list[str]):
         """Two invocations produce byte-identical data."""
-        generate = real_data_variants.wikitext_token_data(4, seq_len=16)
-        np.testing.assert_array_equal(generate()["tokens"], generate()["tokens"])
+        generate = real_data_variants.wikitext_token_data(seq_len=16)
+        np.testing.assert_array_equal(generate(4)["tokens"], generate(4)["tokens"])
 
 
 class TestCriteoData:
@@ -172,14 +172,14 @@ class TestCriteoData:
 
     def test_dense_contract(self, fake_criteo: list[str]):
         """Dense-only features are (n, 13) float32."""
-        data = real_data_variants.criteo_dense_data(6)()
+        data = real_data_variants.criteo_dense_data()(6)
         assert set(data) == {"features"}
         assert data["features"].shape == (6, 13)
         assert data["features"].dtype == np.float32
 
     def test_recommendation_contract(self, fake_criteo: list[str]):
         """Dense + hashed-sparse features concatenate to (n, 39) float32."""
-        data = real_data_variants.criteo_recommendation_data(6)()
+        data = real_data_variants.criteo_recommendation_data()(6)
         features = data["features"]
         assert features.shape == (6, 39)
         assert features.dtype == np.float32
@@ -190,8 +190,8 @@ class TestCriteoData:
 
     def test_deterministic(self, fake_criteo: list[str]):
         """Two invocations produce byte-identical data."""
-        generate = real_data_variants.criteo_recommendation_data(6)
-        np.testing.assert_array_equal(generate()["features"], generate()["features"])
+        generate = real_data_variants.criteo_recommendation_data()
+        np.testing.assert_array_equal(generate(6)["features"], generate(6)["features"])
 
 
 class TestCocoPairData:
@@ -199,7 +199,7 @@ class TestCocoPairData:
 
     def test_float32_contract(self, fake_coco: list[tuple[np.ndarray, str]]):
         """Float32 images in [0, 1] plus int32 tokens."""
-        data = real_data_variants.coco_pair_data(4, h=32, w=32)()
+        data = real_data_variants.coco_pair_data(h=32, w=32)(4)
         assert set(data) == {"image", "tokens"}
         assert data["image"].shape == (4, 32, 32, 3)
         assert data["image"].dtype == np.float32
@@ -209,16 +209,16 @@ class TestCocoPairData:
 
     def test_uint8_contract(self, fake_coco: list[tuple[np.ndarray, str]]):
         """uint8 mode keeps raw pixels and honors vocab_size."""
-        data = real_data_variants.coco_pair_data(
-            4, h=32, w=32, vocab_size=49408, image_dtype="uint8"
-        )()
+        data = real_data_variants.coco_pair_data(h=32, w=32, vocab_size=49408, image_dtype="uint8")(
+            4
+        )
         assert data["image"].dtype == np.uint8
         assert data["tokens"].max() < 49408
 
     def test_deterministic(self, fake_coco: list[tuple[np.ndarray, str]]):
         """Two invocations produce byte-identical data."""
-        generate = real_data_variants.coco_pair_data(4, h=32, w=32)
-        first = generate()
-        second = generate()
+        generate = real_data_variants.coco_pair_data(h=32, w=32)
+        first = generate(4)
+        second = generate(4)
         np.testing.assert_array_equal(first["image"], second["image"])
         np.testing.assert_array_equal(first["tokens"], second["tokens"])

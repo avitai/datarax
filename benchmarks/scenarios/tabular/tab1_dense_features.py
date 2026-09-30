@@ -39,11 +39,11 @@ _VARIANT_SPECS: dict[str, dict[str, Any]] = {
 
 
 def _make_data_generator(
-    dataset_size: int, num_features: int, seed: int = DEFAULT_SEED
-) -> Callable[[], dict[str, Any]]:
+    num_features: int, seed: int = DEFAULT_SEED
+) -> Callable[[int], dict[str, Any]]:
     """Create a lazy data generator for dense tabular data."""
 
-    def generate() -> dict[str, Any]:
+    def generate(dataset_size: int) -> dict[str, Any]:
         gen = SyntheticDataGenerator(seed=seed)
         return {"features": gen.tabular(dataset_size, num_features)}
 
@@ -64,7 +64,7 @@ def _build_variants() -> dict[str, ScenarioVariant]:
         )
         variants[name] = ScenarioVariant(
             config=config,
-            data_generator=_make_data_generator(spec["dataset_size"], _NUM_FEATURES),
+            data_generator=_make_data_generator(_NUM_FEATURES),
         )
     return variants
 
@@ -81,7 +81,7 @@ VARIANTS["real_criteo"] = ScenarioVariant(
         transforms=["Normalize"],
         extra={"variant_name": "real_criteo"},
     ),
-    data_generator=criteo_dense_data(10_000),
+    data_generator=criteo_dense_data(),
 )
 
 

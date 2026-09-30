@@ -31,10 +31,8 @@ VARIANTS: dict[str, ScenarioVariant] = {
             seed=DEFAULT_SEED,
             extra={"checkpoint": True, "variant_name": "small"},
         ),
-        data_generator=lambda: {
-            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(
-                10_000, 32, 32, 3, dtype="float32"
-            )
+        data_generator=lambda n: {
+            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(n, 32, 32, 3, dtype="float32")
         },
     ),
     "medium": ScenarioVariant(
@@ -47,10 +45,8 @@ VARIANTS: dict[str, ScenarioVariant] = {
             seed=DEFAULT_SEED,
             extra={"checkpoint": True, "variant_name": "medium"},
         ),
-        data_generator=lambda: {
-            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(
-                5_000, 64, 64, 3, dtype="float32"
-            )
+        data_generator=lambda n: {
+            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(n, 64, 64, 3, dtype="float32")
         },
     ),
     "large": ScenarioVariant(
@@ -63,9 +59,9 @@ VARIANTS: dict[str, ScenarioVariant] = {
             seed=DEFAULT_SEED,
             extra={"checkpoint": True, "variant_name": "large"},
         ),
-        data_generator=lambda: {
+        data_generator=lambda n: {
             "volume": np.random.default_rng(DEFAULT_SEED)
-            .standard_normal((500, 64, 64, 64))
+            .standard_normal((n, 64, 64, 64))
             .astype(np.float32)
         },
     ),

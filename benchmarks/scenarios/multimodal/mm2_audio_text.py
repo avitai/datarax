@@ -42,15 +42,14 @@ _VARIANT_SPECS: dict[str, dict[str, Any]] = {
 
 
 def _make_data_generator(
-    dataset_size: int,
     sample_rate: int,
     duration_sec: float,
     text_len: int,
     seed: int = DEFAULT_SEED,
-) -> Callable[[], dict[str, Any]]:
+) -> Callable[[int], dict[str, Any]]:
     """Create a lazy data generator for audio-text pairs."""
 
-    def generate() -> dict[str, Any]:
+    def generate(dataset_size: int) -> dict[str, Any]:
         gen = SyntheticDataGenerator(seed=seed)
         waveforms = gen.audio_waveforms(
             dataset_size, sample_rate=sample_rate, duration_sec=duration_sec
@@ -78,7 +77,6 @@ def _build_variants() -> dict[str, ScenarioVariant]:
         variants[name] = ScenarioVariant(
             config=config,
             data_generator=_make_data_generator(
-                spec["dataset_size"],
                 _SAMPLE_RATE,
                 duration,
                 _TEXT_LEN,

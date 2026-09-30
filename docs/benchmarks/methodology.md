@@ -14,16 +14,42 @@ sequenceDiagram
 
     loop R repetitions
         Runner->>Adapter: setup(config, data)
-        Runner->>Adapter: warmup(W batches)
-        Runner->>Timer: start measurement
+        Runner->>Adapter: warmup(W batches, timed_batches=N)
+        Runner->>Timer: start measurement (no compile allowed)
         loop N batches
-            Adapter->>Timer: record per-batch time
+            Adapter->>Timer: record per-batch time (next() + materialization)
         end
         Runner->>Timer: stop measurement
         Runner->>Adapter: teardown()
     end
     Runner->>Runner: select median by wall_clock_sec
 ```
+
+### What a batch's time spans
+
+A batch's time runs from the iterator's `next()` call that produces it to the end of its
+materialization (`_materialize_batch()`, which for JAX adapters waits with
+`jax.block_until_ready`). `next()` is where a framework loads, transforms and dispatches the
+batch, so the per-batch times add up to the timed wall clock, less the iterator's creation and
+closing. The iterator is closed when the timed run ends, also when it fails. Scan-mode adapters
+run all batches in one call; their per-batch time is that call's wall clock divided by the
+batch count.
+
+### No compilation in the timed region
+
+`run_scenario` runs the timed iteration inside `substrax.testing.compiles.expect_compiles(0)`.
+A compile there is compilation time reported as data loading, so it raises
+`CompileCountError`, noted with the adapter, scenario and variant. Warmup may compile, and is
+told the timed batch count so an adapter whose program depends on it (a whole-epoch scan)
+compiles the timed program there. The Datarax adapter's pipelines serve full batches only
+(`drop_last=True`): a timed run that reaches the end of an epoch stops there, with the batches it
+served counted in `num_batches`, instead of serving a short final batch of a new shape.
+
+`benchmarks/tests/test_structural_counters.py` holds this for every Tier-1 scenario on every
+pull request: the Datarax adapter at the scenario's batch size, element shape and transforms,
+over a dataset of exactly the batches iterated (`ScenarioVariant.with_dataset_size`), compiles
+nothing after one warmup batch. Compile counts do not depend on the runner, which is what makes
+them a gate where hosted-runner throughput is not.
 
 ---
 
@@ -78,9 +104,9 @@ Statistical analysis uses:
 
 ## Materialization Semantics
 
-The timed loop calls each adapter's `_materialize_batch()` per batch, so a
-batch's cost is whatever its framework's real delivery path costs — and that
-differs architecturally:
+The timed loop calls each adapter's iterator `next()` and `_materialize_batch()`
+per batch, so a batch's cost is whatever its framework's real delivery path
+costs — and that differs architecturally:
 
 - **Per-record collation** (Grain, PyTorch DataLoader, SPDL): every batch
   gathers and copies individual records. Throughput reflects real per-batch

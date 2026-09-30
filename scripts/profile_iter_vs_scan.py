@@ -115,7 +115,7 @@ def _compare_pair(scenario_label: str, variant, num_batches: int = 100) -> dict:
     """Run datarax and jax-dataloader on one variant and report ratios."""
     print(f"\n{'=' * 72}\n{scenario_label}\n{'=' * 72}")
     config = variant.config
-    data = variant.data_generator()
+    data = variant.generate_data()
 
     results = {}
     for name, adapter_cls in [
@@ -155,7 +155,7 @@ def _profile_pc1_scaling(num_batches: int = 50) -> list[dict]:
     for depth_name in ["depth_1", "depth_5", "depth_10"]:
         variant = get_pc1(depth_name)
         config = variant.config
-        data = variant.data_generator()
+        data = variant.generate_data()
         print(f"\n  --- PC-1 {depth_name} (transforms={len(config.transforms)}) ---")
 
         if not DataraxAdapter().is_available():

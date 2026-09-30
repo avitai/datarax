@@ -33,15 +33,14 @@ _TRANSFORMS: list[str] = ["Normalize", "GaussianNoise", "RandomBrightness"]
 
 
 def _make_data_generator(
-    dataset_size: int,
     h: int,
     w: int,
     c: int,
     seed: int,
-) -> Callable[[], dict[str, Any]]:
+) -> Callable[[int], dict[str, Any]]:
     """Return a lazy data generator for uint8 images."""
 
-    def _generate() -> dict[str, Any]:
+    def _generate(dataset_size: int) -> dict[str, Any]:
         gen = SyntheticDataGenerator(seed=seed)
         return {"image": gen.images(dataset_size, h, w, c, dtype="uint8")}
 
@@ -58,7 +57,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=_TRANSFORMS,
             extra={"variant_name": "small"},
         ),
-        data_generator=_make_data_generator(10_000, 32, 32, 3, DEFAULT_SEED),
+        data_generator=_make_data_generator(32, 32, 3, DEFAULT_SEED),
     ),
     "medium": ScenarioVariant(
         config=ScenarioConfig(
@@ -69,7 +68,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=_TRANSFORMS,
             extra={"variant_name": "medium"},
         ),
-        data_generator=_make_data_generator(5_000, 128, 128, 3, DEFAULT_SEED),
+        data_generator=_make_data_generator(128, 128, 3, DEFAULT_SEED),
     ),
     "large": ScenarioVariant(
         config=ScenarioConfig(
@@ -80,7 +79,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=_TRANSFORMS,
             extra={"variant_name": "large"},
         ),
-        data_generator=_make_data_generator(50_000, 256, 256, 3, DEFAULT_SEED),
+        data_generator=_make_data_generator(256, 256, 3, DEFAULT_SEED),
     ),
 }
 

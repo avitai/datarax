@@ -24,9 +24,9 @@ _ELEMENT_SHAPE = (32, 32, 3)
 _BATCH_SIZE = 64
 
 
-def _make_data_generator(seed: int = DEFAULT_SEED) -> dict:
+def _make_data_generator(dataset_size: int, seed: int = DEFAULT_SEED) -> dict:
     gen = SyntheticDataGenerator(seed=seed)
-    return {"image": gen.images(_DATASET_SIZE, *_ELEMENT_SHAPE, dtype="float32")}
+    return {"image": gen.images(dataset_size, *_ELEMENT_SHAPE, dtype="float32")}
 
 
 def _build_variants() -> dict[str, ScenarioVariant]:
