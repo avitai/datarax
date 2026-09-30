@@ -17,6 +17,7 @@ from flax import nnx
 
 from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import Element
+from datarax.core.maybe import refuse_maybe
 from datarax.core.operator import OperatorModule
 from datarax.operators.modality.audio.crepe_model import (
     CrepeModel,
@@ -119,6 +120,7 @@ class CrepeF0Operator(OperatorModule):
         data = element.data
         del key, stats
         audio = data["audio"]
+        refuse_maybe(audio, f"{type(self).__name__} reads its audio as an array", "data['audio']")
         f0_hz, confidence = self._extract_f0(audio)
         out_data = {**data, "f0_hz": f0_hz, "f0_confidence": confidence}
         return element.replace(data=out_data)

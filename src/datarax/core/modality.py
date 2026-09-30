@@ -44,6 +44,7 @@ from flax import nnx
 
 from datarax.core.config import OperatorConfig
 from datarax.core.field_paths import get_field, set_field
+from datarax.core.maybe import refuse_maybe
 from datarax.core.operator import OperatorModule
 
 
@@ -277,6 +278,8 @@ class ModalityOperator(OperatorModule):
 
         Raises:
             KeyError: If field_key not found in data
+            TypeError: If the field is a ``Maybe``: the operator would transform its fill value
+                and treat its presence as data.
 
         Examples:
             ```python
@@ -285,7 +288,11 @@ class ModalityOperator(OperatorModule):
             nested = self._extract_field(data, "data.image")  # Access data["data"]["image"]
             ```
         """
-        return get_field(data, field_key)
+        value = get_field(data, field_key)
+        refuse_maybe(
+            value, f"{type(self).__name__} transforms its field as an array", f"data[{field_key!r}]"
+        )
+        return value
 
     def _apply_clip_range(self, value: jax.Array) -> jax.Array:
         """Apply value range clipping if configured.

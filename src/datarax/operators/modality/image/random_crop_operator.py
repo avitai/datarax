@@ -15,6 +15,7 @@ from jaxtyping import PyTree
 
 from datarax.core.element_batch import Element
 from datarax.core.field_paths import get_field, set_field
+from datarax.core.maybe import refuse_maybe
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 from datarax.core.operator import require_key
 from datarax.operators.modality.image import functional
@@ -148,6 +149,11 @@ class RandomCropOperator(ModalityOperator):
             The spec of the record this operator returns.
         """
         source = get_field(input_spec, self.config.field_key)
+        refuse_maybe(
+            source,
+            "RandomCropOperator crops its field as an array",
+            f"data[{self.config.field_key!r}]",
+        )
         cropped = jax.ShapeDtypeStruct((*self.config.size, *source.shape[2:]), source.dtype)
         return set_field(input_spec, self.config.target_key or self.config.field_key, cropped)
 

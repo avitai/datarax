@@ -14,7 +14,7 @@ from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 from substrax.spmd import place_batch_on_shards
 from substrax.testing.compiles import expect_compiles
 
-from datarax.core import batch_ops
+from datarax.core import batch_ops, Maybe
 from datarax.core.element_batch import Batch, Element, PADDING_INDEX
 from datarax.core.state_keys import WEIGHT
 
@@ -377,3 +377,131 @@ def test_shardings_places_rows_on_the_data_axis_and_the_batch_state_replicated()
     np.testing.assert_array_equal(placed.indices, batch.indices)
     with pytest.raises(ValueError, match="batch_state"):
         place_batch_on_shards(batch, rows)
+
+
+def maybe_batch(size: int = B, offset: int = 0) -> Batch:
+    """A host batch with a nested missing-capable field: row ``i`` has a depth when ``i % 3``."""
+    batch = host_batch(size, offset)
+    present = (np.arange(size) + offset) % 3 != 0
+    values = np.where(present[:, None], np.arange(size, dtype=np.float32)[:, None] + offset, 0.0)
+    depth = Maybe(np.repeat(values, 2, axis=1).astype(np.float32), present)
+    return batch.replace(data={**batch.data, "nested": {**batch.data["nested"], "depth": depth}})
+
+
+def depth_of(batch: Batch | Element) -> Maybe:
+    field = batch.data["nested"]["depth"]
+    assert isinstance(field, Maybe)
+    return field
+
+
+class TestMissingValues:
+    """A ``Maybe`` at any depth moves through every batch operation with its rows."""
+
+    def test_element_gives_one_record_its_presence(self) -> None:
+        record = batch_ops.element(maybe_batch(), 4)
+
+        field = depth_of(record)
+        assert field.present.shape == () and bool(field.present)
+        np.testing.assert_array_equal(field.value, [4.0, 4.0])
+        missing = depth_of(batch_ops.element(maybe_batch(), 3))
+        assert not bool(missing.present)
+        np.testing.assert_array_equal(missing.value, [0.0, 0.0])
+
+    def test_slice_take_split_and_concatenate_keep_presence_with_its_rows(self) -> None:
+        batch = maybe_batch()
+        present = np.arange(B) % 3 != 0
+
+        np.testing.assert_array_equal(
+            depth_of(batch_ops.slice_rows(batch, 2, 5)).present, present[2:5]
+        )
+        np.testing.assert_array_equal(
+            depth_of(batch_ops.take(batch, np.array([6, 1, 0]))).present, present[[6, 1, 0]]
+        )
+        parts = batch_ops.split(batch, 4)
+        for k, part in enumerate(parts):
+            np.testing.assert_array_equal(depth_of(part).present, present[2 * k : 2 * k + 2])
+        joined = batch_ops.concatenate(parts)
+        np.testing.assert_array_equal(depth_of(joined).present, present)
+        np.testing.assert_array_equal(depth_of(joined).value, depth_of(batch).value)
+
+    def test_stack_of_split_restores_the_batch(self) -> None:
+        batch = maybe_batch()
+
+        chunk = batch_ops.stack(batch_ops.split(batch, 4))
+
+        assert depth_of(chunk).value.shape == (4, 2, 2)
+        assert depth_of(chunk).present.shape == (4, 2)
+        np.testing.assert_array_equal(depth_of(chunk).present.reshape(B), depth_of(batch).present)
+
+    def test_stacked_records_become_a_batch(self) -> None:
+        records = [
+            Element(
+                {"depth": Maybe(np.full(3, i, np.float32), np.array(i % 2 == 0))},
+                index=np.array([0, i], np.uint32),
+            )
+            for i in range(4)
+        ]
+
+        batch = batch_ops.from_stacked(next(iter(grain.MapDataset.source(records).batch(4))))
+
+        field = batch.data["depth"]
+        assert isinstance(field, Maybe)
+        np.testing.assert_array_equal(field.present, [True, False, True, False])
+        assert field.value.shape == (4, 3)
+
+    def test_host_operations_keep_presence_on_the_host(self) -> None:
+        batch = maybe_batch()
+
+        with jax.transfer_guard("disallow"):
+            results = [
+                batch_ops.element(batch, 2),
+                batch_ops.take(batch, np.array([3, 0])),
+                *batch_ops.split(batch, 2),
+                batch_ops.concatenate([batch, batch]),
+                batch_ops.stack([batch, batch]),
+            ]
+
+        for result in results:
+            assert isinstance(depth_of(result).present, np.ndarray | np.generic)
+
+    @pytest.mark.parametrize(
+        "keep", [np.arange(B) % 2 == 1, np.array([0, 0, 1, 0, 1, 1, 0, 1], bool)]
+    )
+    def test_mask_and_compact_keep_values_and_presence(self, keep: np.ndarray) -> None:
+        batch = jax.device_put(maybe_batch())
+
+        masked = jax.jit(batch_ops.mask)(batch, keep)
+        compacted, count = jax.jit(batch_ops.compact)(batch, keep)
+
+        np.testing.assert_array_equal(depth_of(masked).present, depth_of(batch).present)
+        np.testing.assert_array_equal(depth_of(masked).value, depth_of(batch).value)
+        kept = int(count)
+        np.testing.assert_array_equal(
+            depth_of(compacted).present[:kept], np.asarray(depth_of(batch).present)[keep]
+        )
+        np.testing.assert_array_equal(
+            depth_of(compacted).value[:kept], np.asarray(depth_of(batch).value)[keep]
+        )
+
+    def test_every_operation_in_one_step_compiles_once_and_transfers_nothing(self) -> None:
+        step = jax.jit(TestInsideAStep._every_operation)
+        keep = jax.device_put(np.arange(B) % 3 != 0)
+        i = jax.device_put(np.int32(5))
+        step(jax.device_put(maybe_batch()), keep, i)
+
+        with jax.transfer_guard("disallow"), expect_compiles(0):
+            for offset in (1, 2, 3):
+                out = step(jax.device_put(maybe_batch(offset=offset)), keep, i)
+
+        np.testing.assert_array_equal(depth_of(out[3]).present, (np.arange(B) + 3) % 3 != 0)
+
+    def test_placement_puts_presence_on_the_row_sharding(self) -> None:
+        mesh = Mesh(np.array(jax.devices()), ("data",))
+        rows, replicated = NamedSharding(mesh, P("data")), NamedSharding(mesh, P())
+        batch = maybe_batch(size=len(jax.devices()))
+
+        placed = place_batch_on_shards(batch, batch_ops.shardings(batch, rows, replicated))
+
+        assert depth_of(placed).present.sharding == rows
+        assert depth_of(placed).value.sharding == rows
+        np.testing.assert_array_equal(depth_of(placed).present, depth_of(batch).present)

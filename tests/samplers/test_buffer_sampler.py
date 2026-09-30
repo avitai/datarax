@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 from flax import nnx
 
+from datarax.core import Maybe
 from datarax.samplers.buffer_sampler import BufferSampler, BufferSamplerConfig
 
 
@@ -145,3 +146,31 @@ def test_buffer_rejects_sample_size_above_capacity() -> None:
     """Invariant: ``sample_size <= capacity`` (cannot draw more than the buffer holds)."""
     with pytest.raises(ValueError, match="sample_size"):
         BufferSamplerConfig(capacity=4, prefill=4, sample_size=8)
+
+
+def test_a_missing_capable_field_is_buffered_with_its_presence() -> None:
+    """A ``Maybe`` record is two leaves to the buffer: value and presence are replayed together.
+
+    Its spec sits in the sampler's static configuration, so it compares and hashes as a spec.
+    """
+    spec = {
+        "depth": Maybe(jax.ShapeDtypeStruct((2,), jnp.float32), jax.ShapeDtypeStruct((), jnp.bool_))
+    }
+    config = BufferSamplerConfig(
+        capacity=2, prefill=2, sample_size=1, read_mode="sequential", write_mode="fifo"
+    )
+    sampler = BufferSampler(config, element_spec=spec, rngs=nnx.Rngs(0))
+    step = nnx.jit(lambda s, v: s.next(v))
+
+    def record(value: float, present: bool) -> dict:
+        return {"depth": Maybe(jnp.full((2,), value, jnp.float32), jnp.asarray(present))}
+
+    step(sampler, record(1.0, True))
+    step(sampler, record(0.0, False))
+    chunk, _ = step(sampler, record(3.0, True))
+
+    field = chunk["depth"]
+    assert isinstance(field, Maybe)
+    np.testing.assert_array_equal(field.value, [[3.0, 3.0]])
+    np.testing.assert_array_equal(field.present, [True])
+    np.testing.assert_array_equal(sampler.buffer.get_value()["depth"].present, [True, False])
