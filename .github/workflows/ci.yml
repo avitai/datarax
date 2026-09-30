@@ -30,7 +30,7 @@ jobs:
       - name: Compare this tree with the pull request that produced it
         id: compare
         if: github.event_name == 'push'
-        uses: avitai/substrax/.github/actions/already-tested@v0.1.20
+        uses: avitai/substrax/.github/actions/already-tested@ec43d80bbae0040375f746cd1bb07dddb0a0b169
 
   # Not gated on already_tested: performance_tests runs only on main, so it never
   # repeats a pull request, and a skipped dependency would take it down with it.

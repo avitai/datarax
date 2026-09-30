@@ -661,9 +661,12 @@ def test_pull_requests_gate_coverage_on_changed_lines() -> None:
     assert "diff-cover" in test_extra
 
 
-# The stack's gate lives in substrax, the base layer, pinned to a release: one implementation,
-# whose filter treats a pending or cancelled check as unproven.
-GATE_ACTION = "avitai/substrax/.github/actions/already-tested@v0.1.20"
+# The stack's gate lives in substrax, the base layer, pinned by commit: one implementation, which
+# finds the merged pull request (squash or rebase) through GitHub's commit-to-pull-request
+# association and treats a pending or cancelled check as unproven.
+GATE_ACTION = (
+    "avitai/substrax/.github/actions/already-tested@ec43d80bbae0040375f746cd1bb07dddb0a0b169"
+)
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 MACOS_WORKFLOW = WORKFLOWS / "macos.yml"
 
