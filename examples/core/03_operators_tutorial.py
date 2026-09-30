@@ -53,7 +53,12 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.operators import (
+    ElementOperator,
+    ElementOperatorConfig,
+    ProbabilisticOperator,
+    ProbabilisticOperatorConfig,
+)
 from datarax.operators.composite_operator import (
     CompositeOperatorConfig,
     CompositeOperatorModule,
@@ -64,8 +69,12 @@ from datarax.operators.modality.image import (
     BrightnessOperatorConfig,
     ContrastOperator,
     ContrastOperatorConfig,
+    FlipOperator,
+    FlipOperatorConfig,
     NoiseOperator,
     NoiseOperatorConfig,
+    RandomCropOperator,
+    RandomCropOperatorConfig,
     RotationOperator,
     RotationOperatorConfig,
 )
@@ -224,11 +233,34 @@ rotation_op = RotationOperator(
     rngs=nnx.Rngs(rotation=400),
 )
 
+# Random crop: pad 4 pixels, crop 32x32 at each record's own offset (torchvision's
+# RandomCrop(32, padding=4)); eval mode takes the centre crop
+crop_op = RandomCropOperator(
+    RandomCropOperatorConfig(
+        field_key="image",
+        size=(32, 32),
+        padding=4,
+        stochastic=True,
+        stream_name="crop",
+    ),
+    rngs=nnx.Rngs(crop=500),
+)
+
+# Random horizontal flip: the deterministic FlipOperator, applied to each record with
+# probability 0.5 by ProbabilisticOperator
+random_flip_op = ProbabilisticOperator(
+    ProbabilisticOperatorConfig(probability=0.5),
+    operator=FlipOperator(FlipOperatorConfig(field_key="image")),
+    rngs=nnx.Rngs(augment=600),
+)
+
 print("Built-in operators created:")
 print("  - BrightnessOperator (range: -0.3 to +0.3)")
 print("  - ContrastOperator (factor: 0.8-1.2)")
 print("  - NoiseOperator (gaussian, std=0.05)")
 print("  - RotationOperator (angle: -15° to +15°)")
+print("  - RandomCropOperator (32x32, padding 4)")
+print("  - FlipOperator (horizontal) with probability 0.5")
 
 # %% [markdown]
 """
@@ -287,10 +319,10 @@ norm_op = ElementOperator(
     rngs=nnx.Rngs(0),
 )
 
-flip_op = ElementOperator(
-    ElementOperatorConfig(stochastic=True, stream_name="flip"),
-    fn=random_flip,
-    rngs=nnx.Rngs(flip=42),
+flip_op = ProbabilisticOperator(
+    ProbabilisticOperatorConfig(probability=0.5),
+    operator=FlipOperator(FlipOperatorConfig(field_key="image")),
+    rngs=nnx.Rngs(augment=42),
 )
 
 # Sequential composition: normalize → flip
@@ -330,10 +362,10 @@ normalizer = ElementOperator(
     rngs=nnx.Rngs(0),
 )
 
-flipper = ElementOperator(
-    ElementOperatorConfig(stochastic=True, stream_name="flip"),
-    fn=random_flip,
-    rngs=nnx.Rngs(flip=42),
+flipper = ProbabilisticOperator(
+    ProbabilisticOperatorConfig(probability=0.5),
+    operator=FlipOperator(FlipOperatorConfig(field_key="image")),
+    rngs=nnx.Rngs(augment=42),
 )
 
 brightness = BrightnessOperator(

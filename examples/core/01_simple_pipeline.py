@@ -47,12 +47,16 @@ uv pip install datarax
 
 # %%
 # Imports
-import jax
-import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.operators import (
+    ElementOperator,
+    ElementOperatorConfig,
+    ProbabilisticOperator,
+    ProbabilisticOperatorConfig,
+)
+from datarax.operators.modality.image import FlipOperator, FlipOperatorConfig
 from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
@@ -119,25 +123,14 @@ normalizer = ElementOperator(normalizer_config, fn=normalize, rngs=nnx.Rngs(0))
 
 
 # %%
-# Stochastic operator: Random horizontal flip
-def apply_augmentation(element, key):
-    """Randomly flip image horizontally with 50% probability."""
-    key1, _ = jax.random.split(key)
-    flip = jax.random.bernoulli(key1, 0.5)
-
-    def flip_image(img):
-        return jnp.flip(img, axis=1)
-
-    def no_flip(img):
-        return img
-
-    # Use jax.lax.cond for JAX-compatible branching
-    new_image = jax.lax.cond(flip, flip_image, no_flip, element.data["image"])
-    return element.update_data({"image": new_image})
-
-
-augmenter_config = ElementOperatorConfig(stochastic=True, stream_name="augment")
-augmenter = ElementOperator(augmenter_config, fn=apply_augmentation, rngs=nnx.Rngs(augment=42))
+# Stochastic operator: random horizontal flip. FlipOperator mirrors a record;
+# ProbabilisticOperator applies it to each record with probability 0.5, decided from the
+# record's own key.
+augmenter = ProbabilisticOperator(
+    ProbabilisticOperatorConfig(probability=0.5),
+    operator=FlipOperator(FlipOperatorConfig(field_key="image")),
+    rngs=nnx.Rngs(augment=42),
+)
 
 # %% [markdown]
 """
@@ -237,9 +230,9 @@ def main():
     normalizer = ElementOperator(
         ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0)
     )
-    augmenter = ElementOperator(
-        ElementOperatorConfig(stochastic=True, stream_name="augment"),
-        fn=apply_augmentation,
+    augmenter = ProbabilisticOperator(
+        ProbabilisticOperatorConfig(probability=0.5),
+        operator=FlipOperator(FlipOperatorConfig(field_key="image")),
         rngs=nnx.Rngs(augment=42),
     )
 

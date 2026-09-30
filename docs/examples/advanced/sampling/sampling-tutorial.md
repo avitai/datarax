@@ -187,7 +187,7 @@ Advanced Sampling Tutorial
    First 5 indices: [0, 1, 2, 3, 4]
 
 2. ShuffleSampler:
-   First 5 shuffled: [14, 24, 97, 65, 88]
+   First 5 shuffled: [20, 18, 97, 95, 64]
 
 3. RangeSampler:
    Range 10-20: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19]

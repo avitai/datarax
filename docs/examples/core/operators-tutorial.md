@@ -14,7 +14,7 @@ Master the Datarax operator system - the building blocks for data transformation
 ## What You'll Learn
 
 1. Understand operator types: deterministic vs stochastic
-2. Use built-in image augmentation operators (Brightness, Contrast, Noise, Rotation)
+2. Use built-in image augmentation operators (Brightness, Contrast, Noise, Rotation, Random Crop, Flip)
 3. Create custom operators with proper RNG handling
 4. Select and transform specific data fields
 5. Compose operators with different strategies (sequential, parallel)
@@ -26,9 +26,10 @@ Master the Datarax operator system - the building blocks for data transformation
 | PyTorch | Datarax |
 |---------|---------|
 | `transforms.Normalize(mean, std)` | `ElementOperator` with custom normalization fn |
-| `transforms.RandomHorizontalFlip(p=0.5)` | `ElementOperator(stochastic=True)` with flip logic |
+| `transforms.RandomHorizontalFlip(p=0.5)` | `ProbabilisticOperator(probability=0.5)` around `FlipOperator` |
 | `transforms.ColorJitter(brightness=0.2)` | `BrightnessOperator(brightness_range=(-0.2, 0.2))` |
 | `transforms.RandomRotation(15)` | `RotationOperator(angle_range=(-15, 15), stochastic=True)` |
+| `transforms.RandomCrop(32, padding=4)` | `RandomCropOperator(size=(32, 32), padding=4, ...)` |
 | `transforms.Compose([T1, T2])` | `CompositeOperatorModule` with SEQUENTIAL strategy |
 
 **Key difference:** Datarax operators use JAX random keys and explicit RNG streams for fine-grained reproducibility. Each stochastic operator needs a unique `stream_name`.
@@ -86,7 +87,12 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.operators import (
+    ElementOperator,
+    ElementOperatorConfig,
+    ProbabilisticOperator,
+    ProbabilisticOperatorConfig,
+)
 from datarax.operators.composite_operator import (
     CompositeOperatorConfig,
     CompositeOperatorModule,
@@ -97,8 +103,12 @@ from datarax.operators.modality.image import (
     BrightnessOperatorConfig,
     ContrastOperator,
     ContrastOperatorConfig,
+    FlipOperator,
+    FlipOperatorConfig,
     NoiseOperator,
     NoiseOperatorConfig,
+    RandomCropOperator,
+    RandomCropOperatorConfig,
     RotationOperator,
     RotationOperatorConfig,
 )
@@ -182,6 +192,10 @@ Normalization result:
 
 ### Example 2: Stochastic Horizontal Flip
 
+A stochastic `ElementOperator` receives a per-record `key` and draws its randomness from it. This
+hand-written flip shows the pattern; for a flip in a real pipeline, use the built-in `FlipOperator`
+with `ProbabilisticOperator` (Part 3).
+
 ```python
 # Example 2: Stochastic horizontal flip
 def random_flip(element, key):
@@ -220,8 +234,7 @@ Datarax provides optimized image augmentation operators. These follow a consiste
 ### Brightness Adjustment
 
 ```python
-from datarax.operators.modality.image import BrightnessOperator, BrightnessOperatorConfig
-
+# Brightness adjustment
 brightness_op = BrightnessOperator(
     BrightnessOperatorConfig(
         field_key="image",
@@ -236,8 +249,7 @@ brightness_op = BrightnessOperator(
 ### Contrast Adjustment
 
 ```python
-from datarax.operators.modality.image import ContrastOperator, ContrastOperatorConfig
-
+# Contrast adjustment
 contrast_op = ContrastOperator(
     ContrastOperatorConfig(
         field_key="image",
@@ -252,8 +264,7 @@ contrast_op = ContrastOperator(
 ### Gaussian Noise
 
 ```python
-from datarax.operators.modality.image import NoiseOperator, NoiseOperatorConfig
-
+# Gaussian noise
 noise_op = NoiseOperator(
     NoiseOperatorConfig(
         field_key="image",
@@ -280,12 +291,50 @@ rotation_op = RotationOperator(
     ),
     rngs=nnx.Rngs(rotation=400),
 )
+```
+
+### Random Crop
+
+`RandomCropOperator` pads each image and crops it back to a fixed size at a random offset, the
+equivalent of torchvision's `RandomCrop(32, padding=4)`.
+
+```python
+# Random crop: pad 4 pixels, crop 32x32 at each record's own offset (torchvision's
+# RandomCrop(32, padding=4)); eval mode takes the centre crop
+crop_op = RandomCropOperator(
+    RandomCropOperatorConfig(
+        field_key="image",
+        size=(32, 32),
+        padding=4,
+        stochastic=True,
+        stream_name="crop",
+    ),
+    rngs=nnx.Rngs(crop=500),
+)
+```
+
+### Random Horizontal Flip
+
+`FlipOperator` is deterministic: it always mirrors the image. Wrapping it in
+`ProbabilisticOperator` applies it to each record with the configured probability, which gives
+the random horizontal flip.
+
+```python
+# Random horizontal flip: the deterministic FlipOperator, applied to each record with
+# probability 0.5 by ProbabilisticOperator
+random_flip_op = ProbabilisticOperator(
+    ProbabilisticOperatorConfig(probability=0.5),
+    operator=FlipOperator(FlipOperatorConfig(field_key="image")),
+    rngs=nnx.Rngs(augment=600),
+)
 
 print("Built-in operators created:")
 print("  - BrightnessOperator (range: -0.3 to +0.3)")
 print("  - ContrastOperator (factor: 0.8-1.2)")
 print("  - NoiseOperator (gaussian, std=0.05)")
 print("  - RotationOperator (angle: -15° to +15°)")
+print("  - RandomCropOperator (32x32, padding 4)")
+print("  - FlipOperator (horizontal) with probability 0.5")
 ```
 
 **Terminal Output:**
@@ -295,6 +344,8 @@ Built-in operators created:
   - ContrastOperator (factor: 0.8-1.2)
   - NoiseOperator (gaussian, std=0.05)
   - RotationOperator (angle: -15° to +15°)
+  - RandomCropOperator (32x32, padding 4)
+  - FlipOperator (horizontal) with probability 0.5
 ```
 
 ## Part 4: Field Filtering
@@ -353,10 +404,10 @@ norm_op = ElementOperator(
     rngs=nnx.Rngs(0),
 )
 
-flip_op = ElementOperator(
-    ElementOperatorConfig(stochastic=True, stream_name="flip"),
-    fn=random_flip,
-    rngs=nnx.Rngs(flip=42),
+flip_op = ProbabilisticOperator(
+    ProbabilisticOperatorConfig(probability=0.5),
+    operator=FlipOperator(FlipOperatorConfig(field_key="image")),
+    rngs=nnx.Rngs(augment=42),
 )
 
 # Sequential composition: normalize → flip
@@ -429,10 +480,10 @@ normalizer = ElementOperator(
     rngs=nnx.Rngs(0),
 )
 
-flipper = ElementOperator(
-    ElementOperatorConfig(stochastic=True, stream_name="flip"),
-    fn=random_flip,
-    rngs=nnx.Rngs(flip=42),
+flipper = ProbabilisticOperator(
+    ProbabilisticOperatorConfig(probability=0.5),
+    operator=FlipOperator(FlipOperatorConfig(field_key="image")),
+    rngs=nnx.Rngs(augment=42),
 )
 
 brightness = BrightnessOperator(
@@ -559,6 +610,9 @@ Created conditional augmentation operator
 | ContrastOperator | Image contrast | Yes | ContrastOperatorConfig |
 | NoiseOperator | Add noise | Yes | NoiseOperatorConfig |
 | RotationOperator | Rotate images | Yes | RotationOperatorConfig |
+| RandomCropOperator | Pad and crop images | Yes | RandomCropOperatorConfig |
+| FlipOperator | Mirror images | No | FlipOperatorConfig |
+| ProbabilisticOperator | Apply a child operator with a probability | Yes | ProbabilisticOperatorConfig |
 | CompositeOperator | Chain operators | Depends on children | CompositeOperatorConfig |
 
 ### Key Takeaways

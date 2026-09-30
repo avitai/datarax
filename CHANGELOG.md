@@ -184,6 +184,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offset was never drawn. Its `RandomHorizontalFlip` leaves fields with fewer than two axes
   alone. The `ElementOperator` docs flip images on their width axis (`[:, ::-1]`), not their
   channels.
+- The examples flip images with `FlipOperator` inside `ProbabilisticOperator` instead of
+  hand-written flip functions (the operators tutorial keeps one as its lesson in writing a
+  stochastic `ElementOperator`), and the operators tutorial lists `RandomCropOperator`. Their
+  docs pages carry a new GPU run. Output quoted in prose on the DAG fundamentals, sampling,
+  advanced operators and resumable training pages is the run's.
 - Example docs pages show each script's code verbatim with the output a GPU run of it printed
   (an NVIDIA L40S; the sharding quickref on two), and their figures come from that run: 136
   output lines on 21 pages had come from older runs or had been typed. Scripts' expected-output
