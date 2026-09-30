@@ -379,9 +379,6 @@ datarax/
 │   │   ├── 01_grain_datarax_quickref.py     # Tier 1: Grain and Datarax side by side
 │   │   └── README.md
 │   │
-│   ├── config/
-│   │   └── config_example.py
-│   │
 │   ├── integration/
 │   │   ├── README.md
 │   │   ├── 01_ml_classification.py

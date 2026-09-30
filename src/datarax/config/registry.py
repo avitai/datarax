@@ -140,8 +140,8 @@ def _prepare_config_for_nnx(
     if has_rngs_param:
         prepared_config["rngs"] = _prepare_rngs_for_nnx(config)
 
-    # Remove NNX-specific configuration keys that shouldn't be passed to constructor
-    nnx_keys_to_remove = {"variables", "load_state_from", "rngs"}
+    # Remove the keys the registry consumes itself unless the constructor takes them
+    nnx_keys_to_remove = {"variables", "load_state_from", "rngs", "seed"}
     for key in nnx_keys_to_remove:
         if key in prepared_config and key not in sig.parameters:
             prepared_config.pop(key)
@@ -223,11 +223,33 @@ def register_component(component_type: str, name: str | None = None) -> Callable
 
     Examples:
         ```python
-        @register_component("source")
-        class MyDataSource(DataSourceModule):
-            def __init__(self, path: str, *, rngs: nnx.Rngs | None = None):
-                super().__init__(rngs=rngs)
-                self.path = path
+        from dataclasses import dataclass
+
+        from flax import nnx
+
+        from datarax.config.registry import create_component_from_config, register_component
+        from datarax.core.config import StructuralConfig
+        from datarax.core.data_source import DataSourceModule
+
+
+        @dataclass(frozen=True)
+        class CountingSourceConfig(StructuralConfig):
+            size: int = 4
+
+
+        @register_component("source", "CountingSource")
+        class CountingSource(DataSourceModule):
+            def __init__(self, config: CountingSourceConfig, *, rngs: nnx.Rngs | None = None):
+                super().__init__(config, rngs=rngs)
+
+            def __len__(self) -> int:
+                return self.config.size
+
+
+        source = create_component_from_config(
+            "source", "CountingSource", {"config": CountingSourceConfig(size=3), "seed": 0}
+        )
+        assert len(source) == 3
         ```
     """
 
@@ -317,7 +339,8 @@ def create_component_from_config(component_type: str, name: str, config: dict[st
 
     Raises:
         KeyError: If the component is not registered.
-        TypeError: If the configuration is invalid.
+        TypeError: If the configuration does not match the constructor's signature.
+        ValueError: If the constructor refuses a value, or a ``variables`` path is unknown.
     """
     constructor = get_component_constructor(component_type, name)
 
@@ -340,9 +363,9 @@ def create_component_from_config(component_type: str, name: str, config: dict[st
         # Regular component creation
         return constructor(**config)
 
-    except Exception as e:
-        msg = f"Failed to create component {component_type}.{name}: {e}"
-        raise TypeError(msg) from e
+    except (TypeError, ValueError) as error:
+        error.add_note(f"while creating component {component_type}.{name}")
+        raise
 
 
 def get_component_info(component_type: str, name: str) -> dict[str, Any]:

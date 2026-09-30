@@ -1,19 +1,16 @@
-"""Configuration schema definition and validation.
+"""Configuration schemas: the fields a configuration must and may carry.
 
-This module provides classes and utilities for defining and validating
-configuration schemas for Datarax pipelines and components.
-
-The Datarax configuration system uses TOML for defining pipeline configurations
-and supports configuration of NNX-specific features, including:
-
-- RNG streams for stochastic operations
-- State persistence for stateful components
-- NNX module configuration options
+A schema is a :class:`ConfigSchema` subclass whose class attributes are :class:`SchemaField`
+instances. Its fields include every base class's (a subclass redefining a name wins), and
+``validate`` returns a new dictionary with the defaults applied, each default its own copy.
+Types follow what TOML produces: an integer where a float is expected becomes a float, and a
+boolean is neither an integer nor a float.
 """
 
+import copy
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -21,21 +18,20 @@ logger = logging.getLogger(__name__)
 
 
 class ValidationError(Exception):
-    """Exception raised when configuration validation fails."""
-
-    pass
+    """A configuration does not satisfy its schema."""
 
 
-@dataclass
+@dataclass(frozen=True)
 class SchemaField:
     """Definition of a field in a configuration schema.
 
     Attributes:
-        type: The expected type of the field
-        required: Whether the field is required
-        default: Default value for the field if not specified
-        validator: Optional function to validate the field value
-        description: Optional description of the field
+        type: The expected type: ``str``, ``int``, ``float``, ``bool``, ``list``, ``dict``, or a
+            :class:`ConfigSchema` subclass for a nested table.
+        required: Whether the field must be present.
+        default: Value used when an optional field is absent; each validation receives a copy.
+        validator: Optional predicate the value must satisfy.
+        description: Optional description of the field.
     """
 
     type: "SchemaType"
@@ -48,31 +44,32 @@ class SchemaField:
 class ConfigSchema:
     """Base class for configuration schemas.
 
-    Subclasses should define schema fields as class variables using SchemaField.
+    Subclasses define fields as class attributes holding :class:`SchemaField` instances.
 
     Examples:
         ```python
-        class MyConfigSchema(ConfigSchema):
-            name: SchemaField = SchemaField(str, required=True)
-            count: SchemaField = SchemaField(int, required=False, default=0)
+        class Training(ConfigSchema):
+            batch_size: SchemaField = SchemaField(int)
+            learning_rate: SchemaField = SchemaField(float, required=False, default=1e-3)
+
+
+        class FineTuning(Training):
+            freeze_backbone: SchemaField = SchemaField(bool, required=False, default=True)
         ```
     """
 
     @classmethod
     def get_schema_fields(cls) -> dict[str, SchemaField]:
-        """Get all schema fields defined in the class.
+        """Return every field of the schema, its bases' included.
 
         Returns:
-            Dictionary mapping field names to SchemaField instances
+            Field name to :class:`SchemaField`; a subclass's definition replaces its base's.
         """
-        fields = {}
-
-        for name, _field_type in cls.__annotations__.items():
-            if hasattr(cls, name):
-                attr = getattr(cls, name)
-                if isinstance(attr, SchemaField):
-                    fields[name] = attr
-
+        fields: dict[str, SchemaField] = {}
+        for klass in reversed(cls.__mro__):
+            fields.update(
+                {name: attr for name, attr in vars(klass).items() if isinstance(attr, SchemaField)}
+            )
         return fields
 
     @classmethod
@@ -80,42 +77,35 @@ class ConfigSchema:
         """Validate a configuration dictionary against the schema.
 
         Args:
-            config: The configuration dictionary to validate
+            config: The configuration dictionary to validate.
 
         Returns:
-            A validated configuration dictionary with defaults applied
+            A new dictionary with defaults applied, floats widened from integers and nested
+            schemas validated in turn.
 
         Raises:
-            ValidationError: If the configuration fails validation
+            ValidationError: If a required field is missing, a field is unknown, has the wrong
+                type or fails its validator; a nested failure names the field path.
         """
         schema_fields = cls.get_schema_fields()
-        validated = {}
+        unknown = sorted(set(config) - set(schema_fields))
+        if unknown:
+            raise ValidationError(f"Unknown fields in configuration: {', '.join(unknown)}")
 
-        # Check for required fields and apply defaults
+        validated: dict[str, Any] = {}
         for name, schema_field in schema_fields.items():
-            if name in config:
-                value = config[name]
-
-                # Validate type
-                if not is_schema_type_valid(value, schema_field.type):
-                    raise ValidationError(f"Field '{name}' should be of type {schema_field.type}")
-
-                # Apply custom validator if provided
-                if schema_field.validator is not None and not schema_field.validator(value):
-                    raise ValidationError(f"Field '{name}' failed custom validation")
-
-                validated[name] = value
-            elif schema_field.required:
-                raise ValidationError(f"Required field '{name}' is missing")
-            else:
-                # Use default value for non-required fields
-                validated[name] = schema_field.default
-
-        # Check for unknown fields
-        unknown_fields = set(config.keys()) - set(schema_fields.keys())
-        if unknown_fields:
-            raise ValidationError(f"Unknown fields in configuration: {', '.join(unknown_fields)}")
-
+            if name not in config:
+                if schema_field.required:
+                    raise ValidationError(f"Required field '{name}' is missing")
+                default = copy.deepcopy(schema_field.default)
+                if _is_nested_schema(schema_field.type):
+                    default = _validated_value(name, default, schema_field.type)
+                validated[name] = default
+                continue
+            value = _validated_value(name, config[name], schema_field.type)
+            if schema_field.validator is not None and not schema_field.validator(value):
+                raise ValidationError(f"Field '{name}' failed custom validation")
+            validated[name] = value
         return validated
 
     @classmethod
@@ -134,186 +124,92 @@ class ConfigSchema:
         return cls.validate(config)
 
 
-# Runtime-safe alias: schema fields accept Python types and/or schema instances.
-SchemaType = type[Any] | ConfigSchema
-
-
-def _validates_as_config_schema(schema: "ConfigSchema | type[ConfigSchema]", value: Any) -> bool:
-    """Return whether ``value`` is a dict that passes ``schema.validate``.
+def _is_nested_schema(expected_type: "SchemaType") -> bool:
+    """Return whether a field's type is a :class:`ConfigSchema` subclass.
 
     Args:
-        schema: A :class:`ConfigSchema` instance or subclass to validate against.
-        value: Candidate value; only ``dict`` values can validate.
+        expected_type: The field's type.
 
     Returns:
-        ``True`` if ``value`` is a dict and ``schema.validate`` accepts it.
+        ``True`` for a nested schema.
     """
-    if not isinstance(value, dict):
-        return False
-    try:
-        schema.validate(value)
-        return True
-    except ValidationError:
-        return False
+    return isinstance(expected_type, type) and issubclass(expected_type, ConfigSchema)
+
+
+def _validated_value(name: str, value: Any, expected_type: "SchemaType") -> Any:
+    """Return ``value`` checked against ``expected_type``, a nested schema validated.
+
+    Args:
+        name: The field's name, for the error message.
+        value: The configured value.
+        expected_type: The field's type.
+
+    Returns:
+        ``value``, as a float for a float field given an integer, or the nested schema's
+        validated dictionary.
+
+    Raises:
+        ValidationError: If the value does not have the type, or a nested schema refuses it.
+    """
+    if _is_nested_schema(expected_type):
+        if not isinstance(value, dict):
+            raise ValidationError(f"Field '{name}' should be a table for {expected_type.__name__}")
+        try:
+            return expected_type.validate(value)
+        except ValidationError as error:
+            raise ValidationError(f"Field '{name}': {error}") from error
+    if not is_schema_type_valid(value, expected_type):
+        raise ValidationError(f"Field '{name}' should be of type {expected_type}")
+    if expected_type is float:
+        return float(value)
+    return value
+
+
+SchemaType = type[Any]
 
 
 def is_schema_type_valid(value: Any, expected_type: SchemaType) -> bool:
-    """Validate that a value matches an expected schema type."""
-    if expected_type in (str, int, float, bool):
-        return isinstance(value, expected_type)
+    """Return whether ``value`` has ``expected_type`` as TOML values are typed.
 
-    if expected_type == list or expected_type == type[list]:
-        return isinstance(value, list)
+    Args:
+        value: The configured value.
+        expected_type: ``str``, ``int``, ``float``, ``bool``, ``list``, ``dict`` or a
+            :class:`ConfigSchema` subclass.
 
-    if expected_type == dict or expected_type == type[dict]:
-        return isinstance(value, dict)
-
-    if isinstance(expected_type, type) and issubclass(expected_type, ConfigSchema):
-        return _validates_as_config_schema(expected_type, value)
-
-    if isinstance(expected_type, ConfigSchema):
-        return _validates_as_config_schema(expected_type, value)
-
-    return False
-
-
-@dataclass
-class PipelineSchema(ConfigSchema):
-    """Schema for pipeline configuration.
-
-    This schema defines the structure of a pipeline configuration file,
-    including data sources, transformers, augmenters, and other components.
+    Returns:
+        ``True`` when the value fits: a boolean fits only ``bool``, an integer also fits
+        ``float``, and a nested schema is fitted by a dictionary it validates.
     """
-
-    name: SchemaField = field(
-        default_factory=lambda: SchemaField(str, required=True, description="Name of the pipeline")
-    )
-
-    description: SchemaField = field(
-        default_factory=lambda: SchemaField(
-            str, required=False, default="", description="Description of the pipeline"
-        )
-    )
-
-    version: SchemaField = field(
-        default_factory=lambda: SchemaField(
-            str,
-            required=False,
-            default="0.1.0",
-            description="Version of the pipeline configuration",
-        )
-    )
-
-    sources: SchemaField = field(
-        default_factory=lambda: SchemaField(
-            dict, required=True, description="Data source configurations"
-        )
-    )
-
-    transforms: SchemaField = field(
-        default_factory=lambda: SchemaField(
-            dict, required=False, default={}, description="Data transformation configurations"
-        )
-    )
-
-    augmenters: SchemaField = field(
-        default_factory=lambda: SchemaField(
-            dict, required=False, default={}, description="Data augmentation configurations"
-        )
-    )
-
-    samplers: SchemaField = field(
-        default_factory=lambda: SchemaField(
-            dict, required=False, default={}, description="Data sampling configurations"
-        )
-    )
-
-    batch_size: SchemaField = field(
-        default_factory=lambda: SchemaField(
-            int, required=False, default=32, description="Default batch size for the pipeline"
-        )
-    )
-
-    random_seed: SchemaField = field(
-        default_factory=lambda: SchemaField(
-            int, required=False, default=42, description="Random seed for reproducibility"
-        )
-    )
-
-    rng_streams: SchemaField = field(
-        default_factory=lambda: SchemaField(
-            dict,
-            required=False,
-            default={"default": 42, "augment": 43, "dropout": 44},
-            description="RNG streams for NNX components with their seed values",
-        )
-    )
-
-    checkpointing: SchemaField = field(
-        default_factory=lambda: SchemaField(
-            dict,
-            required=False,
-            default={"enabled": False, "directory": "checkpoints", "frequency": 1000},
-            description="Checkpointing configuration for saving pipeline state",
-        )
-    )
-
-    device_mesh: SchemaField = field(
-        default_factory=lambda: SchemaField(
-            dict,
-            required=False,
-            default={},
-            description="JAX device mesh configuration for distributed training",
-        )
-    )
+    if _is_nested_schema(expected_type):
+        return isinstance(value, dict) and _is_valid_nested(expected_type, value)
+    if expected_type is bool:
+        return isinstance(value, bool)
+    accepted = _ACCEPTED_TYPES.get(expected_type)
+    return accepted is not None and not isinstance(value, bool) and isinstance(value, accepted)
 
 
-@dataclass
-class NNXComponentSchema(ConfigSchema):
-    """Schema for configuring components that use NNX modules.
+_ACCEPTED_TYPES: dict[type, tuple[type, ...]] = {
+    str: (str,),
+    int: (int,),
+    float: (int, float),
+    list: (list,),
+    dict: (dict,),
+}
+"""Python types a TOML value of each non-boolean field type may have."""
 
-    This schema defines the structure for components that leverage
-    Flax NNX for state management and computation.
+
+def _is_valid_nested(schema: type[ConfigSchema], value: dict[str, Any]) -> bool:
+    """Return whether ``schema`` validates ``value``.
+
+    Args:
+        schema: The nested schema.
+        value: The configured table.
+
+    Returns:
+        ``True`` if ``schema.validate`` accepts ``value``.
     """
-
-    type: SchemaField = field(
-        default_factory=lambda: SchemaField(
-            str, required=True, description="The type of NNX component to create"
-        )
-    )
-
-    params: SchemaField = field(
-        default_factory=lambda: SchemaField(
-            dict,
-            required=False,
-            default={},
-            description="Parameters to pass to the component constructor",
-        )
-    )
-
-    variables: SchemaField = field(
-        default_factory=lambda: SchemaField(
-            dict,
-            required=False,
-            default={},
-            description="Initial values for NNX variables in the component",
-        )
-    )
-
-    rngs: SchemaField = field(
-        default_factory=lambda: SchemaField(
-            dict,
-            required=False,
-            default={},
-            description="RNG stream configurations specific to this component",
-        )
-    )
-
-    load_state_from: SchemaField = field(
-        default_factory=lambda: SchemaField(
-            str,
-            required=False,
-            default=None,
-            description="Path to load initial component state from",
-        )
-    )
+    try:
+        schema.validate(value)
+    except ValidationError:
+        return False
+    return True
