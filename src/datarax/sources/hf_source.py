@@ -79,6 +79,34 @@ def _resolve_hf_download_options(
     return resolved
 
 
+def _load_hf_dataset(
+    datasets_module: Any, config: HFEagerConfig | HFStreamingConfig, **extra: Any
+) -> Any:
+    """Call ``datasets.load_dataset`` with a config's name, split, folders and download options.
+
+    Args:
+        datasets_module: The ``datasets`` module.
+        config: The source's configuration.
+        **extra: Further ``load_dataset`` arguments (``streaming``).
+
+    Returns:
+        What ``load_dataset`` returns.
+    """
+    # name/split validated non-None by config __post_init__
+    assert config.name is not None  # noqa: S101 (invariant, not control flow)
+    assert config.split is not None  # noqa: S101 (invariant, not control flow)
+    return datasets_module.load_dataset(  # nosec B615
+        config.name,
+        split=config.split,
+        data_dir=config.data_dir,
+        cache_dir=config.cache_dir,
+        **_resolve_hf_download_options(
+            config.download_kwargs, local_files_only=config.local_files_only
+        ),
+        **extra,
+    )
+
+
 def _append_hf_converted_value(arrays: dict[str, list[Any]], key: str, value: Any) -> None:
     """Convert a HF value and append it to per-key buffers."""
     converted = hf_to_jax(value)
@@ -136,7 +164,10 @@ class HFEagerConfig(SourceConfigBase):
     Args:
         name: Name of the dataset in HuggingFace Hub (required)
         split: Split of the dataset to load, e.g., "train", "test" (required)
-        data_dir: Optional directory where the dataset is stored/downloaded
+        data_dir: Optional folder inside the dataset's repository whose data files are
+            loaded (``datasets.load_dataset``'s ``data_dir``), not a storage location
+        cache_dir: Optional folder where downloaded files are cached (``load_dataset``'s
+            ``cache_dir``; the Hugging Face default when ``None``)
         shuffle: Whether to shuffle the dataset during iteration
         seed: Integer seed of the shuffle (default: 42)
         download_kwargs: Optional keyword arguments for load_dataset
@@ -150,6 +181,7 @@ class HFEagerConfig(SourceConfigBase):
 
     shuffle: bool = False
     seed: int = 42  # Integer seed of the shuffle
+    cache_dir: str | None = None
     download_kwargs: dict[str, Any] | None = None
     local_files_only: bool = False
 
@@ -172,7 +204,10 @@ class HFStreamingConfig(SourceConfigBase):
     Args:
         name: Name of the dataset in HuggingFace Hub (required)
         split: Split of the dataset to load, e.g., "train", "test" (required)
-        data_dir: Optional directory where the dataset is stored/downloaded
+        data_dir: Optional folder inside the dataset's repository whose data files are
+            loaded (``datasets.load_dataset``'s ``data_dir``), not a storage location
+        cache_dir: Optional folder where downloaded files are cached (``load_dataset``'s
+            ``cache_dir``; the Hugging Face default when ``None``)
         streaming: Whether to use HuggingFace streaming mode (default: False)
         shuffle: Whether to shuffle the dataset
         shuffle_buffer_size: Buffer size for shuffling in streaming mode (default: 1000)
@@ -184,6 +219,7 @@ class HFStreamingConfig(SourceConfigBase):
     streaming: bool = False
     shuffle: bool = False
     shuffle_buffer_size: int = 1000
+    cache_dir: str | None = None
     download_kwargs: dict[str, Any] | None = None
     local_files_only: bool = False
 
@@ -297,23 +333,7 @@ class HFEagerSource(EagerSourceBase):
         Returns:
             HuggingFace DatasetInfo object if available
         """
-        download_kwargs = _resolve_hf_download_options(
-            config.download_kwargs, local_files_only=config.local_files_only
-        )
-
-        # name/split validated non-None by config __post_init__
-        name = config.name
-        split = config.split
-        assert name is not None  # noqa: S101 (invariant, not control flow)
-        assert split is not None  # noqa: S101 (invariant, not control flow)
-
-        # Load dataset to get info
-        dataset = self._datasets_module.load_dataset(  # nosec B615
-            name,
-            split=split,
-            data_dir=config.data_dir,
-            **download_kwargs,
-        )
+        dataset = _load_hf_dataset(self._datasets_module, config)
 
         # ``load_dataset`` is typed as a union of Dataset / DatasetDict variants;
         # only the (single-split) Dataset variants carry ``info``. ``getattr``
@@ -335,22 +355,7 @@ class HFEagerSource(EagerSourceBase):
         Raises:
             ValueError: If the dataset yields no elements after loading and key filtering.
         """
-        download_kwargs = _resolve_hf_download_options(
-            config.download_kwargs, local_files_only=config.local_files_only
-        )
-
-        # name/split validated non-None by config __post_init__
-        name = config.name
-        split = config.split
-        assert name is not None  # noqa: S101 (invariant, not control flow)
-        assert split is not None  # noqa: S101 (invariant, not control flow)
-
-        dataset = self._datasets_module.load_dataset(  # nosec B615
-            name,
-            split=split,
-            data_dir=config.data_dir,
-            **download_kwargs,
-        )
+        dataset = _load_hf_dataset(self._datasets_module, config)
 
         keys = _selected_hf_columns(dataset.column_names, config.include_keys, config.exclude_keys)
         if not keys or len(dataset) == 0:
@@ -437,22 +442,10 @@ class HFStreamingSource(StreamingSourceBase):
             ) from e
 
         # Load the dataset
-        download_kwargs = _resolve_hf_download_options(
-            config.download_kwargs, local_files_only=config.local_files_only
-        )
-
-        # name/split validated non-None by config __post_init__
-        name = config.name
-        split = config.split
-        assert name is not None  # noqa: S101 (invariant, not control flow)
-        assert split is not None  # noqa: S101 (invariant, not control flow)
-
-        self._hf_dataset = self._datasets_module.load_dataset(  # nosec B615
-            name,
-            split=split,
-            data_dir=config.data_dir,
+        self._hf_dataset = _load_hf_dataset(
+            self._datasets_module,
+            config,
             streaming=config.streaming,  # type: ignore[arg-type]
-            **download_kwargs,
         )
 
         # Apply shuffling if requested

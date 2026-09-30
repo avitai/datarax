@@ -230,6 +230,7 @@ def from_hf(
     seed: int = 42,
     rngs: nnx.Rngs | None = None,
     data_dir: str | None = None,
+    cache_dir: str | None = None,
     include_keys: set[str] | None = None,
     exclude_keys: set[str] | None = None,
     download_kwargs: dict | None = None,
@@ -248,7 +249,9 @@ def from_hf(
         shuffle: Whether to shuffle the dataset
         seed: Integer seed of the shuffle
         rngs: Optional Flax NNX RNG state
-        data_dir: Optional directory for dataset storage
+        data_dir: Optional folder inside the dataset's repository whose data files are
+            loaded (``datasets.load_dataset``'s ``data_dir``), not a storage location
+        cache_dir: Optional folder where downloaded files are cached
         include_keys: Optional set of keys to include
         exclude_keys: Optional set of keys to exclude
         download_kwargs: Optional kwargs for datasets.load_dataset
@@ -292,6 +295,7 @@ def from_hf(
             shuffle=shuffle,
             seed=seed,
             data_dir=data_dir,
+            cache_dir=cache_dir,
             include_keys=include_keys,
             exclude_keys=exclude_keys,
             download_kwargs=download_kwargs,
@@ -304,6 +308,7 @@ def from_hf(
         streaming=hf_streaming,
         shuffle=shuffle,
         data_dir=data_dir,
+        cache_dir=cache_dir,
         include_keys=include_keys,
         exclude_keys=exclude_keys,
         download_kwargs=download_kwargs,

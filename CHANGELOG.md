@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `FlipOperator` mirrors each record left to right or top to bottom. A flip with probability p,
   torchvision's `RandomHorizontalFlip(p)`, is `ProbabilisticOperator(probability=p)` around it.
 - `functional.pad`, `functional.flip_left_right` and `functional.flip_up_down`.
+- `HFEagerConfig`, `HFStreamingConfig` and `from_hf` take `cache_dir`, passed to
+  `datasets.load_dataset`.
 
 ### Changed
 
@@ -175,6 +177,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with jupytext. A notebook whose prose was stale reported as synced, and `--fix` left it
   stale.
 
+- The HuggingFace sources describe `data_dir` as `datasets.load_dataset` uses it: a folder inside
+  the dataset's repository, not a storage location (`cache_dir` is). `examples/hf_datasets_test.py`,
+  which passed a cache folder as `data_dir` and so failed every load while exiting 0, is
+  replaced by an integration test that streams six Hub datasets and checks their fields.
 - `functional.random_crop` takes `padding`, `padding_mode` and `fill`, and refuses a crop larger
   than the (padded) image, which it cropped to the image's size before; `functional.center_crop`
   refuses one too and rounds its offset as torchvision's `CenterCrop` does. The random flips take
