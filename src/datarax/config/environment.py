@@ -1,15 +1,32 @@
-"""Environment variable integration for configuration.
+"""Environment variables that override values of a loaded configuration.
 
-This module provides utilities for integrating environment variables with
-configuration files, allowing for environment-specific overrides.
+An override is ``DATARAX_CONFIG__<KEY>[__<KEY>...]=<value>``: the prefix keeps configuration
+apart from the operational ``DATARAX_*`` variables (test, benchmark and activation settings),
+and the names after it, matched case-insensitively, select a value the configuration already
+has. The string is read as the type of the value it replaces, so the configuration file is the
+schema of what can be overridden:
+
+- ``bool``: ``true`` or ``false`` (any case), nothing else;
+- ``int`` and ``float``: Python's number syntax (an ``int`` string also reads as ``float``);
+- ``str``: the string as given;
+- ``list``: a TOML array, e.g. ``[32, 32]``.
+
+A string that does not read as the type, a name the configuration does not have, or a name that
+selects a table is refused.
 """
 
+import copy
 import logging
 import os
+import tomllib
+from collections.abc import Mapping
 from typing import Any
 
 
 logger = logging.getLogger(__name__)
+
+CONFIG_ENV_PREFIX = "DATARAX_CONFIG__"
+"""Prefix of the environment variables that override configuration values."""
 
 
 def get_env_value(env_var: str, default: Any = None, prefix: str = "DATARAX_") -> str | None:
@@ -28,104 +45,96 @@ def get_env_value(env_var: str, default: Any = None, prefix: str = "DATARAX_") -
 
 
 def apply_environment_overrides(
-    config: dict[str, Any], prefix: str = "DATARAX_", separator: str = "__"
+    config: dict[str, Any],
+    *,
+    prefix: str = CONFIG_ENV_PREFIX,
+    separator: str = "__",
+    environ: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Apply environment variable overrides to a configuration dictionary.
+    """Return a copy of ``config`` with the overrides in ``environ`` applied.
 
-    Environment variables can override configuration values using a naming
-    convention. For example, to override `config.database.host`, the environment
-    variable would be `DATARAX_DATABASE__HOST`.
+    ``DATARAX_CONFIG__TRAINING__BATCH_SIZE=64`` replaces ``config["training"]["batch_size"]``,
+    read as that value's type (module docstring).
 
     Args:
-        config: The configuration dictionary to apply overrides to
-        prefix: Prefix for environment variables to consider
-        separator: Separator used to indicate nested keys
+        config: The configuration; it is not modified.
+        prefix: Prefix of the override variables.
+        separator: Separator between nested names.
+        environ: The variables to read; the process environment when ``None``.
 
     Returns:
-        Configuration dictionary with environment overrides applied
+        A deep copy of ``config`` with every override applied.
     """
-    result = config.copy()
-
-    managed_env_vars = set(os.environ.get("DATARAX_MANAGED_ENV_VARS", "").split())
-    managed_env_vars.add("DATARAX_MANAGED_ENV_VARS")
-
-    # Get all configuration environment variables with the given prefix. The
-    # activation script also exports managed DATARAX_* process metadata; those
-    # variables are runtime setup state, not configuration overrides.
-    env_vars = {
-        k: v for k, v in os.environ.items() if k.startswith(prefix) and k not in managed_env_vars
-    }
-
-    for env_name, env_value in env_vars.items():
-        # Remove prefix
-        config_path = env_name[len(prefix) :]
-
-        # Skip empty paths
-        if not config_path:
-            continue
-
-        # Split path by separator to get nested keys
-        keys = config_path.split(separator)
-
-        # Convert to lowercase for case insensitivity
-        keys = [k.lower() for k in keys]
-
-        # Apply the override
-        _set_nested_value(result, keys, _parse_env_scalar(env_value))
-
+    result = copy.deepcopy(config)
+    variables = os.environ if environ is None else environ
+    for name in sorted(variables):
+        if name.startswith(prefix) and len(name) > len(prefix):
+            keys = [key.lower() for key in name[len(prefix) :].split(separator)]
+            _override(result, keys, variables[name], name)
     return result
 
 
-def _parse_env_scalar(value: str) -> Any:
-    """Convert a string value to an appropriate type.
+def _override(config: dict[str, Any], keys: list[str], text: str, name: str) -> None:
+    """Replace the value at ``keys`` in ``config`` with ``text`` read as that value's type.
 
-    This function attempts to convert string values from environment variables
-    to appropriate Python types (bool, int, float, or string).
+    Reading ``text`` raises ``ValueError`` when the value there is a table or ``text`` does not
+    read as its type (:func:`_read_as`).
 
     Args:
-        value: The string value to convert
+        config: The configuration copy being overridden.
+        keys: Lower-cased names from the variable.
+        text: The variable's value.
+        name: The variable's name, for error messages.
+
+    Raises:
+        KeyError: If the configuration has no value at ``keys``.
+    """
+    table = config
+    for depth, key in enumerate(keys[:-1]):
+        table = table.get(key) if isinstance(table, dict) else None
+        if not isinstance(table, dict):
+            path = ".".join(keys[: depth + 1])
+            raise KeyError(f"{name}: the configuration has no table '{path}'")
+    last = keys[-1]
+    if last not in table:
+        path = ".".join(keys)
+        raise KeyError(f"{name}: the configuration has no value '{path}'")
+    table[last] = _read_as(table[last], text, name)
+
+
+def _read_as(current: Any, text: str, name: str) -> Any:
+    """Read ``text`` as the type of ``current``.
+
+    Args:
+        current: The value being replaced.
+        text: The variable's value.
+        name: The variable's name, for error messages.
 
     Returns:
-        The converted value
-    """
-    # Handle boolean values
-    if value.lower() in ("true", "yes", "1"):
-        return True
-    if value.lower() in ("false", "no", "0"):
-        return False
+        ``text`` converted to ``current``'s type.
 
-    # Handle numeric values
-    try:
-        # Try to convert to integer
-        return int(value)
-    except ValueError:
+    Raises:
+        ValueError: If ``current`` is a table or of a type an override cannot express, or
+            ``text`` does not read as its type.
+    """
+    kind = type(current)
+    if kind is bool:
+        if text.lower() not in ("true", "false"):
+            raise ValueError(f"{name}={text!r}: a boolean is 'true' or 'false'")
+        return text.lower() == "true"
+    if kind is str:
+        return text
+    if kind is list:
         try:
-            # Try to convert to float
-            return float(value)
-        except ValueError:
-            # Keep as string
-            return value
-
-
-def _set_nested_value(config: dict[str, Any], keys: list[str], value: Any) -> None:
-    """Set a value in a nested dictionary using a list of keys.
-
-    Args:
-        config: The dictionary to modify
-        keys: List of keys indicating the path to the value
-        value: The value to set
-    """
-    # Handle single-level key
-    if len(keys) == 1:
-        config[keys[0]] = value
-        return
-
-    # Handle nested keys
-    current_key = keys[0]
-
-    # Create nested dictionary if it doesn't exist
-    if current_key not in config or not isinstance(config[current_key], dict):
-        config[current_key] = {}
-
-    # Recursively set the value in the nested dictionary
-    _set_nested_value(config[current_key], keys[1:], value)
+            value = tomllib.loads(f"value = {text}")["value"]
+        except tomllib.TOMLDecodeError as error:
+            raise ValueError(f"{name}={text!r}: not a TOML array") from error
+        if not isinstance(value, list):
+            raise ValueError(f"{name}={text!r}: not a TOML array")
+        return value
+    if kind in (int, float):
+        try:
+            return kind(text)
+        except ValueError as error:
+            raise ValueError(f"{name}={text!r}: not {kind.__name__}") from error
+    raise ValueError(f"{name}: an override cannot replace a value of type {kind.__name__}")

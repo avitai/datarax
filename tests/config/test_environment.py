@@ -1,7 +1,11 @@
-"""Tests for environment variable configuration integration.
+"""Environment variables override values of a loaded configuration.
 
-Tests follow TDD methodology - defining expected behavior for environment
-variable handling, type conversion, and nested configuration overrides.
+An override lives under its own prefix, ``DATARAX_CONFIG__``, apart from the operational
+``DATARAX_*`` variables (test, benchmark and activation settings), and names a value the
+configuration already has: the string is read as that value's type. Only ``true``/``false`` are
+booleans, so ``DATARAX_CONFIG__BATCH_SIZE=1`` is the integer 1. A value that does not read as
+its type, or a name the configuration does not have, is refused rather than turned into a new
+key. The caller's configuration is never modified.
 """
 
 from typing import Any
@@ -55,257 +59,127 @@ class TestGetEnvValue:
 
 
 class TestApplyEnvironmentOverrides:
-    """Test suite for apply_environment_overrides function."""
+    """``apply_environment_overrides`` over an explicit ``environ`` mapping."""
 
-    def test_apply_simple_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test applying a simple single-level override."""
-        monkeypatch.setenv("DATARAX_HOST", "localhost")
-        config = {"host": "default.com", "port": 8080}
-        result = apply_environment_overrides(config)
-        assert result["host"] == "localhost"
-        assert result["port"] == 8080
+    def test_a_top_level_value_is_replaced(self) -> None:
+        result = apply_environment_overrides(
+            {"host": "default.com", "port": 8080}, environ={"DATARAX_CONFIG__HOST": "localhost"}
+        )
+        assert result == {"host": "localhost", "port": 8080}
 
-    def test_apply_nested_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test applying override to nested configuration."""
-        monkeypatch.setenv("DATARAX_DATABASE__HOST", "db.example.com")
-        config = {"database": {"host": "localhost", "port": 5432}}
-        result = apply_environment_overrides(config)
-        assert result["database"]["host"] == "db.example.com"
-        assert result["database"]["port"] == 5432
+    def test_a_nested_value_is_replaced_and_its_siblings_kept(self) -> None:
+        config = {"db": {"host": "old", "port": 5432, "pool": {"size": 10}}, "api": {"key": "k"}}
+        result = apply_environment_overrides(
+            config,
+            environ={"DATARAX_CONFIG__DB__HOST": "new", "DATARAX_CONFIG__DB__POOL__SIZE": "20"},
+        )
+        assert result == {
+            "db": {"host": "new", "port": 5432, "pool": {"size": 20}},
+            "api": {"key": "k"},
+        }
 
-    def test_apply_deep_nested_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test applying override to deeply nested configuration."""
-        monkeypatch.setenv("DATARAX_APP__DB__POOL__SIZE", "20")
-        config = {"app": {"db": {"pool": {"size": 10}}}}
-        result = apply_environment_overrides(config)
-        assert result["app"]["db"]["pool"]["size"] == 20
+    def test_the_callers_configuration_is_not_modified_at_any_depth(self) -> None:
+        config = {"sources": {"images": {"path": "/data"}}, "batch_size": 32}
+        result = apply_environment_overrides(
+            config, environ={"DATARAX_CONFIG__SOURCES__IMAGES__PATH": "/elsewhere"}
+        )
+        assert config == {"sources": {"images": {"path": "/data"}}, "batch_size": 32}
+        assert result["sources"]["images"]["path"] == "/elsewhere"
+        assert result["sources"] is not config["sources"]
 
-    def test_apply_custom_prefix(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test applying overrides with custom prefix."""
-        monkeypatch.setenv("MYAPP_HOST", "custom.com")
-        config = {"host": "default.com"}
-        result = apply_environment_overrides(config, prefix="MYAPP_")
-        assert result["host"] == "custom.com"
+    @pytest.mark.parametrize(
+        ("current", "text", "expected"),
+        [
+            (8, "1", 1),
+            (8, "0", 0),
+            (8, "-42", -42),
+            (8, "00123", 123),
+            (0.1, "0.95", 0.95),
+            (0.1, "1", 1.0),
+            (0.1, "-273.15", -273.15),
+            (False, "true", True),
+            (False, "TRUE", True),
+            (True, "false", False),
+            (True, "False", False),
+            ("name", "1", "1"),
+            ("name", "true", "true"),
+            ("/data", "/path/to/data", "/path/to/data"),
+            ("u", "http://example.com/__path__/resource", "http://example.com/__path__/resource"),
+            ([1, 2], "[3, 4, 5]", [3, 4, 5]),
+            (["a"], '["b", "c"]', ["b", "c"]),
+        ],
+    )
+    def test_the_string_is_read_as_the_type_of_the_value_it_replaces(
+        self, current: Any, text: str, expected: Any
+    ) -> None:
+        """The replaced value's type decides: ``"1"`` for an integer is 1, not ``True``.
 
-    def test_apply_custom_separator(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test applying overrides with custom separator."""
-        monkeypatch.setenv("DATARAX_DATABASE.HOST", "db.com")
-        config = {"database": {"host": "localhost"}}
-        result = apply_environment_overrides(config, separator=".")
-        assert result["database"]["host"] == "db.com"
+        Reading ``"1"``/``"0"``/``"yes"``/``"no"`` as booleans regardless of the value would set
+        a batch size of ``True`` from ``DATARAX_CONFIG__BATCH_SIZE=1``; only ``true``/``false``
+        are booleans, and only where the replaced value is one.
+        """
+        result = apply_environment_overrides(
+            {"value": current}, environ={"DATARAX_CONFIG__VALUE": text}
+        )
+        assert result["value"] == expected
+        assert type(result["value"]) is type(expected)
 
-    def test_apply_boolean_true_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test type conversion for boolean true values."""
-        test_cases = [
-            ("true", True),
-            ("True", True),
-            ("TRUE", True),
-            ("yes", True),
-            ("Yes", True),
-            ("YES", True),
-            ("1", True),
-        ]
-        for env_val, expected in test_cases:
-            monkeypatch.setenv("DATARAX_ENABLED", env_val)
-            config: dict[str, Any] = {}
-            result = apply_environment_overrides(config)
-            assert result["enabled"] is expected, f"Failed for value: {env_val}"
-            monkeypatch.delenv("DATARAX_ENABLED")
+    @pytest.mark.parametrize(
+        ("current", "text"),
+        [
+            (8, "yes"),
+            (8, "1.5"),
+            (8, "true"),
+            (0.1, "fast"),
+            (False, "1"),
+            (False, "yes"),
+            ([1, 2], "3"),
+            ([1, 2], "[1, "),
+        ],
+    )
+    def test_a_string_that_does_not_read_as_the_type_is_refused(
+        self, current: Any, text: str
+    ) -> None:
+        with pytest.raises(ValueError, match="DATARAX_CONFIG__VALUE"):
+            apply_environment_overrides({"value": current}, environ={"DATARAX_CONFIG__VALUE": text})
 
-    def test_apply_boolean_false_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test type conversion for boolean false values."""
-        test_cases = [
-            ("false", False),
-            ("False", False),
-            ("FALSE", False),
-            ("no", False),
-            ("No", False),
-            ("NO", False),
-            ("0", False),
-        ]
-        for env_val, expected in test_cases:
-            monkeypatch.setenv("DATARAX_ENABLED", env_val)
-            config: dict[str, Any] = {}
-            result = apply_environment_overrides(config)
-            assert result["enabled"] is expected, f"Failed for value: {env_val}"
-            monkeypatch.delenv("DATARAX_ENABLED")
+    def test_a_table_is_not_replaced_by_a_scalar(self) -> None:
+        with pytest.raises(ValueError, match="DATARAX_CONFIG__DB"):
+            apply_environment_overrides({"db": {"host": "x"}}, environ={"DATARAX_CONFIG__DB": "y"})
 
-    def test_apply_integer_conversion(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test type conversion for integer values."""
-        monkeypatch.setenv("DATARAX_PORT", "8080")
-        config: dict[str, Any] = {}
-        result = apply_environment_overrides(config)
-        assert result["port"] == 8080
-        assert isinstance(result["port"], int)
+    @pytest.mark.parametrize(
+        "name", ["DATARAX_CONFIG__EPOCHS", "DATARAX_CONFIG__DB__USER", "DATARAX_CONFIG__HOST__NAME"]
+    )
+    def test_a_name_the_configuration_does_not_have_is_refused(self, name: str) -> None:
+        with pytest.raises(KeyError, match=name):
+            apply_environment_overrides({"host": "h", "db": {"host": "x"}}, environ={name: "1"})
 
-    def test_apply_negative_integer(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test type conversion for negative integer values."""
-        monkeypatch.setenv("DATARAX_OFFSET", "-42")
-        config: dict[str, Any] = {}
-        result = apply_environment_overrides(config)
-        assert result["offset"] == -42
-        assert isinstance(result["offset"], int)
+    def test_operational_variables_outside_the_prefix_are_not_configuration(self) -> None:
+        environ = {
+            "DATARAX_EXAMPLE_TIMEOUT_SECONDS": "300",
+            "DATARAX_BACKEND": "cuda12",
+            "DATARAX_TEST_JAX_PLATFORMS": "cpu",
+            "OTHER_VAR": "x",
+        }
+        assert apply_environment_overrides({"host": "h"}, environ=environ) == {"host": "h"}
 
-    def test_apply_float_conversion(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test type conversion for float values."""
-        monkeypatch.setenv("DATARAX_RATE", "0.95")
-        config: dict[str, Any] = {}
-        result = apply_environment_overrides(config)
-        assert result["rate"] == 0.95
-        assert isinstance(result["rate"], float)
+    def test_names_are_matched_case_insensitively(self) -> None:
+        result = apply_environment_overrides(
+            {"database": {"host": "x"}}, environ={"DATARAX_CONFIG__DATABASE__HOST": "db.com"}
+        )
+        assert result == {"database": {"host": "db.com"}}
 
-    def test_apply_negative_float(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test type conversion for negative float values."""
-        monkeypatch.setenv("DATARAX_TEMPERATURE", "-273.15")
-        config: dict[str, Any] = {}
-        result = apply_environment_overrides(config)
-        assert result["temperature"] == -273.15
-        assert isinstance(result["temperature"], float)
+    def test_a_custom_prefix_and_separator(self) -> None:
+        result = apply_environment_overrides(
+            {"database": {"host": "x"}},
+            prefix="MYAPP_",
+            separator=".",
+            environ={"MYAPP_DATABASE.HOST": "db.com"},
+        )
+        assert result == {"database": {"host": "db.com"}}
 
-    def test_apply_string_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test string values are preserved as strings."""
-        monkeypatch.setenv("DATARAX_NAME", "test_name")
-        config: dict[str, Any] = {}
-        result = apply_environment_overrides(config)
-        assert result["name"] == "test_name"
-        assert isinstance(result["name"], str)
-
-    def test_apply_creates_nested_dict_if_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test that nested dictionaries are created if they don't exist."""
-        monkeypatch.setenv("DATARAX_NEW__NESTED__VALUE", "test")
-        config: dict[str, Any] = {}
-        result = apply_environment_overrides(config)
-        assert result["new"]["nested"]["value"] == "test"
-
-    def test_apply_overwrites_non_dict_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test that non-dict values are overwritten when creating nested structure."""
-        monkeypatch.setenv("DATARAX_CONFIG__NESTED__VALUE", "new")
-        config = {"config": "old_string_value"}
-        result = apply_environment_overrides(config)
-        assert isinstance(result["config"], dict)
-        assert result["config"]["nested"]["value"] == "new"
-
-    def test_apply_multiple_overrides(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test applying multiple environment overrides simultaneously."""
-        monkeypatch.setenv("DATARAX_HOST", "example.com")
-        monkeypatch.setenv("DATARAX_PORT", "9000")
-        monkeypatch.setenv("DATARAX_DEBUG", "true")
-        config = {"host": "localhost", "port": 8080, "debug": False}
-        result = apply_environment_overrides(config)
-        assert result["host"] == "example.com"
-        assert result["port"] == 9000
-        assert result["debug"] is True
-
-    def test_apply_ignores_non_prefixed_variables(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test that environment variables without the prefix are ignored."""
-        monkeypatch.setenv("OTHER_VAR", "should_be_ignored")
-        monkeypatch.setenv("RANDOM_VAR", "also_ignored")
-        config: dict[str, Any] = {"existing": "value"}
-        result = apply_environment_overrides(config)
-        assert "other_var" not in result
-        assert "OTHER_VAR" not in result
-        assert "random_var" not in result
-        assert result["existing"] == "value"
-
-    def test_apply_skips_empty_config_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test that empty config paths (just prefix) are skipped."""
-        monkeypatch.setenv("DATARAX_", "empty_key")
-        config: dict[str, Any] = {}
-        result = apply_environment_overrides(config)
-        assert result == {}
-
-    def test_apply_ignores_managed_activation_variables(
+    def test_the_process_environment_is_read_when_no_mapping_is_given(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test activation metadata is not treated as config."""
-        monkeypatch.setenv(
-            "DATARAX_MANAGED_ENV_VARS",
-            "DATARAX_BACKEND DATARAX_ENV_ROOT",
-        )
-        monkeypatch.setenv("DATARAX_BACKEND", "cuda12")
-        monkeypatch.setenv("DATARAX_ENV_ROOT", "/tmp/datarax")
-        monkeypatch.setenv("DATARAX_USER_SETTING", "enabled")
-
-        result = apply_environment_overrides({})
-
-        assert result == {"user_setting": "enabled"}
-
-    def test_apply_case_insensitive_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test that keys are converted to lowercase for case insensitivity."""
-        monkeypatch.setenv("DATARAX_DATABASE__HOST", "db.com")
-        monkeypatch.setenv("DATARAX_API__KEY", "secret")
-        config: dict[str, Any] = {}
-        result = apply_environment_overrides(config)
-        assert "database" in result
-        assert "DATABASE" not in result
-        assert result["database"]["host"] == "db.com"
-        assert result["api"]["key"] == "secret"
-
-    def test_apply_preserves_original_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test that original config dictionary is not modified."""
-        monkeypatch.setenv("DATARAX_HOST", "new.com")
-        original = {"host": "old.com", "port": 8080}
-        original_copy = original.copy()
-        result = apply_environment_overrides(original)
-        assert original == original_copy  # Original unchanged
-        assert result["host"] == "new.com"  # Result has override
-
-    def test_apply_empty_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test applying overrides to empty configuration."""
-        monkeypatch.setenv("DATARAX_HOST", "example.com")
-        monkeypatch.setenv("DATARAX_PORT", "8080")
-        config: dict[str, Any] = {}
-        result = apply_environment_overrides(config)
-        assert result["host"] == "example.com"
-        assert result["port"] == 8080
-
-    def test_apply_with_existing_nested_structure(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test applying overrides to config with existing nested structure."""
-        monkeypatch.setenv("DATARAX_DB__HOST", "newdb.com")
-        config = {
-            "db": {"host": "olddb.com", "port": 5432, "pool": {"size": 10}},
-            "api": {"key": "secret"},
-        }
-        result = apply_environment_overrides(config)
-        assert result["db"]["host"] == "newdb.com"
-        assert result["db"]["port"] == 5432  # Preserved
-        assert result["db"]["pool"]["size"] == 10  # Preserved
-        assert result["api"]["key"] == "secret"  # Preserved
-
-    def test_apply_numeric_string_not_converted(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test that numeric strings with leading zeros are preserved."""
-        monkeypatch.setenv("DATARAX_ZIP_CODE", "00123")
-        config: dict[str, Any] = {}
-        result = apply_environment_overrides(config)
-        # Leading zero means it should stay as string or be converted to int
-        # Based on implementation, "00123" will be converted to int 123
-        assert result["zip_code"] == 123
-
-    def test_apply_path_like_string(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test that path-like strings are preserved."""
-        monkeypatch.setenv("DATARAX_DATA_PATH", "/path/to/data")
-        config: dict[str, Any] = {}
-        result = apply_environment_overrides(config)
-        assert result["data_path"] == "/path/to/data"
-        assert isinstance(result["data_path"], str)
-
-    def test_apply_single_level_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test applying override to single-level key."""
-        monkeypatch.setenv("DATARAX_TIMEOUT", "30")
-        config = {"timeout": 60}
-        result = apply_environment_overrides(config)
-        assert result["timeout"] == 30
-
-    def test_apply_deeply_nested_new_structure(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test creating deeply nested structure from scratch."""
-        monkeypatch.setenv("DATARAX_A__B__C__D__E", "deep_value")
-        config: dict[str, Any] = {}
-        result = apply_environment_overrides(config)
-        assert result["a"]["b"]["c"]["d"]["e"] == "deep_value"
-
-    def test_apply_mixed_separators_in_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test that separators in values don't affect parsing."""
-        monkeypatch.setenv("DATARAX_URL", "http://example.com/__path__/resource")
-        config: dict[str, Any] = {}
-        result = apply_environment_overrides(config)
-        assert result["url"] == "http://example.com/__path__/resource"
+        monkeypatch.setenv("DATARAX_CONFIG__PORT", "9000")
+        assert apply_environment_overrides({"port": 8080}) == {"port": 9000}

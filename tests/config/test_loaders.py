@@ -225,6 +225,20 @@ class TestDeepMergeDict:
         # Lists are replaced, not merged
         assert result == {"items": [4, 5]}
 
+    def test_the_result_shares_no_container_with_either_input(self):
+        """Changing a merged value leaves both inputs as they were, at every depth."""
+        base = {"kept": {"y": 1}, "merged": {"a": [1]}}
+        override = {"merged": {"b": {"c": 2}}, "added": {"z": [3]}}
+
+        result = deep_merge_dict(base, override)
+        result["kept"]["y"] = 99
+        result["merged"]["a"].append(9)
+        result["merged"]["b"]["c"] = 99
+        result["added"]["z"].append(9)
+
+        assert base == {"kept": {"y": 1}, "merged": {"a": [1]}}
+        assert override == {"merged": {"b": {"c": 2}}, "added": {"z": [3]}}
+
 
 class TestLoadConfigWithIncludes:
     """Tests for load_config_from_path_with_includes function."""

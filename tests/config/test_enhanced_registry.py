@@ -4,6 +4,8 @@ This module tests the enhanced registry functionality that supports
 Flax NNX modules with proper RNG and Variable handling.
 """
 
+import textwrap
+
 import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
@@ -282,8 +284,48 @@ class TestErrorHandling:
         # Pass invalid parameter
         config = {"invalid_param": 123}
 
-        with pytest.raises(TypeError, match="Failed to create component"):
+        with pytest.raises(TypeError, match="invalid_param") as raised:
             create_component_from_config("test", "InvalidConfig", config)
+        assert raised.value.__notes__ == ["while creating component test.InvalidConfig"]
+
+    def test_a_constructor_error_keeps_its_type(self):
+        """A component's own refusal reaches the caller as what it raised, not as TypeError."""
+
+        class Refusing:
+            def __init__(self, size: int):
+                if size <= 0:
+                    raise ValueError("size must be positive")
+
+        register_component("test", "Refusing")(Refusing)
+
+        with pytest.raises(ValueError, match="size must be positive") as raised:
+            create_component_from_config("test", "Refusing", {"size": 0})
+        assert raised.value.__notes__ == ["while creating component test.Refusing"]
+
+    def test_the_seed_derives_the_streams_and_is_not_a_constructor_argument(self):
+        """``seed`` seeds the ``rngs`` it derives; a module that takes no ``seed`` never sees it."""
+        register_component("test", "SeededNNX")(SimpleNNXModule)
+
+        module = create_component_from_config("test", "SeededNNX", {"size": 3, "seed": 7})
+
+        expected = rngs_from_seed(7, DEFAULT_RNG_STREAMS)
+        assert module.size.get_value() == 3
+        for stream in DEFAULT_RNG_STREAMS:
+            assert jnp.array_equal(
+                jax.random.key_data(module.rngs[stream]()), jax.random.key_data(expected[stream]())
+            ), stream
+
+    def test_the_register_component_docstring_example_runs(self):
+        """The fenced example in ``register_component``'s docstring defines a working source."""
+        import re
+
+        from datarax.config import registry
+
+        docstring = registry.register_component.__doc__
+        assert docstring is not None
+        (code,) = re.findall(r"```python\n(.*?)```", docstring, re.S)
+        namespace: dict = {}
+        exec(compile(textwrap.dedent(code), "<docstring>", "exec"), namespace)  # noqa: S102
 
     def test_initialize_variables_invalid_path(self):
         """Test error when variable path is invalid."""

@@ -45,7 +45,7 @@ failed_examples=()
 success_count=0
 total_count=0
 
-for example in $(find "$EXAMPLES_DIR" -name "*.py" | grep -v "__pycache__" | grep -v "__init__.py" | grep -v "config_example.py" | sort); do
+for example in $(find "$EXAMPLES_DIR" -name "*.py" | grep -v "__pycache__" | grep -v "__init__.py" | sort); do
     if run_example "$example"; then
         ((success_count++))
     else

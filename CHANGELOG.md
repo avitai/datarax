@@ -20,9 +20,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `functional.pad`, `functional.flip_left_right` and `functional.flip_up_down`.
 - `HFEagerConfig`, `HFStreamingConfig` and `from_hf` take `cache_dir`, passed to
   `datasets.load_dataset`.
+- `datarax.config` exports `load_config_from_path_with_includes`, `deep_merge_dict`,
+  `SchemaField`, `ValidationError` and `CONFIG_ENV_PREFIX`.
 
 ### Changed
 
+- Configuration environment overrides are `DATARAX_CONFIG__<KEY>[__<KEY>...]`, apart from the
+  operational `DATARAX_*` variables, and replace only values the configuration already has: the
+  string is read as the replaced value's type (only `true`/`false` are booleans, so
+  `DATARAX_CONFIG__BATCH_SIZE=1` is the integer 1; a list reads a TOML array), and a name the
+  configuration does not have, a table, or a string that does not read as the type is refused.
+  `apply_environment_overrides` returns a deep copy and takes `environ=` to read a given mapping;
+  `prefix` and `separator` are keyword-only. Migration: rename `DATARAX_<KEY>` overrides to
+  `DATARAX_CONFIG__<KEY>`, and put every overridden key in the configuration file.
+- `create_component_from_config` re-raises a constructor's `TypeError` or `ValueError` as itself,
+  with a note naming the component, instead of wrapping every exception in `TypeError`; `seed`
+  seeds the derived `rngs` and is not passed to a constructor that does not take it.
 - An operator implements one method, `apply(element, key, stats) -> Element`: one record, its
   key and the batch's statistics. `__call__(batch)` is the one entry: it computes the statistics
   (`compute_statistics(batch)`, which takes the `Batch`), derives one key per record, applies the
@@ -146,8 +159,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A deterministic `ElementOperator`, `MapOperator` or external adapter hands its function `None`
   as the key instead of a fixed key; the function type is the keyed or the keyless shape.
 
+### Removed
+
+- `PipelineSchema` and `NNXComponentSchema`: no field of either was ever read, so neither
+  validated anything. Pipelines are built in Python; define a `ConfigSchema` for the parameters
+  you configure. `examples/config/config_example.py` and its notebook, which exited on a
+  configuration file the repository never had, are removed with them.
+
 ### Fixed
 
+- `ConfigSchema` reads the fields of its base classes (a subclass lost them), gives each
+  validation its own copy of a default, validates a nested schema into its defaults (including an
+  absent optional one) and reports its failure by field path, widens an integer to a float field,
+  and refuses a boolean for an integer or float field. An override no longer changes the caller's
+  nested dictionaries, and `deep_merge_dict` returns dictionaries that share no container with its
+  inputs.
 - `LoudnessOperator` computes DDSP's loudness (magenta/ddsp `compute_loudness` / `power_to_db`):
   the A-weighted power averaged over frequency, then converted to dB and clamped at `-range_db`.
   It averaged per-bin dB before clamping, which gave near-silent bins hundreds of dB down the

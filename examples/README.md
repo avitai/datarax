@@ -32,12 +32,7 @@ source ./activate.sh
 # Run any example
 python examples/custom_benchmark.py
 python examples/hf_model_training_example.py
-python examples/config/config_example.py --config pipeline_example.toml
 ```
-
-> **Note:** `config/config_example.py` reads a TOML file via `--config`. The path
-> is resolved relative to `examples/config/`, and it must point at an existing
-> TOML file (there is no default file shipped in the directory).
 
 ## Contents
 
@@ -69,12 +64,6 @@ Complete model training workflow with HuggingFace Datasets:
 - End-to-end training pipeline
 - Dataset loading and preprocessing
 - Training loop integration
-
-### Configuration (`config/`)
-Configuration system examples demonstrating:
-- TOML configuration loading (`load_toml_from_path`)
-- Environment variable overrides (`apply_environment_overrides`)
-- Schema validation with `PipelineSchema`
 
 ### Comparison (`comparison/`)
 Tutorials that run one job with Grain and with Datarax, so the two APIs sit side by

@@ -4,6 +4,7 @@ This module provides functions for loading and saving TOML configuration files
 for Datarax pipelines and components.
 """
 
+import copy
 import logging
 import tomllib
 from pathlib import Path
@@ -71,18 +72,14 @@ def deep_merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str,
         override: Dictionary with values that override the base
 
     Returns:
-        A new dictionary containing the merged values
+        A new dictionary sharing no container with either input
     """
-    result = base.copy()
-
+    result = copy.deepcopy(base)
     for key, override_value in override.items():
-        if key in result and isinstance(result[key], dict) and isinstance(override_value, dict):
-            # Recursively merge nested dictionaries
+        if isinstance(result.get(key), dict) and isinstance(override_value, dict):
             result[key] = deep_merge_dict(result[key], override_value)
         else:
-            # Override or add the value
-            result[key] = override_value
-
+            result[key] = copy.deepcopy(override_value)
     return result
 
 
