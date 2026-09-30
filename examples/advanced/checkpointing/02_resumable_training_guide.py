@@ -68,7 +68,13 @@ from flax import nnx
 from substrax.artifacts import resolve_output_dir
 
 from datarax.core.element_batch import Batch
-from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.operators import (
+    ElementOperator,
+    ElementOperatorConfig,
+    ProbabilisticOperator,
+    ProbabilisticOperatorConfig,
+)
+from datarax.operators.modality.image import FlipOperator, FlipOperatorConfig
 from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
@@ -230,15 +236,6 @@ def normalize(element, key=None):
     return element.update_data({"image": (image - 0.5) / 0.5})
 
 
-def random_flip(element, key):
-    """Run random_flip."""
-    flip_key, _ = jax.random.split(key)
-    should_flip = jax.random.bernoulli(flip_key, 0.5)
-    image = element.data["image"]
-    flipped = jax.lax.cond(should_flip, lambda x: jnp.flip(x, axis=1), lambda x: x, image)
-    return element.update_data({"image": flipped})
-
-
 def build_pipeline(seed: int, batch_size: int = 32) -> Pipeline:
     """Run build_pipeline."""
     # 2048 samples / 32 batch = 64 batches; supports 60-step demo in one epoch.
@@ -247,10 +244,10 @@ def build_pipeline(seed: int, batch_size: int = 32) -> Pipeline:
     norm_op = ElementOperator(
         ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0)
     )
-    flip_op = ElementOperator(
-        ElementOperatorConfig(stochastic=True, stream_name="flip"),
-        fn=random_flip,
-        rngs=nnx.Rngs(flip=seed + 1000),
+    flip_op = ProbabilisticOperator(
+        ProbabilisticOperatorConfig(probability=0.5),
+        operator=FlipOperator(FlipOperatorConfig(field_key="image")),
+        rngs=nnx.Rngs(augment=seed + 1000),
     )
     return Pipeline(
         source=source,

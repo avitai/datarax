@@ -32,7 +32,7 @@ handle different data modalities, and build production-ready pipelines.
 | `DataLoader(shuffle=True)` | `MemorySourceConfig(shuffle=True)` |
 | Manual seed setting | `nnx.Rngs(seed)` with stream names |
 
-**Key insight:** Datarax separates RNG streams by name (e.g., `flip`, `noise`) for fine-grained reproducibility control.
+**Key insight:** Datarax separates RNG streams by name (e.g., `augment`, `noise`) for fine-grained reproducibility control.
 
 ## Coming from TensorFlow?
 
@@ -106,12 +106,15 @@ from flax import nnx
 from datarax.operators import (
     ElementOperator,
     ElementOperatorConfig,
+    ProbabilisticOperator,
+    ProbabilisticOperatorConfig,
 )
 from datarax.operators.composite_operator import (
     CompositeOperatorConfig,
     CompositeOperatorModule,
     CompositionStrategy,
 )
+from datarax.operators.modality.image import FlipOperator, FlipOperatorConfig
 from datarax.pipeline import Pipeline
 
 # Note: ProbabilisticOperator available for conditional augmentation
@@ -203,27 +206,16 @@ print("Created: normalizer (deterministic)")
 Created: normalizer (deterministic)
 ```
 
+Library operators sit in the same chain as custom ones. The random horizontal flip is the
+built-in `FlipOperator`, which `ProbabilisticOperator` applies to each record with probability 0.5.
+
 ```python
-# Operator 2: Random horizontal flip (stochastic)
-def random_flip(element, key):
-    """Randomly flip image horizontally with 50% probability."""
-    flip_key, _ = jax.random.split(key)
-    should_flip = jax.random.bernoulli(flip_key, 0.5)
-
-    image = element.data["image"]
-    flipped = jax.lax.cond(
-        should_flip,
-        lambda x: jnp.flip(x, axis=1),  # Flip along width axis
-        lambda x: x,
-        image,
-    )
-    return element.update_data({"image": flipped})
-
-
-flipper = ElementOperator(
-    ElementOperatorConfig(stochastic=True, stream_name="flip"),
-    fn=random_flip,
-    rngs=nnx.Rngs(flip=42),
+# Operator 2: Random horizontal flip (stochastic): the built-in FlipOperator, applied to each
+# record with probability 0.5
+flipper = ProbabilisticOperator(
+    ProbabilisticOperatorConfig(probability=0.5),
+    operator=FlipOperator(FlipOperatorConfig(field_key="image")),
+    rngs=nnx.Rngs(augment=42),
 )
 print("Created: flipper (stochastic)")
 ```
@@ -426,10 +418,10 @@ def create_pipeline_with_seed(seed: int):
         ElementOperatorConfig(stochastic=False), fn=normalize_image, rngs=nnx.Rngs(0)
     )
 
-    flip = ElementOperator(
-        ElementOperatorConfig(stochastic=True, stream_name="flip"),
-        fn=random_flip,
-        rngs=nnx.Rngs(flip=seed),
+    flip = ProbabilisticOperator(
+        ProbabilisticOperatorConfig(probability=0.5),
+        operator=FlipOperator(FlipOperatorConfig(field_key="image")),
+        rngs=nnx.Rngs(augment=seed),
     )
 
     return Pipeline(source=src, stages=[norm, flip], batch_size=8, rngs=nnx.Rngs(0))

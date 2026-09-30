@@ -218,13 +218,13 @@ Advanced Operators Tutorial
 ============================================================
 
 1. ProbabilisticOperator (p=0.5):
-   Output mean: 0.5987
+   Output mean: 0.5758
 
 2. SelectorOperator (3 operators):
-   Output mean: 0.5623
+   Output mean: 0.5401
 
 3. PatchDropoutOperator (4 patches):
-   Output mean: 0.4521 (lower due to black patches)
+   Output mean: 0.3930 (lower due to black patches)
 
 ============================================================
 Tutorial completed successfully!

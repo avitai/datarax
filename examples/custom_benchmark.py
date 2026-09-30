@@ -6,7 +6,6 @@ in Python code, using TimingCollector and rank_table.
 
 import time
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 from calibrax.analysis import rank_table
@@ -14,7 +13,13 @@ from calibrax.core import Metric, MetricDef, MetricDirection, Point, Run
 from calibrax.profiling import TimingCollector, TimingSample
 from flax import nnx
 
-from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.operators import (
+    ElementOperator,
+    ElementOperatorConfig,
+    ProbabilisticOperator,
+    ProbabilisticOperatorConfig,
+)
+from datarax.operators.modality.image import FlipOperator, FlipOperatorConfig
 from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
@@ -36,14 +41,6 @@ def generate_sample_image_data(num_samples: int = 1000, image_size: int = 32) ->
 def normalize_transform(element, key=None):
     """Normalize image values to [0, 1] range."""
     return element.update_data({"image": element.data["image"] / 255.0})
-
-
-def random_flip_transform(element, key):
-    """Apply random horizontal flip to image."""
-    image = element.data["image"]
-    flip = jax.random.bernoulli(key, 0.5)
-    flipped_image = jnp.where(flip, jnp.fliplr(image), image)
-    return element.update_data({"image": flipped_image})
 
 
 def simulated_heavy_transform(element, key):
@@ -72,8 +69,11 @@ def create_advanced_pipeline(batch_size: int = 32) -> Pipeline:
     source = MemorySource(source_config, data=data, rngs=nnx.Rngs(0))
     normalizer_config = ElementOperatorConfig(stochastic=False)
     normalizer = ElementOperator(normalizer_config, fn=normalize_transform, rngs=nnx.Rngs(0))
-    flip_config = ElementOperatorConfig(stochastic=True, stream_name="flip")
-    flip_augmenter = ElementOperator(flip_config, fn=random_flip_transform, rngs=nnx.Rngs(flip=42))
+    flip_augmenter = ProbabilisticOperator(
+        ProbabilisticOperatorConfig(probability=0.5),
+        operator=FlipOperator(FlipOperatorConfig(field_key="image")),
+        rngs=nnx.Rngs(augment=42),
+    )
     heavy_config = ElementOperatorConfig(stochastic=True, stream_name="heavy")
     heavy_transform = ElementOperator(
         heavy_config, fn=simulated_heavy_transform, rngs=nnx.Rngs(heavy=43)

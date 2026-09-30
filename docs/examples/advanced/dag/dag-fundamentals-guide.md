@@ -247,11 +247,11 @@ identical topologies.
 Running the guide produces:
 
 ```
-JAX version: 0.9.1
+JAX version: 0.11.1
 Source: 64 samples
 Linear pipeline output: image shape=(16, 32, 32, 3)
 DAG pipeline output: image shape=(16, 2, 32, 32, 3)
-Linear pipeline: 1 stages
+Linear pipeline: 2 stages
 DAG pipeline:    3 stages
 DAG Pipeline Fundamentals Guide
 ==================================================

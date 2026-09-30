@@ -149,20 +149,22 @@ single call.
 Running the guide produces:
 
 ```
+============================================================
 PHASE 1: reference run (60 steps, no checkpoints)
 ============================================================
-Reference: 60 steps, final loss=1.0196
+Reference: 60 steps, final loss=1.0263
 
+============================================================
 PHASE 2: train, checkpoint every 10, interrupt at step 30
 ============================================================
-Crashed: 30 steps, final loss=1.5023
+Crashed: 30 steps, final loss=1.4828
 Available checkpoints: ['step_10', 'step_20', 'step_30']
 
+============================================================
 PHASE 3: restore from step 30, train to step 60
 ============================================================
-Resumed: end step=60, final loss=1.0196
+Resumed: end step=60, final loss=1.0263
 Total resumed-curve length: 60 (expected 60)
-
 Max |reference - resumed| over 60 steps: 0.0000e+00
 Max |reference - resumed| over model params: 0.0000e+00
 Determinism check passed: model parameters round-trip through Orbax.

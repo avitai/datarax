@@ -89,12 +89,18 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.operators import (
+    ElementOperator,
+    ElementOperatorConfig,
+    ProbabilisticOperator,
+    ProbabilisticOperatorConfig,
+)
 from datarax.operators.composite_operator import (
     CompositeOperatorConfig,
     CompositeOperatorModule,
     CompositionStrategy,
 )
+from datarax.operators.modality.image import FlipOperator, FlipOperatorConfig
 from datarax.pipeline import Pipeline
 from datarax.sources import HFEagerConfig, HFEagerSource, HFStreamingConfig, HFStreamingSource
 
@@ -331,23 +337,6 @@ def normalize_image(element, key=None):  # noqa: ARG001
     return element
 
 
-def random_flip(element, key):
-    """Randomly flip image horizontally."""
-    flip_key, _ = jax.random.split(key)
-    should_flip = jax.random.bernoulli(flip_key, 0.5)
-
-    image = element.data.get("image")
-    if image is not None:
-        flipped = jax.lax.cond(
-            should_flip,
-            lambda x: jnp.flip(x, axis=1),  # Flip width axis
-            lambda x: x,
-            image,
-        )
-        return element.update_data({"image": flipped})
-    return element
-
-
 # Create operators
 normalizer = ElementOperator(
     ElementOperatorConfig(stochastic=False),
@@ -355,10 +344,11 @@ normalizer = ElementOperator(
     rngs=nnx.Rngs(0),
 )
 
-flipper = ElementOperator(
-    ElementOperatorConfig(stochastic=True, stream_name="flip"),
-    fn=random_flip,
-    rngs=nnx.Rngs(flip=42),
+# Random horizontal flip: FlipOperator, applied to each record with probability 0.5
+flipper = ProbabilisticOperator(
+    ProbabilisticOperatorConfig(probability=0.5),
+    operator=FlipOperator(FlipOperatorConfig(field_key="image")),
+    rngs=nnx.Rngs(augment=42),
 )
 
 # Create composite augmentation
