@@ -79,23 +79,61 @@ changes under another shuffle seed. Rebuilding the first draw's generator and ap
 transform's arithmetic reproduces the image that was served first.
 
 ```python
+class ImageRecords(grain.sources.RandomAccessDataSource):
+    """``{"image": images[i], "index": i}`` records."""
+
+    def __len__(self) -> int:
+        """Return the number of records."""
+        return NUM_RECORDS
+
+    def __getitem__(self, i: int) -> dict[str, np.ndarray]:
+        """Return the record at ``i``."""
+        return {"image": images[i], "index": index[i]}
+
+
 class AddNoise(grain.transforms.RandomMap):
-    def random_map(self, element: dict, rng: np.random.Generator) -> dict:
+    """Add Gaussian noise drawn from the generator Grain passes with each record."""
+
+    # Grain declares RandomMap.random_map with no return annotation, so a type checker infers
+    # None; its own documented override annotates the return as this one does.
+    def random_map(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self, element: dict, rng: np.random.Generator
+    ) -> dict:
+        """Return the record with noise added to ``image``."""
         noise = rng.normal(scale=NOISE_SCALE, size=IMAGE_SHAPE).astype(np.float32)
         return {**element, "image": element["image"] + noise}
 
 
+def build_grain_loader(shuffle_seed: int) -> grain.DataLoader:
+    """A shuffled, noisy, batched loader over one epoch of the images."""
+    sampler = grain.samplers.IndexSampler(
+        num_records=NUM_RECORDS, shuffle=True, num_epochs=1, seed=shuffle_seed
+    )
+    return grain.DataLoader(
+        data_source=ImageRecords(),
+        sampler=sampler,
+        operations=[AddNoise(), grain.transforms.Batch(batch_size=BATCH_SIZE)],
+    )
+
+
 grain_noise = noise_by_record(build_grain_loader(shuffle_seed=1))
 grain_noise_reshuffled = noise_by_record(build_grain_loader(shuffle_seed=2))
-print(f"Grain: same noise per record under another shuffle order: "
-      f"{np.array_equal(grain_noise, grain_noise_reshuffled)}")
+grain_same_under_reshuffle = np.array_equal(grain_noise, grain_noise_reshuffled)
+print(f"Grain: same noise per record under another shuffle order: {grain_same_under_reshuffle}")
 
+# The first draw of the seed-1 loader used Philox(key=1 + 0). Rebuilding that generator and
+# applying the transform's arithmetic reproduces the served image of whichever record came first.
 first_batch = next(iter(build_grain_loader(shuffle_seed=1)))
 first_record = int(np.asarray(first_batch["index"])[0])
 draw_rng = np.random.Generator(np.random.Philox(key=1 + 0))
 rebuilt_noise = draw_rng.normal(scale=NOISE_SCALE, size=IMAGE_SHAPE).astype(np.float32)
 grain_rebuilt = np.array_equal(images[first_record] + rebuilt_noise, first_batch["image"][0])
-print(f"Grain: record {first_record} was drawn first; Philox(seed + 0) rebuilds it: {grain_rebuilt}")
+print(
+    f"Grain: record {first_record} was drawn first; Philox(seed + 0) rebuilds it: {grain_rebuilt}"
+)
+# Expected output:
+# Grain: same noise per record under another shuffle order: False
+# Grain: record 35 was drawn first; Philox(seed + 0) rebuilds it: True
 ```
 
 **Terminal Output:**
@@ -112,18 +150,38 @@ so every epoch draws fresh noise, as Grain's draw index continuing across epochs
 
 ```python
 def add_noise(element, key):
+    """Add Gaussian noise drawn from this record's own key."""
     image = element.data["image"]
     return element.update_data({"image": image + NOISE_SCALE * jax.random.normal(key, image.shape)})
 
 
-noise = ElementOperator(
-    ElementOperatorConfig(stochastic=True, stream_name="noise"), fn=add_noise, rngs=nnx.Rngs(noise=0)
-)
+def build_datarax_pipeline(shuffle_seed: int, batch_size: int = BATCH_SIZE) -> Pipeline:
+    """A shuffled, noisy, batched pipeline over the images."""
+    source = MemorySource(
+        MemorySourceConfig(shuffle=True),
+        data={"image": images, "index": index},
+        rngs=nnx.Rngs(shuffle_seed),
+    )
+    noise = ElementOperator(
+        ElementOperatorConfig(stochastic=True, stream_name="noise"),
+        fn=add_noise,
+        rngs=nnx.Rngs(noise=0),
+    )
+    return Pipeline(source=source, stages=[noise], batch_size=batch_size, rngs=nnx.Rngs(0))
+
+
 datarax_noise = noise_by_record(build_datarax_pipeline(shuffle_seed=1))
-print(f"Datarax: same noise per record under another shuffle order: "
-      f"{np.array_equal(datarax_noise, noise_by_record(build_datarax_pipeline(shuffle_seed=2)))}")
-print(f"Datarax: same noise per record under batch size 16: "
-      f"{np.array_equal(datarax_noise, noise_by_record(build_datarax_pipeline(shuffle_seed=1, batch_size=16)))}")
+datarax_same_under_reshuffle = np.array_equal(
+    datarax_noise, noise_by_record(build_datarax_pipeline(shuffle_seed=2))
+)
+datarax_same_under_rebatch = np.array_equal(
+    datarax_noise, noise_by_record(build_datarax_pipeline(shuffle_seed=1, batch_size=16))
+)
+print(f"Datarax: same noise per record under another shuffle order: {datarax_same_under_reshuffle}")
+print(f"Datarax: same noise per record under batch size 16: {datarax_same_under_rebatch}")
+# Expected output:
+# Datarax: same noise per record under another shuffle order: True
+# Datarax: same noise per record under batch size 16: True
 ```
 
 **Terminal Output:**
@@ -141,17 +199,32 @@ transform runs as Python and NumPy code outside any JAX trace, so `jax.grad` can
 parameter inside it: with Grain, a learnable preprocessing step belongs in the model.
 
 ```python
-from datarax.core.element_batch import Batch
+TRUE_SCALE = np.array([2.0, -1.0, 0.5], dtype=np.float32)
+targets = images * TRUE_SCALE
+
+
 class LearnableScale(nnx.Module):
+    """Multiply ``image`` by one learnable scale per channel."""
+
     def __init__(self) -> None:
+        """Start every scale at one."""
         self.scale = nnx.Param(jnp.ones(3))
 
     def __call__(self, batch: Batch) -> Batch:
+        """Return the batch with ``image`` rescaled."""
         return batch.replace(data={**batch.data, "image": batch["image"] * self.scale[...]})
 
 
+def build_training_pipeline(stage: nnx.Module, target: np.ndarray) -> Pipeline:
+    """Batch the images and their targets in order through ``stage``."""
+    source = MemorySource(MemorySourceConfig(), data={"image": images, "target": target})
+    return Pipeline(source=source, stages=[stage], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
+
+
 def epoch_loss(pipeline: Pipeline) -> jax.Array:
-    def accumulate(total, batch):
+    """Mean squared error between the stage output and the targets over one epoch."""
+
+    def accumulate(total: jax.Array, batch: dict) -> tuple[jax.Array, None]:
         return total + jnp.mean((batch["image"] - batch["target"]) ** 2), None
 
     total, _ = pipeline.scan(accumulate, length=NUM_BATCHES, init_carry=jnp.zeros(()))
@@ -160,16 +233,34 @@ def epoch_loss(pipeline: Pipeline) -> jax.Array:
 
 @nnx.jit
 def gradient_step(pipeline: Pipeline, learning_rate: jax.Array) -> jax.Array:
+    """One gradient-descent step on every ``nnx.Param`` in the pipeline.
+
+    The learning rate is a traced array, so the compiled step is reused for any value.
+    """
     loss, grads = nnx.value_and_grad(epoch_loss, argnums=nnx.DiffState(0, nnx.Param))(pipeline)
     params = nnx.state(pipeline, nnx.Param)
     nnx.update(pipeline, jax.tree.map(lambda p, g: p - learning_rate * g, params, grads))
     return loss
 
 
+def train(pipeline: Pipeline, learning_rate: float, epochs: int) -> list[float]:
+    """Run ``epochs`` gradient steps, each over one epoch, and return the losses."""
+    rate = jnp.float32(learning_rate)
+    losses = []
+    for _ in range(epochs):
+        pipeline.reset()
+        losses.append(float(gradient_step(pipeline, rate)))
+    return losses
+
+
 scale_stage = LearnableScale()
 scale_losses = train(build_training_pipeline(scale_stage, targets), learning_rate=3.0, epochs=30)
+learned_scale = np.asarray(scale_stage.scale[...])
 print(f"Loss: first {scale_losses[0]:.4f}, last {scale_losses[-1]:.2e}")
-print(f"Learned scale: {np.round(np.asarray(scale_stage.scale[...]), 3)} (true {TRUE_SCALE})")
+print(f"Learned scale: {np.round(learned_scale, 3)} (true {TRUE_SCALE})")
+# Expected output:
+# Loss: first 0.4902, last 0.00e+00
+# Learned scale: [ 2.  -1.   0.5] (true [ 2.  -1.   0.5])
 ```
 
 **Terminal Output:**
@@ -189,15 +280,37 @@ brightened and three quarters contrast-adjusted, produced by the same two operat
 static weights `[0.25, 0.75]`.
 
 ```python
+def image_operators() -> list:
+    """A brightness operator and a contrast operator, both deterministic."""
+    brightness = BrightnessOperator(
+        BrightnessOperatorConfig(field_key="image", brightness_delta=0.2, stochastic=False),
+        rngs=nnx.Rngs(0),
+    )
+    contrast = ContrastOperator(
+        ContrastOperatorConfig(field_key="image", contrast_factor=1.5, stochastic=False),
+        rngs=nnx.Rngs(0),
+    )
+    return [brightness, contrast]
+
+
 def mixture(weights: list[float], learnable: bool) -> CompositeOperatorModule:
+    """Mix the two image operators' outputs with ``weights``."""
     config = CompositeOperatorConfig(
         strategy=CompositionStrategy.WEIGHTED_PARALLEL,
         weights=weights,
         learnable_weights=learnable,
     )
-    return CompositeOperatorModule(config, operators=image_operators(),  # a BrightnessOperator and a ContrastOperator
-        )
+    return CompositeOperatorModule(config, operators=image_operators())
 
+
+target_mixture = mixture([0.25, 0.75], learnable=False)
+target_pipeline = Pipeline(
+    source=MemorySource(MemorySourceConfig(), data={"image": images}),
+    stages=[target_mixture],
+    batch_size=BATCH_SIZE,
+    rngs=nnx.Rngs(0),
+)
+mixed_targets = np.concatenate([np.asarray(batch["image"]) for batch in target_pipeline])
 
 learned_mixture = mixture([0.5, 0.5], learnable=True)
 print(f"Mixed field: {learned_mixture.config.mix_fields}")
@@ -205,8 +318,14 @@ print(f"Initial mixture weights: {np.round(np.asarray(learned_mixture.mixture_we
 mixture_losses = train(
     build_training_pipeline(learned_mixture, mixed_targets), learning_rate=5.0, epochs=200
 )
+learned_weights = np.asarray(learned_mixture.mixture_weights())
 print(f"Loss: first {mixture_losses[0]:.5f}, last {mixture_losses[-1]:.2e}")
-print(f"Learned mixture weights: {np.round(np.asarray(learned_mixture.mixture_weights()), 3)} (target [0.25 0.75])")
+print(f"Learned mixture weights: {np.round(learned_weights, 3)} (target [0.25 0.75])")
+# Expected output (an L40S run; the converged loss varies by hardware):
+# Mixed field: ('image',)
+# Initial mixture weights: [0.5 0.5]
+# Loss: first 0.00296, last 8.48e-10
+# Learned mixture weights: [0.25 0.75] (target [0.25 0.75])
 ```
 
 **Terminal Output:**

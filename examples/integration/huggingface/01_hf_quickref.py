@@ -30,7 +30,7 @@ with seamless integration into your data pipelines.
 By the end of this example, you will be able to:
 
 1. Configure `HFEagerSource` for HuggingFace datasets
-2. Use streaming mode for large datasets
+2. Load a dataset eagerly into JAX arrays
 3. Inspect dataset structure and contents
 4. Apply transformations to HuggingFace data
 """
@@ -70,11 +70,14 @@ Key parameters:
 
 - `name`: Dataset identifier (e.g., "mnist", "imdb", "squad")
 - `split`: Which split to use ("train", "test", "validation")
-- `streaming`: Enable for large datasets to avoid full download
+- `shuffle` / `seed`: Shuffle the records, reproducibly
+
+For datasets too large to download, `HFStreamingSource` with `HFStreamingConfig(streaming=True)`
+reads records on the fly (see the HuggingFace tutorial).
 """
 
 # %%
-# Load MNIST dataset in streaming mode
+# Load the MNIST training split eagerly
 config = HFEagerConfig(
     name="ylecun/mnist",
     split="train",
@@ -83,11 +86,8 @@ config = HFEagerConfig(
 source = HFEagerSource(config, rngs=nnx.Rngs(0))
 print(f"Loaded HuggingFace dataset: {config.name}")
 
-# Check dataset size (may not be available in streaming mode)
-try:
-    print(f"Dataset size: {len(source)}")
-except (NotImplementedError, TypeError):
-    print("Dataset size: N/A (streaming mode)")
+# An eager source knows its size
+print(f"Dataset size: {len(source)}")
 
 # %% [markdown]
 """
@@ -120,8 +120,8 @@ for i in range(3):
 # Expected output (MNIST):
 # Example 1:
 #   Keys: ['image', 'label']
-#   image: shape=(28, 28), dtype=uint8
-#   label: int = 5
+#   image: shape=(1, 28, 28), dtype=uint8
+#   label: shape=(1,), dtype=int32
 
 # %% [markdown]
 """
@@ -179,7 +179,7 @@ print(f"  Image range: [{image_batch.min():.3f}, {image_batch.max():.3f}]")
 | Feature | Value |
 |---------|-------|
 | Dataset | MNIST from HuggingFace Hub |
-| Mode | Streaming (no full download) |
+| Mode | Eager (downloaded and cached locally) |
 | Batch Size | 32 |
 | Output Shape | (32, 28, 28, 1) |
 | Normalization | [0, 255] → [0, 1] |
@@ -188,7 +188,7 @@ HuggingFace integration provides:
 
 - Access to 100,000+ datasets
 - Automatic caching and versioning
-- Streaming for large datasets
+- Streaming (`HFStreamingSource`) for datasets too large to download
 - Seamless Datarax pipeline integration
 """
 

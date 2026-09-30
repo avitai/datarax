@@ -64,13 +64,41 @@ a `RandomMap` transform receives. The `DataLoader` runs the transforms record by
 Python, in worker processes when `worker_count` is above zero.
 
 ```python
+class FeatureRecords(grain.sources.RandomAccessDataSource):
+    """One ``{"x": row}`` record per row of ``features``."""
+
+    def __init__(self, values: np.ndarray) -> None:
+        """Keep the rows the records are read from."""
+        self._values = values
+
+    def __len__(self) -> int:
+        """Return the number of records."""
+        return len(self._values)
+
+    def __getitem__(self, index: int) -> dict[str, np.ndarray]:
+        """Return the record at ``index``."""
+        return {"x": self._values[index]}
+
+    def __repr__(self) -> str:
+        """Describe the records, which Grain compares when it restores a checkpoint."""
+        return f"FeatureRecords(shape={self._values.shape}, dtype={self._values.dtype})"
+
+
 class AddNoise(grain.transforms.RandomMap):
-    def random_map(self, element: dict, rng: np.random.Generator) -> dict:
+    """Add Gaussian noise drawn from the generator Grain passes with each record."""
+
+    # Grain declares RandomMap.random_map with no return annotation, so a type checker infers
+    # None; its own documented override annotates the return as this one does.
+    def random_map(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self, element: dict, rng: np.random.Generator
+    ) -> dict:
+        """Return the record with noise added to ``x``."""
         noise = rng.normal(scale=NOISE_SCALE, size=element["x"].shape).astype(np.float32)
         return {"x": element["x"] + noise}
 
 
 def build_grain_loader() -> grain.DataLoader:
+    """A shuffled, noisy, batched loader over one epoch of ``features``."""
     sampler = grain.samplers.IndexSampler(
         num_records=NUM_RECORDS, shuffle=True, num_epochs=1, seed=SEED
     )
@@ -84,6 +112,7 @@ def build_grain_loader() -> grain.DataLoader:
 grain_iterator = iter(build_grain_loader())
 first_grain_batch = next(grain_iterator)
 print(f"Grain batch: x={first_grain_batch['x'].shape} {type(first_grain_batch['x']).__name__}")
+# Expected output:
 ```
 
 **Terminal Output:**
@@ -129,11 +158,13 @@ record, and iteration runs source, stages and batching as one compiled step.
 
 ```python
 def add_noise(element, key):
+    """Add Gaussian noise drawn from this record's own key."""
     x = element.data["x"]
     return element.update_data({"x": x + NOISE_SCALE * jax.random.normal(key, x.shape)})
 
 
 def build_datarax_pipeline() -> Pipeline:
+    """A shuffled, noisy, batched pipeline over ``features``."""
     source = MemorySource(
         MemorySourceConfig(shuffle=True), data={"x": features}, rngs=nnx.Rngs(SEED)
     )
@@ -145,9 +176,19 @@ def build_datarax_pipeline() -> Pipeline:
     return Pipeline(source=source, stages=[noise], batch_size=BATCH_SIZE, rngs=nnx.Rngs(SEED))
 
 
+# A pipeline over a random-access source iterates through a checkpointable PipelineIterator.
 datarax_iterator = iter(build_datarax_pipeline())
+if not isinstance(datarax_iterator, PipelineIterator):
+    raise TypeError("a MemorySource pipeline iterates through a PipelineIterator")
 first_datarax_batch = next(datarax_iterator)
-print(f"Datarax batch: x={first_datarax_batch['x'].shape} {type(first_datarax_batch['x']).__name__}")
+print(
+    f"Datarax batch: x={first_datarax_batch['x'].shape} {type(first_datarax_batch['x']).__name__}"
+)
+# Expected output:
+# Datarax batch: x=(8, 3) ArrayImpl
+
+# %% [markdown]
+"""
 ```
 
 **Terminal Output:**
@@ -169,6 +210,8 @@ print(f"Datarax checkpoint: {datarax_state}")
 expected_datarax = [np.asarray(next(datarax_iterator)["x"]) for _ in range(2)]
 
 resumed_datarax = iter(build_datarax_pipeline())
+if not isinstance(resumed_datarax, PipelineIterator):
+    raise TypeError("a MemorySource pipeline iterates through a PipelineIterator")
 resumed_datarax.set_state(datarax_state)
 resumed_datarax_batches = [np.asarray(next(resumed_datarax)["x"]) for _ in range(2)]
 datarax_matches = all(
@@ -176,6 +219,9 @@ datarax_matches = all(
     for got, want in zip(resumed_datarax_batches, expected_datarax, strict=True)
 )
 print(f"Datarax resumes exactly: {datarax_matches}")
+# Expected output:
+# Datarax checkpoint: {'position': 8, 'epoch': 0, 'rng_counts': [1, 0], 'version': 2, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 1, 'shuffled': True}}  # noqa: E501
+# Datarax resumes exactly: True
 ```
 
 **Terminal Output:**

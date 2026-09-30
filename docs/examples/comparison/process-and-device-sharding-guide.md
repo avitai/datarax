@@ -75,7 +75,20 @@ shares can be printed side by side. In a real multi-process run, Grain's
 `jax.process_count()` pick the share for the process they run in.
 
 ```python
+class Records(grain.sources.RandomAccessDataSource):
+    """``{"x", "y", "index"}`` records read by index."""
+
+    def __len__(self) -> int:
+        """Return the number of records."""
+        return NUM_RECORDS
+
+    def __getitem__(self, i: int) -> dict[str, np.ndarray]:
+        """Return the record at ``i``."""
+        return {key: value[i] for key, value in data.items()}
+
+
 def build_grain_loader(shard_index: int) -> grain.DataLoader:
+    """One epoch of this shard's records, in order, batched."""
     shard = grain.sharding.ShardOptions(shard_index=shard_index, shard_count=NUM_PROCESSES)
     sampler = grain.samplers.IndexSampler(
         num_records=NUM_RECORDS, shard_options=shard, shuffle=False, num_epochs=1, seed=0
@@ -88,14 +101,36 @@ def build_grain_loader(shard_index: int) -> grain.DataLoader:
 
 
 def build_datarax_pipeline(shard_id: int, stages: list | None = None) -> Pipeline:
+    """One epoch of this worker's records, in order, batched."""
     source = MemorySource(
         MemorySourceConfig(shard_id=shard_id, num_workers=NUM_PROCESSES), data=data
     )
     return Pipeline(source=source, stages=stages or [], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
 
 
+def served_records(batches) -> np.ndarray:
+    """Return the index of every record the batches hold, in the order served."""
+    return np.concatenate([np.asarray(batch["index"]) for batch in batches])
+
+
 grain_shares = [served_records(build_grain_loader(k)) for k in range(NUM_PROCESSES)]
 datarax_shares = [served_records(build_datarax_pipeline(k)) for k in range(NUM_PROCESSES)]
+for k in range(NUM_PROCESSES):
+    print(
+        f"Grain shard {k}: records {grain_shares[k][:4].tolist()} ... {grain_shares[k][-2:].tolist()}"
+    )
+for k in range(NUM_PROCESSES):
+    print(
+        f"Datarax worker {k}: records {datarax_shares[k][:4].tolist()} ... "
+        f"{datarax_shares[k][-2:].tolist()}"
+    )
+print(f"ShardByJaxProcess() on this process: {grain.sharding.ShardByJaxProcess()}")
+# Expected output:
+# Grain shard 0: records [0, 1, 2, 3] ... [30, 31]
+# Grain shard 1: records [32, 33, 34, 35] ... [62, 63]
+# Datarax worker 0: records [0, 2, 4, 6] ... [60, 62]
+# Datarax worker 1: records [1, 3, 5, 7] ... [61, 63]
+# ShardByJaxProcess() on this process: ShardByJaxProcess(shard_index=0, shard_count=1, drop_remainder=False)
 ```
 
 **Terminal Output:**
@@ -105,6 +140,28 @@ Grain shard 1: records [32, 33, 34, 35] ... [62, 63]
 Datarax worker 0: records [0, 2, 4, 6] ... [60, 62]
 Datarax worker 1: records [1, 3, 5, 7] ... [61, 63]
 ShardByJaxProcess() on this process: ShardByJaxProcess(shard_index=0, shard_count=1, drop_remainder=False)
+```
+
+Each library's two shares are disjoint and together cover every record once.
+
+```python
+def is_partition(shares: list[np.ndarray]) -> bool:
+    """True when the shares are disjoint and together cover every record once."""
+    combined = np.concatenate(shares)
+    return len(combined) == NUM_RECORDS and np.array_equal(np.sort(combined), index)
+
+
+grain_partitions = is_partition(grain_shares)
+datarax_partitions = is_partition(datarax_shares)
+print(f"Grain shards partition the records: {grain_partitions}")
+print(f"Datarax workers partition the records: {datarax_partitions}")
+# Expected output:
+# Grain shards partition the records: True
+# Datarax workers partition the records: True
+```
+
+**Terminal Output:**
+```
 Grain shards partition the records: True
 Datarax workers partition the records: True
 ```
@@ -125,13 +182,47 @@ records or two processes serve 32 each. Grain's generator belongs to the draw in
 each shard, so the same record gets different noise under a different partition.
 
 ```python
+def add_noise(element, key):
+    """Add Gaussian noise drawn from this record's own key."""
+    x = element.data["x"]
+    return element.update_data({"x": x + NOISE_SCALE * jax.random.normal(key, x.shape)})
+
+
+def noise_operator() -> ElementOperator:
+    """A stochastic operator with a fixed base key."""
+    return ElementOperator(
+        ElementOperatorConfig(stochastic=True, stream_name="noise"),
+        fn=add_noise,
+        rngs=nnx.Rngs(noise=0),
+    )
+
+
+def noise_by_record(batches) -> np.ndarray:
+    """Return the noise each record received, indexed by record."""
+    noise = np.zeros_like(features)
+    for batch in batches:
+        batch_index = np.asarray(batch["index"])
+        noise[batch_index] = np.asarray(batch["x"]) - features[batch_index]
+    return noise
+
+
+unpartitioned = Pipeline(
+    source=MemorySource(MemorySourceConfig(), data=data),
+    stages=[noise_operator()],
+    batch_size=BATCH_SIZE,
+    rngs=nnx.Rngs(0),
+)
 noise_on_one_process = noise_by_record(unpartitioned)
 noise_on_two_processes = np.zeros_like(features)
 for k in range(NUM_PROCESSES):
     share = build_datarax_pipeline(k, stages=[noise_operator()])
     noise_on_two_processes[datarax_shares[k]] = noise_by_record(share)[datarax_shares[k]]
-print(f"Datarax: same noise per record on one process and on two: "
-      f"{np.array_equal(noise_on_one_process, noise_on_two_processes)}")
+datarax_noise_independent_of_split = np.array_equal(noise_on_one_process, noise_on_two_processes)
+print(
+    f"Datarax: same noise per record on one process and on two: {datarax_noise_independent_of_split}"
+)
+# Expected output:
+# Datarax: same noise per record on one process and on two: True
 ```
 
 **Terminal Output:**
@@ -153,12 +244,28 @@ stitches the slices into one global array.
 ```python
 mesh = DeviceMeshManager.create_data_parallel_mesh()
 batch_sharding = create_data_parallel_sharding(mesh)
+print(f"Mesh: {dict(zip(mesh.axis_names, mesh.device_ids.shape, strict=True))}")
 
 grain_batch = next(iter(build_grain_loader(0)))
 datarax_batch = next(iter(build_datarax_pipeline(0)))
 with jax.set_mesh(mesh):
     placed_grain = place_batch_on_shards(grain_batch, batch_sharding)
     placed_datarax = place_batch_on_shards(datarax_batch, batch_sharding)
+for name, host, placed in [
+    ("Grain", grain_batch, placed_grain),
+    ("Datarax", datarax_batch, placed_datarax),
+]:
+    print(
+        f"{name}: {type(host['x']).__name__} {host['x'].shape} -> "
+        f"{type(placed['x']).__name__} {placed['x'].shape} on {placed['x'].sharding.spec}"
+    )
+placements_match = placed_grain["x"].sharding == placed_datarax["x"].sharding
+print(f"Both batches carry the same sharding: {placements_match}")
+# Expected output (one CPU device; the mesh size varies by hardware):
+# Mesh: {'data': 1}
+# Grain: ndarray (8, 3) -> ArrayImpl (8, 3) on P('data',)
+# Datarax: ArrayImpl (8, 3) -> ArrayImpl (8, 3) on P('data',)
+# Both batches carry the same sharding: True
 ```
 
 **Terminal Output** (one CPU device; the mesh size varies by hardware):
@@ -180,12 +287,34 @@ loaders serve Grain's share: the same records in the same order give the same lo
 the fit reaches the true weights.
 
 ```python
+class LinearRegression(nnx.Module):
+    """One linear layer from three features to one target."""
+
+    def __init__(self, *, rngs: nnx.Rngs) -> None:
+        """Initialize the layer."""
+        self.linear = nnx.Linear(3, 1, rngs=rngs)
+
+    def __call__(self, x: jax.Array) -> jax.Array:
+        """Predict the target."""
+        return self.linear(x)
+
+
+def mse_loss(model: nnx.Module, batch: dict) -> jax.Array:
+    """Mean squared error of the prediction against ``y``."""
+    return jnp.mean((model(batch["x"]) - batch["y"]) ** 2)
+
+
 @nnx.jit
 def train_step(model: LinearRegression, optimizer: nnx.Optimizer, batch: dict) -> jax.Array:
+    """One data-parallel step on a batch already placed on the mesh."""
     return spmd_train_step(model, optimizer, mse_loss, batch)
 
 
 def train(build_batches, epochs: int = 10) -> tuple[list[float], np.ndarray]:
+    """Train a fresh model over ``epochs`` loaders from ``build_batches``.
+
+    Returns the loss of every step and the weights the model ends with.
+    """
     model = LinearRegression(rngs=nnx.Rngs(0))
     optimizer = nnx.Optimizer(model, optax.sgd(learning_rate=0.2), wrt=nnx.Param)
     losses = []
@@ -197,8 +326,29 @@ def train(build_batches, epochs: int = 10) -> tuple[list[float], np.ndarray]:
     return losses, np.asarray(model.linear.kernel[...])
 
 
+def datarax_over_grain_share() -> Pipeline:
+    """A Datarax pipeline over the records Grain's shard 0 serves, in the same order."""
+    share = {key: value[grain_shares[0]] for key, value in data.items()}
+    source = MemorySource(MemorySourceConfig(), data=share)
+    return Pipeline(source=source, stages=[], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
+
+
 grain_losses, grain_weights = train(lambda: build_grain_loader(0))
 datarax_losses, datarax_weights = train(datarax_over_grain_share)
+losses_match = np.allclose(grain_losses, datarax_losses)
+print(
+    f"Grain:   {len(grain_losses)} steps, loss first {grain_losses[0]:.4f}, last {grain_losses[-1]:.2e}"
+)
+print(
+    f"Datarax: {len(datarax_losses)} steps, loss first {datarax_losses[0]:.4f}, last {datarax_losses[-1]:.2e}"
+)
+print(f"Same records through both loaders give the same losses: {losses_match}")
+print(f"Learned weights: {np.round(datarax_weights.ravel(), 3)} (true {TRUE_WEIGHTS.ravel()})")
+# Expected output (an L40S run; the converged loss varies by hardware):
+# Grain:   40 steps, loss first 3.7473, last 5.77e-10
+# Datarax: 40 steps, loss first 3.7473, last 5.77e-10
+# Same records through both loaders give the same losses: True
+# Learned weights: [ 2.  -1.   0.5] (true [ 2.  -1.   0.5])
 ```
 
 **Terminal Output:**

@@ -177,6 +177,7 @@ source2 = HFEagerSource(
         name="stanfordnlp/imdb",
         split="train",
         exclude_keys={"text"},  # Exclude text field - can't batch strings
+        shuffle=True,  # The split starts with negative reviews; shuffle for a mixed sample
     ),
     rngs=nnx.Rngs(1),
 )
@@ -289,6 +290,7 @@ def main():
         name="stanfordnlp/imdb",
         split="train",
         exclude_keys={"text"},
+        shuffle=True,
     )
     source = HFEagerSource(config, rngs=nnx.Rngs(0))
 

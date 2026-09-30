@@ -163,6 +163,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with jupytext. A notebook whose prose was stale reported as synced, and `--fix` left it
   stale.
 
+- Example docs pages show each script's code verbatim with the output a GPU run of it printed
+  (an NVIDIA L40S; the sharding quickref on two), and their figures come from that run: 136
+  output lines on 21 pages had come from older runs or had been typed. Scripts' expected-output
+  comments carry the values the run printed. The HuggingFace quickref describes its eager load,
+  the tutorial compares an `HFStreamingSource` with an eager source, and the IMDB quickref
+  shuffles its pipeline source (the train split starts with negative reviews).
+
 ## [0.1.17] - 2026-09-25
 
 ### Added

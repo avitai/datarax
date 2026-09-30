@@ -88,44 +88,85 @@ Fashion-MNIST contains 70,000 grayscale images of clothing items, designed as a 
 ### Setup and Constants
 
 ```python
+# GPU Memory Configuration
 import os
+
+
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import tensorflow as tf
+
+
 tf.config.set_visible_devices([], "GPU")
+
+# Core imports
+import time
 
 import jax
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
+import numpy as np
 from flax import nnx
+from substrax.artifacts import resolve_output_dir
 
-from datarax.pipeline import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.modality.image import (
-    BrightnessOperator, BrightnessOperatorConfig,
-    ContrastOperator, ContrastOperatorConfig,
-    RotationOperator, RotationOperatorConfig,
-    NoiseOperator, NoiseOperatorConfig,
-    PatchDropoutOperator, PatchDropoutOperatorConfig,
-    DropoutOperator, DropoutOperatorConfig,
+    BrightnessOperator,
+    BrightnessOperatorConfig,
+    ContrastOperator,
+    ContrastOperatorConfig,
+    DropoutOperator,
+    DropoutOperatorConfig,
+    NoiseOperator,
+    NoiseOperatorConfig,
+    PatchDropoutOperator,
+    PatchDropoutOperatorConfig,
+    RotationOperator,
+    RotationOperatorConfig,
 )
+
+# Datarax imports
+from datarax.pipeline import Pipeline
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 
-# Fashion-MNIST normalization constants
+
+print(f"JAX backend: {jax.default_backend()}")
+```
+
+**Terminal Output:**
+```
+JAX backend: gpu
+```
+
+Constants:
+
+```python
+# Constants
+FASHION_CLASSES = [
+    "T-shirt/top",
+    "Trouser",
+    "Pullover",
+    "Dress",
+    "Coat",
+    "Sandal",
+    "Shirt",
+    "Sneaker",
+    "Bag",
+    "Ankle boot",
+]
+
+# Normalization (similar to MNIST)
 FASHION_MEAN = 0.2860
 FASHION_STD = 0.3530
 
 BATCH_SIZE = 64
 TRAIN_SAMPLES = 5000  # Subset for demo
 
-FASHION_CLASSES = [
-    "T-shirt/top", "Trouser", "Pullover", "Dress", "Coat",
-    "Sandal", "Shirt", "Sneaker", "Bag", "Ankle boot"
-]
+print(f"Fashion-MNIST classes: {FASHION_CLASSES}")
 ```
 
 **Terminal Output:**
 ```
-JAX backend: gpu
 Fashion-MNIST classes: ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat', 'Sandal', 'Shirt', 'Sneaker', 'Bag', 'Ankle boot']
 ```
 
@@ -141,10 +182,21 @@ train_config = TFDSEagerConfig(
 )
 
 train_source = TFDSEagerSource(train_config, rngs=nnx.Rngs(42))
+print(f"Loaded {len(train_source)} Fashion-MNIST samples")
+```
 
+**Terminal Output:**
+```
+Loaded 5000 Fashion-MNIST samples
+```
+
+Preprocessing operator:
+
+```python
 # Basic preprocessing
-def preprocess_fashion(element, key=None):
+def preprocess_fashion(element, key=None):  # noqa: ARG001
     """Normalize Fashion-MNIST images."""
+    del key
     image = element.data["image"]
 
     # Convert to float32 and normalize
@@ -159,16 +211,12 @@ def preprocess_fashion(element, key=None):
 
     return element.update_data({"image": image})
 
+
 preprocessor = ElementOperator(
     ElementOperatorConfig(stochastic=False),
     fn=preprocess_fashion,
     rngs=nnx.Rngs(0),
 )
-```
-
-**Terminal Output:**
-```
-Loaded 5000 Fashion-MNIST samples
 ```
 
 ## Part 3: Define Augmentation Operators
@@ -236,12 +284,12 @@ noise_op = NoiseOperator(
 ### 4. Regularization Augmentations
 
 ```python
-# PatchDropout (Cutout-style)
+# 5. PatchDropout (Cutout-style)
 patch_dropout_op = PatchDropoutOperator(
     PatchDropoutOperatorConfig(
         field_key="image",
-        patch_size=(6, 6),
-        num_patches=2,
+        patch_size=(6, 6),  # 6x6 patches
+        num_patches=2,  # Drop 2 patches
         drop_value=0.0,
         stochastic=True,
         stream_name="patch_dropout",
@@ -249,7 +297,7 @@ patch_dropout_op = PatchDropoutOperator(
     rngs=nnx.Rngs(patch_dropout=400),
 )
 
-# Pixel dropout
+# 6. Pixel dropout (alternative to patch)
 pixel_dropout_op = DropoutOperator(
     DropoutOperatorConfig(
         field_key="image",
@@ -259,6 +307,14 @@ pixel_dropout_op = DropoutOperator(
     ),
     rngs=nnx.Rngs(dropout=500),
 )
+
+print("Created augmentation operators:")
+print("  1. Brightness: ±0.15")
+print("  2. Contrast: 0.85-1.15x")
+print("  3. Rotation: ±10°")
+print("  4. Gaussian noise: std=0.1")
+print("  5. PatchDropout: 2x 6x6 patches")
+print("  6. PixelDropout: 10% probability")
 ```
 
 **Terminal Output:**
@@ -277,12 +333,6 @@ Created augmentation operators:
 Create pipelines with single augmentations to see their individual effects.
 
 ```python
-import matplotlib.pyplot as plt
-import numpy as np
-from substrax.artifacts import resolve_output_dir
-
-output_dir = resolve_output_dir("examples").path
-
 def create_single_aug_pipeline(operator, seed=0, num_samples=64):
     """Create pipeline with single augmentation for visualization."""
     source = TFDSEagerSource(
@@ -299,24 +349,103 @@ def create_single_aug_pipeline(operator, seed=0, num_samples=64):
 
     return Pipeline(source=source, stages=stages, batch_size=64, rngs=nnx.Rngs(0))
 
+
 # Get baseline (no augmentation)
 baseline_source = TFDSEagerSource(
     TFDSEagerConfig(name="fashion_mnist", split="train[:64]", shuffle=False),
     rngs=nnx.Rngs(0),
 )
-baseline_pipeline = Pipeline(source=baseline_source, stages=[preprocessor], batch_size=64, rngs=nnx.Rngs(0))
+baseline_pipeline = Pipeline(
+    source=baseline_source,
+    stages=[
+        ElementOperator(
+            ElementOperatorConfig(stochastic=False), fn=preprocess_fashion, rngs=nnx.Rngs(0)
+        )
+    ],
+    batch_size=64,
+    rngs=nnx.Rngs(0),
+)
+
 baseline_batch = next(iter(baseline_pipeline))
 baseline_images = np.array(baseline_batch["image"])
 baseline_labels = np.array(baseline_batch["label"])
+```
 
-# Create comparison grid
+One pipeline per augmentation type, each with its own operator:
+
+```python
+# Create pipelines for each augmentation type
 aug_configs = [
     ("Original", None, baseline_images),
-    ("Brightness", brightness_op, None),
-    ("Contrast", contrast_op, None),
-    ("Rotation", rotation_op, None),
-    ("Noise", noise_op, None),
-    ("PatchDropout", patch_dropout_op, None),
+    (
+        "Brightness",
+        BrightnessOperator(
+            BrightnessOperatorConfig(
+                field_key="image",
+                brightness_range=(-0.15, 0.15),
+                stochastic=True,
+                stream_name="brightness",
+            ),
+            rngs=nnx.Rngs(brightness=100),
+        ),
+        None,
+    ),
+    (
+        "Contrast",
+        ContrastOperator(
+            ContrastOperatorConfig(
+                field_key="image",
+                contrast_range=(0.85, 1.15),
+                stochastic=True,
+                stream_name="contrast",
+            ),
+            rngs=nnx.Rngs(contrast=200),
+        ),
+        None,
+    ),
+    (
+        "Rotation",
+        RotationOperator(
+            RotationOperatorConfig(
+                field_key="image",
+                angle_range=(-10.0, 10.0),
+                fill_value=0.0,
+                stochastic=True,
+                stream_name="rotation",
+            ),
+            rngs=nnx.Rngs(rotation=400),
+        ),
+        None,
+    ),
+    (
+        "Noise",
+        NoiseOperator(
+            NoiseOperatorConfig(
+                field_key="image",
+                mode="gaussian",
+                noise_std=0.1,
+                stochastic=True,
+                stream_name="noise",
+            ),
+            rngs=nnx.Rngs(noise=300),
+        ),
+        None,
+    ),
+    (
+        "PatchDropout",
+        PatchDropoutOperator(
+            PatchDropoutOperatorConfig(
+                field_key="image",
+                patch_size=(6, 6),
+                num_patches=2,
+                drop_value=0.0,
+                stochastic=True,
+                stream_name="patch_dropout",
+            ),
+            rngs=nnx.Rngs(patch_dropout=400),
+        ),
+        None,
+    ),
 ]
 
 # Get augmented samples
@@ -325,8 +454,14 @@ for i, (name, op, imgs) in enumerate(aug_configs):
         pipeline = create_single_aug_pipeline(op, seed=i)
         batch = next(iter(pipeline))
         aug_configs[i] = (name, op, np.array(batch["image"]))
+```
 
+Plot the comparison grid:
+
+```python
 # Plot augmentation comparison grid
+output_dir = resolve_output_dir("examples").path
+
 fig, axes = plt.subplots(6, 8, figsize=(16, 12))
 fig.suptitle("Fashion-MNIST Augmentation Effects", fontsize=14)
 
@@ -345,10 +480,10 @@ for row_idx, (name, _, images) in enumerate(aug_configs):
 
 plt.tight_layout()
 plt.savefig(
-    output_dir / "cv-fashion-augmentation-grid.png",
-    dpi=150, bbox_inches="tight", facecolor="white"
+    output_dir / "cv-fashion-augmentation-grid.png", dpi=150, bbox_inches="tight", facecolor="white"
 )
 plt.close()
+print(f"Saved: {output_dir / 'cv-fashion-augmentation-grid.png'}")
 ```
 
 **Terminal Output:**
@@ -382,7 +517,7 @@ def create_full_augmentation_pipeline(seed=42):
         rngs=nnx.Rngs(0),
     )
 
-    # Lighter augmentations for combined use
+    # Augmentations
     brightness = BrightnessOperator(
         BrightnessOperatorConfig(
             field_key="image",
@@ -428,7 +563,7 @@ def create_full_augmentation_pipeline(seed=42):
     patch_dropout = PatchDropoutOperator(
         PatchDropoutOperatorConfig(
             field_key="image",
-            patch_size=(4, 4),  # Smaller patches
+            patch_size=(4, 4),  # Smaller patches for combined use
             num_patches=1,
             drop_value=0.0,
             stochastic=True,
@@ -438,9 +573,16 @@ def create_full_augmentation_pipeline(seed=42):
     )
 
     # Build pipeline
-    return (
-        Pipeline(source=source, stages=[prep, brightness, contrast, rotation, noise, patch_dropout], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
+    return Pipeline(
+        source=source,
+        stages=[prep, brightness, contrast, rotation, noise, patch_dropout],
+        batch_size=BATCH_SIZE,
+        rngs=nnx.Rngs(0),
     )
+
+
+print("Full augmentation pipeline:")
+print("  Source -> Preprocess -> Brightness -> Contrast -> Rotation -> Noise -> PatchDropout")
 ```
 
 **Terminal Output:**
@@ -459,8 +601,9 @@ batch compiles the session): a 64-sample source yields one batch, which leaves n
 average once the warm-up is skipped.
 
 ```python
-import time
-
+# Time each pipeline over the training split for num_batches batches after a warm-up batch
+# (the first batch compiles the session). A 64-sample source yields one batch, which
+# leaves nothing to average once the warm-up is skipped.
 num_batches = 20
 latencies = {}
 
@@ -480,13 +623,28 @@ for name, op, _ in aug_configs:
 print("Pipeline latency per batch (ms):")
 for name, latency in latencies.items():
     print(f"  {name}: {latency:.2f} ms")
+```
 
+**Terminal Output:**
+```
+Pipeline latency per batch (ms):
+  Original: 0.46 ms
+  Brightness: 0.51 ms
+  Contrast: 0.47 ms
+  Rotation: 0.53 ms
+  Noise: 0.45 ms
+  PatchDropout: 0.59 ms
+```
+
+Plot the latency comparison:
+
+```python
 # Plot latency comparison
 fig, ax = plt.subplots(figsize=(10, 6))
 names = list(latencies.keys())
 values = list(latencies.values())
 
-bars = ax.barh(names, values, color=plt.cm.viridis(np.linspace(0.2, 0.8, len(names))))
+bars = ax.barh(names, values, color=plt.cm.viridis(np.linspace(0.2, 0.8, len(names))))  # type: ignore[reportAttributeAccessIssue]
 ax.set_xlabel("Latency (ms)")
 ax.set_title("Pipeline Latency per Batch (64 samples)")
 
@@ -496,17 +654,11 @@ ax.bar_label(bars, labels=[f"{val:.2f} ms" for val in values], padding=3, fontsi
 plt.tight_layout()
 plt.savefig(output_dir / "cv-fashion-latency.png", dpi=150, bbox_inches="tight", facecolor="white")
 plt.close()
+print(f"Saved: {output_dir / 'cv-fashion-latency.png'}")
 ```
 
 **Terminal Output:**
 ```
-Pipeline latency per batch (ms):
-  Original: 0.26 ms
-  Brightness: 0.25 ms
-  Contrast: 0.29 ms
-  Rotation: 0.21 ms
-  Noise: 0.25 ms
-  PatchDropout: 0.32 ms
 Saved: docs/assets/images/examples/cv-fashion-latency.png
 ```
 
@@ -521,12 +673,12 @@ full_batch = next(iter(full_pipeline))
 full_images = np.array(full_batch["image"])
 full_labels = np.array(full_batch["label"])
 
-# Plot comparison: Original vs Fully Augmented
+# Plot comparison
 fig, axes = plt.subplots(2, 8, figsize=(16, 4))
 fig.suptitle("Original vs Fully Augmented Fashion-MNIST", fontsize=14)
 
 for i in range(8):
-    # Original
+    # Original (from baseline)
     img_orig = baseline_images[i] * FASHION_STD + FASHION_MEAN
     img_orig = np.clip(img_orig, 0, 1).squeeze()
     axes[0, i].imshow(img_orig, cmap="gray")
@@ -544,10 +696,10 @@ axes[1, 0].set_ylabel("Augmented", fontsize=10)
 
 plt.tight_layout()
 plt.savefig(
-    output_dir / "cv-fashion-augmented.png",
-    dpi=150, bbox_inches="tight", facecolor="white"
+    output_dir / "cv-fashion-augmented.png", dpi=150, bbox_inches="tight", facecolor="white"
 )
 plt.close()
+print(f"Saved: {output_dir / 'cv-fashion-augmented.png'}")
 ```
 
 **Terminal Output:**
@@ -562,7 +714,7 @@ Saved: docs/assets/images/examples/cv-fashion-augmented.png
 ```mermaid
 flowchart TB
     subgraph Source["Data Source"]
-        TFDS[TFDSEagerSource<br/>Fashion-MNIST<br/>60k samples]
+        TFDS[TFDSEagerSource<br/>Fashion-MNIST<br/>5k-sample subset]
     end
 
     subgraph Preprocess["Preprocessing"]
@@ -598,15 +750,16 @@ flowchart TB
 
 | Pipeline | Parameter | Latency |
 |----------|-----------|---------|
-| Original (preprocess only) | - | 0.26 ms |
-| Brightness | ±0.15 | 0.25 ms |
-| Contrast | 0.85-1.15x | 0.29 ms |
-| Rotation | ±10° | 0.21 ms |
-| Noise | std=0.1 | 0.25 ms |
-| PatchDropout | 2×6×6 | 0.32 ms |
+| Original (preprocess only) | - | 0.46 ms |
+| Brightness | ±0.15 | 0.51 ms |
+| Contrast | 0.85-1.15x | 0.47 ms |
+| Rotation | ±10° | 0.53 ms |
+| Noise | std=0.1 | 0.45 ms |
+| PatchDropout | 2×6×6 | 0.59 ms |
 
-Every augmentation lands within the run-to-run spread of the preprocessing-only pipeline: at
-this batch size the per-batch cost is the pipeline step itself, not the augmentation.
+The augmented pipelines take 0.45 ms to 0.59 ms per batch against 0.46 ms for the
+preprocessing-only pipeline: at this batch size most of the per-batch cost is the pipeline
+step itself, not the augmentation.
 
 ### Best Practices
 

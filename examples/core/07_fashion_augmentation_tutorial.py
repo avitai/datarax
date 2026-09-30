@@ -649,15 +649,16 @@ Per-batch pipeline latency on an NVIDIA L40S, 64 samples per batch, 20 batches a
 
 | Pipeline | Parameter | Latency |
 |----------|-----------|---------|
-| Original (preprocess only) | - | 0.26 ms |
-| Brightness | ±0.15 | 0.25 ms |
-| Contrast | 0.85-1.15x | 0.29 ms |
-| Rotation | ±10° | 0.21 ms |
-| Noise | std=0.1 | 0.25 ms |
-| PatchDropout | 2×6×6 | 0.32 ms |
+| Original (preprocess only) | - | 0.46 ms |
+| Brightness | ±0.15 | 0.51 ms |
+| Contrast | 0.85-1.15x | 0.47 ms |
+| Rotation | ±10° | 0.53 ms |
+| Noise | std=0.1 | 0.45 ms |
+| PatchDropout | 2×6×6 | 0.59 ms |
 
-Every augmentation lands within the run-to-run spread of the preprocessing-only pipeline: at
-this batch size the per-batch cost is the pipeline step itself, not the augmentation.
+The augmented pipelines take 0.45 ms to 0.59 ms per batch against 0.46 ms for the
+preprocessing-only pipeline: at this batch size most of the per-batch cost is the pipeline
+step itself, not the augmentation.
 
 ### Best Practices
 

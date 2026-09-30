@@ -948,8 +948,8 @@ total_op_params = sum(
 )
 print(f"\nTotal operator parameters: {total_op_params:,}")
 # Expected output:
-#   HarmonicSynth: output keys=['amplitudes', 'f0_hz', 'audio'], audio shape=(1, 64000)
-#   FilteredNoise: output keys=['noise_magnitudes', 'audio'], audio shape=(1, 64000)
+#   HarmonicSynth: output keys=['amplitudes', 'audio', 'f0_hz'], audio shape=(1, 64000)
+#   FilteredNoise: output keys=['audio', 'noise_magnitudes'], audio shape=(1, 64000)
 #   Reverb: IR params=16000, audio shape=(1, 64000)
 #   Total operator parameters: 16,000
 
@@ -1303,7 +1303,7 @@ print(f"Synthesized audio shape: {test_synth.shape}")
 print(f"Audio range: [{float(test_synth[0].min()):.4f}, {float(test_synth[0].max()):.4f}]")
 # Expected output (values vary):
 # Synthesized audio shape: (1, 64000)
-# Audio range: [-0.0116, 0.0109]  (small before training — exp_sigmoid starts near-zero)
+# Audio range: [-0.0171, 0.0339]  (small before training: exp_sigmoid starts near zero)
 
 
 def evaluate_spectral_loss(
@@ -1550,11 +1550,11 @@ for name, component_grad in zip(component_names, grads):
     print(f"  {name:15s} | params: {n_params:6d} | |grad|: {total_grad_norm:.6f} | {status}")
 
 print("\nSUCCESS: All DDSP components receive gradients!")
-# Expected output (values vary per training run):
-# Loss: 13.4107
+# Expected output (QUICK_MODE; values vary per training run):
+# Loss: 2.7178
 # Gradient flow verified: 25 parameter groups
-#   Decoder         | params: 2452646 | |grad|: 12439.834685 | RECEIVES GRADIENTS
-#   SynthComposite  | params:  16000 | |grad|: 700.408447 | RECEIVES GRADIENTS
+#   Decoder         | params: 2452646 | |grad|: 437.441914 | RECEIVES GRADIENTS
+#   SynthComposite  | params:  16000 | |grad|: 685.752808 | RECEIVES GRADIENTS
 # SUCCESS: All DDSP components receive gradients!
 
 # %% [markdown]
@@ -1636,10 +1636,10 @@ print(f"  Random (untrained):  {rand_loss:.4f}")
 print(f"  Trained DDSP:        {avg_test_loss:.4f}")
 improvement = ((rand_loss - avg_test_loss) / rand_loss) * 100
 print(f"  Improvement:         {improvement:.1f}% lower spectral loss")
-# Expected output (varies by training run, 10K samples):
-#   Random (untrained):  ~30
-#   Trained DDSP:        ~8-10
-#   Improvement:         ~65-70% lower spectral loss
+# Expected output (QUICK_MODE, 8 training samples; varies by training run):
+#   Random (untrained):  5.9421
+#   Trained DDSP:        2.7178
+#   Improvement:         54.3% lower spectral loss
 
 # %%
 # Visualize resynthesis quality: target vs. synthesized waveforms and spectrograms

@@ -241,26 +241,50 @@ variance of Gumbel-Softmax gradients.
 ### Gradient Verification
 
 ```python
-def full_loss_fn(policy):
-    aug_images = augment_batch(images, policy, key, temperature=0.5)
-    logits = model(aug_images)
-    return cross_entropy_loss(logits, labels)
+# Step 9: Explicit gradient flow verification
+print("\n=== Gradient Flow Verification ===")
 
-model.eval()  # Model in closure: prevent BatchNorm mutation
+# Create a small batch for verification
+verify_pipeline = Pipeline(source=test_source, stages=[], batch_size=16, rngs=nnx.Rngs(0))
+verify_batch = next(iter(verify_pipeline))
+verify_images = verify_batch["image"]
+verify_labels = verify_batch["label"]
+
+key = jax.random.key(999)
+
+
+def full_loss_fn(policy: AugmentationPolicy) -> jax.Array:
+    """Loss function for gradient verification."""
+    aug_images = augment_batch(verify_images, policy, key, temperature=0.5)
+    logits = model(aug_images)
+    return cross_entropy_loss(logits, verify_labels)
+
+
+model.eval()  # Model in closure — prevent BatchNorm mutation
 loss, grads = nnx.value_and_grad(full_loss_fn)(policy)
 model.train()
 grad_leaves = jax.tree.leaves(grads)
-assert any(jnp.sum(jnp.abs(g)) > 0 for g in grad_leaves)
-# SUCCESS: Augmentation pipeline is fully differentiable
+
+assert len(grad_leaves) > 0, "No gradient leaves found"
+assert any(jnp.sum(jnp.abs(g)) > 0 for g in grad_leaves), (
+    "All gradients are zero — pipeline is NOT differentiable!"
+)
+
+print(f"Loss: {loss:.4f}")
+print(f"Gradient flow verified: {len(grad_leaves)} parameter groups receive gradients")
+for i, g in enumerate(grad_leaves):
+    print(f"  Param group {i}: shape={g.shape}, |grad|={float(jnp.sum(jnp.abs(g))):.6f}")
+print("SUCCESS: Augmentation pipeline is fully differentiable!")
 ```
 
 **Terminal Output:**
 ```
-Loss: 2.3026
+=== Gradient Flow Verification ===
+Loss: 2.3321
 Gradient flow verified: 3 parameter groups receive gradients
-  Param group 0: shape=(25, 2, 15), |grad|=0.042156
-  Param group 1: shape=(25, 2), |grad|=0.001823
-  Param group 2: shape=(25, 2), |grad|=0.003291
+  Param group 0: shape=(25, 2), |grad|=0.063559
+  Param group 1: shape=(25, 2, 15), |grad|=0.111068
+  Param group 2: shape=(25, 2), |grad|=0.038895
 SUCCESS: Augmentation pipeline is fully differentiable!
 ```
 

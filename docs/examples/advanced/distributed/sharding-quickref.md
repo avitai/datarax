@@ -76,22 +76,28 @@ flowchart TB
 
 ## Key Concepts
 
+The terminal output below is from a run on two GPUs (2x NVIDIA L40S), so each step takes its
+multi-device branch. With a single device the same cells skip the mesh and run unsharded.
+
 ### Step 1: Check Device Availability
 
 ```python
-import jax
-
+# Check device availability
 devices = jax.devices()
 use_sharding = len(devices) >= 2
 
-print(f"JAX devices: {devices}")
-print(f"Device count: {len(devices)}")
+if use_sharding:
+    print(f"Multi-device mode: {len(devices)} devices available")
+    print(f"Devices: {[str(d) for d in devices]}")
+else:
+    print(f"Single-device mode: Only {len(devices)} device(s) found")
+    print("Sharding demo will show concepts without actual distribution")
 ```
 
 **Terminal Output:**
 ```
-JAX devices: [cuda:0, cuda:1]
-Device count: 2
+Multi-device mode: 2 devices available
+Devices: ['cuda:0', 'cuda:1']
 ```
 
 ### Step 2: Create Data and Pipeline
@@ -100,10 +106,7 @@ Standard pipeline setup - sharding is applied at the mesh level, not by
 changing how you define sources or operators:
 
 ```python
-from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.pipeline import Pipeline
-from datarax.sources import MemorySource, MemorySourceConfig
-
+# Create sample data
 num_samples = 1024
 data = {
     "image": np.random.rand(num_samples, 32, 32, 3).astype(np.float32),
@@ -111,9 +114,22 @@ data = {
     "label": np.random.randint(0, 10, (num_samples,)).astype(np.int32),
 }
 
-source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+# Create source
+source_config = MemorySourceConfig()
+source = MemorySource(source_config, data=data, rngs=nnx.Rngs(0))
 
+print(f"Data samples: {num_samples}")
+print(f"Image shape per sample: {data['image'].shape[1:]}")
+```
 
+**Terminal Output:**
+```
+Data samples: 1024
+Image shape per sample: (32, 32, 3)
+```
+
+```python
+# Define normalization operator
 def normalize(element, key=None):
     """Normalize image to [0, 1] range."""
     return element.update_data({"image": element.data["image"] / 255.0})
@@ -123,6 +139,7 @@ normalizer = ElementOperator(
     ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0)
 )
 
+# Build pipeline
 pipeline = Pipeline(source=source, stages=[normalizer], batch_size=128, rngs=nnx.Rngs(0))
 
 print("Pipeline created with batch_size=128")
@@ -136,16 +153,14 @@ Pipeline created with batch_size=128
 ### Step 3: Create Device Mesh
 
 ```python
-from substrax.mesh import DeviceMeshManager
-from substrax.spmd import create_data_parallel_sharding
-
-# Create a mesh for data parallelism (Auto axes)
-mesh = DeviceMeshManager.create_data_parallel_mesh()
-
-# Split the batch dimension of every array across the "data" axis
-batch_sharding = create_data_parallel_sharding(mesh)
-
-print(f"Created mesh with {mesh.devices.size} devices along 'data' axis")
+# Create device mesh
+if use_sharding:
+    # Data parallelism: every device along the "data" axis
+    mesh = DeviceMeshManager.create_data_parallel_mesh()
+    print(f"Created mesh with {mesh.devices.size} devices along 'data' axis")
+else:
+    mesh = None
+    print("Skipping mesh creation (single device)")
 ```
 
 **Terminal Output:**
@@ -156,27 +171,54 @@ Created mesh with 2 devices along 'data' axis
 ### Step 4: Process with Sharding
 
 ```python
-from substrax.spmd import place_batch_on_shards
+# Process batches
+print("\nProcessing batches:")
 
-with jax.set_mesh(mesh):
+if use_sharding and mesh is not None:
+    # The batch dimension of every array is split across the "data" axis;
+    # the remaining dimensions are replicated.
+    batch_sharding = create_data_parallel_sharding(mesh)
+
+    with jax.set_mesh(mesh):
+        for i, batch in enumerate(pipeline):
+            if i >= 2:
+                break
+
+            # Place every array of the batch on the mesh
+            sharded_batch = place_batch_on_shards(batch, batch_sharding)
+
+            print(f"Batch {i}:")
+            print(f"  Image shape: {sharded_batch['image'].shape}")
+            print(f"  Image sharding: {sharded_batch['image'].sharding}")
+            print(f"  Label shape: {sharded_batch['label'].shape}")
+else:
+    # Single device fallback
     for i, batch in enumerate(pipeline):
         if i >= 2:
             break
 
-        # Place every array of the batch on the mesh
-        sharded_batch = place_batch_on_shards(batch, batch_sharding)
-
         print(f"Batch {i}:")
-        print(f"  Image shape: {sharded_batch['image'].shape}")
-        print(f"  Image sharding: {sharded_batch['image'].sharding}")
-        print(f"  Label shape: {sharded_batch['label'].shape}")
+        print(f"  Image shape: {batch['image'].shape}")
+        print(f"  Label shape: {batch['label'].shape}")
+        print("  (Running on single device)")
+
+# Expected output (multi-GPU):
+# Batch 0:
+#   Image shape: (128, 32, 32, 3)
+#   Image sharding: NamedSharding(mesh=Mesh('data': 2, axis_types=(Auto,)), spec=P('data',), memory_kind=device)  # noqa: E501
+#   Label shape: (128,)
 ```
 
-**Terminal Output (multi-GPU):**
+**Terminal Output:**
 ```
+Processing batches:
 Batch 0:
   Image shape: (128, 32, 32, 3)
-  Image sharding: NamedSharding(mesh=..., spec=PartitionSpec('data',))
+  Image sharding: NamedSharding(mesh=Mesh('data': 2, axis_types=(Auto,)), spec=P('data',), memory_kind=device)
+  Label shape: (128,)
+Batch 1:
+  Image shape: (128, 32, 32, 3)
+  Image sharding: NamedSharding(mesh=Mesh('data': 2, axis_types=(Auto,)), spec=P('data',), memory_kind=device)
   Label shape: (128,)
 ```
 

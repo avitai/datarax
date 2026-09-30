@@ -116,25 +116,31 @@ CutMix branch of clovaai/CutMix-PyTorch `train.py`). Integer class labels stay i
 ```python
 # GPU Memory Configuration
 import os
+
+
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import tensorflow as tf
+
+
 tf.config.set_visible_devices([], "GPU")
 
 # Core imports
-from pathlib import Path
+
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 from flax import nnx
+from substrax.artifacts import resolve_output_dir
 
-# Datarax imports
-from datarax.pipeline import Pipeline
 from datarax.core.config import BatchMixOperatorConfig
 from datarax.core.state_keys import MIX_LAMBDA, MIX_PARTNER
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.batch_mix_operator import BatchMixOperator
+
+# Datarax imports
+from datarax.pipeline import Pipeline
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 ```
 
@@ -147,15 +153,26 @@ We'll use CIFAR-10 because it's more complex than MNIST and benefits more from b
 CIFAR10_MEAN = jnp.array([0.4914, 0.4822, 0.4465])
 CIFAR10_STD = jnp.array([0.2470, 0.2435, 0.2616])
 CIFAR10_CLASSES = [
-    "airplane", "automobile", "bird", "cat", "deer",
-    "dog", "frog", "horse", "ship", "truck"
+    "airplane",
+    "automobile",
+    "bird",
+    "cat",
+    "deer",
+    "dog",
+    "frog",
+    "horse",
+    "ship",
+    "truck",
 ]
 
 BATCH_SIZE = 32
 NUM_CLASSES = 10
+```
 
-def preprocess_cifar10(element, key=None):
+```python
+def preprocess_cifar10(element, key=None):  # noqa: ARG001
     """Normalize CIFAR-10 images; labels stay integer class indices."""
+    del key
     image = element.data["image"]
 
     # Normalize to [0, 1] then standardize
@@ -164,12 +181,15 @@ def preprocess_cifar10(element, key=None):
 
     return element.update_data({"image": image})
 
+
 preprocessor = ElementOperator(
     ElementOperatorConfig(stochastic=False),
     fn=preprocess_cifar10,
     rngs=nnx.Rngs(0),
 )
+```
 
+```python
 def create_base_pipeline(seed=42, num_samples=256):
     """Create CIFAR-10 pipeline with preprocessing."""
     source = TFDSEagerSource(
@@ -190,6 +210,9 @@ def create_base_pipeline(seed=42, num_samples=256):
     )
 
     return Pipeline(source=source, stages=[prep], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
+
+
+print("Base pipeline factory created")
 ```
 
 **Terminal Output:**
@@ -263,9 +286,8 @@ def create_mixup_pipeline(alpha=0.4, seed=42):
         rngs=nnx.Rngs(mixup=100 + seed),
     )
 
-    return (
-        Pipeline(source=source, stages=[prep, mixup], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
-    )
+    return Pipeline(source=source, stages=[prep, mixup], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
+
 
 # Get MixUp batch
 mixup_pipeline = create_mixup_pipeline(alpha=0.4)
@@ -275,24 +297,22 @@ print("\nMixUp batch:")
 print(f"  Image shape: {mixup_batch['image'].shape}")
 print(f"  Labels (unchanged integers): {mixup_batch['label'][:8]}")
 print(f"  Partner of each record: {mixup_batch.states[MIX_PARTNER][:8]}")
-print(f"  Mixing ratio λ: {float(mixup_batch.batch_state[MIX_LAMBDA]):.3f}")
 ```
 
 **Terminal Output:**
 ```
 MixUp batch:
   Image shape: (32, 32, 32, 3)
-  Label shape: (32, 10)
-  Label is soft: True
+  Labels (unchanged integers): [8 9 4 7 5 6 5 8]
+  Partner of each record: [ 4 21 14  3 28 29 24 27]
+  Mixing ratio λ: 0.014
 ```
 
 ### Visualize MixUp Results
 
 ```python
-import matplotlib.pyplot as plt
-from substrax.artifacts import resolve_output_dir
-
 output_dir = resolve_output_dir("examples").path
+
 
 def denormalize_cifar10(images):
     """Denormalize CIFAR-10 images for display."""
@@ -300,12 +320,14 @@ def denormalize_cifar10(images):
     images = images * np.array(CIFAR10_STD) + np.array(CIFAR10_MEAN)
     return np.clip(images, 0, 1)
 
+
 def mixed_title(batch, i):
     """Record ``i``'s class and its partner's, each with its weight in the loss."""
     lam = float(batch.batch_state[MIX_LAMBDA])
     own = CIFAR10_CLASSES[int(batch["label"][i])][:3]
     other = CIFAR10_CLASSES[int(batch["label"][batch.states[MIX_PARTNER][i]])][:3]
     return f"{own}:{lam:.1f} {other}:{1 - lam:.1f}"
+
 
 # Get original batch for comparison
 base_pipeline = create_base_pipeline(seed=42)
@@ -328,17 +350,18 @@ for i in range(8):
     axes[1, i].axis("off")
 
     # The record's own class with weight λ, its partner's with 1 - λ
-    axes[1, i].set_title(mixed_title(mixup_batch, i), fontsize=8)
+    title = mixed_title(mixup_batch, i)
+    axes[1, i].set_title(title, fontsize=8)
 
 axes[0, 0].set_ylabel("Original", fontsize=10)
 axes[1, 0].set_ylabel("MixUp", fontsize=10)
 
 plt.tight_layout()
 plt.savefig(
-    output_dir / "cv-cifar-mixup-samples.png",
-    dpi=150, bbox_inches="tight", facecolor="white"
+    output_dir / "cv-cifar-mixup-samples.png", dpi=150, bbox_inches="tight", facecolor="white"
 )
 plt.close()
+print(f"Saved: {output_dir / 'cv-cifar-mixup-samples.png'}")
 ```
 
 **Terminal Output:**
@@ -412,9 +435,8 @@ def create_cutmix_pipeline(alpha=1.0, seed=42):
         rngs=nnx.Rngs(cutmix=200 + seed),
     )
 
-    return (
-        Pipeline(source=source, stages=[prep, cutmix], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
-    )
+    return Pipeline(source=source, stages=[prep, cutmix], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
+
 
 # Get CutMix batch
 cutmix_pipeline = create_cutmix_pipeline(alpha=1.0)
@@ -429,7 +451,7 @@ print(f"  Fraction of each image kept, λ: {float(cutmix_batch.batch_state[MIX_L
 ```
 CutMix batch:
   Image shape: (32, 32, 32, 3)
-  Label shape: (32, 10)
+  Fraction of each image kept, λ: 0.453
 ```
 
 ### Visualize CutMix Results
@@ -452,17 +474,18 @@ for i in range(8):
     axes[1, i].axis("off")
 
     # The record's own class with weight λ, its partner's with 1 - λ
-    axes[1, i].set_title(mixed_title(cutmix_batch, i), fontsize=8)
+    title = mixed_title(cutmix_batch, i)
+    axes[1, i].set_title(title, fontsize=8)
 
 axes[0, 0].set_ylabel("Original", fontsize=10)
 axes[1, 0].set_ylabel("CutMix", fontsize=10)
 
 plt.tight_layout()
 plt.savefig(
-    output_dir / "cv-cifar-cutmix-samples.png",
-    dpi=150, bbox_inches="tight", facecolor="white"
+    output_dir / "cv-cifar-cutmix-samples.png", dpi=150, bbox_inches="tight", facecolor="white"
 )
 plt.close()
+print(f"Saved: {output_dir / 'cv-cifar-cutmix-samples.png'}")
 ```
 
 **Terminal Output:**
@@ -506,6 +529,7 @@ for row, alpha in enumerate(alphas):
 plt.tight_layout()
 plt.savefig(output_dir / "cv-cifar-mix-alpha.png", dpi=150, bbox_inches="tight", facecolor="white")
 plt.close()
+print(f"Saved: {output_dir / 'cv-cifar-mix-alpha.png'}")
 ```
 
 **Terminal Output:**
@@ -534,6 +558,7 @@ def mixed_cross_entropy(logits, batch):
     other = -jnp.take_along_axis(log_probs, labels[partner][:, None], axis=1)[:, 0]
     return lam * own + (1 - lam) * other
 
+
 logits = jax.random.normal(jax.random.key(0), (BATCH_SIZE, NUM_CLASSES))
 for name, batch in (("MixUp", mixup_batch), ("CutMix", cutmix_batch)):
     lam = batch.batch_state[MIX_LAMBDA]
@@ -543,6 +568,12 @@ for name, batch in (("MixUp", mixup_batch), ("CutMix", cutmix_batch)):
     soft_ce = -jnp.sum(soft * jax.nn.log_softmax(logits), axis=1)
     difference = float(jnp.max(jnp.abs(mixed_cross_entropy(logits, batch) - soft_ce)))
     print(f"{name}: mixed loss vs soft-label cross-entropy, max difference {difference:.2e}")
+```
+
+**Terminal Output:**
+```
+MixUp: mixed loss vs soft-label cross-entropy, max difference 0.00e+00
+CutMix: mixed loss vs soft-label cross-entropy, max difference 0.00e+00
 ```
 
 ### How strongly samples are mixed

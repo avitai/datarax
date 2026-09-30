@@ -276,7 +276,7 @@ for i, batch in enumerate(augmented_pipeline):
 # Batch 0:
 #   Image shape: (16, 32, 32, 3)
 #   Image range: [0.000, 1.000]
-#   Mean: 0.518, Std: 0.300
+#   Mean: 0.486, Std: 0.288
 
 # %% [markdown]
 """

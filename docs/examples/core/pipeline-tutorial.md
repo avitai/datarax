@@ -97,26 +97,78 @@ flowchart LR
 with arrays sharing the same first dimension (sample dimension).
 
 ```python
+# Imports
+import jax
+import jax.numpy as jnp
 import numpy as np
 from flax import nnx
+
+from datarax.operators import (
+    ElementOperator,
+    ElementOperatorConfig,
+)
+from datarax.operators.composite_operator import (
+    CompositeOperatorConfig,
+    CompositeOperatorModule,
+    CompositionStrategy,
+)
+from datarax.pipeline import Pipeline
+
+# Note: ProbabilisticOperator available for conditional augmentation
+# See advanced examples for probabilistic operator usage
 from datarax.sources import MemorySource, MemorySourceConfig
 
-np.random.seed(42)
-num_samples = 500
 
-# Simulate RGB images and one-hot encoded labels
-data = {
-    "image": np.random.randint(0, 256, (num_samples, 32, 32, 3)).astype(np.float32),
-    "label": np.eye(10)[np.random.randint(0, 10, num_samples)].astype(np.float32),
-    "metadata": np.random.rand(num_samples, 4).astype(np.float32),
-}
-
-source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
-print(f"Source created: {len(source)} samples")
+print(f"JAX version: {jax.__version__}")
+print(f"JAX backend: {jax.default_backend()}")
 ```
 
 **Terminal Output:**
 ```
+JAX version: 0.11.1
+JAX backend: gpu
+```
+
+```python
+# Create realistic training data
+np.random.seed(42)  # For reproducibility
+
+num_samples = 500
+image_height, image_width, channels = 32, 32, 3
+
+# Simulate RGB images and one-hot encoded labels
+data = {
+    "image": np.random.randint(0, 256, (num_samples, image_height, image_width, channels)).astype(
+        np.float32
+    ),
+    "label": np.eye(10)[np.random.randint(0, 10, num_samples)].astype(np.float32),
+    "metadata": np.random.rand(num_samples, 4).astype(np.float32),  # Extra features
+}
+
+print("Dataset structure:")
+for key, value in data.items():
+    print(f"  {key}: shape={value.shape}, dtype={value.dtype}")
+```
+
+**Terminal Output:**
+```
+Dataset structure:
+  image: shape=(500, 32, 32, 3), dtype=float32
+  label: shape=(500, 10), dtype=float32
+  metadata: shape=(500, 4), dtype=float32
+```
+
+```python
+# Create MemorySource with configuration
+source_config = MemorySourceConfig()
+source = MemorySource(source_config, data=data, rngs=nnx.Rngs(0))
+
+print(f"\nSource created: {len(source)} samples")
+```
+
+**Terminal Output:**
+```
+
 Source created: 500 samples
 ```
 
@@ -127,45 +179,64 @@ Operators transform data elements. Each operator receives:
 - `element`: A data element with `.data` dict
 - `key`: JAX random key (for stochastic operators)
 
-```python
-import jax
-import jax.numpy as jnp
-from datarax.operators import ElementOperator, ElementOperatorConfig
+The operator returns a new element via `element.update_data(new_data)`.
 
-# Deterministic operator: Normalize images to [0, 1]
+```python
+# Operator 1: Normalize images to [0, 1]
 def normalize_image(element, key=None):
+    """Normalize image pixel values to [0, 1] range."""
     image = element.data["image"]
     normalized = image / 255.0
     return element.update_data({"image": normalized})
 
+
 normalizer = ElementOperator(
-    ElementOperatorConfig(stochastic=False),
+    ElementOperatorConfig(stochastic=False),  # Deterministic
     fn=normalize_image,
     rngs=nnx.Rngs(0),
 )
+print("Created: normalizer (deterministic)")
+```
 
-# Stochastic operator: Random horizontal flip
+**Terminal Output:**
+```
+Created: normalizer (deterministic)
+```
+
+```python
+# Operator 2: Random horizontal flip (stochastic)
 def random_flip(element, key):
+    """Randomly flip image horizontally with 50% probability."""
     flip_key, _ = jax.random.split(key)
     should_flip = jax.random.bernoulli(flip_key, 0.5)
 
     image = element.data["image"]
     flipped = jax.lax.cond(
         should_flip,
-        lambda x: jnp.flip(x, axis=1),
+        lambda x: jnp.flip(x, axis=1),  # Flip along width axis
         lambda x: x,
         image,
     )
     return element.update_data({"image": flipped})
+
 
 flipper = ElementOperator(
     ElementOperatorConfig(stochastic=True, stream_name="flip"),
     fn=random_flip,
     rngs=nnx.Rngs(flip=42),
 )
+print("Created: flipper (stochastic)")
+```
 
-# Stochastic operator: Add Gaussian noise
+**Terminal Output:**
+```
+Created: flipper (stochastic)
+```
+
+```python
+# Operator 3: Add Gaussian noise (stochastic)
 def add_noise(element, key):
+    """Add random Gaussian noise to image."""
     noise_key, _ = jax.random.split(key)
     image = element.data["image"]
 
@@ -175,17 +246,17 @@ def add_noise(element, key):
 
     return element.update_data({"image": noisy})
 
+
 noise_adder = ElementOperator(
     ElementOperatorConfig(stochastic=True, stream_name="noise"),
     fn=add_noise,
     rngs=nnx.Rngs(noise=123),
 )
+print("Created: noise_adder (stochastic)")
 ```
 
 **Terminal Output:**
 ```
-Created: normalizer (deterministic)
-Created: flipper (stochastic)
 Created: noise_adder (stochastic)
 ```
 
@@ -195,22 +266,21 @@ Created: noise_adder (stochastic)
 applying them sequentially to each element.
 
 ```python
-from datarax.operators.composite_operator import (
-    CompositeOperatorConfig,
-    CompositeOperatorModule,
-    CompositionStrategy,
-)
-
+# Create composite augmentation pipeline
+# CompositeOperatorConfig requires strategy and operators in the config
 augmentation_config = CompositeOperatorConfig(
-    strategy=CompositionStrategy.SEQUENTIAL,
+    strategy=CompositionStrategy.SEQUENTIAL,  # Apply operators in sequence
     stochastic=True,
     stream_name="augment",
 )
 
+# Build composite operator from config
 augmentation_pipeline = CompositeOperatorModule(
     augmentation_config,
-    operators=[flipper, noise_adder],
+    operators=[flipper, noise_adder],  # List of operators to chain
 )
+
+print("Created composite operator with SEQUENTIAL strategy (2 operators)")
 ```
 
 **Terminal Output:**
@@ -225,6 +295,7 @@ Add more operators to the pipeline for extensive augmentation.
 ```python
 # Create a brightness adjustment operator
 def adjust_brightness(element, key):
+    """Adjust image brightness by a random factor."""
     brightness_key, _ = jax.random.split(key)
     factor = jax.random.uniform(brightness_key, minval=0.8, maxval=1.2)
 
@@ -232,11 +303,14 @@ def adjust_brightness(element, key):
     adjusted = jnp.clip(image * factor, 0.0, 1.0)
     return element.update_data({"image": adjusted})
 
+
 brightness_op = ElementOperator(
     ElementOperatorConfig(stochastic=True, stream_name="brightness"),
     fn=adjust_brightness,
     rngs=nnx.Rngs(brightness=456),
 )
+
+print("Created brightness adjustment operator (stochastic)")
 ```
 
 **Terminal Output:**
@@ -249,11 +323,19 @@ Created brightness adjustment operator (stochastic)
 Chain everything together using the DAG API.
 
 ```python
-from datarax.pipeline import Pipeline
-
-pipeline = (
-    Pipeline(source=source, stages=[normalizer, augmentation_pipeline, brightness_op], batch_size=32, rngs=nnx.Rngs(0))
+# Build the full pipeline
+pipeline = Pipeline(
+    source=source,
+    # 1. normalize → 2. flip+noise → 3. brightness
+    stages=[normalizer, augmentation_pipeline, brightness_op],
+    batch_size=32,
+    rngs=nnx.Rngs(0),
 )
+
+print("Pipeline structure:")
+print("  Source → Normalize → [Flip + Noise] → Brightness → Output")
+print("  Batch size: 32")
+print(f"  Total samples: {len(source)}")
 ```
 
 **Terminal Output:**
@@ -266,55 +348,104 @@ Pipeline structure:
 
 ## Part 7: Running the Pipeline
 
+Iterate through the pipeline to process data in batches.
+
 ```python
-print("Processing batches:")
+# Process batches
+print("\nProcessing batches:")
 stats = {"min": [], "max": [], "mean": []}
 
 for i, batch in enumerate(pipeline):
-    if i >= 5:
+    if i >= 5:  # Process 5 batches for demo
         break
 
     image_batch = batch["image"]
+    label_batch = batch["label"]
+
+    # Collect statistics
     stats["min"].append(float(image_batch.min()))
     stats["max"].append(float(image_batch.max()))
     stats["mean"].append(float(image_batch.mean()))
 
-    print(f"Batch {i}: shape={image_batch.shape}, range=[{image_batch.min():.3f}, {image_batch.max():.3f}]")
+    print(f"Batch {i}:")
+    img_min, img_max = image_batch.min(), image_batch.max()
+    print(f"  Image: shape={image_batch.shape}, range=[{img_min:.3f}, {img_max:.3f}]")
+    print(f"  Label: shape={label_batch.shape}")
 ```
 
 **Terminal Output:**
 ```
+
 Processing batches:
-Batch 0: shape=(32, 32, 32, 3), range=[0.000, 1.000]
-Batch 1: shape=(32, 32, 32, 3), range=[0.000, 1.000]
-Batch 2: shape=(32, 32, 32, 3), range=[0.000, 1.000]
-Batch 3: shape=(32, 32, 32, 3), range=[0.000, 1.000]
-Batch 4: shape=(32, 32, 32, 3), range=[0.000, 1.000]
+Batch 0:
+  Image: shape=(32, 32, 32, 3), range=[0.000, 1.000]
+  Label: shape=(32, 10)
+Batch 1:
+  Image: shape=(32, 32, 32, 3), range=[0.000, 1.000]
+  Label: shape=(32, 10)
+Batch 2:
+  Image: shape=(32, 32, 32, 3), range=[0.000, 1.000]
+  Label: shape=(32, 10)
+Batch 3:
+  Image: shape=(32, 32, 32, 3), range=[0.000, 1.000]
+  Label: shape=(32, 10)
+Batch 4:
+  Image: shape=(32, 32, 32, 3), range=[0.000, 1.000]
+  Label: shape=(32, 10)
+```
+
+```python
+# Summary statistics
+print("\nPipeline Statistics (5 batches):")
+print(f"  Min pixel: {min(stats['min']):.4f}")
+print(f"  Max pixel: {max(stats['max']):.4f}")
+print(f"  Mean pixel: {sum(stats['mean']) / len(stats['mean']):.4f}")
+```
+
+**Terminal Output:**
+```
+
+Pipeline Statistics (5 batches):
+  Min pixel: 0.0000
+  Max pixel: 1.0000
+  Mean pixel: 0.4961
 ```
 
 ## Part 8: Reproducibility
 
 Datarax ensures reproducible pipelines through explicit RNG management.
+Same seeds produce identical results.
 
 ```python
+# Demonstrate reproducibility
 def create_pipeline_with_seed(seed: int):
+    """Create a fresh pipeline with specific seed."""
     src = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(seed))
-    norm = ElementOperator(ElementOperatorConfig(stochastic=False), fn=normalize_image, rngs=nnx.Rngs(0))
+
+    norm = ElementOperator(
+        ElementOperatorConfig(stochastic=False), fn=normalize_image, rngs=nnx.Rngs(0)
+    )
+
     flip = ElementOperator(
         ElementOperatorConfig(stochastic=True, stream_name="flip"),
         fn=random_flip,
         rngs=nnx.Rngs(flip=seed),
     )
+
     return Pipeline(source=src, stages=[norm, flip], batch_size=8, rngs=nnx.Rngs(0))
+
 
 # Create two pipelines with same seed
 p1 = create_pipeline_with_seed(42)
 p2 = create_pipeline_with_seed(42)
 
+# Get first batch from each
 batch1 = next(iter(p1))
 batch2 = next(iter(p2))
 
-print(f"Same seed produces identical results: {jnp.allclose(batch1['image'], batch2['image'])}")
+# Check if identical
+images_match = jnp.allclose(batch1["image"], batch2["image"])
+print(f"Same seed produces identical results: {images_match}")
 ```
 
 **Terminal Output:**

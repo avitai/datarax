@@ -338,9 +338,9 @@ print(
 )
 # Expected output:
 # Grain reference:   40 steps, loss first 4.2264, last 0.0126
-# Datarax reference: 40 steps, loss first 1.9849, last 0.0402
+# Datarax reference: 40 steps, loss first 3.7683, last 0.0719
 # Grain weights:   [ 1.95 -1.    0.48]
-# Datarax weights: [ 1.99 -0.99  0.51] (true [ 2.  -1.   0.5])
+# Datarax weights: [ 1.98 -0.96  0.53] (true [ 2.  -1.   0.5])
 
 # %% [markdown]
 """
@@ -451,10 +451,10 @@ print(
 )
 # Expected output:
 # Restored Grain step 20 (loss 0.0837)
-# Restored Datarax step 20 (loss 0.0310)
+# Restored Datarax step 20 (loss 0.0438)
 # Grain: resumed run reproduces the reference loss for loss: True
 # Datarax: resumed run reproduces the reference loss for loss: True
-# Steps 20-22 reference [0.067  0.0206 0.044 ] resumed [0.067  0.0206 0.044 ]
+# Steps 20-22 reference [0.052  0.057  0.0387] resumed [0.052  0.057  0.0387]
 
 # %% [markdown]
 """

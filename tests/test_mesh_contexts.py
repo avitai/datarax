@@ -20,7 +20,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 THIS_FILE = Path(__file__).resolve()
 MESH_CONTEXT = re.compile(r"\bwith\s+(?:(?:[A-Za-z_]\w*\.)*\w*mesh\s*:|(?:[A-Za-z_]\w*\.)*Mesh\()")
-MESH_CONSTRUCTION = re.compile(r"\bMesh\(|\bmake_mesh\(")
+# A call, not a mesh's repr: printed output shows `Mesh('data': 2, ...)`, which no call can spell
+MESH_CONSTRUCTION = re.compile(r"\bMesh\((?!'[^']*'\s*:)|\bmake_mesh\(")
 
 pytestmark = pytest.mark.contract
 
@@ -77,6 +78,9 @@ def test_context_matcher_finds_only_direct_mesh_contexts(text: str, expected: li
         ('mesh = jax.make_mesh((4,), ("data",), axis_types=types)', [1]),
         ("mesh = DeviceMeshManager.create_data_parallel_mesh()", []),
         ('abstract = AbstractMesh((2,), ("x",))', []),
+        ("mesh = Mesh(np.array(devices), ('data',))", [1]),
+        # A mesh's repr in printed output names axes and sizes; it constructs nothing
+        ("sharding: NamedSharding(mesh=Mesh('data': 2, axis_types=(Auto,)), spec=P('data',))", []),
     ],
 )
 def test_construction_matcher_finds_raw_mesh_constructors(text: str, expected: list[int]) -> None:

@@ -776,7 +776,7 @@ n_params = sum(p.size for p in jax.tree.leaves(nnx.state(model, nnx.Param)))
 print(f"WRN-40-2 parameters: {n_params:,}")
 # Expected output:
 # WRN-40-2 output shape: (2, 10)
-# WRN-40-2 parameters: ~2,243,546
+# WRN-40-2 parameters: 2,246,474
 
 # %% [markdown]
 """
@@ -960,7 +960,7 @@ control_variate = RELAXControlVariate(rngs=nnx.Rngs(0))
 cv_params = sum(p.size for p in jax.tree.leaves(nnx.state(control_variate, nnx.Param)))
 print(f"RELAX control variate parameters: {cv_params}")
 # Expected output:
-# RELAX control variate parameters: ~3,169
+# RELAX control variate parameters: 3137
 
 # %% [markdown]
 """

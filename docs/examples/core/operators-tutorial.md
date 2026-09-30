@@ -77,12 +77,50 @@ Operators are the transformation units in Datarax pipelines. They receive data e
 | **Batch** | Collection of elements processed together |
 | **Stream Name** | Unique identifier for RNG stream in stochastic operators |
 
+The tutorial's imports:
+
 ```python
+# Imports
+import jax
+import jax.numpy as jnp
 import numpy as np
 from flax import nnx
+
+from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.operators.composite_operator import (
+    CompositeOperatorConfig,
+    CompositeOperatorModule,
+    CompositionStrategy,
+)
+from datarax.operators.modality.image import (
+    BrightnessOperator,
+    BrightnessOperatorConfig,
+    ContrastOperator,
+    ContrastOperatorConfig,
+    NoiseOperator,
+    NoiseOperatorConfig,
+    RotationOperator,
+    RotationOperatorConfig,
+)
+from datarax.pipeline import Pipeline
+
+# SelectorOperator randomly selects one operator from a list
+# It's different from field filtering (see Part 4 for field filtering)
 from datarax.sources import MemorySource, MemorySourceConfig
 
-# Create sample image data
+
+print(f"JAX version: {jax.__version__}")
+```
+
+**Terminal Output:**
+```
+JAX version: 0.11.1
+```
+
+Create sample data:
+
+```python
+# Create sample image data for demonstrations
 np.random.seed(42)
 num_samples = 100
 data = {
@@ -92,6 +130,10 @@ data = {
 }
 
 source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+print(f"Created dataset: {num_samples} samples")
+print(f"  image: {data['image'].shape}")
+print(f"  label: {data['label'].shape}")
+print(f"  metadata: {data['metadata'].shape}")
 ```
 
 **Terminal Output:**
@@ -109,15 +151,14 @@ Created dataset: 100 samples
 ### Example 1: Deterministic Normalization
 
 ```python
-import jax.numpy as jnp
-from datarax.operators import ElementOperator, ElementOperatorConfig
-
-def normalize_image(element, key=None):
+# Example 1: Deterministic normalization
+def normalize_image(element, key=None):  # noqa: ARG001
     """Normalize image pixels to [0, 1] range."""
     del key  # Unused - deterministic operator
     image = element.data["image"]
     normalized = image / 255.0
     return element.update_data({"image": normalized})
+
 
 normalizer = ElementOperator(
     ElementOperatorConfig(stochastic=False),
@@ -126,12 +167,11 @@ normalizer = ElementOperator(
 )
 
 # Test it
-from datarax.pipeline import Pipeline
-
 pipeline = Pipeline(source=source, stages=[normalizer], batch_size=16, rngs=nnx.Rngs(0))
 batch = next(iter(pipeline))
 
-print(f"Range: [{batch['image'].min():.3f}, {batch['image'].max():.3f}]")
+print("Normalization result:")
+print(f"  Range: [{batch['image'].min():.3f}, {batch['image'].max():.3f}]")
 ```
 
 **Terminal Output:**
@@ -143,9 +183,7 @@ Normalization result:
 ### Example 2: Stochastic Horizontal Flip
 
 ```python
-import jax
-import jax.numpy as jnp
-
+# Example 2: Stochastic horizontal flip
 def random_flip(element, key):
     """Randomly flip image horizontally."""
     flip_key, _ = jax.random.split(key)
@@ -160,11 +198,14 @@ def random_flip(element, key):
     )
     return element.update_data({"image": flipped})
 
+
 flipper = ElementOperator(
     ElementOperatorConfig(stochastic=True, stream_name="flip"),
     fn=random_flip,
     rngs=nnx.Rngs(flip=42),
 )
+
+print("Created stochastic flipper operator")
 ```
 
 **Terminal Output:**
@@ -192,12 +233,6 @@ brightness_op = BrightnessOperator(
 )
 ```
 
-**Terminal Output:**
-```
-Built-in operators created:
-  - BrightnessOperator (range: -0.3 to +0.3)
-```
-
 ### Contrast Adjustment
 
 ```python
@@ -212,11 +247,6 @@ contrast_op = ContrastOperator(
     ),
     rngs=nnx.Rngs(contrast=200),
 )
-```
-
-**Terminal Output:**
-```
-  - ContrastOperator (factor: 0.8-1.2)
 ```
 
 ### Gaussian Noise
@@ -236,16 +266,10 @@ noise_op = NoiseOperator(
 )
 ```
 
-**Terminal Output:**
-```
-  - NoiseOperator (gaussian, std=0.05)
-```
-
 ### Rotation
 
 ```python
-from datarax.operators.modality.image import RotationOperator, RotationOperatorConfig
-
+# Rotation by a random angle, bilinear interpolation, black fill
 rotation_op = RotationOperator(
     RotationOperatorConfig(
         field_key="image",
@@ -256,10 +280,20 @@ rotation_op = RotationOperator(
     ),
     rngs=nnx.Rngs(rotation=400),
 )
+
+print("Built-in operators created:")
+print("  - BrightnessOperator (range: -0.3 to +0.3)")
+print("  - ContrastOperator (factor: 0.8-1.2)")
+print("  - NoiseOperator (gaussian, std=0.05)")
+print("  - RotationOperator (angle: -15° to +15°)")
 ```
 
 **Terminal Output:**
 ```
+Built-in operators created:
+  - BrightnessOperator (range: -0.3 to +0.3)
+  - ContrastOperator (factor: 0.8-1.2)
+  - NoiseOperator (gaussian, std=0.05)
   - RotationOperator (angle: -15° to +15°)
 ```
 
@@ -268,11 +302,13 @@ rotation_op = RotationOperator(
 Transform or filter specific fields from the data dictionary.
 
 ```python
-def filter_fields(element, key=None):
+# Create a field filtering operator using ElementOperator
+def filter_fields(element, key=None):  # noqa: ARG001
     """Keep only image and label fields."""
     del key  # Unused - deterministic operator
     filtered = {k: v for k, v in element.data.items() if k in ["image", "label"]}
     return element.update_data(filtered)
+
 
 field_filter = ElementOperator(
     ElementOperatorConfig(stochastic=False),
@@ -285,8 +321,9 @@ source2 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(1))
 pipeline = Pipeline(source=source2, stages=[field_filter], batch_size=8, rngs=nnx.Rngs(0))
 batch = next(iter(pipeline))
 
-print(f"Image present: {batch['image'].shape}")
-print(f"Label present: {batch['label'].shape}")
+print("After field filtering:")
+print(f"  Image present: {batch['image'].shape}")
+print(f"  Label present: {batch['label'].shape}")
 ```
 
 **Terminal Output:**
@@ -309,12 +346,6 @@ Chain multiple operators with `CompositeOperatorModule`. Different strategies co
 | ENSEMBLE_MEAN | Parallel + average outputs |
 
 ```python
-from datarax.operators.composite_operator import (
-    CompositeOperatorConfig,
-    CompositeOperatorModule,
-    CompositionStrategy,
-)
-
 # Create individual operators for composition
 norm_op = ElementOperator(
     ElementOperatorConfig(stochastic=False),
@@ -337,6 +368,8 @@ sequential_augment = CompositeOperatorModule(
     ),
     operators=[norm_op, flip_op],
 )
+
+print("Created SEQUENTIAL composite: normalize → flip")
 ```
 
 **Terminal Output:**
@@ -347,12 +380,14 @@ Created SEQUENTIAL composite: normalize → flip
 Test the composite operator:
 
 ```python
+# Test the composite operator
 source3 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(2))
 pipeline = Pipeline(source=source3, stages=[sequential_augment], batch_size=16, rngs=nnx.Rngs(0))
 batch = next(iter(pipeline))
 
-print(f"Image shape: {batch['image'].shape}")
-print(f"Image range: [{batch['image'].min():.3f}, {batch['image'].max():.3f}]")
+print("Sequential composite result:")
+print(f"  Image shape: {batch['image'].shape}")
+print(f"  Image range: [{batch['image'].min():.3f}, {batch['image'].max():.3f}]")
 ```
 
 **Terminal Output:**
@@ -412,8 +447,8 @@ brightness = BrightnessOperator(
 
 # Build pipeline with chained operators
 source4 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(3))
-full_pipeline = (
-    Pipeline(source=source4, stages=[normalizer, flipper, brightness], batch_size=32, rngs=nnx.Rngs(0))
+full_pipeline = Pipeline(
+    source=source4, stages=[normalizer, flipper, brightness], batch_size=32, rngs=nnx.Rngs(0)
 )
 
 print("Full augmentation pipeline:")
@@ -429,6 +464,7 @@ Full augmentation pipeline:
 Process and collect statistics:
 
 ```python
+# Process and collect statistics
 stats = {"batches": 0, "samples": 0, "mean_values": []}
 
 for batch in full_pipeline:
@@ -444,10 +480,11 @@ print(f"  Mean pixel value: {sum(stats['mean_values']) / len(stats['mean_values'
 
 **Terminal Output:**
 ```
+
 Pipeline processed:
   Batches: 4
-  Samples: 128
-  Mean pixel value: 0.4947
+  Samples: 100
+  Mean pixel value: 0.5178
 ```
 
 ## Part 7: Custom Operator Patterns
@@ -478,6 +515,7 @@ def augment_image_and_mask(element, key):
 Apply augmentation only to certain samples based on metadata:
 
 ```python
+# Pattern 2: Conditional transformation
 def conditional_augment(element, key):
     """Apply augmentation only to certain samples based on metadata."""
     key1, _ = jax.random.split(key)
@@ -497,11 +535,14 @@ def conditional_augment(element, key):
 
     return element.update_data({"image": augmented})
 
+
 conditional_op = ElementOperator(
     ElementOperatorConfig(stochastic=True, stream_name="cond"),
     fn=conditional_augment,
     rngs=nnx.Rngs(cond=999),
 )
+
+print("Created conditional augmentation operator")
 ```
 
 **Terminal Output:**
