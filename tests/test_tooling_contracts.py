@@ -299,6 +299,26 @@ def test_long_running_examples_restore_the_prepared_dataset_cache() -> None:
     assert "scripts/prepare_example_datasets.py" in prepare_commands
 
 
+def test_every_uv_cache_is_pruned_before_it_is_saved() -> None:
+    """A saved uv cache holds only what uv built, not the wheels it downloaded.
+
+    Unpruned, a cache of this repository's extras (TensorFlow, PyTorch) is about 3.9 GB, and a
+    handful of them exceed the repository's Actions cache budget; GitHub then evicts the least
+    recently used entry, which is the prepared dataset cache the example tier fails without.
+    setup-uv prunes only when asked (``prune-cache`` defaults to false from v9).
+    """
+    unpruned = []
+    for workflow_path in sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml")):
+        for job_name, job in yaml.safe_load(workflow_path.read_text())["jobs"].items():
+            for step in job.get("steps", []):
+                if not str(step.get("uses", "")).startswith("astral-sh/setup-uv@"):
+                    continue
+                if step.get("with", {}).get("prune-cache") is not True:
+                    unpruned.append(f"{workflow_path.name}:{job_name}")
+
+    assert unpruned == [], f"setup-uv steps saving an unpruned cache: {unpruned}"
+
+
 def coverage_floor_violations(workflow: dict, pyproject: dict) -> list[str]:
     """Return why CI would not fail below the coverage floor, if it would not."""
     # PyYAML reads the `on:` key as the boolean True.

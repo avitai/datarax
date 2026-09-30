@@ -49,6 +49,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
+          prune-cache: true
           enable-cache: true
           cache-suffix: "lint"
 
@@ -96,6 +97,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
+          prune-cache: true
           enable-cache: true
           cache-suffix: "examples"
 
@@ -143,6 +145,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
+          prune-cache: true
           enable-cache: true
           cache-suffix: "unit-${{ matrix.python-version }}"
 
@@ -208,6 +211,7 @@ jobs:
         if: steps.datasets.outputs.cache-hit != 'true'
         uses: astral-sh/setup-uv@v10.2.0
         with:
+          prune-cache: true
           enable-cache: true
           cache-suffix: "long-running"
 
@@ -242,6 +246,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
+          prune-cache: true
           enable-cache: true
           cache-suffix: "long-running"
 
@@ -311,6 +316,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
+          prune-cache: true
           enable-cache: true
           cache-suffix: "integration"
 
@@ -362,6 +368,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
+          prune-cache: true
           enable-cache: true
           cache-suffix: "e2e"
 
@@ -416,6 +423,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
+          prune-cache: true
           enable-cache: true
           cache-suffix: "perf"
 
@@ -468,6 +476,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
+          prune-cache: true
           enable-cache: true
           cache-suffix: "coverage"
 
