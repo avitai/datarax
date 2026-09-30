@@ -114,60 +114,93 @@ class SimplePipeline(CheckpointableIterator[dict[str, jax.Array]]):
 
 ### Step 2: Set Up Checkpointing
 
-```python
-from datarax.checkpoint import IteratorCheckpoint
+`IteratorCheckpoint` stores each step with substrax's Orbax checkpoint store and keeps the most
+recent `max_to_keep` of them.
 
-checkpoint_dir = "/path/to/checkpoints"
-checkpoint = IteratorCheckpoint(checkpoint_dir, max_to_keep=2)  # Keep last 2 checkpoints
+```python
+# Create checkpoint directory
+checkpoint_dir = tempfile.mkdtemp(prefix="datarax_ckpt_")
+checkpoint = IteratorCheckpoint(os.path.join(checkpoint_dir, "pipeline_state"), max_to_keep=2)
+
 print(f"Checkpoint directory: {checkpoint_dir}")
 ```
 
 **Terminal Output:**
 ```
-Checkpoint directory: /path/to/checkpoints
+Checkpoint directory: /tmp/datarax_ckpt_8amyhhxp
 ```
 
 ### Step 3: Save Checkpoints During Processing
 
 ```python
+# Process data with checkpointing
 step = 0
 for epoch in range(2):
-    for batch in pipeline:
-        step += 1
-        # Process batch...
+    print(f"\nEpoch {epoch}:")
+    pipeline_iter = pipeline.iterator()
 
-        if checkpoint.save_if_due(pipeline, step, interval=3, epoch=epoch):
-            print(f"Saved checkpoint at step {step}")
+    for batch_idx, batch in enumerate(pipeline_iter):
+        batch_mean = jnp.mean(batch["x"]).item()
+        step += 1
+
+        print(f"  Batch {batch_idx}: mean={batch_mean:.2f}")
+
+        # Save checkpoint every 3 steps; the epoch is a field of the checkpoint record
+        if checkpoint.save_if_due(
+            pipeline, step, interval=3, epoch=epoch, metadata={"batch": batch_idx}
+        ):
+            print(f"  -> Saved checkpoint at step {step}")
+
+print(f"\nProcessed {step} total steps")
 ```
 
 **Terminal Output:**
 ```
-Saved checkpoint at step 3
-Saved checkpoint at step 6
-Saved checkpoint at step 9
+Epoch 0:
+  Batch 0: mean=21.30
+  Batch 1: mean=19.80
+  Batch 2: mean=21.90
+  -> Saved checkpoint at step 3
+  Batch 3: mean=26.10
+  Batch 4: mean=33.40
+
+Epoch 1:
+  Batch 0: mean=22.70
+  -> Saved checkpoint at step 6
+  Batch 1: mean=24.30
+  Batch 2: mean=29.50
+  Batch 3: mean=27.00
+  -> Saved checkpoint at step 9
+  Batch 4: mean=19.00
+
+Processed 10 total steps
 ```
 
 ### Step 4: Restore from Checkpoint
 
 ```python
 # Create new pipeline (simulating restart)
-new_pipeline = SimplePipeline(data)
-print(f"Before restore: position={new_pipeline.position}")
+new_pipeline = SimplePipeline(data, batch_size=10, shuffle=True)
+print(f"New pipeline state: epoch={new_pipeline.epoch}, position={new_pipeline.position}")
 
-# Restore from latest checkpoint
+# Restore from the latest checkpoint
 checkpoint.restore(new_pipeline)
-print(f"After restore: position={new_pipeline.position}")
+print(f"Restored state: epoch={new_pipeline.epoch}, position={new_pipeline.position}")
 
-# Continue processing from checkpoint
-for batch in new_pipeline:
-    # Processing continues from saved position
-    pass
+# Continue processing
+print("\nContinuing from checkpoint:")
+for batch_idx, batch in enumerate(new_pipeline):
+    batch_mean = jnp.mean(batch["x"]).item()
+    print(f"  Batch {batch_idx}: mean={batch_mean:.2f}")
 ```
 
 **Terminal Output:**
 ```
-Before restore: position=0
-After restore: position=40
+New pipeline state: epoch=0, position=0
+Restored state: epoch=1, position=40
+
+Continuing from checkpoint:
+  Batch 0: mean=19.00
 ```
 
 ## Checkpoint State Contents

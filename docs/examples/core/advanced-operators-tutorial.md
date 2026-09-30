@@ -93,9 +93,9 @@ prob_brightness = ProbabilisticOperator(
 ```
 Effect of probability values:
   p=0.00 (deterministic): mean delta = -0.0000
-  p=0.25 (stochastic  ): mean delta = +0.0504
-  p=0.50 (stochastic  ): mean delta = +0.0953
-  p=0.75 (stochastic  ): mean delta = +0.1475
+  p=0.25 (stochastic  ): mean delta = +0.0306
+  p=0.50 (stochastic  ): mean delta = +0.0719
+  p=0.75 (stochastic  ): mean delta = +0.1296
   p=1.00 (deterministic): mean delta = +0.1800
 ```
 
@@ -104,18 +104,19 @@ Effect of probability values:
 Randomly selects ONE operator from a list to apply per sample.
 
 ```python
-from datarax.operators.selector_operator import (
-    SelectorOperator,
-    SelectorOperatorConfig,
-)
-
+# Create selector with custom weights
 selector = SelectorOperator(
     SelectorOperatorConfig(
-        weights=[0.5, 0.3, 0.2],  # 50%, 30%, 20%
+        weights=[0.5, 0.3, 0.2],  # 50% brightness, 30% contrast, 20% noise
     ),
     operators=[op_bright, op_contrast, op_noise],
-        rngs=nnx.Rngs(augment=100),
+    rngs=nnx.Rngs(augment=100),
 )
+
+print("SelectorOperator created:")
+print("  Operators: [Brightness, Contrast, Noise]")
+print("  Weights: [50%, 30%, 20%]")
+print(f"  Always stochastic: {selector.config.stochastic}")
 ```
 
 **Terminal Output:**

@@ -76,14 +76,25 @@ Each sample contains:
 ## Step 1: Load IMDB Dataset
 
 ```python
+# Imports
 import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax.pipeline import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.pipeline import Pipeline
 from datarax.sources import HFEagerConfig, HFEagerSource
 
+
+print(f"JAX devices: {jax.devices()}")
+```
+
+**Terminal Output:**
+```
+JAX devices: [CudaDevice(id=0)]
+```
+
+```python
 # Load IMDB eagerly into JAX-compatible arrays
 config = HFEagerConfig(
     name="stanfordnlp/imdb",  # Use full dataset path for reliability
@@ -108,6 +119,8 @@ Mode: Eager load with local HuggingFace cache
 Unlike image datasets, IMDB returns text strings. Let's examine the structure.
 
 ```python
+# For text datasets, iterate element-by-element since strings can't be
+# batched as JAX arrays (text needs tokenization first for batching)
 print("Sample reviews from IMDB:")
 
 for i, element in enumerate(source):
@@ -131,6 +144,12 @@ for i, element in enumerate(source):
 
 # Reset source for further use
 source.reset()
+
+# Expected output:
+# Example 1:
+#   Keys: ['text', 'label']
+#   Label: 0 (negative)
+#   Text preview: I rented I AM CURIOUS-YELLOW from my video store because of...
 ```
 
 **Terminal Output:**
@@ -140,17 +159,17 @@ Sample reviews from IMDB:
 Example 1:
   Keys: ['text', 'label']
   Label: 0 (negative)
-  Text preview: I rented I AM CURIOUS-YELLOW from my video store because of all the controversy that...
+  Text preview: I rented I AM CURIOUS-YELLOW from my video store because of all the controversy that surrounded it w...
 
 Example 2:
   Keys: ['text', 'label']
   Label: 0 (negative)
-  Text preview: "I Am Curious: Yellow" is a risible and pretentious steaming pile. It doesn't matter...
+  Text preview: "I Am Curious: Yellow" is a risible and pretentious steaming pile. It doesn't matter what one's poli...
 
 Example 3:
   Keys: ['text', 'label']
-  Label: 1 (positive)
-  Text preview: If only to avoid making this type of film in the future. This film is interesting...
+  Label: 0 (negative)
+  Text preview: If only to avoid making this type of film in the future. This film is interesting as an experiment b...
 ```
 
 ## Step 3: Text Preprocessing
@@ -163,12 +182,15 @@ For NLP tasks, you typically need to:
 Here we demonstrate label normalization. For full text processing, you'd add tokenization.
 
 ```python
-def normalize_label(element, key=None):
+def normalize_label(element, key=None):  # noqa: ARG001
     """Normalize sentiment label to JAX array."""
+    del key  # Unused - deterministic operator
+
     # IMDB labels: 0=negative, 1=positive
     # Convert to proper JAX array for batching
     label = element.data.get("label", 0)
     return element.update_data({"label": jnp.array(label, dtype=jnp.int32)})
+
 
 text_stats_op = ElementOperator(
     ElementOperatorConfig(stochastic=False),
@@ -189,6 +211,7 @@ Created label normalization operator
 Chain the source with our preprocessing operator.
 
 **Important:** We exclude the 'text' field because strings can't be batched as JAX arrays.
+The source also shuffles the split, which stores its negative reviews first.
 
 ```python
 # Create fresh source for the full pipeline
@@ -199,6 +222,7 @@ source2 = HFEagerSource(
         name="stanfordnlp/imdb",
         split="train",
         exclude_keys={"text"},  # Exclude text field - can't batch strings
+        shuffle=True,  # The split starts with negative reviews; shuffle for a mixed sample
     ),
     rngs=nnx.Rngs(1),
 )
@@ -219,6 +243,7 @@ Pipeline: HFEagerSource(IMDB) -> TextStats -> Output
 Collect statistics about sentiment distribution.
 
 ```python
+# Process batches and collect sentiment statistics
 print("\nAnalyzing IMDB review sentiment:")
 
 total_reviews = 0
@@ -230,36 +255,49 @@ for i, batch in enumerate(pipeline):
     if i >= num_batches:
         break
 
-    batch_size = len(batch["label"]) if hasattr(batch["label"], "__len__") else 1
+    data = batch.data
+
+    batch_size = len(data["label"]) if hasattr(data["label"], "__len__") else 1
     total_reviews += batch_size
 
     # Count positives (label=1 is positive)
-    labels = batch["label"]
+    labels = data["label"]
     if hasattr(labels, "__iter__"):
         total_positive += sum(1 for l in labels if l == 1)
     else:
         total_positive += 1 if labels == 1 else 0
 
     if i < 3:  # Show first 3 batches
-        print(f"Batch {i}: {batch_size} samples, labels={labels[:5]}...")
+        label_preview = labels[:5] if hasattr(labels, "__getitem__") else labels  # type: ignore[reportIndexIssue]
+        print(f"Batch {i}: {batch_size} samples, labels={label_preview}...")
 
 print(f"\nSentiment Summary ({total_reviews} reviews analyzed):")
 print(f"  Positive: {total_positive} ({100 * total_positive / total_reviews:.1f}%)")
 total_negative = total_reviews - total_positive
 print(f"  Negative: {total_negative} ({100 * total_negative / total_reviews:.1f}%)")
+
+# Expected output:
+# Sentiment Summary (160 reviews analyzed):
+#   Positive: ~50%
+#   Negative: ~50%
 ```
 
 **Terminal Output:**
 ```
+
 Analyzing IMDB review sentiment:
-Batch 0: 8 samples, labels=[0 0 1 0 1]...
-Batch 1: 8 samples, labels=[1 1 0 1 0]...
-Batch 2: 8 samples, labels=[0 1 1 0 0]...
+Batch 0: 8 samples, labels=[0 1 0 0 0]...
+Batch 1: 8 samples, labels=[0 0 0 0 0]...
+Batch 2: 8 samples, labels=[1 0 0 0 1]...
 
 Sentiment Summary (160 reviews analyzed):
-  Positive: 78 (48.8%)
-  Negative: 82 (51.2%)
+  Positive: 72 (45.0%)
+  Negative: 88 (55.0%)
 ```
+
+The `stanfordnlp/imdb` train split starts with negative reviews (the three inspected in
+Step 2 are all negative). The pipeline's source is built with `shuffle=True`, so the 160
+reviews analyzed mix both sentiments.
 
 ## Text vs Image Pipeline Comparison
 

@@ -66,17 +66,47 @@ jupyter lab examples/core/05_augmentation_quickref.ipynb
 
 We'll create synthetic image data to demonstrate augmentations. In practice, you'd load real images from TFDSEagerSource or HFEagerSource.
 
+The example's imports:
+
 ```python
+# Imports
 import jax
+import jax.numpy as jnp
 import numpy as np
 from flax import nnx
+
+from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.operators.modality.image import (
+    BrightnessOperator,
+    BrightnessOperatorConfig,
+    ContrastOperator,
+    ContrastOperatorConfig,
+    NoiseOperator,
+    NoiseOperatorConfig,
+    RotationOperator,
+    RotationOperatorConfig,
+)
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
+
+print(f"JAX version: {jax.__version__}")
+```
+
+**Terminal Output:**
+```
+JAX version: 0.11.1
+```
+
+Create the sample images:
+
+```python
 # Create sample RGB images
 np.random.seed(42)
 num_samples = 64
 image_shape = (32, 32, 3)  # CIFAR-10 like
 
+# Create gradient images for clear visualization of transforms
 data = {
     "image": np.random.rand(num_samples, *image_shape).astype(np.float32),
     "label": np.random.randint(0, 10, (num_samples,)).astype(np.int32),
@@ -122,8 +152,8 @@ Let's examine each operator individually before chaining.
 Adds a random delta to pixel values.
 
 ```python
-from datarax.operators.modality.image import BrightnessOperator, BrightnessOperatorConfig
-
+# 1. Brightness Operator
+# Adds a random delta to pixel values
 brightness_op = BrightnessOperator(
     BrightnessOperatorConfig(
         field_key="image",
@@ -153,8 +183,8 @@ BrightnessOperator:
 Multiplies pixel values around the mean.
 
 ```python
-from datarax.operators.modality.image import ContrastOperator, ContrastOperatorConfig
-
+# 2. Contrast Operator
+# Multiplies pixel values around the mean
 contrast_op = ContrastOperator(
     ContrastOperatorConfig(
         field_key="image",
@@ -184,8 +214,8 @@ ContrastOperator:
 Rotates images by random angle.
 
 ```python
-from datarax.operators.modality.image import RotationOperator, RotationOperatorConfig
-
+# 3. Rotation Operator
+# Rotates images by random angle
 rotation_op = RotationOperator(
     RotationOperatorConfig(
         field_key="image",
@@ -216,8 +246,8 @@ RotationOperator:
 Adds random noise to images.
 
 ```python
-from datarax.operators.modality.image import NoiseOperator, NoiseOperatorConfig
-
+# 4. Noise Operator
+# Adds random noise to images
 noise_op = NoiseOperator(
     NoiseOperatorConfig(
         field_key="image",
@@ -268,8 +298,6 @@ flowchart LR
 ```
 
 ```python
-from datarax.pipeline import Pipeline
-
 # Create fresh source for chained pipeline
 source2 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(1))
 
@@ -305,9 +333,10 @@ noise = NoiseOperator(
     rngs=nnx.Rngs(noise=30),
 )
 
-# Chain operators via stages
-augmented_pipeline = (
-    Pipeline(source=source2, stages=[brightness, contrast, noise], batch_size=16, rngs=nnx.Rngs(0)))
+# Chain stages directly in the Pipeline constructor
+augmented_pipeline = Pipeline(
+    source=source2, stages=[brightness, contrast, noise], batch_size=16, rngs=nnx.Rngs(0)
+)
 
 print("Augmentation Pipeline:")
 print("  Source -> Brightness -> Contrast -> Noise -> Output")
@@ -338,23 +367,30 @@ for i, batch in enumerate(augmented_pipeline):
     print(f"  Image shape: {images.shape}")
     print(f"  Image range: [{float(images.min()):.3f}, {float(images.max()):.3f}]")
     print(f"  Mean: {float(images.mean()):.3f}, Std: {float(images.std()):.3f}")
+
+# Expected output:
+# Batch 0:
+#   Image shape: (16, 32, 32, 3)
+#   Image range: [0.000, 1.000]
+#   Mean: 0.486, Std: 0.288
 ```
 
 **Terminal Output:**
 ```
+
 Processing augmented batches:
 Batch 0:
   Image shape: (16, 32, 32, 3)
   Image range: [0.000, 1.000]
-  Mean: 0.518, Std: 0.300
+  Mean: 0.486, Std: 0.288
 Batch 1:
   Image shape: (16, 32, 32, 3)
   Image range: [0.000, 1.000]
-  Mean: 0.510, Std: 0.303
+  Mean: 0.489, Std: 0.301
 Batch 2:
   Image shape: (16, 32, 32, 3)
   Image range: [0.000, 1.000]
-  Mean: 0.483, Std: 0.292
+  Mean: 0.493, Std: 0.297
 ```
 
 The batches stay in `[0, 1]` because the image operators clip their output to `clip_range`,
@@ -368,15 +404,13 @@ adjustment, and a custom `ElementOperator` does no clipping of its own; a clip s
 such an operator keeps the pipeline's output in range.
 
 ```python
-import jax.numpy as jnp
-from datarax.operators import ElementOperator, ElementOperatorConfig
-
-def clip_image(element, key=None):
+def clip_image(element, key=None):  # noqa: ARG001
     """Clip image values to [0, 1] range."""
     del key
     image = element.data["image"]
     clipped = jnp.clip(image, 0.0, 1.0)
     return element.update_data({"image": clipped})
+
 
 clipper = ElementOperator(
     ElementOperatorConfig(stochastic=False),
@@ -416,7 +450,7 @@ for label, pipeline in [
 
 **Terminal Output:**
 ```
-Without clipping - Image range: [-0.142, 1.145]
+Without clipping - Image range: [-0.125, 1.129]
 With clipping - Image range: [0.000, 1.000]
 ```
 

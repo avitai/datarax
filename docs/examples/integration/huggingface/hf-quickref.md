@@ -82,11 +82,26 @@ jupyter lab examples/integration/huggingface/01_hf_quickref.ipynb
 > which always loads the full dataset into JAX arrays at init.
 
 ```python
+# Imports
 import jax
+import jax.numpy as jnp
 from flax import nnx
+
+from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.pipeline import Pipeline
 from datarax.sources import HFEagerConfig, HFEagerSource
 
-# Load the MNIST training split (eager: loaded into JAX arrays at init)
+
+print(f"JAX devices: {jax.devices()}")
+```
+
+**Terminal Output:**
+```
+JAX devices: [CudaDevice(id=0)]
+```
+
+```python
+# Load the MNIST training split eagerly
 config = HFEagerConfig(
     name="ylecun/mnist",
     split="train",
@@ -95,14 +110,12 @@ config = HFEagerConfig(
 source = HFEagerSource(config, rngs=nnx.Rngs(0))
 print(f"Loaded HuggingFace dataset: {config.name}")
 
-# Eager sources expose their length directly
-print(f"Dataset size: {len(source)}")
+# An eager source knows its size
 ```
 
 **Terminal Output:**
 ```
-JAX devices: [CudaDevice(id=0)]
-Loaded HuggingFace dataset: mnist
+Loaded HuggingFace dataset: ylecun/mnist
 Dataset size: 60000
 ```
 
@@ -134,8 +147,6 @@ flowchart LR
 ```
 
 ```python
-from datarax.pipeline import Pipeline
-
 # Create pipeline with batch_size=1 for inspection
 pipeline = Pipeline(source=source, stages=[], batch_size=1, rngs=nnx.Rngs(0))
 
@@ -145,7 +156,7 @@ example_iter = iter(pipeline)
 
 for i in range(3):
     batch = next(example_iter)
-    data = batch.data  # the Batch's fields
+    data = batch.data
 
     print(f"\nExample {i + 1}:")
     print(f"  Keys: {list(data.keys())}")
@@ -155,6 +166,12 @@ for i in range(3):
             print(f"  {key}: shape={value.shape}, dtype={value.dtype}")
         else:
             print(f"  {key}: {type(value).__name__} = {value}")
+
+# Expected output (MNIST):
+# Example 1:
+#   Keys: ['image', 'label']
+#   image: shape=(1, 28, 28), dtype=uint8
+#   label: shape=(1,), dtype=int32
 ```
 
 **Terminal Output:**
@@ -182,10 +199,6 @@ Example 3:
 Add operators to transform the HuggingFace data.
 
 ```python
-import jax.numpy as jnp
-from datarax.pipeline import Pipeline
-from datarax.operators import ElementOperator, ElementOperatorConfig
-
 # Define a normalization transform
 def normalize_image(element, key=None):
     """Normalize image to [0, 1] range and add channel dimension."""
@@ -199,6 +212,7 @@ def normalize_image(element, key=None):
         return element.update_data({"image": normalized})
     return element
 
+
 # Create operator
 normalizer = ElementOperator(
     ElementOperatorConfig(stochastic=False),
@@ -208,7 +222,9 @@ normalizer = ElementOperator(
 
 # Build transformed pipeline (need fresh source for new iteration)
 source2 = HFEagerSource(config, rngs=nnx.Rngs(1))
-transformed_pipeline = Pipeline(source=source2, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0))
+transformed_pipeline = Pipeline(
+    source=source2, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0)
+)
 
 # Process a batch
 batch = next(iter(transformed_pipeline))
@@ -217,6 +233,11 @@ image_batch = batch["image"]
 print("Transformed batch:")
 print(f"  Image shape: {image_batch.shape}")
 print(f"  Image range: [{image_batch.min():.3f}, {image_batch.max():.3f}]")
+
+# Expected output:
+# Transformed batch:
+#   Image shape: (32, 28, 28, 1)
+#   Image range: [0.000, 1.000]
 ```
 
 **Terminal Output:**

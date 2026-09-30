@@ -249,7 +249,7 @@ print(
 )
 print(f"Test images:  {test_data['image'].shape}")
 # Expected output:
-# Train images: (512, 32, 32, 3), range: [0.000, ~0.300]
+# Train images: (512, 32, 32, 3), range: [0.000, 0.360]
 # Test images:  (128, 32, 32, 3)
 
 # %%
@@ -592,11 +592,11 @@ for OpClass, ConfigClass, name in [
     )
 
 # Expected output:
-# CCM            | params:    9 | output range: [0.200, 0.200]
-# Desaturation   | params:    1 | output range: [0.200, 0.200]
-# ToneMapping    | params:   16 | output range: [0.000, 1.000]
-# GammaCorrection| params:    1 | output range: [0.200, 0.200]
-# Sharpening     | params:   10 | output range: [0.200, 0.200]
+#   CCM             | params:    9 | output range: [0.200, 0.200]
+#   Desaturation    | params:    1 | output range: [0.200, 0.200]
+#   ToneMapping     | params:   16 | output range: [0.550, 0.550]
+#   GammaCorrection | params:    1 | output range: [0.200, 0.200]
+#   Sharpening      | params:   10 | output range: [0.200, 0.200]
 
 # %% [markdown]
 """
@@ -754,7 +754,7 @@ n_det_params = sum(p.size for p in jax.tree.leaves(nnx.state(detector, nnx.Param
 print(f"Detector parameters: {n_det_params:,}")
 # Expected output:
 # Detector output shape: (2, 10)
-# Detector parameters: ~391,946
+# Detector parameters: 391,946
 
 # %% [markdown]
 """

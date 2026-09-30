@@ -91,26 +91,174 @@ curve is the reference the resumed run must reproduce. One `nnx.jit` step with
 `calibrax.metrics.functional.mse` serves both loaders.
 
 ```python
-@nnx.jit
-def train_step(model: LinearRegression, optimizer: nnx.Optimizer, batch: dict) -> jax.Array:
-    def loss_fn(module: LinearRegression) -> jax.Array:
-        return mse(module(batch["x"]), batch["y"])
+class Records(grain.sources.RandomAccessDataSource):
+    """``{"x", "y"}`` records read by index."""
 
-    loss, grads = nnx.value_and_grad(loss_fn)(model)
-    optimizer.update(model, grads)
-    return loss
+    def __len__(self) -> int:
+        """Return the number of records."""
+        return NUM_RECORDS
+
+    def __getitem__(self, i: int) -> dict[str, np.ndarray]:
+        """Return the record at ``i``."""
+        return {"x": features[i], "y": targets[i]}
+
+    def __repr__(self) -> str:
+        """Describe the records, which Grain compares when it restores a checkpoint."""
+        return f"Records(num_records={NUM_RECORDS})"
 
 
+class AddNoise(grain.transforms.RandomMap):
+    """Add Gaussian noise drawn from the generator Grain passes with each record."""
+
+    # Grain declares RandomMap.random_map with no return annotation, so a type checker infers
+    # None; its own documented override annotates the return as this one does.
+    def random_map(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self, element: dict, rng: np.random.Generator
+    ) -> dict:
+        """Return the record with noise added to ``x``."""
+        noise = rng.normal(scale=NOISE_SCALE, size=element["x"].shape).astype(np.float32)
+        return {**element, "x": element["x"] + noise}
+
+
+def build_grain_iterator():
+    """A shuffled, noisy, batched loader over five epochs."""
+    sampler = grain.samplers.IndexSampler(
+        num_records=NUM_RECORDS, shuffle=True, num_epochs=NUM_EPOCHS, seed=0
+    )
+    loader = grain.DataLoader(
+        data_source=Records(),
+        sampler=sampler,
+        operations=[AddNoise(), grain.transforms.Batch(batch_size=BATCH_SIZE)],
+    )
+    return iter(loader)
+
+
+def add_noise(element, key):
+    """Add Gaussian noise drawn from this record's own key."""
+    x = element.data["x"]
+    return element.update_data({"x": x + NOISE_SCALE * jax.random.normal(key, x.shape)})
+
+
+def build_datarax_pipeline() -> Pipeline:
+    """A shuffled, noisy, batched pipeline over the records."""
+    source = MemorySource(
+        MemorySourceConfig(shuffle=True), data={"x": features, "y": targets}, rngs=nnx.Rngs(0)
+    )
+    noise = ElementOperator(
+        ElementOperatorConfig(stochastic=True, stream_name="noise"),
+        fn=add_noise,
+        rngs=nnx.Rngs(noise=0),
+    )
+    return Pipeline(source=source, stages=[noise], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
+
+
+def datarax_iterators(pipeline: Pipeline, first: PipelineIterator | None = None):
+    """Yield one iterator per epoch, starting from ``first`` when a run resumes."""
+    iterator = first if first is not None else iter(pipeline)
+    while True:
+        if not isinstance(iterator, PipelineIterator):
+            raise TypeError("a MemorySource pipeline iterates through a PipelineIterator")
+        yield iterator
+        if int(iterator.get_state()["epoch"]) + 1 >= NUM_EPOCHS:
+            return
+        pipeline.reset()
+        iterator = iter(pipeline)
+
+
+def train_grain(
+    iterator,
+    model: LinearRegression,
+    optimizer: nnx.Optimizer,
+    steps: int,
+    save: tuple[int, OrbaxCheckpointStore] | None = None,
+) -> tuple[list[float], dict | None]:
+    """Train over ``steps`` batches; ``save`` names the step to checkpoint at and the store.
+
+    Returns the losses and the payload saved, or ``None`` when nothing was saved.
+    """
+    losses: list[float] = []
+    payload = None
+    for _ in range(steps):
+        batch = next(iterator)
+        losses.append(float(train_step(model, optimizer, {"x": batch["x"], "y": batch["y"]})))
+        if save is not None and len(losses) == save[0]:
+            payload = {
+                **training_state(model, optimizer),
+                "data_iterator": iterator.get_state().decode(),
+            }
+            save[1].save(save[0], payload, metrics={"loss": losses[-1]})
+    return losses, payload
+
+
+def train_datarax(
+    pipeline: Pipeline,
+    model: LinearRegression,
+    optimizer: nnx.Optimizer,
+    steps: int,
+    first: PipelineIterator | None = None,
+    save: tuple[int, OrbaxCheckpointStore] | None = None,
+) -> tuple[list[float], dict | None]:
+    """Train over ``steps`` batches; ``save`` names the step to checkpoint at and the store.
+
+    Returns the losses and the payload saved, or ``None`` when nothing was saved.
+    """
+    losses: list[float] = []
+    payload = None
+    for iterator in datarax_iterators(pipeline, first):
+        for batch in iterator:
+            losses.append(float(train_step(model, optimizer, batch)))
+            if save is not None and len(losses) == save[0]:
+                payload = {
+                    **training_state(model, optimizer),
+                    "data_iterator": iterator.get_state(),
+                }
+                save[1].save(save[0], payload, metrics={"loss": losses[-1]})
+            if len(losses) == steps:
+                return losses, payload
+    return losses, payload
+
+
+def saved_payload(payload: dict | None) -> dict:
+    """The payload a training run saved, which a run asked to checkpoint always has."""
+    if payload is None:
+        raise RuntimeError("the run did not reach its checkpoint step")
+    return payload
+
+
+def restored_payload(store: OrbaxCheckpointStore, templates: dict, step: int) -> Checkpoint:
+    """Restore the items at ``step`` from ``store`` onto ``templates`` of the same structure."""
+    return store.restore(step, templates=templates)
+
+
+grain_model, grain_optimizer = build_model()
 grain_reference, _ = train_grain(build_grain_iterator(), grain_model, grain_optimizer, TOTAL_STEPS)
-datarax_reference, _ = train_datarax(build_datarax_pipeline(), datarax_model, datarax_optimizer, TOTAL_STEPS)
+datarax_model, datarax_optimizer = build_model()
+datarax_reference, _ = train_datarax(
+    build_datarax_pipeline(), datarax_model, datarax_optimizer, TOTAL_STEPS
+)
+print(
+    f"Grain reference:   {len(grain_reference)} steps, loss first {grain_reference[0]:.4f}, last {grain_reference[-1]:.4f}"
+)
+print(
+    f"Datarax reference: {len(datarax_reference)} steps, loss first {datarax_reference[0]:.4f}, last {datarax_reference[-1]:.4f}"
+)
+print(f"Grain weights:   {np.round(np.asarray(grain_model.linear.kernel[...]).ravel(), 2)}")
+print(
+    f"Datarax weights: {np.round(np.asarray(datarax_model.linear.kernel[...]).ravel(), 2)} (true {TRUE_WEIGHTS.ravel()})"
+)
+# Expected output:
+# Grain reference:   40 steps, loss first 4.2264, last 0.0126
+# Datarax reference: 40 steps, loss first 3.7683, last 0.0719
+# Grain weights:   [ 1.95 -1.    0.48]
+# Datarax weights: [ 1.98 -0.96  0.53] (true [ 2.  -1.   0.5])
 ```
 
 **Terminal Output:**
 ```
 Grain reference:   40 steps, loss first 4.2264, last 0.0126
-Datarax reference: 40 steps, loss first 1.9849, last 0.0402
+Datarax reference: 40 steps, loss first 3.7683, last 0.0719
 Grain weights:   [ 1.95 -1.    0.48]
-Datarax weights: [ 1.99 -0.99  0.51] (true [ 2.  -1.   0.5])
+Datarax weights: [ 1.98 -0.96  0.53] (true [ 2.  -1.   0.5])
 ```
 
 ### Part 2: Train, Checkpoint at Step 20, Stop
@@ -122,19 +270,28 @@ served, Datarax's dict names position 32 of epoch 2.
 
 ```python
 grain_store = OrbaxCheckpointStore(checkpoint_root / "grain")
+model, optimizer = build_model()
 grain_before, grain_payload = train_grain(
     build_grain_iterator(), model, optimizer, CHECKPOINT_STEP, save=(CHECKPOINT_STEP, grain_store)
 )
-# inside train_grain, at the checkpoint step:
-#   payload = {**training_state(model, optimizer), "data_iterator": iterator.get_state().decode()}
-#   store.save(CHECKPOINT_STEP, payload, metrics={"loss": losses[-1]})
-
 datarax_store = OrbaxCheckpointStore(checkpoint_root / "datarax")
+model, optimizer = build_model()
 datarax_before, datarax_payload = train_datarax(
-    build_datarax_pipeline(), model, optimizer, CHECKPOINT_STEP, save=(CHECKPOINT_STEP, datarax_store)
+    build_datarax_pipeline(),
+    model,
+    optimizer,
+    CHECKPOINT_STEP,
+    save=(CHECKPOINT_STEP, datarax_store),
 )
-# inside train_datarax, at the checkpoint step:
-#   payload = {**training_state(model, optimizer), "data_iterator": iterator.get_state()}
+print(f"Latest step in each store: {grain_store.latest_step()}, {datarax_store.latest_step()}")
+print(
+    f"Grain loader state keys: {sorted(json.loads(saved_payload(grain_payload)['data_iterator']))}"
+)
+print(f"Datarax loader state: {saved_payload(datarax_payload)['data_iterator']}")
+# Expected output:
+# Latest step in each store: 20, 20
+# Grain loader state keys: ['data_source', 'last_seen_indices', 'last_worker_index', 'sampler', 'version', 'worker_count']
+# Datarax loader state: {'position': 32, 'epoch': 2, 'rng_counts': [1, 0], 'version': 2, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 1, 'shuffled': True}}  # noqa: E501
 ```
 
 **Terminal Output:**
@@ -153,13 +310,21 @@ Grain's bytes go to `set_state` on a loader built the same way, and Datarax's di
 remaining 20 steps.
 
 ```python
+def build_fresh_model() -> tuple[LinearRegression, nnx.Optimizer]:
+    """A model and optimizer from another seed, so only the checkpoint can align them."""
+    model = LinearRegression(rngs=nnx.Rngs(1))
+    optimizer = nnx.Optimizer(model, optax.sgd(learning_rate=LEARNING_RATE), wrt=nnx.Param)
+    return model, optimizer
+
+
 model, optimizer = build_fresh_model()
 templates = {**training_state(model, optimizer), "data_iterator": ""}
-grain_checkpoint = grain_store.restore(CHECKPOINT_STEP, templates=templates)
+grain_checkpoint = restored_payload(grain_store, templates, CHECKPOINT_STEP)
 load_training_state(model, optimizer, grain_checkpoint.items)
 grain_iterator = build_grain_iterator()
 grain_iterator.set_state(grain_checkpoint.items["data_iterator"].encode())
 grain_after, _ = train_grain(grain_iterator, model, optimizer, TOTAL_STEPS - CHECKPOINT_STEP)
+grain_store.close()
 
 model, optimizer = build_fresh_model()
 templates = {
@@ -179,23 +344,45 @@ templates = {
         },
     },
 }
-datarax_checkpoint = datarax_store.restore(CHECKPOINT_STEP, templates=templates)
+datarax_checkpoint = restored_payload(datarax_store, templates, CHECKPOINT_STEP)
 load_training_state(model, optimizer, datarax_checkpoint.items)
 pipeline = build_datarax_pipeline()
 datarax_iterator = iter(pipeline)
+if not isinstance(datarax_iterator, PipelineIterator):
+    raise TypeError("a MemorySource pipeline iterates through a PipelineIterator")
 datarax_iterator.set_state(datarax_checkpoint.items["data_iterator"])
 datarax_after, _ = train_datarax(
     pipeline, model, optimizer, TOTAL_STEPS - CHECKPOINT_STEP, first=datarax_iterator
 )
+datarax_store.close()
+
+grain_resumed = grain_before + grain_after
+datarax_resumed = datarax_before + datarax_after
+grain_matches = np.array_equal(grain_resumed, grain_reference)
+datarax_matches = np.array_equal(datarax_resumed, datarax_reference)
+grain_record, datarax_record = grain_checkpoint.metadata, datarax_checkpoint.metadata
+print(f"Restored Grain step {grain_record.step} (loss {grain_record.metrics['loss']:.4f})")
+print(f"Restored Datarax step {datarax_record.step} (loss {datarax_record.metrics['loss']:.4f})")
+print(f"Grain: resumed run reproduces the reference loss for loss: {grain_matches}")
+print(f"Datarax: resumed run reproduces the reference loss for loss: {datarax_matches}")
+print(
+    f"Steps 20-22 reference {np.round(datarax_reference[20:23], 4)} resumed {np.round(datarax_resumed[20:23], 4)}"
+)
+# Expected output:
+# Restored Grain step 20 (loss 0.0837)
+# Restored Datarax step 20 (loss 0.0438)
+# Grain: resumed run reproduces the reference loss for loss: True
+# Datarax: resumed run reproduces the reference loss for loss: True
+# Steps 20-22 reference [0.052  0.057  0.0387] resumed [0.052  0.057  0.0387]
 ```
 
 **Terminal Output:**
 ```
 Restored Grain step 20 (loss 0.0837)
-Restored Datarax step 20 (loss 0.0310)
+Restored Datarax step 20 (loss 0.0438)
 Grain: resumed run reproduces the reference loss for loss: True
 Datarax: resumed run reproduces the reference loss for loss: True
-Steps 20-22 reference [0.067  0.0206 0.044 ] resumed [0.067  0.0206 0.044 ]
+Steps 20-22 reference [0.052  0.057  0.0387] resumed [0.052  0.057  0.0387]
 ```
 
 ## Architecture Diagram

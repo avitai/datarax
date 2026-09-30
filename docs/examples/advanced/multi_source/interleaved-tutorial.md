@@ -93,34 +93,34 @@ Combine MNIST and Fashion-MNIST to create a unified classification dataset:
 ## Part 1: Create Individual Sources
 
 ```python
-from datarax.sources import TFDSEagerConfig, TFDSEagerSource
-
-# MNIST Source
+# MNIST Source - 10 digit classes (0-9)
 mnist_config = TFDSEagerConfig(
     name="mnist",
-    split="train[:2000]",
+    split="train[:2000]",  # Subset for demo
     shuffle=True,
     seed=42,
 )
+
 mnist_source = TFDSEagerSource(mnist_config, rngs=nnx.Rngs(42))
 
-# Fashion-MNIST Source
+# Fashion-MNIST Source - 10 fashion classes
 fashion_config = TFDSEagerConfig(
     name="fashion_mnist",
     split="train[:2000]",
     shuffle=True,
     seed=43,
 )
+
 fashion_source = TFDSEagerSource(fashion_config, rngs=nnx.Rngs(43))
 
 print(f"MNIST samples: {len(mnist_source)}")
-print(f"Fashion samples: {len(fashion_source)}")
+print(f"Fashion-MNIST samples: {len(fashion_source)}")
 ```
 
 **Terminal Output:**
 ```
 MNIST samples: 2000
-Fashion samples: 2000
+Fashion-MNIST samples: 2000
 ```
 
 ## Part 2: Source-Specific Preprocessing
@@ -246,23 +246,39 @@ interleaved = InterleavedIterator([mnist_pipeline, fashion_pipeline])
 ## Part 4: Process Mixed Batches
 
 ```python
-# Create fresh pipelines for interleaving (train[:500] subset per source)
+# Create interleaved pipeline
 def create_interleaved_pipelines():
     """Create fresh pipelines for interleaving."""
     mnist_src = TFDSEagerSource(
-        TFDSEagerConfig(name="mnist", split="train[:500]", shuffle=True, seed=42),
+        TFDSEagerConfig(
+            name="mnist",
+            split="train[:500]",
+            shuffle=True,
+            seed=42,
+        ),
         rngs=nnx.Rngs(42),
     )
+
     fashion_src = TFDSEagerSource(
-        TFDSEagerConfig(name="fashion_mnist", split="train[:500]", shuffle=True, seed=43),
+        TFDSEagerConfig(
+            name="fashion_mnist",
+            split="train[:500]",
+            shuffle=True,
+            seed=43,
+        ),
         rngs=nnx.Rngs(43),
     )
 
     mnist_prep = ElementOperator(
-        ElementOperatorConfig(stochastic=False), fn=preprocess_mnist, rngs=nnx.Rngs(0)
+        ElementOperatorConfig(stochastic=False),
+        fn=preprocess_mnist,
+        rngs=nnx.Rngs(0),
     )
+
     fashion_prep = ElementOperator(
-        ElementOperatorConfig(stochastic=False), fn=preprocess_fashion, rngs=nnx.Rngs(0)
+        ElementOperatorConfig(stochastic=False),
+        fn=preprocess_fashion,
+        rngs=nnx.Rngs(0),
     )
 
     mnist_pipe = Pipeline(

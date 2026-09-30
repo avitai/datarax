@@ -94,29 +94,33 @@ model_sharded = P(None, None, None, "model") # Model parallelism
 ## Part 2: Creating the Device Mesh
 
 The guide builds a **1D mesh** for pure data parallelism — all devices along a
-single `"data"` axis. This is what the script does:
+single `"data"` axis. This is what the script does (the output below is from a single-GPU run,
+so the script takes its single-device branch and builds no mesh):
 
 ```python
-import jax
-from substrax.mesh import DeviceMeshManager
-
+# Device configuration
 devices = jax.devices()
 num_devices = len(devices)
 use_sharding = num_devices >= 2
 
+print(f"Available devices: {num_devices}")
+print(f"Device types: {[str(d.device_kind) for d in devices]}")
+
 if use_sharding:
     # Create 1D mesh for pure data parallelism
     mesh = DeviceMeshManager.create_data_parallel_mesh()
-    print(f"Created mesh: {mesh.shape} with axis 'data'")
+    print(f"\nCreated mesh: {mesh.shape} with axis 'data'")
 else:
     mesh = None
-    print("Single device mode - will simulate sharding concepts")
+    print("\nSingle device mode - will simulate sharding concepts")
 ```
 
 **Terminal Output:**
 ```
-Available devices: 2
-Created mesh: (2,) with axis 'data'
+Available devices: 1
+Device types: ['NVIDIA L40S']
+
+Single device mode - will simulate sharding concepts
 ```
 
 !!! note "Conceptual extension: 2D meshes"
@@ -174,25 +178,28 @@ def create_pipeline(batch_size=BATCH_SIZE, num_samples=NUM_SAMPLES, seed=42):
     return Pipeline(source=source, stages=[preprocessor], batch_size=batch_size, rngs=nnx.Rngs(0))
 ```
 
-Each batch is placed on the mesh by applying the sharding to every array it contains:
+With a mesh, each batch is placed on it by applying the sharding to every array it contains;
+with a single device the script reports the unsharded batch:
 
 ```python
-from substrax.spmd import place_batch_on_shards
-
-# Distribute a batch within the mesh context
-pipeline = create_pipeline()
-test_batch = next(iter(pipeline))
-with jax.set_mesh(mesh):
-    sharded_batch = place_batch_on_shards(test_batch, create_data_parallel_sharding(mesh))
-    print(f"  Image shape: {sharded_batch['image'].shape}")
-    print(f"  Image sharding: {sharded_batch['image'].sharding.spec}")
+# Test distribution
+if mesh is not None:
+    test_batch = next(iter(pipeline))
+    with jax.set_mesh(mesh):
+        sharded_batch = place_batch_on_shards(test_batch, create_data_parallel_sharding(mesh))
+        print("\nDistributed batch:")
+        print(f"  Image shape: {sharded_batch['image'].shape}")
+        print(f"  Image sharding: {sharded_batch['image'].sharding.spec}")
+else:
+    test_batch = next(iter(pipeline))
+    print("\nSingle-device batch:")
+    print(f"  Image shape: {test_batch['image'].shape}")
 ```
 
 **Terminal Output:**
 ```
-Distributed batch:
+Single-device batch:
   Image shape: (128, 32, 32, 3)
-  Image sharding: PartitionSpec('data', None, None, None)
 ```
 
 ## Part 4: Optimizing Throughput

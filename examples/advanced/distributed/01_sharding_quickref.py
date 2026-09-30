@@ -190,7 +190,7 @@ else:
 # Expected output (multi-GPU):
 # Batch 0:
 #   Image shape: (128, 32, 32, 3)
-#   Image sharding: NamedSharding(mesh=..., spec=PartitionSpec('data',))
+#   Image sharding: NamedSharding(mesh=Mesh('data': 2, axis_types=(Auto,)), spec=P('data',), memory_kind=device)  # noqa: E501
 #   Label shape: (128,)
 
 # %% [markdown]

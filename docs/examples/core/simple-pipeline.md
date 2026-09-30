@@ -69,16 +69,30 @@ Datarax works with dictionary-based data where each key maps to an array.
 The first dimension is the sample dimension.
 
 ```python
+# Imports
+import jax
+import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-# Create MNIST-like sample data
+from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.pipeline import Pipeline
+from datarax.sources import MemorySource, MemorySourceConfig
+```
+
+```python
+# Create sample MNIST-like data
 num_samples = 1000
+image_shape = (28, 28, 1)
+
 data = {
-    "image": np.random.randint(0, 255, (num_samples, 28, 28, 1)).astype(np.float32),
+    "image": np.random.randint(0, 255, (num_samples, *image_shape)).astype(np.float32),
     "label": np.random.randint(0, 10, (num_samples,)).astype(np.int32),
 }
+
 print(f"Created data: image={data['image'].shape}, label={data['label'].shape}")
+# Expected output:
+# Created data: image=(1000, 28, 28, 1), label=(1000,)
 ```
 
 **Terminal Output:**
@@ -92,11 +106,13 @@ Created data: image=(1000, 28, 28, 1), label=(1000,)
 It requires a config object and random number generators (rngs).
 
 ```python
-from datarax.sources import MemorySource, MemorySourceConfig
-
+# Create source with config-based API
 source_config = MemorySourceConfig()
 source = MemorySource(source_config, data=data, rngs=nnx.Rngs(0))
+
 print(f"Source contains {len(source)} samples")
+# Expected output:
+# Source contains 1000 samples
 ```
 
 **Terminal Output:**
@@ -151,11 +167,14 @@ augmenter = ElementOperator(
 Chain the source and operators using the DAG-based API.
 
 ```python
-from datarax.pipeline import Pipeline
-
-pipeline = (
-    Pipeline(source=source, stages=[normalizer, augmenter], batch_size=32, rngs=nnx.Rngs(0))
+# Build the pipeline
+pipeline = Pipeline(
+    source=source,
+    stages=[normalizer, augmenter],
+    batch_size=32,
+    rngs=nnx.Rngs(0),
 )
+
 print("Pipeline created with batch_size=32")
 ```
 
@@ -169,19 +188,46 @@ Pipeline created with batch_size=32
 The pipeline is iterable. Each iteration yields a `Batch`, read by field name.
 
 ```python
+# Process batches
 print("Processing batches:")
 for i, batch in enumerate(pipeline):
-    if i >= 3:
+    if i >= 3:  # Show first 3 batches
         break
-    print(f"Batch {i}: image={batch['image'].shape}, range=[{batch['image'].min():.3f}, {batch['image'].max():.3f}]")
+
+    image_batch = batch["image"]
+    label_batch = batch["label"]
+
+    print(f"Batch {i}:")
+    print(f"  Image shape: {image_batch.shape}")
+    print(f"  Label shape: {label_batch.shape}")
+    print(f"  Image range: [{image_batch.min():.3f}, {image_batch.max():.3f}]")
+
+# Expected output:
+# Processing batches:
+# Batch 0:
+#   Image shape: (32, 28, 28, 1)
+#   Label shape: (32,)
+#   Image range: [0.000, 0.996]
+# Batch 1:
+#   Image shape: (32, 28, 28, 1)
+#   ...
 ```
 
 **Terminal Output:**
 ```
 Processing batches:
-Batch 0: image=(32, 28, 28, 1), range=[0.000, 1.000]
-Batch 1: image=(32, 28, 28, 1), range=[0.000, 1.000]
-Batch 2: image=(32, 28, 28, 1), range=[0.000, 1.000]
+Batch 0:
+  Image shape: (32, 28, 28, 1)
+  Label shape: (32,)
+  Image range: [0.000, 0.996]
+Batch 1:
+  Image shape: (32, 28, 28, 1)
+  Label shape: (32,)
+  Image range: [0.000, 0.996]
+Batch 2:
+  Image shape: (32, 28, 28, 1)
+  Label shape: (32,)
+  Image range: [0.000, 0.996]
 ```
 
 ## Architecture Diagram

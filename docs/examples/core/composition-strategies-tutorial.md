@@ -97,6 +97,31 @@ graph TB
 
 ## Key Concepts
 
+The examples draw batches from a small in-memory dataset through a pipeline helper:
+
+```python
+# Create sample image data
+np.random.seed(42)
+num_samples = 100
+data = {
+    "image": np.random.randint(0, 256, (num_samples, 32, 32, 3)).astype(np.float32) / 255.0,
+    "label": np.random.randint(0, 10, (num_samples,)).astype(np.int32),
+}
+
+source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+print(f"Dataset: {num_samples} samples, shape {data['image'].shape}")
+
+
+def example_pipeline(source, batch_size: int, stages=()):
+    """Build the tutorial pipelines used throughout this example."""
+    return Pipeline(source=source, stages=list(stages), batch_size=batch_size, rngs=nnx.Rngs(0))
+```
+
+**Terminal Output:**
+```
+Dataset: 100 samples, shape (100, 32, 32, 3)
+```
+
 ### Helper Factories
 
 The tutorial builds its operators through small factory functions, so each
@@ -138,22 +163,28 @@ def make_noise_op(std: float, seed: int = 0) -> NoiseOperator:
 Sequential strategies chain operators where output of one becomes input of next.
 
 ```python
-from datarax.operators.composite_operator import (
-    CompositeOperatorConfig,
-    CompositeOperatorModule,
-    CompositionStrategy,
-)
-
 # SEQUENTIAL: Basic chaining
+# brightness(+0.1) → contrast(1.2) → result
+
 bright_op = make_brightness_op(0.1, seed=1)
 contrast_op = make_contrast_op(1.2, seed=2)
 
 sequential_composite = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.SEQUENTIAL,
-        ),
+    ),
     operators=[bright_op, contrast_op],
 )
+
+# Test it
+source1 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(10))
+pipeline = example_pipeline(source1, batch_size=16, stages=[sequential_composite])
+batch = next(iter(pipeline))
+
+print("SEQUENTIAL Strategy:")
+print("  Chain: Brightness(+0.1) → Contrast(×1.2)")
+print("  Input range: [0.0, 1.0]")
+print(f"  Output range: [{batch['image'].min():.3f}, {batch['image'].max():.3f}]")
 ```
 
 **Terminal Output:**
@@ -161,7 +192,7 @@ sequential_composite = CompositeOperatorModule(
 SEQUENTIAL Strategy:
   Chain: Brightness(+0.1) → Contrast(×1.2)
   Input range: [0.0, 1.0]
-  Output range: [0.000, 1.440]
+  Output range: [0.000, 1.000]
 ```
 
 ### Part 2: Parallel Strategies
@@ -177,18 +208,29 @@ Apply ALL operators to the SAME input, then merge outputs.
 | `"dict"` | Keep separate in dict | `{op_0: ..., op_1: ...}` |
 
 ```python
-# PARALLEL with mean merge
+# PARALLEL: Apply multiple augmentations to same input, merge results
+
 op_bright = make_brightness_op(0.15, seed=10)
 op_contrast = make_contrast_op(1.3, seed=11)
 op_noise = make_noise_op(0.05, seed=12)
 
+# Merge with mean - creates averaged augmentation
 parallel_mean = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.PARALLEL,
-        merge_strategy="mean",
+        merge_strategy="mean",  # Average the three versions
     ),
     operators=[op_bright, op_contrast, op_noise],
 )
+
+source2 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(20))
+pipeline = example_pipeline(source2, batch_size=16, stages=[parallel_mean])
+batch = next(iter(pipeline))
+
+print("PARALLEL Strategy (merge='mean'):")
+print("  Operators: [Brightness, Contrast, Noise]")
+print(f"  Output shape: {batch['image'].shape} (same as input)")
+print("  Output is the mean of all three augmented versions")
 ```
 
 **Terminal Output:**
@@ -249,10 +291,18 @@ ensemble_mean = CompositeOperatorModule(
 Route data through different operator branches based on conditions.
 
 ```python
+# BRANCHING: Route based on label
 def label_router(data):
-    """Route based on label: 0-5 → branch 0, 6-9 → branch 1."""
+    """Route based on label value.
+
+    Returns:
+        0 if label <= 5 (bright augmentation)
+        1 if label > 5 (contrast augmentation)
+    """
     label = data["label"]
+    # Must use jax.lax operations for traced values
     return jax.lax.cond(label > 5, lambda: 1, lambda: 0)
+
 
 branch_ops = [
     make_brightness_op(0.2, seed=70),  # Branch 0: for labels 0-5
@@ -263,17 +313,26 @@ branching = CompositeOperatorModule(
     CompositeOperatorConfig(
         strategy=CompositionStrategy.BRANCHING,
         router=label_router,
-        default_branch=0,
+        default_branch=0,  # Fallback if router fails
     ),
     operators=branch_ops,
 )
+
+source7 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(70))
+pipeline = example_pipeline(source7, batch_size=16, stages=[branching])
+batch = next(iter(pipeline))
+
+print("BRANCHING Strategy:")
+print("  Router: label <= 5 → Brightness, label > 5 → Contrast")
+print(f"  Batch labels: {batch['label'][:8]}...")
+print("  Each sample routed to appropriate augmentation branch")
 ```
 
 **Terminal Output:**
 ```
 BRANCHING Strategy:
   Router: label <= 5 → Brightness, label > 5 → Contrast
-  Batch labels: [3 7 2 8 4 6 1 9]...
+  Batch labels: [8 2 2 4 1 0 3 6]...
   Each sample routed to appropriate augmentation branch
 ```
 
@@ -302,7 +361,7 @@ The composition strategies are designed for `jax.vmap` and `jax.jit` compatibili
 
 ## Results
 
-Running the tutorial produces:
+The script ends by running its `main()` function, which prints:
 
 ```
 ============================================================
@@ -313,10 +372,10 @@ Composition Strategies Tutorial
    Output shape: (16, 32, 32, 3)
 
 2. ENSEMBLE_MEAN: Average augmentations
-   Output range: [0.000, 1.100]
+   Output range: [0.050, 0.950]
 
 3. BRANCHING: Route by label
-   Labels: [3 7 2 8 4]... → routed to different branches
+   Labels: [8 2 2 4 1]... → routed to different branches
 
 ============================================================
 Tutorial completed successfully!

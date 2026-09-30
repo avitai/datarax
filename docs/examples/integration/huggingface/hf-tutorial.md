@@ -84,15 +84,33 @@ jupyter lab examples/integration/huggingface/02_hf_tutorial.ipynb
 ### Basic Configuration Example
 
 ```python
+# Imports
 import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from datarax.pipeline import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.sources import HFEagerConfig, HFEagerSource
+from datarax.operators.composite_operator import (
+    CompositeOperatorConfig,
+    CompositeOperatorModule,
+    CompositionStrategy,
+)
+from datarax.pipeline import Pipeline
+from datarax.sources import HFEagerConfig, HFEagerSource, HFStreamingConfig, HFStreamingSource
 
-# Basic configuration for MNIST
+
+print(f"JAX version: {jax.__version__}")
+print(f"JAX backend: {jax.default_backend()}")
+```
+
+**Terminal Output:**
+```
+JAX version: 0.11.1
+JAX backend: gpu
+```
+
+```python
+# Example: Basic configuration for MNIST
 basic_config = HFEagerConfig(
     name="ylecun/mnist",
     split="train[:1000]",  # Load first 1000 samples
@@ -133,17 +151,18 @@ filtered_source = HFEagerSource(filtered_config, rngs=nnx.Rngs(1))
 # Check what fields are available
 pipeline = Pipeline(source=filtered_source, stages=[], batch_size=1, rngs=nnx.Rngs(0))
 batch = next(iter(pipeline))
+data = batch.data
 
 print("Filtered fields:")
-for key in batch.data:
-    print(f"  - {key}: shape={batch[key].shape}")
+for key in data.keys():
+    print(f"  - {key}")
 ```
 
 **Terminal Output:**
 ```
 Filtered fields:
-  - image: shape=(1, 28, 28, 1)
-  - label: shape=(1,)
+  - image
+  - label
 ```
 
 ### Exclude Keys Example
@@ -157,12 +176,6 @@ exclude_config = HFEagerConfig(
 )
 
 exclude_source = HFEagerSource(exclude_config, rngs=nnx.Rngs(2))
-```
-
-**Terminal Output:**
-```
-Excluded 'id' field from dataset
-Remaining fields: image, label
 ```
 
 ## Part 3: Shuffling Configuration
@@ -182,7 +195,7 @@ only need `shuffle=True` and an integer `seed`.
 ### Eager Shuffle Example
 
 ```python
-# Configure shuffling with a reproducible seed
+# Shuffle the whole split, reproducibly from the seed
 shuffle_config = HFEagerConfig(
     name="ylecun/mnist",
     split="train[:2000]",
@@ -197,7 +210,6 @@ shuffle_source = HFEagerSource(
 )
 
 print("Shuffle configuration:")
-print(f"  Seed: {shuffle_config.seed}")
 ```
 
 **Terminal Output:**
@@ -215,19 +227,42 @@ Shuffle configuration:
 - Faster iteration after initial download
 - Requires disk space
 
+The comparison below builds one source of each kind: the streaming source has no length
+until its stream is read, while the downloaded subset reports its size.
+
 ```python
-# Downloaded (eager) mode
+# Compare streaming vs downloaded
+print("Mode Comparison:")
+
+# Streaming mode: records are read on the fly, so the length is unknown
+streaming_config = HFStreamingConfig(
+    name="ylecun/mnist",
+    split="train",
+    streaming=True,
+)
+streaming_source = HFStreamingSource(streaming_config, rngs=nnx.Rngs(0))
+
+try:
+    print(f"Streaming mode length: {len(streaming_source)}")
+except NotImplementedError:
+    print("Streaming mode length: unknown until the stream is read")
+first_record = next(iter(streaming_source))
+print(f"First streamed record: {sorted(first_record)}")
+
+# Downloaded mode (using subset)
 downloaded_config = HFEagerConfig(
     name="ylecun/mnist",
     split="train[:1000]",
 )
 downloaded_source = HFEagerSource(downloaded_config, rngs=nnx.Rngs(0))
-
 print(f"Downloaded mode length: {len(downloaded_source)}")
 ```
 
 **Terminal Output:**
 ```
+Mode Comparison:
+Streaming mode length: unknown until the stream is read
+First streamed record: ['image', 'label']
 Downloaded mode length: 1000
 ```
 
@@ -259,11 +294,6 @@ except (NotImplementedError, TypeError):
     print("Streaming mode length: N/A (not available in streaming)")
 ```
 
-**Terminal Output:**
-```
-Streaming mode length: N/A (not available in streaming)
-```
-
 > **Tip:** The `from_hf(name, split, ...)` factory auto-selects `HFEagerSource`
 > for datasets under ~1GB and `HFStreamingSource` for larger ones. Pass
 > `streaming=True` to force streaming regardless of size.
@@ -286,8 +316,10 @@ Combine HFEagerSource with operators for a production-ready pipeline.
 ### Define Preprocessing Operators
 
 ```python
-def normalize_image(element, key=None):
+# Define operators
+def normalize_image(element, key=None):  # noqa: ARG001
     """Normalize image to [0, 1] and ensure proper shape."""
+    del key  # Unused - deterministic
     image = element.data.get("image")
     if image is not None and hasattr(image, "dtype"):
         # Normalize to [0, 1]
@@ -297,6 +329,7 @@ def normalize_image(element, key=None):
             normalized = normalized[..., None]
         return element.update_data({"image": normalized})
     return element
+
 
 def random_flip(element, key):
     """Randomly flip image horizontally."""
@@ -314,6 +347,7 @@ def random_flip(element, key):
         return element.update_data({"image": flipped})
     return element
 
+
 # Create operators
 normalizer = ElementOperator(
     ElementOperatorConfig(stochastic=False),
@@ -326,21 +360,6 @@ flipper = ElementOperator(
     fn=random_flip,
     rngs=nnx.Rngs(flip=42),
 )
-```
-
-**Terminal Output:**
-```
-Created operators: normalizer (deterministic), flipper (stochastic)
-```
-
-### Build Complete Pipeline
-
-```python
-from datarax.operators.composite_operator import (
-    CompositeOperatorConfig,
-    CompositeOperatorModule,
-    CompositionStrategy,
-)
 
 # Create composite augmentation
 augmentation = CompositeOperatorModule(
@@ -352,19 +371,32 @@ augmentation = CompositeOperatorModule(
     operators=[normalizer, flipper],
 )
 
+print("Created operators: normalizer, flipper, augmentation")
+```
+
+**Terminal Output:**
+```
+Created operators: normalizer, flipper, augmentation
+```
+
+### Build Complete Pipeline
+
+```python
 # Build the complete pipeline
 train_config = HFEagerConfig(
     name="ylecun/mnist",
     split="train[:5000]",
     shuffle=True,
-    include_keys={"image", "label"},
     seed=42,
+    include_keys={"image", "label"},
 )
 
 train_source = HFEagerSource(train_config, rngs=nnx.Rngs(0))
 
 # Chain: Source -> Augmentation -> Output
-training_pipeline = Pipeline(source=train_source, stages=[augmentation], batch_size=64, rngs=nnx.Rngs(0))
+training_pipeline = Pipeline(
+    source=train_source, stages=[augmentation], batch_size=64, rngs=nnx.Rngs(0)
+)
 
 print("Training pipeline:")
 print("  HFEagerSource(mnist) -> Normalize -> RandomFlip -> Output")
@@ -381,6 +413,7 @@ Training pipeline:
 ### Process Training Data
 
 ```python
+# Process training data
 print("\nProcessing training batches:")
 stats = {"batches": 0, "samples": 0}
 
@@ -406,6 +439,7 @@ print(f"\nProcessed {stats['batches']} batches, {stats['samples']} samples")
 
 **Terminal Output:**
 ```
+
 Processing training batches:
 Batch 0:
   Image: shape=(64, 28, 28, 1), dtype=float32
@@ -433,12 +467,12 @@ HuggingFace Hub hosts thousands of datasets across different modalities.
 ### Split Syntax Examples
 
 ```python
+# Example: Different split syntax
 print("Split syntax examples:")
 print("  'train' - Full training set")
 print("  'train[:1000]' - First 1000 samples")
 print("  'train[1000:2000]' - Samples 1000-2000")
 print("  'train[:10%]' - First 10% of data")
-print("  'train[10%:20%]' - Second 10% of data")
 print("  'train+test' - Combined splits")
 ```
 
@@ -449,7 +483,6 @@ Split syntax examples:
   'train[:1000]' - First 1000 samples
   'train[1000:2000]' - Samples 1000-2000
   'train[:10%]' - First 10% of data
-  'train[10%:20%]' - Second 10% of data
   'train+test' - Combined splits
 ```
 
@@ -470,16 +503,6 @@ builder = load_dataset_builder("mnist")
 print(f"\nMNIST info:")
 print(f"  Description: {builder.info.description[:100]}...")
 print(f"  Features: {builder.info.features}")
-```
-
-**Terminal Output:**
-```
-Datasets fetched: 100
-Example datasets: ['mnist', 'cifar10', 'imdb', 'squad', 'glue']
-
-MNIST info:
-  Description: The MNIST database of handwritten digits...
-  Features: {'image': Image(shape=(28, 28, 1), dtype=uint8), 'label': ClassLabel(num_classes=10)}
 ```
 
 ## Architecture Diagram

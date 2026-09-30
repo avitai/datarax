@@ -66,20 +66,25 @@ IMPORTANT: Configure TensorFlow to not use GPU (JAX handles GPU computation).
 
 ```python
 # GPU Memory Configuration
+# Prevent TensorFlow from using GPU (JAX handles GPU computation)
 # This MUST be set BEFORE importing tensorflow
 import os
+
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress all TF logs
 
 # Force TF to CPU-only mode BEFORE importing JAX
 import tensorflow as tf
+
+
 tf.config.set_visible_devices([], "GPU")
 
 # Now import JAX which will handle GPU
 import jax.numpy as jnp
 from flax import nnx
 
-# Import Datarax TFDS source
+
+# Conditionally import TFDS source
 try:
     from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 except ImportError as e:
@@ -87,14 +92,8 @@ except ImportError as e:
         "This example requires TensorFlow Datasets. Install with: uv pip install datarax[data]"
     ) from e
 
-from datarax.pipeline import Pipeline
 from datarax.operators import ElementOperator, ElementOperatorConfig
-```
-
-**Terminal Output:**
-```
-TensorFlow configured for CPU-only mode
-JAX will use GPU for computation
+from datarax.pipeline import Pipeline
 ```
 
 ## Step 1: Create TFDS Data Source
@@ -128,14 +127,12 @@ source = TFDSEagerSource(config, rngs=nnx.Rngs(42))
 
 print("Dataset: MNIST")
 print(f"Samples: {len(source)}")
-print(f"Shuffle: {config.shuffle}")
 ```
 
 **Terminal Output:**
 ```
 Dataset: MNIST
 Samples: 500
-Shuffle: True
 ```
 
 ## Step 2: Define Transformations
@@ -143,11 +140,13 @@ Shuffle: True
 Create operators to preprocess the data. TFDS data comes as raw uint8 images which need normalization for training.
 
 ```python
-def normalize_image(element, key=None):
+def normalize_image(element, key=None):  # noqa: ARG001
     """Normalize image to [0, 1] range."""
+    del key  # Unused - deterministic operator
     image = element.data["image"]
     normalized = image.astype(jnp.float32) / 255.0
     return element.update_data({"image": normalized})
+
 
 normalizer = ElementOperator(
     ElementOperatorConfig(stochastic=False),
@@ -156,15 +155,11 @@ normalizer = ElementOperator(
 )
 
 print("Created normalizer operator")
-print("  Input: uint8 [0-255]")
-print("  Output: float32 [0-1]")
 ```
 
 **Terminal Output:**
 ```
 Created normalizer operator
-  Input: uint8 [0-255]
-  Output: float32 [0-1]
 ```
 
 ## Step 3: Build Pipeline
@@ -190,6 +185,7 @@ Batch size: 32
 Process batches and inspect the transformed data.
 
 ```python
+# Process batches
 print("\nProcessing batches:")
 for i, batch in enumerate(pipeline):
     if i >= 3:  # Show first 3 batches
@@ -202,10 +198,17 @@ for i, batch in enumerate(pipeline):
     print(f"  Image: shape={image_batch.shape}, dtype={image_batch.dtype}")
     print(f"  Image range: [{float(image_batch.min()):.3f}, {float(image_batch.max()):.3f}]")
     print(f"  Label: shape={label_batch.shape}")
+
+# Expected output:
+# Batch 0:
+#   Image: shape=(32, 28, 28, 1), dtype=float32
+#   Image range: [0.000, 1.000]
+#   Label: shape=(32,)
 ```
 
 **Terminal Output:**
 ```
+
 Processing batches:
 Batch 0:
   Image: shape=(32, 28, 28, 1), dtype=float32
@@ -297,12 +300,6 @@ print(f"Total TFDS datasets: {len(builders)}")
 print(f"Example datasets: {builders[:10]}")
 ```
 
-**Terminal Output:**
-```
-Total TFDS datasets: 537
-Example datasets: ['abstract_reasoning', 'accentdb', 'aeslc', 'ag_news_subset', 'ai2_arc', 'amazon_us_reviews', 'anli', 'arc', 'bair_robot_pushing_small', 'beans']
-```
-
 ## Results Summary
 
 | Component | Description |
@@ -386,18 +383,6 @@ print("  'train[1000:2000]' - Samples 1000-2000")
 print("  'train[:10%]' - First 10% of training data")
 print("  'train[80%:]' - Last 20% of training data")
 print("  'train+test' - Combined train and test splits")
-```
-
-**Terminal Output:**
-```
-Split syntax examples:
-  'train' - Full training set
-  'test' - Full test set
-  'train[:1000]' - First 1000 training samples
-  'train[1000:2000]' - Samples 1000-2000
-  'train[:10%]' - First 10% of training data
-  'train[80%:]' - Last 20% of training data
-  'train+test' - Combined train and test splits
 ```
 
 ## Best Practices

@@ -189,7 +189,7 @@ for i, batch in enumerate(pipeline):
 # Batch 0:
 #   Image shape: (32, 28, 28, 1)
 #   Label shape: (32,)
-#   Image range: [0.000, 1.000]
+#   Image range: [0.000, 0.996]
 # Batch 1:
 #   Image shape: (32, 28, 28, 1)
 #   ...

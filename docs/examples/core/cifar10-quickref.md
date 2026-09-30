@@ -72,16 +72,22 @@ Standard normalization values for CIFAR-10, computed from the training set. Usin
 | **Std** | 0.2470 | 0.2435 | 0.2616 |
 
 ```python
-import jax.numpy as jnp
-
 # CIFAR-10 normalization constants
 CIFAR10_MEAN = jnp.array([0.4914, 0.4822, 0.4465])
 CIFAR10_STD = jnp.array([0.2470, 0.2435, 0.2616])
 
 # Class names for reference
 CIFAR10_CLASSES = [
-    "airplane", "automobile", "bird", "cat", "deer",
-    "dog", "frog", "horse", "ship", "truck",
+    "airplane",
+    "automobile",
+    "bird",
+    "cat",
+    "deer",
+    "dog",
+    "frog",
+    "horse",
+    "ship",
+    "truck",
 ]
 
 print("CIFAR-10 classes:", CIFAR10_CLASSES)
@@ -97,13 +103,24 @@ CIFAR-10 classes: ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog
 Prevent TensorFlow from using GPU (reserved for JAX training):
 
 ```python
+# GPU Memory Configuration - prevent TensorFlow from using GPU
 import os
 
-# GPU Memory Configuration - prevent TensorFlow from using GPU
+
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import tensorflow as tf
+
+
 tf.config.set_visible_devices([], "GPU")
+
+# Now import JAX and Datarax
+import jax.numpy as jnp
+from flax import nnx
+
+from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.pipeline import Pipeline
+from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 ```
 
 ## Step 2: Create TFDS Data Source
@@ -111,23 +128,25 @@ tf.config.set_visible_devices([], "GPU")
 Configure `TFDSEagerSource` to load CIFAR-10 training split. We use a subset for this quick reference to keep runtime short.
 
 ```python
-from flax import nnx
-from datarax.sources import TFDSEagerConfig, TFDSEagerSource
-
 # Load CIFAR-10 training data (subset for quick demo)
 config = TFDSEagerConfig(
     name="cifar10",
     split="train[:1000]",  # First 1000 samples for demo
     shuffle=True,
-    seed=42,
+    seed=42,  # Integer seed of the shuffle
     exclude_keys={"id"},  # Exclude non-numeric fields
 )
 
 source = TFDSEagerSource(config, rngs=nnx.Rngs(42))
 
-print(f"Dataset: CIFAR-10")
+print("Dataset: CIFAR-10")
 print(f"Samples: {len(source)}")
 print(f"Classes: {len(CIFAR10_CLASSES)}")
+
+# Expected output:
+# Dataset: CIFAR-10
+# Samples: 1000
+# Classes: 10
 ```
 
 **Terminal Output:**
@@ -144,9 +163,7 @@ Standard CIFAR-10 preprocessing:
 2. Apply channel-wise normalization with CIFAR-10 statistics
 
 ```python
-from datarax.operators import ElementOperator, ElementOperatorConfig
-
-def preprocess_cifar10(element, key=None):
+def preprocess_cifar10(element, key=None):  # noqa: ARG001
     """Normalize CIFAR-10 images to standard statistics."""
     del key  # Unused - deterministic operator
     image = element.data["image"]
@@ -158,6 +175,7 @@ def preprocess_cifar10(element, key=None):
     image = (image - CIFAR10_MEAN) / CIFAR10_STD
 
     return element.update_data({"image": image})
+
 
 normalizer = ElementOperator(
     ElementOperatorConfig(stochastic=False),
@@ -196,8 +214,6 @@ flowchart LR
 ```
 
 ```python
-from datarax.pipeline import Pipeline
-
 # Build the training pipeline
 batch_size = 32
 pipeline = Pipeline(source=source, stages=[normalizer], batch_size=batch_size, rngs=nnx.Rngs(0))
@@ -241,42 +257,61 @@ for i, batch in enumerate(pipeline):
         print(f"Batch {i}:")
         print(f"  Image: shape={image_batch.shape}, dtype={image_batch.dtype}")
         print(f"  Labels: {label_batch[:8]}... (first 8)")
-        print(f"  Per-channel mean: [{batch_mean[0]:.3f}, {batch_mean[1]:.3f}, {batch_mean[2]:.3f}]")
+        print(
+            f"  Per-channel mean: [{batch_mean[0]:.3f}, {batch_mean[1]:.3f}, {batch_mean[2]:.3f}]"
+        )
+
+# Expected output:
+# Batch 0:
+#   Image: shape=(32, 32, 32, 3), dtype=float32
+#   Labels: [2 5 4 3 9 4 8 6]... (first 8)
+#   Per-channel mean: [-0.163, -0.170, -0.191]
 ```
 
 **Terminal Output:**
 ```
+
 Processing batches:
 Batch 0:
   Image: shape=(32, 32, 32, 3), dtype=float32
-  Labels: [6 9 9 4 1 1 2 7]... (first 8)
-  Per-channel mean: [-0.012, 0.034, -0.089]
+  Labels: [2 5 4 3 9 4 8 6]... (first 8)
+  Per-channel mean: [-0.163, -0.170, -0.191]
 Batch 1:
   Image: shape=(32, 32, 32, 3), dtype=float32
-  Labels: [3 5 8 7 0 4 5 3]... (first 8)
-  Per-channel mean: [0.045, -0.021, 0.012]
+  Labels: [6 7 3 0 3 7 1 9]... (first 8)
+  Per-channel mean: [-0.085, -0.126, -0.111]
 Batch 2:
   Image: shape=(32, 32, 32, 3), dtype=float32
-  Labels: [2 1 6 8 9 0 4 2]... (first 8)
-  Per-channel mean: [-0.089, 0.015, -0.034]
+  Labels: [3 1 1 8 4 0 3 4]... (first 8)
+  Per-channel mean: [0.107, 0.195, 0.156]
 ```
 
 Aggregate statistics across batches:
 
 ```python
+# Aggregate statistics across batches
+import jax.numpy as jnp
+
+
 mean_of_means = jnp.stack(all_means).mean(axis=0)
 mean_of_stds = jnp.stack(all_stds).mean(axis=0)
 
 print("\nAggregate Statistics (should be ~0 mean, ~1 std):")
-print(f"  Mean across batches: [{mean_of_means[0]:.3f}, {mean_of_means[1]:.3f}, {mean_of_means[2]:.3f}]")
-print(f"  Std across batches:  [{mean_of_stds[0]:.3f}, {mean_of_stds[1]:.3f}, {mean_of_stds[2]:.3f}]")
+print(
+    f"  Mean across batches: [{mean_of_means[0]:.3f}, {mean_of_means[1]:.3f}, "
+    f"{mean_of_means[2]:.3f}]"
+)
+print(
+    f"  Std across batches:  [{mean_of_stds[0]:.3f}, {mean_of_stds[1]:.3f}, {mean_of_stds[2]:.3f}]"
+)
 ```
 
 **Terminal Output:**
 ```
+
 Aggregate Statistics (should be ~0 mean, ~1 std):
-  Mean across batches: [-0.015, 0.009, -0.037]
-  Std across batches:  [0.987, 1.012, 0.995]
+  Mean across batches: [-0.031, -0.017, -0.032]
+  Std across batches:  [1.005, 0.997, 0.986]
 ```
 
 ## Results Summary
