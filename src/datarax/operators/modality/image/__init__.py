@@ -18,6 +18,7 @@ from datarax.operators.modality.image.dropout_operator import (
     DropoutOperator,
     DropoutOperatorConfig,
 )
+from datarax.operators.modality.image.flip_operator import FlipOperator, FlipOperatorConfig
 from datarax.operators.modality.image.noise_operator import (
     NoiseOperator,
     NoiseOperatorConfig,
@@ -25,6 +26,10 @@ from datarax.operators.modality.image.noise_operator import (
 from datarax.operators.modality.image.patch_dropout_operator import (
     PatchDropoutOperator,
     PatchDropoutOperatorConfig,
+)
+from datarax.operators.modality.image.random_crop_operator import (
+    RandomCropOperator,
+    RandomCropOperatorConfig,
 )
 from datarax.operators.modality.image.rotation_operator import (
     RotationOperator,
@@ -39,11 +44,15 @@ __all__ = [
     "ContrastOperatorConfig",
     "DropoutOperator",
     "DropoutOperatorConfig",
+    "FlipOperator",
+    "FlipOperatorConfig",
     "functional",
     "NoiseOperator",
     "NoiseOperatorConfig",
     "PatchDropoutOperator",
     "PatchDropoutOperatorConfig",
+    "RandomCropOperator",
+    "RandomCropOperatorConfig",
     "RotationOperator",
     "RotationOperatorConfig",
 ]

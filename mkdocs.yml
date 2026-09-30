@@ -288,9 +288,11 @@ nav:
               - brightness_operator: operators/brightness_operator.md
               - contrast_operator: operators/contrast_operator.md
               - dropout_operator: operators/dropout_operator.md
+              - flip_operator: operators/flip_operator.md
               - functional: operators/functional.md
               - noise_operator: operators/noise_operator.md
               - patch_dropout_operator: operators/patch_dropout_operator.md
+              - random_crop_operator: operators/random_crop_operator.md
               - rotation_operator: operators/rotation_operator.md
           - Strategies:
               - base: operators/base.md

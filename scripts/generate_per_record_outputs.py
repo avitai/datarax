@@ -60,10 +60,15 @@ from datarax.operators.modality.image.contrast_operator import (
     ContrastOperatorConfig,
 )
 from datarax.operators.modality.image.dropout_operator import DropoutOperator, DropoutOperatorConfig
+from datarax.operators.modality.image.flip_operator import FlipOperator, FlipOperatorConfig
 from datarax.operators.modality.image.noise_operator import NoiseOperator, NoiseOperatorConfig
 from datarax.operators.modality.image.patch_dropout_operator import (
     PatchDropoutOperator,
     PatchDropoutOperatorConfig,
+)
+from datarax.operators.modality.image.random_crop_operator import (
+    RandomCropOperator,
+    RandomCropOperatorConfig,
 )
 from datarax.operators.modality.image.rotation_operator import (
     RotationOperator,
@@ -298,6 +303,56 @@ CASES: list[tuple[str, Callable[[], OperatorModule], dict[str, jax.Array]]] = [
         "rotation stochastic",
         lambda: RotationOperator(
             RotationOperatorConfig(field_key="image", **stochastic_kwargs(True)), rngs=rngs()
+        ),
+        IMAGE_LABEL,
+    ),
+    (
+        "random crop deterministic",
+        lambda: RandomCropOperator(
+            RandomCropOperatorConfig(field_key="image", size=(12, 10), padding=(1, 2))
+        ),
+        IMAGE_LABEL,
+    ),
+    (
+        "random crop stochastic",
+        lambda: RandomCropOperator(
+            RandomCropOperatorConfig(
+                field_key="image", size=(16, 16), padding=4, **stochastic_kwargs(True)
+            ),
+            rngs=rngs(),
+        ),
+        IMAGE_LABEL,
+    ),
+    (
+        "random crop stochastic reflect",
+        lambda: RandomCropOperator(
+            RandomCropOperatorConfig(
+                field_key="image",
+                size=(12, 14),
+                padding=(2, 1, 3, 0),
+                padding_mode="reflect",
+                **stochastic_kwargs(True),
+            ),
+            rngs=rngs(),
+        ),
+        IMAGE_LABEL,
+    ),
+    (
+        "flip horizontal",
+        lambda: FlipOperator(FlipOperatorConfig(field_key="image")),
+        IMAGE_LABEL,
+    ),
+    (
+        "flip vertical",
+        lambda: FlipOperator(FlipOperatorConfig(field_key="image", axis="vertical")),
+        IMAGE_LABEL,
+    ),
+    (
+        "probabilistic horizontal flip p=0.5",
+        lambda: ProbabilisticOperator(
+            ProbabilisticOperatorConfig(probability=0.5),
+            operator=FlipOperator(FlipOperatorConfig(field_key="image")),
+            rngs=rngs(),
         ),
         IMAGE_LABEL,
     ),

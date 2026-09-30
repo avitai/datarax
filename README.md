@@ -105,22 +105,15 @@ import numpy as np
 from flax import nnx
 
 from datarax import Element, Pipeline
-from datarax.operators import ElementOperator, ElementOperatorConfig
+from datarax.operators import (
+    ElementOperator, ElementOperatorConfig, ProbabilisticOperator, ProbabilisticOperatorConfig,
+)
+from datarax.operators.modality.image import FlipOperator, FlipOperatorConfig
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
 def normalize(element: Element, key: jax.Array | None = None) -> Element:
     return element.update_data({"image": element.data["image"] / 255.0})
-
-
-def augment(element: Element, key: jax.Array) -> Element:
-    key1, _ = jax.random.split(key)
-    flip = jax.random.bernoulli(key1, 0.5)
-    new_image = jax.lax.cond(
-        flip, lambda img: jnp.flip(img, axis=1), lambda img: img,
-        element.data["image"],
-    )
-    return element.update_data({"image": new_image})
 
 
 # Create in-memory data source
@@ -134,9 +127,11 @@ source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
 normalizer = ElementOperator(
     ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0),
 )
-augmenter = ElementOperator(
-    ElementOperatorConfig(stochastic=True, stream_name="augmentations"),
-    fn=augment, rngs=nnx.Rngs(42),
+# Each record is flipped left to right with probability 0.5, decided from its own key
+augmenter = ProbabilisticOperator(
+    ProbabilisticOperatorConfig(probability=0.5),
+    operator=FlipOperator(FlipOperatorConfig(field_key="image")),
+    rngs=nnx.Rngs(augment=42),
 )
 
 pipeline = (

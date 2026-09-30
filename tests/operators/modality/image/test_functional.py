@@ -123,18 +123,6 @@ class TestJITCompatibility:
         res = op(image)
         assert res.shape == (16, 16, 3)
 
-    def test_jit_random_crop(self):
-        image = jnp.ones((32, 32, 3))
-        output_size = (16, 16)
-        key = jax.random.PRNGKey(0)
-
-        @jax.jit
-        def op(img, k):
-            return functional.random_crop(img, output_size, k)
-
-        res = op(image, key)
-        assert res.shape == (16, 16, 3)
-
     def test_jit_normalize(self):
         image = jnp.ones((32, 32, 3))
         mean = jnp.array([0.5, 0.5, 0.5])
@@ -145,28 +133,6 @@ class TestJITCompatibility:
             return functional.normalize(img, mean, std)
 
         res = op(image)
-        assert res.shape == image.shape
-
-    def test_jit_random_flip_left_right(self):
-        image = jnp.ones((32, 32, 3))
-        key = jax.random.PRNGKey(0)
-
-        @jax.jit
-        def op(img, k):
-            return functional.random_flip_left_right(img, k)
-
-        res = op(image, key)
-        assert res.shape == image.shape
-
-    def test_jit_random_flip_up_down(self):
-        image = jnp.ones((32, 32, 3))
-        key = jax.random.PRNGKey(0)
-
-        @jax.jit
-        def op(img, k):
-            return functional.random_flip_up_down(img, k)
-
-        res = op(image, key)
         assert res.shape == image.shape
 
     def test_jit_adjust_brightness(self):

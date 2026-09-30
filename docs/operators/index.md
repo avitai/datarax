@@ -52,8 +52,10 @@ Specialized operators for image data transformations:
 - [brightness_operator](brightness_operator.md) - Brightness adjustments
 - [contrast_operator](contrast_operator.md) - Contrast modifications
 - [dropout_operator](dropout_operator.md) - Pixel dropout regularization
+- [flip_operator](flip_operator.md) - Left-right or top-bottom mirroring
 - [noise_operator](noise_operator.md) - Gaussian/uniform noise injection
 - [patch_dropout_operator](patch_dropout_operator.md) - Patch-level dropout
+- [random_crop_operator](random_crop_operator.md) - Padding and random-offset crops
 - [rotation_operator](rotation_operator.md) - Image rotation transforms
 - [functional](functional.md) - Functional image operations (stateless)
 
