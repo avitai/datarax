@@ -155,7 +155,7 @@ class TestCanRunScenario:
                 batch_size=32,
                 transforms=[],
             ),
-            data_generator=lambda: {},
+            data_generator=lambda _dataset_size: {},
         )
 
     def test_small_variant_can_run(self):

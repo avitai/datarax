@@ -135,10 +135,13 @@ def _random_resized_crop(element: Element, key: jax.Array) -> Element:
 
     A fixed crop ratio (static sizes), its offsets drawn by ``functional.random_crop``
     (independent, uniform, inclusive), then a bilinear resize back to the original dimensions.
-    ~20 FLOPs/pixel from bilinear interpolation.
+    ~20 FLOPs/pixel from bilinear interpolation. One crop per record, so an image and its mask
+    crop together; fields with fewer than two axes (tokens, labels) pass through.
     """
 
     def crop_and_resize(x: jax.Array) -> jax.Array:
+        if x.ndim < 2:
+            return x
         h, w = x.shape[0], x.shape[1]
         cropped = functional.random_crop(x, ((h * 3) // 4, (w * 3) // 4), key)
         return jax.image.resize(cropped, x.shape, method="bilinear")
@@ -469,6 +472,15 @@ class _MergeModule(nnx.Module):
         return a.replace(data=jax.tree.map(lambda x, y: (x + y) * 0.5, a.data, b.data))
 
 
+_DROP_LAST = True
+"""Every batch the adapter serves is full: an epoch's last records short of a batch are skipped.
+
+One epoch per session, as the peer adapters serve, and one batch shape, so a timed run reaching
+the end of the epoch stops there (``IterationResult.num_batches`` counts what was served) instead
+of serving a short final batch: a second shape, compiled inside the timed region.
+"""
+
+
 @register
 class DataraxAdapter(PipelineAdapter):
     """PipelineAdapter implementation for Datarax.
@@ -673,6 +685,7 @@ class DataraxAdapter(PipelineAdapter):
             sink="merge",
             batch_size=config.batch_size,
             rngs=nnx.Rngs(config.seed),
+            drop_last=_DROP_LAST,
         )
 
     def setup(self, config: ScenarioConfig, data: Any) -> None:
@@ -708,6 +721,7 @@ class DataraxAdapter(PipelineAdapter):
             stages=stages,
             batch_size=config.batch_size,
             rngs=nnx.Rngs(config.seed),
+            drop_last=_DROP_LAST,
         )
 
         if Capability.CACHING in set(config.required_capabilities):

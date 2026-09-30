@@ -31,14 +31,10 @@ _SIZE_TIERS: dict[str, int] = {
 }
 
 
-def _make_data_generator(n: int):
-    """Return a lazy data generator for *n* float32 images."""
-
-    def _generate() -> dict:
-        gen = SyntheticDataGenerator(seed=DEFAULT_SEED)
-        return {"image": gen.images(n, 64, 64, 3, dtype="float32")}
-
-    return _generate
+def _make_image_data(n: int) -> dict:
+    """Generate *n* float32 images."""
+    gen = SyntheticDataGenerator(seed=DEFAULT_SEED)
+    return {"image": gen.images(n, *_ELEMENT_SHAPE, dtype="float32")}
 
 
 VARIANTS: dict[str, ScenarioVariant] = {
@@ -52,7 +48,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
             seed=DEFAULT_SEED,
             extra={"variant_name": name},
         ),
-        data_generator=_make_data_generator(size),
+        data_generator=_make_image_data,
     )
     for name, size in _SIZE_TIERS.items()
 }

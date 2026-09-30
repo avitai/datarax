@@ -44,7 +44,7 @@ class TestCV1Scenario:
     def test_data_generation_shapes(self):
         """Generated image data must have correct NHWC shapes."""
         small = self.mod.get_variant("small")
-        data = small.data_generator()
+        data = small.generate_data()
         assert "image" in data
         img = data["image"]
         assert isinstance(img, np.ndarray)
@@ -77,9 +77,9 @@ class TestCV1Scenario:
                 transforms=["Normalize", "CastToFloat32"],
                 extra={"variant_name": "test_tiny"},
             ),
-            data_generator=lambda: {
+            data_generator=lambda dataset_size: {
                 "image": np.random.default_rng(42).integers(
-                    0, 256, (100, 32, 32, 3), dtype=np.uint8
+                    0, 256, (dataset_size, 32, 32, 3), dtype=np.uint8
                 )
             },
         )
@@ -153,9 +153,9 @@ class TestCV2Scenario:
                 transforms=["Normalize"],
                 extra={"variant_name": "test_tiny"},
             ),
-            data_generator=lambda: {
+            data_generator=lambda dataset_size: {
                 "volume": np.random.default_rng(42)
-                .standard_normal((50, 8, 8, 8))
+                .standard_normal((dataset_size, 8, 8, 8))
                 .astype(np.float32)
             },
         )
@@ -233,9 +233,9 @@ class TestCV3Scenario:
                 required_capabilities=[Capability.BATCH_MIXING],
                 extra={"variant_name": "test_tiny", "mix_mode": "mixup", "mix_alpha": 0.4},
             ),
-            data_generator=lambda: {
+            data_generator=lambda dataset_size: {
                 "image": np.random.default_rng(42).integers(
-                    0, 256, (100, 32, 32, 3), dtype=np.uint8
+                    0, 256, (dataset_size, 32, 32, 3), dtype=np.uint8
                 )
             },
         )
@@ -309,9 +309,9 @@ class TestCV4Scenario:
                 transforms=["MultiScaleResize", "Normalize"],
                 extra={"variant_name": "test_tiny"},
             ),
-            data_generator=lambda: {
+            data_generator=lambda dataset_size: {
                 "image": np.random.default_rng(42).integers(
-                    0, 256, (100, 32, 32, 3), dtype=np.uint8
+                    0, 256, (dataset_size, 32, 32, 3), dtype=np.uint8
                 )
             },
         )

@@ -49,12 +49,12 @@ import numpy as np
 import optax
 import pytest
 from flax import nnx
+from substrax.testing.compiles import compiled_programs
 
 from datarax.core.element_batch import Batch
 from datarax.pipeline import Pipeline
 from datarax.pipeline.iteration import _host_copies
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
-from tests.test_common.compiles import compiled_programs
 
 
 # ---------- Helpers ----------

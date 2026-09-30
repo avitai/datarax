@@ -28,9 +28,9 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=["CreateAttentionMask", "CausalMaskGeneration"],
             extra={"variant_name": "short_context"},
         ),
-        data_generator=lambda: {
+        data_generator=lambda n: {
             "tokens": SyntheticDataGenerator(seed=DEFAULT_SEED).token_sequences(
-                100_000, 2048, vocab_size=32000
+                n, 2048, vocab_size=32000
             )
         },
     ),
@@ -43,9 +43,9 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=["CreateAttentionMask", "CausalMaskGeneration"],
             extra={"variant_name": "long_context"},
         ),
-        data_generator=lambda: {
+        data_generator=lambda n: {
             "tokens": SyntheticDataGenerator(seed=DEFAULT_SEED).token_sequences(
-                1_000_000, 8192, vocab_size=32000
+                n, 8192, vocab_size=32000
             )
         },
     ),
@@ -58,7 +58,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=["CreateAttentionMask", "CausalMaskGeneration"],
             extra={"variant_name": "real_wikitext"},
         ),
-        data_generator=wikitext_token_data(100_000, seq_len=2048),
+        data_generator=wikitext_token_data(seq_len=2048),
     ),
 }
 

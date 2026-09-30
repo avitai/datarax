@@ -42,14 +42,13 @@ _VARIANT_SPECS: dict[str, dict[str, Any]] = {
 
 
 def _make_data_generator(
-    dataset_size: int,
     img_shape: tuple[int, ...],
     text_len: int,
     seed: int = DEFAULT_SEED,
-) -> Callable[[], dict[str, Any]]:
+) -> Callable[[int], dict[str, Any]]:
     """Create a lazy data generator for image-text pairs."""
 
-    def generate() -> dict[str, Any]:
+    def generate(dataset_size: int) -> dict[str, Any]:
         gen = SyntheticDataGenerator(seed=seed)
         images, tokens = gen.image_text_pairs(dataset_size, img_shape=img_shape, text_len=text_len)
         return {"image": images, "tokens": tokens}
@@ -72,7 +71,7 @@ def _build_variants() -> dict[str, ScenarioVariant]:
         )
         variants[name] = ScenarioVariant(
             config=config,
-            data_generator=_make_data_generator(spec["dataset_size"], img_shape, _TEXT_LEN),
+            data_generator=_make_data_generator(img_shape, _TEXT_LEN),
         )
     return variants
 
@@ -88,7 +87,7 @@ VARIANTS["real_coco"] = ScenarioVariant(
         transforms=["Normalize"],
         extra={"variant_name": "real_coco"},
     ),
-    data_generator=coco_pair_data(5_000, h=_IMG_SHAPE[0], w=_IMG_SHAPE[1], text_len=_TEXT_LEN),
+    data_generator=coco_pair_data(h=_IMG_SHAPE[0], w=_IMG_SHAPE[1], text_len=_TEXT_LEN),
 )
 
 

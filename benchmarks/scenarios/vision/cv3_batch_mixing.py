@@ -29,10 +29,8 @@ VARIANTS: dict[str, ScenarioVariant] = {
             required_capabilities=[Capability.BATCH_MIXING],
             extra={"variant_name": "default", "mix_mode": "mixup", "mix_alpha": 0.4},
         ),
-        data_generator=lambda: {
-            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(
-                5_000, 64, 64, 3, dtype="uint8"
-            )
+        data_generator=lambda n: {
+            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(n, 64, 64, 3, dtype="uint8")
         },
     ),
     "large": ScenarioVariant(
@@ -45,10 +43,8 @@ VARIANTS: dict[str, ScenarioVariant] = {
             required_capabilities=[Capability.BATCH_MIXING],
             extra={"variant_name": "large", "mix_mode": "mixup", "mix_alpha": 0.4},
         ),
-        data_generator=lambda: {
-            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(
-                50_000, 224, 224, 3, dtype="uint8"
-            )
+        data_generator=lambda n: {
+            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(n, 224, 224, 3, dtype="uint8")
         },
     ),
     "real_cifar10": ScenarioVariant(
@@ -61,7 +57,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
             required_capabilities=[Capability.BATCH_MIXING],
             extra={"variant_name": "real_cifar10", "mix_mode": "mixup", "mix_alpha": 0.4},
         ),
-        data_generator=cifar10_image_data(5_000, h=64, w=64),
+        data_generator=cifar10_image_data(h=64, w=64),
     ),
 }
 

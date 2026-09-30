@@ -28,10 +28,8 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=["Normalize", "CastToFloat32"],
             extra={"variant_name": "small"},
         ),
-        data_generator=lambda: {
-            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(
-                10_000, 32, 32, 3, dtype="uint8"
-            )
+        data_generator=lambda n: {
+            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(n, 32, 32, 3, dtype="uint8")
         },
     ),
     "medium": ScenarioVariant(
@@ -43,10 +41,8 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=["Normalize", "CastToFloat32"],
             extra={"variant_name": "medium"},
         ),
-        data_generator=lambda: {
-            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(
-                5_000, 128, 128, 3, dtype="uint8"
-            )
+        data_generator=lambda n: {
+            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(n, 128, 128, 3, dtype="uint8")
         },
     ),
     "large": ScenarioVariant(
@@ -58,10 +54,8 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=["Normalize", "CastToFloat32"],
             extra={"variant_name": "large"},
         ),
-        data_generator=lambda: {
-            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(
-                50_000, 256, 256, 3, dtype="uint8"
-            )
+        data_generator=lambda n: {
+            "image": SyntheticDataGenerator(seed=DEFAULT_SEED).images(n, 256, 256, 3, dtype="uint8")
         },
     ),
     "real_cifar10": ScenarioVariant(
@@ -73,7 +67,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=["Normalize", "CastToFloat32"],
             extra={"variant_name": "real_cifar10"},
         ),
-        data_generator=cifar10_image_data(10_000),
+        data_generator=cifar10_image_data(),
     ),
 }
 

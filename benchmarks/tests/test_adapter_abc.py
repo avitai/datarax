@@ -367,3 +367,109 @@ class TestAdapterRegistry:
 
         assert get_available_adapters() == {}
         assert get_adapters_for_scenario("CV-1") == {}
+
+
+# ---------------------------------------------------------------------------
+# iterate(): what a batch's time spans
+# ---------------------------------------------------------------------------
+
+
+class _FakeClock:
+    """A ``perf_counter`` stand-in that moves only when a fake adapter does work."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+_PRODUCE_SEC = 1.0
+"""Fake time the pipeline spends producing a batch (inside ``next()``)."""
+
+_MATERIALIZE_SEC = 0.25
+"""Fake time materializing a produced batch takes."""
+
+
+class _ClockedAdapter(ConcreteAdapter):
+    """Advances a fake clock while producing and while materializing each batch.
+
+    Records whether its batch iterator was closed, and can fail on a chosen batch.
+    """
+
+    def __init__(self, clock: _FakeClock, *, batches: int = 100, fail_at: int | None = None):
+        super().__init__()
+        self._clock = clock
+        self._num_total_batches = batches
+        self._fail_at = fail_at
+        self._served = 0
+        self.closed = False
+
+    def _iterate_batches(self) -> Iterator[Any]:
+        try:
+            for _ in range(self._num_total_batches):
+                self._clock.now += _PRODUCE_SEC
+                yield np.zeros((self._batch_size, 10), dtype=np.float32)
+        finally:
+            self.closed = True
+
+    def _materialize_batch(self, batch: Any) -> list[Any]:
+        self._served += 1
+        if self._fail_at is not None and self._served == self._fail_at:
+            raise RuntimeError("materialization failed")
+        self._clock.now += _MATERIALIZE_SEC
+        return [batch]
+
+
+_CONFIG = ScenarioConfig(
+    scenario_id="CV-1",
+    dataset_size=1000,
+    element_shape=(10,),
+    batch_size=4,
+    transforms=[],
+)
+
+
+class TestIterateTiming:
+    """A batch's time spans producing it (``next()``) and materializing it."""
+
+    @pytest.fixture
+    def clock(self, monkeypatch: pytest.MonkeyPatch) -> _FakeClock:
+        clock = _FakeClock()
+        monkeypatch.setattr("benchmarks.adapters.base.time.perf_counter", clock)
+        return clock
+
+    def test_per_batch_time_includes_producing_the_batch(self, clock: _FakeClock) -> None:
+        adapter = _ClockedAdapter(clock)
+        adapter.setup(_CONFIG, data=None)
+        result = adapter.iterate(num_batches=3)
+        assert result.per_batch_times == [_PRODUCE_SEC + _MATERIALIZE_SEC] * 3
+        assert result.first_batch_time == _PRODUCE_SEC + _MATERIALIZE_SEC
+        assert result.wall_clock_sec == 3 * (_PRODUCE_SEC + _MATERIALIZE_SEC)
+
+    def test_batch_times_cover_the_wall_clock(self, clock: _FakeClock) -> None:
+        adapter = _ClockedAdapter(clock)
+        adapter.setup(_CONFIG, data=None)
+        result = adapter.iterate(num_batches=5)
+        assert sum(result.per_batch_times) == result.wall_clock_sec
+
+    def test_the_iterator_is_closed_after_iterate(self, clock: _FakeClock) -> None:
+        adapter = _ClockedAdapter(clock)
+        adapter.setup(_CONFIG, data=None)
+        adapter.iterate(num_batches=2)
+        assert adapter.closed
+
+    def test_the_iterator_is_closed_when_materialization_fails(self, clock: _FakeClock) -> None:
+        adapter = _ClockedAdapter(clock, fail_at=2)
+        adapter.setup(_CONFIG, data=None)
+        with pytest.raises(RuntimeError, match="materialization failed"):
+            adapter.iterate(num_batches=4)
+        assert adapter.closed
+
+    def test_an_exhausted_iterator_ends_the_run_early(self, clock: _FakeClock) -> None:
+        adapter = _ClockedAdapter(clock, batches=2)
+        adapter.setup(_CONFIG, data=None)
+        result = adapter.iterate(num_batches=5)
+        assert result.num_batches == 2
+        assert result.num_elements == 2 * _CONFIG.batch_size
+        assert result.per_batch_times == [_PRODUCE_SEC + _MATERIALIZE_SEC] * 2

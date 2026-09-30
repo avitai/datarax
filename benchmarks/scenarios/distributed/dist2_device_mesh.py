@@ -22,9 +22,9 @@ _ELEMENT_SHAPE = (32, 32, 3)
 _BATCH_SIZE = 64
 
 
-def _make_data_generator(seed: int = DEFAULT_SEED) -> dict:
+def _make_data_generator(dataset_size: int, seed: int = DEFAULT_SEED) -> dict:
     gen = SyntheticDataGenerator(seed=seed)
-    return {"image": gen.images(_DATASET_SIZE, *_ELEMENT_SHAPE, dtype="float32")}
+    return {"image": gen.images(dataset_size, *_ELEMENT_SHAPE, dtype="float32")}
 
 
 VARIANTS: dict[str, ScenarioVariant] = {
@@ -38,7 +38,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
             seed=DEFAULT_SEED,
             extra={"mesh_topology": "1d", "variant_name": "mesh_1d"},
         ),
-        data_generator=lambda: _make_data_generator(),
+        data_generator=_make_data_generator,
     ),
     "mesh_2d": ScenarioVariant(
         config=ScenarioConfig(
@@ -50,7 +50,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
             seed=DEFAULT_SEED,
             extra={"mesh_topology": "2d", "variant_name": "mesh_2d"},
         ),
-        data_generator=lambda: _make_data_generator(),
+        data_generator=_make_data_generator,
     ),
 }
 

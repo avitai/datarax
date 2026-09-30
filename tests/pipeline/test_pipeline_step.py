@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from flax import nnx
+from substrax.testing.compiles import compiled_programs
 
 from datarax.core.config import MapOperatorConfig
 from datarax.core.element_batch import Batch
@@ -18,7 +19,6 @@ from datarax.operators.map_operator import MapOperator
 from datarax.pipeline import Pipeline
 from datarax.pipeline.iteration import _host_copies, _session_step
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
-from tests.test_common.compiles import compiled_programs
 
 
 _N = 64

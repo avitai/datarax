@@ -33,7 +33,7 @@ def _build_variants() -> dict[str, ScenarioVariant]:
     variants: dict[str, ScenarioVariant] = {}
     for res_name, (ds_size, shape, bs) in _RESOLUTION_CONFIGS.items():
         # Bind the loop values through defaults so each generator keeps its own shape.
-        def make_gen(n: int = ds_size, h: int = shape[0], w: int = shape[1]) -> dict:
+        def make_gen(n: int, h: int = shape[0], w: int = shape[1]) -> dict:
             gen = SyntheticDataGenerator(seed=DEFAULT_SEED)
             return {"image": gen.images(n, h, w, 3, dtype="float32")}
 

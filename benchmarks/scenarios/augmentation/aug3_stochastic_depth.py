@@ -52,13 +52,12 @@ def _build_stochastic_chain(depth: int) -> list[str]:
 
 
 def _make_data_generator(
-    dataset_size: int,
     shape: tuple[int, int],
     seed: int,
-) -> Callable[[], dict[str, Any]]:
+) -> Callable[[int], dict[str, Any]]:
     """Return a lazy data generator for uint8 2D data."""
 
-    def _generate() -> dict[str, Any]:
+    def _generate(dataset_size: int) -> dict[str, Any]:
         rng = np.random.default_rng(seed)
         return {
             "data": rng.integers(
@@ -89,7 +88,7 @@ def _build_variant(depth: int) -> ScenarioVariant:
                 "variant_name": name,
             },
         ),
-        data_generator=_make_data_generator(_DATASET_SIZE, _ELEMENT_SHAPE, DEFAULT_SEED),
+        data_generator=_make_data_generator(_ELEMENT_SHAPE, DEFAULT_SEED),
     )
 
 

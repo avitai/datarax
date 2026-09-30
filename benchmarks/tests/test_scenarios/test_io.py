@@ -46,7 +46,7 @@ class TestIO1Scenario:
     def test_data_generation_shapes(self):
         """memory_source variant must generate NHWC uint8 image data."""
         variant = self.mod.get_variant("memory_source")
-        data = variant.data_generator()
+        data = variant.generate_data()
         assert "image" in data
         img = data["image"]
         assert isinstance(img, np.ndarray)
@@ -78,9 +78,9 @@ class TestIO1Scenario:
                 transforms=["Normalize"],
                 extra={"variant_name": "test_tiny"},
             ),
-            data_generator=lambda: {
+            data_generator=lambda dataset_size: {
                 "image": np.random.default_rng(42).integers(
-                    0, 256, (100, 32, 32, 3), dtype=np.uint8
+                    0, 256, (dataset_size, 32, 32, 3), dtype=np.uint8
                 )
             },
         )
@@ -123,7 +123,7 @@ class TestIO2Scenario:
     def test_data_generation_shapes(self):
         """Generated float32 image data must have correct NHWC shape."""
         variant = self.mod.get_variant("10k")
-        data = variant.data_generator()
+        data = variant.generate_data()
         assert "image" in data
         img = data["image"]
         assert isinstance(img, np.ndarray)
@@ -153,9 +153,9 @@ class TestIO2Scenario:
                 transforms=["Normalize"],
                 extra={"variant_name": "test_tiny"},
             ),
-            data_generator=lambda: {
+            data_generator=lambda dataset_size: {
                 "image": np.random.default_rng(42)
-                .standard_normal((100, 64, 64, 3))
+                .standard_normal((dataset_size, 64, 64, 3))
                 .astype(np.float32)
             },
         )
@@ -198,7 +198,7 @@ class TestIO3Scenario:
     def test_data_generation_shapes(self):
         """Generated data must have both image and label arrays."""
         variant = self.mod.get_variant("default")
-        data = variant.data_generator()
+        data = variant.generate_data()
         assert "image" in data
         assert "label" in data
 
@@ -259,7 +259,7 @@ class TestIO4Scenario:
     def test_data_generation_shapes(self):
         """Generated float32 image data must have correct NHWC shape."""
         variant = self.mod.get_variant("default")
-        data = variant.data_generator()
+        data = variant.generate_data()
         assert "image" in data
         img = data["image"]
         assert isinstance(img, np.ndarray)
@@ -290,9 +290,9 @@ class TestIO4Scenario:
                 required_capabilities=[Capability.CACHING],
                 extra={"variant_name": "test_tiny", "num_epochs": 3},
             ),
-            data_generator=lambda: {
+            data_generator=lambda dataset_size: {
                 "image": np.random.default_rng(42)
-                .standard_normal((100, 32, 32, 3))
+                .standard_normal((dataset_size, 32, 32, 3))
                 .astype(np.float32)
             },
         )

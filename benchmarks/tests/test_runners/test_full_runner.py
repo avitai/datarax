@@ -207,7 +207,9 @@ def _setup_mocks(adapter_names, scenario_ids):
         )
         variant = ScenarioVariant(
             config=config,
-            data_generator=lambda: {"image": __import__("numpy").zeros((640, 32, 32, 3))},
+            data_generator=lambda dataset_size: {
+                "image": __import__("numpy").zeros((dataset_size, 32, 32, 3))
+            },
         )
         mod = MagicMock()
         mod.SCENARIO_ID = sid

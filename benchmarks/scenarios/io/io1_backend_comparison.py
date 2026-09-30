@@ -35,14 +35,15 @@ _MNIST_DATASET = "mnist"
 _MNIST_SPLIT = "train"
 
 
-def _make_memory_source_data() -> dict:
+def _make_memory_source_data(dataset_size: int) -> dict:
     """Generate in-memory uint8 image data for the memory_source variant."""
     gen = SyntheticDataGenerator(seed=DEFAULT_SEED)
-    return {"image": gen.images(_MEM_DATASET_SIZE, *_MEM_ELEMENT_SHAPE, dtype="uint8")}
+    return {"image": gen.images(dataset_size, *_MEM_ELEMENT_SHAPE, dtype="uint8")}
 
 
-def _make_empty_data() -> dict:
-    """Return empty dict — external backends load their own data."""
+def _make_empty_data(dataset_size: int) -> dict:
+    """Return empty dict — external backends load their own data, whatever the size."""
+    del dataset_size
     return {}
 
 

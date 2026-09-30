@@ -85,8 +85,10 @@ class IterationResult:
         num_elements: Total elements processed.
         total_bytes: Total bytes processed.
         wall_clock_sec: Total wall-clock time in seconds.
-        per_batch_times: List of per-batch wall-clock times.
-        first_batch_time: Time for the first batch (includes startup).
+        per_batch_times: Wall-clock time of each batch, from the call that produces it (the
+            iterator's ``next()``) through its materialization.
+        first_batch_time: Time from the start of the run to the first batch's
+            materialization (includes startup).
         extra_metrics: Additional framework-specific metrics.
     """
 
@@ -243,42 +245,55 @@ class PipelineAdapter(ABC):
         finally:
             self._close_iterator(iterator)
 
-    def warmup(self, num_batches: int = 3) -> None:
+    def warmup(self, num_batches: int = 3, *, timed_batches: int | None = None) -> None:
         """Run warmup batches to trigger JIT compilation, caching, etc.
 
-        Default implementation iterates and materializes batches.
+        Default implementation iterates and materializes ``num_batches`` batches.
         Override if the framework needs extra steps (e.g. iterator reset).
+
+        Args:
+            num_batches: Batches to serve before the timed iteration.
+            timed_batches: How many batches the next :meth:`iterate` call will serve, for an
+                adapter whose compiled program depends on that count (a whole-epoch scan);
+                the default implementation does not use it.
         """
+        del timed_batches
         for batch in self._iter_exact_batches(num_batches):
             self._materialize_batch(batch)
 
     def iterate(self, num_batches: int) -> IterationResult:
         """Consume up to *num_batches* and return timing data.
 
-        Uses ``time.perf_counter()`` for wall-clock measurement and
-        delegates batch production / materialization to the two hooks
-        ``_iterate_batches()`` and ``_materialize_batch()``.
+        A batch's time spans producing it (the iterator's ``next()``, where the framework
+        loads, transforms and dispatches it) and materializing it; the batch times therefore
+        add up to the wall clock, less the iterator's creation and closing. The iterator is
+        closed when the run ends, also when it raises. Uses ``time.perf_counter()``.
         """
         per_batch_times: list[float] = []
         total_elements = 0
         total_bytes = 0
-        first_batch_time: float | None = None
+        first_batch_time = 0.0
 
         start = time.perf_counter()
+        iterator = iter(self._iterate_batches())
+        try:
+            for _ in range(max(0, num_batches)):
+                batch_start = time.perf_counter()
+                try:
+                    batch = next(iterator)
+                except StopIteration:
+                    break
+                arrays = self._materialize_batch(batch)
+                batch_end = time.perf_counter()
+                if not per_batch_times:
+                    first_batch_time = batch_end - start
+                per_batch_times.append(batch_end - batch_start)
 
-        for batch in self._iter_exact_batches(num_batches):
-            batch_start = time.perf_counter()
-            arrays = self._materialize_batch(batch)
-            batch_end = time.perf_counter()
-
-            if first_batch_time is None:
-                first_batch_time = batch_end - start
-
-            per_batch_times.append(batch_end - batch_start)
-
-            if arrays:
-                total_elements += arrays[0].shape[0]
-                total_bytes += sum(a.nbytes for a in arrays)
+                if arrays:
+                    total_elements += arrays[0].shape[0]
+                    total_bytes += sum(a.nbytes for a in arrays)
+        finally:
+            self._close_iterator(iterator)
 
         wall_clock = time.perf_counter() - start
 
@@ -288,7 +303,7 @@ class PipelineAdapter(ABC):
             total_bytes=total_bytes,
             wall_clock_sec=wall_clock,
             per_batch_times=per_batch_times,
-            first_batch_time=first_batch_time or 0.0,
+            first_batch_time=first_batch_time,
         )
 
     # ------------------------------------------------------------------

@@ -23,11 +23,11 @@ _BATCH_SIZE = 64
 _TRANSFORMS = ["Normalize"]
 
 
-def _make_mixed_data() -> dict:
+def _make_mixed_data(dataset_size: int) -> dict:
     """Generate image + label arrays for the mixed-source scenario."""
     gen = SyntheticDataGenerator(seed=DEFAULT_SEED)
-    images = gen.images(_DATASET_SIZE, *_ELEMENT_SHAPE, dtype="float32")
-    labels = gen.token_sequences(_DATASET_SIZE, 1)
+    images = gen.images(dataset_size, *_ELEMENT_SHAPE, dtype="float32")
+    labels = gen.token_sequences(dataset_size, 1)
     return {"image": images, "label": labels}
 
 

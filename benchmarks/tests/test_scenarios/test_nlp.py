@@ -45,7 +45,7 @@ class TestNLP1Scenario:
     def test_data_generation_shapes(self):
         """Generated token data must have correct (N, seq_len) shape."""
         small = self.mod.get_variant("small")
-        data = small.data_generator()
+        data = small.generate_data()
         assert "tokens" in data
         tokens = data["tokens"]
         assert isinstance(tokens, np.ndarray)
@@ -77,8 +77,10 @@ class TestNLP1Scenario:
                 transforms=[],
                 extra={"variant_name": "test_tiny"},
             ),
-            data_generator=lambda: {
-                "tokens": np.random.default_rng(42).integers(0, 32000, (100, 128), dtype=np.int32)
+            data_generator=lambda dataset_size: {
+                "tokens": np.random.default_rng(42).integers(
+                    0, 32000, (dataset_size, 128), dtype=np.int32
+                )
             },
         )
         result = run_quick_scenario(datarax_adapter, tiny_variant)
@@ -117,7 +119,7 @@ class TestNLP2Scenario:
     def test_data_generation_shapes(self):
         """Generated padded data must have tokens and attention_mask."""
         variant = self.mod.get_variant("default")
-        data = variant.data_generator()
+        data = variant.generate_data()
 
         assert "tokens" in data
         assert "attention_mask" in data
@@ -166,7 +168,7 @@ class TestNLP2Scenario:
                 transforms=["DynamicPad"],
                 extra={"variant_name": "test_tiny"},
             ),
-            data_generator=lambda: {"tokens": padded, "attention_mask": masks},
+            data_generator=lambda _dataset_size: {"tokens": padded, "attention_mask": masks},
         )
         result = run_quick_scenario(datarax_adapter, tiny_variant)
         assert isinstance(result, BenchmarkResult)

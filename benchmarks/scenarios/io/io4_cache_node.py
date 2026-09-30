@@ -34,10 +34,10 @@ _TRANSFORMS = ["ExpensiveTransform", "CheapTransform"]
 _NUM_EPOCHS = 3
 
 
-def _make_cache_data() -> dict:
+def _make_cache_data(dataset_size: int) -> dict:
     """Generate float32 image data for the cache benchmark."""
     gen = SyntheticDataGenerator(seed=DEFAULT_SEED)
-    return {"image": gen.images(_DATASET_SIZE, *_ELEMENT_SHAPE, dtype="float32")}
+    return {"image": gen.images(dataset_size, *_ELEMENT_SHAPE, dtype="float32")}
 
 
 VARIANTS: dict[str, ScenarioVariant] = {

@@ -113,7 +113,7 @@ def run_microbenchmark(
         MicrobenchmarkResult with detailed timing breakdown.
     """
     adapter.setup(config, data)
-    adapter.warmup(warmup_batches)
+    adapter.warmup(warmup_batches, timed_batches=num_batches)
 
     per_batch_source: list[float] = []
     per_batch_transform: list[float] = []

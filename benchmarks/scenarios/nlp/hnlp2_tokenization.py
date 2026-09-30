@@ -28,9 +28,9 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=["CreateAttentionMask"],
             extra={"variant_name": "small"},
         ),
-        data_generator=lambda: {
+        data_generator=lambda n: {
             "tokens": SyntheticDataGenerator(seed=DEFAULT_SEED).token_sequences(
-                100_000, 256, vocab_size=32000
+                n, 256, vocab_size=32000
             )
         },
     ),
@@ -43,9 +43,9 @@ VARIANTS: dict[str, ScenarioVariant] = {
             transforms=["CreateAttentionMask"],
             extra={"variant_name": "medium"},
         ),
-        data_generator=lambda: {
+        data_generator=lambda n: {
             "tokens": SyntheticDataGenerator(seed=DEFAULT_SEED).token_sequences(
-                500_000, 512, vocab_size=32000
+                n, 512, vocab_size=32000
             )
         },
     ),

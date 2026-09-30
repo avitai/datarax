@@ -45,7 +45,7 @@ class TestTAB1Scenario:
     def test_data_generation_shapes(self):
         """Generated tabular data must have correct (N, features) shape."""
         small = self.mod.get_variant("small")
-        data = small.data_generator()
+        data = small.generate_data()
         assert "features" in data
         features = data["features"]
         assert isinstance(features, np.ndarray)
@@ -77,8 +77,10 @@ class TestTAB1Scenario:
                 transforms=["Normalize"],
                 extra={"variant_name": "test_tiny"},
             ),
-            data_generator=lambda: {
-                "features": np.random.default_rng(42).standard_normal((100, 100)).astype(np.float32)
+            data_generator=lambda dataset_size: {
+                "features": np.random.default_rng(42)
+                .standard_normal((dataset_size, 100))
+                .astype(np.float32)
             },
         )
         result = run_quick_scenario(datarax_adapter, tiny_variant)
@@ -117,7 +119,7 @@ class TestTAB2Scenario:
     def test_data_generation_shapes(self):
         """Generated sparse data must have dense and sparse_* keys."""
         variant = self.mod.get_variant("default")
-        data = variant.data_generator()
+        data = variant.generate_data()
 
         # Must have a 'dense' key
         assert "dense" in data
@@ -163,7 +165,7 @@ class TestTAB2Scenario:
                 transforms=[],
                 extra={"variant_name": "test_tiny"},
             ),
-            data_generator=lambda: data_dict,
+            data_generator=lambda _dataset_size: data_dict,
         )
         result = run_quick_scenario(datarax_adapter, tiny_variant)
         assert isinstance(result, BenchmarkResult)
