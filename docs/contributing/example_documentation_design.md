@@ -789,7 +789,7 @@ If you're familiar with PyTorch DataLoader, here's how Datarax compares:
 | `DataLoader(dataset, batch_size=32)` | `Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))` |
 | `TensorDataset(data)` | `MemorySource(config, data=data)` |
 | `transforms.Compose([T1, T2])` | `Pipeline(source=source, stages=[op1, op2], ...)` |
-| `transforms.RandomHorizontalFlip(p=0.5)` | `ProbabilisticOperator(config, fn=flip, p=0.5)` |
+| `transforms.RandomHorizontalFlip(p=0.5)` | `ProbabilisticOperator(ProbabilisticOperatorConfig(probability=0.5), operator=FlipOperator(...))` |
 | `for images, labels in loader:` | `for batch in pipeline:` (dict-based) |
 
 **Key differences:**

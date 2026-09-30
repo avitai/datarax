@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `RandomCropOperator` pads each record and crops it at an offset drawn from the record's own
+  key, with torchvision's `RandomCrop` semantics: padding as one int, (left/right, top/bottom) or
+  (left, top, right, bottom); modes constant (with `fill`), edge, reflect and symmetric; top and
+  left drawn independently and uniformly over every valid offset. A crop larger than the padded
+  record is refused. In eval mode, and with `stochastic=False`, it takes the centre crop of the
+  padded record; `output_spec` reports the cropped shape.
+- `FlipOperator` mirrors each record left to right or top to bottom. A flip with probability p,
+  torchvision's `RandomHorizontalFlip(p)`, is `ProbabilisticOperator(probability=p)` around it.
+- `functional.pad`, `functional.flip_left_right` and `functional.flip_up_down`.
+
 ### Changed
 
 - An operator implements one method, `apply(element, key, stats) -> Element`: one record, its
@@ -163,6 +175,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with jupytext. A notebook whose prose was stale reported as synced, and `--fix` left it
   stale.
 
+- `functional.random_crop` takes `padding`, `padding_mode` and `fill`, and refuses a crop larger
+  than the (padded) image, which it cropped to the image's size before; `functional.center_crop`
+  refuses one too and rounds its offset as torchvision's `CenterCrop` does. The random flips take
+  a traced probability. The benchmark adapter's `RandomCrop` (torchvision's
+  `RandomCrop(size, padding=size // 8)`) and `RandomResizedCrop` draw their offsets through
+  `functional.random_crop`: their top and left offsets were always equal and the last valid
+  offset was never drawn. Its `RandomHorizontalFlip` leaves fields with fewer than two axes
+  alone. The `ElementOperator` docs flip images on their width axis (`[:, ::-1]`), not their
+  channels.
 - Example docs pages show each script's code verbatim with the output a GPU run of it printed
   (an NVIDIA L40S; the sharding quickref on two), and their figures come from that run: 136
   output lines on 21 pages had come from older runs or had been typed. Scripts' expected-output

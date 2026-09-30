@@ -68,12 +68,13 @@ class ElementOperator(OperatorModule):
             return element.replace(data=new_data)
         config = ElementOperatorConfig(stochastic=True, stream_name="augment")
         op = ElementOperator(config, fn=add_noise, rngs=rngs)
-        def flip_both(element, key):  # Coordinated augmentation
+        def flip_both(element, key):  # Coordinated augmentation: one decision, two fields
             flip = jax.random.uniform(key) < 0.5
             new_data = jax.lax.cond(
                 flip,
-                lambda e: {"image": e.data["image"][..., ::-1],
-                           "mask": e.data["mask"][..., ::-1]},
+                # [:, ::-1] is the width axis of an (H, W, C) image and an (H, W) mask
+                lambda e: {"image": e.data["image"][:, ::-1],
+                           "mask": e.data["mask"][:, ::-1]},
                 lambda e: e.data,
                 element
             )

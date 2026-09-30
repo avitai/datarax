@@ -31,6 +31,7 @@ from datarax.core.element_batch import Batch, Element
 from datarax.core.operator import OperatorModule
 from datarax.operators.batch_mix_operator import BatchMixOperator
 from datarax.operators.element_operator import ElementOperator
+from datarax.operators.modality.image import functional
 from datarax.operators.probabilistic_operator import (
     ProbabilisticOperator,
     ProbabilisticOperatorConfig,
@@ -132,37 +133,29 @@ def _random_scale(element: Element, key: jax.Array) -> Element:
 def _random_resized_crop(element: Element, key: jax.Array) -> Element:
     """Random crop (75% area) + bilinear resize to original shape. Stochastic.
 
-    Uses a fixed crop ratio (JIT-compatible: dynamic_slice needs static sizes)
-    with random position, then bilinear interpolation resize back to original
-    dimensions. ~20 FLOPs/pixel from bilinear interpolation.
+    A fixed crop ratio (static sizes), its offsets drawn by ``functional.random_crop``
+    (independent, uniform, inclusive), then a bilinear resize back to the original dimensions.
+    ~20 FLOPs/pixel from bilinear interpolation.
     """
 
     def crop_and_resize(x: jax.Array) -> jax.Array:
-        h, w, c = x.shape[0], x.shape[1], x.shape[2]
-        # Fixed 75% crop (static sizes for JIT compatibility)
-        crop_h, crop_w = (h * 3) // 4, (w * 3) // 4
-
-        # Random crop position (dynamic start indices are JIT-safe)
-        max_top = h - crop_h
-        max_left = w - crop_w
-        top = jax.random.randint(key, (), 0, jnp.maximum(max_top, 1))
-        left = jax.random.randint(key, (), 0, jnp.maximum(max_left, 1))
-
-        cropped = jax.lax.dynamic_slice(x, (top, left, 0), (crop_h, crop_w, c))
-
-        # Bilinear resize back to original shape (compute-heavy)
-        return jax.image.resize(cropped, (h, w, c), method="bilinear")
+        h, w = x.shape[0], x.shape[1]
+        cropped = functional.random_crop(x, ((h * 3) // 4, (w * 3) // 4), key)
+        return jax.image.resize(cropped, x.shape, method="bilinear")
 
     new_data = jax.tree.map(crop_and_resize, element.data)
     return element.replace(data=new_data)
 
 
 def _random_horizontal_flip(element: Element, key: jax.Array) -> Element:
-    """Randomly flip images horizontally with 50% probability. Stochastic."""
-    should_flip = jax.random.bernoulli(key, p=0.5)
+    """Mirror every image-like field left to right with probability 0.5. Stochastic.
+
+    One decision per record, so an image and its mask flip together; fields with fewer than two
+    axes (labels) pass through.
+    """
 
     def maybe_flip(x: jax.Array) -> jax.Array:
-        return jax.lax.cond(should_flip, lambda a: jnp.flip(a, axis=1), lambda a: a, x)
+        return functional.random_flip_left_right(x, key) if x.ndim >= 2 else x
 
     new_data = jax.tree.map(maybe_flip, element.data)
     return element.replace(data=new_data)
@@ -263,20 +256,16 @@ def _random_grayscale(element: Element, key: jax.Array) -> Element:
 
 
 def _random_crop(element: Element, key: jax.Array) -> Element:
-    """Random fixed-size crop (87.5% area) then pad back to original shape. Stochastic.
+    """torchvision's ``RandomCrop(size, padding=size // 8)``, keeping the shape. Stochastic.
 
-    Crop size is static (JIT-safe ``dynamic_slice``); the padded-back result keeps
-    the original shape so batches stay uniform. Used by PR-2, NNX-1, XFMR-1.
+    The CIFAR-10 recipe's crop (padding 4 on 32x32): each side padded by an eighth of its axis,
+    then a crop of the original size at an offset drawn by ``functional.random_crop``. Used by
+    PR-2, NNX-1, XFMR-1.
     """
 
     def crop(x: jax.Array) -> jax.Array:
-        h, w, c = x.shape[0], x.shape[1], x.shape[2]
-        crop_h, crop_w = (h * 7) // 8, (w * 7) // 8
-        top = jax.random.randint(key, (), 0, jnp.maximum(h - crop_h, 1))
-        left = jax.random.randint(key, (), 0, jnp.maximum(w - crop_w, 1))
-        cropped = jax.lax.dynamic_slice(x, (top, left, 0), (crop_h, crop_w, c))
-        # Pad back to the original shape so the batch dimension stays uniform.
-        return jnp.pad(cropped, ((0, h - crop_h), (0, w - crop_w), (0, 0)))
+        h, w = x.shape[0], x.shape[1]
+        return functional.random_crop(x, (h, w), key, padding=(w // 8, h // 8))
 
     return element.replace(data=jax.tree.map(crop, element.data))
 

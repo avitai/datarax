@@ -51,14 +51,15 @@ length_op = ElementOperator(
 )
 
 # Stochastic element transform (the per-record key arrives as the second arg)
-def random_crop(element, key):
-    # ... crop logic using key
-    return element.update_data({"image": cropped})
+def add_noise(element, key):
+    image = element.data["image"]
+    noise = 0.05 * jax.random.normal(key, image.shape, dtype=image.dtype)
+    return element.update_data({"image": image + noise})
 
-crop_op = ElementOperator(
+noise_op = ElementOperator(
     ElementOperatorConfig(stochastic=True, stream_name="augment"),
-    fn=random_crop,
-    rngs=nnx.Rngs(0),
+    fn=add_noise,
+    rngs=nnx.Rngs(augment=0),
 )
 ```
 
@@ -80,8 +81,7 @@ class MyOperator(OperatorModule):
         super().__init__(config, rngs=rngs)
         self.scale = nnx.Param(jnp.ones(()))  # Learnable parameter
 
-    # apply() is a pure per-element function operating on raw PyTrees.
-    # It returns a (data, state, metadata) tuple.
+    # apply() is a pure function of one record: it takes and returns an Element.
     def apply(
         self,
         element: Element,
@@ -100,11 +100,32 @@ op = MyOperator(OperatorConfig(), rngs=nnx.Rngs(0))
 Built-in operators for common image augmentations.
 
 ```python
+from datarax.operators import ProbabilisticOperator, ProbabilisticOperatorConfig
 from datarax.operators.modality.image import (
     BrightnessOperator, BrightnessOperatorConfig,
     ContrastOperator, ContrastOperatorConfig,
+    FlipOperator, FlipOperatorConfig,
+    RandomCropOperator, RandomCropOperatorConfig,
     RotationOperator, RotationOperatorConfig,
     NoiseOperator, NoiseOperatorConfig,
+)
+
+# Random crop: pad 4 pixels, crop 32x32 at each record's own offset (torchvision's
+# RandomCrop(32, padding=4)); eval mode takes the centre crop
+crop = RandomCropOperator(
+    RandomCropOperatorConfig(
+        field_key="image", size=(32, 32), padding=4,
+        stochastic=True, stream_name="crop",
+    ),
+    rngs=nnx.Rngs(crop=0),
+)
+
+# Random horizontal flip with probability 0.5 (torchvision's RandomHorizontalFlip()):
+# FlipOperator is deterministic; ProbabilisticOperator decides per record
+flip = ProbabilisticOperator(
+    ProbabilisticOperatorConfig(probability=0.5),
+    operator=FlipOperator(FlipOperatorConfig(field_key="image", axis="horizontal")),
+    rngs=nnx.Rngs(augment=0),
 )
 
 # Brightness adjustment

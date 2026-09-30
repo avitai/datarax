@@ -56,10 +56,15 @@ from datarax.operators.modality.image.dropout_operator import (
     DropoutOperator,
     DropoutOperatorConfig,
 )
+from datarax.operators.modality.image.flip_operator import FlipOperator, FlipOperatorConfig
 from datarax.operators.modality.image.noise_operator import NoiseOperator, NoiseOperatorConfig
 from datarax.operators.modality.image.patch_dropout_operator import (
     PatchDropoutOperator,
     PatchDropoutOperatorConfig,
+)
+from datarax.operators.modality.image.random_crop_operator import (
+    RandomCropOperator,
+    RandomCropOperatorConfig,
 )
 from datarax.operators.modality.image.rotation_operator import (
     RotationOperator,
@@ -138,6 +143,15 @@ _INPUT_FAMILIES: dict[str, Family] = {
             rngs=_rngs(),
         )
     ),
+    "random crop": Family(
+        lambda: RandomCropOperator(
+            RandomCropOperatorConfig(
+                field_key="image", size=(8, 8), padding=2, stochastic=True, stream_name="augment"
+            ),
+            rngs=_rngs(),
+        )
+    ),
+    "flip": Family(lambda: FlipOperator(FlipOperatorConfig(field_key="image"))),
     "noise gaussian": Family(
         lambda: NoiseOperator(NoiseOperatorConfig(field_key="image", noise_std=0.01), rngs=_rngs())
     ),

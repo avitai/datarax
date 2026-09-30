@@ -244,3 +244,60 @@ class TestScenarioDiscovery:
         mod = get_scenario_by_id("AUG-1")
         assert mod is not None
         assert mod.TIER1_VARIANT == "small"
+
+
+# ========================================================================
+# Tests: Crop and flip transforms (datarax's functional crop and flip)
+# ========================================================================
+
+
+def _coordinates(height: int, width: int) -> jax.Array:
+    """(H, W, 2) image whose pixel (r, c) holds (r + 1, c + 1); zero padding stays 0."""
+    rows, cols = jnp.meshgrid(jnp.arange(height), jnp.arange(width), indexing="ij")
+    return jnp.stack([rows, cols], axis=-1).astype(jnp.float32) + 1.0
+
+
+class TestCropAndFlipTransforms:
+    """RandomCrop is torchvision's RandomCrop(size, padding=size // 8); flips move fields together."""
+
+    def test_random_crop_offsets_are_independent_and_inclusive(self):
+        crop = _STOCHASTIC_TRANSFORM_FNS["RandomCrop"]
+        image = _coordinates(16, 16)  # padding 2 on each side, so offsets in [0, 4]
+        offsets = []
+        for seed in range(300):
+            out = crop(Element(data={"image": image}, state={}), jax.random.key(seed)).data["image"]
+            assert out.shape == image.shape
+            i, j = (int(v) for v in jnp.argwhere(out[..., 0] > 0)[0])
+            offsets.append((int(out[i, j, 0]) - 1 + 2 - i, int(out[i, j, 1]) - 1 + 2 - j))
+        tops, lefts = zip(*offsets, strict=True)
+        assert set(tops) == set(range(5)) and set(lefts) == set(range(5))
+        assert any(top != left for top, left in offsets)
+
+    def test_random_resized_crop_takes_its_offsets_from_the_functional_crop(self):
+        from datarax.operators.modality.image import functional
+
+        crop = _STOCHASTIC_TRANSFORM_FNS["RandomResizedCrop"]
+        image = _coordinates(16, 16)
+        key = jax.random.key(3)
+
+        out = crop(Element(data={"image": image}, state={}), key).data["image"]
+
+        expected = jax.image.resize(
+            functional.random_crop(image, (12, 12), key), (16, 16, 2), method="bilinear"
+        )
+        assert jnp.array_equal(out, expected)
+
+    def test_random_horizontal_flip_moves_image_and_mask_together(self):
+        flip = _STOCHASTIC_TRANSFORM_FNS["RandomHorizontalFlip"]
+        image = _coordinates(4, 5)
+        mask = image[..., 0]
+        outcomes = set()
+        for seed in range(40):
+            element = Element(data={"image": image, "mask": mask, "label": jnp.int32(3)}, state={})
+            data = flip(element, jax.random.key(seed)).data
+            flipped = bool(jnp.array_equal(data["image"], image[:, ::-1]))
+            assert flipped or jnp.array_equal(data["image"], image)
+            assert jnp.array_equal(data["mask"], mask[:, ::-1] if flipped else mask)
+            assert int(data["label"]) == 3
+            outcomes.add(flipped)
+        assert outcomes == {True, False}

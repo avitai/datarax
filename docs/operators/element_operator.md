@@ -65,22 +65,26 @@ One of ElementOperator's key strengths is applying the **same random decision** 
 import jax.lax
 
 def flip_both(element, key):
-    """Randomly flip image and mask together."""
+    """Randomly flip image and mask together, left to right."""
     should_flip = jax.random.uniform(key) < 0.5
 
     new_data = jax.lax.cond(
         should_flip,
         lambda: {
-            "image": element.data["image"][..., ::-1],
-            "mask": element.data["mask"][..., ::-1]
+            # [:, ::-1] is the width axis of an (H, W, C) image and an (H, W) mask
+            "image": element.data["image"][:, ::-1],
+            "mask": element.data["mask"][:, ::-1],
         },
         lambda: element.data,
     )
     return element.replace(data=new_data)
 
 config = ElementOperatorConfig(stochastic=True, stream_name="flip")
-flip_op = ElementOperator(config, fn=flip_both, rngs=nnx.Rngs(0))
+flip_op = ElementOperator(config, fn=flip_both, rngs=nnx.Rngs(flip=0))
 ```
+
+To flip a single field, datarax ships `FlipOperator`; wrap it in `ProbabilisticOperator` for a
+per-record probability (see [Image operators](../examples/quick-reference/operator-cheatsheet.md#image-operators)).
 
 ## Integration with DAG Pipelines
 

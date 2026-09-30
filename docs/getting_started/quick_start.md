@@ -80,6 +80,10 @@ For random data augmentation, we use **Stochastic Operators**. These receive a P
 
 **Crucial Note**: Because Datarax runs inside JAX's JIT compilation, you must use JAX's control flow primitives (like `jax.lax.cond`) instead of Python's `if/else` when the condition depends on data or random values.
 
+The example below writes a flip by hand to show that control flow; for real pipelines, datarax
+ships `FlipOperator` and `RandomCropOperator` (see the
+[operator cheat sheet](../examples/quick-reference/operator-cheatsheet.md#image-operators)).
+
 ```python
 import flax.nnx as nnx
 import jax

@@ -73,82 +73,149 @@ def resize_image_to_shape(
     )
 
 
+PADDING_MODES = ("constant", "edge", "reflect", "symmetric")
+"""``jnp.pad``'s modes that torchvision's ``RandomCrop`` also names: edge repeats the border pixel,
+reflect mirrors without repeating it, symmetric mirrors repeating it."""
+
+type Padding = int | tuple[int, int] | tuple[int, int, int, int]
+"""Padding as torchvision takes it: every side, (left/right, top/bottom) or
+(left, top, right, bottom)."""
+
+
+def padding_sides(padding: Padding) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Return ``((top, bottom), (left, right))`` for padding in any of torchvision's forms.
+
+    Args:
+        padding: One int for every side, ``(left/right, top/bottom)``, or
+            ``(left, top, right, bottom)``.
+
+    Returns:
+        The padding of the height axis and of the width axis.
+
+    Raises:
+        ValueError: If the padding has another length or a negative side.
+    """
+    if isinstance(padding, int):
+        left = top = right = bottom = padding
+    elif len(padding) == 2:
+        left = right = padding[0]
+        top = bottom = padding[1]
+    elif len(padding) == 4:
+        left, top, right, bottom = padding
+    else:
+        raise ValueError(f"padding takes one, two or four values, got {padding!r}")
+    if min(left, top, right, bottom) < 0:
+        raise ValueError(f"padding must be non-negative, got {padding!r}")
+    return (top, bottom), (left, right)
+
+
+def pad(
+    image: jax.Array,
+    padding: Padding,
+    *,
+    mode: str = "constant",
+    fill: float = 0.0,
+) -> jax.Array:
+    """Pad an image's height and width axes, as torchvision's ``RandomCrop`` pads.
+
+    The modes are ``jnp.pad``'s. Reflect needs each side's padding smaller than its axis and
+    symmetric no larger than it, as torchvision requires (``jnp.pad`` would repeat the
+    reflection instead).
+
+    Args:
+        image: ``(H, W)`` or ``(H, W, C)``.
+        padding: One int, ``(left/right, top/bottom)`` or ``(left, top, right, bottom)``.
+        mode: One of ``PADDING_MODES``.
+        fill: The value of constant padding, in the image's dtype.
+
+    Returns:
+        The padded image, in the image's dtype.
+
+    Raises:
+        ValueError: For an unknown mode, or padding a reflect or symmetric mode cannot mirror.
+    """
+    if mode not in PADDING_MODES:
+        raise ValueError(f"padding mode must be one of {PADDING_MODES}, got {mode!r}")
+    (top, bottom), (left, right) = padding_sides(padding)
+    height, width = image.shape[0], image.shape[1]
+    if mode == "reflect" and (max(top, bottom) >= height or max(left, right) >= width):
+        raise ValueError(
+            f"reflect padding {padding!r} must be smaller than the image {image.shape}"
+        )
+    if mode == "symmetric" and (max(top, bottom) > height or max(left, right) > width):
+        raise ValueError(f"symmetric padding {padding!r} must not exceed the image {image.shape}")
+    widths = ((top, bottom), (left, right), *((0, 0),) * (image.ndim - 2))
+    if mode == "constant":
+        return jnp.pad(image, widths, constant_values=jnp.asarray(fill, image.dtype))
+    return jnp.pad(image, widths, mode=mode)
+
+
+def _check_fits(image: jax.Array, output_size: tuple[int, int]) -> None:
+    """Refuse a crop larger than the image it is taken from.
+
+    Args:
+        image: ``(H, W)`` or ``(H, W, C)``.
+        output_size: ``(height, width)`` of the crop.
+
+    Raises:
+        ValueError: If either side of ``output_size`` exceeds the image's.
+    """
+    if output_size[0] > image.shape[0] or output_size[1] > image.shape[1]:
+        raise ValueError(f"crop {output_size} is larger than the image {image.shape[:2]}")
+
+
 def center_crop(
     image: jax.Array,
     output_size: tuple[int, int],
 ) -> jax.Array:
-    """Crop the center of an image to the specified dimensions.
+    """Crop the centre of an image, the offset rounded as torchvision's ``CenterCrop`` rounds.
 
     Args:
-        image: Input image as JAX array with shape [height, width, channels]
-               or [height, width] for grayscale.
-        output_size: Target size as (height, width) tuple.
+        image: ``(H, W)`` or ``(H, W, C)``.
+        output_size: ``(height, width)`` of the crop.
 
     Returns:
-        Center-cropped image.
+        The crop, in the image's dtype.
     """
-    input_shape = image.shape
-    input_h, input_w = input_shape[0], input_shape[1]
-    output_h, output_w = output_size
-
-    # Calculate crop coordinates
-    y_start = max(0, (input_h - output_h) // 2)
-    x_start = max(0, (input_w - output_w) // 2)
-
-    # Ensure output size doesn't exceed input size
-    actual_h = min(output_h, input_h)
-    actual_w = min(output_w, input_w)
-
-    # Perform the crop
-    if len(input_shape) == 3:
-        return image[y_start : y_start + actual_h, x_start : x_start + actual_w, :]
-    return image[y_start : y_start + actual_h, x_start : x_start + actual_w]
+    _check_fits(image, output_size)
+    top = int(round((image.shape[0] - output_size[0]) / 2.0))
+    left = int(round((image.shape[1] - output_size[1]) / 2.0))
+    return image[top : top + output_size[0], left : left + output_size[1]]
 
 
 def random_crop(
     image: jax.Array,
     output_size: tuple[int, int],
     key: jax.Array,
+    *,
+    padding: Padding = 0,
+    padding_mode: str = "constant",
+    fill: float = 0.0,
 ) -> jax.Array:
-    """Randomly crop an image to the specified dimensions.
+    """Pad an image, then crop it at an offset drawn from ``key``, as torchvision's ``RandomCrop``.
+
+    Top and left are drawn independently and uniformly over every valid offset, the last
+    included (``torch.randint(0, padded - size + 1)``). Sizes and padding are static, so the
+    output shape is too; the offsets stay on the device.
 
     Args:
-        image: Input image as JAX array with shape [height, width, channels]
-               or [height, width] for grayscale.
-        output_size: Target size as (height, width) tuple.
-        key: JAX PRNG key for random operations.
+        image: ``(H, W)`` or ``(H, W, C)``.
+        output_size: ``(height, width)`` of the crop.
+        key: This image's PRNG key.
+        padding: Padding before the crop, in any of ``pad``'s forms.
+        padding_mode: One of ``PADDING_MODES``.
+        fill: The value of constant padding.
 
     Returns:
-        Randomly cropped image.
+        The crop, in the image's dtype.
     """
-    input_shape = image.shape
-    input_h, input_w = input_shape[0], input_shape[1]
-    output_h, output_w = output_size
-
-    # Ensure output size doesn't exceed input size
-    output_h = min(output_h, input_h)
-    output_w = min(output_w, input_w)
-
-    # Calculate maximum valid starting positions
-    max_y = max(0, input_h - output_h)
-    max_x = max(0, input_w - output_w)
-
-    # Generate random starting positions
-    if max_y > 0 or max_x > 0:
-        key1, key2 = jax.random.split(key)
-        y_start = jax.random.randint(key1, shape=(), minval=0, maxval=max_y + 1)
-        x_start = jax.random.randint(key2, shape=(), minval=0, maxval=max_x + 1)
-    else:
-        y_start = 0
-        x_start = 0
-
-    # Perform the crop
-    # Perform the crop
-    if len(input_shape) == 3:
-        return jax.lax.dynamic_slice(
-            image, (y_start, x_start, 0), (output_h, output_w, input_shape[2])
-        )
-    return jax.lax.dynamic_slice(image, (y_start, x_start), (output_h, output_w))
+    padded = pad(image, padding, mode=padding_mode, fill=fill)
+    _check_fits(padded, output_size)
+    top_key, left_key = jax.random.split(key)
+    top = jax.random.randint(top_key, (), 0, padded.shape[0] - output_size[0] + 1)
+    left = jax.random.randint(left_key, (), 0, padded.shape[1] - output_size[1] + 1)
+    starts = (top, left, *(0,) * (padded.ndim - 2))
+    return jax.lax.dynamic_slice(padded, starts, (*output_size, *padded.shape[2:]))
 
 
 def normalize(
@@ -189,60 +256,50 @@ def normalize(
     return normalized
 
 
+def flip_left_right(image: jax.Array) -> jax.Array:
+    """Mirror an ``(H, W)`` or ``(H, W, C)`` image left to right (its width axis)."""
+    return jnp.flip(image, axis=1)
+
+
+def flip_up_down(image: jax.Array) -> jax.Array:
+    """Mirror an ``(H, W)`` or ``(H, W, C)`` image top to bottom (its height axis)."""
+    return jnp.flip(image, axis=0)
+
+
 def random_flip_left_right(
     image: jax.Array,
     key: jax.Array,
-    probability: float = 0.5,
+    probability: float | jax.Array = 0.5,
 ) -> jax.Array:
-    """Randomly flip an image horizontally based on the given probability.
+    """Mirror an image left to right with probability ``probability``, decided from ``key``.
 
     Args:
-        image: Input image as JAX array.
-        key: JAX PRNG key for randomness.
-        probability: Probability of applying the flip (0.0 to 1.0).
+        image: ``(H, W)`` or ``(H, W, C)``.
+        key: This image's PRNG key.
+        probability: The chance of flipping; may be traced.
 
     Returns:
-        The original or flipped image.
+        The flipped or the unchanged image.
     """
-    # Check if we should always flip
-    if probability >= 1.0:
-        return jnp.fliplr(image)
-
-    # Check if we should never flip
-    if probability <= 0.0:
-        return image
-
-    # Otherwise randomly decide based on probability
-    do_flip = jax.random.uniform(key) < probability
-    return jnp.where(do_flip, jnp.fliplr(image), image)
+    return jnp.where(jax.random.uniform(key) < probability, flip_left_right(image), image)
 
 
 def random_flip_up_down(
     image: jax.Array,
     key: jax.Array,
-    probability: float = 0.5,
+    probability: float | jax.Array = 0.5,
 ) -> jax.Array:
-    """Randomly flip an image vertically based on the given probability.
+    """Mirror an image top to bottom with probability ``probability``, decided from ``key``.
 
     Args:
-        image: Input image as JAX array.
-        key: JAX PRNG key for randomness.
-        probability: Probability of applying the flip (0.0 to 1.0).
+        image: ``(H, W)`` or ``(H, W, C)``.
+        key: This image's PRNG key.
+        probability: The chance of flipping; may be traced.
 
     Returns:
-        The original or flipped image.
+        The flipped or the unchanged image.
     """
-    # Check if we should always flip
-    if probability >= 1.0:
-        return jnp.flipud(image)
-
-    # Check if we should never flip
-    if probability <= 0.0:
-        return image
-
-    # Otherwise randomly decide based on probability
-    do_flip = jax.random.uniform(key) < probability
-    return jnp.where(do_flip, jnp.flipud(image), image)
+    return jnp.where(jax.random.uniform(key) < probability, flip_up_down(image), image)
 
 
 def adjust_brightness(
