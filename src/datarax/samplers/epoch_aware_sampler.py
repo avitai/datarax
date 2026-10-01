@@ -8,6 +8,7 @@ from typing import Any, Self
 from flax import nnx
 
 from datarax.core.config import SamplerConfig
+from datarax.core.index_shuffle import index_shuffle
 from datarax.core.sampler import SamplerModule
 from datarax.samplers._iteration import (
     read_epoch_step,
@@ -15,7 +16,6 @@ from datarax.samplers._iteration import (
     total_epoch_length,
 )
 from datarax.samplers._validation import validate_sampler_bounds, validate_seed
-from datarax.samplers.index_shuffle import index_shuffle
 
 
 logger = logging.getLogger(__name__)

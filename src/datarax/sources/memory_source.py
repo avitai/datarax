@@ -17,13 +17,13 @@ from flax import nnx
 from datarax.config.registry import register_component
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
-from datarax.core.index_words import from_words, low_words, to_words
-from datarax.core.spec import array_to_spec, array_to_spec_strip_leading, device_spec
-from datarax.samplers.index_shuffle import (
+from datarax.core.index_shuffle import (
     index_shuffle,
     shuffle_positions,
     shuffle_positions_host,
 )
+from datarax.core.index_words import from_words, low_words, to_words
+from datarax.core.spec import array_to_spec, array_to_spec_strip_leading, device_spec
 from datarax.sources._grain_bridge import records_from_batched_mapping, validate_index_batch
 from datarax.sources.source_ops import (
     configure_stochastic_from_shuffle,

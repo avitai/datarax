@@ -6,7 +6,7 @@ Target: Same epoch output regardless of worker count.
 import flax.nnx as nnx
 import pytest
 
-from datarax.samplers.index_shuffle import index_shuffle
+from datarax.core.index_shuffle import index_shuffle
 from datarax.sources import MemorySource, MemorySourceConfig
 
 

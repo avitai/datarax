@@ -10,9 +10,9 @@ from typing import Any
 from flax import nnx
 
 from datarax.core.config import SamplerConfig
+from datarax.core.index_shuffle import index_shuffle
 from datarax.core.sampler import SamplerModule
 from datarax.samplers._validation import validate_seed
-from datarax.samplers.index_shuffle import index_shuffle
 
 
 logger = logging.getLogger(__name__)

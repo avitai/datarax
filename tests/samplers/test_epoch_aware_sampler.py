@@ -539,7 +539,7 @@ class TestEpochAwareGrainDelegation:
 
     def test_shuffle_order_matches_grain_index_shuffle_per_epoch(self):
         """Epoch-0 order must equal index_shuffle(i, seed, N) — no materialized list."""
-        from datarax.samplers.index_shuffle import index_shuffle
+        from datarax.core.index_shuffle import index_shuffle
 
         num_records, seed = 64, 123
         config = EpochAwareSamplerConfig(

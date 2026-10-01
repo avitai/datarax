@@ -21,9 +21,9 @@ from flax import nnx
 
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
+from datarax.core.index_shuffle import shuffle_positions_host
 from datarax.core.index_words import from_words, MAX_RECORDS
 from datarax.pipeline.epochs import EpochPlan
-from datarax.samplers.index_shuffle import shuffle_positions_host
 from datarax.sources._source_base import EagerSourceBase
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode

@@ -179,7 +179,7 @@ def test_shuffle_sampler_order_matches_index_shuffle():
     order (checkpoint/determinism continuity) and proves the sampler delegates to
     datarax's Feistel index shuffle rather than materializing a full permutation.
     """
-    from datarax.samplers.index_shuffle import index_shuffle
+    from datarax.core.index_shuffle import index_shuffle
 
     dataset_size, seed = 1000, 123
     config = ShuffleSamplerConfig(dataset_size=dataset_size, seed=seed)

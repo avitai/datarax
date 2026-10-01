@@ -26,10 +26,10 @@ from flax import nnx
 
 from datarax.core.config import ElementOperatorConfig
 from datarax.core.element_batch import Batch
+from datarax.core.index_shuffle import shuffle_positions
 from datarax.core.index_words import from_words, to_words
 from datarax.operators import ElementOperator
 from datarax.pipeline import iteration, Pipeline, PipelineIterator
-from datarax.samplers.index_shuffle import shuffle_positions
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from tests.pipeline.test_pipeline_streaming import _ListStream
 

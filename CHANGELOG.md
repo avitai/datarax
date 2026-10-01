@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The record order lives in core.** `datarax.samplers.index_shuffle` is now
+  `datarax.core.index_shuffle` (`shuffle_positions`, `shuffle_positions_host`, `index_shuffle`),
+  beside `datarax.core.index_words`; the samplers, the sources and core import it from there.
+  The old path is gone, with no alias: import from `datarax.core.index_shuffle`.
+
 - **Record indices and the shuffled order are 64-bit.** `record_indices_at` (the
   `DataSourceModule` default and every source's override) and `resolve_wrapped_indices` return
   uint32 `(size, 2)`, each index as its words `(hi, lo)` (the layout of `Batch.indices`), in

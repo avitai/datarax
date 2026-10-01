@@ -28,7 +28,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from datarax.core import index_words
-from datarax.samplers.index_shuffle import (
+from datarax.core.index_shuffle import (
     index_shuffle,
     shuffle_positions,
     shuffle_positions_host,
@@ -101,7 +101,7 @@ def resolve_wrapped_indices(  # noqa: PLR0913 - the order, its partition and the
     """Return the global record indices for a wrapped slice of a worker's record order.
 
     The dataset order is ``arange(length)``, or the keyed bijection
-    :func:`~datarax.samplers.index_shuffle.shuffle_positions` of it when ``is_random_order`` is
+    :func:`~datarax.core.index_shuffle.shuffle_positions` of it when ``is_random_order`` is
     set and a ``key`` is supplied; each index costs O(1), so a slice costs O(size) at every
     dataset size and no order is stored. Worker ``shard_id`` of
     ``num_workers`` serves positions ``[shard_id::num_workers]`` of that order, and its
