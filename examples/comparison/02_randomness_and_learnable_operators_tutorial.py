@@ -224,17 +224,19 @@ def add_noise(element, key):
 
 def build_datarax_pipeline(shuffle_seed: int, batch_size: int = BATCH_SIZE) -> Pipeline:
     """A shuffled, noisy, batched pipeline over the images."""
-    source = MemorySource(
-        MemorySourceConfig(shuffle=True),
-        data={"image": images, "index": index},
-        rngs=nnx.Rngs(shuffle_seed),
-    )
+    source = MemorySource(MemorySourceConfig(), data={"image": images, "index": index})
     noise = ElementOperator(
         ElementOperatorConfig(stochastic=True, stream_name="noise"),
         fn=add_noise,
         rngs=nnx.Rngs(noise=0),
     )
-    return Pipeline(source=source, stages=[noise], batch_size=batch_size, rngs=nnx.Rngs(0))
+    return Pipeline(
+        source=source,
+        stages=[noise],
+        batch_size=batch_size,
+        rngs=nnx.Rngs(shuffle_seed),
+        shuffle=True,
+    )
 
 
 datarax_noise = noise_by_record(build_datarax_pipeline(shuffle_seed=1))

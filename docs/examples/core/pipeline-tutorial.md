@@ -29,7 +29,7 @@ handle different data modalities, and build production-ready pipelines.
 |---------|---------|
 | `transforms.Compose([T1, T2, T3])` | `CompositeOperatorModule(CompositeOperatorConfig(strategy=CompositionStrategy.SEQUENTIAL), operators=[op1, op2, op3], rngs=...)` |
 | `transforms.RandomApply([t], p=0.5)` | `ProbabilisticOperator(ProbabilisticOperatorConfig(probability=0.5), operator=t, rngs=...)` |
-| `DataLoader(shuffle=True)` | `MemorySourceConfig(shuffle=True)` |
+| `DataLoader(shuffle=True)` | `Pipeline(..., shuffle=True)` |
 | Manual seed setting | `nnx.Rngs(seed)` with stream names |
 
 **Key insight:** Datarax separates RNG streams by name (e.g., `augment`, `noise`) for fine-grained reproducibility control.
@@ -40,7 +40,7 @@ handle different data modalities, and build production-ready pipelines.
 |--------------------|---------|
 | `dataset.map(fn1).map(fn2)` | `Pipeline(source=source, stages=[op1, op2], ...)` |
 | `tf.function` compiled transforms | JAX JIT compilation with `jax.jit` |
-| `dataset.shuffle(buffer_size)` | `MemorySourceConfig(shuffle=True)` |
+| `dataset.shuffle(buffer_size)` | `Pipeline(..., shuffle=True)` |
 | `tf.random.Generator` | `nnx.Rngs` with stream-based key management |
 
 ## Files
@@ -164,7 +164,7 @@ Dataset structure:
 ```python
 # Create MemorySource with configuration
 source_config = MemorySourceConfig()
-source = MemorySource(source_config, data=data, rngs=nnx.Rngs(0))
+source = MemorySource(source_config, data=data)
 
 print(f"\nSource created: {len(source)} samples")
 ```
@@ -412,7 +412,7 @@ Same seeds produce identical results.
 # Demonstrate reproducibility
 def create_pipeline_with_seed(seed: int):
     """Create a fresh pipeline with specific seed."""
-    src = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(seed))
+    src = MemorySource(MemorySourceConfig(), data=data)
 
     norm = ElementOperator(
         ElementOperatorConfig(stochastic=False), fn=normalize_image, rngs=nnx.Rngs(0)

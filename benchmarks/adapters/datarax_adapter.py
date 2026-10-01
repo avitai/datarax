@@ -541,10 +541,10 @@ class DataraxAdapter(PipelineAdapter):
         """
         first = {key: value[: len(value) // 2] for key, value in data.items()}
         second = {key: value[len(value) // 2 :] for key, value in data.items()}
-        source_config = MemorySourceConfig(shuffle=False)
+        source_config = MemorySourceConfig()
         sub_sources: list[DataSourceModule] = [
-            MemorySource(config=source_config, data=first, rngs=rngs),
-            MemorySource(config=source_config, data=second, rngs=rngs),
+            MemorySource(config=source_config, data=first),
+            MemorySource(config=source_config, data=second),
         ]
         mix_config = MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5))
         return MixDataSourcesNode(mix_config, sub_sources, rngs=rngs)
@@ -567,11 +567,9 @@ class DataraxAdapter(PipelineAdapter):
             src_config = TFDSEagerConfig(
                 name=config.extra["dataset_name"],
                 split=config.extra["split"],
-                shuffle=False,
-                seed=config.seed,
                 as_supervised=True,
             )
-            return TFDSEagerSource(src_config, rngs=rngs)
+            return TFDSEagerSource(src_config)
 
         if backend == "tfds_streaming":
             from datarax.sources import TFDSStreamingConfig, TFDSStreamingSource
@@ -590,10 +588,8 @@ class DataraxAdapter(PipelineAdapter):
             src_config = HFEagerConfig(
                 name=config.extra["dataset_name"],
                 split=config.extra["split"],
-                shuffle=False,
-                seed=config.seed,
             )
-            return HFEagerSource(src_config, rngs=rngs)
+            return HFEagerSource(src_config)
 
         if backend == "hf_streaming":
             from datarax.sources import HFStreamingConfig, HFStreamingSource
@@ -606,8 +602,8 @@ class DataraxAdapter(PipelineAdapter):
             return HFStreamingSource(src_config, rngs=rngs)
 
         # Default: MemorySource
-        source_config = MemorySourceConfig(shuffle=False)
-        return MemorySource(config=source_config, data=data, rngs=rngs)
+        source_config = MemorySourceConfig()
+        return MemorySource(config=source_config, data=data)
 
     def _append_capability_operators(
         self, stages: list[Any], config: ScenarioConfig, rngs: nnx.Rngs
@@ -721,6 +717,9 @@ class DataraxAdapter(PipelineAdapter):
             stages=stages,
             batch_size=config.batch_size,
             rngs=nnx.Rngs(config.seed),
+            # A mix draws its records from the pipeline's epoch key (until it moves onto
+            # Grain's mix), so its pipeline passes the key; no other scenario shuffles.
+            shuffle=Capability.MIXED_SOURCE in set(config.required_capabilities),
             drop_last=_DROP_LAST,
         )
 

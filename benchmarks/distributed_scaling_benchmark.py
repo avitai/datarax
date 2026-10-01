@@ -194,9 +194,9 @@ def normalize(element, key=None):
     return element.update_data({"image": element.data["image"] / 255.0})
 
 
-def create_pipeline(data: dict, batch_size: int = 64, seed: int = 0):
+def create_pipeline(data: dict, batch_size: int = 64):
     """Create a standard image processing pipeline."""
-    source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(seed))
+    source = MemorySource(MemorySourceConfig(), data=data)
     normalizer = ElementOperator(
         ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0)
     )

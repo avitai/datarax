@@ -593,7 +593,7 @@ class TestBatchMixOperatorInAPipeline:
         from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
         data = {"image": jnp.arange(8 * 4, dtype=jnp.float32).reshape(8, 4)}
-        source = MemorySource(MemorySourceConfig(shuffle=False), data)
+        source = MemorySource(MemorySourceConfig(), data)
         mixer = BatchMixOperator(
             BatchMixOperatorConfig(mode="mixup", data_field="image"),
             rngs=nnx.Rngs(batch_mix=0),

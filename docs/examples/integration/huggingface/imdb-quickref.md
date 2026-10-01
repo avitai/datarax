@@ -101,7 +101,7 @@ config = HFEagerConfig(
     split="train",
 )
 
-source = HFEagerSource(config, rngs=nnx.Rngs(0))
+source = HFEagerSource(config)
 print(f"Loaded HuggingFace dataset: {config.name}")
 print(f"Split: {config.split}")
 print("Mode: Eager load with local HuggingFace cache")
@@ -211,7 +211,7 @@ Created label normalization operator
 Chain the source with our preprocessing operator.
 
 **Important:** We exclude the 'text' field because strings can't be batched as JAX arrays.
-The source also shuffles the split, which stores its negative reviews first.
+The pipeline also shuffles the split, which stores its negative reviews first.
 
 ```python
 # Create fresh source for the full pipeline
@@ -222,13 +222,13 @@ source2 = HFEagerSource(
         name="stanfordnlp/imdb",
         split="train",
         exclude_keys={"text"},  # Exclude text field - can't batch strings
-        shuffle=True,  # The split starts with negative reviews; shuffle for a mixed sample
     ),
-    rngs=nnx.Rngs(1),
 )
 
-# Build pipeline
-pipeline = Pipeline(source=source2, stages=[text_stats_op], batch_size=8, rngs=nnx.Rngs(0))
+# Build pipeline; the split starts with negative reviews, so shuffle for a mixed sample
+pipeline = Pipeline(
+    source=source2, stages=[text_stats_op], batch_size=8, rngs=nnx.Rngs(0), shuffle=True
+)
 
 print("Pipeline: HFEagerSource(IMDB) -> TextStats -> Output")
 ```
@@ -296,7 +296,7 @@ Sentiment Summary (160 reviews analyzed):
 ```
 
 The `stanfordnlp/imdb` train split starts with negative reviews (the three inspected in
-Step 2 are all negative). The pipeline's source is built with `shuffle=True`, so the 160
+Step 2 are all negative). The pipeline is built with `shuffle=True`, so the 160
 reviews analyzed mix both sentiments.
 
 ## Text vs Image Pipeline Comparison

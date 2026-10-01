@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import jax
 import numpy as np
-from flax import nnx
 
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
@@ -18,7 +17,7 @@ _N = 10_000
 
 def _source() -> MemorySource:
     data = {"x": np.arange(_N * 4, dtype=np.float32).reshape(_N, 4)}
-    return MemorySource(MemorySourceConfig(shuffle=True), data=data, rngs=nnx.Rngs(0, shuffle=1))
+    return MemorySource(MemorySourceConfig(), data=data)
 
 
 def test_the_checkpoint_holds_no_record_data() -> None:

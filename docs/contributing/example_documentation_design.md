@@ -90,7 +90,7 @@ add operators, sharding, checkpointing, and monitoring as they understand each c
 from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
-pipeline = Pipeline(source=MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0)), stages=[], batch_size=32, rngs=nnx.Rngs(0))
+pipeline = Pipeline(source=MemorySource(MemorySourceConfig(), data=data), stages=[], batch_size=32, rngs=nnx.Rngs(0))
 
 # Level 2: Add operators
 pipeline = Pipeline(source=source, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0))
@@ -590,7 +590,7 @@ We create a `MemorySource` to wrap our dictionary data.
 
 # %%
 # Create source with config
-source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+source = MemorySource(MemorySourceConfig(), data=data)
 print(f"Source length: {len(source)}")
 # Expected output:
 # Source length: 1000
@@ -2413,7 +2413,7 @@ from datarax.sources import MemorySource, MemorySourceConfig
 
 data = {"x": np.random.rand(100, 10).astype(np.float32)}
 pipeline = Pipeline(
-    source=MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0)),
+    source=MemorySource(MemorySourceConfig(), data=data),
     stages=[],
     batch_size=32,
     rngs=nnx.Rngs(0),

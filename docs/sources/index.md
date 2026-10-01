@@ -53,18 +53,16 @@ import flax.nnx as nnx
 from datarax.sources import from_hf
 
 # Streaming is selected via the factory, not HFEagerConfig
-source = from_hf("allenai/c4", "train", streaming=True, rngs=nnx.Rngs(0))
+source = from_hf("allenai/c4", "train", streaming=True)
 ```
 
 ### Shuffling
 
+The pipeline owns an eager source's order (an O(1)-memory Feistel index shuffle):
+
 ```python
-config = HFEagerConfig(
-    name="mnist",
-    split="train",
-    shuffle=True,
-    seed=42,  # Eager: O(1)-memory Feistel index shuffle
-)
+source = HFEagerSource(HFEagerConfig(name="mnist", split="train"))
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0), shuffle=True)
 ```
 
 ### Field Filtering

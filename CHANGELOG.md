@@ -44,7 +44,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `datarax.core.index_shuffle` (`shuffle_positions`, `shuffle_positions_host`, `index_shuffle`),
   beside `datarax.core.index_words`; the samplers, the sources and core import it from there.
   The old path is gone, with no alias: import from `datarax.core.index_shuffle`.
-
+- **The pipeline owns the shuffle.** `Pipeline(..., shuffle=True)` (and `Pipeline.from_dag`)
+  serves each epoch in a new order, keyed by the pipeline's epoch key; `shuffle=False`, the
+  default, serves the sequential order. `record_indices_at(start, size, key)` keeps its
+  signature and serves the order `key` selects, or the sequential order when `key` is `None`:
+  the pipeline passes its epoch key exactly when it shuffles. The default `record_indices_at`
+  shuffles a sized source by the key (so `StreamingDiskSource` now shuffles) and refuses a key
+  for a source without a length. Orders are unchanged: a fixture recorded on the previous
+  revision, every batch that iteration, `step()` and `scan` served over in-memory, mixed and
+  memory-mapped sources, is reproduced bit for bit. `Pipeline.from_arrays(shuffle=...)` passes
+  the flag to the pipeline. `resolve_wrapped_indices(start, size, length, key, *, num_workers,
+  shard_id)` drops `is_random_order` and shuffles iff a key is given. A pipeline over
+  `MixDataSourcesNode`, which draws its mix from the key, is built with `shuffle=True`; without
+  it the first pull is refused naming `Pipeline(shuffle=True)`. The session state's
+  `fingerprint["shuffled"]` is the pipeline's flag.
+- In-memory sources (`MemorySource`, `TFDSEagerSource`, `HFEagerSource`) take no `rngs`: nothing
+  in them is random. `Pipeline.get_state()` therefore holds no source RNG or seed state, and an
+  iterator state's `rng_counts` is the pipeline's count alone. A state saved while the source
+  held them is refused on restore, naming what the pipeline lacks; nothing converts it.
 - **Record indices and the shuffled order are 64-bit.** `record_indices_at` (the
   `DataSourceModule` default and every source's override) and `resolve_wrapped_indices` return
   uint32 `(size, 2)`, each index as its words `(hi, lo)` (the layout of `Batch.indices`), in
@@ -223,6 +240,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- Source-level shuffling, which the pipeline now owns: `MemorySourceConfig.shuffle`,
+  `TFDSEagerConfig.shuffle`/`seed`, `HFEagerConfig.shuffle`/`seed`, the `shuffle`, `seed` and
+  `rngs` arguments of `from_tfds` and `from_hf`, `is_random_order`/`set_random_order` on
+  `MemorySource` and the eager sources, `MemorySource`'s drawn host-shuffle seed (and its
+  `_shuffle_seed`/`_shuffle_seeded` state), `source_ops.shuffled_index_for_position` and
+  `source_ops.validate_seed_range`, and the `shuffle`/`seed` parameters of the eager helpers
+  (`eager_iter`, `eager_get_batch` and their defaults). Use `Pipeline(..., shuffle=True)`; a
+  removed config field raises `TypeError`. Iterating a source directly serves its records in
+  order. The streaming sources and `ArrayRecordSourceModule` keep their own shuffle.
 - `PipelineSchema` and `NNXComponentSchema`: no field of either was ever read, so neither
   validated anything. Pipelines are built in Python; define a `ConfigSchema` for the parameters
   you configure. `examples/config/config_example.py` and its notebook, which exited on a

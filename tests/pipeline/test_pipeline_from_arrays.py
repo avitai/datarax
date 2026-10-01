@@ -32,9 +32,14 @@ def _data() -> dict[str, np.ndarray]:
 
 
 def _two_step(*, seed: int, shuffle: bool, drop_last: bool = False) -> Pipeline:
-    source = MemorySource(MemorySourceConfig(shuffle=shuffle), data=_data(), rngs=nnx.Rngs(seed))
+    source = MemorySource(MemorySourceConfig(), data=_data())
     return Pipeline(
-        source=source, stages=[], batch_size=_BATCH, rngs=nnx.Rngs(seed), drop_last=drop_last
+        source=source,
+        stages=[],
+        batch_size=_BATCH,
+        rngs=nnx.Rngs(seed),
+        shuffle=shuffle,
+        drop_last=drop_last,
     )
 
 

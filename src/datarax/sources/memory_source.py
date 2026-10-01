@@ -17,16 +17,10 @@ from flax import nnx
 from datarax.config.registry import register_component
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
-from datarax.core.index_shuffle import (
-    index_shuffle,
-    shuffle_positions,
-    shuffle_positions_host,
-)
-from datarax.core.index_words import from_words, low_words, to_words
+from datarax.core.index_words import low_words
 from datarax.core.spec import array_to_spec, array_to_spec_strip_leading, device_spec
 from datarax.sources._grain_bridge import records_from_batched_mapping, validate_index_batch
 from datarax.sources.source_ops import (
-    configure_stochastic_from_shuffle,
     partition_length,
     record_count,
     resolve_wrapped_indices,
@@ -41,19 +35,20 @@ logger = logging.getLogger(__name__)
 class MemorySourceConfig(StructuralConfig):
     """Configuration for MemorySource (in-memory data source).
 
+    The order records are served in belongs to the pipeline (``Pipeline(shuffle=...)``), not
+    to the source.
+
     Args:
-        shuffle: Whether to shuffle data on each epoch
         cache_size: Number of batches to cache (0 = no caching)
         prefetch_size: Number of items to prefetch (0 = no prefetching)
         shard_id: Optional shard identifier for distributed processing
         num_workers: Number of parallel workers (default 1). When > 1,
             each worker (identified by shard_id) receives a disjoint
-            partition of the globally-shuffled elements. Worker k
-            gets elements at global positions [k::num_workers].
+            partition of the global order. Worker k gets elements at
+            global positions [k::num_workers].
     """
 
     # Optional parameters with defaults
-    shuffle: bool = False
     cache_size: int = 0
     prefetch_size: int = 0
     shard_id: int | None = None
@@ -61,8 +56,6 @@ class MemorySourceConfig(StructuralConfig):
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
-        configure_stochastic_from_shuffle(self, shuffle=self.shuffle)
-
         if self.num_workers < 1:
             raise ValueError(f"num_workers must be >= 1, got {self.num_workers}")
         if self.num_workers > 1 and self.shard_id is None:
@@ -87,7 +80,6 @@ class MemorySource(DataSourceModule):
 
         - Dual-mode operation (stateless iteration and stateful with internal index)
         - Random access via __getitem__
-        - Optional shuffling with RNG support
         - Batch retrieval with get_batch method
         - Support for dictionary and list/sequence data
         - Batch-first design for efficient processing
@@ -98,8 +90,7 @@ class MemorySource(DataSourceModule):
         ```python
         # Create source with list data
         data = [{'x': i, 'y': i*2} for i in range(100)]
-        config = MemorySourceConfig(shuffle=False)
-        source = MemorySource(config, data, rngs=nnx.Rngs(0))
+        source = MemorySource(MemorySourceConfig(), data)
 
         # Stateless iteration
         for item in source:
@@ -108,9 +99,9 @@ class MemorySource(DataSourceModule):
         # Stateful iteration with internal index
         batch = source.get_batch(32)  # Gets next 32 items
 
-        # With shuffling
-        config = MemorySourceConfig(shuffle=True)
-        source = MemorySource(config, data, rngs=nnx.Rngs(0))
+        # A shuffled order is the pipeline's
+        pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0),
+                            shuffle=True)
         ```
     """
 
@@ -125,7 +116,6 @@ class MemorySource(DataSourceModule):
         config: MemorySourceConfig,
         data: dict[str, Any] | list[Any] | Sequence[Any],
         *,
-        rngs: nnx.Rngs | None = None,
         name: str | None = None,
     ) -> None:
         """Initialize memory source with config.
@@ -135,7 +125,6 @@ class MemorySource(DataSourceModule):
             data: Either a dictionary mapping keys to data arrays or a
                 list/sequence of elements. If a dictionary is provided,
                 all values must have the same first dimension size.
-            rngs: Optional RNG state for shuffling and stateful iteration
             name: Optional name for the module (defaults to "MemorySource")
 
         Raises:
@@ -146,7 +135,7 @@ class MemorySource(DataSourceModule):
         if name is None:
             name = "MemorySource"
 
-        super().__init__(config, rngs=rngs, name=name)
+        super().__init__(config, name=name)
 
         # Validate input data type
         if isinstance(data, str):
@@ -156,7 +145,6 @@ class MemorySource(DataSourceModule):
 
         # Store data and config values
         self.data = nnx.data(data)
-        self._is_random_order = config.shuffle
         self.prefetch_size = config.prefetch_size
 
         # The length is read from the data on every call; reading it here validates the data.
@@ -167,14 +155,6 @@ class MemorySource(DataSourceModule):
         # State variables for stateful iteration
         self.index = nnx.Variable(0)
         self.epoch = nnx.Variable(0)
-
-        # The host shuffle's seed, drawn when a host shuffle first needs it (so a source served
-        # only through a pipeline draws nothing) and kept: epoch e serves the order of
-        # (seed, e), a function of checkpointed state alone, so a restored source resumes the
-        # same records. Both Variables exist from construction, so the checkpoint's layout
-        # never changes. uint32, because the seed spans [0, 2**32).
-        self._shuffle_seed = nnx.Variable(jnp.uint32(0))
-        self._shuffle_seeded = nnx.Variable(False)
 
     @property
     def length(self) -> int:
@@ -198,9 +178,8 @@ class MemorySource(DataSourceModule):
     def __iter__(self) -> Iterator[Any]:
         """Iterate over data elements.
 
-        For stateless iteration, yields elements in order.
-        For stateful iteration with shuffling, uses internal RNG.
-        When prefetch_size > 0, wraps iteration with threaded prefetching.
+        Yields elements in record order. When prefetch_size > 0, wraps iteration with threaded
+        prefetching.
 
         Returns:
             Iterator over data elements
@@ -215,9 +194,6 @@ class MemorySource(DataSourceModule):
 
     def _raw_iter(self) -> Iterator[Any]:
         """Synchronous element iteration (no prefetching).
-
-        Shuffled positions map to records through ``index_shuffle`` a block at a time, so no
-        order is materialized.
 
         When num_workers > 1, yields only this worker's partition of the
         global order: worker k gets global positions [k::num_workers].
@@ -234,16 +210,7 @@ class MemorySource(DataSourceModule):
         # One pass serves the data as it is when the pass starts.
         length = self.length
 
-        if self.is_random_order and self.rngs is not None:
-            seed, epoch = self._host_shuffle_seed(), self.epoch.get_value()
-            if num_workers > 1:
-                # Partition: yield elements at global positions [shard_id::num_workers]
-                for i in range(shard_id, length, num_workers):
-                    yield self._get_element(index_shuffle(i, seed, length, epoch))
-            else:
-                for i in range(length):
-                    yield self._get_element(index_shuffle(i, seed, length, epoch))
-        elif num_workers > 1:
+        if num_workers > 1:
             for i in range(shard_id, length, num_workers):
                 yield self._get_element(i)
         else:
@@ -291,37 +258,24 @@ class MemorySource(DataSourceModule):
         Args:
             batch_size: Number of elements in the batch
             key: Optional RNG key. When provided, selects **stateless** mode: the
-                batch is derived purely from ``key`` with no internal state read
+                batch is the first ``batch_size`` records, with no internal state read
                 or mutated. When ``None``, selects **stateful** mode: the batch
                 begins at ``self.index`` and this call advances ``self.index``
-                (rolling ``self.epoch`` and forcing a reshuffle at wrap-around).
+                (rolling ``self.epoch`` at wrap-around).
 
         Returns:
             Batch of data with shape (batch_size, ...)
         """
         length = self.length
-        # Get indices for this batch
         if key is not None:
-            # Stateless mode: the first records of the order ``key`` selects
-            if self.is_random_order:
-                positions = jnp.asarray(to_words(np.arange(min(batch_size, length))))
-                return self._gather_batch(from_words(shuffle_positions(positions, length, key)))
-            # Sequential: use slicing (zero-copy for arrays)
+            # Stateless mode: slicing (zero-copy for arrays)
             return self._gather_batch_slice(0, min(batch_size, length))
         # Stateful mode - use internal index
         start = self.index.get_value()
         end = min(start + batch_size, length)
         epoch = self.epoch.get_value()
-        if self.is_random_order:
-            # The records at positions [start, end) of this batch's epoch, read before the
-            # epoch advances at its end.
-            positions = np.arange(start, end)
-            batch = self._gather_batch(
-                shuffle_positions_host(positions, length, self._host_shuffle_seed(), epoch)
-            )
-        else:
-            # Sequential: use slicing (zero-copy for arrays)
-            batch = self._gather_batch_slice(start, end)
+        # Sequential: use slicing (zero-copy for arrays)
+        batch = self._gather_batch_slice(start, end)
 
         # Update index for next call
         new_index = end % length
@@ -338,15 +292,15 @@ class MemorySource(DataSourceModule):
     ) -> jax.Array:
         """Return the global index of each record ``get_batch_at(start, size, key)`` returns.
 
-        ``start`` and ``size`` are positions in the order this source serves: the whole
-        dataset, or with ``num_workers > 1`` this worker's positions
-        ``[shard_id::num_workers]`` of the global order, shuffled by ``key`` when
-        ``shuffle=True``. The indices are global, so a record has one index on every worker.
+        ``start`` and ``size`` are positions in the order ``key`` selects (the sequential order
+        when ``key`` is ``None``): the whole dataset, or with ``num_workers > 1`` this worker's
+        positions ``[shard_id::num_workers]`` of the global order. The indices are global, so a
+        record has one index on every worker.
 
         Args:
             start: Starting logical position; concrete int or traced ``jax.Array``.
             size: Number of records (Python int).
-            key: PRNG key for shuffled mode.
+            key: The key selecting the order, or ``None`` for the sequential order.
 
         Returns:
             uint32 ``jax.Array`` of shape ``(size, 2)``, each index as its words ``(hi, lo)``.
@@ -355,7 +309,6 @@ class MemorySource(DataSourceModule):
             start,
             size,
             self.length,
-            self.is_random_order,
             key,
             num_workers=self.config.num_workers,
             shard_id=self.config.shard_id or 0,
@@ -409,29 +362,6 @@ class MemorySource(DataSourceModule):
         return {
             key_name: jnp.take(jnp.asarray(value), rows, axis=0) for key_name, value in data.items()
         }
-
-    def _host_shuffle_seed(self) -> int:
-        """The host shuffle's seed, drawn from its RNG stream on first use and kept.
-
-        The stream is the configured one, ``shuffle`` by default, falling back to ``default``;
-        a source without either uses 0.
-
-        Returns:
-            An integer seed in ``[0, 2**32)``.
-        """
-        if not self._shuffle_seeded.get_value():
-            seed = 0
-            if self.rngs is not None:
-                for stream_name in (self.config.stream_name or "shuffle", "default"):
-                    if stream_name in self.rngs:
-                        # uint32 draws: x64 would widen bits to uint64, past the seed's range
-                        seed = int(
-                            jax.random.bits(getattr(self.rngs, stream_name)(), dtype=jnp.uint32)
-                        )
-                        break
-            self._shuffle_seed.set_value(jnp.uint32(seed))
-            self._shuffle_seeded.set_value(True)
-        return int(self._shuffle_seed.get_value())
 
     def _get_element(self, index: int) -> Any:
         """Get single element at index.
@@ -520,19 +450,6 @@ class MemorySource(DataSourceModule):
         self.index.set_value(0)
         self.epoch.set_value(0)
 
-    @property
-    def is_random_order(self) -> bool:
-        """Whether this source randomizes iteration order."""
-        return self._is_random_order
-
-    def set_random_order(self, enabled: bool) -> None:
-        """Enable or disable random-order iteration.
-
-        Args:
-            enabled: Whether to randomize iteration order.
-        """
-        self._is_random_order = enabled
-
     # get_state/set_state inherited from TransformBase - handles all nnx.Variables automatically
 
     def __repr__(self) -> str:
@@ -543,7 +460,6 @@ class MemorySource(DataSourceModule):
             f"MemorySource("
             f"type={data_type}, "
             f"length={self.length}, "
-            f"random_order={self.is_random_order}, "
             f"index={self.index.get_value()}/{self.length}, "
             f"epoch={self.epoch.get_value()})"
         )

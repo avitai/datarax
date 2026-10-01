@@ -27,7 +27,7 @@ from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNod
 
 
 def _memory(data: dict[str, Any] | Sequence[Any]) -> MemorySource:
-    return MemorySource(MemorySourceConfig(shuffle=False), data=data)
+    return MemorySource(MemorySourceConfig(), data=data)
 
 
 class TestMemorySource:
@@ -80,8 +80,6 @@ class _Eager(EagerSourceBase):
         self.data = nnx.data(data)
         self.index = nnx.Variable(jnp.int32(0))
         self.epoch = nnx.Variable(jnp.int32(0))
-        self._seed = 0
-        self._is_random_order = False
         self.dataset_name = "eager"
         self.split_name = "all"
         self._dataset_info = None

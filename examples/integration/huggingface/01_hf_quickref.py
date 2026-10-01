@@ -70,7 +70,9 @@ Key parameters:
 
 - `name`: Dataset identifier (e.g., "mnist", "imdb", "squad")
 - `split`: Which split to use ("train", "test", "validation")
-- `shuffle` / `seed`: Shuffle the records, reproducibly
+
+The order records are served in belongs to the pipeline: `Pipeline(shuffle=True)` shuffles
+every epoch, reproducibly from the pipeline's `rngs`.
 
 For datasets too large to download, `HFStreamingSource` with `HFStreamingConfig(streaming=True)`
 reads records on the fly (see the HuggingFace tutorial).
@@ -83,7 +85,7 @@ config = HFEagerConfig(
     split="train",
 )
 
-source = HFEagerSource(config, rngs=nnx.Rngs(0))
+source = HFEagerSource(config)
 print(f"Loaded HuggingFace dataset: {config.name}")
 
 # An eager source knows its size
@@ -154,7 +156,7 @@ normalizer = ElementOperator(
 )
 
 # Build transformed pipeline (need fresh source for new iteration)
-source2 = HFEagerSource(config, rngs=nnx.Rngs(1))
+source2 = HFEagerSource(config)
 transformed_pipeline = Pipeline(
     source=source2, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0)
 )
@@ -211,7 +213,7 @@ def main():
 
     # Load dataset
     config = HFEagerConfig(name="ylecun/mnist", split="train")
-    source = HFEagerSource(config, rngs=nnx.Rngs(0))
+    source = HFEagerSource(config)
 
     # Create pipeline with normalization
     def normalize(element, key=None):

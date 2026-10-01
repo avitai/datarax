@@ -3,7 +3,6 @@
 This module tests the functionality of the unified MemorySource implementation.
 """
 
-import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -81,11 +80,10 @@ def test_memory_source_stateless_iteration() -> None:
 
 def test_memory_source_stateful_iteration() -> None:
     """Test stateful iteration with internal index tracking."""
-    # Create data source with rngs (stateful mode)
+    # Create data source (stateful mode)
     data = [{"x": i} for i in range(10)]
-    rngs = nnx.Rngs(default=0)
     config = MemorySourceConfig()
-    source = MemorySource(config, data, rngs=rngs)
+    source = MemorySource(config, data)
 
     # Test batch retrieval with internal state
     batch1 = source.get_batch(3)
@@ -133,11 +131,10 @@ def test_memory_source_random_access():
 
 def test_memory_source_batch_retrieval():
     """Test batch retrieval methods."""
-    # Create data source with rngs for stateful batch retrieval
+    # Create data source for stateful batch retrieval
     data = {"values": jnp.arange(20)}
-    rngs = nnx.Rngs(default=0)
     config = MemorySourceConfig()
-    source = MemorySource(config, data, rngs=rngs)
+    source = MemorySource(config, data)
 
     # Get batch using stateful mode
     batch = source.get_batch(5)
@@ -148,25 +145,6 @@ def test_memory_source_batch_retrieval():
     # Get next batch (should continue from index 5)
     batch2 = source.get_batch(5)
     assert jnp.array_equal(batch2["values"], jnp.arange(5, 10))
-
-
-def test_memory_source_shuffling():
-    """Test shuffling functionality."""
-    # Create data source with shuffling enabled
-    data = list(range(100))
-    rngs = nnx.Rngs(default=42, shuffle=42)
-    config = MemorySourceConfig(shuffle=True)
-    source = MemorySource(config, data, rngs=rngs)
-
-    # Get shuffled data
-    items = list(source)
-
-    # Should have same elements but in different order
-    assert set(items) == set(range(100))
-    assert items != list(range(100))  # Should be shuffled
-
-    # Test epoch tracking
-    assert source.epoch.get_value() == 1
 
 
 def test_memory_source_stateless_batch():
@@ -186,11 +164,6 @@ def test_memory_source_stateless_batch():
     batch2 = source.get_batch(5, key=key)
     assert jnp.array_equal(batch["values"], batch2["values"])
 
-    # Different key might give different batch (if shuffling)
-    key2 = jax.random.key(43)
-    source.get_batch(5, key=key2)
-    # Note: Without shuffle=True, batches will still be the same
-
 
 def test_memory_source_errors():
     """Test error cases for MemorySource."""
@@ -206,11 +179,10 @@ def test_memory_source_errors():
 
 def test_memory_source_state_management():
     """Test state management in MemorySource."""
-    # Create data source with rngs for stateful operation
+    # Create data source for stateful operation
     data = [{"value": i} for i in range(10)]
-    rngs = nnx.Rngs(default=0)
     config = MemorySourceConfig()
-    source = MemorySource(config, data, rngs=rngs)
+    source = MemorySource(config, data)
 
     # Get several batches to advance state
     source.get_batch(3)
@@ -267,31 +239,6 @@ def test_memory_source_string_input_error():
         MemorySource(config, "not_a_valid_input")
 
 
-def test_memory_source_stateless_batch_with_shuffle():
-    """Test stateless batch retrieval with shuffling enabled."""
-    # Create data source with shuffling (requires rngs for stochastic modules)
-    data = {"values": jnp.arange(20)}
-    config = MemorySourceConfig(shuffle=True)
-    rngs = nnx.Rngs(shuffle=42)  # Required for stochastic modules
-    source = MemorySource(config, data, rngs=rngs)
-
-    # Get batch with explicit key (stateless mode, line 198)
-    key = jax.random.key(42)
-    batch1 = source.get_batch(10, key=key)
-    assert "values" in batch1
-    assert len(batch1["values"]) == 10
-
-    # Same key should give same shuffled batch
-    batch2 = source.get_batch(10, key=key)
-    assert jnp.array_equal(batch1["values"], batch2["values"])
-
-    # Different key should give different shuffled batch
-    key2 = jax.random.key(43)
-    batch3 = source.get_batch(10, key=key2)
-    # The values should be different (with high probability)
-    assert not jnp.array_equal(batch1["values"], batch3["values"])
-
-
 def test_memory_source_get_batch_behavior():
     """Test direct batch retrieval behavior."""
     data = {"values": jnp.arange(15)}
@@ -309,17 +256,6 @@ def test_memory_source_get_batch_behavior():
     batch_with_key = source.get_batch(5, key)
     assert "values" in batch_with_key
     assert len(batch_with_key["values"]) == 5
-
-
-def test_memory_source_shuffle_without_key():
-    """Test that shuffling without rngs raises an error in stochastic mode."""
-    # In the new architecture, stochastic modules (shuffle=True) require rngs
-    data = list(range(10))
-    config = MemorySourceConfig(shuffle=True)
-
-    # Should raise ValueError because stochastic modules require rngs
-    with pytest.raises(ValueError, match="Stochastic structural modules require rngs"):
-        MemorySource(config, data, rngs=None)
 
 
 def test_memory_source_dict_with_scalar_values():
@@ -382,36 +318,6 @@ def test_memory_source_array_batch_gathering():
     assert jnp.array_equal(batch, expected)
 
 
-def test_memory_source_set_random_order():
-    """Test set_random_order method to enable/disable shuffling."""
-    # Test set_random_order method (lines 337-339)
-    data = list(range(100))
-    # Include default stream for fallback behavior
-    rngs = nnx.Rngs(default=0, shuffle=42)
-    config = MemorySourceConfig(shuffle=False)
-    source = MemorySource(config, data, rngs=rngs)
-
-    # Initially not shuffling
-    assert source.is_random_order is False
-
-    # Enable shuffling
-    source.set_random_order(True)
-    assert source.is_random_order is True
-
-    # Get data - should be shuffled
-    items = list(source)
-    assert set(items) == set(range(100))
-    assert items != list(range(100))  # Should be shuffled
-
-    # Disable shuffling
-    source.set_random_order(False)
-    assert source.is_random_order is False
-
-    # Get data - should not be shuffled
-    items2 = list(source)
-    assert items2 == list(range(100))
-
-
 def test_memory_source_complex_nested_data():
     """Test MemorySource with complex nested data structures."""
     # Test with nested dictionaries and mixed types
@@ -453,8 +359,7 @@ def test_memory_source_edge_cases():
     assert len(batch) == 1  # Should only return available data
 
     # Test empty batch after exhaustion in stateful mode
-    rngs = nnx.Rngs(0)
-    source2 = MemorySource(config, [1, 2, 3], rngs=rngs)
+    source2 = MemorySource(config, [1, 2, 3])
     batch1 = source2.get_batch(2)
     assert len(batch1) == 2
     batch2 = source2.get_batch(2)

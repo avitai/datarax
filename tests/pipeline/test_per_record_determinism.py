@@ -41,22 +41,28 @@ def _operator() -> ElementOperator:
 
 def _build_pipeline(batch_size: int) -> Pipeline:
     data = {"value": jnp.arange(24, dtype=jnp.float32).reshape(24, 1)}
-    source = MemorySource(MemorySourceConfig(shuffle=False), data)
+    source = MemorySource(MemorySourceConfig(), data)
     return Pipeline(source=source, stages=[_operator()], batch_size=batch_size, rngs=nnx.Rngs(0))
 
 
-def _source(*, shuffle: bool = False, num_workers: int = 1, shard_id: int | None = None):
+def _source(*, num_workers: int = 1, shard_id: int | None = None):
     """Records whose ``value`` starts at zero, so the output is the augmentation itself."""
     data = {
         "value": jnp.zeros((N_RECORDS, 1), dtype=jnp.float32),
         "id": jnp.arange(N_RECORDS, dtype=jnp.int32),
     }
-    config = MemorySourceConfig(shuffle=shuffle, num_workers=num_workers, shard_id=shard_id)
-    return MemorySource(config, data, rngs=nnx.Rngs(3))
+    config = MemorySourceConfig(num_workers=num_workers, shard_id=shard_id)
+    return MemorySource(config, data)
 
 
-def _pipeline(source: MemorySource) -> Pipeline:
-    return Pipeline(source=source, stages=[_operator()], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
+def _pipeline(source: MemorySource, *, shuffle: bool = False) -> Pipeline:
+    return Pipeline(
+        source=source,
+        stages=[_operator()],
+        batch_size=BATCH_SIZE,
+        rngs=nnx.Rngs(0),
+        shuffle=shuffle,
+    )
 
 
 def _session(pipeline: Pipeline) -> PipelineIterator:
@@ -113,8 +119,8 @@ def test_same_pipeline_reproduces_across_runs():
 
 
 def test_a_record_keeps_its_augmentation_when_the_order_is_shuffled():
-    ordered_ids, ordered = _epoch(_pipeline(_source(shuffle=False)))
-    shuffled_ids, shuffled = _epoch(_pipeline(_source(shuffle=True)))
+    ordered_ids, ordered = _epoch(_pipeline(_source(), shuffle=False))
+    shuffled_ids, shuffled = _epoch(_pipeline(_source(), shuffle=True))
 
     assert ordered_ids == list(range(N_RECORDS))
     assert sorted(shuffled_ids) == ordered_ids
@@ -133,7 +139,7 @@ def test_every_epoch_draws_fresh_augmentation():
 
 
 def test_resuming_mid_second_epoch_reproduces_the_remaining_batches():
-    reference = _pipeline(_source(shuffle=True))
+    reference = _pipeline(_source(), shuffle=True)
     _epoch(reference)
     reference.reset()
     session = _session(reference)
@@ -142,7 +148,7 @@ def test_resuming_mid_second_epoch_reproduces_the_remaining_batches():
     state = session.get_state()
     expected = [np.asarray(batch["value"]) for batch in session]
 
-    resumed = _session(_pipeline(_source(shuffle=True)))
+    resumed = _session(_pipeline(_source(), shuffle=True))
     resumed.set_state(state)
     got = [np.asarray(batch["value"]) for batch in resumed]
 

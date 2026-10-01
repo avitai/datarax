@@ -74,10 +74,11 @@ jupyter lab examples/integration/huggingface/01_hf_quickref.ipynb
 |-----------|-------------|---------|
 | `name` | Dataset identifier | `"mnist"`, `"imdb"`, `"squad"` |
 | `split` | Which split to use | `"train"`, `"test"`, `"validation"` |
-| `shuffle` | Shuffle rows (O(1) index shuffle) | `True` |
-| `seed` | Seed for shuffling | `42` |
 
-> **Streaming large datasets?** Use `from_hf(name, split, streaming=True, rngs=...)`
+The order records are served in belongs to the pipeline: `Pipeline(..., shuffle=True)`
+shuffles every epoch (an O(1) index shuffle), reproducibly from the pipeline's `rngs`.
+
+> **Streaming large datasets?** Use `from_hf(name, split, streaming=True)`
 > (or `HFStreamingConfig`/`HFStreamingSource` directly) instead of `HFEagerConfig`,
 > which always loads the full dataset into JAX arrays at init.
 
@@ -107,7 +108,7 @@ config = HFEagerConfig(
     split="train",
 )
 
-source = HFEagerSource(config, rngs=nnx.Rngs(0))
+source = HFEagerSource(config)
 print(f"Loaded HuggingFace dataset: {config.name}")
 
 # An eager source knows its size
@@ -221,7 +222,7 @@ normalizer = ElementOperator(
 )
 
 # Build transformed pipeline (need fresh source for new iteration)
-source2 = HFEagerSource(config, rngs=nnx.Rngs(1))
+source2 = HFEagerSource(config)
 transformed_pipeline = Pipeline(
     source=source2, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0)
 )
@@ -258,13 +259,13 @@ ones can use `HFEagerConfig`/`HFEagerSource` directly.
 from datarax.sources import from_hf
 
 # CIFAR-10: 60K 32x32 color images, 10 classes
-source = from_hf("cifar10", "train", streaming=True, rngs=nnx.Rngs(0))
+source = from_hf("cifar10", "train", streaming=True)
 
 # ImageNet-1K: 1.28M images, 1000 classes
-source = from_hf("imagenet-1k", "train", streaming=True, rngs=nnx.Rngs(0))
+source = from_hf("imagenet-1k", "train", streaming=True)
 
 # Fashion-MNIST: 70K 28x28 grayscale fashion items
-source = from_hf("fashion_mnist", "train", streaming=True, rngs=nnx.Rngs(0))
+source = from_hf("fashion_mnist", "train", streaming=True)
 ```
 
 ### Natural Language Processing
@@ -273,13 +274,13 @@ source = from_hf("fashion_mnist", "train", streaming=True, rngs=nnx.Rngs(0))
 from datarax.sources import from_hf
 
 # IMDB: 50K movie reviews (sentiment analysis)
-source = from_hf("stanfordnlp/imdb", "train", streaming=True, rngs=nnx.Rngs(0))
+source = from_hf("stanfordnlp/imdb", "train", streaming=True)
 
 # SQuAD: Reading comprehension dataset
-source = from_hf("squad", "train", streaming=True, rngs=nnx.Rngs(0))
+source = from_hf("squad", "train", streaming=True)
 
 # WikiText: Language modeling dataset
-source = from_hf("wikitext", "train", streaming=True, rngs=nnx.Rngs(0))
+source = from_hf("wikitext", "train", streaming=True)
 ```
 
 ### Multimodal
@@ -288,10 +289,10 @@ source = from_hf("wikitext", "train", streaming=True, rngs=nnx.Rngs(0))
 from datarax.sources import from_hf
 
 # COCO Captions: Image captioning
-source = from_hf("coco", "train", streaming=True, rngs=nnx.Rngs(0))
+source = from_hf("coco", "train", streaming=True)
 
 # Conceptual Captions: 3.3M image-text pairs
-source = from_hf("conceptual_captions", "train", streaming=True, rngs=nnx.Rngs(0))
+source = from_hf("conceptual_captions", "train", streaming=True)
 ```
 
 ## Streaming vs Eager Sources
@@ -334,7 +335,7 @@ config = HFEagerConfig(
     name="ylecun/mnist",
     split="train",
 )
-source = HFEagerSource(config, rngs=nnx.Rngs(0))
+source = HFEagerSource(config)
 
 # Advantages:
 # - Fast random access (local arrays)

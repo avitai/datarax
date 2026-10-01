@@ -155,11 +155,9 @@ print(f"Fashion-MNIST classes: {FASHION_CLASSES}")
 train_config = TFDSEagerConfig(
     name="fashion_mnist",
     split=f"train[:{TRAIN_SAMPLES}]",
-    shuffle=True,
-    seed=42,
 )
 
-train_source = TFDSEagerSource(train_config, rngs=nnx.Rngs(42))
+train_source = TFDSEagerSource(train_config)
 print(f"Loaded {len(train_source)} Fashion-MNIST samples")
 
 
@@ -289,11 +287,10 @@ See the effect of each augmentation type.
 
 
 # %%
-def create_single_aug_pipeline(operator, seed=0, num_samples=64):
+def create_single_aug_pipeline(operator, num_samples=64):
     """Create pipeline with single augmentation for visualization."""
     source = TFDSEagerSource(
-        TFDSEagerConfig(name="fashion_mnist", split=f"train[:{num_samples}]", shuffle=False),
-        rngs=nnx.Rngs(seed),
+        TFDSEagerConfig(name="fashion_mnist", split=f"train[:{num_samples}]"),
     )
 
     prep = ElementOperator(
@@ -308,8 +305,7 @@ def create_single_aug_pipeline(operator, seed=0, num_samples=64):
 
 # Get baseline (no augmentation)
 baseline_source = TFDSEagerSource(
-    TFDSEagerConfig(name="fashion_mnist", split="train[:64]", shuffle=False),
-    rngs=nnx.Rngs(0),
+    TFDSEagerConfig(name="fashion_mnist", split="train[:64]"),
 )
 baseline_pipeline = Pipeline(
     source=baseline_source,
@@ -404,7 +400,7 @@ aug_configs = [
 # Get augmented samples
 for i, (name, op, imgs) in enumerate(aug_configs):
     if imgs is None and op is not None:
-        pipeline = create_single_aug_pipeline(op, seed=i)
+        pipeline = create_single_aug_pipeline(op)
         batch = next(iter(pipeline))
         aug_configs[i] = (name, op, np.array(batch["image"]))
 
@@ -444,16 +440,13 @@ Chain all augmentations into a single pipeline.
 
 
 # %%
-def create_full_augmentation_pipeline(seed=42):
+def create_full_augmentation_pipeline():
     """Create pipeline with all augmentations."""
     source = TFDSEagerSource(
         TFDSEagerConfig(
             name="fashion_mnist",
             split=f"train[:{TRAIN_SAMPLES}]",
-            shuffle=True,
-            seed=seed,
         ),
-        rngs=nnx.Rngs(seed),
     )
 
     # Preprocessing
@@ -524,6 +517,7 @@ def create_full_augmentation_pipeline(seed=42):
         stages=[prep, brightness, contrast, rotation, noise, patch_dropout],
         batch_size=BATCH_SIZE,
         rngs=nnx.Rngs(0),
+        shuffle=True,
     )
 
 
@@ -547,7 +541,7 @@ num_batches = 20
 latencies = {}
 
 for name, op, _ in aug_configs:
-    pipeline = create_single_aug_pipeline(op, seed=0, num_samples=TRAIN_SAMPLES)
+    pipeline = create_single_aug_pipeline(op, num_samples=TRAIN_SAMPLES)
     batches = iter(pipeline)
 
     times = []
@@ -590,7 +584,7 @@ Compare samples before and after full augmentation pipeline.
 
 # %%
 # Get samples from full pipeline
-full_pipeline = create_full_augmentation_pipeline(seed=42)
+full_pipeline = create_full_augmentation_pipeline()
 full_batch = next(iter(full_pipeline))
 full_images = np.array(full_batch["image"])
 full_labels = np.array(full_batch["label"])
@@ -694,7 +688,7 @@ def main():
     print("=" * 50)
 
     # Create pipeline
-    pipeline = create_full_augmentation_pipeline(seed=42)
+    pipeline = create_full_augmentation_pipeline()
 
     # Process batches
     total_samples = 0

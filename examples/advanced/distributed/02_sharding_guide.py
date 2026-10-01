@@ -187,17 +187,15 @@ def preprocess_image(element, key=None):  # noqa: ARG001
     return element.update_data({"image": image})
 
 
-def create_pipeline(batch_size=BATCH_SIZE, num_samples=NUM_SAMPLES, seed=42):
+def create_pipeline(batch_size=BATCH_SIZE, num_samples=NUM_SAMPLES):
     """Create CIFAR-10 data pipeline."""
     config = TFDSEagerConfig(
         name="cifar10",
         split=f"train[:{num_samples}]",
-        shuffle=True,
-        seed=seed,
         exclude_keys={"id"},
     )
 
-    source = TFDSEagerSource(config, rngs=nnx.Rngs(seed))
+    source = TFDSEagerSource(config)
 
     preprocessor = ElementOperator(
         ElementOperatorConfig(stochastic=False),
@@ -205,7 +203,13 @@ def create_pipeline(batch_size=BATCH_SIZE, num_samples=NUM_SAMPLES, seed=42):
         rngs=nnx.Rngs(0),
     )
 
-    return Pipeline(source=source, stages=[preprocessor], batch_size=batch_size, rngs=nnx.Rngs(0))
+    return Pipeline(
+        source=source,
+        stages=[preprocessor],
+        batch_size=batch_size,
+        rngs=nnx.Rngs(0),
+        shuffle=True,
+    )
 
 
 # Create pipeline

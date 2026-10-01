@@ -10,7 +10,7 @@
 |---------|-------------|
 | **Automatic conversion** | TensorFlow/NumPy tensors → JAX arrays |
 | **Streaming support** | `HFStreamingSource` / `from_hf(streaming=True)` loads large datasets without downloading everything |
-| **Shuffling** | Eager: O(1)-memory Feistel index shuffle; streaming: buffer-based shuffle |
+| **Shuffling** | Eager: `Pipeline(shuffle=True)`'s O(1)-memory Feistel index shuffle; streaming: buffer-based shuffle |
 | **Key filtering** | Include/exclude specific dataset fields |
 | **Stateful iteration** | Track position, epoch, and support batch retrieval |
 
@@ -19,7 +19,7 @@
     - HFEagerSource wraps the `datasets` library for JAX-native workflows
     - PIL images are automatically converted to JAX arrays
     - For datasets larger than your disk, use `HFStreamingSource` or `from_hf(streaming=True)` (streaming is not a field on `HFEagerConfig`)
-    - Eager shuffling is an O(1)-memory Feistel index shuffle; only the streaming source uses a buffer-based shuffle
+    - An eager source is shuffled by its pipeline (`Pipeline(shuffle=True)`), an O(1)-memory Feistel index shuffle; only the streaming source uses a buffer-based shuffle
     - The `get_batch()` method enables efficient batch retrieval
 
 ## Installation
@@ -41,7 +41,7 @@ from datarax.sources.hf_source import HFEagerConfig
 
 # Load IMDB sentiment dataset
 config = HFEagerConfig(name="stanfordnlp/imdb", split="train")
-source = HFEagerSource(config, rngs=nnx.Rngs(0))
+source = HFEagerSource(config)
 
 # Iterate over elements
 for item in source:
@@ -75,7 +75,7 @@ import flax.nnx as nnx
 from datarax.sources import from_hf
 
 # Streaming is selected via the factory, not HFEagerConfig
-source = from_hf("allenai/c4", "train", streaming=True, rngs=nnx.Rngs(0))
+source = from_hf("allenai/c4", "train", streaming=True)
 
 # Data is fetched on-demand
 for item in source:
@@ -84,16 +84,12 @@ for item in source:
 
 ## Shuffling
 
-Enable shuffling with configurable buffer size:
+The pipeline owns an eager source's order: `Pipeline(shuffle=True)` serves each epoch in a
+new order, an O(1)-memory index shuffle seeded by the pipeline's `rngs`:
 
 ```python
-config = HFEagerConfig(
-    name="mnist",
-    split="train",
-    shuffle=True,
-    seed=42,  # Integer seed of the O(1)-memory shuffle
-)
-source = HFEagerSource(config, rngs=nnx.Rngs(42))
+source = HFEagerSource(HFEagerConfig(name="mnist", split="train"))
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0), shuffle=True)
 ```
 
 ## Field Filtering

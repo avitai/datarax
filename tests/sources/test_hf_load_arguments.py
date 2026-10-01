@@ -41,7 +41,7 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
 
 def build(kind: str, **fields: Any) -> None:
     if kind == "eager":
-        HFEagerSource(HFEagerConfig(name="org/dataset", split="train", **fields), rngs=nnx.Rngs(0))
+        HFEagerSource(HFEagerConfig(name="org/dataset", split="train", **fields))
     else:
         HFStreamingSource(
             HFStreamingConfig(name="org/dataset", split="train", **fields), rngs=nnx.Rngs(0)

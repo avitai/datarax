@@ -318,7 +318,6 @@ class TestValidateBatch:
         source = MemorySource(
             MemorySourceConfig(),
             {"x": np.random.rand(8, 3), "y": np.arange(8)},
-            rngs=nnx.Rngs(0),
         )
 
         @nnx.jit

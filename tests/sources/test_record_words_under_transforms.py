@@ -34,15 +34,13 @@ _SIZE = 6
 
 
 class _Eager(EagerSourceBase):
-    """An eager source over device arrays, shuffled or in order."""
+    """An eager source over device arrays."""
 
-    def __init__(self, values: jax.Array, *, shuffle: bool) -> None:
+    def __init__(self, values: jax.Array) -> None:
         super().__init__(StructuralConfig())
         self.data = nnx.data({"x": values})
         self.index = nnx.Variable(jnp.int32(0))
         self.epoch = nnx.Variable(jnp.int32(0))
-        self._seed = 0
-        self._is_random_order = shuffle
         self.dataset_name = "eager"
         self.split_name = "all"
         self._dataset_info = None
@@ -53,13 +51,9 @@ def _values(length: int, offset: float = 0.0) -> jax.Array:
     return jnp.arange(length * 3, dtype=jnp.float32).reshape(length, 3) + offset
 
 
-def _memory(
-    length: int = 23, *, shuffle: bool = True, workers: int = 1, shard: int | None = None
-) -> MemorySource:
+def _memory(length: int = 23, *, workers: int = 1, shard: int | None = None) -> MemorySource:
     return MemorySource(
-        MemorySourceConfig(shuffle=shuffle, num_workers=workers, shard_id=shard),
-        {"x": _values(length)},
-        rngs=nnx.Rngs(0),
+        MemorySourceConfig(num_workers=workers, shard_id=shard), {"x": _values(length)}
     )
 
 
@@ -71,10 +65,9 @@ def _mixed() -> MixDataSourcesNode:
 
 
 _SOURCES: dict[str, Callable[[], DataSourceModule]] = {
-    "memory": lambda: _memory(shuffle=False),
-    "memory-shuffled": _memory,
+    "memory": _memory,
     "memory-worker": lambda: _memory(workers=3, shard=1),
-    "eager-shuffled": lambda: _Eager(_values(23), shuffle=True),
+    "eager": lambda: _Eager(_values(23)),
     "mixed": _mixed,
 }
 
@@ -188,7 +181,7 @@ class TestEverySource:
         assert all(np.isfinite(leaf).all() for leaf in leaves)
         total = sum(float(leaf.sum()) for leaf in leaves)
         assert total == pytest.approx(float(weights.sum()), rel=1e-5)
-        if name in {"memory", "memory-shuffled", "memory-worker", "eager-shuffled"}:
+        if name in {"memory", "memory-worker", "eager"}:
             (rows,) = leaves
             expected = np.zeros_like(rows)
             np.add.at(expected, named, np.asarray(weights))
@@ -222,17 +215,15 @@ def test_a_traced_start_names_what_an_integer_start_names(
     length: int, workers: int, shard: int, shuffle: bool
 ) -> None:
     """One compile per layout serves every traced start, each equal to the host-integer form."""
-    key = jax.random.key(8)
+    key = jax.random.key(8) if shuffle else None
 
     @jax.jit
     def names(start: jax.Array) -> jax.Array:
-        return resolve_wrapped_indices(
-            start, 8, length, shuffle, key, num_workers=workers, shard_id=shard
-        )
+        return resolve_wrapped_indices(start, 8, length, key, num_workers=workers, shard_id=shard)
 
     starts = (0, 3, 9, (1 << 31) - 5)
     expected = [
-        resolve_wrapped_indices(start, 8, length, shuffle, key, num_workers=workers, shard_id=shard)
+        resolve_wrapped_indices(start, 8, length, key, num_workers=workers, shard_id=shard)
         for start in starts
     ]
     arguments = [jnp.int32(start) for start in starts]
@@ -252,9 +243,9 @@ def test_a_traced_start_names_what_an_integer_start_names(
 def test_under_vmap_over_starts_each_start_names_its_positions() -> None:
     """The pipeline names a crossing batch with ``record_indices_at`` vmapped over starts."""
     length, starts = (1 << 32) + 1, jnp.asarray([0, 7, (1 << 31) - 1], jnp.int32)
-    batched = jax.jit(
-        jax.vmap(lambda start: resolve_wrapped_indices(start, 4, length, False, None))
-    )(starts)
+    batched = jax.jit(jax.vmap(lambda start: resolve_wrapped_indices(start, 4, length, None)))(
+        starts
+    )
     for start, words in zip(np.asarray(starts), batched, strict=True):
         np.testing.assert_array_equal(
             from_words(words), np.arange(int(start), int(start) + 4, dtype=np.uint64)

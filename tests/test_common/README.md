@@ -16,6 +16,7 @@ In GitHub Actions workflows, this is handled by explicitly adding the project ro
 
 ## Contents
 
+- `compiles.py`: `expect_first_call_compiles`, the programs a first call builds from cleared jax caches
 - `data_generators.py`: Functions for generating test data
 - `data_source_fixtures.py`: Test fixtures for data source components
 - `dependency_utilities.py`: Helpers for optional-dependency detection and skipping

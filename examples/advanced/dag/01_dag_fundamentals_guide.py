@@ -83,7 +83,7 @@ data = {
     "image": np.random.rand(64, 32, 32, 3).astype(np.float32),
     "label": np.random.randint(0, 10, (64,)).astype(np.int32),
 }
-source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+source = MemorySource(MemorySourceConfig(), data=data)
 print(f"Source: {len(source)} samples")
 
 
@@ -245,7 +245,7 @@ def main():
         "image": np.random.rand(64, 16, 16, 3).astype(np.float32),
         "label": np.random.randint(0, 10, (64,)).astype(np.int32),
     }
-    src = MemorySource(MemorySourceConfig(), data=data_main, rngs=nnx.Rngs(0))
+    src = MemorySource(MemorySourceConfig(), data=data_main)
 
     norm = ElementOperator(ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0))
     bright = ElementOperator(

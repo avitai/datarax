@@ -29,7 +29,7 @@ Measured throughput and memory for both libraries are on the
 | Grain | Datarax |
 |-------|---------|
 | `RandomAccessDataSource` with `__len__` and `__getitem__` | `MemorySource` over arrays, reading records by index |
-| `IndexSampler(shuffle=True, seed=...)` fixes the order | `MemorySourceConfig(shuffle=True)` with the source's `nnx.Rngs` |
+| `IndexSampler(shuffle=True, seed=...)` fixes the order | `Pipeline(..., shuffle=True)` with the pipeline's `nnx.Rngs` |
 | `RandomMap.random_map(element, rng)` receives a NumPy generator per record | `ElementOperator` receives each record's JAX key |
 | `transforms.Batch(batch_size=...)` as an operation | `Pipeline(..., batch_size=...)` |
 | `iterator.get_state()` returns JSON bytes | `iterator.get_state()` returns `position`, `epoch`, `rng_counts` and `version` |
@@ -151,7 +151,7 @@ Grain resumes exactly: True
 
 ### Step 3: A Datarax Pipeline
 
-A Datarax `Pipeline` is an `nnx.Module`. The source shuffles, and the stochastic operator
+A Datarax `Pipeline` is an `nnx.Module`. The pipeline shuffles, and the stochastic operator
 draws each record's key from its own stable base key, folding in the record's epoch, draw
 and index (`per_record_keys`). The operator is a JAX function of one
 record, and iteration runs source, stages and batching as one compiled step.
@@ -165,15 +165,15 @@ def add_noise(element, key):
 
 def build_datarax_pipeline() -> Pipeline:
     """A shuffled, noisy, batched pipeline over ``features``."""
-    source = MemorySource(
-        MemorySourceConfig(shuffle=True), data={"x": features}, rngs=nnx.Rngs(SEED)
-    )
+    source = MemorySource(MemorySourceConfig(), data={"x": features})
     noise = ElementOperator(
         ElementOperatorConfig(stochastic=True, stream_name="noise"),
         fn=add_noise,
         rngs=nnx.Rngs(noise=SEED),
     )
-    return Pipeline(source=source, stages=[noise], batch_size=BATCH_SIZE, rngs=nnx.Rngs(SEED))
+    return Pipeline(
+        source=source, stages=[noise], batch_size=BATCH_SIZE, rngs=nnx.Rngs(SEED), shuffle=True
+    )
 
 
 # A pipeline over a random-access source iterates through a checkpointable PipelineIterator.
@@ -220,13 +220,13 @@ datarax_matches = all(
 )
 print(f"Datarax resumes exactly: {datarax_matches}")
 # Expected output:
-# Datarax checkpoint: {'position': 8, 'epoch': 0, 'rng_counts': [1, 0], 'version': 2, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 1, 'shuffled': True}}  # noqa: E501
+# Datarax checkpoint: {'position': 8, 'epoch': 0, 'rng_counts': [1], 'version': 2, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 1, 'shuffled': True}}  # noqa: E501
 # Datarax resumes exactly: True
 ```
 
 **Terminal Output:**
 ```
-Datarax checkpoint: {'position': 8, 'epoch': 0, 'rng_counts': [1, 0], 'version': 2, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 1, 'shuffled': True}}
+Datarax checkpoint: {'position': 8, 'epoch': 0, 'rng_counts': [1], 'version': 2, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 1, 'shuffled': True}}
 Datarax resumes exactly: True
 ```
 
@@ -244,7 +244,7 @@ flowchart LR
     end
 
     subgraph Datarax["Datarax Pipeline (nnx.Module)"]
-        DS["MemorySource<br/>shuffle"]
+        DS["MemorySource<br/>shuffled by the pipeline"]
         DO["ElementOperator<br/>key per record"]
         DB["Batching"]
         DC["get_state()<br/>position, epoch,<br/>rng_counts, version, fingerprint"]

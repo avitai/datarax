@@ -172,17 +172,14 @@ preprocessor = ElementOperator(
 
 
 # %%
-def create_base_pipeline(seed=42, num_samples=256):
+def create_base_pipeline(num_samples=256):
     """Create CIFAR-10 pipeline with preprocessing."""
     source = TFDSEagerSource(
         TFDSEagerConfig(
             name="cifar10",
             split=f"train[:{num_samples}]",
-            shuffle=True,
-            seed=seed,
             exclude_keys={"id"},
         ),
-        rngs=nnx.Rngs(seed),
     )
 
     prep = ElementOperator(
@@ -191,7 +188,9 @@ def create_base_pipeline(seed=42, num_samples=256):
         rngs=nnx.Rngs(0),
     )
 
-    return Pipeline(source=source, stages=[prep], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
+    return Pipeline(
+        source=source, stages=[prep], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0), shuffle=True
+    )
 
 
 print("Base pipeline factory created")
@@ -229,11 +228,8 @@ def create_mixup_pipeline(alpha=0.4, seed=42):
         TFDSEagerConfig(
             name="cifar10",
             split="train[:256]",
-            shuffle=True,
-            seed=seed,
             exclude_keys={"id"},
         ),
-        rngs=nnx.Rngs(seed),
     )
 
     prep = ElementOperator(
@@ -253,7 +249,9 @@ def create_mixup_pipeline(alpha=0.4, seed=42):
         rngs=nnx.Rngs(mixup=100 + seed),
     )
 
-    return Pipeline(source=source, stages=[prep, mixup], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
+    return Pipeline(
+        source=source, stages=[prep, mixup], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0), shuffle=True
+    )
 
 
 # Get MixUp batch
@@ -291,7 +289,7 @@ def mixed_title(batch, i):
 
 
 # Get original batch for comparison
-base_pipeline = create_base_pipeline(seed=42)
+base_pipeline = create_base_pipeline()
 original_batch = next(iter(base_pipeline))
 
 # Plot MixUp samples
@@ -356,11 +354,8 @@ def create_cutmix_pipeline(alpha=1.0, seed=42):
         TFDSEagerConfig(
             name="cifar10",
             split="train[:256]",
-            shuffle=True,
-            seed=seed,
             exclude_keys={"id"},
         ),
-        rngs=nnx.Rngs(seed),
     )
 
     prep = ElementOperator(
@@ -380,7 +375,9 @@ def create_cutmix_pipeline(alpha=1.0, seed=42):
         rngs=nnx.Rngs(cutmix=200 + seed),
     )
 
-    return Pipeline(source=source, stages=[prep, cutmix], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
+    return Pipeline(
+        source=source, stages=[prep, cutmix], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0), shuffle=True
+    )
 
 
 # Get CutMix batch

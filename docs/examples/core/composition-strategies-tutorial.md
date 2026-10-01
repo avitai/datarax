@@ -108,7 +108,7 @@ data = {
     "label": np.random.randint(0, 10, (num_samples,)).astype(np.int32),
 }
 
-source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+source = MemorySource(MemorySourceConfig(), data=data)
 print(f"Dataset: {num_samples} samples, shape {data['image'].shape}")
 
 
@@ -177,7 +177,7 @@ sequential_composite = CompositeOperatorModule(
 )
 
 # Test it
-source1 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(10))
+source1 = MemorySource(MemorySourceConfig(), data=data)
 pipeline = example_pipeline(source1, batch_size=16, stages=[sequential_composite])
 batch = next(iter(pipeline))
 
@@ -223,7 +223,7 @@ parallel_mean = CompositeOperatorModule(
     operators=[op_bright, op_contrast, op_noise],
 )
 
-source2 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(20))
+source2 = MemorySource(MemorySourceConfig(), data=data)
 pipeline = example_pipeline(source2, batch_size=16, stages=[parallel_mean])
 batch = next(iter(pipeline))
 
@@ -318,7 +318,7 @@ branching = CompositeOperatorModule(
     operators=branch_ops,
 )
 
-source7 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(70))
+source7 = MemorySource(MemorySourceConfig(), data=data)
 pipeline = example_pipeline(source7, batch_size=16, stages=[branching])
 batch = next(iter(pipeline))
 

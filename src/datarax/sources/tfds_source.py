@@ -5,7 +5,6 @@ This module provides two distinct source types optimized for different use cases
 **TFDSEagerSource**: For small/medium datasets that fit in memory (~10% VRAM)
 - Loads ALL data to JAX arrays at initialization
 - Pure JAX iteration after init (no TensorFlow overhead during training)
-- O(1) memory shuffling via a keyed Feistel bijection
 - Fully checkpointable (just indices, no external state)
 - Ideal for: MNIST, CIFAR-10, Fashion-MNIST, small custom datasets
 
@@ -144,21 +143,16 @@ class TFDSEagerConfig(SourceConfigBase):
         name: Name of the dataset in TFDS (required)
         split: Split of the dataset to load, e.g., "train", "test" (required)
         data_dir: Optional directory where the dataset is stored/downloaded
-        shuffle: Whether to shuffle the dataset during iteration
-        seed: Integer seed of the shuffle (default: 42)
         as_supervised: If True, returns 'image'/'label' keys instead of original features
         download_and_prepare_kwargs: Optional keyword arguments for download_and_prepare
         include_keys: Optional set of keys to include in output (exclusive with exclude_keys)
         exclude_keys: Optional set of keys to exclude from output (exclusive with include_keys)
 
     Note:
-        The seed parameter is an integer (not a JAX RNG key).
-        This ensures O(1) memory shuffling and reproducible per-epoch seeds.
+        The order records are served in belongs to the pipeline (``Pipeline(shuffle=...)``).
     """
 
     try_gcs: bool = False
-    shuffle: bool = False
-    seed: int = 42  # Integer seed of the shuffle
     as_supervised: bool = False
     download_and_prepare_kwargs: dict[str, Any] | None = None
     beam_num_workers: int | None = None
@@ -169,7 +163,6 @@ class TFDSEagerConfig(SourceConfigBase):
         validate_eager_source_settings(
             self,
             "TFDSEagerConfig",
-            seed=self.seed,
             try_gcs=self.try_gcs,
             data_dir=self.data_dir,
         )
@@ -239,7 +232,6 @@ class TFDSEagerSource(EagerSourceBase):
     Key Features:
         - One-time TF→JAX conversion at init (DLPack zero-copy when possible)
         - Pure JAX iteration after init (no TF threads during training)
-        - O(1) memory shuffling via a keyed Feistel bijection
         - Full checkpointing support (indices only, no external state)
         - Supports `as_supervised` mode and key filtering
 
@@ -251,8 +243,8 @@ class TFDSEagerSource(EagerSourceBase):
     Example:
         ```python
         # Create eager source for MNIST
-        config = TFDSEagerConfig(name="mnist", split="train", shuffle=True)
-        source = TFDSEagerSource(config, rngs=nnx.Rngs(0))
+        config = TFDSEagerConfig(name="mnist", split="train")
+        source = TFDSEagerSource(config)
 
         # Iterate - pure JAX, no TF overhead
         for item in source:
@@ -271,25 +263,21 @@ class TFDSEagerSource(EagerSourceBase):
         self,
         config: TFDSEagerConfig,
         *,
-        rngs: nnx.Rngs | None = None,
         name: str | None = None,
     ) -> None:
         """Initialize TFDSEagerSource by loading all data to JAX arrays.
 
         Args:
             config: Configuration for the source
-            rngs: Optional RNG state for shuffling
             name: Optional name (defaults to TFDSEagerSource(dataset:split))
         """
         if name is None:
             name = f"TFDSEagerSource({config.name}:{config.split})"
-        super().__init__(config, rngs=rngs, name=name)
+        super().__init__(config, name=name)
 
         # Store config for feature access
         self.dataset_name = config.name
         self.split_name = config.split
-        self._is_random_order = config.shuffle
-        self._seed = config.seed
         self.as_supervised = config.as_supervised
         self.include_keys = config.include_keys
         self.exclude_keys = config.exclude_keys

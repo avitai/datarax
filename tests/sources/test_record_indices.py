@@ -55,25 +55,20 @@ class _Unsized(DataSourceModule):
 
 
 class _Eager(EagerSourceBase):
-    def __init__(self, length: int, *, shuffle: bool) -> None:
+    def __init__(self, length: int) -> None:
         super().__init__(StructuralConfig())
         self.data = nnx.data({"x": jnp.arange(length, dtype=jnp.float32)})
         self.index = nnx.Variable(jnp.int32(0))
         self.epoch = nnx.Variable(jnp.int32(0))
-        self._seed = 0
-        self._is_random_order = shuffle
         self.dataset_name = "eager"
         self.split_name = "all"
         self._dataset_info = None
 
 
-def _memory(
-    length: int, *, shuffle: bool = False, num_workers: int = 1, shard_id: int | None = None
-) -> MemorySource:
+def _memory(length: int, *, num_workers: int = 1, shard_id: int | None = None) -> MemorySource:
     return MemorySource(
-        MemorySourceConfig(shuffle=shuffle, num_workers=num_workers, shard_id=shard_id),
+        MemorySourceConfig(num_workers=num_workers, shard_id=shard_id),
         {"x": np.arange(length, dtype=np.float32)},
-        rngs=nnx.Rngs(0),
     )
 
 
@@ -95,10 +90,8 @@ def _sources(tmp_path: Path) -> dict[str, DataSourceModule]:
         "default": _Sized(10),
         "unsized": _Unsized(),
         "memory": _memory(10),
-        "memory-shuffled": _memory(10, shuffle=True),
-        "memory-worker": _memory(10, shuffle=True, num_workers=3, shard_id=1),
-        "eager": _Eager(10, shuffle=False),
-        "eager-shuffled": _Eager(10, shuffle=True),
+        "memory-worker": _memory(10, num_workers=3, shard_id=1),
+        "eager": _Eager(10),
         "mixed": _mixed(),
         "disk": _disk(tmp_path),
     }
@@ -108,10 +101,8 @@ _NAMES = [
     "default",
     "unsized",
     "memory",
-    "memory-shuffled",
     "memory-worker",
     "eager",
-    "eager-shuffled",
     "mixed",
     "disk",
 ]
@@ -124,7 +115,9 @@ class TestEverySource:
         self, tmp_path: Path, name: str, start: object
     ) -> None:
         source = _sources(tmp_path)[name]
-        indices = source.record_indices_at(start, 4, jax.random.key(1))
+        # A source without a length has no order to shuffle, so it is named sequentially.
+        key = None if name == "unsized" else jax.random.key(1)
+        indices = source.record_indices_at(start, 4, key)
         assert indices.shape == (4, 2)
         assert indices.dtype == jnp.uint32
 
@@ -184,7 +177,7 @@ class TestWrappedOrder:
         worker_length = _share(length, workers, shard)
         for start in (0, worker_length - 3, worker_length + 5, 5 * worker_length - 1):
             names = resolve_wrapped_indices(
-                start, 8, length, False, None, num_workers=workers, shard_id=shard
+                start, 8, length, None, num_workers=workers, shard_id=shard
             )
             assert names.dtype == jnp.uint32
             assert [int(v) for v in from_words(names)] == _reference(
@@ -195,19 +188,17 @@ class TestWrappedOrder:
     def test_shuffled_positions_are_the_order_s_records(self, length: int) -> None:
         seed, epoch = 3, 2
         key = jax.random.fold_in(jax.random.key(seed), epoch)
-        names = resolve_wrapped_indices(length - 4, 8, length, True, key)
+        names = resolve_wrapped_indices(length - 4, 8, length, key)
         expected = shuffle_positions_host(_reference(length - 4, 8, length), length, seed, epoch)
         np.testing.assert_array_equal(from_words(names), expected)
 
     def test_a_traced_start_names_what_an_integer_start_names(self) -> None:
         length = (1 << 32) + 1
-        at = jax.jit(lambda start: resolve_wrapped_indices(start, 8, length, False, None))
-        np.testing.assert_array_equal(
-            at(jnp.int32(7)), resolve_wrapped_indices(7, 8, length, False, None)
-        )
+        at = jax.jit(lambda start: resolve_wrapped_indices(start, 8, length, None))
+        np.testing.assert_array_equal(at(jnp.int32(7)), resolve_wrapped_indices(7, 8, length, None))
 
     def test_a_batch_wrapping_a_short_source_several_times_is_exact(self) -> None:
-        names = resolve_wrapped_indices(2, 10, 3, False, None)
+        names = resolve_wrapped_indices(2, 10, 3, None)
         assert [int(v) for v in from_words(names)] == _reference(2, 10, 3)
 
 
@@ -232,7 +223,7 @@ def test_the_epoch_plan_composed_with_the_shuffle_crosses_wide_epochs(
         for offset in range(plan.epochs_touched(size)):
             first = start if offset == 0 else 0
             key = jax.random.fold_in(jax.random.key(seed), epoch + offset)
-            named.append(from_words(resolve_wrapped_indices(first, size, length, True, key)))
+            named.append(from_words(resolve_wrapped_indices(first, size, length, key)))
         served = []
         for row, (row_epoch, row_position) in enumerate(rows):
             later = row_epoch - epoch

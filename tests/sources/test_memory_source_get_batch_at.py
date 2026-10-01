@@ -2,16 +2,15 @@
 
 Two modes:
 
-- **Sequential**: when the source is constructed without shuffle
-  (``MemorySourceConfig(shuffle=False)``), ``get_batch_at`` returns the
+- **Sequential**: without a key (``key=None``), ``get_batch_at`` returns the
   contiguous slice ``[start, start + size)``.
-- **Shuffled**: when the source has ``shuffle=True``, ``get_batch_at``
-  returns a ``size``-element slice of a deterministic permutation
-  derived from ``key``. Same ``(start, size, key)`` always returns the
-  same output; different ``key`` yields a different permutation.
+- **Shuffled**: with a key, ``get_batch_at`` returns a ``size``-element slice
+  of a deterministic permutation derived from ``key``. Same
+  ``(start, size, key)`` always returns the same output; different ``key``
+  yields a different permutation.
 
-The shuffled mode contract is what ``Pipeline.scan`` consumes when
-training requires per-epoch shuffling.
+The shuffled mode contract is what a pipeline built with ``shuffle=True``
+consumes, passing its epoch key.
 
 Test contract index:
 
@@ -42,7 +41,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from flax import nnx
 
 from datarax.core.index_words import from_words, to_words
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
@@ -53,22 +51,22 @@ from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
 def test_sequential_returns_contiguous_slice() -> None:
     src = MemorySource(
-        MemorySourceConfig(shuffle=False),
+        MemorySourceConfig(),
         {"x": jnp.arange(8, dtype=jnp.float32)},
     )
 
-    batch = src.get_batch_at(start=2, size=4, key=jax.random.key(0))
+    batch = src.get_batch_at(start=2, size=4, key=None)
     np.testing.assert_array_equal(np.asarray(batch["x"]), np.array([2.0, 3.0, 4.0, 5.0]))
 
 
 def test_sequential_wraps_at_end_of_source() -> None:
     src = MemorySource(
-        MemorySourceConfig(shuffle=False),
+        MemorySourceConfig(),
         {"x": jnp.arange(8, dtype=jnp.float32)},
     )
 
     # start=6, size=4 → indices 6, 7, 0, 1 (wrap)
-    batch = src.get_batch_at(start=6, size=4, key=jax.random.key(0))
+    batch = src.get_batch_at(start=6, size=4, key=None)
     np.testing.assert_array_equal(np.asarray(batch["x"]), np.array([6.0, 7.0, 0.0, 1.0]))
 
 
@@ -77,9 +75,8 @@ def test_sequential_wraps_at_end_of_source() -> None:
 
 def test_shuffled_is_deterministic_for_fixed_key() -> None:
     src = MemorySource(
-        MemorySourceConfig(shuffle=True),
+        MemorySourceConfig(),
         {"x": jnp.arange(16, dtype=jnp.float32)},
-        rngs=nnx.Rngs(shuffle=0),
     )
     key = jax.random.key(42)
 
@@ -91,9 +88,8 @@ def test_shuffled_is_deterministic_for_fixed_key() -> None:
 
 def test_shuffled_differs_across_keys() -> None:
     src = MemorySource(
-        MemorySourceConfig(shuffle=True),
+        MemorySourceConfig(),
         {"x": jnp.arange(16, dtype=jnp.float32)},
-        rngs=nnx.Rngs(shuffle=0),
     )
 
     a = src.get_batch_at(start=0, size=4, key=jax.random.key(0))
@@ -109,9 +105,8 @@ def test_shuffled_covers_all_records_over_one_full_epoch() -> None:
     length = 16
     batch_size = 4
     src = MemorySource(
-        MemorySourceConfig(shuffle=True),
+        MemorySourceConfig(),
         {"x": jnp.arange(length, dtype=jnp.float32)},
-        rngs=nnx.Rngs(shuffle=0),
     )
     key = jax.random.key(7)
 
@@ -129,9 +124,8 @@ def test_shuffled_covers_all_records_over_one_full_epoch() -> None:
 def test_shuffled_handles_partial_final_batch() -> None:
     """When start+size exceeds length, output still has `size` records (wrap)."""
     src = MemorySource(
-        MemorySourceConfig(shuffle=True),
+        MemorySourceConfig(),
         {"x": jnp.arange(8, dtype=jnp.float32)},
-        rngs=nnx.Rngs(shuffle=0),
     )
 
     batch = src.get_batch_at(start=6, size=4, key=jax.random.key(3))
@@ -145,9 +139,8 @@ def test_shuffled_handles_partial_final_batch() -> None:
 def test_record_indices_name_the_records_get_batch_at_serves() -> None:
     """``record_indices_at`` returns the stable index of every record in the same batch."""
     src = MemorySource(
-        MemorySourceConfig(shuffle=True),
+        MemorySourceConfig(),
         {"x": jnp.arange(16, dtype=jnp.float32) * 10},
-        rngs=nnx.Rngs(shuffle=0),
     )
     key = jax.random.key(5)
 
@@ -162,16 +155,12 @@ def test_workers_serve_disjoint_global_records_covering_the_source() -> None:
     length = 10
     data = {"x": jnp.arange(length, dtype=jnp.float32)}
     key = jax.random.key(1)
-    whole = MemorySource(MemorySourceConfig(shuffle=True), data, rngs=nnx.Rngs(shuffle=0))
+    whole = MemorySource(MemorySourceConfig(), data)
     order = from_words(whole.record_indices_at(start=0, size=length, key=key))
 
     served: list[np.ndarray] = []
     for shard_id in range(3):
-        worker = MemorySource(
-            MemorySourceConfig(shuffle=True, num_workers=3, shard_id=shard_id),
-            data,
-            rngs=nnx.Rngs(shuffle=0),
-        )
+        worker = MemorySource(MemorySourceConfig(num_workers=3, shard_id=shard_id), data)
         worker_ids = from_words(worker.record_indices_at(start=0, size=len(worker), key=key))
         np.testing.assert_array_equal(worker_ids, order[shard_id::3])
         np.testing.assert_array_equal(
@@ -194,7 +183,7 @@ def test_supports_indexed_access_is_true() -> None:
     around instead of returning an empty batch.
     """
     src = MemorySource(
-        MemorySourceConfig(shuffle=False),
+        MemorySourceConfig(),
         {"x": jnp.arange(8, dtype=jnp.float32)},
     )
     assert src.supports_indexed_access() is True

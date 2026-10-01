@@ -39,8 +39,6 @@ class EagerSourceBase(DataSourceModule):
     - ``data`` (``dict[str, Any]``): The loaded dataset as a key→array mapping.
     - ``index`` (``nnx.Variable``): Current iteration index.
     - ``epoch`` (``nnx.Variable``): Current epoch counter.
-    - ``_seed`` (``int``): Base integer seed of the shuffle.
-    - ``_is_random_order`` (``bool``): Whether to randomize iteration order.
     - ``dataset_name`` (``str | None``): Human-readable dataset name.
     - ``split_name`` (``str | None``): Dataset split identifier.
     - ``_dataset_info`` (``Any``): Cached backend-specific dataset metadata.
@@ -50,8 +48,6 @@ class EagerSourceBase(DataSourceModule):
     data: dict[str, Any]
     index: nnx.Variable[int]  # pyright: ignore[reportGeneralTypeIssues]
     epoch: nnx.Variable[int]  # pyright: ignore[reportGeneralTypeIssues]
-    _seed: int
-    _is_random_order: bool
     dataset_name: str | None
     split_name: str | None
     _dataset_info: Any
@@ -66,15 +62,8 @@ class EagerSourceBase(DataSourceModule):
         return self.length
 
     def __iter__(self) -> Iterator[dict[str, Any]]:
-        """Iterate through eager data with optional deterministic shuffling."""
-        return eager_iter_default(
-            self.data,
-            self.length,
-            self.index,
-            self.epoch,
-            self.is_random_order,
-            self._seed,
-        )
+        """Iterate through eager data in record order."""
+        return eager_iter_default(self.data, self.length, self.index, self.epoch)
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         """Retrieve one eager element by index."""
@@ -106,14 +95,7 @@ class EagerSourceBase(DataSourceModule):
             A batch dictionary of ``batch_size`` records.
         """
         return eager_get_batch_default(
-            self.data,
-            self.length,
-            self.index,
-            self.epoch,
-            self.is_random_order,
-            self._seed,
-            batch_size,
-            key,
+            self.data, self.length, self.index, self.epoch, batch_size, key
         )
 
     def record_indices_at(
@@ -127,12 +109,12 @@ class EagerSourceBase(DataSourceModule):
         Args:
             start: Starting logical position; concrete int or traced ``jax.Array``.
             size: Number of records (Python int).
-            key: PRNG key for shuffled mode.
+            key: The key selecting the order, or ``None`` for the sequential order.
 
         Returns:
             uint32 ``jax.Array`` of shape ``(size, 2)``, each index as its words ``(hi, lo)``.
         """
-        return resolve_wrapped_indices(start, size, self.length, self.is_random_order, key)
+        return resolve_wrapped_indices(start, size, self.length, key)
 
     def get_records(self, indices: jax.Array) -> DataDict:
         """Gather the records at ``indices``; JIT-traceable for scan-based iteration.
@@ -159,15 +141,6 @@ class EagerSourceBase(DataSourceModule):
         del seed
         eager_reset(self.index, self.epoch)
 
-    @property
-    def is_random_order(self) -> bool:
-        """Whether iteration order is randomized."""
-        return self._is_random_order
-
-    def set_random_order(self, enabled: bool) -> None:
-        """Update runtime random-order behavior."""
-        self._is_random_order = enabled
-
     def _repr_extra_fields(self) -> dict[str, Any]:
         """Optional additional repr fields for subclasses."""
         return {}
@@ -179,7 +152,6 @@ class EagerSourceBase(DataSourceModule):
             self.dataset_name,
             self.split_name,
             self.length,
-            self.is_random_order,
             self.epoch.get_value(),
             self._repr_extra_fields(),
         )
@@ -267,7 +239,6 @@ class StreamingSourceBase(DataSourceModule):
             self.dataset_name,
             self.split_name,
             self.length,
-            self.is_random_order,
             self.epoch.get_value(),
-            self._repr_extra_fields(),
+            {"shuffle": self.is_random_order, **self._repr_extra_fields()},
         )

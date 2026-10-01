@@ -265,8 +265,8 @@ class MixDataSourcesNode(DataSourceModule):
         if key is None:
             raise ValueError(
                 "MixDataSourcesNode.record_indices_at requires a PRNG key for "
-                "deterministic mixing. Pass `key=jax.random.key(seed)` or "
-                "drive iteration via Pipeline (which threads its own rngs)."
+                "deterministic mixing. Pass `key=jax.random.key(seed)`, or build its "
+                "pipeline with Pipeline(shuffle=True), which passes its epoch key."
             )
 
         log_weights = jnp.log(jnp.asarray(self._weights, dtype=jnp.float32))

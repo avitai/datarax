@@ -90,7 +90,7 @@ class _LearnableScale(nnx.Module):
 def _source(num_elements: int = 16) -> MemorySource:
     """Build a deterministic MemorySource with ``x = arange(N)``."""
     return MemorySource(
-        MemorySourceConfig(shuffle=False),
+        MemorySourceConfig(),
         {"x": jnp.arange(num_elements, dtype=jnp.float32)},
     )
 
@@ -137,7 +137,7 @@ def test_pipeline_call_applies_stages_in_order() -> None:
         rngs=nnx.Rngs(0),
     )
 
-    raw_batch = source.get_batch_at(start=0, size=4, key=jax.random.key(0))
+    raw_batch = source.get_batch_at(start=0, size=4, key=None)
     out = pipeline(raw_batch)
 
     expected = jnp.array([10.0, 12.0, 14.0, 16.0])

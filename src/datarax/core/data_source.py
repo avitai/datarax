@@ -13,6 +13,7 @@ from typing import Any
 import jax
 from jaxtyping import PyTree
 
+from datarax.core.index_shuffle import shuffle_positions
 from datarax.core.index_words import wrapped_positions
 from datarax.core.structural import StructuralModule
 from datarax.typing import DataDict
@@ -211,25 +212,39 @@ class DataSourceModule(StructuralModule):
 
         These are the indices :meth:`get_records` gathers. Stochastic operators key each
         record's randomness on them, so within an epoch a record keeps its augmentation however
-        records are batched, ordered or split across workers. The default names records by their
-        wrapped position ``(start + arange(size)) % len(self)``, which is right for a source that
-        serves records in order. A source that shuffles, partitions or mixes records overrides it.
-        Indices are 64-bit, each a uint32 ``(hi, lo)`` pair, the layout of ``Batch.indices``.
+        records are batched, ordered or split across workers. The order is the one ``key``
+        selects, or the sequential order when ``key`` is ``None``: the pipeline owns the shuffle
+        and passes its epoch key exactly when it was built with ``shuffle=True``. The default
+        names records by their wrapped position ``(start + arange(size)) % len(self)``, and with
+        a key by the keyed permutation of those positions
+        (:func:`~datarax.core.index_shuffle.shuffle_positions`). A source that partitions
+        or mixes records overrides it. Indices are 64-bit, each a uint32 ``(hi, lo)`` pair, the
+        layout of ``Batch.indices``.
 
         Args:
             start: Starting position; a Python int of any size or a traced int32 ``jax.Array``.
             size: Number of records (Python int).
-            key: The key selecting the order.
+            key: The key selecting the order, or ``None`` for the sequential order.
 
         Returns:
             uint32 array of shape ``(size, 2)``.
+
+        Raises:
+            ValueError: If a key is given to a source without a length, which has no order to
+                shuffle.
         """
-        del key
         try:
             length: int | None = len(self)
         except NotImplementedError:
             length = None
-        return wrapped_positions(start, size, length)
+        if key is None:
+            return wrapped_positions(start, size, length)
+        if length is None:
+            raise ValueError(
+                f"{type(self).__name__} has no length, so it has no order to shuffle; build its "
+                "pipeline with shuffle=False"
+            )
+        return shuffle_positions(wrapped_positions(start, size, length), length, key)
 
     def supports_indexed_access(self) -> bool:
         """Whether ``Pipeline`` can drive this source through ``get_records``.

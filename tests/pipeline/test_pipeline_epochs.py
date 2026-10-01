@@ -21,12 +21,10 @@ _BATCH = 16
 
 
 def _pipeline(*, shuffle: bool = True, seed: int = 0) -> Pipeline:
-    source = MemorySource(
-        MemorySourceConfig(shuffle=shuffle),
-        data={"id": jnp.arange(_N, dtype=jnp.int32)},
-        rngs=nnx.Rngs(seed),
+    source = MemorySource(MemorySourceConfig(), data={"id": jnp.arange(_N, dtype=jnp.int32)})
+    return Pipeline(
+        source=source, stages=[], batch_size=_BATCH, rngs=nnx.Rngs(seed), shuffle=shuffle
     )
-    return Pipeline(source=source, stages=[], batch_size=_BATCH, rngs=nnx.Rngs(seed))
 
 
 def _epoch_ids(pipeline: Pipeline) -> list[int]:

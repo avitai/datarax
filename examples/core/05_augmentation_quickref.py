@@ -89,7 +89,7 @@ data = {
     "label": np.random.randint(0, 10, (num_samples,)).astype(np.int32),
 }
 
-source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+source = MemorySource(MemorySourceConfig(), data=data)
 
 print(f"Created {num_samples} sample images: {image_shape}")
 print("Image range: [0.0, 1.0] (pre-normalized)")
@@ -207,7 +207,7 @@ Operators are applied left-to-right.
 
 # %%
 # Create fresh source for chained pipeline
-source2 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(1))
+source2 = MemorySource(MemorySourceConfig(), data=data)
 
 # Create fresh operators (each needs its own RNG state)
 brightness = BrightnessOperator(
@@ -305,7 +305,7 @@ clipper = ElementOperator(
 )
 
 # Create pipeline with clipping
-source3 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(2))
+source3 = MemorySource(MemorySourceConfig(), data=data)
 
 brightness2 = BrightnessOperator(
     BrightnessOperatorConfig(
@@ -398,7 +398,7 @@ def main():
         "image": np.random.rand(64, 32, 32, 3).astype(np.float32),
         "label": np.random.randint(0, 10, (64,)).astype(np.int32),
     }
-    source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+    source = MemorySource(MemorySourceConfig(), data=data)
 
     # Create augmentation operators
     brightness = BrightnessOperator(

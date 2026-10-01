@@ -11,7 +11,7 @@
 | **Automatic conversion** | TensorFlow tensors → JAX arrays |
 | **One-time load** | Eager source converts TF→JAX at init, then tears down TensorFlow |
 | **Supervised mode** | Optional `(image, label)` tuple unpacking |
-| **Shuffling** | O(1)-memory Feistel index shuffle (same split as HF source) |
+| **Shuffling** | `Pipeline(shuffle=True)`'s O(1)-memory Feistel index shuffle (as for the HF source) |
 | **Fixed prefetch** | Streaming source uses a fixed `prefetch_buffer=2`, deliberately not AUTOTUNE |
 
 !!! note "Key points"
@@ -41,7 +41,7 @@ from datarax.sources.tfds_source import TFDSEagerConfig
 
 # Load MNIST dataset
 config = TFDSEagerConfig(name="mnist", split="train")
-source = TFDSEagerSource(config, rngs=nnx.Rngs(0))
+source = TFDSEagerSource(config)
 
 # Iterate over elements
 for item in source:
@@ -84,17 +84,13 @@ for step in range(10000):
 
 ## Shuffling
 
-The eager source uses the same O(1)-memory Feistel index shuffle as the HF source
-(no shuffle buffer):
+The pipeline owns an eager source's order: `Pipeline(shuffle=True)` serves each epoch in a
+new order with the same O(1)-memory Feistel index shuffle as for the HF source (no shuffle
+buffer), seeded by the pipeline's `rngs`:
 
 ```python
-config = TFDSEagerConfig(
-    name="cifar10",
-    split="train",
-    shuffle=True,
-    seed=42,  # Integer seed for Grain's index shuffle
-)
-source = TFDSEagerSource(config, rngs=nnx.Rngs(42))
+source = TFDSEagerSource(TFDSEagerConfig(name="cifar10", split="train"))
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0), shuffle=True)
 ```
 
 For ImageNet-scale splits that do not fit in memory, use the streaming path via

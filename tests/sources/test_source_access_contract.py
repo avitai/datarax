@@ -124,7 +124,7 @@ class _Counted(_IndexedOnly):
 def test_the_step_names_its_records_once(stochastic_stage: bool) -> None:
     """The gather and the stages share one computation of the batch's record indices.
 
-    A shuffled source's index computation is its most expensive part on a GPU (a cycle-walking
+    A shuffled order's index computation is its most expensive part on a GPU (a cycle-walking
     loop), and XLA does not merge copies of it placed in different branches, so the step names
     its records with one ``record_indices_at`` call, vmapped over every epoch a batch can touch.
     """
@@ -152,10 +152,15 @@ def test_a_session_and_step_run_one_program_with_no_conditional() -> None:
     """
 
     def shuffled() -> Pipeline:
-        source = MemorySource(
-            MemorySourceConfig(shuffle=True), {"x": jnp.arange(8.0)}, rngs=nnx.Rngs(1)
+        source = MemorySource(MemorySourceConfig(), {"x": jnp.arange(8.0)})
+        return Pipeline(
+            source=source,
+            stages=[],
+            batch_size=3,
+            rngs=nnx.Rngs(0),
+            num_epochs=None,
+            shuffle=True,
         )
-        return Pipeline(source=source, stages=[], batch_size=3, rngs=nnx.Rngs(0), num_epochs=None)
 
     pipeline = shuffled()
     program = compiled_step(pipeline)

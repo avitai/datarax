@@ -103,7 +103,7 @@ data = {
 
 # Create source
 source_config = MemorySourceConfig()
-source = MemorySource(source_config, data=data, rngs=nnx.Rngs(0))
+source = MemorySource(source_config, data=data)
 
 print(f"Data samples: {num_samples}")
 print(f"Image shape per sample: {data['image'].shape[1:]}")
@@ -241,7 +241,7 @@ def main():
         "label": np.random.randint(0, 10, (num_samples,)).astype(np.int32),
     }
 
-    source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+    source = MemorySource(MemorySourceConfig(), data=data)
     normalizer = ElementOperator(
         ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0)
     )

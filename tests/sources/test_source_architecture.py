@@ -47,8 +47,8 @@ class TestEagerSourceArchitecture:
     def test_memory_source_stores_jax_arrays(self):
         """Verify that MemorySource stores data as JAX arrays."""
         data = {"image": np.random.randn(100, 28, 28).astype(np.float32)}
-        config = MemorySourceConfig(shuffle=False)
-        source = MemorySource(config, data, rngs=nnx.Rngs(0))
+        config = MemorySourceConfig()
+        source = MemorySource(config, data)
 
         # Data should be stored and accessible
         assert len(source) == 100
@@ -57,8 +57,8 @@ class TestEagerSourceArchitecture:
     def test_eager_source_iteration_is_pure_python(self):
         """Verify that iteration doesn't invoke external frameworks."""
         data = {"x": np.arange(10)}
-        config = MemorySourceConfig(shuffle=False)
-        source = MemorySource(config, data, rngs=nnx.Rngs(0))
+        config = MemorySourceConfig()
+        source = MemorySource(config, data)
 
         # Iteration should work without any external calls
         items = list(source)
@@ -68,8 +68,8 @@ class TestEagerSourceArchitecture:
     def test_eager_source_supports_indexing(self):
         """Verify that eager sources support random access."""
         data = {"x": np.arange(10)}
-        config = MemorySourceConfig(shuffle=False)
-        source = MemorySource(config, data, rngs=nnx.Rngs(0))
+        config = MemorySourceConfig()
+        source = MemorySource(config, data)
 
         # Should support __getitem__
         assert source[0]["x"] == 0
@@ -80,8 +80,8 @@ class TestEagerSourceArchitecture:
     def test_eager_source_supports_batch_retrieval(self):
         """Verify that eager sources support get_batch method."""
         data = {"x": np.arange(100)}
-        config = MemorySourceConfig(shuffle=False)
-        source = MemorySource(config, data, rngs=nnx.Rngs(0))
+        config = MemorySourceConfig()
+        source = MemorySource(config, data)
 
         # Stateful batch retrieval
         batch1 = source.get_batch(10)
@@ -95,43 +95,22 @@ class TestEagerSourceArchitecture:
     def test_eager_source_stateless_batch_with_key(self):
         """Verify stateless batch retrieval with explicit key."""
         data = {"x": np.arange(100)}
-        config = MemorySourceConfig(shuffle=True)
-        source = MemorySource(config, data, rngs=nnx.Rngs(0))
+        config = MemorySourceConfig()
+        source = MemorySource(config, data)
 
         key = jax.random.key(42)
         batch1 = source.get_batch(10, key=key)
         batch2 = source.get_batch(10, key=key)
 
-        # Same key should give same batch (in shuffle mode)
+        # Same key should give same batch
         np.testing.assert_array_equal(np.array(batch1["x"]), np.array(batch2["x"]))
-
-    @pytest.mark.unit
-    def test_eager_source_shuffle_produces_different_order(self):
-        """Verify that shuffling produces different iteration order."""
-        data = {"x": np.arange(20)}
-        config = MemorySourceConfig(shuffle=True)
-        source = MemorySource(config, data, rngs=nnx.Rngs(42))
-
-        # First epoch
-        items1 = [item["x"] for item in source]
-
-        # Second epoch (should have different shuffle)
-        items2 = [item["x"] for item in source]
-
-        # Both should have all elements
-        assert sorted(items1) == list(range(20))
-        assert sorted(items2) == list(range(20))
-
-        # But order should be different (with high probability)
-        # Note: There's a tiny chance they're the same, but very unlikely
-        assert items1 != items2 or len(items1) < 3  # Allow small datasets to match
 
     @pytest.mark.unit
     def test_eager_source_reset_returns_to_start(self):
         """Verify that reset() returns source to beginning."""
         data = {"x": np.arange(10)}
-        config = MemorySourceConfig(shuffle=False)
-        source = MemorySource(config, data, rngs=nnx.Rngs(0))
+        config = MemorySourceConfig()
+        source = MemorySource(config, data)
 
         # Advance the state
         source.get_batch(5)
@@ -168,7 +147,7 @@ class TestTFDSEagerSource:
 
         try:
             config = TFDSEagerConfig(name="mnist", split="train[:100]")
-            source = TFDSEagerSource(config, rngs=nnx.Rngs(0))
+            source = TFDSEagerSource(config)
 
             # Data should be JAX arrays
             assert isinstance(source.data["image"], jax.Array)
@@ -184,7 +163,7 @@ class TestTFDSEagerSource:
 
         try:
             config = TFDSEagerConfig(name="mnist", split="train[:50]")
-            source = TFDSEagerSource(config, rngs=nnx.Rngs(0))
+            source = TFDSEagerSource(config)
 
             # Iteration should work
             items = []
@@ -205,28 +184,10 @@ class TestTFDSEagerSource:
 
         try:
             config = TFDSEagerConfig(name="mnist", split="train[:10]")
-            source = TFDSEagerSource(config, rngs=nnx.Rngs(0))
+            source = TFDSEagerSource(config)
 
             info = source.get_dataset_info()
             assert info is not None
-        except TFDS_ARCHITECTURE_SKIP_EXCEPTIONS as e:
-            pytest.skip(f"Could not load MNIST: {e}")
-
-    @pytest.mark.tfds
-    def test_tfds_eager_with_shuffling(self):
-        """Shuffling serves a keyed order of the records."""
-        from datarax.sources import TFDSEagerConfig, TFDSEagerSource
-
-        try:
-            config = TFDSEagerConfig(name="mnist", split="train[:100]", shuffle=True, seed=42)
-            source = TFDSEagerSource(config, rngs=nnx.Rngs(0))
-
-            # Get first few items from two epochs
-            epoch1_items = [next(iter(source))["label"] for _ in range(5)]
-            epoch2_items = [next(iter(source))["label"] for _ in range(5)]
-
-            # Shuffling should produce different orders
-            assert epoch1_items != epoch2_items or len(epoch1_items) < 3
         except TFDS_ARCHITECTURE_SKIP_EXCEPTIONS as e:
             pytest.skip(f"Could not load MNIST: {e}")
 
@@ -237,7 +198,7 @@ class TestTFDSEagerSource:
 
         try:
             config = TFDSEagerConfig(name="mnist", split="train[:10]", include_keys={"image"})
-            source = TFDSEagerSource(config, rngs=nnx.Rngs(0))
+            source = TFDSEagerSource(config)
 
             assert "image" in source.data
             assert "label" not in source.data
@@ -337,7 +298,7 @@ class TestHFEagerSource:
         monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
 
         config = HFEagerConfig(name="mock", split="train")
-        source = HFEagerSource(config, rngs=nnx.Rngs(0))
+        source = HFEagerSource(config)
 
         assert len(source) == 10
         assert "label" in source.data
@@ -357,7 +318,7 @@ class TestHFEagerSource:
         monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
 
         config = HFEagerConfig(name="mock", split="train")
-        source = HFEagerSource(config, rngs=nnx.Rngs(0))
+        source = HFEagerSource(config)
 
         items = list(source)
         assert len(items) == 10
@@ -376,7 +337,7 @@ class TestHFEagerSource:
         monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
 
         config = HFEagerConfig(name="mock", split="train", include_keys={"label"})
-        source = HFEagerSource(config, rngs=nnx.Rngs(0))
+        source = HFEagerSource(config)
 
         assert "label" in source.data
         assert "feature" not in source.data
@@ -407,7 +368,7 @@ class TestFactoryFunctions:
 
         monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
 
-        source = from_hf("mock", "train", rngs=nnx.Rngs(0))
+        source = from_hf("mock", "train")
 
         # Should be eager source (has .data attribute)
         assert hasattr(source, "data")
@@ -431,7 +392,7 @@ class TestFactoryFunctions:
 
         monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
 
-        source = from_hf("mock", "train", streaming=True, rngs=nnx.Rngs(0))
+        source = from_hf("mock", "train", streaming=True)
 
         # Should be streaming source (has .is_iterable_mode attribute set to True)
         assert hasattr(source, "is_iterable_mode")

@@ -141,20 +141,17 @@ Create the MNIST data source and preprocessing pipeline.
 train_config = TFDSEagerConfig(
     name="mnist",
     split=f"train[:{TRAIN_SAMPLES}]",
-    shuffle=True,
-    seed=42,
 )
 
-train_source = TFDSEagerSource(train_config, rngs=nnx.Rngs(42))
+train_source = TFDSEagerSource(train_config)
 
-# Create test source (no shuffle)
+# Create test source
 test_config = TFDSEagerConfig(
     name="mnist",
     split="test[:2000]",  # Subset for faster evaluation
-    shuffle=False,
 )
 
-test_source = TFDSEagerSource(test_config, rngs=nnx.Rngs(0))
+test_source = TFDSEagerSource(test_config)
 
 print(f"Training samples: {len(train_source)}")
 print(f"Test samples: {len(test_source)}")
@@ -251,6 +248,7 @@ train_pipeline = Pipeline(
     stages=[preprocessor, brightness_aug, noise_aug],
     batch_size=BATCH_SIZE,
     rngs=nnx.Rngs(0),
+    shuffle=True,
 )
 
 # Test pipeline without augmentation (create fresh sources for actual use)
@@ -438,7 +436,7 @@ batch_throughputs = []
 
 def create_train_pipeline():
     """Create a fresh training pipeline for each epoch."""
-    source = TFDSEagerSource(train_config, rngs=nnx.Rngs(42))
+    source = TFDSEagerSource(train_config)
 
     preprocessor = ElementOperator(
         ElementOperatorConfig(stochastic=False),
@@ -472,12 +470,13 @@ def create_train_pipeline():
         stages=[preprocessor, brightness, noise],
         batch_size=BATCH_SIZE,
         rngs=nnx.Rngs(0),
+        shuffle=True,
     )
 
 
 def create_test_pipeline():
     """Create a fresh test pipeline."""
-    source = TFDSEagerSource(test_config, rngs=nnx.Rngs(0))
+    source = TFDSEagerSource(test_config)
 
     preprocessor = ElementOperator(
         ElementOperatorConfig(stochastic=False),
@@ -593,8 +592,7 @@ print(f"Saved: {output_dir / 'cv-mnist-throughput.png'}")
 # 3. Augmentation Comparison
 # Get samples without augmentation for comparison
 plain_source = TFDSEagerSource(
-    TFDSEagerConfig(name="mnist", split="train[:128]", shuffle=False),
-    rngs=nnx.Rngs(0),
+    TFDSEagerConfig(name="mnist", split="train[:128]"),
 )
 
 plain_preprocessor = ElementOperator(

@@ -6,7 +6,6 @@ Note: The comparative benchmark (vs SPDL adapter) requires the spdl package
 and is skipped if unavailable. The functional tests always run.
 """
 
-import flax.nnx as nnx
 import numpy as np
 import pytest
 
@@ -28,7 +27,7 @@ class TestP3MemoryEfficiency:
             "image": np.random.default_rng(42).integers(0, 255, (1000, 8, 8, 3), dtype=np.uint8)
         }
         config = MemorySourceConfig(prefetch_size=0)
-        source = MemorySource(config, data, rngs=nnx.Rngs(0))
+        source = MemorySource(config, data)
 
         # Iterate through entire source — should use views not copies
         delta_mb = measure_peak_rss_delta_mb(lambda: list(source))
@@ -43,7 +42,7 @@ class TestP3MemoryEfficiency:
         """Verify _gather_batch uses array indexing not list comprehension for arrays."""
         data = {"x": np.arange(500)}
         config = MemorySourceConfig(prefetch_size=0)
-        source = MemorySource(config, data, rngs=nnx.Rngs(0))
+        source = MemorySource(config, data)
 
         # get_batch should work efficiently
         batch = source.get_batch(32)

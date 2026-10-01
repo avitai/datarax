@@ -68,7 +68,7 @@ def test_hf_eager_source_passes_local_files_only_to_load_dataset(
     _serve(monkeypatch, numeric_dataset, captured)
 
     config = HFEagerConfig(name="mock", split="train", local_files_only=True)
-    HFEagerSource(config, rngs=nnx.Rngs(0))
+    HFEagerSource(config)
 
     assert _local_files_only_from_kwargs(captured) is True
 
@@ -79,7 +79,7 @@ def test_hf_eager_source_default_local_files_only_is_false(numeric_dataset, monk
     _serve(monkeypatch, numeric_dataset, captured)
 
     config = HFEagerConfig(name="mock", split="train")
-    HFEagerSource(config, rngs=nnx.Rngs(0))
+    HFEagerSource(config)
 
     assert _local_files_only_from_kwargs(captured) is False
 

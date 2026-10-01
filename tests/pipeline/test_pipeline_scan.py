@@ -62,7 +62,7 @@ from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
 def _source(num_elements: int = 16) -> MemorySource:
     return MemorySource(
-        MemorySourceConfig(shuffle=False),
+        MemorySourceConfig(),
         {"x": jnp.arange(num_elements, dtype=jnp.float32)},
     )
 
@@ -300,8 +300,8 @@ def test_scan_gradient_flows_to_lifted_module_params() -> None:
 # ---------- D. Parity with iterator ----------
 
 
-def test_scan_with_shuffled_source_differentiates_through_data() -> None:
-    """Shuffled source: gradients flow through data values, not through indices.
+def test_scan_with_a_shuffling_pipeline_differentiates_through_data() -> None:
+    """Shuffled order: gradients flow through data values, not through indices.
 
     Verifies the standard JAX semantic — ``jnp.take(values, integer_indices)``
     is differentiable w.r.t. ``values``. The shuffle decision is treated as a
@@ -320,16 +320,12 @@ def test_scan_with_shuffled_source_differentiates_through_data() -> None:
         def __call__(self, batch: Batch) -> jax.Array:
             return jnp.sum(batch["x"] * self.factor[...])
 
-    shuffled_source = MemorySource(
-        MemorySourceConfig(shuffle=True),
-        {"x": jnp.arange(16, dtype=jnp.float32)},
-        rngs=nnx.Rngs(shuffle=0),
-    )
     pipeline = Pipeline(
-        source=shuffled_source,
+        source=MemorySource(MemorySourceConfig(), {"x": jnp.arange(16, dtype=jnp.float32)}),
         stages=[],
         batch_size=4,
         rngs=nnx.Rngs(0),
+        shuffle=True,
     )
     model = _LearnableScale()
 
@@ -501,9 +497,14 @@ def _host_pipeline(*, device: bool = False, stages: list[nnx.Module] | None = No
     """A shuffled pipeline over NumPy data (or its device copy) that never runs out."""
     host = np.arange(64, dtype=np.float32)[:, None] + 1.0
     data = {"x": jnp.asarray(host) if device else host}
-    source = MemorySource(MemorySourceConfig(shuffle=True), data=data, rngs=nnx.Rngs(0))
+    source = MemorySource(MemorySourceConfig(), data=data)
     return Pipeline(
-        source=source, stages=stages or [], batch_size=8, num_epochs=None, rngs=nnx.Rngs(1)
+        source=source,
+        stages=stages or [],
+        batch_size=8,
+        num_epochs=None,
+        rngs=nnx.Rngs(1),
+        shuffle=True,
     )
 
 

@@ -254,9 +254,9 @@ def create_sources(
 ) -> tuple[MemorySource, MemorySource, MemorySource]:
     """Wrap numpy data in datarax MemorySource objects."""
     config = MemorySourceConfig()
-    train_source = MemorySource(config, data=train_data, rngs=nnx.Rngs(0))
-    val_source = MemorySource(config, data=val_data, rngs=nnx.Rngs(1))
-    test_source = MemorySource(config, data=test_data, rngs=nnx.Rngs(2))
+    train_source = MemorySource(config, data=train_data)
+    val_source = MemorySource(config, data=val_data)
+    test_source = MemorySource(config, data=test_data)
     return train_source, val_source, test_source
 
 

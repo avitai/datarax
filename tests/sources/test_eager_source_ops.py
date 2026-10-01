@@ -1,7 +1,7 @@
 """Tests for the eager source operations (datarax.sources.source_ops).
 
 Tests the standalone composition helpers that both HFEagerSource and
-TFDSEagerSource delegate to. These functions handle shuffling, iteration,
+TFDSEagerSource delegate to. These functions handle iteration,
 batching, reset, config validation, and key filtering.
 """
 
@@ -16,46 +16,8 @@ from datarax.sources.source_ops import (
     eager_iter,
     eager_reset,
     filter_keys,
-    shuffled_index_for_position,
     validate_eager_config,
 )
-
-
-class TestGetShuffledIndex(unittest.TestCase):
-    """Tests for shuffled_index_for_position."""
-
-    def test_no_shuffle_returns_original(self):
-        """When shuffle=False, index is returned unchanged."""
-        for i in range(5):
-            self.assertEqual(
-                shuffled_index_for_position(i, shuffle=False, seed=42, epoch=0, length=10), i
-            )
-
-    def test_shuffle_returns_valid_index(self):
-        """Shuffled index is within [0, length)."""
-        for i in range(10):
-            idx = shuffled_index_for_position(i, shuffle=True, seed=42, epoch=0, length=10)
-            self.assertGreaterEqual(idx, 0)
-            self.assertLess(idx, 10)
-
-    def test_shuffle_is_deterministic(self):
-        """Same seed+epoch+index always produces same result."""
-        idx1 = shuffled_index_for_position(3, shuffle=True, seed=42, epoch=1, length=100)
-        idx2 = shuffled_index_for_position(3, shuffle=True, seed=42, epoch=1, length=100)
-        self.assertEqual(idx1, idx2)
-
-    def test_different_epochs_produce_different_shuffles(self):
-        """Different epochs should (usually) produce different permutations."""
-        indices_e0 = [shuffled_index_for_position(i, True, 42, 0, 20) for i in range(20)]
-        indices_e1 = [shuffled_index_for_position(i, True, 42, 1, 20) for i in range(20)]
-        # Very unlikely to be identical for 20 elements
-        self.assertNotEqual(indices_e0, indices_e1)
-
-    def test_shuffle_is_permutation(self):
-        """All indices should be unique (bijective mapping)."""
-        length = 15
-        indices = [shuffled_index_for_position(i, True, 99, 0, length) for i in range(length)]
-        self.assertEqual(len(set(indices)), length)
 
 
 class TestEagerIter(unittest.TestCase):
@@ -82,8 +44,6 @@ class TestEagerIter(unittest.TestCase):
                 length=5,
                 index_var=index_var,
                 epoch_var=epoch_var,
-                shuffle=False,
-                seed=0,
                 build_element=lambda d, idx: {"x": d["x"][idx]},
             )
         )
@@ -101,8 +61,6 @@ class TestEagerIter(unittest.TestCase):
                 3,
                 index_var,
                 epoch_var,
-                False,
-                0,
                 build_element=lambda d, idx: {"x": d["x"][idx]},
             )
         )
@@ -120,8 +78,6 @@ class TestEagerIter(unittest.TestCase):
                 3,
                 index_var,
                 epoch_var,
-                False,
-                0,
                 build_element=lambda d, idx: {"x": d["x"][idx]},
             )
         )
@@ -138,27 +94,8 @@ class TestEagerGetBatch(unittest.TestCase):
         epoch_var.get_value.return_value = epoch_val
         return index_var, epoch_var
 
-    def test_stateless_mode_with_key(self):
-        """With a key, should use stateless random batch."""
-        data = {"x": jnp.arange(10)}
-        index_var, epoch_var = self._make_vars()
-        key = jax.random.key(42)
-
-        batch = eager_get_batch(
-            data,
-            length=10,
-            index_var=index_var,
-            epoch_var=epoch_var,
-            shuffle=True,
-            seed=0,
-            batch_size=3,
-            key=key,
-            gather_fn=lambda d, idx: {"x": d["x"][idx]},
-        )
-        self.assertEqual(batch["x"].shape, (3,))
-
-    def test_stateless_no_shuffle(self):
-        """Stateless without shuffle returns first batch_size elements."""
+    def test_stateless_mode_returns_the_first_records(self):
+        """Stateless mode returns the first batch_size elements."""
         data = {"x": jnp.arange(10)}
         index_var, epoch_var = self._make_vars()
         key = jax.random.key(0)
@@ -168,8 +105,6 @@ class TestEagerGetBatch(unittest.TestCase):
             10,
             index_var,
             epoch_var,
-            shuffle=False,
-            seed=0,
             batch_size=4,
             key=key,
             gather_fn=lambda d, idx: {"x": d["x"][idx]},
@@ -186,8 +121,6 @@ class TestEagerGetBatch(unittest.TestCase):
             10,
             index_var,
             epoch_var,
-            shuffle=False,
-            seed=0,
             batch_size=3,
             key=None,
             gather_fn=lambda d, idx: {"x": d["x"][idx]},
@@ -204,8 +137,6 @@ class TestEagerGetBatch(unittest.TestCase):
             5,
             index_var,
             epoch_var,
-            shuffle=False,
-            seed=0,
             batch_size=3,
             key=None,
             gather_fn=lambda d, idx: {"x": d["x"][idx]},

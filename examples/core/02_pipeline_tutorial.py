@@ -128,7 +128,7 @@ for key, value in data.items():
 # %%
 # Create MemorySource with configuration
 source_config = MemorySourceConfig()
-source = MemorySource(source_config, data=data, rngs=nnx.Rngs(0))
+source = MemorySource(source_config, data=data)
 
 print(f"\nSource created: {len(source)} samples")
 
@@ -318,7 +318,7 @@ Same seeds produce identical results.
 # Demonstrate reproducibility
 def create_pipeline_with_seed(seed: int):
     """Create a fresh pipeline with specific seed."""
-    src = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(seed))
+    src = MemorySource(MemorySourceConfig(), data=data)
 
     norm = ElementOperator(
         ElementOperatorConfig(stochastic=False), fn=normalize_image, rngs=nnx.Rngs(0)
@@ -391,7 +391,7 @@ def main():
     }
 
     # Create source and operators
-    source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+    source = MemorySource(MemorySourceConfig(), data=data)
 
     normalizer = ElementOperator(
         ElementOperatorConfig(stochastic=False), fn=normalize_image, rngs=nnx.Rngs(0)

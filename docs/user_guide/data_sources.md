@@ -135,7 +135,7 @@ for i, batch in enumerate(pipeline):
 
 > **Note:** Dataset configs/variants (for example selecting `"sst2"` within the `"glue"` dataset) are currently unsupported — pass the standalone dataset name to `name`. There is no `config_name` (or subset) field on the HF configs.
 
-> **Tip:** Use `from_hf(name, split, streaming=True, rngs=...)` to select eager or streaming mode, or construct `HFEagerConfig`/`HFStreamingConfig` directly.
+> **Tip:** Use `from_hf(name, split, streaming=True)` to select eager or streaming mode, or construct `HFEagerConfig`/`HFStreamingConfig` directly.
 
 ### ArrayRecordSourceModule
 
@@ -314,7 +314,7 @@ for i in range(10):
 When working with data sources:
 
 1. **Use appropriate source types**: Choose the right data source for your data to optimize loading and processing
-2. **Leverage shuffling**: For training, enable shuffling on the source config, e.g. `TFDSEagerConfig(name="mnist", split="train", shuffle=True, seed=42)`. Eager sources shuffle in O(1) memory via a keyed Feistel bijection — there is no shuffle buffer to size.
+2. **Leverage shuffling**: For training, build the pipeline with `shuffle=True`, e.g. `Pipeline(source=TFDSEagerSource(TFDSEagerConfig(name="mnist", split="train")), stages=[], batch_size=128, rngs=nnx.Rngs(42), shuffle=True)`. The pipeline owns the order and shuffles in O(1) memory via a keyed Feistel bijection — there is no shuffle buffer to size.
 3. **Batch appropriately**: Batching is the Pipeline's job — set `Pipeline(source=source, stages=[], batch_size=N, rngs=nnx.Rngs(0))`. Sources do not expose a `.batch()` method.
 4. **Handle state properly**: Ensure your custom data sources properly manage their state
 5. **Monitor performance**: Watch for bottlenecks in data loading, especially with large datasets

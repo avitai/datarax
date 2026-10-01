@@ -21,7 +21,7 @@ from flax import nnx
 from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
-source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+source = MemorySource(MemorySourceConfig(), data=data)
 pipeline = Pipeline(
     source=source,
     stages=[op1, op2],

@@ -240,7 +240,7 @@ def build_pipeline(seed: int, batch_size: int = 32) -> Pipeline:
     """Run build_pipeline."""
     # 2048 samples / 32 batch = 64 batches; supports 60-step demo in one epoch.
     data = make_data(num_samples=2048, seed=seed)
-    source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(seed))
+    source = MemorySource(MemorySourceConfig(), data=data)
     norm_op = ElementOperator(
         ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0)
     )

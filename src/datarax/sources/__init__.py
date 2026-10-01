@@ -7,7 +7,6 @@ architectural separation between **eager** and **streaming** sources:
     - TFDSEagerSource, HFEagerSource
     - Load ALL data to JAX arrays at initialization
     - Pure JAX iteration (no external framework overhead during training)
-    - O(1) memory shuffling via a keyed Feistel bijection
     - Ideal for: MNIST, CIFAR-10, Fashion-MNIST, small custom datasets
 
 **Streaming Sources** (for large datasets):
@@ -39,8 +38,6 @@ _TFDS_AUTO_DETECT_ERRORS = (ImportError, AttributeError, KeyError, TypeError, Va
 
 # Type-checking imports for static analysis (not executed at runtime)
 if TYPE_CHECKING:
-    from flax import nnx
-
     from datarax.core.data_source import DataSourceModule
     from datarax.sources.array_record_source import (
         ArrayRecordSourceConfig,
@@ -118,9 +115,6 @@ def from_tfds(
     split: str,
     *,
     eager: bool | None = None,
-    shuffle: bool = False,
-    seed: int = 42,
-    rngs: nnx.Rngs | None = None,
     data_dir: str | None = None,
     try_gcs: bool = False,
     as_supervised: bool = False,
@@ -135,13 +129,12 @@ def from_tfds(
     - TFDSEagerSource for datasets < 1GB (loads all to JAX at init)
     - TFDSStreamingSource for datasets >= 1GB (streams with fixed prefetch)
 
+    The order records are served in belongs to the pipeline (``Pipeline(shuffle=...)``).
+
     Args:
         name: TFDS dataset name (e.g., "mnist", "cifar10", "imagenet2012")
         split: Dataset split (e.g., "train", "test", "train[:1000]")
         eager: Force eager (True) or streaming (False). None = auto-detect.
-        shuffle: Whether to shuffle the dataset
-        seed: Integer seed of the shuffle
-        rngs: Optional Flax NNX RNG state
         data_dir: Optional directory for dataset storage
         try_gcs: If True, load pre-built data from Google Cloud Storage
             (gs://tfds-data/datasets/). Bypasses local download_and_prepare(),
@@ -164,7 +157,7 @@ def from_tfds(
         import flax.nnx as nnx
 
         # Auto-detect: MNIST is small, will use eager
-        source = from_tfds("mnist", "train", shuffle=True, rngs=nnx.Rngs(0))
+        source = from_tfds("mnist", "train")
 
         # Load from GCS (bypasses Apache Beam for datasets like NSynth)
         source = from_tfds("nsynth/gansynth_subset", "train", try_gcs=True)
@@ -173,7 +166,7 @@ def from_tfds(
         source = from_tfds("nsynth", "train", beam_num_workers=4)
 
         # Force streaming for memory-constrained environments
-        source = from_tfds("mnist", "train", eager=False, rngs=nnx.Rngs(0))
+        source = from_tfds("mnist", "train", eager=False)
         ```
     """
     from datarax.sources.tfds_source import (
@@ -194,8 +187,6 @@ def from_tfds(
         config = TFDSEagerConfig(
             name=name,
             split=split,
-            shuffle=shuffle,
-            seed=seed,
             data_dir=data_dir,
             try_gcs=try_gcs,
             as_supervised=as_supervised,
@@ -204,11 +195,10 @@ def from_tfds(
             include_keys=include_keys,
             exclude_keys=exclude_keys,
         )
-        return TFDSEagerSource(config, rngs=rngs)
+        return TFDSEagerSource(config)
     config = TFDSStreamingConfig(
         name=name,
         split=split,
-        shuffle=shuffle,
         data_dir=data_dir,
         try_gcs=try_gcs,
         as_supervised=as_supervised,
@@ -217,7 +207,7 @@ def from_tfds(
         include_keys=include_keys,
         exclude_keys=exclude_keys,
     )
-    return TFDSStreamingSource(config, rngs=rngs)
+    return TFDSStreamingSource(config)
 
 
 def from_hf(
@@ -226,9 +216,6 @@ def from_hf(
     *,
     eager: bool | None = None,
     streaming: bool | None = None,
-    shuffle: bool = False,
-    seed: int = 42,
-    rngs: nnx.Rngs | None = None,
     data_dir: str | None = None,
     cache_dir: str | None = None,
     include_keys: set[str] | None = None,
@@ -241,14 +228,13 @@ def from_hf(
     - HFEagerSource for datasets < 1GB (loads all to JAX at init)
     - HFStreamingSource for datasets >= 1GB or when streaming=True
 
+    The order records are served in belongs to the pipeline (``Pipeline(shuffle=...)``).
+
     Args:
         name: HuggingFace dataset name (e.g., "mnist", "imdb", "allenai/c4")
         split: Dataset split (e.g., "train", "test")
         eager: Force eager (True) or streaming source (False). None = auto-detect.
         streaming: Use HuggingFace streaming mode (implies eager=False)
-        shuffle: Whether to shuffle the dataset
-        seed: Integer seed of the shuffle
-        rngs: Optional Flax NNX RNG state
         data_dir: Optional folder inside the dataset's repository whose data files are
             loaded (``datasets.load_dataset``'s ``data_dir``), not a storage location
         cache_dir: Optional folder where downloaded files are cached
@@ -265,10 +251,10 @@ def from_hf(
         import flax.nnx as nnx
 
         # Auto-detect: MNIST is small, will use eager
-        source = from_hf("mnist", "train", shuffle=True, rngs=nnx.Rngs(0))
+        source = from_hf("mnist", "train")
 
         # Force HuggingFace streaming for large datasets
-        source = from_hf("allenai/c4", "train", streaming=True, rngs=nnx.Rngs(0))
+        source = from_hf("allenai/c4", "train", streaming=True)
         ```
     """
     from datarax.sources.hf_source import (
@@ -292,28 +278,25 @@ def from_hf(
         config = HFEagerConfig(
             name=name,
             split=split,
-            shuffle=shuffle,
-            seed=seed,
             data_dir=data_dir,
             cache_dir=cache_dir,
             include_keys=include_keys,
             exclude_keys=exclude_keys,
             download_kwargs=download_kwargs,
         )
-        return HFEagerSource(config, rngs=rngs)
+        return HFEagerSource(config)
     hf_streaming = streaming if streaming is not None else False
     config = HFStreamingConfig(
         name=name,
         split=split,
         streaming=hf_streaming,
-        shuffle=shuffle,
         data_dir=data_dir,
         cache_dir=cache_dir,
         include_keys=include_keys,
         exclude_keys=exclude_keys,
         download_kwargs=download_kwargs,
     )
-    return HFStreamingSource(config, rngs=rngs)
+    return HFStreamingSource(config)
 
 
 __all__ = [

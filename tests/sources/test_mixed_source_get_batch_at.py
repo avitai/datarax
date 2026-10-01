@@ -49,7 +49,7 @@ from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNod
 
 def _source(values: list[float], *, key_name: str = "x") -> MemorySource:
     return MemorySource(
-        MemorySourceConfig(shuffle=False),
+        MemorySourceConfig(),
         {key_name: jnp.asarray(values, dtype=jnp.float32)},
     )
 
@@ -68,7 +68,7 @@ def test_mixed_rejects_sources_with_incompatible_element_specs() -> None:
     """Sources must produce records with the same element_spec to be mix-able."""
     src_a = _source([0.0, 1.0], key_name="x")
     src_b = MemorySource(
-        MemorySourceConfig(shuffle=False),
+        MemorySourceConfig(),
         {"y": jnp.asarray([0.0, 1.0], dtype=jnp.float32)},  # different key
     )
 
@@ -83,7 +83,7 @@ def test_mixed_rejects_incompatible_element_specs_naming_the_field() -> None:
     """The rejection names the differing field and both of its shapes."""
     src_a = _source([0.0, 1.0])
     src_b = MemorySource(
-        MemorySourceConfig(shuffle=False),
+        MemorySourceConfig(),
         {"x": jnp.zeros((2, 3), dtype=jnp.float32)},
     )
 
@@ -221,17 +221,12 @@ def test_mixed_source_repr_lists_children_and_weights() -> None:
 # ---------- D. Record naming ----------
 
 
-def test_mixed_record_indices_name_the_records_served_even_with_shuffled_children() -> None:
-    """A mixed record's index is its source's offset plus the child's RECORD index.
-
-    With a shuffled child, the child's record at a position is not the position, so the index
-    must name the record, or per-record randomness is keyed on the wrong record.
-    """
+def test_mixed_record_indices_name_the_records_served() -> None:
+    """A mixed record's index is its source's offset plus the child's record index."""
     values_a = np.arange(8, dtype=np.float32)
     values_b = 100.0 + np.arange(8, dtype=np.float32)
     children = [
-        MemorySource(MemorySourceConfig(shuffle=True), {"x": jnp.asarray(v)}, rngs=nnx.Rngs(s))
-        for s, v in ((1, values_a), (2, values_b))
+        MemorySource(MemorySourceConfig(), {"x": jnp.asarray(v)}) for v in (values_a, values_b)
     ]
     mix = MixDataSourcesNode(MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)), children)
     key = jax.random.key(5)

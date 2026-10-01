@@ -84,7 +84,7 @@ config = HFEagerConfig(
     split="train",
 )
 
-source = HFEagerSource(config, rngs=nnx.Rngs(0))
+source = HFEagerSource(config)
 print(f"Loaded HuggingFace dataset: {config.name}")
 print(f"Split: {config.split}")
 print("Mode: Eager load with local HuggingFace cache")
@@ -177,13 +177,13 @@ source2 = HFEagerSource(
         name="stanfordnlp/imdb",
         split="train",
         exclude_keys={"text"},  # Exclude text field - can't batch strings
-        shuffle=True,  # The split starts with negative reviews; shuffle for a mixed sample
     ),
-    rngs=nnx.Rngs(1),
 )
 
-# Build pipeline
-pipeline = Pipeline(source=source2, stages=[text_stats_op], batch_size=8, rngs=nnx.Rngs(0))
+# Build pipeline; the split starts with negative reviews, so shuffle for a mixed sample
+pipeline = Pipeline(
+    source=source2, stages=[text_stats_op], batch_size=8, rngs=nnx.Rngs(0), shuffle=True
+)
 
 print("Pipeline: HFEagerSource(IMDB) -> TextStats -> Output")
 
@@ -290,12 +290,13 @@ def main():
         name="stanfordnlp/imdb",
         split="train",
         exclude_keys={"text"},
-        shuffle=True,
     )
-    source = HFEagerSource(config, rngs=nnx.Rngs(0))
+    source = HFEagerSource(config)
 
     # Create pipeline with label normalization
-    pipeline = Pipeline(source=source, stages=[text_stats_op], batch_size=8, rngs=nnx.Rngs(0))
+    pipeline = Pipeline(
+        source=source, stages=[text_stats_op], batch_size=8, rngs=nnx.Rngs(0), shuffle=True
+    )
 
     # Process batches
     total_reviews = 0

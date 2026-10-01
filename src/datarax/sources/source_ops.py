@@ -3,9 +3,8 @@
 The bundled sources (HFEagerSource, TFDSEagerSource, HFStreamingSource,
 TFDSStreamingSource, MemorySource) and sources in other packages delegate to
 these helpers for:
-- Wrapped, optionally shuffled index resolution (``resolve_wrapped_indices``)
-- Shuffled index computation (a keyed Feistel bijection, O(1) per record)
-- Iteration with O(1) memory shuffling
+- Wrapped index resolution, in the order a key selects (``resolve_wrapped_indices``)
+- Iteration in record order
 - Batch retrieval (stateless and stateful)
 - Reset logic (eager and streaming)
 - Config validation
@@ -28,11 +27,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from datarax.core import index_words
-from datarax.core.index_shuffle import (
-    index_shuffle,
-    shuffle_positions,
-    shuffle_positions_host,
-)
+from datarax.core.index_shuffle import shuffle_positions
 
 
 def record_count(data: Any) -> int:
@@ -88,11 +83,10 @@ def partition_length(length: int, num_workers: int = 1, shard_id: int = 0) -> in
     return max(0, -(-(length - shard_id) // num_workers))
 
 
-def resolve_wrapped_indices(  # noqa: PLR0913 - the order, its partition and the slice are separate
+def resolve_wrapped_indices(
     start: jax.Array | int,
     size: int,
     length: int,
-    is_random_order: bool,
     key: jax.Array | None,
     *,
     num_workers: int = 1,
@@ -101,8 +95,9 @@ def resolve_wrapped_indices(  # noqa: PLR0913 - the order, its partition and the
     """Return the global record indices for a wrapped slice of a worker's record order.
 
     The dataset order is ``arange(length)``, or the keyed bijection
-    :func:`~datarax.core.index_shuffle.shuffle_positions` of it when ``is_random_order`` is
-    set and a ``key`` is supplied; each index costs O(1), so a slice costs O(size) at every
+    :func:`~datarax.core.index_shuffle.shuffle_positions` of it when a ``key`` is given
+    (the pipeline passes its epoch key exactly when it shuffles); each index costs O(1), so a
+    slice costs O(size) at every
     dataset size and no order is stored. Worker ``shard_id`` of
     ``num_workers`` serves positions ``[shard_id::num_workers]`` of that order, and its
     logical positions ``start + arange(size)`` wrap at its own length. The same arguments
@@ -114,9 +109,7 @@ def resolve_wrapped_indices(  # noqa: PLR0913 - the order, its partition and the
             ``jax.Array``.
         size: Number of records to return (static Python int).
         length: Total number of records in the dataset.
-        is_random_order: Whether the source serves records in shuffled order.
-        key: PRNG key for shuffled mode; ignored when ``is_random_order`` is
-            False or ``key`` is None.
+        key: The key selecting the order, or ``None`` for the sequential order.
         num_workers: Number of workers the dataset is split across.
         shard_id: This worker's index.
 
@@ -131,7 +124,7 @@ def resolve_wrapped_indices(  # noqa: PLR0913 - the order, its partition and the
         )
         high, low = index_words.add(scaled, index_words.split_constant(shard_id))
         positions = jnp.stack([high, low], axis=-1)
-    if is_random_order and key is not None:
+    if key is not None:
         return shuffle_positions(positions, length, key)
     return positions
 
@@ -175,40 +168,10 @@ def validate_include_exclude_keys(
         raise ValueError("Cannot specify both include_keys and exclude_keys")
 
 
-def validate_seed_range(seed: int) -> None:
-    """Validate a shuffle seed is in ``[0, 2**32)``."""
-    if seed < 0 or seed >= 2**32:
-        raise ValueError("seed must be in [0, 2**32)")
-
-
 def validate_positive_optional_int(value: int | None, field_name: str) -> None:
     """Validate an optional integer field is positive when provided."""
     if value is not None and value < 1:
         raise ValueError(f"{field_name} must be a positive integer")
-
-
-def shuffled_index_for_position(
-    index: int,
-    shuffle: bool,
-    seed: int,
-    epoch: int,
-    length: int,
-) -> int:
-    """Return the record at position ``index`` of the epoch's order.
-
-    Args:
-        index: Position within the epoch.
-        shuffle: Whether shuffling is enabled.
-        seed: Base integer seed of the shuffle.
-        epoch: The epoch whose order is served; each epoch has its own order.
-        length: Total number of elements.
-
-    Returns:
-        ``index_shuffle(index, seed, length, epoch)``, or ``index`` if shuffle=False.
-    """
-    if not shuffle:
-        return index
-    return index_shuffle(index, seed, length, epoch)
 
 
 def eager_iter(
@@ -216,8 +179,6 @@ def eager_iter(
     length: int,
     index_var: Any,
     epoch_var: Any,
-    shuffle: bool,
-    seed: int,
     build_element: Callable[[dict[str, Any], int], dict[str, Any]],
 ) -> Iterator[dict[str, Any]]:
     """Shared iteration pattern for eager sources.
@@ -227,22 +188,18 @@ def eager_iter(
         length: Total number of elements
         index_var: nnx.Variable for current index
         epoch_var: nnx.Variable for current epoch
-        shuffle: Whether to shuffle
-        seed: Base shuffle seed
         build_element: Callback to build element dict from data and index.
             Signature: (data, idx) -> dict. This handles type differences
             between HF (mixed types) and TFDS (all JAX arrays).
 
     Yields:
-        Data elements in (optionally shuffled) order
+        Data elements in record order
     """
     index_var.set_value(0)
     epoch_var.set_value(epoch_var.get_value() + 1)
-    epoch = epoch_var.get_value()
 
     for i in range(length):
-        idx = shuffled_index_for_position(i, shuffle, seed, epoch, length)
-        yield build_element(data, idx)
+        yield build_element(data, i)
 
 
 def eager_get_batch(
@@ -250,8 +207,6 @@ def eager_get_batch(
     length: int,
     index_var: Any,
     epoch_var: Any,
-    shuffle: bool,
-    seed: int,
     batch_size: int,
     key: jax.Array | None,
     gather_fn: Callable[[dict[str, Any], Any], dict[str, Any]],
@@ -263,8 +218,6 @@ def eager_get_batch(
         length: Total number of elements
         index_var: nnx.Variable for current index
         epoch_var: nnx.Variable for current epoch
-        shuffle: Whether to shuffle
-        seed: Base shuffle seed
         batch_size: Number of elements in the batch
         key: Optional RNG key for stateless mode
         gather_fn: Callback to gather batch from data given indices.
@@ -275,29 +228,18 @@ def eager_get_batch(
     """
     if key is not None:
         # Stateless mode
-        if shuffle:
-            positions = jnp.asarray(index_words.to_words(np.arange(min(batch_size, length))))
-            indices = index_words.low_words(shuffle_positions(positions, length, key), length)
-        else:
-            indices = jnp.arange(batch_size)
-        return gather_fn(data, indices)
+        return gather_fn(data, jnp.arange(batch_size))
 
     # Stateful mode
     start = index_var.get_value()
     end = min(start + batch_size, length)
     epoch = epoch_var.get_value()
 
-    positions = np.arange(start, end)
-    shuffled_indices = (
-        shuffle_positions_host(positions, length, seed, epoch) if shuffle else positions
-    )
-
     index_var.set_value(end % length)
     if end >= length:
         epoch_var.set_value(epoch + 1)
 
-    rows = index_words.low_words(jnp.asarray(index_words.to_words(shuffled_indices)), length)
-    return gather_fn(data, rows)
+    return gather_fn(data, jnp.arange(start, end))
 
 
 def eager_reset(
@@ -343,11 +285,9 @@ def eager_iter_default(
     length: int,
     index_var: Any,
     epoch_var: Any,
-    shuffle: bool,
-    seed: int,
 ) -> Iterator[dict[str, Any]]:
     """Iterate eager source data with the shared default element builder."""
-    return eager_iter(data, length, index_var, epoch_var, shuffle, seed, build_eager_element)
+    return eager_iter(data, length, index_var, epoch_var, build_eager_element)
 
 
 def eager_get_batch_default(
@@ -355,8 +295,6 @@ def eager_get_batch_default(
     length: int,
     index_var: Any,
     epoch_var: Any,
-    shuffle: bool,
-    seed: int,
     batch_size: int,
     key: jax.Array | None,
 ) -> dict[str, Any]:
@@ -366,8 +304,6 @@ def eager_get_batch_default(
         length,
         index_var,
         epoch_var,
-        shuffle,
-        seed,
         batch_size,
         key,
         gather_eager_batch,
@@ -379,7 +315,6 @@ def format_source_repr(
     dataset_name: str | None,
     split_name: str | None,
     length: int | None,
-    shuffle: bool,
     epoch: int,
     extra_fields: dict[str, Any] | None = None,
 ) -> str:
@@ -387,7 +322,6 @@ def format_source_repr(
     fields: list[tuple[str, Any]] = [
         ("dataset", f"{dataset_name}:{split_name}"),
         ("length", length),
-        ("shuffle", shuffle),
     ]
     if extra_fields:
         fields.extend(extra_fields.items())
@@ -445,21 +379,16 @@ def validate_eager_config(
 
 def finalize_eager_config_validation(
     *,
-    config: Any,
     super_post_init: Callable[[], None],
     config_class_name: str,
     name: str | None,
     split: str | None,
     include_keys: set[str] | None,
     exclude_keys: set[str] | None,
-    seed: int,
     try_gcs: bool = False,
     data_dir: str | None = None,
 ) -> None:
     """Run shared eager-config validation flow."""
-    configure_stochastic_from_shuffle(config, shuffle=config.shuffle)
-    if config.shuffle:
-        validate_seed_range(seed)
     super_post_init()
     validate_eager_config(
         name,
@@ -505,20 +434,17 @@ def validate_eager_source_settings(
     config: Any,
     config_class_name: str,
     *,
-    seed: int,
     try_gcs: bool = False,
     data_dir: str | None = None,
 ) -> None:
     """Validate a source eager config using standard dataclass fields."""
     finalize_eager_config_validation(
-        config=config,
         super_post_init=_get_super_post_init(config),
         config_class_name=config_class_name,
         name=config.name,
         split=config.split,
         include_keys=config.include_keys,
         exclude_keys=config.exclude_keys,
-        seed=seed,
         try_gcs=try_gcs,
         data_dir=data_dir,
     )

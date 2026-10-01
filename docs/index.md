@@ -112,7 +112,7 @@ def normalize(element, key=None):
 
 # 2. Create data source
 source_config = MemorySourceConfig()
-source = MemorySource(source_config, data=my_data_dict, rngs=nnx.Rngs(0))
+source = MemorySource(source_config, data=my_data_dict)
 
 # 3. Create operators
 normalizer = ElementOperator(

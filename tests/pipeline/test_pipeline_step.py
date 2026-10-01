@@ -57,6 +57,16 @@ class _Counter(nnx.Module):
         return batch
 
 
+class _KeepsRngs(nnx.Module):
+    """A stage keeping the ``Rngs`` it was given, so it shares that ``Rngs``'s Variables."""
+
+    def __init__(self, rngs: nnx.Rngs) -> None:
+        self.rngs = rngs
+
+    def __call__(self, batch: Batch) -> Batch:
+        return batch
+
+
 class _GrowingStage(nnx.Module):
     """Stage adding state while it runs, which changes the module structure."""
 
@@ -75,10 +85,15 @@ def _pipeline(
 ) -> Pipeline:
     host = np.arange(_N, dtype=np.float32)[:, None] + 1.0
     data = {"x": jnp.asarray(host) if device else host}
-    source = MemorySource(MemorySourceConfig(shuffle=shuffle), data=data, rngs=nnx.Rngs(0))
+    source = MemorySource(MemorySourceConfig(), data=data)
     stages = [stage] if stage is not None else []
     return Pipeline(
-        source=source, stages=stages, batch_size=_BATCH, num_epochs=None, rngs=nnx.Rngs(0)
+        source=source,
+        stages=stages,
+        batch_size=_BATCH,
+        num_epochs=None,
+        rngs=nnx.Rngs(0),
+        shuffle=shuffle,
     )
 
 
@@ -216,7 +231,7 @@ class TestGraphMode:
 
     @staticmethod
     def _sharing_rngs() -> Pipeline:
-        """Source, stage and pipeline built from one ``Rngs``: they share its RNG Variables."""
+        """Stages and pipeline built from one ``Rngs``, a stage keeping it: they share it."""
         rngs = nnx.Rngs(0, augment=1)
         stage = MapOperator(
             MapOperatorConfig(stochastic=True, stream_name="augment"),
@@ -224,9 +239,14 @@ class TestGraphMode:
             rngs=rngs,
         )
         data = {"x": np.arange(_N, dtype=np.float32)[:, None]}
-        source = MemorySource(MemorySourceConfig(shuffle=True), data=data, rngs=rngs)
+        source = MemorySource(MemorySourceConfig(), data=data)
         return Pipeline(
-            source=source, stages=[stage], batch_size=_BATCH, num_epochs=None, rngs=rngs
+            source=source,
+            stages=[stage, _KeepsRngs(rngs)],
+            batch_size=_BATCH,
+            num_epochs=None,
+            rngs=rngs,
+            shuffle=True,
         )
 
     def test_the_fixture_shares_variables(self) -> None:
@@ -328,7 +348,7 @@ class TestTransforms:
 
 
 class TestShuffledAugmentingTrainStep:
-    """A shuffled source and a stochastic stage inside the caller's compiled gradient step.
+    """A shuffling pipeline and a stochastic stage inside the caller's compiled gradient step.
 
     The step names its records through the shuffle, gathers them by those names, and keys the
     stage's randomness on them, so every part of the record path runs inside the user's
@@ -343,9 +363,14 @@ class TestShuffledAugmentingTrainStep:
             rngs=nnx.Rngs(augment=1),
         )
         data = {"x": np.arange(_N, dtype=np.float32)[:, None] + 1.0}
-        source = MemorySource(MemorySourceConfig(shuffle=True), data=data, rngs=nnx.Rngs(0))
+        source = MemorySource(MemorySourceConfig(), data=data)
         return Pipeline(
-            source=source, stages=[stage], batch_size=_BATCH, num_epochs=None, rngs=nnx.Rngs(0)
+            source=source,
+            stages=[stage],
+            batch_size=_BATCH,
+            num_epochs=None,
+            rngs=nnx.Rngs(0),
+            shuffle=True,
         )
 
     def test_one_compile_serves_three_epochs_of_the_steps_batches(self) -> None:

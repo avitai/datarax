@@ -62,7 +62,7 @@ def test_spec_chain_source_to_operator_to_batcher() -> None:
         "image": jnp.ones((100, 28, 28, 1), dtype=jnp.float32),
         "label": jnp.arange(100, dtype=jnp.int32),
     }
-    source = MemorySource(MemorySourceConfig(), data, rngs=nnx.Rngs(0))
+    source = MemorySource(MemorySourceConfig(), data)
     op1 = _PassthroughOperator(_PassthroughOperatorConfig(stochastic=False), rngs=nnx.Rngs(0))
     op2 = _PassthroughOperator(_PassthroughOperatorConfig(stochastic=False), rngs=nnx.Rngs(1))
     batcher = _MinimalBatcher(_MinimalBatcherConfig(stochastic=False))
@@ -89,7 +89,7 @@ def test_spec_chain_source_to_operator_to_batcher() -> None:
 def test_spec_chain_passthrough_operator_preserves_dtype_and_shape() -> None:
     """A chain of passthrough operators produces specs identical to source."""
     data = {"x": jnp.ones((5, 3), dtype=jnp.float32)}
-    source = MemorySource(MemorySourceConfig(), data, rngs=nnx.Rngs(0))
+    source = MemorySource(MemorySourceConfig(), data)
     op = _PassthroughOperator(_PassthroughOperatorConfig(stochastic=False), rngs=nnx.Rngs(0))
 
     elem_spec = source.element_spec()

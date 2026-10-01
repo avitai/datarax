@@ -37,13 +37,11 @@ from datarax.sources._source_base import EagerSourceBase
 class _FakeEagerSource(EagerSourceBase):
     """Minimal in-memory source for exercising the EagerSourceBase contract."""
 
-    def __init__(self, data: dict, *, is_random_order: bool = False, seed: int = 0) -> None:
+    def __init__(self, data: dict) -> None:
         super().__init__(StructuralConfig())
         self.data = nnx.data(data)
         self.index = nnx.Variable(jnp.int32(0))
         self.epoch = nnx.Variable(jnp.int32(0))
-        self._seed = seed
-        self._is_random_order = is_random_order
         self.dataset_name = "fake"
         self.split_name = "all"
         self._dataset_info = None
@@ -54,14 +52,14 @@ class _FakeEagerSource(EagerSourceBase):
 
 def test_eager_get_batch_at_returns_contiguous_slice() -> None:
     src = _FakeEagerSource({"x": jnp.arange(8, dtype=jnp.float32)})
-    batch = src.get_batch_at(start=2, size=4, key=jax.random.key(0))
+    batch = src.get_batch_at(start=2, size=4, key=None)
 
     np.testing.assert_array_equal(np.asarray(batch["x"]), np.array([2.0, 3.0, 4.0, 5.0]))
 
 
 def test_eager_get_batch_at_wraps_at_end_of_source() -> None:
     src = _FakeEagerSource({"x": jnp.arange(8, dtype=jnp.float32)})
-    batch = src.get_batch_at(start=6, size=4, key=jax.random.key(0))
+    batch = src.get_batch_at(start=6, size=4, key=None)
 
     np.testing.assert_array_equal(np.asarray(batch["x"]), np.array([6.0, 7.0, 0.0, 1.0]))
 
@@ -80,7 +78,7 @@ def test_eager_get_batch_at_does_not_advance_internal_index() -> None:
 
 
 def test_eager_shuffled_get_batch_at_is_deterministic_for_fixed_key() -> None:
-    src = _FakeEagerSource({"x": jnp.arange(16, dtype=jnp.float32)}, is_random_order=True)
+    src = _FakeEagerSource({"x": jnp.arange(16, dtype=jnp.float32)})
     key = jax.random.key(42)
 
     a = src.get_batch_at(start=0, size=4, key=key)
@@ -90,7 +88,7 @@ def test_eager_shuffled_get_batch_at_is_deterministic_for_fixed_key() -> None:
 
 
 def test_eager_shuffled_get_batch_at_differs_across_keys() -> None:
-    src = _FakeEagerSource({"x": jnp.arange(16, dtype=jnp.float32)}, is_random_order=True)
+    src = _FakeEagerSource({"x": jnp.arange(16, dtype=jnp.float32)})
 
     a = src.get_batch_at(start=0, size=4, key=jax.random.key(0))
     b = src.get_batch_at(start=0, size=4, key=jax.random.key(1))
@@ -101,7 +99,7 @@ def test_eager_shuffled_get_batch_at_differs_across_keys() -> None:
 def test_eager_shuffled_get_batch_at_covers_full_epoch() -> None:
     length = 16
     batch_size = 4
-    src = _FakeEagerSource({"x": jnp.arange(length, dtype=jnp.float32)}, is_random_order=True)
+    src = _FakeEagerSource({"x": jnp.arange(length, dtype=jnp.float32)})
     key = jax.random.key(7)
 
     seen: list[float] = []

@@ -5,7 +5,6 @@ This module provides two distinct source types optimized for different use cases
 **HFEagerSource**: For small/medium datasets that fit in memory (~10% VRAM)
 - Loads ALL data to JAX arrays at initialization
 - Pure JAX iteration after init (no HuggingFace overhead during training)
-- O(1) memory shuffling via a keyed Feistel bijection
 - Fully checkpointable (just indices, no external state)
 - Ideal for: MNIST, CIFAR-10, sentiment datasets, small custom datasets
 
@@ -168,30 +167,21 @@ class HFEagerConfig(SourceConfigBase):
             loaded (``datasets.load_dataset``'s ``data_dir``), not a storage location
         cache_dir: Optional folder where downloaded files are cached (``load_dataset``'s
             ``cache_dir``; the Hugging Face default when ``None``)
-        shuffle: Whether to shuffle the dataset during iteration
-        seed: Integer seed of the shuffle (default: 42)
         download_kwargs: Optional keyword arguments for load_dataset
         include_keys: Optional set of keys to include in output (exclusive with exclude_keys)
         exclude_keys: Optional set of keys to exclude from output (exclusive with include_keys)
 
     Note:
-        The seed parameter is an integer (not a JAX RNG key).
-        This ensures O(1) memory shuffling and reproducible per-epoch seeds.
+        The order records are served in belongs to the pipeline (``Pipeline(shuffle=...)``).
     """
 
-    shuffle: bool = False
-    seed: int = 42  # Integer seed of the shuffle
     cache_dir: str | None = None
     download_kwargs: dict[str, Any] | None = None
     local_files_only: bool = False
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
-        validate_eager_source_settings(
-            self,
-            "HFEagerConfig",
-            seed=self.seed,
-        )
+        validate_eager_source_settings(self, "HFEagerConfig")
 
 
 @dataclass(frozen=True)
@@ -243,7 +233,6 @@ class HFEagerSource(EagerSourceBase):
     Key Features:
         - One-time conversion at init (PIL→numpy→JAX for images)
         - Pure JAX iteration after init
-        - O(1) memory shuffling via a keyed Feistel bijection
         - Full checkpointing support (indices only, no external state)
         - Automatic PIL Image to JAX array conversion
 
@@ -254,8 +243,8 @@ class HFEagerSource(EagerSourceBase):
     Example:
         ```python
         # Create eager source for MNIST from HuggingFace
-        config = HFEagerConfig(name="mnist", split="train", shuffle=True)
-        source = HFEagerSource(config, rngs=nnx.Rngs(0))
+        config = HFEagerConfig(name="mnist", split="train")
+        source = HFEagerSource(config)
 
         # Iterate - pure JAX, no HF overhead
         for item in source:
@@ -274,14 +263,12 @@ class HFEagerSource(EagerSourceBase):
         self,
         config: HFEagerConfig,
         *,
-        rngs: nnx.Rngs | None = None,
         name: str | None = None,
     ) -> None:
         """Initialize HFEagerSource by loading all data to JAX arrays.
 
         Args:
             config: Configuration for the source
-            rngs: Optional RNG state for shuffling
             name: Optional name (defaults to HFEagerSource(dataset:split))
 
         Raises:
@@ -289,7 +276,7 @@ class HFEagerSource(EagerSourceBase):
         """
         if name is None:
             name = f"HFEagerSource({config.name}:{config.split})"
-        super().__init__(config, rngs=rngs, name=name)
+        super().__init__(config, name=name)
 
         # Import datasets lazily
         try:
@@ -306,8 +293,6 @@ class HFEagerSource(EagerSourceBase):
         # Store config for feature access
         self.dataset_name = config.name
         self.split_name = config.split
-        self._is_random_order = config.shuffle
-        self._seed = config.seed
         self.include_keys = config.include_keys
         self.exclude_keys = config.exclude_keys
 

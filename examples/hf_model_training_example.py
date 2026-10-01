@@ -84,7 +84,6 @@ def load_sst2(split: str) -> tuple[np.ndarray, np.ndarray]:
             download_kwargs={"name": "sst2"},
             include_keys={"sentence", "label"},
         ),
-        rngs=nnx.Rngs(0),
     )
     return tokenize(source.data["sentence"]), np.asarray(source.data["label"], dtype=np.int32)
 
@@ -93,12 +92,10 @@ def make_pipeline(
     tokens: np.ndarray, labels: np.ndarray, *, batch_size: int, shuffle: bool, seed: int
 ) -> Pipeline:
     """Batch token ids and labels from memory, shuffled per epoch when asked."""
-    source = MemorySource(
-        MemorySourceConfig(shuffle=shuffle),
-        data={"tokens": tokens, "label": labels},
-        rngs=nnx.Rngs(seed),
+    source = MemorySource(MemorySourceConfig(), data={"tokens": tokens, "label": labels})
+    return Pipeline(
+        source=source, stages=[], batch_size=batch_size, rngs=nnx.Rngs(seed), shuffle=shuffle
     )
-    return Pipeline(source=source, stages=[], batch_size=batch_size, rngs=nnx.Rngs(seed))
 
 
 def loss_fn(model: TextClassifier, batch: Batch) -> tuple[jax.Array, jax.Array]:

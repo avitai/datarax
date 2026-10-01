@@ -26,7 +26,7 @@ If you're familiar with PyTorch's torchvision datasets, here's how Datarax + TFD
 | PyTorch | Datarax |
 |---------|---------|
 | `torchvision.datasets.MNIST(train=True)` | `TFDSEagerSource(TFDSEagerConfig(name="mnist", split="train"))` |
-| `DataLoader(dataset, shuffle=True)` | `TFDSEagerSource` with `shuffle=True` in config |
+| `DataLoader(dataset, shuffle=True)` | `Pipeline(source=TFDSEagerSource(...), ..., shuffle=True)` |
 | `transforms.ToTensor()` | JAX arrays by default (no conversion needed) |
 | `transforms.Normalize(mean, std)` | Custom operator with JAX operations |
 
@@ -108,9 +108,10 @@ from datarax.pipeline import Pipeline
 |-----------|-------------|---------|---------|
 | `name` | TFDS dataset name | Required | `"mnist"`, `"cifar10"` |
 | `split` | Dataset split | Required | `"train"`, `"test[:500]"` |
-| `shuffle` | Enable shuffling | `False` | `True` for training |
-| `stochastic` | Auto-derived from `shuffle` (not user-set) | `False` | Set internally to `True` when shuffling |
-| `stream_name` | Named RNG stream (defaults to `"shuffle"` when shuffling) | `None` | `"shuffle"` |
+| `include_keys` / `exclude_keys` | Fields to keep or drop | `None` | `{"id"}` |
+
+The order records are served in belongs to the pipeline: `Pipeline(..., shuffle=True)` serves
+each epoch in a new order, reproducibly from the pipeline's `rngs`.
 
 ### Basic Example
 
@@ -119,11 +120,9 @@ from datarax.pipeline import Pipeline
 config = TFDSEagerConfig(
     name="mnist",
     split="train[:500]",  # Use subset for quick demo
-    shuffle=True,
-    seed=42,
 )
 
-source = TFDSEagerSource(config, rngs=nnx.Rngs(42))
+source = TFDSEagerSource(config)
 
 print("Dataset: MNIST")
 print(f"Samples: {len(source)}")
@@ -168,7 +167,9 @@ Chain source and operators using the `Pipeline()` constructor API.
 
 ```python
 # Build the pipeline
-pipeline = Pipeline(source=source, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0))
+pipeline = Pipeline(
+    source=source, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0), shuffle=True
+)
 
 print("Pipeline: TFDSEagerSource(MNIST) -> Normalize -> Output")
 print("Batch size: 32")
@@ -234,7 +235,7 @@ flowchart LR
     end
 
     subgraph Source["TFDSEagerSource"]
-        Config[TFDSEagerConfig<br/>name, split, shuffle]
+        Config[TFDSEagerConfig<br/>name, split]
         Load[Load & Convert<br/>to JAX arrays]
     end
 
@@ -330,16 +331,16 @@ The pipeline integrates TFDS datasets into the Datarax ecosystem, enabling the u
 ### Pattern 1: Training Pipeline
 
 ```python
-# Full training set with shuffling
+# Full training set, shuffled every epoch by the pipeline
 train_config = TFDSEagerConfig(
     name="mnist",
     split="train",
-    shuffle=True,
-    seed=42,
 )
 
-train_source = TFDSEagerSource(train_config, rngs=nnx.Rngs(42))
-train_pipeline = Pipeline(source=train_source, stages=[normalizer], batch_size=128, rngs=nnx.Rngs(0))
+train_source = TFDSEagerSource(train_config)
+train_pipeline = Pipeline(
+    source=train_source, stages=[normalizer], batch_size=128, rngs=nnx.Rngs(0), shuffle=True
+)
 ```
 
 ### Pattern 2: Evaluation Pipeline
@@ -349,10 +350,9 @@ train_pipeline = Pipeline(source=train_source, stages=[normalizer], batch_size=1
 test_config = TFDSEagerConfig(
     name="mnist",
     split="test",
-    shuffle=False,
 )
 
-test_source = TFDSEagerSource(test_config, rngs=nnx.Rngs(0))
+test_source = TFDSEagerSource(test_config)
 test_pipeline = Pipeline(source=test_source, stages=[normalizer], batch_size=128, rngs=nnx.Rngs(0))
 ```
 
@@ -363,10 +363,9 @@ test_pipeline = Pipeline(source=test_source, stages=[normalizer], batch_size=128
 dev_config = TFDSEagerConfig(
     name="mnist",
     split="train[:100]",
-    shuffle=False,
 )
 
-dev_source = TFDSEagerSource(dev_config, rngs=nnx.Rngs(0))
+dev_source = TFDSEagerSource(dev_config)
 dev_pipeline = Pipeline(source=dev_source, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0))
 ```
 
@@ -400,17 +399,11 @@ tf.config.set_visible_devices([], "GPU")
 
 ### 2. Reproducibility
 
-Use named RNG streams for reproducible shuffling:
+The pipeline's `rngs` seeds its shuffle, so the same seed serves the same orders:
 
 ```python
-config = TFDSEagerConfig(
-    name="mnist",
-    split="train",
-    shuffle=True,
-    seed=42,
-)
-
-source = TFDSEagerSource(config, rngs=nnx.Rngs(42))
+source = TFDSEagerSource(TFDSEagerConfig(name="mnist", split="train"))
+pipeline = Pipeline(source=source, stages=[normalizer], batch_size=128, rngs=nnx.Rngs(42), shuffle=True)
 ```
 
 ### 3. Memory Efficiency

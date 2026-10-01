@@ -70,7 +70,7 @@ from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 data = {"value": jnp.arange(100)}
-source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+source = MemorySource(MemorySourceConfig(), data=data)
 pipeline = Pipeline(source=source, stages=[], batch_size=10, rngs=nnx.Rngs(0))
 
 for step, batch in zip(range(3), pipeline):
@@ -80,7 +80,7 @@ with IteratorCheckpoint("./pipeline_ckpt") as checkpoint:
     checkpoint.save(pipeline, step=step)
 
 # Later: rebuild the pipeline the same way and restore
-fresh = Pipeline(source=MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0)),
+fresh = Pipeline(source=MemorySource(MemorySourceConfig(), data=data),
                  stages=[], batch_size=10, rngs=nnx.Rngs(0))
 with IteratorCheckpoint("./pipeline_ckpt") as checkpoint:
     checkpoint.restore(fresh)
@@ -117,7 +117,7 @@ iterator.set_state(data_state)
 caller has already consumed; ``set_state()`` requires a pipeline with the
 same structure and seeds as the one that produced the state.
 
-``rng_counts`` holds the pipeline's count, then the source's. An operator
+``rng_counts`` holds the pipeline's count; an in-memory source holds none. An operator
 keys each record on its stable base key and holds no count, so the list's
 length does not depend on the operators.
 

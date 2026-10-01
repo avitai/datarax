@@ -201,7 +201,7 @@ def preprocess(element, key=None):  # noqa: ARG001
 
 def create_memory_pipeline(data, batch_size):
     """Create pipeline from memory data."""
-    source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+    source = MemorySource(MemorySourceConfig(), data=data)
     prep = ElementOperator(ElementOperatorConfig(stochastic=False), fn=preprocess, rngs=nnx.Rngs(0))
     return Pipeline(source=source, stages=[prep], batch_size=batch_size, rngs=nnx.Rngs(0))
 
@@ -295,7 +295,7 @@ Compare throughput of different augmentation operators.
 # %%
 def create_operator_pipeline(data, operator, batch_size=64):
     """Create pipeline with specific operator."""
-    source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+    source = MemorySource(MemorySourceConfig(), data=data)
     prep = ElementOperator(ElementOperatorConfig(stochastic=False), fn=preprocess, rngs=nnx.Rngs(0))
 
     stages = [prep]

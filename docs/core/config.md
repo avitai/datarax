@@ -21,7 +21,7 @@ DataraxModuleConfig (base)
     - **StructuralConfig**: For structural processors
     - All configs are frozen dataclasses — module state is mutable, configs never are
     - All configs validate on construction (`__post_init__`)
-    - For shuffle configurations, use `seed=42` parameter
+    - The order records are served in is the pipeline's (`Pipeline(shuffle=True)`), not a source config's
 
 ## Base Configuration
 

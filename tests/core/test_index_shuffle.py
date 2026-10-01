@@ -521,12 +521,15 @@ _LARGE = 1 << 20
 
 
 def _shuffled_pipeline(num_epochs: int | None) -> Pipeline:
-    source = MemorySource(
-        MemorySourceConfig(shuffle=True),
-        data={"x": np.zeros((_LARGE, 1), dtype=np.float32)},
+    source = MemorySource(MemorySourceConfig(), data={"x": np.zeros((_LARGE, 1), dtype=np.float32)})
+    return Pipeline(
+        source=source,
+        stages=[],
+        batch_size=8,
+        num_epochs=num_epochs,
         rngs=nnx.Rngs(0),
+        shuffle=True,
     )
-    return Pipeline(source=source, stages=[], batch_size=8, num_epochs=num_epochs, rngs=nnx.Rngs(0))
 
 
 class TestBatchCost:

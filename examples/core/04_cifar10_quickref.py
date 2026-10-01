@@ -116,12 +116,10 @@ for this quick reference to keep runtime short.
 config = TFDSEagerConfig(
     name="cifar10",
     split="train[:1000]",  # First 1000 samples for demo
-    shuffle=True,
-    seed=42,  # Integer seed of the shuffle
     exclude_keys={"id"},  # Exclude non-numeric fields
 )
 
-source = TFDSEagerSource(config, rngs=nnx.Rngs(42))
+source = TFDSEagerSource(config)
 
 print("Dataset: CIFAR-10")
 print(f"Samples: {len(source)}")
@@ -176,7 +174,9 @@ Batch size of 32 is standard for CIFAR-10 training.
 # %%
 # Build the training pipeline
 batch_size = 32
-pipeline = Pipeline(source=source, stages=[normalizer], batch_size=batch_size, rngs=nnx.Rngs(0))
+pipeline = Pipeline(
+    source=source, stages=[normalizer], batch_size=batch_size, rngs=nnx.Rngs(0), shuffle=True
+)
 
 print("Pipeline: TFDSEagerSource(CIFAR-10) -> Normalize -> Output")
 print(f"Batch size: {batch_size}")
@@ -289,11 +289,9 @@ def main():
     config = TFDSEagerConfig(
         name="cifar10",
         split="train[:500]",
-        shuffle=True,
-        seed=42,  # Integer seed of the shuffle
         exclude_keys={"id"},  # Exclude non-numeric fields
     )
-    source = TFDSEagerSource(config, rngs=nnx.Rngs(42))
+    source = TFDSEagerSource(config)
 
     # Create normalizer
     normalizer = ElementOperator(
@@ -303,7 +301,9 @@ def main():
     )
 
     # Build and run pipeline
-    pipeline = Pipeline(source=source, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0))
+    pipeline = Pipeline(
+        source=source, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0), shuffle=True
+    )
 
     total_samples = 0
     for batch in pipeline:

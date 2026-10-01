@@ -103,10 +103,9 @@ def test_tfds_eager_source_stateless():
 def test_tfds_eager_source_stateful():
     """Test TFDSEagerSource in stateful mode with internal state management."""
     try:
-        # Create source with rngs (stateful mode)
-        rngs = nnx.Rngs(default=0)
+        # Create source (stateful mode)
         config = TFDSEagerConfig(name="mnist", split="test[:20]")
-        source = TFDSEagerSource(config, rngs=rngs)
+        source = TFDSEagerSource(config)
 
         # Get batches using stateful mode
         batch1 = source.get_batch(5)
@@ -119,28 +118,6 @@ def test_tfds_eager_source_stateful():
         # Verify batch shape (should be batched)
         assert batch1["image"].shape[0] == 5  # Batch size
         assert batch1["label"].shape[0] == 5
-
-    except TFDS_TEST_SKIP_EXCEPTIONS as e:
-        pytest.skip(f"Could not load MNIST dataset: {e}")
-
-
-@pytest.mark.tfds
-def test_tfds_eager_source_with_shuffling():
-    """Test TFDSEagerSource with shuffling enabled."""
-    try:
-        # Create source with shuffling
-        rngs = nnx.Rngs(default=42, shuffle=42)
-        config = TFDSEagerConfig(name="mnist", split="test[:100]", shuffle=True, seed=42)
-        source = TFDSEagerSource(config, rngs=rngs)
-
-        # Get some data
-        items = []
-        for i, item in enumerate(source):
-            if i >= 10:
-                break
-            items.append(item)
-
-        assert len(items) == 10
 
     except TFDS_TEST_SKIP_EXCEPTIONS as e:
         pytest.skip(f"Could not load MNIST dataset: {e}")
@@ -641,7 +618,7 @@ def test_tfds_streaming_source_config_validation():
 def test_from_tfds_creates_eager_for_small_datasets():
     """Test that from_tfds creates eager source for small datasets like MNIST."""
     try:
-        source = from_tfds("mnist", "test[:10]", rngs=nnx.Rngs(0))
+        source = from_tfds("mnist", "test[:10]")
 
         # Should be TFDSEagerSource (has .data attribute)
         assert hasattr(source, "data")
@@ -655,7 +632,7 @@ def test_from_tfds_creates_eager_for_small_datasets():
 def test_from_tfds_force_eager():
     """Test that from_tfds with eager=True creates eager source."""
     try:
-        source = from_tfds("mnist", "test[:10]", eager=True, rngs=nnx.Rngs(0))
+        source = from_tfds("mnist", "test[:10]", eager=True)
         assert isinstance(source, TFDSEagerSource)
 
     except TFDS_TEST_SKIP_EXCEPTIONS as e:
@@ -666,21 +643,8 @@ def test_from_tfds_force_eager():
 def test_from_tfds_force_streaming():
     """Test that from_tfds with eager=False creates streaming source."""
     try:
-        source = from_tfds("mnist", "test[:10]", eager=False, rngs=nnx.Rngs(0))
+        source = from_tfds("mnist", "test[:10]", eager=False)
         assert isinstance(source, TFDSStreamingSource)
-
-    except TFDS_TEST_SKIP_EXCEPTIONS as e:
-        pytest.skip(f"Could not load MNIST dataset: {e}")
-
-
-@pytest.mark.tfds
-def test_from_tfds_with_shuffling():
-    """Test that from_tfds passes shuffle parameter correctly."""
-    try:
-        source = from_tfds("mnist", "test[:20]", shuffle=True, seed=42, rngs=nnx.Rngs(0))
-
-        # Should have shuffling enabled
-        assert source.is_random_order is True  # type: ignore[reportAttributeAccessIssue]
 
     except TFDS_TEST_SKIP_EXCEPTIONS as e:
         pytest.skip(f"Could not load MNIST dataset: {e}")

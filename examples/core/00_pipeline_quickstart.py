@@ -125,7 +125,7 @@ Pass the source, the ordered list of stages, the batch size, and an
 
 # %%
 pipeline = Pipeline(
-    source=MemorySource(MemorySourceConfig(shuffle=False), data),
+    source=MemorySource(MemorySourceConfig(), data),
     stages=[Brightness(factor=1.1), Normalize()],
     batch_size=32,
     rngs=nnx.Rngs(0),

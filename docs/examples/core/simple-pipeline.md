@@ -112,7 +112,7 @@ It requires a config object and random number generators (rngs).
 ```python
 # Create source with config-based API
 source_config = MemorySourceConfig()
-source = MemorySource(source_config, data=data, rngs=nnx.Rngs(0))
+source = MemorySource(source_config, data=data)
 
 print(f"Source contains {len(source)} samples")
 # Expected output:

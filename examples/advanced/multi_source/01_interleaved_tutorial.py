@@ -100,21 +100,17 @@ Each source has its own configuration, preprocessing, and sampling.
 mnist_config = TFDSEagerConfig(
     name="mnist",
     split="train[:2000]",  # Subset for demo
-    shuffle=True,
-    seed=42,
 )
 
-mnist_source = TFDSEagerSource(mnist_config, rngs=nnx.Rngs(42))
+mnist_source = TFDSEagerSource(mnist_config)
 
 # Fashion-MNIST Source - 10 fashion classes
 fashion_config = TFDSEagerConfig(
     name="fashion_mnist",
     split="train[:2000]",
-    shuffle=True,
-    seed=43,
 )
 
-fashion_source = TFDSEagerSource(fashion_config, rngs=nnx.Rngs(43))
+fashion_source = TFDSEagerSource(fashion_config)
 
 print(f"MNIST samples: {len(mnist_source)}")
 print(f"Fashion-MNIST samples: {len(fashion_source)}")
@@ -230,13 +226,21 @@ First, let's verify each pipeline works independently.
 # %%
 # MNIST pipeline
 mnist_pipeline = Pipeline(
-    source=mnist_source, stages=[mnist_preprocessor], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0)
+    source=mnist_source,
+    stages=[mnist_preprocessor],
+    batch_size=BATCH_SIZE,
+    rngs=nnx.Rngs(0),
+    shuffle=True,
 )
 
 # Fashion pipeline (need fresh source)
-fashion_source2 = TFDSEagerSource(fashion_config, rngs=nnx.Rngs(43))
+fashion_source2 = TFDSEagerSource(fashion_config)
 fashion_pipeline = Pipeline(
-    source=fashion_source2, stages=[fashion_preprocessor], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0)
+    source=fashion_source2,
+    stages=[fashion_preprocessor],
+    batch_size=BATCH_SIZE,
+    rngs=nnx.Rngs(0),
+    shuffle=True,
 )
 
 # Test individual pipelines
@@ -310,20 +314,14 @@ def create_interleaved_pipelines():
         TFDSEagerConfig(
             name="mnist",
             split="train[:500]",
-            shuffle=True,
-            seed=42,
         ),
-        rngs=nnx.Rngs(42),
     )
 
     fashion_src = TFDSEagerSource(
         TFDSEagerConfig(
             name="fashion_mnist",
             split="train[:500]",
-            shuffle=True,
-            seed=43,
         ),
-        rngs=nnx.Rngs(43),
     )
 
     mnist_prep = ElementOperator(
@@ -339,10 +337,14 @@ def create_interleaved_pipelines():
     )
 
     mnist_pipe = Pipeline(
-        source=mnist_src, stages=[mnist_prep], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0)
+        source=mnist_src, stages=[mnist_prep], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0), shuffle=True
     )
     fashion_pipe = Pipeline(
-        source=fashion_src, stages=[fashion_prep], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0)
+        source=fashion_src,
+        stages=[fashion_prep],
+        batch_size=BATCH_SIZE,
+        rngs=nnx.Rngs(0),
+        shuffle=True,
     )
 
     return [mnist_pipe, fashion_pipe]
@@ -493,8 +495,7 @@ import time
 
 # Benchmark single source
 mnist_src = TFDSEagerSource(
-    TFDSEagerConfig(name="mnist", split="train[:1000]", shuffle=False),
-    rngs=nnx.Rngs(0),
+    TFDSEagerConfig(name="mnist", split="train[:1000]"),
 )
 mnist_prep = ElementOperator(
     ElementOperatorConfig(stochastic=False),

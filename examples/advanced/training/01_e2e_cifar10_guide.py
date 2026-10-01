@@ -176,11 +176,8 @@ def create_train_pipeline(seed=42):
         TFDSEagerConfig(
             name="cifar10",
             split=f"train[:{TRAIN_SAMPLES}]",
-            shuffle=True,
-            seed=seed,
             exclude_keys={"id"},
         ),
-        rngs=nnx.Rngs(seed),
     )
 
     # Preprocessor
@@ -237,7 +234,9 @@ def create_train_pipeline(seed=42):
         )
         stages.append(mixup)
 
-    return Pipeline(source=source, stages=stages, batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
+    return Pipeline(
+        source=source, stages=stages, batch_size=BATCH_SIZE, rngs=nnx.Rngs(0), shuffle=True
+    )
 
 
 def create_val_pipeline():
@@ -246,10 +245,8 @@ def create_val_pipeline():
         TFDSEagerConfig(
             name="cifar10",
             split=f"test[:{TEST_SAMPLES}]",
-            shuffle=False,
             exclude_keys={"id"},
         ),
-        rngs=nnx.Rngs(0),
     )
 
     prep = ElementOperator(
