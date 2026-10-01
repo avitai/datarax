@@ -1,11 +1,10 @@
-"""How Pipeline drives a source: indexed through get_records, streaming through get_batch.
+"""How Pipeline drives a source: an INDEXED one through get_records, a stream through get_batch.
 
 An indexed source names the record at each position (``record_indices_at``, sequential by
 default) and gathers records by those indices (``get_records``). The pipeline computes each
 batch's record indices once and hands the same indices to the gather and to the stages that key
-randomness on them. A source that implements neither
-``get_records`` nor ``get_batch`` cannot be iterated, and says so when iteration starts rather
-than failing inside the loop.
+randomness on them. The source's declared kind (``record_identity``) routes it; an ``INDEXED``
+source that does not implement ``get_records`` says so at its first pull.
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ import pytest
 from flax import nnx
 
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Batch
 from datarax.core.index_words import to_words
 from datarax.pipeline import iteration, Pipeline, PipelineIterator
@@ -39,6 +38,11 @@ _ROWS = 8
 class _IndexedOnly(DataSourceModule):
     """Source implementing get_records and nothing about access modes."""
 
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """What this source's record index means: INDEXED."""
+        return RecordIdentity.INDEXED
+
     def __init__(self) -> None:
         super().__init__(_Config())
         self.data = nnx.data(jnp.arange(_ROWS, dtype=jnp.float32).reshape(_ROWS, 1))
@@ -56,16 +60,16 @@ class _IndexedOnly(DataSourceModule):
 class _NoAccess(DataSourceModule):
     """Source implementing neither get_records nor get_batch."""
 
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """What this source's record index means: INDEXED."""
+        return RecordIdentity.INDEXED
+
     def __init__(self) -> None:
         super().__init__(_Config())
 
     def element_spec(self) -> dict[str, jax.ShapeDtypeStruct]:
         return {"x": jax.ShapeDtypeStruct((1,), jnp.float32)}
-
-
-def test_implementing_get_records_is_what_indexed_access_means() -> None:
-    assert _IndexedOnly().supports_indexed_access() is True
-    assert _NoAccess().supports_indexed_access() is False
 
 
 def test_a_source_without_get_records_has_no_indexed_read() -> None:
@@ -94,11 +98,11 @@ def test_a_source_that_serves_records_in_order_names_them_by_position() -> None:
     np.testing.assert_array_equal(to_words([6, 7, 0, 1]), ids)
 
 
-def test_iterating_a_source_without_an_access_method_names_both() -> None:
+def test_an_indexed_source_without_get_records_is_refused_at_its_first_pull() -> None:
     pipeline = Pipeline(source=_NoAccess(), stages=[], batch_size=4, rngs=nnx.Rngs(0))
 
-    with pytest.raises(TypeError, match=r"get_records.*get_batch"):
-        iter(pipeline)
+    with pytest.raises(NotImplementedError, match=r"get_records.*INDEXED"):
+        next(iter(pipeline))
 
 
 _NAMED: list[int] = []
@@ -189,6 +193,11 @@ def test_a_pipeline_over_record_list_data_serves_its_columns() -> None:
 
 class _ListStream(DataSourceModule):
     """A forward-only source whose batches are lists."""
+
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """What this source's record index means: ARRIVAL."""
+        return RecordIdentity.ARRIVAL
 
     def __init__(self) -> None:
         super().__init__(_Config())

@@ -16,7 +16,7 @@ import jax.numpy as jnp
 
 from datarax.core.batcher import BatcherModule
 from datarax.core.config import OperatorConfig, StructuralConfig
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Element
 from datarax.core.operator import OperatorModule
 
@@ -27,6 +27,11 @@ def test_data_source_interface():
     # Create a minimal implementation
     class MinimalDataSource(DataSourceModule):
         # REQUIRED: Wrap assigned data with nnx.data().
+        @property
+        def record_identity(self) -> RecordIdentity:
+            """What this source's record index means: ARRIVAL."""
+            return RecordIdentity.ARRIVAL
+
         data: list
 
         def __init__(self, config: StructuralConfig, data, *, rngs=None, name=None):
@@ -136,6 +141,11 @@ def test_data_source_extensibility():
     # Define a custom source with additional methods
     class CustomDataSource(DataSourceModule):
         # REQUIRED: Wrap assigned data with nnx.data().
+        @property
+        def record_identity(self) -> RecordIdentity:
+            """What this source's record index means: ARRIVAL."""
+            return RecordIdentity.ARRIVAL
+
         data: list
 
         def __init__(self, config: StructuralConfig, data, *, rngs=None, name=None):
@@ -268,6 +278,11 @@ def test_nnx_module_integration():
     # Define minimal source and operator
     class SimpleSource(DataSourceModule):
         # REQUIRED: Wrap assigned data with nnx.data().
+        @property
+        def record_identity(self) -> RecordIdentity:
+            """What this source's record index means: ARRIVAL."""
+            return RecordIdentity.ARRIVAL
+
         data: list
 
         def __init__(self, config: StructuralConfig, data, *, rngs=None, name=None):

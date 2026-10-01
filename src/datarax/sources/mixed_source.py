@@ -17,7 +17,7 @@ from flax import nnx
 
 from datarax.config.registry import register_component
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.index_words import low_words, to_words
 from datarax.core.spec import spec_mismatches, SpecMismatchError
 from datarax.sources._grain_streaming import data_source_to_iter_dataset, mix_streaming_sources
@@ -134,6 +134,11 @@ class MixDataSourcesNode(DataSourceModule):
 
     Total elements = sum of all source lengths.
     """
+
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """A mixed record's index is its source's offset plus its index within that source."""
+        return RecordIdentity.INDEXED
 
     def __init__(
         self,

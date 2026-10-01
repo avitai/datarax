@@ -66,7 +66,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core import batch_ops
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Batch
 from datarax.core.module import module_state, restore_module_state
 from datarax.core.spec import declared_spec, validate_batch, validate_device_dtypes
@@ -660,13 +660,13 @@ class Pipeline(nnx.Module):
             The session, iterated with ``for batch in session`` or ``next(session)``.
 
         Raises:
-            TypeError: If the source has no indexed access (a streaming source), which a
-                session cannot drive.
+            TypeError: If the source is not ``INDEXED`` (a stream), which a session cannot drive.
         """
-        if not self.source.supports_indexed_access():
+        kind = self.source.record_identity
+        if kind is not RecordIdentity.INDEXED:
             raise TypeError(
-                f"{type(self.source).__name__} has no indexed access (get_records), so it "
-                "cannot back a session; iterate the pipeline to stream it."
+                f"{type(self.source).__name__} is a {kind.name} stream, not an INDEXED source, "
+                "so it cannot back a session; iterate the pipeline to stream it."
             )
         return PipelineIterator(
             self,
@@ -680,31 +680,22 @@ class Pipeline(nnx.Module):
     def __iter__(self) -> PipelineIterator | Iterator[Batch]:
         """Iterate batches through a compiled session (the Tier-A fast path).
 
-        Random-access sources return a :class:`~datarax.pipeline.iteration.
-        PipelineIterator`: the module graph is split once per session and
-        batches are driven through a cached ``jax.jit`` step, with module
-        state written back when the session ends (exhaustion, ``close()``,
-        or garbage collection after an early break). Iteration stops after
-        ``num_epochs`` epochs; a stream (``num_epochs=None``) and a source without
-        ``__len__`` iterate indefinitely. Streaming sources (no ``get_records``) pull
-        batches on the host and run them through the compiled stage DAG via
-        :meth:`_iter_streaming` instead.
+        The source's declared kind routes it. An ``INDEXED`` source returns a
+        :class:`~datarax.pipeline.iteration.PipelineIterator`: the module graph is
+        split once per session and batches are driven through a cached ``jax.jit``
+        step, with module state written back when the session ends (exhaustion,
+        ``close()``, or garbage collection after an early break). Iteration stops
+        after ``num_epochs`` epochs; a stream (``num_epochs=None``) and a source
+        without ``__len__`` iterate indefinitely. A ``STREAM_IDS`` or ``ARRIVAL``
+        source pulls batches on the host and runs them through the compiled stage
+        DAG via :meth:`_iter_streaming` instead.
 
         Returns:
-            A :class:`~datarax.pipeline.iteration.PipelineIterator` for a source
-            with indexed access, otherwise a generator over streamed batches.
-
-        Raises:
-            TypeError: If the source implements neither ``get_records`` nor
-                ``get_batch``.
+            A :class:`~datarax.pipeline.iteration.PipelineIterator` for an ``INDEXED``
+            source, otherwise a generator over streamed batches.
         """
-        if self.source.supports_indexed_access():
+        if self.source.record_identity is RecordIdentity.INDEXED:
             return self.session()
-        if not self.source.supports_streaming():
-            raise TypeError(
-                f"{type(self.source).__name__} has neither indexed access (get_records) nor a "
-                "streaming get_batch, so Pipeline cannot iterate it."
-            )
         return self._iter_streaming()
 
     def _iter_streaming(self) -> Iterator[Batch]:  # noqa: DOC502

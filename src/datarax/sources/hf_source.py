@@ -31,6 +31,7 @@ from typing import Any
 import numpy as np
 from flax import nnx
 
+from datarax.core.data_source import RecordIdentity
 from datarax.sources._config_base import SourceConfigBase
 from datarax.sources._conversion import hf_to_jax
 from datarax.sources._source_base import DatasetSourceMixin, StreamingSourceBase
@@ -379,6 +380,11 @@ class HFStreamingSource(StreamingSourceBase):
 
     # Narrow config type for pyright (base stores via nnx.static)
     config: HFStreamingConfig  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """A HuggingFace stream reports no record ids, so a record is named by its arrival."""
+        return RecordIdentity.ARRIVAL
 
     def __init__(
         self,

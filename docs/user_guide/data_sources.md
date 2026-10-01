@@ -163,20 +163,18 @@ pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 
 ## Creating Custom Data Sources
 
-You can create custom data sources by subclassing `DataSourceModule`:
+A source whose records fit in host memory subclasses `EagerSource`, loads its records once and
+stores them with `_store`: indexing, iteration, the host read, the traced gather, the order and
+the spec are the base's.
 
 ```python
 import csv
 from dataclasses import dataclass
-from typing import Any
 
-import jax
-import jax.numpy as jnp
-from flax import nnx
+import numpy as np
 
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule
-from datarax.core.spec import array_to_spec_strip_leading
+from datarax.sources import EagerSource
 
 
 @dataclass(frozen=True)
@@ -191,62 +189,37 @@ class CSVDataSourceConfig(StructuralConfig):
             raise ValueError("file_path is required")
 
 
-class CSVDataSource(DataSourceModule):
-    """Random-access data source that reads numeric rows from a CSV file."""
+class CSVDataSource(EagerSource):
+    """Numeric rows of a CSV file, held on the host as one column."""
 
-    # Narrow config type for pyright (base stores via nnx.static)
-    config: CSVDataSourceConfig  # pyright: ignore[reportIncompatibleVariableOverride]
-
-    def __init__(
-        self,
-        config: CSVDataSourceConfig,
-        *,
-        rngs: nnx.Rngs | None = None,
-        name: str | None = None,
-    ) -> None:
-        # A StructuralConfig-derived config is the required first argument.
-        super().__init__(config, rngs=rngs, name=name)
-
-        # Load all rows once at construction (skip the header row).
+    def __init__(self, config: CSVDataSourceConfig, *, name: str | None = None) -> None:
+        super().__init__(config, name=name)
         with open(config.file_path, newline="") as f:
             reader = csv.reader(f)
             next(reader)  # skip header
             rows = [[float(value) for value in row] for row in reader]
-
-        # Wrap array data with nnx.data so NNX treats it as pytree data,
-        # not trainable parameters.
-        self.data = nnx.data(jnp.asarray(rows))
-
-    def __len__(self) -> int:
-        return int(self.data.shape[0])
-
-    def get_records(self, indices: jax.Array) -> dict[str, Any]:
-        # Return the rows at `indices`, which record_indices_at names (in order by default):
-        # uint32 (n, 2), each 64-bit index as its words (hi, lo). An in-memory table's rows
-        # all fit the low word.
-        return {"features": self.data[indices[:, 1]]}
-
-    def element_spec(self) -> dict[str, Any]:
-        # Declare exactly what get_records emits: one row of float32 features.
-        return {"features": array_to_spec_strip_leading(self.data)}
+        self._store({"features": np.asarray(rows, dtype=np.float32)})
 ```
 
-When creating custom data sources, ensure:
+Any other source subclasses `DataSourceModule` and declares what its record index means,
+`record_identity`:
 
-1. Your class extends `DataSourceModule`
+1. Your class extends `DataSourceModule` (or `EagerSource`, which declares `INDEXED`)
 2. You pass a `StructuralConfig`-derived config as the required first positional
    argument to `super().__init__(config, ...)`
-3. You implement the Pipeline contract: for random access, implement a stateless,
-   JAX-traceable `get_records(indices)`, which is what makes
-   `supports_indexed_access()` true; for forward-only streaming, implement
-   `get_batch(batch_size)` instead. A source implementing neither is refused when
-   iteration starts. An indexed source that shuffles, partitions or mixes records
-   also overrides `record_indices_at(start, size, key)` to return the stable index
-   of the record at each position, uint32 `(size, 2)` with each 64-bit index as its
+3. You declare the kind with a `record_identity` property returning `RecordIdentity.INDEXED`
+   (a stable position in the source), `STREAM_IDS` (an id the stream reports) or `ARRIVAL`
+   (the arrival ordinal); a source without one is refused at construction. The kind routes it: an `INDEXED` source
+   implements a stateless, JAX-traceable `get_records(indices)` and the pipeline serves it
+   through its compiled session; a `STREAM_IDS` or `ARRIVAL` source implements
+   `get_batch(batch_size)` and is served by the streaming path. An indexed source that
+   partitions or mixes records also overrides `record_indices_at(start, size, key)` to return
+   the stable index of the record at each position of the order the key selects (the
+   sequential order when the key is `None`), uint32 `(size, 2)` with each 64-bit index as its
    words `(hi, lo)` (`datarax.core.index_words`); the pipeline computes those indices once per
-   batch, gathers them with `get_records`, and stochastic operators key each
-   record's randomness on the same indices. The default names records by position,
-   which is right for a source that serves them in order, like the one above
+   batch, gathers them with `get_records`, and stochastic operators key each record's
+   randomness on the same indices. The default names records by position, shuffled by the
+   key when the pipeline shuffles
 4. `element_spec()` describes exactly the records your batches carry: the same
    keys, per-element shapes and dtypes. For a streaming source, `Pipeline` checks
    every batch against it with `datarax.core.spec.validate_batch` before running

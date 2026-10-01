@@ -35,6 +35,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
+from datarax.core.data_source import RecordIdentity
 from datarax.sources._config_base import SourceConfigBase
 from datarax.sources._conversion import tf_to_jax
 from datarax.sources._source_base import DatasetSourceMixin, StreamingSourceBase
@@ -424,6 +425,11 @@ class TFDSStreamingSource(StreamingSourceBase):
             train_step(batch)
         ```
     """
+
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """TFDS can report a record's id (its file shard and offset): the stream's own names."""
+        return RecordIdentity.STREAM_IDS
 
     def __init__(
         self,

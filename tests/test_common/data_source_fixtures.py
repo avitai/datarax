@@ -11,7 +11,7 @@ import flax.nnx as nnx
 import jax.numpy as jnp
 
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Element
 
 
@@ -22,6 +22,11 @@ class MockDataSourceModule(DataSourceModule):
     state management capabilities, checkpointing, and state restoration.
     It provides predictable data generation with controllable state.
     """
+
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """What this source's record index means: INDEXED."""
+        return RecordIdentity.INDEXED
 
     size: nnx.Variable[int]
     _current_position: nnx.Variable[int]

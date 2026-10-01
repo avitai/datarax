@@ -28,7 +28,7 @@ from jaxtyping import PyTree
 
 from datarax.core import batch_ops
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Batch, Element, PADDING_INDEX
 from datarax.core.index_words import from_words, low_words, to_words
 from datarax.core.spec import array_to_spec_strip_leading, device_spec
@@ -226,6 +226,11 @@ class EagerSource(DataSourceModule):
     """
 
     data: PyTree
+
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """An in-memory record's index is its stable position in the source."""
+        return RecordIdentity.INDEXED
 
     def __init__(self, config: StructuralConfig, *, name: str | None = None) -> None:
         """Create a source holding no records yet.

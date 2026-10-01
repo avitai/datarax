@@ -229,7 +229,7 @@ def register_component(component_type: str, name: str | None = None) -> Callable
 
         from datarax.config.registry import create_component_from_config, register_component
         from datarax.core.config import StructuralConfig
-        from datarax.core.data_source import DataSourceModule
+        from datarax.core.data_source import DataSourceModule, RecordIdentity
 
 
         @dataclass(frozen=True)
@@ -239,6 +239,10 @@ def register_component(component_type: str, name: str | None = None) -> Callable
 
         @register_component("source", "CountingSource")
         class CountingSource(DataSourceModule):
+            @property
+            def record_identity(self) -> RecordIdentity:
+                return RecordIdentity.INDEXED
+
             def __init__(self, config: CountingSourceConfig, *, rngs: nnx.Rngs | None = None):
                 super().__init__(config, rngs=rngs)
 

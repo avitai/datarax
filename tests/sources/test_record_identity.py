@@ -1,0 +1,170 @@
+"""T1: every source declares what its record index means, and the pipeline routes on it.
+
+``RecordIdentity`` has three kinds: ``INDEXED`` (a stable position in the source),
+``STREAM_IDS`` (an id the stream reports) and ``ARRIVAL`` (the arrival ordinal).
+``DataSourceModule.record_identity`` is abstract, so a source that does not declare its kind is
+refused at construction. The access predicates and ``get_batch_at`` are gone: the declared kind
+is the one source of truth, and ``Pipeline`` serves an ``INDEXED`` source through its compiled
+session and every other through the streaming path.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import jax
+import numpy as np
+import pytest
+from flax import nnx
+
+from datarax.core.config import StructuralConfig
+from datarax.core.data_source import DataSourceModule, RecordIdentity
+from datarax.pipeline import iteration
+from datarax.pipeline.pipeline import Pipeline
+from datarax.sources import EagerSource, MemorySource
+from datarax.sources.mixed_source import MixDataSourcesNode
+from datarax.sources.streaming_disk_source import StreamingDiskSource
+
+
+@dataclass(frozen=True)
+class _Config(StructuralConfig):
+    pass
+
+
+def test_the_kinds_are_exactly_three() -> None:
+    assert {kind.name for kind in RecordIdentity} == {"INDEXED", "STREAM_IDS", "ARRIVAL"}
+
+
+def test_every_exported_source_declares_its_kind() -> None:
+    from datarax.sources.array_record_source import ArrayRecordSourceModule
+    from datarax.sources.hf_source import HFEagerSource, HFStreamingSource
+    from datarax.sources.tfds_source import TFDSEagerSource, TFDSStreamingSource
+
+    expected = {
+        EagerSource: RecordIdentity.INDEXED,
+        MemorySource: RecordIdentity.INDEXED,
+        TFDSEagerSource: RecordIdentity.INDEXED,
+        HFEagerSource: RecordIdentity.INDEXED,
+        StreamingDiskSource: RecordIdentity.INDEXED,
+        MixDataSourcesNode: RecordIdentity.INDEXED,
+        TFDSStreamingSource: RecordIdentity.STREAM_IDS,
+        ArrayRecordSourceModule: RecordIdentity.STREAM_IDS,
+        HFStreamingSource: RecordIdentity.ARRIVAL,
+    }
+    for source_class, kind in expected.items():
+        # Each declares a constant: its property's getter returns the kind for any instance.
+        assert source_class.record_identity.fget(None) is kind, source_class.__name__
+
+
+def test_a_source_without_a_kind_is_refused_at_construction() -> None:
+    class Undeclared(DataSourceModule):
+        def __len__(self) -> int:
+            return 1
+
+    with pytest.raises(TypeError, match=r"Undeclared.*record_identity"):
+        Undeclared(_Config())  # pyright: ignore[reportAbstractUsage] - the refusal under test
+
+
+def test_a_property_declares_the_kind() -> None:
+    class Declared(DataSourceModule):
+        @property
+        def record_identity(self) -> RecordIdentity:
+            """What this source's record index means: ARRIVAL."""
+            return RecordIdentity.ARRIVAL
+
+    assert Declared(_Config()).record_identity is RecordIdentity.ARRIVAL
+
+
+def test_the_predicates_and_get_batch_at_are_gone() -> None:
+    for name in ("supports_indexed_access", "supports_streaming", "get_batch_at"):
+        assert not hasattr(DataSourceModule, name), name
+        assert not hasattr(MemorySource, name), name
+
+
+class _Indexed(DataSourceModule):
+    """An indexed source over a column, with get_records."""
+
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """What this source's record index means: INDEXED."""
+        return RecordIdentity.INDEXED
+
+    def __init__(self) -> None:
+        super().__init__(_Config())
+        self.data = nnx.data({"x": np.arange(8, dtype=np.float32)})
+
+    def __len__(self) -> int:
+        return 8
+
+    def get_records(self, indices: jax.Array) -> dict[str, jax.Array]:
+        return {"x": jax.numpy.take(jax.numpy.asarray(self.data["x"]), indices[:, 1])}
+
+    def element_spec(self) -> Any:
+        return {"x": jax.ShapeDtypeStruct((), np.float32)}
+
+
+class _Stream(DataSourceModule):
+    """A forward-only stream of eight records in batches."""
+
+    def __init__(self, kind: RecordIdentity) -> None:
+        super().__init__(_Config())
+        self._kind = kind
+        self.pulled = 0
+
+    @property
+    def record_identity(self) -> RecordIdentity:
+        return self._kind
+
+    def get_batch(self, batch_size: int) -> dict[str, np.ndarray]:
+        start = self.pulled
+        self.pulled = min(8, start + batch_size)
+        return {"x": np.arange(start, self.pulled, dtype=np.float32)} if start < 8 else {}
+
+    def element_spec(self) -> Any:
+        return {"x": jax.ShapeDtypeStruct((), np.float32)}
+
+
+def _served(source: DataSourceModule) -> tuple[list[float], bool]:
+    """The records a pipeline serves, and whether a compiled session served them."""
+    pipeline = Pipeline(source=source, stages=[], batch_size=4, rngs=nnx.Rngs(0))
+    batches: Iterator[Any] = iter(pipeline)
+    in_session = isinstance(batches, iteration.PipelineIterator)
+    values = [float(v) for batch in batches for v in np.asarray(batch["x"])]
+    return values, in_session
+
+
+def test_an_indexed_source_is_served_by_the_compiled_session() -> None:
+    values, in_session = _served(_Indexed())
+    assert in_session
+    assert values == [float(i) for i in range(8)]
+
+
+@pytest.mark.parametrize("kind", [RecordIdentity.STREAM_IDS, RecordIdentity.ARRIVAL])
+def test_a_stream_is_served_by_the_streaming_path(kind: RecordIdentity) -> None:
+    source = _Stream(kind)
+    values, in_session = _served(source)
+    assert not in_session
+    assert values == [float(i) for i in range(8)]
+    assert source.pulled == 8
+
+
+def test_a_session_of_a_stream_is_refused_naming_its_kind() -> None:
+    pipeline = Pipeline(
+        source=_Stream(RecordIdentity.ARRIVAL), stages=[], batch_size=4, rngs=nnx.Rngs(0)
+    )
+    with pytest.raises(TypeError, match="ARRIVAL"):
+        pipeline.session()
+
+
+def test_a_memory_mapped_source_is_indexed(tmp_path: Path) -> None:
+    from datarax.sources.streaming_disk_source import StreamingDiskSourceConfig
+
+    path = tmp_path / "x.npy"
+    np.save(path, np.arange(8, dtype=np.float32))
+    source = StreamingDiskSource(StreamingDiskSourceConfig(path=str(path)))
+    values, in_session = _served(source)
+    assert in_session
+    assert values == [float(i) for i in range(8)]

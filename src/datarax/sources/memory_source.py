@@ -192,14 +192,6 @@ class MemorySource(EagerSource):
             shard_id=self.config.shard_id or 0,
         )
 
-    def supports_streaming(self) -> bool:
-        """``False``: ``get_batch`` is the host read of named records, not a pipeline stream.
-
-        Returns:
-            ``False``.
-        """
-        return False
-
     def __repr__(self) -> str:
         """String representation."""
         return f"MemorySource(length={self.length})"

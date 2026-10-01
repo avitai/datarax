@@ -143,7 +143,7 @@ from flax import nnx
 
 from datarax.checkpoint import IteratorCheckpoint
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, RecordIdentity
 
 
 @dataclass(frozen=True)
@@ -153,6 +153,11 @@ class RecordReaderConfig(StructuralConfig):
 
 class RecordReader(DataSourceModule):
     """Serves records one at a time; its position is state, so a checkpoint resumes it."""
+
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """A record is named by when it is read."""
+        return RecordIdentity.ARRIVAL
 
     def __init__(self, config: RecordReaderConfig, records: list[dict]) -> None:
         super().__init__(config)

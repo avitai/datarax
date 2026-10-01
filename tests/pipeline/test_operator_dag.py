@@ -19,7 +19,7 @@ from substrax.testing.compiles import expect_compiles
 
 from datarax.core import batch_ops
 from datarax.core.config import OperatorConfig, StructuralConfig
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Batch, Element
 from datarax.core.operator import OperatorModule, require_key
 from datarax.operators.batch_mix_operator import BatchMixOperator, BatchMixOperatorConfig
@@ -400,13 +400,15 @@ class TestPipeline:
 class _Stream(DataSourceModule):
     """A forward-only source over prepared batches, then an empty batch."""
 
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """What this source's record index means: ARRIVAL."""
+        return RecordIdentity.ARRIVAL
+
     def __init__(self, chunks: list[dict[str, np.ndarray]]) -> None:
         super().__init__(StructuralConfig(stochastic=False))
         self._chunks = nnx.data(list(chunks))
         self._served = 0
-
-    def supports_indexed_access(self) -> bool:
-        return False
 
     def element_spec(self) -> dict[str, jax.ShapeDtypeStruct]:
         return {"image": jax.ShapeDtypeStruct((4, 4, 3), np.float32)}

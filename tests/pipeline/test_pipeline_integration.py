@@ -176,10 +176,9 @@ def test_pipeline_handles_single_element_source() -> None:
 def test_pipeline_iter_over_memory_source_terminates() -> None:
     """``__iter__`` over a random-access source stops after one pass.
 
-    Regression: MemorySource must report ``supports_indexed_access() ==
-    True``; otherwise ``__iter__`` falls back to the streaming path, whose
-    only stop condition is an empty batch — which a wrapping ``get_batch``
-    never produces, so iteration never ends.
+    Regression: MemorySource must declare itself ``INDEXED``; otherwise
+    ``__iter__`` takes the streaming path, whose only stop condition is an
+    empty batch, which the host read never produces, so iteration never ends.
     """
     pipeline = Pipeline(
         source=_source(16),

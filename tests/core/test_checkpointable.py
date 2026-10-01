@@ -12,7 +12,7 @@ import pytest
 from datarax.checkpoint import IteratorCheckpoint
 from datarax.core import batch_ops
 from datarax.core.config import DataraxModuleConfig, ElementOperatorConfig, StructuralConfig
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.module import DataraxModule
 from datarax.operators import ElementOperator
 from datarax.typing import CheckpointableIterator
@@ -42,6 +42,11 @@ class _RecordReaderConfig(StructuralConfig):
 
 class _RecordReader(DataSourceModule):
     """A checkpointable host iterator: records are construction data, the position is state."""
+
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """What this source's record index means: ARRIVAL."""
+        return RecordIdentity.ARRIVAL
 
     def __init__(self, records: list[str]) -> None:
         super().__init__(_RecordReaderConfig())

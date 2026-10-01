@@ -14,7 +14,7 @@ import pytest
 
 from datarax.core import batch_ops
 from datarax.core.config import DataraxModuleConfig, OperatorConfig, StructuralConfig
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Element
 from datarax.core.module import DataraxModule
 from datarax.core.operator import OperatorModule, require_key
@@ -28,6 +28,11 @@ def test_seed():
 
 class RandomArraySourceModule(DataSourceModule):
     """Source module that generates random arrays using RNG."""
+
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """What this source's record index means: ARRIVAL."""
+        return RecordIdentity.ARRIVAL
 
     def __init__(self, config: StructuralConfig, num_items=10, shape=(5,), *, rngs=None, name=None):
         super().__init__(config, rngs=rngs, name=name)

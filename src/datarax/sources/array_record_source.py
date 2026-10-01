@@ -12,7 +12,7 @@ import numpy as np
 from flax import nnx
 
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.spec import array_to_spec
 from datarax.sources._grain_bridge import validate_index_batch
 from datarax.utils.state import build_state_with_iteration_fields, restore_iteration_fields
@@ -66,6 +66,15 @@ class ArrayRecordSourceModule(DataSourceModule):
 
     # Narrow config type for pyright (base stores via nnx.static)
     config: ArrayRecordSourceConfig  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """``STREAM_IDS``: the source streams decoded batches forward with ``get_batch``.
+
+        Its records are named by the ids it reports until batched random-access reads serve it
+        as an ``INDEXED`` source.
+        """
+        return RecordIdentity.STREAM_IDS
 
     def __init__(
         self,

@@ -12,7 +12,7 @@ from datarax.core.config import (
     SamplerConfig,
     StructuralConfig,
 )
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, RecordIdentity
 
 # The record and batch types
 from datarax.core.element_batch import Batch, Element
@@ -42,6 +42,7 @@ __all__ = [
     "StructuralModule",
     # ===== Data Source Modules =====
     "DataSourceModule",
+    "RecordIdentity",
     # ===== Sampler Modules =====
     "SamplerModule",
     # ===== Batcher Modules =====

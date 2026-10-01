@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.index_shuffle import shuffle_positions_host
 from datarax.core.index_words import from_words, MAX_RECORDS
 from datarax.pipeline.epochs import EpochPlan
@@ -38,6 +38,11 @@ class _Config(StructuralConfig):
 class _Sized(DataSourceModule):
     """A source with a length and nothing else: the default names records by position."""
 
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """What this source's record index means: INDEXED."""
+        return RecordIdentity.INDEXED
+
     def __init__(self, length: int) -> None:
         super().__init__(_Config())
         self.rows = length
@@ -48,6 +53,11 @@ class _Sized(DataSourceModule):
 
 class _Unsized(DataSourceModule):
     """A source without a length: its positions are never wrapped."""
+
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """What this source's record index means: INDEXED."""
+        return RecordIdentity.INDEXED
 
     def __init__(self) -> None:
         super().__init__(_Config())

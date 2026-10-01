@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `datarax.core.RecordIdentity` (`INDEXED`, `STREAM_IDS`, `ARRIVAL`) and the abstract
+  `DataSourceModule.record_identity`: every source declares what its record index means (a
+  stable position, an id the stream reports, or the arrival ordinal), and a source that does
+  not is refused at construction. The in-memory sources, `StreamingDiskSource` and
+  `MixDataSourcesNode` are `INDEXED`, `TFDSStreamingSource` and `ArrayRecordSourceModule`
+  `STREAM_IDS`, `HFStreamingSource` `ARRIVAL`. A source in another package declares its kind
+  with a `record_identity` property returning it.
 - `datarax.sources.EagerSource`, the public base of every in-memory source (`MemorySource`,
   `TFDSEagerSource`, `HFEagerSource`). It holds a record's array part as host NumPy columns and
   its non-array part (strings, bytes, Python objects) as the record's provenance, an immutable
@@ -53,6 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `datarax.core.index_shuffle` (`shuffle_positions`, `shuffle_positions_host`, `index_shuffle`),
   beside `datarax.core.index_words`; the samplers, the sources and core import it from there.
   The old path is gone, with no alias: import from `datarax.core.index_shuffle`.
+- `Pipeline` routes a source on its declared kind: an `INDEXED` source through the compiled
+  session, any other through the streaming path. `Pipeline.session()` refuses a stream naming
+  its kind; an `INDEXED` source that does not implement `get_records` is refused at its first
+  pull, naming it.
 - **In-memory sources hold their records on the host.** `MemorySource`, `TFDSEagerSource` and
   `HFEagerSource` store NumPy columns: device arrays given to them are copied to the host once,
   at construction, and `HFEagerSource` builds its columns without any device array. A list of
@@ -259,6 +270,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `DataSourceModule.supports_indexed_access` and `supports_streaming`, and every override:
+  `record_identity` is the one declaration of a source's kind.
 - The stateful host read and its state: `get_batch(batch_size, key=None)`, `reset()` and the
   `index`/`epoch` Variables of `MemorySource` and the eager sources (use the stateless
   `get_batch(indices, epochs=...)`; a pipeline owns the position and epoch),

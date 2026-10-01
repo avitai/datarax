@@ -24,7 +24,7 @@ from flax import nnx
 from substrax.testing.compiles import expect_compiles
 
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Batch
 from datarax.core.index_words import from_words
 from datarax.pipeline.pipeline import Pipeline
@@ -230,6 +230,11 @@ class _Config(StructuralConfig):
 class _Sized(DataSourceModule):
     """A source with a length and nothing else: the default ``record_indices_at``."""
 
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """What this source's record index means: INDEXED."""
+        return RecordIdentity.INDEXED
+
     def __init__(self, length: int) -> None:
         super().__init__(_Config())
         self.rows = length
@@ -240,6 +245,11 @@ class _Sized(DataSourceModule):
 
 class _Unsized(DataSourceModule):
     """A source without a length: sequential positions only."""
+
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """What this source's record index means: INDEXED."""
+        return RecordIdentity.INDEXED
 
     def __init__(self) -> None:
         super().__init__(_Config())
