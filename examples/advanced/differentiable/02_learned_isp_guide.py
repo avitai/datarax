@@ -234,7 +234,7 @@ def load_cifar10_lowlight(
         "label": jnp.array(labels),
         "clean_image": jnp.array(clean_images),
     }
-    source = MemorySource(MemorySourceConfig(), data=data_dict, rngs=nnx.Rngs(seed))
+    source = MemorySource(MemorySourceConfig(), data=data_dict)
     return data_dict, source
 
 

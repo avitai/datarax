@@ -26,10 +26,10 @@ from flax import nnx
 
 from datarax.core.config import ElementOperatorConfig
 from datarax.core.element_batch import Batch
+from datarax.core.index_shuffle import shuffle_positions
 from datarax.core.index_words import from_words, to_words
 from datarax.operators import ElementOperator
 from datarax.pipeline import iteration, Pipeline, PipelineIterator
-from datarax.samplers.index_shuffle import shuffle_positions
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from tests.pipeline.test_pipeline_streaming import _ListStream
 
@@ -38,22 +38,19 @@ _N = 100
 _BATCH = 32
 
 
-def _source(n: int = _N, *, shuffle: bool = False, seed: int = 0) -> MemorySource:
-    return MemorySource(
-        MemorySourceConfig(shuffle=shuffle),
-        data={"x": np.arange(n, dtype=np.float32)},
-        rngs=nnx.Rngs(seed, shuffle=seed),
-    )
+def _source(n: int = _N) -> MemorySource:
+    return MemorySource(MemorySourceConfig(), data={"x": np.arange(n, dtype=np.float32)})
 
 
 def _pipeline(
     n: int = _N, *, shuffle: bool = False, batch_size: int = _BATCH, **kwargs
 ) -> Pipeline:
     return Pipeline(
-        source=_source(n, shuffle=shuffle),
+        source=_source(n),
         stages=[],
         batch_size=batch_size,
         rngs=nnx.Rngs(0),
+        shuffle=shuffle,
         **kwargs,
     )
 
@@ -178,7 +175,7 @@ def _composed(
 
     Row ``i`` is position ``(start + i) mod N`` of epoch ``epoch + (start + i) // N``, and serves
     that epoch's record at that position: ``shuffle_positions`` under the epoch's key for a
-    shuffled source, the position itself otherwise.
+    shuffling pipeline, the position itself otherwise.
     """
     n = len(pipeline.source)
     records, epochs = [], []
@@ -289,10 +286,10 @@ class _Model(nnx.Module):
 def _at_the_boundary() -> tuple[Pipeline, np.ndarray]:
     """A shuffled pipeline two batches in, and the records its next (boundary) batch holds."""
     pipeline = Pipeline(
-        source=_source(10, shuffle=True), stages=[_Scale()], batch_size=4, rngs=nnx.Rngs(0)
+        source=_source(10), stages=[_Scale()], batch_size=4, rngs=nnx.Rngs(0), shuffle=True
     )
     reference = Pipeline(
-        source=_source(10, shuffle=True), stages=[], batch_size=4, rngs=nnx.Rngs(0)
+        source=_source(10), stages=[], batch_size=4, rngs=nnx.Rngs(0), shuffle=True
     )
     for _ in range(2):
         pipeline.step()
@@ -326,10 +323,11 @@ class TestTransformsAtTheBoundary:
     def test_crossing_epochs_adds_no_compiled_step_or_dispatch_entry(self) -> None:
         pipeline, _ = _at_the_boundary()
         session = Pipeline(
-            source=_source(10, shuffle=True),
+            source=_source(10),
             stages=[_Scale()],
             batch_size=4,
             rngs=nnx.Rngs(0),
+            shuffle=True,
             num_epochs=None,
         ).session()
         next(session)
@@ -376,7 +374,7 @@ def _augmented(*, drop_last: bool) -> Pipeline:
         fn=_augment,
         rngs=nnx.Rngs(aug=7),
     )
-    source = MemorySource(MemorySourceConfig(shuffle=False), data={"x": np.zeros(10, np.float32)})
+    source = MemorySource(MemorySourceConfig(), data={"x": np.zeros(10, np.float32)})
     return Pipeline(
         source=source, stages=[operator], batch_size=4, rngs=nnx.Rngs(0), drop_last=drop_last
     )

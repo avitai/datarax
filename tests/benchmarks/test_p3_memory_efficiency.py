@@ -6,10 +6,10 @@ Note: The comparative benchmark (vs SPDL adapter) requires the spdl package
 and is skipped if unavailable. The functional tests always run.
 """
 
-import flax.nnx as nnx
 import numpy as np
 import pytest
 
+from datarax.core.index_words import to_words
 from datarax.sources import MemorySource, MemorySourceConfig
 from tests.benchmarks.performance_targets import (
     classify_rss_comparison,
@@ -28,7 +28,7 @@ class TestP3MemoryEfficiency:
             "image": np.random.default_rng(42).integers(0, 255, (1000, 8, 8, 3), dtype=np.uint8)
         }
         config = MemorySourceConfig(prefetch_size=0)
-        source = MemorySource(config, data, rngs=nnx.Rngs(0))
+        source = MemorySource(config, data)
 
         # Iterate through entire source — should use views not copies
         delta_mb = measure_peak_rss_delta_mb(lambda: list(source))
@@ -40,14 +40,16 @@ class TestP3MemoryEfficiency:
         assert delta_mb < 200, f"RSS increased by {delta_mb:.0f} MB during iteration"
 
     def test_gather_batch_efficiency(self):
-        """Verify _gather_batch uses array indexing not list comprehension for arrays."""
+        """The host read gathers with array indexing: one NumPy column, views for a run."""
         data = {"x": np.arange(500)}
         config = MemorySourceConfig(prefetch_size=0)
-        source = MemorySource(config, data, rngs=nnx.Rngs(0))
+        source = MemorySource(config, data)
 
-        # get_batch should work efficiently
-        batch = source.get_batch(32)
+        rows = to_words(np.arange(32, dtype=np.uint64))
+        batch = source.get_batch(rows)
+        assert isinstance(batch["x"], np.ndarray)
         assert len(batch["x"]) == 32
+        assert np.shares_memory(source.get_batch(rows, contiguous=True)["x"], source.data["x"])
 
     def test_peak_rss_within_1_5x_spdl(self, cv1_large_image_data):
         """Compare peak RSS against SPDL (requires spdl package).

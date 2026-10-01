@@ -20,8 +20,8 @@ data = {
 }
 
 # 2. Create the source.
-config = MemorySourceConfig(shuffle=False)
-source = MemorySource(config, data=data, rngs=nnx.Rngs(0))
+config = MemorySourceConfig()
+source = MemorySource(config, data=data)
 
 # 3. Build the pipeline. Pipeline auto-batches via batch_size.
 pipeline = Pipeline(source=source, stages=[], batch_size=10, rngs=nnx.Rngs(0))
@@ -201,7 +201,7 @@ data = {
     "image": (np.ones((100, 28, 28, 3), dtype=np.float32) * 128.0),
     "label": (np.arange(100) % 10).astype(np.int32),
 }
-source = MemorySource(MemorySourceConfig(shuffle=False), data=data, rngs=nnx.Rngs(0))
+source = MemorySource(MemorySourceConfig(), data=data)
 
 pipeline = Pipeline(
     source=source,

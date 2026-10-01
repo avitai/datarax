@@ -27,7 +27,7 @@ If you're familiar with PyTorch + torchvision, here's how Datarax compares:
 | PyTorch | Datarax |
 |---------|---------|
 | `torchvision.datasets.MNIST(train=True)` | `TFDSEagerSource(TFDSEagerConfig(name="mnist", split="train"))` |
-| `DataLoader(dataset, batch_size=128, shuffle=True)` | `Pipeline(source=source, stages=[], batch_size=128, rngs=nnx.Rngs(0))` with shuffled source |
+| `DataLoader(dataset, batch_size=128, shuffle=True)` | `Pipeline(source=source, stages=[], batch_size=128, rngs=nnx.Rngs(0), shuffle=True)` |
 | `transforms.Normalize(mean, std)` | Custom `ElementOperator` with JAX operations |
 | `for images, labels in loader:` | `for batch in pipeline:` (dict-based batches) |
 | `model.train()` / `model.eval()` | Separate train/test pipelines (with/without augmentation) |
@@ -40,7 +40,7 @@ If you're familiar with PyTorch + torchvision, here's how Datarax compares:
 |--------------------|---------|
 | `tfds.load('mnist', split='train')` | `TFDSEagerSource(TFDSEagerConfig(name='mnist', split='train'))` |
 | `dataset.map(normalize).batch(128)` | `Pipeline(source=source, stages=[normalizer], batch_size=128, rngs=nnx.Rngs(0))` |
-| `dataset.shuffle(buffer_size=10000)` | Source-level shuffling with `shuffle=True` |
+| `dataset.shuffle(buffer_size=10000)` | `Pipeline(..., shuffle=True)` (a full shuffle, no buffer) |
 | `dataset.repeat(epochs)` | Create fresh pipeline per epoch |
 | `@tf.function` JIT compilation | `@nnx.jit` for JAX compilation |
 
@@ -170,20 +170,17 @@ Configuration:
 train_config = TFDSEagerConfig(
     name="mnist",
     split=f"train[:{TRAIN_SAMPLES}]",
-    shuffle=True,
-    seed=42,
 )
 
-train_source = TFDSEagerSource(train_config, rngs=nnx.Rngs(42))
+train_source = TFDSEagerSource(train_config)
 
-# Create test source (no shuffle)
+# Create test source
 test_config = TFDSEagerConfig(
     name="mnist",
     split="test[:2000]",  # Subset for faster evaluation
-    shuffle=False,
 )
 
-test_source = TFDSEagerSource(test_config, rngs=nnx.Rngs(0))
+test_source = TFDSEagerSource(test_config)
 
 print(f"Training samples: {len(train_source)}")
 print(f"Test samples: {len(test_source)}")
@@ -284,6 +281,7 @@ train_pipeline = Pipeline(
     stages=[preprocessor, brightness_aug, noise_aug],
     batch_size=BATCH_SIZE,
     rngs=nnx.Rngs(0),
+    shuffle=True,
 )
 
 # Test pipeline without augmentation (create fresh sources for actual use)
@@ -424,7 +422,7 @@ batch_throughputs = []
 
 def create_train_pipeline():
     """Create a fresh training pipeline for each epoch."""
-    source = TFDSEagerSource(train_config, rngs=nnx.Rngs(42))
+    source = TFDSEagerSource(train_config)
 
     preprocessor = ElementOperator(
         ElementOperatorConfig(stochastic=False),
@@ -458,12 +456,13 @@ def create_train_pipeline():
         stages=[preprocessor, brightness, noise],
         batch_size=BATCH_SIZE,
         rngs=nnx.Rngs(0),
+        shuffle=True,
     )
 
 
 def create_test_pipeline():
     """Create a fresh test pipeline."""
-    source = TFDSEagerSource(test_config, rngs=nnx.Rngs(0))
+    source = TFDSEagerSource(test_config)
 
     preprocessor = ElementOperator(
         ElementOperatorConfig(stochastic=False),
@@ -539,7 +538,7 @@ Starting training...
 Epoch 1/3:
   Train loss: 0.5495
   Test accuracy: 93.85%
-  Time: 21.8s
+  Time: 20.0s
 
   Epoch 2, Batch 0: loss=0.2300
   Epoch 2, Batch 20: loss=0.1549
@@ -548,7 +547,7 @@ Epoch 1/3:
 Epoch 2/3:
   Train loss: 0.1559
   Test accuracy: 96.35%
-  Time: 19.3s
+  Time: 16.5s
 
   Epoch 3, Batch 0: loss=0.1529
   Epoch 3, Batch 20: loss=0.0933
@@ -557,7 +556,7 @@ Epoch 2/3:
 Epoch 3/3:
   Train loss: 0.1021
   Test accuracy: 96.90%
-  Time: 18.6s
+  Time: 15.6s
 
 Training complete!
 ```
@@ -735,8 +734,8 @@ Saved: docs/assets/images/examples/cv-mnist-throughput.png
 | Metric | Value |
 |--------|-------|
 | Final Test Accuracy | 96.90% (epoch 3) |
-| Average Throughput | ~5000 samples/s (CPU) |
-| Training Time per Epoch | 18.6s to 21.8s (GPU) |
+| Average Throughput | 55985 samples/s per batch request (GPU, the throughput figure's average) |
+| Training Time per Epoch | 15.6s to 20.0s (GPU) |
 | Model Parameters | ~421k |
 
 ### Key Takeaways

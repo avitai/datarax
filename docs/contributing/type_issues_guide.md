@@ -330,7 +330,7 @@ from flax import nnx
 from datarax.sources import MemorySource, MemorySourceConfig
 from datarax.pipeline import Pipeline
 
-source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+source = MemorySource(MemorySourceConfig(), data=data)
 
 # ✅ Correct: keyword arguments, stages are nnx.Module instances
 pipeline = Pipeline(

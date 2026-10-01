@@ -20,7 +20,7 @@ import pytest
 from flax import nnx
 
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Batch
 from datarax.pipeline.pipeline import Pipeline
 from tests.benchmarks.performance_targets import measure_latency
@@ -42,13 +42,15 @@ class _Config(StructuralConfig):
 class _Stream(DataSourceModule):
     """Forward-only source replaying one prepared batch."""
 
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """What this source's record index means: ARRIVAL."""
+        return RecordIdentity.ARRIVAL
+
     def __init__(self, batch: dict[str, jax.Array]) -> None:
         super().__init__(_Config())
         self._batch = nnx.data(batch)
         self.cursor = nnx.Variable(0)
-
-    def supports_indexed_access(self) -> bool:
-        return False
 
     def element_spec(self) -> dict[str, jax.ShapeDtypeStruct]:
         return {

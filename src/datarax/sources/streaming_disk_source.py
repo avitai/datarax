@@ -30,7 +30,7 @@ from flax import nnx
 from jax.experimental import io_callback
 
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.index_words import from_words
 from datarax.typing import DataDict
 
@@ -74,6 +74,11 @@ class StreamingDiskSource(DataSourceModule):
     """``io_callback``-backed source for arrays larger than RAM, with indexed access."""
 
     config: StreamingDiskSourceConfig  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """A record's index is its row in the on-disk array."""
+        return RecordIdentity.INDEXED
 
     def __init__(
         self,

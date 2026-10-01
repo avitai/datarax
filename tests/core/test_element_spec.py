@@ -18,7 +18,7 @@ from flax import nnx
 
 from datarax.core.batcher import BatcherModule
 from datarax.core.config import OperatorConfig, SamplerConfig, StructuralConfig
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Element
 from datarax.core.operator import OperatorModule
 from datarax.core.sampler import SamplerModule
@@ -31,6 +31,11 @@ class _MinimalSourceConfig(StructuralConfig):
 
 class _UnimplementedSource(DataSourceModule):
     """Subclass without overriding element_spec — should raise."""
+
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """What this source's record index means: INDEXED."""
+        return RecordIdentity.INDEXED
 
 
 def test_data_source_module_requires_element_spec() -> None:

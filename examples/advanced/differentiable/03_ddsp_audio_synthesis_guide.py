@@ -584,8 +584,8 @@ train_data, test_data = load_nsynth(
 )
 
 # Wrap in MemorySource
-train_source = MemorySource(MemorySourceConfig(), data=train_data, rngs=nnx.Rngs(0))
-test_source = MemorySource(MemorySourceConfig(), data=test_data, rngs=nnx.Rngs(1))
+train_source = MemorySource(MemorySourceConfig(), data=train_data)
+test_source = MemorySource(MemorySourceConfig(), data=test_data)
 
 print(
     f"Train: audio={train_data['audio'].shape}, "
@@ -1959,8 +1959,8 @@ def main():
         n_test=cfg.n_test,
         synthetic=cfg.use_synthetic_data,
     )
-    src_train = MemorySource(MemorySourceConfig(), data=data_train, rngs=nnx.Rngs(0))
-    src_test = MemorySource(MemorySourceConfig(), data=data_test, rngs=nnx.Rngs(1))
+    src_train = MemorySource(MemorySourceConfig(), data=data_train)
+    src_test = MemorySource(MemorySourceConfig(), data=data_test)
     print(f"  Train: {data_train['audio'].shape}, Test: {data_test['audio'].shape}")
 
     # Train

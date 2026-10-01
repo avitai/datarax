@@ -76,7 +76,7 @@ def create_pipeline(
         3 = normalize + brightness + contrast
         4 = normalize + brightness + contrast + noise
     """
-    source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(seed))
+    source = MemorySource(MemorySourceConfig(), data=data)
     normalizer = ElementOperator(
         ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0)
     )

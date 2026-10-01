@@ -83,7 +83,7 @@ from flax import nnx
 
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.pipeline import Pipeline
-from datarax.sources import HFEagerConfig, HFEagerSource
+from datarax.sources import HFEagerConfig, HFEagerSource, HFStreamingConfig, HFStreamingSource
 
 
 print(f"JAX devices: {jax.devices()}")
@@ -95,13 +95,13 @@ JAX devices: [CudaDevice(id=0)]
 ```
 
 ```python
-# Load IMDB eagerly into JAX-compatible arrays
+# Load IMDB eagerly: numeric columns on the host, text as each record's provenance
 config = HFEagerConfig(
     name="stanfordnlp/imdb",  # Use full dataset path for reliability
     split="train",
 )
 
-source = HFEagerSource(config, rngs=nnx.Rngs(0))
+source = HFEagerSource(config)
 print(f"Loaded HuggingFace dataset: {config.name}")
 print(f"Split: {config.split}")
 print("Mode: Eager load with local HuggingFace cache")
@@ -116,14 +116,17 @@ Mode: Eager load with local HuggingFace cache
 
 ## Step 2: Inspect Data Structure
 
-Unlike image datasets, IMDB returns text strings. Let's examine the structure.
+Unlike image datasets, IMDB returns text strings. The eager source keeps each review's text
+as the record's provenance, beside its numeric columns, and never batches it; the streaming
+source serves the raw records, text included, so it is the one to read reviews with.
 
 ```python
-# For text datasets, iterate element-by-element since strings can't be
-# batched as JAX arrays (text needs tokenization first for batching)
+# Strings can't be batched as JAX arrays (text needs tokenization first), so read the raw
+# records one by one from the streaming source
 print("Sample reviews from IMDB:")
+raw_records = HFStreamingSource(HFStreamingConfig(name="stanfordnlp/imdb", split="train"))
 
-for i, element in enumerate(source):
+for i, element in enumerate(raw_records):
     if i >= 3:
         break
 
@@ -141,9 +144,6 @@ for i, element in enumerate(source):
         text = text[0] if text else ""
     text_preview = str(text)[:100] + "..." if len(str(text)) > 100 else str(text)
     print(f"  Text preview: {text_preview}")
-
-# Reset source for further use
-source.reset()
 
 # Expected output:
 # Example 1:
@@ -211,7 +211,7 @@ Created label normalization operator
 Chain the source with our preprocessing operator.
 
 **Important:** We exclude the 'text' field because strings can't be batched as JAX arrays.
-The source also shuffles the split, which stores its negative reviews first.
+The pipeline also shuffles the split, which stores its negative reviews first.
 
 ```python
 # Create fresh source for the full pipeline
@@ -222,13 +222,13 @@ source2 = HFEagerSource(
         name="stanfordnlp/imdb",
         split="train",
         exclude_keys={"text"},  # Exclude text field - can't batch strings
-        shuffle=True,  # The split starts with negative reviews; shuffle for a mixed sample
     ),
-    rngs=nnx.Rngs(1),
 )
 
-# Build pipeline
-pipeline = Pipeline(source=source2, stages=[text_stats_op], batch_size=8, rngs=nnx.Rngs(0))
+# Build pipeline; the split starts with negative reviews, so shuffle for a mixed sample
+pipeline = Pipeline(
+    source=source2, stages=[text_stats_op], batch_size=8, rngs=nnx.Rngs(0), shuffle=True
+)
 
 print("Pipeline: HFEagerSource(IMDB) -> TextStats -> Output")
 ```
@@ -296,7 +296,7 @@ Sentiment Summary (160 reviews analyzed):
 ```
 
 The `stanfordnlp/imdb` train split starts with negative reviews (the three inspected in
-Step 2 are all negative). The pipeline's source is built with `shuffle=True`, so the 160
+Step 2 are all negative). The pipeline is built with `shuffle=True`, so the 160
 reviews analyzed mix both sentiments.
 
 ## Text vs Image Pipeline Comparison

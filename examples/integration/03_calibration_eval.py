@@ -126,7 +126,7 @@ def main() -> None:
     data = {"image": jnp.asarray(images), "label": jnp.asarray(labels)}
 
     pipeline = Pipeline(
-        source=MemorySource(MemorySourceConfig(shuffle=False), data),
+        source=MemorySource(MemorySourceConfig(), data),
         stages=[],
         batch_size=32,
         rngs=nnx.Rngs(0),

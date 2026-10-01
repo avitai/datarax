@@ -121,7 +121,7 @@ data = {
     "image": np.random.randint(0, 255, (1000, 28, 28, 1)).astype(np.float32),
     "label": np.random.randint(0, 10, (1000,)).astype(np.int32),
 }
-source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+source = MemorySource(MemorySourceConfig(), data=data)
 
 # Build pipeline with DAG-based API
 normalizer = ElementOperator(

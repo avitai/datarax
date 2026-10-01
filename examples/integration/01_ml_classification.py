@@ -240,7 +240,7 @@ def main() -> None:
     print("\nTier A: for batch in pipeline (compatible with any training framework)")
     print("-" * 70)
     pipeline_a = Pipeline(
-        source=MemorySource(MemorySourceConfig(shuffle=False), data),
+        source=MemorySource(MemorySourceConfig(), data),
         stages=[_BrightnessJitter(1.1), _Normalize()],
         batch_size=batch_size,
         rngs=nnx.Rngs(0),
@@ -257,7 +257,7 @@ def main() -> None:
     print("\nTier C: pipeline.scan (entire epoch as one XLA graph)")
     print("-" * 70)
     pipeline_c = Pipeline(
-        source=MemorySource(MemorySourceConfig(shuffle=False), data),
+        source=MemorySource(MemorySourceConfig(), data),
         stages=[_BrightnessJitter(1.1), _Normalize()],
         batch_size=batch_size,
         rngs=nnx.Rngs(0),

@@ -32,7 +32,7 @@ import pytest
 from flax import nnx
 
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Batch
 from datarax.core.spec import SpecMismatchError
 from datarax.operators import ElementOperator, ElementOperatorConfig
@@ -51,6 +51,11 @@ class _ListStream(DataSourceModule):
     attribute that ``reset`` replaces.
     """
 
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """What this source's record index means: ARRIVAL."""
+        return RecordIdentity.ARRIVAL
+
     def __init__(
         self,
         batches: Sequence[dict[str, Any]],
@@ -63,9 +68,6 @@ class _ListStream(DataSourceModule):
         self.cursor = nnx.Variable(0)
         self.spec_calls = nnx.Variable(0)
         self.pulls = nnx.Variable(0)
-
-    def supports_indexed_access(self) -> bool:
-        return False
 
     def element_spec(self) -> dict[str, jax.ShapeDtypeStruct]:
         self.spec_calls.set_value(int(self.spec_calls.get_value()) + 1)

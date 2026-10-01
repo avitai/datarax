@@ -39,11 +39,11 @@ for i, batch in enumerate(pipeline):
         break
 ```
 
-`MemorySource` accepts a dict of arrays, one per field with records along the first axis, which a
-`Pipeline` batches on the device. It also accepts a list of records (dictionaries, `Element`s,
-strings of any length) as a record store for indexing, iteration and `get_batch`; a list has no
-columns to gather a batch from, so a `Pipeline` refuses it. Stack fixed-shape records into a dict of
-arrays to batch them.
+`MemorySource` accepts a dict of arrays, one per field with records along the first axis, held as
+host NumPy columns that a `Pipeline` batches on the device. It also accepts a list of records
+(dictionaries, `Element`s, numbers), which it turns into columns once at construction: the
+numeric fields of equal shape are stacked, and strings and other objects are kept as each
+record's provenance, never batched (see [Records as Columns](#records-as-columns)).
 
 `Pipeline.from_arrays(data, batch_size=..., seed=..., shuffle=...)` is this source and a pipeline
 with no stages in one call; `drop_last` and `num_epochs` reach the pipeline as in its constructor.
@@ -131,11 +131,11 @@ for i, batch in enumerate(pipeline):
         break
 ```
 
-`HFEagerSource` loads the entire dataset into JAX arrays at initialization, so it is best for datasets that fit in memory. For datasets too large to hold in memory, use `HFStreamingSource` (shown above), which wraps HuggingFace's streaming iterator.
+`HFEagerSource` loads the entire dataset into host NumPy columns at initialization (text and other objects as each record's provenance), so it is best for datasets that fit in memory. For datasets too large to hold in memory, use `HFStreamingSource` (shown above), which wraps HuggingFace's streaming iterator.
 
 > **Note:** Dataset configs/variants (for example selecting `"sst2"` within the `"glue"` dataset) are currently unsupported — pass the standalone dataset name to `name`. There is no `config_name` (or subset) field on the HF configs.
 
-> **Tip:** Use `from_hf(name, split, streaming=True, rngs=...)` to select eager or streaming mode, or construct `HFEagerConfig`/`HFStreamingConfig` directly.
+> **Tip:** Use `from_hf(name, split, streaming=True)` to select eager or streaming mode, or construct `HFEagerConfig`/`HFStreamingConfig` directly.
 
 ### ArrayRecordSourceModule
 
@@ -163,20 +163,18 @@ pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 
 ## Creating Custom Data Sources
 
-You can create custom data sources by subclassing `DataSourceModule`:
+A source whose records fit in host memory subclasses `EagerSource`, loads its records once and
+stores them with `_store`: indexing, iteration, the host read, the traced gather, the order and
+the spec are the base's.
 
 ```python
 import csv
 from dataclasses import dataclass
-from typing import Any
 
-import jax
-import jax.numpy as jnp
-from flax import nnx
+import numpy as np
 
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule
-from datarax.core.spec import array_to_spec_strip_leading
+from datarax.sources import EagerSource
 
 
 @dataclass(frozen=True)
@@ -191,63 +189,37 @@ class CSVDataSourceConfig(StructuralConfig):
             raise ValueError("file_path is required")
 
 
-class CSVDataSource(DataSourceModule):
-    """Random-access data source that reads numeric rows from a CSV file."""
+class CSVDataSource(EagerSource):
+    """Numeric rows of a CSV file, held on the host as one column."""
 
-    # Narrow config type for pyright (base stores via nnx.static)
-    config: CSVDataSourceConfig  # pyright: ignore[reportIncompatibleVariableOverride]
-
-    def __init__(
-        self,
-        config: CSVDataSourceConfig,
-        *,
-        rngs: nnx.Rngs | None = None,
-        name: str | None = None,
-    ) -> None:
-        # A StructuralConfig-derived config is the required first argument.
-        super().__init__(config, rngs=rngs, name=name)
-
-        # Load all rows once at construction (skip the header row).
+    def __init__(self, config: CSVDataSourceConfig, *, name: str | None = None) -> None:
+        super().__init__(config, name=name)
         with open(config.file_path, newline="") as f:
             reader = csv.reader(f)
             next(reader)  # skip header
             rows = [[float(value) for value in row] for row in reader]
-
-        # Wrap array data with nnx.data so NNX treats it as pytree data,
-        # not trainable parameters.
-        self.data = nnx.data(jnp.asarray(rows))
-
-    def __len__(self) -> int:
-        return int(self.data.shape[0])
-
-    def get_records(self, indices: jax.Array) -> dict[str, Any]:
-        # Return the rows at `indices`, which record_indices_at names (in order by default):
-        # uint32 (n, 2), each 64-bit index as its words (hi, lo). An in-memory table's rows
-        # all fit the low word.
-        return {"features": self.data[indices[:, 1]]}
-
-    def element_spec(self) -> dict[str, Any]:
-        # Declare exactly what get_records emits: one row of float32 features.
-        return {"features": array_to_spec_strip_leading(self.data)}
+        self._store({"features": np.asarray(rows, dtype=np.float32)})
 ```
 
-When creating custom data sources, ensure:
+Any other source subclasses `DataSourceModule` and declares what its record index means,
+`record_identity`:
 
-1. Your class extends `DataSourceModule`
+1. Your class extends `DataSourceModule` (or `EagerSource`, which declares `INDEXED`)
 2. You pass a `StructuralConfig`-derived config as the required first positional
    argument to `super().__init__(config, ...)`
-3. You implement the Pipeline contract: for random access, implement a stateless,
-   JAX-traceable `get_records(indices)`, which is what makes
-   `supports_indexed_access()` true; for forward-only streaming, implement
-   `get_batch(batch_size)` instead. A source implementing neither is refused when
-   iteration starts. An indexed source that shuffles, partitions or mixes records
-   also overrides `record_indices_at(start, size, key)` to return the stable index
-   of the record at each position, uint32 `(size, 2)` with each 64-bit index as its
+3. You declare the kind with a `record_identity` property returning `RecordIdentity.INDEXED`
+   (a stable position in the source), `STREAM_IDS` (an id the stream reports) or `ARRIVAL`
+   (the arrival ordinal); a source without one is refused at construction. The kind routes it: an `INDEXED` source
+   implements a stateless, JAX-traceable `get_records(indices)` and the pipeline serves it
+   through its compiled session; a `STREAM_IDS` or `ARRIVAL` source implements
+   `get_batch(batch_size)` and is served by the streaming path. An indexed source that
+   partitions or mixes records also overrides `record_indices_at(start, size, key)` to return
+   the stable index of the record at each position of the order the key selects (the
+   sequential order when the key is `None`), uint32 `(size, 2)` with each 64-bit index as its
    words `(hi, lo)` (`datarax.core.index_words`); the pipeline computes those indices once per
-   batch, gathers them with `get_records`, and stochastic operators key each
-   record's randomness on the same indices. The default names records by position,
-   which is right for a source that serves them in order, like the one above.
-   `get_batch_at(start, size, key)` is the two composed
+   batch, gathers them with `get_records`, and stochastic operators key each record's
+   randomness on the same indices. The default names records by position, shuffled by the
+   key when the pipeline shuffles
 4. `element_spec()` describes exactly the records your batches carry: the same
    keys, per-element shapes and dtypes. For a streaming source, `Pipeline` checks
    every batch against it with `datarax.core.spec.validate_batch` before running
@@ -288,25 +260,26 @@ pipeline = (
 
 ## Data Source Features
 
-### State Management
+### Records as Columns
 
-All data sources inherit state management from `DataSourceModule`:
+An in-memory source holds its records as host NumPy columns and keeps no iteration state: the
+pipeline owns the order, the position and the epoch, and checkpoints them. A list of records is
+turned into columns once, at construction: numbers become columns, and strings and other
+objects become each record's provenance, kept beside the columns and never part of a batch.
+Every record must hold the same numeric fields with the same shapes; a field whose shape varies
+is refused, naming the field, so pad it to a fixed length (with its mask or length in `data`) or
+pack records with segment ids.
 
 ```python
+import numpy as np
+from datarax.core.index_words import to_words
 from datarax.sources import MemorySource, MemorySourceConfig
 
-# Create source
-data = [{"x": i} for i in range(100)]
-config = MemorySourceConfig()
-source = MemorySource(config, data)
+data = [{"x": i, "name": f"record {i}"} for i in range(100)]
+source = MemorySource(MemorySourceConfig(), data)
 
-# Iterate through some elements
-iterator = iter(source)
-for i in range(10):
-    element = next(iterator)
-
-# Source maintains iteration state
-# Can be used for checkpointing
+source[3]  # {"x": np.int64(3)}: the record's numbers
+batch = source.get_batch(to_words(np.asarray([7, 2, 9])))  # a Batch of those records
 ```
 
 ## Best Practices for Data Sources
@@ -314,7 +287,7 @@ for i in range(10):
 When working with data sources:
 
 1. **Use appropriate source types**: Choose the right data source for your data to optimize loading and processing
-2. **Leverage shuffling**: For training, enable shuffling on the source config, e.g. `TFDSEagerConfig(name="mnist", split="train", shuffle=True, seed=42)`. Eager sources shuffle in O(1) memory via a keyed Feistel bijection — there is no shuffle buffer to size.
+2. **Leverage shuffling**: For training, build the pipeline with `shuffle=True`, e.g. `Pipeline(source=TFDSEagerSource(TFDSEagerConfig(name="mnist", split="train")), stages=[], batch_size=128, rngs=nnx.Rngs(42), shuffle=True)`. The pipeline owns the order and shuffles in O(1) memory via a keyed Feistel bijection — there is no shuffle buffer to size.
 3. **Batch appropriately**: Batching is the Pipeline's job — set `Pipeline(source=source, stages=[], batch_size=N, rngs=nnx.Rngs(0))`. Sources do not expose a `.batch()` method.
 4. **Handle state properly**: Ensure your custom data sources properly manage their state
 5. **Monitor performance**: Watch for bottlenecks in data loading, especially with large datasets

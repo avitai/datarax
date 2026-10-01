@@ -16,6 +16,7 @@ from substrax.testing.compiles import compiled_programs
 # Skip tests if datasets is not available
 datasets = pytest.importorskip("datasets")
 
+from datarax.core.index_words import to_words
 from datarax.sources import (
     from_hf,
     HFEagerConfig,
@@ -68,7 +69,7 @@ def test_hf_eager_source_initialization(mock_numeric_dataset, monkeypatch):
 
     # Test with config-based initialization
     config = HFEagerConfig(name="mock_dataset", split="train")
-    source = HFEagerSource(config, rngs=nnx.Rngs(42))
+    source = HFEagerSource(config)
     assert source is not None
     assert source.dataset_name == "mock_dataset"
     assert source.split_name == "train"
@@ -85,7 +86,7 @@ def test_hf_eager_source_iteration(mock_numeric_dataset, monkeypatch):
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
 
     config = HFEagerConfig(name="mock_dataset", split="train")
-    source = HFEagerSource(config, rngs=nnx.Rngs(42))
+    source = HFEagerSource(config)
 
     # Get the first element
     data = next(iter(source))
@@ -93,14 +94,14 @@ def test_hf_eager_source_iteration(mock_numeric_dataset, monkeypatch):
     # Verify the data structure (numeric fields only)
     assert "label" in data or "feature" in data
 
-    # HFEagerSource converts numeric data to JAX arrays
+    # HFEagerSource holds numeric data as host NumPy columns
     if "feature" in data:
-        assert isinstance(data["feature"], jax.Array)
+        assert isinstance(data["feature"], np.ndarray)
 
 
 @pytest.mark.unit
 def test_hf_eager_source_preserves_text_columns(mock_dataset, monkeypatch):
-    """Test HFEagerSource can inspect unbatched text columns."""
+    """Text columns are kept as the records' provenance, beside the array columns."""
 
     def mock_load_dataset(name, split=None, **kwargs):
         del kwargs, name, split
@@ -109,17 +110,18 @@ def test_hf_eager_source_preserves_text_columns(mock_dataset, monkeypatch):
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
 
     config = HFEagerConfig(name="mock_dataset", split="train")
-    source = HFEagerSource(config, rngs=nnx.Rngs(42))
+    source = HFEagerSource(config)
     item = next(iter(source))
 
     assert len(source) == 10
-    assert item["text"] == "This is text 0"
-    assert isinstance(item["label"], jax.Array)
+    assert "text" not in item
+    assert source._provenance.value[0]["text"] == "This is text 0"
+    assert isinstance(item["label"], np.generic)  # a scalar row of a host column
 
 
 @pytest.mark.unit
 def test_hf_eager_source_batch_method(mock_numeric_dataset, monkeypatch):
-    """Test HFEagerSource's get_batch method."""
+    """Test HFEagerSource's host read, ``get_batch(indices)``."""
 
     def mock_load_dataset(name, split=None, **kwargs):
         del kwargs, name, split
@@ -128,17 +130,14 @@ def test_hf_eager_source_batch_method(mock_numeric_dataset, monkeypatch):
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
 
     config = HFEagerConfig(name="mock_dataset", split="train")
-    source = HFEagerSource(config, rngs=nnx.Rngs(42))
+    source = HFEagerSource(config)
 
-    # Get a batch
-    batch = source.get_batch(batch_size=4)
+    # Read records 0..3
+    batch = source.get_batch(to_words(np.arange(4, dtype=np.uint64)))
 
-    # Verify batch structure
-    assert "label" in batch or "feature" in batch
-
-    # Verify batch contains data
-    if "label" in batch and isinstance(batch["label"], jax.Array):
-        assert batch["label"].shape[0] == 4
+    assert set(batch.data) == {"label", "feature"}
+    assert batch["label"].shape[0] == 4
+    np.testing.assert_array_equal(batch["label"], np.arange(4))
 
 
 @pytest.mark.unit
@@ -152,7 +151,7 @@ def test_hf_eager_source_random_access(mock_numeric_dataset, monkeypatch):
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
 
     config = HFEagerConfig(name="mock_dataset", split="train")
-    source = HFEagerSource(config, rngs=nnx.Rngs(42))
+    source = HFEagerSource(config)
 
     # Test random access
     item_3 = source[3]
@@ -179,51 +178,17 @@ def test_hf_eager_source_with_filters(mock_dataset, monkeypatch):
     config_include = HFEagerConfig(
         name="mock_dataset", split="train", include_keys={"label", "feature"}
     )
-    source_include = HFEagerSource(config_include, rngs=nnx.Rngs(42))
+    source_include = HFEagerSource(config_include)
     data_include = next(iter(source_include))
     assert "label" in data_include or "feature" in data_include
     assert "text" not in data_include  # Should be excluded
 
     # Test exclude_keys
     config_exclude = HFEagerConfig(name="mock_dataset", split="train", exclude_keys={"text"})
-    source_exclude = HFEagerSource(config_exclude, rngs=nnx.Rngs(42))
+    source_exclude = HFEagerSource(config_exclude)
     data_exclude = next(iter(source_exclude))
     assert "label" in data_exclude or "feature" in data_exclude
     assert "text" not in data_exclude  # Should be excluded
-
-
-@pytest.mark.unit
-def test_hf_eager_source_shuffling(mock_numeric_dataset, monkeypatch):
-    """Test HFEagerSource with shuffling enabled."""
-
-    def mock_load_dataset(name, split=None, **kwargs):
-        del kwargs, name, split
-        return mock_numeric_dataset
-
-    monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
-
-    # Create source without shuffle
-    config_no_shuffle = HFEagerConfig(name="mock_dataset", split="train", shuffle=False)
-    source_no_shuffle = HFEagerSource(config_no_shuffle, rngs=nnx.Rngs(42))
-
-    # Create source with shuffle
-    config_shuffle = HFEagerConfig(name="mock_dataset", split="train", shuffle=True, seed=43)
-    source_shuffle = HFEagerSource(config_shuffle, rngs=nnx.Rngs(43))
-
-    # Collect data from both - create iterator once and use it
-    iter_no_shuffle = iter(source_no_shuffle)
-    data_no_shuffle = [next(iter_no_shuffle)["label"] for _ in range(5)]
-
-    # Create iterator for shuffled source
-    iter_shuffle = iter(source_shuffle)
-    data_shuffle = [next(iter_shuffle)["label"] for _ in range(5)]
-
-    # Without shuffle, should be in order [0, 1, 2, 3, 4]
-    assert data_no_shuffle == [0, 1, 2, 3, 4]
-
-    # With shuffle, order may be different (though could randomly be same)
-    # Just verify they're valid indices
-    assert all(0 <= label < 10 for label in data_shuffle)
 
 
 @pytest.mark.unit
@@ -238,7 +203,7 @@ def test_hf_eager_source_length(mock_numeric_dataset, monkeypatch):
 
     # Non-streaming dataset should have length
     config = HFEagerConfig(name="mock_dataset", split="train")
-    source = HFEagerSource(config, rngs=nnx.Rngs(42))
+    source = HFEagerSource(config)
     assert len(source) == 10
 
 
@@ -323,7 +288,7 @@ def test_hf_eager_source_empty_dataset(monkeypatch):
 
     # Should raise error because no data to load
     with pytest.raises(ValueError, match="produced no elements"):
-        HFEagerSource(config, rngs=nnx.Rngs(42))
+        HFEagerSource(config)
 
 
 @pytest.mark.unit
@@ -399,7 +364,7 @@ def test_from_hf_creates_eager_by_default(mock_numeric_dataset, monkeypatch):
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
 
-    source = from_hf("mock", "train", rngs=nnx.Rngs(0))
+    source = from_hf("mock", "train")
 
     # Should be eager source (has .data attribute)
     assert hasattr(source, "data")
@@ -418,7 +383,7 @@ def test_from_hf_with_streaming_flag(mock_dataset, monkeypatch):
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
 
-    source = from_hf("mock", "train", streaming=True, rngs=nnx.Rngs(0))
+    source = from_hf("mock", "train", streaming=True)
 
     # Should be streaming source
     assert isinstance(source, HFStreamingSource)
@@ -435,7 +400,7 @@ def test_from_hf_force_eager(mock_numeric_dataset, monkeypatch):
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
 
-    source = from_hf("mock", "train", eager=True, rngs=nnx.Rngs(0))
+    source = from_hf("mock", "train", eager=True)
     assert isinstance(source, HFEagerSource)
 
 
@@ -449,24 +414,8 @@ def test_from_hf_force_streaming(mock_dataset, monkeypatch):
 
     monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
 
-    source = from_hf("mock", "train", eager=False, rngs=nnx.Rngs(0))
+    source = from_hf("mock", "train", eager=False)
     assert isinstance(source, HFStreamingSource)
-
-
-@pytest.mark.unit
-def test_from_hf_with_shuffling(mock_numeric_dataset, monkeypatch):
-    """Test that from_hf passes shuffle parameter correctly."""
-
-    def mock_load_dataset(name, split=None, **kwargs):
-        del kwargs, name, split
-        return mock_numeric_dataset
-
-    monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
-
-    source = from_hf("mock", "train", shuffle=True, seed=42, rngs=nnx.Rngs(0))
-
-    # Should have shuffling enabled
-    assert source.is_random_order is True  # type: ignore[reportAttributeAccessIssue]
 
 
 # =============================================================================
@@ -493,7 +442,7 @@ def test_hf_eager_source_image_column_matches_the_decoded_images(image_dataset, 
     dataset, pixels = image_dataset
     monkeypatch.setattr(datasets, "load_dataset", lambda name, split=None, **kwargs: dataset)
 
-    source = HFEagerSource(HFEagerConfig(name="images", split="train"), rngs=nnx.Rngs(0))
+    source = HFEagerSource(HFEagerConfig(name="images", split="train"))
 
     np.testing.assert_array_equal(np.asarray(source.data["image"]), pixels)
     assert source.data["image"].dtype == jnp.uint8
@@ -519,6 +468,6 @@ def test_hf_eager_source_construction_stacks_no_device_array_per_row(image_datas
     jax.clear_caches()
 
     with compiled_programs() as compiled:
-        HFEagerSource(HFEagerConfig(name="images", split="train"), rngs=nnx.Rngs(0))
+        HFEagerSource(HFEagerConfig(name="images", split="train"))
 
     assert "jit(stack)" not in compiled

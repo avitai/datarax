@@ -321,6 +321,7 @@ nav:
       - Sources:
           - Overview: sources/index.md
           - array_record_source: sources/array_record_source.md
+          - eager_source: sources/eager_source.md
           - hf_source: sources/hf_source.md
           - memory_source: sources/memory_source.md
           - mixed_source: sources/mixed_source.md

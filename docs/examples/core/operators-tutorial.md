@@ -139,7 +139,7 @@ data = {
     "metadata": np.random.rand(num_samples, 4).astype(np.float32),
 }
 
-source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+source = MemorySource(MemorySourceConfig(), data=data)
 print(f"Created dataset: {num_samples} samples")
 print(f"  image: {data['image'].shape}")
 print(f"  label: {data['label'].shape}")
@@ -368,7 +368,7 @@ field_filter = ElementOperator(
 )
 
 # Test field filtering
-source2 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(1))
+source2 = MemorySource(MemorySourceConfig(), data=data)
 pipeline = Pipeline(source=source2, stages=[field_filter], batch_size=8, rngs=nnx.Rngs(0))
 batch = next(iter(pipeline))
 
@@ -432,7 +432,7 @@ Test the composite operator:
 
 ```python
 # Test the composite operator
-source3 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(2))
+source3 = MemorySource(MemorySourceConfig(), data=data)
 pipeline = Pipeline(source=source3, stages=[sequential_augment], batch_size=16, rngs=nnx.Rngs(0))
 batch = next(iter(pipeline))
 
@@ -497,7 +497,7 @@ brightness = BrightnessOperator(
 )
 
 # Build pipeline with chained operators
-source4 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(3))
+source4 = MemorySource(MemorySourceConfig(), data=data)
 full_pipeline = Pipeline(
     source=source4, stages=[normalizer, flipper, brightness], batch_size=32, rngs=nnx.Rngs(0)
 )

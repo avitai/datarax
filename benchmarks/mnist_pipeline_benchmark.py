@@ -60,7 +60,7 @@ def create_pipeline(
     data: dict, batch_size: int = 32, with_augmentation: bool = False, seed: int = 0
 ):
     """Create an MNIST pipeline with optional augmentation."""
-    source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(seed))
+    source = MemorySource(MemorySourceConfig(), data=data)
 
     normalizer = ElementOperator(
         ElementOperatorConfig(stochastic=False),

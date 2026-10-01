@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `datarax.core.RecordIdentity` (`INDEXED`, `STREAM_IDS`, `ARRIVAL`) and the abstract
+  `DataSourceModule.record_identity`: every source declares what its record index means (a
+  stable position, an id the stream reports, or the arrival ordinal), and a source that does
+  not is refused at construction. The in-memory sources, `StreamingDiskSource` and
+  `MixDataSourcesNode` are `INDEXED`, `TFDSStreamingSource` and `ArrayRecordSourceModule`
+  `STREAM_IDS`, `HFStreamingSource` `ARRIVAL`. A source in another package declares its kind
+  with a `record_identity` property returning it.
+- `datarax.sources.EagerSource`, the public base of every in-memory source (`MemorySource`,
+  `TFDSEagerSource`, `HFEagerSource`). It holds a record's array part as host NumPy columns and
+  its non-array part (strings, bytes, Python objects) as the record's provenance, an immutable
+  mapping per record in a host holder NNX keeps out of module state and out of every trace,
+  never part of a batch. Its host read, `get_batch(indices, *, epochs=0, contiguous=False)`,
+  gathers the records named by uint32 `(n, 2)` index words with one NumPy gather (a run the
+  caller declares contiguous as views) and returns a `Batch` named with those indices and
+  epochs; it reads and changes no state, creates no device array, and refuses the padding index
+  and indices outside the source by name. A subclass stores its columns with `_store`.
 - `datarax.core.Maybe(value, present)`: a data field a record may lack, at any depth in `data`.
   `value` holds zeros where a record has no value and `present` is a bool per record. It is a
   frozen registered pytree node of the two arrays, so batch operations, placement, specs and
@@ -40,6 +56,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The record order lives in core.** `datarax.samplers.index_shuffle` is now
+  `datarax.core.index_shuffle` (`shuffle_positions`, `shuffle_positions_host`, `index_shuffle`),
+  beside `datarax.core.index_words`; the samplers, the sources and core import it from there.
+  The old path is gone, with no alias: import from `datarax.core.index_shuffle`.
+- `Pipeline` routes a source on its declared kind: an `INDEXED` source through the compiled
+  session, any other through the streaming path. `Pipeline.session()` refuses a stream naming
+  its kind; an `INDEXED` source that does not implement `get_records` is refused at its first
+  pull, naming it.
+- **In-memory sources hold their records on the host.** `MemorySource`, `TFDSEagerSource` and
+  `HFEagerSource` store NumPy columns: device arrays given to them are copied to the host once,
+  at construction, and `HFEagerSource` builds its columns without any device array. A list of
+  records is turned into columns once: numbers (Python and NumPy scalars, numeric arrays) are
+  stacked per field, strings and other objects become the record's provenance, an `Element`
+  record contributes its `data` (one carrying an index or state is refused), and a field whose
+  shape differs between records is refused naming the field, both shapes, padding and packing.
+  A dict's text or object column, and `HFEagerSource`'s text columns, are provenance, never
+  refused. Indexing, iteration (in order, stateless) and Grain's batched reads return a
+  record's array part as NumPy. `index_words.low_words` keeps NumPy indices on the host.
+- **The pipeline owns the shuffle.** `Pipeline(..., shuffle=True)` (and `Pipeline.from_dag`)
+  serves each epoch in a new order, keyed by the pipeline's epoch key; `shuffle=False`, the
+  default, serves the sequential order. `record_indices_at(start, size, key)` keeps its
+  signature and serves the order `key` selects, or the sequential order when `key` is `None`:
+  the pipeline passes its epoch key exactly when it shuffles. The default `record_indices_at`
+  shuffles a sized source by the key (so `StreamingDiskSource` now shuffles) and refuses a key
+  for a source without a length. Orders are unchanged: a fixture recorded on the previous
+  revision, every batch that iteration, `step()` and `scan` served over in-memory, mixed and
+  memory-mapped sources, is reproduced bit for bit. `Pipeline.from_arrays(shuffle=...)` passes
+  the flag to the pipeline. `resolve_wrapped_indices(start, size, length, key, *, num_workers,
+  shard_id)` drops `is_random_order` and shuffles iff a key is given. A pipeline over
+  `MixDataSourcesNode`, which draws its mix from the key, is built with `shuffle=True`; without
+  it the first pull is refused naming `Pipeline(shuffle=True)`. The session state's
+  `fingerprint["shuffled"]` is the pipeline's flag.
+- In-memory sources (`MemorySource`, `TFDSEagerSource`, `HFEagerSource`) take no `rngs`: nothing
+  in them is random. `Pipeline.get_state()` therefore holds no source RNG or seed state, and an
+  iterator state's `rng_counts` is the pipeline's count alone. A state saved while the source
+  held them is refused on restore, naming what the pipeline lacks; nothing converts it.
 - **Record indices and the shuffled order are 64-bit.** `record_indices_at` (the
   `DataSourceModule` default and every source's override) and `resolve_wrapped_indices` return
   uint32 `(size, 2)`, each index as its words `(hi, lo)` (the layout of `Batch.indices`), in
@@ -218,6 +270,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `DataSourceModule.supports_indexed_access` and `supports_streaming`, and every override:
+  `record_identity` is the one declaration of a source's kind.
+- The stateful host read and its state: `get_batch(batch_size, key=None)`, `reset()` and the
+  `index`/`epoch` Variables of `MemorySource` and the eager sources (use the stateless
+  `get_batch(indices, epochs=...)`; a pipeline owns the position and epoch),
+  `DataSourceModule.get_batch_at` (use `get_records(record_indices_at(start, size, key))`), the
+  private `EagerSourceBase` (use `EagerSource`), the eager helpers `eager_get_batch`,
+  `eager_iter`, `eager_reset`, `eager_get_batch_default`, `eager_iter_default`,
+  `build_eager_element`, `get_eager_item` and `gather_eager_batch` with their exports from
+  `datarax.sources`, `source_ops.record_count`, and the epoch argument of
+  `source_ops.format_source_repr`.
+- Source-level shuffling, which the pipeline now owns: `MemorySourceConfig.shuffle`,
+  `TFDSEagerConfig.shuffle`/`seed`, `HFEagerConfig.shuffle`/`seed`, the `shuffle`, `seed` and
+  `rngs` arguments of `from_tfds` and `from_hf`, `is_random_order`/`set_random_order` on
+  `MemorySource` and the eager sources, `MemorySource`'s drawn host-shuffle seed (and its
+  `_shuffle_seed`/`_shuffle_seeded` state), `source_ops.shuffled_index_for_position` and
+  `source_ops.validate_seed_range`, and the `shuffle`/`seed` parameters of the eager helpers
+  (`eager_iter`, `eager_get_batch` and their defaults). Use `Pipeline(..., shuffle=True)`; a
+  removed config field raises `TypeError`. Iterating a source directly serves its records in
+  order. The streaming sources and `ArrayRecordSourceModule` keep their own shuffle.
 - `PipelineSchema` and `NNXComponentSchema`: no field of either was ever read, so neither
   validated anything. Pipelines are built in Python; define a `ConfigSchema` for the parameters
   you configure. `examples/config/config_example.py` and its notebook, which exited on a

@@ -94,7 +94,7 @@ It requires a config object and random number generators (rngs).
 # %%
 # Create source with config-based API
 source_config = MemorySourceConfig()
-source = MemorySource(source_config, data=data, rngs=nnx.Rngs(0))
+source = MemorySource(source_config, data=data)
 
 print(f"Source contains {len(source)} samples")
 # Expected output:
@@ -224,7 +224,7 @@ def main():
     }
 
     # Create source
-    source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+    source = MemorySource(MemorySourceConfig(), data=data)
 
     # Create operators
     normalizer = ElementOperator(

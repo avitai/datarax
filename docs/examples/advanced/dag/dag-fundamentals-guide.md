@@ -55,7 +55,7 @@ By the end of this guide, you will be able to:
 
 | TensorFlow tf.data | Datarax |
 |--------------------|---------|
-| `tf.data.Dataset.from_tensor_slices(data)` | `MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))` |
+| `tf.data.Dataset.from_tensor_slices(data)` | `MemorySource(MemorySourceConfig(), data=data)` |
 | `dataset.batch(32).prefetch(2)` | `Pipeline(source=..., batch_size=32, ...)` |
 | `dataset.map(fn)` | An `nnx.Module` placed in `stages=[...]` |
 | `tf.data.Dataset.zip((a, b))` | `Pipeline.from_dag` with a merge sink |
@@ -141,7 +141,7 @@ brighten_op = ElementOperator(
     rngs=nnx.Rngs(0),
 )
 
-source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+source = MemorySource(MemorySourceConfig(), data=data)
 linear_pipeline = Pipeline(
     source=source,
     stages=[normalize_op, brighten_op],

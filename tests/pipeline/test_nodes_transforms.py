@@ -17,9 +17,7 @@ from datarax.sources import MemorySource, MemorySourceConfig
 
 
 def _linear_pipeline(stage: nnx.Module, data: dict) -> Pipeline:
-    source = MemorySource(
-        config=MemorySourceConfig(shuffle=False), data=dict(data), rngs=nnx.Rngs(0)
-    )
+    source = MemorySource(config=MemorySourceConfig(), data=dict(data))
     return Pipeline(source=source, stages=[stage], batch_size=4, rngs=nnx.Rngs(0))
 
 

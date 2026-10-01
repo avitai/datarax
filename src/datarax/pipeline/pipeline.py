@@ -66,7 +66,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core import batch_ops
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Batch
 from datarax.core.module import module_state, restore_module_state
 from datarax.core.spec import declared_spec, validate_batch, validate_device_dtypes
@@ -95,7 +95,10 @@ class Pipeline(nnx.Module):
             learnable parameters via ``nnx.Param`` — gradients flow
             through ``scan`` via ``StateAxes``.
         batch_size: Number of records fetched per ``step()`` call.
-        rngs: ``nnx.Rngs`` consumed by stochastic stages and the source.
+        rngs: ``nnx.Rngs`` for the epoch key and stochastic stages.
+        shuffle: Whether each epoch serves the source's records in a new random order. The
+            pipeline owns the order: it passes its epoch key to ``record_indices_at`` when
+            ``True`` and ``None`` (the sequential order) otherwise.
         drop_last: What a batch reaching the end of an epoch holds when the source's
             length is not a multiple of ``batch_size``; no batch holds padding.
             ``False`` (the default) completes it from the head of the next epoch's order,
@@ -107,9 +110,9 @@ class Pipeline(nnx.Module):
             after exactly ``num_epochs * len(source)`` records, so its final batch may
             be short.
 
-    Epochs: the pipeline owns the iteration position and the epoch counter. Every
-    batch passes each record's epoch key to ``record_indices_at``, so a shuffled source
-    serves one permutation per epoch and each record is visited once per epoch.
+    Epochs: the pipeline owns the iteration position, the epoch counter and the order. With
+    ``shuffle=True`` every batch passes each record's epoch key to ``record_indices_at``, so
+    the source serves one permutation per epoch and each record is visited once per epoch.
     ``step()`` and ``scan`` never run out: the compiled step starts the next epoch
     when the current one cannot start another batch. :meth:`reset` starts the next
     epoch at position 0 with a new permutation. Iterating a pipeline whose run has
@@ -128,6 +131,7 @@ class Pipeline(nnx.Module):
         nodes: Mapping[str, nnx.Module] | None = None,
         edges: Mapping[str, Sequence[str]] | None = None,
         sink: str | None = None,
+        shuffle: bool = False,
         drop_last: bool = False,
         num_epochs: int | None = 1,
     ) -> None:
@@ -141,6 +145,7 @@ class Pipeline(nnx.Module):
             nodes: DAG nodes by name.
             edges: Predecessors of each DAG node.
             sink: The DAG node whose output is returned.
+            shuffle: Whether each epoch serves a new random order (see the class docstring).
             drop_last: The last-batch rule (see the class docstring).
             num_epochs: Epochs ``iter`` serves, or ``None`` for a stream that never stops.
 
@@ -157,6 +162,7 @@ class Pipeline(nnx.Module):
             drop_last=drop_last,
             num_epochs=num_epochs,
         )
+        self.shuffle = shuffle
         self.drop_last = drop_last
         self.num_epochs = num_epochs
 
@@ -220,6 +226,7 @@ class Pipeline(nnx.Module):
         sink: str,
         batch_size: int,
         rngs: nnx.Rngs,
+        shuffle: bool = False,
         drop_last: bool = False,
         num_epochs: int | None = 1,
     ) -> Pipeline:
@@ -236,7 +243,8 @@ class Pipeline(nnx.Module):
             sink: Name of the node whose output is returned by
                 ``__call__``.
             batch_size: Records fetched per ``step()``.
-            rngs: ``nnx.Rngs`` for stochastic stages and source.
+            rngs: ``nnx.Rngs`` for the epoch key and stochastic stages.
+            shuffle: Whether each epoch serves a new random order (see the class docstring).
             drop_last: The last-batch rule (see the class docstring).
             num_epochs: Epochs ``iter`` serves, or ``None`` for a stream.
 
@@ -254,6 +262,7 @@ class Pipeline(nnx.Module):
             sink=sink,
             batch_size=batch_size,
             rngs=rngs,
+            shuffle=shuffle,
             drop_last=drop_last,
             num_epochs=num_epochs,
         )
@@ -272,15 +281,15 @@ class Pipeline(nnx.Module):
         """Build a Pipeline over in-memory arrays, with no stages.
 
         The same pipeline as a ``MemorySource`` over ``data`` and the linear constructor
-        with ``stages=[]``, both seeded with ``seed``: every guarantee of a pipeline (one
+        with ``stages=[]``, seeded with ``seed``: every guarantee of a pipeline (one
         permutation per epoch, the final-batch rule, resumable position, one compiled step)
         holds for it.
 
         Args:
             data: Arrays by name, all of the same leading length (the record count).
             batch_size: Records fetched per ``step()``.
-            seed: Seed of the source's and the pipeline's ``nnx.Rngs``; with ``shuffle``
-                it chooses each epoch's permutation.
+            seed: Seed of the pipeline's ``nnx.Rngs``; with ``shuffle`` it chooses each
+                epoch's permutation.
             shuffle: Whether each epoch serves the records in a new random order.
             drop_last: The last-batch rule (see the class docstring).
             num_epochs: Epochs ``iter`` serves, or ``None`` for a stream.
@@ -292,14 +301,12 @@ class Pipeline(nnx.Module):
         Returns:
             A configured ``Pipeline`` instance.
         """
-        source = MemorySource(
-            MemorySourceConfig(shuffle=shuffle), data=dict(data), rngs=nnx.Rngs(seed)
-        )
         return cls(
-            source=source,
+            source=MemorySource(MemorySourceConfig(), data=dict(data)),
             stages=[],
             batch_size=batch_size,
             rngs=nnx.Rngs(seed),
+            shuffle=shuffle,
             drop_last=drop_last,
             num_epochs=num_epochs,
         )
@@ -336,7 +343,7 @@ class Pipeline(nnx.Module):
         return self.dag(name_records(batch, records.indices, records.epochs))
 
     def epoch_key(self) -> jax.Array:
-        """The key the current epoch's records are ordered by (``record_indices_at``).
+        """The key the current epoch's records are ordered by when the pipeline shuffles.
 
         One key per epoch is what makes a shuffled epoch a single permutation.
         """
@@ -354,7 +361,8 @@ class Pipeline(nnx.Module):
         ``record_indices_at`` vmapped over the epochs' keys (the first from ``start``, the rest
         from their heads) and each row takes its own epoch's name: no conditional, one batched
         index computation (a shuffle's cycle-walking loop runs once for all epochs), the same
-        program for every batch, and index arrays of O(``size``) per epoch touched.
+        program for every batch, and index arrays of O(``size``) per epoch touched. The source
+        receives its epoch's key when the pipeline shuffles and ``None`` otherwise.
 
         Args:
             start: Where the rows start in epoch ``epoch``.
@@ -368,8 +376,11 @@ class Pipeline(nnx.Module):
         start = jnp.asarray(start, dtype=jnp.int32)
         epoch = jnp.asarray(epoch, dtype=jnp.int32)
 
+        shuffle = self.shuffle
+
         def names(first: jax.Array, key: jax.Array) -> jax.Array:
-            return jnp.asarray(self.source.record_indices_at(first, size, key), jnp.uint32)
+            order = key if shuffle else None
+            return jnp.asarray(self.source.record_indices_at(first, size, order), jnp.uint32)
 
         if not plan.crosses:
             return Records(names(start, self._key_of(epoch)), jnp.full((size,), epoch, jnp.int32))
@@ -435,7 +446,7 @@ class Pipeline(nnx.Module):
     def reset(self) -> None:
         """Start the next epoch: position 0, epoch counter advanced.
 
-        A shuffled source serves a new permutation; a sequential source serves
+        A shuffling pipeline serves a new permutation; a sequential one serves
         the same order again. Sessions in progress see the change at their next
         ``iter()``.
         """
@@ -649,13 +660,13 @@ class Pipeline(nnx.Module):
             The session, iterated with ``for batch in session`` or ``next(session)``.
 
         Raises:
-            TypeError: If the source has no indexed access (a streaming source), which a
-                session cannot drive.
+            TypeError: If the source is not ``INDEXED`` (a stream), which a session cannot drive.
         """
-        if not self.source.supports_indexed_access():
+        kind = self.source.record_identity
+        if kind is not RecordIdentity.INDEXED:
             raise TypeError(
-                f"{type(self.source).__name__} has no indexed access (get_records), so it "
-                "cannot back a session; iterate the pipeline to stream it."
+                f"{type(self.source).__name__} is a {kind.name} stream, not an INDEXED source, "
+                "so it cannot back a session; iterate the pipeline to stream it."
             )
         return PipelineIterator(
             self,
@@ -663,37 +674,28 @@ class Pipeline(nnx.Module):
             plan=self.epoch_plan,
             position=self._position,
             epoch=self._epoch,
-            shuffled=bool(getattr(self.source, "is_random_order", False)),
+            shuffled=self.shuffle,
         )
 
     def __iter__(self) -> PipelineIterator | Iterator[Batch]:
         """Iterate batches through a compiled session (the Tier-A fast path).
 
-        Random-access sources return a :class:`~datarax.pipeline.iteration.
-        PipelineIterator`: the module graph is split once per session and
-        batches are driven through a cached ``jax.jit`` step, with module
-        state written back when the session ends (exhaustion, ``close()``,
-        or garbage collection after an early break). Iteration stops after
-        ``num_epochs`` epochs; a stream (``num_epochs=None``) and a source without
-        ``__len__`` iterate indefinitely. Streaming sources (no ``get_records``) pull
-        batches on the host and run them through the compiled stage DAG via
-        :meth:`_iter_streaming` instead.
+        The source's declared kind routes it. An ``INDEXED`` source returns a
+        :class:`~datarax.pipeline.iteration.PipelineIterator`: the module graph is
+        split once per session and batches are driven through a cached ``jax.jit``
+        step, with module state written back when the session ends (exhaustion,
+        ``close()``, or garbage collection after an early break). Iteration stops
+        after ``num_epochs`` epochs; a stream (``num_epochs=None``) and a source
+        without ``__len__`` iterate indefinitely. A ``STREAM_IDS`` or ``ARRIVAL``
+        source pulls batches on the host and runs them through the compiled stage
+        DAG via :meth:`_iter_streaming` instead.
 
         Returns:
-            A :class:`~datarax.pipeline.iteration.PipelineIterator` for a source
-            with indexed access, otherwise a generator over streamed batches.
-
-        Raises:
-            TypeError: If the source implements neither ``get_records`` nor
-                ``get_batch``.
+            A :class:`~datarax.pipeline.iteration.PipelineIterator` for an ``INDEXED``
+            source, otherwise a generator over streamed batches.
         """
-        if self.source.supports_indexed_access():
+        if self.source.record_identity is RecordIdentity.INDEXED:
             return self.session()
-        if not self.source.supports_streaming():
-            raise TypeError(
-                f"{type(self.source).__name__} has neither indexed access (get_records) nor a "
-                "streaming get_batch, so Pipeline cannot iterate it."
-            )
         return self._iter_streaming()
 
     def _iter_streaming(self) -> Iterator[Batch]:  # noqa: DOC502

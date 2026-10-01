@@ -484,10 +484,15 @@ When adding data sources, implement one Pipeline access mode and declare the
 records your batches carry:
 
 ```python
-from datarax.core import DataSourceModule
+from datarax.core import DataSourceModule, RecordIdentity
 
 class NewDataSource(DataSourceModule):
     """Template for new data sources."""
+
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """What a record's index means; a source without a kind is refused at construction."""
+        return RecordIdentity.INDEXED
 
     def __init__(self, config, name="new_source"):
         # config is a required first positional argument; the base class
@@ -498,9 +503,9 @@ class NewDataSource(DataSourceModule):
         """Return the records at `indices` as JAX arrays; stateless and traceable.
 
         `indices` is uint32 (n, 2), each record's 64-bit index as its words (hi, lo).
-        Implementing it is what gives a source indexed access (get_batch_at is
-        get_records of record_indices_at). A forward-only source implements
-        get_batch(batch_size) instead.
+        An INDEXED source implements it: the pipeline names a batch's records with
+        record_indices_at and gathers them with get_records. A stream (STREAM_IDS or
+        ARRIVAL) implements get_batch(batch_size) instead.
         """
         # Your implementation
 

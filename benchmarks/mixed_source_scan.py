@@ -59,7 +59,7 @@ def _make_source(seed: int) -> MemorySource:
             dtype=jnp.float32,
         )
     }
-    return MemorySource(MemorySourceConfig(shuffle=False), data)
+    return MemorySource(MemorySourceConfig(), data)
 
 
 def _make_mix(num_sources: int) -> MixDataSourcesNode:
@@ -137,7 +137,9 @@ def main() -> None:
     ref_per_step_us: float | None = None
     for n_sources in (1, 2, 3, 5, 8):
         mix = _make_mix(n_sources)
-        pipeline = Pipeline(source=mix, stages=[], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
+        pipeline = Pipeline(
+            source=mix, stages=[], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0), shuffle=True
+        )
         seconds = _time_pipeline(pipeline)
         per_step_us = seconds / (NUM_EPOCHS * STEPS_PER_EPOCH) * 1e6
         results.append((n_sources, seconds, per_step_us))

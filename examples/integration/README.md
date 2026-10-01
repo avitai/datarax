@@ -72,8 +72,8 @@ user's loss function, and any `nnx.value_and_grad` evaluated inside
 the step body — gradients flow through the entire epoch as one XLA
 graph.
 
-Shuffling and differentiability are **orthogonal**. Shuffled sources
-produce integer indices to select records; integer arrays don't carry
+Shuffling and differentiability are **orthogonal**. A shuffled order
+produces integer indices to select records; integer arrays don't carry
 gradients in JAX (this is a fundamental JAX semantic, not a datarax
 choice). Gradients flow through the **values** at the shuffled
 indices, not through the index choice itself. This is the standard

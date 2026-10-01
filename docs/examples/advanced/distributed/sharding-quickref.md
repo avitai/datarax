@@ -116,7 +116,7 @@ data = {
 
 # Create source
 source_config = MemorySourceConfig()
-source = MemorySource(source_config, data=data, rngs=nnx.Rngs(0))
+source = MemorySource(source_config, data=data)
 
 print(f"Data samples: {num_samples}")
 print(f"Image shape per sample: {data['image'].shape[1:]}")

@@ -46,7 +46,7 @@ data = {
     "image": np.random.randn(100, 32, 32, 3).astype(np.float32),
     "label": np.random.randint(0, 10, size=(100,)),
 }
-source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+source = MemorySource(MemorySourceConfig(), data=data)
 
 # Pipeline groups elements into batches of the specified batch_size
 pipeline = Pipeline(source=source, stages=[], batch_size=16, rngs=nnx.Rngs(0))

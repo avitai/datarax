@@ -39,7 +39,7 @@ from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
 def _source(num_elements: int = 16) -> MemorySource:
     return MemorySource(
-        MemorySourceConfig(shuffle=False),
+        MemorySourceConfig(),
         {"x": jnp.arange(num_elements, dtype=jnp.float32)},
     )
 

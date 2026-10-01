@@ -90,11 +90,9 @@ The config specifies the dataset name, split, and shuffling options.
 config = TFDSEagerConfig(
     name="mnist",
     split="train[:500]",  # Use subset for quick demo
-    shuffle=True,
-    seed=42,
 )
 
-source = TFDSEagerSource(config, rngs=nnx.Rngs(42))
+source = TFDSEagerSource(config)
 
 print("Dataset: MNIST")
 print(f"Samples: {len(source)}")
@@ -134,7 +132,9 @@ Chain source and operators using the DAG-based `Pipeline(source=)` API.
 
 # %%
 # Build the pipeline
-pipeline = Pipeline(source=source, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0))
+pipeline = Pipeline(
+    source=source, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0), shuffle=True
+)
 
 print("Pipeline: TFDSEagerSource(MNIST) -> Normalize -> Output")
 print("Batch size: 32")
@@ -200,10 +200,8 @@ def main():
     config = TFDSEagerConfig(
         name="mnist",
         split="train[:200]",
-        shuffle=True,
-        seed=42,
     )
-    source = TFDSEagerSource(config, rngs=nnx.Rngs(42))
+    source = TFDSEagerSource(config)
 
     # Create operator
     normalizer = ElementOperator(
@@ -213,7 +211,9 @@ def main():
     )
 
     # Build and run pipeline
-    pipeline = Pipeline(source=source, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0))
+    pipeline = Pipeline(
+        source=source, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0), shuffle=True
+    )
 
     total_samples = 0
     for batch in pipeline:

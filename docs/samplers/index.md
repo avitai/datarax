@@ -61,10 +61,9 @@ for idx in val_sampler:
 
 ## Integration with Pipeline
 
-Sources own their own shuffling — set ``shuffle=True`` on the source
-config and the source's iterator emits indices in shuffled order via
-the built-in Feistel-cipher index shuffle. Pipeline then orchestrates
-batched access.
+The pipeline owns the order: ``Pipeline(shuffle=True)`` serves each epoch
+of an indexed source in a new order via the built-in Feistel-cipher index
+shuffle, keyed by the pipeline's epoch key.
 
 ```python
 from flax import nnx
@@ -72,17 +71,14 @@ from flax import nnx
 from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
-source = MemorySource(
-    MemorySourceConfig(shuffle=True),
-    data=data,
-    rngs=nnx.Rngs(42),
-)
+source = MemorySource(MemorySourceConfig(), data=data)
 
 pipeline = Pipeline(
     source=source,
     stages=[normalize, augment],
     batch_size=32,
     rngs=nnx.Rngs(0),
+    shuffle=True,
 )
 
 for batch in pipeline:

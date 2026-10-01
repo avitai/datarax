@@ -55,7 +55,7 @@ def create_basic_pipeline(batch_size: int = 32) -> Pipeline:
     """Create a basic image pipeline with minimal processing."""
     data = generate_sample_image_data()
     source_config = MemorySourceConfig()
-    source = MemorySource(source_config, data=data, rngs=nnx.Rngs(0))
+    source = MemorySource(source_config, data=data)
     normalizer_config = ElementOperatorConfig(stochastic=False)
     normalizer = ElementOperator(normalizer_config, fn=normalize_transform, rngs=nnx.Rngs(0))
     pipeline = Pipeline(source=source, stages=[normalizer], batch_size=batch_size, rngs=nnx.Rngs(0))
@@ -66,7 +66,7 @@ def create_advanced_pipeline(batch_size: int = 32) -> Pipeline:
     """Create a more complex image pipeline with augmentation."""
     data = generate_sample_image_data()
     source_config = MemorySourceConfig()
-    source = MemorySource(source_config, data=data, rngs=nnx.Rngs(0))
+    source = MemorySource(source_config, data=data)
     normalizer_config = ElementOperatorConfig(stochastic=False)
     normalizer = ElementOperator(normalizer_config, fn=normalize_transform, rngs=nnx.Rngs(0))
     flip_augmenter = ProbabilisticOperator(

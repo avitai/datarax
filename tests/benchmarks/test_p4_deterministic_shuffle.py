@@ -1,74 +1,52 @@
 """P4: Deterministic multi-worker shuffling target tests.
 
-Target: Same epoch output regardless of worker count.
+Target: Same epoch output regardless of worker count. A shuffled epoch's order is the one the
+pipeline's epoch key selects (``record_indices_at(start, size, key)``); worker ``k`` of ``n``
+serves positions ``[k::n]`` of it.
 """
 
-import flax.nnx as nnx
+import jax
+import numpy as np
 import pytest
 
-from datarax.samplers.index_shuffle import index_shuffle
+from datarax.core.index_shuffle import index_shuffle
+from datarax.core.index_words import from_words
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
-@pytest.mark.benchmark
-class TestP4DeterministicShuffle:
-    """P4: Shuffle order must be worker-count invariant."""
+_KEY = jax.random.key(42)
 
-    def test_deterministic_across_restarts(self):
-        """Verify same seed produces same order across process restarts."""
-        data = [{"x": i} for i in range(1000)]
 
-        config = MemorySourceConfig(shuffle=True)
-        run1 = [item["x"] for item in MemorySource(config, data, rngs=nnx.Rngs(42))]
-        run2 = [item["x"] for item in MemorySource(config, data, rngs=nnx.Rngs(42))]
-
-        assert run1 == run2, "Same seed produced different shuffle orders"
-
-    def test_shuffle_produces_permutation(self):
-        """Verify shuffle produces a valid permutation (all elements present)."""
-        data = [{"x": i} for i in range(500)]
-        config = MemorySourceConfig(shuffle=True)
-        source = MemorySource(config, data, rngs=nnx.Rngs(42))
-
-        values = sorted(item["x"] for item in source)
-        assert values == list(range(500)), "Shuffle lost or duplicated elements"
-
-    def test_shuffle_changes_order(self):
-        """Verify shuffle actually changes the order (not identity permutation)."""
-        data = [{"x": i} for i in range(1000)]
-        config = MemorySourceConfig(shuffle=True)
-        source = MemorySource(config, data, rngs=nnx.Rngs(42))
-
-        values = [item["x"] for item in source]
-        # Extremely unlikely to be in order with 1000 elements
-        assert values != list(range(1000)), "Shuffle produced identity permutation"
+def _epoch(length: int, *, num_workers: int = 1, shard_id: int | None = None) -> list[int]:
+    """The records one worker serves in the epoch the key orders."""
+    config = MemorySourceConfig(num_workers=num_workers, shard_id=shard_id)
+    source = MemorySource(config, {"x": np.arange(length)})
+    return from_words(source.record_indices_at(0, len(source), _KEY)).astype(int).tolist()
 
 
 @pytest.mark.benchmark
 class TestP4MultiWorkerPartitioning:
     """P4: Multi-worker partitioning via num_workers/shard_id."""
 
+    def test_the_epoch_is_a_shuffled_permutation(self):
+        order = _epoch(500)
+        assert sorted(order) == list(range(500)), "Shuffle lost or duplicated elements"
+        assert order != list(range(500)), "Shuffle produced identity permutation"
+
     def test_worker_partitions_cover_all_elements(self):
         """Verify all elements are covered across 4 workers (no gaps)."""
-        data = [{"x": i} for i in range(100)]
         all_values: list[int] = []
-
         for worker_id in range(4):
-            config = MemorySourceConfig(shuffle=True, num_workers=4, shard_id=worker_id)
-            source = MemorySource(config, data, rngs=nnx.Rngs(42))
-            all_values.extend(item["x"] for item in source)
+            all_values.extend(_epoch(100, num_workers=4, shard_id=worker_id))
 
         assert sorted(all_values) == list(range(100)), "Workers missed some elements"
 
     def test_worker_partitions_are_disjoint(self):
         """Verify no element appears in more than one worker's partition."""
-        data = [{"x": i} for i in range(200)]
         seen: set[int] = set()
 
         for worker_id in range(4):
-            config = MemorySourceConfig(shuffle=True, num_workers=4, shard_id=worker_id)
-            source = MemorySource(config, data, rngs=nnx.Rngs(42))
-            worker_values = {item["x"] for item in source}
+            worker_values = set(_epoch(200, num_workers=4, shard_id=worker_id))
 
             overlap = seen & worker_values
             assert not overlap, f"Worker {worker_id} overlaps with previous workers: {overlap}"
@@ -76,16 +54,7 @@ class TestP4MultiWorkerPartitioning:
 
     def test_single_worker_equals_no_partitioning(self):
         """Verify num_workers=1 produces the same output as default (no partitioning)."""
-        data = [{"x": i} for i in range(500)]
-
-        config_default = MemorySourceConfig(shuffle=True)
-        source = MemorySource(config_default, data, rngs=nnx.Rngs(42))
-        default_order = [item["x"] for item in source]
-
-        config_single = MemorySourceConfig(shuffle=True, num_workers=1, shard_id=0)
-        single_order = [item["x"] for item in MemorySource(config_single, data, rngs=nnx.Rngs(42))]
-
-        assert default_order == single_order
+        assert _epoch(500) == _epoch(500, num_workers=1, shard_id=0)
 
     def test_worker_count_invariant_global_order(self):
         """Verify that the global shuffled order is the same regardless of worker count.
@@ -93,18 +62,11 @@ class TestP4MultiWorkerPartitioning:
         Collecting all workers' outputs (in order) and interleaving by global
         position must reconstruct the same global permutation.
         """
-        data = [{"x": i} for i in range(120)]
-
         # Get global order from single worker
-        config_1 = MemorySourceConfig(shuffle=True, num_workers=1, shard_id=0)
-        global_order = [item["x"] for item in MemorySource(config_1, data, rngs=nnx.Rngs(42))]
+        global_order = _epoch(120, num_workers=1, shard_id=0)
 
         # Get partitioned orders from 4 workers and reconstruct global order
-        worker_orders: list[list[int]] = []
-        for worker_id in range(4):
-            config = MemorySourceConfig(shuffle=True, num_workers=4, shard_id=worker_id)
-            source = MemorySource(config, data, rngs=nnx.Rngs(42))
-            worker_orders.append([item["x"] for item in source])
+        worker_orders = [_epoch(120, num_workers=4, shard_id=worker_id) for worker_id in range(4)]
 
         # Reconstruct: worker k gets global positions [k::4]
         reconstructed = [0] * 120
@@ -117,13 +79,9 @@ class TestP4MultiWorkerPartitioning:
 
     def test_uneven_partition_handles_remainder(self):
         """Verify partitioning works when N is not divisible by num_workers."""
-        data = [{"x": i} for i in range(103)]  # 103 % 4 != 0
-        all_values: list[int] = []
-
+        all_values: list[int] = []  # 103 % 4 != 0
         for worker_id in range(4):
-            config = MemorySourceConfig(shuffle=True, num_workers=4, shard_id=worker_id)
-            source = MemorySource(config, data, rngs=nnx.Rngs(42))
-            all_values.extend(item["x"] for item in source)
+            all_values.extend(_epoch(103, num_workers=4, shard_id=worker_id))
 
         assert sorted(all_values) == list(range(103))
 

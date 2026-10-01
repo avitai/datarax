@@ -1,37 +1,31 @@
-"""In-memory data source implementation for Datarax.
+"""In-memory data source: a dict of arrays, a list of records or an array, served from the host.
 
-This module provides a data source that serves data from in-memory collections
-with support for both stateless and stateful operation modes.
+``MemorySource`` turns the data it is given into host NumPy columns and per-record provenance
+once, at construction (see :mod:`datarax.sources.eager_source`), and serves it through the
+eager-source base. A dict is a mapping of columns; a list is a list of records, whose numeric
+values are stacked into columns and whose strings and other objects become provenance; an array
+is one column.
 """
 
 import logging
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 import jax
-import jax.numpy as jnp
 import numpy as np
-from flax import nnx
+from jaxtyping import PyTree
 
 from datarax.config.registry import register_component
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule
-from datarax.core.index_words import from_words, low_words, to_words
-from datarax.core.spec import array_to_spec, array_to_spec_strip_leading, device_spec
-from datarax.samplers.index_shuffle import (
-    index_shuffle,
-    shuffle_positions,
-    shuffle_positions_host,
+from datarax.core.element_batch import Element
+from datarax.sources.eager_source import (
+    EagerSource,
+    is_array_leaf,
+    split_record,
+    stack_records,
 )
-from datarax.sources._grain_bridge import records_from_batched_mapping, validate_index_batch
-from datarax.sources.source_ops import (
-    configure_stochastic_from_shuffle,
-    partition_length,
-    record_count,
-    resolve_wrapped_indices,
-)
-from datarax.typing import DataDict
+from datarax.sources.source_ops import partition_length, resolve_wrapped_indices
 
 
 logger = logging.getLogger(__name__)
@@ -41,19 +35,20 @@ logger = logging.getLogger(__name__)
 class MemorySourceConfig(StructuralConfig):
     """Configuration for MemorySource (in-memory data source).
 
+    The order records are served in belongs to the pipeline (``Pipeline(shuffle=...)``), not
+    to the source.
+
     Args:
-        shuffle: Whether to shuffle data on each epoch
         cache_size: Number of batches to cache (0 = no caching)
         prefetch_size: Number of items to prefetch (0 = no prefetching)
         shard_id: Optional shard identifier for distributed processing
         num_workers: Number of parallel workers (default 1). When > 1,
             each worker (identified by shard_id) receives a disjoint
-            partition of the globally-shuffled elements. Worker k
-            gets elements at global positions [k::num_workers].
+            partition of the global order. Worker k gets elements at
+            global positions [k::num_workers].
     """
 
     # Optional parameters with defaults
-    shuffle: bool = False
     cache_size: int = 0
     prefetch_size: int = 0
     shard_id: int | None = None
@@ -61,8 +56,6 @@ class MemorySourceConfig(StructuralConfig):
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
-        configure_stochastic_from_shuffle(self, shuffle=self.shuffle)
-
         if self.num_workers < 1:
             raise ValueError(f"num_workers must be >= 1, got {self.num_workers}")
         if self.num_workers > 1 and self.shard_id is None:
@@ -76,113 +69,70 @@ class MemorySourceConfig(StructuralConfig):
         super().__post_init__()
 
 
+type _Parts = tuple[PyTree, tuple[dict[str, Any], ...]]
+
+
 @register_component("source", "MemorySource")
-class MemorySource(DataSourceModule):
-    """In-memory data source for Datarax.
+class MemorySource(EagerSource):
+    """In-memory data source over a dict of arrays, a list of records or an array.
 
-    This data source serves data from in-memory collections and supports
-    both stateless and stateful operation modes.
-
-    Key Features:
-
-        - Dual-mode operation (stateless iteration and stateful with internal index)
-        - Random access via __getitem__
-        - Optional shuffling with RNG support
-        - Batch retrieval with get_batch method
-        - Support for dictionary and list/sequence data
-        - Batch-first design for efficient processing
+    The data becomes host NumPy columns once, at construction; device arrays are copied to the
+    host. Strings, bytes and other objects a record carries are kept as its provenance, never
+    served in a batch. Records are read by index (``source[i]``, iteration in order, Grain's
+    batched access) and by the stateless host read ``get_batch(indices, epochs=...)``, which
+    returns a ``Batch``. The order a pipeline serves them in is the pipeline's.
 
     Examples:
-        Create source with list data:
-
         ```python
-        # Create source with list data
-        data = [{'x': i, 'y': i*2} for i in range(100)]
-        config = MemorySourceConfig(shuffle=False)
-        source = MemorySource(config, data, rngs=nnx.Rngs(0))
+        import numpy as np
+        from datarax.core.index_words import to_words
 
-        # Stateless iteration
-        for item in source:
-            process(item)
+        data = {"x": np.arange(100.0), "label": np.arange(100) % 10}
+        source = MemorySource(MemorySourceConfig(), data)
 
-        # Stateful iteration with internal index
-        batch = source.get_batch(32)  # Gets next 32 items
+        for record in source:  # records in order, each a dict of NumPy rows
+            process(record)
 
-        # With shuffling
-        config = MemorySourceConfig(shuffle=True)
-        source = MemorySource(config, data, rngs=nnx.Rngs(0))
+        batch = source.get_batch(to_words(np.arange(32)))  # records 0..31 as a Batch
+
+        pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0),
+                            shuffle=True)
         ```
     """
 
     # Narrow config type for pyright (base stores via nnx.static)
     config: MemorySourceConfig  # pyright: ignore[reportIncompatibleVariableOverride]
 
-    # Static data container (not trainable parameters)
-    data: dict[str, Any] | list[Any] | Sequence[Any]
-
-    def __init__(
+    def __init__(  # noqa: DOC503 - _parts raises the ValueError
         self,
         config: MemorySourceConfig,
-        data: dict[str, Any] | list[Any] | Sequence[Any],
+        data: Mapping[str, Any] | Sequence[Any] | np.ndarray | jax.Array,
         *,
-        rngs: nnx.Rngs | None = None,
         name: str | None = None,
     ) -> None:
-        """Initialize memory source with config.
+        """Build the source's columns and provenance from ``data``.
 
         Args:
             config: Configuration for the MemorySource
-            data: Either a dictionary mapping keys to data arrays or a
-                list/sequence of elements. If a dictionary is provided,
-                all values must have the same first dimension size.
-            rngs: Optional RNG state for shuffling and stateful iteration
+            data: A mapping of columns (all of one length), a sequence of records (each a
+                mapping of values, an ``Element`` or a single value), or an array whose leading
+                axis is the records.
             name: Optional name for the module (defaults to "MemorySource")
 
         Raises:
-            ValueError: If dictionary data has inconsistent lengths
-            TypeError: If data is a string
+            TypeError: If ``data`` is a string, or a column is a mapping.
+            ValueError: If the columns disagree on their length or hold no array, a record's
+                numeric fields or shapes differ from the others', or an ``Element`` carries an
+                index or state.
         """
-        # Set default name if not provided
-        if name is None:
-            name = "MemorySource"
-
-        super().__init__(config, rngs=rngs, name=name)
-
-        # Validate input data type
-        if isinstance(data, str):
+        super().__init__(config, name="MemorySource" if name is None else name)
+        if isinstance(data, str | bytes):
             raise TypeError(
                 f"MemorySource expects a list, sequence, or dictionary, got string: {type(data)}"
             )
-
-        # Store data and config values
-        self.data = nnx.data(data)
-        self._is_random_order = config.shuffle
         self.prefetch_size = config.prefetch_size
-
-        # The length is read from the data on every call; reading it here validates the data.
-        if isinstance(data, dict) and not any(hasattr(value, "__len__") for value in data.values()):
-            raise ValueError("Data dictionary must contain at least one array-like value")
-        record_count(data)
-
-        # State variables for stateful iteration
-        self.index = nnx.Variable(0)
-        self.epoch = nnx.Variable(0)
-
-        # The host shuffle's seed, drawn when a host shuffle first needs it (so a source served
-        # only through a pipeline draws nothing) and kept: epoch e serves the order of
-        # (seed, e), a function of checkpointed state alone, so a restored source resumes the
-        # same records. Both Variables exist from construction, so the checkpoint's layout
-        # never changes. uint32, because the seed spans [0, 2**32).
-        self._shuffle_seed = nnx.Variable(jnp.uint32(0))
-        self._shuffle_seeded = nnx.Variable(False)
-
-    @property
-    def length(self) -> int:
-        """Records the data holds now, across all workers (see :func:`record_count`).
-
-        Read from ``data`` on every call, so data replaced after construction is counted.
-        """
-        return record_count(self.data)
+        columns, provenance = _parts(data)
+        self._store(columns, provenance)
 
     def __len__(self) -> int:
         """Return the number of records this source serves.
@@ -195,140 +145,22 @@ class MemorySource(DataSourceModule):
         """
         return partition_length(self.length, self.config.num_workers, self.config.shard_id or 0)
 
-    def __iter__(self) -> Iterator[Any]:
-        """Iterate over data elements.
+    def __iter__(self) -> Iterator[PyTree]:
+        """Iterate over this worker's records in order, each its array part; stateless.
 
-        For stateless iteration, yields elements in order.
-        For stateful iteration with shuffling, uses internal RNG.
-        When prefetch_size > 0, wraps iteration with threaded prefetching.
+        With ``num_workers > 1`` that is global positions ``[shard_id::num_workers]``. When
+        ``prefetch_size > 0`` the records are read ahead on a thread.
 
         Returns:
-            Iterator over data elements
+            Iterator over the records.
         """
-        raw = self._raw_iter()
-
+        rows = range(self.config.shard_id or 0, self.length, self.config.num_workers)
+        records = (self[row] for row in rows)
         if self.prefetch_size > 0:
-            from datarax.control.prefetcher import Prefetcher
+            from datarax.control.prefetcher import Prefetcher  # noqa: PLC0415
 
-            return Prefetcher(buffer_size=self.prefetch_size).prefetch(raw)
-        return raw
-
-    def _raw_iter(self) -> Iterator[Any]:
-        """Synchronous element iteration (no prefetching).
-
-        Shuffled positions map to records through ``index_shuffle`` a block at a time, so no
-        order is materialized.
-
-        When num_workers > 1, yields only this worker's partition of the
-        global order: worker k gets global positions [k::num_workers].
-
-        Yields:
-            Data elements in iteration order.
-        """
-        # Reset for new iteration
-        self.index.set_value(0)
-        self.epoch.set_value(self.epoch.get_value() + 1)
-
-        num_workers = self.config.num_workers
-        shard_id = self.config.shard_id or 0
-        # One pass serves the data as it is when the pass starts.
-        length = self.length
-
-        if self.is_random_order and self.rngs is not None:
-            seed, epoch = self._host_shuffle_seed(), self.epoch.get_value()
-            if num_workers > 1:
-                # Partition: yield elements at global positions [shard_id::num_workers]
-                for i in range(shard_id, length, num_workers):
-                    yield self._get_element(index_shuffle(i, seed, length, epoch))
-            else:
-                for i in range(length):
-                    yield self._get_element(index_shuffle(i, seed, length, epoch))
-        elif num_workers > 1:
-            for i in range(shard_id, length, num_workers):
-                yield self._get_element(i)
-        else:
-            for i in range(length):
-                yield self._get_element(i)
-
-    def __getitem__(self, index: int) -> Any:
-        """Get element at specific index.
-
-        Args:
-            index: Index of element to retrieve
-
-        Returns:
-            Data element at the specified index
-
-        Raises:
-            IndexError: If index is out of bounds
-        """
-        length = self.length
-        if index < 0:
-            index = length + index
-
-        if index < 0 or index >= length:
-            raise IndexError(f"Index {index} out of range for source with {length} elements")
-
-        return self._get_element(index)
-
-    def _getitems(self, indices: Sequence[int]) -> list[Any]:
-        """Get multiple elements by index for Grain batched random access."""
-        resolved = validate_index_batch(indices, self.length)
-        if isinstance(self.data, dict):
-            batch = self._gather_batch(resolved)
-            return records_from_batched_mapping(batch, len(resolved))
-        return [self._get_element(index) for index in resolved]
-
-    def get_batch(self, batch_size: int, key: jax.Array | None = None) -> Any:
-        """Get next batch of data.
-
-        This method supports both stateless (with explicit key) and stateful
-        (with internal index tracking) operation. The stateful mode follows the
-        iterator ``next()`` idiom — it returns a batch *and* advances internal
-        position — a deliberate, documented exception to command-query separation.
-        For side-effect-free indexed access, use :meth:`get_batch_at`.
-
-        Args:
-            batch_size: Number of elements in the batch
-            key: Optional RNG key. When provided, selects **stateless** mode: the
-                batch is derived purely from ``key`` with no internal state read
-                or mutated. When ``None``, selects **stateful** mode: the batch
-                begins at ``self.index`` and this call advances ``self.index``
-                (rolling ``self.epoch`` and forcing a reshuffle at wrap-around).
-
-        Returns:
-            Batch of data with shape (batch_size, ...)
-        """
-        length = self.length
-        # Get indices for this batch
-        if key is not None:
-            # Stateless mode: the first records of the order ``key`` selects
-            if self.is_random_order:
-                positions = jnp.asarray(to_words(np.arange(min(batch_size, length))))
-                return self._gather_batch(from_words(shuffle_positions(positions, length, key)))
-            # Sequential: use slicing (zero-copy for arrays)
-            return self._gather_batch_slice(0, min(batch_size, length))
-        # Stateful mode - use internal index
-        start = self.index.get_value()
-        end = min(start + batch_size, length)
-        epoch = self.epoch.get_value()
-        if self.is_random_order:
-            # The records at positions [start, end) of this batch's epoch, read before the
-            # epoch advances at its end.
-            positions = np.arange(start, end)
-            batch = self._gather_batch(
-                shuffle_positions_host(positions, length, self._host_shuffle_seed(), epoch)
-            )
-        else:
-            # Sequential: use slicing (zero-copy for arrays)
-            batch = self._gather_batch_slice(start, end)
-
-        # Update index for next call
-        new_index = end % length
-        self.index.set_value(new_index)
-        if new_index == 0:
-            self.epoch.set_value(epoch + 1)
-        return batch
+            return Prefetcher(buffer_size=self.prefetch_size).prefetch(records)
+        return records
 
     def record_indices_at(
         self,
@@ -336,17 +168,17 @@ class MemorySource(DataSourceModule):
         size: int,
         key: jax.Array | None = None,
     ) -> jax.Array:
-        """Return the global index of each record ``get_batch_at(start, size, key)`` returns.
+        """Return the global index of each record at positions ``start .. start + size``.
 
-        ``start`` and ``size`` are positions in the order this source serves: the whole
-        dataset, or with ``num_workers > 1`` this worker's positions
-        ``[shard_id::num_workers]`` of the global order, shuffled by ``key`` when
-        ``shuffle=True``. The indices are global, so a record has one index on every worker.
+        ``start`` and ``size`` are positions in the order ``key`` selects (the sequential order
+        when ``key`` is ``None``): the whole dataset, or with ``num_workers > 1`` this worker's
+        positions ``[shard_id::num_workers]`` of the global order. The indices are global, so a
+        record has one index on every worker.
 
         Args:
             start: Starting logical position; concrete int or traced ``jax.Array``.
             size: Number of records (Python int).
-            key: PRNG key for shuffled mode.
+            key: The key selecting the order, or ``None`` for the sequential order.
 
         Returns:
             uint32 ``jax.Array`` of shape ``(size, 2)``, each index as its words ``(hi, lo)``.
@@ -355,229 +187,175 @@ class MemorySource(DataSourceModule):
             start,
             size,
             self.length,
-            self.is_random_order,
             key,
             num_workers=self.config.num_workers,
             shard_id=self.config.shard_id or 0,
         )
 
-    def supports_indexed_access(self) -> bool:
-        """Whether the data is a dict of arrays, the columns a batch is gathered from.
-
-        A list of records is a record store for indexing, iteration and the host ``get_batch``: its
-        records can be strings, ``Element`` objects or ragged, which no device gather stacks.
-
-        Returns:
-            ``True`` for dict data.
-        """
-        return isinstance(self.data, dict)
-
-    def supports_streaming(self) -> bool:
-        """``False``: ``get_batch`` is the host API over stored records, not a pipeline stream.
-
-        It returns a list of records for list data and wraps around instead of signalling the end,
-        so a pipeline drives a MemorySource only through indexed access (dict-of-arrays data).
-
-        Returns:
-            ``False``.
-        """
-        return False
-
-    def get_records(self, indices: jax.Array) -> DataDict:
-        """Gather the records at ``indices``; JIT-traceable for scan-based iteration.
-
-        Indices are global, as :meth:`record_indices_at` names them, so a record has one index on
-        every worker. Stateless, so callers can drive iteration via their own ``nnx.Variable``
-        position counter and trace it under ``nnx.scan`` / ``nnx.jit``.
-
-        Args:
-            indices: uint32 ``(n, 2)`` record indices in ``[0, len(self))``; concrete or traced.
-
-        Returns:
-            One array per field, with leading dim ``len(indices)``.
-
-        Raises:
-            TypeError: If the data is not a dict of arrays, which has no columns to gather.
-        """
-        data = self.data
-        if not isinstance(data, dict):
-            raise TypeError(
-                f"MemorySource holds {type(data).__name__} data, a record store with no columns "
-                "to gather a batch from; give it a dict of arrays, one per field, to batch it"
-            )
-        rows = low_words(indices, self.length)
-        return {
-            key_name: jnp.take(jnp.asarray(value), rows, axis=0) for key_name, value in data.items()
-        }
-
-    def _host_shuffle_seed(self) -> int:
-        """The host shuffle's seed, drawn from its RNG stream on first use and kept.
-
-        The stream is the configured one, ``shuffle`` by default, falling back to ``default``;
-        a source without either uses 0.
-
-        Returns:
-            An integer seed in ``[0, 2**32)``.
-        """
-        if not self._shuffle_seeded.get_value():
-            seed = 0
-            if self.rngs is not None:
-                for stream_name in (self.config.stream_name or "shuffle", "default"):
-                    if stream_name in self.rngs:
-                        # uint32 draws: x64 would widen bits to uint64, past the seed's range
-                        seed = int(
-                            jax.random.bits(getattr(self.rngs, stream_name)(), dtype=jnp.uint32)
-                        )
-                        break
-            self._shuffle_seed.set_value(jnp.uint32(seed))
-            self._shuffle_seeded.set_value(True)
-        return int(self._shuffle_seed.get_value())
-
-    def _get_element(self, index: int) -> Any:
-        """Get single element at index.
-
-        Args:
-            index: Index of element
-
-        Returns:
-            Element at index
-        """
-        data = self.data
-        if isinstance(data, dict):
-            # Build dictionary element
-            element = {}
-            for key, value in data.items():
-                if hasattr(value, "__getitem__"):
-                    element[key] = value[index]
-                else:
-                    element[key] = value
-            return element
-        # Return list/sequence element
-        return data[index]
-
-    def _gather_batch_slice(self, start: int, end: int) -> Any:
-        """Gather a contiguous batch using slice-based access.
-
-        For numpy/JAX arrays, ``array[start:end]`` returns a view (no copy),
-        which is the key memory optimization for sequential (non-shuffle) paths.
-
-        Args:
-            start: Start index (inclusive).
-            end: End index (exclusive).
-
-        Returns:
-            Batch of elements from data[start:end].
-        """
-        data = self.data
-        if isinstance(data, dict):
-            return {
-                key: value[start:end] if hasattr(value, "__getitem__") else [value] * (end - start)
-                for key, value in data.items()
-            }
-        return data[start:end]
-
-    def _gather_batch(self, indices: Sequence[int] | np.ndarray) -> Any:
-        """Gather batch of elements at arbitrary indices.
-
-        For non-contiguous access (shuffled), uses fancy indexing which
-        creates copies. For contiguous ranges, prefer _gather_batch_slice.
-
-        Uses numpy indexing for host-side operations to avoid dispatching
-        through JAX's XLA allocator for what is fundamentally a CPU operation.
-
-        Args:
-            indices: Indices to gather.
-
-        Returns:
-            Batch of elements.
-        """
-        idx_array = np.asarray(indices)
-        data = self.data
-        if isinstance(data, dict):
-            batch = {}
-            for key, value in data.items():
-                if hasattr(value, "__getitem__"):
-                    if isinstance(value, list | tuple):
-                        batch[key] = [value[i] for i in indices]
-                    else:
-                        # Array-like: numpy fancy indexing (host-side, no XLA dispatch)
-                        batch[key] = value[idx_array]
-                else:
-                    batch[key] = [value] * len(indices)
-            return batch
-        if isinstance(data, list | tuple):
-            return [data[i] for i in indices]
-        # Array-like (numpy/JAX): supports fancy indexing
-        return data[idx_array]  # type: ignore[index]
-
-    def reset(self, seed: int | None = None) -> None:
-        """Reset the source to the beginning.
-
-        Args:
-            seed: Optional seed for reproducibility (ignored for MemorySource)
-        """
-        del seed
-        self.index.set_value(0)
-        self.epoch.set_value(0)
-
-    @property
-    def is_random_order(self) -> bool:
-        """Whether this source randomizes iteration order."""
-        return self._is_random_order
-
-    def set_random_order(self, enabled: bool) -> None:
-        """Enable or disable random-order iteration.
-
-        Args:
-            enabled: Whether to randomize iteration order.
-        """
-        self._is_random_order = enabled
-
-    # get_state/set_state inherited from TransformBase - handles all nnx.Variables automatically
-
     def __repr__(self) -> str:
         """String representation."""
-        data = self.data
-        data_type = "dict" if isinstance(data, dict) else "list"
-        return (
-            f"MemorySource("
-            f"type={data_type}, "
-            f"length={self.length}, "
-            f"random_order={self.is_random_order}, "
-            f"index={self.index.get_value()}/{self.length}, "
-            f"epoch={self.epoch.get_value()})"
+        return f"MemorySource(length={self.length})"
+
+
+def _parts(data: Mapping[str, Any] | Sequence[Any] | np.ndarray | jax.Array) -> _Parts:
+    """The columns and provenance ``data`` holds.
+
+    Args:
+        data: A mapping of columns, an array, or a sequence of records.
+
+    Returns:
+        The host columns and one provenance mapping per record (or none).
+    """
+    if isinstance(data, Mapping):
+        return _parts_of_columns(data)
+    if isinstance(data, np.ndarray | jax.Array):
+        return np.asarray(data), ()
+    return _parts_of_records(data)
+
+
+def _parts_of_columns(data: Mapping[str, Any]) -> _Parts:
+    """A mapping of columns: numeric columns stay columns, the others become provenance.
+
+    A value without rows (a scalar) is every record's; a string is a value, not a column.
+
+    Args:
+        data: The mapping of columns.
+
+    Returns:
+        The host columns and one provenance mapping per record (or none).
+    """
+    length = _record_count(data)
+    columns: dict[str, Any] = {}
+    provenance_columns: dict[str, Sequence[Any]] = {}
+    for key, value in data.items():
+        column = _column(key, value, length)
+        if column is None:
+            provenance_columns[key] = list(value) if _has_rows(value) else [value] * length
+        else:
+            columns[key] = column
+    provenance = (
+        tuple({key: rows[k] for key, rows in provenance_columns.items()} for k in range(length))
+        if provenance_columns
+        else ()
+    )
+    return columns, provenance
+
+
+def _record_count(data: Mapping[str, Any]) -> int:
+    """The number of records a mapping of columns holds: the length its columns share.
+
+    Args:
+        data: The mapping of columns.
+
+    Returns:
+        The record count.
+
+    Raises:
+        TypeError: If a column is itself a mapping, whose key count is not a record count.
+        ValueError: If the columns disagree on their length or no value has rows.
+    """
+    for key, value in data.items():
+        if isinstance(value, Mapping):
+            raise TypeError(
+                f"Data column {key!r} is a mapping; columns are arrays with one row per record, "
+                "in a flat mapping. Give each nested field its own top-level key."
+            )
+    lengths = {key: len(value) for key, value in data.items() if _has_rows(value)}
+    if not lengths:
+        raise ValueError("Data dictionary must contain at least one array-like value")
+    if len(set(lengths.values())) > 1:
+        raise ValueError(
+            f"All arrays in data dictionary must have the same length. Got lengths: {lengths}"
         )
+    return next(iter(lengths.values()))
 
-    def element_spec(self) -> Any:
-        """Return the spec of one record as the device holds it.
 
-        ``get_records`` converts the stored data to JAX arrays, so the spec is
-        ``device_spec`` of the stored data: dict-mode sources strip the leading
-        dataset-size axis from every stored array; list-mode sources, record stores
-        with no batch form, describe element 0; and while x64 is off a stored
-        ``float64`` or ``int64`` array is declared as ``float32`` or ``int32``. Only
-        array metadata is read; the stored data is never converted to derive the
-        spec. The host-side
-        accessors (``get_batch``, indexing, iteration) return stored values
-        unconverted.
+def _column(key: str, value: Any, length: int) -> np.ndarray | None:
+    """``value`` as a host column of ``length`` rows, or ``None`` when it is provenance.
 
-        Returns:
-            ``jax.ShapeDtypeStruct`` PyTree describing one emitted element.
+    Args:
+        key: The column's name.
+        value: The column, or a single value every record shares.
+        length: The record count.
 
-        Raises:
-            ValueError: If the source is empty (no element to introspect).
-        """
-        if self.length == 0:
+    Returns:
+        The host column, or ``None`` for a non-numeric value.
+    """
+    if not _has_rows(value):
+        if not is_array_leaf(value):
+            return None
+        scalar = np.asarray(value)
+        return np.broadcast_to(scalar, (length, *scalar.shape))
+    if isinstance(value, np.ndarray | jax.Array):
+        return np.asarray(value) if is_array_leaf(value) else None
+    if all(is_array_leaf(row) for row in value):
+        return stack_records([{key: np.asarray(row)} for row in value])[key]
+    return None
+
+
+def _has_rows(value: Any) -> bool:
+    """Whether ``value`` is a column (one row per record) rather than a single value.
+
+    Args:
+        value: The value.
+
+    Returns:
+        Whether it has rows.
+    """
+    return hasattr(value, "__len__") and not isinstance(value, str | bytes) and np.ndim(value) > 0
+
+
+def _parts_of_records(records: Sequence[Any]) -> _Parts:
+    """A sequence of records: numeric values stacked into columns, the rest provenance.
+
+    Args:
+        records: The records.
+
+    Returns:
+        The host columns and one provenance mapping per record (or none).
+
+    Raises:
+        ValueError: If an ``Element`` carries an index or state, no record holds a number, or the
+            records' numeric fields or shapes differ (see :func:`stack_records`).
+    """
+    if not records:
+        return {}, ()
+    parts, provenance = [], []
+    for position, record in enumerate(records):
+        part, extra = split_record(_record_data(record, position))
+        if part is None:
             raise ValueError(
-                "MemorySource has zero elements; element_spec() cannot be "
-                "inferred from an empty dataset."
+                f"record {position} holds no numeric value; a batch is built from numeric "
+                "fields, and strings and other objects are kept as the record's provenance"
             )
+        parts.append(part)
+        provenance.append(extra)
+    return stack_records(parts), tuple(provenance) if any(provenance) else ()
 
-        data = self.data
-        if isinstance(data, dict):
-            return device_spec(
-                {key: array_to_spec_strip_leading(value) for key, value in data.items()}
-            )
 
-        # List/sequence mode: describe element 0.
-        return device_spec(jax.tree.map(array_to_spec, data[0]))
+def _record_data(record: Any, position: int) -> Any:
+    """A record's values: an ``Element`` contributes its ``data``, the identity is the source's.
+
+    Args:
+        record: The record.
+        position: Its position, for the refusal.
+
+    Returns:
+        The record's values.
+
+    Raises:
+        ValueError: If an ``Element`` carries an index or state, which the source would drop.
+    """
+    if not isinstance(record, Element):
+        return record
+    if record.index is not None:
+        raise ValueError(
+            f"record {position} is an Element with an index; the source names its records by "
+            "position, so an Element given to it carries data only"
+        )
+    if jax.tree.leaves(record.state):
+        raise ValueError(
+            f"record {position} is an Element with state; the source serves records' data, so "
+            "an Element given to it carries data only"
+        )
+    return record.data

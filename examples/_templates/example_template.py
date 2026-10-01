@@ -119,7 +119,7 @@ print(f"Data shape: image={data['image'].shape}, label={data['label'].shape}")
 # %%
 # Step 2: Create data source
 source_config = MemorySourceConfig()
-source = MemorySource(source_config, data=data, rngs=nnx.Rngs(0))
+source = MemorySource(source_config, data=data)
 print(f"Source length: {len(source)}")
 # Expected output:
 # Source length: 100
@@ -225,7 +225,7 @@ def main():
     # Re-run the example steps
     data = create_sample_data()
     source_config = MemorySourceConfig()
-    source = MemorySource(source_config, data=data, rngs=nnx.Rngs(0))
+    source = MemorySource(source_config, data=data)
     pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
 
     total_samples = 0

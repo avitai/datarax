@@ -177,11 +177,9 @@ Fashion-MNIST classes: ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat', '
 train_config = TFDSEagerConfig(
     name="fashion_mnist",
     split=f"train[:{TRAIN_SAMPLES}]",
-    shuffle=True,
-    seed=42,
 )
 
-train_source = TFDSEagerSource(train_config, rngs=nnx.Rngs(42))
+train_source = TFDSEagerSource(train_config)
 print(f"Loaded {len(train_source)} Fashion-MNIST samples")
 ```
 
@@ -333,11 +331,10 @@ Created augmentation operators:
 Create pipelines with single augmentations to see their individual effects.
 
 ```python
-def create_single_aug_pipeline(operator, seed=0, num_samples=64):
+def create_single_aug_pipeline(operator, num_samples=64):
     """Create pipeline with single augmentation for visualization."""
     source = TFDSEagerSource(
-        TFDSEagerConfig(name="fashion_mnist", split=f"train[:{num_samples}]", shuffle=False),
-        rngs=nnx.Rngs(seed),
+        TFDSEagerConfig(name="fashion_mnist", split=f"train[:{num_samples}]"),
     )
 
     prep = ElementOperator(
@@ -352,8 +349,7 @@ def create_single_aug_pipeline(operator, seed=0, num_samples=64):
 
 # Get baseline (no augmentation)
 baseline_source = TFDSEagerSource(
-    TFDSEagerConfig(name="fashion_mnist", split="train[:64]", shuffle=False),
-    rngs=nnx.Rngs(0),
+    TFDSEagerConfig(name="fashion_mnist", split="train[:64]"),
 )
 baseline_pipeline = Pipeline(
     source=baseline_source,
@@ -451,7 +447,7 @@ aug_configs = [
 # Get augmented samples
 for i, (name, op, imgs) in enumerate(aug_configs):
     if imgs is None and op is not None:
-        pipeline = create_single_aug_pipeline(op, seed=i)
+        pipeline = create_single_aug_pipeline(op)
         batch = next(iter(pipeline))
         aug_configs[i] = (name, op, np.array(batch["image"]))
 ```
@@ -498,16 +494,13 @@ Saved: docs/assets/images/examples/cv-fashion-augmentation-grid.png
 Chain all augmentations together for production use.
 
 ```python
-def create_full_augmentation_pipeline(seed=42):
+def create_full_augmentation_pipeline():
     """Create pipeline with all augmentations."""
     source = TFDSEagerSource(
         TFDSEagerConfig(
             name="fashion_mnist",
             split=f"train[:{TRAIN_SAMPLES}]",
-            shuffle=True,
-            seed=seed,
         ),
-        rngs=nnx.Rngs(seed),
     )
 
     # Preprocessing
@@ -578,6 +571,7 @@ def create_full_augmentation_pipeline(seed=42):
         stages=[prep, brightness, contrast, rotation, noise, patch_dropout],
         batch_size=BATCH_SIZE,
         rngs=nnx.Rngs(0),
+        shuffle=True,
     )
 
 
@@ -608,7 +602,7 @@ num_batches = 20
 latencies = {}
 
 for name, op, _ in aug_configs:
-    pipeline = create_single_aug_pipeline(op, seed=0, num_samples=TRAIN_SAMPLES)
+    pipeline = create_single_aug_pipeline(op, num_samples=TRAIN_SAMPLES)
     batches = iter(pipeline)
 
     times = []
@@ -628,12 +622,12 @@ for name, latency in latencies.items():
 **Terminal Output:**
 ```
 Pipeline latency per batch (ms):
-  Original: 0.46 ms
-  Brightness: 0.51 ms
-  Contrast: 0.47 ms
-  Rotation: 0.53 ms
-  Noise: 0.45 ms
-  PatchDropout: 0.59 ms
+  Original: 0.23 ms
+  Brightness: 0.31 ms
+  Contrast: 0.30 ms
+  Rotation: 0.32 ms
+  Noise: 0.31 ms
+  PatchDropout: 0.31 ms
 ```
 
 Plot the latency comparison:
@@ -668,7 +662,7 @@ Saved: docs/assets/images/examples/cv-fashion-latency.png
 
 ```python
 # Get samples from full pipeline
-full_pipeline = create_full_augmentation_pipeline(seed=42)
+full_pipeline = create_full_augmentation_pipeline()
 full_batch = next(iter(full_pipeline))
 full_images = np.array(full_batch["image"])
 full_labels = np.array(full_batch["label"])
@@ -750,14 +744,14 @@ flowchart TB
 
 | Pipeline | Parameter | Latency |
 |----------|-----------|---------|
-| Original (preprocess only) | - | 0.46 ms |
-| Brightness | ±0.15 | 0.51 ms |
-| Contrast | 0.85-1.15x | 0.47 ms |
-| Rotation | ±10° | 0.53 ms |
-| Noise | std=0.1 | 0.45 ms |
-| PatchDropout | 2×6×6 | 0.59 ms |
+| Original (preprocess only) | - | 0.23 ms |
+| Brightness | ±0.15 | 0.31 ms |
+| Contrast | 0.85-1.15x | 0.30 ms |
+| Rotation | ±10° | 0.32 ms |
+| Noise | std=0.1 | 0.31 ms |
+| PatchDropout | 2×6×6 | 0.31 ms |
 
-The augmented pipelines take 0.45 ms to 0.59 ms per batch against 0.46 ms for the
+The augmented pipelines take 0.30 ms to 0.32 ms per batch against 0.23 ms for the
 preprocessing-only pipeline: at this batch size most of the per-batch cost is the pipeline
 step itself, not the augmentation.
 

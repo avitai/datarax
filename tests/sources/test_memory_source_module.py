@@ -3,13 +3,17 @@
 This module tests the functionality of the unified MemorySource implementation.
 """
 
-import flax.nnx as nnx
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from datarax.core.index_words import to_words
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
+
+
+def _words(rows: list[int]) -> np.ndarray:
+    """Record positions as the uint32 words the host read takes."""
+    return to_words(np.asarray(rows, np.uint64))
 
 
 def test_memory_source_basic_functionality():
@@ -79,25 +83,6 @@ def test_memory_source_stateless_iteration() -> None:
     assert all(item["x"] == i for i, item in enumerate(items2))
 
 
-def test_memory_source_stateful_iteration() -> None:
-    """Test stateful iteration with internal index tracking."""
-    # Create data source with rngs (stateful mode)
-    data = [{"x": i} for i in range(10)]
-    rngs = nnx.Rngs(default=0)
-    config = MemorySourceConfig()
-    source = MemorySource(config, data, rngs=rngs)
-
-    # Test batch retrieval with internal state
-    batch1 = source.get_batch(3)
-    batch2 = source.get_batch(3)
-
-    # Batches should be different (advancing internal index)
-    assert batch1 != batch2
-
-    # Check state tracking
-    assert source.index.get_value() > 0
-
-
 def test_memory_source_with_jax_arrays():
     """Test MemorySource with JAX arrays."""
     # Create data source with JAX arrays
@@ -131,67 +116,6 @@ def test_memory_source_random_access():
         _ = source[-11]
 
 
-def test_memory_source_batch_retrieval():
-    """Test batch retrieval methods."""
-    # Create data source with rngs for stateful batch retrieval
-    data = {"values": jnp.arange(20)}
-    rngs = nnx.Rngs(default=0)
-    config = MemorySourceConfig()
-    source = MemorySource(config, data, rngs=rngs)
-
-    # Get batch using stateful mode
-    batch = source.get_batch(5)
-    assert "values" in batch
-    assert len(batch["values"]) == 5
-    assert jnp.array_equal(batch["values"], jnp.arange(5))
-
-    # Get next batch (should continue from index 5)
-    batch2 = source.get_batch(5)
-    assert jnp.array_equal(batch2["values"], jnp.arange(5, 10))
-
-
-def test_memory_source_shuffling():
-    """Test shuffling functionality."""
-    # Create data source with shuffling enabled
-    data = list(range(100))
-    rngs = nnx.Rngs(default=42, shuffle=42)
-    config = MemorySourceConfig(shuffle=True)
-    source = MemorySource(config, data, rngs=rngs)
-
-    # Get shuffled data
-    items = list(source)
-
-    # Should have same elements but in different order
-    assert set(items) == set(range(100))
-    assert items != list(range(100))  # Should be shuffled
-
-    # Test epoch tracking
-    assert source.epoch.get_value() == 1
-
-
-def test_memory_source_stateless_batch():
-    """Test stateless batch retrieval with explicit key."""
-    # Create data source (can be with or without rngs)
-    data = {"values": jnp.arange(20)}
-    config = MemorySourceConfig()
-    source = MemorySource(config, data)
-
-    # Get batch with explicit key (stateless mode)
-    key = jax.random.key(42)
-    batch = source.get_batch(5, key=key)
-    assert "values" in batch
-    assert len(batch["values"]) == 5
-
-    # Same key should give same batch
-    batch2 = source.get_batch(5, key=key)
-    assert jnp.array_equal(batch["values"], batch2["values"])
-
-    # Different key might give different batch (if shuffling)
-    key2 = jax.random.key(43)
-    source.get_batch(5, key=key2)
-    # Note: Without shuffle=True, batches will still be the same
-
-
 def test_memory_source_errors():
     """Test error cases for MemorySource."""
     config = MemorySourceConfig()
@@ -202,31 +126,6 @@ def test_memory_source_errors():
     # Test error for dictionary without array-like values
     with pytest.raises(ValueError, match="array-like value"):
         MemorySource(config, {"a": 1, "b": 2})
-
-
-def test_memory_source_state_management():
-    """Test state management in MemorySource."""
-    # Create data source with rngs for stateful operation
-    data = [{"value": i} for i in range(10)]
-    rngs = nnx.Rngs(default=0)
-    config = MemorySourceConfig()
-    source = MemorySource(config, data, rngs=rngs)
-
-    # Get several batches to advance state
-    source.get_batch(3)
-    source.get_batch(3)
-    source.get_batch(3)
-
-    # Verify state - after 3 batches of 3 items each, we should be at index 9
-    assert source.index.get_value() == 9
-    assert source.epoch.get_value() == 0
-
-    # Get one more batch to wrap around
-    source.get_batch(3)
-    # After wrapping around, we should be at index 0 (9 + 3 = 12, 12 % 10 = 0)
-    # The last batch gets items 9, 0, 1 (wrapping around)
-    assert source.index.get_value() == 0  # Wrapped around
-    assert source.epoch.get_value() == 1  # Epoch incremented
 
 
 def test_memory_source_with_transform_interface():
@@ -242,10 +141,10 @@ def test_memory_source_with_transform_interface():
     assert hasattr(source, "name")
     assert hasattr(source.config, "stochastic")
 
-    # Test that we can get batches using the get_batch method
-    batch = source.get_batch(5)
+    # Test that we can read records with the host read
+    batch = source.get_batch(_words([0, 1, 2, 3, 4]))
     assert "values" in batch
-    assert len(batch["values"]) == 5
+    assert batch.batch_size == 5
 
 
 def test_memory_source_repr():
@@ -267,66 +166,9 @@ def test_memory_source_string_input_error():
         MemorySource(config, "not_a_valid_input")
 
 
-def test_memory_source_stateless_batch_with_shuffle():
-    """Test stateless batch retrieval with shuffling enabled."""
-    # Create data source with shuffling (requires rngs for stochastic modules)
-    data = {"values": jnp.arange(20)}
-    config = MemorySourceConfig(shuffle=True)
-    rngs = nnx.Rngs(shuffle=42)  # Required for stochastic modules
-    source = MemorySource(config, data, rngs=rngs)
-
-    # Get batch with explicit key (stateless mode, line 198)
-    key = jax.random.key(42)
-    batch1 = source.get_batch(10, key=key)
-    assert "values" in batch1
-    assert len(batch1["values"]) == 10
-
-    # Same key should give same shuffled batch
-    batch2 = source.get_batch(10, key=key)
-    assert jnp.array_equal(batch1["values"], batch2["values"])
-
-    # Different key should give different shuffled batch
-    key2 = jax.random.key(43)
-    batch3 = source.get_batch(10, key=key2)
-    # The values should be different (with high probability)
-    assert not jnp.array_equal(batch1["values"], batch3["values"])
-
-
-def test_memory_source_get_batch_behavior():
-    """Test direct batch retrieval behavior."""
-    data = {"values": jnp.arange(15)}
-    config = MemorySourceConfig()
-    source = MemorySource(config, data)
-
-    # Stateful batch retrieval
-    batch = source.get_batch(5)
-    assert "values" in batch
-    assert len(batch["values"]) == 5
-    assert jnp.array_equal(batch["values"], jnp.arange(5))
-
-    # Stateless batch retrieval with key
-    key = jax.random.key(42)
-    batch_with_key = source.get_batch(5, key)
-    assert "values" in batch_with_key
-    assert len(batch_with_key["values"]) == 5
-
-
-def test_memory_source_shuffle_without_key():
-    """Test that shuffling without rngs raises an error in stochastic mode."""
-    # In the new architecture, stochastic modules (shuffle=True) require rngs
-    data = list(range(10))
-    config = MemorySourceConfig(shuffle=True)
-
-    # Should raise ValueError because stochastic modules require rngs
-    with pytest.raises(ValueError, match="Stochastic structural modules require rngs"):
-        MemorySource(config, data, rngs=None)
-
-
 def test_memory_source_dict_with_scalar_values():
     """Test dictionary data with scalar (non-array) values."""
-    # Test dictionary with scalar values (lines 278, 306)
-    # Note: strings have __len__ so they're treated as arrays
-    # Use actual scalars without __len__ like int, float
+    # A value without rows is every record's
     data = {
         "array_field": jnp.arange(5),
         "scalar_field": 42,  # Scalar int value without __len__
@@ -341,80 +183,43 @@ def test_memory_source_dict_with_scalar_values():
     assert elem["scalar_field"] == 42  # Scalar repeated
     assert elem["float_val"] == 3.14
 
-    # Get batch - scalar values should be repeated
-    batch = source.get_batch(3)
-    assert jnp.array_equal(batch["array_field"], jnp.arange(3))
-    assert batch["scalar_field"] == [42, 42, 42]  # Repeated for batch
-    assert batch["float_val"] == [3.14, 3.14, 3.14]
+    # Read a batch - scalar values are repeated
+    batch = source.get_batch(_words([0, 1, 2]))
+    np.testing.assert_array_equal(batch["array_field"], np.arange(3))
+    np.testing.assert_array_equal(batch["scalar_field"], [42, 42, 42])
+    np.testing.assert_array_equal(batch["float_val"], [3.14, 3.14, 3.14])
 
 
 def test_memory_source_list_batch_gathering():
-    """Test batch gathering from list/tuple data."""
-    # Test list batch gathering (line 300)
+    """A list of records is stored as columns, so a read gathers rows of them."""
     data = [{"id": i, "value": i * 10} for i in range(10)]
     config = MemorySourceConfig()
     source = MemorySource(config, data)
 
-    # Get batch
-    batch = source.get_batch(3)
-    assert len(batch) == 3
-    assert batch[0]["id"] == 0
-    assert batch[1]["id"] == 1
-    assert batch[2]["id"] == 2
+    batch = source.get_batch(_words([0, 1, 2]))
+    assert batch.batch_size == 3
+    np.testing.assert_array_equal(batch["id"], [0, 1, 2])
+    np.testing.assert_array_equal(batch["value"], [0, 10, 20])
 
-    # Test with tuple data
-    data_tuple = tuple(range(10))
-    source_tuple = MemorySource(config, data_tuple)
-    batch_tuple = source_tuple.get_batch(3)
-    assert batch_tuple == (0, 1, 2)
+    # A tuple of scalar records is one column
+    source_tuple = MemorySource(config, tuple(range(10)))
+    np.testing.assert_array_equal(source_tuple.get_batch(_words([0, 1, 2])).data, [0, 1, 2])
 
 
 def test_memory_source_array_batch_gathering():
-    """Test batch gathering from numpy/jax arrays."""
-    # Test array batch gathering (line 314)
+    """An array is one column, held on the host."""
     data = jnp.arange(20).reshape(20, 1)
     config = MemorySourceConfig()
-    source = MemorySource(config, data)  # type: ignore[reportArgumentType]
+    source = MemorySource(config, data)
 
-    # Get batch
-    batch = source.get_batch(5)
-    expected = jnp.arange(5).reshape(5, 1)
-    assert jnp.array_equal(batch, expected)
-
-
-def test_memory_source_set_random_order():
-    """Test set_random_order method to enable/disable shuffling."""
-    # Test set_random_order method (lines 337-339)
-    data = list(range(100))
-    # Include default stream for fallback behavior
-    rngs = nnx.Rngs(default=0, shuffle=42)
-    config = MemorySourceConfig(shuffle=False)
-    source = MemorySource(config, data, rngs=rngs)
-
-    # Initially not shuffling
-    assert source.is_random_order is False
-
-    # Enable shuffling
-    source.set_random_order(True)
-    assert source.is_random_order is True
-
-    # Get data - should be shuffled
-    items = list(source)
-    assert set(items) == set(range(100))
-    assert items != list(range(100))  # Should be shuffled
-
-    # Disable shuffling
-    source.set_random_order(False)
-    assert source.is_random_order is False
-
-    # Get data - should not be shuffled
-    items2 = list(source)
-    assert items2 == list(range(100))
+    batch = source.get_batch(_words([0, 1, 2, 3, 4]))
+    assert isinstance(batch.data, np.ndarray)
+    np.testing.assert_array_equal(batch.data, np.arange(5).reshape(5, 1))
 
 
 def test_memory_source_complex_nested_data():
     """Test MemorySource with complex nested data structures."""
-    # Test with nested dictionaries and mixed types
+    # Nested records: numbers become columns, strings the record's provenance
     data = [
         {
             "features": {"x": i, "y": i * 2},
@@ -430,7 +235,8 @@ def test_memory_source_complex_nested_data():
     item = source[5]
     assert item["features"]["x"] == 5
     assert item["features"]["y"] == 10
-    assert item["metadata"]["id"] == "item_5"
+    assert "id" not in item["metadata"]
+    assert source._provenance.value[5]["metadata/id"] == "item_5"
     assert item["label"] == 2
 
     # Check iteration
@@ -448,18 +254,6 @@ def test_memory_source_edge_cases():
     assert len(source) == 1
     assert source[0] == 42
 
-    # Test batch larger than data
-    batch = source.get_batch(5)
-    assert len(batch) == 1  # Should only return available data
-
-    # Test empty batch after exhaustion in stateful mode
-    rngs = nnx.Rngs(0)
-    source2 = MemorySource(config, [1, 2, 3], rngs=rngs)
-    batch1 = source2.get_batch(2)
-    assert len(batch1) == 2
-    batch2 = source2.get_batch(2)
-    assert len(batch2) == 1  # Only 1 element left
-
-    # After wrap-around, should start from beginning
-    batch3 = source2.get_batch(2)
-    assert len(batch3) == 2
+    # A record outside the source is refused rather than wrapped
+    with pytest.raises(IndexError, match="outside"):
+        source.get_batch(_words([0, 1]))

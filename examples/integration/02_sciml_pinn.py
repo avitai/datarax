@@ -142,7 +142,7 @@ def main() -> None:
     steps_per_epoch = 256 // batch_size
 
     pipeline = Pipeline(
-        source=MemorySource(MemorySourceConfig(shuffle=False), data),
+        source=MemorySource(MemorySourceConfig(), data),
         stages=[],
         batch_size=batch_size,
         rngs=nnx.Rngs(0),

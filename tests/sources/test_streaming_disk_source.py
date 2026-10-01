@@ -151,3 +151,15 @@ def test_pipeline_iterates_the_disk_array_in_order(tmp_path: Path) -> None:
     assert isinstance(iterator, PipelineIterator)
     np.testing.assert_array_equal(np.concatenate([np.asarray(b["x"]) for b in iterator]), array)
     np.testing.assert_array_equal(np.asarray(pipeline().step()["x"]), array[:4])
+
+
+def test_a_tree_mode_split_and_merge_reads_the_same_rows(tmp_path: Path) -> None:
+    """The memory-map holder is static, so a tree-mode round trip keeps the source's reads."""
+    array = np.arange(8 * 2, dtype=np.float32).reshape(8, 2)
+    source = StreamingDiskSource(
+        StreamingDiskSourceConfig(path=str(_write_npy(tmp_path / "data.npy", array)))
+    )
+    graphdef, state = nnx.split(source, graph=False)
+    merged = nnx.merge(graphdef, state)
+    words = jnp.asarray(to_words(np.asarray([5, 1, 3], np.uint64)))
+    np.testing.assert_array_equal(np.asarray(merged.get_records(words)["x"]), array[[5, 1, 3]])

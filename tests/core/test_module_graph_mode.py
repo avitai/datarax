@@ -16,13 +16,12 @@ from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
 
 class _SharingSource(MemorySource):
-    """A source holding its ``Rngs`` under a second name: one RNG count on two graph paths."""
+    """A source holding one ``Rngs`` under two names: one RNG count on two graph paths."""
 
     def __init__(self) -> None:
-        config = MemorySourceConfig(shuffle=True)
-        data = {"x": np.arange(16, dtype=np.float32)}
-        super().__init__(config, data=data, rngs=nnx.Rngs(0, shuffle=1))
-        self.shared_rngs = self.rngs
+        super().__init__(MemorySourceConfig(), data={"x": np.arange(16, dtype=np.float32)})
+        self.first_rngs = nnx.Rngs(0, shuffle=1)
+        self.shared_rngs = self.first_rngs
 
 
 def _sharing_source() -> MemorySource:

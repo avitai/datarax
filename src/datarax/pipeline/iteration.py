@@ -75,8 +75,8 @@ _HOST_COPIES: weakref.WeakKeyDictionary[Any, _HostCopies] = weakref.WeakKeyDicti
 _Writes = tuple[dict[int, Any], dict[int, Any]]
 
 # The layout of PipelineIterator.get_state(). Operators hold no RNG counts, so ``rng_counts`` is
-# the pipeline's and the source's. A state without the field keeps only its counts outside
-# operators.
+# the pipeline's and those of a source that holds a stream (an in-memory source holds none). A
+# state without the field keeps only its counts outside operators.
 _ITERATOR_STATE_VERSION = 2
 # Version 1 carried ``rng_counts`` in the per-operator layout; version 2 adds ``fingerprint``,
 # the configuration that produced the state, which ``set_state`` checks.
@@ -411,7 +411,7 @@ class PipelineIterator:
             plan: How the module's records divide into batches and epochs.
             position: The module's position counter.
             epoch: The module's epoch counter.
-            shuffled: Whether the source serves records in a shuffled order, recorded in
+            shuffled: Whether the pipeline serves records in a shuffled order, recorded in
                 the state's fingerprint.
         """
         graphdef, mutable_state, immutable_state = nnx.split(
@@ -513,14 +513,15 @@ class PipelineIterator:
 
         The state names the batches already yielded to the caller:
         ``position`` (records consumed), ``epoch`` (which permutation a
-        shuffled source serves), ``rng_counts`` (per-stream fork counters,
+        shuffling pipeline serves), ``rng_counts`` (per-stream fork counters,
         which determine every stochastic draw) and ``version``, the layout
         those counts are in. Shapes and types are stable across the
         iterator's lifetime.
 
-        ``rng_counts`` holds the pipeline's count, then the source's. An
-        operator keys each record on its base key and holds no count, so the
-        list's length does not depend on the operators.
+        ``rng_counts`` holds the pipeline's count, then the source's if it holds
+        a stream (an in-memory source holds none). An operator keys each record
+        on its base key and holds no count, so the list's length does not depend
+        on the operators.
 
         Returns:
             JSON-serializable dict with ``position``, ``epoch``, ``rng_counts`` and ``version``.

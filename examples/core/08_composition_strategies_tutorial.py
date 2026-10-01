@@ -111,7 +111,7 @@ data = {
     "label": np.random.randint(0, 10, (num_samples,)).astype(np.int32),
 }
 
-source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+source = MemorySource(MemorySourceConfig(), data=data)
 print(f"Dataset: {num_samples} samples, shape {data['image'].shape}")
 
 
@@ -184,7 +184,7 @@ sequential_composite = CompositeOperatorModule(
 )
 
 # Test it
-source1 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(10))
+source1 = MemorySource(MemorySourceConfig(), data=data)
 pipeline = example_pipeline(source1, batch_size=16, stages=[sequential_composite])
 batch = next(iter(pipeline))
 
@@ -258,7 +258,7 @@ parallel_mean = CompositeOperatorModule(
     operators=[op_bright, op_contrast, op_noise],
 )
 
-source2 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(20))
+source2 = MemorySource(MemorySourceConfig(), data=data)
 pipeline = example_pipeline(source2, batch_size=16, stages=[parallel_mean])
 batch = next(iter(pipeline))
 
@@ -277,7 +277,7 @@ parallel_dict = CompositeOperatorModule(
     operators=[op_bright, op_contrast],
 )
 
-source3 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(30))
+source3 = MemorySource(MemorySourceConfig(), data=data)
 pipeline = example_pipeline(source3, batch_size=8, stages=[parallel_dict])
 batch = next(iter(pipeline))
 
@@ -309,7 +309,7 @@ weighted_parallel = CompositeOperatorModule(
     operators=[op1, op2, op3],
 )
 
-source4 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(40))
+source4 = MemorySource(MemorySourceConfig(), data=data)
 pipeline = example_pipeline(source4, batch_size=16, stages=[weighted_parallel])
 batch = next(iter(pipeline))
 
@@ -350,7 +350,7 @@ ensemble_mean = CompositeOperatorModule(
     operators=ensemble_ops,
 )
 
-source5 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(50))
+source5 = MemorySource(MemorySourceConfig(), data=data)
 pipeline = example_pipeline(source5, batch_size=16, stages=[ensemble_mean])
 batch = next(iter(pipeline))
 
@@ -371,7 +371,7 @@ ensemble_max = CompositeOperatorModule(
     ],
 )
 
-source6 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(60))
+source6 = MemorySource(MemorySourceConfig(), data=data)
 pipeline = example_pipeline(source6, batch_size=16, stages=[ensemble_max])
 batch = next(iter(pipeline))
 
@@ -429,7 +429,7 @@ branching = CompositeOperatorModule(
     operators=branch_ops,
 )
 
-source7 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(70))
+source7 = MemorySource(MemorySourceConfig(), data=data)
 pipeline = example_pipeline(source7, batch_size=16, stages=[branching])
 batch = next(iter(pipeline))
 
@@ -525,7 +525,7 @@ full_pipeline_op = CompositeOperatorModule(
     operators=[normalize_op(), aug_ensemble],
 )
 
-source8 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(90))
+source8 = MemorySource(MemorySourceConfig(), data=data)
 pipeline = example_pipeline(source8, batch_size=32, stages=[full_pipeline_op])
 
 # Process all data
@@ -589,7 +589,7 @@ def main():
         "image": np.random.rand(50, 32, 32, 3).astype(np.float32),
         "label": np.random.randint(0, 10, (50,)).astype(np.int32),
     }
-    source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+    source = MemorySource(MemorySourceConfig(), data=data)
 
     # Demo: Sequential
     print()
@@ -610,7 +610,7 @@ def main():
     # Demo: Ensemble Mean
     print()
     print("2. ENSEMBLE_MEAN: Average augmentations")
-    source2 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(1))
+    source2 = MemorySource(MemorySourceConfig(), data=data)
     ens = CompositeOperatorModule(
         CompositeOperatorConfig(
             strategy=CompositionStrategy.ENSEMBLE_MEAN,
@@ -627,7 +627,7 @@ def main():
     # Demo: Branching
     print()
     print("3. BRANCHING: Route by label")
-    source3 = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(2))
+    source3 = MemorySource(MemorySourceConfig(), data=data)
     branch = CompositeOperatorModule(
         CompositeOperatorConfig(
             strategy=CompositionStrategy.BRANCHING,

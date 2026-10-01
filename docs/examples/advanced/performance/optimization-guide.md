@@ -139,7 +139,7 @@ def preprocess(element, key=None):  # noqa: ARG001
 
 def create_memory_pipeline(data, batch_size):
     """Create pipeline from memory data."""
-    source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+    source = MemorySource(MemorySourceConfig(), data=data)
     prep = ElementOperator(ElementOperatorConfig(stochastic=False), fn=preprocess, rngs=nnx.Rngs(0))
     return Pipeline(source=source, stages=[prep], batch_size=batch_size, rngs=nnx.Rngs(0))
 ```
@@ -153,8 +153,8 @@ print(f"Avg latency: {result['avg_latency_ms']:.2f} ms (p95: {result['p95_latenc
 
 **Terminal Output:**
 ```
-Baseline (batch 64): 163,806 samples/s
-Avg latency: 0.39 ms (p95: 0.75 ms)
+Baseline (batch 64): 281,131 samples/s
+Avg latency: 0.23 ms (p95: 0.36 ms)
 ```
 
 ```python
@@ -181,13 +181,13 @@ for bs in batch_sizes:
 **Terminal Output:**
 ```
 Batch Size Sweep (Datarax Pipeline):
-  Batch    8: 22,157 samples/s (±889)
-  Batch   16: 42,732 samples/s (±2489)
-  Batch   32: 94,022 samples/s (±6628)
-  Batch   64: 191,255 samples/s (±10323)
-  Batch  128: 361,751 samples/s (±22636)
-  Batch  256: 666,255 samples/s (±39106)
-  Batch  512: 1,128,520 samples/s (±46115)
+  Batch    8: 31,409 samples/s (±3672)
+  Batch   16: 71,076 samples/s (±1162)
+  Batch   32: 143,238 samples/s (±4808)
+  Batch   64: 311,890 samples/s (±24337)
+  Batch  128: 600,545 samples/s (±38619)
+  Batch  256: 1,056,967 samples/s (±48010)
+  Batch  512: 1,924,946 samples/s (±318377)
 ```
 
 Each batch size runs 3 trials, so the reported throughput carries a standard deviation. On the
@@ -212,7 +212,7 @@ from datarax.operators.modality.image import (
 ```python
 def create_operator_pipeline(data, operator, batch_size=64):
     """Create pipeline with specific operator."""
-    source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+    source = MemorySource(MemorySourceConfig(), data=data)
     prep = ElementOperator(ElementOperatorConfig(stochastic=False), fn=preprocess, rngs=nnx.Rngs(0))
 
     stages = [prep]
@@ -275,17 +275,17 @@ for name, op in operators.items():
 **Terminal Output:**
 ```
 Operator Benchmarks:
-  Baseline    :   0.28 ms (p95: 0.41 ms)
-  Brightness  :   0.35 ms (p95: 0.65 ms)
-  Contrast    :   0.38 ms (p95: 0.77 ms)
-  Rotation    :   0.41 ms (p95: 0.76 ms)
-  Noise       :   0.36 ms (p95: 0.69 ms)
+  Baseline    :   0.21 ms (p95: 0.32 ms)
+  Brightness  :   0.25 ms (p95: 0.45 ms)
+  Contrast    :   0.28 ms (p95: 0.35 ms)
+  Rotation    :   0.26 ms (p95: 0.33 ms)
+  Noise       :   0.27 ms (p95: 0.39 ms)
 ```
 
 Each operator is measured against the `Baseline` (normalization only), so you
 can read off the marginal latency each augmentation adds per batch: in this L40S run each
-augmentation adds between 0.07 and 0.13 ms to the 0.28 ms baseline, the most for rotation,
-which resamples the image.
+augmentation adds between 0.04 and 0.07 ms to the 0.21 ms baseline. Differences this small
+between operators are within the run-to-run spread of a sub-millisecond timing.
 
 ## Part 4: Pipeline Optimization Strategies
 
@@ -474,19 +474,19 @@ OPTIMIZATION REPORT
 
 1. BATCH SIZE OPTIMIZATION
    Optimal batch size: 512
-   Peak throughput: 1,128,520 samples/s
+   Peak throughput: 1,924,946 samples/s
    Recommendation: Use batch sizes between 256 and 512
 
 2. OPERATOR OVERHEAD
-   Baseline latency: 0.28 ms
-   Brightness: +0.07 ms (+27%)
-   Contrast: +0.11 ms (+38%)
-   Rotation: +0.13 ms (+47%)
-   Noise: +0.08 ms (+29%)
+   Baseline latency: 0.21 ms
+   Brightness: +0.04 ms (+19%)
+   Contrast: +0.07 ms (+33%)
+   Rotation: +0.04 ms (+20%)
+   Noise: +0.05 ms (+25%)
 
 3. MEMORY EFFICIENCY
    Most efficient batch size: 64
-   Throughput/MB: 202596 samples/s/MB
+   Throughput/MB: 330383 samples/s/MB
 
 4. GENERAL RECOMMENDATIONS
    - Use JIT compilation for custom operators

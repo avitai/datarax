@@ -23,9 +23,7 @@ from flax import nnx
 from jax.core import ShapedArray
 from substrax.testing.compiles import expect_compiles
 
-from datarax.core.index_words import from_words, HostIntegers, MAX_RECORDS, to_words
-from datarax.pipeline import Pipeline
-from datarax.samplers.index_shuffle import (
+from datarax.core.index_shuffle import (
     _block_bits,
     _cycle_walk,
     _encrypt,
@@ -37,6 +35,8 @@ from datarax.samplers.index_shuffle import (
     shuffle_positions,
     shuffle_positions_host,
 )
+from datarax.core.index_words import from_words, HostIntegers, MAX_RECORDS, to_words
+from datarax.pipeline import Pipeline
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from tests.test_common.step_jaxpr import sub_jaxprs, traced_step
 
@@ -202,7 +202,7 @@ class TestPort:
 
 
 _ORACLE = (
-    Path(__file__).resolve().parents[1] / "fixtures" / "samplers" / "shuffle_orders_below_2_31.npz"
+    Path(__file__).resolve().parents[1] / "fixtures" / "core" / "shuffle_orders_below_2_31.npz"
 )
 
 
@@ -521,12 +521,15 @@ _LARGE = 1 << 20
 
 
 def _shuffled_pipeline(num_epochs: int | None) -> Pipeline:
-    source = MemorySource(
-        MemorySourceConfig(shuffle=True),
-        data={"x": np.zeros((_LARGE, 1), dtype=np.float32)},
+    source = MemorySource(MemorySourceConfig(), data={"x": np.zeros((_LARGE, 1), dtype=np.float32)})
+    return Pipeline(
+        source=source,
+        stages=[],
+        batch_size=8,
+        num_epochs=num_epochs,
         rngs=nnx.Rngs(0),
+        shuffle=True,
     )
-    return Pipeline(source=source, stages=[], batch_size=8, num_epochs=num_epochs, rngs=nnx.Rngs(0))
 
 
 class TestBatchCost:

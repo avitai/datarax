@@ -318,12 +318,11 @@ class TestValidateBatch:
         source = MemorySource(
             MemorySourceConfig(),
             {"x": np.random.rand(8, 3), "y": np.arange(8)},
-            rngs=nnx.Rngs(0),
         )
 
         @nnx.jit
         def fetch(src: MemorySource) -> dict[str, jax.Array]:
-            batch = src.get_batch_at(0, 4)
+            batch = src.get_records(src.record_indices_at(0, 4))
             validate_batch(batch, src.element_spec(), batch_size=4)
             return batch
 

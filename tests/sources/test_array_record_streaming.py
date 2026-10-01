@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 from flax import nnx
 
+from datarax.core.data_source import RecordIdentity
 from datarax.core.spec import SpecMismatchError
 from datarax.pipeline import Pipeline
 from datarax.sources.array_record_source import (
@@ -115,7 +116,7 @@ def test_without_a_decoder_batches_are_refused() -> None:
 
 
 def test_array_record_is_a_streaming_source() -> None:
-    assert _source().supports_indexed_access() is False
+    assert _source().record_identity is RecordIdentity.STREAM_IDS
 
 
 def test_pipeline_iterates_decoded_batches_one_epoch_per_pass() -> None:

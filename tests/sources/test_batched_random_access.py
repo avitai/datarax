@@ -21,8 +21,8 @@ def test_memory_source_getitems_gathers_array_leaves_in_order() -> None:
     assert [record["y"].tolist() for record in records] == [[8, 9], [2, 3], [6, 7]]
 
 
-def test_memory_source_getitems_gathers_python_sequence_leaves() -> None:
-    """Python list and tuple leaves should use ordered indexed gathers."""
+def test_memory_source_getitems_gathers_numeric_sequences_and_keeps_text_as_provenance() -> None:
+    """A numeric list column is a column; a text column is provenance, never a record's field."""
     source = MemorySource(
         MemorySourceConfig(),
         {"x": [10, 11, 12, 13], "label": ("a", "b", "c", "d")},
@@ -30,7 +30,8 @@ def test_memory_source_getitems_gathers_python_sequence_leaves() -> None:
 
     records = source._getitems([2, 0])
 
-    assert records == [{"x": 12, "label": "c"}, {"x": 10, "label": "a"}]
+    assert records == [{"x": 12}, {"x": 10}]
+    assert [record["label"] for record in source._provenance.value] == ["a", "b", "c", "d"]
 
 
 def test_memory_source_getitems_rejects_invalid_indices() -> None:

@@ -48,7 +48,7 @@ def _jitter(element, key):
 def _build(*, stages: list[nnx.Module] | None = None) -> Pipeline:
     """A shuffled pipeline with a learnable stage and a stochastic operator, built the same way."""
     data = {"x": np.arange(2 * _RECORDS, dtype=np.float32).reshape(_RECORDS, 2)}
-    source = MemorySource(MemorySourceConfig(shuffle=True), data=data, rngs=nnx.Rngs(0, shuffle=1))
+    source = MemorySource(MemorySourceConfig(), data=data)
     if stages is None:
         operator = ElementOperator(
             ElementOperatorConfig(stochastic=True, stream_name="aug"),
@@ -56,7 +56,7 @@ def _build(*, stages: list[nnx.Module] | None = None) -> Pipeline:
             rngs=nnx.Rngs(aug=2),
         )
         stages = [_Scale(), operator]
-    return Pipeline(source=source, stages=stages, batch_size=4, rngs=nnx.Rngs(3))
+    return Pipeline(source=source, stages=stages, batch_size=4, rngs=nnx.Rngs(3), shuffle=True)
 
 
 def _scale(pipeline: Pipeline) -> _Scale:

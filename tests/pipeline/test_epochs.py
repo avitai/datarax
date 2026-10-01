@@ -20,7 +20,7 @@ import pytest
 from flax import nnx
 
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.pipeline import Pipeline, PipelineIterator
 from datarax.pipeline.epochs import EpochPlan
 
@@ -229,6 +229,11 @@ class _Config(StructuralConfig):
 
 class _Resizable(DataSourceModule):
     """Indexed source whose length can change after the pipeline is built."""
+
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """What this source's record index means: INDEXED."""
+        return RecordIdentity.INDEXED
 
     def __init__(self, rows: int) -> None:
         super().__init__(_Config())

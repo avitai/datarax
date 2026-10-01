@@ -592,9 +592,7 @@ def pipeline_entries() -> dict[str, np.ndarray]:
         PIPELINE_RECORDS, 8
     )
     source = MemorySource(
-        MemorySourceConfig(shuffle=True),
-        data={"value": np.asarray(values), "id": np.arange(PIPELINE_RECORDS)},
-        rngs=nnx.Rngs(0, shuffle=1),
+        MemorySourceConfig(), data={"value": np.asarray(values), "id": np.arange(PIPELINE_RECORDS)}
     )
     stage = ElementOperator(
         ElementOperatorConfig(stochastic=True, stream_name="jitter"),
@@ -609,7 +607,9 @@ def pipeline_entries() -> dict[str, np.ndarray]:
         ),
         rngs=nnx.Rngs(0, jitter=2),
     )
-    pipeline = Pipeline(source=source, stages=[stage], batch_size=PIPELINE_BATCH, rngs=nnx.Rngs(0))
+    pipeline = Pipeline(
+        source=source, stages=[stage], batch_size=PIPELINE_BATCH, rngs=nnx.Rngs(0), shuffle=True
+    )
 
     recorded: dict[str, np.ndarray] = {}
     for epoch in range(2):

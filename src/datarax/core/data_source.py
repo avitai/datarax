@@ -5,6 +5,8 @@ that use flax.nnx.Module for state management and JAX transformation
 compatibility.
 """
 
+import abc
+import enum
 import logging
 from collections.abc import Iterator, Sequence
 from pathlib import Path
@@ -13,6 +15,7 @@ from typing import Any
 import jax
 from jaxtyping import PyTree
 
+from datarax.core.index_shuffle import shuffle_positions
 from datarax.core.index_words import wrapped_positions
 from datarax.core.structural import StructuralModule
 from datarax.typing import DataDict
@@ -66,6 +69,27 @@ class LocalFilesOnlyMixin:
             )
 
 
+class RecordIdentity(enum.Enum):
+    """What a source's record index means: the kind of identity its records carry.
+
+    Every source declares one (:attr:`DataSourceModule.record_identity`); the pipeline serves an
+    ``INDEXED`` source through its compiled session and any other through its streaming path.
+    """
+
+    INDEXED = "indexed"
+    """The record's stable position in the source, after the epoch's shuffle: the pipeline turns
+    (epoch, position) into it with ``record_indices_at``. Unique, stable across passes and runs,
+    and global across workers; its epoch is the pipeline's pass counter."""
+
+    STREAM_IDS = "stream_ids"
+    """The id the stream reports for the record (a shard and an offset, in the two words).
+    Unique, stable and global; its epoch is the source's pass counter."""
+
+    ARRIVAL = "arrival"
+    """The record's arrival ordinal in the run, never reset, so never repeated. Unique only: the
+    record's provenance travels beside the batch, and a table keyed by record is refused."""
+
+
 class DataSourceModule(StructuralModule):
     """Enhanced base module for all Datarax data source components.
 
@@ -100,7 +124,21 @@ class DataSourceModule(StructuralModule):
 
     This prevents NNX from trying to track individual JAX Arrays within the data
     structure as trainable parameters.
+
+    Every source declares what its record index means, :attr:`record_identity`; a subclass that
+    does not is refused at construction.
     """
+
+    @property
+    @abc.abstractmethod
+    def record_identity(self) -> RecordIdentity:
+        """What this source's record index means (see :class:`RecordIdentity`).
+
+        ``INDEXED`` sources implement ``get_records`` and ``record_indices_at`` and are served by
+        the pipeline's compiled session; ``STREAM_IDS`` and ``ARRIVAL`` sources pull forward with
+        ``get_batch(batch_size)`` and are served by its streaming path. A subclass declares it
+        with a property returning its kind.
+        """
 
     def __iter__(self) -> Iterator[PyTree]:
         """Return an iterator over individual data elements.
@@ -171,35 +209,14 @@ class DataSourceModule(StructuralModule):
             One array per field, with leading dim ``n``.
 
         Raises:
-            NotImplementedError: If the source does not support indexed access (e.g.
-                forward-only streams). Pipeline drives such a source through ``get_batch``
-                instead.
+            NotImplementedError: If the source does not implement it: an ``INDEXED`` source
+                must, a stream (``STREAM_IDS`` or ``ARRIVAL``) is pulled with ``get_batch``.
         """
         raise NotImplementedError(
-            f"{type(self).__name__} does not support indexed access. Implement "
-            f"get_records(indices), or get_batch(batch_size) for a forward-only stream."
+            f"{type(self).__name__} does not implement get_records(indices), which an INDEXED "
+            "source serves its records with; a stream declares STREAM_IDS or ARRIVAL and "
+            "implements get_batch(batch_size)."
         )
-
-    def get_batch_at(
-        self,
-        start: int | Any,
-        size: int,
-        key: Any | None = None,
-    ) -> DataDict:
-        """The ``size`` records from position ``start`` of the order ``key`` selects.
-
-        :meth:`get_records` of :meth:`record_indices_at`, so it is stateless and
-        JAX-traceable whenever those are.
-
-        Args:
-            start: Starting position; a Python int or a traced ``jax.Array``.
-            size: Number of records to return (Python int — JAX shapes are static).
-            key: Optional PRNG key for shuffled or stochastic sampling.
-
-        Returns:
-            One array per field, with leading dim ``size``.
-        """
-        return self.get_records(self.record_indices_at(start, size, key))
 
     def record_indices_at(
         self,
@@ -211,51 +228,39 @@ class DataSourceModule(StructuralModule):
 
         These are the indices :meth:`get_records` gathers. Stochastic operators key each
         record's randomness on them, so within an epoch a record keeps its augmentation however
-        records are batched, ordered or split across workers. The default names records by their
-        wrapped position ``(start + arange(size)) % len(self)``, which is right for a source that
-        serves records in order. A source that shuffles, partitions or mixes records overrides it.
-        Indices are 64-bit, each a uint32 ``(hi, lo)`` pair, the layout of ``Batch.indices``.
+        records are batched, ordered or split across workers. The order is the one ``key``
+        selects, or the sequential order when ``key`` is ``None``: the pipeline owns the shuffle
+        and passes its epoch key exactly when it was built with ``shuffle=True``. The default
+        names records by their wrapped position ``(start + arange(size)) % len(self)``, and with
+        a key by the keyed permutation of those positions
+        (:func:`~datarax.core.index_shuffle.shuffle_positions`). A source that partitions
+        or mixes records overrides it. Indices are 64-bit, each a uint32 ``(hi, lo)`` pair, the
+        layout of ``Batch.indices``.
 
         Args:
             start: Starting position; a Python int of any size or a traced int32 ``jax.Array``.
             size: Number of records (Python int).
-            key: The key selecting the order.
+            key: The key selecting the order, or ``None`` for the sequential order.
 
         Returns:
             uint32 array of shape ``(size, 2)``.
+
+        Raises:
+            ValueError: If a key is given to a source without a length, which has no order to
+                shuffle.
         """
-        del key
         try:
             length: int | None = len(self)
         except NotImplementedError:
             length = None
-        return wrapped_positions(start, size, length)
-
-    def supports_indexed_access(self) -> bool:
-        """Whether ``Pipeline`` can drive this source through ``get_records``.
-
-        ``get_records`` is stateless and JAX-traceable by contract, so a source whose class
-        implements it supports indexed access: ``Pipeline`` iterates it through the compiled
-        session and drives ``step()`` and ``scan()`` with it. Forward-only sources implement
-        ``get_batch`` instead. A source whose indexed access depends on how it was built
-        overrides this.
-
-        Returns:
-            Whether the source's class implements ``get_records``.
-        """
-        return type(self).get_records is not DataSourceModule.get_records
-
-    def supports_streaming(self) -> bool:
-        """Whether ``Pipeline`` can stream this source through ``get_batch(batch_size)``.
-
-        A streaming source returns one batch per call, a mapping of field names to arrays, and an
-        empty batch once exhausted. A source whose ``get_batch`` is something else (a host API
-        over stored records) overrides this.
-
-        Returns:
-            Whether the source defines a callable ``get_batch``.
-        """
-        return callable(getattr(self, "get_batch", None))
+        if key is None:
+            return wrapped_positions(start, size, length)
+        if length is None:
+            raise ValueError(
+                f"{type(self).__name__} has no length, so it has no order to shuffle; build its "
+                "pipeline with shuffle=False"
+            )
+        return shuffle_positions(wrapped_positions(start, size, length), length, key)
 
     def element_spec(self) -> Any:
         """Return a PyTree of ``jax.ShapeDtypeStruct`` describing per-element output.

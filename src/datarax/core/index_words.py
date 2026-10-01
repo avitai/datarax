@@ -193,18 +193,27 @@ def wrapped_positions(start: int | jax.Array, size: int, length: int | None) -> 
     return jnp.stack([high, low], axis=-1)
 
 
-def low_words(indices: jax.Array, length: int) -> jax.Array:
-    """The low words of ``indices`` into a source of ``length`` records, for a traced gather.
+@overload
+def low_words(indices: np.ndarray, length: int) -> np.ndarray: ...
 
-    A traced gather addresses rows with one uint32 word, which reaches every row of a source of
-    at most ``2**32`` records, whose indices all have a high word of 0.
+
+@overload
+def low_words(indices: jax.Array, length: int) -> jax.Array: ...
+
+
+def low_words(indices: jax.Array | np.ndarray, length: int) -> jax.Array | np.ndarray:
+    """The low words of ``indices`` into a source of ``length`` records: the rows a gather reads.
+
+    A gather addresses rows with one uint32 word, which reaches every row of a source of at most
+    ``2**32`` records, whose indices all have a high word of 0. Host (NumPy) indices give host
+    rows, for the host read; any other indices give a JAX array, for a traced gather.
 
     Args:
         indices: uint32 ``(n, 2)`` record indices.
         length: The source's record count.
 
     Returns:
-        uint32 ``(n,)`` row numbers.
+        uint32 ``(n,)`` row numbers, NumPy for NumPy indices.
 
     Raises:
         ValueError: If the source holds more than ``2**32`` records, which one word cannot
@@ -212,10 +221,11 @@ def low_words(indices: jax.Array, length: int) -> jax.Array:
     """
     if length > 1 << WORD_BITS:
         raise ValueError(
-            f"a traced gather addresses rows with one uint32 word, at most 2**32 rows; this "
+            f"a gather addresses rows with one uint32 word, at most 2**32 rows; this "
             f"source holds {length}"
         )
-    indices = jnp.asarray(indices)
+    if not isinstance(indices, np.ndarray):
+        indices = jnp.asarray(indices)
     if indices.ndim != 2 or indices.shape[-1] != 2:  # noqa: PLR2004 - (hi, lo)
         raise ValueError(f"record indices are uint32 (n, 2) words (hi, lo); got {indices.shape}")
     return indices[:, 1]

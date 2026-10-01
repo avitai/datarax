@@ -97,8 +97,8 @@ for batch in pipeline:
     train_step(model, optimizer, batch)
 ```
 
-Measured on one RTX 4090 with a 1 GiB shuffled source, batches of 256, and a linear model trained
-with SGD:
+Measured on one RTX 4090 with a 1 GiB source served in shuffled order, batches of 256, and a
+linear model trained with SGD:
 
 | Pattern | Cost | Peak device memory | Use when |
 |---|---|---|---|

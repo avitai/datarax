@@ -49,7 +49,7 @@ def _jitter(element, key):
 
 
 def _pipeline(*, stochastic: bool = False, n: int = _N, seed: int = 0) -> Pipeline:
-    source = MemorySource(MemorySourceConfig(shuffle=False), data=_data(n), rngs=nnx.Rngs(seed))
+    source = MemorySource(MemorySourceConfig(), data=_data(n))
     if stochastic:
         stage = ElementOperator(
             ElementOperatorConfig(stochastic=True, stream_name="jitter"),
@@ -93,7 +93,7 @@ class _GrowingStage(nnx.Module):
 
 
 def _pipeline_with(stage: nnx.Module) -> Pipeline:
-    source = MemorySource(MemorySourceConfig(shuffle=False), data=_data(), rngs=nnx.Rngs(0))
+    source = MemorySource(MemorySourceConfig(), data=_data())
     return Pipeline(source=source, stages=[stage], batch_size=_BATCH, rngs=nnx.Rngs(0))
 
 
@@ -514,7 +514,7 @@ class TestImmutableStaging:
 
 
 class TestIteratorRngCounts:
-    """``rng_counts`` holds the pipeline's and the source's counts, whatever the operators are.
+    """``rng_counts`` holds the pipeline's count, whatever the operators are.
 
     An operator keys each record on its ``_base_key`` and holds no stream or counter, so neither
     a stochastic operator nor the streams the caller's ``Rngs`` happened to carry add an entry.
@@ -528,12 +528,12 @@ class TestIteratorRngCounts:
         return counts
 
     def test_a_deterministic_operator_contributes_no_count(self):
-        # The pipeline's own stream, then the source's.
-        assert self._counts(_pipeline()) == [1, 0]
+        # The pipeline's own stream; an in-memory source holds none.
+        assert self._counts(_pipeline()) == [1]
 
     def test_a_stochastic_operator_contributes_no_count(self):
-        # The pipeline's own stream, then the source's.
-        assert self._counts(_pipeline(stochastic=True)) == [1, 0]
+        # The pipeline's own stream; an in-memory source holds none.
+        assert self._counts(_pipeline(stochastic=True)) == [1]
 
     def test_operators_built_from_one_rngs_add_no_count(self):
         shared = nnx.Rngs(jitter=0)
@@ -545,10 +545,10 @@ class TestIteratorRngCounts:
             )
             for _ in range(2)
         ]
-        source = MemorySource(MemorySourceConfig(shuffle=False), data=_data(), rngs=nnx.Rngs(0))
+        source = MemorySource(MemorySourceConfig(), data=_data())
         pipeline = Pipeline(source=source, stages=stages, batch_size=_BATCH, rngs=nnx.Rngs(0))
 
-        assert self._counts(pipeline) == [1, 0]
+        assert self._counts(pipeline) == [1]
 
 
 class TestIteratorStateVersioning:
@@ -612,9 +612,11 @@ class TestStateFingerprint:
             "shuffled": False,
         }
 
-    def test_a_shuffled_source_names_its_order(self):
-        source = MemorySource(MemorySourceConfig(shuffle=True), data=_data(), rngs=nnx.Rngs(0))
-        pipeline = Pipeline(source=source, stages=[], batch_size=_BATCH, rngs=nnx.Rngs(0))
+    def test_a_shuffling_pipeline_names_its_order(self):
+        source = MemorySource(MemorySourceConfig(), data=_data())
+        pipeline = Pipeline(
+            source=source, stages=[], batch_size=_BATCH, rngs=nnx.Rngs(0), shuffle=True
+        )
         assert _session(pipeline).get_state()["fingerprint"]["shuffled"] is True
 
     @pytest.mark.parametrize(

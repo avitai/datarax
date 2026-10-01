@@ -12,7 +12,6 @@ from unittest.mock import patch
 import jax
 import jax.numpy as jnp
 import numpy as np
-from flax import nnx
 
 from datarax.core.spec import batched_spec, validate_batch
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
@@ -28,7 +27,7 @@ def test_memory_source_element_spec_dict_data() -> None:
         "image": jnp.ones((100, 28, 28, 1), dtype=jnp.float32),
         "label": jnp.arange(100, dtype=jnp.int32),
     }
-    source = MemorySource(MemorySourceConfig(), data, rngs=nnx.Rngs(0))
+    source = MemorySource(MemorySourceConfig(), data)
 
     spec = source.element_spec()
 
@@ -52,7 +51,7 @@ def test_memory_source_element_spec_uses_jax_dtypes() -> None:
     checked directly against JAX-traced shapes downstream.
     """
     data = {"x": np.ones((10, 5), dtype=np.float64)}
-    source = MemorySource(MemorySourceConfig(), data, rngs=nnx.Rngs(0))
+    source = MemorySource(MemorySourceConfig(), data)
 
     spec = source.element_spec()
 
@@ -65,7 +64,7 @@ def test_memory_source_element_spec_uses_jax_dtypes() -> None:
 def test_memory_source_element_spec_preserves_pipeline_chain() -> None:
     """A MemorySource's spec composes with the default operator/batcher chain."""
     data = {"image": jnp.ones((50, 4), dtype=jnp.float32)}
-    source = MemorySource(MemorySourceConfig(), data, rngs=nnx.Rngs(0))
+    source = MemorySource(MemorySourceConfig(), data)
 
     elem_spec = source.element_spec()
     bspec = batched_spec(elem_spec, batch_size=8)
@@ -76,10 +75,10 @@ def test_memory_source_element_spec_preserves_pipeline_chain() -> None:
     assert image_spec.shape == (8, 4)
 
 
-def test_memory_source_element_spec_describes_get_batch_at_output() -> None:
-    """The declared spec is exactly what the Pipeline-facing ``get_batch_at`` emits.
+def test_memory_source_element_spec_describes_the_traced_gather_s_output() -> None:
+    """The declared spec is exactly what the Pipeline-facing ``get_records`` emits.
 
-    ``get_batch_at`` converts host storage to JAX arrays, so with x64 off a
+    ``get_records`` converts host storage to JAX arrays, so with x64 off a
     float64 or int64 host array is emitted, and declared, as float32 or int32.
     """
     data = {
@@ -87,7 +86,7 @@ def test_memory_source_element_spec_describes_get_batch_at_output() -> None:
         "y": np.arange(10, dtype=np.int64),
         "image": np.zeros((10, 2, 2), dtype=np.uint8),
     }
-    source = MemorySource(MemorySourceConfig(), data, rngs=nnx.Rngs(0))
+    source = MemorySource(MemorySourceConfig(), data)
 
     spec = source.element_spec()
 
@@ -96,12 +95,12 @@ def test_memory_source_element_spec_describes_get_batch_at_output() -> None:
         "y": jax.ShapeDtypeStruct((), jnp.int32),
         "image": jax.ShapeDtypeStruct((2, 2), jnp.uint8),
     }
-    validate_batch(source.get_batch_at(0, 4), spec, batch_size=4)
+    validate_batch(source.get_records(source.record_indices_at(0, 4)), spec, batch_size=4)
 
 
 def test_memory_source_element_spec_reads_storage_metadata_without_converting_it() -> None:
     """Deriving the spec never copies the stored dataset to the device."""
-    source = MemorySource(MemorySourceConfig(), {"x": np.random.rand(10, 5)}, rngs=nnx.Rngs(0))
+    source = MemorySource(MemorySourceConfig(), {"x": np.random.rand(10, 5)})
     refuse = AssertionError("storage was converted to derive element_spec")
 
     with (
@@ -116,7 +115,7 @@ def test_memory_source_element_spec_reads_storage_metadata_without_converting_it
 def test_memory_source_list_mode_element_spec_is_the_device_view_of_element_zero() -> None:
     """List-mode sources declare element zero as the device holds it."""
     data = [{"x": np.ones((3,), dtype=np.float64), "y": 1} for _ in range(4)]
-    source = MemorySource(MemorySourceConfig(), data, rngs=nnx.Rngs(0))
+    source = MemorySource(MemorySourceConfig(), data)
 
     assert source.element_spec() == {
         "x": jax.ShapeDtypeStruct((3,), jnp.float32),

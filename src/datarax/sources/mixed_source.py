@@ -17,7 +17,7 @@ from flax import nnx
 
 from datarax.config.registry import register_component
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.index_words import low_words, to_words
 from datarax.core.spec import spec_mismatches, SpecMismatchError
 from datarax.sources._grain_streaming import data_source_to_iter_dataset, mix_streaming_sources
@@ -134,6 +134,11 @@ class MixDataSourcesNode(DataSourceModule):
 
     Total elements = sum of all source lengths.
     """
+
+    @property
+    def record_identity(self) -> RecordIdentity:
+        """A mixed record's index is its source's offset plus its index within that source."""
+        return RecordIdentity.INDEXED
 
     def __init__(
         self,
@@ -265,8 +270,8 @@ class MixDataSourcesNode(DataSourceModule):
         if key is None:
             raise ValueError(
                 "MixDataSourcesNode.record_indices_at requires a PRNG key for "
-                "deterministic mixing. Pass `key=jax.random.key(seed)` or "
-                "drive iteration via Pipeline (which threads its own rngs)."
+                "deterministic mixing. Pass `key=jax.random.key(seed)`, or build its "
+                "pipeline with Pipeline(shuffle=True), which passes its epoch key."
             )
 
         log_weights = jnp.log(jnp.asarray(self._weights, dtype=jnp.float32))
@@ -287,7 +292,7 @@ class MixDataSourcesNode(DataSourceModule):
         size: int,
         key: jax.Array | None = None,
     ) -> jax.Array:
-        """Return the index of each record ``get_batch_at(start, size, key)`` returns.
+        """Return the index of each record at positions ``start .. start + size`` of the mix.
 
         A mixed record's index is its source's offset in the concatenation of the sources
         plus its index within that source, so every record of every source has one index.

@@ -85,9 +85,8 @@ print(f"JAX backend: {jax.default_backend()}")
 |-----------|-------------|---------|--------|
 | `name` | Dataset identifier on HF Hub | Required | both |
 | `split` | Which split to use | Required | both |
-| `shuffle` | Enable shuffling | `False` | both |
-| `seed` | Seed of the shuffle | `42` | `HFEagerConfig` |
 | `streaming` | Stream data on the fly | `False` | `HFStreamingConfig` |
+| `shuffle` | Shuffle the stream within a buffer | `False` | `HFStreamingConfig` |
 | `shuffle_buffer_size` | Buffer size for streaming shuffles | `1000` | `HFStreamingConfig` |
 | `include_keys` | Only include these fields | `None` | both |
 | `exclude_keys` | Exclude these fields | `None` | both |
@@ -100,7 +99,7 @@ basic_config = HFEagerConfig(
     split="train[:1000]",  # Load first 1000 samples
 )
 
-basic_source = HFEagerSource(basic_config, rngs=nnx.Rngs(0))
+basic_source = HFEagerSource(basic_config)
 print(f"Basic MNIST source: {len(basic_source)} samples")
 
 # %% [markdown]
@@ -124,7 +123,7 @@ filtered_config = HFEagerConfig(
     include_keys={"image", "label"},  # Only return these fields
 )
 
-filtered_source = HFEagerSource(filtered_config, rngs=nnx.Rngs(1))
+filtered_source = HFEagerSource(filtered_config)
 
 # Check what fields are available
 pipeline = Pipeline(source=filtered_source, stages=[], batch_size=1, rngs=nnx.Rngs(0))
@@ -141,27 +140,20 @@ for key in data.keys():
 
 Shuffling is essential for training ML models:
 
-- `HFEagerSource` shuffles the whole downloaded split, reproducibly from `seed`
+- The pipeline owns the order of an eager source: `Pipeline(shuffle=True)` serves the whole
+  downloaded split in a new order every epoch, reproducibly from the pipeline's `rngs`
 - `HFStreamingSource` shuffles within a buffer of `shuffle_buffer_size` records
 """
 
 # %%
-# Shuffle the whole split, reproducibly from the seed
-shuffle_config = HFEagerConfig(
-    name="ylecun/mnist",
-    split="train[:2000]",
-    shuffle=True,
-    seed=42,  # Integer seed of the shuffle
-)
-
-# Create source with explicit RNG for reproducibility
-shuffle_source = HFEagerSource(
-    shuffle_config,
-    rngs=nnx.Rngs(42),
+# Shuffle the whole split every epoch, reproducibly from the pipeline's seed
+shuffle_source = HFEagerSource(HFEagerConfig(name="ylecun/mnist", split="train[:2000]"))
+shuffle_pipeline = Pipeline(
+    source=shuffle_source, stages=[], batch_size=8, rngs=nnx.Rngs(42), shuffle=True
 )
 
 print("Shuffle configuration:")
-print(f"  Seed: {shuffle_config.seed}")
+print(f"  Pipeline shuffles: {shuffle_pipeline.shuffle}")
 
 # %% [markdown]
 """
@@ -205,7 +197,7 @@ downloaded_config = HFEagerConfig(
     name="ylecun/mnist",
     split="train[:1000]",
 )
-downloaded_source = HFEagerSource(downloaded_config, rngs=nnx.Rngs(0))
+downloaded_source = HFEagerSource(downloaded_config)
 print(f"Downloaded mode length: {len(downloaded_source)}")
 
 # %% [markdown]
@@ -270,16 +262,14 @@ print("Created operators: normalizer, flipper, augmentation")
 train_config = HFEagerConfig(
     name="ylecun/mnist",
     split="train[:5000]",
-    shuffle=True,
-    seed=42,
     include_keys={"image", "label"},
 )
 
-train_source = HFEagerSource(train_config, rngs=nnx.Rngs(0))
+train_source = HFEagerSource(train_config)
 
 # Chain: Source -> Augmentation -> Output
 training_pipeline = Pipeline(
-    source=train_source, stages=[augmentation], batch_size=64, rngs=nnx.Rngs(0)
+    source=train_source, stages=[augmentation], batch_size=64, rngs=nnx.Rngs(0), shuffle=True
 )
 
 print("Training pipeline:")
@@ -356,7 +346,7 @@ print("  'train+test' - Combined splits")
 | Feature | Configuration |
 |---------|--------------|
 | Field Filtering | `include_keys` / `exclude_keys` |
-| Shuffling | `shuffle=True` (eager: `seed`; streaming: `shuffle_buffer_size`) |
+| Shuffling | `Pipeline(shuffle=True)` (streaming: `shuffle=True` with `shuffle_buffer_size`) |
 | Streaming | `HFStreamingSource` with `streaming=True` for large datasets |
 | Reproducibility | Named RNG streams |
 | Pipeline | Source -> Operators -> Output |
@@ -391,11 +381,9 @@ def main():
     config = HFEagerConfig(
         name="ylecun/mnist",
         split="train[:2000]",
-        shuffle=True,
-        seed=42,
         include_keys={"image", "label"},
     )
-    source = HFEagerSource(config, rngs=nnx.Rngs(0))
+    source = HFEagerSource(config)
 
     # Normalizer
     def normalize(element, key=None):  # noqa: ARG001
@@ -414,7 +402,9 @@ def main():
         rngs=nnx.Rngs(0),
     )
 
-    pipeline = Pipeline(source=source, stages=[normalizer], batch_size=64, rngs=nnx.Rngs(0))
+    pipeline = Pipeline(
+        source=source, stages=[normalizer], batch_size=64, rngs=nnx.Rngs(0), shuffle=True
+    )
 
     # Process
     total = 0

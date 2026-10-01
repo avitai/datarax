@@ -16,11 +16,6 @@ def validate_index_batch(indices: Sequence[int], length: int) -> list[int]:
     return resolved
 
 
-def records_from_batched_mapping(batch: dict[str, Any], count: int) -> list[dict[str, Any]]:
-    """Convert a vectorized mapping gather into ordered individual records."""
-    return [{key: value[row] for key, value in batch.items()} for row in range(count)]
-
-
 class _DataraxRandomAccessBase:
     """Shared implementation for Grain random-access adapter protocols."""
 

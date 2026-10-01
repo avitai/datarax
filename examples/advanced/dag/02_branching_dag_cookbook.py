@@ -85,7 +85,7 @@ data = {
     "image": np.random.uniform(0, 1, size=(64, 32, 32, 3)).astype(np.float32),
     "label": np.random.randint(0, 10, size=(64,)).astype(np.int32),
 }
-source = MemorySource(MemorySourceConfig(), data=data, rngs=nnx.Rngs(0))
+source = MemorySource(MemorySourceConfig(), data=data)
 print(f"Source: {len(source)} samples")
 
 

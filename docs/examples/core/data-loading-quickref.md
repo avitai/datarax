@@ -16,11 +16,13 @@ Datarax provides three primary data source types for loading data into pipelines
 
 | Source | Best For | Loads Data | Shuffling |
 |--------|----------|-----------|-----------|
-| `MemorySource` | In-memory numpy/JAX arrays | At init (from arrays) | O(1) Feistel cipher |
-| `TFDSEagerSource` | TensorFlow Datasets (< 1GB) | At init (to JAX arrays) | O(1) Feistel cipher |
-| `HFEagerSource` | HuggingFace Datasets (< 1GB) | At init (to JAX arrays) | O(1) Feistel cipher |
+| `MemorySource` | In-memory numpy/JAX arrays | At init (to host NumPy columns) | O(1) Feistel cipher |
+| `TFDSEagerSource` | TensorFlow Datasets (< 1GB) | At init (to host NumPy columns) | O(1) Feistel cipher |
+| `HFEagerSource` | HuggingFace Datasets (< 1GB) | At init (to host NumPy columns) | O(1) Feistel cipher |
 
-All eager sources convert data to JAX arrays at initialization, so iteration is pure JAX with zero framework overhead.
+All eager sources load their data at initialization into host NumPy columns, so reading a batch is
+one NumPy gather with zero framework overhead; the pipeline places it on the device. The
+shuffle is the pipeline's (`Pipeline(..., shuffle=True)`).
 
 ## Coming from PyTorch?
 
@@ -29,7 +31,7 @@ All eager sources convert data to JAX arrays at initialization, so iteration is 
 | `torch.utils.data.TensorDataset(X, y)` | `MemorySource(config, data={"X": X, "y": y})` |
 | `torchvision.datasets.CIFAR10(root, train)` | `from_tfds("cifar10", "train")` |
 | `datasets.load_dataset("stanfordnlp/imdb")` | `from_hf("stanfordnlp/imdb", "train")` |
-| `DataLoader(ds, shuffle=True)` | `MemorySourceConfig(shuffle=True)` |
+| `DataLoader(ds, shuffle=True)` | `Pipeline(source=..., ..., shuffle=True)` |
 
 ## Coming from TensorFlow?
 
@@ -37,7 +39,7 @@ All eager sources convert data to JAX arrays at initialization, so iteration is 
 |------------|---------|
 | `tf.data.Dataset.from_tensor_slices(data)` | `MemorySource(config, data=data)` |
 | `tfds.load("cifar10", split="train")` | `from_tfds("cifar10", "train")` |
-| `tf.data.Dataset.shuffle(buffer)` | `MemorySourceConfig(shuffle=True)` (full shuffle, not buffer) |
+| `tf.data.Dataset.shuffle(buffer)` | `Pipeline(source=..., ..., shuffle=True)` (full shuffle, not buffer) |
 
 ## MemorySource
 
@@ -46,6 +48,7 @@ For data already in memory as numpy or JAX arrays.
 ```python
 import numpy as np
 from flax import nnx
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 # Create data as a dict of arrays (first axis = samples)
@@ -56,11 +59,10 @@ data = {
 
 # Basic usage
 config = MemorySourceConfig()
-source = MemorySource(config, data=data, rngs=nnx.Rngs(0))
+source = MemorySource(config, data=data)
 
-# With shuffling (seed comes from rngs, not config)
-config = MemorySourceConfig(shuffle=True)
-source = MemorySource(config, data=data, rngs=nnx.Rngs(42))
+# Shuffling belongs to the pipeline; its seed comes from the pipeline's rngs
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0), shuffle=True)
 ```
 
 ## TFDSEagerSource
@@ -69,21 +71,18 @@ For loading TensorFlow Datasets. Uses the `from_tfds()` factory for convenience.
 
 ```python
 from datarax.sources import from_tfds
-import flax.nnx as nnx
 
 # Auto-detect eager vs streaming (< 1GB = eager)
-source = from_tfds("cifar10", "train", shuffle=True, rngs=nnx.Rngs(0))
+source = from_tfds("cifar10", "train")
 
 # Specify custom data directory
 source = from_tfds(
     "ylecun/mnist", "train",
     data_dir="/path/to/data",
-    shuffle=True,
-    rngs=nnx.Rngs(0),
 )
 
 # Load subset with split slicing
-source = from_tfds("cifar10", "train[:5000]", rngs=nnx.Rngs(0))
+source = from_tfds("cifar10", "train[:5000]")
 
 # Load from Google Cloud Storage (bypasses local preparation)
 source = from_tfds("nsynth/gansynth_subset", "train", try_gcs=True)
@@ -99,20 +98,18 @@ For loading HuggingFace Datasets. Uses the `from_hf()` factory.
 
 ```python
 from datarax.sources import from_hf
-import flax.nnx as nnx
 
 # Load a HuggingFace dataset
-source = from_hf("ylecun/mnist", "train", shuffle=True, rngs=nnx.Rngs(0))
+source = from_hf("ylecun/mnist", "train")
 
 # Filter specific columns
 source = from_hf(
     "imdb", "train",
     include_keys={"text", "label"},
-    rngs=nnx.Rngs(0),
 )
 
 # Force streaming for large datasets
-source = from_hf("allenai/c4", "train", streaming=True, rngs=nnx.Rngs(0))
+source = from_hf("allenai/c4", "train", streaming=True)
 ```
 
 !!! note "HF Datasets requires `datasets`"

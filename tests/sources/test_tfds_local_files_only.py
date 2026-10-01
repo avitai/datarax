@@ -71,7 +71,7 @@ def test_tfds_eager_source_passes_local_files_only_to_prepare_builder(
             TFDSEagerSource, "_load_all_from_backend_to_jax", return_value=_mock_eager_arrays()
         ),
     ):
-        TFDSEagerSource(config, rngs=nnx.Rngs(0))
+        TFDSEagerSource(config)
 
         assert mock_prepare.call_args.kwargs.get("local_files_only") is expected
 
