@@ -272,31 +272,53 @@ def test_every_test_module_is_selected_by_a_ci_job() -> None:
     ] == []
 
 
-def test_long_running_examples_restore_the_prepared_dataset_cache() -> None:
-    """A dataset job fills the cache, and the example tier fails if the cache is missing.
+DATASET_JOB = "prepare_example_datasets"
+DATASET_ARTIFACT = "example-datasets"
+
+
+def _step_using(job: dict, action: str) -> dict:
+    """The one step of ``job`` that runs ``action`` (``owner/name@``)."""
+    (step,) = [step for step in job["steps"] if str(step.get("uses", "")).startswith(action)]
+    return step
+
+
+def test_long_running_examples_never_download_the_datasets() -> None:
+    """The example tier reads the prepared datasets: the cache, else this run's artifact.
 
     CIFAR-10 comes from a host the runners fetch at 13-16 s per MiB, so an example must not
-    download it inside its time budget.
+    download it inside its time budget. A cache save can fail ("Unable to reserve cache"),
+    so on a miss the dataset job also hands its result to the example tier as an artifact.
     """
-    jobs = yaml.safe_load(CI_WORKFLOW.read_text())["jobs"]
-    prepare = jobs["prepare_example_datasets"]
+    jobs = _jobs()
+    prepare = jobs[DATASET_JOB]
     long_running = jobs["long_running_tests"]
     needs = long_running["needs"]
-    saved = next(
-        step for step in prepare["steps"] if str(step.get("uses", "")).startswith("actions/cache@")
-    )
-    restored = next(
-        step
-        for step in long_running["steps"]
-        if str(step.get("uses", "")).startswith("actions/cache/restore@")
-    )
+    saved = _step_using(prepare, "actions/cache@")
+    uploaded = _step_using(prepare, "actions/upload-artifact@")
+    restored = _step_using(long_running, "actions/cache/restore@")
+    downloaded = _step_using(long_running, "actions/download-artifact@")
     prepare_commands = "\n".join(str(step.get("run", "")) for step in prepare["steps"])
+    long_running_commands = "\n".join(str(step.get("run", "")) for step in long_running["steps"])
 
-    assert "prepare_example_datasets" in ([needs] if isinstance(needs, str) else needs)
+    assert DATASET_JOB in ([needs] if isinstance(needs, str) else needs)
     assert restored["with"]["key"] == saved["with"]["key"]
     assert restored["with"]["path"] == saved["with"]["path"]
-    assert restored["with"]["fail-on-cache-miss"] is True
     assert "scripts/prepare_example_datasets.py" in prepare_commands
+    assert "scripts/prepare_example_datasets.py" not in long_running_commands
+    assert uploaded["if"] == f"steps.{saved['id']}.outputs.cache-hit != 'true'"
+    assert uploaded["with"]["path"] == saved["with"]["path"]
+    assert uploaded["with"]["name"] == downloaded["with"]["name"] == DATASET_ARTIFACT
+    assert downloaded["if"] == f"steps.{restored['id']}.outputs.cache-hit != 'true'"
+
+
+def test_main_keeps_the_dataset_cache_pull_requests_restore() -> None:
+    """The dataset job runs on every push to main, even one that repeats a pull request.
+
+    A pull request run restores caches saved by its own ref or by main, never by another pull
+    request, so main must hold the prepared datasets. Gated, the job skipped every merge, and
+    once main's entry was evicted no run rebuilt it until the nightly schedule.
+    """
+    assert not _consults_the_gate(_jobs()[DATASET_JOB])
 
 
 def test_every_uv_cache_is_pruned_before_it_is_saved() -> None:
@@ -505,7 +527,8 @@ def test_no_module_configures_logging_at_import() -> None:
 GATE_JOB = "already_tested"
 # performance_tests runs only on main and waits on lint, and GitHub skips a job whose
 # dependency skipped, so gating lint would take the one job that never repeats with it.
-UNGATED_JOBS = frozenset({GATE_JOB, "lint"})
+# prepare_example_datasets keeps main's dataset cache (see its own test).
+UNGATED_JOBS = frozenset({GATE_JOB, "lint", DATASET_JOB})
 GATE_CONDITION = f"needs.{GATE_JOB}.outputs.skip != 'true'"
 
 
