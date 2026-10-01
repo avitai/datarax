@@ -177,7 +177,7 @@ def test_shuffle_sampler_order_matches_index_shuffle():
 
     This pins the exact permutation so the O(1) refactor cannot change observable
     order (checkpoint/determinism continuity) and proves the sampler delegates to
-    Grain's Feistel shuffle rather than materializing a full permutation.
+    datarax's Feistel index shuffle rather than materializing a full permutation.
     """
     from datarax.samplers.index_shuffle import index_shuffle
 
