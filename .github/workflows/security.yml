@@ -32,15 +32,16 @@ jobs:
       - name: Create virtual environment
         run: uv venv
 
-      # pip-audit and bandit come from the dev extra; the audit itself reads the lockfile.
+      # Bandit comes from the dev extra.
       - name: Install dependencies
         run: uv sync --locked --extra dev
 
       # Every extra the lock resolves, in groups that respect [tool.uv] conflicts, each
-      # audited with a fresh advisory cache. The ignored advisories and their reasons live
-      # in the script, which also fails on an ignore that no longer matches anything.
+      # audited by a pinned pip-audit with a fresh advisory cache. The ignored advisories and
+      # their reasons live in [tool.substrax.audit-lock.ignore] in pyproject.toml; the action
+      # also fails on an ignore that no longer matches anything.
       - name: Audit the locked dependencies
-        run: uv run python scripts/audit_lock.py
+        uses: avitai/substrax/.github/actions/audit-lock@13e98b78127606be04437bd7c5de894fb765a28e
 
       - name: Bandit
         run: uv run bandit -r src/datarax/ -c pyproject.toml -f json -o bandit-report.json
