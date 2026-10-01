@@ -236,7 +236,7 @@ flowchart LR
 
     subgraph Source["TFDSEagerSource"]
         Config[TFDSEagerConfig<br/>name, split]
-        Load[Load & Convert<br/>to JAX arrays]
+        Load[Load & Convert<br/>to host NumPy columns]
     end
 
     subgraph Pipeline["Datarax Pipeline"]

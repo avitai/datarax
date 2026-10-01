@@ -1,145 +1,38 @@
-"""Shared source base classes for eager and streaming backends."""
+"""Shared source pieces: the named-dataset mixin of the eager sources and the streaming base."""
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from typing import Any
 
-import jax
-import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.data_source import DataSourceModule
-from datarax.core.index_words import low_words
-from datarax.sources._grain_bridge import records_from_batched_mapping, validate_index_batch
 from datarax.sources.source_ops import (
-    eager_get_batch_default,
-    eager_iter_default,
-    eager_reset,
     format_source_repr,
-    gather_eager_batch,
-    get_eager_item,
-    record_count,
     reset_streaming_state,
-    resolve_wrapped_indices,
     streaming_apply_batch,
 )
-from datarax.typing import DataDict
 
 
 logger = logging.getLogger(__name__)
 
 
-class EagerSourceBase(DataSourceModule):
-    """Shared eager-source behavior for in-memory JAX-backed datasets.
+class DatasetSourceMixin:
+    """What an eager source loaded from a named dataset reports: its name, split and info.
 
-    Subclasses must define the following attributes in their ``__init__``:
-
-    - ``data`` (``dict[str, Any]``): The loaded dataset as a key→array mapping.
-    - ``index`` (``nnx.Variable``): Current iteration index.
-    - ``epoch`` (``nnx.Variable``): Current epoch counter.
-    - ``dataset_name`` (``str | None``): Human-readable dataset name.
-    - ``split_name`` (``str | None``): Dataset split identifier.
-    - ``_dataset_info`` (``Any``): Cached backend-specific dataset metadata.
+    A subclass sets ``dataset_name``, ``split_name`` and ``_dataset_info`` in its ``__init__``.
     """
 
-    # -- Abstract attribute declarations (set by concrete subclasses) --
-    data: dict[str, Any]
-    index: nnx.Variable[int]  # pyright: ignore[reportGeneralTypeIssues]
-    epoch: nnx.Variable[int]  # pyright: ignore[reportGeneralTypeIssues]
     dataset_name: str | None
     split_name: str | None
     _dataset_info: Any
-
-    @property
-    def length(self) -> int:
-        """Records the source's data holds now, read from ``data`` (see :func:`record_count`)."""
-        return record_count(self.data)
-
-    def __len__(self) -> int:
-        """Return total number of elements."""
-        return self.length
-
-    def __iter__(self) -> Iterator[dict[str, Any]]:
-        """Iterate through eager data in record order."""
-        return eager_iter_default(self.data, self.length, self.index, self.epoch)
-
-    def __getitem__(self, index: int) -> dict[str, Any]:
-        """Retrieve one eager element by index."""
-        return get_eager_item(self.data, self.length, index)
-
-    def _getitems(self, indices: Sequence[int]) -> list[dict[str, Any]]:
-        """Retrieve multiple eager elements with vectorized array-leaf indexing."""
-        resolved = validate_index_batch(indices, self.length)
-        batch = gather_eager_batch(self.data, jnp.asarray(resolved))
-        return records_from_batched_mapping(batch, len(resolved))
-
-    def get_batch(self, batch_size: int, key: jax.Array | None = None) -> dict[str, Any]:
-        """Get one eager batch in stateful or stateless mode.
-
-        This follows the iterator ``next()`` idiom: the stateful mode both returns
-        a batch and advances internal position, which is a deliberate, documented
-        exception to command-query separation.
-
-        Args:
-            batch_size: Number of records to return.
-            key: If provided, selects **stateless** mode — the batch is derived
-                purely from ``key`` and no internal state is read or mutated. If
-                ``None``, selects **stateful** mode: the batch starts at the current
-                ``self.index`` and this call advances ``self.index`` (and rolls
-                ``self.epoch`` at wrap-around), so successive calls stream forward.
-                For side-effect-free indexed access, use :meth:`get_batch_at`.
-
-        Returns:
-            A batch dictionary of ``batch_size`` records.
-        """
-        return eager_get_batch_default(
-            self.data, self.length, self.index, self.epoch, batch_size, key
-        )
-
-    def record_indices_at(
-        self,
-        start: int | jax.Array,
-        size: int,
-        key: jax.Array | None = None,
-    ) -> jax.Array:
-        """Return the index of each record ``get_batch_at(start, size, key)`` returns.
-
-        Args:
-            start: Starting logical position; concrete int or traced ``jax.Array``.
-            size: Number of records (Python int).
-            key: The key selecting the order, or ``None`` for the sequential order.
-
-        Returns:
-            uint32 ``jax.Array`` of shape ``(size, 2)``, each index as its words ``(hi, lo)``.
-        """
-        return resolve_wrapped_indices(start, size, self.length, key)
-
-    def get_records(self, indices: jax.Array) -> DataDict:
-        """Gather the records at ``indices``; JIT-traceable for scan-based iteration.
-
-        Args:
-            indices: uint32 ``(n, 2)`` record indices in ``[0, len(self))``, as
-                :meth:`record_indices_at` names them; concrete or traced.
-
-        Returns:
-            Dict mapping each data key to a JAX array with leading dimension ``len(indices)``.
-        """
-        rows = low_words(indices, self.length)
-        return {
-            data_key: jnp.take(jnp.asarray(value), rows, axis=0)
-            for data_key, value in self.data.items()
-        }
+    length: int
 
     def get_dataset_info(self) -> Any:
         """Return cached backend-specific dataset metadata."""
         return self._dataset_info
-
-    def reset(self, seed: int | None = None) -> None:
-        """Reset eager-source iteration state."""
-        del seed
-        eager_reset(self.index, self.epoch)
 
     def _repr_extra_fields(self) -> dict[str, Any]:
         """Optional additional repr fields for subclasses."""
@@ -152,37 +45,7 @@ class EagerSourceBase(DataSourceModule):
             self.dataset_name,
             self.split_name,
             self.length,
-            self.epoch.get_value(),
             self._repr_extra_fields(),
-        )
-
-    def element_spec(self) -> Any:
-        """Derive the spec of emitted records from the eager dict-of-arrays storage.
-
-        EagerSourceBase subclasses store data as a dict mapping keys to arrays
-        whose leading axis is the dataset size, and ``get_batch_at`` gathers
-        those arrays as JAX arrays. This default implementation strips the
-        leading axis from every leaf and states the result as JAX arrays hold it
-        (``device_spec``), reading only array metadata.
-
-        Subclasses with non-dict storage should override.
-
-        Returns:
-            A dict mapping each key to the ``jax.ShapeDtypeStruct`` of one element.
-
-        Raises:
-            ValueError: If the source is empty.
-        """
-        # Imported lazily to keep module import light (matches sibling sources).
-        from datarax.core.spec import array_to_spec_strip_leading, device_spec  # noqa: PLC0415
-
-        if self.length == 0:
-            raise ValueError(
-                f"{type(self).__name__} has zero elements; element_spec() "
-                "cannot be inferred from an empty dataset."
-            )
-        return device_spec(
-            {key: array_to_spec_strip_leading(value) for key, value in self.data.items()}
         )
 
 
@@ -239,6 +102,9 @@ class StreamingSourceBase(DataSourceModule):
             self.dataset_name,
             self.split_name,
             self.length,
-            self.epoch.get_value(),
-            {"shuffle": self.is_random_order, **self._repr_extra_fields()},
+            {
+                "shuffle": self.is_random_order,
+                **self._repr_extra_fields(),
+                "epoch": self.epoch.get_value(),
+            },
         )

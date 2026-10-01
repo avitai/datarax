@@ -2,10 +2,10 @@
 
 This module provides two distinct source types optimized for different use cases:
 
-**HFEagerSource**: For small/medium datasets that fit in memory (~10% VRAM)
-- Loads ALL data to JAX arrays at initialization
-- Pure JAX iteration after init (no HuggingFace overhead during training)
-- Fully checkpointable (just indices, no external state)
+**HFEagerSource**: For small/medium datasets that fit in host memory
+- Loads ALL data at initialization: array columns as host NumPy, text and objects as provenance
+- No HuggingFace work during training: reads are NumPy gathers
+- Holds no iteration state; the pipeline owns the order and position
 - Ideal for: MNIST, CIFAR-10, sentiment datasets, small custom datasets
 
 **HFStreamingSource**: For large datasets that don't fit in memory
@@ -28,14 +28,13 @@ from collections.abc import Collection, Iterator
 from dataclasses import dataclass
 from typing import Any
 
-import jax
-import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
 from datarax.sources._config_base import SourceConfigBase
 from datarax.sources._conversion import hf_to_jax
-from datarax.sources._source_base import EagerSourceBase, StreamingSourceBase
+from datarax.sources._source_base import DatasetSourceMixin, StreamingSourceBase
+from datarax.sources.eager_source import EagerSource, is_array_leaf, stack_records
 from datarax.sources.source_ops import (
     converted_filtered_record,
     validate_eager_source_settings,
@@ -106,30 +105,6 @@ def _load_hf_dataset(
     )
 
 
-def _append_hf_converted_value(arrays: dict[str, list[Any]], key: str, value: Any) -> None:
-    """Convert a HF value and append it to per-key buffers."""
-    converted = hf_to_jax(value)
-    if isinstance(converted, jax.Array):
-        arrays.setdefault(key, []).append(converted)
-    elif isinstance(converted, np.ndarray | int | float | bool):
-        arrays.setdefault(key, []).append(jnp.array(converted))
-    else:
-        arrays.setdefault(key, []).append(converted)
-
-
-def _stack_hf_array_columns(arrays: dict[str, list[Any]]) -> dict[str, Any]:
-    """Stack buffered HF values into batched outputs where possible."""
-    result: dict[str, Any] = {}
-    for key, values in arrays.items():
-        if values and isinstance(values[0], jax.Array):
-            result[key] = jnp.stack(values)
-        elif values and isinstance(values[0], int | float | bool):
-            result[key] = jnp.array(values)
-        else:
-            result[key] = values
-    return result
-
-
 def _selected_hf_columns(
     column_names: list[str],
     include_keys: Collection[str] | None,
@@ -140,25 +115,37 @@ def _selected_hf_columns(
     return [name for name in included if not exclude_keys or name not in exclude_keys]
 
 
-def _hf_column_to_jax(values: Any) -> Any:
-    """Convert one numpy-formatted HF column; a numeric column becomes a single JAX array.
+def _hf_value_on_host(value: Any) -> Any:
+    """One HuggingFace value as the host holds it: a PIL image as its NumPy array."""
+    return np.asarray(value) if hasattr(value, "mode") else value
 
-    String and ragged columns arrive as object or text arrays and keep the element-wise
-    conversion.
+
+def _hf_column_parts(key: str, values: Any) -> tuple[np.ndarray | None, list[Any] | None]:
+    """Split one numpy-formatted HF column into a host NumPy column or provenance values.
+
+    A numeric column is already one NumPy array. A column of images or numeric sequences is
+    stacked once (the shapes must agree); a column of text or other objects is provenance.
+
+    Args:
+        key: The column's name.
+        values: The column as the numpy format gives it.
+
+    Returns:
+        ``(column, None)`` for an array column, ``(None, values)`` for provenance.
     """
-    if isinstance(values, np.ndarray) and values.dtype.kind in "biuf":
-        return jnp.asarray(values)
-    buffer: dict[str, list[Any]] = {}
-    for value in values:
-        _append_hf_converted_value(buffer, "column", value)
-    return _stack_hf_array_columns(buffer)["column"]
+    if isinstance(values, np.ndarray) and is_array_leaf(values):
+        return values, None
+    host = [_hf_value_on_host(value) for value in values]
+    if host and all(is_array_leaf(value) for value in host):
+        return stack_records([{key: np.asarray(value)} for value in host])[key], None
+    return None, list(values)
 
 
 @dataclass(frozen=True)
 class HFEagerConfig(SourceConfigBase):
-    """Configuration for HFEagerSource (loads all data to JAX at init).
+    """Configuration for HFEagerSource (loads all data into host columns at init).
 
-    Configuration for eager-loading HuggingFace datasets into JAX arrays.
+    Configuration for eager-loading HuggingFace datasets into host NumPy columns.
 
     Args:
         name: Name of the dataset in HuggingFace Hub (required)
@@ -219,26 +206,22 @@ class HFStreamingConfig(SourceConfigBase):
 
 
 # =============================================================================
-# HFEagerSource - Loads All Data to JAX at Init
+# HFEagerSource - Loads All Data into Host Columns at Init
 # =============================================================================
 
 
-class HFEagerSource(EagerSourceBase):
+class HFEagerSource(DatasetSourceMixin, EagerSource):
     """Eager-loading HuggingFace source for small/medium datasets.
 
-    Loads ALL data to JAX arrays at initialization, then operates like a
-    MemorySource with pure JAX operations. Use for datasets that fit in
-    ~10% of device VRAM.
+    Loads ALL data at initialization: every array column (numbers, images, numeric sequences)
+    becomes one host NumPy column, and every other column (text, objects) the records'
+    provenance, kept beside the columns and never refused. It then serves its records as every
+    eager source does (:class:`~datarax.sources.eager_source.EagerSource`).
 
     Key Features:
-        - One-time conversion at init (PIL→numpy→JAX for images)
-        - Pure JAX iteration after init
-        - Full checkpointing support (indices only, no external state)
-        - Automatic PIL Image to JAX array conversion
-
-    Performance:
-        - Training loops can use lax.fori_loop for 100-500x speedup
-        - Device placement via collect_to_array() for staged training
+        - One-time conversion at init (PIL images to NumPy arrays)
+        - No HuggingFace work during training
+        - Holds no iteration state: the pipeline owns the order and the position
 
     Example:
         ```python
@@ -246,18 +229,14 @@ class HFEagerSource(EagerSourceBase):
         config = HFEagerConfig(name="mnist", split="train")
         source = HFEagerSource(config)
 
-        # Iterate - pure JAX, no HF overhead
+        # Iterate in order
         for item in source:
             process(item["image"])
 
-        # Get batch (stateless with key, or stateful without)
-        batch = source.get_batch(32)  # Stateful
-        batch = source.get_batch(32, key=jax.random.key(0))  # Stateless
+        # Read records 0..31 as a Batch
+        batch = source.get_batch(to_words(np.arange(32)))
         ```
     """
-
-    # Store loaded columns as JAX arrays or Python lists for non-array columns.
-    data: dict[str, Any]
 
     def __init__(
         self,
@@ -265,7 +244,7 @@ class HFEagerSource(EagerSourceBase):
         *,
         name: str | None = None,
     ) -> None:
-        """Initialize HFEagerSource by loading all data to JAX arrays.
+        """Initialize HFEagerSource by loading all data into host columns and provenance.
 
         Args:
             config: Configuration for the source
@@ -299,15 +278,11 @@ class HFEagerSource(EagerSourceBase):
         # Load dataset info BEFORE loading data
         self._dataset_info = self._load_dataset_info_from_backend(config)
 
-        # Load ALL data to JAX arrays at init
-        self.data = nnx.data(self._load_all_from_backend_to_jax(config))
+        # Load ALL data at init
+        self._store(*self._load_columns(config))
 
         # Clean up resources
         gc.collect()
-
-        # State for iteration (like MemorySource)
-        self.index = nnx.Variable(0)
-        self.epoch = nnx.Variable(0)
 
     def _load_dataset_info_from_backend(self, config: HFEagerConfig) -> Any:
         """Load and cache dataset info.
@@ -325,17 +300,19 @@ class HFEagerSource(EagerSourceBase):
         # stays correct for every variant without a type-narrowing dance.
         return getattr(dataset, "info", None)
 
-    def _load_all_from_backend_to_jax(self, config: HFEagerConfig) -> dict[str, jax.Array]:
-        """Load entire dataset to JAX arrays.
+    def _load_columns(
+        self, config: HFEagerConfig
+    ) -> tuple[dict[str, np.ndarray], tuple[dict[str, Any], ...]]:
+        """Load the whole dataset as host NumPy columns and per-record provenance.
 
-        This is the core of the eager-loading strategy. All HuggingFace operations
-        happen here at init time, so training loops are pure JAX.
+        All HuggingFace work happens here, at init time.
 
         Args:
             config: Source configuration
 
         Returns:
-            Dictionary mapping keys to JAX arrays
+            The array columns, and one mapping per record of its non-array columns (empty when
+            every column is an array).
 
         Raises:
             ValueError: If the dataset yields no elements after loading and key filtering.
@@ -349,11 +326,22 @@ class HFEagerSource(EagerSourceBase):
                 "Check split selection and include/exclude key filters."
             )
 
-        # The numpy format decodes and stacks each column once, so a column becomes one JAX
-        # array. Stacking one JAX array per row instead compiles an XLA program whose operand
-        # count grows with the row count.
-        columns = dataset.select_columns(keys).with_format("numpy")[:]
-        return {key: _hf_column_to_jax(values) for key, values in columns.items()}
+        # The numpy format decodes and stacks each column once, so a numeric column is one
+        # NumPy array, read without per-row work.
+        loaded = dataset.select_columns(keys).with_format("numpy")[:]
+        columns: dict[str, np.ndarray] = {}
+        provenance_columns: dict[str, list[Any]] = {}
+        for key, values in loaded.items():
+            column, provenance = _hf_column_parts(key, values)
+            if column is not None:
+                columns[key] = column
+            else:
+                provenance_columns[key] = provenance or []
+        provenance_records = tuple(
+            {key: values[row] for key, values in provenance_columns.items()}
+            for row in range(len(dataset))
+        )
+        return columns, provenance_records if provenance_columns else ()
 
 
 # =============================================================================

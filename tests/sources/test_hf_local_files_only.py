@@ -3,7 +3,7 @@
 ``datasets`` 4.x routes ``local_files_only`` through ``DownloadConfig`` rather
 than as a top-level ``load_dataset`` kwarg. ``HFStreamingSource.element_spec``
 is needed because the eager-source's generic spec (inherited from
-``EagerSourceBase``) does not apply to iterator-backed streams.
+``EagerSource``) does not apply to iterator-backed streams.
 """
 
 from __future__ import annotations

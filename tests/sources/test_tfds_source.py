@@ -21,6 +21,9 @@ if platform.system() == "Darwin":
 
 import flax.nnx as nnx
 import jax
+import numpy as np
+
+from datarax.core.index_words import to_words
 
 
 # Skip tests if tensorflow or tensorflow_datasets is not available
@@ -86,9 +89,9 @@ def test_tfds_eager_source_stateless():
         assert "image" in data
         assert "label" in data
 
-        # Verify types (should be JAX arrays)
-        assert isinstance(data["image"], jax.Array)
-        assert isinstance(data["label"], jax.Array)
+        # Verify types (host NumPy rows of the columns)
+        assert isinstance(data["image"], np.ndarray)
+        assert isinstance(data["label"], np.generic)  # a scalar row of a host column
 
         # Verify shapes
         assert data["image"].shape == (28, 28, 1)
@@ -100,24 +103,20 @@ def test_tfds_eager_source_stateless():
 
 
 @pytest.mark.tfds
-def test_tfds_eager_source_stateful():
-    """Test TFDSEagerSource in stateful mode with internal state management."""
+def test_tfds_eager_source_host_read():
+    """TFDSEagerSource reads the records its indices name as a host Batch, statelessly."""
     try:
-        # Create source (stateful mode)
         config = TFDSEagerConfig(name="mnist", split="test[:20]")
         source = TFDSEagerSource(config)
 
-        # Get batches using stateful mode
-        batch1 = source.get_batch(5)
-        source.get_batch(5)
+        batch1 = source.get_batch(to_words(np.arange(5, dtype=np.uint64)))
+        again = source.get_batch(to_words(np.arange(5, dtype=np.uint64)))
 
-        # Verify batch structure
         assert "image" in batch1
         assert "label" in batch1
-
-        # Verify batch shape (should be batched)
-        assert batch1["image"].shape[0] == 5  # Batch size
+        assert batch1["image"].shape[0] == 5
         assert batch1["label"].shape[0] == 5
+        np.testing.assert_array_equal(batch1["image"], again["image"])
 
     except TFDS_TEST_SKIP_EXCEPTIONS as e:
         pytest.skip(f"Could not load MNIST dataset: {e}")
@@ -170,16 +169,15 @@ def test_tfds_eager_source_with_exclude_keys():
 
 
 @pytest.mark.tfds
-def test_tfds_eager_source_stateless_batch():
-    """Test TFDSEagerSource batch retrieval with explicit key."""
+def test_tfds_eager_source_host_read_of_any_records():
+    """TFDSEagerSource reads any records, in the order named."""
     try:
-        # Create source with config
         config = TFDSEagerConfig(name="mnist", split="test[:50]")
         source = TFDSEagerSource(config)
 
-        # Get batch with explicit key (stateless mode)
-        key = jax.random.key(42)
-        batch = source.get_batch(10, key=key)
+        rows = np.asarray([49, 3, 17, 0, 8, 22, 31, 5, 40, 11], dtype=np.uint64)
+        batch = source.get_batch(to_words(rows))
+        np.testing.assert_array_equal(batch["label"], source.data["label"][rows.astype(int)])
 
         # Verify batch structure
         assert "image" in batch

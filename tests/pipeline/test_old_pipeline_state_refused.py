@@ -78,8 +78,13 @@ def test_the_fixture_was_saved_by_the_previous_layout() -> None:
 def test_a_saved_pipeline_state_is_refused_naming_what_the_pipeline_lacks() -> None:
     saved, _, _ = _saved()
     pipeline = _pipeline()
-    current = pipeline.get_state()
-    absent = {path[1] for path in _paths(saved) - _paths(current) if path[0] == "source"}
+    present = {path[:end] for path in _paths(pipeline.get_state()) for end in range(len(path) + 1)}
+    # Each saved path the pipeline lacks is named at its shallowest key the pipeline lacks.
+    absent = {
+        next(path[end - 1] for end in range(1, len(path) + 1) if path[:end] not in present)
+        for path in _paths(saved)
+        if path not in present
+    }
     assert absent, "the control: the saved layout has source state the pipeline lacks"
     with pytest.raises(ValueError, match="structurally incompatible") as refused:
         pipeline.set_state(saved)

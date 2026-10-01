@@ -4,22 +4,21 @@ The bundled sources (HFEagerSource, TFDSEagerSource, HFStreamingSource,
 TFDSStreamingSource, MemorySource) and sources in other packages delegate to
 these helpers for:
 - Wrapped index resolution, in the order a key selects (``resolve_wrapped_indices``)
-- Iteration in record order
-- Batch retrieval (stateless and stateful)
-- Reset logic (eager and streaming)
+- A worker's share of the records (``partition_length``)
+- Reset logic (streaming)
 - Config validation
 - Key filtering
 - Element conversion and batch stacking (streaming)
 
-Design: Functions accept nnx.Variable references as arguments so mutations
-propagate correctly back to the caller (Flax NNX reference semantics).
-Streaming helpers use callback parameters (convert_fn) to stay backend-agnostic.
+Streaming helpers take nnx.Variable references as arguments so mutations
+propagate back to the caller, and callback parameters (convert_fn) to stay
+backend-agnostic. In-memory sources read through ``datarax.sources.EagerSource``.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable
 from typing import Any
 
 import jax
@@ -28,42 +27,6 @@ import numpy as np
 
 from datarax.core import index_words
 from datarax.core.index_shuffle import shuffle_positions
-
-
-def record_count(data: Any) -> int:
-    """Return how many records a source's data holds.
-
-    A mapping holds as many records as its columns -- every value with a length, arrays and
-    sequences alike -- and they must agree; a mapping with no such column holds none. Any other
-    sequence holds one record per element. In-memory sources read their length through this
-    on every call, so it follows data replaced after construction.
-
-    Args:
-        data: The data a source serves: a mapping of columns, or a sequence of records.
-
-    Returns:
-        The record count.
-
-    Raises:
-        TypeError: If a column of the mapping is itself a mapping, whose key count is not a
-            record count.
-        ValueError: If the mapping's columns disagree on their length.
-    """
-    if not isinstance(data, dict):
-        return len(data)
-    for key, value in data.items():
-        if isinstance(value, Mapping):
-            raise TypeError(
-                f"Data column {key!r} is a mapping; columns are arrays with one row per record, "
-                "in a flat mapping. Give each nested field its own top-level key."
-            )
-    counts = {len(value) for value in data.values() if hasattr(value, "__len__")}
-    if len(counts) > 1:
-        lengths = {key: len(value) for key, value in data.items() if hasattr(value, "__len__")}
-        raise ValueError(
-            f"All arrays in data dictionary must have the same length. Got lengths: {lengths}"
-        )
-    return counts.pop() if counts else 0
 
 
 def partition_length(length: int, num_workers: int = 1, shard_id: int = 0) -> int:
@@ -174,148 +137,11 @@ def validate_positive_optional_int(value: int | None, field_name: str) -> None:
         raise ValueError(f"{field_name} must be a positive integer")
 
 
-def eager_iter(
-    data: dict[str, Any],
-    length: int,
-    index_var: Any,
-    epoch_var: Any,
-    build_element: Callable[[dict[str, Any], int], dict[str, Any]],
-) -> Iterator[dict[str, Any]]:
-    """Shared iteration pattern for eager sources.
-
-    Args:
-        data: The data dictionary
-        length: Total number of elements
-        index_var: nnx.Variable for current index
-        epoch_var: nnx.Variable for current epoch
-        build_element: Callback to build element dict from data and index.
-            Signature: (data, idx) -> dict. This handles type differences
-            between HF (mixed types) and TFDS (all JAX arrays).
-
-    Yields:
-        Data elements in record order
-    """
-    index_var.set_value(0)
-    epoch_var.set_value(epoch_var.get_value() + 1)
-
-    for i in range(length):
-        yield build_element(data, i)
-
-
-def eager_get_batch(
-    data: dict[str, Any],
-    length: int,
-    index_var: Any,
-    epoch_var: Any,
-    batch_size: int,
-    key: jax.Array | None,
-    gather_fn: Callable[[dict[str, Any], Any], dict[str, Any]],
-) -> dict[str, Any]:
-    """Shared batch retrieval for eager sources.
-
-    Args:
-        data: The data dictionary
-        length: Total number of elements
-        index_var: nnx.Variable for current index
-        epoch_var: nnx.Variable for current epoch
-        batch_size: Number of elements in the batch
-        key: Optional RNG key for stateless mode
-        gather_fn: Callback to gather batch from data given indices.
-            Signature: (data, indices_array) -> dict
-
-    Returns:
-        Batch of data as dictionary
-    """
-    if key is not None:
-        # Stateless mode
-        return gather_fn(data, jnp.arange(batch_size))
-
-    # Stateful mode
-    start = index_var.get_value()
-    end = min(start + batch_size, length)
-    epoch = epoch_var.get_value()
-
-    index_var.set_value(end % length)
-    if end >= length:
-        epoch_var.set_value(epoch + 1)
-
-    return gather_fn(data, jnp.arange(start, end))
-
-
-def eager_reset(
-    index_var: Any,
-    epoch_var: Any,
-) -> None:
-    """Shared reset logic for eager sources.
-
-    Args:
-        index_var: nnx.Variable for current index
-        epoch_var: nnx.Variable for current epoch
-    """
-    index_var.set_value(0)
-    epoch_var.set_value(0)
-
-
-def build_eager_element(data: dict[str, Any], idx: int) -> dict[str, Any]:
-    """Build one element from eager in-memory data for a given index."""
-    return {k: v[idx] if isinstance(v, jax.Array) else v[idx] for k, v in data.items()}
-
-
-def get_eager_item(data: dict[str, Any], length: int, index: int) -> dict[str, Any]:
-    """Return one eager element with bounds checking and negative indexing."""
-    resolved_index = index + length if index < 0 else index
-    if resolved_index < 0 or resolved_index >= length:
-        raise IndexError(f"Index {index} out of range for {length} elements")
-    return build_eager_element(data, resolved_index)
-
-
-def gather_eager_batch(data: dict[str, Any], indices: jax.Array) -> dict[str, Any]:
-    """Gather an eager batch for JAX arrays and Python sequence leaves."""
-    batch: dict[str, Any] = {}
-    for k, v in data.items():
-        if isinstance(v, jax.Array):
-            batch[k] = v[indices]
-        else:
-            batch[k] = [v[int(i)] for i in indices]
-    return batch
-
-
-def eager_iter_default(
-    data: dict[str, Any],
-    length: int,
-    index_var: Any,
-    epoch_var: Any,
-) -> Iterator[dict[str, Any]]:
-    """Iterate eager source data with the shared default element builder."""
-    return eager_iter(data, length, index_var, epoch_var, build_eager_element)
-
-
-def eager_get_batch_default(
-    data: dict[str, Any],
-    length: int,
-    index_var: Any,
-    epoch_var: Any,
-    batch_size: int,
-    key: jax.Array | None,
-) -> dict[str, Any]:
-    """Get eager source batches with the shared default gather function."""
-    return eager_get_batch(
-        data,
-        length,
-        index_var,
-        epoch_var,
-        batch_size,
-        key,
-        gather_eager_batch,
-    )
-
-
 def format_source_repr(
     class_name: str,
     dataset_name: str | None,
     split_name: str | None,
     length: int | None,
-    epoch: int,
     extra_fields: dict[str, Any] | None = None,
 ) -> str:
     """Format a stable source repr string with optional extra fields."""
@@ -325,7 +151,6 @@ def format_source_repr(
     ]
     if extra_fields:
         fields.extend(extra_fields.items())
-    fields.append(("epoch", epoch))
     serialized = ", ".join(f"{key}={value}" for key, value in fields)
     return f"{class_name}({serialized})"
 

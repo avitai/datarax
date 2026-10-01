@@ -6,10 +6,10 @@ gradient flow through learnable stage parameters.
 
 Test contract index:
 
-1. ``test_memory_source_get_batch_at_is_stateless_and_deterministic`` —
-   ``MemorySource.get_batch_at(start, size, key)`` returns identical
-   output for identical args, advances by ``start`` not by internal
-   counter, and does not mutate the source's state.
+1. ``test_memory_source_indexed_read_is_stateless_and_deterministic`` —
+   ``get_records(record_indices_at(start, size, key))`` returns identical
+   output for identical args and advances by ``start``, not by an internal
+   counter.
 2. ``test_pipeline_constructs_with_source_and_stages`` — the
    constructor accepts a source, a list of stages, batch_size, and
    rngs; exposes them as attributes.
@@ -98,13 +98,13 @@ def _source(num_elements: int = 16) -> MemorySource:
 # ---------- Contracts ----------
 
 
-def test_memory_source_get_batch_at_is_stateless_and_deterministic() -> None:
-    """``get_batch_at(start, size, key)`` is stateless and start-driven."""
+def test_memory_source_indexed_read_is_stateless_and_deterministic() -> None:
+    """``get_records(record_indices_at(start, size, key))`` is stateless and start-driven."""
     source = _source(num_elements=8)
 
-    batch_a = source.get_batch_at(start=0, size=4, key=jax.random.key(0))
-    batch_b = source.get_batch_at(start=0, size=4, key=jax.random.key(0))
-    batch_c = source.get_batch_at(start=4, size=4, key=jax.random.key(0))
+    batch_a = source.get_records(source.record_indices_at(0, 4, jax.random.key(0)))
+    batch_b = source.get_records(source.record_indices_at(0, 4, jax.random.key(0)))
+    batch_c = source.get_records(source.record_indices_at(4, 4, jax.random.key(0)))
 
     np.testing.assert_array_equal(np.asarray(batch_a["x"]), np.asarray(batch_b["x"]))
     assert not np.array_equal(np.asarray(batch_a["x"]), np.asarray(batch_c["x"]))
@@ -137,7 +137,7 @@ def test_pipeline_call_applies_stages_in_order() -> None:
         rngs=nnx.Rngs(0),
     )
 
-    raw_batch = source.get_batch_at(start=0, size=4, key=None)
+    raw_batch = source.get_records(source.record_indices_at(0, 4, None))
     out = pipeline(raw_batch)
 
     expected = jnp.array([10.0, 12.0, 14.0, 16.0])

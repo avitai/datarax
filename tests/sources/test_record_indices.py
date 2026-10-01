@@ -17,14 +17,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from flax import nnx
 
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
 from datarax.core.index_shuffle import shuffle_positions_host
 from datarax.core.index_words import from_words, MAX_RECORDS
 from datarax.pipeline.epochs import EpochPlan
-from datarax.sources._source_base import EagerSourceBase
+from datarax.sources.eager_source import EagerSource
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
 from datarax.sources.source_ops import partition_length, resolve_wrapped_indices
@@ -54,15 +53,10 @@ class _Unsized(DataSourceModule):
         super().__init__(_Config())
 
 
-class _Eager(EagerSourceBase):
+class _Eager(EagerSource):
     def __init__(self, length: int) -> None:
         super().__init__(StructuralConfig())
-        self.data = nnx.data({"x": jnp.arange(length, dtype=jnp.float32)})
-        self.index = nnx.Variable(jnp.int32(0))
-        self.epoch = nnx.Variable(jnp.int32(0))
-        self.dataset_name = "eager"
-        self.split_name = "all"
-        self._dataset_info = None
+        self._store({"x": np.arange(length, dtype=np.float32)})
 
 
 def _memory(length: int, *, num_workers: int = 1, shard_id: int | None = None) -> MemorySource:

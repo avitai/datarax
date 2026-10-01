@@ -16,11 +16,13 @@ Datarax provides three primary data source types for loading data into pipelines
 
 | Source | Best For | Loads Data | Shuffling |
 |--------|----------|-----------|-----------|
-| `MemorySource` | In-memory numpy/JAX arrays | At init (from arrays) | O(1) Feistel cipher |
-| `TFDSEagerSource` | TensorFlow Datasets (< 1GB) | At init (to JAX arrays) | O(1) Feistel cipher |
-| `HFEagerSource` | HuggingFace Datasets (< 1GB) | At init (to JAX arrays) | O(1) Feistel cipher |
+| `MemorySource` | In-memory numpy/JAX arrays | At init (to host NumPy columns) | O(1) Feistel cipher |
+| `TFDSEagerSource` | TensorFlow Datasets (< 1GB) | At init (to host NumPy columns) | O(1) Feistel cipher |
+| `HFEagerSource` | HuggingFace Datasets (< 1GB) | At init (to host NumPy columns) | O(1) Feistel cipher |
 
-All eager sources convert data to JAX arrays at initialization, so iteration is pure JAX with zero framework overhead.
+All eager sources load their data at initialization into host NumPy columns, so reading a batch is
+one NumPy gather with zero framework overhead; the pipeline places it on the device. The
+shuffle is the pipeline's (`Pipeline(..., shuffle=True)`).
 
 ## Coming from PyTorch?
 

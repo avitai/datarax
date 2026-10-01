@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `datarax.sources.EagerSource`, the public base of every in-memory source (`MemorySource`,
+  `TFDSEagerSource`, `HFEagerSource`). It holds a record's array part as host NumPy columns and
+  its non-array part (strings, bytes, Python objects) as the record's provenance, an immutable
+  mapping per record in a host holder NNX keeps out of module state and out of every trace,
+  never part of a batch. Its host read, `get_batch(indices, *, epochs=0, contiguous=False)`,
+  gathers the records named by uint32 `(n, 2)` index words with one NumPy gather (a run the
+  caller declares contiguous as views) and returns a `Batch` named with those indices and
+  epochs; it reads and changes no state, creates no device array, and refuses the padding index
+  and indices outside the source by name. A subclass stores its columns with `_store`.
 - `datarax.core.Maybe(value, present)`: a data field a record may lack, at any depth in `data`.
   `value` holds zeros where a record has no value and `present` is a bool per record. It is a
   frozen registered pytree node of the two arrays, so batch operations, placement, specs and
@@ -44,6 +53,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `datarax.core.index_shuffle` (`shuffle_positions`, `shuffle_positions_host`, `index_shuffle`),
   beside `datarax.core.index_words`; the samplers, the sources and core import it from there.
   The old path is gone, with no alias: import from `datarax.core.index_shuffle`.
+- **In-memory sources hold their records on the host.** `MemorySource`, `TFDSEagerSource` and
+  `HFEagerSource` store NumPy columns: device arrays given to them are copied to the host once,
+  at construction, and `HFEagerSource` builds its columns without any device array. A list of
+  records is turned into columns once: numbers (Python and NumPy scalars, numeric arrays) are
+  stacked per field, strings and other objects become the record's provenance, an `Element`
+  record contributes its `data` (one carrying an index or state is refused), and a field whose
+  shape differs between records is refused naming the field, both shapes, padding and packing.
+  A dict's text or object column, and `HFEagerSource`'s text columns, are provenance, never
+  refused. Indexing, iteration (in order, stateless) and Grain's batched reads return a
+  record's array part as NumPy. `index_words.low_words` keeps NumPy indices on the host.
 - **The pipeline owns the shuffle.** `Pipeline(..., shuffle=True)` (and `Pipeline.from_dag`)
   serves each epoch in a new order, keyed by the pipeline's epoch key; `shuffle=False`, the
   default, serves the sequential order. `record_indices_at(start, size, key)` keeps its
@@ -240,6 +259,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The stateful host read and its state: `get_batch(batch_size, key=None)`, `reset()` and the
+  `index`/`epoch` Variables of `MemorySource` and the eager sources (use the stateless
+  `get_batch(indices, epochs=...)`; a pipeline owns the position and epoch),
+  `DataSourceModule.get_batch_at` (use `get_records(record_indices_at(start, size, key))`), the
+  private `EagerSourceBase` (use `EagerSource`), the eager helpers `eager_get_batch`,
+  `eager_iter`, `eager_reset`, `eager_get_batch_default`, `eager_iter_default`,
+  `build_eager_element`, `get_eager_item` and `gather_eager_batch` with their exports from
+  `datarax.sources`, `source_ops.record_count`, and the epoch argument of
+  `source_ops.format_source_repr`.
 - Source-level shuffling, which the pipeline now owns: `MemorySourceConfig.shuffle`,
   `TFDSEagerConfig.shuffle`/`seed`, `HFEagerConfig.shuffle`/`seed`, the `shuffle`, `seed` and
   `rngs` arguments of `from_tfds` and `from_hf`, `is_random_order`/`set_random_order` on

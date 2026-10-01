@@ -80,7 +80,7 @@ shuffles every epoch (an O(1) index shuffle), reproducibly from the pipeline's `
 
 > **Streaming large datasets?** Use `from_hf(name, split, streaming=True)`
 > (or `HFStreamingConfig`/`HFStreamingSource` directly) instead of `HFEagerConfig`,
-> which always loads the full dataset into JAX arrays at init.
+> which always loads the full dataset into host NumPy columns at init.
 
 ```python
 # Imports
@@ -298,7 +298,7 @@ source = from_hf("conceptual_captions", "train", streaming=True)
 ## Streaming vs Eager Sources
 
 Datarax exposes two source types for HuggingFace data. `HFEagerSource` loads the
-whole split into JAX arrays at init; `HFStreamingSource` pulls records on demand.
+whole split into host NumPy columns at init; `HFStreamingSource` pulls records on demand.
 
 ### Streaming (Recommended for Large Datasets)
 
@@ -330,7 +330,7 @@ source = HFStreamingSource(config, rngs=nnx.Rngs(0))
 from flax import nnx
 from datarax.sources import HFEagerConfig, HFEagerSource
 
-# Eager: loads the full split into JAX arrays at init
+# Eager: loads the full split into host NumPy columns at init
 config = HFEagerConfig(
     name="ylecun/mnist",
     split="train",

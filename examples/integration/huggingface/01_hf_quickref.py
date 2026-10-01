@@ -30,7 +30,7 @@ with seamless integration into your data pipelines.
 By the end of this example, you will be able to:
 
 1. Configure `HFEagerSource` for HuggingFace datasets
-2. Load a dataset eagerly into JAX arrays
+2. Load a dataset eagerly into host NumPy columns
 3. Inspect dataset structure and contents
 4. Apply transformations to HuggingFace data
 """

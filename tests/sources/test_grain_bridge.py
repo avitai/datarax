@@ -26,7 +26,8 @@ def test_random_access_adapter_preserves_order_and_repr() -> None:
 
     records = adapter.get_batch([3, 1, 4])
     assert [int(record["x"]) for record in records] == [3, 1, 4]
-    assert [record["y"] for record in records] == ["d", "b", "e"]
+    # Text is the records' provenance, kept by the source and never served as a field.
+    assert all(set(record) == {"x"} for record in records)
 
 
 def test_map_dataset_adapter_preserves_grain_map_dataset_contract() -> None:

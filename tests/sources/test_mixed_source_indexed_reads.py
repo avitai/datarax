@@ -1,10 +1,9 @@
-"""Contracts for ``MixDataSourcesNode.get_batch_at`` — weighted interleaved mix.
+"""Contracts for ``MixDataSourcesNode``'s indexed read — weighted interleaved mix.
 
-Each output position deterministically chooses a source via weighted
-categorical sampling, picks a local index uniformly within that source,
-and dispatches to the source's own ``get_batch_at``. The result is a
-batch of ``size`` records sampled in proportion to the configured
-weights.
+``record_indices_at(start, size, key)`` deterministically chooses, for each output position,
+a source via weighted categorical sampling and a local index uniformly within that source;
+``get_records`` gathers each record with its source's own ``get_records``. The result is a
+batch of ``size`` records sampled in proportion to the configured weights.
 
 Test contract index:
 
@@ -17,18 +16,18 @@ A. Construction validation:
 
 B. Sampling semantics:
 
-   3. ``test_mixed_get_batch_at_is_deterministic_for_fixed_key``
-   4. ``test_mixed_get_batch_at_differs_across_keys``
-   5. ``test_mixed_get_batch_at_returns_size_records``
-   6. ``test_mixed_get_batch_at_respects_weights_in_distribution`` —
+   3. ``test_mixed_indexed_read_is_deterministic_for_fixed_key``
+   4. ``test_mixed_indexed_read_differs_across_keys``
+   5. ``test_mixed_indexed_read_returns_size_records``
+   6. ``test_mixed_indexed_read_respects_weights_in_distribution`` —
       over many positions, source-A records appear roughly
       ``weight_A / sum(weights)`` of the time.
 
 C. JIT compatibility:
 
-   7. ``test_mixed_get_batch_at_traces_under_jit`` — calling under
+   7. ``test_mixed_indexed_read_traces_under_jit`` — calling under
       ``jax.jit`` does not raise; output shape is correct.
-   8. ``test_mixed_get_batch_at_accepts_traced_start``.
+   8. ``test_mixed_indexed_read_accepts_traced_start``.
 """
 
 from __future__ import annotations
@@ -97,7 +96,7 @@ def test_mixed_rejects_incompatible_element_specs_naming_the_field() -> None:
 # ---------- B. Sampling semantics ----------
 
 
-def test_mixed_get_batch_at_is_deterministic_for_fixed_key() -> None:
+def test_mixed_indexed_read_is_deterministic_for_fixed_key() -> None:
     src_a, src_b = _disjoint_pair()
     mix = MixDataSourcesNode(
         MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)),
@@ -105,37 +104,37 @@ def test_mixed_get_batch_at_is_deterministic_for_fixed_key() -> None:
     )
 
     key = jax.random.key(7)
-    batch_1 = mix.get_batch_at(start=0, size=8, key=key)
-    batch_2 = mix.get_batch_at(start=0, size=8, key=key)
+    batch_1 = mix.get_records(mix.record_indices_at(0, 8, key))
+    batch_2 = mix.get_records(mix.record_indices_at(0, 8, key))
 
     np.testing.assert_array_equal(np.asarray(batch_1["x"]), np.asarray(batch_2["x"]))
 
 
-def test_mixed_get_batch_at_differs_across_keys() -> None:
+def test_mixed_indexed_read_differs_across_keys() -> None:
     src_a, src_b = _disjoint_pair()
     mix = MixDataSourcesNode(
         MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)),
         [src_a, src_b],
     )
 
-    batch_a = mix.get_batch_at(start=0, size=16, key=jax.random.key(0))
-    batch_b = mix.get_batch_at(start=0, size=16, key=jax.random.key(1))
+    batch_a = mix.get_records(mix.record_indices_at(0, 16, jax.random.key(0)))
+    batch_b = mix.get_records(mix.record_indices_at(0, 16, jax.random.key(1)))
 
     assert not np.array_equal(np.asarray(batch_a["x"]), np.asarray(batch_b["x"]))
 
 
-def test_mixed_get_batch_at_returns_size_records() -> None:
+def test_mixed_indexed_read_returns_size_records() -> None:
     src_a, src_b = _disjoint_pair()
     mix = MixDataSourcesNode(
         MixDataSourcesConfig(num_sources=2, weights=(0.7, 0.3)),
         [src_a, src_b],
     )
 
-    batch = mix.get_batch_at(start=0, size=12, key=jax.random.key(0))
+    batch = mix.get_records(mix.record_indices_at(0, 12, jax.random.key(0)))
     assert batch["x"].shape == (12,)
 
 
-def test_mixed_get_batch_at_respects_weights_in_distribution() -> None:
+def test_mixed_indexed_read_respects_weights_in_distribution() -> None:
     """Over many positions, source-A frequency ≈ weight_A / sum(weights)."""
     src_a, src_b = _disjoint_pair()  # A has values in [0, 4), B has [100, 104)
     mix = MixDataSourcesNode(
@@ -143,7 +142,7 @@ def test_mixed_get_batch_at_respects_weights_in_distribution() -> None:
         [src_a, src_b],
     )
 
-    batch = mix.get_batch_at(start=0, size=512, key=jax.random.key(0))
+    batch = mix.get_records(mix.record_indices_at(0, 512, jax.random.key(0)))
     values = np.asarray(batch["x"])
 
     # Records < 50 came from A; records >= 50 came from B.
@@ -167,7 +166,7 @@ def test_mixed_record_indices_name_the_source_and_record_served() -> None:
     key = jax.random.key(3)
 
     ids = from_words(mix.record_indices_at(start=0, size=32, key=key)).astype(np.int64)
-    values = np.asarray(mix.get_batch_at(start=0, size=32, key=key)["x"])
+    values = np.asarray(mix.get_records(mix.record_indices_at(0, 32, key))["x"])
 
     assert set(ids.tolist()) <= set(range(8))
     expected = np.where(ids < 4, ids.astype(np.float32), 100.0 + (ids - 4).astype(np.float32))
@@ -177,7 +176,7 @@ def test_mixed_record_indices_name_the_source_and_record_served() -> None:
 # ---------- C. JIT compatibility ----------
 
 
-def test_mixed_get_batch_at_traces_under_jit() -> None:
+def test_mixed_indexed_read_traces_under_jit() -> None:
     src_a, src_b = _disjoint_pair()
     mix = MixDataSourcesNode(
         MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)),
@@ -186,20 +185,20 @@ def test_mixed_get_batch_at_traces_under_jit() -> None:
 
     @nnx.jit
     def fetch(mix: MixDataSourcesNode, start: jax.Array, key: jax.Array) -> jax.Array:
-        return mix.get_batch_at(start, 4, key)["x"]
+        return mix.get_records(mix.record_indices_at(start, 4, key))["x"]
 
     out = fetch(mix, jnp.int32(0), jax.random.key(0))
     assert out.shape == (4,)
 
 
-def test_mixed_get_batch_at_accepts_traced_start() -> None:
+def test_mixed_indexed_read_accepts_traced_start() -> None:
     src_a, src_b = _disjoint_pair()
     mix = MixDataSourcesNode(
         MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)),
         [src_a, src_b],
     )
 
-    out = mix.get_batch_at(start=jnp.int32(2), size=4, key=jax.random.key(0))
+    out = mix.get_records(mix.record_indices_at(jnp.int32(2), 4, jax.random.key(0)))
     assert out["x"].shape == (4,)
 
 
@@ -232,7 +231,7 @@ def test_mixed_record_indices_name_the_records_served() -> None:
     key = jax.random.key(5)
 
     ids = from_words(mix.record_indices_at(start=0, size=64, key=key)).astype(np.int64)
-    served = np.asarray(mix.get_batch_at(start=0, size=64, key=key)["x"])
+    served = np.asarray(mix.get_records(mix.record_indices_at(0, 64, key))["x"])
 
     np.testing.assert_array_equal(served, np.concatenate([values_a, values_b])[ids])
     np.testing.assert_array_equal(

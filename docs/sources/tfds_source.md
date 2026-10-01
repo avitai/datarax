@@ -8,8 +8,8 @@
 
 | Feature | Description |
 |---------|-------------|
-| **Automatic conversion** | TensorFlow tensors → JAX arrays |
-| **One-time load** | Eager source converts TF→JAX at init, then tears down TensorFlow |
+| **Automatic conversion** | TensorFlow tensors → host NumPy columns |
+| **One-time load** | Eager source converts at init, then tears down TensorFlow |
 | **Supervised mode** | Optional `(image, label)` tuple unpacking |
 | **Shuffling** | `Pipeline(shuffle=True)`'s O(1)-memory Feistel index shuffle (as for the HF source) |
 | **Fixed prefetch** | Streaming source uses a fixed `prefetch_buffer=2`, deliberately not AUTOTUNE |
@@ -18,9 +18,9 @@
 
     - TFDS handles download and preparation automatically
     - Use `as_supervised=True` to get `{"image": ..., "label": ...}` format
-    - The eager source performs a one-time TF→JAX conversion at init and tears TensorFlow down afterward; iteration is then pure JAX
+    - The eager source performs a one-time conversion at init, holds the records as host NumPy columns and tears TensorFlow down afterward
     - The streaming source uses a fixed `prefetch_buffer=2` (deliberately not `tf.data.AUTOTUNE`) to avoid thread storms
-    - The source tracks epoch and index for stateful training loops
+    - The source keeps no iteration state: the pipeline owns the order and the position
 
 ## Installation
 
@@ -36,6 +36,9 @@ pip install tensorflow tensorflow-datasets
 
 ```python
 import flax.nnx as nnx
+import numpy as np
+from datarax.core.index_words import to_words
+from datarax.pipeline import Pipeline
 from datarax.sources import TFDSEagerSource
 from datarax.sources.tfds_source import TFDSEagerConfig
 
@@ -45,8 +48,8 @@ source = TFDSEagerSource(config)
 
 # Iterate over elements
 for item in source:
-    image = item["image"]  # JAX array, shape (28, 28, 1)
-    label = item["label"]  # JAX array, scalar
+    image = item["image"]  # NumPy array, shape (28, 28, 1)
+    label = item["label"]  # NumPy scalar
     process(image, label)
 ```
 
@@ -62,24 +65,20 @@ config = TFDSEagerConfig(
 )
 source = TFDSEagerSource(config)
 
-batch = source.get_batch(32)
+batch = source.get_batch(to_words(np.arange(32)))  # records 0..31
 images = batch["image"]  # Shape: (32, 32, 32, 3)
 labels = batch["label"]  # Shape: (32,)
 ```
 
 ## Batch Retrieval
 
-For training loops with automatic epoch cycling:
+A training loop takes its batches from a `Pipeline`, which owns the order, the position and
+the epoch:
 
 ```python
-# Stateful batch retrieval
-for step in range(10000):
-    batch = source.get_batch(64)
+pipeline = Pipeline(source=source, stages=[], batch_size=64, rngs=nnx.Rngs(0), shuffle=True)
+for batch in pipeline:
     loss = train_step(batch)
-
-    # Check progress
-    print(f"Epoch {source.epoch.get_value()}, "
-          f"Index {source.index.get_value()}")
 ```
 
 ## Shuffling

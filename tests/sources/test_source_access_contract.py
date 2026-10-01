@@ -1,9 +1,9 @@
 """How Pipeline drives a source: indexed through get_records, streaming through get_batch.
 
 An indexed source names the record at each position (``record_indices_at``, sequential by
-default) and gathers records by those indices (``get_records``); ``get_batch_at`` is the two
-composed. The pipeline computes each batch's record indices once and hands the same indices to
-the gather and to the stages that key randomness on them. A source that implements neither
+default) and gathers records by those indices (``get_records``). The pipeline computes each
+batch's record indices once and hands the same indices to the gather and to the stages that key
+randomness on them. A source that implements neither
 ``get_records`` nor ``get_batch`` cannot be iterated, and says so when iteration starts rather
 than failing inside the loop.
 """
@@ -68,17 +68,9 @@ def test_implementing_get_records_is_what_indexed_access_means() -> None:
     assert _NoAccess().supports_indexed_access() is False
 
 
-def test_get_batch_at_gathers_the_records_the_positions_name() -> None:
-    source = _IndexedOnly()
-    np.testing.assert_array_equal(
-        np.asarray(source.get_batch_at(6, 4)["x"]),
-        np.asarray(source.get_records(source.record_indices_at(6, 4))["x"]),
-    )
-
-
-def test_a_source_without_get_records_has_no_batch_at() -> None:
+def test_a_source_without_get_records_has_no_indexed_read() -> None:
     with pytest.raises(NotImplementedError, match="get_records"):
-        _NoAccess().get_batch_at(0, 4)
+        _NoAccess().get_records(_NoAccess().record_indices_at(0, 4))
 
 
 def test_pipeline_iterates_a_get_records_source_through_the_compiled_session() -> None:
@@ -176,20 +168,23 @@ def test_a_session_and_step_run_one_program_with_no_conditional() -> None:
     assert len(iteration._SESSION_STEPS) == compiled
 
 
-def test_a_pipeline_over_record_list_data_is_refused_before_any_pull() -> None:
-    """A list of records is not a batch source, and the pipeline says so when iteration starts.
+def test_a_pipeline_over_record_list_data_serves_its_columns() -> None:
+    """A list of records is stored as columns, so the compiled session serves it.
 
-    Its MemorySource has no indexed access, and its ``get_batch`` is the host record API rather
-    than a stream (``supports_streaming`` is False), so nothing is pulled before the refusal.
+    The records' text is their provenance and never part of a batch.
     """
     records = [{"x": np.full((2,), i, np.float32), "name": f"r{i}"} for i in range(6)]
     source = MemorySource(MemorySourceConfig(), records)
     pipeline = Pipeline(source=source, stages=[], batch_size=2, rngs=nnx.Rngs(0))
 
-    assert source.supports_streaming() is False
-    with pytest.raises(TypeError, match="neither indexed access"):
-        next(iter(pipeline))
-    assert source.index.get_value() == 0
+    iterator = iter(pipeline)
+    assert isinstance(iterator, PipelineIterator)
+    served = [np.asarray(batch["x"]) for batch in iterator]
+    np.testing.assert_array_equal(np.concatenate(served)[:, 0], np.arange(6, dtype=np.float32))
+    assert all(
+        "name" not in batch
+        for batch in Pipeline(source=source, stages=[], batch_size=2, rngs=nnx.Rngs(0))
+    )
 
 
 class _ListStream(DataSourceModule):

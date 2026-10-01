@@ -4,9 +4,10 @@ This module provides data source components for loading data with a clean
 architectural separation between **eager** and **streaming** sources:
 
 **Eager Sources** (for small/medium datasets):
-    - TFDSEagerSource, HFEagerSource
-    - Load ALL data to JAX arrays at initialization
-    - Pure JAX iteration (no external framework overhead during training)
+    - EagerSource, the base of MemorySource, TFDSEagerSource and HFEagerSource
+    - Load ALL data at initialization as host NumPy columns, with each record's
+      strings and objects kept beside them as its provenance
+    - One stateless host read, ``get_batch(indices, epochs=...)``, returning a ``Batch``
     - Ideal for: MNIST, CIFAR-10, Fashion-MNIST, small custom datasets
 
 **Streaming Sources** (for large datasets):
@@ -24,14 +25,10 @@ from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
+from datarax.sources.eager_source import EagerSource
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
-from datarax.sources.source_ops import (
-    eager_get_batch,
-    eager_iter,
-    eager_reset,
-    resolve_wrapped_indices,
-)
+from datarax.sources.source_ops import resolve_wrapped_indices
 
 
 _TFDS_AUTO_DETECT_ERRORS = (ImportError, AttributeError, KeyError, TypeError, ValueError, OSError)
@@ -126,7 +123,7 @@ def from_tfds(
     """Create a TFDS source, choosing eager or streaming based on size.
 
     This factory function automatically selects the optimal source type:
-    - TFDSEagerSource for datasets < 1GB (loads all to JAX at init)
+    - TFDSEagerSource for datasets < 1GB (loads all into host columns at init)
     - TFDSStreamingSource for datasets >= 1GB (streams with fixed prefetch)
 
     The order records are served in belongs to the pipeline (``Pipeline(shuffle=...)``).
@@ -225,7 +222,7 @@ def from_hf(
     """Create a HuggingFace source, choosing eager or streaming based on size.
 
     This factory function automatically selects the optimal source type:
-    - HFEagerSource for datasets < 1GB (loads all to JAX at init)
+    - HFEagerSource for datasets < 1GB (loads all into host columns at init)
     - HFStreamingSource for datasets >= 1GB or when streaming=True
 
     The order records are served in belongs to the pipeline (``Pipeline(shuffle=...)``).
@@ -300,7 +297,8 @@ def from_hf(
 
 
 __all__ = [
-    # Memory source (always available)
+    # The in-memory base and the memory source (always available)
+    "EagerSource",
     "MemorySource",
     "MemorySourceConfig",
     # Mixed source
@@ -323,8 +321,5 @@ __all__ = [
     "from_tfds",
     "from_hf",
     # Helpers a source is built from
-    "eager_get_batch",
-    "eager_iter",
-    "eager_reset",
     "resolve_wrapped_indices",
 ]

@@ -498,9 +498,9 @@ class NewDataSource(DataSourceModule):
         """Return the records at `indices` as JAX arrays; stateless and traceable.
 
         `indices` is uint32 (n, 2), each record's 64-bit index as its words (hi, lo).
-        Implementing it is what gives a source indexed access (get_batch_at is
-        get_records of record_indices_at). A forward-only source implements
-        get_batch(batch_size) instead.
+        Implementing it is what gives a source indexed access: the pipeline names a
+        batch's records with record_indices_at and gathers them with get_records. A
+        forward-only source implements get_batch(batch_size) instead.
         """
         # Your implementation
 

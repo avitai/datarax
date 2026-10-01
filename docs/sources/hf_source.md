@@ -1,6 +1,6 @@
 # HuggingFace Source
 
-`HFEagerSource` provides seamless integration with [HuggingFace Datasets](https://huggingface.co/docs/datasets), allowing you to load any of the 100,000+ datasets available on the Hub directly into your Datarax pipelines with automatic JAX array conversion.
+`HFEagerSource` provides seamless integration with [HuggingFace Datasets](https://huggingface.co/docs/datasets), allowing you to load any of the 100,000+ datasets available on the Hub directly into your Datarax pipelines: array columns become host NumPy columns, and text and other objects the records' provenance.
 
 > **Note:** You can also use the factory function `from_hf(name, split, ...)` which auto-selects between eager and streaming modes based on your configuration.
 
@@ -8,19 +8,20 @@
 
 | Feature | Description |
 |---------|-------------|
-| **Automatic conversion** | TensorFlow/NumPy tensors → JAX arrays |
+| **Automatic conversion** | Images and numeric columns → host NumPy columns |
 | **Streaming support** | `HFStreamingSource` / `from_hf(streaming=True)` loads large datasets without downloading everything |
 | **Shuffling** | Eager: `Pipeline(shuffle=True)`'s O(1)-memory Feistel index shuffle; streaming: buffer-based shuffle |
 | **Key filtering** | Include/exclude specific dataset fields |
-| **Stateful iteration** | Track position, epoch, and support batch retrieval |
+| **Stateless reads** | Iteration in order and `get_batch(indices)`; the pipeline owns the position |
 
 !!! note "Key points"
 
     - HFEagerSource wraps the `datasets` library for JAX-native workflows
-    - PIL images are automatically converted to JAX arrays
+    - PIL images are converted to NumPy arrays once, at load
+    - Text and other non-array columns are kept as each record's provenance, beside the batches, never refused
     - For datasets larger than your disk, use `HFStreamingSource` or `from_hf(streaming=True)` (streaming is not a field on `HFEagerConfig`)
     - An eager source is shuffled by its pipeline (`Pipeline(shuffle=True)`), an O(1)-memory Feistel index shuffle; only the streaming source uses a buffer-based shuffle
-    - The `get_batch()` method enables efficient batch retrieval
+    - `get_batch(indices)` reads the named records as a `Batch` with one host gather
 
 ## Installation
 
@@ -36,6 +37,7 @@ pip install datasets
 
 ```python
 import flax.nnx as nnx
+from datarax.pipeline import Pipeline
 from datarax.sources import HFEagerSource
 from datarax.sources.hf_source import HFEagerConfig
 
@@ -43,26 +45,27 @@ from datarax.sources.hf_source import HFEagerConfig
 config = HFEagerConfig(name="stanfordnlp/imdb", split="train")
 source = HFEagerSource(config)
 
-# Iterate over elements
+# Iterate over elements: their array columns (the text is the records' provenance)
 for item in source:
-    text = item["text"]
     label = item["label"]
-    process(text, label)
+    process(label)
 ```
 
 ## Batch Retrieval
 
-For training loops, use the stateful `get_batch()` method:
+`get_batch(indices)` reads the records its indices name as a `Batch`, statelessly; a
+training loop takes its batches from a `Pipeline`, which owns the order and the position:
 
 ```python
-# Get batches of 32 samples
-batch = source.get_batch(32)
-# batch["text"] has shape (32,)
-# batch["label"] has shape (32,)
+import numpy as np
+from datarax.core.index_words import to_words
 
-# Automatic epoch cycling
-for step in range(1000):
-    batch = source.get_batch(32)
+# Records 0..31 as a host Batch; batch["label"] has shape (32,)
+batch = source.get_batch(to_words(np.arange(32)))
+
+# Training: the pipeline serves every epoch in a new order
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0), shuffle=True)
+for batch in pipeline:
     train_step(batch)
 ```
 

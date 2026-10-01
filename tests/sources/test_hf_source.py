@@ -16,6 +16,7 @@ from substrax.testing.compiles import compiled_programs
 # Skip tests if datasets is not available
 datasets = pytest.importorskip("datasets")
 
+from datarax.core.index_words import to_words
 from datarax.sources import (
     from_hf,
     HFEagerConfig,
@@ -93,14 +94,14 @@ def test_hf_eager_source_iteration(mock_numeric_dataset, monkeypatch):
     # Verify the data structure (numeric fields only)
     assert "label" in data or "feature" in data
 
-    # HFEagerSource converts numeric data to JAX arrays
+    # HFEagerSource holds numeric data as host NumPy columns
     if "feature" in data:
-        assert isinstance(data["feature"], jax.Array)
+        assert isinstance(data["feature"], np.ndarray)
 
 
 @pytest.mark.unit
 def test_hf_eager_source_preserves_text_columns(mock_dataset, monkeypatch):
-    """Test HFEagerSource can inspect unbatched text columns."""
+    """Text columns are kept as the records' provenance, beside the array columns."""
 
     def mock_load_dataset(name, split=None, **kwargs):
         del kwargs, name, split
@@ -113,13 +114,14 @@ def test_hf_eager_source_preserves_text_columns(mock_dataset, monkeypatch):
     item = next(iter(source))
 
     assert len(source) == 10
-    assert item["text"] == "This is text 0"
-    assert isinstance(item["label"], jax.Array)
+    assert "text" not in item
+    assert source._provenance.value[0]["text"] == "This is text 0"
+    assert isinstance(item["label"], np.generic)  # a scalar row of a host column
 
 
 @pytest.mark.unit
 def test_hf_eager_source_batch_method(mock_numeric_dataset, monkeypatch):
-    """Test HFEagerSource's get_batch method."""
+    """Test HFEagerSource's host read, ``get_batch(indices)``."""
 
     def mock_load_dataset(name, split=None, **kwargs):
         del kwargs, name, split
@@ -130,15 +132,12 @@ def test_hf_eager_source_batch_method(mock_numeric_dataset, monkeypatch):
     config = HFEagerConfig(name="mock_dataset", split="train")
     source = HFEagerSource(config)
 
-    # Get a batch
-    batch = source.get_batch(batch_size=4)
+    # Read records 0..3
+    batch = source.get_batch(to_words(np.arange(4, dtype=np.uint64)))
 
-    # Verify batch structure
-    assert "label" in batch or "feature" in batch
-
-    # Verify batch contains data
-    if "label" in batch and isinstance(batch["label"], jax.Array):
-        assert batch["label"].shape[0] == 4
+    assert set(batch.data) == {"label", "feature"}
+    assert batch["label"].shape[0] == 4
+    np.testing.assert_array_equal(batch["label"], np.arange(4))
 
 
 @pytest.mark.unit

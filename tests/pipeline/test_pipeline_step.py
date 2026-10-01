@@ -105,25 +105,25 @@ def _source_data(pipeline: Pipeline) -> dict:
     return source.data
 
 
-def _source_records(pipeline: Pipeline) -> jax.Array:
-    """The device array holding the source's records (the array a copy would replace).
+def _source_records(pipeline: Pipeline) -> np.ndarray:
+    """The host array holding the source's records (the array a copy would replace).
 
     Compared by identity, not by buffer address: a freed copy's address can be reused by the next
     copy, so equal addresses do not show that nothing was copied, while holding the object keeps its
     buffer alive and makes identity exact.
     """
     records = _source_data(pipeline)["x"]
-    assert isinstance(records, jax.Array)
+    assert isinstance(records, np.ndarray)
     return records
 
 
 class TestNoCopy:
     """A step returns and copies none of the source's arrays."""
 
-    def test_the_device_source_buffer_is_kept(self) -> None:
+    def test_device_columns_are_held_once_on_the_host_and_kept(self) -> None:
         pipeline = _pipeline(_Scale(), shuffle=True, device=True)
-        pipeline.step()
         before = _source_records(pipeline)
+        pipeline.step()
         for _ in range(3):
             pipeline.step()
         assert _source_records(pipeline) is before

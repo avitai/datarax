@@ -1,8 +1,8 @@
 """Train a text classifier on GLUE SST-2 loaded through HuggingFace Datasets.
 
 JAX arrays cannot hold strings, so a text dataset is tokenized before it is batched:
-``HFEagerSource`` loads and filters the columns, the sentences become fixed-length token
-ids once at load time, and a ``MemorySource`` batches the token ids and labels through a
+``HFStreamingSource`` reads the raw records with their filtered columns, the sentences
+become fixed-length token ids once at load time, and a ``MemorySource`` batches the token ids and labels through a
 ``Pipeline`` for a Flax NNX classifier that trains for three epochs with validation after
 each one.
 """
@@ -17,7 +17,12 @@ from flax import nnx
 
 from datarax.core.element_batch import Batch
 from datarax.pipeline import Pipeline
-from datarax.sources import HFEagerConfig, HFEagerSource, MemorySource, MemorySourceConfig
+from datarax.sources import (
+    HFStreamingConfig,
+    HFStreamingSource,
+    MemorySource,
+    MemorySourceConfig,
+)
 
 
 # A toy vocabulary keeps the example self-contained; a real application uses a trained
@@ -73,19 +78,24 @@ def load_sst2(split: str) -> tuple[np.ndarray, np.ndarray]:
     """Load one SST-2 split and return its token ids and labels.
 
     GLUE is one dataset with many configurations; SST-2 is the ``sst2`` configuration,
-    which ``datasets.load_dataset`` takes as its ``name`` argument. The eager source keeps
-    a text column as Python strings for inspection, and only numeric columns can be batched,
-    so the sentences are tokenized here.
+    which ``datasets.load_dataset`` takes as its ``name`` argument. Only numeric columns
+    can be batched, and an eager source keeps a text column as its records' provenance,
+    beside the batches, so the raw records are read with the streaming source and the
+    sentences tokenized here.
     """
-    source = HFEagerSource(
-        HFEagerConfig(
+    records = HFStreamingSource(
+        HFStreamingConfig(
             name="nyu-mll/glue",
             split=split,
             download_kwargs={"name": "sst2"},
             include_keys={"sentence", "label"},
         ),
     )
-    return tokenize(source.data["sentence"]), np.asarray(source.data["label"], dtype=np.int32)
+    sentences, labels = [], []
+    for record in records:
+        sentences.append(record["sentence"])
+        labels.append(int(record["label"]))
+    return tokenize(sentences), np.asarray(labels, dtype=np.int32)
 
 
 def make_pipeline(

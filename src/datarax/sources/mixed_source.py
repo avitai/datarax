@@ -287,7 +287,7 @@ class MixDataSourcesNode(DataSourceModule):
         size: int,
         key: jax.Array | None = None,
     ) -> jax.Array:
-        """Return the index of each record ``get_batch_at(start, size, key)`` returns.
+        """Return the index of each record at positions ``start .. start + size`` of the mix.
 
         A mixed record's index is its source's offset in the concatenation of the sources
         plus its index within that source, so every record of every source has one index.

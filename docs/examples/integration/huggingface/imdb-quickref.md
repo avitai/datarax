@@ -83,7 +83,7 @@ from flax import nnx
 
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.pipeline import Pipeline
-from datarax.sources import HFEagerConfig, HFEagerSource
+from datarax.sources import HFEagerConfig, HFEagerSource, HFStreamingConfig, HFStreamingSource
 
 
 print(f"JAX devices: {jax.devices()}")
@@ -95,7 +95,7 @@ JAX devices: [CudaDevice(id=0)]
 ```
 
 ```python
-# Load IMDB eagerly into JAX-compatible arrays
+# Load IMDB eagerly: numeric columns on the host, text as each record's provenance
 config = HFEagerConfig(
     name="stanfordnlp/imdb",  # Use full dataset path for reliability
     split="train",
@@ -116,14 +116,17 @@ Mode: Eager load with local HuggingFace cache
 
 ## Step 2: Inspect Data Structure
 
-Unlike image datasets, IMDB returns text strings. Let's examine the structure.
+Unlike image datasets, IMDB returns text strings. The eager source keeps each review's text
+as the record's provenance, beside its numeric columns, and never batches it; the streaming
+source serves the raw records, text included, so it is the one to read reviews with.
 
 ```python
-# For text datasets, iterate element-by-element since strings can't be
-# batched as JAX arrays (text needs tokenization first for batching)
+# Strings can't be batched as JAX arrays (text needs tokenization first), so read the raw
+# records one by one from the streaming source
 print("Sample reviews from IMDB:")
+raw_records = HFStreamingSource(HFStreamingConfig(name="stanfordnlp/imdb", split="train"))
 
-for i, element in enumerate(source):
+for i, element in enumerate(raw_records):
     if i >= 3:
         break
 
@@ -141,9 +144,6 @@ for i, element in enumerate(source):
         text = text[0] if text else ""
     text_preview = str(text)[:100] + "..." if len(str(text)) > 100 else str(text)
     print(f"  Text preview: {text_preview}")
-
-# Reset source for further use
-source.reset()
 
 # Expected output:
 # Example 1:

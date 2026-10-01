@@ -21,7 +21,7 @@ from flax import nnx
 from datarax.core.config import StructuralConfig
 from datarax.core.index_words import from_words
 from datarax.pipeline import Pipeline
-from datarax.sources._source_base import EagerSourceBase
+from datarax.sources.eager_source import EagerSource
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
 
@@ -41,15 +41,15 @@ class TestMemorySource:
         assert len(source) == 12
         np.testing.assert_array_equal(served, np.arange(12.0))
 
-    def test_replaced_list_data_is_counted(self) -> None:
+    def test_replaced_columns_are_counted(self) -> None:
         source = _memory(list(range(5)))
-        source.data = list(range(9))
+        source.data = np.arange(9)
         assert len(source) == 9
 
-    def test_replaced_data_of_unequal_lengths_is_refused(self) -> None:
+    def test_replaced_columns_of_unequal_lengths_are_refused(self) -> None:
         source = _memory({"x": np.zeros(4), "y": np.zeros(4)})
         source.data = {"x": np.zeros(4), "y": np.zeros(6)}
-        with pytest.raises(ValueError, match="same length"):
+        with pytest.raises(ValueError, match="one row per record"):
             len(source)
 
     def test_data_of_unequal_lengths_is_refused_at_construction(self) -> None:
@@ -72,17 +72,12 @@ class TestMemorySource:
         assert len(_memory(records)) == 3
 
 
-class _Eager(EagerSourceBase):
+class _Eager(EagerSource):
     """Minimal eager source: data and nothing about its length."""
 
     def __init__(self, data: dict) -> None:
         super().__init__(StructuralConfig())
-        self.data = nnx.data(data)
-        self.index = nnx.Variable(jnp.int32(0))
-        self.epoch = nnx.Variable(jnp.int32(0))
-        self.dataset_name = "eager"
-        self.split_name = "all"
-        self._dataset_info = None
+        self._store(data)
 
 
 class TestEagerSource:
@@ -107,7 +102,7 @@ class TestMixedSource:
         key = jax.random.key(3)
 
         ids = from_words(mix.record_indices_at(start=0, size=256, key=key)).astype(np.int64)
-        values = np.asarray(mix.get_batch_at(start=0, size=256, key=key)["x"])
+        values = np.asarray(mix.get_records(mix.record_indices_at(0, 256, key))["x"])
 
         assert len(mix) == 12
         assert set(ids.tolist()) <= set(range(12))

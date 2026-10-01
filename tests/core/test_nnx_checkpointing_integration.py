@@ -140,13 +140,12 @@ class TestNNXCheckpointingIntegration:
     @pytest.mark.parametrize(
         "build",
         [
-            lambda rngs: MemorySource(MemorySourceConfig(), [1, 2, 3, 4, 5]),
             lambda rngs: RangeSampler(RangeSamplerConfig(start=0, stop=5, step=1), rngs=rngs),
             lambda rngs: ShuffleSampler(ShuffleSamplerConfig(dataset_size=5), rngs=rngs),
             lambda rngs: DefaultBatcher(DefaultBatcherConfig(), rngs=rngs),
             lambda rngs: JaxProcessSharderModule(rngs=rngs),
         ],
-        ids=["source", "range_sampler", "shuffle_sampler", "batcher", "process_sharder"],
+        ids=["range_sampler", "shuffle_sampler", "batcher", "process_sharder"],
     )
     def test_every_module_type_round_trips(self, tmp_path, build):
         """Each Datarax module type restores into a freshly built instance."""
@@ -161,6 +160,13 @@ class TestNNXCheckpointingIntegration:
             checkpoint.restore(fresh, step=0)
 
         assert _plain(fresh.get_state()) == _plain(module.get_state())
+
+    def test_an_in_memory_source_has_nothing_to_checkpoint(self, tmp_path):
+        """Its records are construction data and its position is the pipeline's."""
+        source = MemorySource(MemorySourceConfig(), [1, 2, 3, 4, 5])
+        with IteratorCheckpoint(tmp_path) as checkpoint:
+            with pytest.raises(ValueError, match="nothing to checkpoint"):
+                checkpoint.save(source, step=0)
 
     def test_nested_module_checkpointing(self, tmp_path):
         """A module with nested layers, variables and a batcher round-trips."""

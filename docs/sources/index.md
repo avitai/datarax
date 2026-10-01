@@ -20,6 +20,8 @@ Data source adapters for loading data from various formats and libraries. Source
 ## Quick Start
 
 ```python
+import numpy as np
+from datarax.core.index_words import to_words
 from datarax.sources import HFEagerSource, TFDSEagerSource
 from datarax.sources.hf_source import HFEagerConfig
 
@@ -27,18 +29,18 @@ from datarax.sources.hf_source import HFEagerConfig
 config = HFEagerConfig(name="ylecun/mnist", split="train")
 source = HFEagerSource(config)
 
-# Iterate or get batches
+# Iterate in order, or read the records named by their indices as a Batch
 for item in source:
     process(item)
 
-# Or use stateful batching
-batch = source.get_batch(32)
+batch = source.get_batch(to_words(np.arange(32)))
 ```
 
 ## Modules
 
+- [eager_source](eager_source.md) - The in-memory base: host columns, provenance and the host read
 - [hf_source](hf_source.md) - HuggingFace Datasets integration (recommended)
-- [source_ops](source_ops.md) - The helpers a source is built from: wrapped index resolution, eager iteration, batching and reset
+- [source_ops](source_ops.md) - The helpers a source is built from: wrapped index resolution, worker shares, config validation and streaming
 - [tfds_source](tfds_source.md) - TensorFlow Datasets integration
 - [memory_source](memory_source.md) - In-memory data for testing
 - [array_record_source](array_record_source.md) - ArrayRecord format (Google)

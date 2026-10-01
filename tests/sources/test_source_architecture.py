@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 from flax import nnx
 
+from datarax.core.index_words import to_words
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -78,48 +79,20 @@ class TestEagerSourceArchitecture:
 
     @pytest.mark.unit
     def test_eager_source_supports_batch_retrieval(self):
-        """Verify that eager sources support get_batch method."""
+        """Eager sources read the records named by their indices, statelessly."""
         data = {"x": np.arange(100)}
         config = MemorySourceConfig()
         source = MemorySource(config, data)
 
-        # Stateful batch retrieval
-        batch1 = source.get_batch(10)
-        assert len(batch1["x"]) == 10
+        batch1 = source.get_batch(to_words(np.arange(10, dtype=np.uint64)))
+        assert batch1.batch_size == 10
 
-        # Second batch should be different (advancing state)
-        batch2 = source.get_batch(10)
+        # The same indices read the same records; others read others
+        np.testing.assert_array_equal(
+            source.get_batch(to_words(np.arange(10, dtype=np.uint64)))["x"], batch1["x"]
+        )
+        batch2 = source.get_batch(to_words(np.arange(10, 20, dtype=np.uint64)))
         assert batch2["x"][0] != batch1["x"][0]
-
-    @pytest.mark.unit
-    def test_eager_source_stateless_batch_with_key(self):
-        """Verify stateless batch retrieval with explicit key."""
-        data = {"x": np.arange(100)}
-        config = MemorySourceConfig()
-        source = MemorySource(config, data)
-
-        key = jax.random.key(42)
-        batch1 = source.get_batch(10, key=key)
-        batch2 = source.get_batch(10, key=key)
-
-        # Same key should give same batch
-        np.testing.assert_array_equal(np.array(batch1["x"]), np.array(batch2["x"]))
-
-    @pytest.mark.unit
-    def test_eager_source_reset_returns_to_start(self):
-        """Verify that reset() returns source to beginning."""
-        data = {"x": np.arange(10)}
-        config = MemorySourceConfig()
-        source = MemorySource(config, data)
-
-        # Advance the state
-        source.get_batch(5)
-        assert source.index.get_value() == 5
-
-        # Reset
-        source.reset()
-        assert source.index.get_value() == 0
-        assert source.epoch.get_value() == 0
 
 
 # =============================================================================
@@ -142,23 +115,23 @@ class TestTFDSEagerSource:
 
     @pytest.mark.tfds
     def test_tfds_eager_loads_all_at_init(self):
-        """TFDS eager source loads all data to JAX arrays at init."""
+        """TFDS eager source loads all data at init, as host NumPy columns."""
         from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 
         try:
             config = TFDSEagerConfig(name="mnist", split="train[:100]")
             source = TFDSEagerSource(config)
 
-            # Data should be JAX arrays
-            assert isinstance(source.data["image"], jax.Array)
+            # Data is held on the host
+            assert isinstance(source.data["image"], np.ndarray)
             assert source.data["image"].shape[0] == 100
             assert len(source) == 100
         except TFDS_ARCHITECTURE_SKIP_EXCEPTIONS as e:
             pytest.skip(f"Could not load MNIST: {e}")
 
     @pytest.mark.tfds
-    def test_tfds_eager_iteration_is_pure_jax(self):
-        """After init, iteration should be pure JAX operations."""
+    def test_tfds_eager_iteration_reads_the_host_columns(self):
+        """After init, iteration reads the host columns, with no TF work."""
         from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 
         try:
@@ -173,7 +146,7 @@ class TestTFDSEagerSource:
                     break
 
             assert len(items) == 6
-            assert isinstance(items[0]["image"], jax.Array)
+            assert isinstance(items[0]["image"], np.ndarray)
         except TFDS_ARCHITECTURE_SKIP_EXCEPTIONS as e:
             pytest.skip(f"Could not load MNIST: {e}")
 

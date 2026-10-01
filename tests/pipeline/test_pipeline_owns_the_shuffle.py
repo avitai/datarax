@@ -202,9 +202,9 @@ class TestTheSourceKeepsNoShuffle:
         assert source.rngs is None
 
     def test_no_source_reports_or_sets_a_random_order(self) -> None:
-        from datarax.sources._source_base import EagerSourceBase
+        from datarax.sources.eager_source import EagerSource
 
-        for source_class in (MemorySource, EagerSourceBase):
+        for source_class in (MemorySource, EagerSource):
             for name in ("is_random_order", "set_random_order", "_host_shuffle_seed"):
                 assert not hasattr(source_class, name), f"{source_class.__name__}.{name}"
 

@@ -75,10 +75,10 @@ def test_memory_source_element_spec_preserves_pipeline_chain() -> None:
     assert image_spec.shape == (8, 4)
 
 
-def test_memory_source_element_spec_describes_get_batch_at_output() -> None:
-    """The declared spec is exactly what the Pipeline-facing ``get_batch_at`` emits.
+def test_memory_source_element_spec_describes_the_traced_gather_s_output() -> None:
+    """The declared spec is exactly what the Pipeline-facing ``get_records`` emits.
 
-    ``get_batch_at`` converts host storage to JAX arrays, so with x64 off a
+    ``get_records`` converts host storage to JAX arrays, so with x64 off a
     float64 or int64 host array is emitted, and declared, as float32 or int32.
     """
     data = {
@@ -95,7 +95,7 @@ def test_memory_source_element_spec_describes_get_batch_at_output() -> None:
         "y": jax.ShapeDtypeStruct((), jnp.int32),
         "image": jax.ShapeDtypeStruct((2, 2), jnp.uint8),
     }
-    validate_batch(source.get_batch_at(0, 4), spec, batch_size=4)
+    validate_batch(source.get_records(source.record_indices_at(0, 4)), spec, batch_size=4)
 
 
 def test_memory_source_element_spec_reads_storage_metadata_without_converting_it() -> None:

@@ -39,11 +39,11 @@ for i, batch in enumerate(pipeline):
         break
 ```
 
-`MemorySource` accepts a dict of arrays, one per field with records along the first axis, which a
-`Pipeline` batches on the device. It also accepts a list of records (dictionaries, `Element`s,
-strings of any length) as a record store for indexing, iteration and `get_batch`; a list has no
-columns to gather a batch from, so a `Pipeline` refuses it. Stack fixed-shape records into a dict of
-arrays to batch them.
+`MemorySource` accepts a dict of arrays, one per field with records along the first axis, held as
+host NumPy columns that a `Pipeline` batches on the device. It also accepts a list of records
+(dictionaries, `Element`s, numbers), which it turns into columns once at construction: the
+numeric fields of equal shape are stacked, and strings and other objects are kept as each
+record's provenance, never batched (see [Records as Columns](#records-as-columns)).
 
 `Pipeline.from_arrays(data, batch_size=..., seed=..., shuffle=...)` is this source and a pipeline
 with no stages in one call; `drop_last` and `num_epochs` reach the pipeline as in its constructor.
@@ -131,7 +131,7 @@ for i, batch in enumerate(pipeline):
         break
 ```
 
-`HFEagerSource` loads the entire dataset into JAX arrays at initialization, so it is best for datasets that fit in memory. For datasets too large to hold in memory, use `HFStreamingSource` (shown above), which wraps HuggingFace's streaming iterator.
+`HFEagerSource` loads the entire dataset into host NumPy columns at initialization (text and other objects as each record's provenance), so it is best for datasets that fit in memory. For datasets too large to hold in memory, use `HFStreamingSource` (shown above), which wraps HuggingFace's streaming iterator.
 
 > **Note:** Dataset configs/variants (for example selecting `"sst2"` within the `"glue"` dataset) are currently unsupported — pass the standalone dataset name to `name`. There is no `config_name` (or subset) field on the HF configs.
 
@@ -246,8 +246,7 @@ When creating custom data sources, ensure:
    words `(hi, lo)` (`datarax.core.index_words`); the pipeline computes those indices once per
    batch, gathers them with `get_records`, and stochastic operators key each
    record's randomness on the same indices. The default names records by position,
-   which is right for a source that serves them in order, like the one above.
-   `get_batch_at(start, size, key)` is the two composed
+   which is right for a source that serves them in order, like the one above
 4. `element_spec()` describes exactly the records your batches carry: the same
    keys, per-element shapes and dtypes. For a streaming source, `Pipeline` checks
    every batch against it with `datarax.core.spec.validate_batch` before running
@@ -288,25 +287,26 @@ pipeline = (
 
 ## Data Source Features
 
-### State Management
+### Records as Columns
 
-All data sources inherit state management from `DataSourceModule`:
+An in-memory source holds its records as host NumPy columns and keeps no iteration state: the
+pipeline owns the order, the position and the epoch, and checkpoints them. A list of records is
+turned into columns once, at construction: numbers become columns, and strings and other
+objects become each record's provenance, kept beside the columns and never part of a batch.
+Every record must hold the same numeric fields with the same shapes; a field whose shape varies
+is refused, naming the field, so pad it to a fixed length (with its mask or length in `data`) or
+pack records with segment ids.
 
 ```python
+import numpy as np
+from datarax.core.index_words import to_words
 from datarax.sources import MemorySource, MemorySourceConfig
 
-# Create source
-data = [{"x": i} for i in range(100)]
-config = MemorySourceConfig()
-source = MemorySource(config, data)
+data = [{"x": i, "name": f"record {i}"} for i in range(100)]
+source = MemorySource(MemorySourceConfig(), data)
 
-# Iterate through some elements
-iterator = iter(source)
-for i in range(10):
-    element = next(iterator)
-
-# Source maintains iteration state
-# Can be used for checkpointing
+source[3]  # {"x": np.int64(3)}: the record's numbers
+batch = source.get_batch(to_words(np.asarray([7, 2, 9])))  # a Batch of those records
 ```
 
 ## Best Practices for Data Sources

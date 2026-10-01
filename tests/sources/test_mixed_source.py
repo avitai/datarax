@@ -18,47 +18,47 @@ from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNod
 
 @pytest.fixture
 def source_a():
-    """Create a MemorySource with 10 elements labeled 'a'."""
-    data = [{"value": i, "label": "a"} for i in range(10)]
+    """Create a MemorySource with 10 elements from source 0."""
+    data = [{"value": i, "source": 0} for i in range(10)]
     config = MemorySourceConfig()
     return MemorySource(config, data)
 
 
 @pytest.fixture
 def source_b():
-    """Create a MemorySource with 10 elements labeled 'b'."""
-    data = [{"value": i + 100, "label": "b"} for i in range(10)]
+    """Create a MemorySource with 10 elements from source 1."""
+    data = [{"value": i + 100, "source": 1} for i in range(10)]
     config = MemorySourceConfig()
     return MemorySource(config, data)
 
 
 @pytest.fixture
 def source_small():
-    """Create a small MemorySource with 3 elements labeled 'small'."""
-    data = [{"value": i + 200, "label": "small"} for i in range(3)]
+    """Create a small MemorySource with 3 elements from source 2."""
+    data = [{"value": i + 200, "source": 2} for i in range(3)]
     config = MemorySourceConfig()
     return MemorySource(config, data)
 
 
 @pytest.fixture
 def large_source_a():
-    """Create a large MemorySource with 800 elements labeled 'a'.
+    """Create a large MemorySource with 800 elements from source 0.
 
     Sized proportional to 0.8 weight so it doesn't exhaust prematurely
     when paired with large_source_b (200) and weights [0.8, 0.2].
     """
-    data = [{"value": i, "label": "a"} for i in range(800)]
+    data = [{"value": i, "source": 0} for i in range(800)]
     config = MemorySourceConfig()
     return MemorySource(config, data)
 
 
 @pytest.fixture
 def large_source_b():
-    """Create a large MemorySource with 200 elements labeled 'b'.
+    """Create a large MemorySource with 200 elements from source 1.
 
     Sized proportional to 0.2 weight for weighted sampling tests.
     """
-    data = [{"value": i + 1000, "label": "b"} for i in range(200)]
+    data = [{"value": i + 1000, "source": 1} for i in range(200)]
     config = MemorySourceConfig()
     return MemorySource(config, data)
 
@@ -130,11 +130,9 @@ class TestMixDataSourcesIteration:
         config = MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5))
         mixed = MixDataSourcesNode(config, [source_a, source_b], rngs=nnx.Rngs(42))
 
-        # Collect all possible elements from both sources
-        valid_labels = {"a", "b"}
-
+        # Every element comes from one of the two sources
         for elem in mixed:
-            assert elem["label"] in valid_labels
+            assert int(elem["source"]) in {0, 1}
 
     def test_weighted_sampling_distribution(self, large_source_a, large_source_b):
         """With weights [0.8, 0.2], ~80% of elements should come from source_a.
@@ -147,7 +145,7 @@ class TestMixDataSourcesIteration:
         mixed = MixDataSourcesNode(config, [large_source_a, large_source_b], rngs=nnx.Rngs(42))
         elements = list(mixed)
 
-        count_a = sum(1 for e in elements if e["label"] == "a")
+        count_a = sum(1 for e in elements if int(e["source"]) == 0)
         fraction_a = count_a / len(elements)
 
         # With 1000 samples, weights [0.8, 0.2], and proportionally-sized
@@ -176,16 +174,12 @@ class TestMixDataSourcesIteration:
         mixed1 = MixDataSourcesNode(config, [source_a, source_b], rngs=nnx.Rngs(99))
         elements1 = list(mixed1)
 
-        # Reset sources for second run
-        source_a.reset()
-        source_b.reset()
-
         mixed2 = MixDataSourcesNode(config, [source_a, source_b], rngs=nnx.Rngs(99))
         elements2 = list(mixed2)
 
         # Same seed → same sequence of source selections
-        labels1 = [e["label"] for e in elements1]
-        labels2 = [e["label"] for e in elements2]
+        labels1 = [int(e["source"]) for e in elements1]
+        labels2 = [int(e["source"]) for e in elements2]
         assert labels1 == labels2
 
 
@@ -205,7 +199,7 @@ class TestMixDataSourcesEdgeCases:
         elements = list(mixed)
         assert len(elements) == len(source_a)
         # All elements come from source_a
-        assert all(e["label"] == "a" for e in elements)
+        assert all(int(e["source"]) == 0 for e in elements)
 
     def test_source_exhaustion_uses_grain_mix_semantics(self, source_a, source_small):
         """Grain mix stops when the weighted schedule reaches an exhausted source."""

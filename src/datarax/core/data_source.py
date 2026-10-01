@@ -181,27 +181,6 @@ class DataSourceModule(StructuralModule):
             f"get_records(indices), or get_batch(batch_size) for a forward-only stream."
         )
 
-    def get_batch_at(
-        self,
-        start: int | Any,
-        size: int,
-        key: Any | None = None,
-    ) -> DataDict:
-        """The ``size`` records from position ``start`` of the order ``key`` selects.
-
-        :meth:`get_records` of :meth:`record_indices_at`, so it is stateless and
-        JAX-traceable whenever those are.
-
-        Args:
-            start: Starting position; a Python int or a traced ``jax.Array``.
-            size: Number of records to return (Python int — JAX shapes are static).
-            key: Optional PRNG key for shuffled or stochastic sampling.
-
-        Returns:
-            One array per field, with leading dim ``size``.
-        """
-        return self.get_records(self.record_indices_at(start, size, key))
-
     def record_indices_at(
         self,
         start: int | Any,

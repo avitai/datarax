@@ -2,10 +2,10 @@
 
 This module provides two distinct source types optimized for different use cases:
 
-**TFDSEagerSource**: For small/medium datasets that fit in memory (~10% VRAM)
-- Loads ALL data to JAX arrays at initialization
-- Pure JAX iteration after init (no TensorFlow overhead during training)
-- Fully checkpointable (just indices, no external state)
+**TFDSEagerSource**: For small/medium datasets that fit in host memory
+- Loads ALL data at initialization and holds it as host NumPy columns
+- No TensorFlow work during training: reads are NumPy gathers
+- Holds no iteration state; the pipeline owns the order and position
 - Ideal for: MNIST, CIFAR-10, Fashion-MNIST, small custom datasets
 
 **TFDSStreamingSource**: For large datasets that don't fit in memory
@@ -37,7 +37,8 @@ from flax import nnx
 
 from datarax.sources._config_base import SourceConfigBase
 from datarax.sources._conversion import tf_to_jax
-from datarax.sources._source_base import EagerSourceBase, StreamingSourceBase
+from datarax.sources._source_base import DatasetSourceMixin, StreamingSourceBase
+from datarax.sources.eager_source import EagerSource
 from datarax.sources.source_ops import (
     converted_filtered_record,
     validate_eager_source_settings,
@@ -135,9 +136,9 @@ def _prepare_tfds_builder(
 
 @dataclass(frozen=True)
 class TFDSEagerConfig(SourceConfigBase):
-    """Configuration for TFDSEagerSource (loads all data to JAX at init).
+    """Configuration for TFDSEagerSource (loads all data into host columns at init).
 
-    Configuration for eager-loading TensorFlow Datasets into JAX arrays.
+    Configuration for eager-loading TensorFlow Datasets into host NumPy columns.
 
     Args:
         name: Name of the dataset in TFDS (required)
@@ -218,27 +219,24 @@ class TFDSStreamingConfig(SourceConfigBase):
 
 
 # =============================================================================
-# TFDSEagerSource - Loads All Data to JAX at Init
+# TFDSEagerSource - Loads All Data into Host Columns at Init
 # =============================================================================
 
 
-class TFDSEagerSource(EagerSourceBase):
+class TFDSEagerSource(DatasetSourceMixin, EagerSource):
     """Eager-loading TFDS source for small/medium datasets.
 
-    Loads ALL data to JAX arrays at initialization, then operates like a
-    MemorySource with pure JAX operations. Use for datasets that fit in
-    ~10% of device VRAM.
+    Loads ALL data at initialization and holds it as host NumPy columns, then serves it as
+    every eager source does (:class:`~datarax.sources.eager_source.EagerSource`): indexing,
+    iteration in order and the stateless host read ``get_batch(indices, epochs=...)``.
 
     Key Features:
-        - One-time TF→JAX conversion at init (DLPack zero-copy when possible)
-        - Pure JAX iteration after init (no TF threads during training)
-        - Full checkpointing support (indices only, no external state)
+        - One-time TF conversion at init; no TF threads during training
+        - Holds no iteration state: the pipeline owns the order and the position
         - Supports `as_supervised` mode and key filtering
 
     Performance:
         - Eliminates ~0.4s epoch 2 delay from TF AUTOTUNE threads
-        - Training loops can use lax.fori_loop for 100-500x speedup
-        - Device placement via collect_to_array() for staged training
 
     Example:
         ```python
@@ -246,18 +244,14 @@ class TFDSEagerSource(EagerSourceBase):
         config = TFDSEagerConfig(name="mnist", split="train")
         source = TFDSEagerSource(config)
 
-        # Iterate - pure JAX, no TF overhead
+        # Iterate in order
         for item in source:
             process(item["image"])
 
-        # Get batch (stateless with key, or stateful without)
-        batch = source.get_batch(32)  # Stateful
-        batch = source.get_batch(32, key=jax.random.key(0))  # Stateless
+        # Read records 0..31 as a Batch
+        batch = source.get_batch(to_words(np.arange(32)))
         ```
     """
-
-    # Store data as JAX arrays (annotated for NNX to prevent parameter tracking)
-    data: dict[str, jax.Array]
 
     def __init__(
         self,
@@ -265,7 +259,7 @@ class TFDSEagerSource(EagerSourceBase):
         *,
         name: str | None = None,
     ) -> None:
-        """Initialize TFDSEagerSource by loading all data to JAX arrays.
+        """Initialize TFDSEagerSource by loading all data into host columns.
 
         Args:
             config: Configuration for the source
@@ -285,15 +279,11 @@ class TFDSEagerSource(EagerSourceBase):
         # Load dataset info BEFORE loading data (for get_dataset_info)
         self._dataset_info = self._load_dataset_info_from_backend(config)
 
-        # Load ALL data to JAX arrays at init
-        self.data = nnx.data(self._load_all_from_backend_to_jax(config))
+        # Load ALL data at init; the base stores it as host NumPy columns
+        self._store(self._load_all_from_backend_to_jax(config))
 
         # Clean up TF resources completely
         self._cleanup_tf()
-
-        # State for iteration (like MemorySource)
-        self.index = nnx.Variable(0)
-        self.epoch = nnx.Variable(0)
 
     def _load_dataset_info_from_backend(self, config: TFDSEagerConfig) -> tfds.core.DatasetInfo:
         """Load and cache dataset info before cleanup.

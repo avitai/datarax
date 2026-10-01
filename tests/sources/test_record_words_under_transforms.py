@@ -23,7 +23,7 @@ from substrax.testing.compiles import expect_compiles
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
 from datarax.core.index_words import from_words, to_words
-from datarax.sources._source_base import EagerSourceBase
+from datarax.sources.eager_source import EagerSource
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
 from datarax.sources.source_ops import resolve_wrapped_indices
@@ -33,17 +33,12 @@ from tests.test_common.step_jaxpr import host_callbacks
 _SIZE = 6
 
 
-class _Eager(EagerSourceBase):
-    """An eager source over device arrays."""
+class _Eager(EagerSource):
+    """An eager source over given columns, stored on the host."""
 
     def __init__(self, values: jax.Array) -> None:
         super().__init__(StructuralConfig())
-        self.data = nnx.data({"x": values})
-        self.index = nnx.Variable(jnp.int32(0))
-        self.epoch = nnx.Variable(jnp.int32(0))
-        self.dataset_name = "eager"
-        self.split_name = "all"
-        self._dataset_info = None
+        self._store({"x": values})
 
 
 def _values(length: int, offset: float = 0.0) -> jax.Array:
