@@ -19,6 +19,7 @@ import pytest
 from flax import nnx
 
 from datarax.core.config import StructuralConfig
+from datarax.core.index_words import from_words
 from datarax.pipeline import Pipeline
 from datarax.sources._source_base import EagerSourceBase
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
@@ -107,7 +108,7 @@ class TestMixedSource:
         grows.data = {"x": jnp.arange(8, dtype=jnp.float32)}
         key = jax.random.key(3)
 
-        ids = np.asarray(mix.record_indices_at(start=0, size=256, key=key))
+        ids = from_words(mix.record_indices_at(start=0, size=256, key=key)).astype(np.int64)
         values = np.asarray(mix.get_batch_at(start=0, size=256, key=key)["x"])
 
         assert len(mix) == 12

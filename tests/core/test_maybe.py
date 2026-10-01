@@ -23,6 +23,7 @@ from substrax.testing.compiles import expect_compiles
 from datarax.core import batch_ops, Maybe
 from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import Batch, Element
+from datarax.core.index_words import to_words
 from datarax.core.operator import OperatorModule, require_key
 from datarax.core.spec import array_to_spec, batched_spec, SpecMismatchError, validate_batch
 from datarax.core.state_keys import IMPUTED, MASKED
@@ -195,7 +196,7 @@ class MaskTokens(OperatorModule):
 
 def test_a_masked_value_keeps_its_target() -> None:
     tokens = jnp.arange(B * 5, dtype=jnp.int32).reshape(B, 5)
-    batch = name_records(batch_ops.from_arrays({"tokens": tokens}), jnp.arange(B), 0)
+    batch = name_records(batch_ops.from_arrays({"tokens": tokens}), to_words(jnp.arange(B)), 0)
     op = MaskTokens(OperatorConfig(stochastic=True, stream_name="mask"), rngs=nnx.Rngs(mask=0))
 
     out = jax.jit(lambda b: op(b))(batch)

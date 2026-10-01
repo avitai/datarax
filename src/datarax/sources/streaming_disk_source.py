@@ -31,6 +31,7 @@ from jax.experimental import io_callback
 
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
+from datarax.core.index_words import from_words
 from datarax.typing import DataDict
 
 
@@ -130,7 +131,8 @@ class StreamingDiskSource(DataSourceModule):
         """Fetch the rows at ``indices`` from disk and return a stop_gradient'd dict.
 
         Args:
-            indices: 1-D ``jax.Array`` of int32 indices into the on-disk array.
+            indices: uint32 ``(n, 2)`` indices into the on-disk array, each as its words
+                ``(hi, lo)``, so every row of an array past ``2**32`` rows is addressed.
 
         Returns:
             ``{feature_key: array}`` where ``array`` has shape
@@ -148,7 +150,7 @@ class StreamingDiskSource(DataSourceModule):
             # ``idx_array`` arrives as a numpy array on the host. Index the
             # memory-map and copy to a contiguous numpy array (memmap rows are
             # already contiguous; the np.asarray ensures owned memory).
-            return np.asarray(host.array[idx_array.astype(np.int64)])
+            return np.asarray(host.array[from_words(idx_array)])
 
         raw = io_callback(_host_read, result_spec, indices)
         # io_callback outputs are non-differentiable by design — make that

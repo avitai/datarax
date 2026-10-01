@@ -7,13 +7,13 @@ reaching the epoch's end is completed from the head of the next epoch's order, t
 ``repeat().batch()``, so every epoch serves each record once. A session serving a number of
 epochs stops after exactly those records, so its final batch may be short.
 :class:`~datarax.pipeline.pipeline.Pipeline` builds a plan from its source's current length,
-and its length, ``batches_left``, iteration sessions and compiled step all read it.
+and its length, ``batches_left``, iteration sessions and compiled step all read it. On the host
+positions and epochs are Python integers, exact at every length up to ``2**64 - 1`` records.
 """
 
 from __future__ import annotations
 
 import dataclasses
-import math
 from typing import cast
 
 import jax
@@ -164,7 +164,7 @@ class EpochPlan:
                 self.batch_size
             )
         records = left + later * self.length
-        batches = math.ceil(records / self.batch_size)
+        batches = -(-records // self.batch_size)  # integer ceiling: exact past 2**53 records
         if batches == 0:
             return 0, 0
         return batches, records - (batches - 1) * self.batch_size

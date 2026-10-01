@@ -21,6 +21,7 @@ from substrax.testing.gradients import check_input_gradients, check_parameter_gr
 from datarax.core import batch_ops
 from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import Batch, Element
+from datarax.core.index_words import to_words
 from datarax.core.operator import OperatorModule, require_key
 from datarax.core.prng import per_record_keys, record_key
 from datarax.core.state_keys import WEIGHT
@@ -32,7 +33,7 @@ B = 6
 
 def _batch(values: jax.Array | None = None, first: int = 10, epoch: int = 1) -> Batch:
     x = jnp.linspace(0.0, 1.0, B * 3, dtype=jnp.float32).reshape(B, 3) if values is None else values
-    return name_records(batch_ops.from_arrays({"x": x}), jnp.arange(B) + first, epoch)
+    return name_records(batch_ops.from_arrays({"x": x}), to_words(jnp.arange(B) + first), epoch)
 
 
 def _stochastic(strategy: str = "vmap") -> OperatorConfig:

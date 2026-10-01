@@ -26,8 +26,10 @@ from flax import nnx
 
 from datarax.core.config import ElementOperatorConfig
 from datarax.core.element_batch import Batch
+from datarax.core.index_words import from_words, to_words
 from datarax.operators import ElementOperator
 from datarax.pipeline import iteration, Pipeline, PipelineIterator
+from datarax.samplers.index_shuffle import shuffle_positions
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from tests.pipeline.test_pipeline_streaming import _ListStream
 
@@ -167,6 +169,65 @@ class TestDropLast:
             np.asarray(pipeline.step()["x"]), np.arange(_BATCH, dtype=np.float32)
         )
         assert (int(pipeline._position[...]), int(pipeline._epoch[...])) == (32, 1)
+
+
+def _composed(
+    pipeline: Pipeline, shuffle: bool, start: int, epoch: int, size: int
+) -> tuple[list[int], list[int]]:
+    """The records and epochs a batch serves by the rule: the plan's rows through the shuffle.
+
+    Row ``i`` is position ``(start + i) mod N`` of epoch ``epoch + (start + i) // N``, and serves
+    that epoch's record at that position: ``shuffle_positions`` under the epoch's key for a
+    shuffled source, the position itself otherwise.
+    """
+    n = len(pipeline.source)
+    records, epochs = [], []
+    for row in range(start, start + size):
+        row_epoch, position = epoch + row // n, row % n
+        if shuffle:
+            words = shuffle_positions(
+                jnp.asarray(to_words([position])), n, pipeline._key_of(jnp.int32(row_epoch))
+            )
+            position = int(from_words(words)[0])
+        records.append(position)
+        epochs.append(row_epoch)
+    return records, epochs
+
+
+class TestOrderComposition:
+    """The order a pipeline serves is ``shuffle_positions`` composed with ``EpochPlan``.
+
+    Every shuffle x ``drop_last`` x epoch-crossing case: each row's index, epoch and value are
+    those of the record its ``(epoch, position)`` in the plan names in that epoch's order, under
+    iteration and under ``step()``.
+    """
+
+    @pytest.mark.parametrize("shuffle", [False, True], ids=["sequential", "shuffled"])
+    @pytest.mark.parametrize("drop_last", [False, True], ids=["crossing", "drop-last"])
+    @pytest.mark.parametrize(("n", "batch_size"), [(10, 4), (10, 5), (7, 3), (3, 8)])
+    def test_each_row_is_its_epoch_s_record_at_its_position(
+        self, shuffle: bool, drop_last: bool, n: int, batch_size: int
+    ) -> None:
+        if drop_last and batch_size > n:
+            pytest.skip("drop_last refuses a batch larger than the source")
+        served = list(
+            _pipeline(n, shuffle=shuffle, batch_size=batch_size, drop_last=drop_last, num_epochs=3)
+        )
+        stepper = _pipeline(n, shuffle=shuffle, batch_size=batch_size, drop_last=drop_last)
+        stepped = [stepper.step() for _ in range(len(served))]
+        plan = stepper.epoch_plan
+        for batches in (served, stepped):
+            position, epoch = 0, 0
+            for batch in batches:
+                start, epoch = plan.batch_start(position, epoch)
+                records, epochs = _composed(stepper, shuffle, start, epoch, batch.batch_size)
+                assert batch.indices.dtype == jnp.uint32
+                assert [int(v) for v in from_words(batch.indices)] == records
+                assert np.asarray(batch.epochs).tolist() == epochs
+                np.testing.assert_array_equal(
+                    np.asarray(batch["x"]), np.asarray(records, np.float32)
+                )
+                position, epoch = plan.advance(start, epoch, batch.batch_size)
 
 
 class _Counter(nnx.Module):

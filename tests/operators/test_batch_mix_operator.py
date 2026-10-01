@@ -21,6 +21,7 @@ from flax import nnx
 
 from datarax.core import batch_ops
 from datarax.core.element_batch import Batch, Element
+from datarax.core.index_words import to_words
 from datarax.core.state_keys import MIX_LAMBDA, MIX_PARTNER
 from datarax.operators.batch_mix_operator import (
     BatchMixOperator,
@@ -609,7 +610,9 @@ class TestBatchMixOperatorInAPipeline:
             rngs=nnx.Rngs(batch_mix=0),
         )
         data = {"image": jnp.ones((4, 8, 8, 3), dtype=jnp.float32)}
-        out = mixer(name_records(batch_ops.from_arrays(data), jnp.arange(4, dtype=jnp.int32), 0))
+        out = mixer(
+            name_records(batch_ops.from_arrays(data), to_words(jnp.arange(4, dtype=jnp.int32)), 0)
+        )
         assert out.data["image"].shape == (4, 8, 8, 3)
 
 
@@ -620,7 +623,9 @@ class TestMixingWritesPartnerAndLambda:
     def _batch(labels: jax.Array) -> Batch:
         images = jax.random.uniform(jax.random.key(0), (6, 8, 8, 3))
         return name_records(
-            batch_ops.from_arrays({"image": images, "label": labels}), jnp.arange(6) + 20, 0
+            batch_ops.from_arrays({"image": images, "label": labels}),
+            to_words(jnp.arange(6) + 20),
+            0,
         )
 
     @pytest.mark.parametrize("mode", ["mixup", "cutmix"])

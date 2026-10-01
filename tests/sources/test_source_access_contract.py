@@ -22,6 +22,7 @@ from flax import nnx
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
 from datarax.core.element_batch import Batch
+from datarax.core.index_words import to_words
 from datarax.pipeline import iteration, Pipeline, PipelineIterator
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from tests.test_common.step_jaxpr import compiled_step
@@ -46,7 +47,7 @@ class _IndexedOnly(DataSourceModule):
         return _ROWS
 
     def get_records(self, indices: jax.Array) -> dict[str, jax.Array]:
-        return {"x": self.data[indices]}
+        return {"x": self.data[indices[:, 1]]}
 
     def element_spec(self) -> dict[str, jax.ShapeDtypeStruct]:
         return {"x": jax.ShapeDtypeStruct((1,), jnp.float32)}
@@ -98,7 +99,7 @@ def test_a_source_that_serves_records_in_order_names_them_by_position() -> None:
     """Without an override, record ids are the wrapped positions."""
     ids = _IndexedOnly().record_indices_at(start=6, size=4)
 
-    np.testing.assert_array_equal(np.asarray(ids), np.array([6, 7, 0, 1]))
+    np.testing.assert_array_equal(to_words([6, 7, 0, 1]), ids)
 
 
 def test_iterating_a_source_without_an_access_method_names_both() -> None:

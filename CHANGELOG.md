@@ -40,6 +40,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Record indices and the shuffled order are 64-bit.** `record_indices_at` (the
+  `DataSourceModule` default and every source's override) and `resolve_wrapped_indices` return
+  uint32 `(size, 2)`, each index as its words `(hi, lo)` (the layout of `Batch.indices`), in
+  place of int32 `(size,)`; `get_records` and `name_records` take those words, and
+  `record_positions` returns them. `shuffle_positions` takes and returns uint32 `(..., 2)` words
+  and refuses any other positions; `shuffle_positions_host` returns uint64 in place of int64. The
+  order covers lengths up to `2**64 - 1`, so the all-ones padding index is never a record, where
+  it refused lengths past `2**31 - 1`; orders of shorter lengths are unchanged (a regression
+  fixture recorded from the previous release's orders pins them). `index_shuffle` keeps its
+  signature. The new `datarax.core.index_words` holds the conversion (`to_words`,
+  `from_words`) and the two-word arithmetic host and device share with x64 off. A traced gather
+  (`MemorySource`, the eager sources, `MixDataSourcesNode`) addresses rows with the low word and
+  refuses a source of more than `2**32` rows; `StreamingDiskSource` reads every 64-bit index on
+  the host.
+- `EpochPlan.run_extent` counts batches with integer division, exact past `2**53` records, and
+  `partition_length` past `2**63 - 1`, where `len(range(...))` overflowed.
 - Operators that treat a field as an array refuse a `Maybe` field with a `TypeError` naming it:
   `MapOperator` over the field (a `Maybe` outside its subtree passes through), the parallel
   merges and ensemble reductions of `CompositeOperatorModule` (a `merge_fn` receives the outputs

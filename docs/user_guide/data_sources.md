@@ -221,8 +221,10 @@ class CSVDataSource(DataSourceModule):
         return int(self.data.shape[0])
 
     def get_records(self, indices: jax.Array) -> dict[str, Any]:
-        # Return the rows at `indices`, which record_indices_at names (in order by default).
-        return {"features": self.data[indices]}
+        # Return the rows at `indices`, which record_indices_at names (in order by default):
+        # uint32 (n, 2), each 64-bit index as its words (hi, lo). An in-memory table's rows
+        # all fit the low word.
+        return {"features": self.data[indices[:, 1]]}
 
     def element_spec(self) -> dict[str, Any]:
         # Declare exactly what get_records emits: one row of float32 features.
@@ -240,7 +242,8 @@ When creating custom data sources, ensure:
    `get_batch(batch_size)` instead. A source implementing neither is refused when
    iteration starts. An indexed source that shuffles, partitions or mixes records
    also overrides `record_indices_at(start, size, key)` to return the stable index
-   of the record at each position; the pipeline computes those indices once per
+   of the record at each position, uint32 `(size, 2)` with each 64-bit index as its
+   words `(hi, lo)` (`datarax.core.index_words`); the pipeline computes those indices once per
    batch, gathers them with `get_records`, and stochastic operators key each
    record's randomness on the same indices. The default names records by position,
    which is right for a source that serves them in order, like the one above.

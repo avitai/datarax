@@ -17,6 +17,7 @@ from substrax.testing.compiles import expect_compiles
 
 from datarax.core import batch_ops
 from datarax.core.element_batch import Batch, Element
+from datarax.core.index_words import to_words
 from datarax.operators.modality.image import functional
 from datarax.operators.modality.image.random_crop_operator import (
     RandomCropOperator,
@@ -45,7 +46,7 @@ def cifar_crop(stochastic: bool = True) -> RandomCropOperator:
 def named_batch(images: jax.Array, indices: list[int]) -> Batch:
     return name_records(
         batch_ops.from_arrays({"image": images, "label": jnp.arange(len(indices))}),
-        np.asarray(indices, dtype=np.uint32),
+        to_words(indices),
         0,
     )
 

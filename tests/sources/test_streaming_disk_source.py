@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 from flax import nnx
 
+from datarax.core.index_words import to_words
 from datarax.sources.streaming_disk_source import (
     StreamingDiskSource,
     StreamingDiskSourceConfig,
@@ -36,7 +37,7 @@ def test_streaming_disk_source_reads_requested_indices(tmp_path: Path) -> None:
     config = StreamingDiskSourceConfig(path=str(path), feature_key="x")
     source = StreamingDiskSource(config, rngs=nnx.Rngs(0))
 
-    indices = jnp.asarray([0, 2, 4, 9], dtype=jnp.int32)
+    indices = jnp.asarray(to_words([0, 2, 4, 9]))
     out = source.get_records(indices)
 
     assert isinstance(out, dict)
@@ -87,7 +88,7 @@ def test_streaming_disk_source_usable_in_downstream_gradient(tmp_path: Path) -> 
     config = StreamingDiskSourceConfig(path=str(path), feature_key="x")
     source = StreamingDiskSource(config, rngs=nnx.Rngs(0))
 
-    indices = jnp.asarray([0, 1, 2], dtype=jnp.int32)
+    indices = jnp.asarray(to_words([0, 1, 2]))
 
     def loss(model_param: jax.Array) -> jax.Array:
         # Disk read with non-differentiated indices; downstream loss is

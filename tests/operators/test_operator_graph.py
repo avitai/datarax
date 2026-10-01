@@ -15,6 +15,7 @@ from substrax.testing import TraceCounter
 
 from datarax.core import batch_ops
 from datarax.core.config import MapOperatorConfig, OperatorConfig
+from datarax.core.index_words import to_words
 from datarax.core.operator import OperatorModule
 from datarax.operators import MapOperator
 from datarax.operators.composite_operator import (
@@ -102,7 +103,7 @@ def _batch() -> dict[str, jax.Array]:
 @pytest.mark.parametrize("graph", [True, False], ids=["graph mode", "tree mode"])
 def test_identically_built_wrappers_share_one_trace(name: str, graph: bool) -> None:
     counter = TraceCounter()
-    indices = jnp.arange(4, dtype=jnp.uint32)
+    indices = to_words(jnp.arange(4, dtype=jnp.uint32))
     apply = nnx.jit(
         counter.wrap(
             lambda op, batch: op(name_records(batch_ops.from_arrays(batch), indices, 0)).data

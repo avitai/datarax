@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Any
 
 import jax
-import jax.numpy as jnp
 from jaxtyping import PyTree
 
+from datarax.core.index_words import wrapped_positions
 from datarax.core.structural import StructuralModule
 from datarax.typing import DataDict
 
@@ -164,7 +164,8 @@ class DataSourceModule(StructuralModule):
         ``nnx.jit`` and ``nnx.scan``.
 
         Args:
-            indices: Int32 array ``(n,)`` of record indices in ``[0, len(self))``.
+            indices: uint32 ``(n, 2)`` record indices in ``[0, len(self))``, each as its words
+                ``(hi, lo)``.
 
         Returns:
             One array per field, with leading dim ``n``.
@@ -213,22 +214,22 @@ class DataSourceModule(StructuralModule):
         records are batched, ordered or split across workers. The default names records by their
         wrapped position ``(start + arange(size)) % len(self)``, which is right for a source that
         serves records in order. A source that shuffles, partitions or mixes records overrides it.
+        Indices are 64-bit, each a uint32 ``(hi, lo)`` pair, the layout of ``Batch.indices``.
 
         Args:
-            start: Starting position; a Python int or a traced ``jax.Array``.
+            start: Starting position; a Python int of any size or a traced int32 ``jax.Array``.
             size: Number of records (Python int).
             key: The key selecting the order.
 
         Returns:
-            Int32 array of shape ``(size,)``.
+            uint32 array of shape ``(size, 2)``.
         """
         del key
-        positions = jnp.asarray(start, dtype=jnp.int32) + jnp.arange(size, dtype=jnp.int32)
         try:
-            length = len(self)
+            length: int | None = len(self)
         except NotImplementedError:
-            return positions
-        return positions % jnp.int32(length)
+            length = None
+        return wrapped_positions(start, size, length)
 
     def supports_indexed_access(self) -> bool:
         """Whether ``Pipeline`` can drive this source through ``get_records``.
