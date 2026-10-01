@@ -773,16 +773,37 @@ def test_the_release_checklist_runs_macos_before_the_tag() -> None:
     assert releasing.index("gh workflow run macos.yml") < releasing.index("git tag -a")
 
 
+# The lockfile audit also lives in substrax, pinned by commit: it exports every extra the lock
+# resolves and runs a pinned pip-audit through uvx, isolated from the project, on each export.
+AUDIT_ACTION = "avitai/substrax/.github/actions/audit-lock@13e98b78127606be04437bd7c5de894fb765a28e"
+
+
 def test_the_security_audit_reads_every_extra_in_the_lock() -> None:
     """The dependency audit covers the whole lockfile, not the extras the test suite installs.
 
     Audited from ``uv sync --extra dev --extra test --extra data``, the job never saw the
-    benchmark and automation extras, where Dependabot reported a critical PyJWT advisory.
+    benchmark and automation extras, where Dependabot reported a critical PyJWT advisory. The
+    stack's ``audit-lock`` action reads the ignored advisories from ``pyproject.toml`` and
+    refuses an empty reason or an entry no advisory matches.
     """
     security = yaml.safe_load((WORKFLOWS / "security.yml").read_text())
-    commands = "\n".join(
-        str(step.get("run", "")) for job in security["jobs"].values() for step in job["steps"]
-    )
+    steps = [step for job in security["jobs"].values() for step in job["steps"]]
+    uses = [str(step.get("uses", "")) for step in steps]
+    commands = "\n".join(str(step.get("run", "")) for step in steps)
+    setup_uv = next(i for i, used in enumerate(uses) if used.startswith("astral-sh/setup-uv@"))
 
-    assert "scripts/audit_lock.py" in commands
+    assert uses.count(AUDIT_ACTION) == 1
+    assert setup_uv < uses.index(AUDIT_ACTION)
     assert "pip-audit" not in commands
+    assert "pip_audit" not in commands
+    assert "audit_lock" not in commands
+    assert not (REPO_ROOT / "scripts" / "audit_lock.py").exists()
+    assert _pyproject()["tool"]["substrax"]["audit-lock"]["ignore"]
+
+
+def test_no_extra_installs_pip_audit() -> None:
+    """The audit runs its own pinned pip-audit in isolation; no extra needs to carry one."""
+    extras = _pyproject()["project"]["optional-dependencies"]
+
+    for name, dependencies in extras.items():
+        assert "pip-audit" not in _dependency_names(dependencies), name

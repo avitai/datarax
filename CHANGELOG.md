@@ -174,6 +174,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `macos.yml` nightly when `main` has moved, on demand, and on the release commit before its tag,
   never on a push or pull request. A pull request's changed lines need 80% coverage
   (`diff-cover`); coverage counts bare `pass` statements; the ruff hooks run the lock's ruff.
+- The Security job audits the lockfile through substrax's `audit-lock` action, pinned by commit:
+  every extra the lock resolves, in groups that respect `[tool.uv] conflicts`, each audited by a
+  pinned pip-audit run in isolation with a fresh advisory cache. The ignored advisories and their
+  reasons move to `[tool.substrax.audit-lock.ignore]` in `pyproject.toml`; the run fails on an
+  advisory that table does not name and on an entry no advisory matches. The `dev` extra no
+  longer installs pip-audit.
 - A stochastic operator's only RNG state is its base key, an `nnx.RngKey` drawn once from the
   caller's stream; the private direct-call stream and `datarax.core.operator.DIRECT_CALL_STREAM`
   are removed, so applying an operator mutates nothing. A call that names no records keys on
@@ -216,6 +222,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   validated anything. Pipelines are built in Python; define a `ConfigSchema` for the parameters
   you configure. `examples/config/config_example.py` and its notebook, which exited on a
   configuration file the repository never had, are removed with them.
+- `scripts/audit_lock.py` and its tests: the audit and its tests live in substrax's
+  `audit-lock` action.
 
 ### Fixed
 
