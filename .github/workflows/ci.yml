@@ -180,10 +180,11 @@ jobs:
           include-hidden-files: true
         if: always()
 
+  # Not gated on already_tested: a pull request run restores only its own ref's caches and
+  # main's, so every push to main keeps the prepared datasets there. On a hit this is seconds.
   prepare_example_datasets:
     name: Prepare Example Datasets
-    needs: [lint, already_tested]
-    if: needs.already_tested.outputs.skip != 'true'
+    needs: lint
     runs-on: ubuntu-latest
     # CIFAR-10 comes from a host that sends each connection about 100 KB/s. The script fetches it
     # over eight ranged connections in its own job and budget instead of an example's.
@@ -224,6 +225,19 @@ jobs:
       - name: Download and prepare the datasets
         if: steps.datasets.outputs.cache-hit != 'true'
         run: uv run python scripts/prepare_example_datasets.py
+
+      # A cache save can fail ("Unable to reserve cache"), and then nothing would reach the
+      # example tier; this run's artifact carries the datasets to it whatever the save did.
+      - name: Hand the prepared datasets to this run
+        if: steps.datasets.outputs.cache-hit != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: example-datasets
+          path: |
+            ~/tensorflow_datasets
+            ~/.keras/datasets
+          include-hidden-files: true
+          retention-days: 1
 
   long_running_tests:
     name: Long-Running Tests
@@ -270,18 +284,27 @@ jobs:
 
 
       - name: Restore the prepared example datasets
+        id: datasets
         uses: actions/cache/restore@v4
         with:
           path: |
             ~/tensorflow_datasets
             ~/.keras/datasets
           key: example-datasets-${{ hashFiles('scripts/prepare_example_datasets.py') }}
-          fail-on-cache-miss: true
+
+      # Present whenever prepare_example_datasets missed the cache; absent otherwise, and then
+      # this step fails rather than letting an example download the datasets.
+      - name: Take the datasets this run prepared
+        if: steps.datasets.outputs.cache-hit != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: example-datasets
+          path: ~/
 
       - name: Run long-running tests
         run: |
           # Each example has a 300 s budget, and running past it fails the test.
-          # Slow-host datasets come from the cache prepare_example_datasets fills,
+          # Slow-host datasets come from what prepare_example_datasets prepared,
           # so no example downloads them inside its budget.
           export JAX_PLATFORMS="cpu"
           export DATARAX_EXAMPLE_TIMEOUT_SECONDS=300
