@@ -771,3 +771,18 @@ def test_the_release_checklist_runs_macos_before_the_tag() -> None:
 
     assert "gh workflow run macos.yml" in releasing
     assert releasing.index("gh workflow run macos.yml") < releasing.index("git tag -a")
+
+
+def test_the_security_audit_reads_every_extra_in_the_lock() -> None:
+    """The dependency audit covers the whole lockfile, not the extras the test suite installs.
+
+    Audited from ``uv sync --extra dev --extra test --extra data``, the job never saw the
+    benchmark and automation extras, where Dependabot reported a critical PyJWT advisory.
+    """
+    security = yaml.safe_load((WORKFLOWS / "security.yml").read_text())
+    commands = "\n".join(
+        str(step.get("run", "")) for job in security["jobs"].values() for step in job["steps"]
+    )
+
+    assert "scripts/audit_lock.py" in commands
+    assert "pip-audit" not in commands
