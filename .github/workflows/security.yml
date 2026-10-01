@@ -32,22 +32,15 @@ jobs:
       - name: Create virtual environment
         run: uv venv
 
-      # The audited set is the one the test suite installs, resolved from the lock so the
-      # audit reads the versions that ship in CI rather than a fresh resolution.
+      # pip-audit and bandit come from the dev extra; the audit itself reads the lockfile.
       - name: Install dependencies
-        run: uv sync --locked --extra dev --extra test --extra data
+        run: uv sync --locked --extra dev
 
-      # Both ignored advisories are torch, and neither can be closed by a lockfile change.
-      # PYSEC-2026-139 has no fixed version published in any release. PYSEC-2025-194 is
-      # fixed in 2.13.0, above the deliberate <2.11 ceiling pyproject.toml declares three
-      # times, because 2.11 wheels link against libcudart.so.13 and would move the whole
-      # stack to CUDA 13. Reviewed 2026-09-08. Revisit when the CUDA 12 ceiling is lifted,
-      # or when PYSEC-2026-139 publishes a fix.
-      - name: Pip audit
-        run: >-
-          uv run pip-audit --desc
-          --ignore-vuln PYSEC-2026-139
-          --ignore-vuln PYSEC-2025-194
+      # Every extra the lock resolves, in groups that respect [tool.uv] conflicts, each
+      # audited with a fresh advisory cache. The ignored advisories and their reasons live
+      # in the script, which also fails on an ignore that no longer matches anything.
+      - name: Audit the locked dependencies
+        run: uv run python scripts/audit_lock.py
 
       - name: Bandit
         run: uv run bandit -r src/datarax/ -c pyproject.toml -f json -o bandit-report.json
