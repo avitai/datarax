@@ -33,6 +33,7 @@ from datarax.core.config import (
 )
 from datarax.core.cross_modal import CrossModalOperator, CrossModalOperatorConfig
 from datarax.core.element_batch import Element
+from datarax.core.index_words import to_words
 from datarax.core.operator import OperatorModule
 from datarax.operators import ElementOperator, MapOperator
 from datarax.operators.batch_mix_operator import BatchMixOperator, BatchMixOperatorConfig
@@ -81,7 +82,7 @@ from datarax.utils.external import ExternalAdapterConfig, ExternalLibraryAdapter
 
 
 _BATCH = 4
-_RECORDS = jnp.arange(_BATCH, dtype=jnp.uint32)
+_RECORDS = to_words(jnp.arange(_BATCH, dtype=jnp.uint32))
 
 
 def _rngs() -> nnx.Rngs:

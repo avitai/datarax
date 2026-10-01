@@ -18,13 +18,15 @@ from flax import nnx
 from jax.typing import ArrayLike
 
 from datarax.core.element_batch import Batch
+from datarax.core.index_words import wrapped_positions
 from datarax.pipeline.topo import topological_sort, validate_dag
 
 
 class Records(NamedTuple):
     """The records a batch holds: each row's stable index and the epoch it belongs to.
 
-    A batch crossing an epoch boundary holds records of two epochs, so the epoch is per row.
+    ``indices`` is uint32 ``(B, 2)``, each 64-bit index as its words ``(hi, lo)``. A batch
+    crossing an epoch boundary holds records of two epochs, so the epoch is per row.
     """
 
     indices: jax.Array
@@ -34,28 +36,35 @@ class Records(NamedTuple):
 def record_positions(size: int, start: jax.Array | int) -> jax.Array:
     """Positions ``start + arange(size)``: a stream serves records in order, so these name them.
 
-    ``start`` may be a traced scalar.
+    ``start`` may be a traced scalar. Returns uint32 ``(size, 2)`` words ``(hi, lo)``.
     """
-    return jnp.asarray(start, dtype=jnp.int32) + jnp.arange(size, dtype=jnp.int32)
+    return wrapped_positions(start, size, None)
 
 
 def name_records(batch: Batch, indices: ArrayLike, epochs: ArrayLike) -> Batch:
-    """``batch`` with its rows named as records ``indices`` (below ``2^31``) of ``epochs``.
+    """``batch`` with its rows named as records ``indices`` of ``epochs``.
 
-    Each index is the low word of the record's 64-bit index. ``epochs`` is one epoch for the
-    batch or one per row.
+    ``epochs`` is one epoch for the batch or one per row.
 
     Args:
         batch: The batch, from ``batch_ops.from_arrays`` over gathered or streamed values.
-        indices: int ``(B,)``, each row's record index.
+        indices: uint32 ``(B, 2)``, each row's 64-bit record index as its words ``(hi, lo)``.
         epochs: The epoch of the batch, or of each row ``(B,)``.
 
     Returns:
         The batch with ``indices`` and ``epochs`` set and ``draws`` 0.
+
+    Raises:
+        ValueError: If ``indices`` is not uint32 ``(B, 2)``.
     """
-    rows = jnp.asarray(indices).astype(jnp.uint32)
+    words = jnp.asarray(indices)
+    if words.dtype != jnp.uint32 or words.shape != (batch.batch_size, 2):
+        raise ValueError(
+            f"record indices are uint32 ({batch.batch_size}, 2) words (hi, lo); got "
+            f"{words.dtype} {words.shape}"
+        )
     return batch.replace(
-        indices=jnp.stack([jnp.zeros_like(rows), rows], axis=-1),
+        indices=words,
         epochs=jnp.broadcast_to(jnp.asarray(epochs, jnp.int32), (batch.batch_size,)),
         draws=jnp.zeros((batch.batch_size,), jnp.int32),
     )

@@ -27,7 +27,7 @@
 - **High Performance:** JIT-compiled pipelines via XLA, profiled and roofline-analysed through calibrax
 - **DAG Pipelines:** Graph-based construction via `Pipeline.from_dag` with branching, parallel execution, caching, and differentiable rebatching nodes
 - **Scalability:** Multi-device and multi-host data distribution with device mesh sharding
-- **Determinism:** Reproducible pipelines by default using Grain's Feistel cipher shuffling (O(1) memory), with resumable mid-epoch iteration for exact checkpoint/restore
+- **Determinism:** Reproducible pipelines by default using a keyed Feistel bijection over 64-bit record indices (O(1) memory), with resumable mid-epoch iteration for exact checkpoint/restore
 - **Extensibility:** Custom data sources, operators, and augmentation strategies via composable NNX modules
 - **Benchmarking Suite:** Comparative benchmarks against 14+ frameworks with calibrax-powered analysis and regression checks
 - **Ecosystem Integration:** Works with Flax, Optax, Orbax, HuggingFace Datasets, and TensorFlow Datasets
@@ -60,7 +60,7 @@ Pipelines are directed acyclic graphs, not linear chains. `Pipeline(stages=[...]
 
 ### Deterministic Reproducibility
 
-Shuffling uses Grain's Feistel cipher permutation, which generates a full-epoch permutation in O(1) memory without materializing the index array. Stochastic operators are keyed on global record positions, so each record augments identically regardless of batch size, shuffle order, or host count. Iterating a random-access pipeline returns a stateful iterator whose `get_state()`/`set_state()` capture position and RNG counts for exact mid-epoch resume, and the live module stays consistent at every yield boundary so Orbax checkpoints taken inside a training loop restore the exact remaining stream.
+Shuffling uses datarax's own keyed Feistel bijection (the construction of CCCL's `cuda::__feistel_bijection`), which maps any position of an epoch of up to 2^64 - 1 records to its record in O(1) memory without materializing the index array. Stochastic operators are keyed on global record positions, so each record augments identically regardless of batch size, shuffle order, or host count. Iterating a random-access pipeline returns a stateful iterator whose `get_state()`/`set_state()` capture position and RNG counts for exact mid-epoch resume, and the live module stays consistent at every yield boundary so Orbax checkpoints taken inside a training loop restore the exact remaining stream.
 
 ### Built-in Competitive Benchmarking
 

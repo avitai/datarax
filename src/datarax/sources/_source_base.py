@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.data_source import DataSourceModule
+from datarax.core.index_words import low_words
 from datarax.sources._grain_bridge import records_from_batched_mapping, validate_index_batch
 from datarax.sources.source_ops import (
     eager_get_batch_default,
@@ -129,7 +130,7 @@ class EagerSourceBase(DataSourceModule):
             key: PRNG key for shuffled mode.
 
         Returns:
-            Int32 ``jax.Array`` of shape ``(size,)``.
+            uint32 ``jax.Array`` of shape ``(size, 2)``, each index as its words ``(hi, lo)``.
         """
         return resolve_wrapped_indices(start, size, self.length, self.is_random_order, key)
 
@@ -137,14 +138,15 @@ class EagerSourceBase(DataSourceModule):
         """Gather the records at ``indices``; JIT-traceable for scan-based iteration.
 
         Args:
-            indices: Int32 record indices in ``[0, len(self))``, as :meth:`record_indices_at`
-                names them; concrete or traced.
+            indices: uint32 ``(n, 2)`` record indices in ``[0, len(self))``, as
+                :meth:`record_indices_at` names them; concrete or traced.
 
         Returns:
             Dict mapping each data key to a JAX array with leading dimension ``len(indices)``.
         """
+        rows = low_words(indices, self.length)
         return {
-            data_key: jnp.take(jnp.asarray(value), indices, axis=0)
+            data_key: jnp.take(jnp.asarray(value), rows, axis=0)
             for data_key, value in self.data.items()
         }
 

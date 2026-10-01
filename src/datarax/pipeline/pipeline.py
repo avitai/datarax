@@ -369,7 +369,7 @@ class Pipeline(nnx.Module):
         epoch = jnp.asarray(epoch, dtype=jnp.int32)
 
         def names(first: jax.Array, key: jax.Array) -> jax.Array:
-            return jnp.asarray(self.source.record_indices_at(first, size, key), jnp.int32)
+            return jnp.asarray(self.source.record_indices_at(first, size, key), jnp.uint32)
 
         if not plan.crosses:
             return Records(names(start, self._key_of(epoch)), jnp.full((size,), epoch, jnp.int32))

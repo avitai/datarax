@@ -56,3 +56,17 @@ def sub_jaxprs(jaxpr: Jaxpr) -> list[Jaxpr]:
                 if isinstance(inner, Jaxpr):
                     found.extend(sub_jaxprs(inner))
     return found
+
+
+HOST_CALLBACKS = ("pure_callback", "io_callback", "debug_callback", "callback")
+"""Primitives that run Python on the host from inside a compiled program."""
+
+
+def host_callbacks(closed: ClosedJaxpr) -> list[str]:
+    """The host callbacks anywhere in a traced program, nested loops and branches included."""
+    return [
+        eqn.primitive.name
+        for jaxpr in sub_jaxprs(closed.jaxpr)
+        for eqn in jaxpr.eqns
+        if eqn.primitive.name in HOST_CALLBACKS
+    ]

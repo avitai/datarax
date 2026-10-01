@@ -51,6 +51,7 @@ assert batch["image"].shape == (2, 32, 32, 3)
 ### Data Structures
 
 - [element_batch](element_batch.md) - `Element` and `Batch` data containers
+- [index_words](index_words.md) - 64-bit record indices as two uint32 words
 - [batch_ops](batch_ops.md) - Building, slicing, regrouping and padding batches
 - [maybe](maybe.md) - Missing (`Maybe`), masked (`MASKED`) and padded values
 - [state_keys](state_keys.md) - The per-record state entries datarax writes

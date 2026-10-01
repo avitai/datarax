@@ -27,6 +27,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from datarax.core import index_words
 from datarax.samplers.index_shuffle import (
     index_shuffle,
     shuffle_positions,
@@ -81,9 +82,10 @@ def partition_length(length: int, num_workers: int = 1, shard_id: int = 0) -> in
         shard_id: This worker's index.
 
     Returns:
-        ``len(range(shard_id, length, num_workers))``.
+        ``len(range(shard_id, length, num_workers))``, computed by integer division, which
+        ``len`` cannot do past ``2**63 - 1`` positions.
     """
-    return len(range(shard_id, length, num_workers))
+    return max(0, -(-(length - shard_id) // num_workers))
 
 
 def resolve_wrapped_indices(  # noqa: PLR0913 - the order, its partition and the slice are separate
@@ -104,10 +106,12 @@ def resolve_wrapped_indices(  # noqa: PLR0913 - the order, its partition and the
     dataset size and no order is stored. Worker ``shard_id`` of
     ``num_workers`` serves positions ``[shard_id::num_workers]`` of that order, and its
     logical positions ``start + arange(size)`` wrap at its own length. The same arguments
-    always yield the same indices.
+    always yield the same indices. Positions and indices are 64-bit, exact for every length up
+    to ``2**64 - 1`` (:func:`~datarax.core.index_words.wrapped_positions`).
 
     Args:
-        start: Starting logical position (concrete int or traced ``jax.Array``).
+        start: Starting logical position: a Python int of any size, or a traced int32
+            ``jax.Array``.
         size: Number of records to return (static Python int).
         length: Total number of records in the dataset.
         is_random_order: Whether the source serves records in shuffled order.
@@ -117,16 +121,19 @@ def resolve_wrapped_indices(  # noqa: PLR0913 - the order, its partition and the
         shard_id: This worker's index.
 
     Returns:
-        Int32 ``jax.Array`` of shape ``(size,)`` with the global record indices.
+        uint32 ``(size, 2)`` global record indices, each as its words ``(hi, lo)``.
     """
     worker_length = partition_length(length, num_workers, shard_id)
-    start_arr = jnp.asarray(start, dtype=jnp.int32)
-    offsets = jnp.arange(size, dtype=jnp.int32)
-    positions = (start_arr + offsets) % jnp.int32(worker_length)
-    global_positions = jnp.int32(shard_id) + positions * jnp.int32(num_workers)
+    positions = index_words.wrapped_positions(start, size, worker_length)
+    if num_workers > 1 or shard_id:
+        scaled = index_words.multiply_word(
+            (positions[:, 0], positions[:, 1]), np.uint32(num_workers)
+        )
+        high, low = index_words.add(scaled, index_words.split_constant(shard_id))
+        positions = jnp.stack([high, low], axis=-1)
     if is_random_order and key is not None:
-        return shuffle_positions(global_positions, length, key)
-    return global_positions
+        return shuffle_positions(positions, length, key)
+    return positions
 
 
 logger = logging.getLogger(__name__)
@@ -269,8 +276,8 @@ def eager_get_batch(
     if key is not None:
         # Stateless mode
         if shuffle:
-            positions = jnp.arange(min(batch_size, length), dtype=jnp.int32)
-            indices = shuffle_positions(positions, length, key)
+            positions = jnp.asarray(index_words.to_words(np.arange(min(batch_size, length))))
+            indices = index_words.low_words(shuffle_positions(positions, length, key), length)
         else:
             indices = jnp.arange(batch_size)
         return gather_fn(data, indices)
@@ -289,7 +296,8 @@ def eager_get_batch(
     if end >= length:
         epoch_var.set_value(epoch + 1)
 
-    return gather_fn(data, jnp.array(shuffled_indices))
+    rows = index_words.low_words(jnp.asarray(index_words.to_words(shuffled_indices)), length)
+    return gather_fn(data, rows)
 
 
 def eager_reset(

@@ -16,6 +16,7 @@ from substrax.testing.compiles import expect_compiles
 
 from datarax.core import batch_ops
 from datarax.core.element_batch import Batch, Element
+from datarax.core.index_words import to_words
 from datarax.operators.modality.image.flip_operator import FlipOperator, FlipOperatorConfig
 from datarax.operators.probabilistic_operator import (
     ProbabilisticOperator,
@@ -32,7 +33,7 @@ def coordinates(height: int, width: int) -> jax.Array:
 def named_batch(images: jax.Array) -> Batch:
     return name_records(
         batch_ops.from_arrays({"image": images}),
-        np.arange(images.shape[0], dtype=np.uint32),
+        to_words(np.arange(images.shape[0])),
         0,
     )
 

@@ -2,6 +2,8 @@
 
 A shuffled order is a bijection of ``[0, length)`` keyed by a PRNG key, computed per position,
 so serving a batch costs O(batch) at every dataset size and nothing is stored between batches.
+``length`` reaches ``2**64 - 1``: every 64-bit record index but the all-ones one, which marks
+padding (:data:`~datarax.core.index_words.MAX_RECORDS`).
 
 The bijection is CCCL's ``cuda::__feistel_bijection``
 (``libcudacxx/include/cuda/__random/feistel_bijection.h``, also ``thrust::shuffle``'s
@@ -9,9 +11,19 @@ The bijection is CCCL's ``cuda::__feistel_bijection``
 "Bandwidth-optimal random shuffling for GPUs", ACM Transactions on Parallel Computing 9(1), 2022
 -- an unbalanced Feistel network over ``max(8, bit_width(length - 1))`` bits whose 24 rounds use
 the Philox multiplier as round function -- with cycle-walking into ``[0, length)`` (Black and
-Rogaway, "Ciphers with Arbitrary Finite Domains", CT-RSA 2002). Adapted to JAX: 32-bit arithmetic
-with the 64-bit product built from 16-bit limbs (positions are int32, so the left half has at most
-15 bits), and round keys drawn from a JAX key.
+Rogaway, "Ciphers with Arbitrary Finite Domains", CT-RSA 2002). Adapted to JAX: positions and
+records are 64-bit integers held as two uint32 words (:mod:`datarax.core.index_words`), so the
+cipher runs with x64 off, and round keys are drawn from a JAX key.
+
+The arithmetic in words. A domain of ``bits <= 64`` splits into a right half of
+``ceil(bits / 2) <= 32`` bits and a left half of ``floor(bits / 2) <= 32`` bits, so each half is
+one uint32 word. A round needs the 64-bit product of the Philox multiplier ``M`` and the left half
+``L``, modulo ``2**64``. With ``M = M_hi * 2**32 + M_lo``, that product's low word is
+``L * M_lo mod 2**32`` and its high word is ``high(L * M_lo) + L * M_hi mod 2**32``, where
+``high(.)`` is the high word of a 32 x 32-bit product, built from 16-bit limbs
+(:func:`~datarax.core.index_words.multiply_high`). A left half of at most 16 bits, in every
+domain of up to 33 bits, is a single limb, and its product takes three multiplications instead
+of six.
 
 Two forms share the cipher. :func:`shuffle_positions` is traceable and takes a JAX key;
 :func:`shuffle_positions_host` and its scalar :func:`index_shuffle` run in NumPy for host-side
@@ -33,13 +45,23 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from datarax.core import index_words
+from datarax.core.index_words import HostIntegers, MAX_RECORDS, WORD_BITS
+
 
 logger = logging.getLogger(__name__)
+
+type _Words = tuple[jax.Array, jax.Array]
 
 _ROUNDS = 24
 _MIN_BITS = 8
 _PHILOX_MULTIPLIER = 0xD2B74407B1CE6E93
-_MAX_LENGTH = int(np.iinfo(np.int32).max)
+_MULTIPLIER_HIGH = np.uint32(_PHILOX_MULTIPLIER >> WORD_BITS)
+_MULTIPLIER_LOW = np.uint32(_PHILOX_MULTIPLIER & 0xFFFFFFFF)
+_MULTIPLIER_LOW_LIMBS = (
+    np.uint32(_PHILOX_MULTIPLIER >> 16 & 0xFFFF),
+    np.uint32(_PHILOX_MULTIPLIER & 0xFFFF),
+)
 # Positions the scalar host form computes at once and caches, so a per-element caller pays a
 # vectorized cipher call per block instead of per element.
 _HOST_BLOCK = 4096
@@ -48,7 +70,8 @@ _HOST_BLOCK = 4096
 _FALLBACK_CHANCE = 1e-3
 # The fixed passes are capped at those a domain within twice the length needs for 2**22 values,
 # log2(2**22 / _FALLBACK_CHANCE); only a source shorter than half the smallest domain (2**7
-# records) needs more, and its walk continues in the loop.
+# records) needs more, and its walk continues in the loop. The bound depends on the length only
+# through the fraction of the domain it fills, so it holds at every width up to 64 bits.
 _MAX_FIXED_PASSES = 32
 
 
@@ -57,38 +80,62 @@ def _block_bits(length: int) -> int:
     return max(_MIN_BITS, (length - 1).bit_length())
 
 
-def _encrypt[A: (jax.Array, np.ndarray)](values: A, bits: int, round_keys: A) -> A:
-    """CCCL's ``__feistel_bijection::operator()`` over ``bits``-bit uint32 values.
+def _philox_product[A: (jax.Array, np.ndarray)](left: A, left_bits: int) -> tuple[A, A]:
+    """``_PHILOX_MULTIPLIER * left`` modulo ``2**64``, as its high and low words.
+
+    For ``left`` of at most 16 bits each product of ``left`` with a 16-bit limb of the
+    multiplier's low word fits in 32 bits, and the low word's carry goes into the high word.
+    """
+    if left_bits <= 16:  # noqa: PLR2004 - one 16-bit limb
+        limb_high, limb_low = _MULTIPLIER_LOW_LIMBS
+        middle = left * limb_high
+        shifted = middle << 16
+        low = shifted + left * limb_low
+        carry = (low < shifted).astype(np.uint32)
+        return (middle >> 16) + carry + left * _MULTIPLIER_HIGH, low
+    high = index_words.multiply_high(left, _MULTIPLIER_LOW) + left * _MULTIPLIER_HIGH
+    return high, left * _MULTIPLIER_LOW
+
+
+def _encrypt[A: (jax.Array, np.ndarray)](high: A, low: A, bits: int, round_keys: A) -> tuple[A, A]:
+    """CCCL's ``__feistel_bijection::operator()`` over ``bits``-bit values held as two words.
 
     The round is written with operators NumPy and JAX uint32 arrays share (both wrap modulo
     2**32), so the host and device forms run the same code. NumPy iterates it in Python; JAX
     iterates it with ``lax.scan(unroll=True)``, which traces the round once and hands the compiler
     the same unrolled rounds -- a Python loop would trace all 24, and every transform applied to
-    the shuffle (``vmap``, the platform choice) would walk each of them again.
+    the shuffle (``vmap``, the platform choice) would walk each of them again. At 64 bits the
+    left half is a whole word, and the round's ``right >> left_bits`` is 0 (C++ leaves that shift
+    of a 32-bit word undefined; the cipher's arithmetic means 0).
+
+    Args:
+        high: uint32 high words of the values.
+        low: uint32 low words of the values.
+        bits: The domain's width, 8 to 64.
+        round_keys: uint32 ``(_ROUNDS,)`` round keys.
+
+    Returns:
+        The encrypted values' high and low words.
     """
     left_bits = bits // 2
     right_bits = bits - left_bits
     left_mask = np.uint32((1 << left_bits) - 1)
     right_mask = np.uint32((1 << right_bits) - 1)
-    multiplier_high = np.uint32(_PHILOX_MULTIPLIER >> 32)
-    multiplier_mid = np.uint32((_PHILOX_MULTIPLIER >> 16) & 0xFFFF)
-    multiplier_low = np.uint32(_PHILOX_MULTIPLIER & 0xFFFF)
 
     def one_round(halves: tuple[A, A], round_key: A) -> tuple[A, A]:
         left, right = halves
-        # product = multiplier * left mod 2**64, as 32-bit halves. left < 2**15, so each
-        # 16-bit limb product fits in 32 bits; the low half carries into the high half.
-        middle = left * multiplier_mid
-        shifted = middle << 16
-        product_low = shifted + left * multiplier_low
-        carry = (product_low < shifted).astype(np.uint32)
-        product_high = (middle >> 16) + carry + left * multiplier_high
+        product_high, product_low = _philox_product(left, left_bits)
         new_left = (product_high ^ round_key) ^ right
-        new_right = (product_low << (right_bits - left_bits)) | (right >> left_bits)
+        new_right = product_low << (right_bits - left_bits)
+        if left_bits < WORD_BITS:  # at 64 bits the whole right half shifts out
+            new_right = new_right | (right >> left_bits)
         return new_left & left_mask, new_right & right_mask
 
-    halves = (values >> right_bits, values & right_mask)
-    if isinstance(values, np.ndarray):
+    if right_bits == WORD_BITS:
+        halves = (high, low)
+    else:
+        halves = ((high << (WORD_BITS - right_bits)) | (low >> right_bits), low & right_mask)
+    if isinstance(low, np.ndarray):
         for round_key in round_keys:
             halves = one_round(halves, round_key)
     else:
@@ -99,12 +146,14 @@ def _encrypt[A: (jax.Array, np.ndarray)](values: A, bits: int, round_keys: A) ->
             unroll=True,
         )
     left, right = halves
-    return (left << right_bits) | right
+    if right_bits == WORD_BITS:
+        return left, right
+    return left >> (WORD_BITS - right_bits), (left << right_bits) | right
 
 
 def _check_length(length: int) -> None:
-    if not 1 <= length <= _MAX_LENGTH:
-        raise ValueError(f"length must be in [1, 2**31 - 1], got {length}")
+    if not 1 <= length <= MAX_RECORDS:
+        raise ValueError(f"length must be in [1, 2**64 - 1], got {length}")
 
 
 def shuffle_positions(positions: jax.Array, length: int, key: jax.Array) -> jax.Array:  # noqa: DOC502
@@ -115,19 +164,25 @@ def shuffle_positions(positions: jax.Array, length: int, key: jax.Array) -> jax.
     ``scan``: ``positions`` and ``key`` may be traced, ``length`` is static.
 
     Args:
-        positions: Int32 positions in ``[0, length)``, any shape.
-        length: Number of records the order covers, in ``[1, 2**31 - 1]``.
+        positions: uint32 ``(..., 2)`` positions in ``[0, length)``, each a 64-bit integer as
+            its words ``(hi, lo)`` (:func:`~datarax.core.index_words.to_words`).
+        length: Number of records the order covers, in ``[1, 2**64 - 1]``.
         key: PRNG key selecting the order.
 
     Returns:
-        Int32 array of record indices, shaped like ``positions``.
+        uint32 ``(..., 2)`` record indices ``(hi, lo)``, shaped like ``positions``.
 
     Raises:
-        ValueError: If ``length`` is out of range.
+        ValueError: If ``length`` is out of range, or ``positions`` is not uint32 words.
     """
     _check_length(length)
     positions = jnp.asarray(positions)
-    passes = _fixed_passes(length, positions.size)
+    if positions.dtype != jnp.uint32 or positions.ndim == 0 or positions.shape[-1] != 2:  # noqa: PLR2004
+        raise ValueError(
+            "positions are 64-bit integers as uint32 (..., 2) words (hi, lo); got "
+            f"{positions.dtype} {positions.shape}"
+        )
+    passes = _fixed_passes(length, positions.size // 2)
     return jax.lax.platform_dependent(
         positions,
         key,
@@ -143,7 +198,9 @@ def _fixed_passes(length: int, count: int) -> int:
     1/2 by the choice of ``bits``, so ``count`` values all land within ``k`` passes except with
     probability at most ``count * (1 - length / 2**bits) ** k``; the returned ``k`` is the least
     making that at most :data:`_FALLBACK_CHANCE`, which grows with ``log(count)``, capped at
-    :data:`_MAX_FIXED_PASSES`.
+    :data:`_MAX_FIXED_PASSES`. The out-of-range fraction is the exact integer ``2**bits - length``
+    over ``2**bits``: computed as ``1 - length / 2**bits`` in floating point it rounds to 0 once
+    ``length`` is within ``2**-53`` of the domain, which only a domain past 53 bits reaches.
 
     Args:
         length: Records the order covers.
@@ -152,9 +209,10 @@ def _fixed_passes(length: int, count: int) -> int:
     Returns:
         The pass count, at least 1.
     """
-    out_of_range = 1.0 - length / (1 << _block_bits(length))
-    if out_of_range == 0.0:
+    domain = 1 << _block_bits(length)
+    if domain == length:
         return 1
+    out_of_range = (domain - length) / domain
     passes = math.ceil(math.log(_FALLBACK_CHANCE / max(count, 1)) / math.log(out_of_range))
     return min(max(1, passes), _MAX_FIXED_PASSES)
 
@@ -170,37 +228,48 @@ def _cycle_walk(positions: jax.Array, length: int, key: jax.Array, fixed: int) -
     iteration, and a known trip count needs no such read.
 
     Args:
-        positions: Int32 positions in ``[0, length)``.
+        positions: uint32 ``(..., 2)`` positions in ``[0, length)``.
         length: Records the order covers.
         key: PRNG key selecting the order.
         fixed: Passes to run before the loop, 0 for the loop alone.
 
     Returns:
-        Int32 record indices, shaped like ``positions``.
+        uint32 ``(..., 2)`` record indices, shaped like ``positions``.
     """
     bits = _block_bits(length)
     round_keys = jax.random.bits(key, (_ROUNDS,), jnp.uint32)
-    top = jnp.uint32(length - 1)
+    top = index_words.split_constant(length - 1)
 
-    def walk(values: jax.Array) -> jax.Array:
-        return jnp.where(values > top, _encrypt(values, bits, round_keys), values)
+    def encrypt(values: _Words) -> _Words:
+        return _encrypt(values[0], values[1], bits, round_keys)
 
-    records = positions.astype(jnp.uint32)
+    def select(outside: jax.Array, values: _Words) -> _Words:
+        encrypted = encrypt(values)
+        return jnp.where(outside, encrypted[0], values[0]), jnp.where(
+            outside, encrypted[1], values[1]
+        )
+
+    def out_of_range(values: _Words) -> jax.Array:
+        return index_words.greater(values, top)
+
+    records: _Words = (positions[..., 0], positions[..., 1])
     if fixed == 0:
-        records = _encrypt(records, bits, round_keys)
+        records = encrypt(records)
     else:
         # Pass 0 encrypts every position and later passes only values still out of range, so the
         # cipher appears once in the loop body rather than once more before it.
         records = jax.lax.fori_loop(
             0,
             fixed,
-            lambda index, values: jnp.where(
-                (index == 0) | (values > top), _encrypt(values, bits, round_keys), values
-            ),
+            lambda index, values: select((index == 0) | out_of_range(values), values),
             records,
         )
-    records = jax.lax.while_loop(lambda values: jnp.any(values > top), walk, records)
-    return jnp.asarray(records).astype(jnp.int32)
+    records = jax.lax.while_loop(
+        lambda values: jnp.any(out_of_range(values)),
+        lambda values: select(out_of_range(values), values),
+        records,
+    )
+    return jnp.stack(records, axis=-1)
 
 
 @functools.lru_cache(maxsize=64)
@@ -213,40 +282,49 @@ def _host_round_keys(seed: int, epoch: int) -> np.ndarray:
 
 
 def shuffle_positions_host(  # noqa: DOC502
-    positions: np.ndarray, length: int, seed: int, epoch: int = 0
+    positions: HostIntegers, length: int, seed: int, epoch: int = 0
 ) -> np.ndarray:
     """NumPy form of :func:`shuffle_positions` for the order of ``seed`` at ``epoch``.
 
-    Equal to ``shuffle_positions(positions, length, fold_in(key(seed), epoch))``.
+    Equal to ``shuffle_positions(to_words(positions), length, fold_in(key(seed), epoch))``, with
+    positions and records as 64-bit integers rather than words.
 
     Args:
-        positions: Integer positions in ``[0, length)``, any shape.
-        length: Number of records the order covers, in ``[1, 2**31 - 1]``.
+        positions: Nonnegative integer positions in ``[0, length)``, any shape: Python ints of
+            any size or a NumPy integer array.
+        length: Number of records the order covers, in ``[1, 2**64 - 1]``.
         seed: Integer seed in ``[0, 2**32)``.
         epoch: Epoch whose order is served.
 
     Returns:
-        Int64 array of record indices, shaped like ``positions``.
+        uint64 array of record indices, shaped like ``positions``.
 
     Raises:
-        ValueError: If ``length`` is out of range.
+        ValueError: If ``length`` is out of range or a position is negative.
     """
     _check_length(length)
     bits = _block_bits(length)
     round_keys = _host_round_keys(seed, epoch)
-    top = np.uint32(length - 1)
-    values = _encrypt(np.atleast_1d(np.asarray(positions)).astype(np.uint32), bits, round_keys)
-    while (outside := values > top).any():
-        values = np.where(outside, _encrypt(values, bits, round_keys), values)
-    return np.asarray(values).astype(np.int64).reshape(np.shape(positions))
+    top = index_words.split_constant(length - 1)
+    words = np.asarray(index_words.to_words(positions))
+    flat = words.reshape(-1, 2)
+    values = _encrypt(flat[:, 0], flat[:, 1], bits, round_keys)
+    while (outside := index_words.greater(values, top)).any():
+        encrypted = _encrypt(values[0], values[1], bits, round_keys)
+        values = (
+            np.where(outside, encrypted[0], values[0]),
+            np.where(outside, encrypted[1], values[1]),
+        )
+    return index_words.from_words(np.stack(values, axis=-1)).reshape(words.shape[:-1])
 
 
 @functools.lru_cache(maxsize=64)
 def _host_block(length: int, seed: int, epoch: int, block: int) -> np.ndarray:
     """Record indices of positions ``[block * _HOST_BLOCK, ...)`` of one order, cached."""
     start = block * _HOST_BLOCK
+    count = min(_HOST_BLOCK, length - start)
     indices = shuffle_positions_host(
-        np.arange(start, min(start + _HOST_BLOCK, length)), length, seed, epoch
+        np.arange(count, dtype=np.uint64) + np.uint64(start), length, seed, epoch
     )
     indices.flags.writeable = False
     return indices
@@ -261,7 +339,7 @@ def index_shuffle(index: int, seed: int, num_elements: int, epoch: int = 0) -> i
     Args:
         index: Position in ``[0, num_elements)``.
         seed: Integer seed in ``[0, 2**32)``.
-        num_elements: Number of records the order covers.
+        num_elements: Number of records the order covers, at most ``2**64 - 1``.
         epoch: Epoch whose order is served.
 
     Returns:

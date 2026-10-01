@@ -19,6 +19,7 @@ from datarax.operators.map_operator import MapOperator
 from datarax.pipeline import Pipeline
 from datarax.pipeline.iteration import _host_copies, _session_step
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
+from tests.test_common.step_jaxpr import host_callbacks, traced_step
 
 
 _N = 64
@@ -324,3 +325,72 @@ class TestTransforms:
         assert float(first) == pytest.approx(float(reference.step()["x"].sum()))
         assert float(second) == pytest.approx(float(reference.step()["x"].sum()))
         assert int(pipeline._position[...]) == 2 * _BATCH
+
+
+class TestShuffledAugmentingTrainStep:
+    """A shuffled source and a stochastic stage inside the caller's compiled gradient step.
+
+    The step names its records through the shuffle, gathers them by those names, and keys the
+    stage's randomness on them, so every part of the record path runs inside the user's
+    ``nnx.jit`` and ``grad``.
+    """
+
+    @staticmethod
+    def _pipeline() -> Pipeline:
+        stage = MapOperator(
+            MapOperatorConfig(stochastic=True, stream_name="augment"),
+            fn=lambda x, key: x + jax.random.normal(key, x.shape),
+            rngs=nnx.Rngs(augment=1),
+        )
+        data = {"x": np.arange(_N, dtype=np.float32)[:, None] + 1.0}
+        source = MemorySource(MemorySourceConfig(shuffle=True), data=data, rngs=nnx.Rngs(0))
+        return Pipeline(
+            source=source, stages=[stage], batch_size=_BATCH, num_epochs=None, rngs=nnx.Rngs(0)
+        )
+
+    def test_one_compile_serves_three_epochs_of_the_steps_batches(self) -> None:
+        model, pipeline, reference = _Model(), self._pipeline(), self._pipeline()
+
+        @nnx.jit
+        def train_step(model: _Model, pipeline: Pipeline) -> jax.Array:
+            def loss(model: _Model, pipeline: Pipeline) -> jax.Array:
+                return model.weight[...] * pipeline.step()["x"].sum()
+
+            return nnx.grad(loss)(model, pipeline).weight[...]
+
+        steps = 3 * _N // _BATCH
+        first = train_step(model, pipeline)
+        with compiled_programs() as compiled:
+            gradients = [first] + [train_step(model, pipeline) for _ in range(steps - 1)]
+        expected = [np.asarray(reference.step()["x"]).sum(dtype=np.float32) for _ in range(steps)]
+        assert compiled == []
+        # Two compiled programs may associate a float32 sum of 8 values differently.
+        np.testing.assert_allclose(
+            np.asarray(gradients), expected, rtol=8 * float(np.finfo(np.float32).eps)
+        )
+        assert (int(pipeline._position[...]), int(pipeline._epoch[...])) == (_N, 2)
+
+    def test_the_step_holds_no_host_callback(self) -> None:
+        closed, _ = traced_step(self._pipeline())
+        assert host_callbacks(closed) == []
+
+    def test_inside_a_functional_jax_jit_over_split_state(self) -> None:
+        pipeline, reference = self._pipeline(), self._pipeline()
+        graphdef, state = nnx.split(pipeline)
+
+        @jax.jit
+        def fetch(state: nnx.State) -> tuple[jax.Array, nnx.State]:
+            module = nnx.merge(graphdef, state)
+            return module.step()["x"], nnx.state(module)
+
+        served, state = fetch(state)
+        batches = [served]
+        with compiled_programs() as compiled:
+            for _ in range(_N // _BATCH):  # into the second epoch
+                served, state = fetch(state)
+                batches.append(served)
+        nnx.update(pipeline, state)
+        assert compiled == []
+        for batch in batches:
+            np.testing.assert_allclose(np.asarray(batch), np.asarray(reference.step()["x"]))
+        assert int(pipeline._epoch[...]) == 1

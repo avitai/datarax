@@ -164,6 +164,38 @@ class TestRunExtent:
         assert _plan(None, 4).run_extent(0) is None
 
 
+class TestWidePositions:
+    """On the host the plan counts records in Python integers, exact past 2**31 and 2**53."""
+
+    @pytest.mark.parametrize("drop_last", [False, True])
+    def test_host_positions_past_int32_stay_exact_integers(self, drop_last: bool) -> None:
+        length = (1 << 40) + 3
+        plan = _plan(length, 256, drop_last=drop_last, num_epochs=None)
+        start, epoch = plan.batch_start(length - 100, 7)
+        position, after = plan.advance(start, epoch, 256)
+
+        assert all(type(value) is int for value in (start, epoch, position, after))
+        if drop_last:
+            assert (start, epoch, position, after) == (0, 8, 256, 8)
+        else:
+            assert (start, epoch, position, after) == (length - 100, 7, 156, 8)
+
+    @pytest.mark.parametrize("drop_last", [False, True])
+    @pytest.mark.parametrize("length", [(1 << 53) + 1, (1 << 60) + 1, (1 << 64) - 1])
+    def test_a_run_s_extent_is_exact_past_float_precision(
+        self, length: int, drop_last: bool
+    ) -> None:
+        plan = _plan(length, 3, drop_last=drop_last, num_epochs=2)
+        records = 2 * length
+        if drop_last:
+            expected = (2 * (length // 3), 3)
+        else:
+            batches = -(-records // 3)
+            expected = (batches, records - (batches - 1) * 3)
+        assert plan.run_extent(0) == expected
+        assert all(type(value) is int for value in expected)
+
+
 class TestValidation:
     @pytest.mark.parametrize("num_epochs", [0, -1])
     def test_num_epochs_is_at_least_one_or_none(self, num_epochs: int) -> None:
@@ -206,7 +238,7 @@ class _Resizable(DataSourceModule):
         return self.rows
 
     def get_records(self, indices: jax.Array) -> dict[str, jax.Array]:
-        return {"x": jnp.asarray(indices, jnp.float32)[:, None]}
+        return {"x": jnp.asarray(indices[:, 1], jnp.float32)[:, None]}
 
     def element_spec(self) -> dict[str, jax.ShapeDtypeStruct]:
         return {"x": jax.ShapeDtypeStruct((1,), jnp.float32)}

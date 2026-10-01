@@ -19,6 +19,7 @@ from flax import nnx
 from datarax.core import batch_ops
 from datarax.core.config import BatchMixOperatorConfig, OperatorConfig
 from datarax.core.element_batch import Batch, Element
+from datarax.core.index_words import to_words
 from datarax.core.operator import OperatorModule
 from datarax.operators.batch_mix_operator import BatchMixOperator
 from datarax.operators.composite_operator import (
@@ -40,7 +41,7 @@ B = 8
 
 def _batch() -> Batch:
     image = jnp.full((B, 4, 4, 1), 0.5, jnp.float32)
-    return name_records(batch_ops.from_arrays({"image": image}), jnp.arange(B) + 3, 1)
+    return name_records(batch_ops.from_arrays({"image": image}), to_words(jnp.arange(B) + 3), 1)
 
 
 def _noise(seed: int = 0) -> NoiseOperator:

@@ -39,6 +39,7 @@ import numpy as np
 import pytest
 from flax import nnx
 
+from datarax.core.index_words import from_words, to_words
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
 
@@ -165,7 +166,7 @@ def test_mixed_record_indices_name_the_source_and_record_served() -> None:
     )
     key = jax.random.key(3)
 
-    ids = np.asarray(mix.record_indices_at(start=0, size=32, key=key))
+    ids = from_words(mix.record_indices_at(start=0, size=32, key=key)).astype(np.int64)
     values = np.asarray(mix.get_batch_at(start=0, size=32, key=key)["x"])
 
     assert set(ids.tolist()) <= set(range(8))
@@ -235,8 +236,10 @@ def test_mixed_record_indices_name_the_records_served_even_with_shuffled_childre
     mix = MixDataSourcesNode(MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)), children)
     key = jax.random.key(5)
 
-    ids = np.asarray(mix.record_indices_at(start=0, size=64, key=key))
+    ids = from_words(mix.record_indices_at(start=0, size=64, key=key)).astype(np.int64)
     served = np.asarray(mix.get_batch_at(start=0, size=64, key=key)["x"])
 
     np.testing.assert_array_equal(served, np.concatenate([values_a, values_b])[ids])
-    np.testing.assert_array_equal(np.asarray(mix.get_records(jnp.asarray(ids))["x"]), served)
+    np.testing.assert_array_equal(
+        np.asarray(mix.get_records(jnp.asarray(to_words(ids)))["x"]), served
+    )

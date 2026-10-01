@@ -40,6 +40,7 @@ from datarax.core.config import (
 )
 from datarax.core.cross_modal import CrossModalOperator, CrossModalOperatorConfig
 from datarax.core.element_batch import Element
+from datarax.core.index_words import to_words
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 from datarax.core.operator import OperatorModule, require_key
 from datarax.operators.batch_mix_operator import BatchMixOperator
@@ -86,7 +87,7 @@ from datarax.utils.external import ExternalAdapterConfig, ExternalLibraryAdapter
 
 
 BATCH = 4
-INDICES = jnp.arange(BATCH, dtype=jnp.int32) + 10
+INDICES = to_words(jnp.arange(BATCH, dtype=jnp.int32) + 10)
 EPOCH = jnp.int32(2)
 IMAGE = jnp.linspace(0.1, 0.9, BATCH * 16 * 16 * 3, dtype=jnp.float32).reshape(BATCH, 16, 16, 3)
 IMAGE_LABEL: dict[str, jax.Array] = {"image": IMAGE, "label": jnp.arange(BATCH, dtype=jnp.int32)}

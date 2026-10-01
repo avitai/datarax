@@ -44,6 +44,7 @@ import numpy as np
 import pytest
 from flax import nnx
 
+from datarax.core.index_words import from_words, to_words
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
 
@@ -153,7 +154,7 @@ def test_record_indices_name_the_records_get_batch_at_serves() -> None:
     ids = src.record_indices_at(start=3, size=4, key=key)
     batch = src.get_batch_at(start=3, size=4, key=key)
 
-    np.testing.assert_array_equal(np.asarray(batch["x"]), np.asarray(ids) * 10.0)
+    np.testing.assert_array_equal(np.asarray(batch["x"]), from_words(ids) * 10.0)
 
 
 def test_workers_serve_disjoint_global_records_covering_the_source() -> None:
@@ -162,7 +163,7 @@ def test_workers_serve_disjoint_global_records_covering_the_source() -> None:
     data = {"x": jnp.arange(length, dtype=jnp.float32)}
     key = jax.random.key(1)
     whole = MemorySource(MemorySourceConfig(shuffle=True), data, rngs=nnx.Rngs(shuffle=0))
-    order = np.asarray(whole.record_indices_at(start=0, size=length, key=key))
+    order = from_words(whole.record_indices_at(start=0, size=length, key=key))
 
     served: list[np.ndarray] = []
     for shard_id in range(3):
@@ -171,7 +172,7 @@ def test_workers_serve_disjoint_global_records_covering_the_source() -> None:
             data,
             rngs=nnx.Rngs(shuffle=0),
         )
-        worker_ids = np.asarray(worker.record_indices_at(start=0, size=len(worker), key=key))
+        worker_ids = from_words(worker.record_indices_at(start=0, size=len(worker), key=key))
         np.testing.assert_array_equal(worker_ids, order[shard_id::3])
         np.testing.assert_array_equal(
             np.asarray(worker.get_batch_at(start=0, size=len(worker), key=key)["x"]), worker_ids
@@ -212,7 +213,7 @@ def test_list_data_has_no_indexed_access() -> None:
 
     assert source.supports_indexed_access() is False
     with pytest.raises(TypeError, match="dict of arrays"):
-        source.get_records(jnp.arange(2, dtype=jnp.int32))
+        source.get_records(jnp.asarray(to_words([0, 1])))
 
 
 def test_list_data_still_serves_its_records_on_the_host() -> None:

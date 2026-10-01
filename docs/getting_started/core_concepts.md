@@ -116,7 +116,8 @@ into it for each record (`per_record_keys`). Within an epoch a record is
 augmented **identically** regardless of batch size, shuffle order, how records are
 split across workers, or resume point, and every epoch draws fresh augmentation —
 while gradients still flow through the transformation. The `Pipeline` asks its
-source for the indices of the records it serves (`record_indices_at`); a streaming
+source for the 64-bit indices of the records it serves (`record_indices_at`, two
+uint32 words per record); a streaming
 source's records are named by their position in the stream.
 
 ---

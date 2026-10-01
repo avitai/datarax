@@ -18,6 +18,7 @@ from flax import nnx
 from datarax.config.registry import register_component
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
+from datarax.core.index_words import low_words, to_words
 from datarax.core.spec import spec_mismatches, SpecMismatchError
 from datarax.sources._grain_streaming import data_source_to_iter_dataset, mix_streaming_sources
 from datarax.typing import DataDict
@@ -297,13 +298,15 @@ class MixDataSourcesNode(DataSourceModule):
             key: PRNG key for deterministic source / index selection.
 
         Returns:
-            Int32 ``jax.Array`` of shape ``(size,)``.
+            uint32 ``jax.Array`` of shape ``(size, 2)``, each index as its words ``(hi, lo)``.
 
         Raises:
             ValueError: If ``key is None``.
         """
         chosen_sources, local_indices = self._selections(start, size, key)
-        return jnp.asarray(self._offsets(), dtype=jnp.int32)[chosen_sources] + local_indices
+        return to_words(
+            jnp.asarray(self._offsets(), dtype=jnp.int32)[chosen_sources] + local_indices
+        )
 
     def get_records(self, indices: jax.Array) -> DataDict:
         """Gather the mixed records at ``indices``, each from the source that owns it.
@@ -313,18 +316,20 @@ class MixDataSourcesNode(DataSourceModule):
         ``get_records``. Stateless; ``vmap`` over records builds the batch in one trace.
 
         Args:
-            indices: Int32 mixed record indices; concrete or traced.
+            indices: uint32 ``(n, 2)`` mixed record indices; concrete or traced.
 
         Returns:
             Dict mapping each data key to a JAX array with leading dim ``len(indices)``.
         """
         offsets = jnp.asarray(self._offsets(), dtype=jnp.int32)
-        indices = jnp.asarray(indices, dtype=jnp.int32)
+        indices = low_words(indices, len(self)).astype(jnp.int32)
         owners = jnp.searchsorted(offsets, indices, side="right") - 1
         # Each branch fetches one record from one source. All branches share the same output
         # shape (validated at construction by _validate_compatible_element_specs).
         branches = [
-            lambda local, src=src: jax.tree.map(lambda x: x[0], src.get_records(local[None]))
+            lambda local, src=src: jax.tree.map(
+                lambda x: x[0], src.get_records(to_words(local[None]))
+            )
             for src in self._sources
         ]
 

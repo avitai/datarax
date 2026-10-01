@@ -497,6 +497,7 @@ class NewDataSource(DataSourceModule):
     def get_records(self, indices):
         """Return the records at `indices` as JAX arrays; stateless and traceable.
 
+        `indices` is uint32 (n, 2), each record's 64-bit index as its words (hi, lo).
         Implementing it is what gives a source indexed access (get_batch_at is
         get_records of record_indices_at). A forward-only source implements
         get_batch(batch_size) instead.

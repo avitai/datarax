@@ -22,6 +22,7 @@ from datarax.core import batch_ops, Maybe
 from datarax.core.config import MapOperatorConfig, OperatorConfig
 from datarax.core.cross_modal import CrossModalOperator, CrossModalOperatorConfig
 from datarax.core.element_batch import Batch, Element
+from datarax.core.index_words import to_words
 from datarax.core.operator import OperatorModule
 from datarax.operators.batch_mix_operator import BatchMixOperator, BatchMixOperatorConfig
 from datarax.operators.composite_operator import (
@@ -70,7 +71,7 @@ def _depth() -> Maybe:
 
 def _batch(**extra: Any) -> Batch:
     data = {"x": jnp.linspace(0.0, 1.0, B * 3, dtype=jnp.float32).reshape(B, 3), "depth": _depth()}
-    return name_records(batch_ops.from_arrays({**data, **extra}), jnp.arange(B) + 10, 1)
+    return name_records(batch_ops.from_arrays({**data, **extra}), to_words(jnp.arange(B) + 10), 1)
 
 
 def _assert_depth_unchanged(out: Batch) -> None:

@@ -17,6 +17,7 @@ from flax import nnx
 from datarax.config.registry import register_component
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule
+from datarax.core.index_words import from_words, low_words, to_words
 from datarax.core.spec import array_to_spec, array_to_spec_strip_leading, device_spec
 from datarax.samplers.index_shuffle import (
     index_shuffle,
@@ -303,9 +304,8 @@ class MemorySource(DataSourceModule):
         if key is not None:
             # Stateless mode: the first records of the order ``key`` selects
             if self.is_random_order:
-                positions = jnp.arange(min(batch_size, length), dtype=jnp.int32)
-                indices = np.asarray(shuffle_positions(positions, length, key))
-                return self._gather_batch(indices)
+                positions = jnp.asarray(to_words(np.arange(min(batch_size, length))))
+                return self._gather_batch(from_words(shuffle_positions(positions, length, key)))
             # Sequential: use slicing (zero-copy for arrays)
             return self._gather_batch_slice(0, min(batch_size, length))
         # Stateful mode - use internal index
@@ -349,7 +349,7 @@ class MemorySource(DataSourceModule):
             key: PRNG key for shuffled mode.
 
         Returns:
-            Int32 ``jax.Array`` of shape ``(size,)``.
+            uint32 ``jax.Array`` of shape ``(size, 2)``, each index as its words ``(hi, lo)``.
         """
         return resolve_wrapped_indices(
             start,
@@ -391,7 +391,7 @@ class MemorySource(DataSourceModule):
         position counter and trace it under ``nnx.scan`` / ``nnx.jit``.
 
         Args:
-            indices: Int32 record indices in ``[0, len(self))``; concrete or traced.
+            indices: uint32 ``(n, 2)`` record indices in ``[0, len(self))``; concrete or traced.
 
         Returns:
             One array per field, with leading dim ``len(indices)``.
@@ -405,9 +405,9 @@ class MemorySource(DataSourceModule):
                 f"MemorySource holds {type(data).__name__} data, a record store with no columns "
                 "to gather a batch from; give it a dict of arrays, one per field, to batch it"
             )
+        rows = low_words(indices, self.length)
         return {
-            key_name: jnp.take(jnp.asarray(value), indices, axis=0)
-            for key_name, value in data.items()
+            key_name: jnp.take(jnp.asarray(value), rows, axis=0) for key_name, value in data.items()
         }
 
     def _host_shuffle_seed(self) -> int:
