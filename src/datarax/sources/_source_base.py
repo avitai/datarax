@@ -12,8 +12,9 @@ advances.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+import weakref
+from collections.abc import Generator, Iterator, Mapping
+from dataclasses import dataclass, field
 from typing import Any, Literal, NamedTuple, overload
 
 import jax
@@ -114,7 +115,30 @@ def _split(chunk: StreamChunk, size: int) -> tuple[StreamChunk, StreamChunk]:
     return part(slice(None, size)), part(slice(size, None))
 
 
-@dataclass(slots=True)
+class _ReaderCloser:
+    """Closes a stream's open pass reader, holding it only weakly.
+
+    ``weakref.finalize`` keeps this object, never the reader, so it keeps no stream alive. It runs
+    when the stream's position is collected or, for a stream still alive, at interpreter exit,
+    before module teardown: a backend reader left suspended until teardown is finalized with its
+    modules half cleared, where HuggingFace's Parquet reader hangs.
+    """
+
+    __slots__ = ("reader",)
+
+    def __init__(self) -> None:
+        """Hold no reader."""
+        self.reader: weakref.ref[Iterator[StreamChunk]] | None = None
+
+    def __call__(self) -> None:
+        """Close the reader if it is still alive."""
+        reader = None if self.reader is None else self.reader()
+        self.reader = None
+        if isinstance(reader, Generator):
+            reader.close()
+
+
+@dataclass(slots=True, weakref_slot=True)
 class _Cursor:
     """Where a stream is: its pass, the open pass's reader, records read ahead, arrivals."""
 
@@ -122,6 +146,18 @@ class _Cursor:
     reader: Iterator[StreamChunk] | None = None
     ahead: StreamChunk | None = None
     arrived: int = 0
+    closer: _ReaderCloser = field(default_factory=_ReaderCloser)
+
+    def open(self, reader: Iterator[StreamChunk]) -> None:
+        """Hold ``reader`` as the open pass's reader, closing any reader held before."""
+        self.close()
+        self.reader = reader
+        self.closer.reader = weakref.ref(reader)
+
+    def close(self) -> None:
+        """Close and drop the open pass's reader, if any."""
+        self.closer()
+        self.reader = None
 
 
 class StreamPosition(HostValue):
@@ -170,7 +206,9 @@ class StreamingSourceBase(DataSourceModule):
             name: Optional module name.
         """
         super().__init__(config, name=name)
-        self._position = StreamPosition(_Cursor())
+        cursor = _Cursor()
+        weakref.finalize(cursor, cursor.closer)
+        self._position = StreamPosition(cursor)
 
     def _open_pass(
         self, pass_index: int, key: jax.Array | None, size_hint: int
@@ -196,9 +234,13 @@ class StreamingSourceBase(DataSourceModule):
         return self._position.value.pass_index
 
     def reset(self) -> None:
-        """Start again at the first pass; arrival ordinals keep counting, so none repeats."""
+        """Start again at the first pass, closing the reader of a pass stopped midway.
+
+        Arrival ordinals keep counting, so none repeats.
+        """
         cursor = self._position.value
-        cursor.pass_index, cursor.reader, cursor.ahead = 0, None, None
+        cursor.close()
+        cursor.pass_index, cursor.ahead = 0, None
 
     @overload
     def get_batch(
@@ -236,10 +278,11 @@ class StreamingSourceBase(DataSourceModule):
             raise ValueError(f"batch_size must be at least 1; got {batch_size}")
         cursor = self._position.value
         if cursor.reader is None:
-            cursor.reader = self._open_pass(cursor.pass_index, key, batch_size)
+            cursor.open(self._open_pass(cursor.pass_index, key, batch_size))
         chunk = self._pull(cursor, batch_size)
         if chunk is None:
-            cursor.pass_index, cursor.reader = cursor.pass_index + 1, None
+            cursor.close()
+            cursor.pass_index += 1
             batch: Batch = empty_stream_batch()
             return (batch, ()) if with_provenance else batch
         batch = self._named(chunk, cursor)

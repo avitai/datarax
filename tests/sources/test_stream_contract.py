@@ -10,6 +10,7 @@ outside NNX state, so no Variable holds a Python value and the graph definition 
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
@@ -242,3 +243,93 @@ class TestNnxHygiene:
         )
 
         assert nnx.graphdef(one) == nnx.graphdef(other)
+
+
+class _Watched(RecordStream):
+    """A stream whose pass reader records when it is closed."""
+
+    closed: list[int] = []
+
+    def _open_pass(
+        self, pass_index: int, key: jax.Array | None, size_hint: int
+    ) -> Iterator[StreamChunk]:
+        try:
+            yield from super()._open_pass(pass_index, key, size_hint)
+        finally:
+            _Watched.closed.append(pass_index)
+
+
+class TestTheOpenPassReaderIsClosed:
+    """A stream stopped mid-pass closes the pass reader it holds, while the interpreter runs.
+
+    A backend's reader left suspended until interpreter shutdown is finalized during module
+    teardown, where HuggingFace's Parquet reader hangs (``uoft-cs/cifar10``).
+    """
+
+    def test_reset_closes_the_reader_of_a_pass_stopped_midway(self) -> None:
+        _Watched.closed.clear()
+        stream = _Watched({"x": np.arange(_N, dtype=np.float32)}, chunk=2)
+        stream.get_batch(2)
+
+        stream.reset()
+
+        assert _Watched.closed == [0]
+
+    def test_a_finished_pass_leaves_nothing_to_close(self) -> None:
+        _Watched.closed.clear()
+        stream = _Watched({"x": np.arange(4, dtype=np.float32)}, chunk=2)
+        _pass(stream, 2)
+
+        stream.reset()
+
+        assert _Watched.closed == [0]  # closed once, when the pass ended
+
+    def test_an_unreferenced_stream_closes_its_reader(self) -> None:
+        import gc  # noqa: PLC0415
+
+        _Watched.closed.clear()
+        stream = _Watched({"x": np.arange(_N, dtype=np.float32)}, chunk=2)
+        stream.get_batch(2)
+
+        del stream
+        gc.collect()
+
+        assert _Watched.closed == [0]
+
+
+# A stream stopped mid-pass and still referenced at exit: its reader's cleanup writes a line. It
+# must run while the interpreter is alive (its module globals intact), not during teardown.
+_STOPPED_AT_EXIT = """
+import sys
+import numpy as np
+from tests.test_common.streams import RecordStream
+
+LOG = open(sys.argv[1], "w")
+
+class Stopped(RecordStream):
+    def _open_pass(self, pass_index, key, size_hint):
+        try:
+            yield from super()._open_pass(pass_index, key, size_hint)
+        finally:
+            LOG.write("closed with globals intact\\n")
+            LOG.flush()
+
+stream = Stopped({"x": np.arange(10, dtype=np.float32)}, chunk=2)
+stream.get_batch(2)
+"""
+
+
+def test_a_reader_still_open_at_exit_is_closed_before_teardown(tmp_path: Path) -> None:
+    from substrax.testing import run_python  # noqa: PLC0415
+
+    log = tmp_path / "closed.txt"
+    result = run_python(
+        _STOPPED_AT_EXIT,
+        str(log),
+        timeout=120.0,
+        cwd=Path(__file__).resolve().parents[2],
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Exception ignored" not in result.stderr
+    assert log.read_text() == "closed with globals intact\n"

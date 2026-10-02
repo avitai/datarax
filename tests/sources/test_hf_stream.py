@@ -194,3 +194,29 @@ class TestTheRead:
             "pixels": jax.ShapeDtypeStruct((2, 2, 3), np.uint8),
             "label": jax.ShapeDtypeStruct((), np.int32),
         }
+
+
+class TestTheOpenReaderIsClosed:
+    def test_a_pass_stopped_midway_closes_hugging_face_s_batched_reader(
+        self, loads: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        closed: list[bool] = []
+        batched = datasets.IterableDataset.iter
+
+        def watched(self: Any, *args: Any, **kwargs: Any) -> Any:
+            def reader() -> Any:
+                try:
+                    yield from batched(self, *args, **kwargs)
+                finally:
+                    closed.append(True)
+
+            return reader()
+
+        monkeypatch.setattr(datasets.IterableDataset, "iter", watched)
+        source = _stream()
+        source.get_batch(2)
+        assert closed == []
+
+        source.reset()
+
+        assert closed == [True]

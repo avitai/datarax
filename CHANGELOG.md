@@ -18,7 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `with_provenance=True` the records' strings and objects beside it. Where a stream is lives in a
   host holder outside NNX state, so no Variable holds a Python value and the graph definition
   does not move as it advances. `element_spec()` is the first record's array part as the device
-  holds it.
+  holds it. A pass's reader stopped midway is closed by `reset()`, when the stream is collected,
+  and at interpreter exit before module teardown (a backend reader left suspended until teardown
+  hangs there, as HuggingFace's Parquet reader does).
 - `datarax.pipeline.epochs.stream_batches(pull, batch_size, *, drop_last, num_epochs)`: the
   epoch rule over a stream's passes, the rule `EpochPlan` applies to an indexed source.
 - `DataSourceModule.provenance(indices)` and `DataSourceModule.record_keys(batch)`: a source

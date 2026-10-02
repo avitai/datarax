@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import gc
 import logging
 from collections.abc import Collection, Iterator, Mapping
@@ -474,22 +475,26 @@ class HFStreamingSource(StreamingSourceBase):
         if key is not None:
             # After with_format, which copies the dataset without its epoch (datasets 5.0.1).
             dataset.set_epoch(pass_index)
-        for rows in dataset.iter(batch_size=size_hint):
-            size = len(next(iter(rows.values())))
-            kept = _selected_hf_columns(
-                list(rows), self.config.include_keys, self.config.exclude_keys
-            )
-            cast = {
-                column: np.asarray(rows[column]).astype(dtypes[column], copy=False)
-                if column in dtypes
-                else rows[column]
-                for column in kept
-            }
-            columns, provenance = _hf_parts(cast, size)
-            yield StreamChunk(
-                columns,
-                tuple(MappingProxyType(record) for record in provenance)
-                if provenance
-                else (NO_PROVENANCE,) * size,
-                None,
-            )
+        # HF's batched reader is a generator over Parquet generators; closing it here, when this
+        # pass is closed, finalizes them while the interpreter runs (left to module teardown,
+        # HF's Parquet reader hangs).
+        with contextlib.closing(dataset.iter(batch_size=size_hint)) as batches:
+            for rows in batches:
+                size = len(next(iter(rows.values())))
+                kept = _selected_hf_columns(
+                    list(rows), self.config.include_keys, self.config.exclude_keys
+                )
+                cast = {
+                    column: np.asarray(rows[column]).astype(dtypes[column], copy=False)
+                    if column in dtypes
+                    else rows[column]
+                    for column in kept
+                }
+                columns, provenance = _hf_parts(cast, size)
+                yield StreamChunk(
+                    columns,
+                    tuple(MappingProxyType(record) for record in provenance)
+                    if provenance
+                    else (NO_PROVENANCE,) * size,
+                    None,
+                )
