@@ -340,17 +340,56 @@ class TestCompiles:
                 step(model, make_batch(seed, epoch=seed))
 
 
-def _median_launch_us(fn: Callable[[object], jax.Array], arg: object) -> float:
+def _median_launch_us(fn: Callable[[object], jax.Array], arg: object, calls: int = 200) -> float:
     """Median host time, in microseconds, to launch ``fn(arg)`` without waiting for the device."""
-    medians = []
-    for _ in range(5):
-        times = []
-        for _ in range(200):
-            start = time.perf_counter()
-            fn(arg)
-            times.append(time.perf_counter() - start)
-        medians.append(statistics.median(times))
-    return statistics.median(medians) * 1e6
+    times = []
+    for _ in range(calls):
+        start = time.perf_counter()
+        fn(arg)
+        times.append(time.perf_counter() - start)
+    return statistics.median(times) * 1e6
+
+
+def _launch_ratio(
+    fn: Callable[[object], jax.Array],
+    arg: object,
+    reference: Callable[[object], jax.Array],
+    reference_arg: object,
+    rounds: int = 9,
+) -> tuple[float, float, float]:
+    """Median over rounds of ``fn``'s launch time over ``reference``'s, the two timed in turn.
+
+    Each round times both back to back, alternating which goes first, so a burst of load on the
+    machine lands on both sides of one ratio instead of on one side of the comparison.
+
+    Returns:
+        The median ratio, and the median launch times of ``fn`` and ``reference`` in microseconds.
+    """
+    ratios, fn_us, reference_us = [], [], []
+    for round_index in range(rounds):
+        if round_index % 2:
+            reference_time = _median_launch_us(reference, reference_arg)
+            fn_time = _median_launch_us(fn, arg)
+        else:
+            fn_time = _median_launch_us(fn, arg)
+            reference_time = _median_launch_us(reference, reference_arg)
+        ratios.append(fn_time / reference_time)
+        fn_us.append(fn_time)
+        reference_us.append(reference_time)
+    return statistics.median(ratios), statistics.median(fn_us), statistics.median(reference_us)
+
+
+def _batch_and_dict_steps() -> tuple[
+    Callable[[object], jax.Array], Batch, Callable[[object], jax.Array], dict[str, jax.Array]
+]:
+    """A jitted step over a Batch and one over a dict of the same leaves, both compiled."""
+    batch = make_batch()
+    as_dict = {f"leaf{i}": leaf for i, leaf in enumerate(jax.tree.leaves(batch))}
+    step_batch = jax.jit(lambda b: jnp.sum(b["image"]))
+    step_dict = jax.jit(lambda d: jnp.sum(d["leaf0"]))
+    step_batch(batch).block_until_ready()
+    step_dict(as_dict).block_until_ready()
+    return step_batch, batch, step_dict, as_dict
 
 
 @pytest.mark.performance
@@ -360,15 +399,26 @@ def test_launch_cost_is_within_noise_of_a_dict_with_the_same_leaves() -> None:
     Both are timed the same way in one process, so the bound is a ratio: a coverage tracer
     slows both alike.
     """
-    batch = make_batch()
-    as_dict = {f"leaf{i}": leaf for i, leaf in enumerate(jax.tree.leaves(batch))}
-    step_batch = jax.jit(lambda b: jnp.sum(b["image"]))
-    step_dict = jax.jit(lambda d: jnp.sum(d["leaf0"]))
-    step_batch(batch).block_until_ready()
-    step_dict(as_dict).block_until_ready()
+    step_batch, batch, step_dict, as_dict = _batch_and_dict_steps()
 
     with expect_compiles(0):
-        batch_us = _median_launch_us(step_batch, batch)
-        dict_us = _median_launch_us(step_dict, as_dict)
+        ratio, batch_us, dict_us = _launch_ratio(step_batch, batch, step_dict, as_dict)
 
-    assert batch_us <= 1.5 * dict_us, f"Batch {batch_us:.1f} us vs dict {dict_us:.1f} us"
+    assert ratio <= 1.5, f"Batch {batch_us:.1f} us vs dict {dict_us:.1f} us (ratio {ratio:.2f})"
+
+
+@pytest.mark.performance
+def test_the_launch_ratio_detects_a_slower_launch() -> None:
+    """The bound above can fail: a launch that does 50 us more host work exceeds it."""
+    step_batch, batch, step_dict, as_dict = _batch_and_dict_steps()
+
+    def slower_step(b: object) -> jax.Array:
+        deadline = time.perf_counter() + 50e-6
+        while time.perf_counter() < deadline:
+            pass
+        return step_batch(b)
+
+    with expect_compiles(0):
+        ratio, _, _ = _launch_ratio(slower_step, batch, step_dict, as_dict)
+
+    assert ratio > 1.5
