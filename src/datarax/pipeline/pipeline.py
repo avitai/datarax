@@ -13,7 +13,7 @@ Three integration tiers (measured costs: ``docs/performance/index.md``):
   whose batches go to a train or inference step written as the Flax and
   JAX examples write it. The module graph is split once per session and
   batches run through a cached ``jax.jit`` step, so per-batch cost is one
-  compiled dispatch; host data is uploaded once. A streaming source's host
+  compiled dispatch; host data is uploaded once. A stream's host
   batches run through the stage DAG compiled the same way. Works with any
   framework that takes batches; the recommended path.
 - **Tier B — ``Pipeline.step()``** — one batch, traceable, with live
@@ -63,15 +63,22 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from flax import nnx
 
 from datarax.core import batch_ops
 from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Batch
 from datarax.core.module import module_state, restore_module_state
-from datarax.core.spec import declared_spec, validate_batch, validate_device_dtypes
+from datarax.core.spec import (
+    array_to_spec,
+    declared_spec,
+    device_spec,
+    validate_batch,
+    validate_device_dtypes,
+)
 from datarax.pipeline.dag import name_records, OperatorDag, Records
-from datarax.pipeline.epochs import EpochPlan
+from datarax.pipeline.epochs import EpochPlan, stream_batches
 from datarax.pipeline.iteration import (
     compile_streaming_dag,
     next_batch,
@@ -699,59 +706,68 @@ class Pipeline(nnx.Module):
         return self._iter_streaming()
 
     def _iter_streaming(self) -> Iterator[Batch]:  # noqa: DOC502
-        """Iterate a streaming source (sequential, no random access) through the DAG.
+        """Iterate a stream (``STREAM_IDS`` or ``ARRIVAL``) through the DAG.
 
-        Streaming sources have no ``get_records``, so batches are pulled on the
-        host with ``get_batch`` and run through the stage DAG, compiled once per
-        batch shape by :func:`~datarax.pipeline.iteration.compile_streaming_dag`;
-        the final batch may be short. Iteration ends when the source is exhausted
-        (``get_batch`` returns an empty batch).
+        A stream names its records and counts its passes, so the pipeline keeps no counter for
+        it: batches are pulled on the host with the source's ``get_batch``, which takes the
+        pipeline's key when it shuffles (``None`` otherwise) and returns a host ``Batch`` named
+        by the stream. The epoch rule over the stream's passes is
+        :func:`~datarax.pipeline.epochs.stream_batches`: ``drop_last`` and ``num_epochs`` as
+        for an indexed source. Each batch runs through the stage DAG, compiled once per batch
+        shape by :func:`~datarax.pipeline.iteration.compile_streaming_dag`.
 
-        The source's ``element_spec()`` is read once per source and x64 setting and
-        is refused if it declares a dtype JAX arrays cannot hold as declared: a
-        ``float64`` field while x64 is off would otherwise be narrowed silently
-        inside the compiled DAG. Every batch is checked against it with
-        :func:`~datarax.core.spec.validate_batch` before it reaches the DAG, so a
-        batch whose structure, per-element shapes, dtypes or record counts disagree
-        with the declaration stops iteration with the fields named. Pipeline state
-        is current at every yield.
+        The source's ``element_spec()`` is read once per source and x64 setting and is refused
+        if it declares a dtype JAX arrays cannot hold as declared: a ``float64`` field while x64
+        is off would otherwise be narrowed silently inside the compiled DAG. Every pulled batch
+        is checked against it, as the device will hold it, with
+        :func:`~datarax.core.spec.validate_batch` before it reaches the DAG, so a batch whose
+        structure, per-element shapes or dtypes disagree with the declaration stops iteration
+        with the fields named. Module state is current at every yield.
 
         Yields:
-            The DAG's ``Batch`` for each source batch, until exhaustion.
+            The DAG's ``Batch`` for each batch of the run.
 
         Raises:
-            SpecMismatchError: If the declared spec, or a source batch, breaks the
-                contract above.
-            TypeError: If the source's batches are not mappings (see :meth:`_source_batches`).
+            SpecMismatchError: If the declared spec, or a pulled batch, breaks the contract above.
+            TypeError: If the source's ``get_batch`` does not return a ``Batch``.
             ValueError: If a stage adds or removes state while it runs.
         """
         element_spec = declared_spec(self.source)
         validate_device_dtypes(element_spec)
-        apply = compile_streaming_dag(self.dag, self._position, self._epoch)
-        for batch in self._source_batches():
-            validate_batch(batch, element_spec, batch_size=self.batch_size)
+        apply = compile_streaming_dag(self.dag)
+        key = jax.random.wrap_key_data(self._epoch_key_base[...]) if self.shuffle else None
+        source = self.source
+
+        def pull(size: int) -> Batch:
+            batch = source.get_batch(  # type: ignore[attr-defined]
+                size, key=key, read_size=self.batch_size
+            )
+            if not isinstance(batch, Batch):
+                raise TypeError(
+                    f"{type(source).__name__}.get_batch returned {type(batch).__name__}, but a "
+                    "stream serves a Batch named by the stream"
+                )
+            if batch.batch_size:
+                validate_batch(
+                    _as_the_device_holds(batch.data), element_spec, batch_size=self.batch_size
+                )
+            return batch
+
+        for batch in stream_batches(
+            pull, self.batch_size, drop_last=self.drop_last, num_epochs=self.num_epochs
+        ):
             yield apply(batch)
 
-    def _source_batches(self) -> Iterator[Mapping[str, Any]]:
-        """The streaming source's batches, until it returns an empty one.
 
-        Yields:
-            Each batch the source's ``get_batch`` returns.
+def _as_the_device_holds(data: Any) -> Any:
+    """Zero-copy stand-ins for host ``data`` with the dtypes the device will hold it in.
 
-        Raises:
-            TypeError: If a batch is not a mapping of field names to arrays.
-        """
-        while True:
-            batch = self.source.get_batch(self.batch_size)  # type: ignore[attr-defined]
-            if not isinstance(batch, Mapping):
-                raise TypeError(
-                    f"{type(self.source).__name__}.get_batch returned "
-                    f"{type(batch).__name__}, but a pipeline batch is a mapping of field names "
-                    "to arrays"
-                )
-            if not jax.tree.leaves(batch):  # an exhausted stream returns an empty batch
-                return
-            yield batch
+    A stream's host column keeps its stored dtype (an ``int64`` label) while its declared spec
+    states the device's (``int32`` while x64 is off); each stand-in is a broadcast view of one
+    element of the device dtype, so the check reads shapes and dtypes and copies nothing.
+    """
+    devices = device_spec(jax.tree.map(array_to_spec, data))
+    return jax.tree.map(lambda spec: np.broadcast_to(np.zeros((), spec.dtype), spec.shape), devices)
 
 
 def _source_length(source: DataSourceModule) -> int | None:

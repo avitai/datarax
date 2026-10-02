@@ -326,6 +326,7 @@ nav:
           - memory_source: sources/memory_source.md
           - mixed_source: sources/mixed_source.md
           - source_ops: sources/source_ops.md
+          - streaming_disk_source: sources/streaming_disk_source.md
           - tfds_source: sources/tfds_source.md
   - Benchmarks:
       - Overview: benchmarks/index.md

@@ -87,7 +87,7 @@ for i, batch in enumerate(train_pipeline):
 
 `TFDSEagerSource` reads a dataset from the TensorFlow Datasets catalog that TFDS has prepared as ArrayRecord, without TensorFlow in the process; prepare it once, in a process of its own, with `tfds.builder("mnist", file_format="array_record").download_and_prepare()` (the `tfds` extra). Text features, such as CIFAR-10's `id`, are kept as each record's provenance.
 
-> **Tip:** Use `from_tfds(name, split, ...)` factory function for automatic eager/streaming mode selection.
+> **Tip:** `from_tfds(name, split, ...)` picks the source by the copy's prepared format: `TFDSEagerSource` for ArrayRecord, `TFDSStreamingSource` (no TensorFlow) for TFRecord.
 
 ### HFEagerSource
 
@@ -96,46 +96,30 @@ For data from Hugging Face datasets, use `HFEagerSource`:
 ```python
 from datarax.pipeline import Pipeline
 from datarax.sources import HFStreamingSource, HFStreamingConfig
-from datarax.operators import ElementOperator, ElementOperatorConfig
 from flax import nnx
 
 # Stream a large dataset from HuggingFace (streaming keeps memory bounded)
-config = HFStreamingConfig(
-    name="stanfordnlp/sst2",
-    split="train",
-    streaming=True,
+train_source = HFStreamingSource(HFStreamingConfig(name="stanfordnlp/sst2", split="train"))
+
+# A stream's batches hold its numeric columns; its text travels beside each batch
+batch, provenance = train_source.get_batch(16, with_provenance=True)
+print(batch["label"][:2], [record["sentence"] for record in provenance[:2]])
+
+# Or iterate a pipeline over the stream, shuffled from the pipeline's seed
+pipeline = Pipeline(
+    source=train_source, stages=[], batch_size=16, rngs=nnx.Rngs(0), shuffle=True
 )
-train_source = HFStreamingSource(config, rngs=nnx.Rngs(0))
-
-# Define field extraction as an operator
-def extract_fields(element, key=None):
-    return element.update_data({
-        "text": element.data["sentence"],
-        "label": element.data["label"]
-    })
-
-extractor = ElementOperator(
-    ElementOperatorConfig(stochastic=False),
-    fn=extract_fields
-)
-
-# Create pipeline
-pipeline = (
-    Pipeline(source=train_source, stages=[extractor], batch_size=16, rngs=nnx.Rngs(0)))
-
-# Iterate
 for i, batch in enumerate(pipeline):
-    # Process batch
-    print(f"Batch {i}: {batch['text'][:2]}...")  # Print first 2 texts
+    print(f"Batch {i}: labels {batch['label'][:4]}")
     if i >= 2:
         break
 ```
 
-`HFEagerSource` loads the entire dataset into host NumPy columns at initialization (text and other objects as each record's provenance), so it is best for datasets that fit in memory. For datasets too large to hold in memory, use `HFStreamingSource` (shown above), which wraps HuggingFace's streaming iterator.
+`HFEagerSource` loads the entire dataset into host NumPy columns at initialization (text and other objects as each record's provenance), so it is best for datasets that fit in memory. For datasets too large to hold in memory, use `HFStreamingSource` (shown above), which reads with HuggingFace's streaming mode and names records by their arrival.
 
-> **Note:** Dataset configs/variants (for example selecting `"sst2"` within the `"glue"` dataset) are currently unsupported — pass the standalone dataset name to `name`. There is no `config_name` (or subset) field on the HF configs.
+> **Note:** A dataset's configuration (for example `"sst2"` within `"nyu-mll/glue"`) is `load_dataset`'s `name`, passed through `download_kwargs`: `HFEagerConfig(name="nyu-mll/glue", split="train", download_kwargs={"name": "sst2"})`. There is no `config_name` or `subset` field on the HF configs.
 
-> **Tip:** Use `from_hf(name, split, streaming=True)` to select eager or streaming mode, or construct `HFEagerConfig`/`HFStreamingConfig` directly.
+> **Tip:** `from_hf(name, split)` builds the eager source and `from_hf(name, split, streaming=True)` the stream; or construct `HFEagerConfig`/`HFStreamingConfig` directly.
 
 ### ArrayRecordSourceModule
 
@@ -211,8 +195,10 @@ Any other source subclasses `DataSourceModule` and declares what its record inde
    (a stable position in the source), `STREAM_IDS` (an id the stream reports) or `ARRIVAL`
    (the arrival ordinal); a source without one is refused at construction. The kind routes it: an `INDEXED` source
    implements a stateless, JAX-traceable `get_records(indices)` and the pipeline serves it
-   through its compiled session; a `STREAM_IDS` or `ARRIVAL` source implements
-   `get_batch(batch_size)` and is served by the streaming path. An indexed source that
+   through its compiled session; a `STREAM_IDS` or `ARRIVAL` source builds on
+   `datarax.sources.StreamingSourceBase`, implements `_open_pass(pass_index, key, read_size)`
+   (a generator of `StreamChunk`s: host columns, provenance and ids, read `read_size` records
+   at a time), and is served by the streaming path. An indexed source that
    partitions or mixes records also overrides `record_indices_at(start, size, key)` to return
    the stable index of the record at each position of the order the key selects (the
    sequential order when the key is `None`), uint32 `(size, 2)` with each 64-bit index as its
@@ -221,8 +207,8 @@ Any other source subclasses `DataSourceModule` and declares what its record inde
    randomness on the same indices. The default names records by position, shuffled by the
    key when the pipeline shuffles
 4. `element_spec()` describes exactly the records your batches carry: the same
-   keys, per-element shapes and dtypes. For a streaming source, `Pipeline` checks
-   every batch against it with `datarax.core.spec.validate_batch` before running
+   keys, per-element shapes and dtypes. For a stream, `Pipeline` checks
+   every batch against it, as the device will hold it, with `datarax.core.spec.validate_batch` before running
    the DAG, and names the field that disagrees. It reads the declaration once per
    source and x64 setting, so keep it fixed after construction. Declare dtypes the
    device holds as declared: while `jax_enable_x64` is off, a declared `float64` or
@@ -303,7 +289,7 @@ Datarax provides the following data sources:
 - **ArrayRecordSourceModule**: For array record format files
 - **Custom sources**: Subclass `DataSourceModule` for your own sources
 
-> **Factory Functions:** Use `from_tfds()` and `from_hf()` for automatic eager/streaming mode selection based on your configuration.
+> **Factory Functions:** `from_tfds()` picks the TFDS source by the copy's prepared format; `from_hf()` builds the eager source, or the stream with `streaming=True`.
 
 ## Next Steps
 

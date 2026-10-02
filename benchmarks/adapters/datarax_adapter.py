@@ -579,10 +579,9 @@ class DataraxAdapter(PipelineAdapter):
                 name=config.extra["dataset_name"],
                 split=config.extra["split"],
                 data_dir=config.extra.get("data_dir"),
-                shuffle=False,
                 as_supervised=True,
             )
-            return TFDSStreamingSource(src_config, rngs=rngs)
+            return TFDSStreamingSource(src_config)
 
         if backend == "hf_eager":
             from datarax.sources import HFEagerConfig, HFEagerSource
@@ -599,9 +598,8 @@ class DataraxAdapter(PipelineAdapter):
             src_config = HFStreamingConfig(
                 name=config.extra["dataset_name"],
                 split=config.extra["split"],
-                shuffle=False,
             )
-            return HFStreamingSource(src_config, rngs=rngs)
+            return HFStreamingSource(src_config)
 
         # Default: MemorySource
         source_config = MemorySourceConfig()

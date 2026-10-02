@@ -41,10 +41,9 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from datarax.core import batch_ops
 from datarax.core.element_batch import Batch
 from datarax.core.operator import OperatorModule
-from datarax.pipeline.dag import name_records, OperatorDag, record_positions
+from datarax.pipeline.dag import OperatorDag
 from datarax.pipeline.epochs import EpochPlan
 
 
@@ -302,15 +301,9 @@ def _dag_step(graphdef: Any) -> Callable[..., Any]:
 
     def build() -> Callable[..., Any]:
         @jax.jit
-        def step(mutable_state: Any, read_only_state: Any, data: Any) -> tuple[Batch, _Writes]:
-            def run(graph: Any) -> Batch:
-                dag, position, epoch = graph
-                batch = batch_ops.from_arrays(data)
-                # A stream serves records in order, so their positions name them.
-                names = record_positions(batch.batch_size, position[...])
-                output = dag(name_records(batch, names, epoch[...]))
-                position[...] = position[...] + jnp.int32(batch.batch_size)
-                return output
+        def step(mutable_state: Any, read_only_state: Any, batch: Batch) -> tuple[Batch, _Writes]:
+            def run(dag: OperatorDag) -> Batch:
+                return dag(batch)
 
             return _run_tracking_writes(graphdef, (mutable_state, read_only_state), run)
 
@@ -319,31 +312,22 @@ def _dag_step(graphdef: Any) -> Callable[..., Any]:
     return _cached_step(_DAG_STEPS, graphdef, build)
 
 
-def compile_streaming_dag(
-    dag: OperatorDag,
-    position: nnx.Variable[jax.Array],
-    epoch: nnx.Variable[jax.Array],
-) -> Callable[[Any], Batch]:
-    """Return a function running a pipeline's DAG over one host batch.
+def compile_streaming_dag(dag: OperatorDag) -> Callable[[Batch], Batch]:
+    """Return a function running a pipeline's DAG over one host ``Batch`` a stream served.
 
-    The DAG and the position counter are split once and each batch runs
-    through a cached ``jax.jit`` step, so the module graph is not traversed per
-    batch. The split state references the live Variables: every call reads their
-    current values, including changes made between batches, and writes every
-    Variable the step changed back into the live module, advancing the position by
-    the batch's record count. A stage that adds or removes state is refused while
-    tracing.
+    The stream names the batch's records and epochs; the DAG is split once and each batch runs
+    through a cached ``jax.jit`` step, so the module graph is not traversed per batch. The split
+    state references the live Variables: every call reads their current values, including
+    changes made between batches, and writes every Variable the step changed back into the live
+    module. A stage that adds or removes state is refused while tracing.
 
     Args:
         dag: The pipeline's DAG.
-        position: The position counter the batch's records are named from.
-        epoch: The epoch counter the operators key their randomness on.
 
     Returns:
-        A function taking a validated batch of host arrays and returning the DAG's ``Batch``.
+        A function taking a validated host ``Batch`` and returning the DAG's ``Batch``.
     """
-    graph = (dag, position, epoch)
-    graphdef, per_batch_state, staged_state = nnx.split(graph, _is_per_batch_state, ..., graph=True)
+    graphdef, per_batch_state, staged_state = nnx.split(dag, _is_per_batch_state, ..., graph=True)
     step = _dag_step(graphdef)
     receivers = ((_state_leaves(per_batch_state),), (_state_leaves(staged_state),))
 

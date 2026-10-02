@@ -11,10 +11,14 @@ import jax
 import numpy as np
 from flax import nnx
 
+from datarax.core import batch_ops
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule, RecordIdentity
+from datarax.core.element_batch import Batch
+from datarax.core.index_words import to_words
 from datarax.core.spec import array_to_spec
 from datarax.sources._grain_bridge import validate_index_batch
+from datarax.sources._source_base import empty_stream_batch
 from datarax.utils.state import build_state_with_iteration_fields, restore_iteration_fields
 
 
@@ -288,33 +292,56 @@ class ArrayRecordSourceModule(DataSourceModule):
             )
         return self._decode
 
-    def get_batch(self, batch_size: int) -> dict[str, np.ndarray]:
-        """Decode and stack up to ``batch_size`` records of the current epoch.
+    def get_batch(
+        self, batch_size: int, *, key: jax.Array | None = None, read_size: int | None = None
+    ) -> Batch:
+        """Decode and stack up to ``batch_size`` records of the current epoch, as a host ``Batch``.
 
-        Returns an empty dict at the end of an epoch, and the next call starts the
-        next epoch, so each ``for batch in pipeline`` pass covers one epoch. Once
-        ``num_epochs`` epochs have been served every call returns an empty dict.
+        The batch's ``indices`` are the records' positions in the files (after ``shuffle_files``)
+        and its ``epochs`` the source's epoch. Returns an empty batch at the end of an epoch, and
+        the next call starts the next epoch, so each ``for batch in pipeline`` pass covers one
+        epoch. Once ``num_epochs`` epochs have been served every call returns an empty batch.
 
         Args:
             batch_size: Largest number of records to return.
+            key: Must be ``None``: the source orders its records by ``shuffle_files`` and its
+                ``seed``, so its pipeline is built with ``shuffle=False``.
+            read_size: The stream route's read size; unused, since each pull reads its own
+                records by position.
 
         Returns:
-            Arrays stacked along a leading record axis, or ``{}`` at an epoch boundary.
+            The records as a host ``Batch``, or an empty one at an epoch boundary.
+
+        Raises:
+            ValueError: If a key is given.
         """
+        if key is not None:
+            raise ValueError(
+                "ArrayRecordSourceModule orders its records by shuffle_files and its seed; build "
+                "its pipeline with shuffle=False"
+            )
+        del read_size
         decode = self._require_decode()
         if self._epochs_exhausted():
-            return {}
+            return empty_stream_batch()
         index = self.current_index.get_value()
         total = self.total_records.get_value()
         if index >= total:
             self._start_next_epoch()
-            return {}
+            return empty_stream_batch()
         stop = min(index + batch_size, total)
         records = [decode(record) for record in self._getitems(list(range(index, stop)))]
         self.current_index.set_value(stop)
-        return {
-            key: np.stack([np.asarray(record[key]) for record in records]) for key in records[0]
+        shuffled = self.shuffled_indices.get_value()
+        positions = np.arange(index, stop) if shuffled is None else shuffled[index:stop]
+        columns = {
+            field: np.stack([np.asarray(record[field]) for record in records])
+            for field in records[0]
         }
+        return batch_ops.from_arrays(columns).replace(
+            indices=to_words(np.asarray(positions, dtype=np.uint64)),
+            epochs=np.full((stop - index,), self.current_epoch.get_value(), np.int32),
+        )
 
     def element_spec(self) -> dict[str, jax.ShapeDtypeStruct]:
         """Describe one decoded record exactly as ``get_batch`` stacks it.

@@ -89,7 +89,7 @@ from datarax.pipeline import Pipeline
 
 `TFDSEagerSource` reads a prepared TFDS split into host columns for Datarax pipelines.
 
-> **Note:** You can also use the factory function `from_tfds(name, split, ...)` which auto-selects between eager and streaming modes.
+> **Note:** The factory `from_tfds(name, split, ...)` picks the source by the format the copy is prepared in: `TFDSEagerSource` for ArrayRecord, `TFDSStreamingSource` for TFRecord.
 
 ### Configuration Options
 

@@ -31,7 +31,7 @@ from datarax.core.index_words import from_words, to_words
 from datarax.operators import ElementOperator
 from datarax.pipeline import iteration, Pipeline, PipelineIterator
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
-from tests.pipeline.test_pipeline_streaming import _ListStream
+from tests.test_common.streams import RecordStream
 
 
 _N = 100
@@ -73,12 +73,7 @@ class TestNoPadding:
         np.testing.assert_array_equal(np.asarray(keys), [1] * 5)
 
     def test_a_streaming_source_carries_no_mask(self) -> None:
-        batches = [
-            {"x": jnp.array([0.0, 1.0])},
-            {"x": jnp.array([2.0, 3.0])},
-            {"x": jnp.array([4.0])},
-        ]
-        source = _ListStream(batches, {"x": jax.ShapeDtypeStruct((), jnp.float32)})
+        source = RecordStream({"x": np.arange(5, dtype=np.float32)})
         pipeline = Pipeline(source=source, stages=[], batch_size=2, rngs=nnx.Rngs(0))
 
         assert [set(batch.data) for batch in pipeline] == [{"x"}] * 3

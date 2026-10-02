@@ -27,6 +27,7 @@ from datarax.pipeline.pipeline import Pipeline
 from datarax.sources import EagerSource, MemorySource
 from datarax.sources.mixed_source import MixDataSourcesNode
 from datarax.sources.streaming_disk_source import StreamingDiskSource
+from tests.test_common.streams import RecordStream
 
 
 @dataclass(frozen=True)
@@ -106,25 +107,9 @@ class _Indexed(DataSourceModule):
         return {"x": jax.ShapeDtypeStruct((), np.float32)}
 
 
-class _Stream(DataSourceModule):
-    """A forward-only stream of eight records in batches."""
-
-    def __init__(self, kind: RecordIdentity) -> None:
-        super().__init__(_Config())
-        self._kind = kind
-        self.pulled = 0
-
-    @property
-    def record_identity(self) -> RecordIdentity:
-        return self._kind
-
-    def get_batch(self, batch_size: int) -> dict[str, np.ndarray]:
-        start = self.pulled
-        self.pulled = min(8, start + batch_size)
-        return {"x": np.arange(start, self.pulled, dtype=np.float32)} if start < 8 else {}
-
-    def element_spec(self) -> Any:
-        return {"x": jax.ShapeDtypeStruct((), np.float32)}
+def _stream(kind: RecordIdentity) -> RecordStream:
+    """A stream of eight records."""
+    return RecordStream({"x": np.arange(8, dtype=np.float32)}, kind=kind, chunk=4)
 
 
 def _served(source: DataSourceModule) -> tuple[list[float], bool]:
@@ -144,16 +129,16 @@ def test_an_indexed_source_is_served_by_the_compiled_session() -> None:
 
 @pytest.mark.parametrize("kind", [RecordIdentity.STREAM_IDS, RecordIdentity.ARRIVAL])
 def test_a_stream_is_served_by_the_streaming_path(kind: RecordIdentity) -> None:
-    source = _Stream(kind)
+    source = _stream(kind)
     values, in_session = _served(source)
     assert not in_session
     assert values == [float(i) for i in range(8)]
-    assert source.pulled == 8
+    assert source.pass_index == 1
 
 
 def test_a_session_of_a_stream_is_refused_naming_its_kind() -> None:
     pipeline = Pipeline(
-        source=_Stream(RecordIdentity.ARRIVAL), stages=[], batch_size=4, rngs=nnx.Rngs(0)
+        source=_stream(RecordIdentity.ARRIVAL), stages=[], batch_size=4, rngs=nnx.Rngs(0)
     )
     with pytest.raises(TypeError, match="ARRIVAL"):
         pipeline.session()

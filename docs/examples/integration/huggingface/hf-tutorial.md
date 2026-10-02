@@ -63,7 +63,7 @@ jupyter lab examples/integration/huggingface/02_hf_tutorial.ipynb
 
 `HFEagerConfig` provides extensive options for loading HuggingFace datasets.
 
-> **Note:** You can also use the factory function `from_hf(name, split, ...)` which auto-selects between eager and streaming modes.
+> **Note:** The factory `from_hf(name, split, ...)` builds `HFEagerSource`, or `HFStreamingSource` with `streaming=True`.
 
 ### Key Configuration Parameters
 
@@ -193,7 +193,7 @@ no shuffle buffer, and the pipeline's `rngs` seeds it.
 |------|-------------|---------------|
 | **No shuffle** | Testing, evaluation | `Pipeline(..., shuffle=False)` (the default) |
 | **Index shuffle** | Eager (downloaded) datasets | `Pipeline(..., shuffle=True)`, seeded by its `rngs` |
-| **Buffer shuffle** | Streaming datasets (large) | `HFStreamingConfig(shuffle=True, shuffle_buffer_size=N)` |
+| **Buffer shuffle** | Streams (large datasets) | `Pipeline(..., shuffle=True)` over `HFStreamingSource`; buffer `HFStreamingConfig(shuffle_buffer_size=N)` |
 
 ### Eager Shuffle Example
 
@@ -214,85 +214,57 @@ Shuffle configuration:
   Pipeline shuffles: True
 ```
 
-## Part 4: Streaming vs Downloaded Mode
+## Part 4: Streaming vs Eager Loading
 
-### Downloaded / Eager Mode (`HFEagerSource`)
+### Eager (`HFEagerSource`)
 
-- Full dataset downloaded and cached locally
-- Random access to any sample
-- Faster iteration after initial download
-- Requires disk space
+- Full split downloaded, cached and loaded into host memory
+- Random access to any record, and its text by index (`provenance(indices)`)
+- Faster iteration after the initial download
+- Requires disk space and host memory
 
-The comparison below builds one source of each kind: the streaming source has no length
-until its stream is read, while the downloaded subset reports its size.
+### Streaming (`HFStreamingSource`)
+
+- Data read on the fly with HuggingFace's streaming mode (`load_dataset(..., streaming=True)`)
+- No disk storage required
+- Ideal for large datasets (ImageNet, Common Crawl)
+- Records named by their arrival; the length is not known
+- Text and other objects travel beside each batch as provenance
+- A shuffling pipeline seeds HuggingFace's buffer shuffle (`shuffle_buffer_size` records),
+  each pass in its own order
+
+The comparison below builds one source of each kind: the stream has no length until it is
+read, while the eager subset reports its size.
 
 ```python
-# Compare streaming vs downloaded
+# Compare streaming and eager loading
 print("Mode Comparison:")
 
-# Streaming mode: records are read on the fly, so the length is unknown
-streaming_config = HFStreamingConfig(
-    name="ylecun/mnist",
-    split="train",
-    streaming=True,
-)
-streaming_source = HFStreamingSource(streaming_config, rngs=nnx.Rngs(0))
+# Streaming: records are read on the fly, so the length is unknown
+streaming_source = HFStreamingSource(HFStreamingConfig(name="ylecun/mnist", split="train"))
 
 try:
-    print(f"Streaming mode length: {len(streaming_source)}")
+    print(f"Streaming length: {len(streaming_source)}")
 except NotImplementedError:
-    print("Streaming mode length: unknown until the stream is read")
-first_record = next(iter(streaming_source))
-print(f"First streamed record: {sorted(first_record)}")
+    print("Streaming length: unknown until the stream is read")
+first_batch = streaming_source.get_batch(1)
+print(f"First streamed record's fields: {sorted(first_batch.data)}")
 
-# Downloaded mode (using subset)
-downloaded_config = HFEagerConfig(
-    name="ylecun/mnist",
-    split="train[:1000]",
-)
-downloaded_source = HFEagerSource(downloaded_config)
-print(f"Downloaded mode length: {len(downloaded_source)}")
+# Eager (using a subset)
+eager_source = HFEagerSource(HFEagerConfig(name="ylecun/mnist", split="train[:1000]"))
+print(f"Eager length: {len(eager_source)}")
 ```
 
 **Terminal Output:**
 ```
 Mode Comparison:
-Streaming mode length: unknown until the stream is read
-First streamed record: ['image', 'label']
-Downloaded mode length: 1000
+Streaming length: unknown until the stream is read
+First streamed record's fields: ['image', 'label']
+Eager length: 1000
 ```
 
-### Streaming Mode (`HFStreamingSource`)
-
-- Data loaded on-the-fly from HuggingFace servers
-- No disk storage required
-- Ideal for large datasets (ImageNet, Common Crawl)
-- Cannot seek to specific indices
-- Dataset length may not be available
-- Shuffling uses a buffer (`shuffle_buffer_size`) rather than an index shuffle
-
-```python
-from datarax.sources import HFStreamingConfig, HFStreamingSource
-
-# Streaming mode with buffer-based shuffle
-streaming_config = HFStreamingConfig(
-    name="ylecun/mnist",
-    split="train",
-    streaming=True,
-    shuffle=True,
-    shuffle_buffer_size=1000,
-)
-streaming_source = HFStreamingSource(streaming_config, rngs=nnx.Rngs(0))
-
-try:
-    print(f"Streaming mode length: {len(streaming_source)}")
-except (NotImplementedError, TypeError):
-    print("Streaming mode length: N/A (not available in streaming)")
-```
-
-> **Tip:** The `from_hf(name, split, ...)` factory auto-selects `HFEagerSource`
-> for datasets under ~1GB and `HFStreamingSource` for larger ones. Pass
-> `streaming=True` to force streaming regardless of size.
+> **Tip:** `from_hf(name, split)` builds `HFEagerSource`; `from_hf(name, split, streaming=True)`
+> builds `HFStreamingSource`.
 
 ### Mode Comparison Table
 
@@ -531,7 +503,7 @@ flowchart TB
 |---------|----------------|-----------|
 | **Large datasets** | `HFStreamingSource` (or `from_hf(..., streaming=True)`) | Avoid memory/disk issues |
 | **Training** | `Pipeline(..., shuffle=True)` | Essential for SGD convergence |
-| **Streaming shuffle** | `shuffle_buffer_size` on `HFStreamingConfig` | Better shuffle quality when streaming |
+| **Streaming shuffle** | `Pipeline(shuffle=True)` with `shuffle_buffer_size` on `HFStreamingConfig` | Better shuffle quality when streaming |
 | **Field filtering** | Use `include_keys` | Reduce memory overhead |
 | **Reproducibility** | A fixed pipeline seed, `rngs=nnx.Rngs(seed)` | Deterministic index shuffle |
 | **Development** | `split="train[:1000]"` | Fast iteration |
@@ -560,7 +532,7 @@ train_config = HFEagerConfig(
     split="train",
 )
 
-# Pattern 3: Large dataset streaming (forces HFStreamingSource)
+# Pattern 3: Large dataset streaming (HFStreamingSource)
 large_source = from_hf(
     "imagenet-1k",
     "train",

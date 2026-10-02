@@ -11,28 +11,29 @@ architectural separation between **eager** and **streaming** sources:
     - One stateless host read, ``get_batch(indices, epochs=...)``, returning a ``Batch``
     - Ideal for: MNIST, CIFAR-10, Fashion-MNIST, small custom datasets
 
-**Streaming Sources** (for large datasets):
-    - TFDSStreamingSource, HFStreamingSource
-    - Thin wrapper around external iterators
-    - DLPack zero-copy conversion for efficient data transfer
+**Streams** (for datasets too large to hold):
+    - StreamingSourceBase, the public base of TFDSStreamingSource and HFStreamingSource
+    - Read forward one pass after another, in an order the pipeline's key chooses
+    - Return host ``Batch``es named by the stream: the ids it reports (TFDS's ``tfds_id``) or
+      arrival ordinals (HuggingFace); strings and objects beside the batch, never in it
     - Ideal for: ImageNet, The Pile, large-scale datasets
 
 **Factory Functions**:
-    - from_tfds(): Auto-detect eager vs streaming based on dataset size
-    - from_hf(): Auto-detect eager vs streaming based on dataset size
+    - from_tfds(): the eager source for a copy prepared as ArrayRecord, the stream for TFRecord
+    - from_hf(): the eager source, or the stream with ``streaming=True``
 """
 
 from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
+from datarax.sources._source_base import StreamChunk, StreamingSourceBase
 from datarax.sources.eager_source import EagerSource
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
 from datarax.sources.source_ops import resolve_wrapped_indices
+from datarax.sources.streaming_disk_source import StreamingDiskSource, StreamingDiskSourceConfig
 
-
-_TFDS_AUTO_DETECT_ERRORS = (ImportError, AttributeError, KeyError, TypeError, ValueError, OSError)
 
 # Type-checking imports for static analysis (not executed at runtime)
 if TYPE_CHECKING:
@@ -88,19 +89,6 @@ def __dir__() -> list[str]:
     return list(__all__)
 
 
-def _is_tfds_eager_mode_required(name: str, split: str, data_dir: str | None) -> bool:
-    """Infer eager mode for TFDS sources based on split size."""
-    import tensorflow_datasets as tfds
-
-    builder = tfds.builder(name, data_dir=data_dir)
-    split_base = split.split("[")[0]  # Handle "train[:1000]"
-    if builder.info.splits and split_base in builder.info.splits:
-        size_bytes = builder.info.splits[split_base].num_bytes
-        size_mb = size_bytes / 1e6 if size_bytes else 0
-        return size_mb < 1000  # < 1GB → eager
-    return True  # Default to eager for unknown splits
-
-
 # =============================================================================
 # Factory Functions
 # =============================================================================
@@ -110,45 +98,38 @@ def from_tfds(
     name: str,
     split: str,
     *,
-    eager: bool | None = None,
     data_dir: str | None = None,
     as_supervised: bool = False,
     include_keys: set[str] | None = None,
     exclude_keys: set[str] | None = None,
 ) -> DataSourceModule:
-    """Create a TFDS source, choosing eager or streaming based on size.
+    """Create the TFDS source that reads the copy prepared in ``data_dir``, by its format.
 
-    This factory function automatically selects the optimal source type:
-    - TFDSEagerSource for datasets < 1GB (reads a copy prepared as ArrayRecord into host
-      columns at init, without TensorFlow)
-    - TFDSStreamingSource for datasets >= 1GB (streams a TFRecord copy with fixed prefetch)
+    - A copy prepared as ArrayRecord has random access: ``TFDSEagerSource`` reads it into host
+      columns at init, without TensorFlow.
+    - A copy prepared as TFRecord (TFDS's default format) is streamed by
+      ``TFDSStreamingSource``, without TensorFlow.
 
-    The order records are served in belongs to the pipeline (``Pipeline(shuffle=...)``). A
-    stream that needs GCS, Beam workers or download options is built with
-    ``TFDSStreamingConfig``.
+    Neither prepares a dataset; a split that is not prepared is refused, naming the call that
+    prepares it as ArrayRecord. The order records are served in belongs to the pipeline
+    (``Pipeline(shuffle=...)``).
 
     Args:
         name: TFDS dataset name (e.g., "mnist", "cifar10", "imagenet2012")
         split: Dataset split (e.g., "train", "test", "train[:1000]")
-        eager: Force eager (True) or streaming (False). None = auto-detect.
         data_dir: Optional directory where the dataset is prepared
-        as_supervised: If True, keeps only the supervised features (eager) or yields them as
-            ``{"image": ..., "label": ...}`` (streaming)
+        as_supervised: If True, keeps only the supervised features, under their own names
         include_keys: Optional set of keys to include
         exclude_keys: Optional set of keys to exclude
 
     Returns:
-        TFDSEagerSource for small datasets, TFDSStreamingSource for large.
+        TFDSEagerSource for an ArrayRecord copy, TFDSStreamingSource for a TFRecord copy.
 
     Example:
         ```python
         from datarax.sources import from_tfds
 
-        # Auto-detect: MNIST is small, will use eager (prepared as ArrayRecord)
-        source = from_tfds("mnist", "train")
-
-        # Force streaming for memory-constrained environments
-        source = from_tfds("mnist", "train", eager=False)
+        source = from_tfds("mnist", "train")  # prepared as ArrayRecord: the eager source
         ```
     """
     from datarax.sources.tfds_source import (
@@ -156,17 +137,22 @@ def from_tfds(
         TFDSEagerSource,
         TFDSStreamingConfig,
         TFDSStreamingSource,
+        tfrecord_only,
     )
 
-    # Auto-detect based on dataset size if not specified
-    if eager is None:
-        try:
-            eager = _is_tfds_eager_mode_required(name, split, data_dir)
-        except _TFDS_AUTO_DETECT_ERRORS:
-            eager = True  # Default to eager on inference errors
-
-    if eager:
-        config = TFDSEagerConfig(
+    if tfrecord_only(name, data_dir):
+        return TFDSStreamingSource(
+            TFDSStreamingConfig(
+                name=name,
+                split=split,
+                data_dir=data_dir,
+                as_supervised=as_supervised,
+                include_keys=include_keys,
+                exclude_keys=exclude_keys,
+            )
+        )
+    return TFDSEagerSource(
+        TFDSEagerConfig(
             name=name,
             split=split,
             data_dir=data_dir,
@@ -174,43 +160,30 @@ def from_tfds(
             include_keys=include_keys,
             exclude_keys=exclude_keys,
         )
-        return TFDSEagerSource(config)
-    config = TFDSStreamingConfig(
-        name=name,
-        split=split,
-        data_dir=data_dir,
-        as_supervised=as_supervised,
-        include_keys=include_keys,
-        exclude_keys=exclude_keys,
     )
-    return TFDSStreamingSource(config)
 
 
 def from_hf(
     name: str,
     split: str,
     *,
-    eager: bool | None = None,
-    streaming: bool | None = None,
+    streaming: bool = False,
     data_dir: str | None = None,
     cache_dir: str | None = None,
     include_keys: set[str] | None = None,
     exclude_keys: set[str] | None = None,
     download_kwargs: dict | None = None,
 ) -> DataSourceModule:
-    """Create a HuggingFace source, choosing eager or streaming based on size.
+    """Create a HuggingFace source: the eager source, or the stream when asked.
 
-    This factory function automatically selects the optimal source type:
-    - HFEagerSource for datasets < 1GB (loads all into host columns at init)
-    - HFStreamingSource for datasets >= 1GB or when streaming=True
-
-    The order records are served in belongs to the pipeline (``Pipeline(shuffle=...)``).
+    ``HFEagerSource`` loads the dataset whole into host columns at init; with ``streaming=True``,
+    ``HFStreamingSource`` streams it with HuggingFace's streaming mode, for datasets too large to
+    hold. The order records are served in belongs to the pipeline (``Pipeline(shuffle=...)``).
 
     Args:
         name: HuggingFace dataset name (e.g., "mnist", "imdb", "allenai/c4")
         split: Dataset split (e.g., "train", "test")
-        eager: Force eager (True) or streaming source (False). None = auto-detect.
-        streaming: Use HuggingFace streaming mode (implies eager=False)
+        streaming: Whether to stream the dataset rather than load it whole
         data_dir: Optional folder inside the dataset's repository whose data files are
             loaded (``datasets.load_dataset``'s ``data_dir``), not a storage location
         cache_dir: Optional folder where downloaded files are cached
@@ -219,18 +192,14 @@ def from_hf(
         download_kwargs: Optional kwargs for datasets.load_dataset
 
     Returns:
-        HFEagerSource for small datasets, HFStreamingSource for large.
+        HFEagerSource, or HFStreamingSource with ``streaming=True``.
 
     Example:
         ```python
         from datarax.sources import from_hf
-        import flax.nnx as nnx
 
-        # Auto-detect: MNIST is small, will use eager
-        source = from_hf("mnist", "train")
-
-        # Force HuggingFace streaming for large datasets
-        source = from_hf("allenai/c4", "train", streaming=True)
+        source = from_hf("ylecun/mnist", "train")  # loaded whole
+        stream = from_hf("allenai/c4", "train", streaming=True, download_kwargs={"name": "en"})
         ```
     """
     from datarax.sources.hf_source import (
@@ -240,18 +209,20 @@ def from_hf(
         HFStreamingSource,
     )
 
-    # If streaming explicitly requested, use streaming source
     if streaming:
-        eager = False
-
-    # Auto-detect based on whether HF streaming is commonly used for this dataset
-    if eager is None:
-        # Default to eager for most datasets
-        # Users can explicitly set streaming=True for large datasets
-        eager = True
-
-    if eager:
-        config = HFEagerConfig(
+        return HFStreamingSource(
+            HFStreamingConfig(
+                name=name,
+                split=split,
+                data_dir=data_dir,
+                cache_dir=cache_dir,
+                include_keys=include_keys,
+                exclude_keys=exclude_keys,
+                download_kwargs=download_kwargs,
+            )
+        )
+    return HFEagerSource(
+        HFEagerConfig(
             name=name,
             split=split,
             data_dir=data_dir,
@@ -260,24 +231,15 @@ def from_hf(
             exclude_keys=exclude_keys,
             download_kwargs=download_kwargs,
         )
-        return HFEagerSource(config)
-    hf_streaming = streaming if streaming is not None else False
-    config = HFStreamingConfig(
-        name=name,
-        split=split,
-        streaming=hf_streaming,
-        data_dir=data_dir,
-        cache_dir=cache_dir,
-        include_keys=include_keys,
-        exclude_keys=exclude_keys,
-        download_kwargs=download_kwargs,
     )
-    return HFStreamingSource(config)
 
 
 __all__ = [
     # The in-memory base and the memory source (always available)
     "EagerSource",
+    # The base every stream builds on
+    "StreamingSourceBase",
+    "StreamChunk",
     "MemorySource",
     "MemorySourceConfig",
     # Mixed source
@@ -296,6 +258,9 @@ __all__ = [
     "HFEagerConfig",
     "HFStreamingSource",
     "HFStreamingConfig",
+    # The memory-mapped on-disk source
+    "StreamingDiskSource",
+    "StreamingDiskSourceConfig",
     # Factory functions
     "from_tfds",
     "from_hf",

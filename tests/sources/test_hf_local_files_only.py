@@ -1,9 +1,8 @@
 """Tests for ``local_files_only`` and ``element_spec`` on HuggingFace sources.
 
 ``datasets`` 4.x routes ``local_files_only`` through ``DownloadConfig`` rather
-than as a top-level ``load_dataset`` kwarg. ``HFStreamingSource.element_spec``
-is needed because the eager-source's generic spec (inherited from
-``EagerSource``) does not apply to iterator-backed streams.
+than as a top-level ``load_dataset`` kwarg. A stream's spec is its first record's
+array part, as the device holds it.
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ import numpy as np
 import pytest
 from flax import nnx
 
-from datarax.core.spec import validate_batch
+from datarax.pipeline import Pipeline
 from datarax.sources.hf_source import (
     HFEagerConfig,
     HFEagerSource,
@@ -44,7 +43,7 @@ def _serve(
     def load_dataset(name, split=None, **kwargs):  # noqa: ARG001
         if captured is not None:
             captured.update(kwargs)
-        return dataset
+        return dataset.to_iterable_dataset() if kwargs.get("streaming") else dataset
 
     monkeypatch.setattr(datasets, "load_dataset", load_dataset)
 
@@ -92,22 +91,17 @@ def test_hf_streaming_source_passes_local_files_only_to_load_dataset(
     _serve(monkeypatch, numeric_dataset, captured)
 
     config = HFStreamingConfig(name="mock", split="train", local_files_only=True)
-    HFStreamingSource(config, rngs=nnx.Rngs(0))
+    HFStreamingSource(config)
 
     assert _local_files_only_from_kwargs(captured) is True
 
 
 def test_hf_streaming_source_element_spec_peeks_first_element(numeric_dataset, monkeypatch) -> None:
-    """``HFStreamingSource.element_spec`` returns shape/dtype for one element.
-
-    Streaming sources can't strip a leading dimension because they iterate one
-    element at a time. The spec is derived by peeking the first element from
-    the backend iterator and describing the record the source emits for it.
-    """
+    """``HFStreamingSource.element_spec`` is the first record's array part."""
     _serve(monkeypatch, numeric_dataset)
 
     config = HFStreamingConfig(name="mock", split="train")
-    source = HFStreamingSource(config, rngs=nnx.Rngs(0))
+    source = HFStreamingSource(config)
 
     spec = source.element_spec()
 
@@ -134,25 +128,25 @@ def test_hf_streaming_source_element_spec_honors_key_filters(
 ) -> None:
     """The declared keys are exactly the keys the filtered records carry."""
     _serve(monkeypatch, numeric_dataset)
-    source = HFStreamingSource(
-        HFStreamingConfig(name="mock", split="train", **filters), rngs=nnx.Rngs(0)
-    )
+    source = HFStreamingSource(HFStreamingConfig(name="mock", split="train", **filters))
 
     spec = source.element_spec()
 
     assert set(spec) == {"feature"}
-    assert set(source.get_batch(2)) == {"feature"}
+    assert set(source.get_batch(2).data) == {"feature"}
 
 
-def test_hf_streaming_source_element_spec_describes_its_converted_batches(monkeypatch) -> None:
-    """Python floats reach batches as float32 arrays, and the spec declares float32."""
+def test_hf_streaming_source_spec_is_what_the_device_holds_of_its_batches(monkeypatch) -> None:
+    """A float64 column is held on the host as stored and declared as the device holds it."""
     dataset = datasets.Dataset.from_dict(
         {"score": [float(i) for i in range(6)], "label": list(range(6))}
     )
     _serve(monkeypatch, dataset)
-    source = HFStreamingSource(HFStreamingConfig(name="mock", split="train"), rngs=nnx.Rngs(0))
+    source = HFStreamingSource(HFStreamingConfig(name="mock", split="train"))
 
     spec = source.element_spec()
+    batches = list(Pipeline(source=source, stages=[], batch_size=3, rngs=nnx.Rngs(0)))
 
     assert spec["score"] == jax.ShapeDtypeStruct((), jnp.float32)
-    validate_batch(source.get_batch(3), spec, batch_size=3)
+    assert source.get_batch(3)["score"].dtype == np.float64
+    assert [batch["score"].dtype for batch in batches] == [jnp.float32, jnp.float32]

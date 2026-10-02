@@ -6,18 +6,20 @@ data streams (e.g., different image datasets, synthetic + real data).
 """
 
 import logging
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 import grain
 import jax
 import jax.numpy as jnp
+import numpy as np
 from flax import nnx
+from jax.typing import ArrayLike
 
 from datarax.config.registry import register_component
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule, RecordIdentity
+from datarax.core.data_source import DataSourceModule, host_rows, record_words, RecordIdentity
 from datarax.core.index_words import low_words, to_words
 from datarax.core.spec import spec_mismatches, SpecMismatchError
 from datarax.sources._grain_streaming import data_source_to_iter_dataset, mix_streaming_sources
@@ -312,6 +314,37 @@ class MixDataSourcesNode(DataSourceModule):
         return to_words(
             jnp.asarray(self._offsets(), dtype=jnp.int32)[chosen_sources] + local_indices
         )
+
+    def provenance(  # noqa: DOC502 - record_words and host_rows raise
+        self, indices: ArrayLike
+    ) -> tuple[Mapping[str, Any], ...]:
+        """The provenance of the mixed records ``indices`` names, each from the source owning it.
+
+        A mixed index is a source's offset plus the record's index within that source, so each
+        record's provenance is its source's ``provenance`` of that index.
+
+        Args:
+            indices: uint32 ``(n, 2)`` mixed record indices.
+
+        Returns:
+            One mapping per index, in the order named.
+
+        Raises:
+            ValueError: If ``indices`` are not uint32 ``(n, 2)`` words.
+            IndexError: If an index is the padding index or outside the mix.
+        """
+        rows = host_rows(record_words(indices), len(self)).astype(np.int64)
+        offsets = np.asarray(self._offsets(), dtype=np.int64)
+        owners = np.searchsorted(offsets, rows, side="right") - 1
+        found: list[Mapping[str, Any]] = [{}] * len(rows)
+        for owner in np.unique(owners):
+            at = np.flatnonzero(owners == owner)
+            local = to_words((rows[at] - offsets[owner]).astype(np.uint64))
+            for position, record in zip(
+                at, self._sources[int(owner)].provenance(local), strict=True
+            ):
+                found[position] = record
+        return tuple(found)
 
     def get_records(self, indices: jax.Array) -> DataDict:
         """Gather the mixed records at ``indices``, each from the source that owns it.

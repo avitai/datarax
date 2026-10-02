@@ -8,15 +8,19 @@ compatibility.
 import abc
 import enum
 import logging
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import jax
+import numpy as np
+from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
+from datarax.core.element_batch import Batch, PADDING_INDEX
 from datarax.core.index_shuffle import shuffle_positions
-from datarax.core.index_words import wrapped_positions
+from datarax.core.index_words import from_words, low_words, wrapped_positions
 from datarax.core.structural import StructuralModule
 from datarax.typing import DataDict
 
@@ -67,6 +71,73 @@ class LocalFilesOnlyMixin:
                 "Populate the cache offline or set local_files_only=False to "
                 "allow the source to download."
             )
+
+
+def record_words(indices: ArrayLike) -> np.ndarray:
+    """``indices`` as host record words, refusing anything that is not uint32 ``(n, 2)``.
+
+    Args:
+        indices: Record indices, each as its words ``(hi, lo)``.
+
+    Returns:
+        The words as a host array.
+
+    Raises:
+        ValueError: If ``indices`` are not uint32 ``(n, 2)`` words.
+    """
+    words = np.asarray(indices)
+    if words.dtype != np.uint32 or words.ndim != 2 or words.shape[1] != 2:  # noqa: PLR2004
+        raise ValueError(
+            "record indices are uint32 (n, 2) words (hi, lo), as index_words.to_words names "
+            f"positions; got {words.dtype} {words.shape}"
+        )
+    return words
+
+
+def refuse_padding(words: np.ndarray) -> None:
+    """Refuse the padding index, which names no record.
+
+    Args:
+        words: uint32 ``(n, 2)`` record indices.
+
+    Raises:
+        IndexError: If an index is the padding index (all ones).
+    """
+    padding = np.all(words == PADDING_INDEX, axis=1)
+    if padding.any():
+        raise IndexError(
+            f"index {int(np.argmax(padding))} is the padding index (all ones), which names "
+            "no record"
+        )
+
+
+def host_rows(words: np.ndarray, length: int) -> np.ndarray:
+    """The rows ``words`` name in a source of ``length`` records, refusing words naming none.
+
+    The one row check of the host reads and provenance lookups: the padding index and records
+    outside the source are refused.
+
+    Args:
+        words: uint32 ``(n, 2)`` record indices.
+        length: The source's record count.
+
+    Returns:
+        uint32 ``(n,)`` row numbers.
+
+    Raises:
+        IndexError: If an index is the padding index or outside the source.
+    """
+    refuse_padding(words)
+    outside = (words[:, 0] != 0) | (words[:, 1] >= length)
+    if outside.any():
+        raise IndexError(
+            f"record index {int(from_words(words[outside][:1])[0])} is outside [0, {length})"
+        )
+    return low_words(words, length)
+
+
+NO_PROVENANCE: Mapping[str, Any] = MappingProxyType({})
+"""The provenance of a record that carries nothing but arrays."""
 
 
 class RecordIdentity(enum.Enum):
@@ -139,6 +210,79 @@ class DataSourceModule(StructuralModule):
         ``get_batch(batch_size)`` and are served by its streaming path. A subclass declares it
         with a property returning its kind.
         """
+
+    def provenance(  # noqa: DOC502 - the checks it calls raise
+        self, indices: ArrayLike
+    ) -> tuple[Mapping[str, Any], ...]:
+        """The provenance of the records ``indices`` names: their strings and objects, by index.
+
+        A source naming records stably (``INDEXED``, ``STREAM_IDS``) serves each record's
+        non-array part by its index, as an immutable mapping, in the order named. This base
+        serves a source that holds none: one empty mapping per record, after refusing the padding
+        index and, for a source with a length, indices outside it. A source holding provenance
+        overrides it. A source naming records by arrival refuses it (see :meth:`record_keys`).
+
+        Args:
+            indices: uint32 ``(n, 2)`` record indices, as a batch's ``indices`` holds them.
+
+        Returns:
+            One mapping per index.
+
+        Raises:
+            TypeError: If the source names its records by arrival.
+            ValueError: If ``indices`` are not uint32 ``(n, 2)`` words.
+            IndexError: If an index is the padding index or outside the source.
+        """
+        self._refuse_arrival("look a record's provenance up by its index")
+        words = record_words(indices)
+        try:
+            length: int | None = len(self)
+        except (NotImplementedError, TypeError):
+            length = None
+        if length is None:
+            refuse_padding(words)
+        else:
+            host_rows(words, length)
+        return (NO_PROVENANCE,) * len(words)
+
+    def record_keys(self, batch: Batch) -> Any:  # noqa: DOC502 - _refuse_arrival raises
+        """The keys a per-record table indexes this source's records by: the batch's indices.
+
+        A table keyed by record (D7) needs identities that are stable and unique across passes,
+        which a source naming records by position (``INDEXED``) or by the ids its stream reports
+        (``STREAM_IDS``) gives. Only the static ``record_identity`` is read, so under ``jit`` the
+        batch's indices pass through and the call adds nothing to the program. A ``Batch`` has no
+        source and so no record keys: key a table with this method on a batch this source's
+        pipeline served.
+
+        Args:
+            batch: A batch this source's records were served in.
+
+        Returns:
+            ``batch.indices``, uint32 ``(B, 2)``.
+
+        Raises:
+            TypeError: If the source names its records by arrival.
+        """
+        self._refuse_arrival("key a per-record table")
+        return batch.indices
+
+    def _refuse_arrival(self, what: str) -> None:
+        """Refuse a lookup by record on a source naming its records by arrival.
+
+        Args:
+            what: What the caller asked for.
+
+        Raises:
+            TypeError: If the source's records are named by arrival.
+        """
+        kind = self.record_identity
+        if kind is RecordIdentity.ARRIVAL:
+            raise TypeError(
+                f"{type(self).__name__} names its records by arrival ({kind.name}), so it cannot "
+                f"{what}: an arrival ordinal names no record it can find again. A stream naming "
+                "records by arrival hands each record's provenance out beside each batch it serves."
+            )
 
     def __iter__(self) -> Iterator[PyTree]:
         """Return an iterator over individual data elements.

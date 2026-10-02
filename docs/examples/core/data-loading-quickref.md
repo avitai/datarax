@@ -72,7 +72,7 @@ For loading TensorFlow Datasets prepared as ArrayRecord, without TensorFlow in t
 ```python
 from datarax.sources import from_tfds
 
-# Auto-detect eager vs streaming (< 1GB = eager)
+# cifar10 prepared as ArrayRecord: the eager source (a TFRecord copy would be streamed)
 source = from_tfds("cifar10", "train")
 
 # Specify the directory the dataset is prepared in

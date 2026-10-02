@@ -19,9 +19,9 @@ Existing parallel-worker concepts elsewhere in datarax (do not duplicate)
 
 - ``MemorySource(num_workers=N)`` (``datarax.sources.memory_source``) shards an
   in-memory dataset by ``positions[k::num_workers]`` per worker.
-- ``beam_num_workers`` on ``TFDSStreamingSource``
-  (``datarax.sources.tfds_source``) controls Apache Beam DirectRunner workers
-  for TFDS preparation.
+- ``TFDSStreamingSource.pass_dataset`` (``datarax.sources.tfds_source``) is one pass
+  of a TFDS stream as a Grain dataset that worker processes split with ``set_slice``,
+  each reading and decoding its own batches.
 - ``datarax.control.prefetcher`` provides asynchronous prefetching via threads
   (limited by the GIL for CPU-heavy work).
 
@@ -48,7 +48,8 @@ _RESERVATION_NOTICE = (
     "backend (process-pool prefetcher + multiprocessing-backed transforms). "
     "It is not implemented yet. "
     "Existing parallel-worker concepts: MemorySource(num_workers=...), "
-    "beam_num_workers on the TFDS streaming source, datarax.control.prefetcher (threaded)."
+    "TFDSStreamingSource.pass_dataset (a Grain dataset worker processes split by set_slice), "
+    "datarax.control.prefetcher (threaded)."
 )
 
 

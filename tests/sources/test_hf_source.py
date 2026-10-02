@@ -1,14 +1,9 @@
-"""Unit tests for HF Sources (HFEagerSource and HFStreamingSource).
-
-This module contains unit tests for the HuggingFace Datasets data source adapters,
-testing both eager-loading and streaming source functionality.
-"""
+"""Unit tests for ``HFEagerSource`` and ``from_hf``'s default; the stream is ``test_hf_stream``."""
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from flax import nnx
 from PIL import Image
 from substrax.testing.compiles import compiled_programs
 
@@ -17,13 +12,7 @@ from substrax.testing.compiles import compiled_programs
 datasets = pytest.importorskip("datasets")
 
 from datarax.core.index_words import to_words
-from datarax.sources import (
-    from_hf,
-    HFEagerConfig,
-    HFEagerSource,
-    HFStreamingConfig,
-    HFStreamingSource,
-)
+from datarax.sources import from_hf, HFEagerConfig, HFEagerSource
 
 
 @pytest.fixture
@@ -208,66 +197,6 @@ def test_hf_eager_source_length(mock_numeric_dataset, monkeypatch):
 
 
 # =============================================================================
-# Unit Tests for HFStreamingSource
-# =============================================================================
-
-
-@pytest.mark.unit
-def test_hf_streaming_source_initialization(mock_dataset, monkeypatch):
-    """Test HFStreamingSource initialization."""
-
-    def mock_load_dataset(name, split=None, streaming=False, **kwargs):
-        del kwargs, name, split
-        if streaming:
-            return mock_dataset.to_iterable_dataset()
-        return mock_dataset
-
-    monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
-
-    config = HFStreamingConfig(name="mock_dataset", split="train", streaming=False)
-    source = HFStreamingSource(config, rngs=nnx.Rngs(42))
-    assert source is not None
-    assert source.dataset_name == "mock_dataset"
-
-
-@pytest.mark.unit
-def test_hf_streaming_source_iteration(mock_numeric_dataset, monkeypatch):
-    """Test HFStreamingSource iteration."""
-
-    def mock_load_dataset(name, split=None, streaming=False, **kwargs):
-        del kwargs, name, split, streaming
-        return mock_numeric_dataset
-
-    monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
-
-    config = HFStreamingConfig(name="mock_dataset", split="train")
-    source = HFStreamingSource(config, rngs=nnx.Rngs(42))
-
-    # Get first element
-    data = next(iter(source))
-    assert "label" in data or "feature" in data
-
-
-@pytest.mark.unit
-def test_hf_streaming_source_streaming_mode(mock_dataset, monkeypatch):
-    """Test HFStreamingSource with streaming=True."""
-
-    def mock_load_dataset(name, split=None, streaming=False, **kwargs):
-        del kwargs, name, split
-        if streaming:
-            return mock_dataset.to_iterable_dataset()
-        return mock_dataset
-
-    monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
-
-    # Create streaming source
-    config = HFStreamingConfig(name="mock_dataset", split="train", streaming=True)
-    source = HFStreamingSource(config, rngs=nnx.Rngs(42))
-
-    assert source.is_iterable_mode is True
-
-
-# =============================================================================
 # Edge Cases and Error Handling
 # =============================================================================
 
@@ -305,27 +234,6 @@ def test_hf_eager_source_invalid_filters():
 
 
 @pytest.mark.unit
-def test_hf_streaming_source_no_random_access(mock_dataset, monkeypatch):
-    """Test that streaming HFStreamingSource doesn't support random access."""
-
-    def mock_load_dataset(name, split=None, streaming=False, **kwargs):
-        del kwargs, name, split
-        if streaming:
-            return mock_dataset.to_iterable_dataset()
-        return mock_dataset
-
-    monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
-
-    # Create streaming source
-    config = HFStreamingConfig(name="mock_dataset", split="train", streaming=True)
-    source = HFStreamingSource(config, rngs=nnx.Rngs(42))
-
-    # Streaming sources don't have length, so should raise NotImplementedError
-    with pytest.raises(NotImplementedError, match="Length unknown"):
-        _ = len(source)
-
-
-@pytest.mark.unit
 def test_hf_eager_config_validation():
     """Test HFEagerConfig validation."""
     # Should raise error when name is not provided
@@ -335,18 +243,6 @@ def test_hf_eager_config_validation():
     # Should raise error when split is not provided
     with pytest.raises(ValueError, match="split is required"):
         HFEagerConfig(name="dataset")
-
-
-@pytest.mark.unit
-def test_hf_streaming_config_validation():
-    """Test HFStreamingConfig validation."""
-    # Should raise error when name is not provided
-    with pytest.raises(ValueError, match="name is required"):
-        HFStreamingConfig(split="train")
-
-    # Should raise error when split is not provided
-    with pytest.raises(ValueError, match="split is required"):
-        HFStreamingConfig(name="dataset")
 
 
 # =============================================================================
@@ -369,53 +265,6 @@ def test_from_hf_creates_eager_by_default(mock_numeric_dataset, monkeypatch):
     # Should be eager source (has .data attribute)
     assert hasattr(source, "data")
     assert isinstance(source, HFEagerSource)
-
-
-@pytest.mark.unit
-def test_from_hf_with_streaming_flag(mock_dataset, monkeypatch):
-    """Test that from_hf with streaming=True creates streaming source."""
-
-    def mock_load_dataset(name, split=None, streaming=False, **kwargs):
-        del kwargs, name, split
-        if streaming:
-            return mock_dataset.to_iterable_dataset()
-        return mock_dataset
-
-    monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
-
-    source = from_hf("mock", "train", streaming=True)
-
-    # Should be streaming source
-    assert isinstance(source, HFStreamingSource)
-    assert source.is_iterable_mode is True
-
-
-@pytest.mark.unit
-def test_from_hf_force_eager(mock_numeric_dataset, monkeypatch):
-    """Test that from_hf with eager=True creates eager source."""
-
-    def mock_load_dataset(name, split=None, **kwargs):
-        del kwargs, name, split
-        return mock_numeric_dataset
-
-    monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
-
-    source = from_hf("mock", "train", eager=True)
-    assert isinstance(source, HFEagerSource)
-
-
-@pytest.mark.unit
-def test_from_hf_force_streaming(mock_dataset, monkeypatch):
-    """Test that from_hf with eager=False creates streaming source."""
-
-    def mock_load_dataset(name, split=None, streaming=False, **kwargs):
-        del kwargs, name, split, streaming
-        return mock_dataset
-
-    monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
-
-    source = from_hf("mock", "train", eager=False)
-    assert isinstance(source, HFStreamingSource)
 
 
 # =============================================================================

@@ -1,8 +1,8 @@
 # TensorFlow Datasets Source
 
-`TFDSEagerSource` reads [TensorFlow Datasets (TFDS)](https://www.tensorflow.org/datasets) that TFDS has prepared as ArrayRecord, giving access to hundreds of ready-to-use datasets as host NumPy columns, without TensorFlow in the process.
+`TFDSEagerSource` reads [TensorFlow Datasets (TFDS)](https://www.tensorflow.org/datasets) that TFDS has prepared as ArrayRecord, giving access to hundreds of ready-to-use datasets as host NumPy columns, without TensorFlow in the process. `TFDSStreamingSource` streams a split prepared as TFRecord (TFDS's default format), also without TensorFlow, for splits too large to hold.
 
-> **Note:** You can also use the factory function `from_tfds(name, split, ...)` which auto-selects between eager and streaming modes based on your configuration.
+> **Note:** The factory `from_tfds(name, split, ...)` picks the source by the format the copy is prepared in: `TFDSEagerSource` for ArrayRecord, `TFDSStreamingSource` for TFRecord.
 
 ## Key Features
 
@@ -13,7 +13,7 @@
 | **Provenance** | Text features (CIFAR-10's `id`) are kept per record as provenance, never served in a batch |
 | **Supervised mode** | `as_supervised=True` keeps only the dataset's supervised features, under their own names |
 | **Shuffling** | `Pipeline(shuffle=True)`'s O(1)-memory Feistel index shuffle (as for the HF source) |
-| **Fixed prefetch** | Streaming source uses a fixed `prefetch_buffer=2`, deliberately not AUTOTUNE |
+| **Streaming** | `TFDSStreamingSource` reads TFRecord with Grain's reader and TFDS's NumPy decoder; records named by `tfds_id` (shard, offset) |
 
 !!! note "Key points"
 
@@ -21,16 +21,16 @@
     - A split that is not prepared, or is prepared only as TFRecord, is refused with a `FileNotFoundError` naming the call that prepares it
     - TensorFlow in a JAX process breaks JAX's multi-GPU (NCCL) collectives; the eager source keeps it out of the training process
     - Values keep the dtype TFDS stores: a class label is int64 on the host, and int32 on a device while JAX's 64-bit types are off
-    - The streaming source reads a TFRecord copy through `tf.data`, so it imports TensorFlow; it uses a fixed `prefetch_buffer=2` (deliberately not `tf.data.AUTOTUNE`) to avoid thread storms
+    - The streaming source reads a TFRecord copy without TensorFlow and refuses an ArrayRecord copy, naming the eager source; a shuffling pipeline orders each pass as TFDS's training read does (shard files in a keyed order, interleaved 16 at a time, then tf.data's buffer shuffle of `shuffle_buffer_size` records), every draw keyed by the pipeline's key and the pass
     - The source keeps no iteration state: the pipeline owns the order and the position
 
 ## Installation
 
-Reading needs the `data` extra (tensorflow-datasets and Pillow); preparing a dataset and the streaming source need the `tfds` extra, which adds TensorFlow:
+Reading, eager or streamed, needs the `data` extra (tensorflow-datasets and Pillow); preparing a dataset needs the `tfds` extra, which adds TensorFlow:
 
 ```bash
 pip install "datarax[data]"          # read prepared datasets with TFDSEagerSource
-pip install "datarax[data,tfds]"     # also prepare datasets, or stream them
+pip install "datarax[data,tfds]"     # also prepare datasets
 ```
 
 ## Preparing a Dataset
@@ -103,9 +103,31 @@ source = TFDSEagerSource(TFDSEagerConfig(name="cifar10", split="train"))
 pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0), shuffle=True)
 ```
 
-For ImageNet-scale splits that do not fit in memory, use the streaming path via
-`from_tfds(name, split, ...)` (or `TFDSStreamingConfig` directly), which streams a TFRecord
-copy with a fixed prefetch buffer instead of loading everything at init.
+For ImageNet-scale splits that do not fit in memory, prepare a TFRecord copy (TFDS's default
+format) and stream it with `TFDSStreamingSource` (or `from_tfds(name, split, ...)`, which picks it
+for a TFRecord copy):
+
+```python
+source = TFDSStreamingSource(
+    TFDSStreamingConfig(name="imagenet2012", split="train", shuffle_buffer_size=10_000)
+)
+pipeline = Pipeline(source=source, stages=[], batch_size=256, rngs=nnx.Rngs(0),
+                    shuffle=True, num_epochs=None)
+```
+
+A pass is also a Grain dataset of decoded batches, `source.pass_dataset(pass_index, key,
+batch_size)`. It computes the pass's order over record ids, reads each record's payload at its
+offset in an index built once from the shard files' frame headers, checks each frame's CRCs as
+tf.data's TFRecord reader does (a damaged frame raises `datarax.sources.tfds_source.DamagedRecordError` naming its file and
+record), and decodes last. The shuffle buffer holds record ids, not records. It pickles
+with its index and implements Grain's `set_slice`: each of k worker processes computes the same
+order and reads and decodes only its own batches (every k-th), so the order does not depend on k
+and the workers read the data once between them.
+
+Each record is named by its `tfds_id`, the shard file and the offset in it, so its text is
+looked up again by `source.provenance(batch.indices)`. A copy prepared as ArrayRecord is read by
+the eager source; reading one larger than host memory by index comes with the pipeline's host
+stage.
 
 ## Custom Data Directory
 

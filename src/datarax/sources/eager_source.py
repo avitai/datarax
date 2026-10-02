@@ -29,9 +29,15 @@ from jaxtyping import PyTree
 
 from datarax.core import batch_ops
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule, RecordIdentity
-from datarax.core.element_batch import Batch, Element, PADDING_INDEX
-from datarax.core.index_words import from_words, low_words, to_words
+from datarax.core.data_source import (
+    DataSourceModule,
+    host_rows,
+    NO_PROVENANCE,
+    record_words,
+    RecordIdentity,
+)
+from datarax.core.element_batch import Batch, Element
+from datarax.core.index_words import low_words, to_words
 from datarax.core.spec import array_to_spec_strip_leading, device_spec
 from datarax.sources._grain_bridge import validate_index_batch
 from datarax.sources.source_ops import resolve_wrapped_indices
@@ -259,6 +265,55 @@ def take_rows(columns: PyTree, rows: np.ndarray | slice) -> PyTree:
     return jax.tree.map(lambda column: column[rows], columns)
 
 
+def read_host_batch(
+    columns: PyTree,
+    length: int,
+    indices: ArrayLike,
+    *,
+    epochs: ArrayLike = 0,
+    contiguous: bool = False,
+) -> Batch:
+    """Read the rows ``indices`` names from host ``columns``, as a ``Batch`` named with them.
+
+    The one host read of indexed sources whose records sit in host arrays (in memory, or a
+    memory map): the words are checked (:func:`~datarax.core.data_source.host_rows`), the rows
+    gathered with :func:`take_rows`, and the ``Batch`` named with the given words and epochs, with
+    draws 0. No device array is created. A run declared ``contiguous`` is read as views of the
+    columns; only its ends are checked, and its rows are named as the run.
+
+    Args:
+        columns: Host arrays with a leading record axis of ``length`` rows.
+        length: The record count.
+        indices: uint32 ``(n, 2)`` record indices, each as its words ``(hi, lo)``.
+        epochs: The epoch of every record, or of each ``(n,)``.
+        contiguous: Whether ``indices`` is a run of consecutive records.
+
+    Returns:
+        The records as a host ``Batch``.
+
+    Raises:
+        ValueError: If ``indices`` are not uint32 ``(n, 2)`` words, or a run declared contiguous
+            is not one.
+    """
+    words = record_words(indices)
+    rows = host_rows(words, length)
+    if contiguous and len(rows):
+        first = int(rows[0])
+        if int(rows[-1]) != first + len(rows) - 1:
+            raise ValueError(
+                f"a read declared contiguous names a run of records; {first} to "
+                f"{int(rows[-1])} is not a run of {len(rows)}"
+            )
+        data = take_rows(columns, slice(first, first + len(rows)))
+        words = to_words(np.arange(first, first + len(rows), dtype=np.uint64))
+    else:
+        data = take_rows(columns, rows)
+    epoch_of_each = np.broadcast_to(np.asarray(epochs, np.int32), (len(rows),))
+    return batch_ops.from_arrays(data).replace(
+        indices=words, epochs=np.ascontiguousarray(epoch_of_each)
+    )
+
+
 class EagerSource(DataSourceModule):
     """An indexed source over records held in host memory as NumPy columns and provenance.
 
@@ -352,16 +407,16 @@ class EagerSource(DataSourceModule):
         rows = take_rows(self.data, np.asarray(resolved, dtype=np.intp))
         return [jax.tree.map(lambda column, k=k: column[k], rows) for k in range(len(resolved))]
 
-    def get_batch(  # noqa: DOC503 - _host_rows raises the IndexError
+    def get_batch(  # noqa: DOC502 - read_host_batch raises
         self, indices: ArrayLike, *, epochs: ArrayLike = 0, contiguous: bool = False
     ) -> Batch:
         """Read the records ``indices`` names, as a ``Batch`` named with them, on the host.
 
-        One host gather of the array part; the batch's ``indices`` are the given words, its
-        ``epochs`` the given epochs and its draws 0. It reads and changes no state and creates no
-        device array. With ``contiguous=True`` the caller states that ``indices`` is a run of
-        consecutive records, which is read as views of the columns; only the run's ends are
-        checked, and its rows are named as the run.
+        One host gather of the array part (:func:`read_host_batch`); the batch's ``indices`` are
+        the given words, its ``epochs`` the given epochs and its draws 0. It reads and changes no
+        state and creates no device array. With ``contiguous=True`` the caller states that
+        ``indices`` is a run of consecutive records, which is read as views of the columns; only
+        the run's ends are checked, and its rows are named as the run.
 
         Args:
             indices: uint32 ``(n, 2)`` record indices, each as its words ``(hi, lo)``
@@ -377,54 +432,31 @@ class EagerSource(DataSourceModule):
                 contiguous is not one.
             IndexError: If an index is the padding index or outside the source.
         """
-        words = np.asarray(indices)
-        if words.dtype != np.uint32 or words.ndim != 2 or words.shape[1] != 2:  # noqa: PLR2004
-            raise ValueError(
-                "record indices are uint32 (n, 2) words (hi, lo), as index_words.to_words names "
-                f"positions; got {words.dtype} {words.shape}"
-            )
-        rows = self._host_rows(words)
-        if contiguous and len(rows):
-            first = int(rows[0])
-            if int(rows[-1]) != first + len(rows) - 1:
-                raise ValueError(
-                    f"a read declared contiguous names a run of records; {first} to "
-                    f"{int(rows[-1])} is not a run of {len(rows)}"
-                )
-            data = take_rows(self.data, slice(first, first + len(rows)))
-            words = to_words(np.arange(first, first + len(rows), dtype=np.uint64))
-        else:
-            data = take_rows(self.data, rows)
-        epoch_of_each = np.broadcast_to(np.asarray(epochs, np.int32), (len(rows),))
-        return batch_ops.from_arrays(data).replace(
-            indices=words, epochs=np.ascontiguousarray(epoch_of_each)
+        return read_host_batch(
+            self.data, self.length, indices, epochs=epochs, contiguous=contiguous
         )
 
-    def _host_rows(self, words: np.ndarray) -> np.ndarray:
-        """The rows ``words`` name, refusing the padding index and records outside the source.
+    def provenance(  # noqa: DOC502 - record_words and host_rows raise
+        self, indices: ArrayLike
+    ) -> tuple[Mapping[str, Any], ...]:
+        """The provenance of the records ``indices`` names, read from the host holder by row.
 
         Args:
-            words: uint32 ``(n, 2)`` record indices.
+            indices: uint32 ``(n, 2)`` record indices.
 
         Returns:
-            uint32 ``(n,)`` row numbers.
+            Each named record's immutable mapping of strings and objects, in the order named; an
+            empty mapping for a record that carries nothing but arrays.
 
         Raises:
+            ValueError: If ``indices`` are not uint32 ``(n, 2)`` words.
             IndexError: If an index is the padding index or outside the source.
         """
-        length = self.length
-        padding = np.all(words == PADDING_INDEX, axis=1)
-        if padding.any():
-            raise IndexError(
-                f"index {int(np.argmax(padding))} is the padding index (all ones), which names "
-                "no record"
-            )
-        outside = (words[:, 0] != 0) | (words[:, 1] >= length)
-        if outside.any():
-            raise IndexError(
-                f"record index {int(from_words(words[outside][:1])[0])} is outside [0, {length})"
-            )
-        return low_words(words, length)
+        rows = host_rows(record_words(indices), self.length)
+        held = self._provenance.value
+        if not held:
+            return (NO_PROVENANCE,) * len(rows)
+        return tuple(held[int(row)] for row in rows)
 
     def record_indices_at(
         self,
@@ -484,6 +516,7 @@ __all__ = [
     "column_length",
     "is_array_leaf",
     "parts_of_records",
+    "read_host_batch",
     "split_record",
     "stack_records",
     "take_rows",

@@ -3,7 +3,7 @@
 ``TFDSEagerSource`` reads a split TFDS prepared as ArrayRecord, through TFDS's random-access
 reader, into host NumPy columns and per-record provenance; it never prepares a dataset and never
 imports TensorFlow, and it refuses a copy that is not prepared or is prepared in another format,
-naming the call that prepares it. ``TFDSStreamingSource`` reads a TFRecord copy through tf.data.
+naming the call that prepares it. The stream over a TFRecord copy is ``test_tfds_stream``.
 The tests marked ``tfds`` read the offline fixture (``tests.test_common.tfds_fixture``), which is
 prepared with TensorFlow; CI runs them in the job that installs it.
 """
@@ -21,13 +21,7 @@ import pytest
 from flax import nnx
 
 from datarax.core.index_words import to_words
-from datarax.sources import (
-    from_tfds,
-    TFDSEagerConfig,
-    TFDSEagerSource,
-    TFDSStreamingConfig,
-    TFDSStreamingSource,
-)
+from datarax.sources import from_tfds, TFDSEagerConfig, TFDSEagerSource
 from tests.test_common.tfds_fixture import (
     FIXTURE,
     IMAGE_SHAPE,
@@ -76,7 +70,7 @@ def test_eager_config_takes_no_preparation_field(field: str) -> None:
 
 
 def test_from_tfds_takes_no_preparation_argument() -> None:
-    """A stream that needs one is built with ``TFDSStreamingConfig``."""
+    """Neither TFDS source prepares a dataset."""
     parameters = inspect.signature(from_tfds).parameters
     assert [name for name in _PREPARATION_FIELDS if name in parameters] == []
 
@@ -255,231 +249,3 @@ class TestTheEagerSourceRefusesAnUnreadableCopy:
             FileNotFoundError, match=_refusal_pattern(FIXTURE, directory, "tfrecord")
         ):
             TFDSEagerSource(config)
-
-
-# =============================================================================
-# The streaming source over the TFRecord copy (tf.data)
-# =============================================================================
-
-
-def _streaming(fixture: TFDSFixture, **kwargs: object) -> TFDSStreamingSource:
-    """The stream over the fixture's TFRecord copy, without the text and nested features.
-
-    The stream converts each feature with ``tf_to_jax``, which takes neither text nor a nested
-    feature; that conversion is the stream's own (C5b).
-    """
-    config = TFDSStreamingConfig(
-        name=FIXTURE,
-        split="train",
-        data_dir=str(fixture.tfrecord),
-        local_files_only=True,
-        exclude_keys={"name", "meta"},
-        **kwargs,  # type: ignore[arg-type]
-    )
-    return TFDSStreamingSource(config, rngs=nnx.Rngs(0))
-
-
-@pytest.mark.tfds
-class TestTheStreamingSource:
-    def test_it_yields_jax_arrays(self, tfds_fixture: TFDSFixture) -> None:
-        record = next(iter(_streaming(tfds_fixture)))
-
-        assert isinstance(record["image"], jax.Array)
-        assert record["image"].shape == IMAGE_SHAPE
-        assert isinstance(record["label"], jax.Array)
-
-    def test_it_streams_every_record_with_a_shuffle_buffer(self, tfds_fixture: TFDSFixture) -> None:
-        source = _streaming(tfds_fixture, shuffle=True, shuffle_buffer_size=TRAIN_RECORDS)
-
-        assert len(list(source)) == TRAIN_RECORDS
-        assert len(source) == TRAIN_RECORDS
-
-    def test_from_tfds_builds_the_stream_when_asked(self, tfds_fixture: TFDSFixture) -> None:
-        source = from_tfds(FIXTURE, "train", eager=False, data_dir=str(tfds_fixture.tfrecord))
-
-        assert isinstance(source, TFDSStreamingSource)
-
-
-def test_streaming_config_requires_a_name_and_a_split_and_one_key_filter() -> None:
-    with pytest.raises(ValueError, match="name is required"):
-        TFDSStreamingConfig(split="train")
-    with pytest.raises(ValueError, match="split is required"):
-        TFDSStreamingConfig(name="mnist")
-    with pytest.raises(ValueError, match="Cannot specify both"):
-        TFDSStreamingConfig(
-            name="mnist", split="test", include_keys={"image"}, exclude_keys={"label"}
-        )
-
-
-class TestTFDSStreamingConfigTryGcs:
-    """Tests for try_gcs field on TFDSStreamingConfig."""
-
-    def test_try_gcs_defaults_to_false(self) -> None:
-        config = TFDSStreamingConfig(name="mnist", split="train")
-        assert config.try_gcs is False
-
-    def test_try_gcs_true_accepted(self) -> None:
-        config = TFDSStreamingConfig(name="mnist", split="train", try_gcs=True)
-        assert config.try_gcs is True
-
-    def test_try_gcs_true_with_data_dir_raises(self) -> None:
-        with pytest.raises(ValueError, match="Cannot specify both try_gcs=True and data_dir"):
-            TFDSStreamingConfig(name="mnist", split="train", try_gcs=True, data_dir="/tmp/data")
-
-
-class TestTFDSStreamingConfigBeamWorkers:
-    """Tests for beam_num_workers field on TFDSStreamingConfig."""
-
-    def test_beam_num_workers_defaults_to_none(self) -> None:
-        config = TFDSStreamingConfig(name="mnist", split="train")
-        assert config.beam_num_workers is None
-
-    def test_beam_num_workers_positive_accepted(self) -> None:
-        config = TFDSStreamingConfig(name="mnist", split="train", beam_num_workers=8)
-        assert config.beam_num_workers == 8
-
-    def test_beam_num_workers_zero_raises(self) -> None:
-        with pytest.raises(ValueError, match="beam_num_workers must be a positive integer"):
-            TFDSStreamingConfig(name="mnist", split="train", beam_num_workers=0)
-
-
-# =============================================================================
-# _prepare_tfds_builder (the streaming source's), mocked
-# =============================================================================
-
-
-class TestPrepareTfdsBuilderBeamWorkers:
-    """Tests that _prepare_tfds_builder constructs beam options from beam_num_workers."""
-
-    def test_beam_options_constructed_when_workers_set(self) -> None:
-        """beam_num_workers should produce PipelineOptions in download_config."""
-        pytest.importorskip("apache_beam")
-        from unittest.mock import MagicMock, patch
-
-        from datarax.sources.tfds_source import _prepare_tfds_builder
-
-        mock_builder = MagicMock()
-
-        with (
-            patch("tensorflow_datasets.builder", return_value=mock_builder),
-            patch("datarax.sources.tfds_source._is_read_only_tfds_source", return_value=False),
-            patch("tensorflow_datasets.download.DownloadConfig") as mock_dl_config,
-        ):
-            _prepare_tfds_builder("nsynth", None, False, None, beam_num_workers=4)
-
-        assert mock_dl_config.called
-        beam_opts = mock_dl_config.call_args.kwargs.get("beam_options")
-        assert beam_opts is not None
-        dl_call_kwargs = mock_builder.download_and_prepare.call_args.kwargs
-        assert "download_config" in dl_call_kwargs
-
-    def test_no_beam_options_when_workers_none(self) -> None:
-        """No beam_options should be constructed when beam_num_workers is None."""
-        from unittest.mock import MagicMock, patch
-
-        from datarax.sources.tfds_source import _prepare_tfds_builder
-
-        mock_builder = MagicMock()
-
-        with (
-            patch("tensorflow_datasets.builder", return_value=mock_builder),
-            patch("datarax.sources.tfds_source._is_read_only_tfds_source", return_value=False),
-        ):
-            _prepare_tfds_builder("mnist", None, False, None, beam_num_workers=None)
-
-        mock_builder.download_and_prepare.assert_called_once_with()
-
-    def test_beam_options_not_constructed_for_read_only_builder(self) -> None:
-        """ReadOnlyBuilder should skip download entirely, no beam options."""
-        from unittest.mock import MagicMock, patch
-
-        from datarax.sources.tfds_source import _prepare_tfds_builder
-
-        mock_builder = MagicMock()
-
-        with (
-            patch("tensorflow_datasets.builder", return_value=mock_builder),
-            patch("datarax.sources.tfds_source._is_read_only_tfds_source", return_value=True),
-        ):
-            _prepare_tfds_builder("nsynth", None, True, None, beam_num_workers=8)
-
-        mock_builder.download_and_prepare.assert_not_called()
-
-
-class TestPrepareTfdsBuilder:
-    """Tests for the _prepare_tfds_builder helper function."""
-
-    def test_regular_builder_calls_download_and_prepare(self) -> None:
-        """Non-ReadOnlyBuilder should have download_and_prepare called."""
-        from unittest.mock import MagicMock, patch
-
-        from datarax.sources.tfds_source import _prepare_tfds_builder
-
-        mock_builder = MagicMock()
-        mock_builder.__class__ = type("RegularBuilder", (), {})  # type: ignore[reportAttributeAccessIssue]
-
-        with patch("tensorflow_datasets.builder", return_value=mock_builder) as mock_tfds_builder:
-            with patch("datarax.sources.tfds_source._is_read_only_tfds_source", return_value=False):
-                result = _prepare_tfds_builder("mnist", None, False, None)
-
-        mock_tfds_builder.assert_called_once_with("mnist", data_dir=None, try_gcs=False)
-        mock_builder.download_and_prepare.assert_called_once_with()
-        assert result is mock_builder
-
-    def test_read_only_builder_skips_download_and_prepare(self) -> None:
-        """ReadOnlyBuilder (from try_gcs) should NOT call download_and_prepare."""
-        from unittest.mock import MagicMock, patch
-
-        from datarax.sources.tfds_source import _prepare_tfds_builder
-
-        mock_builder = MagicMock()
-
-        with patch("tensorflow_datasets.builder", return_value=mock_builder) as mock_tfds_builder:
-            with patch("datarax.sources.tfds_source._is_read_only_tfds_source", return_value=True):
-                result = _prepare_tfds_builder("nsynth", None, True, None)
-
-        mock_tfds_builder.assert_called_once_with("nsynth", data_dir=None, try_gcs=True)
-        mock_builder.download_and_prepare.assert_not_called()
-        assert result is mock_builder
-
-    def test_download_kwargs_passed_through(self) -> None:
-        """download_and_prepare_kwargs should be unpacked to download_and_prepare."""
-        from unittest.mock import MagicMock, patch
-
-        from datarax.sources.tfds_source import _prepare_tfds_builder
-
-        mock_builder = MagicMock()
-        kwargs = {"download_dir": "/tmp", "max_examples_per_split": 100}
-
-        with patch("tensorflow_datasets.builder", return_value=mock_builder):
-            with patch("datarax.sources.tfds_source._is_read_only_tfds_source", return_value=False):
-                _prepare_tfds_builder("mnist", None, False, kwargs)
-
-        mock_builder.download_and_prepare.assert_called_once_with(
-            download_dir="/tmp", max_examples_per_split=100
-        )
-
-
-class TestStreamingSourceTryGcsPassthrough:
-    """Tests that TFDSStreamingSource passes try_gcs through to _prepare_tfds_builder."""
-
-    def test_try_gcs_passed_to_prepare_builder(self) -> None:
-        """try_gcs should be forwarded to _prepare_tfds_builder."""
-        from unittest.mock import MagicMock, patch
-
-        mock_builder = MagicMock()
-        mock_builder.info.splits = {"train": MagicMock(num_examples=100)}
-
-        mock_tf_dataset = MagicMock()
-        mock_tf_dataset.prefetch.return_value = mock_tf_dataset
-        mock_builder.as_dataset.return_value = mock_tf_dataset
-
-        with patch(
-            "datarax.sources.tfds_source._prepare_tfds_builder", return_value=mock_builder
-        ) as mock_prepare:
-            config = TFDSStreamingConfig(name="mnist", split="train", try_gcs=True)
-            TFDSStreamingSource(config)
-
-            mock_prepare.assert_called_once_with(
-                "mnist", None, True, None, beam_num_workers=None, local_files_only=False
-            )
