@@ -30,6 +30,7 @@ from datarax.sources.eager_source import EagerSource
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
 from datarax.sources.source_ops import resolve_wrapped_indices
+from datarax.sources.streaming_disk_source import StreamingDiskSource, StreamingDiskSourceConfig
 
 
 _TFDS_AUTO_DETECT_ERRORS = (ImportError, AttributeError, KeyError, TypeError, ValueError, OSError)
@@ -296,6 +297,9 @@ __all__ = [
     "HFEagerConfig",
     "HFStreamingSource",
     "HFStreamingConfig",
+    # The memory-mapped on-disk source
+    "StreamingDiskSource",
+    "StreamingDiskSourceConfig",
     # Factory functions
     "from_tfds",
     "from_hf",

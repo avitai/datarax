@@ -1,10 +1,16 @@
-"""Out-of-core streaming source backed by a memory-mapped numpy array.
+"""Out-of-core indexed source backed by a memory-mapped numpy array.
 
 Reads a contiguous numpy array (``.npy``) from disk via ``np.memmap`` for
-zero-copy random access, exposes a JAX-friendly ``get_records(indices)``
-that issues the disk read through ``jax.experimental.io_callback``, and
-wraps the result in ``jax.lax.stop_gradient`` so downstream gradient
-computations cannot attempt to backprop through the disk read.
+zero-copy random access. Two reads serve it:
+
+- the host read, ``get_batch(indices, *, epochs=0, contiguous=False)``, the eager sources' read
+  (:func:`~datarax.sources.eager_source.read_host_batch`): a NumPy gather of the named rows of the
+  memory map (a contiguous run as a view of it), returned as a ``Batch`` named with the given
+  words and epochs, creating no device array;
+- the traced read, ``get_records(indices)``, which issues the disk read through
+  ``jax.experimental.io_callback`` for the compiled pipeline session, and wraps the result in
+  ``jax.lax.stop_gradient`` so downstream gradient computations cannot attempt to backprop
+  through the disk read.
 
 Why ``stop_gradient`` is mandatory
 ----------------------------------
@@ -28,10 +34,13 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 from jax.experimental import io_callback
+from jax.typing import ArrayLike
 
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule, RecordIdentity
+from datarax.core.element_batch import Batch
 from datarax.core.index_words import from_words
+from datarax.sources.eager_source import read_host_batch
 from datarax.typing import DataDict
 
 
@@ -71,7 +80,11 @@ class _HostArray:
 
 
 class StreamingDiskSource(DataSourceModule):
-    """``io_callback``-backed source for arrays larger than RAM, with indexed access."""
+    """An indexed source over an on-disk array larger than RAM, read through a memory map.
+
+    ``get_batch`` reads rows on the host; ``get_records`` reads them inside a compiled program
+    through ``io_callback``.
+    """
 
     config: StreamingDiskSourceConfig  # pyright: ignore[reportIncompatibleVariableOverride]
 
@@ -131,6 +144,37 @@ class StreamingDiskSource(DataSourceModule):
         """Return per-element spec — leading dataset axis stripped."""
         leaf = jax.ShapeDtypeStruct(shape=self._element_shape, dtype=self._element_dtype)
         return {self._feature_key: leaf}
+
+    def get_batch(  # noqa: DOC502 - read_host_batch raises
+        self, indices: ArrayLike, *, epochs: ArrayLike = 0, contiguous: bool = False
+    ) -> Batch:
+        """Read the rows ``indices`` names from the memory map, as a ``Batch``, on the host.
+
+        The eager sources' host read (:func:`~datarax.sources.eager_source.read_host_batch`): one
+        NumPy gather of the named rows, the ``Batch`` named with the given words and epochs, no
+        state read or changed and no device array created. With ``contiguous=True`` the caller
+        states that ``indices`` is a run of consecutive rows, read as a view of the memory map.
+
+        Args:
+            indices: uint32 ``(n, 2)`` row indices, each as its words ``(hi, lo)``.
+            epochs: The epoch of every record, or of each ``(n,)``.
+            contiguous: Whether ``indices`` is a run of consecutive rows.
+
+        Returns:
+            ``{feature_key: rows}`` as a host ``Batch``.
+
+        Raises:
+            ValueError: If ``indices`` are not uint32 ``(n, 2)`` words, or a run declared
+                contiguous is not one.
+            IndexError: If an index is the padding index or outside the array.
+        """
+        return read_host_batch(
+            {self._feature_key: self._host.array},
+            self._length,
+            indices,
+            epochs=epochs,
+            contiguous=contiguous,
+        )
 
     def get_records(self, indices: jax.Array) -> DataDict:
         """Fetch the rows at ``indices`` from disk and return a stop_gradient'd dict.

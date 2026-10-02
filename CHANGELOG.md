@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `StreamingDiskSource.get_batch(indices, *, epochs=0, contiguous=False)`: a host read of the
+  memory map with the eager sources' signature and checks, returning a `Batch` named with the
+  given index words and epochs and creating no device array (a run declared contiguous is a
+  view of the map). The traced `get_records` still serves the compiled session.
+  `StreamingDiskSource` and `StreamingDiskSourceConfig` are exported from `datarax.sources`.
+- `datarax.sources.eager_source.read_host_batch(columns, length, indices, ...)` and
+  `host_rows(words, length)`: the one host read and row check of indexed sources whose records
+  sit in host arrays (`EagerSource` and `StreamingDiskSource` use them).
 - `datarax.sources.tfds_source.open_prepared_split(name, split, data_dir)` opens a TFDS split
   prepared as ArrayRecord through TFDS's random-access reader, reading no record and importing
   no TensorFlow, and refuses a copy that is not prepared or is prepared in another format with a
