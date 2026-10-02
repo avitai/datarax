@@ -196,9 +196,9 @@ Any other source subclasses `DataSourceModule` and declares what its record inde
    (the arrival ordinal); a source without one is refused at construction. The kind routes it: an `INDEXED` source
    implements a stateless, JAX-traceable `get_records(indices)` and the pipeline serves it
    through its compiled session; a `STREAM_IDS` or `ARRIVAL` source builds on
-   `datarax.sources.StreamingSourceBase`, implements `_open_pass(pass_index, key, size_hint)`
-   (a generator of `StreamChunk`s: host columns, provenance and ids), and is served by the
-   streaming path. An indexed source that
+   `datarax.sources.StreamingSourceBase`, implements `_open_pass(pass_index, key, read_size)`
+   (a generator of `StreamChunk`s: host columns, provenance and ids, read `read_size` records
+   at a time), and is served by the streaming path. An indexed source that
    partitions or mixes records also overrides `record_indices_at(start, size, key)` to return
    the stable index of the record at each position of the order the key selects (the
    sequential order when the key is `None`), uint32 `(size, 2)` with each 64-bit index as its

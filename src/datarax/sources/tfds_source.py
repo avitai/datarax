@@ -10,11 +10,13 @@ columns once, through the path every eager source shares.
 - Ideal for: MNIST, CIFAR-10, Fashion-MNIST, small custom datasets
 
 **TFDSStreamingSource** streams a split TFDS has prepared as TFRecord (TFDS's default format), for
-datasets too large for host memory: Grain's TFRecord reader frames the records and TFDS's NumPy
-decoder decodes them. Records are named by the id TFDS reports for them, ``tfds_id``: the shard
-file and the record's offset in it (``STREAM_IDS``). Given the pipeline's key, a pass is ordered as
-TFDS's training read orders it: the shard files in a keyed order, read 16 at a time in blocks of
-16, through tf.data's buffer shuffle.
+datasets too large for host memory. An index of each shard file, built once from its frame headers,
+gives every record's byte offset; a pass's order is computed over record ids, each record's payload
+is read at its offset and checked against its CRC, and TFDS's NumPy decoder decodes it last.
+Records are named by the id TFDS reports for them, ``tfds_id``: the shard file and the record's
+offset in it (``STREAM_IDS``). Given the pipeline's key, a pass is ordered as TFDS's training read
+orders it: the shard files in a keyed order, read 16 at a time in blocks of 16, through tf.data's
+buffer shuffle, the buffer holding record ids.
 
 TensorFlow is never imported: TensorFlow in a JAX process breaks JAX's NCCL collectives. Neither
 source prepares a dataset, because preparing imports TensorFlow: a split that is not prepared, or
@@ -838,9 +840,11 @@ class _TFDSStreamIterator(grain.DatasetIterator):
 class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
     """A TFDS split prepared as TFRecord, streamed without TensorFlow, named by ``tfds_id``.
 
-    Each pass reads the split's shard files with Grain's TFRecord reader and decodes each record
-    with TFDS's NumPy decoder: numeric features become host NumPy columns, text and other objects
-    the record's provenance, beside the batch. A record is named by the id TFDS reports for it,
+    An offset index of each shard file is built once from its frame headers. Each pass computes
+    its order over record ids, reads each record's payload at its offset, checks the frame's CRCs
+    as tf.data's TFRecord reader does, and decodes it last with TFDS's NumPy decoder: numeric
+    features become host NumPy columns, text and other objects the record's provenance, beside
+    the batch. A record is named by the id TFDS reports for it,
     ``tfds_id``: its shard file and its offset in the file, as the two words ``(shard, offset)``
     (``STREAM_IDS``), where the shard is the file's place among the dataset's files in name order
     (:attr:`shard_files`). A slice names its records as the full split does.
@@ -848,9 +852,9 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
     The order is the pipeline's to choose. Without its key a pass reads the files in order. With
     it, pass ``p`` is ordered as TFDS's training read (``shuffle_files=True`` and
     ``shuffle(shuffle_buffer_size)``) orders an epoch: the files in a keyed order, interleaved 16 at
-    a time in blocks of 16, through tf.data's buffer shuffle on the serialized records, every draw
-    from a NumPy Philox generator keyed by ``fold_in(key, p)``. The buffer holds
-    ``shuffle_buffer_size`` serialized records in host memory.
+    a time in blocks of 16, through tf.data's buffer shuffle, every draw from a NumPy Philox
+    generator keyed by ``fold_in(key, p)``. The buffer holds ``shuffle_buffer_size`` record ids
+    (a shard position and an offset each), not records: a record is read only when served.
 
     A record's provenance is also looked up by its id, ``provenance(indices)``, reading the record
     again at its offset. TensorFlow is never imported. The source never prepares a dataset:

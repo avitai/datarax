@@ -10,12 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `datarax.sources.StreamingSourceBase` (public) and `StreamChunk`: the base every stream
-  builds on. A subclass reads one pass in its order (`_open_pass(pass_index, key, size_hint)`, a
+  builds on. A subclass reads one pass in its order (`_open_pass(pass_index, key, read_size)`, a
   generator of host columns, provenance and ids); the base serves
-  `get_batch(batch_size, *, key=None, with_provenance=False)`, a host `Batch` named by the
-  stream (`STREAM_IDS`: the ids it reports as two words; `ARRIVAL`: arrival ordinals, never
-  reset), `epochs` the pass from 0, an empty `Batch` at a pass's end, and with
-  `with_provenance=True` the records' strings and objects beside it. Where a stream is lives in a
+  `get_batch(batch_size, *, key=None, with_provenance=False, read_size=None)`, a host `Batch`
+  named by the stream (`STREAM_IDS`: the ids it reports as two words; `ARRIVAL`: arrival
+  ordinals, never reset), `epochs` the pass from 0, an empty `Batch` at a pass's end, and with
+  `with_provenance=True` the records' strings and objects beside it. A pass is read `read_size`
+  records at a time, the pipeline's batch size, whatever a pull asks for. An error raised while
+  a pass is read reaches the pull that met it, and later pulls are refused naming it until
+  `reset()`. `clone()` gives a stream between passes a position of its own; a stream in the
+  middle of a pass refuses it. Where a stream is lives in a
   host holder outside NNX state, so no Variable holds a Python value and the graph definition
   does not move as it advances. `element_spec()` is the first record's array part as the device
   holds it. A pass's reader stopped midway is closed by `reset()`, when the stream is collected,
@@ -100,15 +104,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an indexed source (a pass's short tail is dropped or completed from the next pass's head; a
   stream used to ignore both and serve one pass), checks each batch against the declared spec
   as the device will hold it, and runs the DAG over the stream's `Batch`.
-- **`TFDSStreamingSource` streams a TFRecord copy without TensorFlow.** Grain's TFRecord reader
-  frames the records and TFDS's NumPy decoder decodes them; records are named by `tfds_id`
+- **`TFDSStreamingSource` streams a TFRecord copy without TensorFlow.** An offset index of each
+  shard file, built once from its frame headers, locates every record; each payload is read at
+  its offset, checked against the frame's CRCs as tf.data checks them (a damaged frame raises
+  `DamagedRecordError`, naming the file and record; `google-crc32c` joins the `data` extra), and
+  decoded by TFDS's NumPy decoder; records are named by `tfds_id`
   (shard, offset) and their text is provenance, served beside the batch and looked up by id
   (`provenance(indices)`). A shuffling pipeline orders each pass as TFDS's training read does:
   the shard files in a keyed order, interleaved 16 at a time in blocks of 16, then tf.data's
   buffer shuffle of `shuffle_buffer_size` records, every draw from a NumPy Philox generator keyed
-  by `fold_in(key, pass)`; the order is computed over record ids, and each record's payload is
-  read once, at its offset in a header-only index of the shard files. A copy prepared as ArrayRecord is refused, naming
-  `TFDSEagerSource`; an unprepared copy is refused naming the call that prepares a TFRecord copy.
+  by `fold_in(key, pass)`; the order is computed over record ids, so the buffer holds ids, not
+  records, and each record's payload is read once. A record offset an id cannot hold is refused
+  when the source is built. A copy prepared as ArrayRecord is refused, naming `TFDSEagerSource`; an unprepared copy is refused naming the call that prepares a TFRecord copy.
   A pass is a Grain `IterDataset` of decoded batches (`TFDSStreamingSource.pass_dataset`,
   `TFDSStreamDataset`) that pickles with its offset index and implements Grain's `set_slice`:
   each of k worker processes computes the same order over ids and reads and decodes only its own

@@ -1,13 +1,13 @@
 """The TFDS stream: a TFRecord copy read without TensorFlow, named by ``tfds_id`` (C5b).
 
-``TFDSStreamingSource`` reads a split TFDS prepared as TFRecord (TFDS's default format) with Grain's
-TFRecord reader and decodes each record with TFDS's NumPy decoder, so TensorFlow never enters the
-process. It names each record ``(shard, offset)``, the id TFDS reports as ``tfds_id``
-(``STREAM_IDS``). With the pipeline's key a pass is ordered as TFDS's documented training read
-orders it: the shard files in a keyed order, interleaved 16 at a time in blocks of 16, then
-tf.data's buffer shuffle, its picks drawn from a generator keyed by ``fold_in(key, pass)``. A copy
-prepared as ArrayRecord is refused, naming the eager source. ``from_tfds`` picks the source by the
-format the copy is prepared in.
+``TFDSStreamingSource`` reads a split TFDS prepared as TFRecord (TFDS's default format) by an offset
+index of its frame headers, checks each frame's CRCs and decodes each record with TFDS's NumPy
+decoder, so TensorFlow never enters the process. It names each record ``(shard, offset)``, the id
+TFDS reports as ``tfds_id`` (``STREAM_IDS``). With the pipeline's key a pass is ordered as TFDS's
+documented training read orders it: the shard files in a keyed order, interleaved 16 at a time in
+blocks of 16, then tf.data's buffer shuffle, its picks drawn from a generator keyed by
+``fold_in(key, pass)``. A copy prepared as ArrayRecord is refused, naming the eager source.
+``from_tfds`` picks the source by the format the copy is prepared in.
 """
 
 from __future__ import annotations
