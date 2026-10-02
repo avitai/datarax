@@ -74,8 +74,8 @@ Key parameters:
 The order records are served in belongs to the pipeline: `Pipeline(shuffle=True)` shuffles
 every epoch, reproducibly from the pipeline's `rngs`.
 
-For datasets too large to download, `HFStreamingSource` with `HFStreamingConfig(streaming=True)`
-reads records on the fly (see the HuggingFace tutorial).
+For datasets too large to download, `HFStreamingSource` (`from_hf(name, split, streaming=True)`)
+streams records with HuggingFace's streaming mode (see the HuggingFace tutorial).
 """
 
 # %%

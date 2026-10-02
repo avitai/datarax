@@ -1,0 +1,391 @@
+"""The TFDS stream: a TFRecord copy read without TensorFlow, named by ``tfds_id`` (C5b).
+
+``TFDSStreamingSource`` reads a split TFDS prepared as TFRecord (TFDS's default format) with Grain's
+TFRecord reader and decodes each record with TFDS's NumPy decoder, so TensorFlow never enters the
+process. It names each record ``(shard, offset)``, the id TFDS reports as ``tfds_id``
+(``STREAM_IDS``). With the pipeline's key a pass is ordered as TFDS's documented training read
+orders it: the shard files in a keyed order, interleaved 16 at a time in blocks of 16, then
+tf.data's buffer shuffle, its picks drawn from a generator keyed by ``fold_in(key, pass)``. A copy
+prepared as ArrayRecord is refused, naming the eager source. ``from_tfds`` picks the source by the
+format the copy is prepared in.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+import jax
+import numpy as np
+import pytest
+from substrax.testing import run_python
+
+from datarax.core.data_source import RecordIdentity
+from datarax.core.element_batch import Batch, PADDING_INDEX
+from datarax.sources import (
+    from_tfds,
+    tfds_source,
+    TFDSEagerSource,
+    TFDSStreamingConfig,
+    TFDSStreamingSource,
+)
+from tests.jax_test_environment import forwarded_jax_environment
+from tests.test_common.tfds_fixture import FIXTURE, IMAGE_SHAPE, TFDSFixture, TRAIN_RECORDS
+
+
+pytestmark = pytest.mark.tfds
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_CHILD_SECONDS = 300.0
+
+# tf.data's own read of the TFRecord copy with tfds_id, files in order: the oracle of names.
+_TFDATA_ORACLE = """
+import hashlib, json, sys
+import tensorflow as tf
+tf.config.set_visible_devices([], "GPU")
+import tensorflow_datasets as tfds
+builder = tfds.builder(sys.argv[1], data_dir=sys.argv[2])
+config = tfds.ReadConfig(add_tfds_id=True, interleave_cycle_length=1)
+rows = [
+    [r["tfds_id"].decode(), hashlib.sha256(r["image"].tobytes()).hexdigest(), int(r["label"]),
+     r["name"].decode()]
+    for r in tfds.as_numpy(builder.as_dataset(split=sys.argv[3], read_config=config))
+]
+print(json.dumps(rows))
+"""
+
+
+def _oracle(fixture: TFDSFixture, split: str = "train") -> list[list[Any]]:
+    result = run_python(
+        _TFDATA_ORACLE,
+        FIXTURE,
+        str(fixture.tfrecord),
+        split,
+        timeout=_CHILD_SECONDS,
+        env=forwarded_jax_environment(os.environ),
+        cwd=_REPO_ROOT,
+    )
+    return json.loads(result.check().stdout.strip().splitlines()[-1])
+
+
+@pytest.fixture(scope="module")
+def oracle(tfds_fixture: TFDSFixture) -> list[list[Any]]:
+    return _oracle(tfds_fixture)
+
+
+def _stream(fixture: TFDSFixture, split: str = "train", **kwargs: Any) -> TFDSStreamingSource:
+    return TFDSStreamingSource(
+        TFDSStreamingConfig(name=FIXTURE, split=split, data_dir=str(fixture.tfrecord), **kwargs)
+    )
+
+
+def _pass(
+    source: TFDSStreamingSource, size: int = 6, key: jax.Array | None = None
+) -> tuple[list[Batch], list[Any]]:
+    batches, provenance = [], []
+    while True:
+        batch, sidecar = source.get_batch(size, key=key, with_provenance=True)
+        if not batch.batch_size:
+            return batches, provenance
+        batches.append(batch)
+        provenance.extend(sidecar)
+
+
+def _tfds_ids(source: TFDSStreamingSource, batches: list[Batch]) -> list[str]:
+    words = np.concatenate([np.asarray(b.indices) for b in batches])
+    return [f"{source.shard_files[int(hi)]}__{int(lo)}" for hi, lo in words]
+
+
+def _rows(
+    source: TFDSStreamingSource, batches: list[Batch], provenance: list[Any]
+) -> list[list[Any]]:
+    images = np.concatenate([b["image"] for b in batches])
+    labels = np.concatenate([b["label"] for b in batches])
+    return [
+        [tfds_id, hashlib.sha256(image.tobytes()).hexdigest(), int(label), record["name"].decode()]
+        for tfds_id, image, label, record in zip(
+            _tfds_ids(source, batches), images, labels, provenance, strict=True
+        )
+    ]
+
+
+class TestNamesAndRecords:
+    def test_records_and_names_equal_tf_data_s_tfds_id_read(
+        self, tfds_fixture: TFDSFixture, oracle: list[list[Any]]
+    ) -> None:
+        source = _stream(tfds_fixture)
+
+        batches, provenance = _pass(source)
+
+        assert source.record_identity is RecordIdentity.STREAM_IDS
+        assert _rows(source, batches, provenance) == oracle
+
+    def test_a_slice_names_its_records_as_the_full_split_does(
+        self, tfds_fixture: TFDSFixture, oracle: list[list[Any]]
+    ) -> None:
+        source = _stream(tfds_fixture, "train[10:20]")
+
+        batches, provenance = _pass(source)
+
+        assert len(source) == 10
+        assert _rows(source, batches, provenance) == oracle[10:20]
+
+    def test_a_record_is_a_host_batch_row_with_its_text_beside_it(
+        self, tfds_fixture: TFDSFixture, oracle: list[list[Any]]
+    ) -> None:
+        batch, provenance = _stream(tfds_fixture).get_batch(4, with_provenance=True)
+
+        assert batch["image"].shape == (4, *IMAGE_SHAPE)
+        assert batch["image"].dtype == np.uint8
+        assert batch["label"].dtype == np.int64
+        assert batch["meta"]["score"].shape == (4, 2)
+        assert "name" not in batch
+        assert [p["name"].decode() for p in provenance] == [row[3] for row in oracle[:4]]
+        assert all(isinstance(leaf, np.ndarray) for leaf in jax.tree.leaves(batch))
+
+    def test_an_offset_past_the_word_is_refused_naming_the_shard(
+        self, tfds_fixture: TFDSFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(tfds_source, "_LARGEST_OFFSET", 3)
+
+        with pytest.raises(ValueError, match=r"tfrecord-00000-of-00001.*offset 4"):
+            _pass(_stream(tfds_fixture))
+
+    def test_supervised_keys_and_key_filters(self, tfds_fixture: TFDSFixture) -> None:
+        supervised = _stream(tfds_fixture, as_supervised=True).get_batch(2)
+        included = _stream(tfds_fixture, include_keys={"label"}).get_batch(2)
+
+        assert set(supervised.data) == {"image", "label"}
+        assert set(included.data) == {"label"}
+
+    def test_the_spec_is_the_first_record_s_array_part(self, tfds_fixture: TFDSFixture) -> None:
+        spec = _stream(tfds_fixture).element_spec()
+
+        assert spec["image"] == jax.ShapeDtypeStruct(IMAGE_SHAPE, np.uint8)
+        assert spec["label"] == jax.ShapeDtypeStruct((), np.int32)
+        assert "name" not in spec
+
+
+class TestTheOrder:
+    def test_without_a_key_every_pass_reads_the_files_in_order(
+        self, tfds_fixture: TFDSFixture
+    ) -> None:
+        source = _stream(tfds_fixture)
+
+        first, second = _pass(source)[0], _pass(source)[0]
+
+        words = np.concatenate([np.asarray(b.indices) for b in first])
+        assert _tfds_ids(source, first) == _tfds_ids(source, second)
+        assert source.shard_files[int(words[0, 0])].endswith("train.tfrecord-00000-of-00001")
+        assert len(set(words[:, 0].tolist())) == 1
+        assert words[:, 1].tolist() == list(range(TRAIN_RECORDS))
+        assert [int(e) for b in second for e in b.epochs] == [1] * TRAIN_RECORDS
+
+    def test_the_key_orders_each_pass_reproducibly(self, tfds_fixture: TFDSFixture) -> None:
+        key = jax.random.key(11)
+
+        def passes(seed_key: jax.Array) -> list[list[str]]:
+            source = _stream(tfds_fixture, shuffle_buffer_size=8)
+            return [_tfds_ids(source, _pass(source, key=seed_key)[0]) for _ in range(3)]
+
+        orders = passes(key)
+
+        assert orders == passes(key)
+        assert passes(jax.random.key(12)) != orders
+        assert len({tuple(order) for order in orders}) == 3
+        assert all(sorted(order) == sorted(orders[0]) for order in orders)
+        assert len(orders[0]) == TRAIN_RECORDS
+
+    def test_the_stream_config_has_no_shuffle_or_preparation_field(self) -> None:
+        for field in (
+            "shuffle",
+            "try_gcs",
+            "download_and_prepare_kwargs",
+            "beam_num_workers",
+            "prefetch_buffer",
+            "local_files_only",
+        ):
+            with pytest.raises(TypeError):
+                TFDSStreamingConfig(name=FIXTURE, split="train", **{field: True})  # type: ignore[arg-type]
+
+
+class TestProvenanceByIdentity:
+    def test_provenance_by_index_equals_the_sidecar_of_the_pull(
+        self, tfds_fixture: TFDSFixture
+    ) -> None:
+        source = _stream(tfds_fixture, shuffle_buffer_size=8)
+        batches, sidecar = _pass(source, key=jax.random.key(2))
+
+        looked_up = [p for b in batches for p in source.provenance(b.indices)]
+
+        assert [dict(p) for p in looked_up] == [dict(p) for p in sidecar]
+
+    def test_record_keys_are_the_batch_s_indices(self, tfds_fixture: TFDSFixture) -> None:
+        source = _stream(tfds_fixture)
+        batch = source.get_batch(3)
+
+        np.testing.assert_array_equal(source.record_keys(batch), batch.indices)
+
+    @pytest.mark.parametrize(
+        ("words", "match"),
+        [
+            (np.asarray([PADDING_INDEX]), "padding"),
+            (np.asarray([[0, TRAIN_RECORDS]], np.uint32), "offset"),
+            (np.asarray([[99, 0]], np.uint32), "shard"),
+        ],
+        ids=["padding", "past-the-shard", "no-such-shard"],
+    )
+    def test_ids_naming_no_record_are_refused(
+        self, tfds_fixture: TFDSFixture, words: np.ndarray, match: str
+    ) -> None:
+        with pytest.raises(IndexError, match=match):
+            _stream(tfds_fixture).provenance(words)
+
+
+class TestTheCopyTheStreamReads:
+    def test_an_array_record_copy_is_refused_naming_the_eager_source(
+        self, tfds_fixture: TFDSFixture
+    ) -> None:
+        config = TFDSStreamingConfig(
+            name=FIXTURE, split="train", data_dir=str(tfds_fixture.array_record)
+        )
+
+        with pytest.raises(FileNotFoundError, match="TFDSEagerSource") as refused:
+            TFDSStreamingSource(config)
+        assert "array_record" in str(refused.value)
+        assert "host stage" in str(refused.value)
+
+    def test_a_copy_not_prepared_is_refused_naming_the_preparing_call(self, tmp_path: Path) -> None:
+        config = TFDSStreamingConfig(name=FIXTURE, split="train", data_dir=str(tmp_path))
+
+        with pytest.raises(FileNotFoundError, match="file_format='tfrecord'"):
+            TFDSStreamingSource(config)
+
+    def test_from_tfds_picks_the_source_by_the_prepared_format(
+        self, tfds_fixture: TFDSFixture
+    ) -> None:
+        eager = from_tfds(FIXTURE, "train", data_dir=str(tfds_fixture.array_record))
+        stream = from_tfds(FIXTURE, "train", data_dir=str(tfds_fixture.tfrecord))
+
+        assert isinstance(eager, TFDSEagerSource)
+        assert isinstance(stream, TFDSStreamingSource)
+        assert stream.get_batch(2).batch_size == 2
+
+    def test_from_tfds_takes_no_eager_argument(self, tfds_fixture: TFDSFixture) -> None:
+        with pytest.raises(TypeError):
+            from_tfds(FIXTURE, "train", eager=False, data_dir=str(tfds_fixture.tfrecord))  # type: ignore[call-arg]
+
+    def test_from_tfds_over_nothing_prepared_names_the_preparing_call(self, tmp_path: Path) -> None:
+        with pytest.raises(FileNotFoundError, match="file_format='array_record'"):
+            from_tfds(FIXTURE, "train", data_dir=str(tmp_path))
+
+
+# Builds a stream over the TFRecord copy, reads a shuffled pass, looks provenance up and runs a
+# pipeline over it; prints whether TensorFlow is in the process after each stage.
+_STREAM_WITHOUT_TENSORFLOW = """
+import json, sys
+if "--import-tensorflow" in sys.argv:
+    import tensorflow
+import jax
+from flax import nnx
+seen = {}
+from datarax.pipeline import Pipeline
+from datarax.sources import TFDSStreamingConfig, TFDSStreamingSource
+source = TFDSStreamingSource(TFDSStreamingConfig(name=NAME, split="train", data_dir=sys.argv[1]))
+seen["construct"] = "tensorflow" in sys.modules
+batch = source.get_batch(8, key=jax.random.key(0))
+seen["read"] = "tensorflow" in sys.modules
+source.provenance(batch.indices)
+seen["provenance"] = "tensorflow" in sys.modules
+source.reset()
+served = sum(b.batch_size for b in Pipeline(source=source, stages=[], batch_size=4,
+                                             rngs=nnx.Rngs(0), shuffle=True, num_epochs=2))
+seen["pipeline"] = "tensorflow" in sys.modules
+print(json.dumps({"served": served, "seen": seen}))
+"""
+
+
+@pytest.mark.parametrize("control", [False, True], ids=["stream", "control-imports-tensorflow"])
+def test_the_stream_never_imports_tensorflow(tfds_fixture: TFDSFixture, control: bool) -> None:
+    result = run_python(
+        _STREAM_WITHOUT_TENSORFLOW.replace("NAME", repr(FIXTURE)),
+        str(tfds_fixture.tfrecord),
+        *(["--import-tensorflow"] if control else []),
+        timeout=_CHILD_SECONDS,
+        env=forwarded_jax_environment(os.environ),
+        cwd=_REPO_ROOT,
+    )
+
+    report = json.loads(result.check().stdout.strip().splitlines()[-1])
+    assert report["served"] == 2 * TRAIN_RECORDS
+    assert set(report["seen"].values()) == {control}
+
+
+class TestThePassDatasetForWorkers:
+    """The pass is a Grain dataset that worker processes can split without changing its order."""
+
+    @staticmethod
+    def _batches(dataset: Any) -> list[tuple[list[int], bytes]]:
+        return [
+            (ids.tolist(), hashlib.sha256(columns["image"].tobytes()).digest())
+            for columns, _, ids in dataset
+        ]
+
+    @pytest.mark.parametrize("slices", [2, 4, 8])
+    def test_slices_interleaved_round_robin_are_the_unsliced_pass(
+        self, tfds_fixture: TFDSFixture, slices: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source = _stream(tfds_fixture, shuffle_buffer_size=8)
+        key = jax.random.key(4)
+        whole = self._batches(source.pass_dataset(1, key, 2))
+        decoded: list[int] = []
+        decode = tfds_source._decoded_batch
+
+        def counting(features: Any, frames: Any, read: Any) -> Any:
+            decoded.append(len(frames))
+            return decode(features, frames, read)
+
+        monkeypatch.setattr(tfds_source, "_decoded_batch", counting)
+        parts = []
+        for i in range(slices):
+            dataset = source.pass_dataset(1, key, 2)
+            dataset.set_slice(slice(i, None, slices))
+            parts.append(self._batches(dataset))
+        interleaved = [
+            part[j] for j in range(max(map(len, parts))) for part in parts if j < len(part)
+        ]
+
+        assert interleaved == whole
+        assert len(decoded) == len(whole)  # each batch decoded by one slice only
+
+    def test_a_sequential_slice_is_refused(self, tfds_fixture: TFDSFixture) -> None:
+        dataset = _stream(tfds_fixture).pass_dataset(0, None, 2)
+
+        with pytest.raises(ValueError, match="strides"):
+            dataset.set_slice(slice(0, None, 2), sequential_slice=True)
+
+    def test_the_pass_dataset_pickles_and_reads_the_same_batches(
+        self, tfds_fixture: TFDSFixture
+    ) -> None:
+        import cloudpickle  # noqa: PLC0415 - Grain's process prefetch pickles with it
+
+        dataset = _stream(tfds_fixture, shuffle_buffer_size=8).pass_dataset(0, jax.random.key(9), 4)
+        copy = cloudpickle.loads(cloudpickle.dumps(dataset))
+
+        assert self._batches(copy) == self._batches(dataset)
+
+    def test_iterators_started_together_in_threads_read_the_same_batches(
+        self, tfds_fixture: TFDSFixture
+    ) -> None:
+        from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+
+        dataset = _stream(tfds_fixture, shuffle_buffer_size=8).pass_dataset(0, jax.random.key(9), 4)
+        reference = self._batches(dataset)
+
+        with ThreadPoolExecutor(8) as pool:
+            results = list(pool.map(lambda _: self._batches(dataset), range(8)))
+
+        assert all(result == reference for result in results)

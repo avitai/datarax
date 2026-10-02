@@ -1,46 +1,41 @@
-"""HuggingFace Datasets data source implementation for Datarax.
+"""HuggingFace Datasets sources for Datarax.
 
-This module provides two distinct source types optimized for different use cases:
-
-**HFEagerSource**: For small/medium datasets that fit in host memory
+**HFEagerSource** reads a map-style dataset whole, for datasets that fit in host memory:
 - Loads ALL data at initialization: array columns as host NumPy, text and objects as provenance
 - No HuggingFace work during training: reads are NumPy gathers
 - Holds no iteration state; the pipeline owns the order and position
 - Ideal for: MNIST, CIFAR-10, sentiment datasets, small custom datasets
 
-**HFStreamingSource**: For large datasets that don't fit in memory
-- Thin wrapper around HuggingFace dataset iterator
-- Supports HuggingFace's built-in streaming mode
-- Trade-offs: External iterator state, can't checkpoint mid-epoch
+**HFStreamingSource** streams a dataset with HuggingFace's streaming mode
+(``load_dataset(..., streaming=True)``), for datasets too large to hold:
+- Batched NumPy reads; array columns in their features' dtypes, text and objects as provenance
+  beside each batch
+- Records named by arrival; the pipeline's seed orders each pass through HF's buffer shuffle
 - Ideal for: The Pile, C4, large-scale datasets, memory-constrained environments
-
-Architecture Insight:
-    The separation between eager and streaming follows the same pattern as TFDS,
-    ensuring consistent behavior across data backends while optimizing for each
-    use case's specific requirements.
 """
 
 from __future__ import annotations
 
 import gc
 import logging
-from collections.abc import Collection, Iterator
+from collections.abc import Collection, Iterator, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
+import jax
 import numpy as np
-from flax import nnx
 
-from datarax.core.data_source import RecordIdentity
+from datarax.core.data_source import NO_PROVENANCE, RecordIdentity
 from datarax.sources._config_base import SourceConfigBase
-from datarax.sources._conversion import hf_to_jax
-from datarax.sources._source_base import DatasetSourceMixin, StreamingSourceBase
-from datarax.sources.eager_source import EagerSource, HostValue, is_array_leaf, stack_records
-from datarax.sources.source_ops import (
-    converted_filtered_record,
-    validate_eager_source_settings,
-    validate_streaming_source_settings,
+from datarax.sources._source_base import (
+    DatasetSourceMixin,
+    key_integer,
+    StreamChunk,
+    StreamingSourceBase,
 )
+from datarax.sources.eager_source import EagerSource, HostValue, is_array_leaf, stack_records
+from datarax.sources.source_ops import validate_source_settings
 
 
 logger = logging.getLogger(__name__)
@@ -142,6 +137,33 @@ def _hf_column_parts(key: str, values: Any) -> tuple[np.ndarray | None, list[Any
     return None, list(values)
 
 
+def _hf_parts(
+    loaded: Mapping[str, Any], size: int
+) -> tuple[dict[str, np.ndarray], tuple[dict[str, Any], ...]]:
+    """Numpy-formatted HF columns as host array columns and one provenance mapping per record.
+
+    Args:
+        loaded: Column name to the column as HF's numpy format gives it.
+        size: The records the columns hold.
+
+    Returns:
+        The array columns, and one mapping per record of its non-array columns (empty when
+        every column is an array).
+    """
+    columns: dict[str, np.ndarray] = {}
+    provenance_columns: dict[str, list[Any]] = {}
+    for key, values in loaded.items():
+        column, provenance = _hf_column_parts(key, values)
+        if column is not None:
+            columns[key] = column
+        else:
+            provenance_columns[key] = provenance or []
+    provenance_records = tuple(
+        {key: values[row] for key, values in provenance_columns.items()} for row in range(size)
+    )
+    return columns, provenance_records if provenance_columns else ()
+
+
 @dataclass(frozen=True)
 class HFEagerConfig(SourceConfigBase):
     """Configuration for HFEagerSource (loads all data into host columns at init).
@@ -169,15 +191,12 @@ class HFEagerConfig(SourceConfigBase):
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
-        validate_eager_source_settings(self, "HFEagerConfig")
+        validate_source_settings(self, "HFEagerConfig")
 
 
 @dataclass(frozen=True)
 class HFStreamingConfig(SourceConfigBase):
-    """Configuration for HFStreamingSource (streams data from HF dataset).
-
-    Use this for datasets too large to fit in memory or when using HuggingFace's
-    built-in streaming mode for efficient data loading.
+    """Configuration for HFStreamingSource (streams a dataset with HF's streaming mode).
 
     Args:
         name: Name of the dataset in HuggingFace Hub (required)
@@ -186,24 +205,33 @@ class HFStreamingConfig(SourceConfigBase):
             loaded (``datasets.load_dataset``'s ``data_dir``), not a storage location
         cache_dir: Optional folder where downloaded files are cached (``load_dataset``'s
             ``cache_dir``; the Hugging Face default when ``None``)
-        streaming: Whether to use HuggingFace streaming mode (default: False)
-        shuffle: Whether to shuffle the dataset
-        shuffle_buffer_size: Buffer size for shuffling in streaming mode (default: 1000)
+        shuffle_buffer_size: Records HF's shuffle buffer holds when the pipeline shuffles
         download_kwargs: Optional keyword arguments for load_dataset
         include_keys: Optional set of keys to include in output
         exclude_keys: Optional set of keys to exclude from output
+
+    Note:
+        Whether a pass is shuffled, and by which seed, is the pipeline's
+        (``Pipeline(shuffle=...)``). A map-style dataset is read by ``HFEagerSource``.
     """
 
-    streaming: bool = False
-    shuffle: bool = False
     shuffle_buffer_size: int = 1000
     cache_dir: str | None = None
     download_kwargs: dict[str, Any] | None = None
     local_files_only: bool = False
 
     def __post_init__(self) -> None:
-        """Validate configuration after initialization."""
-        validate_streaming_source_settings(self, "HFStreamingConfig")
+        """Validate configuration after initialization.
+
+        Raises:
+            ValueError: If the name, split or key filters are invalid, or the buffer holds no
+                record.
+        """
+        validate_source_settings(self, "HFStreamingConfig")
+        if self.shuffle_buffer_size < 1:
+            raise ValueError(
+                f"shuffle_buffer_size must be at least 1; got {self.shuffle_buffer_size}"
+            )
 
 
 # =============================================================================
@@ -329,56 +357,57 @@ class HFEagerSource(DatasetSourceMixin, EagerSource):
 
         # The numpy format decodes and stacks each column once, so a numeric column is one
         # NumPy array, read without per-row work.
-        loaded = dataset.select_columns(keys).with_format("numpy")[:]
-        columns: dict[str, np.ndarray] = {}
-        provenance_columns: dict[str, list[Any]] = {}
-        for key, values in loaded.items():
-            column, provenance = _hf_column_parts(key, values)
-            if column is not None:
-                columns[key] = column
-            else:
-                provenance_columns[key] = provenance or []
-        provenance_records = tuple(
-            {key: values[row] for key, values in provenance_columns.items()}
-            for row in range(len(dataset))
-        )
-        return columns, provenance_records if provenance_columns else ()
+        return _hf_parts(dataset.select_columns(keys).with_format("numpy")[:], len(dataset))
 
 
 # =============================================================================
-# HFStreamingSource - Thin Wrapper for Large Datasets
+# HFStreamingSource - Streams with HuggingFace's Streaming Mode
 # =============================================================================
+
+
+def _feature_dtypes(features: Any, keys: Collection[str]) -> dict[str, np.dtype]:
+    """The NumPy dtype each array feature declares, which HF's numpy format may widen.
+
+    HF's numpy formatter returns an ``Array3D(dtype="uint8")`` column as int64; the declared dtype
+    is the column's.
+    """
+    dtypes: dict[str, np.dtype] = {}
+    for key in keys:
+        dtype = getattr(features.get(key) if features else None, "dtype", None)
+        try:
+            resolved = np.dtype(dtype) if dtype is not None else None
+        except TypeError:  # a feature dtype NumPy does not name, such as "string"
+            resolved = None
+        if resolved is not None and resolved.kind in "biuf":
+            dtypes[key] = resolved
+    return dtypes
 
 
 class HFStreamingSource(StreamingSourceBase):
-    """Streaming HuggingFace source for large datasets.
+    """A HuggingFace dataset streamed with HF's streaming mode, records named by arrival.
 
-    Thin wrapper around HuggingFace dataset for data that can't fit in memory.
-    Supports HuggingFace's native streaming mode for efficient large-scale data loading.
+    The dataset is loaded with ``load_dataset(..., streaming=True)``; a map-style dataset is
+    ``HFEagerSource``'s. Each pass reads batched NumPy columns (``with_format("numpy").iter``):
+    an array column becomes a host NumPy column in its feature's dtype, text and other objects
+    the records' provenance, beside the batch. A HuggingFace stream reports no record ids, so
+    records are named by their arrival ordinal, never reset (``ARRIVAL``), and lookups by record
+    (``provenance(indices)``, ``record_keys``) are refused.
 
-    Key Features:
-        - Native HuggingFace streaming support
-        - Automatic PIL Image to JAX array conversion
-        - include_keys/exclude_keys filtering
-        - Revision pinning for security (B615)
-
-    Trade-offs vs Eager:
-        - Cannot checkpoint mid-epoch (external iterator state)
-        - Use with prefetch_to_device() for best results
+    The order is the pipeline's to choose: without its key a pass serves the dataset's order;
+    with it, HF's buffer shuffle (``IterableDataset.shuffle(seed, buffer_size)``) is seeded from
+    the key, and ``set_epoch(pass)`` gives each pass its own order.
 
     Example:
         ```python
-        # Create streaming source for large dataset
-        config = HFStreamingConfig(name="allenai/c4", split="train", streaming=True)
-        source = HFStreamingSource(config, rngs=nnx.Rngs(0))
-
-        # Iterate with prefetching
-        for batch in prefetch_to_device(source, size=2):
+        source = HFStreamingSource(HFStreamingConfig(name="allenai/c4", split="train",
+                                                     download_kwargs={"name": "en"}))
+        pipeline = Pipeline(source=source, stages=[tokenize], batch_size=64, rngs=nnx.Rngs(0),
+                            shuffle=True, num_epochs=None)
+        for batch in pipeline:
             train_step(batch)
         ```
     """
 
-    # Narrow config type for pyright (base stores via nnx.static)
     config: HFStreamingConfig  # pyright: ignore[reportIncompatibleVariableOverride]
 
     @property
@@ -386,18 +415,11 @@ class HFStreamingSource(StreamingSourceBase):
         """A HuggingFace stream reports no record ids, so a record is named by its arrival."""
         return RecordIdentity.ARRIVAL
 
-    def __init__(
-        self,
-        config: HFStreamingConfig,
-        *,
-        rngs: nnx.Rngs | None = None,
-        name: str | None = None,
-    ) -> None:
-        """Initialize HFStreamingSource.
+    def __init__(self, config: HFStreamingConfig, *, name: str | None = None) -> None:
+        """Load the dataset in HuggingFace's streaming mode.
 
         Args:
             config: Configuration for the source
-            rngs: Optional RNG state
             name: Optional name (defaults to HFStreamingSource(dataset:split))
 
         Raises:
@@ -405,55 +427,16 @@ class HFStreamingSource(StreamingSourceBase):
         """
         if name is None:
             name = f"HFStreamingSource({config.name}:{config.split})"
-        super().__init__(config, rngs=rngs, name=name)
-        self._is_random_order = config.shuffle
-
-        # Import datasets lazily
+        super().__init__(config, name=name)
         try:
             import datasets  # type: ignore[import-not-found]
-
-            self._datasets_module = datasets
         except ImportError as e:
             raise ImportError(
                 "Loading from HuggingFace Datasets requires additional "
                 "dependencies. Install Datarax with optional HF dependencies "
                 "using: pip install datarax[data]"
             ) from e
-
-        # Load the dataset
-        self._hf_dataset = _load_hf_dataset(
-            self._datasets_module,
-            config,
-            streaming=config.streaming,  # type: ignore[arg-type]
-        )
-
-        # Apply shuffling if requested
-        if config.shuffle:
-            if config.streaming:
-                # HF IterableDataset.shuffle accepts buffer_size (type stubs incomplete)
-                shuffle_kwargs: dict[str, Any] = {
-                    "buffer_size": config.shuffle_buffer_size,
-                    "seed": 42,
-                }
-                self._hf_dataset = self._hf_dataset.shuffle(**shuffle_kwargs)
-            else:
-                self._hf_dataset = self._hf_dataset.shuffle(seed=42)
-
-        # Get dataset info and length. Only the Dataset variants carry ``info``;
-        # getattr stays correct across the load_dataset return union.
-        self._dataset_info = getattr(self._hf_dataset, "info", None)
-
-        # Try to get length (non-streaming Dataset supports __len__)
-        if not config.streaming:
-            try:
-                self._length: int | None = len(self._hf_dataset)  # type: ignore[arg-type]
-            except (TypeError, AttributeError):
-                self._length = None
-        else:
-            self._length = None
-
-        self._iterator: Iterator | None = None
-        self.epoch = nnx.Variable(0)
+        self._dataset = HostValue(_load_hf_dataset(datasets, config, streaming=True))
 
     @property
     def dataset_name(self) -> str | None:
@@ -465,94 +448,65 @@ class HFStreamingSource(StreamingSourceBase):
         """Dataset split from source config."""
         return self.config.split
 
-    @property
-    def is_iterable_mode(self) -> bool:
-        """Streaming mode flag from source config."""
-        return self.config.streaming
+    def get_dataset_info(self) -> Any:
+        """The streamed dataset's ``DatasetInfo``."""
+        return getattr(self._dataset.value, "info", None)
 
-    @property
-    def random_order_buffer_depth(self) -> int:
-        """Shuffle buffer size from source config."""
-        return self.config.shuffle_buffer_size
-
-    @property
-    def selected_keys(self) -> set[str] | None:
-        """Optional key-include filter from source config."""
-        return self.config.include_keys
-
-    @property
-    def rejected_keys(self) -> set[str] | None:
-        """Optional key-exclude filter from source config."""
-        return self.config.exclude_keys
-
-    @property
-    def length(self) -> int | None:
-        """Dataset length when known."""
-        return self._length
-
-    def __len__(self) -> int:
-        """Return the total number of data elements if known.
-
-        Returns:
-            Total number of elements or raises NotImplementedError if unknown
+    def __len__(self) -> int:  # noqa: DOC201 - it only raises
+        """A stream's length is unknown.
 
         Raises:
-            NotImplementedError: If the length of the streaming dataset is unknown.
+            NotImplementedError: Always.
         """
-        if self.length is None:
-            raise NotImplementedError("Length unknown for streaming dataset")
-        return self.length
+        raise NotImplementedError("Length unknown for streaming dataset")
 
-    def __iter__(self) -> Iterator[dict[str, Any]]:
-        """Start iteration over the dataset."""
-        self.epoch.set_value(self.epoch.get_value() + 1)
-        self._iterator = iter(self._hf_dataset)
-        return self
-
-    def __next__(self) -> dict[str, Any]:  # noqa: DOC502
-        """Get next element from the dataset.
-
-        Returns:
-            Dictionary of values (JAX arrays for numeric data)
-
-        Raises:
-            StopIteration: When dataset is exhausted
-        """
-        iterator = self._iterator
-        if iterator is None:
-            iterator = iter(self._hf_dataset)
-            self._iterator = iterator
-
-        return self._convert_record(next(iterator))
-
-    def _convert_record(self, element: dict[str, Any]) -> dict[str, Any]:
-        """Filter and convert one raw HuggingFace record into the record this source emits."""
-        return converted_filtered_record(
-            element,
-            self.selected_keys,
-            self.rejected_keys,
-            hf_to_jax,
+    def __repr__(self) -> str:
+        """String representation."""
+        return (
+            f"HFStreamingSource(dataset={self.dataset_name}:{self.split_name}, "
+            f"shuffle_buffer_size={self.config.shuffle_buffer_size})"
         )
 
-    def _repr_extra_fields(self) -> dict[str, Any]:
-        """Add source-mode details to the shared representation."""
-        return {"streaming": self.is_iterable_mode}
+    def _open_pass(
+        self, pass_index: int, key: jax.Array | None, size_hint: int
+    ) -> Iterator[StreamChunk]:
+        """Read pass ``pass_index``: the dataset's order, or HF's seeded shuffle under ``key``.
 
-    def element_spec(self) -> Any:
-        """Return the spec of the records this source emits, derived from the first one.
+        Args:
+            pass_index: The pass, from 0.
+            key: The pipeline's key when it shuffles, ``None`` for the dataset's order.
+            size_hint: Records read per batched read.
 
-        Streaming sources cannot strip a leading dataset-size dimension because
-        each iteration yields one element. The first element of the cached
-        ``self._hf_dataset`` is filtered and converted exactly as iteration does
-        it, so ``include_keys``/``exclude_keys`` apply and Python values become
-        the JAX arrays batches carry; each top-level value is then described as
-        one ``ShapeDtypeStruct`` (a Python list feature becomes one 1-D array,
-        not per-element scalars).
-
-        The peek starts a fresh iterator on the dataset loaded in ``__init__``,
-        so it neither consumes the training iterator nor re-triggers downloads.
+        Yields:
+            The pass's records as chunks.
         """
-        from datarax.core.spec import array_to_spec  # noqa: PLC0415
-
-        record = self._convert_record(next(iter(self._hf_dataset)))
-        return {key: array_to_spec(value) for key, value in record.items()}
+        dataset = self._dataset.value
+        features = getattr(dataset, "features", None)
+        dtypes = _feature_dtypes(features, list(features or ()))
+        if key is not None:
+            dataset = dataset.shuffle(
+                seed=key_integer(key), buffer_size=self.config.shuffle_buffer_size
+            )
+        dataset = dataset.with_format("numpy")
+        if key is not None:
+            # After with_format, which copies the dataset without its epoch (datasets 5.0.1).
+            dataset.set_epoch(pass_index)
+        for rows in dataset.iter(batch_size=size_hint):
+            size = len(next(iter(rows.values())))
+            kept = _selected_hf_columns(
+                list(rows), self.config.include_keys, self.config.exclude_keys
+            )
+            cast = {
+                column: np.asarray(rows[column]).astype(dtypes[column], copy=False)
+                if column in dtypes
+                else rows[column]
+                for column in kept
+            }
+            columns, provenance = _hf_parts(cast, size)
+            yield StreamChunk(
+                columns,
+                tuple(MappingProxyType(record) for record in provenance)
+                if provenance
+                else (NO_PROVENANCE,) * size,
+                None,
+            )

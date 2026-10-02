@@ -2,7 +2,7 @@
 
 `HFEagerSource` provides seamless integration with [HuggingFace Datasets](https://huggingface.co/docs/datasets), allowing you to load any of the 100,000+ datasets available on the Hub directly into your Datarax pipelines: array columns become host NumPy columns, and text and other objects the records' provenance.
 
-> **Note:** You can also use the factory function `from_hf(name, split, ...)` which auto-selects between eager and streaming modes based on your configuration.
+> **Note:** The factory `from_hf(name, split, ...)` builds `HFEagerSource`, or `HFStreamingSource` with `streaming=True`.
 
 ## Key Features
 
@@ -10,7 +10,7 @@
 |---------|-------------|
 | **Automatic conversion** | Images and numeric columns → host NumPy columns |
 | **Streaming support** | `HFStreamingSource` / `from_hf(streaming=True)` loads large datasets without downloading everything |
-| **Shuffling** | Eager: `Pipeline(shuffle=True)`'s O(1)-memory Feistel index shuffle; streaming: buffer-based shuffle |
+| **Shuffling** | `Pipeline(shuffle=True)`: eager, an O(1)-memory Feistel index shuffle; streaming, HF's buffer shuffle seeded by the pipeline |
 | **Key filtering** | Include/exclude specific dataset fields |
 | **Stateless reads** | Iteration in order and `get_batch(indices)`; the pipeline owns the position |
 
@@ -20,7 +20,8 @@
     - PIL images are converted to NumPy arrays once, at load
     - Text and other non-array columns are kept as each record's provenance, beside the batches, never refused
     - For datasets larger than your disk, use `HFStreamingSource` or `from_hf(streaming=True)` (streaming is not a field on `HFEagerConfig`)
-    - An eager source is shuffled by its pipeline (`Pipeline(shuffle=True)`), an O(1)-memory Feistel index shuffle; only the streaming source uses a buffer-based shuffle
+    - Both are shuffled by their pipeline (`Pipeline(shuffle=True)`): the eager source by an O(1)-memory Feistel index shuffle, the stream by HuggingFace's buffer shuffle seeded from the pipeline's key, each pass in its own order
+    - The stream names records by their arrival and hands text out beside each batch (`get_batch(n, with_provenance=True)`); the eager source serves it by index (`provenance(indices)`)
     - `get_batch(indices)` reads the named records as a `Batch` with one host gather
 
 ## Installation

@@ -25,6 +25,7 @@ from datarax.core.prng import per_record_keys
 from datarax.operators.element_operator import ElementOperator
 from datarax.pipeline.pipeline import Pipeline
 from datarax.sources import EagerSource, MemorySource, MemorySourceConfig
+from tests.test_common.transfers import device_to_host_raises, implicit_upload_raises
 
 
 _N = 16
@@ -146,36 +147,13 @@ class TestGradientsThroughTheDag:
         assert len(set(values)) == 3
 
 
-def _implicit_transfer_raises() -> bool:
-    """The control: a NumPy argument to a jitted function is an implicit host-to-device transfer."""
-    double = jax.jit(lambda x: x * 2)
-    jax.block_until_ready(double(jnp.ones(2)))
-    with jax.transfer_guard_host_to_device("disallow"):
-        try:
-            double(np.ones(2))
-        except RuntimeError:
-            return True
-    return False
-
-
-def _device_to_host_raises() -> bool:
-    """The control: reading a device array back is a device-to-host transfer."""
-    value = jax.block_until_ready(jnp.ones(2) * 3)
-    with jax.transfer_guard_device_to_host("disallow"):
-        try:
-            np.asarray(value)
-        except RuntimeError:
-            return True
-    return False
-
-
 _SOURCES = {"memory": lambda: MemorySource(MemorySourceConfig(), _columns()), "eager": _Columns}
 
 
 @pytest.mark.parametrize("name", sorted(_SOURCES))
 class TestNoPerBatchTransfer:
     def test_a_session_uploads_no_records_after_warm_up(self, name: str) -> None:
-        assert _implicit_transfer_raises(), "the host-to-device guard does not fire here"
+        assert implicit_upload_raises(), "the host-to-device guard does not fire here"
         session = iter(_pipeline(_SOURCES[name]()))
         for _ in range(2):
             jax.block_until_ready(next(session).indices)
@@ -184,7 +162,7 @@ class TestNoPerBatchTransfer:
                 jax.block_until_ready(next(session).indices)
 
     def test_a_user_jitted_step_uploads_no_records_after_its_first_call(self, name: str) -> None:
-        assert _implicit_transfer_raises(), "the host-to-device guard does not fire here"
+        assert implicit_upload_raises(), "the host-to-device guard does not fire here"
         pipeline = _pipeline(_SOURCES[name]())
         step = nnx.jit(lambda p: p.step())
         jax.block_until_ready(step(pipeline).indices)
@@ -193,7 +171,7 @@ class TestNoPerBatchTransfer:
                 jax.block_until_ready(step(pipeline).indices)
 
     def test_neither_reads_back_to_the_host(self, name: str) -> None:
-        if not _device_to_host_raises():
+        if not device_to_host_raises():
             pytest.skip("the device-to-host guard does not fire on this backend (host memory)")
         pipeline = _pipeline(_SOURCES[name]())
         session = iter(_pipeline(_SOURCES[name]()))

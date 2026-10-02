@@ -77,7 +77,8 @@ print(f"JAX backend: {jax.default_backend()}")
 """
 ## Part 1: Understanding HFEagerSource Configuration
 
-`HFEagerConfig` loads a dataset into memory; `HFStreamingConfig` reads it on the fly.
+`HFEagerConfig` loads a dataset into memory; `HFStreamingConfig` streams it with HuggingFace's
+streaming mode.
 
 ### Key Configuration Options
 
@@ -85,9 +86,7 @@ print(f"JAX backend: {jax.default_backend()}")
 |-----------|-------------|---------|--------|
 | `name` | Dataset identifier on HF Hub | Required | both |
 | `split` | Which split to use | Required | both |
-| `streaming` | Stream data on the fly | `False` | `HFStreamingConfig` |
-| `shuffle` | Shuffle the stream within a buffer | `False` | `HFStreamingConfig` |
-| `shuffle_buffer_size` | Buffer size for streaming shuffles | `1000` | `HFStreamingConfig` |
+| `shuffle_buffer_size` | Records the stream's shuffle buffer holds | `1000` | `HFStreamingConfig` |
 | `include_keys` | Only include these fields | `None` | both |
 | `exclude_keys` | Exclude these fields | `None` | both |
 """
@@ -142,7 +141,8 @@ Shuffling is essential for training ML models:
 
 - The pipeline owns the order of an eager source: `Pipeline(shuffle=True)` serves the whole
   downloaded split in a new order every epoch, reproducibly from the pipeline's `rngs`
-- `HFStreamingSource` shuffles within a buffer of `shuffle_buffer_size` records
+- `HFStreamingSource` follows the same flag: a shuffling pipeline seeds HuggingFace's buffer
+  shuffle of `shuffle_buffer_size` records, with each pass in its own order
 """
 
 # %%
@@ -157,48 +157,39 @@ print(f"  Pipeline shuffles: {shuffle_pipeline.shuffle}")
 
 # %% [markdown]
 """
-## Part 4: Streaming vs Downloaded Mode
+## Part 4: Streaming vs Eager Loading
 
-### Streaming Mode (`streaming=True`)
-- Data loaded on-the-fly from HuggingFace servers
+### Streaming (`HFStreamingSource`)
+- Data read on the fly with HuggingFace's streaming mode
 - No disk storage required
 - Ideal for large datasets
-- Cannot seek to specific indices
-- Dataset length may not be available
+- Records named by their arrival; the length is not known
+- Text and other objects travel beside each batch as provenance
 
-### Downloaded Mode (`streaming=False`)
-- Full dataset downloaded and cached locally
-- Random access to any sample
-- Faster iteration after initial download
-- Requires disk space
+### Eager (`HFEagerSource`)
+- Full split downloaded, cached and loaded into host memory
+- Random access to any record, and its text by index (`provenance(indices)`)
+- Faster iteration after the initial download
+- Requires disk space and host memory
 """
 
 # %%
-# Compare streaming vs downloaded
+# Compare streaming and eager loading
 print("Mode Comparison:")
 
-# Streaming mode: records are read on the fly, so the length is unknown
-streaming_config = HFStreamingConfig(
-    name="ylecun/mnist",
-    split="train",
-    streaming=True,
-)
-streaming_source = HFStreamingSource(streaming_config, rngs=nnx.Rngs(0))
+# Streaming: records are read on the fly, so the length is unknown
+streaming_source = HFStreamingSource(HFStreamingConfig(name="ylecun/mnist", split="train"))
 
 try:
-    print(f"Streaming mode length: {len(streaming_source)}")
+    print(f"Streaming length: {len(streaming_source)}")
 except NotImplementedError:
-    print("Streaming mode length: unknown until the stream is read")
-first_record = next(iter(streaming_source))
-print(f"First streamed record: {sorted(first_record)}")
+    print("Streaming length: unknown until the stream is read")
+first_batch = streaming_source.get_batch(1)
+print(f"First streamed record's fields: {sorted(first_batch.data)}")
 
-# Downloaded mode (using subset)
-downloaded_config = HFEagerConfig(
-    name="ylecun/mnist",
-    split="train[:1000]",
-)
-downloaded_source = HFEagerSource(downloaded_config)
-print(f"Downloaded mode length: {len(downloaded_source)}")
+# Eager (using a subset)
+eager_source = HFEagerSource(HFEagerConfig(name="ylecun/mnist", split="train[:1000]"))
+print(f"Eager length: {len(eager_source)}")
 
 # %% [markdown]
 """
@@ -346,14 +337,14 @@ print("  'train+test' - Combined splits")
 | Feature | Configuration |
 |---------|--------------|
 | Field Filtering | `include_keys` / `exclude_keys` |
-| Shuffling | `Pipeline(shuffle=True)` (streaming: `shuffle=True` with `shuffle_buffer_size`) |
-| Streaming | `HFStreamingSource` with `streaming=True` for large datasets |
+| Shuffling | `Pipeline(shuffle=True)` (streams: within `shuffle_buffer_size` records) |
+| Streaming | `HFStreamingSource` for large datasets |
 | Reproducibility | Named RNG streams |
 | Pipeline | Source -> Operators -> Output |
 
 ### Best Practices
 
-1. **Large datasets**: Use `HFStreamingSource` with `streaming=True` to avoid memory issues
+1. **Large datasets**: Use `HFStreamingSource` to avoid memory issues
 2. **Training**: Always enable shuffling
 3. **Reproducibility**: Use named RNG streams (`nnx.Rngs(name=seed)`)
 4. **Memory**: Use `include_keys` to filter unnecessary fields

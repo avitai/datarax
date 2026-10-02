@@ -19,6 +19,8 @@ import pytest
 from flax import nnx
 
 from datarax.core.data_source import RecordIdentity
+from datarax.core.element_batch import Batch
+from datarax.core.index_words import from_words
 from datarax.core.spec import SpecMismatchError
 from datarax.pipeline import Pipeline
 from datarax.sources.array_record_source import (
@@ -56,9 +58,9 @@ def _labels(labels: np.ndarray | jax.Array) -> list[int]:
     return [int(label) for label in labels]
 
 
-def _pass(source: ArrayRecordSourceModule, batch_size: int) -> list[dict[str, Any]]:
+def _pass(source: ArrayRecordSourceModule, batch_size: int) -> list[Batch]:
     batches = []
-    while batch := source.get_batch(batch_size):
+    while (batch := source.get_batch(batch_size)).batch_size:
         batches.append(batch)
     return batches
 
@@ -117,6 +119,22 @@ def test_without_a_decoder_batches_are_refused() -> None:
 
 def test_array_record_is_a_streaming_source() -> None:
     assert _source().record_identity is RecordIdentity.STREAM_IDS
+
+
+def test_a_batch_names_its_records_by_position_and_the_source_s_epoch() -> None:
+    source = _source()
+    first = _pass(source, 4)
+    second = _pass(source, 4)
+
+    names = [int(i) for b in first for i in from_words(np.asarray(b.indices))]
+    assert names == list(range(_RECORDS))
+    assert {int(e) for b in first for e in b.epochs} == {0}
+    assert {int(e) for b in second for e in b.epochs} == {1}
+
+
+def test_the_pipeline_s_key_is_refused_naming_shuffle_files() -> None:
+    with pytest.raises(ValueError, match="shuffle_files"):
+        _source().get_batch(4, key=jax.random.key(0))
 
 
 def test_pipeline_iterates_decoded_batches_one_epoch_per_pass() -> None:

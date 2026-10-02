@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `datarax.sources.StreamingSourceBase` (public) and `StreamChunk`: the base every stream
+  builds on. A subclass reads one pass in its order (`_open_pass(pass_index, key, size_hint)`, a
+  generator of host columns, provenance and ids); the base serves
+  `get_batch(batch_size, *, key=None, with_provenance=False)`, a host `Batch` named by the
+  stream (`STREAM_IDS`: the ids it reports as two words; `ARRIVAL`: arrival ordinals, never
+  reset), `epochs` the pass from 0, an empty `Batch` at a pass's end, and with
+  `with_provenance=True` the records' strings and objects beside it. Where a stream is lives in a
+  host holder outside NNX state, so no Variable holds a Python value and the graph definition
+  does not move as it advances. `element_spec()` is the first record's array part as the device
+  holds it.
+- `datarax.pipeline.epochs.stream_batches(pull, batch_size, *, drop_last, num_epochs)`: the
+  epoch rule over a stream's passes, the rule `EpochPlan` applies to an indexed source.
 - `DataSourceModule.provenance(indices)` and `DataSourceModule.record_keys(batch)`: a source
   naming records stably (`INDEXED`, `STREAM_IDS`) serves each record's strings and objects by
   its index, one immutable mapping per index (empty for a record carrying nothing but arrays),
@@ -80,6 +92,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Streams name their own records, take the pipeline's key and honour the epoch rule.** The
+  pipeline keeps no counter for a stream: it passes its key to the stream's `get_batch` when it
+  shuffles (`None` otherwise), applies `drop_last` and `num_epochs` to the stream's passes as to
+  an indexed source (a pass's short tail is dropped or completed from the next pass's head; a
+  stream used to ignore both and serve one pass), checks each batch against the declared spec
+  as the device will hold it, and runs the DAG over the stream's `Batch`.
+- **`TFDSStreamingSource` streams a TFRecord copy without TensorFlow.** Grain's TFRecord reader
+  frames the records and TFDS's NumPy decoder decodes them; records are named by `tfds_id`
+  (shard, offset) and their text is provenance, served beside the batch and looked up by id
+  (`provenance(indices)`). A shuffling pipeline orders each pass as TFDS's training read does:
+  the shard files in a keyed order, interleaved 16 at a time in blocks of 16, then tf.data's
+  buffer shuffle of `shuffle_buffer_size` serialized records, every draw from a NumPy Philox
+  generator keyed by `fold_in(key, pass)`. A copy prepared as ArrayRecord is refused, naming
+  `TFDSEagerSource`; an unprepared copy is refused naming the call that prepares a TFRecord copy.
+  A pass is a Grain `IterDataset` of decoded batches (`TFDSStreamingSource.pass_dataset`,
+  `TFDSStreamDataset`): the order runs on serialized records and the decode last, the dataset
+  pickles, and it implements Grain's `set_slice`, so worker processes can each decode every k-th
+  batch without changing the order.
+- **`HFStreamingSource` always streams** (`load_dataset(..., streaming=True)`); a map-style
+  HuggingFace dataset is `HFEagerSource`'s. Records are named by arrival; a shuffling pipeline
+  seeds HuggingFace's buffer shuffle from its key, `set_epoch(pass)` ordering each pass (it used
+  a literal seed of 42). Reads are batched NumPy columns in their features' dtypes, text and
+  objects as provenance beside the batch.
+- `from_tfds(name, split, ...)` picks the source by the copy's prepared format (ArrayRecord:
+  `TFDSEagerSource`; TFRecord: `TFDSStreamingSource`); `from_hf(name, split, *, streaming=False,
+  ...)` builds `HFEagerSource`, or `HFStreamingSource` with `streaming=True`.
+- `ArrayRecordSourceModule.get_batch(batch_size, *, key=None)` returns a host `Batch` named by
+  the records' positions and the source's epoch, and refuses a key (its order is
+  `shuffle_files`'s).
+- `source_ops.validate_eager_source_settings`, `validate_eager_config` and
+  `finalize_eager_config_validation` are `validate_source_settings`, `validate_source_config` and
+  `finalize_source_config_validation` (eager and stream
+  configs share it).
 - The HuggingFace examples that read raw text (the IMDB quick reference and the SST-2 training
   example) load with `HFEagerSource` and read each record's text with `provenance(indices)`.
 - **`TFDSEagerSource` reads TFDS without TensorFlow.** It reads a split TFDS has prepared as
@@ -96,7 +141,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   label is int64 on the host (int32 on a device while 64-bit types are off, as before). The
   50,000 CIFAR-10 training records load in about 4.5 s, where the TensorFlow loader took over
   1,000 s, and loading places nothing on a device.
-  Reading needs the `data` extra; preparing and `TFDSStreamingSource` need the `tfds` extra.
+  Reading needs the `data` extra; preparing needs the `tfds` extra.
   `tensorflow-datasets` is now `>=4.9.8`, the first release whose `as_data_source` takes a file
   format.
 - `get_dataset_info()` of the eager TFDS and HuggingFace sources is held in a `HostValue`, out of
@@ -327,6 +372,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The stream configs' `shuffle` (the pipeline's `shuffle` decides), `HFStreamingConfig.streaming`
+  and `HFStreamingSource.is_iterable_mode`/`random_order_buffer_depth`, and
+  `TFDSStreamingConfig`'s `try_gcs`, `download_and_prepare_kwargs`, `beam_num_workers`,
+  `prefetch_buffer` and `local_files_only` (the stream neither prepares a dataset nor runs
+  tf.data). The streams' `rngs` argument, `epoch` Variable, per-record iteration (`__iter__`,
+  `__next__`) and `is_random_order`.
+- `from_tfds(eager=)` and `from_hf(eager=)`, and `from_tfds`'s size-based choice.
+- `datarax.sources._conversion` (`tf_to_jax`, `hf_to_jax`, `convert_batch_to_jax`,
+  `stack_batch_sequence`), and the stream helpers in `source_ops`
+  (`streaming_apply_batch`, `batch_elements_to_dict`, `converted_filtered_record`,
+  `reset_streaming_state`, `configure_stochastic_from_shuffle`,
+  `validate_streaming_source_settings`, `finalize_streaming_config_validation`,
+  `validate_positive_optional_int`); `datarax.pipeline.dag.record_positions`.
 - `TFDSEagerConfig.try_gcs`, `download_and_prepare_kwargs`, `beam_num_workers` and
   `local_files_only`, and `from_tfds`'s `try_gcs`, `download_and_prepare_kwargs` and
   `beam_num_workers`: the eager source never prepares a dataset. Passing them raises

@@ -13,7 +13,6 @@ from typing import Any
 import datasets
 import numpy as np
 import pytest
-from flax import nnx
 
 from datarax.sources.hf_source import (
     HFEagerConfig,
@@ -43,9 +42,7 @@ def build(kind: str, **fields: Any) -> None:
     if kind == "eager":
         HFEagerSource(HFEagerConfig(name="org/dataset", split="train", **fields))
     else:
-        HFStreamingSource(
-            HFStreamingConfig(name="org/dataset", split="train", **fields), rngs=nnx.Rngs(0)
-        )
+        HFStreamingSource(HFStreamingConfig(name="org/dataset", split="train", **fields))
 
 
 @pytest.mark.parametrize("kind", ["eager", "streaming"])

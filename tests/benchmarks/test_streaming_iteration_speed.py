@@ -5,25 +5,21 @@ its per-call overhead and recommends splitting the module once and driving a
 plain ``jax.jit`` step. Streaming iteration follows that pattern for the stage
 DAG, so a batch costs a host pull, a check of shapes and dtypes, and one compiled
 dispatch. The guard compares a streaming pass with applying the same DAG through
-``nnx.jit`` on every batch, the pattern the guide describes as slow.
+``nnx.jit`` on every batch the stream serves, the pattern the guide describes as slow.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
-
 import jax
-import jax.numpy as jnp
 import numpy as np
 import pytest
 from flax import nnx
 
-from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule, RecordIdentity
+from datarax.core.data_source import RecordIdentity
 from datarax.core.element_batch import Batch
 from datarax.pipeline.pipeline import Pipeline
 from tests.benchmarks.performance_targets import measure_latency
+from tests.test_common.streams import RecordStream
 
 
 _BATCHES = 200
@@ -32,38 +28,6 @@ _FEATURES = 32
 # Streaming must cost at most this fraction of per-batch nnx.jit. Traversing the
 # graph per batch puts the ratio near 1; hoisting it out measured about 0.1 on CPU.
 _MAX_RATIO = 0.5
-
-
-@dataclass(frozen=True)
-class _Config(StructuralConfig):
-    pass
-
-
-class _Stream(DataSourceModule):
-    """Forward-only source replaying one prepared batch."""
-
-    @property
-    def record_identity(self) -> RecordIdentity:
-        """What this source's record index means: ARRIVAL."""
-        return RecordIdentity.ARRIVAL
-
-    def __init__(self, batch: dict[str, jax.Array]) -> None:
-        super().__init__(_Config())
-        self._batch = nnx.data(batch)
-        self.cursor = nnx.Variable(0)
-
-    def element_spec(self) -> dict[str, jax.ShapeDtypeStruct]:
-        return {
-            "x": jax.ShapeDtypeStruct((_FEATURES,), jnp.float32),
-            "y": jax.ShapeDtypeStruct((), jnp.int32),
-        }
-
-    def get_batch(self, batch_size: int) -> dict[str, Any]:
-        del batch_size
-        if int(self.cursor.get_value()) >= _BATCHES:
-            return {}
-        self.cursor.set_value(int(self.cursor.get_value()) + 1)
-        return dict(self._batch)
 
 
 class _Noise(nnx.Module):
@@ -79,30 +43,35 @@ class _Noise(nnx.Module):
         )
 
 
-def _pipeline() -> tuple[Pipeline, _Stream]:
-    batch = {
-        "x": jnp.ones((_BATCH_SIZE, _FEATURES), jnp.float32),
-        "y": jnp.zeros((_BATCH_SIZE,), jnp.int32),
-    }
-    source = _Stream(batch)
-    pipeline = Pipeline(source=source, stages=[_Noise()], batch_size=_BATCH_SIZE, rngs=nnx.Rngs(0))
-    return pipeline, source
+def _stream() -> RecordStream:
+    records = _BATCHES * _BATCH_SIZE
+    return RecordStream(
+        {
+            "x": np.ones((records, _FEATURES), np.float32),
+            "y": np.zeros((records,), np.int32),
+        },
+        kind=RecordIdentity.ARRIVAL,
+        chunk=_BATCH_SIZE,
+    )
 
 
-_apply_per_batch = nnx.jit(Pipeline.__call__)
+def _pipeline() -> Pipeline:
+    return Pipeline(source=_stream(), stages=[_Noise()], batch_size=_BATCH_SIZE, rngs=nnx.Rngs(0))
+
+
+_apply_per_batch = nnx.jit(lambda dag, batch: dag(batch))
 
 
 def _stream_pass() -> None:
-    pipeline, _ = _pipeline()
-    jax.block_until_ready(list(pipeline))
+    jax.block_until_ready(list(_pipeline()))
 
 
 def _nnx_jit_pass() -> None:
-    pipeline, source = _pipeline()
+    source = _stream()
+    pipeline = Pipeline(source=source, stages=[_Noise()], batch_size=_BATCH_SIZE, rngs=nnx.Rngs(0))
     outputs = []
-    while batch := source.get_batch(_BATCH_SIZE):
-        outputs.append(_apply_per_batch(pipeline, batch))
-        pipeline._position[...] = pipeline._position[...] + jnp.int32(_BATCH_SIZE)
+    while (batch := source.get_batch(_BATCH_SIZE)).batch_size:
+        outputs.append(_apply_per_batch(pipeline.dag, batch))
     jax.block_until_ready(outputs)
 
 

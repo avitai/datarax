@@ -18,7 +18,6 @@ from flax import nnx
 from jax.typing import ArrayLike
 
 from datarax.core.element_batch import Batch
-from datarax.core.index_words import wrapped_positions
 from datarax.pipeline.topo import topological_sort, validate_dag
 
 
@@ -31,14 +30,6 @@ class Records(NamedTuple):
 
     indices: jax.Array
     epochs: jax.Array
-
-
-def record_positions(size: int, start: jax.Array | int) -> jax.Array:
-    """Positions ``start + arange(size)``: a stream serves records in order, so these name them.
-
-    ``start`` may be a traced scalar. Returns uint32 ``(size, 2)`` words ``(hi, lo)``.
-    """
-    return wrapped_positions(start, size, None)
 
 
 def name_records(batch: Batch, indices: ArrayLike, epochs: ArrayLike) -> Batch:
@@ -159,4 +150,4 @@ class OperatorDag(nnx.Module):
         return outputs[self.sink]
 
 
-__all__ = ["OperatorDag", "Records", "name_records", "record_positions"]
+__all__ = ["OperatorDag", "Records", "name_records"]

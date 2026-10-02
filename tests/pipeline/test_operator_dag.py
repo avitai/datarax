@@ -18,7 +18,7 @@ from substrax.testing import TraceCounter
 from substrax.testing.compiles import expect_compiles
 
 from datarax.core import batch_ops
-from datarax.core.config import OperatorConfig, StructuralConfig
+from datarax.core.config import OperatorConfig
 from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Batch, Element
 from datarax.core.operator import OperatorModule, require_key
@@ -27,6 +27,7 @@ from datarax.pipeline.dag import OperatorDag
 from datarax.pipeline.nodes import SplitField
 from datarax.pipeline.pipeline import Pipeline
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
+from tests.test_common.streams import RecordStream
 
 
 B = 8
@@ -381,13 +382,15 @@ class TestPipeline:
         with pytest.raises(ValueError, match="Provide either stages="):
             Pipeline(source=source, batch_size=4, rngs=nnx.Rngs(0), **shape)
 
-    def test_a_stream_yields_batches_named_by_their_positions(self) -> None:
-        """A stream without record ids names each record by its arrival position (C5b gives
-        streams their own identities)."""
-        chunks = [{"image": np.full((4, 4, 4, 3), k, np.float32)} for k in range(3)]
-        pipe = Pipeline(
-            source=_Stream(chunks), stages=[_Scale(2.0)], batch_size=4, rngs=nnx.Rngs(0)
+    def test_a_stream_yields_batches_named_by_their_arrival(self) -> None:
+        """A stream without record ids names each record by its arrival ordinal."""
+        images = np.repeat(np.arange(3, dtype=np.float32), 4)[:, None, None, None]
+        stream = RecordStream(
+            {"image": np.broadcast_to(images, (12, 4, 4, 3)).copy()},
+            kind=RecordIdentity.ARRIVAL,
+            chunk=4,
         )
+        pipe = Pipeline(source=stream, stages=[_Scale(2.0)], batch_size=4, rngs=nnx.Rngs(0))
 
         batches = list(pipe)
 
@@ -395,27 +398,3 @@ class TestPipeline:
         rows = np.concatenate([np.asarray(batch.indices)[:, 1] for batch in batches])
         np.testing.assert_array_equal(rows, np.arange(12))
         np.testing.assert_allclose(batches[2]["image"], 4.0)
-
-
-class _Stream(DataSourceModule):
-    """A forward-only source over prepared batches, then an empty batch."""
-
-    @property
-    def record_identity(self) -> RecordIdentity:
-        """What this source's record index means: ARRIVAL."""
-        return RecordIdentity.ARRIVAL
-
-    def __init__(self, chunks: list[dict[str, np.ndarray]]) -> None:
-        super().__init__(StructuralConfig(stochastic=False))
-        self._chunks = nnx.data(list(chunks))
-        self._served = 0
-
-    def element_spec(self) -> dict[str, jax.ShapeDtypeStruct]:
-        return {"image": jax.ShapeDtypeStruct((4, 4, 3), np.float32)}
-
-    def get_batch(self, batch_size: int) -> dict[str, np.ndarray]:
-        del batch_size
-        if self._served == len(self._chunks):
-            return {}
-        self._served += 1
-        return self._chunks[self._served - 1]

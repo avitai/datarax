@@ -32,6 +32,7 @@ from datarax.sources import MemorySource, MemorySourceConfig, TFDSEagerConfig, T
 from datarax.sources.eager_source import HostProvenance
 from tests.test_common.compiles import expect_first_call_compiles
 from tests.test_common.tfds_fixture import FIXTURE, TFDSFixture, TRAIN_RECORDS
+from tests.test_common.transfers import device_to_host_raises, implicit_upload_raises
 
 
 pytestmark = pytest.mark.tfds
@@ -263,32 +264,9 @@ class TestRecordIndicesUnderTransforms:
             )
 
 
-def _device_to_host_raises() -> bool:
-    """The control: reading a device array back is a device-to-host transfer."""
-    value = jax.block_until_ready(jnp.ones(2) * 3)
-    with jax.transfer_guard_device_to_host("disallow"):
-        try:
-            np.asarray(value)
-        except RuntimeError:
-            return True
-    return False
-
-
-def _implicit_upload_raises() -> bool:
-    """The control: a NumPy argument to a jitted function is an implicit host-to-device transfer."""
-    double = jax.jit(lambda x: x * 2)
-    jax.block_until_ready(double(jnp.ones(2)))
-    with jax.transfer_guard_host_to_device("disallow"):
-        try:
-            double(np.ones(2))
-        except RuntimeError:
-            return True
-    return False
-
-
 def test_steady_steps_upload_no_records(tfds_fixture: TFDSFixture) -> None:
     """The int64 host label is not converted and uploaded again on every step."""
-    assert _implicit_upload_raises(), "the host-to-device guard does not fire here"
+    assert implicit_upload_raises(), "the host-to-device guard does not fire here"
     session = iter(_pipeline(_source(tfds_fixture)))
     pipeline = _pipeline(_source(tfds_fixture))
     step = nnx.jit(lambda p: p.step())
@@ -302,7 +280,7 @@ def test_steady_steps_upload_no_records(tfds_fixture: TFDSFixture) -> None:
 
 
 def test_steady_steps_read_nothing_back_to_the_host(tfds_fixture: TFDSFixture) -> None:
-    if not _device_to_host_raises():
+    if not device_to_host_raises():
         pytest.skip("the device-to-host guard does not fire on this backend (host memory)")
     session = iter(_pipeline(_source(tfds_fixture)))
     pipeline = _pipeline(_source(tfds_fixture))

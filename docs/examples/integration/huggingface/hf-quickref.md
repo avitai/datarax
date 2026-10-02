@@ -66,7 +66,7 @@ jupyter lab examples/integration/huggingface/01_hf_quickref.ipynb
 
 `HFEagerConfig` specifies which dataset to load.
 
-> **Note:** You can also use the factory function `from_hf(name, split, ...)` which auto-selects between eager and streaming modes.
+> **Note:** The factory `from_hf(name, split, ...)` builds `HFEagerSource`, or `HFStreamingSource` with `streaming=True`.
 
 ### Key Parameters
 
@@ -303,16 +303,11 @@ whole split into host NumPy columns at init; `HFStreamingSource` pulls records o
 ### Streaming (Recommended for Large Datasets)
 
 ```python
-from flax import nnx
 from datarax.sources import HFStreamingConfig, HFStreamingSource
 
-# Streaming: pulls records on-demand
-config = HFStreamingConfig(
-    name="imagenet-1k",
-    split="train",
-    streaming=True,  # No full download
-)
-source = HFStreamingSource(config, rngs=nnx.Rngs(0))
+# Streaming: reads records on demand with HuggingFace's streaming mode
+config = HFStreamingConfig(name="imagenet-1k", split="train")
+source = HFStreamingSource(config)
 
 # Advantages:
 # - No large upfront download

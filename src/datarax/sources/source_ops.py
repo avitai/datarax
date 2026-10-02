@@ -5,14 +5,11 @@ TFDSStreamingSource, MemorySource) and sources in other packages delegate to
 these helpers for:
 - Wrapped index resolution, in the order a key selects (``resolve_wrapped_indices``)
 - A worker's share of the records (``partition_length``)
-- Reset logic (streaming)
-- Config validation
+- Config validation of named datasets (``validate_source_settings``)
 - Key filtering
-- Element conversion and batch stacking (streaming)
 
-Streaming helpers take nnx.Variable references as arguments so mutations
-propagate back to the caller, and callback parameters (convert_fn) to stay
-backend-agnostic. In-memory sources read through ``datarax.sources.EagerSource``.
+In-memory sources read through ``datarax.sources.EagerSource``; streams build on
+``datarax.sources.StreamingSourceBase``.
 """
 
 from __future__ import annotations
@@ -95,21 +92,6 @@ def resolve_wrapped_indices(
 logger = logging.getLogger(__name__)
 
 
-def configure_stochastic_from_shuffle(
-    config: Any,
-    *,
-    shuffle: bool,
-    default_stream_name: str = "shuffle",
-) -> None:
-    """Set stochastic and stream_name based on shuffle flag."""
-    if shuffle:
-        object.__setattr__(config, "stochastic", True)
-        if config.stream_name is None:
-            object.__setattr__(config, "stream_name", default_stream_name)
-    else:
-        object.__setattr__(config, "stochastic", False)
-
-
 def validate_required_name_split(
     name: str | None,
     split: str | None,
@@ -131,12 +113,6 @@ def validate_include_exclude_keys(
         raise ValueError("Cannot specify both include_keys and exclude_keys")
 
 
-def validate_positive_optional_int(value: int | None, field_name: str) -> None:
-    """Validate an optional integer field is positive when provided."""
-    if value is not None and value < 1:
-        raise ValueError(f"{field_name} must be a positive integer")
-
-
 def format_source_repr(
     class_name: str,
     dataset_name: str | None,
@@ -155,28 +131,14 @@ def format_source_repr(
     return f"{class_name}({serialized})"
 
 
-def streaming_apply_batch(
-    next_item: Callable[[], Any],
-    batch_size: int,
-) -> dict[str, Any]:
-    """Collect up to batch_size elements from a streaming iterator."""
-    elements = []
-    for _ in range(batch_size):
-        try:
-            elements.append(next_item())
-        except StopIteration:
-            break
-    return batch_elements_to_dict(elements)
-
-
-def validate_eager_config(  # noqa: DOC502 - the two validators it calls raise the ValueError
+def validate_source_config(  # noqa: DOC502 - the two validators it calls raise the ValueError
     name: str | None,
     split: str | None,
     include_keys: set[str] | None,
     exclude_keys: set[str] | None,
     config_class_name: str,
 ) -> None:
-    """Shared config validation for eager source configs.
+    """Shared config validation for the configs of sources reading a named dataset.
 
     Args:
         name: Dataset name (required)
@@ -192,7 +154,7 @@ def validate_eager_config(  # noqa: DOC502 - the two validators it calls raise t
     validate_include_exclude_keys(include_keys, exclude_keys)
 
 
-def finalize_eager_config_validation(
+def finalize_source_config_validation(
     *,
     super_post_init: Callable[[], None],
     config_class_name: str,
@@ -201,26 +163,9 @@ def finalize_eager_config_validation(
     include_keys: set[str] | None,
     exclude_keys: set[str] | None,
 ) -> None:
-    """Run shared eager-config validation flow."""
+    """Run the shared validation of a named-dataset source config, after its parent's."""
     super_post_init()
-    validate_eager_config(name, split, include_keys, exclude_keys, config_class_name)
-
-
-def finalize_streaming_config_validation(
-    *,
-    config: Any,
-    super_post_init: Callable[[], None],
-    config_class_name: str,
-    name: str | None,
-    split: str | None,
-    include_keys: set[str] | None,
-    exclude_keys: set[str] | None,
-) -> None:
-    """Run shared streaming-config validation flow."""
-    configure_stochastic_from_shuffle(config, shuffle=config.shuffle)
-    super_post_init()
-    validate_required_name_split(name, split, config_class_name)
-    validate_include_exclude_keys(include_keys, exclude_keys)
+    validate_source_config(name, split, include_keys, exclude_keys, config_class_name)
 
 
 def _get_super_post_init(config: Any) -> Callable[[], None]:
@@ -235,28 +180,12 @@ def _get_super_post_init(config: Any) -> Callable[[], None]:
     return parent_post_init
 
 
-def validate_eager_source_settings(
+def validate_source_settings(
     config: Any,
     config_class_name: str,
 ) -> None:
-    """Validate a source eager config using standard dataclass fields."""
-    finalize_eager_config_validation(
-        super_post_init=_get_super_post_init(config),
-        config_class_name=config_class_name,
-        name=config.name,
-        split=config.split,
-        include_keys=config.include_keys,
-        exclude_keys=config.exclude_keys,
-    )
-
-
-def validate_streaming_source_settings(
-    config: Any,
-    config_class_name: str,
-) -> None:
-    """Validate a source streaming config using standard dataclass fields."""
-    finalize_streaming_config_validation(
-        config=config,
+    """Validate a named-dataset source config (eager or stream) from its standard fields."""
+    finalize_source_config_validation(
         super_post_init=_get_super_post_init(config),
         config_class_name=config_class_name,
         name=config.name,
@@ -286,84 +215,3 @@ def filter_keys(
     if exclude_keys is not None:
         return {k: v for k, v in element.items() if k not in exclude_keys}
     return element
-
-
-# =============================================================================
-# Streaming source helpers
-# =============================================================================
-
-
-def converted_filtered_record(
-    element: dict[str, Any],
-    include_keys: set[str] | None,
-    exclude_keys: set[str] | None,
-    convert_fn: Callable[[Any], Any],
-) -> dict[str, Any]:
-    """Convert and filter a raw element from a streaming source.
-
-    Applies key filtering then converts each value via the backend-specific
-    convert_fn (e.g., hf_to_jax or tf_to_jax). For HF sources, also promotes
-    scalars to JAX arrays; for TFDS, convert_fn handles everything.
-
-    Args:
-        element: Raw element dict from the dataset iterator.
-        include_keys: If set, only include these keys.
-        exclude_keys: If set, exclude these keys.
-        convert_fn: Backend-specific conversion (value -> JAX array or passthrough).
-
-    Returns:
-        Filtered and converted element dict.
-    """
-    result: dict[str, Any] = {}
-    for k, v in element.items():
-        if include_keys and k not in include_keys:
-            continue
-        if exclude_keys and k in exclude_keys:
-            continue
-        converted = convert_fn(v)
-        if isinstance(converted, jax.Array):
-            result[k] = converted
-        elif isinstance(converted, int | float | bool):
-            result[k] = jnp.array(converted)
-        else:
-            result[k] = converted
-    return result
-
-
-def batch_elements_to_dict(elements: list[dict[str, Any]]) -> dict[str, Any]:
-    """Stack a list of element dicts into a single batched dict.
-
-    JAX arrays are stacked, numeric scalars are arrayed, and other types
-    (strings, etc.) are collected as lists.
-
-    Args:
-        elements: List of element dicts with consistent keys.
-
-    Returns:
-        Batched dict where each value is stacked/collected across elements.
-    """
-    if not elements:
-        return {}
-    keys = elements[0].keys()
-    batch: dict[str, Any] = {}
-    for k in keys:
-        values = [elem[k] for elem in elements]
-        first_val = values[0]
-        if isinstance(first_val, jax.Array):
-            batch[k] = jnp.stack(values)
-        elif isinstance(first_val, int | float | bool):
-            batch[k] = jnp.array(values)
-        else:
-            batch[k] = values
-    return batch
-
-
-def reset_streaming_state(
-    epoch_var: Any,
-) -> None:
-    """Reset streaming source state to initial values.
-
-    Args:
-        epoch_var: nnx.Variable for current epoch.
-    """
-    epoch_var.set_value(0)

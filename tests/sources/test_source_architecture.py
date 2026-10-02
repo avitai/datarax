@@ -5,7 +5,7 @@ eager-loading and streaming sources, following TDD principles.
 
 Architecture Goals:
     - Eager sources load all data into host NumPy columns at initialization
-    - Streaming sources provide thin wrappers with DLPack conversion
+    - Streams return host Batches named by the stream (test_stream_contract)
     - The eager TFDS source reads prepared ArrayRecord and never imports TensorFlow
     - O(1) memory shuffling via a keyed Feistel bijection
 """
@@ -16,7 +16,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from flax import nnx
 
 from datarax.core.index_words import to_words
 from datarax.sources import MemorySource, MemorySourceConfig
@@ -140,49 +139,6 @@ class TestTFDSEagerSource:
 
         assert "image" in source.data
         assert "label" not in source.data
-
-
-# =============================================================================
-# Tests for TFDS Streaming Source (the offline fixture, prepared as TFRecord)
-# =============================================================================
-
-
-@pytest.mark.tfds
-class TestTFDSStreamingSource:
-    """Tests for TFDSStreamingSource architecture."""
-
-    @staticmethod
-    def _source(fixture: TFDSFixture, **kwargs: object) -> Any:
-        from datarax.sources import TFDSStreamingConfig, TFDSStreamingSource
-
-        config = TFDSStreamingConfig(
-            name=FIXTURE,
-            split="train",
-            data_dir=str(fixture.tfrecord),
-            local_files_only=True,
-            exclude_keys={"name", "meta"},
-            **kwargs,  # type: ignore[arg-type]
-        )
-        return TFDSStreamingSource(config, rngs=nnx.Rngs(0))
-
-    def test_tfds_streaming_uses_fixed_prefetch(self, tfds_fixture: TFDSFixture) -> None:
-        """Streaming source should use fixed prefetch, not AUTOTUNE."""
-        source = self._source(tfds_fixture, prefetch_buffer=2)
-
-        items = []
-        for i, item in enumerate(source):
-            items.append(item)
-            if i >= 5:
-                break
-
-        assert len(items) == 6
-
-    def test_tfds_streaming_produces_jax_arrays(self, tfds_fixture: TFDSFixture) -> None:
-        """Each record should be JAX arrays."""
-        item = next(iter(self._source(tfds_fixture)))
-
-        assert isinstance(item["image"], jax.Array)
-        assert isinstance(item["label"], jax.Array)
 
 
 # =============================================================================
@@ -317,11 +273,11 @@ class TestFactoryFunctions:
 
         monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
 
+        from datarax.sources import HFStreamingSource
+
         source = from_hf("mock", "train", streaming=True)
 
-        # Should be streaming source (has .is_iterable_mode attribute set to True)
-        assert hasattr(source, "is_iterable_mode")
-        assert source.is_iterable_mode is True  # type: ignore[reportAttributeAccessIssue]
+        assert isinstance(source, HFStreamingSource)
 
 
 # =============================================================================

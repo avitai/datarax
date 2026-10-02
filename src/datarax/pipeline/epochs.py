@@ -1,6 +1,8 @@
 """How a pipeline's records divide into batches and epochs.
 
-:class:`EpochPlan` is the one place the rule lives. No batch holds padding. Under
+:class:`EpochPlan` is the rule for a source the pipeline indexes, :func:`stream_batches` the same
+rule over a stream's passes; this module is the one place the rule lives. No batch holds padding.
+Under
 ``drop_last`` the records short of a full batch are skipped and the next batch starts the
 next epoch, tf.data's and Grain's ``batch(drop_remainder=True).repeat()``. Otherwise a batch
 reaching the epoch's end is completed from the head of the next epoch's order, their
@@ -14,10 +16,14 @@ positions and epochs are Python integers, exact at every length up to ``2**64 - 
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Callable, Iterator
 from typing import cast
 
 import jax
 import jax.numpy as jnp
+
+from datarax.core import batch_ops
+from datarax.core.element_batch import Batch
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -175,3 +181,53 @@ def _select[T: (int, jax.Array)](condition: bool | jax.Array, if_true: T, if_fal
     if isinstance(condition, bool):
         return if_true if condition else if_false
     return cast(T, jnp.where(condition, if_true, if_false))
+
+
+def stream_batches(
+    pull: Callable[[int], Batch],
+    batch_size: int,
+    *,
+    drop_last: bool,
+    num_epochs: int | None,
+) -> Iterator[Batch]:
+    """The batches of a stream's passes, by the rule :class:`EpochPlan` applies to an index.
+
+    ``pull(n)`` returns up to ``n`` records of the stream's current pass as a ``Batch``, empty at
+    the pass's end, after which it serves the next pass. Under ``drop_last`` a pass's records
+    short of a full batch are skipped; otherwise the batch is completed from the head of the next
+    pass, each row keeping its own epoch. After ``num_epochs`` passes the run ends, its last batch
+    possibly short; with ``None`` it never ends. A stream whose pass holds no record ends the run.
+
+    Args:
+        pull: Reads up to the given number of records of the current pass.
+        batch_size: Records per batch.
+        drop_last: Whether a pass's records short of a full batch are skipped.
+        num_epochs: Passes served, or ``None`` for no end.
+
+    Yields:
+        Full batches, and under ``drop_last=False`` the run's short final batch.
+    """
+    pending: list[Batch] = []
+    held = served = passes = 0
+    while num_epochs is None or passes < num_epochs:
+        batch = pull(batch_size - held)
+        if batch.batch_size == 0:
+            passes += 1
+            if served == 0:  # a pass with no record: the stream holds none
+                break
+            served = 0
+            if drop_last:
+                pending, held = [], 0
+            continue
+        pending.append(batch)
+        held += batch.batch_size
+        served += batch.batch_size
+        if held == batch_size:
+            yield _joined(pending)
+            pending, held = [], 0
+    if pending and not drop_last:
+        yield _joined(pending)
+
+
+def _joined(batches: list[Batch]) -> Batch:
+    return batches[0] if len(batches) == 1 else batch_ops.concatenate(batches)

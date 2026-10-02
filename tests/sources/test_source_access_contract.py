@@ -202,14 +202,15 @@ class _ListStream(DataSourceModule):
     def __init__(self) -> None:
         super().__init__(_Config())
 
-    def get_batch(self, batch_size: int) -> list[float]:
+    def get_batch(self, batch_size: int, *, key: jax.Array | None = None) -> list[float]:
+        del key
         return [1.0] * batch_size
 
     def element_spec(self) -> dict[str, jax.ShapeDtypeStruct]:
         return {"x": jax.ShapeDtypeStruct((), jnp.float32)}
 
 
-def test_a_streaming_source_yielding_non_mapping_batches_is_refused() -> None:
+def test_a_stream_yielding_something_other_than_a_batch_is_refused() -> None:
     pipeline = Pipeline(source=_ListStream(), stages=[], batch_size=2, rngs=nnx.Rngs(0))
 
     with pytest.raises(TypeError, match="_ListStream.get_batch returned list"):

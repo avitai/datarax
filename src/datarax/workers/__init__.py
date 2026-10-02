@@ -19,9 +19,6 @@ Existing parallel-worker concepts elsewhere in datarax (do not duplicate)
 
 - ``MemorySource(num_workers=N)`` (``datarax.sources.memory_source``) shards an
   in-memory dataset by ``positions[k::num_workers]`` per worker.
-- ``beam_num_workers`` on ``TFDSStreamingSource``
-  (``datarax.sources.tfds_source``) controls Apache Beam DirectRunner workers
-  for TFDS preparation.
 - ``datarax.control.prefetcher`` provides asynchronous prefetching via threads
   (limited by the GIL for CPU-heavy work).
 

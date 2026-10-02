@@ -9,14 +9,14 @@ Data source adapters for loading data from various formats and libraries. Source
 | **HFEagerSource** | HuggingFace Datasets | Small/medium Hub datasets |
 | **HFStreamingSource** | HuggingFace Datasets | Large datasets (streaming) |
 | **TFDSEagerSource** | TensorFlow Datasets prepared as ArrayRecord, read without TensorFlow | Small/medium TFDS catalog |
-| **TFDSStreamingSource** | TensorFlow Datasets through `tf.data` (imports TensorFlow) | Large datasets (streaming) |
+| **TFDSStreamingSource** | TensorFlow Datasets prepared as TFRecord, read without TensorFlow | Large datasets (streaming) |
 | **MemorySource** | In-memory arrays | Testing, small data |
 | **StreamingDiskSource** | A `.npy` array read through a memory map | Arrays larger than RAM |
 | **ArrayRecordSourceModule** | ArrayRecord format | Large-scale training |
 | **MixDataSourcesNode** | Multiple sources | Multi-dataset training |
 
-!!! tip "Factory functions with auto-selection"
-    Use `from_hf(name, split, ...)` and `from_tfds(name, split, ...)` for eager/streaming mode selection. `from_tfds` picks by split size (`< 1GB` → eager), while `from_hf` defaults to eager — pass `streaming=True` to force HuggingFace streaming. You can also override with `eager=True` or `eager=False`.
+!!! tip "Factory functions"
+    `from_tfds(name, split, ...)` picks the TFDS source by the format the copy is prepared in (ArrayRecord: eager; TFRecord: streamed). `from_hf(name, split, ...)` builds the eager source, or the stream with `streaming=True`.
 
 ## Quick Start
 
@@ -41,7 +41,7 @@ batch = source.get_batch(to_words(np.arange(32)))
 
 - [eager_source](eager_source.md) - The in-memory base: host columns, provenance and the host read
 - [hf_source](hf_source.md) - HuggingFace Datasets integration (recommended)
-- [source_ops](source_ops.md) - The helpers a source is built from: wrapped index resolution, worker shares, config validation and streaming
+- [source_ops](source_ops.md) - The helpers a source is built from: wrapped index resolution, worker shares and config validation
 - [tfds_source](tfds_source.md) - TensorFlow Datasets integration
 - [memory_source](memory_source.md) - In-memory data for testing
 - [streaming_disk_source](streaming_disk_source.md) - A `.npy` array larger than RAM, read through a memory map
