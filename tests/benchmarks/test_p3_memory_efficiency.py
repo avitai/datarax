@@ -54,7 +54,11 @@ class TestP3MemoryEfficiency:
     def test_peak_rss_within_1_5x_spdl(self, cv1_large_image_data):
         """Compare peak RSS against SPDL (requires spdl package).
 
-        The CV-1 scenario uses 10K x 224x224x3 uint8 images = ~1.5 GB raw.
+        The CV-1 scenario uses 10K x 224x224x3 uint8 images = ~1.5 GB raw,
+        built before either measurement, so each delta is what the loader
+        allocates on top of the NumPy data it is handed. SPDL gathers each
+        batch from that data (about 20 MB at peak, below the noise floor),
+        so Datarax is compared against the floor rather than skipped.
         Comparison logic (ratio target, skip conditions, absolute cap)
         is delegated to ``classify_rss_comparison`` so each branch is
         independently unit-tested in ``test_performance_targets``. This

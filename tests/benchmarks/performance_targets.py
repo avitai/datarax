@@ -146,22 +146,15 @@ def measure_latency(
 # Peak-RSS comparison classifier (used by P3 memory-efficiency test)
 # ---------------------------------------------------------------------------
 
-# Below this peak-RSS delta SPDL is effectively non-measuring — typically
-# because it iterates the in-memory fixture via zero-copy views or because
-# the fixture was already paged in and counted toward baseline. Comparing
-# Datarax (which holds a Pipeline + buffers at peak) against ~0 produces a
-# divergent ratio that says nothing about actual memory regressions.
-SPDL_NULL_FLOOR_MB = 1.0
-
 # Below this peak-RSS delta the measurement is dominated by allocator noise
 # (Python GC, JAX backend init, kernel page-cache effects) rather than data
-# residency. Both-below-this means a ratio assertion is uninformative.
+# residency. A delta below it is known only to be at most the floor.
 NOISE_FLOOR_MB = 50.0
 
 # Hard ceiling on Datarax peak-RSS regardless of SPDL. CV-1 raw data is
 # ~1.5 GB; the cap allows up to ~2.6x for one in-flight copy plus pipeline
-# state and JIT-trace overhead. Exceeding this is a memory regression that
-# must not be hidden by an SPDL-zero skip.
+# state and JIT-trace overhead. Exceeding this is a memory regression
+# whatever SPDL measured.
 DATARAX_RSS_ABSOLUTE_CAP_MB = 4000.0
 
 
@@ -175,15 +168,16 @@ def classify_rss_comparison(
 
     Decision order:
 
-    1. If Datarax exceeds ``DATARAX_RSS_ABSOLUTE_CAP_MB``, fail loud
-       regardless of SPDL — this catches regressions that an
-       SPDL-effectively-zero skip would otherwise hide.
-    2. If SPDL is below ``SPDL_NULL_FLOOR_MB``, skip with a
-       SPDL-specific message (zero-copy / pre-loaded fixture).
-    3. If either adapter is below ``NOISE_FLOOR_MB``, skip with the
-       noise-floor message — the ratio is uninformative.
-    4. Otherwise compare ``datarax_rss / spdl_rss`` against
-       ``max_ratio``.
+    1. If Datarax exceeds ``DATARAX_RSS_ABSOLUTE_CAP_MB``, fail regardless
+       of SPDL.
+    2. If Datarax is below ``NOISE_FLOOR_MB``, skip: its peak is allocator
+       noise, and no SPDL value makes that a regression.
+    3. Otherwise compare Datarax against ``max_ratio`` times SPDL's peak,
+       taken as at least ``NOISE_FLOOR_MB``. An SPDL peak below the floor is
+       known only to be at most the floor, so the floor is the largest
+       reference it could be; Datarax above ``max_ratio`` times the floor
+       exceeds the target whatever SPDL's true peak. Skipping here would
+       hide exactly the case where one loader allocates far more.
 
     Returns:
         Tuple of ``(verdict, message)`` where ``verdict`` is one of
@@ -199,43 +193,35 @@ def classify_rss_comparison(
             ),
         )
 
-    if spdl_rss < SPDL_NULL_FLOOR_MB:
+    if datarax_rss < NOISE_FLOOR_MB:
         return (
             "skip",
             (
-                f"SPDL allocated {spdl_rss:.3f} MB (below "
-                f"{SPDL_NULL_FLOOR_MB:.1f} MB null floor) — likely zero-copy "
-                "on the in-memory fixture or fixture pre-loaded into baseline. "
-                f"The {max_ratio}x ratio is undefined; absolute cap "
-                f"({DATARAX_RSS_ABSOLUTE_CAP_MB:.0f} MB) was satisfied at "
-                f"{datarax_rss:.0f} MB."
+                f"Datarax peak RSS below noise floor ({NOISE_FLOOR_MB} MB): "
+                f"Datarax={datarax_rss:.0f} MB, SPDL={spdl_rss:.0f} MB."
             ),
         )
 
-    if datarax_rss < NOISE_FLOOR_MB or spdl_rss < NOISE_FLOOR_MB:
-        return (
-            "skip",
-            (
-                f"Peak RSS below noise floor ({NOISE_FLOOR_MB} MB): "
-                f"Datarax={datarax_rss:.0f} MB, SPDL={spdl_rss:.0f} MB. "
-                "Increase scenario.dataset_size for a meaningful comparison."
-            ),
-        )
-
-    ratio = datarax_rss / spdl_rss
+    reference = max(spdl_rss, NOISE_FLOOR_MB)
+    reference_text = (
+        f"SPDL ({spdl_rss:.0f} MB)"
+        if spdl_rss >= NOISE_FLOOR_MB
+        else f"the {NOISE_FLOOR_MB:.0f} MB noise floor (SPDL={spdl_rss:.0f} MB, below it)"
+    )
+    ratio = datarax_rss / reference
     if ratio > max_ratio:
         return (
             "fail",
             (
                 f"Datarax peak RSS ({datarax_rss:.0f} MB) is {ratio:.2f}x "
-                f"SPDL ({spdl_rss:.0f} MB), exceeds {max_ratio}x target."
+                f"{reference_text}, exceeds {max_ratio}x target."
             ),
         )
     return (
         "pass",
         (
             f"Datarax peak RSS ({datarax_rss:.0f} MB) is {ratio:.2f}x "
-            f"SPDL ({spdl_rss:.0f} MB), within {max_ratio}x target."
+            f"{reference_text}, within {max_ratio}x target."
         ),
     )
 

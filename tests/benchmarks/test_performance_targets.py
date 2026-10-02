@@ -9,7 +9,6 @@ from tests.benchmarks.performance_targets import (
     measure_latency,
     measure_peak_rss_delta_mb,
     NOISE_FLOOR_MB,
-    SPDL_NULL_FLOOR_MB,
 )
 
 
@@ -88,8 +87,6 @@ class TestClassifyRssComparison:
 
     def test_absolute_cap_failure_independent_of_spdl(self):
         # Datarax over the absolute cap must fail regardless of SPDL value.
-        # This is the regression-guard: SPDL=0 used to skip silently while
-        # Datarax allocated multi-GB.
         verdict, msg = classify_rss_comparison(
             datarax_rss=DATARAX_RSS_ABSOLUTE_CAP_MB + 1000.0,
             spdl_rss=0.0,
@@ -97,25 +94,35 @@ class TestClassifyRssComparison:
         assert verdict == "fail"
         assert "absolute cap" in msg.lower()
 
-    def test_absolute_cap_failure_takes_precedence_over_skip(self):
-        # Even when SPDL=0 (which would normally skip), an absolute-cap
-        # violation should fail loud rather than skip quiet.
-        verdict, _ = classify_rss_comparison(
+    def test_absolute_cap_failure_takes_precedence_over_the_ratio(self):
+        # Over the cap, the failure names the cap rather than the ratio, whatever SPDL measured.
+        verdict, msg = classify_rss_comparison(
             datarax_rss=DATARAX_RSS_ABSOLUTE_CAP_MB + 100.0,
             spdl_rss=0.5,
         )
         assert verdict == "fail"
+        assert "absolute cap" in msg.lower()
 
-    def test_skip_when_spdl_effectively_zero(self):
-        # SPDL=0 with Datarax under the absolute cap should skip with a
-        # message that names the SPDL-zero cause specifically.
+    @pytest.mark.parametrize(
+        ("datarax_rss", "spdl_rss"),
+        [(1462.0, 19.0), (2918.0, 0.0), (76.0, 0.5)],
+    )
+    def test_a_reference_below_the_noise_floor_does_not_hide_a_larger_datarax_peak(
+        self, datarax_rss, spdl_rss
+    ):
+        # SPDL inside the noise floor and Datarax above it is not an uninformative pair: SPDL's
+        # peak is at most the floor, so Datarax above max_ratio x the floor already exceeds the
+        # target. (1462, 19) is the pair the CI Performance lane measured on CV-1 and skipped.
+        verdict, msg = classify_rss_comparison(datarax_rss=datarax_rss, spdl_rss=spdl_rss)
+        assert verdict == "fail", msg
+        assert "noise floor" in msg.lower()
+
+    def test_a_reference_below_the_noise_floor_is_compared_at_the_floor(self):
+        # Datarax within max_ratio x the floor cannot be told apart from SPDL: it passes.
         verdict, msg = classify_rss_comparison(
-            datarax_rss=2918.0,
-            spdl_rss=0.0,
+            datarax_rss=1.5 * NOISE_FLOOR_MB, spdl_rss=NOISE_FLOOR_MB / 10
         )
-        assert verdict == "skip"
-        assert "SPDL" in msg
-        assert "zero-copy" in msg.lower() or "below" in msg.lower()
+        assert verdict == "pass", msg
 
     def test_skip_when_both_below_noise_floor(self):
         # Both adapters tiny — measurement is allocator noise, ratio
@@ -131,6 +138,5 @@ class TestClassifyRssComparison:
         assert verdict == "skip"
 
     def test_constants_have_sensible_ordering(self):
-        # SPDL_NULL_FLOOR (effectively zero) must be < NOISE_FLOOR
-        # (allocator noise floor) which must be < DATARAX cap.
-        assert 0 < SPDL_NULL_FLOOR_MB < NOISE_FLOOR_MB < DATARAX_RSS_ABSOLUTE_CAP_MB
+        # The allocator noise floor must be below the Datarax cap.
+        assert 0 < NOISE_FLOOR_MB < DATARAX_RSS_ABSOLUTE_CAP_MB
