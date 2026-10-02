@@ -6,6 +6,8 @@ I/O scenario module before implementation exists.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pytest
 from calibrax.core import BenchmarkResult
@@ -55,6 +57,40 @@ class TestIO1Scenario:
         h, w, c = variant.config.element_shape
         assert img.shape[1:] == (h, w, c)
         assert img.dtype == np.uint8
+
+    def test_the_tfds_variants_read_their_own_data_dirs(self):
+        """The eager source reads an ArrayRecord copy and the stream a TFRecord one.
+
+        TFDS holds one format per prepared dataset version, so the two variants cannot share a
+        data directory: the eager variant reads TFDS's own (where the example datasets are
+        prepared as ArrayRecord), the streaming variant a directory of its own.
+        """
+        eager = self.mod.VARIANTS["tfds_eager"].config.extra
+        streaming = self.mod.VARIANTS["tfds_streaming"].config.extra
+
+        assert eager.get("data_dir") is None
+        assert streaming["data_dir"]
+        assert streaming["data_dir"] != eager.get("data_dir")
+
+    @pytest.mark.parametrize("variant", ["tfds_eager", "tfds_streaming"])
+    def test_the_adapter_opens_the_variant_s_data_dir(
+        self, variant: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        from flax import nnx
+
+        from datarax.sources import tfds_source
+
+        opened: list[Any] = []
+        for name in ("TFDSEagerSource", "TFDSStreamingSource"):
+            monkeypatch.setattr(
+                tfds_source, name, lambda config, **kwargs: opened.append(config) or config
+            )
+        config = self.mod.VARIANTS[variant].config
+
+        DataraxAdapter()._create_source(config, {}, nnx.Rngs(0))
+
+        (source_config,) = opened
+        assert source_config.data_dir == config.extra.get("data_dir")
 
     def test_tier1_variant_exists(self):
         """IO-1 must define TIER1_VARIANT pointing to 'memory_source'."""

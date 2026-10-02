@@ -42,22 +42,15 @@ By the end of this tutorial, you will be able to:
 ## Setup
 
 ```bash
-uv pip install "datarax[tfds]" matplotlib
+uv pip install "datarax[data]" matplotlib
+# Prepare MNIST and Fashion-MNIST once as ArrayRecord, in a process of its own: preparing imports
+# TensorFlow (the tfds extra); the example reads the prepared copy without it
+uv pip install "datarax[tfds]"
+python -c "import tensorflow_datasets as tfds; [tfds.builder(n, file_format='array_record').download_and_prepare() for n in ('mnist', 'fashion_mnist')]"
 ```
 """
 
 # %%
-# GPU Memory Configuration
-import os
-
-
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-
-import tensorflow as tf
-
-
-tf.config.set_visible_devices([], "GPU")
-
 # Core imports
 
 import jax

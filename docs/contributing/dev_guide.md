@@ -283,7 +283,7 @@ Tests use pytest markers for categorization:
 | `@pytest.mark.devices(count)` | Tests that need at least `count` devices (substrax plugin) |
 | `@pytest.mark.slow` | Slow-running tests |
 | `@pytest.mark.benchmark` | Performance benchmarks |
-| `@pytest.mark.tfds` | TensorFlow Datasets tests |
+| `@pytest.mark.tfds` | Reads the offline TFDS fixture (prepared with TensorFlow by `python -m tests.test_common.tfds_fixture <dir>`, named in `DATARAX_TFDS_FIXTURE_DIR`) or the prepared example datasets; runs in CI's long-running job only |
 | `@pytest.mark.hf` | HuggingFace Datasets tests |
 
 ### Running Specific Test Types

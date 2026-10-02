@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import re
 import threading
@@ -12,12 +13,14 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+import yaml
 
 from tests.scripts.script_loader import load_script, REPO_ROOT
+from tests.test_common.tfds_fixture import FIXTURE, TFDSFixture
 
 
-_TFDS_CIFAR10 = re.compile(r'Config\(\s*name="cifar10"|tfds\.(?:load|builder)\("cifar10"')
 _KERAS_CIFAR10 = re.compile(r"from keras\.datasets import cifar10\b")
+_TFDS_READERS = {"TFDSEagerConfig", "TFDSStreamingConfig", "from_tfds"}
 _BLOB = bytes(range(256)) * 4
 
 
@@ -26,27 +29,125 @@ def prepare() -> ModuleType:
     return load_script("prepare_example_datasets")
 
 
-def _cifar10_loaders() -> set[tuple[str, str]]:
-    """The CIFAR-10 loaders the examples call, found in their sources."""
-    loaders: set[tuple[str, str]] = set()
+def _dataset_name(call: ast.Call) -> str | None:
+    """The literal dataset name a TFDS source config or factory call is given, if any."""
+    named = [keyword.value for keyword in call.keywords if keyword.arg == "name"]
+    candidates = named or call.args[:1]
+    if candidates and isinstance(candidates[0], ast.Constant):
+        return str(candidates[0].value)
+    return None
+
+
+def _tfds_datasets_the_examples_read() -> set[str]:
+    """Every TFDS dataset an example script reads through a datarax TFDS source."""
+    names: set[str] = set()
     for path in sorted((REPO_ROOT / "examples").rglob("*.py")):
-        text = path.read_text(encoding="utf-8")
-        if _TFDS_CIFAR10.search(text):
-            loaders.add(("tfds", "cifar10"))
-        if _KERAS_CIFAR10.search(text):
-            loaders.add(("keras", "cifar10"))
-    return loaders
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Call):
+                continue
+            callee = node.func.attr if isinstance(node.func, ast.Attribute) else None
+            callee = node.func.id if isinstance(node.func, ast.Name) else callee
+            if callee in _TFDS_READERS and (name := _dataset_name(node)) is not None:
+                names.add(name)
+    return names
 
 
-def test_every_cifar10_loader_the_examples_use_is_prepared(prepare: ModuleType) -> None:
-    """CIFAR-10 is served from a slow host, so each loader of it an example uses is cached in CI."""
-    loaders = _cifar10_loaders()
-    prepared = {("tfds", name) for name in prepare.TFDS_DATASETS} | {
-        ("keras", name) for name in prepare.KERAS_DATASETS
+def test_every_tfds_dataset_the_examples_read_is_prepared(prepare: ModuleType) -> None:
+    """The examples read prepared ArrayRecord copies, and the script prepares exactly those."""
+    read = _tfds_datasets_the_examples_read()
+
+    assert read == {"cifar10", "fashion_mnist", "mnist"}
+    assert set(prepare.TFDS_DATASETS) == read
+
+
+def test_the_keras_cifar10_loader_the_examples_use_is_prepared(prepare: ModuleType) -> None:
+    """CIFAR-10 is served from a slow host, so the keras loader of it is cached in CI too."""
+    examples = sorted((REPO_ROOT / "examples").rglob("*.py"))
+
+    assert any(_KERAS_CIFAR10.search(path.read_text(encoding="utf-8")) for path in examples)
+    assert "cifar10" in prepare.KERAS_DATASETS
+
+
+def test_a_tfds_dataset_is_prepared_as_array_record(
+    prepare: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ArrayRecord is the format the eager TFDS source reads without TensorFlow."""
+    import tensorflow_datasets as tfds
+
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class _Builder:
+        def download_and_prepare(self, **kwargs: object) -> None:
+            calls.append(("download_and_prepare", kwargs))
+
+    def builder(name: str, **kwargs: object) -> _Builder:
+        calls.append((name, kwargs))
+        return _Builder()
+
+    monkeypatch.setattr(tfds, "builder", builder)
+
+    prepare.prepare_tfds_dataset("mnist", tmp_path)
+
+    assert calls[0] == ("mnist", {"file_format": "array_record"})
+    assert calls[1][0] == "download_and_prepare"
+    assert calls[1][1]["download_dir"] == tmp_path
+
+
+def test_the_cache_key_names_the_format_it_holds() -> None:
+    """A cache of another format is never restored as this one."""
+    workflow = yaml.safe_load((REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text())
+    keys = {
+        step["with"]["key"]
+        for job in workflow["jobs"].values()
+        for step in job.get("steps", [])
+        if str(step.get("uses", "")).startswith("actions/cache")
+        and "tensorflow_datasets" in str(step.get("with", {}).get("path", ""))
     }
 
-    assert loaders == {("tfds", "cifar10"), ("keras", "cifar10")}
-    assert loaders <= prepared
+    assert keys == {
+        "example-datasets-array_record-${{ hashFiles('scripts/prepare_example_datasets.py') }}"
+    }
+
+
+@pytest.mark.tfds
+def test_a_copy_in_another_format_is_listed_for_replacement(
+    prepare: ModuleType, tfds_fixture: TFDSFixture
+) -> None:
+    stale = prepare.stale_copies([FIXTURE], data_dir=str(tfds_fixture.tfrecord))
+
+    assert stale == {FIXTURE: tfds_fixture.tfrecord / FIXTURE / "1.0.0"}
+
+
+@pytest.mark.tfds
+def test_an_array_record_copy_or_none_is_not_listed(
+    prepare: ModuleType, tfds_fixture: TFDSFixture, tmp_path: Path
+) -> None:
+    assert prepare.stale_copies([FIXTURE], data_dir=str(tfds_fixture.array_record)) == {}
+    assert prepare.stale_copies(["mnist", FIXTURE], data_dir=str(tmp_path)) == {}
+
+
+def test_removing_a_stale_copy_deletes_that_version_and_nothing_else(
+    prepare: ModuleType, tmp_path: Path
+) -> None:
+    version = tmp_path / "mnist" / "3.0.1"
+    for kept in (
+        tmp_path / "mnist" / "3.0.0",
+        tmp_path / "nsynth" / "2.3.3",
+        tmp_path / "downloads",
+    ):
+        kept.mkdir(parents=True)
+        (kept / "keep.txt").write_text("kept")
+    version.mkdir(parents=True)
+    (version / "mnist-train.tfrecord-00000-of-00001").write_bytes(b"x")
+
+    prepare.remove_stale_copy(version)
+
+    assert not version.exists()
+    assert sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("keep.txt")) == [
+        "downloads/keep.txt",
+        "mnist/3.0.0/keep.txt",
+        "nsynth/2.3.3/keep.txt",
+    ]
 
 
 class _RangeHandler(BaseHTTPRequestHandler):
@@ -267,19 +368,26 @@ def test_keras_archive_path_is_where_get_file_looks_for_a_named_download(
     )
 
 
-def test_prepare_all_fetches_then_forbids_the_hosts_then_runs_the_loaders(
+def test_prepare_all_lists_the_stale_copies_first_and_replaces_each_before_preparing_it(
     prepare: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("KERAS_HOME", str(tmp_path / "keras-home"))
-    tfds_archive = prepare.Archive(url="https://host.example/tfds.tar.gz", size=1, sha256="0" * 64)
+    monkeypatch.setattr(prepare, "TFDS_DATASETS", ("cifar10", "mnist"))
+    archives = {
+        name: prepare.Archive(url=f"https://host.example/{name}.gz", size=1, sha256="0" * 64)
+        for name in prepare.TFDS_DATASETS
+    }
+    stale = tmp_path / "data" / "mnist" / "3.0.1"
     events: list[tuple[object, ...]] = []
-    monkeypatch.setattr(prepare, "tfds_archives", lambda name: [(tfds_archive, "tfds.tar.gz")])
+    monkeypatch.setattr(prepare, "stale_copies", lambda names: {"mnist": stale})
+    monkeypatch.setattr(prepare, "tfds_archives", lambda name: [(archives[name], f"{name}.gz")])
     monkeypatch.setattr(
         prepare,
         "fetch_archives",
         lambda downloads: events.append(("fetch", list(downloads))) or {"host.example"},
     )
     monkeypatch.setattr(prepare, "forbid_hosts", lambda hosts: events.append(("forbid", hosts)))
+    monkeypatch.setattr(prepare, "remove_stale_copy", lambda path: events.append(("remove", path)))
     monkeypatch.setattr(
         prepare,
         "prepare_tfds_dataset",
@@ -289,18 +397,27 @@ def test_prepare_all_fetches_then_forbids_the_hosts_then_runs_the_loaders(
         prepare, "prepare_keras_dataset", lambda name: events.append(("keras", name))
     )
 
+    monkeypatch.setattr(
+        prepare.LOGGER, "info", lambda message, *args: events.append(("log", message % args))
+    )
+
     prepare.prepare_all(tmp_path / "work")
 
     keras = prepare.KERAS_DATASETS["cifar10"]
-    assert events == [
+    work = tmp_path / "work" / "tfds"
+    assert events[0] == ("log", f"Replacing these copies with ArrayRecord: {stale}")
+    assert [event for event in events if event[0] != "log"] == [
         (
             "fetch",
             [
-                (tfds_archive, tmp_path / "work" / "tfds" / "cifar10" / "tfds.tar.gz"),
+                (archives["cifar10"], work / "cifar10" / "cifar10.gz"),
+                (archives["mnist"], work / "mnist" / "mnist.gz"),
                 (keras.archive, prepare.keras_archive_path(keras.fname)),
             ],
         ),
         ("forbid", {"host.example"}),
-        ("tfds", "cifar10", tmp_path / "work" / "tfds" / "cifar10"),
+        ("tfds", "cifar10", work / "cifar10"),
+        ("remove", stale),
+        ("tfds", "mnist", work / "mnist"),
         ("keras", "cifar10"),
     ]

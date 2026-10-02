@@ -7,7 +7,7 @@
 | **Prerequisites** | JAX, Flax NNX, DAG pipelines, image processing basics |
 | **Memory** | ~4 GB VRAM (GPU) / ~8 GB RAM (CPU) |
 | **Devices** | GPU recommended, CPU supported |
-| **Dataset** | CIFAR-10 (~170 MB, auto-downloaded) |
+| **Dataset** | CIFAR-10 (~170 MB, prepared once as ArrayRecord) |
 | **Format** | Python + Jupyter |
 
 ## Overview
@@ -40,8 +40,12 @@ This example showcases two datarax composition mechanisms:
 ## Quick Start
 
 ```bash
-# Install dependencies
-uv pip install "datarax[data]"
+# Install dependencies (the tfds extra prepares CIFAR-10)
+uv pip install "datarax[data,tfds]"
+
+# Prepare the example datasets once as ArrayRecord (in its own process: it imports
+# TensorFlow; the example reads them without it)
+python scripts/prepare_example_datasets.py
 
 # Run the example (GPU recommended)
 python examples/advanced/differentiable/02_learned_isp_guide.py
@@ -54,7 +58,7 @@ python examples/advanced/differentiable/02_learned_isp_guide.py
 
 ## Dataset: CIFAR-10 with Low-Light Simulation
 
-Real CIFAR-10 images are loaded via `tensorflow_datasets` and simulated as low-light:
+Real CIFAR-10 images are read with `TFDSEagerSource` and simulated as low-light:
 
 - **Darkening**: Per-image random brightness factor in [0.1, 0.3]
 - **Noise**: Gaussian noise σ=0.02 (simulating high ISO sensor noise)

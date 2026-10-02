@@ -22,6 +22,7 @@ In GitHub Actions workflows, this is handled by explicitly adding the project ro
 - `dependency_utilities.py`: Helpers for optional-dependency detection and skipping
 - `mock_operators.py`: Mock operator implementations for tests
 - `nnx_fixtures.py`: Fixtures for Flax NNX module tests
+- `tfds_fixture.py`: The offline TFDS dataset the `tfds` tests read (`python -m tests.test_common.tfds_fixture <dir>` prepares it, with TensorFlow; the `tfds_fixture` fixture in `tests/conftest.py` serves it)
 - `utils.py`: General test utilities
 
 ### Data Source Fixtures

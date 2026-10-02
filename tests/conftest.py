@@ -61,8 +61,14 @@ os.environ.update(resolve_test_environment(os.environ, cuda_plugin_available=has
 import jax
 import jax.numpy as jnp
 import pytest
+from substrax.testing import run_python
 
 from datarax.utils.console import emit
+from tests.test_common.tfds_fixture import (
+    COMMAND as TFDS_FIXTURE_COMMAND,
+    DIRECTORY_VARIABLE as TFDS_FIXTURE_DIRECTORY_VARIABLE,
+    TFDSFixture,
+)
 
 
 # Pre-import Deep Lake before TensorFlow to avoid fatal OpenSSL conflict.
@@ -114,7 +120,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 # Register custom markers
 def pytest_configure(config):
     """Register custom markers for pytest."""
-    config.addinivalue_line("markers", "tfds: mark test as requiring tensorflow_datasets")
+    config.addinivalue_line(
+        "markers", "tfds: reads the TFDS fixture or prepared datasets (CI long-running job)"
+    )
     config.addinivalue_line("markers", "hf: mark test as requiring huggingface_datasets")
     config.addinivalue_line("markers", "integration: mark test as an integration test")
     config.addinivalue_line("markers", "end_to_end: mark test as an end-to-end test")
@@ -304,6 +312,44 @@ def sample_tabular_data() -> list[dict[str, Any]]:
         }
         for i in range(100)
     ]
+
+
+_TFDS_FIXTURE_PREPARE_SECONDS = 600.0
+
+
+@pytest.fixture(scope="session")
+def tfds_fixture(tmp_path_factory: pytest.TempPathFactory) -> TFDSFixture:
+    """The offline TFDS dataset (:mod:`tests.test_common.tfds_fixture`).
+
+    CI prepares it in a step of its own and names its directory in ``DATARAX_TFDS_FIXTURE_DIR``;
+    a directory named there must hold it. Without the variable it is prepared here, in a child
+    interpreter, since preparing imports TensorFlow and the test process reads it.
+
+    Args:
+        tmp_path_factory: Where an unnamed fixture is prepared.
+
+    Returns:
+        The fixture's data directories.
+
+    Raises:
+        RuntimeError: If preparing it failed, naming the command and the child's error.
+    """
+    named = os.environ.get(TFDS_FIXTURE_DIRECTORY_VARIABLE)
+    if named:
+        return TFDSFixture.at(Path(named))
+    root = tmp_path_factory.mktemp("tfds_fixture")
+    result = run_python(
+        "from tests.test_common.tfds_fixture import main; main()",
+        str(root),
+        timeout=_TFDS_FIXTURE_PREPARE_SECONDS,
+        cwd=Path(__file__).resolve().parent.parent,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"`{TFDS_FIXTURE_COMMAND} {root}` failed (it needs TensorFlow: the tfds extra):\n"
+            f"{result.stderr[-2000:]}"
+        )
+    return TFDSFixture.at(root)
 
 
 @pytest.fixture

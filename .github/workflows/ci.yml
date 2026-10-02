@@ -121,7 +121,7 @@ jobs:
         run: |
           export JAX_PLATFORMS="cpu"
           # Disable coverage for examples tests (they only check structure, not code)
-          uv run pytest tests/examples/ -v -m "not slow" --no-cov
+          uv run pytest tests/examples/ -v -m "not slow and not tfds" --no-cov
 
   unit_tests:
     name: Unit Tests (Python ${{ matrix.python-version }}, shard ${{ matrix.group }})
@@ -177,7 +177,7 @@ jobs:
           # pytest-randomly orders the collection before pytest-split assigns it, so every
           # shard of a run takes the run's id as its seed: one order, each test in exactly one
           # shard. docs/contributing/testing_guide.md shows how to rerun one shard locally.
-          uv run pytest tests benchmarks/tests --no-integration --no-end-to-end --no-benchmark -v -m "not slow" --cov-fail-under=0 \
+          uv run pytest tests benchmarks/tests --no-integration --no-end-to-end --no-benchmark -v -m "not slow and not tfds" --cov-fail-under=0 \
             --splits "$UNIT_TEST_SHARDS" --group ${{ matrix.group }} --splitting-algorithm least_duration \
             --randomly-seed=${{ github.run_id }}
 
@@ -213,7 +213,7 @@ jobs:
           path: |
             ~/tensorflow_datasets
             ~/.keras/datasets
-          key: example-datasets-${{ hashFiles('scripts/prepare_example_datasets.py') }}
+          key: example-datasets-array_record-${{ hashFiles('scripts/prepare_example_datasets.py') }}
 
       - name: Set up Python
         if: steps.datasets.outputs.cache-hit != 'true'
@@ -303,7 +303,7 @@ jobs:
           path: |
             ~/tensorflow_datasets
             ~/.keras/datasets
-          key: example-datasets-${{ hashFiles('scripts/prepare_example_datasets.py') }}
+          key: example-datasets-array_record-${{ hashFiles('scripts/prepare_example_datasets.py') }}
 
       # Present whenever prepare_example_datasets missed the cache; absent otherwise, and then
       # this step fails rather than letting an example download the datasets.
@@ -314,14 +314,22 @@ jobs:
           name: example-datasets
           path: ~/
 
+      # The TFDS tests read an offline dataset whose preparation imports TensorFlow, which only
+      # this job installs. It is prepared here, before them, and named for them; a missing
+      # fixture fails those tests rather than skipping them.
+      - name: Prepare the TFDS test fixture
+        run: |
+          uv run python -m tests.test_common.tfds_fixture "$RUNNER_TEMP/tfds_fixture"
+          echo "DATARAX_TFDS_FIXTURE_DIR=$RUNNER_TEMP/tfds_fixture" >> "$GITHUB_ENV"
+
       - name: Run long-running tests
         run: |
           # Each example has a 300 s budget, and running past it fails the test.
           # Slow-host datasets come from what prepare_example_datasets prepared,
-          # so no example downloads them inside its budget.
+          # so no example downloads them inside its budget. The TFDS tests run only here.
           export JAX_PLATFORMS="cpu"
           export DATARAX_EXAMPLE_TIMEOUT_SECONDS=300
-          uv run pytest tests benchmarks/tests -m slow --no-benchmark -v --cov-fail-under=0 --timeout=600 --durations=0
+          uv run pytest tests benchmarks/tests -m "slow or tfds" --no-benchmark -v --cov-fail-under=0 --timeout=600 --durations=0
 
       - name: Prepare coverage data
         run: uv run coverage combine || true
@@ -373,7 +381,7 @@ jobs:
         run: |
           # Explicitly run on CPU for GitHub workflow
           export JAX_PLATFORMS="cpu"
-          uv run pytest tests --integration -v --cov-fail-under=0
+          uv run pytest tests --integration -v -m "not tfds" --cov-fail-under=0
 
       - name: Prepare coverage data
         run: uv run coverage combine || true
@@ -428,7 +436,7 @@ jobs:
             tests/pipeline/test_pipeline_integration.py \
             tests/pipeline/test_pipeline_scan.py \
             tests/pipeline/test_pipeline_dag.py \
-            -v --cov-fail-under=0
+            -v -m "not tfds" --cov-fail-under=0
 
       - name: Prepare coverage data
         run: uv run coverage combine || true
@@ -481,7 +489,7 @@ jobs:
           # Explicitly run on CPU for GitHub workflow
           # Disable coverage to avoid distorting benchmark timings
           export JAX_PLATFORMS="cpu"
-          uv run pytest tests --benchmark -v --no-cov --benchmark-autosave --benchmark-columns=mean,stddev,min,max
+          uv run pytest tests --benchmark -v -m "not tfds" --no-cov --benchmark-autosave --benchmark-columns=mean,stddev,min,max
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4

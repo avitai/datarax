@@ -8,8 +8,8 @@ Data source adapters for loading data from various formats and libraries. Source
 |--------|---------|----------|
 | **HFEagerSource** | HuggingFace Datasets | Small/medium Hub datasets |
 | **HFStreamingSource** | HuggingFace Datasets | Large datasets (streaming) |
-| **TFDSEagerSource** | TensorFlow Datasets | Small/medium TFDS catalog |
-| **TFDSStreamingSource** | TensorFlow Datasets | Large datasets (streaming) |
+| **TFDSEagerSource** | TensorFlow Datasets prepared as ArrayRecord, read without TensorFlow | Small/medium TFDS catalog |
+| **TFDSStreamingSource** | TensorFlow Datasets through `tf.data` (imports TensorFlow) | Large datasets (streaming) |
 | **MemorySource** | In-memory arrays | Testing, small data |
 | **ArrayRecordSourceModule** | ArrayRecord format | Large-scale training |
 | **MixDataSourcesNode** | Multiple sources | Multi-dataset training |

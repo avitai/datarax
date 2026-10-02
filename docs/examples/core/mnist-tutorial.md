@@ -52,6 +52,10 @@ If you're familiar with PyTorch + torchvision, here's how Datarax compares:
 ## Quick Start
 
 ```bash
+# Prepare the example datasets once as ArrayRecord (in its own process: it imports
+# TensorFlow; the example reads them without it)
+python scripts/prepare_example_datasets.py
+
 # Run the Python script
 python examples/core/06_mnist_tutorial.py
 
@@ -85,17 +89,6 @@ These values are computed from the training set and are widely used in literatur
 ### Training Configuration
 
 ```python
-# GPU Memory Configuration
-import os
-
-
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-
-import tensorflow as tf
-
-
-tf.config.set_visible_devices([], "GPU")
-
 # Core imports
 import time
 

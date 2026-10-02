@@ -1,47 +1,47 @@
-"""TensorFlow Datasets (TFDS) data source implementation for Datarax.
+"""TensorFlow Datasets (TFDS) sources for Datarax.
 
-This module provides two distinct source types optimized for different use cases:
+**TFDSEagerSource** reads a split that TFDS has prepared as ArrayRecord, whole, into host NumPy
+columns and per-record provenance. TFDS's random-access reader (``builder.as_data_source``) reads
+every record in one batched call and decodes it with NumPy and Pillow; the records then become
+columns once, through the path every eager source shares. TensorFlow is never imported, so a
+training process that reads TFDS data this way holds none of it (TensorFlow in a JAX process
+breaks JAX's NCCL collectives). The source never prepares a dataset, because preparing imports
+TensorFlow: a split that is not prepared, or is prepared only in another format such as TFRecord,
+is refused, naming the call that prepares it as ArrayRecord. Reading needs the ``data`` extra;
+preparing needs the ``tfds`` extra, in a process of its own.
 
-**TFDSEagerSource**: For small/medium datasets that fit in host memory
-- Loads ALL data at initialization and holds it as host NumPy columns
-- No TensorFlow work during training: reads are NumPy gathers
 - Holds no iteration state; the pipeline owns the order and position
+- Strings a record carries (an ``id``, a caption) are kept as its provenance, never served
 - Ideal for: MNIST, CIFAR-10, Fashion-MNIST, small custom datasets
 
-**TFDSStreamingSource**: For large datasets that don't fit in memory
-- Thin wrapper around TF dataset iterator
-- DLPack zero-copy conversion for each batch
-- Fixed prefetch buffer (no AUTOTUNE thread storms)
-- Trade-offs: External iterator state, can't checkpoint mid-epoch
-- Ideal for: ImageNet, large-scale datasets, memory-constrained environments
+**TFDSStreamingSource** streams a copy prepared as TFRecord through ``tf.data``, for datasets too
+large for host memory; it imports TensorFlow into the process.
 
-Architecture Insight:
-    The ~0.4s delay at epoch 2 in previous implementations was caused by
-    TensorFlow's AUTOTUNE prefetch spawning background threads during epoch
-    transitions. TFDSEagerSource eliminates this entirely by loading all data
-    upfront. TFDSStreamingSource uses fixed prefetch to prevent thread storms.
+- DLPack zero-copy conversion for each record
+- Fixed prefetch buffer (no AUTOTUNE thread storms)
+- Trade-offs: external iterator state, can't checkpoint mid-epoch
+- Ideal for: ImageNet, large-scale datasets, memory-constrained environments
 """
 
 from __future__ import annotations
 
-import gc
 import logging
 import os
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from typing import Any, TYPE_CHECKING
+from typing import Any, Protocol
 
 import jax
-import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.data_source import RecordIdentity
 from datarax.sources._config_base import SourceConfigBase
 from datarax.sources._conversion import tf_to_jax
 from datarax.sources._source_base import DatasetSourceMixin, StreamingSourceBase
-from datarax.sources.eager_source import EagerSource
+from datarax.sources.eager_source import EagerSource, HostValue, parts_of_records
 from datarax.sources.source_ops import (
     converted_filtered_record,
+    filter_keys,
     validate_eager_source_settings,
     validate_positive_optional_int,
     validate_streaming_source_settings,
@@ -49,10 +49,6 @@ from datarax.sources.source_ops import (
 
 
 logger = logging.getLogger(__name__)
-
-
-if TYPE_CHECKING:
-    import tensorflow_datasets as tfds
 
 
 # =============================================================================
@@ -137,39 +133,28 @@ def _prepare_tfds_builder(
 
 @dataclass(frozen=True)
 class TFDSEagerConfig(SourceConfigBase):
-    """Configuration for TFDSEagerSource (loads all data into host columns at init).
-
-    Configuration for eager-loading TensorFlow Datasets into host NumPy columns.
+    """Configuration for TFDSEagerSource (reads a prepared ArrayRecord split into host columns).
 
     Args:
         name: Name of the dataset in TFDS (required)
-        split: Split of the dataset to load, e.g., "train", "test" (required)
-        data_dir: Optional directory where the dataset is stored/downloaded
-        as_supervised: If True, returns 'image'/'label' keys instead of original features
-        download_and_prepare_kwargs: Optional keyword arguments for download_and_prepare
+        split: Split of the dataset to load, e.g., "train", "test[:2000]" (required)
+        data_dir: Directory holding the dataset prepared as ArrayRecord; TFDS's default data
+            directory (``TFDS_DATA_DIR``, else ``~/tensorflow_datasets``) when ``None``
+        as_supervised: If True, keeps only the dataset's supervised features
+            (``info.supervised_keys``), under their own names
         include_keys: Optional set of keys to include in output (exclusive with exclude_keys)
         exclude_keys: Optional set of keys to exclude from output (exclusive with include_keys)
 
     Note:
         The order records are served in belongs to the pipeline (``Pipeline(shuffle=...)``).
+        The source never prepares a dataset; see :class:`TFDSEagerSource`.
     """
 
-    try_gcs: bool = False
     as_supervised: bool = False
-    download_and_prepare_kwargs: dict[str, Any] | None = None
-    beam_num_workers: int | None = None
-    local_files_only: bool = False
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
-        validate_eager_source_settings(
-            self,
-            "TFDSEagerConfig",
-            try_gcs=self.try_gcs,
-            data_dir=self.data_dir,
-        )
-
-        validate_positive_optional_int(self.beam_num_workers, "beam_num_workers")
+        validate_eager_source_settings(self, "TFDSEagerConfig")
 
 
 @dataclass(frozen=True)
@@ -220,176 +205,162 @@ class TFDSStreamingConfig(SourceConfigBase):
 
 
 # =============================================================================
-# TFDSEagerSource - Loads All Data into Host Columns at Init
+# TFDSEagerSource - Reads a Prepared ArrayRecord Split into Host Columns at Init
 # =============================================================================
 
 
+class PreparedRecords(Protocol):
+    """A prepared split's records, read by position: TFDS's random-access data source."""
+
+    def __len__(self) -> int:
+        """The number of records in the split."""
+        ...
+
+    def __getitems__(self, keys: Sequence[int]) -> Sequence[Any]:
+        """Read and decode the records at ``keys``, in one batched read."""
+        ...
+
+
+def _not_prepared(name: str, data_dir: str | None, found: str) -> FileNotFoundError:
+    """The refusal of a copy the eager source cannot read, naming the call that prepares one."""
+    where = data_dir if data_dir is not None else "TFDS's default data directory"
+    return FileNotFoundError(
+        f"TFDS dataset {name!r} is not prepared as ArrayRecord in {where}: {found}. "
+        "TFDSEagerSource reads a copy prepared as ArrayRecord and never prepares one, since "
+        "preparing imports TensorFlow. Prepare it once, in a process of its own with the tfds "
+        f"extra installed: tfds.builder({name!r}, data_dir={data_dir!r}, "
+        "file_format='array_record').download_and_prepare(). A data directory holds one format "
+        "per dataset version, so prepare it where no copy of that version in another format is."
+    )
+
+
+def open_prepared_split(  # noqa: DOC503 - _not_prepared builds the FileNotFoundError
+    name: str, split: str, data_dir: str | None
+) -> tuple[Any, PreparedRecords]:
+    """Open ``split`` of the TFDS dataset ``name`` as prepared in ArrayRecord, reading no record.
+
+    TFDS's own reader serves it (``builder.as_data_source``), and TensorFlow is not imported.
+
+    Args:
+        name: The TFDS dataset name, with its config when it has one (``"nsynth/full"``).
+        split: The split, slices included (``"train[:5000]"``).
+        data_dir: The data directory; TFDS's default when ``None``.
+
+    Returns:
+        The dataset's ``DatasetInfo`` and the split's records.
+
+    Raises:
+        FileNotFoundError: If the data directory holds no copy of the dataset prepared as
+            ArrayRecord: nothing prepared, or a copy in another format such as TFRecord.
+    """
+    _configure_protobuf_runtime()
+    import tensorflow_datasets as tfds
+
+    try:
+        builder = tfds.builder(name, data_dir=data_dir)
+    except tfds.core.DatasetNotFoundError as error:
+        raise _not_prepared(name, data_dir, "it is not prepared there") from error
+    if not builder.is_prepared():
+        raise _not_prepared(name, data_dir, f"{builder.data_dir} is not prepared")
+    formats = builder.info.available_file_formats()
+    if tfds.core.FileFormat.ARRAY_RECORD not in formats:
+        found = ", ".join(sorted(fmt.value for fmt in formats))
+        raise _not_prepared(name, data_dir, f"{builder.data_dir} holds it prepared as {found}")
+    # tfds wraps as_data_source in a logging decorator whose type hides the parameters.
+    records = builder.as_data_source(
+        split=split,  # pyright: ignore[reportCallIssue]
+        file_format=tfds.core.FileFormat.ARRAY_RECORD,
+    )
+    return builder.info, records
+
+
+def _kept_features(
+    record: dict[str, Any], keys: Sequence[str] | None, config: TFDSEagerConfig
+) -> dict[str, Any]:
+    """The features of ``record`` the source keeps: the supervised ones if asked, then filtered."""
+    if keys is not None:
+        record = {key: record[key] for key in keys}
+    return filter_keys(record, config.include_keys, config.exclude_keys)
+
+
 class TFDSEagerSource(DatasetSourceMixin, EagerSource):
-    """Eager-loading TFDS source for small/medium datasets.
+    """Eager TFDS source: a split prepared as ArrayRecord, read whole into host columns.
 
-    Loads ALL data at initialization and holds it as host NumPy columns, then serves it as
+    At construction it opens the split with TFDS's random-access reader, reads every record in
+    one batched read and stores the numeric features as host NumPy columns and every other
+    feature (text, such as CIFAR-10's ``id``) as each record's provenance; it then serves them as
     every eager source does (:class:`~datarax.sources.eager_source.EagerSource`): indexing,
-    iteration in order and the stateless host read ``get_batch(indices, epochs=...)``.
+    iteration in order and the stateless host read ``get_batch(indices, epochs=...)``. Values keep
+    the dtype TFDS stores (a class label is int64 on the host; a device holds it as int32 while
+    64-bit types are off).
 
-    Key Features:
-        - One-time TF conversion at init; no TF threads during training
-        - Holds no iteration state: the pipeline owns the order and the position
-        - Supports `as_supervised` mode and key filtering
+    TensorFlow is never imported. The source never prepares a dataset: a split that is not
+    prepared, or is prepared in another format, is refused with the call that prepares it, to be
+    run once in a process of its own (preparing imports TensorFlow)::
 
-    Performance:
-        - Eliminates ~0.4s epoch 2 delay from TF AUTOTUNE threads
+        tfds.builder("mnist", data_dir=..., file_format="array_record").download_and_prepare()
 
     Example:
         ```python
-        # Create eager source for MNIST
         config = TFDSEagerConfig(name="mnist", split="train")
         source = TFDSEagerSource(config)
 
-        # Iterate in order
-        for item in source:
+        for item in source:  # records in order
             process(item["image"])
 
-        # Read records 0..31 as a Batch
-        batch = source.get_batch(to_words(np.arange(32)))
+        batch = source.get_batch(to_words(np.arange(32)))  # records 0..31 as a Batch
         ```
     """
 
-    def __init__(
+    def __init__(  # noqa: DOC503 - open_prepared_split raises the FileNotFoundError
         self,
         config: TFDSEagerConfig,
         *,
         name: str | None = None,
     ) -> None:
-        """Initialize TFDSEagerSource by loading all data into host columns.
+        """Read the prepared split into host columns and provenance.
 
         Args:
             config: Configuration for the source
             name: Optional name (defaults to TFDSEagerSource(dataset:split))
+
+        Raises:
+            FileNotFoundError: If the dataset is not prepared as ArrayRecord in the data directory.
+            ValueError: If ``as_supervised`` is asked of a dataset without supervised keys, the
+                split and key filters leave nothing, or a feature's shape varies between records.
         """
         if name is None:
             name = f"TFDSEagerSource({config.name}:{config.split})"
         super().__init__(config, name=name)
-
-        # Store config for feature access
         self.dataset_name = config.name
         self.split_name = config.split
         self.as_supervised = config.as_supervised
         self.include_keys = config.include_keys
         self.exclude_keys = config.exclude_keys
 
-        # Load dataset info BEFORE loading data (for get_dataset_info)
-        self._dataset_info = self._load_dataset_info_from_backend(config)
+        # name and split are validated non-None by the config's __post_init__
+        dataset, split = config.name, config.split
+        assert dataset is not None and split is not None  # noqa: S101 (invariant, not control flow)
+        info, records = open_prepared_split(dataset, split, config.data_dir)
+        self._dataset_info = HostValue(info)
+        keys = self._supervised_keys(dataset) if config.as_supervised else None
+        rows = [
+            _kept_features(record, keys, config)
+            for record in records.__getitems__(list(range(len(records))))
+        ]
+        if not rows or not rows[0]:
+            raise ValueError(
+                f"{dataset} {split} produced no records after loading and filtering; check the "
+                "split and the include/exclude key filters"
+            )
+        self._store(*parts_of_records(rows))
 
-        # Load ALL data at init; the base stores it as host NumPy columns
-        self._store(self._load_all_from_backend_to_jax(config))
-
-        # Clean up TF resources completely
-        self._cleanup_tf()
-
-    def _load_dataset_info_from_backend(self, config: TFDSEagerConfig) -> tfds.core.DatasetInfo:
-        """Load and cache dataset info before cleanup.
-
-        Args:
-            config: Source configuration
-
-        Returns:
-            TFDS DatasetInfo object
-        """
-        # name validated non-None by config __post_init__
-        name = config.name
-        assert name is not None  # noqa: S101 (invariant, not control flow)
-        builder = _prepare_tfds_builder(
-            name,
-            config.data_dir,
-            config.try_gcs,
-            config.download_and_prepare_kwargs,
-            beam_num_workers=config.beam_num_workers,
-            local_files_only=config.local_files_only,
-        )
-        return builder.info
-
-    def _load_all_from_backend_to_jax(self, config: TFDSEagerConfig) -> dict[str, jax.Array]:
-        """Load entire dataset to JAX arrays using DLPack.
-
-        This is the core of the eager-loading strategy. All TF operations
-        happen here at init time, so training loops are pure JAX.
-
-        Args:
-            config: Source configuration
-
-        Returns:
-            Dictionary mapping keys to JAX arrays
-        """
-        _configure_protobuf_runtime()
-        import tensorflow_datasets as tfds
-
-        # name validated non-None by config __post_init__
-        name = config.name
-        assert name is not None  # noqa: S101 (invariant, not control flow)
-
-        ds = tfds.load(
-            name,
-            split=config.split,
-            data_dir=config.data_dir,
-            as_supervised=config.as_supervised,
-            try_gcs=config.try_gcs,
-        )
-
-        # Collect all data
-        arrays: dict[str, list[Any]] = {}
-        for tf_element in ds:  # type: ignore[union-attr]
-            self._accumulate_tf_element(arrays, tf_element, config)
-
-        # Stack to single arrays
-        return {k: jnp.stack(v) for k, v in arrays.items()}
-
-    @staticmethod
-    def _is_key_excluded(key: str, config: TFDSEagerConfig) -> bool:
-        """Return whether ``key`` should be dropped per include/exclude filters.
-
-        Args:
-            key: Feature key from a TFDS element.
-            config: Source configuration carrying ``include_keys``/``exclude_keys``.
-
-        Returns:
-            ``True`` if the key is filtered out and should not be collected.
-        """
-        if config.include_keys and key not in config.include_keys:
-            return True
-        return bool(config.exclude_keys and key in config.exclude_keys)
-
-    def _accumulate_tf_element(
-        self, arrays: dict[str, list[Any]], tf_element: Any, config: TFDSEagerConfig
-    ) -> None:
-        """Convert one TF element's kept fields to JAX arrays, appending into ``arrays``.
-
-        Args:
-            arrays: Accumulator mapping feature key to a list of per-record JAX arrays.
-            tf_element: A single element yielded by the TFDS dataset.
-            config: Source configuration (supervised format + key filters).
-        """
-        # Handle as_supervised tuple format
-        if config.as_supervised and isinstance(tf_element, tuple):
-            tf_element = {"image": tf_element[0], "label": tf_element[1]}
-
-        for k, v in tf_element.items():
-            if self._is_key_excluded(k, config):
-                continue
-            arrays.setdefault(k, []).append(tf_to_jax(v))
-
-    def _cleanup_tf(self) -> None:
-        """Release all TensorFlow resources.
-
-        This ensures no TF threads remain active after init,
-        eliminating the epoch 2 delay problem.
-        """
-        try:
-            import tensorflow as tf
-
-            tf.keras.backend.clear_session()  # type: ignore[reportAttributeAccessIssue]
-        except ImportError:
-            pass
-        gc.collect()
+    def _supervised_keys(self, dataset: str) -> list[str]:
+        """The features ``as_supervised`` keeps: those the dataset declares supervised."""
+        declared = self.get_dataset_info().supervised_keys
+        if declared is None:
+            raise ValueError(f"{dataset} declares no supervised keys, which as_supervised keeps")
+        return [str(key) for key in jax.tree.leaves(declared)]
 
 
 # =============================================================================

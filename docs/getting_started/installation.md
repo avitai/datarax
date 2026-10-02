@@ -43,6 +43,7 @@ pip install datarax[all-macos]
 # Install with specific optional dependencies
 pip install datarax[docs]     # Documentation dependencies
 pip install datarax[data]     # Data loading (HuggingFace, TFDS, etc.)
+pip install datarax[tfds]     # Prepare TFDS datasets, and stream them (TensorFlow)
 pip install datarax[test]     # Testing dependencies
 pip install datarax[metal]    # Metal acceleration (Apple Silicon only)
 ```

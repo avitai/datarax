@@ -169,15 +169,12 @@ def streaming_apply_batch(
     return batch_elements_to_dict(elements)
 
 
-def validate_eager_config(
+def validate_eager_config(  # noqa: DOC502 - the two validators it calls raise the ValueError
     name: str | None,
     split: str | None,
     include_keys: set[str] | None,
     exclude_keys: set[str] | None,
     config_class_name: str,
-    *,
-    try_gcs: bool = False,
-    data_dir: str | None = None,
 ) -> None:
     """Shared config validation for eager source configs.
 
@@ -187,19 +184,12 @@ def validate_eager_config(
         include_keys: Optional include keys
         exclude_keys: Optional exclude keys
         config_class_name: Name of config class for error messages
-        try_gcs: Whether to load from GCS (mutually exclusive with data_dir)
-        data_dir: Custom data directory (mutually exclusive with try_gcs)
 
     Raises:
         ValueError: If validation fails
     """
     validate_required_name_split(name, split, config_class_name)
     validate_include_exclude_keys(include_keys, exclude_keys)
-    if try_gcs and data_dir is not None:
-        raise ValueError(
-            f"Cannot specify both try_gcs=True and data_dir='{data_dir}' in {config_class_name}. "
-            "try_gcs overrides data_dir to the public GCS bucket (gs://tfds-data/datasets/)."
-        )
 
 
 def finalize_eager_config_validation(
@@ -210,20 +200,10 @@ def finalize_eager_config_validation(
     split: str | None,
     include_keys: set[str] | None,
     exclude_keys: set[str] | None,
-    try_gcs: bool = False,
-    data_dir: str | None = None,
 ) -> None:
     """Run shared eager-config validation flow."""
     super_post_init()
-    validate_eager_config(
-        name,
-        split,
-        include_keys,
-        exclude_keys,
-        config_class_name,
-        try_gcs=try_gcs,
-        data_dir=data_dir,
-    )
+    validate_eager_config(name, split, include_keys, exclude_keys, config_class_name)
 
 
 def finalize_streaming_config_validation(
@@ -258,9 +238,6 @@ def _get_super_post_init(config: Any) -> Callable[[], None]:
 def validate_eager_source_settings(
     config: Any,
     config_class_name: str,
-    *,
-    try_gcs: bool = False,
-    data_dir: str | None = None,
 ) -> None:
     """Validate a source eager config using standard dataclass fields."""
     finalize_eager_config_validation(
@@ -270,8 +247,6 @@ def validate_eager_source_settings(
         split=config.split,
         include_keys=config.include_keys,
         exclude_keys=config.exclude_keys,
-        try_gcs=try_gcs,
-        data_dir=data_dir,
     )
 
 

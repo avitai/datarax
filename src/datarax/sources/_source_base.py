@@ -9,6 +9,7 @@ from typing import Any
 from flax import nnx
 
 from datarax.core.data_source import DataSourceModule
+from datarax.sources.eager_source import HostValue
 from datarax.sources.source_ops import (
     format_source_repr,
     reset_streaming_state,
@@ -23,16 +24,19 @@ class DatasetSourceMixin:
     """What an eager source loaded from a named dataset reports: its name, split and info.
 
     A subclass sets ``dataset_name``, ``split_name`` and ``_dataset_info`` in its ``__init__``.
+    The info is held in a :class:`~datarax.sources.eager_source.HostValue`: a backend's info
+    object compares by identity (TFDS's ``DatasetInfo``), so held as an attribute it would make
+    every source a graphdef of its own and every jitted step over a new source compile again.
     """
 
     dataset_name: str | None
     split_name: str | None
-    _dataset_info: Any
+    _dataset_info: HostValue
     length: int
 
     def get_dataset_info(self) -> Any:
         """Return cached backend-specific dataset metadata."""
-        return self._dataset_info
+        return self._dataset_info.value
 
     def _repr_extra_fields(self) -> dict[str, Any]:
         """Optional additional repr fields for subclasses."""

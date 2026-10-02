@@ -30,7 +30,7 @@ If you're familiar with PyTorch's torchvision datasets, here's how Datarax + TFD
 | `transforms.ToTensor()` | JAX arrays by default (no conversion needed) |
 | `transforms.Normalize(mean, std)` | Custom operator with JAX operations |
 
-**Key difference:** TFDS provides automatic downloads and caching, while Datarax handles JAX array conversion.
+**Key difference:** TFDS prepares a dataset once (downloads it and writes it as ArrayRecord), while Datarax reads the prepared copy into host NumPy columns without TensorFlow.
 
 ## Coming from TensorFlow?
 
@@ -51,6 +51,10 @@ If you're familiar with PyTorch's torchvision datasets, here's how Datarax + TFD
 ## Quick Start
 
 ```bash
+# Prepare the example datasets once as ArrayRecord (in its own process: it imports
+# TensorFlow; the example reads them without it)
+python scripts/prepare_example_datasets.py
+
 # Run the Python script
 python examples/integration/tfds/01_tfds_quickref.py
 
@@ -60,26 +64,11 @@ jupyter lab examples/integration/tfds/01_tfds_quickref.ipynb
 
 ## Setup
 
-### GPU Memory Configuration
+### Imports
 
-IMPORTANT: Configure TensorFlow to not use GPU (JAX handles GPU computation).
+Datarax reads the prepared dataset without TensorFlow, so the process needs no TensorFlow device setup:
 
 ```python
-# GPU Memory Configuration
-# Prevent TensorFlow from using GPU (JAX handles GPU computation)
-# This MUST be set BEFORE importing tensorflow
-import os
-
-
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress all TF logs
-
-# Force TF to CPU-only mode BEFORE importing JAX
-import tensorflow as tf
-
-
-tf.config.set_visible_devices([], "GPU")
-
-# Now import JAX which will handle GPU
 import jax.numpy as jnp
 from flax import nnx
 
@@ -98,7 +87,7 @@ from datarax.pipeline import Pipeline
 
 ## Step 1: Create TFDS Data Source
 
-`TFDSEagerSource` wraps TensorFlow Datasets for use in Datarax pipelines.
+`TFDSEagerSource` reads a prepared TFDS split into host columns for Datarax pipelines.
 
 > **Note:** You can also use the factory function `from_tfds(name, split, ...)` which auto-selects between eager and streaming modes.
 
@@ -231,12 +220,12 @@ Batch 2:
 flowchart LR
     subgraph TFDS["TensorFlow Datasets"]
         Catalog[TFDS Catalog<br/>500+ datasets]
-        Download[Auto-download<br/>& cache]
+        Prepare[Prepared once<br/>as ArrayRecord]
     end
 
     subgraph Source["TFDSEagerSource"]
         Config[TFDSEagerConfig<br/>name, split]
-        Load[Load & Convert<br/>to host NumPy columns]
+        Load[Read without TensorFlow<br/>into host NumPy columns]
     end
 
     subgraph Pipeline["Datarax Pipeline"]
@@ -248,8 +237,8 @@ flowchart LR
         JAX[JAX Arrays<br/>Ready for training]
     end
 
-    Catalog --> Download
-    Download --> Config
+    Catalog --> Prepare
+    Prepare --> Config
     Config --> Load
     Load --> Op
     Op --> Batch
@@ -320,9 +309,9 @@ The pipeline integrates TFDS datasets into the Datarax ecosystem, enabling the u
 
 ### Key Benefits
 
-1. **Auto-download**: TFDS handles dataset downloads and caching
+1. **Prepared once**: TFDS downloads a dataset and writes it as ArrayRecord, once
 2. **Standardization**: Consistent API across 500+ datasets
-3. **JAX Integration**: Automatic conversion to JAX arrays
+3. **No TensorFlow in training**: the eager source reads the prepared copy without TensorFlow
 4. **Versioning**: Dataset versions for reproducibility
 5. **Metadata**: Rich dataset information and statistics
 
@@ -386,16 +375,17 @@ print("  'train+test' - Combined train and test splits")
 
 ## Best Practices
 
-### 1. GPU Configuration
+### 1. Keep TensorFlow Out of the Training Process
 
-Always configure TensorFlow to use CPU only when using JAX for computation:
+Prepare datasets in a process of their own (preparing imports TensorFlow); the eager source then
+reads them without it. TensorFlow in a JAX process breaks JAX's multi-GPU collectives:
 
-```python
-import os
-
-import tensorflow as tf
-tf.config.set_visible_devices([], "GPU")
+```bash
+python -c "import tensorflow_datasets as tfds; tfds.builder('mnist', file_format='array_record').download_and_prepare()"
 ```
+
+A copy that is not prepared, or is prepared only as TFRecord, is refused with a
+`FileNotFoundError` that names this call.
 
 ### 2. Reproducibility
 

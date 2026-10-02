@@ -82,7 +82,7 @@ benchmark = [
   # Peer frameworks for comparative benchmarking (Section 14.2 of benchmark report)
   # Tier 1: JAX ecosystem (Grain already in base deps)
   "jax-dataloader>=0.1", # jax-dataloader — minimal JAX-native loader
-  "tensorflow-datasets>=4.9", # tf.data adapter (provides tensorflow dep)
+  "tensorflow-datasets>=4.9.8", # tf.data adapter; CIFAR-10 is read through TFDSEagerSource
   # Tier 2: High-performance leaders
   "nvidia-dali-cuda120>=1.0; sys_platform == 'linux'", # NVIDIA DALI — GPU-native data loading + augmentation (Linux/CUDA only)
   "spdl>=0.1", # Meta SPDL — thread-based data loading
@@ -129,7 +129,7 @@ cuda12 = [
 data = [
   # Data loading and processing dependencies
   "importlib_resources>=5.0", # Backport required by grain/etils on some Python versions
-  "tensorflow-datasets>=4.9.2", # For TFDS integration
+  "tensorflow-datasets>=4.9.8", # as_data_source(file_format=), read without TensorFlow
   "datasets>=2.21", # For HuggingFace datasets (>=2.21 for pyarrow 15+ compat)
   "pyarrow>=21", # >=21 for pa.json_ (datasets 4+) and macOS-14 arm64 wheel stability
   "pillow>=10.0.0", # For image processing
@@ -225,11 +225,12 @@ test = [
   # spdl: Linux-only; comparison adapter for memory-efficiency benchmarks.
   "spdl>=0.1; sys_platform == 'linux'"
 ]
-# TFDS-backed sources. Kept out of the base install so a JAX-native package does not
-# pull TensorFlow: every import site in src/datarax/sources/ is already lazy.
+# Preparing TFDS datasets and the TFDS streaming source, which import TensorFlow. Reading a
+# dataset prepared as ArrayRecord (TFDSEagerSource) needs only the data extra, and keeps
+# TensorFlow out of the process; a JAX-native package does not pull TensorFlow on a plain install.
 tfds = [
   "tensorflow>=2.20.0,<2.21", # 2.21 requires protobuf 6 and trips TFDS descriptor warnings
-  "tensorflow-datasets>=4.9.2"
+  "tensorflow-datasets>=4.9.8"
 ]
 # benchmarks/export.py imports calibrax's W&B exporter, which needs wandb and says so.
 wandb = ["calibrax[wandb]>=0.1.14"]
@@ -430,7 +431,7 @@ filterwarnings = [
 log_cli = true
 log_cli_level = "INFO"
 markers = [
-  "tfds: marks tests that require tensorflow_datasets to be installed",
+  "tfds: marks tests that read the TFDS fixture or prepared datasets (CI long-running job)",
   "hf: marks tests that require huggingface datasets to be installed",
   "slow: marks tests as slow (deselect with '-m \"not slow\"')",
   "integration: marks tests as integration tests",

@@ -41,26 +41,18 @@ By the end of this example, you will be able to:
 ## Setup
 
 ```bash
-# Install datarax with TFDS support
+# Install datarax with TFDS reading support
+uv pip install "datarax[data]"
+# Prepare CIFAR-10 once as ArrayRecord, in a process of its own: preparing imports
+# TensorFlow (the tfds extra); the example reads the prepared copy without it
 uv pip install "datarax[tfds]"
+python -c "import tensorflow_datasets as tfds; tfds.builder('cifar10', file_format='array_record').download_and_prepare()"
 ```
 
-**Note**: First run downloads CIFAR-10 (~170 MB).
+**Note**: Preparing downloads CIFAR-10 (~170 MB) once.
 """
 
 # %%
-# GPU Memory Configuration - prevent TensorFlow from using GPU
-import os
-
-
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-
-import tensorflow as tf
-
-
-tf.config.set_visible_devices([], "GPU")
-
-# Now import JAX and Datarax
 import jax.numpy as jnp
 from flax import nnx
 
@@ -116,7 +108,6 @@ for this quick reference to keep runtime short.
 config = TFDSEagerConfig(
     name="cifar10",
     split="train[:1000]",  # First 1000 samples for demo
-    exclude_keys={"id"},  # Exclude non-numeric fields
 )
 
 source = TFDSEagerSource(config)
@@ -289,7 +280,6 @@ def main():
     config = TFDSEagerConfig(
         name="cifar10",
         split="train[:500]",
-        exclude_keys={"id"},  # Exclude non-numeric fields
     )
     source = TFDSEagerSource(config)
 

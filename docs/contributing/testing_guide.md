@@ -98,7 +98,7 @@ Tests are configured with several pytest markers and command-line options:
 - `@pytest.mark.integration`: Integration test
 - `@pytest.mark.end_to_end`: End-to-end test
 - `@pytest.mark.benchmark`: Performance benchmark test
-- `@pytest.mark.tfds`: Test requires TensorFlow Datasets
+- `@pytest.mark.tfds`: Reads the offline TFDS fixture (prepared with TensorFlow by `python -m tests.test_common.tfds_fixture <dir>`, named in `DATARAX_TFDS_FIXTURE_DIR`) or the prepared example datasets; runs in CI's long-running job only
 - `@pytest.mark.hf`: Test requires HuggingFace Datasets
 
 ## CI/GitHub Workflow Testing

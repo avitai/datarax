@@ -40,27 +40,21 @@ By the end of this example, you will be able to:
 ## Setup
 
 ```bash
-# Install datarax with TFDS support
+# Install datarax with TFDS reading support
 uv pip install "datarax[data]"
+# Prepare MNIST once as ArrayRecord, in a process of its own: preparing imports
+# TensorFlow (the tfds extra); the example reads the prepared copy without it
+uv pip install "datarax[tfds]"
+python -c "import tensorflow_datasets as tfds; tfds.builder('mnist', file_format='array_record').download_and_prepare()"
 ```
+
+`TFDSEagerSource` reads a dataset TFDS has prepared as ArrayRecord, through TFDS's own
+random-access reader, and never imports TensorFlow, so the training process holds none. It
+never prepares a dataset itself: one that is not prepared, or is prepared only as TFRecord,
+is refused with the call above.
 """
 
 # %%
-# GPU Memory Configuration
-# Prevent TensorFlow from using GPU (JAX handles GPU computation)
-# This MUST be set BEFORE importing tensorflow
-import os
-
-
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress all TF logs
-
-# Force TF to CPU-only mode BEFORE importing JAX
-import tensorflow as tf
-
-
-tf.config.set_visible_devices([], "GPU")
-
-# Now import JAX which will handle GPU
 import jax.numpy as jnp
 from flax import nnx
 
@@ -81,8 +75,8 @@ from datarax.pipeline import Pipeline
 """
 ## Step 1: Create TFDS Data Source
 
-`TFDSEagerSource` wraps TensorFlow Datasets for use in Datarax pipelines.
-The config specifies the dataset name, split, and shuffling options.
+`TFDSEagerSource` reads a prepared TFDS split into host columns for Datarax pipelines.
+The config names the dataset and the split; the pipeline owns the order.
 """
 
 # %%

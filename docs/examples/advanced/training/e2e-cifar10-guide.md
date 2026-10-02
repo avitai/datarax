@@ -52,6 +52,10 @@ augmentation, batch mixing, and metrics collection with a Flax NNX model.
 ## Quick Start
 
 ```bash
+# Prepare the example datasets once as ArrayRecord (in its own process: it imports
+# TensorFlow; the example reads them without it)
+python scripts/prepare_example_datasets.py
+
 python examples/advanced/training/01_e2e_cifar10_guide.py
 ```
 
@@ -122,7 +126,6 @@ def create_train_pipeline(seed=42):
         TFDSEagerConfig(
             name="cifar10",
             split=f"train[:{TRAIN_SAMPLES}]",
-            exclude_keys={"id"},
         ),
     )
 

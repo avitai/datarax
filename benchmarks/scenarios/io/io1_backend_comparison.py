@@ -8,10 +8,17 @@ variants require optional dependencies (tensorflow_datasets, datasets)
 and are Tier 2. External backends load MNIST (60K images, 28×28×1) via
 their native APIs — the adapter creates the appropriate source object.
 
+TFDS holds one format per prepared dataset version, and the two TFDS variants read different
+ones: the eager source reads MNIST prepared as ArrayRecord in TFDS's data directory (where
+``scripts/prepare_example_datasets.py`` prepares it), the streaming source a TFRecord copy it
+prepares in a data directory of its own.
+
 Design ref: Section 7.3 of the benchmark report.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 from benchmarks.adapters.base import ScenarioConfig
 from benchmarks.fixtures.synthetic_data import SyntheticDataGenerator
@@ -33,6 +40,8 @@ _MNIST_DATASET_SIZE = 60_000
 _MNIST_ELEMENT_SHAPE = (28, 28, 1)
 _MNIST_DATASET = "mnist"
 _MNIST_SPLIT = "train"
+# The streaming variant's TFRecord copy; the eager variant reads TFDS's default data directory.
+_TFRECORD_DATA_DIR = str(Path.home() / "tensorflow_datasets_tfrecord")
 
 
 def _make_memory_source_data(dataset_size: int) -> dict:
@@ -90,6 +99,7 @@ VARIANTS: dict[str, ScenarioVariant] = {
                 "backend": "tfds_streaming",
                 "dataset_name": _MNIST_DATASET,
                 "split": _MNIST_SPLIT,
+                "data_dir": _TFRECORD_DATA_DIR,
             },
         ),
         data_generator=_make_empty_data,

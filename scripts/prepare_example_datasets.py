@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """Download and prepare the example datasets that CI caches for the long-running example tier.
 
+The TFDS datasets the examples read (CIFAR-10, Fashion-MNIST, MNIST) are prepared as ArrayRecord
+in TFDS's data directory (``TFDS_DATA_DIR``, else ``~/tensorflow_datasets``): the format the eager
+TFDS source reads without TensorFlow. TFDS holds one format per prepared dataset version, so a copy
+of one of these datasets prepared in another format (TFRecord) is replaced in place: the script
+lists those copies first, then deletes each just before preparing that dataset again. Nothing
+else in the data directory is touched. Preparing imports TensorFlow (the ``tfds`` extra).
+
 CIFAR-10 is served from https://www.cs.toronto.edu, which sends each connection about 100 KB/s
 and resets a client's connections beyond eight. The loaders the examples call, TFDS and keras,
 each download over a single connection, which takes about 25 minutes per archive. This script
@@ -19,6 +26,7 @@ import hashlib
 import http.client
 import logging
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -62,8 +70,10 @@ class KerasArchive:
     fname: str
 
 
-# TFDS builders the examples load; their archives come from TFDS's registered checksums.
-TFDS_DATASETS = ("cifar10",)
+# TFDS builders the examples read, prepared as ArrayRecord; their archives come from TFDS's
+# registered checksums.
+TFDS_DATASETS = ("cifar10", "fashion_mnist", "mnist")
+TFDS_FILE_FORMAT = "array_record"
 
 # keras.datasets modules the examples load, as their load_data() calls get_file.
 KERAS_DATASETS = {
@@ -286,8 +296,44 @@ def forbid_hosts(hosts: Collection[str]) -> None:
     sys.addaudithook(host_guard(frozenset(hosts)))
 
 
+def stale_copies(names: Sequence[str], data_dir: str | None = None) -> dict[str, Path]:
+    """The prepared copies of ``names`` the eager TFDS source cannot read: those not in ArrayRecord.
+
+    Each is the version directory TFDS resolves for the dataset in ``data_dir``.
+
+    Args:
+        names: TFDS dataset names.
+        data_dir: The data directory; TFDS's default when ``None``.
+
+    Returns:
+        Each dataset prepared only in another format, with its version directory.
+    """
+    import tensorflow_datasets as tfds
+
+    stale = {}
+    for name in names:
+        try:
+            builder = tfds.builder(name, data_dir=data_dir)
+        except tfds.core.DatasetNotFoundError:
+            continue
+        formats = builder.info.available_file_formats()
+        if builder.is_prepared() and tfds.core.FileFormat(TFDS_FILE_FORMAT) not in formats:
+            stale[name] = Path(builder.data_dir)
+    return stale
+
+
+def remove_stale_copy(version_dir: Path) -> None:
+    """Delete one prepared dataset version directory, and nothing beside it.
+
+    Args:
+        version_dir: The version directory ``stale_copies`` listed.
+    """
+    LOGGER.info("Deleting %s", version_dir)
+    shutil.rmtree(version_dir)
+
+
 def prepare_tfds_dataset(name: str, archive_dir: Path) -> None:
-    """Prepare a TFDS dataset from archives already in ``archive_dir``.
+    """Prepare a TFDS dataset as ArrayRecord from archives already in ``archive_dir``.
 
     Args:
         name: The TFDS builder name.
@@ -297,7 +343,7 @@ def prepare_tfds_dataset(name: str, archive_dir: Path) -> None:
     import tensorflow_datasets as tfds
 
     tfds.disable_progress_bar()
-    tfds.builder(name).download_and_prepare(
+    tfds.builder(name, file_format=TFDS_FILE_FORMAT).download_and_prepare(
         download_dir=archive_dir,
         download_config=tfds.download.DownloadConfig(manual_dir=archive_dir),
     )
@@ -320,11 +366,19 @@ def _log_prepared(loader: str, name: str, started: float) -> None:
 
 
 def prepare_all(work_dir: Path) -> None:
-    """Fetch every archive, forbid their hosts, then prepare every dataset from them.
+    """List the copies to replace, fetch every archive, forbid their hosts, then prepare each.
+
+    A dataset prepared in another format is deleted just before it is prepared again, so a fetch
+    that fails leaves every existing copy in place.
 
     Args:
         work_dir: Scratch directory for TFDS archives and extractions, which CI does not cache.
     """
+    stale = stale_copies(TFDS_DATASETS)
+    LOGGER.info(
+        "Replacing these copies with ArrayRecord: %s",
+        ", ".join(str(path) for path in stale.values()) or "none",
+    )
     tfds_dirs = {name: work_dir / "tfds" / name for name in TFDS_DATASETS}
     downloads = [
         (archive, tfds_dirs[name] / filename)
@@ -339,6 +393,8 @@ def prepare_all(work_dir: Path) -> None:
 
     for name, archive_dir in tfds_dirs.items():
         started = time.perf_counter()
+        if name in stale:
+            remove_stale_copy(stale[name])
         prepare_tfds_dataset(name, archive_dir)
         _log_prepared("tfds", name, started)
     for name in KERAS_DATASETS:

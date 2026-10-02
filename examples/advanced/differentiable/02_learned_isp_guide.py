@@ -19,7 +19,7 @@
 | **Prerequisites** | JAX, Flax NNX, DAG pipelines, image processing basics |
 | **Memory** | ~4 GB VRAM (GPU) / ~8 GB RAM (CPU) |
 | **Devices** | GPU recommended, CPU supported |
-| **Dataset** | CIFAR-10 (~170 MB, auto-downloaded) |
+| **Dataset** | CIFAR-10 (~170 MB, prepared once as ArrayRecord) |
 | **Format** | Python + Jupyter |
 
 ## Overview
@@ -71,6 +71,10 @@ By the end of this example, you will be able to:
 ```bash
 # Install datarax with data dependencies
 uv pip install "datarax[data]"
+# Prepare CIFAR-10 once as ArrayRecord, in a process of its own: preparing imports
+# TensorFlow (the tfds extra); the example reads the prepared copy without it
+uv pip install "datarax[tfds]"
+python -c "import tensorflow_datasets as tfds; tfds.builder('cifar10', file_format='array_record').download_and_prepare()"
 ```
 
 **Estimated Time:** ~30 min on GPU, ~3 hrs on CPU (QUICK_MODE: ~2-5 min GPU)
@@ -97,7 +101,7 @@ from datarax.operators import (
     CompositionStrategy,
 )
 from datarax.pipeline import Pipeline
-from datarax.sources import MemorySource, MemorySourceConfig
+from datarax.sources import MemorySource, MemorySourceConfig, TFDSEagerConfig, TFDSEagerSource
 
 
 matplotlib.use("Agg")
@@ -177,7 +181,7 @@ into a sequential pipeline that supports automatic differentiation.
 
 ### Step 1: Load CIFAR-10 with Low-Light Simulation
 
-We load real images from CIFAR-10 via `tensorflow_datasets` and simulate
+We load real images from CIFAR-10 with `TFDSEagerSource` and simulate
 low-light conditions by darkening and adding sensor noise. This produces a
 realistic training scenario: the ISP must learn to recover image content
 that helps the downstream classifier. In production, you would use the LOD
@@ -206,15 +210,9 @@ def load_cifar10_lowlight(
         Tuple of (data dict with JAX arrays, MemorySource wrapping the data).
         The data dict contains 'image' (darkened), 'label', and 'clean_image'.
     """
-    import tensorflow as tf
-    import tensorflow_datasets as tfds
-
-    # Prevent TF from allocating GPU memory (only JAX needs the GPU)
-    tf.config.set_visible_devices([], "GPU")
-
-    # Load entire split as numpy arrays (CIFAR-10 is ~170 MB, fits in memory)
-    data = tfds.load("cifar10", split=split, as_supervised=True, batch_size=-1)
-    images, labels = tfds.as_numpy(data)
+    # Read the whole split into host NumPy columns (CIFAR-10 is ~170 MB, fits in memory)
+    cifar10 = TFDSEagerSource(TFDSEagerConfig(name="cifar10", split=split, as_supervised=True))
+    images, labels = cifar10.data["image"], cifar10.data["label"]
 
     # Normalize uint8 → float32 [0, 1]
     clean_images = images.astype(np.float32) / 255.0

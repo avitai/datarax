@@ -86,7 +86,7 @@ Tests are organized using pytest markers defined in `conftest.py` and `pyproject
 | `@pytest.mark.benchmark` | Performance benchmarks |
 | `@pytest.mark.accelerator(kind="gpu")` | Requires a GPU backend (substrax plugin) |
 | `@pytest.mark.devices(count)` | Requires `count` devices (substrax plugin) |
-| `@pytest.mark.tfds` | Requires TensorFlow Datasets |
+| `@pytest.mark.tfds` | Reads the offline TFDS fixture (prepared with TensorFlow by `python -m tests.test_common.tfds_fixture <dir>`, named in `DATARAX_TFDS_FIXTURE_DIR`) or the prepared example datasets; runs in CI's long-running job only |
 | `@pytest.mark.hf` | Requires HuggingFace Datasets |
 
 ### Running Specific Test Types

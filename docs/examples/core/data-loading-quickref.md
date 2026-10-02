@@ -67,7 +67,7 @@ pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0), s
 
 ## TFDSEagerSource
 
-For loading TensorFlow Datasets. Uses the `from_tfds()` factory for convenience.
+For loading TensorFlow Datasets prepared as ArrayRecord, without TensorFlow in the process. Uses the `from_tfds()` factory for convenience.
 
 ```python
 from datarax.sources import from_tfds
@@ -75,22 +75,21 @@ from datarax.sources import from_tfds
 # Auto-detect eager vs streaming (< 1GB = eager)
 source = from_tfds("cifar10", "train")
 
-# Specify custom data directory
+# Specify the directory the dataset is prepared in
 source = from_tfds(
-    "ylecun/mnist", "train",
+    "mnist", "train",
     data_dir="/path/to/data",
 )
 
 # Load subset with split slicing
 source = from_tfds("cifar10", "train[:5000]")
-
-# Load from Google Cloud Storage (bypasses local preparation)
-source = from_tfds("nsynth/gansynth_subset", "train", try_gcs=True)
 ```
 
-!!! note "TFDS requires `tensorflow-datasets`"
-    Install with `uv pip install tensorflow-datasets`. Datarax lazy-imports TFDS
-    to avoid slowing down startup when it's not needed.
+!!! note "Prepare once, read without TensorFlow"
+    Reading needs `uv pip install "datarax[data]"` (tensorflow-datasets). The eager source never
+    prepares a dataset: prepare it once as ArrayRecord, in a process of its own with the `tfds`
+    extra, e.g. `python -c "import tensorflow_datasets as tfds; tfds.builder('cifar10', file_format='array_record').download_and_prepare()"`.
+    A copy that is not prepared, or is prepared only as TFRecord, is refused naming that call.
 
 ## HFEagerSource
 

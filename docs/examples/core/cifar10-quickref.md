@@ -50,8 +50,12 @@ This quick reference demonstrates loading and processing CIFAR-10 from TensorFlo
 ## Quick Start
 
 ```bash
-# Install datarax with TFDS support
-uv pip install "datarax[tfds]"
+# Install datarax with TFDS reading support, and the tfds extra to prepare CIFAR-10
+uv pip install "datarax[data,tfds]"
+
+# Prepare the example datasets once as ArrayRecord (in its own process: it imports
+# TensorFlow; the example reads them without it)
+python scripts/prepare_example_datasets.py
 
 # Run the Python script
 python examples/core/04_cifar10_quickref.py
@@ -60,7 +64,7 @@ python examples/core/04_cifar10_quickref.py
 jupyter lab examples/core/04_cifar10_quickref.ipynb
 ```
 
-**Note:** First run downloads CIFAR-10 (~170 MB).
+**Note:** Preparing downloads CIFAR-10 (~170 MB) once.
 
 ## CIFAR-10 Preprocessing Constants
 
@@ -98,23 +102,11 @@ print("CIFAR-10 classes:", CIFAR10_CLASSES)
 CIFAR-10 classes: ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
 ```
 
-## Step 1: GPU Memory Configuration
+## Step 1: Imports
 
-Prevent TensorFlow from using GPU (reserved for JAX training):
+Datarax reads the prepared CIFAR-10 without TensorFlow, so the process needs no TensorFlow device setup:
 
 ```python
-# GPU Memory Configuration - prevent TensorFlow from using GPU
-import os
-
-
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-
-import tensorflow as tf
-
-
-tf.config.set_visible_devices([], "GPU")
-
-# Now import JAX and Datarax
 import jax.numpy as jnp
 from flax import nnx
 
@@ -132,7 +124,6 @@ Configure `TFDSEagerSource` to load CIFAR-10 training split. We use a subset for
 config = TFDSEagerConfig(
     name="cifar10",
     split="train[:1000]",  # First 1000 samples for demo
-    exclude_keys={"id"},  # Exclude non-numeric fields
 )
 
 source = TFDSEagerSource(config)

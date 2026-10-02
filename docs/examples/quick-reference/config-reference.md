@@ -128,7 +128,7 @@ These configs extend the base classes for specific use cases:
 | Config | Extends | Module | Key Fields |
 |--------|---------|--------|------------|
 | `MemorySourceConfig` | `StructuralConfig` | `MemorySource` | `cache_size`, `prefetch_size`, `shard_id`, `num_workers` |
-| `TFDSEagerConfig` | `StructuralConfig` | `TFDSEagerSource` | `name`, `split`, `data_dir`, `try_gcs` |
+| `TFDSEagerConfig` | `StructuralConfig` | `TFDSEagerSource` | `name`, `split`, `data_dir`, `as_supervised` |
 | `HFEagerConfig` | `StructuralConfig` | `HFEagerSource` | `name`, `split`, `data_dir` |
 | `EpochAwareSamplerConfig` | `StructuralConfig` | `EpochAwareSamplerModule` | `num_records`, `num_epochs`, `shuffle`, `seed` |
 | `CompositeOperatorConfig` | `OperatorConfig` | `CompositeOperatorModule` | `strategy` |

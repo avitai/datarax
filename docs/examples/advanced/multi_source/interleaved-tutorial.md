@@ -50,6 +50,10 @@ diverse training sets from heterogeneous data.
 ## Quick Start
 
 ```bash
+# Prepare the example datasets once as ArrayRecord (in its own process: it imports
+# TensorFlow; the example reads them without it)
+python scripts/prepare_example_datasets.py
+
 python examples/advanced/multi_source/01_interleaved_tutorial.py
 ```
 

@@ -85,7 +85,7 @@ for i, batch in enumerate(train_pipeline):
         break
 ```
 
-`TFDSEagerSource` handles downloading, caching, and preprocessing datasets from the TensorFlow Datasets catalog.
+`TFDSEagerSource` reads a dataset from the TensorFlow Datasets catalog that TFDS has prepared as ArrayRecord, without TensorFlow in the process; prepare it once, in a process of its own, with `tfds.builder("mnist", file_format="array_record").download_and_prepare()` (the `tfds` extra). Text features, such as CIFAR-10's `id`, are kept as each record's provenance.
 
 > **Tip:** Use `from_tfds(name, split, ...)` factory function for automatic eager/streaming mode selection.
 
