@@ -1,4 +1,4 @@
-"""A two-device all-reduce over a batch the eager TFDS source read: the program a test runs.
+"""A two-device all-reduce over a batch a TFDS source read: the program a test runs.
 
 TensorFlow in a JAX process breaks JAX's NCCL collectives on GPUs ("corrupted comm object
 detected"), so the process that reads TFDS data for training must not hold it. This program
@@ -7,9 +7,10 @@ places a host-read batch on a two-device data mesh and takes its mean, an all-re
 devices, then prints one line starting with :data:`REPORT_PREFIX`, then JSON: whether TensorFlow
 is in the process, the devices, and the mean beside the host's. ``--import-tensorflow`` imports
 TensorFlow first, hiding the GPUs from it as examples used to: the positive control, which on
-GPUs reproduces the failure.
+GPUs reproduces the failure. ``--stream`` reads the batch with ``TFDSStreamingSource`` from the
+fixture's TFRecord copy, a shuffled pull, instead of the eager source.
 
-    python -m tests.test_common.tfds_collective <fixture directory> [--import-tensorflow]
+    python -m tests.test_common.tfds_collective <fixture directory> [--stream] [--import-tensorflow]
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 
 DEVICES = 2
@@ -42,15 +44,7 @@ def main(argv: list[str]) -> None:
         place_batch_on_shards,
     )
 
-    from datarax.core.index_words import to_words  # noqa: PLC0415
-    from datarax.sources import TFDSEagerConfig, TFDSEagerSource  # noqa: PLC0415
-    from tests.test_common.tfds_fixture import FIXTURE  # noqa: PLC0415
-
-    source = TFDSEagerSource(
-        TFDSEagerConfig(name=FIXTURE, split="train", data_dir=str(root / "array_record"))
-    )
-    batch = source.get_batch(to_words(np.arange(RECORDS, dtype=np.uint64)))
-    images = np.asarray(batch["image"], np.float32)
+    images = np.asarray(_read(root, stream="--stream" in argv[1:])["image"], np.float32)
     mesh = jax.make_mesh(
         (DEVICES,),
         ("data",),
@@ -68,6 +62,31 @@ def main(argv: list[str]) -> None:
         "host_mean": float(images.mean()),
     }
     sys.stdout.write(REPORT_PREFIX + json.dumps(report) + "\n")
+
+
+def _read(root: Path, *, stream: bool) -> Any:
+    """:data:`RECORDS` records of the fixture as a host ``Batch``, eager or streamed."""
+    import jax  # noqa: PLC0415
+    import numpy as np  # noqa: PLC0415
+
+    from datarax.core.index_words import to_words  # noqa: PLC0415
+    from datarax.sources import (  # noqa: PLC0415
+        TFDSEagerConfig,
+        TFDSEagerSource,
+        TFDSStreamingConfig,
+        TFDSStreamingSource,
+    )
+    from tests.test_common.tfds_fixture import FIXTURE  # noqa: PLC0415
+
+    if stream:
+        source = TFDSStreamingSource(
+            TFDSStreamingConfig(name=FIXTURE, split="train", data_dir=str(root / "tfrecord"))
+        )
+        return source.get_batch(RECORDS, key=jax.random.key(0))
+    eager = TFDSEagerSource(
+        TFDSEagerConfig(name=FIXTURE, split="train", data_dir=str(root / "array_record"))
+    )
+    return eager.get_batch(to_words(np.arange(RECORDS, dtype=np.uint64)))
 
 
 if __name__ == "__main__":

@@ -602,8 +602,8 @@ backend = "modal"
 [tool.substrax.compute.backends.modal]
 outputs_volume = "datarax-compute-outputs"
 
-# R53: an NCCL all-reduce on two GPUs after a TFDS read, with no TensorFlow in the process
-# (tests/sources/test_tfds_collective.py). The control runs the same program with TensorFlow
+# R53: an NCCL all-reduce on two GPUs after a TFDS read, eager or streamed, with no TensorFlow
+# in the process (tests/sources/test_tfds_collective.py). The control runs the same program with TensorFlow
 # imported first, which breaks JAX's NCCL collectives.
 [tool.substrax.compute.jobs.tfds-nccl]
 env = {DATARAX_TEST_JAX_PLATFORMS = "cuda,cpu", DATARAX_TFDS_FIXTURE_DIR = "/tmp/tfds_fixture", NCCL_DEBUG = "WARN"}
@@ -617,8 +617,10 @@ timeout_seconds = 2700
 [tool.substrax.compute.jobs.tfds-nccl.commands]
 1-fixture = ["python", "-m", "tests.test_common.tfds_fixture", "/tmp/tfds_fixture"]
 2-program = ["python", "-m", "tests.test_common.tfds_collective", "/tmp/tfds_fixture"]
-3-collective = ["python", "-m", "pytest", "tests/sources/test_tfds_collective.py", "-p", "no:cacheprovider", "--no-cov", "-rs", "-v"]
-4-control = ["python", "-m", "tests.test_common.tfds_collective", "/tmp/tfds_fixture", "--import-tensorflow"]
+3-stream-program = ["python", "-m", "tests.test_common.tfds_collective", "/tmp/tfds_fixture", "--stream"]
+4-collective = ["python", "-m", "pytest", "tests/sources/test_tfds_collective.py", "-p", "no:cacheprovider", "--no-cov", "-rs", "-v"]
+5-control = ["python", "-m", "tests.test_common.tfds_collective", "/tmp/tfds_fixture", "--import-tensorflow"]
+6-stream-control = ["python", "-m", "tests.test_common.tfds_collective", "/tmp/tfds_fixture", "--stream", "--import-tensorflow"]
 
 [tool.uv]
 # The automation extra is benchmark tooling: skypilot[vast] and vastai-sdk, used only
