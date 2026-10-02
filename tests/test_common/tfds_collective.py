@@ -8,7 +8,7 @@ devices, then prints one JSON line: whether TensorFlow is in the process, the de
 mean beside the host's. ``--import-tensorflow`` imports TensorFlow first, hiding the GPUs from it
 as examples used to: the positive control, which on GPUs reproduces the failure.
 
-    python tests/test_common/tfds_collective.py <fixture directory> [--import-tensorflow]
+    python -m tests.test_common.tfds_collective <fixture directory> [--import-tensorflow]
 """
 
 from __future__ import annotations

@@ -617,7 +617,7 @@ timeout_seconds = 2700
 [tool.substrax.compute.jobs.tfds-nccl.commands]
 1-fixture = ["python", "-m", "tests.test_common.tfds_fixture", "/tmp/tfds_fixture"]
 2-collective = ["python", "-m", "pytest", "tests/sources/test_tfds_collective.py", "-p", "no:cacheprovider", "--no-cov", "-rs", "-v"]
-3-control = ["python", "tests/test_common/tfds_collective.py", "/tmp/tfds_fixture", "--import-tensorflow"]
+3-control = ["python", "-m", "tests.test_common.tfds_collective", "/tmp/tfds_fixture", "--import-tensorflow"]
 
 [tool.uv]
 # The automation extra is benchmark tooling: skypilot[vast] and vastai-sdk, used only

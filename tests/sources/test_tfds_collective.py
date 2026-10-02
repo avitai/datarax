@@ -24,7 +24,9 @@ from tests.test_common.tfds_fixture import TFDSFixture
 pytestmark = [pytest.mark.tfds, pytest.mark.devices(2)]
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_PROGRAM = _REPO_ROOT / "tests" / "test_common" / "tfds_collective.py"
+# Run from the repository root by module name, so the program imports the tests package wherever
+# the root is not on the path (an installed project, as on the compute job).
+_PROGRAM = "import sys; from tests.test_common.tfds_collective import main; main(sys.argv[1:])"
 _SECONDS = 300.0
 
 
