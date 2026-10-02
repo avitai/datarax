@@ -121,7 +121,7 @@ jobs:
         run: |
           export JAX_PLATFORMS="cpu"
           # Disable coverage for examples tests (they only check structure, not code)
-          uv run pytest tests/examples/ -v -m "not slow and not tfds" --no-cov
+          uv run pytest tests/examples/ -v -rs -m "not slow and not tfds" --no-cov
 
   unit_tests:
     name: Unit Tests (Python ${{ matrix.python-version }}, shard ${{ matrix.group }})
@@ -177,7 +177,7 @@ jobs:
           # pytest-randomly orders the collection before pytest-split assigns it, so every
           # shard of a run takes the run's id as its seed: one order, each test in exactly one
           # shard. docs/contributing/testing_guide.md shows how to rerun one shard locally.
-          uv run pytest tests benchmarks/tests --no-integration --no-end-to-end --no-benchmark -v -m "not slow and not tfds" --cov-fail-under=0 \
+          uv run pytest tests benchmarks/tests --no-integration --no-end-to-end --no-benchmark -v -rs -m "not slow and not tfds" --cov-fail-under=0 \
             --splits "$UNIT_TEST_SHARDS" --group ${{ matrix.group }} --splitting-algorithm least_duration \
             --randomly-seed=${{ github.run_id }}
 
@@ -329,7 +329,7 @@ jobs:
           # so no example downloads them inside its budget. The TFDS tests run only here.
           export JAX_PLATFORMS="cpu"
           export DATARAX_EXAMPLE_TIMEOUT_SECONDS=300
-          uv run pytest tests benchmarks/tests -m "slow or tfds" --no-benchmark -v --cov-fail-under=0 --timeout=600 --durations=0
+          uv run pytest tests benchmarks/tests -m "slow or tfds" --no-benchmark -v -rs --cov-fail-under=0 --timeout=600 --durations=0
 
       - name: Prepare coverage data
         run: uv run coverage combine || true
@@ -381,7 +381,7 @@ jobs:
         run: |
           # Explicitly run on CPU for GitHub workflow
           export JAX_PLATFORMS="cpu"
-          uv run pytest tests --integration -v -m "not tfds" --cov-fail-under=0
+          uv run pytest tests --integration -v -rs -m "not tfds" --cov-fail-under=0
 
       - name: Prepare coverage data
         run: uv run coverage combine || true
@@ -436,7 +436,7 @@ jobs:
             tests/pipeline/test_pipeline_integration.py \
             tests/pipeline/test_pipeline_scan.py \
             tests/pipeline/test_pipeline_dag.py \
-            -v -m "not tfds" --cov-fail-under=0
+            -v -rs -m "not tfds" --cov-fail-under=0
 
       - name: Prepare coverage data
         run: uv run coverage combine || true
@@ -489,7 +489,7 @@ jobs:
           # Explicitly run on CPU for GitHub workflow
           # Disable coverage to avoid distorting benchmark timings
           export JAX_PLATFORMS="cpu"
-          uv run pytest tests --benchmark -v -m "not tfds" --no-cov --benchmark-autosave --benchmark-columns=mean,stddev,min,max
+          uv run pytest tests --benchmark -v -rs -m "not tfds" --no-cov --benchmark-autosave --benchmark-columns=mean,stddev,min,max
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
