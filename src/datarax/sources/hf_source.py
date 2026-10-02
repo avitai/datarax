@@ -304,39 +304,24 @@ class HFEagerSource(DatasetSourceMixin, EagerSource):
         self.include_keys = config.include_keys
         self.exclude_keys = config.exclude_keys
 
-        # Load dataset info BEFORE loading data
-        self._dataset_info = HostValue(self._load_dataset_info_from_backend(config))
-
-        # Load ALL data at init
-        self._store(*self._load_columns(config))
+        # Load the dataset once: its info and ALL its data, at init
+        dataset = _load_hf_dataset(self._datasets_module, config)
+        # Only the single-split Dataset variants of load_dataset's return union carry ``info``.
+        self._dataset_info = HostValue(getattr(dataset, "info", None))
+        self._store(*self._load_columns(dataset, config))
 
         # Clean up resources
         gc.collect()
 
-    def _load_dataset_info_from_backend(self, config: HFEagerConfig) -> Any:
-        """Load and cache dataset info.
-
-        Args:
-            config: Source configuration
-
-        Returns:
-            HuggingFace DatasetInfo object if available
-        """
-        dataset = _load_hf_dataset(self._datasets_module, config)
-
-        # ``load_dataset`` is typed as a union of Dataset / DatasetDict variants;
-        # only the (single-split) Dataset variants carry ``info``. ``getattr``
-        # stays correct for every variant without a type-narrowing dance.
-        return getattr(dataset, "info", None)
-
     def _load_columns(
-        self, config: HFEagerConfig
+        self, dataset: Any, config: HFEagerConfig
     ) -> tuple[dict[str, np.ndarray], tuple[dict[str, Any], ...]]:
-        """Load the whole dataset as host NumPy columns and per-record provenance.
+        """The loaded dataset as host NumPy columns and per-record provenance.
 
         All HuggingFace work happens here, at init time.
 
         Args:
+            dataset: The dataset ``load_dataset`` returned
             config: Source configuration
 
         Returns:
@@ -346,8 +331,6 @@ class HFEagerSource(DatasetSourceMixin, EagerSource):
         Raises:
             ValueError: If the dataset yields no elements after loading and key filtering.
         """
-        dataset = _load_hf_dataset(self._datasets_module, config)
-
         keys = _selected_hf_columns(dataset.column_names, config.include_keys, config.exclude_keys)
         if not keys or len(dataset) == 0:
             raise ValueError(

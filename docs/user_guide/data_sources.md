@@ -117,7 +117,7 @@ for i, batch in enumerate(pipeline):
 
 `HFEagerSource` loads the entire dataset into host NumPy columns at initialization (text and other objects as each record's provenance), so it is best for datasets that fit in memory. For datasets too large to hold in memory, use `HFStreamingSource` (shown above), which reads with HuggingFace's streaming mode and names records by their arrival.
 
-> **Note:** Dataset configs/variants (for example selecting `"sst2"` within the `"glue"` dataset) are currently unsupported — pass the standalone dataset name to `name`. There is no `config_name` (or subset) field on the HF configs.
+> **Note:** A dataset's configuration (for example `"sst2"` within `"nyu-mll/glue"`) is `load_dataset`'s `name`, passed through `download_kwargs`: `HFEagerConfig(name="nyu-mll/glue", split="train", download_kwargs={"name": "sst2"})`. There is no `config_name` or `subset` field on the HF configs.
 
 > **Tip:** `from_hf(name, split)` builds the eager source and `from_hf(name, split, streaming=True)` the stream; or construct `HFEagerConfig`/`HFStreamingConfig` directly.
 

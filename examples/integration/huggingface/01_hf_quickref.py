@@ -199,7 +199,8 @@ HuggingFace integration provides:
 ## Next Steps
 
 - **More datasets**: Try `"imdb"`, `"squad"`, `"cifar10"` - change the `name` parameter
-- **Custom configs**: Use `HFEagerConfig(subset="...")` for dataset variants
+- **Dataset configurations**: Pass one with `HFEagerConfig(download_kwargs={"name": "sst2"})`
+  (for `"nyu-mll/glue"`), the `name` `load_dataset` takes
 - **TFDS alternative**: [TFDS](../tfds/01_tfds_quickref.ipynb)
 - **Full tutorial**: [HuggingFace Tutorial](02_hf_tutorial.py) for advanced usage
 """

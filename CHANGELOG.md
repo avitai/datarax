@@ -418,6 +418,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `HFEagerSource` calls `load_dataset` once, taking its info and its columns from the one
+  dataset (it loaded the dataset twice). The HuggingFace quick reference no longer suggests an
+  `HFEagerConfig(subset=...)` field, and the data-sources guide shows a dataset configuration
+  passed as `download_kwargs={"name": ...}`.
 - `ConfigSchema` reads the fields of its base classes (a subclass lost them), gives each
   validation its own copy of a default, validates a nested schema into its defaults (including an
   absent optional one) and reports its failure by field path, widens an integer to a float field,
