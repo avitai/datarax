@@ -6,7 +6,8 @@ architectural separation between **eager** and **streaming** sources:
 **Eager Sources** (for small/medium datasets):
     - EagerSource, the base of MemorySource, TFDSEagerSource and HFEagerSource
     - Load ALL data at initialization as host NumPy columns, with each record's
-      strings and objects kept beside them as its provenance
+      strings and objects kept beside them as its provenance (TFDSEagerSource reads a
+      copy prepared as ArrayRecord, without TensorFlow)
     - One stateless host read, ``get_batch(indices, epochs=...)``, returning a ``Batch``
     - Ideal for: MNIST, CIFAR-10, Fashion-MNIST, small custom datasets
 
@@ -87,13 +88,11 @@ def __dir__() -> list[str]:
     return list(__all__)
 
 
-def _is_tfds_eager_mode_required(
-    name: str, split: str, data_dir: str | None, try_gcs: bool
-) -> bool:
+def _is_tfds_eager_mode_required(name: str, split: str, data_dir: str | None) -> bool:
     """Infer eager mode for TFDS sources based on split size."""
     import tensorflow_datasets as tfds
 
-    builder = tfds.builder(name, data_dir=data_dir, try_gcs=try_gcs)
+    builder = tfds.builder(name, data_dir=data_dir)
     split_base = split.split("[")[0]  # Handle "train[:1000]"
     if builder.info.splits and split_base in builder.info.splits:
         size_bytes = builder.info.splits[split_base].num_bytes
@@ -113,35 +112,28 @@ def from_tfds(
     *,
     eager: bool | None = None,
     data_dir: str | None = None,
-    try_gcs: bool = False,
     as_supervised: bool = False,
-    download_and_prepare_kwargs: dict | None = None,
-    beam_num_workers: int | None = None,
     include_keys: set[str] | None = None,
     exclude_keys: set[str] | None = None,
 ) -> DataSourceModule:
     """Create a TFDS source, choosing eager or streaming based on size.
 
     This factory function automatically selects the optimal source type:
-    - TFDSEagerSource for datasets < 1GB (loads all into host columns at init)
-    - TFDSStreamingSource for datasets >= 1GB (streams with fixed prefetch)
+    - TFDSEagerSource for datasets < 1GB (reads a copy prepared as ArrayRecord into host
+      columns at init, without TensorFlow)
+    - TFDSStreamingSource for datasets >= 1GB (streams a TFRecord copy with fixed prefetch)
 
-    The order records are served in belongs to the pipeline (``Pipeline(shuffle=...)``).
+    The order records are served in belongs to the pipeline (``Pipeline(shuffle=...)``). A
+    stream that needs GCS, Beam workers or download options is built with
+    ``TFDSStreamingConfig``.
 
     Args:
         name: TFDS dataset name (e.g., "mnist", "cifar10", "imagenet2012")
         split: Dataset split (e.g., "train", "test", "train[:1000]")
         eager: Force eager (True) or streaming (False). None = auto-detect.
-        data_dir: Optional directory for dataset storage
-        try_gcs: If True, load pre-built data from Google Cloud Storage
-            (gs://tfds-data/datasets/). Bypasses local download_and_prepare(),
-            which avoids Apache Beam dependencies for datasets like NSynth.
-            Mutually exclusive with data_dir.
-        as_supervised: If True, returns {"image": ..., "label": ...}
-        download_and_prepare_kwargs: Optional kwargs for download_and_prepare
-        beam_num_workers: Number of Apache Beam DirectRunner workers for
-            parallel dataset generation. Useful for large Beam-based datasets
-            (e.g., NSynth). None uses Beam's default (single-threaded).
+        data_dir: Optional directory where the dataset is prepared
+        as_supervised: If True, keeps only the supervised features (eager) or yields them as
+            ``{"image": ..., "label": ...}`` (streaming)
         include_keys: Optional set of keys to include
         exclude_keys: Optional set of keys to exclude
 
@@ -151,16 +143,9 @@ def from_tfds(
     Example:
         ```python
         from datarax.sources import from_tfds
-        import flax.nnx as nnx
 
-        # Auto-detect: MNIST is small, will use eager
+        # Auto-detect: MNIST is small, will use eager (prepared as ArrayRecord)
         source = from_tfds("mnist", "train")
-
-        # Load from GCS (bypasses Apache Beam for datasets like NSynth)
-        source = from_tfds("nsynth/gansynth_subset", "train", try_gcs=True)
-
-        # Parallel dataset generation for Beam-based datasets
-        source = from_tfds("nsynth", "train", beam_num_workers=4)
 
         # Force streaming for memory-constrained environments
         source = from_tfds("mnist", "train", eager=False)
@@ -176,7 +161,7 @@ def from_tfds(
     # Auto-detect based on dataset size if not specified
     if eager is None:
         try:
-            eager = _is_tfds_eager_mode_required(name, split, data_dir, try_gcs)
+            eager = _is_tfds_eager_mode_required(name, split, data_dir)
         except _TFDS_AUTO_DETECT_ERRORS:
             eager = True  # Default to eager on inference errors
 
@@ -185,10 +170,7 @@ def from_tfds(
             name=name,
             split=split,
             data_dir=data_dir,
-            try_gcs=try_gcs,
             as_supervised=as_supervised,
-            download_and_prepare_kwargs=download_and_prepare_kwargs,
-            beam_num_workers=beam_num_workers,
             include_keys=include_keys,
             exclude_keys=exclude_keys,
         )
@@ -197,10 +179,7 @@ def from_tfds(
         name=name,
         split=split,
         data_dir=data_dir,
-        try_gcs=try_gcs,
         as_supervised=as_supervised,
-        download_and_prepare_kwargs=download_and_prepare_kwargs,
-        beam_num_workers=beam_num_workers,
         include_keys=include_keys,
         exclude_keys=exclude_keys,
     )

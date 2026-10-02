@@ -43,23 +43,16 @@ By the end of this tutorial, you will be able to:
 ## Setup
 
 ```bash
-# Install datarax with TFDS and Flax support
-uv pip install "datarax[tfds]" flax optax matplotlib
+# Install datarax with TFDS reading and Flax support
+uv pip install "datarax[data]" flax optax matplotlib
+# Prepare MNIST once as ArrayRecord, in a process of its own: preparing imports
+# TensorFlow (the tfds extra); the example reads the prepared copy without it
+uv pip install "datarax[tfds]"
+python -c "import tensorflow_datasets as tfds; tfds.builder('mnist', file_format='array_record').download_and_prepare()"
 ```
 """
 
 # %%
-# GPU Memory Configuration
-import os
-
-
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-
-import tensorflow as tf
-
-
-tf.config.set_visible_devices([], "GPU")
-
 # Core imports
 import time
 

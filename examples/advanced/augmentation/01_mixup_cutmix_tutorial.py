@@ -43,22 +43,15 @@ By the end of this tutorial, you will be able to:
 ## Setup
 
 ```bash
-uv pip install "datarax[tfds]" matplotlib
+uv pip install "datarax[data]" matplotlib
+# Prepare CIFAR-10 once as ArrayRecord, in a process of its own: preparing imports
+# TensorFlow (the tfds extra); the example reads the prepared copy without it
+uv pip install "datarax[tfds]"
+python -c "import tensorflow_datasets as tfds; tfds.builder('cifar10', file_format='array_record').download_and_prepare()"
 ```
 """
 
 # %%
-# GPU Memory Configuration
-import os
-
-
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-
-import tensorflow as tf
-
-
-tf.config.set_visible_devices([], "GPU")
-
 # Core imports
 
 import jax
@@ -178,7 +171,6 @@ def create_base_pipeline(num_samples=256):
         TFDSEagerConfig(
             name="cifar10",
             split=f"train[:{num_samples}]",
-            exclude_keys={"id"},
         ),
     )
 
@@ -228,7 +220,6 @@ def create_mixup_pipeline(alpha=0.4, seed=42):
         TFDSEagerConfig(
             name="cifar10",
             split="train[:256]",
-            exclude_keys={"id"},
         ),
     )
 
@@ -354,7 +345,6 @@ def create_cutmix_pipeline(alpha=1.0, seed=42):
         TFDSEagerConfig(
             name="cifar10",
             split="train[:256]",
-            exclude_keys={"id"},
         ),
     )
 

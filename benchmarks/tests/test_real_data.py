@@ -303,12 +303,12 @@ class TestCocoImageText:
 
 
 @pytest.mark.tfds
-@pytest.mark.skipif(
-    not real_data.cifar10_is_cached(),
-    reason="cifar10 not cached in the local TFDS data dir",
-)
 class TestCifar10Integration:
-    """Integration against the locally cached TFDS cifar10."""
+    """Integration against the TFDS cifar10 copy prepared as ArrayRecord.
+
+    It runs where the example datasets are prepared (CI's long-running job restores them), and
+    there a missing copy fails rather than skipping.
+    """
 
     def test_real_load_contract(self):
         """Cached cifar10 loads and matches the synthetic contract."""
@@ -325,11 +325,10 @@ class TestCifar10Integration:
         np.testing.assert_array_equal(first, second)
 
 
-@pytest.mark.tfds
 def test_cifar10_missing_data_raises(tmp_path):
-    """With downloads disabled and an empty data dir, fail fast and clear."""
+    """With no ArrayRecord copy in the data dir, fail fast, naming how to prepare one."""
     provider = RealDataProvider(data_dir=tmp_path, allow_download=False)
-    with pytest.raises(RealDataUnavailableError, match="cifar10"):
+    with pytest.raises(RealDataUnavailableError, match="cifar10.*prepare_example_datasets"):
         provider.cifar10_images(4)
 
 

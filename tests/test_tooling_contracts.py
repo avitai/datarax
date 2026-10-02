@@ -924,3 +924,72 @@ def test_no_extra_installs_pip_audit() -> None:
 
     for name, dependencies in extras.items():
         assert "pip-audit" not in _dependency_names(dependencies), name
+
+
+TFDS_JOB = "long_running_tests"
+TFDS_FIXTURE_MODULE = "tests.test_common.tfds_fixture"
+_MARKER_EXPRESSION = re.compile(r"""-m\s+(?:"([^"]*)"|'([^']*)'|(\S+))""")
+_PYTEST_COMMAND = re.compile(r"(?:^|[\s/])pytest\s")
+
+
+def _pytest_lines(job: dict) -> list[str]:
+    """Each pytest invocation in the job's ``run`` steps, continuation lines joined."""
+    commands = "\n".join(str(step.get("run", "")) for step in job.get("steps", []))
+    lines = commands.replace("\\\n", " ").splitlines()
+    return [
+        line for line in lines if _PYTEST_COMMAND.search(line) and not line.strip().startswith("#")
+    ]
+
+
+def _selects(line: str, markers: set[str]) -> bool:
+    """Whether the pytest command line selects a test carrying exactly ``markers``."""
+    from _pytest.mark.expression import Expression  # noqa: PLC0415 - pytest's own -m parser
+
+    expressions = ["".join(groups) for groups in _MARKER_EXPRESSION.findall(line)]
+    return all(
+        Expression.compile(expression).evaluate(lambda name, **_: name in markers)
+        for expression in expressions
+    )
+
+
+def _workflow_jobs() -> dict[str, dict]:
+    return {
+        f"{path.name}:{name}": job
+        for path in sorted(WORKFLOWS.glob("*.yml"))
+        for name, job in yaml.safe_load(path.read_text())["jobs"].items()
+    }
+
+
+def test_the_tfds_tests_run_in_the_long_running_job_after_the_fixture_step() -> None:
+    """The job that installs TensorFlow prepares the offline fixture, then runs the TFDS tests.
+
+    Preparing a TFDS dataset imports TensorFlow, which only the long-running job installs (the
+    ``tfds`` extra), so the fixture is prepared there in a step of its own and named in
+    ``DATARAX_TFDS_FIXTURE_DIR``; a missing fixture then fails the tests rather than skipping them.
+    """
+    job = _jobs()[TFDS_JOB]
+    runs = [str(step.get("run", "")) for step in job["steps"]]
+    fixture = next(k for k, run in enumerate(runs) if TFDS_FIXTURE_MODULE in run)
+    tests = next(k for k, run in enumerate(runs) if _PYTEST_COMMAND.search(run))
+
+    assert "--extra tfds" in "\n".join(runs)
+    assert fixture < tests
+    assert "DATARAX_TFDS_FIXTURE_DIR" in runs[fixture]
+    assert "$GITHUB_ENV" in runs[fixture]
+    (line,) = _pytest_lines(job)
+    assert _selects(line, {"tfds"})
+    assert _selects(line, {"tfds", "slow"})
+
+
+def test_every_other_lane_deselects_the_tfds_tests_explicitly() -> None:
+    """No other lane installs TensorFlow, so each states that it leaves the TFDS tests out."""
+    lanes = [
+        (name, line)
+        for name, job in _workflow_jobs().items()
+        if name != f"ci.yml:{TFDS_JOB}"
+        for line in _pytest_lines(job)
+    ]
+
+    assert len(lanes) >= 6
+    assert [name for name, line in lanes if _selects(line, {"tfds"})] == []
+    assert [name for name, line in lanes if "not tfds" not in line] == []

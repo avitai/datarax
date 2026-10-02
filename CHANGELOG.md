@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `datarax.sources.tfds_source.open_prepared_split(name, split, data_dir)` opens a TFDS split
+  prepared as ArrayRecord through TFDS's random-access reader, reading no record and importing
+  no TensorFlow, and refuses a copy that is not prepared or is prepared in another format with a
+  `FileNotFoundError` naming the call that prepares it.
+- `datarax.sources.eager_source.parts_of_records(records)`, the one path from records to host
+  columns and provenance (`MemorySource` and `TFDSEagerSource` use it), and `HostValue`, the
+  holder of a host value NNX keeps out of module state and every program (`HostProvenance` is
+  one).
 - `datarax.core.RecordIdentity` (`INDEXED`, `STREAM_IDS`, `ARRIVAL`) and the abstract
   `DataSourceModule.record_identity`: every source declares what its record index means (a
   stable position, an id the stream reports, or the arrival ordinal), and a source that does
@@ -56,6 +64,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`TFDSEagerSource` reads TFDS without TensorFlow.** It reads a split TFDS has prepared as
+  ArrayRecord, through `builder.as_data_source`, in one batched read, and never imports
+  TensorFlow, so a training process that reads TFDS data holds none (TensorFlow in a JAX process
+  breaks JAX's NCCL collectives). It never prepares a dataset: preparing imports TensorFlow, so
+  it runs once, in a process of its own, as
+  `tfds.builder(name, data_dir=..., file_format="array_record").download_and_prepare()`, and a
+  split that is not prepared, or is prepared only as TFRecord, is refused naming that call. The
+  records become columns and provenance through the path every eager source shares: a text
+  feature, such as CIFAR-10's `id`, is the record's provenance rather than a `TypeError`, so the
+  examples no longer exclude it. `as_supervised=True` keeps the dataset's supervised features
+  (`info.supervised_keys`) under their own names. Values keep the dtype TFDS stores: a class
+  label is int64 on the host (int32 on a device while 64-bit types are off, as before). The
+  50,000 CIFAR-10 training records load in about 4.5 s, where the TensorFlow loader took over
+  1,000 s, and loading places nothing on a device.
+  Reading needs the `data` extra; preparing and `TFDSStreamingSource` need the `tfds` extra.
+  `tensorflow-datasets` is now `>=4.9.8`, the first release whose `as_data_source` takes a file
+  format.
+- `get_dataset_info()` of the eager TFDS and HuggingFace sources is held in a `HostValue`, out of
+  the module's graph: TFDS's `DatasetInfo` compares by identity, so every `TFDSEagerSource` was a
+  graphdef of its own and a jitted step over a newly built source compiled again.
+- `scripts/prepare_example_datasets.py` prepares every TFDS dataset the examples read (CIFAR-10,
+  Fashion-MNIST, MNIST) as ArrayRecord in TFDS's data directory. It lists first, then deletes
+  just before preparing again, any copy of those three datasets prepared in another format;
+  nothing else in the directory is touched. CI's dataset cache key names the format
+  (`example-datasets-array_record-...`).
+- The TFDS tests read an offline dataset prepared by `python -m tests.test_common.tfds_fixture`
+  (with TensorFlow) and run in CI's long-running job after a step that prepares it; every other
+  lane deselects them (`-m "not tfds"`), and a missing fixture fails them instead of skipping.
+- IO-1's `tfds_eager` and `tfds_streaming` variants read separate data directories, an
+  ArrayRecord copy and a TFRecord copy; the benchmark fixture reads CIFAR-10 through
+  `TFDSEagerSource` and no longer downloads it.
 - **The record order lives in core.** `datarax.samplers.index_shuffle` is now
   `datarax.core.index_shuffle` (`shuffle_positions`, `shuffle_positions_host`, `index_shuffle`),
   beside `datarax.core.index_words`; the samplers, the sources and core import it from there.
@@ -270,6 +309,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `TFDSEagerConfig.try_gcs`, `download_and_prepare_kwargs`, `beam_num_workers` and
+  `local_files_only`, and `from_tfds`'s `try_gcs`, `download_and_prepare_kwargs` and
+  `beam_num_workers`: the eager source never prepares a dataset. Passing them raises
+  `TypeError`; a stream that needs them is built with `TFDSStreamingConfig`.
 - `DataSourceModule.supports_indexed_access` and `supports_streaming`, and every override:
   `record_identity` is the one declaration of a source's kind.
 - The stateful host read and its state: `get_batch(batch_size, key=None)`, `reset()` and the

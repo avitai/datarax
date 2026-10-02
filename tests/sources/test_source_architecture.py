@@ -4,13 +4,13 @@ This module contains tests verifying the new architectural separation between
 eager-loading and streaming sources, following TDD principles.
 
 Architecture Goals:
-    - Eager sources load all data to JAX arrays at initialization
+    - Eager sources load all data into host NumPy columns at initialization
     - Streaming sources provide thin wrappers with DLPack conversion
-    - No TensorFlow threads should remain after eager source init
+    - The eager TFDS source reads prepared ArrayRecord and never imports TensorFlow
     - O(1) memory shuffling via a keyed Feistel bijection
 """
 
-import platform
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -20,16 +20,7 @@ from flax import nnx
 
 from datarax.core.index_words import to_words
 from datarax.sources import MemorySource, MemorySourceConfig
-
-
-TFDS_ARCHITECTURE_SKIP_EXCEPTIONS = (
-    ImportError,
-    FileNotFoundError,
-    OSError,
-    RuntimeError,
-    ValueError,
-    NotImplementedError,
-)
+from tests.test_common.tfds_fixture import FIXTURE, TFDSFixture
 
 
 # =============================================================================
@@ -96,141 +87,102 @@ class TestEagerSourceArchitecture:
 
 
 # =============================================================================
-# Tests for TFDS Eager Source
+# Tests for TFDS Eager Source (the offline fixture, prepared as ArrayRecord)
 # =============================================================================
 
 
-@pytest.mark.skipif(
-    platform.system() == "Darwin",
-    reason="Skipping TFDS tests on macOS (TensorFlow ARM64 import hang issue)",
-)
+@pytest.mark.tfds
 class TestTFDSEagerSource:
     """Tests for TFDSEagerSource architecture."""
 
-    @pytest.fixture(autouse=True)
-    def skip_without_tf(self):
-        """Skip tests if TensorFlow/TFDS not available."""
-        pytest.importorskip("tensorflow")
-        pytest.importorskip("tensorflow_datasets")
+    @staticmethod
+    def _source(fixture: TFDSFixture, split: str, **kwargs: object) -> Any:
+        from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 
-    @pytest.mark.tfds
-    def test_tfds_eager_loads_all_at_init(self):
+        config = TFDSEagerConfig(
+            name=FIXTURE,
+            split=split,
+            data_dir=str(fixture.array_record),
+            **kwargs,  # type: ignore[arg-type]
+        )
+        return TFDSEagerSource(config)
+
+    def test_tfds_eager_loads_all_at_init(self, tfds_fixture: TFDSFixture) -> None:
         """TFDS eager source loads all data at init, as host NumPy columns."""
-        from datarax.sources import TFDSEagerConfig, TFDSEagerSource
+        source = self._source(tfds_fixture, "train[:10]")
 
-        try:
-            config = TFDSEagerConfig(name="mnist", split="train[:100]")
-            source = TFDSEagerSource(config)
+        assert isinstance(source.data["image"], np.ndarray)
+        assert source.data["image"].shape[0] == 10
+        assert len(source) == 10
 
-            # Data is held on the host
-            assert isinstance(source.data["image"], np.ndarray)
-            assert source.data["image"].shape[0] == 100
-            assert len(source) == 100
-        except TFDS_ARCHITECTURE_SKIP_EXCEPTIONS as e:
-            pytest.skip(f"Could not load MNIST: {e}")
+    def test_tfds_eager_iteration_reads_the_host_columns(self, tfds_fixture: TFDSFixture) -> None:
+        """After init, iteration reads the host columns, with no TFDS work."""
+        source = self._source(tfds_fixture, "train")
 
-    @pytest.mark.tfds
-    def test_tfds_eager_iteration_reads_the_host_columns(self):
-        """After init, iteration reads the host columns, with no TF work."""
-        from datarax.sources import TFDSEagerConfig, TFDSEagerSource
+        items = []
+        for i, item in enumerate(source):
+            items.append(item)
+            if i >= 5:
+                break
 
-        try:
-            config = TFDSEagerConfig(name="mnist", split="train[:50]")
-            source = TFDSEagerSource(config)
+        assert len(items) == 6
+        assert isinstance(items[0]["image"], np.ndarray)
 
-            # Iteration should work
-            items = []
-            for i, item in enumerate(source):
-                items.append(item)
-                if i >= 5:
-                    break
-
-            assert len(items) == 6
-            assert isinstance(items[0]["image"], np.ndarray)
-        except TFDS_ARCHITECTURE_SKIP_EXCEPTIONS as e:
-            pytest.skip(f"Could not load MNIST: {e}")
-
-    @pytest.mark.tfds
-    def test_tfds_eager_dataset_info_available(self):
+    def test_tfds_eager_dataset_info_available(self, tfds_fixture: TFDSFixture) -> None:
         """Dataset info should be cached and available."""
-        from datarax.sources import TFDSEagerConfig, TFDSEagerSource
+        source = self._source(tfds_fixture, "train")
 
-        try:
-            config = TFDSEagerConfig(name="mnist", split="train[:10]")
-            source = TFDSEagerSource(config)
+        assert source.get_dataset_info().name == FIXTURE
 
-            info = source.get_dataset_info()
-            assert info is not None
-        except TFDS_ARCHITECTURE_SKIP_EXCEPTIONS as e:
-            pytest.skip(f"Could not load MNIST: {e}")
-
-    @pytest.mark.tfds
-    def test_tfds_eager_include_keys_filter(self):
+    def test_tfds_eager_include_keys_filter(self, tfds_fixture: TFDSFixture) -> None:
         """include_keys should filter output."""
-        from datarax.sources import TFDSEagerConfig, TFDSEagerSource
+        source = self._source(tfds_fixture, "train", include_keys={"image"})
 
-        try:
-            config = TFDSEagerConfig(name="mnist", split="train[:10]", include_keys={"image"})
-            source = TFDSEagerSource(config)
-
-            assert "image" in source.data
-            assert "label" not in source.data
-        except TFDS_ARCHITECTURE_SKIP_EXCEPTIONS as e:
-            pytest.skip(f"Could not load MNIST: {e}")
+        assert "image" in source.data
+        assert "label" not in source.data
 
 
 # =============================================================================
-# Tests for TFDS Streaming Source
+# Tests for TFDS Streaming Source (the offline fixture, prepared as TFRecord)
 # =============================================================================
 
 
-@pytest.mark.skipif(
-    platform.system() == "Darwin",
-    reason="Skipping TFDS tests on macOS (TensorFlow ARM64 import hang issue)",
-)
+@pytest.mark.tfds
 class TestTFDSStreamingSource:
     """Tests for TFDSStreamingSource architecture."""
 
-    @pytest.fixture(autouse=True)
-    def skip_without_tf(self):
-        """Skip tests if TensorFlow/TFDS not available."""
-        pytest.importorskip("tensorflow")
-        pytest.importorskip("tensorflow_datasets")
+    @staticmethod
+    def _source(fixture: TFDSFixture, **kwargs: object) -> Any:
+        from datarax.sources import TFDSStreamingConfig, TFDSStreamingSource
 
-    @pytest.mark.tfds
-    def test_tfds_streaming_uses_fixed_prefetch(self):
+        config = TFDSStreamingConfig(
+            name=FIXTURE,
+            split="train",
+            data_dir=str(fixture.tfrecord),
+            local_files_only=True,
+            exclude_keys={"name", "meta"},
+            **kwargs,  # type: ignore[arg-type]
+        )
+        return TFDSStreamingSource(config, rngs=nnx.Rngs(0))
+
+    def test_tfds_streaming_uses_fixed_prefetch(self, tfds_fixture: TFDSFixture) -> None:
         """Streaming source should use fixed prefetch, not AUTOTUNE."""
-        from datarax.sources import TFDSStreamingConfig, TFDSStreamingSource
+        source = self._source(tfds_fixture, prefetch_buffer=2)
 
-        try:
-            config = TFDSStreamingConfig(name="mnist", split="train[:50]", prefetch_buffer=2)
-            source = TFDSStreamingSource(config, rngs=nnx.Rngs(0))
+        items = []
+        for i, item in enumerate(source):
+            items.append(item)
+            if i >= 5:
+                break
 
-            # Should be iterable
-            items = []
-            for i, item in enumerate(source):
-                items.append(item)
-                if i >= 5:
-                    break
+        assert len(items) == 6
 
-            assert len(items) == 6
-        except TFDS_ARCHITECTURE_SKIP_EXCEPTIONS as e:
-            pytest.skip(f"Could not load MNIST: {e}")
+    def test_tfds_streaming_produces_jax_arrays(self, tfds_fixture: TFDSFixture) -> None:
+        """Each record should be JAX arrays."""
+        item = next(iter(self._source(tfds_fixture)))
 
-    @pytest.mark.tfds
-    def test_tfds_streaming_produces_jax_arrays(self):
-        """Each batch should produce JAX arrays."""
-        from datarax.sources import TFDSStreamingConfig, TFDSStreamingSource
-
-        try:
-            config = TFDSStreamingConfig(name="mnist", split="train[:10]")
-            source = TFDSStreamingSource(config, rngs=nnx.Rngs(0))
-
-            item = next(iter(source))
-            assert isinstance(item["image"], jax.Array)
-            assert isinstance(item["label"], jax.Array)
-        except TFDS_ARCHITECTURE_SKIP_EXCEPTIONS as e:
-            pytest.skip(f"Could not load MNIST: {e}")
+        assert isinstance(item["image"], jax.Array)
+        assert isinstance(item["label"], jax.Array)
 
 
 # =============================================================================

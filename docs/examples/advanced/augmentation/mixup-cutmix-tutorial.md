@@ -50,6 +50,10 @@ If you're familiar with PyTorch augmentations, here's how Datarax batch mixing c
 ## Quick Start
 
 ```bash
+# Prepare the example datasets once as ArrayRecord (in its own process: it imports
+# TensorFlow; the example reads them without it)
+python scripts/prepare_example_datasets.py
+
 # Run the Python script
 python examples/advanced/augmentation/01_mixup_cutmix_tutorial.py
 
@@ -114,17 +118,6 @@ CutMix branch of clovaai/CutMix-PyTorch `train.py`). Integer class labels stay i
 ## Setup
 
 ```python
-# GPU Memory Configuration
-import os
-
-
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-
-import tensorflow as tf
-
-
-tf.config.set_visible_devices([], "GPU")
-
 # Core imports
 
 import jax
@@ -196,7 +189,6 @@ def create_base_pipeline(num_samples=256):
         TFDSEagerConfig(
             name="cifar10",
             split=f"train[:{num_samples}]",
-            exclude_keys={"id"},
         ),
     )
 
@@ -261,7 +253,6 @@ def create_mixup_pipeline(alpha=0.4, seed=42):
         TFDSEagerConfig(
             name="cifar10",
             split="train[:256]",
-            exclude_keys={"id"},
         ),
     )
 
@@ -409,7 +400,6 @@ def create_cutmix_pipeline(alpha=1.0, seed=42):
         TFDSEagerConfig(
             name="cifar10",
             split="train[:256]",
-            exclude_keys={"id"},
         ),
     )
 

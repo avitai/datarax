@@ -44,7 +44,7 @@ def fake_cifar(monkeypatch: pytest.MonkeyPatch) -> np.ndarray:
     rng = np.random.default_rng(0)
     images = rng.integers(0, 256, (FAKE_CIFAR_COUNT, 32, 32, 3), dtype=np.uint8)
 
-    def _fake_load(data_dir: str | None, allow_download: bool) -> np.ndarray:
+    def _fake_load(data_dir: str | None) -> np.ndarray:
         return images
 
     monkeypatch.setattr(real_data, "_load_cifar10_train", _fake_load)

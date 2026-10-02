@@ -567,6 +567,7 @@ class DataraxAdapter(PipelineAdapter):
             src_config = TFDSEagerConfig(
                 name=config.extra["dataset_name"],
                 split=config.extra["split"],
+                data_dir=config.extra.get("data_dir"),
                 as_supervised=True,
             )
             return TFDSEagerSource(src_config)
@@ -577,6 +578,7 @@ class DataraxAdapter(PipelineAdapter):
             src_config = TFDSStreamingConfig(
                 name=config.extra["dataset_name"],
                 split=config.extra["split"],
+                data_dir=config.extra.get("data_dir"),
                 shuffle=False,
                 as_supervised=True,
             )

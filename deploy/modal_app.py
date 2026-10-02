@@ -167,7 +167,8 @@ def examples(run: str, paths: list[str], prepare_datasets: bool) -> str:
         run: Name of this run; everything lands under ``<run>/`` in the output volume.
         paths: Example scripts, relative to the repository root, run in order.
         prepare_datasets: Whether to run ``scripts/prepare_example_datasets.py`` first, which
-            fetches the slow-host archives into the dataset volume once.
+            prepares the TFDS example datasets as ArrayRecord in the dataset volume (a TFRecord
+            copy of them there is replaced in place) and fetches the slow-host archives once.
 
     Returns:
         The summary: one tab-separated ``<exit code> <script>`` line per script. The volume holds
@@ -224,7 +225,8 @@ def main(
         paths: Example scripts to run, space-separated; the comparison tutorials by default.
         run: The run's name in the output volume; a UTC timestamp when empty.
         out: Local directory that receives ``<run>/``; ``temp/`` is gitignored.
-        prepare_datasets: Fetch the slow-host datasets into the volume before the examples.
+        prepare_datasets: Prepare the example datasets in the volume (TFDS ones as ArrayRecord,
+            in place) before the examples.
     """
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     if task == "probe":

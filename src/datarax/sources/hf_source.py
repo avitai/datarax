@@ -35,7 +35,7 @@ from datarax.core.data_source import RecordIdentity
 from datarax.sources._config_base import SourceConfigBase
 from datarax.sources._conversion import hf_to_jax
 from datarax.sources._source_base import DatasetSourceMixin, StreamingSourceBase
-from datarax.sources.eager_source import EagerSource, is_array_leaf, stack_records
+from datarax.sources.eager_source import EagerSource, HostValue, is_array_leaf, stack_records
 from datarax.sources.source_ops import (
     converted_filtered_record,
     validate_eager_source_settings,
@@ -277,7 +277,7 @@ class HFEagerSource(DatasetSourceMixin, EagerSource):
         self.exclude_keys = config.exclude_keys
 
         # Load dataset info BEFORE loading data
-        self._dataset_info = self._load_dataset_info_from_backend(config)
+        self._dataset_info = HostValue(self._load_dataset_info_from_backend(config))
 
         # Load ALL data at init
         self._store(*self._load_columns(config))

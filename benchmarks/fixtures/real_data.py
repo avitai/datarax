@@ -8,13 +8,15 @@ is what keeps cross-framework comparisons fair.
 
 Datasets (cached locally after a one-time materialization):
 
-- cifar10 via ``tensorflow_datasets`` (honors ``TFDS_DATA_DIR``)
+- cifar10 via ``TFDSEagerSource``, from the copy ``scripts/prepare_example_datasets.py``
+  prepares as ArrayRecord in TFDS's data directory (honors ``TFDS_DATA_DIR``); it is
+  never downloaded here, since preparing imports TensorFlow
 - wikitext-103-raw-v1 via Hugging Face ``Salesforce/wikitext``
 - Criteo DAC sample (13 dense + 26 categorical) via ``Recommenders/criteo``
 - COCO captions (Karpathy validation split) via ``jxie/coco_captions``
 
-Downloads are disabled by default; set ``DATARAX_BENCH_DOWNLOAD=1`` (or pass
-``allow_download=True``) to permit them. With downloads disabled, missing
+Downloads of the Hugging Face datasets are disabled by default; set
+``DATARAX_BENCH_DOWNLOAD=1`` (or pass ``allow_download=True``) to permit them. Missing
 data raises :class:`RealDataUnavailableError` with remediation instructions.
 
 Selection is deterministic per seed: rows are permuted once, then tiled
@@ -82,17 +84,6 @@ def hash_tokenize(words: Sequence[str], vocab_size: int) -> np.ndarray:
     )
 
 
-def default_tfds_data_dir() -> Path:
-    """Return the TFDS data directory (``TFDS_DATA_DIR`` or the home default)."""
-    return Path(os.environ.get("TFDS_DATA_DIR", str(Path.home() / "tensorflow_datasets")))
-
-
-def cifar10_is_cached(data_dir: str | Path | None = None) -> bool:
-    """Return True if cifar10 is already materialized in the TFDS data dir."""
-    base = Path(data_dir) if data_dir is not None else default_tfds_data_dir()
-    return (base / "cifar10").is_dir()
-
-
 def _download_hint(dataset: str) -> str:
     """Build the standard remediation message for missing datasets."""
     return (
@@ -149,20 +140,24 @@ def _caption_tokens(caption: str, text_len: int, vocab_size: int) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-def _load_cifar10_train(data_dir: str | Path | None, allow_download: bool) -> np.ndarray:
-    """Load the full cifar10 train split as a uint8 NHWC array via TFDS."""
-    if not allow_download and not cifar10_is_cached(data_dir):
-        raise RealDataUnavailableError(_download_hint("cifar10 (TFDS)"))
-    import tensorflow_datasets as tfds
+def _load_cifar10_train(data_dir: str | Path | None) -> np.ndarray:
+    """Load the full cifar10 train split as a uint8 NHWC array, from its ArrayRecord copy."""
+    from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 
-    batch = tfds.load(
-        "cifar10",
+    config = TFDSEagerConfig(
+        name="cifar10",
         split="train",
         data_dir=str(data_dir) if data_dir is not None else None,
-        batch_size=-1,
-        download=allow_download,
+        include_keys={"image"},
     )
-    return np.asarray(tfds.as_numpy(batch)["image"], dtype=np.uint8)
+    try:
+        source = TFDSEagerSource(config)
+    except FileNotFoundError as error:
+        raise RealDataUnavailableError(
+            "cifar10 is not prepared as ArrayRecord in the TFDS data dir; prepare it once with "
+            "`uv run python scripts/prepare_example_datasets.py` (needs the tfds extra)"
+        ) from error
+    return np.asarray(source.data["image"], dtype=np.uint8)
 
 
 def _load_hf_dataset(
@@ -305,7 +300,7 @@ class RealDataProvider:
             Array of shape ``(n, h, w, 3)`` with dtype uint8.
         """
         _require_positive(n)
-        images = _load_cifar10_train(self.data_dir, self.allow_download)
+        images = _load_cifar10_train(self.data_dir)
         selected = images[_select_indices(len(images), n, self.rng)]
         return _resize_images(selected, h, w)
 

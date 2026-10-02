@@ -1,6 +1,6 @@
 # TensorFlow Datasets Source
 
-`TFDSEagerSource` provides integration with [TensorFlow Datasets (TFDS)](https://www.tensorflow.org/datasets), giving access to hundreds of ready-to-use datasets with automatic conversion from TensorFlow tensors to JAX arrays.
+`TFDSEagerSource` reads [TensorFlow Datasets (TFDS)](https://www.tensorflow.org/datasets) that TFDS has prepared as ArrayRecord, giving access to hundreds of ready-to-use datasets as host NumPy columns, without TensorFlow in the process.
 
 > **Note:** You can also use the factory function `from_tfds(name, split, ...)` which auto-selects between eager and streaming modes based on your configuration.
 
@@ -8,29 +8,40 @@
 
 | Feature | Description |
 |---------|-------------|
-| **Automatic conversion** | TensorFlow tensors → host NumPy columns |
-| **One-time load** | Eager source converts at init, then tears down TensorFlow |
-| **Supervised mode** | Optional `(image, label)` tuple unpacking |
+| **No TensorFlow** | Reads through TFDS's random-access reader (`as_data_source`); TensorFlow is never imported |
+| **One batched read** | The whole split is read and decoded at init, then held as host NumPy columns |
+| **Provenance** | Text features (CIFAR-10's `id`) are kept per record as provenance, never served in a batch |
+| **Supervised mode** | `as_supervised=True` keeps only the dataset's supervised features, under their own names |
 | **Shuffling** | `Pipeline(shuffle=True)`'s O(1)-memory Feistel index shuffle (as for the HF source) |
 | **Fixed prefetch** | Streaming source uses a fixed `prefetch_buffer=2`, deliberately not AUTOTUNE |
 
 !!! note "Key points"
 
-    - TFDS handles download and preparation automatically
-    - Use `as_supervised=True` to get `{"image": ..., "label": ...}` format
-    - The eager source performs a one-time conversion at init, holds the records as host NumPy columns and tears TensorFlow down afterward
-    - The streaming source uses a fixed `prefetch_buffer=2` (deliberately not `tf.data.AUTOTUNE`) to avoid thread storms
+    - The eager source reads a copy prepared as **ArrayRecord** and never prepares one: preparing imports TensorFlow, so it runs once, in a process of its own
+    - A split that is not prepared, or is prepared only as TFRecord, is refused with a `FileNotFoundError` naming the call that prepares it
+    - TensorFlow in a JAX process breaks JAX's multi-GPU (NCCL) collectives; the eager source keeps it out of the training process
+    - Values keep the dtype TFDS stores: a class label is int64 on the host, and int32 on a device while JAX's 64-bit types are off
+    - The streaming source reads a TFRecord copy through `tf.data`, so it imports TensorFlow; it uses a fixed `prefetch_buffer=2` (deliberately not `tf.data.AUTOTUNE`) to avoid thread storms
     - The source keeps no iteration state: the pipeline owns the order and the position
 
 ## Installation
 
-TFDSEagerSource requires TensorFlow and tensorflow-datasets:
+Reading needs the `data` extra (tensorflow-datasets and Pillow); preparing a dataset and the streaming source need the `tfds` extra, which adds TensorFlow:
 
 ```bash
-pip install datarax[data]
-# or
-pip install tensorflow tensorflow-datasets
+pip install "datarax[data]"          # read prepared datasets with TFDSEagerSource
+pip install "datarax[data,tfds]"     # also prepare datasets, or stream them
 ```
+
+## Preparing a Dataset
+
+Prepare each dataset once as ArrayRecord, in a process of its own (it imports TensorFlow):
+
+```bash
+python -c "import tensorflow_datasets as tfds; tfds.builder('mnist', file_format='array_record').download_and_prepare()"
+```
+
+`data_dir=` chooses where it is prepared (TFDS's default is `TFDS_DATA_DIR`, else `~/tensorflow_datasets`). A data directory holds one format per dataset version, so a dataset already prepared there as TFRecord is prepared as ArrayRecord in another directory, or after its TFRecord copy is deleted. In the datarax repository, `scripts/prepare_example_datasets.py` prepares the datasets the examples read (CIFAR-10, Fashion-MNIST, MNIST) and replaces a TFRecord copy of them in place.
 
 ## Quick Start
 
@@ -42,7 +53,7 @@ from datarax.pipeline import Pipeline
 from datarax.sources import TFDSEagerSource
 from datarax.sources.tfds_source import TFDSEagerConfig
 
-# Load MNIST dataset
+# Read MNIST, prepared as ArrayRecord
 config = TFDSEagerConfig(name="mnist", split="train")
 source = TFDSEagerSource(config)
 
@@ -55,13 +66,13 @@ for item in source:
 
 ## Supervised Mode
 
-Get a cleaner `{"image", "label"}` structure:
+Keep only the dataset's supervised features (`info.supervised_keys`), under their own names:
 
 ```python
 config = TFDSEagerConfig(
     name="cifar10",
     split="train",
-    as_supervised=True,  # Returns {"image": ..., "label": ...}
+    as_supervised=True,  # keeps {"image": ..., "label": ...}, drops "id"
 )
 source = TFDSEagerSource(config)
 
@@ -93,20 +104,30 @@ pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0), s
 ```
 
 For ImageNet-scale splits that do not fit in memory, use the streaming path via
-`from_tfds(name, split, ...)` (or `TFDSStreamingConfig` directly), which streams
-with a fixed prefetch buffer instead of loading everything at init.
+`from_tfds(name, split, ...)` (or `TFDSStreamingConfig` directly), which streams a TFRecord
+copy with a fixed prefetch buffer instead of loading everything at init.
 
 ## Custom Data Directory
 
-Store datasets in a specific location:
+Read a dataset prepared in a specific location:
 
 ```python
 config = TFDSEagerConfig(
-    name="imagenet2012",
+    name="cifar10",
     split="train",
     data_dir="/path/to/tfds_data",
 )
 source = TFDSEagerSource(config)
+```
+
+## Strings Are Provenance
+
+A record's text features stay on the host as its provenance, aligned with the rows, and never
+enter a `Batch` or a compiled program. CIFAR-10's `id` is one:
+
+```python
+source = TFDSEagerSource(TFDSEagerConfig(name="cifar10", split="train[:4]"))
+sorted(source.data)  # ['image', 'label']
 ```
 
 ## Field Filtering
@@ -122,9 +143,9 @@ config = TFDSEagerConfig(
 
 # Or exclude unwanted fields
 config = TFDSEagerConfig(
-    name="mnist",
+    name="cifar10",
     split="train",
-    exclude_keys={"id"},
+    exclude_keys={"label"},
 )
 ```
 
@@ -149,7 +170,7 @@ for batch in pipeline:
 
 ## Dataset Information
 
-Access rich metadata from TFDS:
+Access rich metadata from TFDS, read from the prepared copy:
 
 ```python
 info = source.get_dataset_info()

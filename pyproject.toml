@@ -82,7 +82,7 @@ benchmark = [
   # Peer frameworks for comparative benchmarking (Section 14.2 of benchmark report)
   # Tier 1: JAX ecosystem (Grain already in base deps)
   "jax-dataloader>=0.1", # jax-dataloader — minimal JAX-native loader
-  "tensorflow-datasets>=4.9", # tf.data adapter (provides tensorflow dep)
+  "tensorflow-datasets>=4.9.8", # tf.data adapter; CIFAR-10 is read through TFDSEagerSource
   # Tier 2: High-performance leaders
   "nvidia-dali-cuda120>=1.0; sys_platform == 'linux'", # NVIDIA DALI — GPU-native data loading + augmentation (Linux/CUDA only)
   "spdl>=0.1", # Meta SPDL — thread-based data loading
@@ -129,7 +129,7 @@ cuda12 = [
 data = [
   # Data loading and processing dependencies
   "importlib_resources>=5.0", # Backport required by grain/etils on some Python versions
-  "tensorflow-datasets>=4.9.2", # For TFDS integration
+  "tensorflow-datasets>=4.9.8", # as_data_source(file_format=), read without TensorFlow
   "datasets>=2.21", # For HuggingFace datasets (>=2.21 for pyarrow 15+ compat)
   "pyarrow>=21", # >=21 for pa.json_ (datasets 4+) and macOS-14 arm64 wheel stability
   "pillow>=10.0.0", # For image processing
@@ -225,11 +225,12 @@ test = [
   # spdl: Linux-only; comparison adapter for memory-efficiency benchmarks.
   "spdl>=0.1; sys_platform == 'linux'"
 ]
-# TFDS-backed sources. Kept out of the base install so a JAX-native package does not
-# pull TensorFlow: every import site in src/datarax/sources/ is already lazy.
+# Preparing TFDS datasets and the TFDS streaming source, which import TensorFlow. Reading a
+# dataset prepared as ArrayRecord (TFDSEagerSource) needs only the data extra, and keeps
+# TensorFlow out of the process; a JAX-native package does not pull TensorFlow on a plain install.
 tfds = [
   "tensorflow>=2.20.0,<2.21", # 2.21 requires protobuf 6 and trips TFDS descriptor warnings
-  "tensorflow-datasets>=4.9.2"
+  "tensorflow-datasets>=4.9.8"
 ]
 # benchmarks/export.py imports calibrax's W&B exporter, which needs wandb and says so.
 wandb = ["calibrax[wandb]>=0.1.14"]
@@ -430,7 +431,7 @@ filterwarnings = [
 log_cli = true
 log_cli_level = "INFO"
 markers = [
-  "tfds: marks tests that require tensorflow_datasets to be installed",
+  "tfds: marks tests that read the TFDS fixture or prepared datasets (CI long-running job)",
   "hf: marks tests that require huggingface datasets to be installed",
   "slow: marks tests as slow (deselect with '-m \"not slow\"')",
   "integration: marks tests as integration tests",
@@ -594,6 +595,30 @@ max-args = 13
 "PYSEC-2026-3546" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
 "PYSEC-2026-3547" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
 "PYSEC-2026-3929" = "benchmark extra only, through mosaicml-streaming (the MosaicML peer adapter): its latest release, 0.13.0, requires transformers<5 and paramiko<4. Paramiko's advisory covers every release through 4.0.0. Revisit when mosaicml-streaming lifts those bounds."
+
+[tool.substrax.compute]
+backend = "modal"
+
+[tool.substrax.compute.backends.modal]
+outputs_volume = "datarax-compute-outputs"
+
+# R53: an NCCL all-reduce on two GPUs after a TFDS read, with no TensorFlow in the process
+# (tests/sources/test_tfds_collective.py). The control runs the same program with TensorFlow
+# imported first, which breaks JAX's NCCL collectives.
+[tool.substrax.compute.jobs.tfds-nccl]
+env = {DATARAX_TEST_JAX_PLATFORMS = "cuda,cpu", DATARAX_TFDS_FIXTURE_DIR = "/tmp/tfds_fixture", NCCL_DEBUG = "WARN"}
+extras = ["cuda12", "data", "dev", "test", "tfds"]
+resources = {accelerator = {count = 2, kind = "L40S"}, cpu = 8, memory_mib = 32768}
+runtime = {platforms = ["cuda"], preallocate = false, xla_flags = ["--xla_gpu_deterministic_ops=true"]}
+task_timeout_seconds = 900
+timeout_seconds = 2700
+
+# Tasks run in table order and the table is kept sorted, so their names carry the order.
+[tool.substrax.compute.jobs.tfds-nccl.commands]
+1-fixture = ["python", "-m", "tests.test_common.tfds_fixture", "/tmp/tfds_fixture"]
+2-program = ["python", "-m", "tests.test_common.tfds_collective", "/tmp/tfds_fixture"]
+3-collective = ["python", "-m", "pytest", "tests/sources/test_tfds_collective.py", "-p", "no:cacheprovider", "--no-cov", "-rs", "-v"]
+4-control = ["python", "-m", "tests.test_common.tfds_collective", "/tmp/tfds_fixture", "--import-tensorflow"]
 
 [tool.uv]
 # The automation extra is benchmark tooling: skypilot[vast] and vastai-sdk, used only

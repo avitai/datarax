@@ -22,7 +22,7 @@ from datarax.core.element_batch import Element
 from datarax.sources.eager_source import (
     EagerSource,
     is_array_leaf,
-    split_record,
+    parts_of_records,
     stack_records,
 )
 from datarax.sources.source_ops import partition_length, resolve_wrapped_indices
@@ -305,7 +305,7 @@ def _has_rows(value: Any) -> bool:
     return hasattr(value, "__len__") and not isinstance(value, str | bytes) and np.ndim(value) > 0
 
 
-def _parts_of_records(records: Sequence[Any]) -> _Parts:
+def _parts_of_records(records: Sequence[Any]) -> _Parts:  # noqa: DOC502 - from parts_of_records
     """A sequence of records: numeric values stacked into columns, the rest provenance.
 
     Args:
@@ -316,21 +316,11 @@ def _parts_of_records(records: Sequence[Any]) -> _Parts:
 
     Raises:
         ValueError: If an ``Element`` carries an index or state, no record holds a number, or the
-            records' numeric fields or shapes differ (see :func:`stack_records`).
+            records' numeric fields or shapes differ (see :func:`parts_of_records`).
     """
-    if not records:
-        return {}, ()
-    parts, provenance = [], []
-    for position, record in enumerate(records):
-        part, extra = split_record(_record_data(record, position))
-        if part is None:
-            raise ValueError(
-                f"record {position} holds no numeric value; a batch is built from numeric "
-                "fields, and strings and other objects are kept as the record's provenance"
-            )
-        parts.append(part)
-        provenance.append(extra)
-    return stack_records(parts), tuple(provenance) if any(provenance) else ()
+    return parts_of_records(
+        [_record_data(record, position) for position, record in enumerate(records)]
+    )
 
 
 def _record_data(record: Any, position: int) -> Any:

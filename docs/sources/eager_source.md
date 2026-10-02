@@ -4,7 +4,8 @@ The base of every in-memory source (`MemorySource`, `TFDSEagerSource`, `HFEagerS
 held on the host as NumPy columns, each record's strings and objects kept beside them as its
 provenance, and one stateless host read, `get_batch(indices, *, epochs=0)`, that returns a
 `Batch` named with the given indices and epochs. A source that loads records from somewhere
-new subclasses `EagerSource` and stores its columns with `_store`.
+new subclasses `EagerSource` and stores its columns with `_store`; records become columns and
+provenance through one path, `parts_of_records` (the memory and TFDS sources use it).
 
 ## See Also
 

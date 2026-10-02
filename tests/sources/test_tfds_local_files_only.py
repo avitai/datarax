@@ -1,9 +1,10 @@
-"""Tests for ``local_files_only`` and ``element_spec`` on TFDS sources.
+"""Tests for ``local_files_only`` on the TFDS streaming source.
 
 TFDS has no native ``local_files_only`` kwarg — the contract is enforced by
 skipping ``builder.download_and_prepare()`` when ``local_files_only=True``.
 The user is then responsible for ensuring the data is already prepared in
-``data_dir``; if not, ``tfds.load`` will surface its own error.
+``data_dir``; if not, ``builder.as_dataset`` will surface its own error. The eager
+source never prepares a dataset, so it has no such flag.
 
 These are unit tests over that kwarg, so they name a dataset that does not exist and patch
 what would load one. A test that names a real dataset reads it wherever the machine happens
@@ -15,30 +16,14 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import jax.numpy as jnp
 import pytest
 from flax import nnx
 
-from datarax.sources.tfds_source import (
-    TFDSEagerConfig,
-    TFDSEagerSource,
-    TFDSStreamingConfig,
-    TFDSStreamingSource,
-)
+from datarax.sources.tfds_source import TFDSStreamingConfig, TFDSStreamingSource
 
 
-# Same skip pattern as test_tfds_source.py — TFDS imports are flaky on macOS.
+# Same skip pattern as the other TFDS tests — TFDS imports are flaky on macOS.
 TFDS_TEST_SKIP_EXCEPTIONS = (ImportError, ModuleNotFoundError, OSError, RuntimeError)
-
-
-def _mock_eager_arrays() -> dict[str, jnp.ndarray]:
-    """The arrays an eager source would have materialised.
-
-    ``TFDSEagerSource.__init__`` loads the whole split, which patching the builder alone does
-    not prevent: on a machine that happens to have the dataset prepared the constructor reads
-    it, and these tests assert nothing about the data.
-    """
-    return {"image": jnp.zeros((4, 2, 2, 1)), "label": jnp.zeros((4,), dtype=jnp.int32)}
 
 
 def _mock_streaming_builder():
@@ -51,33 +36,8 @@ def _mock_streaming_builder():
     return mock_builder
 
 
-@pytest.mark.parametrize(
-    ("config", "expected"),
-    [
-        (TFDSEagerConfig(name="mock", split="train", local_files_only=True), True),
-        (TFDSEagerConfig(name="mock", split="train"), False),
-    ],
-    ids=["requested", "default"],
-)
-def test_tfds_eager_source_passes_local_files_only_to_prepare_builder(
-    config: TFDSEagerConfig, expected: bool
-) -> None:
-    """The flag flows into ``_prepare_tfds_builder`` as a kwarg, and defaults to False."""
-    with (
-        patch(
-            "datarax.sources.tfds_source._prepare_tfds_builder", return_value=MagicMock()
-        ) as mock_prepare,
-        patch.object(
-            TFDSEagerSource, "_load_all_from_backend_to_jax", return_value=_mock_eager_arrays()
-        ),
-    ):
-        TFDSEagerSource(config)
-
-        assert mock_prepare.call_args.kwargs.get("local_files_only") is expected
-
-
 def test_tfds_streaming_source_passes_local_files_only_to_prepare_builder() -> None:
-    """Streaming source honors ``local_files_only=True`` the same way."""
+    """The streaming source passes ``local_files_only=True`` to ``_prepare_tfds_builder``."""
     with patch(
         "datarax.sources.tfds_source._prepare_tfds_builder",
         return_value=_mock_streaming_builder(),

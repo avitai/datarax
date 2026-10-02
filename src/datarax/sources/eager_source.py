@@ -5,7 +5,8 @@ columns, one row per record: the only thing the host read, ``get_records`` and `
 read. The non-array part (strings, bytes and other Python objects) is each record's provenance, an
 immutable mapping per record kept in a host holder that NNX leaves out of module state and out of
 every trace; it is never part of a ``Batch``. ``MemorySource``, ``TFDSEagerSource`` and
-``HFEagerSource`` build on it, each turning its own input into the two parts.
+``HFEagerSource`` build on it, each turning its own input into the two parts; records become
+them through one path, :func:`parts_of_records`.
 
 The host read, ``get_batch(indices, *, epochs=0)``, gathers the named records with NumPy indexing
 (a contiguous run as views) and returns a ``Batch`` named with the given indices and epochs. It
@@ -39,35 +40,46 @@ from datarax.sources.source_ops import resolve_wrapped_indices
 _NUMERIC_KINDS = frozenset("biufc")
 
 
-class HostProvenance:
-    """The non-array part of a source's records, held on the host and out of NNX state.
+class HostValue:
+    """A value a source keeps on the host, out of NNX state and out of every program.
 
     As a plain object it is static to NNX: it is not module state, never a jit argument and never
-    traced. It compares equal to every other holder, so two sources differing only in their
-    provenance share one graphdef and one compiled program; nothing traced reads it.
+    traced. Holders of one kind compare equal whatever they hold, so two sources differing only in
+    such values share one graphdef and one compiled program; nothing traced reads them.
+
+    Attributes:
+        value: The value held.
+    """
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: Any) -> None:
+        """Hold ``value``.
+
+        Args:
+            value: The value.
+        """
+        self.value = value
+
+    def __eq__(self, other: object) -> bool:
+        """Every holder of a kind is equal to every other: what it holds decides no program."""
+        return type(other) is type(self)
+
+    def __hash__(self) -> int:
+        """One hash per kind of holder, as ``__eq__`` requires."""
+        return hash(type(self))
+
+
+class HostProvenance(HostValue):
+    """The non-array part of a source's records, held on the host and out of NNX state.
 
     Attributes:
         value: One immutable mapping per record, aligned with the rows, or empty when the
             records carry nothing but arrays.
     """
 
-    __slots__ = ("value",)
-
-    def __init__(self, value: tuple[Mapping[str, Any], ...]) -> None:
-        """Hold ``value``.
-
-        Args:
-            value: The per-record mappings.
-        """
-        self.value = value
-
-    def __eq__(self, other: object) -> bool:
-        """Every holder is equal to every other: provenance never decides a program."""
-        return isinstance(other, HostProvenance)
-
-    def __hash__(self) -> int:
-        """One hash for every holder, as ``__eq__`` requires."""
-        return hash(HostProvenance)
+    __slots__ = ()
+    value: tuple[Mapping[str, Any], ...]
 
 
 def is_array_leaf(value: Any) -> bool:
@@ -178,6 +190,38 @@ def stack_records(parts: Sequence[PyTree]) -> PyTree:
                     "axis and keep its mask or length in data, or pack records with segment ids"
                 )
     return batch_ops.stack([Element(part) for part in parts]).data
+
+
+def parts_of_records(records: Sequence[Any]) -> tuple[PyTree, tuple[dict[str, Any], ...]]:
+    """Turn records into columns and provenance: the one records-to-parts path of eager sources.
+
+    Each record's numeric values (:func:`split_record`) are stacked into columns once, on the
+    host (:func:`stack_records`); its strings, bytes and other objects become its provenance.
+
+    Args:
+        records: The records, each a mapping of values (nested mappings included) or a value.
+
+    Returns:
+        The host columns, and one provenance mapping per record, or none when no record carries
+        anything but numbers.
+
+    Raises:
+        ValueError: If a record holds no numeric value, or the records' numeric fields or shapes
+            differ (see :func:`stack_records`).
+    """
+    if not records:
+        return {}, ()
+    parts, provenance = [], []
+    for position, record in enumerate(records):
+        part, extra = split_record(record)
+        if part is None:
+            raise ValueError(
+                f"record {position} holds no numeric value; a batch is built from numeric "
+                "fields, and strings and other objects are kept as the record's provenance"
+            )
+        parts.append(part)
+        provenance.append(extra)
+    return stack_records(parts), tuple(provenance) if any(provenance) else ()
 
 
 def column_length(columns: PyTree) -> int:
@@ -436,8 +480,10 @@ class EagerSource(DataSourceModule):
 __all__ = [
     "EagerSource",
     "HostProvenance",
+    "HostValue",
     "column_length",
     "is_array_leaf",
+    "parts_of_records",
     "split_record",
     "stack_records",
     "take_rows",

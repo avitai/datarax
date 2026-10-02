@@ -50,6 +50,10 @@ optimize throughput for distributed training, and handle common pitfalls.
 ## Quick Start
 
 ```bash
+# Prepare the example datasets once as ArrayRecord (in its own process: it imports
+# TensorFlow; the example reads them without it)
+python scripts/prepare_example_datasets.py
+
 python examples/advanced/distributed/02_sharding_guide.py
 ```
 
@@ -165,7 +169,6 @@ def create_pipeline(batch_size=BATCH_SIZE, num_samples=NUM_SAMPLES):
     config = TFDSEagerConfig(
         name="cifar10",
         split=f"train[:{num_samples}]",
-        exclude_keys={"id"},
     )
     source = TFDSEagerSource(config)
     preprocessor = ElementOperator(

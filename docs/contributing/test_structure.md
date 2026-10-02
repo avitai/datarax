@@ -115,7 +115,7 @@ Tests are organized using pytest markers defined in `conftest.py`:
 | `@pytest.mark.benchmark` | Performance measurement | `benchmarks/` directory |
 | `@pytest.mark.accelerator(kind="gpu")` | Requires a GPU backend | Skips unless `DATARAX_TEST_JAX_PLATFORMS=cuda` selects one |
 | `@pytest.mark.devices(count)` | Requires `count` devices | Skips below `count` visible devices |
-| `@pytest.mark.tfds` | Requires TensorFlow Datasets | TFDS integration tests |
+| `@pytest.mark.tfds` | Reads the offline TFDS fixture (prepared with TensorFlow by `python -m tests.test_common.tfds_fixture <dir>`, named in `DATARAX_TFDS_FIXTURE_DIR`) or the prepared example datasets; runs in CI's long-running job only | TFDS source tests |
 | `@pytest.mark.hf` | Requires HuggingFace Datasets | HF integration tests |
 
 ### Running Specific Test Types
