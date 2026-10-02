@@ -615,12 +615,12 @@ for name, latency in latencies.items():
 **Terminal Output:**
 ```
 Pipeline latency per batch (ms):
-  Original: 0.23 ms
-  Brightness: 0.31 ms
-  Contrast: 0.30 ms
-  Rotation: 0.32 ms
-  Noise: 0.31 ms
-  PatchDropout: 0.31 ms
+  Original: 0.25 ms
+  Brightness: 0.26 ms
+  Contrast: 0.26 ms
+  Rotation: 0.30 ms
+  Noise: 0.26 ms
+  PatchDropout: 0.28 ms
 ```
 
 Plot the latency comparison:
@@ -737,12 +737,12 @@ flowchart TB
 
 | Pipeline | Parameter | Latency |
 |----------|-----------|---------|
-| Original (preprocess only) | - | 0.23 ms |
-| Brightness | ±0.15 | 0.31 ms |
-| Contrast | 0.85-1.15x | 0.30 ms |
-| Rotation | ±10° | 0.32 ms |
-| Noise | std=0.1 | 0.31 ms |
-| PatchDropout | 2×6×6 | 0.31 ms |
+| Original (preprocess only) | - | 0.25 ms |
+| Brightness | ±0.15 | 0.26 ms |
+| Contrast | 0.85-1.15x | 0.26 ms |
+| Rotation | ±10° | 0.30 ms |
+| Noise | std=0.1 | 0.26 ms |
+| PatchDropout | 2×6×6 | 0.28 ms |
 
 The augmented pipelines take 0.30 ms to 0.32 ms per batch against 0.23 ms for the
 preprocessing-only pipeline: at this batch size most of the per-batch cost is the pipeline

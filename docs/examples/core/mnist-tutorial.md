@@ -531,7 +531,7 @@ Starting training...
 Epoch 1/3:
   Train loss: 0.5495
   Test accuracy: 93.85%
-  Time: 20.0s
+  Time: 8.8s
 
   Epoch 2, Batch 0: loss=0.2300
   Epoch 2, Batch 20: loss=0.1549
@@ -540,7 +540,7 @@ Epoch 1/3:
 Epoch 2/3:
   Train loss: 0.1559
   Test accuracy: 96.35%
-  Time: 16.5s
+  Time: 1.7s
 
   Epoch 3, Batch 0: loss=0.1529
   Epoch 3, Batch 20: loss=0.0933
@@ -549,7 +549,7 @@ Epoch 2/3:
 Epoch 3/3:
   Train loss: 0.1021
   Test accuracy: 96.90%
-  Time: 15.6s
+  Time: 1.7s
 
 Training complete!
 ```
@@ -727,8 +727,8 @@ Saved: docs/assets/images/examples/cv-mnist-throughput.png
 | Metric | Value |
 |--------|-------|
 | Final Test Accuracy | 96.90% (epoch 3) |
-| Average Throughput | 55985 samples/s per batch request (GPU, the throughput figure's average) |
-| Training Time per Epoch | 15.6s to 20.0s (GPU) |
+| Average Throughput | 62000 samples/s per batch request (GPU, the throughput figure's average) |
+| Training Time per Epoch | 1.7s to 8.8s (GPU; the first epoch includes compilation) |
 | Model Parameters | ~421k |
 
 ### Key Takeaways
