@@ -9,14 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `DataSourceModule.provenance(indices)` and `DataSourceModule.record_keys(batch)`: a source
+  naming records stably (`INDEXED`, `STREAM_IDS`) serves each record's strings and objects by
+  its index, one immutable mapping per index (empty for a record carrying nothing but arrays),
+  and hands out a batch's indices as the keys of a per-record table; a source naming records by
+  arrival (`ARRIVAL`) refuses both with a `TypeError` naming its kind. `EagerSource` serves the
+  provenance it holds, `MixDataSourcesNode` each record's from the source that owns it. The row
+  check of host reads, `host_rows`, and the word check, `record_words`, move to
+  `datarax.core.data_source`.
 - `StreamingDiskSource.get_batch(indices, *, epochs=0, contiguous=False)`: a host read of the
   memory map with the eager sources' signature and checks, returning a `Batch` named with the
   given index words and epochs and creating no device array (a run declared contiguous is a
   view of the map). The traced `get_records` still serves the compiled session.
   `StreamingDiskSource` and `StreamingDiskSourceConfig` are exported from `datarax.sources`.
-- `datarax.sources.eager_source.read_host_batch(columns, length, indices, ...)` and
-  `host_rows(words, length)`: the one host read and row check of indexed sources whose records
-  sit in host arrays (`EagerSource` and `StreamingDiskSource` use them).
+- `datarax.sources.eager_source.read_host_batch(columns, length, indices, ...)`: the one host
+  read of indexed sources whose records sit in host arrays (`EagerSource` and
+  `StreamingDiskSource` use it).
 - `datarax.sources.tfds_source.open_prepared_split(name, split, data_dir)` opens a TFDS split
   prepared as ArrayRecord through TFDS's random-access reader, reading no record and importing
   no TensorFlow, and refuses a copy that is not prepared or is prepared in another format with a
@@ -72,6 +80,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The HuggingFace examples that read raw text (the IMDB quick reference and the SST-2 training
+  example) load with `HFEagerSource` and read each record's text with `provenance(indices)`.
 - **`TFDSEagerSource` reads TFDS without TensorFlow.** It reads a split TFDS has prepared as
   ArrayRecord, through `builder.as_data_source`, in one batched read, and never imports
   TensorFlow, so a training process that reads TFDS data holds none (TensorFlow in a JAX process

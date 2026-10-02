@@ -29,9 +29,15 @@ from jaxtyping import PyTree
 
 from datarax.core import batch_ops
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule, RecordIdentity
-from datarax.core.element_batch import Batch, Element, PADDING_INDEX
-from datarax.core.index_words import from_words, low_words, to_words
+from datarax.core.data_source import (
+    DataSourceModule,
+    host_rows,
+    NO_PROVENANCE,
+    record_words,
+    RecordIdentity,
+)
+from datarax.core.element_batch import Batch, Element
+from datarax.core.index_words import low_words, to_words
 from datarax.core.spec import array_to_spec_strip_leading, device_spec
 from datarax.sources._grain_bridge import validate_index_batch
 from datarax.sources.source_ops import resolve_wrapped_indices
@@ -259,36 +265,6 @@ def take_rows(columns: PyTree, rows: np.ndarray | slice) -> PyTree:
     return jax.tree.map(lambda column: column[rows], columns)
 
 
-def host_rows(words: np.ndarray, length: int) -> np.ndarray:
-    """The rows ``words`` name in a source of ``length`` records, refusing words naming none.
-
-    The one row check of the host reads: the padding index and records outside the source are
-    refused.
-
-    Args:
-        words: uint32 ``(n, 2)`` record indices.
-        length: The source's record count.
-
-    Returns:
-        uint32 ``(n,)`` row numbers.
-
-    Raises:
-        IndexError: If an index is the padding index or outside the source.
-    """
-    padding = np.all(words == PADDING_INDEX, axis=1)
-    if padding.any():
-        raise IndexError(
-            f"index {int(np.argmax(padding))} is the padding index (all ones), which names "
-            "no record"
-        )
-    outside = (words[:, 0] != 0) | (words[:, 1] >= length)
-    if outside.any():
-        raise IndexError(
-            f"record index {int(from_words(words[outside][:1])[0])} is outside [0, {length})"
-        )
-    return low_words(words, length)
-
-
 def read_host_batch(
     columns: PyTree,
     length: int,
@@ -300,10 +276,10 @@ def read_host_batch(
     """Read the rows ``indices`` names from host ``columns``, as a ``Batch`` named with them.
 
     The one host read of indexed sources whose records sit in host arrays (in memory, or a
-    memory map): the words are checked (:func:`host_rows`), the rows gathered with
-    :func:`take_rows`, and the ``Batch`` named with the given words and epochs, with draws 0. No
-    device array is created. A run declared ``contiguous`` is read as views of the columns; only
-    its ends are checked, and its rows are named as the run.
+    memory map): the words are checked (:func:`~datarax.core.data_source.host_rows`), the rows
+    gathered with :func:`take_rows`, and the ``Batch`` named with the given words and epochs, with
+    draws 0. No device array is created. A run declared ``contiguous`` is read as views of the
+    columns; only its ends are checked, and its rows are named as the run.
 
     Args:
         columns: Host arrays with a leading record axis of ``length`` rows.
@@ -319,12 +295,7 @@ def read_host_batch(
         ValueError: If ``indices`` are not uint32 ``(n, 2)`` words, or a run declared contiguous
             is not one.
     """
-    words = np.asarray(indices)
-    if words.dtype != np.uint32 or words.ndim != 2 or words.shape[1] != 2:  # noqa: PLR2004
-        raise ValueError(
-            "record indices are uint32 (n, 2) words (hi, lo), as index_words.to_words names "
-            f"positions; got {words.dtype} {words.shape}"
-        )
+    words = record_words(indices)
     rows = host_rows(words, length)
     if contiguous and len(rows):
         first = int(rows[0])
@@ -465,6 +436,28 @@ class EagerSource(DataSourceModule):
             self.data, self.length, indices, epochs=epochs, contiguous=contiguous
         )
 
+    def provenance(  # noqa: DOC502 - record_words and host_rows raise
+        self, indices: ArrayLike
+    ) -> tuple[Mapping[str, Any], ...]:
+        """The provenance of the records ``indices`` names, read from the host holder by row.
+
+        Args:
+            indices: uint32 ``(n, 2)`` record indices.
+
+        Returns:
+            Each named record's immutable mapping of strings and objects, in the order named; an
+            empty mapping for a record that carries nothing but arrays.
+
+        Raises:
+            ValueError: If ``indices`` are not uint32 ``(n, 2)`` words.
+            IndexError: If an index is the padding index or outside the source.
+        """
+        rows = host_rows(record_words(indices), self.length)
+        held = self._provenance.value
+        if not held:
+            return (NO_PROVENANCE,) * len(rows)
+        return tuple(held[int(row)] for row in rows)
+
     def record_indices_at(
         self,
         start: int | jax.Array,
@@ -521,7 +514,6 @@ __all__ = [
     "HostProvenance",
     "HostValue",
     "column_length",
-    "host_rows",
     "is_array_leaf",
     "parts_of_records",
     "read_host_batch",

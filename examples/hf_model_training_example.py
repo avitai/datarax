@@ -1,10 +1,11 @@
 """Train a text classifier on GLUE SST-2 loaded through HuggingFace Datasets.
 
 JAX arrays cannot hold strings, so a text dataset is tokenized before it is batched:
-``HFStreamingSource`` reads the raw records with their filtered columns, the sentences
-become fixed-length token ids once at load time, and a ``MemorySource`` batches the token ids and labels through a
-``Pipeline`` for a Flax NNX classifier that trains for three epochs with validation after
-each one.
+``HFEagerSource`` loads the split with its filtered columns, keeping the labels as a host column
+and each sentence as its record's provenance, which ``provenance(indices)`` reads back; the
+sentences become fixed-length token ids once at load time, and a ``MemorySource`` batches the
+token ids and labels through a ``Pipeline`` for a Flax NNX classifier that trains for three
+epochs with validation after each one.
 """
 
 from collections.abc import Sequence
@@ -16,10 +17,11 @@ import optax
 from flax import nnx
 
 from datarax.core.element_batch import Batch
+from datarax.core.index_words import to_words
 from datarax.pipeline import Pipeline
 from datarax.sources import (
-    HFStreamingConfig,
-    HFStreamingSource,
+    HFEagerConfig,
+    HFEagerSource,
     MemorySource,
     MemorySourceConfig,
 )
@@ -79,22 +81,21 @@ def load_sst2(split: str) -> tuple[np.ndarray, np.ndarray]:
 
     GLUE is one dataset with many configurations; SST-2 is the ``sst2`` configuration,
     which ``datasets.load_dataset`` takes as its ``name`` argument. Only numeric columns
-    can be batched, and an eager source keeps a text column as its records' provenance,
-    beside the batches, so the raw records are read with the streaming source and the
-    sentences tokenized here.
+    can be batched: the eager source keeps each sentence as its record's provenance, so the
+    labels are read as one batch of every record and the sentences by the same indices, then
+    tokenized here.
     """
-    records = HFStreamingSource(
-        HFStreamingConfig(
+    source = HFEagerSource(
+        HFEagerConfig(
             name="nyu-mll/glue",
             split=split,
             download_kwargs={"name": "sst2"},
             include_keys={"sentence", "label"},
         ),
     )
-    sentences, labels = [], []
-    for record in records:
-        sentences.append(record["sentence"])
-        labels.append(int(record["label"]))
+    every = to_words(np.arange(len(source), dtype=np.uint64))
+    labels = source.get_batch(every, contiguous=True)["label"]
+    sentences = [record["sentence"] for record in source.provenance(every)]
     return tokenize(sentences), np.asarray(labels, dtype=np.int32)
 
 

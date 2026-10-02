@@ -79,11 +79,13 @@ Each sample contains:
 # Imports
 import jax
 import jax.numpy as jnp
+import numpy as np
 from flax import nnx
 
+from datarax.core.index_words import to_words
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.pipeline import Pipeline
-from datarax.sources import HFEagerConfig, HFEagerSource, HFStreamingConfig, HFStreamingSource
+from datarax.sources import HFEagerConfig, HFEagerSource
 
 
 print(f"JAX devices: {jax.devices()}")
@@ -117,37 +119,32 @@ Mode: Eager load with local HuggingFace cache
 ## Step 2: Inspect Data Structure
 
 Unlike image datasets, IMDB returns text strings. The eager source keeps each review's text
-as the record's provenance, beside its numeric columns, and never batches it; the streaming
-source serves the raw records, text included, so it is the one to read reviews with.
+as the record's provenance, beside its numeric columns, and never batches it. A batch names its
+records by their indices, and `source.provenance(indices)` reads those records' text back.
 
 ```python
-# Strings can't be batched as JAX arrays (text needs tokenization first), so read the raw
-# records one by one from the streaming source
+# Strings can't be batched as JAX arrays (text needs tokenization first): read the first
+# three records' labels as a batch and their reviews by the same indices
 print("Sample reviews from IMDB:")
-raw_records = HFStreamingSource(HFStreamingConfig(name="stanfordnlp/imdb", split="train"))
+first = to_words(np.arange(3, dtype=np.uint64))
+labels = source.get_batch(first)["label"]
 
-for i, element in enumerate(raw_records):
-    if i >= 3:
-        break
-
+for i, (label, record) in enumerate(zip(labels, source.provenance(first), strict=True)):
     print(f"\nExample {i + 1}:")
-    print(f"  Keys: {list(element.keys())}")
+    print(f"  Provenance keys: {list(record.keys())}")
 
     # Show label
-    label = element.get("label")
     sentiment = "positive" if label == 1 else "negative"
-    print(f"  Label: {label} ({sentiment})")
+    print(f"  Label: {int(label)} ({sentiment})")
 
     # Show text preview
-    text = element.get("text", "")
-    if isinstance(text, (list, tuple)):
-        text = text[0] if text else ""
-    text_preview = str(text)[:100] + "..." if len(str(text)) > 100 else str(text)
+    text = str(record["text"])
+    text_preview = text[:100] + "..." if len(text) > 100 else text
     print(f"  Text preview: {text_preview}")
 
 # Expected output:
 # Example 1:
-#   Keys: ['text', 'label']
+#   Provenance keys: ['text']
 #   Label: 0 (negative)
 #   Text preview: I rented I AM CURIOUS-YELLOW from my video store because of...
 ```
@@ -157,17 +154,17 @@ for i, element in enumerate(raw_records):
 Sample reviews from IMDB:
 
 Example 1:
-  Keys: ['text', 'label']
+  Provenance keys: ['text']
   Label: 0 (negative)
   Text preview: I rented I AM CURIOUS-YELLOW from my video store because of all the controversy that surrounded it w...
 
 Example 2:
-  Keys: ['text', 'label']
+  Provenance keys: ['text']
   Label: 0 (negative)
   Text preview: "I Am Curious: Yellow" is a risible and pretentious steaming pile. It doesn't matter what one's poli...
 
 Example 3:
-  Keys: ['text', 'label']
+  Provenance keys: ['text']
   Label: 0 (negative)
   Text preview: If only to avoid making this type of film in the future. This film is interesting as an experiment b...
 ```
