@@ -152,6 +152,88 @@ def multiply_word[A: (jax.Array, np.ndarray)](a: tuple[A, A], factor: np.uint32)
     return a[0] * factor + multiply_high(a[1], factor), a[1] * factor
 
 
+def divmod_word[A: (jax.Array, np.ndarray)](a: tuple[A, A], divisor: int) -> tuple[tuple[A, A], A]:
+    """``divmod(a, divisor)`` of the two-word value ``a`` by a word, in uint32 arithmetic.
+
+    The high word divides directly; its remainder and the low word form a 64-bit value below
+    ``divisor * 2**32``, whose quotient is one word. That division is Knuth's algorithm D for two
+    16-bit quotient digits as Hacker's Delight writes it for 32-bit machines (Warren, *Hacker's
+    Delight*, 2nd ed., section 9-4, ``divlu``): the divisor is shifted until its top bit is set,
+    each digit is estimated from the divisor's top 16 bits and corrected at most twice, and the
+    remainder is shifted back. The corrections are selected arithmetically rather than by
+    branching, so NumPy arrays and traced arrays run the same code. ``divisor`` is a Python int,
+    so its normalisation is computed once on the host and a jitted caller compiles once per
+    divisor.
+
+    Args:
+        a: The dividend's words ``(hi, lo)``, uint32 arrays.
+        divisor: A Python int in ``[1, 2**32 - 1]``.
+
+    Returns:
+        ``((quotient_hi, quotient_lo), remainder)``, uint32.
+
+    Raises:
+        ValueError: If ``divisor`` is not in ``[1, 2**32 - 1]``.
+    """
+    if not 1 <= divisor <= _LOW_MASK:
+        raise ValueError(f"a word divisor is in [1, 2**32 - 1]; got {divisor}")
+    word = np.uint32(divisor)
+    high_quotient = a[0] // word
+    carry = a[0] - high_quotient * word
+    low_quotient, remainder = _divide_below_word(carry, a[1], divisor)
+    return (high_quotient, low_quotient), remainder
+
+
+_DIGIT_BASE = np.uint32(1 << 16)
+
+
+def _divide_below_word[A: (jax.Array, np.ndarray)](high: A, low: A, divisor: int) -> tuple[A, A]:
+    """``divmod(high * 2**32 + low, divisor)`` for ``high < divisor``: a one-word quotient.
+
+    Hacker's Delight's ``divlu`` (section 9-4) in 32-bit words with 16-bit digits; see
+    :func:`divmod_word`. Every intermediate the algorithm forms modulo ``2**32`` is exact where it
+    is read: a product that can wrap is read only when the digit estimate is below ``2**16``.
+    """
+    shift = WORD_BITS - divisor.bit_length()
+    normalised = divisor << shift
+    divisor_word = np.uint32(normalised)
+    top, bottom = np.uint32(normalised >> 16), np.uint32(normalised & 0xFFFF)
+    if shift:
+        numerator_high = (high << np.uint32(shift)) | (low >> np.uint32(WORD_BITS - shift))
+        numerator_low = low << np.uint32(shift)
+    else:
+        numerator_high, numerator_low = high, low
+    digits = (numerator_low >> np.uint32(16), numerator_low & _LIMB_MASK)
+
+    quotient_digits = []
+    partial = numerator_high
+    for digit in digits:
+        estimate = partial // top
+        remainder_estimate = partial - estimate * top
+
+        def too_large(estimate: A, remainder_estimate: A, digit: A = digit) -> A:
+            """Whether the digit estimate exceeds the digit (``divlu``'s correction test)."""
+            return cast(
+                A,
+                (estimate >= _DIGIT_BASE)
+                | (estimate * bottom > _DIGIT_BASE * remainder_estimate + digit),
+            )
+
+        # The estimate exceeds the digit by at most two; the second test applies only after a
+        # first correction that left the remainder estimate below the digit base.
+        first = too_large(estimate, remainder_estimate)
+        estimate = estimate - first.astype(np.uint32)
+        remainder_estimate = remainder_estimate + first.astype(np.uint32) * top
+        second = (
+            first & (remainder_estimate < _DIGIT_BASE) & too_large(estimate, remainder_estimate)
+        )
+        estimate = estimate - second.astype(np.uint32)
+        quotient_digits.append(estimate)
+        partial = partial * _DIGIT_BASE + digit - estimate * divisor_word
+    quotient = quotient_digits[0] * _DIGIT_BASE + quotient_digits[1]
+    return quotient, partial >> np.uint32(shift)
+
+
 def wrapped_positions(start: int | jax.Array, size: int, length: int | None) -> jax.Array:
     """Positions ``start + arange(size)`` wrapped at ``length``, as uint32 ``(size, 2)`` words.
 
@@ -236,6 +318,7 @@ __all__ = [
     "MAX_RECORDS",
     "WORD_BITS",
     "add",
+    "divmod_word",
     "from_words",
     "greater",
     "low_words",

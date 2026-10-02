@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `datarax.core.index_words.divmod_word(a, divisor)`: the quotient and remainder of a two-word
+  (64-bit) value by a word in uint32 arithmetic (Hacker's Delight `divlu`), the same code for
+  NumPy and traced arrays, with x64 off. A jitted caller compiles once per divisor.
 - `datarax.sources.StreamingSourceBase` (public) and `StreamChunk`: the base every stream
   builds on. A subclass reads one pass in its order (`_open_pass(pass_index, key, read_size)`, a
   generator of host columns, provenance and ids); the base serves
