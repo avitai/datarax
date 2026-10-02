@@ -202,8 +202,10 @@ class _ListStream(DataSourceModule):
     def __init__(self) -> None:
         super().__init__(_Config())
 
-    def get_batch(self, batch_size: int, *, key: jax.Array | None = None) -> list[float]:
-        del key
+    def get_batch(
+        self, batch_size: int, *, key: jax.Array | None = None, read_size: int | None = None
+    ) -> list[float]:
+        del key, read_size
         return [1.0] * batch_size
 
     def element_spec(self) -> dict[str, jax.ShapeDtypeStruct]:

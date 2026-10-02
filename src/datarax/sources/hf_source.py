@@ -452,14 +452,14 @@ class HFStreamingSource(StreamingSourceBase):
         )
 
     def _open_pass(
-        self, pass_index: int, key: jax.Array | None, size_hint: int
+        self, pass_index: int, key: jax.Array | None, read_size: int
     ) -> Iterator[StreamChunk]:
         """Read pass ``pass_index``: the dataset's order, or HF's seeded shuffle under ``key``.
 
         Args:
             pass_index: The pass, from 0.
             key: The pipeline's key when it shuffles, ``None`` for the dataset's order.
-            size_hint: Records read per batched read.
+            read_size: Records per batched read.
 
         Yields:
             The pass's records as chunks.
@@ -478,7 +478,7 @@ class HFStreamingSource(StreamingSourceBase):
         # HF's batched reader is a generator over Parquet generators; closing it here, when this
         # pass is closed, finalizes them while the interpreter runs (left to module teardown,
         # HF's Parquet reader hangs).
-        with contextlib.closing(dataset.iter(batch_size=size_hint)) as batches:
+        with contextlib.closing(dataset.iter(batch_size=read_size)) as batches:
             for rows in batches:
                 size = len(next(iter(rows.values())))
                 kept = _selected_hf_columns(

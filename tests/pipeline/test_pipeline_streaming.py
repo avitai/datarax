@@ -280,6 +280,18 @@ class TestEpochLoopsOverAStream:
         assert all(len(loop) == steps for loop in streamed)
 
 
+@pytest.mark.parametrize("drop_last", [False, True])
+def test_every_pass_is_read_in_the_pipeline_s_batch_size(drop_last: bool) -> None:
+    """A pass opened by a pull completing a batch is still read ``batch_size`` at a time (F5)."""
+    stream = RecordStream(_columns(), chunk=None)  # chunks of the pass's read size
+
+    served = list(_pipeline(stream, drop_last=drop_last, num_epochs=3))
+
+    assert _N % 4 != 0
+    assert stream.read_sizes[1:] == [4, 4, 4]  # the first is the declared spec's read
+    assert {b.batch_size for b in served[:-1]} == {4}
+
+
 # ---------------------------------------------------------------------------
 # The pipeline's key (OWN-0930-SHUFFLE-OWNER, D4, W2b-57)
 # ---------------------------------------------------------------------------

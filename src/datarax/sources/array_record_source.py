@@ -292,7 +292,9 @@ class ArrayRecordSourceModule(DataSourceModule):
             )
         return self._decode
 
-    def get_batch(self, batch_size: int, *, key: jax.Array | None = None) -> Batch:
+    def get_batch(
+        self, batch_size: int, *, key: jax.Array | None = None, read_size: int | None = None
+    ) -> Batch:
         """Decode and stack up to ``batch_size`` records of the current epoch, as a host ``Batch``.
 
         The batch's ``indices`` are the records' positions in the files (after ``shuffle_files``)
@@ -304,6 +306,8 @@ class ArrayRecordSourceModule(DataSourceModule):
             batch_size: Largest number of records to return.
             key: Must be ``None``: the source orders its records by ``shuffle_files`` and its
                 ``seed``, so its pipeline is built with ``shuffle=False``.
+            read_size: The stream route's read size; unused, since each pull reads its own
+                records by position.
 
         Returns:
             The records as a host ``Batch``, or an empty one at an epoch boundary.
@@ -316,6 +320,7 @@ class ArrayRecordSourceModule(DataSourceModule):
                 "ArrayRecordSourceModule orders its records by shuffle_files and its seed; build "
                 "its pipeline with shuffle=False"
             )
+        del read_size
         decode = self._require_decode()
         if self._epochs_exhausted():
             return empty_stream_batch()

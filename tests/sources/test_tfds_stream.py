@@ -15,17 +15,21 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import struct
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import jax
 import numpy as np
 import pytest
+from flax import nnx
 from substrax.testing import run_python
 
 from datarax.core.data_source import RecordIdentity
 from datarax.core.element_batch import Batch, PADDING_INDEX
+from datarax.pipeline import Pipeline
 from datarax.sources import (
     from_tfds,
     tfds_source,
@@ -34,6 +38,12 @@ from datarax.sources import (
     TFDSStreamingSource,
 )
 from tests.jax_test_environment import forwarded_jax_environment
+from tests.test_common.streams import (
+    graph_definitions_across_a_pass,
+    non_array_state_leaves,
+    record_chunks,
+    second_pulls_after_a_tree_round_trip,
+)
 from tests.test_common.tfds_fixture import FIXTURE, IMAGE_SHAPE, TFDSFixture, TRAIN_RECORDS
 
 
@@ -152,8 +162,8 @@ class TestNamesAndRecords:
     ) -> None:
         monkeypatch.setattr(tfds_source, "_LARGEST_OFFSET", 3)
 
-        with pytest.raises(ValueError, match=r"tfrecord-00000-of-00001.*offset 4"):
-            _pass(_stream(tfds_fixture))
+        with pytest.raises(ValueError, match=r"train.tfrecord-00000-of-00001.*offset 19"):
+            _stream(tfds_fixture)  # refused when built, before any record is read
 
     def test_supervised_keys_and_key_filters(self, tfds_fixture: TFDSFixture) -> None:
         supervised = _stream(tfds_fixture, as_supervised=True).get_batch(2)
@@ -230,6 +240,25 @@ class TestProvenanceByIdentity:
 
         np.testing.assert_array_equal(source.record_keys(batch), batch.indices)
 
+    def test_a_lookup_on_a_fresh_stream_indexes_only_the_files_it_names(
+        self, tfds_fixture: TFDSFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        indexed: list[str] = []
+        build = tfds_source._record_index
+
+        def counting(path: str) -> Any:
+            indexed.append(Path(path).name)
+            return build(path)
+
+        monkeypatch.setattr(tfds_source, "_record_index", counting)
+        source = _stream(tfds_fixture)  # the train split
+        test_shard = next(i for i, f in enumerate(source.shard_files) if "-test.tfrecord" in f)
+
+        (record,) = source.provenance(np.asarray([[test_shard, 1]], np.uint32))
+
+        assert indexed == [source.shard_files[test_shard]]
+        assert isinstance(record["name"], bytes)
+
     @pytest.mark.parametrize(
         ("words", "match"),
         [
@@ -244,6 +273,110 @@ class TestProvenanceByIdentity:
     ) -> None:
         with pytest.raises(IndexError, match=match):
             _stream(tfds_fixture).provenance(words)
+
+
+def test_every_pass_decodes_in_the_pipeline_s_batch_size(
+    tfds_fixture: TFDSFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    chunks = record_chunks(monkeypatch, TFDSStreamingSource)
+    pipeline = Pipeline(
+        source=_stream(tfds_fixture), stages=[], batch_size=6, rngs=nnx.Rngs(0), num_epochs=3
+    )
+
+    list(pipeline)
+
+    assert TRAIN_RECORDS % 6 != 0
+    # The declared spec's read of one record, then each pass in batches of 6.
+    assert chunks == [(0, 1, 1)] + [(p, 6, n) for p in range(3) for n in (6, 6, 6, 2)]
+
+
+class TestNnxHygiene:
+    """The TFDS stream keeps its position and dataset objects out of NNX state (brief T11)."""
+
+    def test_no_variable_holds_a_python_value(self, tfds_fixture: TFDSFixture) -> None:
+        source = _stream(tfds_fixture)
+        _pass(source)
+        source.provenance(np.asarray([[0, 0]], np.uint32))
+
+        assert non_array_state_leaves(source) == []
+
+    def test_the_graph_definition_does_not_move_as_the_stream_advances(
+        self, tfds_fixture: TFDSFixture
+    ) -> None:
+        before, after = graph_definitions_across_a_pass(_stream(tfds_fixture), 6)
+
+        assert before == after
+        assert hash(before) == hash(after)
+
+    def test_a_tree_mode_split_and_merge_round_trip_keeps_reading(
+        self, tfds_fixture: TFDSFixture
+    ) -> None:
+        merged, twin = second_pulls_after_a_tree_round_trip(lambda: _stream(tfds_fixture), 6)
+
+        assert merged[0][:, 1].tolist() == list(range(6, 12))
+        for ours, theirs in zip(merged, twin, strict=True):
+            np.testing.assert_array_equal(ours, theirs)
+
+
+_DAMAGED = tfds_source.DamagedRecordError
+_TRAIN_SHARD = r"train\.tfrecord-00000-of-00001"
+
+
+class TestDamagedFrames:
+    """A damaged frame is refused naming its file and record, as tf.data's TFRecord reader does.
+
+    tf.data checks each frame's masked CRC32C, of the length and of the payload, and reports a
+    corrupted record; the stream checks the same two and a frame cut short.
+    """
+
+    @staticmethod
+    def _damaged(
+        fixture: TFDSFixture, tmp_path: Path, damage: Callable[[bytearray, list[int]], bytes]
+    ) -> TFDSStreamingSource:
+        shutil.copytree(fixture.tfrecord / FIXTURE, tmp_path / FIXTURE)
+        path = _train_shard(tmp_path)
+        data = bytearray(path.read_bytes())
+        path.write_bytes(damage(data, [start for start, _ in _frames(bytes(data))]))
+        return TFDSStreamingSource(
+            TFDSStreamingConfig(name=FIXTURE, split="train", data_dir=str(tmp_path))
+        )
+
+    def test_a_payload_failing_its_crc_is_refused(
+        self, tfds_fixture: TFDSFixture, tmp_path: Path
+    ) -> None:
+        def flip_a_payload_byte(data: bytearray, starts: list[int]) -> bytes:
+            data[starts[3] + 12 + 5] ^= 0xFF
+            return bytes(data)
+
+        source = self._damaged(tfds_fixture, tmp_path, flip_a_payload_byte)
+
+        with pytest.raises(_DAMAGED, match=_TRAIN_SHARD + r".*record 3.*CRC"):
+            _pass(source)
+        shard = source.shard_files.index(_train_name(source))
+        with pytest.raises(_DAMAGED, match=r"record 3.*CRC"):
+            source.provenance(np.asarray([[shard, 3]], np.uint32))
+
+    def test_a_length_failing_its_crc_is_refused(
+        self, tfds_fixture: TFDSFixture, tmp_path: Path
+    ) -> None:
+        def flip_a_length_bit(data: bytearray, starts: list[int]) -> bytes:
+            data[starts[2]] ^= 0x01
+            return bytes(data)
+
+        source = self._damaged(tfds_fixture, tmp_path, flip_a_length_bit)
+
+        with pytest.raises(_DAMAGED, match=_TRAIN_SHARD + r".*record 2.*CRC"):
+            source.get_batch(4)
+
+    def test_a_file_cut_short_is_refused(self, tfds_fixture: TFDSFixture, tmp_path: Path) -> None:
+        source = self._damaged(tfds_fixture, tmp_path, lambda data, _: bytes(data[:-10]))
+
+        with pytest.raises(_DAMAGED, match=_TRAIN_SHARD + r".*record 19.*short"):
+            source.get_batch(4)
+
+
+def _train_name(source: TFDSStreamingSource) -> str:
+    return next(name for name in source.shard_files if "-train.tfrecord" in name)
 
 
 class TestTheCopyTheStreamReads:
@@ -350,15 +483,24 @@ class _CountingReads:
         monkeypatch.setattr(tfds_source, "_pread", counting)
 
 
-def _payload_lengths(fixture: TFDSFixture) -> list[int]:
-    """Each record's payload length in the fixture's train shard, read here from its frames."""
-    (path,) = (fixture.tfrecord / FIXTURE).glob("*/*-train.tfrecord-*")
-    data, lengths, position = path.read_bytes(), [], 0
+def _train_shard(data_dir: Path) -> Path:
+    (path,) = (data_dir / FIXTURE).glob("*/*-train.tfrecord-*")
+    return path
+
+
+def _frames(data: bytes) -> list[tuple[int, int]]:
+    """Each TFRecord frame's start and payload length, read here from the frames."""
+    frames, position = [], 0
     while position < len(data):
         (length,) = struct.unpack("<Q", data[position : position + 8])
-        lengths.append(length)
+        frames.append((position, length))
         position += 12 + length + 4
-    return lengths
+    return frames
+
+
+def _payload_lengths(fixture: TFDSFixture) -> list[int]:
+    """Each record's payload length in the fixture's train shard."""
+    return [length for _, length in _frames(_train_shard(fixture.tfrecord).read_bytes())]
 
 
 class TestThePassDatasetForWorkers:
@@ -430,7 +572,8 @@ class TestThePassDatasetForWorkers:
 
             assert len(reads.calls) == len(served)  # one read per own record, no header reads
             lengths = _payload_lengths(tfds_fixture)
-            assert sum(size for _, size, _ in reads.calls) == sum(lengths[o] for o in served)
+            # Each read is a record's payload and its 4-byte CRC, nothing more.
+            assert sum(size for _, size, _ in reads.calls) == sum(lengths[o] + 4 for o in served)
 
     def test_building_the_offset_index_reads_the_frame_headers_only(
         self, tfds_fixture: TFDSFixture, monkeypatch: pytest.MonkeyPatch

@@ -37,6 +37,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, NamedTuple, Protocol
 
+import google_crc32c
 import grain
 import jax
 import numpy as np
@@ -392,6 +393,12 @@ _BLOCK_LENGTH = 16
 _TFRECORD_HEADER = struct.Struct("<QI")
 """A TFRecord frame's header: the payload's length (uint64) and its masked CRC (uint32)."""
 
+_TFRECORD_CRC = struct.Struct("<I")
+"""A TFRecord frame's trailer, after the payload: the payload's masked CRC (uint32)."""
+
+_CRC_MASK_DELTA = 0xA282EAD8
+"""The constant TFRecord adds to a rotated CRC32C to mask it (TensorFlow's ``crc32c::Mask``)."""
+
 
 @dataclass(frozen=True, slots=True)
 class _Shard:
@@ -449,49 +456,122 @@ def _pread(file: Any, size: int, position: int) -> bytes:
     return os.pread(file.fileno(), size, position)
 
 
+def _masked_crc(data: bytes) -> int:
+    """TFRecord's masked CRC32C of ``data``: rotated right by 15 bits, plus a constant."""
+    crc = google_crc32c.value(data)
+    return (((crc >> 15) | (crc << 17)) + _CRC_MASK_DELTA) & 0xFFFFFFFF
+
+
+class DamagedRecordError(ValueError):
+    """A TFRecord frame that fails tf.data's checks: its CRCs, or a file ending inside it."""
+
+    def __init__(self, path: str, record: int, damage: str) -> None:
+        """Name the shard file, the record and the damage.
+
+        Args:
+            path: The shard file.
+            record: The record's offset in it.
+            damage: What is wrong with the frame.
+        """
+        super().__init__(f"shard file {path}: record {record} {damage}; the file is damaged")
+
+
 def _record_index(path: str) -> ShardIndex:
     """The payload offset and length of every record in a TFRecord file, from its frame headers.
 
     Neither TFDS, Grain nor ArrayRecord indexes a TFRecord file (searched: ``tfds.core.reader``,
     ``grain.experimental.TFRecordIterDataset``, ``array_record``), so the 12-byte frame headers
-    are read here, each with one unbuffered positioned read, the payloads skipped.
+    are read here, each with one unbuffered positioned read, the payloads skipped. Each length is
+    checked against its masked CRC32C and each frame against the file's size, as tf.data's
+    TFRecord reader checks them.
 
     Args:
         path: The shard file.
 
     Returns:
         The shard's index.
+
+    Raises:
+        DamagedRecordError: If a frame's length fails its CRC check or the file ends inside it.
     """
     payloads, lengths, position = [], [], 0
     with Path(path).open("rb", buffering=0) as file:
-        while len(header := _pread(file, _TFRECORD_HEADER.size, position)) == _TFRECORD_HEADER.size:
-            length, _ = _TFRECORD_HEADER.unpack(header)
+        size = os.fstat(file.fileno()).st_size
+        while header := _pread(file, _TFRECORD_HEADER.size, position):
+            record = len(lengths)
+            if len(header) < _TFRECORD_HEADER.size:
+                raise DamagedRecordError(
+                    path, record, f"is cut short: the file ends at byte {size}"
+                )
+            length, length_crc = _TFRECORD_HEADER.unpack(header)
+            if _masked_crc(header[:8]) != length_crc:
+                raise DamagedRecordError(path, record, "has a length that fails its CRC check")
+            end = position + _TFRECORD_HEADER.size + length + _TFRECORD_CRC.size
+            if end > size:
+                raise DamagedRecordError(
+                    path, record, f"is cut short: the file ends at byte {size}"
+                )
             payloads.append(position + _TFRECORD_HEADER.size)
             lengths.append(length)
-            position += _TFRECORD_HEADER.size + length + 4
+            position = end
     return ShardIndex(np.asarray(payloads, np.int64), np.asarray(lengths, np.int64))
 
 
-def _shard_ids(position: int, shard: _Shard) -> Iterator[_RecordId]:
-    """The records ``shard`` holds for the split, in file order, as ids.
+def _payload(file: Any, path: str, index: ShardIndex, offset: int) -> bytes:
+    """The payload of record ``offset`` of an open shard file, checked against its CRC.
+
+    One positioned read takes the payload and the CRC after it.
 
     Args:
-        position: The shard's position in the pass's read.
-        shard: The shard file and the offsets the split reads of it.
+        file: The shard file, open unbuffered.
+        path: Its path, for the refusal.
+        index: Its record index.
+        offset: The record's offset in the file.
 
-    Yields:
-        Each record's id.
+    Returns:
+        The serialized record.
 
     Raises:
-        ValueError: If a record's offset does not fit the id's low word.
+        DamagedRecordError: If the payload fails its CRC check.
     """
-    for offset in range(shard.skip, shard.skip + shard.take):
-        if offset > _LARGEST_OFFSET:
-            raise ValueError(
-                f"shard file {shard.path}: the record at offset {offset} does not fit an id, "
-                f"whose low word holds a record's offset in its shard, at most {_LARGEST_OFFSET}"
-            )
-        yield _RecordId(position, offset)
+    length = int(index.lengths[offset])
+    frame = _pread(file, length + _TFRECORD_CRC.size, int(index.payloads[offset]))
+    payload = frame[:length]
+    if (
+        len(frame) != length + _TFRECORD_CRC.size
+        or _masked_crc(payload) != (_TFRECORD_CRC.unpack_from(frame, length)[0])
+    ):
+        raise DamagedRecordError(path, offset, "has a payload that fails its CRC check")
+    return payload
+
+
+def _split_shard(path: str, shard: int, skip: int, take: int) -> _Shard:
+    """The records ``skip .. skip + take`` a split reads of a shard file, as a :class:`_Shard`.
+
+    Args:
+        path: The shard file.
+        shard: Its number among the dataset's files.
+        skip: The split's first record offset in the file.
+        take: How many records the split reads of it.
+
+    Returns:
+        The shard.
+
+    Raises:
+        ValueError: If the split's last offset does not fit an id's low word.
+    """
+    last = skip + take - 1
+    if last > _LARGEST_OFFSET:
+        raise ValueError(
+            f"shard file {path}: the record at offset {last} does not fit an id, whose low "
+            f"word holds a record's offset in its shard, at most {_LARGEST_OFFSET}"
+        )
+    return _Shard(path, shard, skip, take)
+
+
+def _shard_ids(position: int, shard: _Shard) -> Iterator[_RecordId]:
+    """The records ``shard`` holds for the split, in file order, as ids."""
+    return (_RecordId(position, offset) for offset in range(shard.skip, shard.skip + shard.take))
 
 
 def _interleaved(streams: Sequence[Iterator[_RecordId]]) -> Iterator[_RecordId]:
@@ -546,6 +626,54 @@ def _features(name: str, data_dir: str | None) -> Any:
 
 
 @dataclass(frozen=True, slots=True)
+class _KeptFeatures:
+    """The features a TFDS stream keeps of each record, as plain values that pickle.
+
+    Attributes:
+        keys: The supervised features kept, or ``None`` for every feature.
+        include_keys: Features kept, when given.
+        exclude_keys: Features dropped, when given.
+    """
+
+    keys: tuple[str, ...] | None
+    include_keys: frozenset[str] | None
+    exclude_keys: frozenset[str] | None
+
+    @classmethod
+    def of_config(  # noqa: DOC502 - _supervised_keys raises
+        cls, config: TFDSStreamingConfig, info: Any, dataset: str
+    ) -> _KeptFeatures:
+        """The features ``config`` keeps of ``dataset``'s records.
+
+        Args:
+            config: The stream's configuration.
+            info: The dataset's ``DatasetInfo``.
+            dataset: The dataset's name.
+
+        Returns:
+            The kept features.
+
+        Raises:
+            ValueError: If ``as_supervised`` is asked of a dataset without supervised keys.
+        """
+        include, exclude = config.include_keys, config.exclude_keys
+        return cls(
+            keys=tuple(_supervised_keys(info, dataset)) if config.as_supervised else None,
+            include_keys=None if include is None else frozenset(include),
+            exclude_keys=None if exclude is None else frozenset(exclude),
+        )
+
+    def of(self, record: dict[str, Any]) -> dict[str, Any]:
+        """The features of ``record`` kept."""
+        return _kept_features(
+            record,
+            self.keys,
+            None if self.include_keys is None else set(self.include_keys),
+            None if self.exclude_keys is None else set(self.exclude_keys),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class StreamRead:
     """What one pass of a TFDS stream reads, as plain values that pickle to a worker process.
 
@@ -559,9 +687,7 @@ class StreamRead:
             file order.
         buffer_size: Records the shuffle buffer holds.
         batch_size: Records decoded together, one element of the dataset.
-        keys: The supervised features kept, or ``None`` for every feature.
-        include_keys: Features kept, when given.
-        exclude_keys: Features dropped, when given.
+        kept: The features kept of each record.
     """
 
     name: str
@@ -571,9 +697,7 @@ class StreamRead:
     seed: int | None
     buffer_size: int
     batch_size: int
-    keys: tuple[str, ...] | None
-    include_keys: frozenset[str] | None
-    exclude_keys: frozenset[str] | None
+    kept: _KeptFeatures
 
 
 def _ordered_ids(read: StreamRead) -> Iterator[_RecordId]:
@@ -590,27 +714,19 @@ def _ordered_ids(read: StreamRead) -> Iterator[_RecordId]:
 
 
 def _decoded_batch(
-    features: Any, frames: Sequence[_Frame], read: StreamRead
+    features: Any, frames: Sequence[_Frame], kept: _KeptFeatures
 ) -> tuple[dict[str, Any], tuple[dict[str, Any], ...], np.ndarray]:
     """``frames`` decoded with TFDS's NumPy decoder: host columns, provenance and ids.
 
     Args:
         features: The dataset's TFDS features.
         frames: The serialized records.
-        read: The pass's read, which names the features kept.
+        kept: The features kept of each record.
 
     Returns:
         The array part as host columns, one provenance mapping per record and the records' ids.
     """
-    records = [
-        _kept_features(
-            features.deserialize_example_np(frame.raw),
-            read.keys,
-            set(read.include_keys) if read.include_keys is not None else None,
-            set(read.exclude_keys) if read.exclude_keys is not None else None,
-        )
-        for frame in frames
-    ]
+    records = [kept.of(features.deserialize_example_np(frame.raw)) for frame in frames]
     columns, provenance = parts_of_records(records)
     ids = np.asarray([(frame.shard << 32) | frame.offset for frame in frames], dtype=np.uint64)
     return columns, provenance or tuple({} for _ in frames), ids
@@ -687,7 +803,7 @@ class _TFDSStreamIterator(grain.DatasetIterator):
             batch, self._batch = self._batch, self._batch + 1
             if batch % self._step == self._start:
                 frames = [self._frame(record) for record in ids]
-                return _decoded_batch(self._features, frames, self._read)
+                return _decoded_batch(self._features, frames, self._read.kept)
 
     def _frame(self, record: _RecordId) -> _Frame:
         """The record's payload, read at its offset, and its id."""
@@ -697,8 +813,7 @@ class _TFDSStreamIterator(grain.DatasetIterator):
             opened = Path(shard.path).open("rb", buffering=0)  # noqa: SIM115 - the ExitStack closes it
             file = self._files.enter_context(opened)
             self._open[record.position] = file
-        index = self._read.index[record.position]
-        raw = _pread(file, int(index.lengths[record.offset]), int(index.payloads[record.offset]))
+        raw = _payload(file, shard.path, self._read.index[record.position], record.offset)
         return _Frame(shard.shard, record.offset, raw)
 
     def get_state(self) -> dict[str, Any]:
@@ -759,7 +874,7 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
         """A TFDS record's id is its shard file and offset: the stream's own names."""
         return RecordIdentity.STREAM_IDS
 
-    def __init__(  # noqa: DOC502 - _prepared_builder and _supervised_keys raise
+    def __init__(  # noqa: DOC502 - _prepared_builder, _supervised_keys and _split_shard raise
         self, config: TFDSStreamingConfig, *, name: str | None = None
     ) -> None:
         """Open the prepared TFRecord split, reading no record.
@@ -770,7 +885,8 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
 
         Raises:
             FileNotFoundError: If the dataset is not prepared as TFRecord in the data directory.
-            ValueError: If ``as_supervised`` is asked of a dataset without supervised keys.
+            ValueError: If ``as_supervised`` is asked of a dataset without supervised keys, or a
+                record the split reads sits at an offset an id's low word cannot hold.
         """
         if name is None:
             name = f"TFDSStreamingSource({config.name}:{config.split})"
@@ -788,9 +904,7 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
         self.split_name = split
         self._dataset = dataset
         self._dataset_info = HostValue(info)
-        self._keys = HostValue(
-            tuple(_supervised_keys(info, dataset)) if config.as_supervised else None
-        )
+        self._kept = HostValue(_KeptFeatures.of_config(config, info, dataset))
         files = {
             Path(instruction.filename).name: instruction
             for split_name in info.splits
@@ -800,7 +914,7 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
         shard_of = {basename: shard for shard, (basename, _) in enumerate(self._files.value)}
         self._shards = HostValue(
             tuple(
-                _Shard(
+                _split_shard(
                     instruction.filename,
                     shard_of[Path(instruction.filename).name],
                     instruction.skip,
@@ -843,7 +957,6 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
     def _stream_read(self, pass_index: int, key: jax.Array | None, batch_size: int) -> StreamRead:
         """What pass ``pass_index`` reads, as plain values, the shards' record index included."""
         config = self.config
-        include, exclude = config.include_keys, config.exclude_keys
         return StreamRead(
             name=self._dataset,
             data_dir=config.data_dir,
@@ -852,25 +965,23 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
             seed=None if key is None else pass_seed(key, pass_index),
             buffer_size=config.shuffle_buffer_size,
             batch_size=batch_size,
-            keys=self._keys.value,
-            include_keys=None if include is None else frozenset(include),
-            exclude_keys=None if exclude is None else frozenset(exclude),
+            kept=self._kept.value,
         )
 
     def _open_pass(
-        self, pass_index: int, key: jax.Array | None, size_hint: int
+        self, pass_index: int, key: jax.Array | None, read_size: int
     ) -> Iterator[StreamChunk]:
         """Read pass ``pass_index``: in file order, or as TFDS's training read under ``key``.
 
         Args:
             pass_index: The pass, from 0.
             key: The pipeline's key when it shuffles, ``None`` for file order.
-            size_hint: Records decoded together, the first pull's size.
+            read_size: Records decoded together.
 
         Yields:
             The pass's records as decoded chunks.
         """
-        for columns, provenance, ids in self.pass_dataset(pass_index, key, size_hint):
+        for columns, provenance, ids in self.pass_dataset(pass_index, key, read_size):
             yield StreamChunk(columns, tuple(MappingProxyType(p) for p in provenance), ids)
 
     def provenance(  # noqa: DOC502 - record_words, refuse_padding and _frame_at raise
@@ -889,15 +1000,16 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
 
         Raises:
             ValueError: If ``indices`` are not uint32 ``(n, 2)`` words.
+            DamagedRecordError: If a named record's frame is damaged.
             IndexError: If an index is the padding index, or names no shard or no record in it.
         """
         words = record_words(indices)
         refuse_padding(words)
         frames = [self._frame_at(int(shard), int(offset)) for shard, offset in words]
-        read = self._stream_read(0, None, len(frames))
         features = self._dataset_info.value.features
         return tuple(
-            MappingProxyType(record) for record in _decoded_batch(features, frames, read)[1]
+            MappingProxyType(record)
+            for record in _decoded_batch(features, frames, self._kept.value)[1]
         )
 
     def _shard_index(self, shard: int) -> ShardIndex:
@@ -909,7 +1021,7 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
             )
         return index
 
-    def _frame_at(self, shard: int, offset: int) -> _Frame:
+    def _frame_at(self, shard: int, offset: int) -> _Frame:  # noqa: DOC503 - _payload raises
         """The serialized record at ``offset`` of shard ``shard``.
 
         Args:
@@ -921,6 +1033,7 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
 
         Raises:
             IndexError: If the dataset has no such shard, or the shard no such record.
+            DamagedRecordError: If the shard file is damaged at the record's frame.
         """
         files = self._files.value
         if shard >= len(files):
@@ -933,5 +1046,5 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
                 f"{len(index.lengths)}"
             )
         with Path(instruction.filename).open("rb", buffering=0) as file:
-            raw = _pread(file, int(index.lengths[offset]), int(index.payloads[offset]))
+            raw = _payload(file, instruction.filename, index, offset)
         return _Frame(shard, offset, raw)

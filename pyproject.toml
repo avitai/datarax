@@ -130,6 +130,7 @@ data = [
   # Data loading and processing dependencies
   "importlib_resources>=5.0", # Backport required by grain/etils on some Python versions
   "tensorflow-datasets>=4.9.8", # as_data_source(file_format=), read without TensorFlow
+  "google-crc32c>=1.8", # TFRecord frame CRC32C checks of the TFDS stream, as tf.data makes them
   "datasets>=2.21", # For HuggingFace datasets (>=2.21 for pyarrow 15+ compat)
   "pyarrow>=21", # >=21 for pa.json_ (datasets 4+) and macOS-14 arm64 wheel stability
   "pillow>=10.0.0", # For image processing

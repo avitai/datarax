@@ -22,6 +22,12 @@ from datarax.core.element_batch import Batch
 from datarax.core.index_words import from_words
 from datarax.pipeline import Pipeline
 from datarax.sources import from_hf, HFEagerSource, HFStreamingConfig, HFStreamingSource
+from tests.test_common.streams import (
+    graph_definitions_across_a_pass,
+    non_array_state_leaves,
+    record_chunks,
+    second_pulls_after_a_tree_round_trip,
+)
 
 
 datasets = pytest.importorskip("datasets")
@@ -167,6 +173,46 @@ class TestTheOrder:
         assert first == served(3)
         assert sorted(first[:_N]) == sorted(first[_N:]) == list(range(_N))
         assert first[:_N] != first[_N:]
+
+
+def test_every_pass_reads_in_the_pipeline_s_batch_size(
+    loads: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    chunks = record_chunks(monkeypatch, HFStreamingSource)
+    pipeline = Pipeline(source=_stream(), stages=[], batch_size=5, rngs=nnx.Rngs(0), num_epochs=3)
+
+    list(pipeline)
+
+    assert _N % 5 != 0
+    # The declared spec's read of one record, then each pass in batches of 5.
+    assert chunks == [(0, 1, 1)] + [(p, 5, n) for p in range(3) for n in (5, 5, 2)]
+
+
+class TestNnxHygiene:
+    """The HF stream keeps its position and dataset objects out of NNX state (brief T11)."""
+
+    def test_no_variable_holds_a_python_value(self, loads: list[dict[str, Any]]) -> None:
+        source = _stream()
+        _pass(source)
+
+        assert non_array_state_leaves(source) == []
+
+    def test_the_graph_definition_does_not_move_as_the_stream_advances(
+        self, loads: list[dict[str, Any]]
+    ) -> None:
+        before, after = graph_definitions_across_a_pass(_stream(), 5)
+
+        assert before == after
+        assert hash(before) == hash(after)
+
+    def test_a_tree_mode_split_and_merge_round_trip_keeps_reading(
+        self, loads: list[dict[str, Any]]
+    ) -> None:
+        merged, twin = second_pulls_after_a_tree_round_trip(_stream, 5)
+
+        assert from_words(merged[0]).tolist() == list(range(5, 10))
+        for ours, theirs in zip(merged, twin, strict=True):
+            np.testing.assert_array_equal(ours, theirs)
 
 
 class TestTheRead:

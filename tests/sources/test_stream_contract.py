@@ -23,7 +23,12 @@ from datarax.core.data_source import RecordIdentity
 from datarax.core.element_batch import Batch
 from datarax.core.index_words import from_words
 from datarax.sources import StreamChunk, StreamingSourceBase
-from tests.test_common.streams import RecordStream
+from tests.test_common.streams import (
+    graph_definitions_across_a_pass,
+    non_array_state_leaves,
+    RecordStream,
+    second_pulls_after_a_tree_round_trip,
+)
 
 
 _N = 10
@@ -106,9 +111,9 @@ class TestTheStreamBatch:
     def test_records_without_a_numeric_field_are_refused(self) -> None:
         class _TextOnly(RecordStream):
             def _open_pass(
-                self, pass_index: int, key: jax.Array | None, size_hint: int
+                self, pass_index: int, key: jax.Array | None, read_size: int
             ) -> Iterator[StreamChunk]:
-                for chunk in super()._open_pass(pass_index, key, size_hint):
+                for chunk in super()._open_pass(pass_index, key, read_size):
                     yield chunk._replace(columns={})
 
         with pytest.raises(ValueError, match="no numeric field"):
@@ -153,6 +158,116 @@ class TestTheOrder:
 
         assert [index for index, _ in stream.opened] == [0, 1]
         assert all(given is key for _, given in stream.opened)
+
+
+class TestTheReadSize:
+    """A pass is read in chunks of the size it is opened with, whatever the pulls ask for."""
+
+    def test_a_pass_is_opened_with_the_read_size_given(self) -> None:
+        stream = _stream(chunk=None)
+
+        first = stream.get_batch(2, read_size=4)
+        rest = _pass(stream, 3, read_size=4)
+
+        assert stream.read_sizes == [4]
+        assert first.batch_size == 2
+        assert [b.batch_size for b in rest] == [3, 3, 2]
+
+    def test_without_one_a_pass_is_read_in_the_first_pull_s_size(self) -> None:
+        stream = _stream(chunk=None)
+
+        _pass(stream, 3)
+
+        assert stream.read_sizes == [3]
+
+    def test_a_read_size_below_one_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="read_size"):
+            _stream().get_batch(2, read_size=0)
+
+
+class TestAClone:
+    """A clone has the stream's state and a position of its own (``DataraxModule.clone``)."""
+
+    def test_a_clone_reads_from_its_own_position(self) -> None:
+        stream = _stream()
+        clone = stream.clone()
+
+        assert _names([stream.get_batch(4)]) == [0, 1, 2, 3]
+        assert _names([clone.get_batch(4)]) == [0, 1, 2, 3]
+        assert _names([stream.get_batch(4)]) == [4, 5, 6, 7]
+
+    def test_a_clone_starts_where_the_stream_is_between_passes(self) -> None:
+        stream = _stream(RecordIdentity.ARRIVAL)
+        _pass(stream, 4)
+
+        clone = stream.clone()
+        batch = clone.get_batch(4)
+
+        assert clone.pass_index == 1
+        assert _names([batch]) == [_N, _N + 1, _N + 2, _N + 3]
+        assert {int(e) for e in batch.epochs} == {1}
+        assert stream.pass_index == 1
+        assert _names([stream.get_batch(4)]) == [_N, _N + 1, _N + 2, _N + 3]
+
+    def test_a_stream_mid_pass_is_refused_a_clone(self) -> None:
+        stream = _stream()
+        stream.get_batch(4)
+
+        with pytest.raises(ValueError, match="between passes"):
+            stream.clone()
+
+        assert _names([stream.get_batch(4)]) == [4, 5, 6, 7]
+
+
+class _Failing(RecordStream):
+    """A stream whose pass reader raises after its first chunk, on the passes named."""
+
+    def __init__(self, failing: set[int]) -> None:
+        super().__init__({"x": np.arange(_N, dtype=np.float32)}, chunk=3)
+        self.failing = failing
+
+    def _open_pass(
+        self, pass_index: int, key: jax.Array | None, read_size: int
+    ) -> Iterator[StreamChunk]:
+        chunks = super()._open_pass(pass_index, key, read_size)
+        yield next(chunks)
+        if pass_index in self.failing:
+            raise OSError("the connection was reset")
+        yield from chunks
+
+
+class TestAReadThatFails:
+    """An error inside a pass never reads as the pass's end (F9)."""
+
+    def test_the_error_reaches_the_pull_that_met_it(self) -> None:
+        stream = _Failing({0})
+        stream.get_batch(3)
+
+        with pytest.raises(OSError, match="connection was reset"):
+            stream.get_batch(3)
+
+    def test_the_next_pull_is_refused_naming_the_pass_and_the_error(self) -> None:
+        stream = _Failing({0})
+        stream.get_batch(3)
+        with pytest.raises(OSError):
+            stream.get_batch(3)
+
+        with pytest.raises(RuntimeError, match="pass 0") as refused:
+            stream.get_batch(3)
+
+        assert isinstance(refused.value.__cause__, OSError)
+        assert stream.pass_index == 0
+
+    def test_reset_starts_the_first_pass_again_after_a_failure(self) -> None:
+        stream = _Failing({0})
+        stream.get_batch(3)
+        with pytest.raises(OSError):
+            stream.get_batch(3)
+        stream.failing.clear()
+
+        stream.reset()
+
+        assert _names(_pass(stream, 4)) == list(range(_N))
 
 
 class TestArrivalNames:
@@ -210,30 +325,22 @@ class TestNnxHygiene:
         stream = _stream()
         _pass(stream, 4)
 
-        leaves = jax.tree.leaves(nnx.state(stream))
-        assert all(isinstance(leaf, np.ndarray | jax.Array) for leaf in leaves)
+        assert non_array_state_leaves(stream) == []
 
     def test_the_graph_definition_is_hashable_and_does_not_move_as_the_stream_advances(
         self,
     ) -> None:
-        stream = _stream()
-        before = nnx.graphdef(stream)
+        before, after = graph_definitions_across_a_pass(_stream(), 4)
 
-        stream.get_batch(4, key=jax.random.key(0))
-        _pass(stream, 4)
-
-        after = nnx.graphdef(stream)
         assert before == after
         assert hash(before) == hash(after)
 
     def test_a_tree_mode_split_and_merge_round_trip_keeps_reading(self) -> None:
-        stream = _stream()
-        stream.get_batch(4)
-        graphdef, state = nnx.split(stream, graph=False)
+        merged, twin = second_pulls_after_a_tree_round_trip(_stream, 4)
 
-        merged = nnx.merge(graphdef, state)
-
-        assert _names([merged.get_batch(4)]) == [4, 5, 6, 7]
+        assert from_words(merged[0]).tolist() == [4, 5, 6, 7]
+        for ours, theirs in zip(merged, twin, strict=True):
+            np.testing.assert_array_equal(ours, theirs)
 
     def test_streams_differing_only_in_their_strings_share_one_graph_definition(self) -> None:
         one = _stream()
@@ -251,10 +358,10 @@ class _Watched(RecordStream):
     closed: list[int] = []
 
     def _open_pass(
-        self, pass_index: int, key: jax.Array | None, size_hint: int
+        self, pass_index: int, key: jax.Array | None, read_size: int
     ) -> Iterator[StreamChunk]:
         try:
-            yield from super()._open_pass(pass_index, key, size_hint)
+            yield from super()._open_pass(pass_index, key, read_size)
         finally:
             _Watched.closed.append(pass_index)
 
@@ -302,14 +409,19 @@ class TestTheOpenPassReaderIsClosed:
 _STOPPED_AT_EXIT = """
 import sys
 import numpy as np
-from tests.test_common.streams import RecordStream
+from tests.test_common.streams import (
+    graph_definitions_across_a_pass,
+    non_array_state_leaves,
+    RecordStream,
+    second_pulls_after_a_tree_round_trip,
+)
 
 LOG = open(sys.argv[1], "w")
 
 class Stopped(RecordStream):
-    def _open_pass(self, pass_index, key, size_hint):
+    def _open_pass(self, pass_index, key, read_size):
         try:
-            yield from super()._open_pass(pass_index, key, size_hint)
+            yield from super()._open_pass(pass_index, key, read_size)
         finally:
             LOG.write("closed with globals intact\\n")
             LOG.flush()

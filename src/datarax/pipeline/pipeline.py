@@ -739,7 +739,9 @@ class Pipeline(nnx.Module):
         source = self.source
 
         def pull(size: int) -> Batch:
-            batch = source.get_batch(size, key=key)  # type: ignore[attr-defined]
+            batch = source.get_batch(  # type: ignore[attr-defined]
+                size, key=key, read_size=self.batch_size
+            )
             if not isinstance(batch, Batch):
                 raise TypeError(
                     f"{type(source).__name__}.get_batch returned {type(batch).__name__}, but a "
