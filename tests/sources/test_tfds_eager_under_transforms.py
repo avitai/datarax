@@ -7,7 +7,8 @@ very program a ``MemorySource`` holding the old loader's int32 label builds; a t
 merge steps alike; sources differing only in provenance share one graphdef and one compile; a
 host-read batch through ``pipe.dag`` is differentiable inside ``nnx.value_and_grad`` in graph and
 tree mode with one compile for batches of other values and records; ``record_indices_at`` holds
-under ``vmap`` and ``lax.scan``; and steady steps read nothing back to the host.
+under ``vmap`` and ``lax.scan``; and steady steps upload no records and read nothing back to the
+host.
 """
 
 from __future__ import annotations
@@ -271,6 +272,33 @@ def _device_to_host_raises() -> bool:
         except RuntimeError:
             return True
     return False
+
+
+def _implicit_upload_raises() -> bool:
+    """The control: a NumPy argument to a jitted function is an implicit host-to-device transfer."""
+    double = jax.jit(lambda x: x * 2)
+    jax.block_until_ready(double(jnp.ones(2)))
+    with jax.transfer_guard_host_to_device("disallow"):
+        try:
+            double(np.ones(2))
+        except RuntimeError:
+            return True
+    return False
+
+
+def test_steady_steps_upload_no_records(tfds_fixture: TFDSFixture) -> None:
+    """The int64 host label is not converted and uploaded again on every step."""
+    assert _implicit_upload_raises(), "the host-to-device guard does not fire here"
+    session = iter(_pipeline(_source(tfds_fixture)))
+    pipeline = _pipeline(_source(tfds_fixture))
+    step = nnx.jit(lambda p: p.step())
+    for _ in range(2):
+        jax.block_until_ready(next(session).indices)
+        jax.block_until_ready(step(pipeline).indices)
+    with jax.transfer_guard_host_to_device("disallow"):
+        for _ in range(3):
+            jax.block_until_ready(next(session).indices)
+            jax.block_until_ready(step(pipeline).indices)
 
 
 def test_steady_steps_read_nothing_back_to_the_host(tfds_fixture: TFDSFixture) -> None:
