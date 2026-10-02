@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import struct
 from pathlib import Path
 from typing import Any
 
@@ -324,8 +325,48 @@ def test_the_stream_never_imports_tensorflow(tfds_fixture: TFDSFixture, control:
     assert set(report["seen"].values()) == {control}
 
 
+# The order of the fixture's train split at buffer 8 and batch 4 (record offsets in its one shard),
+# for keys 0 and 11, passes 0 and 1: the order decided for TFDS streams ("C5b stream order",
+# OWN-1002-STREAM-ID-ORDER keeps it bit for bit). Recorded from datarax 11b7aff.
+_DECIDED_ORDER = {
+    (0, 0): [5, 4, 8, 9, 11, 3, 7, 10, 13, 16, 17, 0, 18, 19, 2, 12, 1, 14, 6, 15],
+    (0, 1): [3, 8, 4, 5, 9, 6, 7, 14, 11, 13, 12, 1, 15, 19, 10, 16, 18, 2, 17, 0],
+    (11, 0): [6, 2, 3, 0, 5, 10, 13, 14, 15, 11, 8, 16, 9, 12, 1, 19, 4, 7, 18, 17],
+    (11, 1): [0, 7, 4, 5, 11, 10, 2, 14, 6, 8, 1, 9, 17, 13, 3, 12, 16, 19, 18, 15],
+}
+
+
+class _CountingReads:
+    """Every ``_pread`` call: the file it reads, how many bytes and from where."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.calls: list[tuple[str, int, int]] = []
+        read = tfds_source._pread
+
+        def counting(file: Any, size: int, position: int) -> bytes:
+            self.calls.append((Path(file.name).name, size, position))
+            return read(file, size, position)
+
+        monkeypatch.setattr(tfds_source, "_pread", counting)
+
+
+def _payload_lengths(fixture: TFDSFixture) -> list[int]:
+    """Each record's payload length in the fixture's train shard, read here from its frames."""
+    (path,) = (fixture.tfrecord / FIXTURE).glob("*/*-train.tfrecord-*")
+    data, lengths, position = path.read_bytes(), [], 0
+    while position < len(data):
+        (length,) = struct.unpack("<Q", data[position : position + 8])
+        lengths.append(length)
+        position += 12 + length + 4
+    return lengths
+
+
 class TestThePassDatasetForWorkers:
-    """The pass is a Grain dataset that worker processes can split without changing its order."""
+    """The pass is a Grain dataset that worker processes split without changing its order.
+
+    Every worker computes the same order over record ids from the offset index the parent built,
+    and reads the payloads of its own batches only (OWN-1002-STREAM-ID-ORDER).
+    """
 
     @staticmethod
     def _batches(dataset: Any) -> list[tuple[list[int], bytes]]:
@@ -334,7 +375,19 @@ class TestThePassDatasetForWorkers:
             for columns, _, ids in dataset
         ]
 
-    @pytest.mark.parametrize("slices", [2, 4, 8])
+    @pytest.mark.parametrize(("seed", "pass_index"), sorted(_DECIDED_ORDER))
+    def test_the_order_is_the_decided_order(
+        self, tfds_fixture: TFDSFixture, seed: int, pass_index: int
+    ) -> None:
+        dataset = _stream(tfds_fixture, shuffle_buffer_size=8).pass_dataset(
+            pass_index, jax.random.key(seed), 4
+        )
+
+        served = [int(i) & 0xFFFFFFFF for _, _, ids in dataset for i in ids]
+
+        assert served == _DECIDED_ORDER[(seed, pass_index)]
+
+    @pytest.mark.parametrize("slices", [1, 2, 4, 8])
     def test_slices_interleaved_round_robin_are_the_unsliced_pass(
         self, tfds_fixture: TFDSFixture, slices: int, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -360,6 +413,35 @@ class TestThePassDatasetForWorkers:
 
         assert interleaved == whole
         assert len(decoded) == len(whole)  # each batch decoded by one slice only
+
+    @pytest.mark.parametrize("slices", [2, 4, 8])
+    def test_each_slice_reads_the_payloads_of_its_own_records_only(
+        self, tfds_fixture: TFDSFixture, slices: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source = _stream(tfds_fixture, shuffle_buffer_size=8)
+        key = jax.random.key(4)
+        source.pass_dataset(0, key, 2)  # the parent builds the offset index here, once
+        reads = _CountingReads(monkeypatch)
+        for i in range(slices):
+            dataset = source.pass_dataset(0, key, 2)
+            dataset.set_slice(slice(i, None, slices))
+            reads.calls.clear()
+            served = [int(r) & 0xFFFFFFFF for _, _, ids in dataset for r in ids]
+
+            assert len(reads.calls) == len(served)  # one read per own record, no header reads
+            lengths = _payload_lengths(tfds_fixture)
+            assert sum(size for _, size, _ in reads.calls) == sum(lengths[o] for o in served)
+
+    def test_building_the_offset_index_reads_the_frame_headers_only(
+        self, tfds_fixture: TFDSFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source = _stream(tfds_fixture)
+        reads = _CountingReads(monkeypatch)
+
+        source.pass_dataset(0, None, 2)
+
+        assert {size for _, size, _ in reads.calls} == {12}
+        assert len(reads.calls) == TRAIN_RECORDS + 1  # each header, then the end of the file
 
     def test_a_sequential_slice_is_refused(self, tfds_fixture: TFDSFixture) -> None:
         dataset = _stream(tfds_fixture).pass_dataset(0, None, 2)

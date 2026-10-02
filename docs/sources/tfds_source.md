@@ -116,8 +116,11 @@ pipeline = Pipeline(source=source, stages=[], batch_size=256, rngs=nnx.Rngs(0),
 ```
 
 A pass is also a Grain dataset of decoded batches, `source.pass_dataset(pass_index, key,
-batch_size)`: it orders the serialized records and decodes last, pickles, and implements Grain's
-`set_slice`, so worker processes can each decode every k-th batch while the order stays the same.
+batch_size)`. It computes the pass's order over record ids, reads each record's payload at its
+offset in an index built once from the shard files' frame headers, and decodes last. It pickles
+with its index and implements Grain's `set_slice`: each of k worker processes computes the same
+order and reads and decodes only its own batches (every k-th), so the order does not depend on k
+and the workers read the data once between them.
 
 Each record is named by its `tfds_id`, the shard file and the offset in it, so its text is
 looked up again by `source.provenance(batch.indices)`. A copy prepared as ArrayRecord is read by

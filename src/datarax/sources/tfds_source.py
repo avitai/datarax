@@ -25,10 +25,12 @@ extra, in a process of its own.
 
 from __future__ import annotations
 
+import contextlib
 import itertools
 import logging
 import os
 import struct
+import weakref
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -422,40 +424,85 @@ def _not_streamable(name: str, data_dir: str | None, found: str) -> FileNotFound
     )
 
 
-def _frames(shard: _Shard) -> Iterator[_Frame]:
-    """The records ``shard`` reads, in file order, with Grain's TFRecord reader.
+class _RecordId(NamedTuple):
+    """A record of a pass: the position of its shard in the pass's read, and its offset there."""
+
+    position: int
+    offset: int
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class ShardIndex:
+    """Where each record of a TFRecord shard file sits: its payload's byte offset and length.
+
+    Attributes:
+        payloads: int64 byte offset of each record's payload in the file, by record offset.
+        lengths: int64 byte length of each record's payload, by record offset.
+    """
+
+    payloads: np.ndarray
+    lengths: np.ndarray
+
+
+def _pread(file: Any, size: int, position: int) -> bytes:
+    """Read ``size`` bytes of an open file from ``position``, with no buffering around it."""
+    return os.pread(file.fileno(), size, position)
+
+
+def _record_index(path: str) -> ShardIndex:
+    """The payload offset and length of every record in a TFRecord file, from its frame headers.
+
+    Neither TFDS, Grain nor ArrayRecord indexes a TFRecord file (searched: ``tfds.core.reader``,
+    ``grain.experimental.TFRecordIterDataset``, ``array_record``), so the 12-byte frame headers
+    are read here, each with one unbuffered positioned read, the payloads skipped.
 
     Args:
+        path: The shard file.
+
+    Returns:
+        The shard's index.
+    """
+    payloads, lengths, position = [], [], 0
+    with Path(path).open("rb", buffering=0) as file:
+        while len(header := _pread(file, _TFRECORD_HEADER.size, position)) == _TFRECORD_HEADER.size:
+            length, _ = _TFRECORD_HEADER.unpack(header)
+            payloads.append(position + _TFRECORD_HEADER.size)
+            lengths.append(length)
+            position += _TFRECORD_HEADER.size + length + 4
+    return ShardIndex(np.asarray(payloads, np.int64), np.asarray(lengths, np.int64))
+
+
+def _shard_ids(position: int, shard: _Shard) -> Iterator[_RecordId]:
+    """The records ``shard`` holds for the split, in file order, as ids.
+
+    Args:
+        position: The shard's position in the pass's read.
         shard: The shard file and the offsets the split reads of it.
 
     Yields:
-        Each record and its id.
+        Each record's id.
 
     Raises:
         ValueError: If a record's offset does not fit the id's low word.
     """
-    for offset, raw in enumerate(grain.experimental.TFRecordIterDataset(shard.path)):
-        if offset >= shard.skip + shard.take:
-            return
-        if offset < shard.skip:
-            continue
+    for offset in range(shard.skip, shard.skip + shard.take):
         if offset > _LARGEST_OFFSET:
             raise ValueError(
                 f"shard file {shard.path}: the record at offset {offset} does not fit an id, "
                 f"whose low word holds a record's offset in its shard, at most {_LARGEST_OFFSET}"
             )
-        yield _Frame(shard.shard, offset, raw)
+        yield _RecordId(position, offset)
 
 
-def _interleaved(shards: Sequence[_Shard]) -> Iterator[_Frame]:
-    """The records of ``shards`` read as TFDS's training read interleaves its files.
+def _interleaved(streams: Sequence[Iterator[_RecordId]]) -> Iterator[_RecordId]:
+    """The records of ``streams``, one per shard, as TFDS's training read interleaves its files.
 
-    ``_CYCLE_LENGTH`` files are open at once and ``_BLOCK_LENGTH`` records are read from each in
+    ``_CYCLE_LENGTH`` files are open at once and ``_BLOCK_LENGTH`` records are taken from each in
     turn; a file that ends is replaced by the next one in its place in the cycle (tf.data's
     ``interleave(cycle_length, block_length)``, which ``tfds.core.reader`` applies).
     """
-    pending = iter(shards)
-    cycle = [_frames(shard) for shard in itertools.islice(pending, _CYCLE_LENGTH)]
+    pending = iter(streams)
+    cycle = list(itertools.islice(pending, _CYCLE_LENGTH))
     while cycle:
         slot = 0
         while slot < len(cycle):
@@ -466,48 +513,29 @@ def _interleaved(shards: Sequence[_Shard]) -> Iterator[_Frame]:
                 if following is None:
                     del cycle[slot]
                     continue
-                cycle[slot] = _frames(following)
+                cycle[slot] = following
             slot += 1
 
 
 def _buffer_shuffled(
-    frames: Iterator[_Frame], size: int, generator: np.random.Generator
-) -> Iterator[_Frame]:
-    """``frames`` through tf.data's buffer shuffle of ``size`` records.
+    ids: Iterator[_RecordId], size: int, generator: np.random.Generator
+) -> Iterator[_RecordId]:
+    """``ids`` through tf.data's buffer shuffle of ``size`` records.
 
     The buffer fills with the first ``size`` records; then each record served is a uniform pick
     from the buffer, whose place the next record takes; at the end the buffer is served in
-    uniform picks. The buffer holds serialized records, so decoding follows the order. Its state
-    is the records' ids and the generator's state.
+    uniform picks. The buffer holds record ids, so its state is the ids and the generator's.
     """
-    buffer = list(itertools.islice(frames, size))
-    for frame in frames:
+    buffer = list(itertools.islice(ids, size))
+    for record in ids:
         pick = int(generator.integers(len(buffer)))
         yield buffer[pick]
-        buffer[pick] = frame
+        buffer[pick] = record
     while buffer:
         pick = int(generator.integers(len(buffer)))
         yield buffer[pick]
         buffer[pick] = buffer[-1]
         buffer.pop()
-
-
-def _record_offsets(path: str) -> np.ndarray:
-    """The byte offset of every record in a TFRecord file, by reading its frame headers.
-
-    Neither TFDS, Grain nor ArrayRecord indexes a TFRecord file (searched: ``tfds.core.reader``,
-    ``grain.experimental.TFRecordIterDataset``, ``array_record``), so the headers are read here:
-    12 bytes per record, the payload skipped.
-    """
-    offsets = []
-    with Path(path).open("rb") as file:
-        position = 0
-        while header := file.read(_TFRECORD_HEADER.size):
-            length, _ = _TFRECORD_HEADER.unpack(header)
-            offsets.append(position)
-            position += _TFRECORD_HEADER.size + length + 4
-            file.seek(position)
-    return np.asarray(offsets, dtype=np.int64)
 
 
 def _features(name: str, data_dir: str | None) -> Any:
@@ -525,6 +553,8 @@ class StreamRead:
         name: The TFDS dataset name.
         data_dir: The data directory holding it prepared as TFRecord.
         shards: The shard files and offsets the split reads, in file order.
+        index: Each shard's record index, aligned with ``shards``; built once by the source and
+            pickled with the read, so no worker reads a frame header.
         seed: The pass's order as an integer key (``fold_in(key, pass)``'s data), or ``None`` for
             file order.
         buffer_size: Records the shuffle buffer holds.
@@ -537,6 +567,7 @@ class StreamRead:
     name: str
     data_dir: str | None
     shards: tuple[_Shard, ...]
+    index: tuple[ShardIndex, ...]
     seed: int | None
     buffer_size: int
     batch_size: int
@@ -545,15 +576,17 @@ class StreamRead:
     exclude_keys: frozenset[str] | None
 
 
-def _ordered_frames(read: StreamRead) -> Iterator[_Frame]:
-    """The pass's serialized records in its order: file order, or TFDS's training read's."""
+def _ordered_ids(read: StreamRead) -> Iterator[_RecordId]:
+    """The pass's records in its order, as ids: file order, or TFDS's training read's.
+
+    The same order every worker of the pass computes, from the read alone, with no file read.
+    """
+    streams = [_shard_ids(position, shard) for position, shard in enumerate(read.shards)]
     if read.seed is None:
-        return itertools.chain.from_iterable(map(_frames, read.shards))
+        return itertools.chain.from_iterable(streams)
     generator = np.random.Generator(np.random.Philox(key=read.seed))
-    order = generator.permutation(len(read.shards))
-    return _buffer_shuffled(
-        _interleaved([read.shards[i] for i in order]), read.buffer_size, generator
-    )
+    order = generator.permutation(len(streams))
+    return _buffer_shuffled(_interleaved([streams[i] for i in order]), read.buffer_size, generator)
 
 
 def _decoded_batch(
@@ -586,14 +619,16 @@ def _decoded_batch(
 class TFDSStreamDataset(grain.IterDataset):
     """One pass of a TFDS stream as a Grain dataset of decoded batches.
 
-    Its iterator reads the pass's serialized records in the pass's order, cuts them into batches of
-    ``batch_size`` and decodes each batch last, so the order runs on raw bytes and only the decode
-    is per batch. It implements Grain's slicing hook: with ``set_slice(slice(i, None, k))`` the
-    iterator still orders every raw record but decodes and yields only batches ``j`` with
-    ``j % k == i``, so ``k`` such slices interleaved round robin give the unsliced batches, the
-    stream's order not depending on ``k``. That is how Grain's process prefetch splits a dataset
-    across workers. The dataset pickles (its read is plain values), and each iterator opens its
-    own files and decoder, so iterators in threads or processes share no lazy state.
+    Its iterator computes the pass's order over record ids (no file read), cuts it into batches of
+    ``batch_size``, and for each of its batches reads the records' payloads by their offsets in the
+    index and decodes them last. It implements Grain's slicing hook: with
+    ``set_slice(slice(i, None, k))`` the iterator computes the same order over ids but reads and
+    decodes only batches ``j`` with ``j % k == i``, so ``k`` such slices interleaved round robin
+    give the unsliced batches, the stream's order not depending on ``k``, and the k slices read
+    each record once between them. That is how Grain's process prefetch splits a dataset across
+    workers. The dataset pickles (its read is plain values, the offset index included), and each
+    iterator opens its own files and decoder, so iterators in threads or processes share no lazy
+    state.
     """
 
     def __init__(self, read: StreamRead) -> None:
@@ -630,24 +665,41 @@ class TFDSStreamDataset(grain.IterDataset):
 
 
 class _TFDSStreamIterator(grain.DatasetIterator):
-    """Batches of one pass of a TFDS stream, those of its slice decoded."""
+    """Batches of one pass of a TFDS stream, those of its slice read and decoded."""
 
     def __init__(self, read: StreamRead, sl: slice) -> None:
         super().__init__()
         self._read = read
-        self._frames = _ordered_frames(read)
+        self._ids = _ordered_ids(read)
         self._features = _features(read.name, read.data_dir)
         self._start, self._step = sl.start or 0, sl.step or 1
         self._batch = 0
+        self._files = contextlib.ExitStack()
+        self._open: dict[int, Any] = {}
+        weakref.finalize(self, self._files.close)
 
     def __next__(self) -> tuple[dict[str, Any], tuple[dict[str, Any], ...], np.ndarray]:
         while True:
-            frames = list(itertools.islice(self._frames, self._read.batch_size))
-            if not frames:
+            ids = list(itertools.islice(self._ids, self._read.batch_size))
+            if not ids:
+                self._files.close()
                 raise StopIteration
             batch, self._batch = self._batch, self._batch + 1
             if batch % self._step == self._start:
+                frames = [self._frame(record) for record in ids]
                 return _decoded_batch(self._features, frames, self._read)
+
+    def _frame(self, record: _RecordId) -> _Frame:
+        """The record's payload, read at its offset, and its id."""
+        shard = self._read.shards[record.position]
+        file = self._open.get(record.position)
+        if file is None:
+            opened = Path(shard.path).open("rb", buffering=0)  # noqa: SIM115 - the ExitStack closes it
+            file = self._files.enter_context(opened)
+            self._open[record.position] = file
+        index = self._read.index[record.position]
+        raw = _pread(file, int(index.lengths[record.offset]), int(index.payloads[record.offset]))
+        return _Frame(shard.shard, record.offset, raw)
 
     def get_state(self) -> dict[str, Any]:
         """The batches of the pass this iterator has passed."""
@@ -757,7 +809,7 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
                 for instruction in info.splits[split].file_instructions
             )
         )
-        self._offsets = HostValue({})
+        self._index = HostValue({})
         self.length = sum(shard.take for shard in self._shards.value)
 
     @property
@@ -789,13 +841,14 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
         return TFDSStreamDataset(self._stream_read(pass_index, key, batch_size))
 
     def _stream_read(self, pass_index: int, key: jax.Array | None, batch_size: int) -> StreamRead:
-        """What pass ``pass_index`` reads, as plain values."""
+        """What pass ``pass_index`` reads, as plain values, the shards' record index included."""
         config = self.config
         include, exclude = config.include_keys, config.exclude_keys
         return StreamRead(
             name=self._dataset,
             data_dir=config.data_dir,
             shards=self._shards.value,
+            index=tuple(self._shard_index(shard.shard) for shard in self._shards.value),
             seed=None if key is None else pass_seed(key, pass_index),
             buffer_size=config.shuffle_buffer_size,
             batch_size=batch_size,
@@ -847,6 +900,15 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
             MappingProxyType(record) for record in _decoded_batch(features, frames, read)[1]
         )
 
+    def _shard_index(self, shard: int) -> ShardIndex:
+        """Shard ``shard``'s record index, built from its frame headers on first use, then kept."""
+        index = self._index.value.get(shard)
+        if index is None:
+            index = self._index.value.setdefault(
+                shard, _record_index(self._files.value[shard][1].filename)
+            )
+        return index
+
     def _frame_at(self, shard: int, offset: int) -> _Frame:
         """The serialized record at ``offset`` of shard ``shard``.
 
@@ -864,14 +926,12 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
         if shard >= len(files):
             raise IndexError(f"shard {shard} names no file: the dataset has {len(files)} shards")
         basename, instruction = files[shard]
-        offsets = self._offsets.value.get(shard)
-        if offsets is None:
-            offsets = self._offsets.value.setdefault(shard, _record_offsets(instruction.filename))
-        if offset >= len(offsets):
+        index = self._shard_index(shard)
+        if offset >= len(index.lengths):
             raise IndexError(
                 f"offset {offset} names no record of shard {shard} ({basename}), which holds "
-                f"{len(offsets)}"
+                f"{len(index.lengths)}"
             )
-        reader = iter(grain.experimental.TFRecordIterDataset(instruction.filename))
-        reader.set_state({"reader_offset": int(offsets[offset])})
-        return _Frame(shard, offset, next(reader))
+        with Path(instruction.filename).open("rb", buffering=0) as file:
+            raw = _pread(file, int(index.lengths[offset]), int(index.payloads[offset]))
+        return _Frame(shard, offset, raw)

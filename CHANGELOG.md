@@ -103,13 +103,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (shard, offset) and their text is provenance, served beside the batch and looked up by id
   (`provenance(indices)`). A shuffling pipeline orders each pass as TFDS's training read does:
   the shard files in a keyed order, interleaved 16 at a time in blocks of 16, then tf.data's
-  buffer shuffle of `shuffle_buffer_size` serialized records, every draw from a NumPy Philox
-  generator keyed by `fold_in(key, pass)`. A copy prepared as ArrayRecord is refused, naming
+  buffer shuffle of `shuffle_buffer_size` records, every draw from a NumPy Philox generator keyed
+  by `fold_in(key, pass)`; the order is computed over record ids, and each record's payload is
+  read once, at its offset in a header-only index of the shard files. A copy prepared as ArrayRecord is refused, naming
   `TFDSEagerSource`; an unprepared copy is refused naming the call that prepares a TFRecord copy.
   A pass is a Grain `IterDataset` of decoded batches (`TFDSStreamingSource.pass_dataset`,
-  `TFDSStreamDataset`): the order runs on serialized records and the decode last, the dataset
-  pickles, and it implements Grain's `set_slice`, so worker processes can each decode every k-th
-  batch without changing the order.
+  `TFDSStreamDataset`) that pickles with its offset index and implements Grain's `set_slice`:
+  each of k worker processes computes the same order over ids and reads and decodes only its own
+  batches (every k-th), so the order does not depend on k and the workers read the data once
+  between them.
 - **`HFStreamingSource` always streams** (`load_dataset(..., streaming=True)`); a map-style
   HuggingFace dataset is `HFEagerSource`'s. Records are named by arrival; a shuffling pipeline
   seeds HuggingFace's buffer shuffle from its key, `set_epoch(pass)` ordering each pass (it used
