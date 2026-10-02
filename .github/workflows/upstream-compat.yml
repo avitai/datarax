@@ -51,4 +51,4 @@ jobs:
       - name: Run the fast test subset
         run: |
           echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> "$GITHUB_ENV"
-          .venv/bin/pytest tests --no-integration --no-end-to-end --no-benchmark -m "not slow and not tfds" --no-cov -p no:cacheprovider
+          .venv/bin/pytest tests --no-integration --no-end-to-end --no-benchmark -rs -m "not slow and not tfds" --no-cov -p no:cacheprovider

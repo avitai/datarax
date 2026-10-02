@@ -82,7 +82,7 @@ jobs:
       - name: Run unit tests
         run: |
           export JAX_PLATFORMS="cpu"
-          uv run pytest tests benchmarks/tests --no-integration --no-end-to-end --no-benchmark -v -m "not slow and not tfds" --cov-fail-under=0
+          uv run pytest tests benchmarks/tests --no-integration --no-end-to-end --no-benchmark -v -rs -m "not slow and not tfds" --cov-fail-under=0
 
   build:
     name: Build

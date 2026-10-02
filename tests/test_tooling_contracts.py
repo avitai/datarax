@@ -5,11 +5,13 @@ from __future__ import annotations
 import ast
 import fnmatch
 import re
+import shlex
 import subprocess  # nosec B404
 import tomllib
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
 import yaml
 from packaging.requirements import Requirement
 
@@ -993,3 +995,68 @@ def test_every_other_lane_deselects_the_tfds_tests_explicitly() -> None:
     assert len(lanes) >= 6
     assert [name for name, line in lanes if _selects(line, {"tfds"})] == []
     assert [name for name, line in lanes if "not tfds" not in line] == []
+
+
+# Events on which a workflow measures the tree unattended; a skip there is read from the log.
+MEASURING_EVENTS = frozenset({"push", "pull_request", "schedule"})
+# `pytest -r` report characters that list each skip with its reason: `s` itself, or `a`/`A`
+# (all outcomes but passes, and all outcomes).
+SKIP_REPORT_CHARACTERS = frozenset("saA")
+
+
+def _reports_skip_reasons(line: str) -> bool:
+    """Whether the pytest command line asks for a ``SKIPPED [n] file: reason`` summary line."""
+    arguments = shlex.split(line.split("pytest", 1)[1])
+    characters = [
+        argument[2:] or (arguments[index + 1] if index + 1 < len(arguments) else "")
+        for index, argument in enumerate(arguments)
+        if argument.startswith("-r") and not argument.startswith("--")
+    ]
+    return any(SKIP_REPORT_CHARACTERS & set(chars) for chars in characters)
+
+
+def _measuring_pytest_lines() -> list[tuple[str, str]]:
+    """``(workflow:job, command)`` for each pytest run by a push, pull request or schedule."""
+    lines = []
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        workflow = yaml.safe_load(path.read_text())
+        # PyYAML reads the `on:` key as the boolean True.
+        triggers = workflow.get("on") or workflow.get(True) or {}
+        if not MEASURING_EVENTS & set(triggers):
+            continue
+        lines += [
+            (f"{path.name}:{name}", line)
+            for name, job in workflow["jobs"].items()
+            for line in _pytest_lines(job)
+        ]
+    return lines
+
+
+@pytest.mark.parametrize(
+    ("line", "reports"),
+    [
+        ("uv run pytest tests -rs -v", True),
+        ("uv run pytest tests -r s", True),
+        ("uv run pytest tests -ra", True),
+        ("uv run pytest tests -rfEs", True),
+        ("uv run pytest tests -v -m 'not slow'", False),
+        ("uv run pytest tests -rfE", False),
+        ("uv run pytest tests --rootdir=s", False),
+    ],
+)
+def test_skip_reason_detection(line: str, reports: bool) -> None:
+    """The check reads pytest's ``-r`` option itself, not any argument containing ``-r``."""
+    assert _reports_skip_reasons(line) is reports
+
+
+def test_every_measuring_pytest_command_explains_its_skips() -> None:
+    """A skip count in a CI log comes with each skip's reason.
+
+    Without ``-r`` naming skips, pytest reports how many tests skipped but not why, and a
+    module-level skip prints no per-test line at all, so a lane can lose a dependency and
+    still read as green.
+    """
+    lines = _measuring_pytest_lines()
+
+    assert len(lines) >= 8
+    assert [name for name, line in lines if not _reports_skip_reasons(line)] == []
