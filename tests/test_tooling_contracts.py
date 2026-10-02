@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import fnmatch
 import re
 import subprocess  # nosec B404
 import tomllib
@@ -799,6 +800,122 @@ def test_the_security_audit_reads_every_extra_in_the_lock() -> None:
     assert "audit_lock" not in commands
     assert not (REPO_ROOT / "scripts" / "audit_lock.py").exists()
     assert _pyproject()["tool"]["substrax"]["audit-lock"]["ignore"]
+
+
+UNIT_JOB = "unit_tests"
+SHARD_COUNT = "UNIT_TEST_SHARDS"
+
+
+def _unit_test_step() -> dict:
+    (step,) = [step for step in _jobs()[UNIT_JOB]["steps"] if "pytest" in str(step.get("run", ""))]
+    return step
+
+
+def _pytest_arguments(command: str) -> list[str]:
+    """The arguments of the one pytest invocation in a workflow ``run`` script.
+
+    An expression keeps its inner spaces out, so ``${{ matrix.group }}`` is one argument,
+    ``${{matrix.group}}``.
+    """
+    lines = command.replace("\\\n", " ").splitlines()
+    (invocation,) = [
+        line for line in lines if "pytest" in line and not line.lstrip().startswith("#")
+    ]
+    invocation = re.sub(r"\$\{\{\s*([^}]*?)\s*\}\}", r"${{\1}}", invocation)
+    return invocation.split("pytest", 1)[1].split()
+
+
+def _option(arguments: list[str], name: str) -> str:
+    """The value given to ``name``, as ``name value`` or ``name=value``."""
+    for index, argument in enumerate(arguments):
+        if argument == name:
+            return arguments[index + 1]
+        if argument.startswith(f"{name}="):
+            return argument.split("=", 1)[1]
+    raise AssertionError(f"pytest is not given {name}: {arguments}")
+
+
+def test_the_unit_suite_runs_as_one_collection_split_into_shards() -> None:
+    """Each matrix leg runs one pytest-split group of the same collection.
+
+    The group list is exactly 1..N for the N shards the job declares, so no group is left
+    unrun, and every leg reports on its own (``fail-fast`` off) so one red shard does not
+    cancel the others' coverage.
+    """
+    job = _jobs()[UNIT_JOB]
+    shards = int(job["env"][SHARD_COUNT])
+    matrix = job["strategy"]["matrix"]
+    arguments = _pytest_arguments(_unit_test_step()["run"])
+
+    assert shards >= 2
+    assert matrix["group"] == list(range(1, shards + 1))
+    assert job["strategy"]["fail-fast"] is False
+    assert "${{ matrix.group }}" in job["name"]
+    assert _option(arguments, "--splits") == f'"${SHARD_COUNT}"'
+    assert _option(arguments, "--group") == "${{matrix.group}}"
+    assert _option(arguments, "--splitting-algorithm") == "least_duration"
+    assert "pytest-split" in _dependency_names(
+        _pyproject()["project"]["optional-dependencies"]["test"]
+    )
+    assert "--extra test" in str(
+        next(s for s in job["steps"] if s.get("name") == "Install dependencies")["run"]
+    )
+
+
+def test_every_shard_orders_the_collection_with_one_seed() -> None:
+    """The shards of a run share pytest-randomly's seed, so each sees the same item order.
+
+    pytest-randomly reorders the collection before pytest-split assigns it, and pytest-split
+    breaks ties between equally long tests of the same name by that order. A seed drawn per
+    process gives each shard its own order, and then a test can land in two shards while
+    another lands in none. The run id is one value across the run, and a new one per run, so
+    the order still changes from run to run.
+    """
+    job = _jobs()[UNIT_JOB]
+    arguments = _pytest_arguments(_unit_test_step()["run"])
+    install = next(s for s in job["steps"] if s.get("name") == "Install dependencies")["run"]
+
+    assert _option(arguments, "--randomly-seed") == "${{github.run_id}}"
+    assert "pytest-randomly" in _dependency_names(
+        _pyproject()["project"]["optional-dependencies"]["dev"]
+    )
+    assert "--extra dev" in install
+
+
+def _expand_matrix(template: str, matrix: dict) -> list[str]:
+    """``template`` with each ``${{ matrix.key }}`` replaced, for every combination."""
+    names = [template]
+    for key, values in matrix.items():
+        placeholder = f"${{{{ matrix.{key} }}}}"
+        if placeholder in template:
+            names = [name.replace(placeholder, str(value)) for name in names for value in values]
+    return names
+
+
+def test_the_coverage_job_combines_every_shard() -> None:
+    """Each shard uploads its own coverage data, and the coverage job reads all of them.
+
+    The artifact name carries the Python version and the group, so no two legs write the same
+    artifact; the coverage job waits on the whole matrix, downloads every ``coverage-*``
+    artifact into a directory of its own (not merged, where same-named ``.coverage`` files
+    would overwrite each other) and combines what it finds.
+    """
+    jobs = _jobs()
+    unit = jobs[UNIT_JOB]
+    upload = _step_using(unit, "actions/upload-artifact@")
+    coverage = jobs["coverage"]
+    download = _step_using(coverage, "actions/download-artifact@")
+    combine = next(s for s in coverage["steps"] if "coverage combine" in str(s.get("run", "")))
+    names = _expand_matrix(upload["with"]["name"], unit["strategy"]["matrix"])
+    legs = len(unit["strategy"]["matrix"]["python-version"]) * len(
+        unit["strategy"]["matrix"]["group"]
+    )
+
+    assert len(set(names)) == len(names) == legs
+    assert UNIT_JOB in coverage["needs"]
+    assert all(fnmatch.fnmatchcase(name, download["with"]["pattern"]) for name in names)
+    assert download["with"].get("merge-multiple") is not True
+    assert f'find {download["with"]["path"]} -name ".coverage"' in combine["run"]
 
 
 def test_no_extra_installs_pip_audit() -> None:

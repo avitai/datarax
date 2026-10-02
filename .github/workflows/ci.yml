@@ -124,14 +124,22 @@ jobs:
           uv run pytest tests/examples/ -v -m "not slow" --no-cov
 
   unit_tests:
-    name: Unit Tests (Python ${{ matrix.python-version }})
+    name: Unit Tests (Python ${{ matrix.python-version }}, shard ${{ matrix.group }})
     needs: [lint, already_tested]
     if: needs.already_tested.outputs.skip != 'true'
     # macOS runs nightly and before a release, in macos.yml.
     runs-on: ubuntu-latest
+    # pytest-split divides one collection into this many groups, one per matrix leg; the
+    # group list below is 1..UNIT_TEST_SHARDS. With no durations file it balances by test
+    # count (least_duration gives every test the same weight). Unsharded, the suite took
+    # about 32 minutes; four shards bring each leg well under the long-running job, which
+    # the coverage job waits on as well, so more shards would not shorten the run.
+    env:
+      UNIT_TEST_SHARDS: 4
     strategy:
       matrix:
         python-version: ['3.12', '3.13']
+        group: [1, 2, 3, 4]
       fail-fast: false
 
     steps:
@@ -166,7 +174,12 @@ jobs:
         run: |
           # Explicitly run on CPU for GitHub workflow
           export JAX_PLATFORMS="cpu"
-          uv run pytest tests benchmarks/tests --no-integration --no-end-to-end --no-benchmark -v -m "not slow" --cov-fail-under=0
+          # pytest-randomly orders the collection before pytest-split assigns it, so every
+          # shard of a run takes the run's id as its seed: one order, each test in exactly one
+          # shard. docs/contributing/testing_guide.md shows how to rerun one shard locally.
+          uv run pytest tests benchmarks/tests --no-integration --no-end-to-end --no-benchmark -v -m "not slow" --cov-fail-under=0 \
+            --splits "$UNIT_TEST_SHARDS" --group ${{ matrix.group }} --splitting-algorithm least_duration \
+            --randomly-seed=${{ github.run_id }}
 
       - name: Prepare coverage data
         run: uv run coverage combine || true
@@ -175,7 +188,7 @@ jobs:
       - name: Upload coverage data
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-unit-py${{ matrix.python-version }}
+          name: coverage-unit-py${{ matrix.python-version }}-shard${{ matrix.group }}
           path: .coverage
           include-hidden-files: true
         if: always()
