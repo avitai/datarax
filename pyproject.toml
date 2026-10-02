@@ -616,8 +616,9 @@ timeout_seconds = 2700
 # Tasks run in table order and the table is kept sorted, so their names carry the order.
 [tool.substrax.compute.jobs.tfds-nccl.commands]
 1-fixture = ["python", "-m", "tests.test_common.tfds_fixture", "/tmp/tfds_fixture"]
-2-collective = ["python", "-m", "pytest", "tests/sources/test_tfds_collective.py", "-p", "no:cacheprovider", "--no-cov", "-rs", "-v"]
-3-control = ["python", "-m", "tests.test_common.tfds_collective", "/tmp/tfds_fixture", "--import-tensorflow"]
+2-program = ["python", "-m", "tests.test_common.tfds_collective", "/tmp/tfds_fixture"]
+3-collective = ["python", "-m", "pytest", "tests/sources/test_tfds_collective.py", "-p", "no:cacheprovider", "--no-cov", "-rs", "-v"]
+4-control = ["python", "-m", "tests.test_common.tfds_collective", "/tmp/tfds_fixture", "--import-tensorflow"]
 
 [tool.uv]
 # The automation extra is benchmark tooling: skypilot[vast] and vastai-sdk, used only

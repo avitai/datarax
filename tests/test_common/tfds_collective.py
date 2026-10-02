@@ -4,9 +4,10 @@ TensorFlow in a JAX process breaks JAX's NCCL collectives on GPUs ("corrupted co
 detected"), so the process that reads TFDS data for training must not hold it. This program
 reads the offline fixture (:mod:`tests.test_common.tfds_fixture`) with ``TFDSEagerSource``,
 places a host-read batch on a two-device data mesh and takes its mean, an all-reduce across the
-devices, then prints one JSON line: whether TensorFlow is in the process, the devices, and the
-mean beside the host's. ``--import-tensorflow`` imports TensorFlow first, hiding the GPUs from it
-as examples used to: the positive control, which on GPUs reproduces the failure.
+devices, then prints one line starting with :data:`REPORT_PREFIX`, then JSON: whether TensorFlow
+is in the process, the devices, and the mean beside the host's. ``--import-tensorflow`` imports
+TensorFlow first, hiding the GPUs from it as examples used to: the positive control, which on
+GPUs reproduces the failure.
 
     python -m tests.test_common.tfds_collective <fixture directory> [--import-tensorflow]
 """
@@ -20,6 +21,9 @@ from pathlib import Path
 
 DEVICES = 2
 RECORDS = 8
+# The report's line starts with this: NCCL writes to standard output too, through C stdio, whose
+# buffer reaches the pipe after Python's at exit, so the report is not the last line there.
+REPORT_PREFIX = "TFDS_COLLECTIVE "
 
 
 def main(argv: list[str]) -> None:
@@ -63,7 +67,7 @@ def main(argv: list[str]) -> None:
         "mean": mean,
         "host_mean": float(images.mean()),
     }
-    sys.stdout.write(json.dumps(report) + "\n")
+    sys.stdout.write(REPORT_PREFIX + json.dumps(report) + "\n")
 
 
 if __name__ == "__main__":

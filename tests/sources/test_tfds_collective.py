@@ -18,6 +18,7 @@ import pytest
 from substrax.testing import run_python
 
 from tests.jax_test_environment import forwarded_jax_environment
+from tests.test_common.tfds_collective import REPORT_PREFIX
 from tests.test_common.tfds_fixture import TFDSFixture
 
 
@@ -32,7 +33,9 @@ _SECONDS = 300.0
 
 def _collective(fixture: TFDSFixture, env: dict[str, str]) -> dict[str, object]:
     result = run_python(_PROGRAM, str(fixture.root), timeout=_SECONDS, env=env, cwd=_REPO_ROOT)
-    return json.loads(result.check().stdout.strip().splitlines()[-1])
+    lines = [line for line in result.check().stdout.splitlines() if line.startswith(REPORT_PREFIX)]
+    assert len(lines) == 1, result.stdout
+    return json.loads(lines[0].removeprefix(REPORT_PREFIX))
 
 
 def _assert_an_all_reduce_without_tensorflow(report: dict[str, object]) -> None:
