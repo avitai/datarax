@@ -196,7 +196,11 @@ def stream_batches(
     the pass's end, after which it serves the next pass. Under ``drop_last`` a pass's records
     short of a full batch are skipped; otherwise the batch is completed from the head of the next
     pass, each row keeping its own epoch. After ``num_epochs`` passes the run ends, its last batch
-    possibly short; with ``None`` it never ends. A stream whose pass holds no record ends the run.
+    possibly short; with ``None`` it never ends. A run may start where an earlier one stopped:
+    mid-pass, or at a pass's end it has not yet read, which counts as a pass served, as an
+    exhausted epoch does. A pass the run read from its start to its end holding no record means
+    the stream holds none, and ends the run; whether a pass held records is known only for a pass
+    the run saw begin, never from a count over the run.
 
     Args:
         pull: Reads up to the given number of records of the current pass.
@@ -208,12 +212,13 @@ def stream_batches(
         Full batches, and under ``drop_last=False`` the run's short final batch.
     """
     pending: list[Batch] = []
-    held = served = passes = 0
+    held = passes = 0
+    served: int | None = None  # records of the current pass, unknown until a pass starts in view
     while num_epochs is None or passes < num_epochs:
         batch = pull(batch_size - held)
         if batch.batch_size == 0:
             passes += 1
-            if served == 0:  # a pass with no record: the stream holds none
+            if served == 0:  # a pass read whole held no record: the stream holds none
                 break
             served = 0
             if drop_last:
@@ -221,7 +226,7 @@ def stream_batches(
             continue
         pending.append(batch)
         held += batch.batch_size
-        served += batch.batch_size
+        served = (served or 0) + batch.batch_size
         if held == batch_size:
             yield _joined(pending)
             pending, held = [], 0

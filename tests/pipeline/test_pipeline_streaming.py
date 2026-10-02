@@ -11,6 +11,7 @@ DAG as one compiled step per batch shape over the stream's ``Batch``. The DAG ov
 
 from __future__ import annotations
 
+import itertools
 import re
 from collections.abc import Iterator, Mapping
 from typing import Any
@@ -29,7 +30,7 @@ from datarax.core.element_batch import Batch, Element
 from datarax.core.index_words import from_words
 from datarax.core.operator import OperatorModule, require_key
 from datarax.core.spec import SpecMismatchError
-from datarax.pipeline.epochs import stream_batches
+from datarax.pipeline.epochs import EpochPlan, stream_batches
 from datarax.pipeline.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig, StreamChunk
 from tests.test_common.streams import RecordStream
@@ -194,6 +195,89 @@ class TestTheEpochRule:
         empty = RecordStream({"x": np.zeros((0, 3), np.float32)})
 
         assert list(stream_batches(empty.get_batch, 4, drop_last=False, num_epochs=None)) == []
+
+    @pytest.mark.parametrize("num_epochs", [None, 1, 2])
+    def test_a_run_starting_at_a_pass_s_unseen_end_serves_the_next_pass(
+        self, num_epochs: int | None
+    ) -> None:
+        """A run that did not see a pass start cannot read its empty end as an empty stream."""
+        stream = RecordStream({"x": np.arange(8, dtype=np.float32)})
+        assert stream.get_batch(8).batch_size == 8  # the pass's records, not yet its end
+
+        run = stream_batches(stream.get_batch, 4, drop_last=False, num_epochs=num_epochs)
+        served = _served(list(itertools.islice(run, 2)))
+
+        # The pass whose end the run starts at counts as served, as an exhausted epoch does.
+        expected = [] if num_epochs == 1 else [([0, 1, 2, 3], [1] * 4), ([4, 5, 6, 7], [1] * 4)]
+        assert served == expected
+
+
+type _Loops = list[list[tuple[list[int], list[int]]]]
+
+
+def _epoch_loops(pipeline: Pipeline, loops: int, steps: int) -> _Loops:
+    """``for step, batch in zip(range(steps), pipeline)`` run ``loops`` times, each loop's batches.
+
+    ``zip`` stops on ``range`` without advancing the pipeline again, so a loop taking exactly an
+    epoch's batches leaves the source at the epoch's end, unseen.
+    """
+    return [_served([batch for _, batch in zip(range(steps), pipeline)]) for _ in range(loops)]
+
+
+def _plan_loops(plan: EpochPlan, loops: int, steps: int) -> _Loops:
+    """What :func:`_epoch_loops` serves from a source in its own order, by ``plan``'s rule.
+
+    Each loop is a session from where the last stopped: :meth:`EpochPlan.run_extent` bounds it,
+    :meth:`EpochPlan.batch_start` and :meth:`EpochPlan.advance` place each batch.
+    """
+    length = plan.length
+    if length is None:
+        raise ValueError("the table is of a source with a length")
+    position = epoch = 0
+    table = []
+    for _ in range(loops):
+        extent = plan.run_extent(position)
+        batches, final = (steps, plan.batch_size) if extent is None else extent
+        served = []
+        for step in range(min(steps, batches)):
+            size = final if step == batches - 1 else plan.batch_size
+            start, epoch = plan.batch_start(position, epoch)
+            records = range(start, start + size)
+            served.append(([r % length for r in records], [epoch + r // length for r in records]))
+            position, epoch = plan.advance(start, epoch, size)
+        table.append(served)
+    return table
+
+
+class TestEpochLoopsOverAStream:
+    """An epoch loop of ``N // B`` steps over a fresh iterator each epoch (F1, T5, W2b-72)."""
+
+    _LOOPS = 4
+    _BATCH = 4
+
+    @pytest.mark.parametrize("records", [8, 10])
+    @pytest.mark.parametrize("drop_last", [False, True])
+    @pytest.mark.parametrize("num_epochs", [None, 3])
+    def test_every_loop_serves_what_an_indexed_source_serves_and_the_plan_states(
+        self, records: int, drop_last: bool, num_epochs: int | None
+    ) -> None:
+        settings = {"drop_last": drop_last, "num_epochs": num_epochs, "batch_size": self._BATCH}
+        steps = records // self._BATCH
+        streamed = _epoch_loops(
+            _pipeline(RecordStream(_columns(records)), **settings), self._LOOPS, steps
+        )
+        indexed = _epoch_loops(
+            _pipeline(MemorySource(MemorySourceConfig(), _columns(records)), **settings),
+            self._LOOPS,
+            steps,
+        )
+        plan = EpochPlan(
+            length=records, batch_size=self._BATCH, drop_last=drop_last, num_epochs=num_epochs
+        )
+
+        assert streamed == indexed
+        assert streamed == _plan_loops(plan, self._LOOPS, steps)
+        assert all(len(loop) == steps for loop in streamed)
 
 
 # ---------------------------------------------------------------------------
