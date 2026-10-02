@@ -1,4 +1,4 @@
-"""Five Hub datasets across modalities load through ``HFStreamingSource`` with the fields we expect.
+"""Five Hub datasets across modalities load through ``HFStreamingSource`` with their fields.
 
 An integration test (``--integration``): it streams the first records of each dataset as one
 batch, so it downloads no split. It is skipped only when the Hub cannot be reached or refuses for

@@ -46,8 +46,14 @@ HIGHER_IS_BETTER = ("displacement", "first_shards")
 
 
 def buffer_sizes(records: int) -> tuple[int, ...]:
-    """The buffer sizes measured: a hundredth, a tenth and all of the records."""
-    return (records // 100, records // 10, records)
+    """The buffer sizes measured: a hundredth and a tenth of the records.
+
+    A buffer of every record is not measured: there both reads serve a uniform permutation of the
+    pass, so the two orders are draws of one distribution and the criterion could only fire by
+    chance (it did once, at 10,000 records and 20 shards, on a low draw of tf.data's first ten
+    seeds). Below that the order's mixing is what its design gives, and that is what is compared.
+    """
+    return (records // 100, records // 10)
 
 
 def tv_sorted(order: np.ndarray, records: int) -> float:

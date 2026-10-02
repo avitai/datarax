@@ -1,12 +1,14 @@
 """T15: the TFDS stream's order mixes at least as well as tf.data's training read (C5b).
 
 The reference is recorded by :mod:`tests.test_common.stream_mixing` in a TensorFlow process of its
-own: TFDS's documented training read (``shuffle_files=True`` with ``ReadConfig(shuffle_seed)``,
-then ``shuffle(W)``) over datasets of 1, 4 and 20 TFRecord shards, two passes, three buffer sizes,
-ten seeds. The stream reads the same files with the pipeline's key of each seed, and no measure
-(per-batch label TV on a class-sorted layout, batch-mates recurring across passes, displacement,
-shards among the first records) may be worse than the reference's beyond the seed spread. A
-failure stops the step for the order to be revisited; the margin is never widened.
+own: TFDS's documented training read (``shuffle_files=True`` with ``ReadConfig(shuffle_seed)``, then
+``shuffle(W)``) over datasets of 1, 4 and 20 TFRecord shards, two passes, buffers of a hundredth and
+a tenth of the records, ten seeds. The stream reads the same files with the pipeline's key of each
+seed, and no measure (per-batch label TV on a class-sorted layout, batch-mates recurring across
+passes, displacement, shards among the first records) may be worse than the reference's beyond the
+seed spread. A failure stops the step for the order to be revisited; the margin is never widened. A
+buffer of every record is not compared (see :func:`~tests.test_common.stream_mixing.buffer_sizes`);
+over twenty salted sets of ten seeds the criterion held in every cell compared.
 """
 
 from __future__ import annotations
