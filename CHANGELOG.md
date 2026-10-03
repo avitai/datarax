@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Pipeline.raw_batches(chunk=None, *, max_chunk_bytes=None, with_provenance=False)`: unprocessed
   batches read by the host stage (`datarax.pipeline.host_stage`) and placed on the default device,
-  uncommitted, two deep ahead of the consumer: the form whose DAG (`pipe.dag`) runs inside the
+  uncommitted, as each is taken (reads run ahead): the form whose DAG (`pipe.dag`) runs inside the
   caller's differentiated step. An indexed source's batches are named on the CPU device and read
   with its stateless host read (`datarax.core.data_source.IndexedHostRead`) by Grain threads; a
   TFDS stream reads its run through one sliceable Grain dataset; any other stream is read pass by

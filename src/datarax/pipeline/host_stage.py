@@ -14,12 +14,12 @@ Every source kind reads through one stage, which does nothing but read:
 - Any other stream (HuggingFace) is read pass by pass on one producer thread, at a position of the
   host stage's own, its batches cut by :func:`~datarax.pipeline.epochs.stream_batches`.
 
-A batch's provenance comes beside it when asked. Batches are placed on the default device ahead of
-the consumer and left uncommitted, so a jitted step taking them compiles once; nothing else
-transfers. Where iteration stands (:class:`Cursor`) advances when the consumer takes a batch,
-never when a worker reads one, so the cursor names exactly the batches served whatever the
-workers have read ahead. One Grain iterator serves a run across calls; it is closed at the run's
-end, by ``close()``, and when collected.
+A batch's provenance comes beside it when asked. Units are read ahead of the consumer and each is
+placed on the default device as it is taken, uncommitted, so a jitted step taking them compiles
+once; nothing else transfers. Where iteration stands (:class:`Cursor`) advances when the consumer
+takes a batch, never when a worker reads one, so the cursor names exactly the batches served
+whatever the workers have read ahead. One Grain iterator serves a run across calls; it is closed
+at the run's end, by ``close()``, and when collected.
 """
 
 from __future__ import annotations
@@ -57,9 +57,10 @@ _READ_THREADS = 1
 records a second); a decode-bound read gains little from a second thread (the GIL), and Grain
 processes are the remedy there."""
 _READ_BUFFER = 2
-"""Units read ahead of placement."""
-_DEVICE_BUFFER = 2
-"""Units placed ahead of the consumer."""
+"""Units read ahead of the consumer. Each is placed when the consumer takes it: ``device_put`` is
+asynchronous on an accelerator, so the transfer still overlaps the step before. A placement thread
+running ahead holds more copies: on the P3 shape (CV-1, B=64, CPU device) peak host RSS measures
+68-101 MB with one and about 22 MB without, against the 75 MiB bound."""
 
 
 @dataclasses.dataclass(slots=True)
@@ -469,11 +470,8 @@ class HostStage:
         self._opened_for, self._finalizer = None, None
 
     def _open(self, dataset: grain.IterDataset, options: tuple[Any, ...]) -> _Placed:
-        """Start the run's iterator: units read ahead, placed two deep ahead of the consumer."""
-        placed = grain.experimental.ThreadPrefetchIterDataset(
-            dataset.map(_place), prefetch_buffer_size=_DEVICE_BUFFER
-        )
-        iterator: _Placed = iter(placed)
+        """Start the run's iterator: units read ahead, each placed as the consumer takes it."""
+        iterator: _Placed = iter(dataset.map(_place))
         self._run_iterator.append(iterator)
         self._opened_for = options
         self._finalizer = weakref.finalize(self, _close_run, self._run_iterator)

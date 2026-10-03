@@ -499,8 +499,8 @@ class Pipeline(nnx.Module):
         The DAG is not applied: pass :attr:`dag` into your differentiated train step and call it
         on each batch, so its operators' parameters train with the model. Records are served in
         the pipeline's order and epoch rule, named on the CPU device, read on the host by Grain
-        threads ahead of the consumer and placed on the default device, uncommitted, two deep
-        ahead; nothing else of the source reaches the device. Iteration stands where the last
+        threads ahead of the consumer and placed on the default device as each is taken,
+        uncommitted; nothing else of the source reaches the device. Iteration stands where the last
         batch taken ended, so a later call continues the run with the same Grain iterator; the
         run ends after ``num_epochs`` epochs.
 

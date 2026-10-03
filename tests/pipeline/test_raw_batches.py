@@ -1,12 +1,12 @@
 """``pipe.raw_batches()``: host-read batches placed on the device, read ahead by Grain threads.
 
 The host stage names each batch's records on the CPU device, reads them with the source's
-stateless host read and places the batch two deep ahead of the consumer, uncommitted. Nothing of
-the source moves to the device but the batches, every transfer is explicit, and where iteration
-stands advances as the consumer takes batches. The DAG is not applied: ``pipe.dag`` runs inside
-the caller's differentiated step (OWN-0926-E2E). Chunks of ``K`` batches are one host read and one
-transfer, ``(K, B, ...)``. With ``with_provenance=True`` each batch comes with its records'
-provenance. One Grain iterator serves a run across calls and leaves no thread behind.
+stateless host read ahead of the consumer and places each batch as it is taken, uncommitted.
+Nothing of the source moves to the device but the batches, every transfer is explicit, and where
+iteration stands advances as the consumer takes batches. The DAG is not applied: ``pipe.dag`` runs
+inside the caller's differentiated step (OWN-0926-E2E). Chunks of ``K`` batches are one host read
+and one transfer, ``(K, B, ...)``. With ``with_provenance=True`` each batch comes with its
+records' provenance. One Grain iterator serves a run across calls and leaves no thread behind.
 """
 
 from __future__ import annotations
@@ -292,6 +292,31 @@ class TestPlacement:
         with jax.transfer_guard("disallow"):
             served = list(pipe.raw_batches())
         assert served
+
+    def test_a_batch_is_placed_when_it_is_taken_never_ahead(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Reads run ahead on a thread; placement waits for the consumer (P3's peak RSS bound).
+
+        A placement thread running ahead holds more device copies and, measured on the P3 shape,
+        raises peak RSS past the 75 MiB bound (``evidence/w2b/c5a4/impl/p3_rss``); an
+        accelerator's ``device_put`` is asynchronous, so a batch placed when taken still transfers
+        while the previous step computes.
+        """
+        placed: list[int] = []
+        original_put = jax.device_put
+
+        def watched(value: Any, *args: Any, **kwargs: Any) -> Any:
+            if isinstance(value, Batch):
+                placed.append(1)
+            return original_put(value, *args, **kwargs)
+
+        monkeypatch.setattr(jax, "device_put", watched)
+        batches = iter(_pipeline(_memory(), num_epochs=None).raw_batches())
+        for taken in range(1, 4):
+            next(batches)
+            threading.Event().wait(0.3)  # time for any thread to run ahead
+            assert len(placed) == taken
 
     def test_batches_are_uncommitted_so_a_jitted_step_compiles_once(self) -> None:
         step = jax.jit(lambda x, image: x + jnp.sum(image.astype(jnp.float32)))
