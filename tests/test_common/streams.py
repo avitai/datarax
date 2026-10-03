@@ -30,6 +30,10 @@ from datarax.sources._source_base import chunk_size, pass_generator
 from datarax.sources.eager_source import HostValue
 
 
+# The provenance of a record without text: read-only, so every such record shares it.
+_NO_TEXT: Mapping[str, Any] = MappingProxyType({})
+
+
 @dataclass(frozen=True)
 class RecordStreamConfig(StructuralConfig):
     """No settings: the records and the kind are constructor arguments."""
@@ -93,11 +97,11 @@ class RecordStream(StreamingSourceBase):
             order = pass_generator(key, pass_index).permutation(self._size)
         for start in range(0, self._size, chunk):
             rows = order[start : start + chunk]
-            provenance: tuple[Mapping[str, Any], ...] = tuple(
-                MappingProxyType(
-                    {} if self._texts.value is None else {"text": self._texts.value[r]}
-                )
-                for r in rows
+            texts = self._texts.value
+            provenance: tuple[Mapping[str, Any], ...] = (
+                (_NO_TEXT,) * len(rows)
+                if texts is None
+                else tuple(MappingProxyType({"text": texts[r]}) for r in rows)
             )
             yield StreamChunk(
                 {name: column[rows] for name, column in self._columns.items()},

@@ -72,6 +72,17 @@ class TestConstruction:
 
         assert batch.states is states and batch.batch_state is batch_state
 
+    def test_from_arrays_takes_the_names_and_epochs_it_is_given(self) -> None:
+        indices = np.stack([np.zeros(3, np.uint32), np.arange(7, 10, dtype=np.uint32)], 1)
+        epochs = np.full(3, 2, np.int32)
+
+        batch = batch_ops.from_arrays(
+            {"x": np.ones((3,), np.float32)}, indices=indices, epochs=epochs
+        )
+
+        assert batch.indices is indices and batch.epochs is epochs
+        np.testing.assert_array_equal(batch.draws, np.zeros(3, np.int32))
+
     def test_from_arrays_stays_on_the_host_for_numpy_data(self) -> None:
         with jax.transfer_guard("disallow"):
             batch = batch_ops.from_arrays({"x": np.ones((4, 2), np.float32)})
