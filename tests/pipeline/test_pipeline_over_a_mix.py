@@ -124,7 +124,22 @@ class TestThePipelineOwnsTheOrder:
             np.testing.assert_array_equal(local, np.arange(len(local)))
 
     def test_with_a_shuffle_epochs_differ_and_reach_other_child_records(self) -> None:
-        indices, epochs, _ = _served(_pipeline("two", shuffle=True, drop_last=True))
+        """An epoch takes 10 of the larger child's 1000 records: two epochs drawing the same 10
+        has probability 1 / C(1000, 10), below 1e-23, for any key."""
+        children = [
+            MemorySource(MemorySourceConfig(), {"x": np.arange(n, dtype=np.float32)})
+            for n in (1000, 10)
+        ]
+        pipe = Pipeline(
+            source=MixDataSourcesNode(MixDataSourcesConfig(weights=(0.5, 0.5)), children),
+            stages=[],
+            batch_size=5,
+            num_epochs=2,
+            drop_last=True,
+            rngs=nnx.Rngs(0),
+            shuffle=True,
+        )
+        indices, epochs, _ = _served(pipe)
         served = _by_epoch(indices, epochs)
         assert not np.array_equal(served[0], served[1])
         assert set(served[0].tolist()) != set(served[1].tolist())

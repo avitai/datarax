@@ -324,11 +324,18 @@ class TestTheKeySelectsTheOrder:
     def test_a_pipeline_over_a_mix_serves_a_fixed_order_iff_it_does_not_shuffle(
         self, shuffle: bool
     ) -> None:
-        """Unshuffled, a mix is one interleave every epoch; shuffled, epochs draw other records."""
+        """Unshuffled, a mix is one interleave every epoch; shuffled, epochs draw other records.
+
+        An epoch takes 10 of the larger child's 1000 records, so two shuffled epochs drawing the
+        same records has probability 1 / C(1000, 10), below 1e-23, for any key.
+        """
+        mix = MixDataSourcesNode(
+            MixDataSourcesConfig(weights=(0.5, 0.5)), [_memory(1000), _memory(10)]
+        )
         pipe = Pipeline(
-            source=_mixed(),
+            source=mix,
             stages=[],
-            batch_size=6,
+            batch_size=5,
             num_epochs=2,
             drop_last=True,
             rngs=nnx.Rngs(0),

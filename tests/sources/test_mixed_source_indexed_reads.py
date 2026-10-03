@@ -46,14 +46,19 @@ def _owned(mix: MixDataSourcesNode, names: jax.Array) -> tuple[np.ndarray, np.nd
     return owners, indices - offsets[owners]
 
 
-_KEYS = {"ordered": None, "keyed": jax.random.key(7)}
+_ORDERS = ("keyed", "ordered")
+
+
+def _key(order: str) -> jax.Array | None:
+    """The key a pipeline passes for ``order``: built when a test asks, never at import."""
+    return jax.random.key(7) if order == "keyed" else None
 
 
 class TestTheNames:
-    @pytest.mark.parametrize("order", sorted(_KEYS))
+    @pytest.mark.parametrize("order", _ORDERS)
     def test_the_records_named_are_the_records_gathered(self, order: str) -> None:
         mix = _mix()
-        names = mix.record_indices_at(3, 12, _KEYS[order])
+        names = mix.record_indices_at(3, 12, _key(order))
         owners, local = _owned(mix, names)
         served = np.asarray(mix.get_records(names)["x"])
         expected = np.asarray(_BASES, np.float32)[owners] + local.astype(np.float32)
@@ -76,9 +81,9 @@ class TestTheNames:
             own = from_words(source.record_indices_at(0, len(mine), jax.random.fold_in(key, child)))
             np.testing.assert_array_equal(mine, own.astype(np.int64))
 
-    @pytest.mark.parametrize("order", sorted(_KEYS))
+    @pytest.mark.parametrize("order", _ORDERS)
     def test_an_epoch_names_each_record_at_most_once(self, order: str) -> None:
-        names = from_words(_mix().record_indices_at(0, len(_mix()), _KEYS[order]))
+        names = from_words(_mix().record_indices_at(0, len(_mix()), _key(order)))
         assert len(np.unique(names)) == len(names)
 
     def test_two_keys_name_different_orders(self) -> None:
@@ -87,19 +92,19 @@ class TestTheNames:
         second = mix.record_indices_at(0, len(mix), jax.random.key(1))
         assert not np.array_equal(first, second)
 
-    @pytest.mark.parametrize("order", sorted(_KEYS))
+    @pytest.mark.parametrize("order", _ORDERS)
     def test_rows_past_the_epoch_name_records_of_the_mix(self, order: str) -> None:
         """A crossing batch's rows past the end are discarded by the pipeline, yet stay valid."""
         mix = _mix()
-        names = from_words(mix.record_indices_at(len(mix) - 3, 9, _KEYS[order]))
+        names = from_words(mix.record_indices_at(len(mix) - 3, 9, _key(order)))
         assert (names < sum(_LENGTHS)).all()
         np.asarray(mix.get_records(jnp.asarray(to_words(names)))["x"])
 
-    @pytest.mark.parametrize("order", sorted(_KEYS))
+    @pytest.mark.parametrize("order", _ORDERS)
     @pytest.mark.parametrize("cut", [1, 5, 11])
     def test_a_split_range_names_what_the_whole_range_names(self, order: str, cut: int) -> None:
         """A pure function of (key, start, size): how a range is split never changes its names."""
-        mix, key = _mix(), _KEYS[order]
+        mix, key = _mix(), _key(order)
         whole = mix.record_indices_at(2, 16, key)
         parts = np.concatenate(
             [mix.record_indices_at(2, cut, key), mix.record_indices_at(2 + cut, 16 - cut, key)]
@@ -115,7 +120,7 @@ def _names(order: str) -> Callable[..., jax.Array]:
 
 
 class TestTransforms:
-    @pytest.mark.parametrize("order", sorted(_KEYS))
+    @pytest.mark.parametrize("order", _ORDERS)
     def test_one_compile_per_layout_serves_every_start(self, order: str) -> None:
         mix, names = _mix(), _names(order)
         starts = (0, 5, 17, 40)
@@ -142,9 +147,9 @@ class TestTransforms:
         for row, start, key in zip(batched, starts, keys, strict=True):
             np.testing.assert_array_equal(row, mix.record_indices_at(int(start), 6, key))
 
-    @pytest.mark.parametrize("order", sorted(_KEYS))
+    @pytest.mark.parametrize("order", _ORDERS)
     def test_scan_over_starts_equals_the_loop(self, order: str) -> None:
-        mix, key = _mix(), _KEYS[order]
+        mix, key = _mix(), _key(order)
         starts = jnp.arange(0, 30, 6, dtype=jnp.int32)
 
         @jax.jit
