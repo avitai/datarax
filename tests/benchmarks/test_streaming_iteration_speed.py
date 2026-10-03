@@ -3,11 +3,9 @@
 Flax's performance guide names the Python graph traversal inside ``nnx.jit`` as
 its per-call overhead and recommends splitting the module once and driving a
 plain ``jax.jit`` step. Streaming iteration follows that pattern for the stage
-DAG: the host stage reads each batch on its producer thread (a pull and a check of
-shapes and dtypes), places it as it is taken, and the DAG runs in one compiled
-dispatch. The guard compares a streaming pass with the same host-stage batches
-(``raw_batches()``) put through ``nnx.jit`` on every batch, the pattern the guide
-describes as slow, so both sides pay the host stage and differ by the traversal.
+DAG, so a batch costs a host pull, a check of shapes and dtypes, and one compiled
+dispatch. The guard compares a streaming pass with applying the same DAG through
+``nnx.jit`` on every batch the stream serves, the pattern the guide describes as slow.
 """
 
 from __future__ import annotations
@@ -31,13 +29,12 @@ from tests.test_common.streams import RecordStream
 _BATCHES = 200
 _BATCH_SIZE = 64
 _FEATURES = 32
-# Streaming must cost at most this fraction of per-batch nnx.jit over the same host-stage
-# batches. Both sides include the host stage's per-batch thread hand-off and placement, so the
-# statistic is higher than when the guard compared against pulls made in the consumer thread
-# (0.29 there, 2026-10-02). Measured 2026-10-03 on an Intel i7-13700 (CPU backend), median of 10
-# runs of this test's statistic: 0.57 (0.50 to 0.68) on 24 threads and 0.53 (0.51 to 0.56)
-# pinned to 4; with the graph traversed per batch the statistic is 1 by construction.
-_MAX_RATIO = 0.8
+# Streaming must cost at most this fraction of per-batch nnx.jit over the same pulls. Measured
+# 2026-10-02 on an Intel i7-13700 (CPU backend), median of 10 runs of this test's statistic:
+# 0.29 (0.28 to 0.30) on 24 threads and 0.32 (0.31 to 0.32) pinned to 4; with the graph
+# traversed per batch, 1.06 (1.04 to 1.07). GitHub's 4-vCPU runner read 0.54 where this
+# machine read 0.44 on 4 threads.
+_MAX_RATIO = 0.5
 
 
 class _Noise(nnx.Module):
@@ -77,13 +74,16 @@ def _stream_pass() -> None:
 
 
 def _nnx_jit_pass() -> None:
-    pipeline = _pipeline()
-    outputs = [_apply_per_batch(pipeline.dag, batch) for batch in pipeline.raw_batches()]
+    source = _stream()
+    pipeline = Pipeline(source=source, stages=[_Noise()], batch_size=_BATCH_SIZE, rngs=nnx.Rngs(0))
+    outputs = []
+    while (batch := source.get_batch(_BATCH_SIZE)).batch_size:
+        outputs.append(_apply_per_batch(pipeline.dag, batch))
     jax.block_until_ready(outputs)
 
 
 @pytest.mark.benchmark
-def test_streaming_costs_less_than_applying_the_dag_through_nnx_jit_per_batch() -> None:
+def test_streaming_costs_at_most_half_of_applying_the_dag_through_nnx_jit_per_batch() -> None:
     """Paired interleaved rounds; the median ratio is the guard."""
     _stream_pass()
     _nnx_jit_pass()
