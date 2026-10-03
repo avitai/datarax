@@ -42,22 +42,11 @@ By the end of this guide, you will be able to:
 ## Setup
 
 ```bash
-uv pip install "datarax[tfds]" matplotlib
+uv pip install datarax matplotlib
 ```
 """
 
 # %%
-# GPU Memory Configuration
-import os
-
-
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-
-import tensorflow as tf
-
-
-tf.config.set_visible_devices([], "GPU")
-
 # Core imports
 import time
 
