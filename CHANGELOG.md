@@ -137,7 +137,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `MixDataSourcesNode` refuses, at construction, a source that is not `INDEXED`, one worker's
   shard of a `MemorySource` (`num_workers > 1`), a source with no records, a source whose
   `element_spec()` is not implemented, an index space reaching the padding index, an epoch past
-  `sys.maxsize` and weights whose Grain proportions sum past `2**32 - 1`.
+  `sys.maxsize` and weights whose Grain proportions sum past `2**32 - 1`. A source without a host
+  read, `get_batch(indices, *, epochs, contiguous)`, is refused too.
   `MixDataSourcesConfig` refuses a zero weight.
 - **Streams name their own records, take the pipeline's key and honour the epoch rule.** The
   pipeline keeps no counter for a stream: it passes its key to the stream's `get_batch` when it

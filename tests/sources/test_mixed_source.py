@@ -29,7 +29,7 @@ from datarax.core.prng import per_record_keys
 from datarax.pipeline import Pipeline
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
-from tests.test_common.mixing import grain_mix, grain_mix_indices, offsets_of, Sized
+from tests.test_common.mixing import grain_mix, grain_mix_indices, offsets_of, Sized, SizedConfig
 from tests.test_common.streams import non_array_state_leaves, RecordStream
 
 
@@ -98,6 +98,21 @@ class TestTheChildren:
     def test_a_child_without_records_is_refused(self) -> None:
         with pytest.raises(ValueError, match="child 1.*no records"):
             _mix([_memory(np.arange(4)), _memory(np.arange(0))], (0.5, 0.5))
+
+    def test_a_child_without_a_host_read_is_refused(self) -> None:
+        class NoHostRead(DataSourceModule):
+            def __init__(self) -> None:
+                super().__init__(SizedConfig())
+
+            @property
+            def record_identity(self) -> RecordIdentity:
+                return RecordIdentity.INDEXED
+
+            def __len__(self) -> int:
+                return 4
+
+        with pytest.raises(TypeError, match=r"child 1 \(NoHostRead\).*get_batch"):
+            _mix([Sized(4), NoHostRead()], (0.5, 0.5))
 
     def test_a_child_whose_spec_cannot_be_read_is_refused_naming_it(self) -> None:
         class Unspecified(Sized):

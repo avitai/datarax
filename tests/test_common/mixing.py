@@ -17,8 +17,11 @@ import grain
 import jax
 import numpy as np
 
+from datarax.core import batch_ops
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule, RecordIdentity
+from datarax.core.data_source import DataSourceModule, record_words, RecordIdentity
+from datarax.core.element_batch import Batch
+from datarax.core.index_words import from_words
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
 
@@ -56,7 +59,8 @@ class Sized(DataSourceModule):
     """An indexed source with a length, a one-float record spec and the default naming.
 
     It names position ``p`` of an unshuffled pass ``p`` itself, so a mix over such children
-    names, without a key, exactly the indices :func:`grain_mix_indices` gives.
+    names, without a key, exactly the indices :func:`grain_mix_indices` gives. Its host read
+    serves each record's index as its value, so any length costs no memory.
     """
 
     def __init__(self, length: int) -> None:
@@ -74,6 +78,14 @@ class Sized(DataSourceModule):
     def element_spec(self) -> Any:
         """One float32 scalar per record."""
         return {"x": jax.ShapeDtypeStruct((), jax.numpy.float32)}
+
+    def get_batch(self, indices: Any, *, epochs: Any = 0, contiguous: bool = False) -> Batch:
+        """The records ``indices`` names, each record's value its index."""
+        del contiguous
+        words = record_words(indices)
+        values = from_words(words).astype(np.float32)
+        epoch_of_each = np.broadcast_to(np.asarray(epochs, np.int32), (len(values),)).copy()
+        return batch_ops.from_arrays({"x": values}).replace(indices=words, epochs=epoch_of_each)
 
 
 _SHAPES = {"image": (4, 4, 3), "text": (6,)}

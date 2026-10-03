@@ -21,7 +21,7 @@ from flax import nnx
 
 from datarax.core import batch_ops
 from datarax.core.element_batch import Batch
-from datarax.core.index_words import from_words, to_words
+from datarax.core.index_words import to_words
 from datarax.core.spec import array_to_spec_strip_leading, device_spec
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
@@ -108,19 +108,8 @@ class TestTheHostRead:
             _pair().get_batch(_words([2, 4]), contiguous=True)
 
     def test_indices_past_two_to_the_32_are_read_from_their_child(self) -> None:
-        class HostSized(Sized):
-            def get_batch(
-                self, indices: Any, *, epochs: Any = 0, contiguous: bool = False
-            ) -> Batch:
-                del contiguous
-                values = from_words(indices).astype(np.float32)
-                return batch_ops.from_arrays({"x": values}).replace(
-                    indices=np.asarray(indices),
-                    epochs=np.broadcast_to(np.asarray(epochs, np.int32), len(values)).copy(),
-                )
-
         big = (1 << 32) + 5
-        mix = _mix([HostSized(big), _memory({"x": 7 + np.arange(3, dtype=np.float32)})])
+        mix = _mix([Sized(big), _memory({"x": 7 + np.arange(3, dtype=np.float32)})])
         words = _words([big + 2, 1 << 32, big])
         batch = mix.get_batch(words)
         np.testing.assert_array_equal(batch["x"], [9.0, float(1 << 32), 7.0])
@@ -157,6 +146,17 @@ class TestTheHostRead:
         kept = child.get_batch(_words([3, 0]))
         assert len(jax.live_arrays()) > before
         del batch, kept
+
+    def test_the_read_builds_no_spec(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The union's fields come from the children's reads, not a per-call spec rebuild."""
+        mix = _pair()
+
+        def refused(_: Any) -> None:
+            raise AssertionError("element_spec rebuilt by the host read")
+
+        monkeypatch.setattr(MixDataSourcesNode, "element_spec", refused)
+        batch = mix.get_batch(_words([12, 3]))
+        np.testing.assert_array_equal(batch["x"], [103.0, 3.0])
 
     def test_equal_calls_read_equal_batches_and_change_nothing(self) -> None:
         mix = _pair()

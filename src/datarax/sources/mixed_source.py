@@ -244,7 +244,8 @@ def _refuse_unmixable(position: int, source: DataSourceModule) -> None:
         source: The child.
 
     Raises:
-        TypeError: If the child is not ``INDEXED``: a stream has no stable positions to mix.
+        TypeError: If the child is not ``INDEXED`` (a stream has no stable positions to mix) or
+            has no host read.
         ValueError: If the child is one worker's shard of a ``MemorySource``, whose indices name
             positions of the whole data.
     """
@@ -253,6 +254,11 @@ def _refuse_unmixable(position: int, source: DataSourceModule) -> None:
         raise TypeError(
             f"child {position} ({type(source).__name__}) names its records as {kind.name}; a mix "
             "names each record by its stable position in its source, so every child is INDEXED"
+        )
+    if not callable(getattr(source, "get_batch", None)):
+        raise TypeError(
+            f"child {position} ({type(source).__name__}) has no host read, "
+            "get_batch(indices, *, epochs, contiguous), which a mix reads its records with"
         )
     if isinstance(source, MemorySource) and source.config.num_workers > 1:
         raise ValueError(
@@ -390,9 +396,39 @@ def union_spec(specs: Sequence[Any]) -> Any:  # noqa: DOC502 - the checks it cal
     )
 
 
+type _ReadField = tuple[tuple[int, ...], bool]
+"""A union field as the children's reads give it: one record's shape, and whether it can be
+missing (some child lacks it or holds it as a ``Maybe``)."""
+
+
+def _read_union(reads: Sequence[Mapping[_Path, Any]]) -> dict[_Path, _ReadField]:
+    """The union's fields from the children's reads (each child read once, empty or not).
+
+    The construction checked the children's specs against each other (:func:`union_spec`), so
+    the reads agree on each field's record shape; this reads the union off them instead of
+    rebuilding every child's spec per batch.
+
+    Args:
+        reads: Each child's rows by field path.
+
+    Returns:
+        Each field's record shape and whether it can be missing.
+    """
+    union: dict[_Path, _ReadField] = {}
+    for held in reads:
+        for path, field in held.items():
+            shape = tuple(np.shape(_value_part(field))[1:])
+            optional = isinstance(field, Maybe) or union.get(path, (shape, False))[1]
+            union[path] = (shape, optional)
+    return {
+        path: (shape, optional or any(path not in held for held in reads))
+        for path, (shape, optional) in union.items()
+    }
+
+
 def _union_rows(
     held: Mapping[_Path, Any],
-    union: Mapping[_Path, Any],
+    union: Mapping[_Path, _ReadField],
     dtypes: Mapping[_Path, np.dtype],
     size: int,
 ) -> dict[str, Any]:
@@ -400,7 +436,7 @@ def _union_rows(
 
     Args:
         held: The child's rows by field path, as its ``get_batch`` returns them.
-        union: The union's fields by path.
+        union: The union's fields by path (:func:`_read_union`).
         dtypes: Each field's host dtype, joined over the children.
         size: The rows read.
 
@@ -408,14 +444,13 @@ def _union_rows(
         The rows as a nested dictionary of the union's fields.
     """
     rows: dict[_Path, Any] = {}
-    for path, spec in union.items():
+    for path, (shape, optional) in union.items():
         dtype = dtypes[path]
         field = held.get(path)
-        if not isinstance(spec, Maybe):
+        if not optional:
             rows[path] = np.asarray(field).astype(dtype, copy=False)
         elif field is None:
-            shape = (size, *spec.value.shape)
-            rows[path] = Maybe(np.zeros(shape, dtype), np.zeros(size, np.bool_))
+            rows[path] = Maybe(np.zeros((size, *shape), dtype), np.zeros(size, np.bool_))
         elif isinstance(field, Maybe):
             rows[path] = Maybe(np.asarray(field.value).astype(dtype, copy=False), field.present)
         else:
@@ -424,7 +459,7 @@ def _union_rows(
 
 
 def _host_dtypes(
-    reads: Sequence[Mapping[_Path, Any]], union: Mapping[_Path, Any]
+    reads: Sequence[Mapping[_Path, Any]], union: Mapping[_Path, _ReadField]
 ) -> dict[_Path, np.dtype]:
     """Each union field's host dtype: NumPy's promotion of the dtypes the children store.
 
@@ -443,9 +478,7 @@ def _host_dtypes(
     }
 
 
-def _joined(
-    reads: Sequence[tuple[np.ndarray, Mapping[_Path, Any]]], union: Mapping[_Path, Any]
-) -> Batch:
+def _joined(reads: Sequence[tuple[np.ndarray, Mapping[_Path, Any]]]) -> Batch:
     """Join the children's rows in the union's fields, in the order they were named.
 
     Every field is held at its children's joined host dtype (NumPy's promotion of the dtypes
@@ -454,11 +487,11 @@ def _joined(
 
     Args:
         reads: Per child, the positions of its rows in the read and its fields by path.
-        union: The union's fields by path.
 
     Returns:
         The rows as a host ``Batch`` named by position.
     """
+    union = _read_union([held for _, held in reads])
     dtypes = _host_dtypes([held for _, held in reads], union)
     parts = [
         (rows, batch_ops.from_arrays(_union_rows(held, union, dtypes, len(rows))))
@@ -769,7 +802,7 @@ class MixDataSourcesNode(DataSourceModule):
             (rows, _fields_of(read.data))
             for rows, read in self._read_children(owners, local, epoch_of_each, contiguous)
         ]
-        joined = _joined(reads, _fields_of(self.element_spec()))
+        joined = _joined(reads)
         return joined.replace(
             indices=words, epochs=epoch_of_each, draws=np.zeros(len(words), np.int32)
         )
