@@ -66,11 +66,6 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-def _configure_protobuf_runtime() -> None:
-    """Configure protobuf runtime before importing TensorFlow ecosystem modules."""
-    os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
-
-
 def _prepared_builder(  # noqa: DOC503 - the exception raised is the one ``refuse`` builds
     name: str, data_dir: str | None, file_format: str, refuse: Callable[[str], Exception]
 ) -> Any:
@@ -88,7 +83,6 @@ def _prepared_builder(  # noqa: DOC503 - the exception raised is the one ``refus
     Raises:
         Exception: What ``refuse`` builds, if the copy is not prepared in ``file_format``.
     """
-    _configure_protobuf_runtime()
     import tensorflow_datasets as tfds
 
     try:
@@ -117,7 +111,6 @@ def tfrecord_only(name: str, data_dir: str | None) -> bool:
     Returns:
         Whether the prepared copy is TFRecord only.
     """
-    _configure_protobuf_runtime()
     import tensorflow_datasets as tfds
 
     try:

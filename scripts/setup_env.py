@@ -20,7 +20,6 @@ MANAGED_ENV_VARS = (
     "TF_CPP_MIN_LOG_LEVEL",
     "XLA_CLIENT_MEM_FRACTION",
     "XLA_PYTHON_CLIENT_PREALLOCATE",
-    "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION",
 )
 
 
@@ -69,7 +68,6 @@ def build_env_contents(project_root: Path, backend: str) -> str:
         "TF_CPP_MIN_LOG_LEVEL": "1",
         "XLA_CLIENT_MEM_FRACTION": "0.75",
         "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
-        "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION": "python",
     }
 
     lines = [

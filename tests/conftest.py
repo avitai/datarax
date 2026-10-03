@@ -31,7 +31,6 @@ IS_LINUX = platform.system() == "Linux"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress all TF logs
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"  # Disable oneDNN (can cause hangs)
-os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"  # Pure Python protobuf
 
 if IS_MACOS:
     # macOS-specific settings to prevent TensorFlow import hang on ARM64
