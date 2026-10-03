@@ -21,7 +21,7 @@ import pytest
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.index_shuffle import shuffle_positions_host
-from datarax.core.index_words import from_words, MAX_RECORDS
+from datarax.core.index_words import from_words, MAX_RECORDS, to_words
 from datarax.pipeline.epochs import EpochPlan
 from datarax.sources.eager_source import EagerSource
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
@@ -116,7 +116,7 @@ class TestEverySource:
     @pytest.mark.parametrize("name", _NAMES)
     @pytest.mark.parametrize("start", [3, jnp.int32(3)], ids=["int", "traced"])
     def test_record_indices_are_uint32_words(
-        self, tmp_path: Path, name: str, start: object
+        self, tmp_path: Path, name: str, start: int | jax.Array
     ) -> None:
         source = _sources(tmp_path)[name]
         # A source without a length has no order to shuffle, so it is named sequentially.
@@ -241,3 +241,84 @@ def test_the_epoch_plan_composed_with_the_shuffle_crosses_wide_epochs(
         if drop_last:
             assert {row_epoch for row_epoch, _ in rows} == {epoch}
         position, epoch = plan.advance(start, epoch, size)
+
+
+class TestWordStart:
+    """A start given as two uint32 words, the host stage's form, names what an integer start names.
+
+    The host stage names positions past ``2**31`` (an int32 cannot hold them) with ``(hi, lo)``
+    words, as NumPy words or traced inside its naming program; every source's override takes it.
+    """
+
+    @pytest.mark.parametrize("name", [n for n in _NAMES if n != "unsized"])
+    @pytest.mark.parametrize("keyed", [False, True])
+    def test_every_source_names_a_word_start_as_its_integer_start(
+        self, tmp_path: Path, name: str, keyed: bool
+    ) -> None:
+        source = _sources(tmp_path)[name]
+        key = jax.random.key(4) if keyed else None
+        named = jax.jit(lambda start, key: source.record_indices_at(start, 5, key))
+        for start in range(len(source)):
+            expected = np.asarray(source.record_indices_at(start, 5, key))
+            words = to_words(start)
+            np.testing.assert_array_equal(source.record_indices_at(words, 5, key), expected)
+            np.testing.assert_array_equal(named(jnp.asarray(words), key), expected)
+
+    def test_a_source_without_a_length_names_a_word_start_past_uint32(self) -> None:
+        start = (1 << 32) + 7
+        np.testing.assert_array_equal(
+            from_words(_Unsized().record_indices_at(to_words(start), 4)),
+            np.arange(start, start + 4, dtype=np.uint64),
+        )
+
+    @pytest.mark.parametrize("length", _WIDE)
+    @pytest.mark.parametrize(("workers", "shard"), [(1, 0), (3, 2)])
+    def test_a_word_start_past_int32_and_uint32_is_exact(
+        self, length: int, workers: int, shard: int
+    ) -> None:
+        worker_length = _share(length, workers, shard)
+        traced = jax.jit(
+            lambda start: resolve_wrapped_indices(
+                start, 8, length, None, num_workers=workers, shard_id=shard
+            )
+        )
+        for start in (0, (1 << 31) + 3, (1 << 32) - 2, worker_length - 3):
+            if start >= worker_length:
+                continue  # a word start is a position of the order
+            words = to_words(start)
+            expected = _reference(start, 8, length, workers=workers, shard=shard)
+            assert [int(v) for v in from_words(traced(jnp.asarray(words)))] == expected
+            assert [
+                int(v)
+                for v in from_words(
+                    resolve_wrapped_indices(
+                        words, 8, length, None, num_workers=workers, shard_id=shard
+                    )
+                )
+            ] == expected
+
+    @pytest.mark.parametrize("name", ["default", "memory", "mixed"])
+    def test_under_vmap_over_keys_each_key_names_its_order(self, tmp_path: Path, name: str) -> None:
+        source = _sources(tmp_path)[name]
+        keys = jnp.stack([jax.random.key(seed) for seed in range(4)])
+        start = jnp.asarray(to_words(3))
+        named = jax.vmap(lambda key: source.record_indices_at(start, 5, key))(keys)
+        for row, seed in enumerate(range(4)):
+            np.testing.assert_array_equal(
+                named[row], source.record_indices_at(3, 5, jax.random.key(seed))
+            )
+
+    @pytest.mark.parametrize("name", ["default", "memory", "mixed"])
+    def test_under_scan_over_word_starts_each_step_names_its_batch(
+        self, tmp_path: Path, name: str
+    ) -> None:
+        source = _sources(tmp_path)[name]
+        key = jax.random.key(6)
+        starts = jnp.asarray(to_words(np.arange(0, 8, 2, dtype=np.uint64)))
+
+        def body(carry: None, start: jax.Array) -> tuple[None, jax.Array]:
+            return carry, source.record_indices_at(start, 3, key)
+
+        _, named = jax.lax.scan(body, None, starts)
+        for step, start in enumerate(range(0, 8, 2)):
+            np.testing.assert_array_equal(named[step], source.record_indices_at(start, 3, key))

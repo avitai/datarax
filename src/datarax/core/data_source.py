@@ -11,7 +11,7 @@ import logging
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Protocol
 
 import jax
 import numpy as np
@@ -139,6 +139,9 @@ def host_rows(words: np.ndarray, length: int) -> np.ndarray:
 NO_PROVENANCE: Mapping[str, Any] = MappingProxyType({})
 """The provenance of a record that carries nothing but arrays."""
 
+type Provenance = tuple[Mapping[str, Any], ...]
+"""One immutable mapping per record: its strings and objects, beside the batch."""
+
 
 class RecordIdentity(enum.Enum):
     """What a source's record index means: the kind of identity its records carry.
@@ -159,6 +162,44 @@ class RecordIdentity(enum.Enum):
     ARRIVAL = "arrival"
     """The record's arrival ordinal in the run, never reset, so never repeated. Unique only: the
     record's provenance travels beside the batch, and a table keyed by record is refused."""
+
+
+class IndexedHostRead(Protocol):
+    """The stateless host read of an ``INDEXED`` source, which the host stage reads it with.
+
+    ``EagerSource`` (and so ``MemorySource``, ``TFDSEagerSource`` and ``HFEagerSource``),
+    ``StreamingDiskSource`` and ``MixDataSourcesNode`` implement it. It is a protocol, not a base
+    method: a stream's ``get_batch(batch_size, ...)`` pulls forward, a different contract under
+    the same name.
+    """
+
+    def get_batch(
+        self, indices: ArrayLike, *, epochs: ArrayLike = 0, contiguous: bool = False
+    ) -> Batch:
+        """Read the records ``indices`` names, as a ``Batch`` named with them, on the host.
+
+        Args:
+            indices: uint32 ``(n, 2)`` record indices.
+            epochs: The epoch of every record, or of each ``(n,)``.
+            contiguous: Whether ``indices`` is a run of consecutive records, read as views.
+
+        Returns:
+            The records as a host ``Batch``.
+        """
+        ...
+
+
+class BatchSchedule(Protocol):
+    """The batches a run serves, unit by unit: what a reader of the run is handed.
+
+    A unit is one batch, or a chunk of consecutive batches read together; its batches are
+    ``(start, epoch, size)`` of the pipeline's epoch plan, a batch crossing an epoch's end
+    continuing at the next epoch's head. Units are numbered from the run's start.
+    """
+
+    def unit(self, ordinal: int) -> tuple[tuple[int, int, int], ...] | None:
+        """The batches of unit ``ordinal``, or ``None`` past the run's end."""
+        ...
 
 
 class DataSourceModule(StructuralModule):
@@ -380,7 +421,7 @@ class DataSourceModule(StructuralModule):
 
     def record_indices_at(
         self,
-        start: int | Any,
+        start: int | ArrayLike,
         size: int,
         key: Any | None = None,
     ) -> Any:
@@ -398,7 +439,9 @@ class DataSourceModule(StructuralModule):
         layout of ``Batch.indices``.
 
         Args:
-            start: Starting position; a Python int of any size or a traced int32 ``jax.Array``.
+            start: Starting position: a Python int of any size, its two uint32 words ``(hi, lo)``
+                (NumPy or traced; a position of the order, below its length), or a traced
+                int32 ``jax.Array``.
             size: Number of records (Python int).
             key: The key selecting the order, or ``None`` for the sequential order.
 

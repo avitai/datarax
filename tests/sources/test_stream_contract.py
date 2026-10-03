@@ -111,7 +111,7 @@ class TestTheStreamBatch:
     def test_records_without_a_numeric_field_are_refused(self) -> None:
         class _TextOnly(RecordStream):
             def _open_pass(
-                self, pass_index: int, key: jax.Array | None, read_size: int
+                self, pass_index: int, key: np.ndarray | None, read_size: int
             ) -> Iterator[StreamChunk]:
                 for chunk in super()._open_pass(pass_index, key, read_size):
                     yield chunk._replace(columns={})
@@ -157,7 +157,11 @@ class TestTheOrder:
         _pass(stream, 2, key=key)
 
         assert [index for index, _ in stream.opened] == [0, 1]
-        assert all(given is key for _, given in stream.opened)
+        # A pass takes the key as its words on the host, read once when the pass opens.
+        words = np.asarray(jax.random.key_data(key), np.uint32)
+        for _, given in stream.opened:
+            assert isinstance(given, np.ndarray) and given.dtype == np.uint32
+            np.testing.assert_array_equal(given, words)
 
 
 class TestTheReadSize:
@@ -227,7 +231,7 @@ class _Failing(RecordStream):
         self.failing = failing
 
     def _open_pass(
-        self, pass_index: int, key: jax.Array | None, read_size: int
+        self, pass_index: int, key: np.ndarray | None, read_size: int
     ) -> Iterator[StreamChunk]:
         chunks = super()._open_pass(pass_index, key, read_size)
         yield next(chunks)
@@ -358,7 +362,7 @@ class _Watched(RecordStream):
     closed: list[int] = []
 
     def _open_pass(
-        self, pass_index: int, key: jax.Array | None, read_size: int
+        self, pass_index: int, key: np.ndarray | None, read_size: int
     ) -> Iterator[StreamChunk]:
         try:
             yield from super()._open_pass(pass_index, key, read_size)

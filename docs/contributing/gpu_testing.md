@@ -46,7 +46,8 @@ bash scripts/run_gpu_tests.sh
 This script will:
 
 1. Activate the project environment and check for GPU availability
-2. Ask the test run for CUDA with `DATARAX_TEST_JAX_PLATFORMS=cuda`
+2. Ask the test run for CUDA with `DATARAX_TEST_JAX_PLATFORMS=cuda,cpu` (the CPU device stays
+   beside the GPU: the host stage names records on it)
 3. Run the GPU-marked tests on the GPU
 
 ## Manual GPU Testing
@@ -56,7 +57,7 @@ If you want more control over which tests to run on GPU, you can:
 ```bash
 # Test runs use the CPU with eight emulated devices unless they ask for an
 # accelerator; a JAX_PLATFORMS inherited from your shell does not change that.
-export DATARAX_TEST_JAX_PLATFORMS="cuda"
+export DATARAX_TEST_JAX_PLATFORMS="cuda,cpu"
 
 # Run every test on the GPU
 uv run pytest
@@ -104,7 +105,7 @@ The GPU testing infrastructure consists of:
 
 2. **Shell Script** (`scripts/run_gpu_tests.sh`):
    - Verifies GPU availability using `scripts/check_gpu.py`
-   - Sets `DATARAX_TEST_JAX_PLATFORMS=cuda`
+   - Sets `DATARAX_TEST_JAX_PLATFORMS=cuda,cpu`
    - Runs pytest over `tests/`
 
 3. **Test Markers**: the substrax pytest plugin's `@pytest.mark.accelerator(kind="gpu")` skips a test unless the run uses a GPU backend, and `@pytest.mark.devices(count)` skips it below `count` visible devices. Most tests run on any device.
@@ -150,10 +151,10 @@ The GPU testing infrastructure supports:
 
 ```bash
 # Run all tests on GPU
-DATARAX_TEST_JAX_PLATFORMS=cuda uv run pytest tests/
+DATARAX_TEST_JAX_PLATFORMS=cuda,cpu uv run pytest tests/
 
 # Run with memory limits (useful for shared GPUs)
-XLA_CLIENT_MEM_FRACTION=0.5 DATARAX_TEST_JAX_PLATFORMS=cuda uv run pytest tests/
+XLA_CLIENT_MEM_FRACTION=0.5 DATARAX_TEST_JAX_PLATFORMS=cuda,cpu uv run pytest tests/
 ```
 
 For more testing information, see the [Testing Guide](testing_guide.md).

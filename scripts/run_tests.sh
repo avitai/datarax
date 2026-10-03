@@ -55,7 +55,7 @@ run_tests_on_device() {
     if [ "$device" = "gpu" ]; then
         # The test environment selects its backend from DATARAX_TEST_JAX_PLATFORMS and
         # ignores an exported JAX_PLATFORMS.
-        export DATARAX_TEST_JAX_PLATFORMS="cuda"
+        export DATARAX_TEST_JAX_PLATFORMS="cuda,cpu"
         export XLA_CLIENT_MEM_FRACTION=0.75  # Limit memory usage to avoid OOM errors
 
         # Run tests with GPU enabled

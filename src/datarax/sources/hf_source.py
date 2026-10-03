@@ -24,7 +24,6 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
-import jax
 import numpy as np
 
 from datarax.core.data_source import NO_PROVENANCE, RecordIdentity
@@ -452,13 +451,14 @@ class HFStreamingSource(StreamingSourceBase):
         )
 
     def _open_pass(
-        self, pass_index: int, key: jax.Array | None, read_size: int
+        self, pass_index: int, key: np.ndarray | None, read_size: int
     ) -> Iterator[StreamChunk]:
         """Read pass ``pass_index``: the dataset's order, or HF's seeded shuffle under ``key``.
 
         Args:
             pass_index: The pass, from 0.
-            key: The pipeline's key when it shuffles, ``None`` for the dataset's order.
+            key: The pipeline's key as its host words when it shuffles, ``None`` for the
+                dataset's order.
             read_size: Records per batched read.
 
         Yields:

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import itertools
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 import jax
@@ -32,7 +32,7 @@ from datarax.core.operator import OperatorModule, require_key
 from datarax.core.spec import SpecMismatchError
 from datarax.pipeline.epochs import EpochPlan, stream_batches
 from datarax.pipeline.pipeline import Pipeline
-from datarax.sources import MemorySource, MemorySourceConfig, StreamChunk
+from datarax.sources import MemorySource, MemorySourceConfig, StreamChunk, StreamingSourceBase
 from tests.test_common.streams import RecordStream
 from tests.test_common.transfers import device_to_host_raises
 
@@ -180,7 +180,12 @@ class TestTheEpochRule:
         stream = _stream(chunk=7)
 
         served = _served(
-            list(stream_batches(stream.get_batch, batch_size=4, drop_last=False, num_epochs=2))
+            [
+                batch
+                for batch, _ in stream_batches(
+                    _with_provenance(stream), batch_size=4, drop_last=False, num_epochs=2
+                )
+            ]
         )
 
         assert [names for names, _ in served] == [
@@ -194,7 +199,9 @@ class TestTheEpochRule:
     def test_a_stream_holding_no_record_serves_nothing(self) -> None:
         empty = RecordStream({"x": np.zeros((0, 3), np.float32)})
 
-        assert list(stream_batches(empty.get_batch, 4, drop_last=False, num_epochs=None)) == []
+        assert (
+            list(stream_batches(_with_provenance(empty), 4, drop_last=False, num_epochs=None)) == []
+        )
 
     @pytest.mark.parametrize("num_epochs", [None, 1, 2])
     def test_a_run_starting_at_a_pass_s_unseen_end_serves_the_next_pass(
@@ -204,12 +211,17 @@ class TestTheEpochRule:
         stream = RecordStream({"x": np.arange(8, dtype=np.float32)})
         assert stream.get_batch(8).batch_size == 8  # the pass's records, not yet its end
 
-        run = stream_batches(stream.get_batch, 4, drop_last=False, num_epochs=num_epochs)
-        served = _served(list(itertools.islice(run, 2)))
+        run = stream_batches(_with_provenance(stream), 4, drop_last=False, num_epochs=num_epochs)
+        served = _served([batch for batch, _ in itertools.islice(run, 2)])
 
         # The pass whose end the run starts at counts as served, as an exhausted epoch does.
         expected = [] if num_epochs == 1 else [([0, 1, 2, 3], [1] * 4), ([4, 5, 6, 7], [1] * 4)]
         assert served == expected
+
+
+def _with_provenance(stream: StreamingSourceBase) -> Callable[[int], tuple[Batch, Any]]:
+    """A pull reading the stream's batches with their provenance, as ``stream_batches`` takes it."""
+    return lambda size: stream.get_batch(size, with_provenance=True)
 
 
 type _Loops = list[list[tuple[list[int], list[int]]]]
@@ -455,16 +467,19 @@ def test_stochastic_outputs_equal_the_dag_through_nnx_jit_on_the_same_batch() ->
     streamed = _pipeline(_stream(), [_JitteredScale()], num_epochs=2, shuffle=True)
     read_stream = _stream()
     reference = _pipeline(read_stream, [_JitteredScale()], num_epochs=2, shuffle=True)
-    reads = list(
-        stream_batches(
+    reads = [
+        batch
+        for batch, _ in stream_batches(
             lambda size: read_stream.get_batch(
-                size, key=jax.random.wrap_key_data(reference._epoch_key_base[...])
+                size,
+                key=jax.random.wrap_key_data(reference._epoch_key_base[...]),
+                with_provenance=True,
             ),
             4,
             drop_last=False,
             num_epochs=2,
         )
-    )
+    ]
     apply = nnx.jit(lambda dag, batch: dag(batch))
 
     outputs = list(streamed)

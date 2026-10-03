@@ -14,29 +14,32 @@ from __future__ import annotations
 
 import logging
 import weakref
-from collections.abc import Generator, Iterator, Mapping
+from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
 from typing import Any, cast, Literal, NamedTuple, overload, Self
 
 import jax
-import jax.numpy as jnp
 import numpy as np
+from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from datarax.core import batch_ops
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule, RecordIdentity
+from datarax.core.data_source import (
+    BatchSchedule,
+    DataSourceModule,
+    Provenance,
+    RecordIdentity,
+)
 from datarax.core.element_batch import Batch
 from datarax.core.index_words import to_words
+from datarax.core.prng import fold_on_host, key_words
 from datarax.core.spec import array_to_spec_strip_leading, device_spec
 from datarax.sources.eager_source import HostValue
 from datarax.sources.source_ops import format_source_repr
 
 
 logger = logging.getLogger(__name__)
-
-type Provenance = tuple[Mapping[str, Any], ...]
-"""One immutable mapping per record: its strings and objects, beside the batch."""
 
 
 class DatasetSourceMixin:
@@ -140,7 +143,7 @@ class _ReaderCloser:
 
 
 @dataclass(slots=True, weakref_slot=True)
-class _Cursor:
+class StreamCursor:
     """Where a stream is: its pass, the open pass's reader, records read ahead, arrivals.
 
     ``failure`` is the error that stopped the open pass's reader, kept until :meth:`reset`. The
@@ -158,9 +161,9 @@ class _Cursor:
         """Close the reader this cursor holds when the cursor goes, never holding the cursor."""
         weakref.finalize(self, self.closer)
 
-    def between_passes(self) -> _Cursor:
+    def between_passes(self) -> StreamCursor:
         """A cursor of its own at this one's place, which is between passes (no reader open)."""
-        return _Cursor(pass_index=self.pass_index, arrived=self.arrived, failure=self.failure)
+        return StreamCursor(pass_index=self.pass_index, arrived=self.arrived, failure=self.failure)
 
     def open(self, reader: Iterator[StreamChunk]) -> None:
         """Hold ``reader`` as the open pass's reader, closing any reader held before."""
@@ -178,7 +181,7 @@ class StreamPosition(HostValue):
     """A stream's position, held on the host and out of NNX state (see :class:`HostValue`)."""
 
     __slots__ = ()
-    value: _Cursor
+    value: StreamCursor
 
 
 def empty_stream_batch() -> Batch:
@@ -220,16 +223,19 @@ class StreamingSourceBase(DataSourceModule):
             name: Optional module name.
         """
         super().__init__(config, name=name)
-        self._position = StreamPosition(_Cursor())
+        self._position = StreamPosition(StreamCursor())
 
     def _open_pass(
-        self, pass_index: int, key: jax.Array | None, read_size: int
+        self, pass_index: int, key: np.ndarray | None, read_size: int
     ) -> Iterator[StreamChunk]:
         """Read pass ``pass_index`` in its order, as chunks of records: a subclass's generator.
 
         Args:
             pass_index: The pass, from 0.
-            key: The pipeline's key when it shuffles, ``None`` for the stream's own order.
+            key: The pipeline's key as its uint32 words on the host
+                (:func:`~datarax.core.prng.key_words`) when it shuffles, ``None`` for the
+                stream's own order. A pass's order is drawn from ``fold_in(key, pass_index)``
+                (:func:`pass_seed`), folded on the CPU device.
             read_size: Records the pass reads at a time (a backend's batched read or decode);
                 chunks may hold any number.
 
@@ -286,7 +292,7 @@ class StreamingSourceBase(DataSourceModule):
         self,
         batch_size: int,
         *,
-        key: jax.Array | None = None,
+        key: ArrayLike | None = None,
         with_provenance: Literal[False] = False,
         read_size: int | None = None,
     ) -> Batch: ...
@@ -296,7 +302,7 @@ class StreamingSourceBase(DataSourceModule):
         self,
         batch_size: int,
         *,
-        key: jax.Array | None = None,
+        key: ArrayLike | None = None,
         with_provenance: Literal[True],
         read_size: int | None = None,
     ) -> tuple[Batch, Provenance]: ...
@@ -305,7 +311,7 @@ class StreamingSourceBase(DataSourceModule):
         self,
         batch_size: int,
         *,
-        key: jax.Array | None = None,
+        key: ArrayLike | None = None,
         with_provenance: bool = False,
         read_size: int | None = None,
     ) -> Batch | tuple[Batch, Provenance]:
@@ -316,8 +322,9 @@ class StreamingSourceBase(DataSourceModule):
 
         Args:
             batch_size: The most records to return.
-            key: The key the pass's order is drawn from (read when a pass starts), or ``None``
-                for the stream's own order.
+            key: The key the pass's order is drawn from (typed, raw or its host words; read
+                once, as host words, when a pass starts), or ``None`` for the stream's own
+                order.
             with_provenance: Whether to return the records' provenance beside the batch.
             read_size: Records a pass this call opens reads at a time, the pipeline's batch
                 size; ``None`` reads it ``batch_size`` at a time.
@@ -335,7 +342,36 @@ class StreamingSourceBase(DataSourceModule):
             raise ValueError(
                 f"batch_size and read_size must be at least 1; got {batch_size} and {read_size}"
             )
-        cursor = self._position.value
+        batch, provenance = self.read_from(
+            self._position.value,
+            batch_size,
+            key=None if key is None else key_words(key),
+            read_size=read_size,
+        )
+        return (batch, provenance) if with_provenance else batch
+
+    def read_from(  # noqa: DOC503 - a reader's error is re-raised as it came
+        self, cursor: StreamCursor, batch_size: int, *, key: np.ndarray | None, read_size: int
+    ) -> tuple[Batch, Provenance]:
+        """Read up to ``batch_size`` records of ``cursor``'s pass, advancing ``cursor``.
+
+        The read :meth:`get_batch` makes at the stream's own position, open to a caller keeping a
+        position of its own (the pipeline's host stage): a pass is opened at the cursor's pass when
+        none is open, the records are named by the stream (arrival ordinals from the cursor's
+        count), and the pass's end returns an empty batch and moves the cursor to the next pass.
+
+        Args:
+            cursor: Where the read stands; it advances.
+            batch_size: The most records to return.
+            key: The key's host words, read when a pass opens, or ``None`` for the stream's order.
+            read_size: Records a pass this call opens reads at a time.
+
+        Returns:
+            The batch, empty at the end of a pass, and its records' provenance.
+
+        Raises:
+            RuntimeError: If an error stopped the cursor's pass.
+        """
         if cursor.failure is not None:
             raise RuntimeError(
                 f"{type(self).__name__}'s pass {cursor.pass_index} stopped at an error and "
@@ -356,13 +392,28 @@ class StreamingSourceBase(DataSourceModule):
         if chunk is None:
             cursor.close()
             cursor.pass_index += 1
-            batch: Batch = empty_stream_batch()
-            return (batch, ()) if with_provenance else batch
-        batch = self._named(chunk, cursor)
-        return (batch, chunk.provenance) if with_provenance else batch
+            return empty_stream_batch(), ()
+        return self._named(chunk, cursor), chunk.provenance
+
+    def run_dataset(self, schedule: BatchSchedule, key: np.ndarray | None) -> Any:
+        """A run of this stream's passes as one sliceable Grain dataset, if the stream has one.
+
+        A stream whose passes' orders are computed without reading its records (TFDS) returns
+        a dataset serving the schedule's units, numbered from the run's start, which Grain can
+        slice across workers. This base has none, and the host stage reads it pass by pass.
+
+        Args:
+            schedule: The run's units, each a run of batches ``(start, pass, size)``.
+            key: The pipeline's key as host words, or ``None`` for the stream's own order.
+
+        Returns:
+            ``None``: the base reads no run as one dataset.
+        """
+        del schedule, key
+        return None
 
     @staticmethod
-    def _pull(cursor: _Cursor, reader: Iterator[StreamChunk], size: int) -> StreamChunk | None:
+    def _pull(cursor: StreamCursor, reader: Iterator[StreamChunk], size: int) -> StreamChunk | None:
         """Up to ``size`` records of the open pass, keeping what is read past them for later."""
         parts, held = ([cursor.ahead], chunk_size(cursor.ahead)) if cursor.ahead else ([], 0)
         cursor.ahead = None
@@ -380,7 +431,7 @@ class StreamingSourceBase(DataSourceModule):
             joined, cursor.ahead = _split(joined, size)
         return joined
 
-    def _named(self, chunk: StreamChunk, cursor: _Cursor) -> Batch:
+    def _named(self, chunk: StreamChunk, cursor: StreamCursor) -> Batch:
         """``chunk`` as a host ``Batch`` named by the stream: its ids or arrival ordinals."""
         size = chunk_size(chunk)
         if not jax.tree.leaves(chunk.columns):
@@ -421,16 +472,15 @@ class StreamingSourceBase(DataSourceModule):
         raise ValueError(f"{type(self).__name__} holds no records, so it declares no spec")
 
 
-def pass_generator(key: jax.Array, pass_index: int) -> np.random.Generator:
+def pass_generator(key: np.ndarray, pass_index: int) -> np.random.Generator:
     """The generator a stream draws pass ``pass_index``'s order from: keyed by the pass's key.
 
     The pass's key is ``fold_in(key, pass_index)``, the key an indexed pipeline orders its epoch
     ``pass_index`` by, so passes never share a key (Grain's ``seed + epoch`` collision cannot
-    arise). Its key data, read on the host once per pass, keys NumPy's counter-based Philox
-    generator.
+    arise). Its data keys NumPy's counter-based Philox generator.
 
     Args:
-        key: The pipeline's key, typed or as raw key data.
+        key: The pipeline's key as its uint32 words on the host.
         pass_index: The pass, from 0.
 
     Returns:
@@ -439,27 +489,24 @@ def pass_generator(key: jax.Array, pass_index: int) -> np.random.Generator:
     return np.random.Generator(np.random.Philox(key=pass_seed(key, pass_index)))
 
 
-def pass_seed(key: jax.Array, pass_index: int) -> int:
-    """Pass ``pass_index``'s key, ``fold_in(key, pass_index)``, as one integer, read on the host.
+def pass_seed(key: np.ndarray, pass_index: int) -> int:
+    """Pass ``pass_index``'s key, ``fold_in(key, pass_index)``, as one integer.
+
+    The fold runs on the CPU device from the key's host words
+    (:func:`~datarax.core.prng.fold_on_host`): nothing is read back from an accelerator, and
+    nothing transfers implicitly.
 
     Args:
-        key: The pipeline's key, typed or as raw key data.
+        key: The pipeline's key as its uint32 words on the host
+            (:func:`~datarax.core.prng.key_words`).
         pass_index: The pass, from 0.
 
     Returns:
         The pass key's data as a non-negative integer.
     """
-    return key_integer(jax.random.fold_in(typed_key(key), pass_index))
+    return key_integer(fold_on_host(key, pass_index))
 
 
-def typed_key(key: jax.Array) -> jax.Array:
-    """``key`` as a typed key: raw key data is wrapped, a typed key returned as it is."""
-    if jnp.issubdtype(key.dtype, jax.dtypes.prng_key):
-        return key
-    return jax.random.wrap_key_data(key)
-
-
-def key_integer(key: jax.Array) -> int:
-    """All of ``key``'s data as one non-negative integer: a seed NumPy and HF generators take."""
-    words = np.asarray(jax.random.key_data(typed_key(key)), np.uint32)
-    return int.from_bytes(words.tobytes(), "little")
+def key_integer(words: np.ndarray) -> int:
+    """A key's uint32 words as one non-negative integer: a seed NumPy and HF generators take."""
+    return int.from_bytes(np.asarray(words, np.uint32).tobytes(), "little")
