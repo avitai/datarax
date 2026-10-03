@@ -31,6 +31,8 @@ from datarax.core.data_source import RecordIdentity
 from datarax.core.element_batch import Batch, PADDING_INDEX
 from datarax.core.prng import key_words
 from datarax.pipeline import Pipeline
+from datarax.pipeline.epochs import EpochPlan, Run
+from datarax.pipeline.host_stage import RunUnits
 from datarax.sources import (
     from_tfds,
     tfds_source,
@@ -515,7 +517,7 @@ class TestThePassDatasetForWorkers:
     def _batches(dataset: Any) -> list[tuple[list[int], bytes]]:
         return [
             (ids.tolist(), hashlib.sha256(columns["image"].tobytes()).digest())
-            for columns, _, ids in dataset
+            for columns, _, ids, _ in dataset
         ]
 
     @pytest.mark.parametrize(("seed", "pass_index"), sorted(_DECIDED_ORDER))
@@ -526,7 +528,7 @@ class TestThePassDatasetForWorkers:
             pass_index, key_words(jax.random.key(seed)), 4
         )
 
-        served = [int(i) & 0xFFFFFFFF for _, _, ids in dataset for i in ids]
+        served = [int(i) & 0xFFFFFFFF for _, _, ids, _ in dataset for i in ids]
 
         assert served == _DECIDED_ORDER[(seed, pass_index)]
 
@@ -569,7 +571,7 @@ class TestThePassDatasetForWorkers:
             dataset = source.pass_dataset(0, key, 2)
             dataset.set_slice(slice(i, None, slices))
             reads.calls.clear()
-            served = [int(r) & 0xFFFFFFFF for _, _, ids in dataset for r in ids]
+            served = [int(r) & 0xFFFFFFFF for _, _, ids, _ in dataset for r in ids]
 
             assert len(reads.calls) == len(served)  # one read per own record, no header reads
             lengths = _payload_lengths(tfds_fixture)
@@ -619,3 +621,150 @@ class TestThePassDatasetForWorkers:
             results = list(pool.map(lambda _: self._batches(dataset), range(8)))
 
         assert all(result == reference for result in results)
+
+
+def _run_units(
+    length: int,
+    batch_size: int,
+    *,
+    start: tuple[int, int] = (0, 0),
+    passes: int = 3,
+    drop_last: bool = False,
+    chunk: int = 1,
+) -> RunUnits:
+    """A run of ``passes`` passes from ``(position, pass)``, cut into the host stage's units."""
+    plan = EpochPlan(length=length, batch_size=batch_size, drop_last=drop_last, num_epochs=passes)
+    run = Run(plan=plan, position=start[0], epoch=start[1], end_epoch=passes)
+    return RunUnits(run=run, chunk=chunk)
+
+
+class TestRunDataset:
+    """A run's passes as one Grain dataset of decoded batches, numbered from where the run starts.
+
+    One dataset spans the run, so a worker process slicing it starts once per run, and its batches
+    are numbered from the run's first, so ``k`` slices interleaved from worker 0 serve the run's
+    order wherever it resumed.
+    """
+
+    @staticmethod
+    def _rows(dataset: Any) -> list[tuple[list[int], list[int], bytes]]:
+        return [
+            (
+                [int(i) for i in ids],
+                [int(e) for e in epochs],
+                hashlib.sha256(columns["image"].tobytes()).digest(),
+            )
+            for columns, _, ids, epochs in dataset
+        ]
+
+    @staticmethod
+    def _pass_ids(source: TFDSStreamingSource, key: Any, pass_index: int) -> list[int]:
+        return [int(i) for _, _, ids, _ in source.pass_dataset(pass_index, key, 64) for i in ids]
+
+    @pytest.mark.parametrize("drop_last", [False, True])
+    def test_the_run_is_its_passes_cut_into_batches_by_the_plan(
+        self, tfds_fixture: TFDSFixture, drop_last: bool
+    ) -> None:
+        source = _stream(tfds_fixture, shuffle_buffer_size=8)
+        key = key_words(jax.random.key(4))
+        served = self._rows(
+            source.run_dataset(_run_units(TRAIN_RECORDS, 6, drop_last=drop_last), key)
+        )
+        expected_ids: list[int] = []
+        expected_epochs: list[int] = []
+        for pass_index in range(3):
+            ids = self._pass_ids(source, key, pass_index)
+            if drop_last:
+                ids = ids[: len(ids) // 6 * 6]
+            expected_ids += ids
+            expected_epochs += [pass_index] * len(ids)
+        assert [i for ids, _, _ in served for i in ids] == expected_ids
+        assert [e for _, epochs, _ in served for e in epochs] == expected_epochs
+        assert [len(ids) for ids, _, _ in served][:-1] == [6] * (len(served) - 1)
+
+    @pytest.mark.parametrize("slices", [2, 3, 8])
+    def test_slices_interleaved_from_the_first_serve_the_run_each_batch_decoded_once(
+        self, tfds_fixture: TFDSFixture, slices: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source = _stream(tfds_fixture, shuffle_buffer_size=8)
+        key = key_words(jax.random.key(4))
+        whole = self._rows(source.run_dataset(_run_units(TRAIN_RECORDS, 4), key))
+        decoded: list[int] = []
+        decode = tfds_source._decoded_batch
+
+        def counting(features: Any, frames: Any, read: Any) -> Any:
+            decoded.append(len(frames))
+            return decode(features, frames, read)
+
+        monkeypatch.setattr(tfds_source, "_decoded_batch", counting)
+        parts = []
+        for i in range(slices):
+            dataset = source.run_dataset(_run_units(TRAIN_RECORDS, 4), key)
+            dataset.set_slice(slice(i, None, slices))
+            parts.append(self._rows(dataset))
+        interleaved = [
+            part[j] for j in range(max(map(len, parts))) for part in parts if j < len(part)
+        ]
+        assert interleaved == whole
+        assert len(decoded) == len(whole)
+
+    @pytest.mark.parametrize("slices", [2, 3])
+    @pytest.mark.parametrize("resume_at", [1, 5, 7])
+    def test_a_resumed_run_sliced_serves_the_rest_in_order_reading_no_skipped_payload(
+        self,
+        tfds_fixture: TFDSFixture,
+        slices: int,
+        resume_at: int,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Resumed at a batch not divisible by ``k``, the slices still interleave from worker 0."""
+        source = _stream(tfds_fixture, shuffle_buffer_size=8)
+        key = key_words(jax.random.key(7))
+        units = _run_units(TRAIN_RECORDS, 4)
+        whole = self._rows(source.run_dataset(units, key))
+        position, epoch = 0, 0
+        for ordinal in range(resume_at):
+            batch = units.run.batch(ordinal)
+            assert batch is not None
+            position, epoch = units.run.plan.advance(*batch)
+        resumed = _run_units(TRAIN_RECORDS, 4, start=(position, epoch))
+        source.run_dataset(resumed, key)  # the parent builds the offset index here, once
+        reads = _CountingReads(monkeypatch)
+        parts = []
+        for i in range(slices):
+            dataset = source.run_dataset(resumed, key)
+            dataset.set_slice(slice(i, None, slices))
+            parts.append(self._rows(dataset))
+        interleaved = [
+            part[j] for j in range(max(map(len, parts))) for part in parts if j < len(part)
+        ]
+        assert interleaved == whole[resume_at:]
+        assert len(reads.calls) == sum(len(ids) for ids, _, _ in whole[resume_at:])
+
+    def test_the_run_dataset_pickles_and_reads_the_same_batches(
+        self, tfds_fixture: TFDSFixture
+    ) -> None:
+        import cloudpickle  # noqa: PLC0415 - Grain's process prefetch pickles with it
+
+        source = _stream(tfds_fixture, shuffle_buffer_size=8)
+        dataset = source.run_dataset(_run_units(TRAIN_RECORDS, 4), key_words(jax.random.key(1)))
+        copy = cloudpickle.loads(cloudpickle.dumps(dataset))
+        assert self._rows(copy) == self._rows(dataset)
+
+
+class TestThroughTheHostStage:
+    def test_raw_batches_serve_the_run_dataset_s_batches(self, tfds_fixture: TFDSFixture) -> None:
+        source = _stream(tfds_fixture, shuffle_buffer_size=8)
+        pipe = Pipeline(
+            source=source, stages=[], batch_size=6, rngs=nnx.Rngs(2), shuffle=True, num_epochs=2
+        )
+        served = list(pipe.raw_batches())
+        key = key_words(pipe._epoch_key_base[...])  # noqa: SLF001
+        expected = [
+            [int(i) for i in ids]
+            for _, _, ids, _ in source.run_dataset(_run_units(TRAIN_RECORDS, 6, passes=2), key)
+        ]
+        names = [
+            [(int(hi) << 32) | int(lo) for hi, lo in np.asarray(batch.indices)] for batch in served
+        ]
+        assert names == expected

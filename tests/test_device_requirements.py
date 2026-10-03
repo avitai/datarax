@@ -150,8 +150,11 @@ def test_no_pytest_command_passes_a_device_option() -> None:
 
 @pytest.mark.parametrize("script", ["run_tests.sh", "run_gpu_tests.sh"])
 def test_gpu_test_runners_select_cuda_through_the_test_variable(script: str) -> None:
-    """Tests ignore an exported JAX_PLATFORMS, so a GPU run names the test variable."""
+    """Tests ignore an exported JAX_PLATFORMS, so a GPU run names the test variable.
+
+    The CPU platform stays beside CUDA: the host stage names records on the CPU device.
+    """
     text = (ROOT / "scripts" / script).read_text(encoding="utf-8")
 
-    assert 'DATARAX_TEST_JAX_PLATFORMS="cuda"' in text
-    assert 'JAX_PLATFORMS="cuda"' not in text.replace('DATARAX_TEST_JAX_PLATFORMS="cuda"', "")
+    assert 'DATARAX_TEST_JAX_PLATFORMS="cuda,cpu"' in text
+    assert 'JAX_PLATFORMS="cuda' not in text.replace('DATARAX_TEST_JAX_PLATFORMS="cuda,cpu"', "")

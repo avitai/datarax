@@ -59,19 +59,20 @@ Public surface:
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import Any
+from typing import Any, Literal, overload
 
 import jax
 import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core import batch_ops
-from datarax.core.data_source import DataSourceModule, RecordIdentity
+from datarax.core.data_source import DataSourceModule, Provenance, RecordIdentity
 from datarax.core.element_batch import Batch
 from datarax.core.module import module_state, restore_module_state
 from datarax.core.spec import declared_spec, validate_batch, validate_device_dtypes
 from datarax.pipeline.dag import name_records, OperatorDag, Records
 from datarax.pipeline.epochs import batch_records, EpochPlan, stream_batches
+from datarax.pipeline.host_stage import HostStage, HostStageHolder
 from datarax.pipeline.iteration import (
     compile_streaming_dag,
     next_batch,
@@ -183,6 +184,9 @@ class Pipeline(nnx.Module):
         # under nnx.split/merge — it lives on the Python side of the
         # module boundary.
         self._scan_body_cache: dict[Any, Any] = {}
+        # Where host-stage iteration stands and the Grain iterator of its current run, held on
+        # the host and out of NNX state, so the graph definition does not move as it advances.
+        self._host = HostStageHolder(HostStage(end_epoch=num_epochs))
 
     @staticmethod
     def _build_dag(
@@ -460,6 +464,71 @@ class Pipeline(nnx.Module):
         """
         restore_module_state(self, state)
 
+    @property
+    def host_stage(self) -> HostStage:
+        """The host stage: where host iteration stands, and the Grain iterator of its run."""
+        return self._host.value
+
+    @overload
+    def raw_batches(
+        self,
+        chunk: int | None = None,
+        *,
+        max_chunk_bytes: int | None = None,
+        with_provenance: Literal[False] = False,
+    ) -> Iterator[Batch]: ...
+
+    @overload
+    def raw_batches(
+        self,
+        chunk: int | None = None,
+        *,
+        max_chunk_bytes: int | None = None,
+        with_provenance: Literal[True],
+    ) -> Iterator[tuple[Batch, Provenance]]: ...
+
+    def raw_batches(  # noqa: DOC502 - the host stage raises
+        self,
+        chunk: int | None = None,
+        *,
+        max_chunk_bytes: int | None = None,
+        with_provenance: bool = False,
+    ) -> Iterator[Batch] | Iterator[tuple[Batch, Provenance]]:
+        """Unprocessed batches read by the host stage and placed on the device: the E2E form.
+
+        The DAG is not applied: pass :attr:`dag` into your differentiated train step and call it
+        on each batch, so its operators' parameters train with the model. Records are served in
+        the pipeline's order and epoch rule, named on the CPU device, read on the host by Grain
+        threads ahead of the consumer and placed on the default device, uncommitted, two deep
+        ahead; nothing else of the source reaches the device. Iteration stands where the last
+        batch taken ended, so a later call continues the run with the same Grain iterator; the
+        run ends after ``num_epochs`` epochs.
+
+        Args:
+            chunk: Batches per unit: ``None`` serves batches ``(B, ...)``; ``K`` serves chunks
+                ``(K, B, ...)`` of ``K`` full batches, each one host read and one transfer, while
+                ``K`` remain, then the remaining batches singly, the run's short final batch
+                last.
+            max_chunk_bytes: The most bytes a chunk's data may hold; a larger chunk is refused.
+            with_provenance: Whether each unit comes as ``(batch, provenance)``, one mapping of
+                strings and objects per record, in row order.
+
+        Returns:
+            The units.
+
+        Raises:
+            ValueError: If ``chunk`` is below 1, or a chunk would hold more than
+                ``max_chunk_bytes``.
+            TypeError: If the source has no host read the stage reads it with.
+        """
+        return self.host_stage.batches(
+            self, chunk=chunk, max_chunk_bytes=max_chunk_bytes, with_provenance=with_provenance
+        )
+
+    def close(self) -> None:
+        """Close the host stage's run and its read threads; where iteration stands is kept."""
+        self.host_stage.close()
+
     def step(self) -> Batch:
         """Serve the next batch from the source through the DAG.
 
@@ -712,7 +781,7 @@ class Pipeline(nnx.Module):
         key = jax.random.wrap_key_data(self._epoch_key_base[...]) if self.shuffle else None
         source = self.source
 
-        def pull(size: int) -> Batch:
+        def pull(size: int) -> tuple[Batch, Provenance]:
             batch = source.get_batch(  # type: ignore[attr-defined]
                 size, key=key, read_size=self.batch_size
             )
@@ -725,9 +794,9 @@ class Pipeline(nnx.Module):
                 validate_batch(
                     batch.data, element_spec, batch_size=self.batch_size, as_the_device_holds=True
                 )
-            return batch
+            return batch, ()
 
-        for batch in stream_batches(
+        for batch, _ in stream_batches(
             pull, self.batch_size, drop_last=self.drop_last, num_epochs=self.num_epochs
         ):
             yield apply(batch)

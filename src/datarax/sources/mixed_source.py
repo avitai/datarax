@@ -22,7 +22,7 @@ union of its children's fields, a field some child lacks being a ``Maybe``.
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, cast, Protocol
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -35,6 +35,7 @@ from datarax.core import batch_ops
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import (
     DataSourceModule,
+    IndexedHostRead,
     record_words,
     RecordIdentity,
     refuse_padding,
@@ -506,16 +507,6 @@ def _joined(reads: Sequence[tuple[np.ndarray, Mapping[_Path, Any]]]) -> Batch:
     return joined
 
 
-class _IndexedHostRead(Protocol):
-    """The host read of an indexed source (``EagerSource``, ``StreamingDiskSource``, a mix)."""
-
-    def get_batch(
-        self, indices: ArrayLike, *, epochs: ArrayLike = 0, contiguous: bool = False
-    ) -> Batch:
-        """Read the records ``indices`` names, as a ``Batch`` named with them, on the host."""
-        ...
-
-
 @register_component("source", "MixDataSources")
 class MixDataSourcesNode(DataSourceModule):
     """Mix indexed sources in fixed proportions, as Grain's ``MapDataset.mix`` does.
@@ -839,7 +830,7 @@ class MixDataSourcesNode(DataSourceModule):
         reads = []
         for child, source in enumerate(self._sources):
             rows = np.flatnonzero(owners == child)
-            read = cast(_IndexedHostRead, source).get_batch(
+            read = cast(IndexedHostRead, source).get_batch(
                 local[rows], epochs=epochs[rows], contiguous=contiguous
             )
             reads.append((rows, read))

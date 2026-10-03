@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Pipeline.raw_batches(chunk=None, *, max_chunk_bytes=None, with_provenance=False)`: unprocessed
+  batches read by the host stage (`datarax.pipeline.host_stage`) and placed on the default device,
+  uncommitted, two deep ahead of the consumer: the form whose DAG (`pipe.dag`) runs inside the
+  caller's differentiated step. An indexed source's batches are named on the CPU device and read
+  with its stateless host read (`datarax.core.data_source.IndexedHostRead`) by Grain threads; a
+  TFDS stream reads its run through one sliceable Grain dataset; any other stream is read pass by
+  pass on one producer thread. `chunk=K` serves `(K, B, ...)` chunks of full batches, one host
+  read and one transfer each, then the rest singly; `with_provenance=True` serves
+  `(batch, provenance)` pairs. Nothing but the batches reaches the device, nothing transfers
+  implicitly, and one Grain iterator serves a run across calls (`Pipeline.close()` ends it).
+  `Pipeline.host_stage` holds where host iteration stands.
+- `TFDSStreamingSource.run_dataset(schedule, key)`: a run of passes as one Grain dataset of decoded
+  units numbered from the run's start (`datarax.core.data_source.BatchSchedule`), so Grain's
+  process prefetch starts its workers once per run and `k` slices interleaved from the first
+  serve a resumed run in order.
 - `datarax.pipeline.epochs.batch_records(source, plan, *, key_base, start, epoch, size)`: the
   records a batch of an indexed source holds, by the epoch plan, each row by its own epoch's order
   (the rows past an epoch's end are the next epoch's head). The compiled session names its batches
@@ -142,6 +157,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `datarax.pipeline.epochs.stream_batches(pull, ...)` takes a pull returning `(Batch, provenance)`
+  and yields `(Batch, provenance)` pairs, the provenance joined with its rows.
+- A `TFDSStreamDataset` element is `(columns, provenance, ids, epochs)`, each record's pass beside
+  its id; `pass_dataset` is a run of one pass.
+- `StreamingSourceBase.read_from(cursor, batch_size, *, key, read_size)` is the read `get_batch`
+  makes at the stream's own position, open to a caller keeping a position of its own
+  (`StreamCursor`).
+- `StreamingDiskSource` pickles as its path and opens its memory map at first use, once, under
+  concurrent readers.
+- The GPU test recipe is `DATARAX_TEST_JAX_PLATFORMS=cuda,cpu`: the host stage names records on the
+  CPU device beside the GPU.
 - A stream's pass key is folded on the CPU device from the key's host words:
   `StreamingSourceBase._open_pass(pass_index, key, read_size)` and
   `TFDSStreamingSource.pass_dataset(pass_index, key, batch_size)` take `key` as uint32 words on the

@@ -276,11 +276,12 @@ class TestProgram:
         naming = HostNaming(pipe.source, pipe.epoch_plan, shuffled=True)
         key = _key_words(pipe)
         naming(0, 0, 8, key)
-        before = {id(a) for a in jax.live_arrays()}
+        before = jax.live_arrays()
+        known = {id(a) for a in before}  # ``before`` holds them, so no id is reused
         with jax.transfer_guard("disallow"):
             for start in range(0, 48, 8):
                 naming(start, 1, 8, key)
-        created = [a for a in jax.live_arrays() if id(a) not in before]
+        created = [a for a in jax.live_arrays() if id(a) not in known]
         assert all(a.shape[0] < 50 if a.ndim else True for a in created)
         assert isinstance(pipe.source, MemorySource)
         assert isinstance(pipe.source.data["x"], np.ndarray)
@@ -296,9 +297,10 @@ class TestProgram:
         assert host_callbacks(jaxpr) == []
         naming = HostNaming(pipe.source, pipe.epoch_plan, shuffled=True)
         naming(5, 2, 16, _key_words(pipe))
-        before = {id(a) for a in jax.live_arrays()}
+        before = jax.live_arrays()
+        known = {id(a) for a in before}  # ``before`` holds them, so no id is reused
         indices, epochs = naming(21, 2, 16, _key_words(pipe))
-        created = [a for a in jax.live_arrays() if id(a) not in before]
+        created = [a for a in jax.live_arrays() if id(a) not in known]
         cpu = jax.devices("cpu")[0]
         assert all(a.devices() == {cpu} for a in created)
         assert isinstance(indices, np.ndarray) and indices.dtype == np.uint32

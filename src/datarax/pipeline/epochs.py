@@ -19,6 +19,7 @@ positions and epochs are Python integers, exact at every length up to ``2**64 - 
 from __future__ import annotations
 
 import dataclasses
+import threading
 from collections.abc import Callable, Iterator
 from typing import cast
 
@@ -28,7 +29,7 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from datarax.core import batch_ops
-from datarax.core.data_source import DataSourceModule
+from datarax.core.data_source import DataSourceModule, Provenance
 from datarax.core.element_batch import Batch
 from datarax.core.index_words import is_word_start, split_constant, subtract, to_words
 from datarax.core.prng import host_device
@@ -388,23 +389,51 @@ class HostNaming:
     """
 
     def __init__(self, source: DataSourceModule, plan: EpochPlan, *, shuffled: bool) -> None:
-        """Hold the source and the plan, and build the program; nothing is compiled yet.
+        """Hold the source and the plan; the program is built and compiled at first use.
 
         Args:
             source: The indexed source.
             plan: The pipeline's epoch plan.
             shuffled: Whether the pipeline shuffles, which a key then orders.
         """
+        self._source = source
+        self._plan = plan
         self._shuffled = shuffled
         self._device = host_device()
+        self._lock = threading.Lock()
+        self._program: Callable[..., tuple[jax.Array, jax.Array]] | None = None
 
-        def _names(
-            start: jax.Array, epoch: jax.Array, key: jax.Array | None, size: int
-        ) -> tuple[jax.Array, jax.Array]:
-            records = batch_records(source, plan, key_base=key, start=start, epoch=epoch, size=size)
-            return records.indices, records.epochs
+    def __getstate__(self) -> dict[str, object]:
+        """What a copy needs (a worker process's): the source, plan and order, not the program."""
+        return {"source": self._source, "plan": self._plan, "shuffled": self._shuffled}
 
-        self._program = jax.jit(_names, static_argnames=("size",))
+    def __setstate__(self, state: dict[str, object]) -> None:
+        """Hold what was copied; the copy builds its own program at first use."""
+        self.__init__(
+            cast(DataSourceModule, state["source"]),
+            cast(EpochPlan, state["plan"]),
+            shuffled=bool(state["shuffled"]),
+        )
+
+    def _built(self) -> Callable[..., tuple[jax.Array, jax.Array]]:
+        """The program, built once however many threads ask for it at once."""
+        program = self._program
+        if program is None:
+            with self._lock:
+                if self._program is None:
+                    source, plan = self._source, self._plan
+
+                    def _names(
+                        start: jax.Array, epoch: jax.Array, key: jax.Array | None, size: int
+                    ) -> tuple[jax.Array, jax.Array]:
+                        records = batch_records(
+                            source, plan, key_base=key, start=start, epoch=epoch, size=size
+                        )
+                        return records.indices, records.epochs
+
+                    self._program = jax.jit(_names, static_argnames=("size",))
+                program = self._program
+        return program
 
     def __call__(
         self, start: int, epoch: int, size: int, key: np.ndarray | None
@@ -434,7 +463,7 @@ class HostNaming:
             )
         device = self._device
         placed_key = None if key is None else jax.device_put(np.asarray(key, np.uint32), device)
-        indices, epochs = self._program(
+        indices, epochs = self._built()(
             jax.device_put(to_words(start), device),
             jax.device_put(np.int32(epoch), device),
             placed_key,
@@ -444,38 +473,40 @@ class HostNaming:
 
 
 def stream_batches(
-    pull: Callable[[int], Batch],
+    pull: Callable[[int], tuple[Batch, Provenance]],
     batch_size: int,
     *,
     drop_last: bool,
     num_epochs: int | None,
-) -> Iterator[Batch]:
+) -> Iterator[tuple[Batch, Provenance]]:
     """The batches of a stream's passes, by the rule :class:`EpochPlan` applies to an index.
 
-    ``pull(n)`` returns up to ``n`` records of the stream's current pass as a ``Batch``, empty at
-    the pass's end, after which it serves the next pass. Under ``drop_last`` a pass's records
-    short of a full batch are skipped; otherwise the batch is completed from the head of the next
-    pass, each row keeping its own epoch. After ``num_epochs`` passes the run ends, its last batch
-    possibly short; with ``None`` it never ends. A run may start where an earlier one stopped:
-    mid-pass, or at a pass's end it has not yet read, which counts as a pass served, as an
-    exhausted epoch does. A pass the run read from its start to its end holding no record means
-    the stream holds none, and ends the run; whether a pass held records is known only for a pass
-    the run saw begin, never from a count over the run.
+    ``pull(n)`` returns up to ``n`` records of the stream's current pass as a ``Batch`` and their
+    provenance (one mapping per record, or none), empty at the pass's end, after which it serves
+    the next pass. Under ``drop_last`` a pass's records short of a full batch are skipped;
+    otherwise the batch is completed from the head of the next pass, each row keeping its own
+    epoch. After ``num_epochs`` passes the run ends, its last batch possibly short; with ``None``
+    it never ends. A run may start where an earlier one stopped: mid-pass, or at a pass's end it
+    has not yet read, which counts as a pass served, as an exhausted epoch does. A pass the run
+    read from its start to its end holding no record means the stream holds none, and ends the
+    run; whether a pass held records is known only for a pass the run saw begin, never from a
+    count over the run.
 
     Args:
-        pull: Reads up to the given number of records of the current pass.
+        pull: Reads up to the given number of records of the current pass, with provenance.
         batch_size: Records per batch.
         drop_last: Whether a pass's records short of a full batch are skipped.
         num_epochs: Passes served, or ``None`` for no end.
 
     Yields:
-        Full batches, and under ``drop_last=False`` the run's short final batch.
+        Full batches with their records' provenance, and under ``drop_last=False`` the run's
+        short final batch.
     """
-    pending: list[Batch] = []
+    pending: list[tuple[Batch, Provenance]] = []
     held = passes = 0
     served: int | None = None  # records of the current pass, unknown until a pass starts in view
     while num_epochs is None or passes < num_epochs:
-        batch = pull(batch_size - held)
+        batch, provenance = pull(batch_size - held)
         if batch.batch_size == 0:
             passes += 1
             if served == 0:  # a pass read whole held no record: the stream holds none
@@ -484,7 +515,7 @@ def stream_batches(
             if drop_last:
                 pending, held = [], 0
             continue
-        pending.append(batch)
+        pending.append((batch, provenance))
         held += batch.batch_size
         served = (served or 0) + batch.batch_size
         if held == batch_size:
@@ -494,5 +525,8 @@ def stream_batches(
         yield _joined(pending)
 
 
-def _joined(batches: list[Batch]) -> Batch:
-    return batches[0] if len(batches) == 1 else batch_ops.concatenate(batches)
+def _joined(parts: list[tuple[Batch, Provenance]]) -> tuple[Batch, Provenance]:
+    if len(parts) == 1:
+        return parts[0]
+    batch = batch_ops.concatenate([batch for batch, _ in parts])
+    return batch, tuple(record for _, provenance in parts for record in provenance)

@@ -290,7 +290,7 @@ Tests use pytest markers for categorization:
 
 ```bash
 # Run on a GPU; tests marked accelerator skip on a CPU run
-DATARAX_TEST_JAX_PLATFORMS=cuda uv run pytest
+DATARAX_TEST_JAX_PLATFORMS=cuda,cpu uv run pytest
 
 # Run only integration tests
 uv run pytest -m integration
@@ -423,7 +423,7 @@ export XLA_CLIENT_MEM_FRACTION="0.8"
 python -c "import jax; print(jax.devices())"
 
 # Run the tests that need a GPU backend
-DATARAX_TEST_JAX_PLATFORMS=cuda uv run pytest -m accelerator
+DATARAX_TEST_JAX_PLATFORMS=cuda,cpu uv run pytest -m accelerator
 ```
 
 ## Docker
