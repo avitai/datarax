@@ -316,3 +316,54 @@ def test_grain_is_the_published_reference() -> None:
     """The oracle above is Grain's public API, not a copy of the arithmetic under test."""
     assert grain_mix([5, 3], (0.5, 0.5))[1] == 5
     assert isinstance(grain_mix([5, 3], (0.5, 0.5)), grain.MapDataset)
+
+
+class TestANestedMixKeepsItsIndexSpace:
+    """A Mix child's epoch is shorter than its index space when it does not cover its children."""
+
+    @staticmethod
+    def _nested() -> MixDataSourcesNode:
+        inner = _mix([_memory(np.arange(9)), _memory(100 + np.arange(14))], (0.5, 0.5))
+        assert (len(inner), inner.index_space()) == (18, 23)
+        return _mix([inner, _memory(200 + np.arange(8))], (0.5, 0.5))
+
+    def test_the_offsets_and_the_space_count_the_index_space_of_a_mix_child(self) -> None:
+        outer = self._nested()
+        assert outer.index_space() == 23 + 8
+        assert len(outer) == 16  # the inner mix serves 18 positions, the other source 8
+
+    @pytest.mark.parametrize("seed", range(8))
+    def test_a_shuffled_epoch_names_each_record_once_and_serves_it_from_its_owner(
+        self, seed: int
+    ) -> None:
+        outer = self._nested()
+        names = outer.record_indices_at(0, len(outer), jax.random.key(seed))
+        indices = from_words(names).astype(np.int64)
+        assert len(np.unique(indices)) == len(indices)
+        inner_owned = indices < 23
+        expected_third = 200.0 + (indices - 23)
+        for served in (
+            np.asarray(outer.get_batch(np.asarray(names))["x"]),
+            np.asarray(jax.jit(outer.get_records)(names)["x"]),
+        ):
+            assert (served[inner_owned] < 200).all()
+            np.testing.assert_array_equal(served[~inner_owned], expected_third[~inner_owned])
+
+
+class TestTheTracedGatherAddressesInt32:
+    def test_a_space_past_int32_is_refused_naming_the_host_read(self) -> None:
+        mix = _sized([10, (1 << 31) + 100], (0.5, 0.5))
+        words = jnp.asarray(to_words([12, (1 << 31) + 9]))
+        with pytest.raises(ValueError, match=r"get_batch"):
+            mix.get_records(words)
+        with pytest.raises(ValueError, match=r"get_batch"):
+            jax.jit(mix.get_records)(words)
+
+
+def test_an_in_memory_source_s_index_space_is_its_data_not_its_shard() -> None:
+    sharded = MemorySource(
+        MemorySourceConfig(num_workers=3, shard_id=1), {"x": np.arange(10, dtype=np.float32)}
+    )
+    assert len(sharded) == 3
+    assert sharded.index_space() == 10
+    assert Sized(7).index_space() == 7

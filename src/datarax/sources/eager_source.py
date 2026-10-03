@@ -368,6 +368,10 @@ class EagerSource(DataSourceModule):
         """Records the columns hold now (see :func:`column_length`)."""
         return column_length(self.data)
 
+    def index_space(self) -> int:
+        """Every stored row has an index, a worker's shard included: the data's record count."""
+        return self.length
+
     def __len__(self) -> int:
         """Return the number of records."""
         return self.length
@@ -480,7 +484,7 @@ class EagerSource(DataSourceModule):
         """Gather the records at ``indices``; JIT-traceable, for the compiled pipeline path.
 
         Args:
-            indices: uint32 ``(n, 2)`` record indices in ``[0, len(self))``, as
+            indices: uint32 ``(n, 2)`` record indices in ``[0, index_space())``, as
                 :meth:`record_indices_at` names them; concrete or traced.
 
         Returns:

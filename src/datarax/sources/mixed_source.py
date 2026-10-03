@@ -193,9 +193,13 @@ class MixDataSourcesConfig(StructuralConfig):
 
 @dataclass(frozen=True)
 class _Layout:
-    """Where the children stand now: their lengths, offsets, the index space and the epoch."""
+    """Where the children stand now: their offsets, the index space and the epoch's length.
 
-    lengths: tuple[int, ...]
+    A child's offset counts the index spaces of the children before it; the epoch's length
+    counts the positions each child can serve once (its ``len``). The two differ for a mix child
+    that does not cover its own children.
+    """
+
     offsets: tuple[int, ...]
     space: int
     epoch_length: int
@@ -553,8 +557,9 @@ class MixDataSourcesNode(DataSourceModule):
         for position, length in enumerate(lengths):
             if length < 1:
                 raise ValueError(f"child {position} has no records; a mix serves every child")
-        offsets = tuple(sum(lengths[:position]) for position in range(len(lengths)))
-        space = sum(lengths)
+        spaces = tuple(source.index_space() for source in self._sources)
+        offsets = tuple(sum(spaces[:position]) for position in range(len(spaces)))
+        space = sum(spaces)
         if space >= MAX_RECORDS:
             raise ValueError(
                 f"the children hold {space} records, whose indices reach the padding index "
@@ -570,11 +575,15 @@ class MixDataSourcesNode(DataSourceModule):
                 f"an epoch of this mix has {epoch_length} positions, past the sys.maxsize "
                 "records len() reports"
             )
-        return _Layout(lengths, offsets, space, epoch_length)
+        return _Layout(offsets, space, epoch_length)
 
     def __len__(self) -> int:
         """Positions in an epoch: Grain's length over the children as long as they are now."""
         return self._layout().epoch_length
+
+    def index_space(self) -> int:
+        """Every record of every child has an index: the sum of the children's index spaces."""
+        return self._layout().space
 
     def _child_specs(self) -> list[Any]:
         """Each child's record spec, as it declares it now."""
@@ -813,8 +822,8 @@ class MixDataSourcesNode(DataSourceModule):
         A mixed index is a source's offset plus a record index within that source (see
         :meth:`record_indices_at`), so each record is fetched with its source's own
         ``get_records``. Stateless; ``vmap`` over records builds the batch in one trace. The
-        gather addresses records with one int32 word, so a mix whose children hold more than
-        ``2**31 - 1`` records together is refused here.
+        gather addresses records with one int32 word, so a mix whose index space passes
+        ``2**31 - 1`` is refused here, naming the host read.
 
         Args:
             indices: uint32 ``(n, 2)`` mixed record indices; concrete or traced.
@@ -823,8 +832,17 @@ class MixDataSourcesNode(DataSourceModule):
             Dict mapping each data key to a JAX array with leading dim ``len(indices)``.
 
         Raises:
+            ValueError: If the mix's index space passes ``2**31 - 1``, which one int32 word
+                cannot address.
             TypeError: If the children's fields differ, which only the host read joins.
         """
+        layout = self._layout()
+        if layout.space > np.iinfo(np.int32).max:
+            raise ValueError(
+                f"MixDataSourcesNode.get_records addresses mixed records with one int32 word, "
+                f"and this mix names {layout.space}; read its records on the host with "
+                "mix.get_batch(indices)"
+            )
         union = self.element_spec()
         for position, spec in enumerate(self._child_specs()):
             if spec_mismatches(union, spec):
@@ -834,7 +852,6 @@ class MixDataSourcesNode(DataSourceModule):
                     "mix's records on the host with mix.get_batch(indices), which joins them as "
                     "the union of the children's fields"
                 )
-        layout = self._layout()
         offsets = jnp.asarray(layout.offsets, dtype=jnp.int32)
         indices = low_words(indices, layout.space).astype(jnp.int32)
         owners = jnp.searchsorted(offsets, indices, side="right") - 1

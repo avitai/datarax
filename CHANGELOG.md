@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `DataSourceModule.index_space()`: how many record indices a source names, `len` by default.
+  An in-memory source names every stored row (a worker's shard included) and a mix every record
+  of its children, though an epoch serves fewer. A mix's offsets count its children's index
+  spaces, so a nested mix that does not cover its own children keeps one index per record.
 - `MixDataSourcesNode.get_batch(indices, *, epochs=0, contiguous=False)`: the host read of
   mixed records with the indexed sources' signature, a `Batch` named by the given words and
   epochs with draws 0, in the order named. It reads each source once with that source's own
@@ -468,6 +472,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `MixDataSourcesNode.get_records` refuses a mix whose index space passes `2**31 - 1`, which its
+  int32 gather cannot address, naming `get_batch`; such indices reached the wrong child.
 - The docs no longer link to `performance/synchronization.md`, a page removed with the
   synchronization helpers; `mkdocs build --strict` warned on both links.
 - `HFEagerSource` calls `load_dataset` once, taking its info and its columns from the one
