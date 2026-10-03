@@ -181,9 +181,11 @@ print(f"epoch mean: {jnp.mean(means_per_step):.4f}")
 
 - **Train a model** — see `examples/integration/01_ml_classification.py`
   for a full training loop showing both Tier A and Tier C.
-- **Multi-source mixing** — `MixDataSourcesNode` composes several
-  sources with weighted interleaving and works the same way as
-  `MemorySource` in a pipeline.
+- **Multi-source mixing** — `MixDataSourcesNode` interleaves several
+  sources in fixed proportions (Grain's mix). A mix of sources with the
+  same fields works the same way as `MemorySource` in a pipeline; a mix
+  of sources with different fields reads them with `mix.get_batch`,
+  and a pipeline over it refuses its first batch, naming that method.
 - **Branching topology** — `Pipeline.from_dag(...)` accepts an
   explicit DAG of nodes for parallel branches and merges.
 - **Custom stages with parameters** — any `nnx.Module` with
