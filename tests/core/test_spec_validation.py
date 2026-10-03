@@ -329,3 +329,44 @@ class TestValidateBatch:
         batch = fetch(source)
         assert batch["x"].dtype == np.float32
         assert batch["y"].dtype == np.int32
+
+
+class TestValidateBatchAsTheDeviceHolds:
+    """``as_the_device_holds`` compares each host leaf's dtype as a JAX array holds it."""
+
+    def _int64_labels(self, size: int) -> dict[str, np.ndarray]:
+        return {"x": np.zeros((size, 3), np.float32), "y": np.arange(size, dtype=np.int64)}
+
+    def test_a_host_int64_column_satisfies_an_int32_declaration_while_x64_is_off(self) -> None:
+        with _conversion_forbidden():
+            validate_batch(self._int64_labels(4), _ELEMENT_SPEC, as_the_device_holds=True)
+
+    def test_without_it_the_same_column_is_refused(self) -> None:
+        with pytest.raises(SpecMismatchError, match=r"\['y'\].*int64.*int32"):
+            validate_batch(self._int64_labels(4), _ELEMENT_SPEC)
+
+    def test_with_x64_on_the_int64_column_is_refused(self) -> None:
+        with jax.enable_x64(True), pytest.raises(SpecMismatchError, match=r"\['y'\]"):
+            validate_batch(self._int64_labels(4), _ELEMENT_SPEC, as_the_device_holds=True)
+
+    def test_a_mismatch_is_reported_in_the_dtypes_the_device_holds(self) -> None:
+        batch = {"x": np.zeros((2, 3), np.float64), "y": np.zeros((2,), np.float64)}
+        with pytest.raises(SpecMismatchError, match=r"\['y'\].*float32.*int32"):
+            validate_batch(batch, _ELEMENT_SPEC, as_the_device_holds=True)
+
+    def test_a_dtype_without_a_jax_representation_is_named(self) -> None:
+        batch = {"x": np.zeros((2, 3), np.float32), "y": np.array(["a", "b"])}
+        with pytest.raises(TypeError, match=r"\['y'\]"):
+            validate_batch(batch, _ELEMENT_SPEC, as_the_device_holds=True)
+
+    def test_a_matching_batch_builds_no_spec_and_no_stand_in(self) -> None:
+        """The per-batch path reads dtypes only: describing the batch is left to a mismatch."""
+        refuse = AssertionError("a matching batch was described leaf by leaf")
+        with (
+            patch("datarax.core.spec.device_spec", side_effect=refuse),
+            patch("datarax.core.spec.array_to_spec", side_effect=refuse),
+            patch("numpy.broadcast_to", side_effect=refuse),
+        ):
+            validate_batch(
+                self._int64_labels(4), _ELEMENT_SPEC, batch_size=4, as_the_device_holds=True
+            )

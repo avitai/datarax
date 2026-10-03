@@ -29,7 +29,7 @@ compiled graph.
 from __future__ import annotations
 
 import weakref
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -389,8 +389,21 @@ def _record_count(leaf: Any) -> int | None:
     return None
 
 
-def _batch_matches(batch: Any, element_spec: Any, batch_size: int | None) -> bool:
-    """Whether ``batch`` satisfies ``element_spec``: the flat check run before any report."""
+def _given_dtype(dtype: Any) -> Any:
+    """``dtype`` as given: the comparison :func:`validate_batch` makes by default."""
+    return dtype
+
+
+def _batch_matches(
+    batch: Any,
+    element_spec: Any,
+    batch_size: int | None,
+    held: Callable[[Any], Any] = _given_dtype,
+) -> bool:
+    """Whether ``batch`` satisfies ``element_spec``: the flat check run before any report.
+
+    ``held`` maps a leaf's dtype to the dtype compared with the declared one.
+    """
     batch_leaves, batch_tree = jax.tree.flatten(batch)
     spec_leaves, spec_tree = jax.tree.flatten(element_spec)
     counts = {_record_count(leaf) for leaf in batch_leaves}
@@ -400,7 +413,7 @@ def _batch_matches(batch: Any, element_spec: Any, batch_size: int | None) -> boo
     if batch_size is not None and count is not None and not 1 <= count <= batch_size:
         return False
     return all(
-        leaf.shape[1:] == expected.shape and leaf.dtype == expected.dtype
+        leaf.shape[1:] == expected.shape and held(leaf.dtype) == expected.dtype
         for leaf, expected in zip(batch_leaves, spec_leaves, strict=True)
     )
 
@@ -422,7 +435,13 @@ def _batch_problems(batch: Any, element_spec: Any, batch_size: int | None) -> li
     return problems
 
 
-def validate_batch(batch: Any, element_spec: Any, *, batch_size: int | None = None) -> None:
+def validate_batch(  # noqa: DOC503 - device_spec raises the TypeError
+    batch: Any,
+    element_spec: Any,
+    *,
+    batch_size: int | None = None,
+    as_the_device_holds: bool = False,
+) -> None:
     """Check ``batch`` against the element spec its source declares.
 
     The batch must have the spec's tree structure, with one array per declared
@@ -439,15 +458,30 @@ def validate_batch(batch: Any, element_spec: Any, *, batch_size: int | None = No
         batch: PyTree of arrays with a leading record axis.
         element_spec: PyTree of ``jax.ShapeDtypeStruct`` describing one element.
         batch_size: Largest record count the batch may hold, when bounded.
+        as_the_device_holds: Compare each leaf's dtype as a JAX array holds it
+            (:func:`device_spec`) rather than as given, so a host ``int64`` column
+            satisfies an ``int32`` declaration while x64 is off. Still reads only
+            dtypes; the report for a mismatch is built from the device dtypes.
 
     Raises:
         SpecMismatchError: Listing every problem found, each naming its field.
+        TypeError: With ``as_the_device_holds``, if a mismatching leaf's dtype has no
+            JAX array representation.
     """
-    if not _batch_matches(batch, element_spec, batch_size):
+    held = _device_dtype if as_the_device_holds else _given_dtype
+    if not _batch_matches(batch, element_spec, batch_size, held):
+        if as_the_device_holds:
+            batch = _device_stand_ins(batch)
         raise SpecMismatchError(
             "The batch does not match the declared element spec.",
             _batch_problems(batch, element_spec, batch_size),
         )
+
+
+def _device_stand_ins(batch: Any) -> Any:
+    """Zero-copy views shaped like ``batch``'s leaves in the dtypes a JAX array holds them in."""
+    devices = device_spec(jax.tree.map(array_to_spec, batch))
+    return jax.tree.map(lambda spec: np.broadcast_to(np.zeros((), spec.dtype), spec.shape), devices)
 
 
 # Declared element specs per source, by x64 setting. Reading a spec can open a
