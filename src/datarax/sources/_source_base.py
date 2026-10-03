@@ -399,8 +399,8 @@ class StreamingSourceBase(DataSourceModule):
                     "carries the id it is named by"
                 )
             words = to_words(chunk.ids)
-        return batch_ops.from_arrays(chunk.columns).replace(
-            indices=words, epochs=np.full((size,), cursor.pass_index, np.int32)
+        return batch_ops.from_arrays(
+            chunk.columns, indices=words, epochs=np.full((size,), cursor.pass_index, np.int32)
         )
 
     def element_spec(self) -> Any:
