@@ -145,6 +145,18 @@ class TestTierA:
         with expect_compiles(2):  # the short final batch: its naming and its DAG call
             next(batches)
 
+    def test_a_pipeline_without_stages_serves_its_placed_batches_with_no_dag_call(self) -> None:
+        """An empty DAG is the identity: no compile and no copy of each batch on the device."""
+        pipe = _pipeline(_memory(24), num_epochs=1)  # six full batches: one naming shape
+        reference = [_rows(b) for b in _pipeline(_memory(24), num_epochs=1).raw_batches()]
+        jax.clear_caches()
+        batches = iter(pipe)
+        with expect_compiles(1):  # the naming; no DAG step
+            first = next(batches)
+        with expect_compiles(0):
+            rest = list(batches)
+        assert [_rows(b) for b in [first, *rest]] == reference
+
     def test_batch_norm_statistics_are_written_back(self) -> None:
         class Normalize(nnx.Module):
             def __init__(self) -> None:

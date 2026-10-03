@@ -167,7 +167,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compiled session served, uploads no dataset, and continues where the last batch taken ended
   until the run's `num_epochs`; `reset()` starts the next run. `iter(pipeline)` is no longer a
   `PipelineIterator`: `pipeline.session()` is the compiled session. `step()`, `scan` and the
-  session keep their place in the pipeline's Variables, apart from iteration's.
+  session keep their place in the pipeline's Variables, apart from iteration's. A pipeline without
+  stages serves the placed batches as they are, with no DAG call: no compile and no copy.
 - `Pipeline.get_state()` / `set_state(state, /)` are the host stage's cursor, version 3, typed
   `substrax.typing.CheckpointState`: `version`, `kind`, `epoch`, `position`, `run_end_epoch`,
   `stream` (a stream's pass, records, arrivals and passes left) and `fingerprint` (batch size,

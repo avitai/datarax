@@ -736,10 +736,12 @@ class Pipeline(nnx.Module):
         The host stage reads batches ahead on Grain threads and places each as it is taken
         (:meth:`raw_batches`); each runs through :attr:`dag` in one compiled call, split once per
         call and compiled once per batch shape, the state its stages write (BatchNorm
-        statistics) written back. Iteration continues where the last batch taken ended and stops
-        after the run's ``num_epochs`` epochs; :meth:`reset` starts the next run. A stream whose
-        source is not a :class:`~datarax.sources.StreamingSourceBase` pulls its own batches
-        through :meth:`_iter_streaming`.
+        statistics) written back. A pipeline without stages serves the placed batches as they
+        are: an empty DAG is the identity, so it compiles nothing and copies no batch. Iteration
+        continues where the last batch taken ended and stops after the run's ``num_epochs``
+        epochs; :meth:`reset` starts the next run. A stream whose source is not a
+        :class:`~datarax.sources.StreamingSourceBase` pulls its own batches through
+        :meth:`_iter_streaming`.
 
         Returns:
             The processed batches.
@@ -748,6 +750,8 @@ class Pipeline(nnx.Module):
             self.source, StreamingSourceBase
         ):
             return self._iter_streaming()
+        if not self.dag.order:
+            return iter(self.raw_batches())
         apply = compile_dag(self.dag)
         return (apply(batch) for batch in self.raw_batches())
 
