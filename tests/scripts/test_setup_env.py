@@ -67,3 +67,17 @@ def test_the_memory_fraction_uses_the_name_jaxlib_reads(tmp_path: Path) -> None:
 
     assert "export XLA_CLIENT_MEM_FRACTION=0.75" in contents
     assert "XLA_PYTHON_CLIENT_MEM_FRACTION" not in contents
+
+
+def test_the_env_file_leaves_the_protobuf_runtime_to_the_install(tmp_path: Path) -> None:
+    """No backend's env file names the protobuf runtime, so TFDS decodes on upb.
+
+    A shell activated with an env file that exported it loses it on the next activation, as
+    with the renamed memory fraction above.
+    """
+    setup_env = _load_setup_env_module()
+
+    for backend in ("cpu", "cuda12", "metal"):
+        contents = setup_env.build_env_contents(tmp_path, backend)
+        assert "export DATARAX_BACKEND=" in contents  # the control: the file was built
+        assert "PROTOCOL_BUFFERS" not in contents, backend
