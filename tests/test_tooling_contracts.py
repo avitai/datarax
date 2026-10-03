@@ -15,6 +15,8 @@ import pytest
 import yaml
 from packaging.requirements import Requirement
 
+from tests.test_common.protobuf_runtime import RUNTIME_VARIABLE
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
@@ -669,6 +671,33 @@ def test_the_global_pre_commit_exclude_names_tracked_files() -> None:
     ).stdout.splitlines()
 
     assert any(re.search(exclude, path) for path in tracked), f"{exclude} matches no tracked file"
+
+
+def _tracked_files_naming(name: str) -> set[str]:
+    listing = subprocess.run(  # noqa: S603  # nosec B603 B607 - git on this repository
+        ["git", "ls-files", "-z"], cwd=REPO_ROOT, capture_output=True, text=True, check=True
+    ).stdout
+    needle = name.encode()
+    return {
+        path
+        for path in listing.split("\0")
+        if path and (REPO_ROOT / path).is_file() and needle in (REPO_ROOT / path).read_bytes()
+    }
+
+
+def test_no_tracked_file_chooses_the_protobuf_runtime() -> None:
+    """The runtime TFDS records are parsed on is the one a plain install selects (upb).
+
+    Pure-Python protobuf doubles the per-record TFDS decode (132 vs 71 us on CIFAR-10), and a
+    variable exported by the managed env file, the test conftest or a source module reaches every
+    process started from there.
+    """
+    # The control: the same scan sees a variable the env generator and the macOS workflow name.
+    assert {"scripts/setup_env.py", ".github/workflows/macos.yml"} <= _tracked_files_naming(
+        "JAX_PLATFORMS"
+    )
+
+    assert _tracked_files_naming(RUNTIME_VARIABLE) == set()
 
 
 def test_pull_requests_gate_coverage_on_changed_lines() -> None:

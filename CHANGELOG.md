@@ -533,6 +533,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- TFDS records decode on the protobuf runtime a plain install selects (`upb`). The managed env
+  file, the test conftest and the TFDS sources each chose protobuf's pure-Python runtime, which
+  nearly doubles TFDS's per-record decode (CIFAR-10: about 130 us against 72 us). The sources
+  chose it after protobuf had loaded, so their own process stayed on `upb` and only the child
+  processes it started ran pure Python. Rerun `./setup.sh` to regenerate `.datarax.env`.
 - `MixDataSourcesNode.get_records` refuses a mix whose index space passes `2**31 - 1`, which its
   int32 gather cannot address, naming `get_batch`; such indices reached the wrong child.
 - The docs no longer link to `performance/synchronization.md`, a page removed with the
