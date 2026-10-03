@@ -394,6 +394,8 @@ def _checker(source: DataSourceModule, batch_size: int) -> Callable[[Batch], Non
     """A check of a stream's batches against the spec its source declares, as the device holds it.
 
     The spec is read once and refused if it declares a dtype JAX arrays cannot hold as declared.
+    Batches are checked in the precision mode the spec was read in, on whichever thread reads
+    them: ``jax.enable_x64`` is thread-local, and the read threads do not inherit it.
 
     Args:
         source: The stream.
@@ -404,9 +406,13 @@ def _checker(source: DataSourceModule, batch_size: int) -> Callable[[Batch], Non
     """
     element_spec = declared_spec(source)
     validate_device_dtypes(element_spec)
+    x64 = bool(jax.config.read("jax_enable_x64"))
 
     def check(batch: Batch) -> None:
-        validate_batch(batch.data, element_spec, batch_size=batch_size, as_the_device_holds=True)
+        with jax.enable_x64(x64):
+            validate_batch(
+                batch.data, element_spec, batch_size=batch_size, as_the_device_holds=True
+            )
 
     return check
 
@@ -425,6 +431,7 @@ class HostStage:
     Attributes:
         cursor: Where iteration stands.
         read_threads: Grain threads reading units of an indexed source's run.
+        read_buffer: Units read ahead of the consumer.
     """
 
     def __init__(self, *, end_epoch: int | None) -> None:
@@ -435,12 +442,14 @@ class HostStage:
         """
         self.cursor = Cursor(epoch=0, position=0, arrived=0, end_epoch=end_epoch)
         self.read_threads = _READ_THREADS
-        # The run's Grain iterator, in a list the stage's finalizer empties, so at exit the
+        self.read_buffer = _READ_BUFFER
+        # The run's Grain iterator, in a list the run's finalizer empties, so at exit the
         # iterator is closed and released before the interpreter tears Grain's modules down.
         self._run_iterator: list[_Placed] = []
         self._opened_for: tuple[Any, ...] | None = None
         self._naming: tuple[Any, HostNaming] | None = None
         self._finalizer: weakref.finalize | None = None
+        self._token: weakref.ref[_RunToken] | None = None
 
     def naming(self, source: DataSourceModule, plan: EpochPlan, shuffled: bool) -> HostNaming:
         """The pipeline's host naming, built once per source, plan and order.
@@ -469,13 +478,27 @@ class HostStage:
             self._finalizer()
         self._opened_for, self._finalizer = None, None
 
-    def _open(self, dataset: grain.IterDataset, options: tuple[Any, ...]) -> _Placed:
-        """Start the run's iterator: units read ahead, each placed as the consumer takes it."""
-        iterator: _Placed = iter(dataset.map(_place))
-        self._run_iterator.append(iterator)
+    def _open(self, dataset: grain.IterDataset, options: tuple[Any, ...]) -> _RunToken:
+        """Start the run's iterator: units read ahead, each placed as the consumer takes it.
+
+        The run lives as long as its token: the pipelines it served and the iterators serving
+        it hold the token, and the stage only a weak reference. A compiled-step cache keyed by
+        a pipeline's graph keeps the stage (a static of that graph), so a run the stage owned
+        would keep its threads and the batches read ahead for the life of the process.
+
+        Args:
+            dataset: The run's dataset of host elements.
+            options: What the run was opened for, compared when a later call continues it.
+
+        Returns:
+            The run's token.
+        """
+        self._run_iterator.append(iter(dataset.map(_place)))
         self._opened_for = options
-        self._finalizer = weakref.finalize(self, _close_run, self._run_iterator)
-        return iterator
+        token = _RunToken()
+        self._token = weakref.ref(token)
+        self._finalizer = weakref.finalize(token, _close_run, self._run_iterator)
+        return token
 
     def batches(
         self,
@@ -511,15 +534,33 @@ class HostStage:
                     f"a chunk of {size} batches holds {size * batch_bytes} bytes, over "
                     f"max_chunk_bytes={max_chunk_bytes}; one batch holds {batch_bytes} bytes"
                 )
-        options = (id(source), pipeline.epoch_plan, pipeline.shuffle, chunk, with_provenance)
+        # A run is read in the caller's precision mode (a thread-local setting the read threads
+        # do not inherit) and with the stage's read options; a change of any opens a new run.
+        x64 = bool(jax.config.read("jax_enable_x64"))
+        options = (
+            id(source),
+            pipeline.epoch_plan,
+            pipeline.shuffle,
+            chunk,
+            with_provenance,
+            x64,
+            self.read_threads,
+            self.read_buffer,
+        )
         cursor = self.cursor
-        if self.iterator is None or self._opened_for != (*options, cursor.epoch, cursor.position):
+        token = None if self._token is None else self._token()
+        if (
+            token is None
+            or self.iterator is None
+            or self._opened_for != (*options, cursor.epoch, cursor.position)
+        ):
             self.close()
             dataset = self._dataset(pipeline, chunk, with_provenance)
-            self._open(dataset, (*options, cursor.epoch, cursor.position))
+            token = self._open(dataset, (*options, cursor.epoch, cursor.position))
+        _RUN_HOLDERS[pipeline] = token
         return cast(
             Iterator[Batch] | Iterator[tuple[Batch, Provenance]],
-            _Served(self, (*options,), with_provenance),
+            _Served(self, (*options,), with_provenance, token),
         )
 
     def _dataset(
@@ -554,7 +595,7 @@ class HostStage:
                 .map(read)
                 .to_iter_dataset(
                     grain.ReadOptions(
-                        num_threads=self.read_threads, prefetch_buffer_size=_READ_BUFFER
+                        num_threads=self.read_threads, prefetch_buffer_size=self.read_buffer
                     )
                 )
             )
@@ -578,7 +619,7 @@ class HostStage:
             check=check,
         )
         return grain.experimental.ThreadPrefetchIterDataset(
-            _Stream(source, cursor, config), prefetch_buffer_size=_READ_BUFFER
+            _Stream(source, cursor, config), prefetch_buffer_size=self.read_buffer
         )
 
     def _run(self, plan: EpochPlan) -> Run:
@@ -586,6 +627,122 @@ class HostStage:
         return Run(
             plan=plan, position=cursor.position, epoch=cursor.epoch, end_epoch=cursor.end_epoch
         )
+
+    def state(self, pipeline: Any) -> dict[str, Any]:
+        """Where iteration stands, as version :data:`STATE_VERSION` of the pipeline's state.
+
+        Every leaf is an int, a bool, a string, a list of ints or ``None``; the cursor names the
+        batches the consumer took, whatever the read threads have read ahead.
+
+        Args:
+            pipeline: The pipeline whose state it is.
+
+        Returns:
+            The state.
+        """
+        cursor = self.cursor
+        kind = pipeline.source.record_identity
+        indexed = kind is RecordIdentity.INDEXED
+        stream = None
+        if not indexed:
+            stream = {
+                "pass": cursor.epoch,
+                "records": cursor.position,
+                "arrived": cursor.arrived,
+                "passes_left": None
+                if cursor.end_epoch is None
+                else max(0, cursor.end_epoch - cursor.epoch),
+            }
+        return {
+            "version": STATE_VERSION,
+            "kind": kind.value,
+            "epoch": cursor.epoch if indexed else None,
+            "position": cursor.position if indexed else None,
+            "run_end_epoch": cursor.end_epoch if indexed else None,
+            "stream": stream,
+            "fingerprint": _fingerprint(pipeline),
+        }
+
+    def restore(self, pipeline: Any, state: Mapping[str, Any]) -> None:
+        """Move the cursor to where ``state`` stands, closing the run open now.
+
+        Args:
+            pipeline: The pipeline the state is restored into.
+            state: A state :meth:`state` produced, as saved or as a checkpoint store returns it.
+
+        Raises:
+            ValueError: If the state is another version, another kind of source, or was produced
+                under another configuration, naming what differs; nothing converts a layout.
+        """
+        state = _plain(state)
+        version = state.get("version")
+        if version != STATE_VERSION:
+            if version is None:
+                saved = "a state without a version (a pipeline module_state layout)"
+            elif version == _SESSION_VERSION:
+                saved = f"version {version} (the session layout of PipelineIterator)"
+            else:
+                saved = f"version {version}"
+            raise ValueError(
+                f"the state is {saved}; this pipeline reads version {STATE_VERSION}: save it "
+                "again from a pipeline built as this one is"
+            )
+        kind = pipeline.source.record_identity.value
+        if state.get("kind") != kind:
+            raise ValueError(
+                f"the state's kind is {state.get('kind')!r} but this pipeline's source is {kind!r}"
+            )
+        mine = _fingerprint(pipeline)
+        for field, value in mine.items():
+            if state["fingerprint"].get(field) != value:
+                raise ValueError(
+                    f"the state was produced with {field}={state['fingerprint'].get(field)!r} "
+                    f"but this pipeline has {field}={value!r}; a state is only valid for the "
+                    "configuration that produced it"
+                )
+        self.close()
+        if kind == RecordIdentity.INDEXED.value:
+            self.cursor = Cursor(
+                epoch=int(state["epoch"]),
+                position=int(state["position"]),
+                arrived=0,
+                end_epoch=None if state["run_end_epoch"] is None else int(state["run_end_epoch"]),
+            )
+            return
+        stream = state["stream"]
+        left = stream["passes_left"]
+        self.cursor = Cursor(
+            epoch=int(stream["pass"]),
+            position=int(stream["records"]),
+            arrived=int(stream["arrived"]),
+            end_epoch=None if left is None else int(stream["pass"]) + int(left),
+        )
+
+    def reset(self, num_epochs: int | None) -> None:
+        """Start a new run at the next epoch's (or pass's) start, closing the run open now.
+
+        Args:
+            num_epochs: Epochs the new run serves, or ``None`` for no end.
+        """
+        self.close()
+        epoch = self.cursor.epoch + 1
+        self.cursor = Cursor(
+            epoch=epoch,
+            position=0,
+            arrived=self.cursor.arrived,
+            end_epoch=None if num_epochs is None else epoch + num_epochs,
+        )
+
+    def batches_left(self, plan: EpochPlan) -> int | None:
+        """Batches the rest of the run serves, or ``None`` for one without a length or an end.
+
+        Args:
+            plan: The pipeline's epoch plan.
+
+        Returns:
+            The count.
+        """
+        return self._run(plan).batches()
 
     def read_for_workers(self, pipeline: Any) -> IndexedRead:
         """The read a worker runs for the pipeline's run from the cursor, single batches.
@@ -674,10 +831,17 @@ class _RunElementsIterator(grain.DatasetIterator):
 class _Served:
     """The units a call of ``raw_batches`` takes from the stage's run, advancing its cursor."""
 
-    def __init__(self, stage: HostStage, options: tuple[Any, ...], with_provenance: bool) -> None:
+    def __init__(
+        self,
+        stage: HostStage,
+        options: tuple[Any, ...],
+        with_provenance: bool,
+        token: _RunToken,
+    ) -> None:
         self._stage = stage
         self._options = options
         self._with_provenance = with_provenance
+        self._token = token  # the run stays open while this iterator lives
 
     def __iter__(self) -> _Served:
         return self
@@ -698,6 +862,48 @@ class _Served:
         if self._with_provenance:
             return batch, () if provenance is None else provenance
         return batch
+
+
+STATE_VERSION = 3
+"""The layout of ``Pipeline.get_state()``: the host stage's cursor and the configuration it fits."""
+_SESSION_VERSION = 2  # the layout of ``PipelineIterator.get_state()``, named when refused
+
+
+def _fingerprint(pipeline: Any) -> dict[str, Any]:
+    """The configuration a state is only valid for: batch rule, length, epochs, key and order."""
+    plan: EpochPlan = pipeline.epoch_plan
+    return {
+        "batch_size": plan.batch_size,
+        "length": plan.length,
+        "drop_last": plan.drop_last,
+        "num_epochs": plan.num_epochs,
+        "shuffled": bool(pipeline.shuffle),
+        "seed": [int(word) for word in key_words(pipeline._epoch_key_base.get_value())],  # noqa: SLF001
+        "order": {"kind": "global"},
+    }
+
+
+def _plain(value: Any) -> Any:
+    """A saved state as plain Python values: a checkpoint store may return NumPy leaves."""
+    if isinstance(value, Mapping):
+        return {key: _plain(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_plain(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return _plain(value.tolist())
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+class _RunToken:
+    """A run's lifetime: the run closes when the last holder of its token is gone."""
+
+    __slots__ = ("__weakref__",)
+
+
+_RUN_HOLDERS: weakref.WeakKeyDictionary[Any, _RunToken] = weakref.WeakKeyDictionary()
+"""The token of the run each live pipeline was last served from."""
 
 
 def _close_run(run: list[_Placed]) -> None:
@@ -721,4 +927,12 @@ class HostStageHolder(HostValue):
     value: HostStage
 
 
-__all__ = ["Cursor", "HostElement", "HostStage", "HostStageHolder", "IndexedRead", "RunUnits"]
+__all__ = [
+    "STATE_VERSION",
+    "Cursor",
+    "HostElement",
+    "HostStage",
+    "HostStageHolder",
+    "IndexedRead",
+    "RunUnits",
+]

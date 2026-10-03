@@ -104,8 +104,9 @@ class CompatibleModule(DataraxModule):
 
 **Solution**: keep the position in an `nnx.Variable` and the records as construction data
 (`nnx.data`), as the [checkpointable iterator pattern](checkpointing_guide.md#checkpointable-iterator-pattern)
-shows. A `Pipeline` and its iteration session already do: checkpoint the pipeline with
-`IteratorCheckpoint.save(pipeline, step=...)`, which also keeps its stages' tuned parameters.
+shows. A `Pipeline` keeps where iteration stands itself: checkpoint it with
+`IteratorCheckpoint.save(pipeline, step=...)`, and its stages' tuned parameters with the model as
+`nnx.state(pipeline.dag)`.
 
 ## State Management Issues
 

@@ -39,7 +39,7 @@ By the end of this guide, you will be able to:
 
 1. Save model, optimizer and loader state together with `OrbaxCheckpointStore`, and read
    back the step and loss it records
-2. Restore a Grain loader from its JSON state and a Datarax pipeline from its iterator state
+2. Restore a Grain loader from its JSON state and a Datarax pipeline from its state
 3. Show that a resumed run reproduces the uninterrupted run exactly, in both libraries
 4. Say what each loader's state holds and why the randomness resumes with it
 """
@@ -74,7 +74,7 @@ from substrax.checkpoint import Checkpoint, OrbaxCheckpointStore
 
 from datarax.core.element_batch import Batch
 from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.pipeline import Pipeline, PipelineIterator
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -106,17 +106,17 @@ print(
 | Part | Grain | Datarax |
 |---|---|---|
 | Model and optimizer | `nnx.to_pure_dict(nnx.state(...))`: arrays only | The same |
-| Loader state | `iterator.get_state()`: JSON bytes with the last index each worker served, the sampler and the source description | `iterator.get_state()`: `position`, `epoch`, one count per random stream, `version` |
+| Loader state | `iterator.get_state()`: JSON bytes with the last index each worker served, the sampler and the source description | `pipeline.get_state()`: `epoch`, `position`, the run's last epoch, `version`, and a fingerprint of the configuration (batch size, length, seed) |
 | Randomness | Resumes because the draw index resumes | Resumes because the epoch and record index resume |
-| Put back with | `iterator.set_state(bytes)` on a loader built the same way | `iterator.set_state(dict)` on a fresh iterator of a pipeline built the same way |
+| Put back with | `iterator.set_state(bytes)` on a loader built the same way | `pipeline.set_state(dict)` on a pipeline built the same way |
 
 `OrbaxCheckpointStore.save(step, items, metrics=...)` writes the model, the optimizer and
 the loader state as three named items (`model`, `optimizer`, `data_iterator`), each any
 pytree of arrays and plain leaves, under a step number, with the loss in the record's
 metrics; `restore(step, templates=...)` fills templates of the same structure and returns
-the items with that record. The model and optimizer travel as
-`nnx.to_pure_dict(nnx.state(...))`, Grain's bytes as a string leaf, and Datarax's iterator
-state as a dict of ints and lists.
+the items with that record, and an item without a template comes back as it was saved. The
+model and optimizer travel as `nnx.to_pure_dict(nnx.state(...))`, Grain's bytes as a string
+leaf, and Datarax's state as a dict of ints, strings and lists.
 """
 
 
@@ -176,7 +176,8 @@ def load_training_state(model: LinearRegression, optimizer: nnx.Optimizer, saved
 
 Each library trains for five epochs with per-record noise, and its loss curve is the
 reference the resumed run must reproduce. Grain's sampler runs `num_epochs=5` on one
-iterator; a Datarax pipeline serves one epoch per iterator, and `reset()` starts the next.
+iterator; a Datarax pipeline built with `num_epochs=5` serves the five epochs to
+`for batch in pipeline`.
 """
 
 
@@ -238,21 +239,13 @@ def build_datarax_pipeline() -> Pipeline:
         rngs=nnx.Rngs(noise=0),
     )
     return Pipeline(
-        source=source, stages=[noise], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0), shuffle=True
+        source=source,
+        stages=[noise],
+        batch_size=BATCH_SIZE,
+        rngs=nnx.Rngs(0),
+        shuffle=True,
+        num_epochs=NUM_EPOCHS,
     )
-
-
-def datarax_iterators(pipeline: Pipeline, first: PipelineIterator | None = None):
-    """Yield one iterator per epoch, starting from ``first`` when a run resumes."""
-    iterator = first if first is not None else iter(pipeline)
-    while True:
-        if not isinstance(iterator, PipelineIterator):
-            raise TypeError("a MemorySource pipeline iterates through a PipelineIterator")
-        yield iterator
-        if int(iterator.get_state()["epoch"]) + 1 >= NUM_EPOCHS:
-            return
-        pipeline.reset()
-        iterator = iter(pipeline)
 
 
 def train_grain(
@@ -285,26 +278,23 @@ def train_datarax(
     model: LinearRegression,
     optimizer: nnx.Optimizer,
     steps: int,
-    first: PipelineIterator | None = None,
     save: tuple[int, OrbaxCheckpointStore] | None = None,
 ) -> tuple[list[float], dict | None]:
     """Train over ``steps`` batches; ``save`` names the step to checkpoint at and the store.
 
+    Iteration continues where the pipeline stands, and stops its read threads when it ends.
     Returns the losses and the payload saved, or ``None`` when nothing was saved.
     """
     losses: list[float] = []
     payload = None
-    for iterator in datarax_iterators(pipeline, first):
-        for batch in iterator:
-            losses.append(float(train_step(model, optimizer, batch)))
-            if save is not None and len(losses) == save[0]:
-                payload = {
-                    **training_state(model, optimizer),
-                    "data_iterator": iterator.get_state(),
-                }
-                save[1].save(save[0], payload, metrics={"loss": losses[-1]})
-            if len(losses) == steps:
-                return losses, payload
+    for batch in pipeline:
+        losses.append(float(train_step(model, optimizer, batch)))
+        if save is not None and len(losses) == save[0]:
+            payload = {**training_state(model, optimizer), "data_iterator": pipeline.get_state()}
+            save[1].save(save[0], payload, metrics={"loss": losses[-1]})
+        if len(losses) == steps:
+            break
+    pipeline.close()
     return losses, payload
 
 
@@ -316,7 +306,7 @@ def saved_payload(payload: dict | None) -> dict:
 
 
 def restored_payload(store: OrbaxCheckpointStore, templates: dict, step: int) -> Checkpoint:
-    """Restore the items at ``step`` from ``store`` onto ``templates`` of the same structure."""
+    """Restore the items at ``step`` from ``store``, the ones ``templates`` names onto them."""
     return store.restore(step, templates=templates)
 
 
@@ -349,7 +339,7 @@ print(
 Each run starts again from the same seeds, trains 20 steps, and saves model, optimizer and
 loader state under step 20 in its own store. Step 20 is halfway through the third epoch,
 so the loader state carries a mid-epoch position: Grain's bytes name the last index each
-worker served, Datarax's dict names position 32 of epoch 2.
+worker served, Datarax's dict names position 32 of epoch 2 in a run that ends at epoch 5.
 """
 
 # %%
@@ -375,7 +365,7 @@ print(f"Datarax loader state: {saved_payload(datarax_payload)['data_iterator']}"
 # Expected output:
 # Latest step in each store: 20, 20
 # Grain loader state keys: ['data_source', 'last_seen_indices', 'last_worker_index', 'sampler', 'version', 'worker_count']
-# Datarax loader state: {'position': 32, 'epoch': 2, 'rng_counts': [1], 'version': 2, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 1, 'shuffled': True}}  # noqa: E501
+# Datarax loader state: {'version': 3, 'kind': 'indexed', 'epoch': 2, 'position': 32, 'run_end_epoch': 5, 'stream': None, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 5, 'shuffled': True, 'seed': [1797259609, 2579123966], 'order': {'kind': 'global'}}}  # noqa: E501
 
 # %% [markdown]
 """
@@ -385,8 +375,8 @@ A new model and optimizer are built from a different seed, so nothing but the ch
 can make them match. `restore(step, templates=...)` fills templates of the same structure
 and returns the items with the record the store wrote at the step. The model and optimizer arrays go
 back through `nnx.replace_by_pure_dict`, Grain's bytes go to `set_state` on a loader built
-the same way, and Datarax's dict goes to `set_state` on a fresh iterator of a pipeline
-built the same way. Each run then trains the remaining 20 steps.
+the same way, and Datarax's dict, restored as it was saved, goes to `set_state` on a
+pipeline built the same way. Each run then trains the remaining 20 steps.
 """
 
 
@@ -408,33 +398,13 @@ grain_after, _ = train_grain(grain_iterator, model, optimizer, TOTAL_STEPS - CHE
 grain_store.close()
 
 model, optimizer = build_fresh_model()
-templates = {
-    **training_state(model, optimizer),
-    "data_iterator": {
-        "position": 0,
-        "epoch": 0,
-        "rng_counts": [0],
-        "version": 2,
-        # The state names the configuration it is valid for; the template only fixes the shape.
-        "fingerprint": {
-            "batch_size": 0,
-            "length": 0,
-            "drop_last": False,
-            "num_epochs": 0,
-            "shuffled": False,
-        },
-    },
-}
-datarax_checkpoint = restored_payload(datarax_store, templates, CHECKPOINT_STEP)
+datarax_checkpoint = restored_payload(
+    datarax_store, training_state(model, optimizer), CHECKPOINT_STEP
+)
 load_training_state(model, optimizer, datarax_checkpoint.items)
 pipeline = build_datarax_pipeline()
-datarax_iterator = iter(pipeline)
-if not isinstance(datarax_iterator, PipelineIterator):
-    raise TypeError("a MemorySource pipeline iterates through a PipelineIterator")
-datarax_iterator.set_state(datarax_checkpoint.items["data_iterator"])
-datarax_after, _ = train_datarax(
-    pipeline, model, optimizer, TOTAL_STEPS - CHECKPOINT_STEP, first=datarax_iterator
-)
+pipeline.set_state(datarax_checkpoint.items["data_iterator"])
+datarax_after, _ = train_datarax(pipeline, model, optimizer, TOTAL_STEPS - CHECKPOINT_STEP)
 datarax_store.close()
 
 grain_resumed = grain_before + grain_after
@@ -462,20 +432,20 @@ print(
 
 | | Grain | Datarax |
 |---|---|---|
-| Loader state | JSON bytes: last index per worker, sampler and source description | `position`, `epoch`, one count per random stream, `version` |
-| Restored into | `set_state(bytes)` on a loader built the same way | `set_state(dict)` on a fresh iterator of a pipeline built the same way |
+| Loader state | JSON bytes: last index per worker, sampler and source description | `epoch`, `position`, the run's last epoch, `version`, a configuration fingerprint |
+| Restored into | `set_state(bytes)` on a loader built the same way | `set_state(dict)` on a pipeline built the same way |
 | Randomness after resume | The draw index continues, so the same generators follow | The epoch and record index continue, so the same keys follow |
 | Model and optimizer | `nnx.to_pure_dict` in, `nnx.replace_by_pure_dict` out | The same |
 | Store | One `OrbaxCheckpointStore.save(step, items, metrics)` with `model`, `optimizer` and `data_iterator` items | The same |
 
 Both resumed runs reproduce their reference loss for loss. The difference between the
 libraries is what the loader contributes to the payload: bytes that describe a Python
-loader, or a small dict that names a position in a compiled one.
+loader, or a small dict that names a position in the pipeline's run.
 
 ## Next Steps
 
 1. [Resumable Training Guide](../advanced/checkpointing/02_resumable_training_guide.py):
-   the Datarax pattern with the pipeline's module state and Orbax's `StandardCheckpointer`
+   the Datarax pattern with the pipeline's state and Orbax's composite checkpoints
 2. [Checkpoint Quick Reference](../advanced/checkpointing/01_checkpoint_quickref.py): iterator
    state for every Datarax source
 3. [Iteration and Checkpoint State](01_grain_datarax_quickref.py): the quick reference this

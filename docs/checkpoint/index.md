@@ -13,6 +13,8 @@ State persistence and recovery for pipelines, iterators and modules. Built on
 !!! note "Key points"
 
     - Every Datarax module, pipeline and iterator is Checkpointable
+    - A pipeline's state is where iteration stands; its stages' parameters and statistics are
+      `nnx.state(pipeline.dag)`, saved with the model
     - Arrays, typed PRNG keys and plain-Python leaves (positions, seeds, reprs) all round-trip
     - Checkpoints are addressed by integer step; Orbax keeps the most recent `max_to_keep`
     - Use the context manager, or call `close()`, to release the store

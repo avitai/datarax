@@ -129,12 +129,12 @@ class TestDataraxAdapterNLP:
 
 
 class TestDataraxAdapterPrefetchPolicy:
-    """Benchmark adapter should control prefetch policy explicitly."""
+    """The scenario's ``prefetch_size`` is the depth the host stage reads ahead."""
 
     def test_setup_defaults_prefetch_to_two(self, cv1_small_config, small_image_data):
         adapter = DataraxAdapter()
         adapter.setup(cv1_small_config, small_image_data)
-        assert adapter._buffer_depth == 2  # type: ignore[reportAttributeAccessIssue]
+        assert adapter._pipeline.host_stage.read_buffer == 2
         adapter.teardown()
 
     def test_setup_prefetch_override_from_extra(self, cv1_small_config, small_image_data):
@@ -150,7 +150,7 @@ class TestDataraxAdapterPrefetchPolicy:
             extra={**cv1_small_config.extra, "prefetch_size": 4},
         )
         adapter.setup(override_config, small_image_data)
-        assert adapter._buffer_depth == 4  # type: ignore[reportAttributeAccessIssue]
+        assert adapter._pipeline.host_stage.read_buffer == 4
         adapter.teardown()
 
 

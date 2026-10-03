@@ -245,10 +245,9 @@ class TestRunEnd:
 
     def test_the_run_ends_at_the_end_of_its_last_epoch(self) -> None:
         pipeline = _pipeline()
-        session = pipeline.session()
-        list(session)
+        list(pipeline)
 
-        assert (session.get_state()["position"], session.get_state()["epoch"]) == (_N, 0)
+        assert (pipeline.get_state()["position"], pipeline.get_state()["epoch"]) == (_N, 0)
         assert list(pipeline) == []
         pipeline.reset()
         assert len(list(pipeline)) == 4
@@ -256,10 +255,10 @@ class TestRunEnd:
     def test_a_repeated_run_reuses_the_compiled_steps(self) -> None:
         iteration._SESSION_STEPS.clear()
         pipeline = _pipeline()
-        list(pipeline)
+        list(pipeline.session())
         assert len(iteration._SESSION_STEPS) == 2  # the full batch and the short final one
         pipeline.reset()
-        list(pipeline)
+        list(pipeline.session())
         assert len(iteration._SESSION_STEPS) == 2
 
 

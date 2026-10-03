@@ -6,11 +6,11 @@ never loaded whole: each read touches only the rows it names.
 Two reads serve it:
 
 - `get_batch(indices, *, epochs=0, contiguous=False)` reads on the host, as the eager sources
-  do: one NumPy gather of the named rows (a run declared contiguous is a view of the memory
+  do, and is what `for batch in pipeline` calls: one NumPy gather of the named rows (a run declared contiguous is a view of the memory
   map), returned as a `Batch` named with the given index words and epochs. It creates no device
   array, and refuses the padding index and rows outside the array.
-- `get_records(indices)` reads inside a compiled program through `io_callback`, for the
-  pipeline's compiled session; its output is wrapped in `stop_gradient`.
+- `get_records(indices)` reads inside a compiled program through `io_callback`, for
+  `pipeline.step()`, `scan` and `pipeline.session()`; its output is wrapped in `stop_gradient`.
 
 ```python
 import numpy as np

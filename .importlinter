@@ -25,4 +25,4 @@ type = layers
 layers =
     datarax.pipeline.pipeline
     datarax.pipeline.host_stage | datarax.pipeline.iteration
-    datarax.pipeline.epochs
+    datarax.pipeline.epochs | datarax.pipeline.dag_call

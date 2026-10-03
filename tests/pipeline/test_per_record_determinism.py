@@ -66,7 +66,7 @@ def _pipeline(source: MemorySource, *, shuffle: bool = False) -> Pipeline:
 
 
 def _session(pipeline: Pipeline) -> PipelineIterator:
-    session = iter(pipeline)
+    session = pipeline.session()
     assert isinstance(session, PipelineIterator)
     return session
 

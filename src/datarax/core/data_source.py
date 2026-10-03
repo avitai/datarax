@@ -146,8 +146,8 @@ type Provenance = tuple[Mapping[str, Any], ...]
 class RecordIdentity(enum.Enum):
     """What a source's record index means: the kind of identity its records carry.
 
-    Every source declares one (:attr:`DataSourceModule.record_identity`); the pipeline serves an
-    ``INDEXED`` source through its compiled session and any other through its streaming path.
+    Every source declares one (:attr:`DataSourceModule.record_identity`); the pipeline's host
+    stage reads an ``INDEXED`` source by the indices it names and pulls any other forward.
     """
 
     INDEXED = "indexed"
@@ -246,10 +246,11 @@ class DataSourceModule(StructuralModule):
     def record_identity(self) -> RecordIdentity:
         """What this source's record index means (see :class:`RecordIdentity`).
 
-        ``INDEXED`` sources implement ``get_records`` and ``record_indices_at`` and are served by
-        the pipeline's compiled session; ``STREAM_IDS`` and ``ARRIVAL`` sources pull forward with
-        ``get_batch(batch_size)`` and are served by its streaming path. A subclass declares it
-        with a property returning its kind.
+        ``INDEXED`` sources implement ``record_indices_at``, the traced ``get_records`` that
+        ``step()`` calls, and the host read ``get_batch(indices, *, epochs, contiguous)`` that the
+        pipeline's host stage calls; ``STREAM_IDS`` and ``ARRIVAL`` sources pull
+        forward with ``get_batch(batch_size)``, which the host stage calls in order. A subclass
+        declares it with a property returning its kind.
         """
 
     def provenance(  # noqa: DOC502 - the checks it calls raise

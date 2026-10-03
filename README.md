@@ -60,7 +60,7 @@ Pipelines are directed acyclic graphs, not linear chains. `Pipeline(stages=[...]
 
 ### Deterministic Reproducibility
 
-Shuffling uses datarax's own keyed Feistel bijection (the construction of CCCL's `cuda::__feistel_bijection`), which maps any position of an epoch of up to 2^64 - 1 records to its record in O(1) memory without materializing the index array. Stochastic operators are keyed on global record positions, so each record augments identically regardless of batch size, shuffle order, or host count. Iterating a random-access pipeline returns a stateful iterator whose `get_state()`/`set_state()` capture position and RNG counts for exact mid-epoch resume, and the live module stays consistent at every yield boundary so Orbax checkpoints taken inside a training loop restore the exact remaining stream.
+Shuffling uses datarax's own keyed Feistel bijection (the construction of CCCL's `cuda::__feistel_bijection`), which maps any position of an epoch of up to 2^64 - 1 records to its record in O(1) memory without materializing the index array. Stochastic operators are keyed on global record positions, so each record augments identically regardless of batch size, shuffle order, or host count. `for batch in pipeline` reads each batch on host threads and places it on the device as the loop takes it, and the pipeline's `get_state()`/`set_state()` hold where iteration stands, so a checkpoint taken inside a training loop resumes the exact remaining stream, whatever the threads had read ahead.
 
 ### Built-in Competitive Benchmarking
 

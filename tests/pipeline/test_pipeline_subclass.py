@@ -142,7 +142,7 @@ def test_subclass_can_hold_extra_state() -> None:
     assert int(rebuilt.batches_seen[...]) == int(pipeline.batches_seen[...]) == 2
 
 
-def test_an_overridden_step_body_is_what_step_and_iteration_run() -> None:
+def test_an_overridden_step_body_is_what_step_and_the_session_run() -> None:
     """The compiled step runs the pipeline's own ``_next_batch``, override included."""
 
     class _Offset(Pipeline):
@@ -154,7 +154,7 @@ def test_an_overridden_step_body_is_what_step_and_iteration_run() -> None:
     iterated = _Offset(source=_source(), batch_size=4, rngs=nnx.Rngs(0), stages=[])
 
     np.testing.assert_array_equal(np.asarray(stepped.step()["x"]), np.arange(4.0) + 100.0)
-    np.testing.assert_array_equal(np.asarray(next(iter(iterated))["x"]), np.arange(4.0) + 100.0)
+    np.testing.assert_array_equal(np.asarray(next(iterated.session())["x"]), np.arange(4.0) + 100.0)
 
 
 def test_the_step_passes_the_records_it_served() -> None:

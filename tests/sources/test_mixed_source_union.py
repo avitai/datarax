@@ -177,16 +177,10 @@ class TestConflictsAndHostDtypes:
             assert held == mix.element_spec()
 
 
-class TestUntilTheHostStageServesIt:
-    def test_a_pipeline_over_a_union_mix_is_refused_naming_the_host_read(self) -> None:
-        pipe = Pipeline(source=four_presence_cases(), stages=[], batch_size=4, rngs=nnx.Rngs(0))
-        with pytest.raises(TypeError, match=r"get_batch"):
-            next(iter(pipe))
-
-    def test_an_equal_mix_still_iterates_through_the_session(self) -> None:
-        mix = _mix([_memory(child_columns(c, ("text", "label"))) for c in range(2)])
-        pipe = Pipeline(source=mix, stages=[], batch_size=4, rngs=nnx.Rngs(0))
-        assert sum(batch.batch_size for batch in pipe) == len(mix)
+def test_a_pipeline_over_a_union_mix_serves_every_record_once() -> None:
+    mix = four_presence_cases()
+    pipe = Pipeline(source=mix, stages=[], batch_size=4, rngs=nnx.Rngs(0))
+    assert sum(batch.batch_size for batch in pipe) == len(mix)
 
 
 def test_the_words_named_are_the_words_read() -> None:

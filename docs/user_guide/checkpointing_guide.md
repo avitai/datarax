@@ -57,9 +57,17 @@ checkpoint path, or `None` when the step is not due.
 
 ## Checkpointing Datarax Modules
 
-Every Datarax module is Checkpointable: `get_state()` is its NNX state as a
-pure dictionary and `set_state()` restores it strictly (the structure must
-match).
+Every Datarax module other than the pipeline is Checkpointable through its NNX
+state: `get_state()` is that state as a pure dictionary and `set_state()`
+restores it strictly (the structure must match).
+
+## Pipeline State
+
+A pipeline's `get_state()` is where iteration stands, and nothing else: no
+records and no stage parameters. ``for batch in pipeline`` reads each batch on
+the host stage and continues where the last batch taken ended; `get_state()`
+names exactly the batches already taken, whatever the read threads have read
+ahead, and `set_state()` on a pipeline built the same way resumes there.
 
 ```python
 import jax.numpy as jnp
@@ -86,48 +94,49 @@ with IteratorCheckpoint("./pipeline_ckpt") as checkpoint:
     checkpoint.restore(fresh)
 ```
 
-## Pipeline Iterator State
+The state is a small dictionary of plain values:
 
-``iter(pipeline)`` over a random-access source returns a
-``PipelineIterator`` — a compiled iteration session with two
-checkpointing surfaces:
+| Field | Holds |
+|---|---|
+| `version` | The layout, `3`; any other layout is refused, naming both versions |
+| `kind` | The source's record identity: `indexed`, `stream_ids` or `arrival` |
+| `epoch`, `position` | The epoch and the records served in it (`None` for a stream) |
+| `run_end_epoch` | The epoch the run ends at, so a resumed run ends where the uninterrupted one would |
+| `stream` | A stream's pass, the records taken in it, the records arrived and the passes left (`None` for an indexed source) |
+| `fingerprint` | The configuration the state is valid for: batch size, length, `drop_last`, `num_epochs`, whether it shuffles, the seed's words and the order |
 
-- **Module state**: every Variable a batch writes (position, RNG counts, and
-  any stage state such as batch statistics) reaches the live pipeline module at
-  every yield boundary, so checkpointing the pipeline with
-  `IteratorCheckpoint` — inside the loop or after it — always captures
-  exactly the batches already consumed.
-- **Iterator state**: a lighter, JSON-serializable alternative for data
-  checkpoints that should live outside the module snapshot:
+`set_state()` refuses a state whose fingerprint differs from the pipeline's,
+naming the field. No random stream advances while iterating: an operator keys
+each record on its stable base key, so the epoch and the position decide every
+draw.
+
+### Stage parameters and statistics
+
+Stages carry parameters training moves and statistics (batch norm) iteration
+writes. They are the stage graph's NNX state, `nnx.state(pipeline.dag)`, and
+are checkpointed with the model:
 
 ```python
-iterator = iter(pipeline)
-for step, batch in enumerate(iterator):
-    train_step(model, batch)
-    if step % 1000 == 0:
-        data_state = iterator.get_state()  # position, epoch, rng_counts, version
-        save_checkpoint(model, data_state)
+from flax import nnx
+from substrax.checkpoint import OrbaxCheckpointStore
 
-# Resume later: identical pipeline configuration, then restore.
-iterator = iter(pipeline)
-iterator.set_state(data_state)
+with OrbaxCheckpointStore("./run") as store:
+    store.save(step, {
+        "model": {
+            "network": nnx.to_pure_dict(nnx.state(model)),
+            "stages": nnx.to_pure_dict(nnx.state(pipeline.dag)),
+        },
+        "data_iterator": pipeline.get_state(),
+    })
 ```
 
-``get_state()`` returns a JSON-serializable dict naming the batches the
-caller has already consumed; ``set_state()`` requires a pipeline with the
-same structure and seeds as the one that produced the state.
+### `step()`, `scan` and `session()`
 
-``rng_counts`` holds the pipeline's count; an in-memory source holds none. An operator
-keys each record on its stable base key and holds no count, so the list's
-length does not depend on the operators.
-
-``version`` names the layout those counts are in. A state saved before the
-field existed is upgraded when it is restored — the counts outside operators
-keep their values and their order, and every operator count restores to 0.
-An upgrade needs each operator's counts to precede the rest, which holds for
-operators used as pipeline stages; a pipeline holding an operator somewhere
-else, such as inside its source, refuses such a state rather than resuming
-from counts placed wrongly.
+`step()`, `scan` and the compiled session `pipeline.session()` keep their place
+in the pipeline's own Variables, apart from iteration's: a run driven by them
+checkpoints `nnx.state(pipeline)`, and a session's own `get_state()` /
+`set_state()` resume that session. Mixing `step()` and ``for batch in pipeline``
+on one pipeline is not supported; `reset()` resets both places.
 
 ## Checkpointable Iterator Pattern
 

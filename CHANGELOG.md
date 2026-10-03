@@ -18,8 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pass on one producer thread. `chunk=K` serves `(K, B, ...)` chunks of full batches, one host
   read and one transfer each, then the rest singly; `with_provenance=True` serves
   `(batch, provenance)` pairs. Nothing but the batches reaches the device, nothing transfers
-  implicitly, and one Grain iterator serves a run across calls (`Pipeline.close()` ends it).
-  `Pipeline.host_stage` holds where host iteration stands.
+  implicitly, and one Grain iterator serves a run across calls (`Pipeline.close()` ends it); a run
+  lives as long as the pipelines it served and the iterators serving it, though a compiled-step
+  cache keyed by the pipeline's graph keeps its host stage. Reads run in the caller's precision
+  mode. `Pipeline.host_stage` holds where host iteration stands; its `read_threads` and
+  `read_buffer` are the run's read options.
 - `TFDSStreamingSource.run_dataset(schedule, key)`: a run of passes as one Grain dataset of decoded
   units numbered from the run's start (`datarax.core.data_source.BatchSchedule`), so Grain's
   process prefetch starts its workers once per run and `k` slices interleaved from the first
@@ -157,6 +160,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `for batch in pipeline` runs on the host stage: each batch is read by Grain threads, named on the
+  CPU device, placed on the device as it is taken and run through `pipeline.dag` in one compiled
+  call (`datarax.pipeline.dag_call.compile_dag`), split once per iteration, compiled once per
+  batch shape, the state the stages write written back. Iteration serves the records and draws the
+  compiled session served, uploads no dataset, and continues where the last batch taken ended
+  until the run's `num_epochs`; `reset()` starts the next run. `iter(pipeline)` is no longer a
+  `PipelineIterator`: `pipeline.session()` is the compiled session. `step()`, `scan` and the
+  session keep their place in the pipeline's Variables, apart from iteration's.
+- `Pipeline.get_state()` / `set_state(state, /)` are the host stage's cursor, version 3, typed
+  `substrax.typing.CheckpointState`: `version`, `kind`, `epoch`, `position`, `run_end_epoch`,
+  `stream` (a stream's pass, records, arrivals and passes left) and `fingerprint` (batch size,
+  length, `drop_last`, `num_epochs`, whether it shuffles, the seed's words, the order). They no
+  longer hold stage parameters or the position Variables: stage parameters and statistics are
+  checkpointed as `nnx.state(pipeline.dag)`. A state of any other layout (an unversioned
+  `module_state`, a session's version 2) or of another configuration is refused, naming it; a
+  refused state changes nothing. `Pipeline.batches_left()` counts the host stage's run.
+- The Tier-A DAG call moves from `datarax.pipeline.iteration` to `datarax.pipeline.dag_call`, its
+  helpers public (`is_per_batch_state`, `cached_step`, `state_leaves`, `run_tracking_writes`,
+  `apply_writes`, `Writes`); `compile_streaming_dag` is `compile_dag`.
 - `datarax.pipeline.epochs.stream_batches(pull, ...)` takes a pull returning `(Batch, provenance)`
   and yields `(Batch, provenance)` pairs, the provenance joined with its rows.
 - A `TFDSStreamDataset` element is `(columns, provenance, ids, epochs)`, each record's pass beside

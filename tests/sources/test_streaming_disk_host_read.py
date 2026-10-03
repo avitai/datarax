@@ -141,7 +141,9 @@ def test_the_session_over_the_disk_source_still_compiles_once(
 
     from datarax.pipeline import Pipeline  # noqa: PLC0415
 
-    session = iter(Pipeline(source=source, stages=[], batch_size=8, rngs=nnx.Rngs(0), num_epochs=2))
+    session = Pipeline(
+        source=source, stages=[], batch_size=8, rngs=nnx.Rngs(0), num_epochs=2
+    ).session()
     with expect_first_call_compiles("jit(session_step)"):
         first = next(session)
         jax.block_until_ready(first.indices)

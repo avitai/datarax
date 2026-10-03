@@ -16,11 +16,14 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 from flax import nnx
 
+from datarax.core import batch_ops
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule, RecordIdentity
+from datarax.core.element_batch import Batch
 from datarax.pipeline import Pipeline, PipelineIterator
 from datarax.pipeline.epochs import EpochPlan, Run
 
@@ -245,6 +248,17 @@ class _Resizable(DataSourceModule):
     def get_records(self, indices: jax.Array) -> dict[str, jax.Array]:
         return {"x": jnp.asarray(indices[:, 1], jnp.float32)[:, None]}
 
+    def get_batch(self, indices: Any, *, epochs: Any = 0, contiguous: bool = False) -> Batch:
+        """The host read: each record's value is its index."""
+        del contiguous
+        words = np.asarray(indices, np.uint32)
+        epoch_of_each = np.broadcast_to(np.asarray(epochs, np.int32), (len(words),))
+        return batch_ops.from_arrays(
+            {"x": words[:, 1:].astype(np.float32)},
+            indices=words,
+            epochs=np.ascontiguousarray(epoch_of_each),
+        )
+
     def element_spec(self) -> dict[str, jax.ShapeDtypeStruct]:
         return {"x": jax.ShapeDtypeStruct((1,), jnp.float32)}
 
@@ -287,8 +301,8 @@ class TestSession:
         assert isinstance(session, PipelineIterator)
         assert "position" in session.get_state()
 
-    def test_iterating_a_random_access_pipeline_is_its_session(self) -> None:
-        assert isinstance(iter(_pipeline(8, 4)), PipelineIterator)
+    def test_iterating_a_random_access_pipeline_is_the_host_stage_not_its_session(self) -> None:
+        assert not isinstance(iter(_pipeline(8, 4)), PipelineIterator)
 
 
 def _stepped(

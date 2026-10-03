@@ -1,11 +1,12 @@
-"""A state saved while the source held RNG, seed or counter state is refused, never upgraded.
+"""States saved in an earlier layout are refused by the pipeline, naming both versions.
 
 The fixture holds a ``Pipeline.get_state()`` and an iterator ``get_state()`` as datarax
 ``611bf97`` saved them, from a ``MemorySource`` that held an ``nnx.Rngs``, a drawn shuffle seed
-and its own position and epoch; its provenance is stored in the file. The pipeline now owns the
-order and in-memory sources hold none of that state, so restoring either saved state into the
-same pipeline built today raises, naming what the saved state has and the pipeline lacks. No
-code converts the old layout.
+and its own position and epoch; its provenance is stored in the file. A pipeline's state is now
+its host stage's cursor, version 3: the saved module state (no version) and the saved session
+state (version 2) are both refused by ``Pipeline.set_state``, naming the version each is and the
+one the pipeline reads. The compiled session still refuses the old iterator state itself. No code
+converts an old layout.
 """
 
 from __future__ import annotations
@@ -53,14 +54,6 @@ def _saved() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     return state, iterator_state, provenance
 
 
-def _paths(state: dict[str, Any], prefix: tuple[str, ...] = ()) -> set[tuple[str, ...]]:
-    paths: set[tuple[str, ...]] = set()
-    for key, value in state.items():
-        here = (*prefix, str(key))
-        paths |= _paths(value, here) if isinstance(value, dict) else {here}
-    return paths
-
-
 def _pipeline() -> Pipeline:
     """The fixture's pipeline as it is built now."""
     source = MemorySource(MemorySourceConfig(), data={"x": np.arange(8, dtype=np.float32)})
@@ -75,25 +68,20 @@ def test_the_fixture_was_saved_by_the_previous_layout() -> None:
     assert iterator_state["rng_counts"] == [1, 0, 1]
 
 
-def test_a_saved_pipeline_state_is_refused_naming_what_the_pipeline_lacks() -> None:
+def test_a_saved_pipeline_state_is_refused_naming_its_layout_and_the_version_read() -> None:
     saved, _, _ = _saved()
-    pipeline = _pipeline()
-    present = {path[:end] for path in _paths(pipeline.get_state()) for end in range(len(path) + 1)}
-    # Each saved path the pipeline lacks is named at its shallowest key the pipeline lacks.
-    absent = {
-        next(path[end - 1] for end in range(1, len(path) + 1) if path[:end] not in present)
-        for path in _paths(saved)
-        if path not in present
-    }
-    assert absent, "the control: the saved layout has source state the pipeline lacks"
-    with pytest.raises(ValueError, match="structurally incompatible") as refused:
-        pipeline.set_state(saved)
-    cause = str(refused.value.__cause__)
-    for name in absent:
-        assert name in cause, f"{name!r} not named in {cause!r}"
+    assert "version" not in saved
+    with pytest.raises(ValueError, match=r"without a version.*module_state.*version 3"):
+        _pipeline().set_state(saved)
 
 
-def test_a_saved_iterator_state_is_refused() -> None:
+def test_a_saved_session_state_is_refused_by_the_pipeline_naming_both_versions() -> None:
+    _, iterator_state, _ = _saved()
+    with pytest.raises(ValueError, match=r"version 2 \(the session layout.*reads version 3"):
+        _pipeline().set_state(iterator_state)
+
+
+def test_a_saved_iterator_state_is_refused_by_the_session() -> None:
     _, iterator_state, _ = _saved()
     session = _pipeline().session()
     with pytest.raises(ValueError, match="rng counts"):
@@ -102,9 +90,10 @@ def test_a_saved_iterator_state_is_refused() -> None:
 
 def test_the_current_layout_round_trips() -> None:
     pipeline = _pipeline()
-    pipeline.step()
+    batches = iter(pipeline)
+    next(batches)
     state = pipeline.get_state()
-    expected = np.asarray(pipeline.step().indices)
+    expected = np.asarray(next(batches).indices)
     resumed = _pipeline()
     resumed.set_state(state)
-    np.testing.assert_array_equal(np.asarray(resumed.step().indices), expected)
+    np.testing.assert_array_equal(np.asarray(next(iter(resumed)).indices), expected)

@@ -98,6 +98,11 @@ def _session_batches(pipe: Pipeline) -> list[Batch]:
     return list(pipe.session())
 
 
+@nnx.jit
+def _user_step(pipeline: Pipeline) -> jax.Array:
+    return jnp.sum(pipeline.step()["image"])
+
+
 def _grain_threads() -> list[str]:
     return [t.name for t in threading.enumerate() if "grain" in t.name.lower()]
 
@@ -160,6 +165,26 @@ class TestOrder:
         pipe = _pipeline(_memory())
         pipe.host_stage.read_threads = threads
         assert [_names(b) for b in pipe.raw_batches()] == reference
+
+    @pytest.mark.parametrize("depth", [1, 4])
+    def test_reads_run_ahead_by_the_read_buffer(
+        self, monkeypatch: pytest.MonkeyPatch, depth: int
+    ) -> None:
+        calls: list[int] = []
+        original = MemorySource.get_batch
+
+        def counted(self: MemorySource, indices: Any, **kwargs: Any) -> Batch:
+            calls.append(1)
+            return original(self, indices, **kwargs)
+
+        monkeypatch.setattr(MemorySource, "get_batch", counted)
+        pipe = _pipeline(_memory(), num_epochs=None)
+        pipe.host_stage.read_buffer = depth
+        batches = iter(pipe.raw_batches())
+        next(batches)
+        threading.Event().wait(0.3)  # time for the reads to run ahead
+        assert len(calls) - 1 == depth
+        pipe.close()
 
     def test_one_host_read_per_batch(self, monkeypatch: pytest.MonkeyPatch) -> None:
         calls: list[int] = []
@@ -299,9 +324,8 @@ class TestPlacement:
         """Reads run ahead on a thread; placement waits for the consumer (P3's peak RSS bound).
 
         A placement thread running ahead holds more device copies and, measured on the P3 shape,
-        raises peak RSS past the 75 MiB bound (``evidence/w2b/c5a4/impl/p3_rss``); an
-        accelerator's ``device_put`` is asynchronous, so a batch placed when taken still transfers
-        while the previous step computes.
+        raises peak RSS past the 75 MiB bound; an accelerator's ``device_put`` is asynchronous, so
+        a batch placed when taken still transfers while the previous step computes.
         """
         placed: list[int] = []
         original_put = jax.device_put
@@ -494,6 +518,30 @@ class TestLifetime:
                 break
             threading.Event().wait(0.05)
         assert threads == []
+
+    @pytest.mark.parametrize("cached_by", ["step", "a user's nnx.jit"])
+    def test_a_dropped_pipeline_closes_its_run_though_a_cache_holds_its_graph(
+        self, cached_by: str
+    ) -> None:
+        """A compiled-step cache keyed by the pipeline's graph keeps its host stage, not its run."""
+        pipe = _pipeline(_memory(), num_epochs=None)
+        next(iter(pipe.raw_batches()))
+        if cached_by == "step":
+            pipe.step()
+        else:
+            _user_step(pipe)
+        stage = pipe.host_stage
+        assert stage.iterator is not None
+        del pipe
+        gc.collect()
+        assert stage.iterator is None
+
+    def test_an_iterator_keeps_its_run_when_its_pipeline_is_dropped(self) -> None:
+        reference = [_names(b) for b in _pipeline(_memory(), num_epochs=1).raw_batches()]
+        batches = iter(_pipeline(_memory(), num_epochs=1).raw_batches())
+        first = _names(next(batches))
+        gc.collect()
+        assert [first, *(_names(b) for b in batches)] == reference
 
     def test_no_exception_is_ignored_at_exit(self) -> None:
         code = (

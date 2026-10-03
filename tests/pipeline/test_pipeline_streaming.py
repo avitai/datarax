@@ -239,30 +239,32 @@ def _epoch_loops(pipeline: Pipeline, loops: int, steps: int) -> _Loops:
 def _plan_loops(plan: EpochPlan, loops: int, steps: int) -> _Loops:
     """What :func:`_epoch_loops` serves from a source in its own order, by ``plan``'s rule.
 
-    Each loop is a session from where the last stopped: :meth:`EpochPlan.run_extent` bounds it,
-    :meth:`EpochPlan.batch_start` and :meth:`EpochPlan.advance` place each batch.
+    The loops share one run, each continuing where the last stopped: :meth:`EpochPlan.run_extent`
+    from the run's start bounds it, :meth:`EpochPlan.batch_start` and :meth:`EpochPlan.advance`
+    place each batch, and a loop after the run's end serves nothing.
     """
     length = plan.length
     if length is None:
         raise ValueError("the table is of a source with a length")
+    extent = plan.run_extent(0)
+    batches, final = (loops * steps, plan.batch_size) if extent is None else extent
     position = epoch = 0
-    table = []
-    for _ in range(loops):
-        extent = plan.run_extent(position)
-        batches, final = (steps, plan.batch_size) if extent is None else extent
-        served = []
-        for step in range(min(steps, batches)):
-            size = final if step == batches - 1 else plan.batch_size
-            start, epoch = plan.batch_start(position, epoch)
-            records = range(start, start + size)
-            served.append(([r % length for r in records], [epoch + r // length for r in records]))
-            position, epoch = plan.advance(start, epoch, size)
-        table.append(served)
-    return table
+    served = []
+    for step in range(min(loops * steps, batches)):
+        size = final if step == batches - 1 else plan.batch_size
+        start, epoch = plan.batch_start(position, epoch)
+        records = range(start, start + size)
+        served.append(([r % length for r in records], [epoch + r // length for r in records]))
+        position, epoch = plan.advance(start, epoch, size)
+    return [served[loop * steps : (loop + 1) * steps] for loop in range(loops)]
 
 
 class TestEpochLoopsOverAStream:
-    """An epoch loop of ``N // B`` steps over a fresh iterator each epoch (F1, T5, W2b-72)."""
+    """An epoch loop of ``N // B`` steps over a fresh iterator each epoch (F1, T5, W2b-72).
+
+    The loops continue one run: each starts where the last stopped, and the run ends after its
+    ``num_epochs`` epochs.
+    """
 
     _LOOPS = 4
     _BATCH = 4
@@ -289,7 +291,6 @@ class TestEpochLoopsOverAStream:
 
         assert streamed == indexed
         assert streamed == _plan_loops(plan, self._LOOPS, steps)
-        assert all(len(loop) == steps for loop in streamed)
 
 
 @pytest.mark.parametrize("drop_last", [False, True])
@@ -422,19 +423,11 @@ def test_the_declared_spec_is_read_once_per_source_and_precision_mode() -> None:
 
     for _ in range(2):
         assert len(list(pipeline)) == 3
+        pipeline.reset()
     assert stream.spec_calls == 1
     with jax.enable_x64(True):
         list(pipeline)
     assert stream.spec_calls == 2
-
-
-def test_a_source_serving_something_other_than_a_batch_is_refused() -> None:
-    class _Dicts(RecordStream):
-        def get_batch(self, batch_size: int, **kwargs: Any) -> Any:  # type: ignore[override]
-            return {"x": np.ones((batch_size, 3), np.float32)}
-
-    with pytest.raises(TypeError, match="Batch"):
-        list(_pipeline(_Dicts(_columns())))
 
 
 # ---------------------------------------------------------------------------

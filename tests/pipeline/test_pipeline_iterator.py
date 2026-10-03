@@ -1,6 +1,6 @@
 """Contracts for the compiled pipeline iteration session.
 
-``iter(pipeline)`` over a random-access source returns a
+``pipeline.session()`` over a random-access source returns a
 ``PipelineIterator``: a compiled fast loop that hoists the NNX
 module-graph traversal out of the per-batch path. The contracts below pin
 its equivalence with the plain ``step()`` path and its state semantics:
@@ -99,7 +99,7 @@ def _pipeline_with(stage: nnx.Module) -> Pipeline:
 
 def _session(pipeline: Pipeline) -> PipelineIterator:
     """iter() narrowed to the random-access session type."""
-    iterator = iter(pipeline)
+    iterator = pipeline.session()
     assert isinstance(iterator, PipelineIterator)
     return iterator
 
@@ -122,13 +122,13 @@ def _epoch_via_step(pipeline: Pipeline) -> list[np.ndarray]:
 class TestOutputEquivalence:
     """The compiled session reproduces step() outputs exactly."""
 
-    def test_iterator_returns_pipeline_iterator(self):
-        iterator = iter(_pipeline())
+    def test_a_session_is_a_pipeline_iterator(self):
+        iterator = _pipeline().session()
         assert isinstance(iterator, PipelineIterator)
 
     def test_deterministic_epoch_matches_step(self):
         expected = _epoch_via_step(_pipeline())
-        got = [np.asarray(b["x"]) for b in _pipeline()]
+        got = [np.asarray(b["x"]) for b in _pipeline().session()]
         assert len(got) == len(expected) == _N // _BATCH
         for g, e in zip(got, expected):
             np.testing.assert_array_equal(g, e)
@@ -136,14 +136,14 @@ class TestOutputEquivalence:
     def test_stochastic_epoch_matches_step(self):
         """RNG counts advance identically inside the compiled session."""
         expected = _epoch_via_step(_pipeline(stochastic=True))
-        got = [np.asarray(b["x"]) for b in _pipeline(stochastic=True)]
+        got = [np.asarray(b["x"]) for b in _pipeline(stochastic=True).session()]
         for g, e in zip(got, expected):
             np.testing.assert_array_equal(g, e)
 
     def test_the_short_final_batch_is_the_epoch_s_rows_of_step_s_batch(self):
         """The session's final batch holds the rows step() serves before crossing the end."""
         expected = _epoch_via_step(_pipeline(n=100))
-        got = [np.asarray(b["x"]) for b in _pipeline(n=100)]
+        got = [np.asarray(b["x"]) for b in _pipeline(n=100).session()]
         assert len(got) == len(expected) == 4  # ceil(100 / 32)
         assert got[-1].shape[0] == 4
         for g, e in zip(got, expected):
@@ -160,7 +160,7 @@ class TestModuleStateWriteBack:
 
     def test_position_after_exhaustion(self):
         pipeline = _pipeline()
-        for _ in pipeline:
+        for _ in pipeline.session():
             pass
         assert int(pipeline._position[...]) == _N
 
@@ -187,7 +187,7 @@ class TestModuleStateWriteBack:
     def test_position_after_early_break(self):
         """A bare for/break writes back via prompt garbage collection."""
         pipeline = _pipeline()
-        for index, _ in enumerate(pipeline):
+        for index, _ in enumerate(pipeline.session()):
             if index == 2:
                 break
         assert int(pipeline._position[...]) == 3 * _BATCH
@@ -195,7 +195,7 @@ class TestModuleStateWriteBack:
     def test_rng_counts_written_back(self):
         """After a session, manual step() continues the exact RNG stream."""
         via_iterator = _pipeline(stochastic=True)
-        for index, _ in enumerate(via_iterator):
+        for index, _ in enumerate(via_iterator.session()):
             if index == 3:
                 break
         continued = np.asarray(via_iterator.step()["x"])
@@ -208,29 +208,29 @@ class TestModuleStateWriteBack:
 
     def test_sequential_reiteration_resumes_from_position(self):
         pipeline = _pipeline()
-        first = [np.asarray(b["x"]) for b in pipeline]  # full epoch
+        first = [np.asarray(b["x"]) for b in pipeline.session()]  # full epoch
         assert len(first) == _N // _BATCH
-        again = [np.asarray(b["x"]) for b in pipeline]  # exhausted: no batches
+        again = [np.asarray(b["x"]) for b in pipeline.session()]  # exhausted: no batches
         assert again == []
         pipeline.reset()
-        rewound = [np.asarray(b["x"]) for b in pipeline]
+        rewound = [np.asarray(b["x"]) for b in pipeline.session()]
         assert len(rewound) == len(first)
 
     def test_checkpoint_round_trip_after_partial_iteration(self):
         """split/merge after leaving the loop resumes identically."""
         pipeline = _pipeline(stochastic=True)
-        for index, _ in enumerate(pipeline):
+        for index, _ in enumerate(pipeline.session()):
             if index == 3:
                 break
         graphdef, state = nnx.split(pipeline)
         restored = nnx.merge(graphdef, state)
-        rest_restored = [np.asarray(b["x"]) for b in restored]
+        rest_restored = [np.asarray(b["x"]) for b in restored.session()]
 
         reference = _pipeline(stochastic=True)
-        for index, _ in enumerate(reference):
+        for index, _ in enumerate(reference.session()):
             if index == 3:
                 break
-        rest_reference = [np.asarray(b["x"]) for b in reference]
+        rest_reference = [np.asarray(b["x"]) for b in reference.session()]
         assert len(rest_restored) == len(rest_reference)
         for g, e in zip(rest_restored, rest_reference):
             np.testing.assert_array_equal(g, e)
@@ -319,7 +319,7 @@ class TestStageState:
 
     def test_batch_statistics_written_by_a_stage_match_step(self):
         iterated_stage, stepped_stage = _RunningTotal(), _RunningTotal()
-        for _ in _pipeline_with(iterated_stage):
+        for _ in _pipeline_with(iterated_stage).session():
             pass
         stepped = _pipeline_with(stepped_stage)
         for _ in range(_N // _BATCH):
@@ -328,9 +328,12 @@ class TestStageState:
         assert float(stepped_stage.total[...]) != 0.0
         assert float(iterated_stage.total[...]) == float(stepped_stage.total[...])
 
-    def test_a_stage_changing_the_module_structure_is_refused(self):
+    @pytest.mark.parametrize("through", ["session", "iteration"])
+    def test_a_stage_changing_the_module_structure_is_refused(self, through: str):
+        pipeline = _pipeline_with(_GrowingStage())
+        batches = pipeline.session() if through == "session" else iter(pipeline)
         with pytest.raises(ValueError, match="changed the module structure"):
-            for _ in _pipeline_with(_GrowingStage()):
+            for _ in batches:
                 pass
 
     def test_the_compiled_step_returns_only_the_state_it_writes(self):
@@ -397,17 +400,17 @@ class TestSessionBehavior:
 
 
 class TestMidLoopCheckpointing:
-    """nnx.state(pipeline) inside the loop reflects consumed batches.
+    """nnx.state(pipeline) inside a session loop reflects the batches it consumed.
 
-    This is the resumable-training pattern: checkpoint the pipeline
-    module every N steps without leaving the loop, then resume from the
+    A session keeps its place in the pipeline module: checkpoint the module
+    every N steps without leaving the loop, then resume a session from the
     snapshot and reproduce the exact remaining batch stream.
     """
 
     def test_module_state_live_at_yield_boundaries(self):
         pipeline = _pipeline(stochastic=True)
         snapshot = None
-        for step, _ in enumerate(pipeline):
+        for step, _ in enumerate(pipeline.session()):
             if step == 2:
                 snapshot = nnx.to_pure_dict(nnx.state(pipeline))
             if step == 4:
@@ -419,13 +422,13 @@ class TestMidLoopCheckpointing:
         state = nnx.state(restored)
         nnx.replace_by_pure_dict(state, snapshot)
         nnx.update(restored, state)
-        resumed = [np.asarray(b["x"]) for b in restored]
+        resumed = [np.asarray(b["x"]) for b in restored.session()]
 
         reference = _pipeline(stochastic=True)
-        for step, _ in enumerate(reference):
+        for step, _ in enumerate(reference.session()):
             if step == 2:
                 break
-        rest = [np.asarray(b["x"]) for b in reference]
+        rest = [np.asarray(b["x"]) for b in reference.session()]
         assert len(resumed) == len(rest)
         for got, expected in zip(resumed, rest, strict=True):
             np.testing.assert_array_equal(got, expected)

@@ -81,7 +81,7 @@ def test_pipeline_iterates_a_get_records_source_through_the_compiled_session() -
     iterated = Pipeline(source=_IndexedOnly(), stages=[], batch_size=4, rngs=nnx.Rngs(0))
     stepped = Pipeline(source=_IndexedOnly(), stages=[], batch_size=4, rngs=nnx.Rngs(0))
 
-    iterator = iter(iterated)
+    iterator = iterated.session()
     assert isinstance(iterator, PipelineIterator)
     batches = [np.asarray(batch["x"]) for batch in iterator]
     expected = [np.asarray(stepped.step()["x"]) for _ in batches]
@@ -98,11 +98,14 @@ def test_a_source_that_serves_records_in_order_names_them_by_position() -> None:
     np.testing.assert_array_equal(to_words([6, 7, 0, 1]), ids)
 
 
-def test_an_indexed_source_without_get_records_is_refused_at_its_first_pull() -> None:
+def test_an_indexed_source_without_a_read_is_refused_at_its_first_pull() -> None:
+    """Iteration needs the host read; the compiled session the traced one. Each names its own."""
     pipeline = Pipeline(source=_NoAccess(), stages=[], batch_size=4, rngs=nnx.Rngs(0))
 
-    with pytest.raises(NotImplementedError, match=r"get_records.*INDEXED"):
+    with pytest.raises(TypeError, match=r"get_batch\(indices, \*, epochs, contiguous\)"):
         next(iter(pipeline))
+    with pytest.raises(NotImplementedError, match=r"get_records.*INDEXED"):
+        next(pipeline.session())
 
 
 _NAMED: list[int] = []
@@ -173,7 +176,7 @@ def test_a_session_and_step_run_one_program_with_no_conditional() -> None:
 
 
 def test_a_pipeline_over_record_list_data_serves_its_columns() -> None:
-    """A list of records is stored as columns, so the compiled session serves it.
+    """A list of records is stored as columns, which the host stage and the session serve.
 
     The records' text is their provenance and never part of a batch.
     """
@@ -181,7 +184,7 @@ def test_a_pipeline_over_record_list_data_serves_its_columns() -> None:
     source = MemorySource(MemorySourceConfig(), records)
     pipeline = Pipeline(source=source, stages=[], batch_size=2, rngs=nnx.Rngs(0))
 
-    iterator = iter(pipeline)
+    iterator = pipeline.session()
     assert isinstance(iterator, PipelineIterator)
     served = [np.asarray(batch["x"]) for batch in iterator]
     np.testing.assert_array_equal(np.concatenate(served)[:, 0], np.arange(6, dtype=np.float32))
