@@ -86,16 +86,21 @@ def from_arrays(  # noqa: DOC502 - _record_axis raises the ValueError
     *,
     states: PyTree | None = None,
     batch_state: PyTree | None = None,
+    indices: ArrayValue | None = None,
+    epochs: ArrayValue | None = None,
 ) -> Batch:
-    """Build a batch from arrays with a leading record axis, without record identities.
+    """Build a batch from arrays with a leading record axis.
 
-    Row ``i`` is record ``(0, i)`` of epoch 0, draw 0, so each row keys its randomness on its
+    Without ``indices``, row ``i`` is record ``(0, i)``, so each row keys its randomness on its
     position: the same arrays draw the same values on every call, and no two rows share a key.
+    Without ``epochs``, every row is of epoch 0. Every row is draw 0.
 
     Args:
         data: The records' values, every leaf with the record axis first.
         states: Per-record state with the same record axis; none by default.
         batch_state: Batch-level arrays; none by default.
+        indices: uint32 ``(B, 2)`` record names ``(hi, lo)``; row positions by default.
+        epochs: int32 ``(B,)`` epochs the rows were served in; 0 by default.
 
     Returns:
         The batch, its identities NumPy arrays when ``data`` is.
@@ -109,8 +114,8 @@ def from_arrays(  # noqa: DOC502 - _record_axis raises the ValueError
     return Batch(
         data,
         states=states,
-        indices=_row_indices(size, xp),
-        epochs=xp.zeros(size, xp.int32),
+        indices=_row_indices(size, xp) if indices is None else indices,
+        epochs=xp.zeros(size, xp.int32) if epochs is None else epochs,
         draws=xp.zeros(size, xp.int32),
         batch_state={} if batch_state is None else batch_state,
     )

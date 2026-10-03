@@ -63,20 +63,13 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 from flax import nnx
 
 from datarax.core import batch_ops
 from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Batch
 from datarax.core.module import module_state, restore_module_state
-from datarax.core.spec import (
-    array_to_spec,
-    declared_spec,
-    device_spec,
-    validate_batch,
-    validate_device_dtypes,
-)
+from datarax.core.spec import declared_spec, validate_batch, validate_device_dtypes
 from datarax.pipeline.dag import name_records, OperatorDag, Records
 from datarax.pipeline.epochs import EpochPlan, stream_batches
 from datarax.pipeline.iteration import (
@@ -749,7 +742,7 @@ class Pipeline(nnx.Module):
                 )
             if batch.batch_size:
                 validate_batch(
-                    _as_the_device_holds(batch.data), element_spec, batch_size=self.batch_size
+                    batch.data, element_spec, batch_size=self.batch_size, as_the_device_holds=True
                 )
             return batch
 
@@ -757,17 +750,6 @@ class Pipeline(nnx.Module):
             pull, self.batch_size, drop_last=self.drop_last, num_epochs=self.num_epochs
         ):
             yield apply(batch)
-
-
-def _as_the_device_holds(data: Any) -> Any:
-    """Zero-copy stand-ins for host ``data`` with the dtypes the device will hold it in.
-
-    A stream's host column keeps its stored dtype (an ``int64`` label) while its declared spec
-    states the device's (``int32`` while x64 is off); each stand-in is a broadcast view of one
-    element of the device dtype, so the check reads shapes and dtypes and copies nothing.
-    """
-    devices = device_spec(jax.tree.map(array_to_spec, data))
-    return jax.tree.map(lambda spec: np.broadcast_to(np.zeros((), spec.dtype), spec.shape), devices)
 
 
 def _source_length(source: DataSourceModule) -> int | None:

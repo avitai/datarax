@@ -32,8 +32,8 @@ jobs:
         if: github.event_name == 'push'
         uses: avitai/substrax/.github/actions/already-tested@ec43d80bbae0040375f746cd1bb07dddb0a0b169
 
-  # Not gated on already_tested: performance_tests runs only on main, so it never
-  # repeats a pull request, and a skipped dependency would take it down with it.
+  # Not gated on already_tested: performance_tests runs on main or on a manual run, so it
+  # never repeats a pull request, and a skipped dependency would take it down with it.
   lint:
     name: Lint Code
     runs-on: ubuntu-latest
@@ -454,7 +454,11 @@ jobs:
     name: Performance Tests
     needs: lint
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Pushes to main, plus a manual run on any branch, so a change to a measured path can be
+    # measured before it merges (`gh workflow run ci.yml --ref <branch>`).
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      || github.event_name == 'workflow_dispatch'
 
     steps:
       - uses: actions/checkout@v4
