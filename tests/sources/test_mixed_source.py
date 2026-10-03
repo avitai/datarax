@@ -50,8 +50,14 @@ def _named(mix: MixDataSourcesNode, start: int, size: int, key: jax.Array | None
 
 
 class TestTheConfig:
-    def test_weights_are_normalised(self) -> None:
-        assert MixDataSourcesConfig(weights=(1.0, 3.0)).weights == pytest.approx((0.25, 0.75))
+    def test_the_weights_are_kept_as_given_and_read_normalised(self) -> None:
+        config = MixDataSourcesConfig(weights=(1, 3))
+        assert config.weights == (1.0, 3.0)
+        assert config.normalized_weights == pytest.approx((0.25, 0.75))
+
+    def test_weights_whose_proportions_pass_one_word_are_refused(self) -> None:
+        with pytest.raises(ValueError, match="one word"):
+            _sized([4, 4], (1e-9, 1.0))
 
     @pytest.mark.parametrize("weights", [(0.5, 0.0), (-0.5, 1.5), ()], ids=["zero", "neg", "none"])
     def test_weights_that_are_not_all_positive_are_refused(
@@ -121,8 +127,9 @@ _WEIGHT_SETS = [
     ((0.3, 0.7), 333),
     ((0.25, 0.25, 0.5), 400),
     ((1.0, 2.0, 3.5), 650),
+    ((20, 5, 10, 4), 975),
     ((0.001, 0.999), 100_000),
-    ((1e-4, 1 - 1e-4), 1_000_000),
+    pytest.param((1e-4, 1 - 1e-4), 1_000_000, marks=pytest.mark.slow),
 ]
 
 
@@ -143,8 +150,17 @@ class TestGrainsSelection:
         mix = _sized(lengths, weights)
         positions = 5 * period
         assert len(mix) >= positions
-        expected = grain_mix_indices(lengths, mix.weights, range(positions))
+        expected = grain_mix_indices(lengths, weights, range(positions))
         assert _named(mix, 0, positions) == expected
+
+    def test_random_integer_weights_select_as_grain_does_for_the_weights_given(self) -> None:
+        """Grain scales the weights the user passed; the mix must not scale a normalised copy."""
+        rng = np.random.default_rng(0)
+        for _ in range(120):
+            weights = tuple(int(w) for w in rng.integers(1, 21, size=int(rng.integers(2, 5))))
+            lengths = [400 * w for w in weights]
+            mix = _sized(lengths, weights)
+            assert _named(mix, 0, 300) == grain_mix_indices(lengths, weights, range(300)), weights
 
     def test_positions_up_to_two_to_the_63_equal_grains(self) -> None:
         weights = (0.3, 0.7)
@@ -153,7 +169,7 @@ class TestGrainsSelection:
         last = len(mix) - 1
         assert last > (1 << 62)
         positions = [(1 << 31) - 3, (1 << 32) + 7, (1 << 53) + 1, (1 << 62) + 5, last]
-        expected = grain_mix_indices(lengths, mix.weights, positions)
+        expected = grain_mix_indices(lengths, weights, positions)
         assert [_named(mix, p, 1)[0] for p in positions] == expected
 
     @pytest.mark.parametrize(
@@ -171,16 +187,25 @@ class TestGrainsSelection:
     ) -> None:
         """Grain's length: the most positions that serve each child record at most once."""
         mix = _sized(lengths, weights)
-        assert len(mix) == len(grain_mix(lengths, mix.weights))
+        assert len(mix) == len(grain_mix(lengths, weights))
         if length is not None:
             assert len(mix) == length
+
+    def test_the_length_is_exact_where_grain_s_float_falls_one_short(self) -> None:
+        """Grain divides in float64: 621090 / (9 / 14) rounds just below 966140, the exact bound."""
+        lengths, weights = [777487, 621090], (5, 9)
+        mix = _sized(lengths, weights)
+        assert len(mix) == 966140
+        assert len(grain_mix(lengths, weights)) == 966139
+        last = from_words(mix.record_indices_at(len(mix) - 1, 1))[0]
+        assert int(last) < sum(lengths)  # the last position still names a record once
 
     def test_the_length_past_two_to_the_53_is_exact(self) -> None:
         """Grain computes the length in float64; the mix keeps its rule in integers."""
         lengths = [(1 << 53) + 1, (1 << 53) + 1]
         mix = _sized(lengths, (0.5, 0.5))
         assert len(mix) == (1 << 54) + 2  # each child's records twice over, at 1:1
-        assert len(grain_mix(lengths, mix.weights)) == 1 << 54
+        assert len(grain_mix(lengths, (0.5, 0.5))) == 1 << 54
 
     @pytest.mark.parametrize(("weights", "period"), _WEIGHT_SETS[:4])
     def test_an_epoch_serves_grains_counts_each_record_at_most_once(
@@ -189,7 +214,7 @@ class TestGrainsSelection:
         lengths = _lengths_for(weights, 3, period)
         mix = _sized(lengths, weights)
         named = np.asarray(_named(mix, 0, len(mix)), np.uint64)
-        expected = np.asarray(grain_mix_indices(lengths, mix.weights, range(len(mix))), np.uint64)
+        expected = np.asarray(grain_mix_indices(lengths, weights, range(len(mix))), np.uint64)
         np.testing.assert_array_equal(named, expected)
         assert len(np.unique(named)) == len(named)
         owners = np.searchsorted(np.asarray(offsets_of(lengths)), named, side="right") - 1
@@ -226,7 +251,7 @@ class TestOneIndexSpace:
         mix = _sized(self._LENGTHS, weights)
         positions = [0, 1, 2, 3 * 2**30 + 1, len(mix) - 3, len(mix) - 2, len(mix) - 1]
         named = [_named(mix, p, 1)[0] for p in positions]
-        assert named == grain_mix_indices(self._LENGTHS, mix.weights, positions)
+        assert named == grain_mix_indices(self._LENGTHS, weights, positions)
         assert max(named) > 1 << 32
         assert len(set(named)) == len(named)
         assert all(index < sum(self._LENGTHS) for index in named)

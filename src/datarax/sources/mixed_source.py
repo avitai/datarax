@@ -6,15 +6,16 @@ of the mix belongs to the parent whose share of the first ``k + 1`` positions fi
 share of the first ``k``, at the parent position that share counts. Its length is the most
 positions that serve each parent record at most once, the minimum over parents of
 ``len_c * S / p_c`` for proportions ``p`` summing to ``S``. :class:`MixDataSourcesNode` serves
-exactly that selection and length. Grain evaluates the selection in Python per index; the mix
+that selection, and that length computed exactly in integers, which can exceed Grain's float64
+result by one. Grain evaluates the selection in Python per index; the mix
 evaluates the same integer arithmetic in uint32 words, so it runs inside traced programs and on
 the host alike, never as a table of Grain's period (which grows with the weight ratio).
 
 Which record a child serves at its ``j``-th position is the child's own order:
 ``record_indices_at(j, ...)`` under the pipeline's epoch key folded with the child's position,
 or the child's sequential order when the pipeline does not shuffle. A mixed record's index is its
-child's offset, the sum of the lengths of the children before it, plus the record's index within
-that child, so every record of every child has one 64-bit index. A mixed record carries the
+child's offset, the sum of the index spaces of the children before it, plus the record's index
+within that child, so every record of every child has one 64-bit index. A mixed record carries the
 union of its children's fields, a field some child lacks being a ``Maybe``.
 """
 
@@ -167,13 +168,15 @@ class MixDataSourcesConfig(StructuralConfig):
     """Configuration for :class:`MixDataSourcesNode`.
 
     Attributes:
-        weights: One positive weight per child source, normalised to sum to 1.
+        weights: One positive weight per child source, as given. Grain's proportions are
+            computed from these, as ``grain.MapDataset.mix`` computes them from the weights it
+            is given.
     """
 
     weights: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
-        """Validate and normalise the weights.
+        """Validate the weights.
 
         Raises:
             ValueError: If no weights are given or a weight is not positive: Grain mixes positive
@@ -184,11 +187,17 @@ class MixDataSourcesConfig(StructuralConfig):
         weights = tuple(float(weight) for weight in self.weights)
         if not weights or not all(weight > 0 for weight in weights):
             raise ValueError(f"a mix takes one positive weight per source; got {self.weights!r}")
-        total = sum(weights)
-        object.__setattr__(self, "weights", tuple(weight / total for weight in weights))
+        object.__setattr__(self, "weights", weights)
         object.__setattr__(self, "stochastic", False)
         object.__setattr__(self, "stream_name", None)
         super().__post_init__()
+
+    @property
+    def normalized_weights(self) -> tuple[float, ...]:
+        """The weights divided by their sum: each source's share of an epoch's positions."""
+        weights = self.weights or ()
+        total = sum(weights)
+        return tuple(weight / total for weight in weights)
 
 
 @dataclass(frozen=True)
@@ -540,7 +549,7 @@ class MixDataSourcesNode(DataSourceModule):
 
     @property
     def weights(self) -> tuple[float, ...]:
-        """The mixing weights, normalised to sum to 1, in the order of the sources."""
+        """The mixing weights as given, in the order of the sources."""
         return self._weights
 
     def _layout(self) -> _Layout:

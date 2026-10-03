@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `mixed_source.grain_proportions(weights)`: Grain's integer proportions for mixing weights (the
+  smallest scaled to 100, the others alike and truncated), the rule of `grain.MapDataset.mix`.
+  `MixDataSourcesConfig.weights` keeps the weights as given, so a mix's proportions are the ones
+  Grain computes from the same weights; `MixDataSourcesConfig.normalized_weights` reads them
+  divided by their sum. A mix's length is Grain's rule computed exactly in integers, which can
+  exceed Grain's float64 result by one.
 - `DataSourceModule.index_space()`: how many record indices a source names, `len` by default.
   An in-memory source names every stored row (a worker's shard included) and a mix every record
   of its children, though an epoch serves fewer. A mix's offsets count its children's index
