@@ -22,7 +22,7 @@ from flax import nnx
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.pipeline import Pipeline, PipelineIterator
-from datarax.pipeline.epochs import EpochPlan
+from datarax.pipeline.epochs import EpochPlan, Run
 
 
 _GRID = [
@@ -289,3 +289,80 @@ class TestSession:
 
     def test_iterating_a_random_access_pipeline_is_its_session(self) -> None:
         assert isinstance(iter(_pipeline(8, 4)), PipelineIterator)
+
+
+def _stepped(
+    plan: EpochPlan,
+    position: int,
+    epoch: int,
+    count: int,
+) -> list[tuple[int, int, int]]:
+    """``(start, epoch, size)`` of ``count`` batches from here, by ``batch_start``, ``advance``."""
+    batches = []
+    for _ in range(count):
+        start, epoch = plan.batch_start(position, epoch)
+        batches.append((start, epoch, plan.batch_size))
+        position, epoch = plan.advance(start, epoch, plan.batch_size)
+    return batches
+
+
+class TestRun:
+    """A run names its batches by ordinal, so any of them is found without walking to it."""
+
+    @pytest.mark.parametrize(("length", "batch_size", "drop_last"), _GRID)
+    @pytest.mark.parametrize("num_epochs", [1, 3])
+    def test_a_fresh_run_serves_what_a_session_from_its_start_serves(
+        self, length: int, batch_size: int, drop_last: bool, num_epochs: int
+    ) -> None:
+        plan = _plan(length, batch_size, drop_last=drop_last, num_epochs=num_epochs)
+        for position, epoch in ((0, 0), (length // 2, 4), (length, 1)):
+            run = Run.starting(plan, position, epoch)
+            extent = plan.run_extent(position)
+            assert extent is not None
+            count, final = extent
+            expected = _stepped(plan, position, epoch, count)
+            if count:
+                expected[-1] = (*expected[-1][:2], final)
+            assert len(run) == count
+            assert [run.batch(ordinal) for ordinal in range(count)] == expected
+            assert run.batch(count) is None
+
+    @pytest.mark.parametrize(("length", "batch_size", "drop_last"), _GRID)
+    def test_a_run_resumed_anywhere_serves_the_rest_and_ends_where_it_would_have(
+        self, length: int, batch_size: int, drop_last: bool
+    ) -> None:
+        plan = _plan(length, batch_size, drop_last=drop_last, num_epochs=3)
+        whole = Run.starting(plan, 0, 0)
+        served = [whole.batch(ordinal) for ordinal in range(len(whole))]
+        position, epoch = 0, 0
+        for done, batch in enumerate(served):
+            resumed = Run(plan=plan, position=position, epoch=epoch, end_epoch=whole.end_epoch)
+            assert len(resumed) == len(served) - done
+            assert [resumed.batch(ordinal) for ordinal in range(len(resumed))] == served[done:]
+            assert batch is not None
+            position, epoch = plan.advance(*batch)
+
+    def test_a_run_without_an_end_or_a_length_never_ends(self) -> None:
+        endless = Run.starting(_plan(10, 4, num_epochs=None), 0, 2)
+        assert endless.end_epoch is None and endless.batches() is None
+        with pytest.raises(TypeError, match="no length"):
+            len(endless)
+        assert endless.batch(10**6) == _stepped(endless.plan, 0, 2, 10**6 + 1)[-1]
+        unsized = Run.starting(_plan(None, 4, num_epochs=None), 7, 0)
+        assert unsized.batch(3) == (19, 0, 4)
+
+    @pytest.mark.parametrize("drop_last", [False, True])
+    def test_ordinals_past_int32_name_exact_positions(self, drop_last: bool) -> None:
+        length = (1 << 40) + 7
+        plan = _plan(length, 256, drop_last=drop_last, num_epochs=None)
+        run = Run.starting(plan, 0, 0)
+        ordinal = (1 << 31) + 5  # its records end past 2**39, inside the first epoch
+        batch = run.batch(ordinal)
+        assert batch == (ordinal * 256, 0, 256)
+        per_epoch = length // 256 if drop_last else None
+        later = run.batch(length // 256 + 2)
+        if per_epoch is not None:
+            assert later == (512, 1, 256)  # the third batch of epoch 1
+        else:
+            records = (length // 256 + 2) * 256
+            assert later == (records - length, 1, 256)

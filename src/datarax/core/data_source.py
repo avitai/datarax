@@ -380,7 +380,7 @@ class DataSourceModule(StructuralModule):
 
     def record_indices_at(
         self,
-        start: int | Any,
+        start: int | ArrayLike,
         size: int,
         key: Any | None = None,
     ) -> Any:
@@ -398,7 +398,9 @@ class DataSourceModule(StructuralModule):
         layout of ``Batch.indices``.
 
         Args:
-            start: Starting position; a Python int of any size or a traced int32 ``jax.Array``.
+            start: Starting position: a Python int of any size, its two uint32 words ``(hi, lo)``
+                (NumPy or traced; a position of the order, below its length), or a traced
+                int32 ``jax.Array``.
             size: Number of records (Python int).
             key: The key selecting the order, or ``None`` for the sequential order.
 

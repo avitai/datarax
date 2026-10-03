@@ -29,6 +29,7 @@ from substrax.testing import run_python
 
 from datarax.core.data_source import RecordIdentity
 from datarax.core.element_batch import Batch, PADDING_INDEX
+from datarax.core.prng import key_words
 from datarax.pipeline import Pipeline
 from datarax.sources import (
     from_tfds,
@@ -522,7 +523,7 @@ class TestThePassDatasetForWorkers:
         self, tfds_fixture: TFDSFixture, seed: int, pass_index: int
     ) -> None:
         dataset = _stream(tfds_fixture, shuffle_buffer_size=8).pass_dataset(
-            pass_index, jax.random.key(seed), 4
+            pass_index, key_words(jax.random.key(seed)), 4
         )
 
         served = [int(i) & 0xFFFFFFFF for _, _, ids in dataset for i in ids]
@@ -534,7 +535,7 @@ class TestThePassDatasetForWorkers:
         self, tfds_fixture: TFDSFixture, slices: int, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         source = _stream(tfds_fixture, shuffle_buffer_size=8)
-        key = jax.random.key(4)
+        key = key_words(jax.random.key(4))
         whole = self._batches(source.pass_dataset(1, key, 2))
         decoded: list[int] = []
         decode = tfds_source._decoded_batch
@@ -561,7 +562,7 @@ class TestThePassDatasetForWorkers:
         self, tfds_fixture: TFDSFixture, slices: int, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         source = _stream(tfds_fixture, shuffle_buffer_size=8)
-        key = jax.random.key(4)
+        key = key_words(jax.random.key(4))
         source.pass_dataset(0, key, 2)  # the parent builds the offset index here, once
         reads = _CountingReads(monkeypatch)
         for i in range(slices):
@@ -597,7 +598,9 @@ class TestThePassDatasetForWorkers:
     ) -> None:
         import cloudpickle  # noqa: PLC0415 - Grain's process prefetch pickles with it
 
-        dataset = _stream(tfds_fixture, shuffle_buffer_size=8).pass_dataset(0, jax.random.key(9), 4)
+        dataset = _stream(tfds_fixture, shuffle_buffer_size=8).pass_dataset(
+            0, key_words(jax.random.key(9)), 4
+        )
         copy = cloudpickle.loads(cloudpickle.dumps(dataset))
 
         assert self._batches(copy) == self._batches(dataset)
@@ -607,7 +610,9 @@ class TestThePassDatasetForWorkers:
     ) -> None:
         from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
 
-        dataset = _stream(tfds_fixture, shuffle_buffer_size=8).pass_dataset(0, jax.random.key(9), 4)
+        dataset = _stream(tfds_fixture, shuffle_buffer_size=8).pass_dataset(
+            0, key_words(jax.random.key(9)), 4
+        )
         reference = self._batches(dataset)
 
         with ThreadPoolExecutor(8) as pool:

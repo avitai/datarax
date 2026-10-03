@@ -19,8 +19,8 @@ from dataclasses import dataclass, field
 from typing import Any, cast, Literal, NamedTuple, overload, Self
 
 import jax
-import jax.numpy as jnp
 import numpy as np
+from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from datarax.core import batch_ops
@@ -28,6 +28,7 @@ from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Batch
 from datarax.core.index_words import to_words
+from datarax.core.prng import fold_on_host, key_words
 from datarax.core.spec import array_to_spec_strip_leading, device_spec
 from datarax.sources.eager_source import HostValue
 from datarax.sources.source_ops import format_source_repr
@@ -223,13 +224,16 @@ class StreamingSourceBase(DataSourceModule):
         self._position = StreamPosition(_Cursor())
 
     def _open_pass(
-        self, pass_index: int, key: jax.Array | None, read_size: int
+        self, pass_index: int, key: np.ndarray | None, read_size: int
     ) -> Iterator[StreamChunk]:
         """Read pass ``pass_index`` in its order, as chunks of records: a subclass's generator.
 
         Args:
             pass_index: The pass, from 0.
-            key: The pipeline's key when it shuffles, ``None`` for the stream's own order.
+            key: The pipeline's key as its uint32 words on the host
+                (:func:`~datarax.core.prng.key_words`) when it shuffles, ``None`` for the
+                stream's own order. A pass's order is drawn from ``fold_in(key, pass_index)``
+                (:func:`pass_seed`), folded on the CPU device.
             read_size: Records the pass reads at a time (a backend's batched read or decode);
                 chunks may hold any number.
 
@@ -286,7 +290,7 @@ class StreamingSourceBase(DataSourceModule):
         self,
         batch_size: int,
         *,
-        key: jax.Array | None = None,
+        key: ArrayLike | None = None,
         with_provenance: Literal[False] = False,
         read_size: int | None = None,
     ) -> Batch: ...
@@ -296,7 +300,7 @@ class StreamingSourceBase(DataSourceModule):
         self,
         batch_size: int,
         *,
-        key: jax.Array | None = None,
+        key: ArrayLike | None = None,
         with_provenance: Literal[True],
         read_size: int | None = None,
     ) -> tuple[Batch, Provenance]: ...
@@ -305,7 +309,7 @@ class StreamingSourceBase(DataSourceModule):
         self,
         batch_size: int,
         *,
-        key: jax.Array | None = None,
+        key: ArrayLike | None = None,
         with_provenance: bool = False,
         read_size: int | None = None,
     ) -> Batch | tuple[Batch, Provenance]:
@@ -316,8 +320,9 @@ class StreamingSourceBase(DataSourceModule):
 
         Args:
             batch_size: The most records to return.
-            key: The key the pass's order is drawn from (read when a pass starts), or ``None``
-                for the stream's own order.
+            key: The key the pass's order is drawn from (typed, raw or its host words; read
+                once, as host words, when a pass starts), or ``None`` for the stream's own
+                order.
             with_provenance: Whether to return the records' provenance beside the batch.
             read_size: Records a pass this call opens reads at a time, the pipeline's batch
                 size; ``None`` reads it ``batch_size`` at a time.
@@ -343,7 +348,9 @@ class StreamingSourceBase(DataSourceModule):
             ) from cursor.failure
         reader = cursor.reader
         if reader is None:
-            reader = self._open_pass(cursor.pass_index, key, read_size)
+            reader = self._open_pass(
+                cursor.pass_index, None if key is None else key_words(key), read_size
+            )
             cursor.open(reader)
         try:
             chunk = self._pull(cursor, reader, batch_size)
@@ -421,16 +428,15 @@ class StreamingSourceBase(DataSourceModule):
         raise ValueError(f"{type(self).__name__} holds no records, so it declares no spec")
 
 
-def pass_generator(key: jax.Array, pass_index: int) -> np.random.Generator:
+def pass_generator(key: np.ndarray, pass_index: int) -> np.random.Generator:
     """The generator a stream draws pass ``pass_index``'s order from: keyed by the pass's key.
 
     The pass's key is ``fold_in(key, pass_index)``, the key an indexed pipeline orders its epoch
     ``pass_index`` by, so passes never share a key (Grain's ``seed + epoch`` collision cannot
-    arise). Its key data, read on the host once per pass, keys NumPy's counter-based Philox
-    generator.
+    arise). Its data keys NumPy's counter-based Philox generator.
 
     Args:
-        key: The pipeline's key, typed or as raw key data.
+        key: The pipeline's key as its uint32 words on the host.
         pass_index: The pass, from 0.
 
     Returns:
@@ -439,27 +445,24 @@ def pass_generator(key: jax.Array, pass_index: int) -> np.random.Generator:
     return np.random.Generator(np.random.Philox(key=pass_seed(key, pass_index)))
 
 
-def pass_seed(key: jax.Array, pass_index: int) -> int:
-    """Pass ``pass_index``'s key, ``fold_in(key, pass_index)``, as one integer, read on the host.
+def pass_seed(key: np.ndarray, pass_index: int) -> int:
+    """Pass ``pass_index``'s key, ``fold_in(key, pass_index)``, as one integer.
+
+    The fold runs on the CPU device from the key's host words
+    (:func:`~datarax.core.prng.fold_on_host`): nothing is read back from an accelerator, and
+    nothing transfers implicitly.
 
     Args:
-        key: The pipeline's key, typed or as raw key data.
+        key: The pipeline's key as its uint32 words on the host
+            (:func:`~datarax.core.prng.key_words`).
         pass_index: The pass, from 0.
 
     Returns:
         The pass key's data as a non-negative integer.
     """
-    return key_integer(jax.random.fold_in(typed_key(key), pass_index))
+    return key_integer(fold_on_host(key, pass_index))
 
 
-def typed_key(key: jax.Array) -> jax.Array:
-    """``key`` as a typed key: raw key data is wrapped, a typed key returned as it is."""
-    if jnp.issubdtype(key.dtype, jax.dtypes.prng_key):
-        return key
-    return jax.random.wrap_key_data(key)
-
-
-def key_integer(key: jax.Array) -> int:
-    """All of ``key``'s data as one non-negative integer: a seed NumPy and HF generators take."""
-    words = np.asarray(jax.random.key_data(typed_key(key)), np.uint32)
-    return int.from_bytes(words.tobytes(), "little")
+def key_integer(words: np.ndarray) -> int:
+    """A key's uint32 words as one non-negative integer: a seed NumPy and HF generators take."""
+    return int.from_bytes(np.asarray(words, np.uint32).tobytes(), "little")

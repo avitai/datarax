@@ -944,13 +944,15 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
         return {"shuffle_buffer_size": self.config.shuffle_buffer_size}
 
     def pass_dataset(
-        self, pass_index: int, key: jax.Array | None, batch_size: int
+        self, pass_index: int, key: np.ndarray | None, batch_size: int
     ) -> TFDSStreamDataset:
         """Pass ``pass_index`` as a Grain dataset of decoded batches, a :class:`TFDSStreamDataset`.
 
         Args:
             pass_index: The pass, from 0.
-            key: The pipeline's key when it shuffles, ``None`` for file order.
+            key: The pipeline's key as its uint32 words on the host
+                (:func:`~datarax.core.prng.key_words`) when it shuffles, ``None`` for file
+                order.
             batch_size: Records per decoded batch.
 
         Returns:
@@ -958,7 +960,7 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
         """
         return TFDSStreamDataset(self._stream_read(pass_index, key, batch_size))
 
-    def _stream_read(self, pass_index: int, key: jax.Array | None, batch_size: int) -> StreamRead:
+    def _stream_read(self, pass_index: int, key: np.ndarray | None, batch_size: int) -> StreamRead:
         """What pass ``pass_index`` reads, as plain values, the shards' record index included."""
         config = self.config
         return StreamRead(
@@ -973,13 +975,13 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
         )
 
     def _open_pass(
-        self, pass_index: int, key: jax.Array | None, read_size: int
+        self, pass_index: int, key: np.ndarray | None, read_size: int
     ) -> Iterator[StreamChunk]:
         """Read pass ``pass_index``: in file order, or as TFDS's training read under ``key``.
 
         Args:
             pass_index: The pass, from 0.
-            key: The pipeline's key when it shuffles, ``None`` for file order.
+            key: The pipeline's key as its host words when it shuffles, ``None`` for file order.
             read_size: Records decoded together.
 
         Yields:

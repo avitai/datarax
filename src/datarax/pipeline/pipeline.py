@@ -71,7 +71,7 @@ from datarax.core.element_batch import Batch
 from datarax.core.module import module_state, restore_module_state
 from datarax.core.spec import declared_spec, validate_batch, validate_device_dtypes
 from datarax.pipeline.dag import name_records, OperatorDag, Records
-from datarax.pipeline.epochs import EpochPlan, stream_batches
+from datarax.pipeline.epochs import batch_records, EpochPlan, stream_batches
 from datarax.pipeline.iteration import (
     compile_streaming_dag,
     next_batch,
@@ -356,13 +356,9 @@ class Pipeline(nnx.Module):
     def _records_at(self, start: jax.Array, epoch: jax.Array, size: int) -> Records:
         """The ``size`` records served from ``start`` of epoch ``epoch``'s order.
 
-        When the plan crosses epochs, rows past the epoch's end are the head of the following
-        epochs' orders, so no row is padding. Every epoch the batch can touch is named by one
-        ``record_indices_at`` vmapped over the epochs' keys (the first from ``start``, the rest
-        from their heads) and each row takes its own epoch's name: no conditional, one batched
-        index computation (a shuffle's cycle-walking loop runs once for all epochs), the same
-        program for every batch, and index arrays of O(``size``) per epoch touched. The source
-        receives its epoch's key when the pipeline shuffles and ``None`` otherwise.
+        :func:`~datarax.pipeline.epochs.batch_records` over this pipeline's source and plan, the
+        rule the host stage names its batches by. The source receives its epoch's key when the
+        pipeline shuffles and ``None`` otherwise.
 
         Args:
             start: Where the rows start in epoch ``epoch``.
@@ -372,29 +368,14 @@ class Pipeline(nnx.Module):
         Returns:
             Each row's record index and epoch.
         """
-        plan = self.epoch_plan
-        start = jnp.asarray(start, dtype=jnp.int32)
-        epoch = jnp.asarray(epoch, dtype=jnp.int32)
-
-        shuffle = self.shuffle
-
-        def names(first: jax.Array, key: jax.Array) -> jax.Array:
-            order = key if shuffle else None
-            return jnp.asarray(self.source.record_indices_at(first, size, order), jnp.uint32)
-
-        if not plan.crosses:
-            return Records(names(start, self._key_of(epoch)), jnp.full((size,), epoch, jnp.int32))
-        length = plan.length
-        assert length is not None  # noqa: S101 - a crossing plan has a length
-        offsets = jnp.arange(plan.epochs_touched(size), dtype=jnp.int32)
-        starts = jnp.where(offsets == 0, start, 0)
-        named = jax.vmap(names)(starts, jax.vmap(self._key_of)(epoch + offsets))
-        rows = start + jnp.arange(size, dtype=jnp.int32)
-        later = rows // length  # epochs after ``epoch`` each row belongs to
-        # A row of the first epoch is its own row of that epoch's names; a later epoch's row is
-        # the position it reaches within that epoch, counted from its head.
-        column = jnp.where(later == 0, jnp.arange(size, dtype=jnp.int32), rows - later * length)
-        return Records(named[later, column], epoch + later)
+        return batch_records(
+            self.source,
+            self.epoch_plan,
+            key_base=self._epoch_key_base[...] if self.shuffle else None,
+            start=jnp.asarray(start, dtype=jnp.int32),
+            epoch=jnp.asarray(epoch, dtype=jnp.int32),
+            size=size,
+        )
 
     @property
     def epoch_plan(self) -> EpochPlan:

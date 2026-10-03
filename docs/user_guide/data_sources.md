@@ -198,11 +198,15 @@ Any other source subclasses `DataSourceModule` and declares what its record inde
    through its compiled session; a `STREAM_IDS` or `ARRIVAL` source builds on
    `datarax.sources.StreamingSourceBase`, implements `_open_pass(pass_index, key, read_size)`
    (a generator of `StreamChunk`s: host columns, provenance and ids, read `read_size` records
-   at a time), and is served by the streaming path. An indexed source that
+   at a time; `key` is the pipeline's key as uint32 words on the host, or `None` for the
+   stream's own order, and a pass's order is drawn from `pass_seed(key, pass_index)`), and is
+   served by the streaming path. An indexed source that
    partitions or mixes records also overrides `record_indices_at(start, size, key)` to return
    the stable index of the record at each position of the order the key selects (the
    sequential order when the key is `None`), uint32 `(size, 2)` with each 64-bit index as its
-   words `(hi, lo)` (`datarax.core.index_words`); the pipeline computes those indices once per
+   words `(hi, lo)` (`datarax.core.index_words`). `start` is a Python int, its two uint32
+   words `(hi, lo)` (a position of the order, below its length: how the host names positions
+   past `2**31`), or a traced int32; the pipeline computes those indices once per
    batch, gathers them with `get_records`, and stochastic operators key each record's
    randomness on the same indices. The default names records by position, shuffled by the
    key when the pipeline shuffles

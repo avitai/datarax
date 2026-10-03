@@ -1,7 +1,10 @@
-"""How a pipeline's records divide into batches and epochs.
+"""How a pipeline's records divide into batches and epochs, and which records a batch holds.
 
 :class:`EpochPlan` is the rule for a source the pipeline indexes, :func:`stream_batches` the same
-rule over a stream's passes; this module is the one place the rule lives. No batch holds padding.
+rule over a stream's passes; this module is the one place the rule lives. :func:`batch_records`
+names the records a batch of an indexed source holds by that rule, each row by its own epoch's
+order; the compiled session traces it, and :class:`HostNaming` runs it on the CPU device for the
+host stage. No batch holds padding.
 Under
 ``drop_last`` the records short of a full batch are skipped and the next batch starts the
 next epoch, tf.data's and Grain's ``batch(drop_remainder=True).repeat()``. Otherwise a batch
@@ -21,9 +24,15 @@ from typing import cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
+from jax.typing import ArrayLike
 
 from datarax.core import batch_ops
+from datarax.core.data_source import DataSourceModule
 from datarax.core.element_batch import Batch
+from datarax.core.index_words import is_word_start, split_constant, subtract, to_words
+from datarax.core.prng import host_device
+from datarax.pipeline.dag import Records
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -176,11 +185,262 @@ class EpochPlan:
         return batches, records - (batches - 1) * self.batch_size
 
 
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class Run:
+    """The batches a run serves, each found from its ordinal without walking to it.
+
+    A run starts at ``(position, epoch)`` and serves the plan's batches until epoch ``end_epoch``
+    would start; a run without an end (``end_epoch`` ``None``) never stops. The end is recorded,
+    not recomputed, so a run resumed anywhere ends where the uninterrupted one would. Batch
+    ``ordinal`` is the one :meth:`EpochPlan.batch_start` and :meth:`EpochPlan.advance` reach
+    after that many batches, the last one short when the records left do not fill it. Python
+    integers throughout, exact at every length up to ``2**64 - 1`` records.
+
+    Attributes:
+        plan: How records divide into batches and epochs.
+        position: Records of ``epoch`` served before the run's first batch.
+        epoch: The epoch the run starts in.
+        end_epoch: The epoch the run stops before, or ``None`` for a run without an end.
+    """
+
+    plan: EpochPlan
+    position: int
+    epoch: int
+    end_epoch: int | None
+
+    @classmethod
+    def starting(cls, plan: EpochPlan, position: int, epoch: int) -> Run:
+        """A run of the plan's ``num_epochs`` epochs from ``(position, epoch)``.
+
+        It finishes the epoch it starts in, an exhausted one counting as served, then serves the
+        rest: it stops before epoch ``epoch + num_epochs``, as
+        :meth:`EpochPlan.run_extent` counts a session from ``position``.
+
+        Args:
+            plan: How records divide into batches and epochs.
+            position: Records of ``epoch`` already served.
+            epoch: The current epoch.
+
+        Returns:
+            The run.
+        """
+        start, first = plan.batch_start(position, epoch)
+        end = None if plan.num_epochs is None or plan.length is None else epoch + plan.num_epochs
+        return cls(plan=plan, position=start, epoch=first, end_epoch=end)
+
+    def __len__(self) -> int:
+        """The batches the run serves; see :meth:`batches`.
+
+        Returns:
+            The count.
+
+        Raises:
+            TypeError: If the run has no end.
+        """
+        count = self.batches()
+        if count is None:
+            raise TypeError("a run without an end has no length")
+        return count
+
+    def batches(self) -> int | None:
+        """The batches the run serves, or ``None`` for a run without an end."""
+        plan, length = self.plan, self.plan.length
+        if self.end_epoch is None or length is None:
+            return None
+        position, epoch = plan.batch_start(self.position, self.epoch)
+        if epoch >= self.end_epoch:
+            return 0
+        if plan.drop_last:
+            per_epoch = length // plan.batch_size
+            return (length - position) // plan.batch_size + (self.end_epoch - epoch - 1) * per_epoch
+        records = (self.end_epoch - epoch) * length - position
+        return -(-records // plan.batch_size)
+
+    def batch(self, ordinal: int) -> tuple[int, int, int] | None:
+        """Batch ``ordinal`` of the run: ``(start, epoch, size)``, or ``None`` past its end.
+
+        Args:
+            ordinal: The batch's place in the run, from 0.
+
+        Returns:
+            Where the batch starts, its first row's epoch and its size.
+        """
+        plan, length, size = self.plan, self.plan.length, self.plan.batch_size
+        position, epoch = plan.batch_start(self.position, self.epoch)
+        if length is None:
+            return position + ordinal * size, epoch, size
+        if plan.drop_last:
+            first = (length - position) // size
+            if ordinal < first:
+                start, at = position + ordinal * size, epoch
+            else:
+                later, index = divmod(ordinal - first, length // size)
+                start, at = index * size, epoch + 1 + later
+            if self.end_epoch is not None and at >= self.end_epoch:
+                return None
+            return start, at, size
+        served = position + ordinal * size  # records from the start of ``epoch``
+        if self.end_epoch is not None:
+            total = (self.end_epoch - epoch) * length
+            if served >= total:
+                return None
+            size = min(size, total - served)
+        return served % length, epoch + served // length, size
+
+
 def _select[T: (int, jax.Array)](condition: bool | jax.Array, if_true: T, if_false: T) -> T:
     """``if_true`` where ``condition`` holds, else ``if_false``: on the host or traced alike."""
     if isinstance(condition, bool):
         return if_true if condition else if_false
     return cast(T, jnp.where(condition, if_true, if_false))
+
+
+def batch_records(
+    source: DataSourceModule,
+    plan: EpochPlan,
+    *,
+    key_base: ArrayLike | None,
+    start: ArrayLike,
+    epoch: ArrayLike,
+    size: int,
+) -> Records:
+    """The records of the batch of ``size`` rows starting at ``start`` of epoch ``epoch``.
+
+    The rows are the plan's: the rest of the epoch ``start`` is in, then, when the plan crosses
+    epochs, the heads of the following epochs' orders, so no row is padding. Every epoch the batch
+    can touch is named by one ``source.record_indices_at`` vmapped over the epochs' keys (the
+    first from ``start``, the rest from their heads), and each row takes its own epoch's name: no
+    conditional, one batched index computation, the same program for every batch, and index
+    arrays of O(``size``) per epoch touched. Epoch ``e`` is ordered by
+    ``fold_in(wrap_key_data(key_base), e)``, or sequentially without a key. Traceable; the source
+    is read for its order only, never its records.
+
+    Args:
+        source: The indexed source.
+        plan: The pipeline's epoch plan.
+        key_base: The pipeline's key data, or ``None`` when it does not shuffle.
+        start: Where the batch starts in its epoch: a traced int32 (the compiled session's) or
+            two uint32 words ``(hi, lo)`` (the host stage's, exact past ``2**31``).
+        epoch: The epoch the first row belongs to, int32.
+        size: Rows to serve (static).
+
+    Returns:
+        Each row's record index, uint32 ``(size, 2)``, and epoch, int32 ``(size,)``.
+    """
+    epoch = jnp.asarray(epoch, dtype=jnp.int32)
+
+    def names(first: jax.Array, epoch_of: jax.Array) -> jax.Array:
+        key = (
+            None
+            if key_base is None
+            else jax.random.fold_in(jax.random.wrap_key_data(jnp.asarray(key_base)), epoch_of)
+        )
+        return jnp.asarray(source.record_indices_at(first, size, key), jnp.uint32)
+
+    if not plan.crosses:
+        return Records(names(jnp.asarray(start), epoch), jnp.full((size,), epoch, jnp.int32))
+    length = plan.length
+    assert length is not None  # noqa: S101 - a crossing plan has a length
+    first = jnp.asarray(start)
+    offsets = jnp.arange(plan.epochs_touched(size), dtype=jnp.int32)
+    later_heads = jnp.zeros_like(first)
+    starts = jnp.where((offsets == 0).reshape(-1, *([1] * first.ndim)), first, later_heads)
+    named = jax.vmap(names)(starts, epoch + offsets)
+    row = jnp.arange(size, dtype=jnp.int32)
+    left = _rows_left(first, length, size)
+    past = row - left  # rows after the epoch's end, counted from the next epoch's head
+    if length > size:
+        later = (row >= left).astype(jnp.int32)
+        column = jnp.where(row < left, row, past)
+    else:
+        later = jnp.where(row < left, 0, 1 + past // length)
+        column = jnp.where(row < left, row, past % length)
+    return Records(named[later, column], epoch + later)
+
+
+def _rows_left(start: jax.Array, length: int, size: int) -> jax.Array:
+    """Rows of the batch inside the epoch it starts in: ``min(length - start, size)``, int32.
+
+    Computed in two words, so a start past ``2**31`` of a longer epoch is exact.
+    """
+    words = (
+        (start[0], start[1])
+        if is_word_start(start)
+        else (jnp.zeros((), jnp.uint32), start.astype(jnp.uint32))
+    )
+    length_high, length_low = split_constant(length)
+    high, low = subtract((jnp.asarray(length_high), jnp.asarray(length_low)), words)
+    inside = (high == 0) & (low < size)
+    return jnp.where(inside, low, np.uint32(size)).astype(jnp.int32)
+
+
+class HostNaming:
+    """A pipeline's naming on the host: :func:`batch_records` as one ``jax.jit`` program on the CPU.
+
+    The host stage names each batch's records here, before reading them: the start goes in as two
+    uint32 words, so every position up to ``2**64 - 1`` is exact, and the program runs on the CPU
+    device (:func:`~datarax.core.prng.host_device`), off the accelerator's queue. The source is
+    closed over, never an argument, so none of its records is transferred; its order reads its
+    lengths only. One program is compiled per batch shape (a run's short final batch is a second)
+    and reused for every batch, run, reset and restore of the pipeline that holds this object.
+    Every input is placed on the CPU device and every output read back explicitly, so naming
+    needs no implicit transfer.
+    """
+
+    def __init__(self, source: DataSourceModule, plan: EpochPlan, *, shuffled: bool) -> None:
+        """Hold the source and the plan, and build the program; nothing is compiled yet.
+
+        Args:
+            source: The indexed source.
+            plan: The pipeline's epoch plan.
+            shuffled: Whether the pipeline shuffles, which a key then orders.
+        """
+        self._shuffled = shuffled
+        self._device = host_device()
+
+        def _names(
+            start: jax.Array, epoch: jax.Array, key: jax.Array | None, size: int
+        ) -> tuple[jax.Array, jax.Array]:
+            records = batch_records(source, plan, key_base=key, start=start, epoch=epoch, size=size)
+            return records.indices, records.epochs
+
+        self._program = jax.jit(_names, static_argnames=("size",))
+
+    def __call__(
+        self, start: int, epoch: int, size: int, key: np.ndarray | None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """The records of the batch of ``size`` rows starting at ``start`` of epoch ``epoch``.
+
+        Args:
+            start: Where the batch starts in its epoch, any position up to ``2**64 - 2``.
+            epoch: The epoch the first row belongs to.
+            size: Rows to serve.
+            key: The pipeline's key as uint32 words on the host
+                (:func:`~datarax.core.prng.key_words`), or ``None`` when it does not shuffle.
+
+        Returns:
+            Each row's record index, uint32 ``(size, 2)``, and epoch, int32 ``(size,)``, on the
+            host.
+
+        Raises:
+            ValueError: If a key is given to a pipeline that does not shuffle, or none to one
+                that does.
+        """
+        if (key is None) == self._shuffled:
+            raise ValueError(
+                "a pipeline that shuffles orders each epoch by its key, which naming then takes"
+                if self._shuffled
+                else "this pipeline does not shuffle, so naming takes no key"
+            )
+        device = self._device
+        placed_key = None if key is None else jax.device_put(np.asarray(key, np.uint32), device)
+        indices, epochs = self._program(
+            jax.device_put(to_words(start), device),
+            jax.device_put(np.int32(epoch), device),
+            placed_key,
+            size=size,
+        )
+        return jax.device_get(indices), jax.device_get(epochs)
 
 
 def stream_batches(

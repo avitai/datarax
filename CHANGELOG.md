@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `datarax.pipeline.epochs.batch_records(source, plan, *, key_base, start, epoch, size)`: the
+  records a batch of an indexed source holds, by the epoch plan, each row by its own epoch's order
+  (the rows past an epoch's end are the next epoch's head). The compiled session names its batches
+  with it. `datarax.pipeline.epochs.HostNaming(source, plan, *, shuffled)` runs it as one
+  `jax.jit` program on the CPU device for the host stage, taking the start as two uint32 words,
+  so positions past `2**31` are named exactly; the source is closed over (none of its records is
+  transferred), one program is compiled per batch shape, and nothing transfers implicitly.
+- `datarax.pipeline.epochs.Run`: the batches a run serves, batch `ordinal` found without walking
+  to it, until a recorded end epoch, so a run resumed anywhere ends where the uninterrupted run
+  would. `Run.starting(plan, position, epoch)` counts the run as a session from that position.
+- `record_indices_at(start, ...)` of every source (the default, `EagerSource`, `MemorySource`
+  sharded or not, `MixDataSourcesNode`, `resolve_wrapped_indices`) takes the start as its two
+  uint32 words `(hi, lo)`, NumPy or traced, beside a Python int and a traced int32
+  (`index_words.is_word_start`, `index_words.wrapped_positions`).
+- `datarax.core.prng.key_words(key)`, `fold_on_host(words, data)` and `host_device()`: a key's
+  data as host words, read once with an explicit `jax.device_get`, and `fold_in` computed on the
+  CPU device from them, with no implicit transfer and no read back from an accelerator.
+
+
 - `mixed_source.grain_proportions(weights)`: Grain's integer proportions for mixing weights (the
   smallest scaled to 100, the others alike and truncated), the rule of `grain.MapDataset.mix`.
   `MixDataSourcesConfig.weights` keeps the weights as given, so a mix's proportions are the ones
@@ -123,6 +142,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A stream's pass key is folded on the CPU device from the key's host words:
+  `StreamingSourceBase._open_pass(pass_index, key, read_size)` and
+  `TFDSStreamingSource.pass_dataset(pass_index, key, batch_size)` take `key` as uint32 words on the
+  host (`datarax.core.prng.key_words`), `pass_seed(key, pass_index)`, `pass_generator` and
+  `key_integer` take the words, and `get_batch(..., key=...)` reads a typed or raw key's words once
+  per pass. A pass opens under `jax.transfer_guard("disallow")`. `_source_base.typed_key` is
+  removed.
 - `datarax.sources._grain_bridge` is `datarax.sources._index_validation`, named for the one
   function it holds, `validate_index_batch`.
 - `MixDataSourcesNode` mixes on Grain's mix. Position `k` of an epoch belongs to the source

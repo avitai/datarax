@@ -68,8 +68,8 @@ class RecordStream(StreamingSourceBase):
         self._read_sizes = HostValue([])
 
     @property
-    def opened(self) -> list[tuple[int, jax.Array | None]]:
-        """The passes ``_open_pass`` was asked for, in order, and the key each was given."""
+    def opened(self) -> list[tuple[int, np.ndarray | None]]:
+        """The passes ``_open_pass`` was asked for, in order, and the key words each was given."""
         return self._opened.value
 
     @property
@@ -87,7 +87,7 @@ class RecordStream(StreamingSourceBase):
         return self._size
 
     def _open_pass(
-        self, pass_index: int, key: jax.Array | None, read_size: int
+        self, pass_index: int, key: np.ndarray | None, read_size: int
     ) -> Iterator[StreamChunk]:
         self._opened.value.append((pass_index, key))
         self._read_sizes.value.append(read_size)
@@ -126,7 +126,7 @@ def record_chunks(
     original = stream_type._open_pass  # noqa: SLF001 - the hook every stream implements
 
     def watched(
-        self: StreamingSourceBase, pass_index: int, key: jax.Array | None, read_size: int
+        self: StreamingSourceBase, pass_index: int, key: np.ndarray | None, read_size: int
     ) -> Iterator[StreamChunk]:
         for chunk in original(self, pass_index, key, read_size):
             seen.append((pass_index, read_size, chunk_size(chunk)))

@@ -464,14 +464,16 @@ class EagerSource(DataSourceModule):
 
     def record_indices_at(
         self,
-        start: int | jax.Array,
+        start: int | ArrayLike,
         size: int,
         key: jax.Array | None = None,
     ) -> jax.Array:
         """Return the index of each record at positions ``start .. start + size``.
 
         Args:
-            start: Starting position; concrete int or traced ``jax.Array``.
+            start: Starting position: a Python int, its two uint32 words ``(hi, lo)``, or a
+                traced int32 ``jax.Array`` (see
+                :func:`~datarax.core.index_words.wrapped_positions`).
             size: Number of records (Python int).
             key: The key selecting the order, or ``None`` for the sequential order.
 

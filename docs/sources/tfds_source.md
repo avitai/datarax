@@ -116,7 +116,8 @@ pipeline = Pipeline(source=source, stages=[], batch_size=256, rngs=nnx.Rngs(0),
 ```
 
 A pass is also a Grain dataset of decoded batches, `source.pass_dataset(pass_index, key,
-batch_size)`. It computes the pass's order over record ids, reads each record's payload at its
+batch_size)`, where `key` is the pipeline's key as uint32 words on the host
+(`datarax.core.prng.key_words(key)`), or `None` for file order. It computes the pass's order over record ids, reads each record's payload at its
 offset in an index built once from the shard files' frame headers, checks each frame's CRCs as
 tf.data's TFRecord reader does (a damaged frame raises `datarax.sources.tfds_source.DamagedRecordError` naming its file and
 record), and decodes last. The shuffle buffer holds record ids, not records. It pickles
