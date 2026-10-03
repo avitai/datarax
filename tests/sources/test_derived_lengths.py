@@ -2,9 +2,9 @@
 
 ``MemorySource`` and the eager sources copied their length at construction, while their
 ``data`` stays a public attribute: after the data was replaced, ``len(source)`` kept the old
-count and a pipeline silently skipped the new records. ``MixDataSourcesNode`` froze its total
-and per-source offsets while it sampled records from each child's current length, so a child
-that grew produced record indices colliding with another source's.
+count and a pipeline silently skipped the new records. A ``MixDataSourcesNode``'s epoch length
+and its children's offsets follow its children's current lengths, so a child that grows moves
+the records of the children after it and lengthens the epoch by Grain's rule.
 """
 
 from __future__ import annotations
@@ -92,20 +92,19 @@ class TestEagerSource:
 
 
 class TestMixedSource:
-    def test_the_total_and_offsets_follow_a_child_that_grew(self) -> None:
-        grows = _memory({"x": jnp.arange(4, dtype=jnp.float32)})
-        fixed = _memory({"x": jnp.arange(100, 104, dtype=jnp.float32)})
-        mix = MixDataSourcesNode(
-            MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)), [grows, fixed]
-        )
-        grows.data = {"x": jnp.arange(8, dtype=jnp.float32)}
+    def test_the_length_and_offsets_follow_a_child_that_grew(self) -> None:
+        grows = _memory({"x": np.arange(4, dtype=np.float32)})
+        fixed = _memory({"x": np.arange(100, 120, dtype=np.float32)})
+        mix = MixDataSourcesNode(MixDataSourcesConfig(weights=(0.5, 0.5)), [grows, fixed])
+        assert len(mix) == 8  # Grain's length: the shorter child at 1:1, twice over
+        grows.data = {"x": np.arange(8, dtype=np.float32)}
         key = jax.random.key(3)
 
-        ids = from_words(mix.record_indices_at(start=0, size=256, key=key)).astype(np.int64)
-        values = np.asarray(mix.get_records(mix.record_indices_at(0, 256, key))["x"])
+        ids = from_words(mix.record_indices_at(start=0, size=len(mix), key=key)).astype(np.int64)
+        values = np.asarray(mix.get_records(mix.record_indices_at(0, len(mix), key))["x"])
 
-        assert len(mix) == 12
-        assert set(ids.tolist()) <= set(range(12))
-        # One index, one record: the grown source owns 0..7, the other 8..11.
+        assert len(mix) == 16
+        assert len(set(ids.tolist())) == 16
+        # One index, one record: the grown source owns 0..7, the other 8..27.
         expected = np.where(ids < 8, ids.astype(np.float32), 100.0 + (ids - 8).astype(np.float32))
         np.testing.assert_array_equal(values, expected)

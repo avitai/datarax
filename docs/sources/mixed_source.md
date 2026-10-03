@@ -1,6 +1,95 @@
 # Mixed Source
 
-Combine multiple data sources with configurable mixing.
+`MixDataSourcesNode` mixes indexed sources in fixed proportions, the way Grain's
+`MapDataset.mix` does, and names every record of every source in one 64-bit index space.
+
+```python
+import numpy as np
+from flax import nnx
+
+from datarax.pipeline import Pipeline
+from datarax.sources import MemorySource, MemorySourceConfig, MixDataSourcesConfig, MixDataSourcesNode
+
+small = MemorySource(MemorySourceConfig(), {"x": np.zeros((300, 8), np.float32)})
+large = MemorySource(MemorySourceConfig(), {"x": np.ones((700, 8), np.float32)})
+mix = MixDataSourcesNode(MixDataSourcesConfig(weights=(0.3, 0.7)), [small, large])
+pipeline = Pipeline(source=mix, stages=[], batch_size=32, rngs=nnx.Rngs(0), shuffle=True)
+```
+
+## Which source serves each position
+
+Grain turns the weights into integer proportions. It scales the smallest weight to 100, scales
+the others by the same factor and truncates them, so `(0.3, 0.7)` becomes `100:233`. The
+selection interleaves the sources in those proportions and repeats every `sum(proportions)`
+positions. A source's `j`-th position in the mix is its own position `j`. The selection draws
+nothing at random.
+
+## How long an epoch is
+
+An epoch is Grain's length: the most positions that serve each record of each source at most
+once, `min(len(source) * S / p)` over the sources, for proportions `p` summing to `S`. Every
+record an epoch serves is therefore distinct, and no two rows of an epoch share a random key.
+Sources at `(0.5, 0.5)` with 1,000 and 10 records give an epoch of 20 positions, 10 from each.
+A larger weight draws more from a larger source.
+
+## The order within each source
+
+The pipeline owns the order. With `Pipeline(shuffle=True)` each source orders its own records by
+the epoch's key folded with the source's position in the mix, so each epoch reads a different
+part of every source that holds more records than an epoch takes from it. With `shuffle=False`
+the mix is a fixed interleave of each source's records in order, the same records every epoch:
+a source that an epoch does not exhaust serves the same first records each time, as an
+unshuffled `drop_last` epoch skips the same tail. One pass over every record of several sources
+is a concatenation of the sources, not a weighted mix.
+
+## Record identity
+
+A mixed record's index is its source's offset, the number of records in the sources before it,
+plus its index within that source, as two `uint32` words. `mix.provenance(indices)` serves each
+record's strings and objects from the source that owns it. When a source grows, the indices of
+the sources after it move and the epoch lengthens.
+
+## What a mix takes
+
+Every source must be an `INDEXED` source with at least one record. The mix refuses a stream
+(`STREAM_IDS`, `ARRIVAL`), which has no stable positions, and one worker's shard of a
+`MemorySource`. A mix is itself an `INDEXED` source, so mixes nest. Weights must be positive. The
+mix refuses weights so far apart that Grain's proportions sum past `2**32 - 1`.
+
+## Sources with different fields
+
+A mixed record carries the union of its sources' fields. A field every source has stays an
+array. A field some source lacks is a `Maybe(value, present)` in every batch of the mix: rows from
+a source that has the field hold its value with `present` True, and rows from a source that lacks
+it hold zeros with `present` False. A source whose field is already a `Maybe` keeps its own
+`present`. Every batch of the mix therefore has one structure, whichever sources its rows come
+from, and a compiled step over it compiles once.
+
+```python
+images = MemorySource(MemorySourceConfig(), {"image": image_array, "label": labels_a})
+captions = MemorySource(MemorySourceConfig(), {"text": text_array, "label": labels_b})
+mix = MixDataSourcesNode(MixDataSourcesConfig(weights=(0.5, 0.5)), [images, captions])
+
+batch = mix.get_batch(mix.record_indices_at(0, 8))
+batch["label"]                 # an array: every source has it
+batch["image"].present         # True for rows from `images`
+batch["image"].value_or(0.0)   # the values, zeros where missing
+```
+
+`Maybe` has no arithmetic, so a missing value is read only through `value_or` or with `present`
+in hand (see [Missing values](../core/maybe.md)).
+
+The mix compares the sources' declared specs, the dtypes the device holds. It refuses a field
+whose shape or device dtype differs between two sources, or which holds values in one source and
+nested fields in another, naming the field and both specs. Host columns of one field stored in
+different dtypes of one kind join at NumPy's lossless promotion: an `int64` label beside an
+`int32` one reads as `int64` on the host in every batch and as `int32` on the device.
+
+`mix.get_batch(indices, *, epochs=0, contiguous=False)` reads mixed records on the host. It reads
+each source once with that source's own `get_batch`, creates no device array and changes no
+state. A `Pipeline` iterates a mix whose sources hold equal fields; a mix whose sources' fields
+differ is read with `mix.get_batch`, and a `Pipeline` over it refuses its first batch naming that
+method.
 
 ## See Also
 

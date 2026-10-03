@@ -39,7 +39,7 @@ from datarax.core.data_source import (
 from datarax.core.element_batch import Batch, Element
 from datarax.core.index_words import low_words, to_words
 from datarax.core.spec import array_to_spec_strip_leading, device_spec
-from datarax.sources._grain_bridge import validate_index_batch
+from datarax.sources._index_validation import validate_index_batch
 from datarax.sources.source_ops import resolve_wrapped_indices
 
 
@@ -368,6 +368,10 @@ class EagerSource(DataSourceModule):
         """Records the columns hold now (see :func:`column_length`)."""
         return column_length(self.data)
 
+    def index_space(self) -> int:
+        """Every stored row has an index, a worker's shard included: the data's record count."""
+        return self.length
+
     def __len__(self) -> int:
         """Return the number of records."""
         return self.length
@@ -480,7 +484,7 @@ class EagerSource(DataSourceModule):
         """Gather the records at ``indices``; JIT-traceable, for the compiled pipeline path.
 
         Args:
-            indices: uint32 ``(n, 2)`` record indices in ``[0, len(self))``, as
+            indices: uint32 ``(n, 2)`` record indices in ``[0, index_space())``, as
                 :meth:`record_indices_at` names them; concrete or traced.
 
         Returns:

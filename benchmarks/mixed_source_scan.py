@@ -1,12 +1,11 @@
 """Benchmark: ``Pipeline.scan`` over a ``MixDataSourcesNode`` at varying source counts.
 
-Measures the per-step wall-clock cost of ``MixDataSourcesNode.get_records``
-under ``Pipeline.scan`` as the number of mixed sources grows. The
-implementation uses ``jax.vmap`` over per-record ``jax.lax.switch``.
-While ``lax.switch`` semantically traces every branch, XLA's compile-time
-dead-branch elimination means the runtime cost stays roughly constant in
-the number of mixed sources — the per-position dispatch + RNG + categorical
-sampling dominates over the per-source fetch in compiled code.
+Measures the per-step wall-clock cost of a mix under ``Pipeline.scan`` as the
+number of mixed sources grows. Each step names its records with
+``MixDataSourcesNode.record_indices_at`` (Grain's selection in uint32 words, then
+one naming of a window of positions per source) and gathers them with
+``get_records`` (``jax.vmap`` over a per-record ``jax.lax.switch``), so the
+naming's cost grows with the number of sources.
 
 Reports:
 
@@ -68,10 +67,7 @@ def _make_mix(num_sources: int) -> MixDataSourcesNode:
 
     sources: list[DataSourceModule] = [_make_source(seed=i) for i in range(num_sources)]
     weights = tuple([1.0 / num_sources] * num_sources)
-    return MixDataSourcesNode(
-        MixDataSourcesConfig(num_sources=num_sources, weights=weights),
-        sources,
-    )
+    return MixDataSourcesNode(MixDataSourcesConfig(weights=weights), sources)
 
 
 # ---------------------------------------------------------------------
@@ -137,9 +133,7 @@ def main() -> None:
     ref_per_step_us: float | None = None
     for n_sources in (1, 2, 3, 5, 8):
         mix = _make_mix(n_sources)
-        pipeline = Pipeline(
-            source=mix, stages=[], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0), shuffle=True
-        )
+        pipeline = Pipeline(source=mix, stages=[], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
         seconds = _time_pipeline(pipeline)
         per_step_us = seconds / (NUM_EPOCHS * STEPS_PER_EPOCH) * 1e6
         results.append((n_sources, seconds, per_step_us))
@@ -158,9 +152,8 @@ def main() -> None:
 
     print("-" * 72)
     print(
-        "Note: per-step cost is roughly constant in N (XLA dead-branch "
-        "elimination amortizes over lax.switch). Mixing overhead is dominated "
-        "by per-position RNG + categorical sampling + vmap dispatch."
+        "Note: each step names one window of positions per source, so the "
+        "naming's cost grows with N; the gather is one lax.switch per record."
     )
     print()
 

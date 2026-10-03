@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `mixed_source.grain_proportions(weights)`: Grain's integer proportions for mixing weights (the
+  smallest scaled to 100, the others alike and truncated), the rule of `grain.MapDataset.mix`.
+  `MixDataSourcesConfig.weights` keeps the weights as given, so a mix's proportions are the ones
+  Grain computes from the same weights; `MixDataSourcesConfig.normalized_weights` reads them
+  divided by their sum. A mix's length is Grain's rule computed exactly in integers, which can
+  exceed Grain's float64 result by one.
+- `DataSourceModule.index_space()`: how many record indices a source names, `len` by default.
+  An in-memory source names every stored row (a worker's shard included) and a mix every record
+  of its children, though an epoch serves fewer. A mix's offsets count its children's index
+  spaces, so a nested mix that does not cover its own children keeps one index per record.
+- `MixDataSourcesNode.get_batch(indices, *, epochs=0, contiguous=False)`: the host read of
+  mixed records with the indexed sources' signature, a `Batch` named by the given words and
+  epochs with draws 0, in the order named. It reads each source once with that source's own
+  `get_batch`, creates no device array and changes no state; a run declared contiguous is read
+  as each source's views.
+- Sources with different fields mix: a mixed record carries the union of its sources' fields
+  (`MixDataSourcesNode.element_spec()`, `mixed_source.union_spec`). A field some source lacks is
+  `Maybe(value, present)` in every batch of the mix, zeros where a record has none, and a
+  source's own `Maybe` keeps its `present`. Host columns of one field stored in different dtypes
+  of one kind join at NumPy's lossless promotion. A field whose shape, device dtype or nesting
+  differs between sources is refused naming both. The traced `get_records` refuses a mix whose
+  sources' fields differ, naming `get_batch`.
+- `datarax.core.index_words.divmod_word(a, divisor)`: the quotient and remainder of a two-word
+  (64-bit) value by a word in uint32 arithmetic (Hacker's Delight `divlu`), the same code for
+  NumPy and traced arrays, with x64 off. A jitted caller compiles once per divisor.
 - `datarax.sources.StreamingSourceBase` (public) and `StreamChunk`: the base every stream
   builds on. A subclass reads one pass in its order (`_open_pass(pass_index, key, read_size)`, a
   generator of host columns, provenance and ids); the base serves
@@ -98,6 +123,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `datarax.sources._grain_bridge` is `datarax.sources._index_validation`, named for the one
+  function it holds, `validate_index_batch`.
+- `MixDataSourcesNode` mixes on Grain's mix. Position `k` of an epoch belongs to the source
+  `grain.MapDataset.mix` selects for `k`, at the source position Grain reads there; the weights
+  become Grain's integer proportions. The selection runs in uint32 words, so it traces and runs
+  on the host alike, with no table of Grain's period. `len(mix)` is Grain's length, the most
+  positions that serve each source record at most once (`min(len(source) * S / p)`, exact in
+  integers), where it was the sum of the source lengths: an epoch no longer repeats a record or
+  gives two rows one key. Each source serves its records in its own `record_indices_at` order,
+  keyed by `fold_in(key, c)` when the pipeline shuffles and in order when it does not, so a
+  `Pipeline(shuffle=False)` over a mix serves one fixed interleave every epoch instead of being
+  refused. Mixed record indices and the source offsets are 64-bit words; `provenance` checks
+  indices against the mix's index space (the sum of the source lengths).
+- `MixDataSourcesNode` refuses, at construction, a source that is not `INDEXED`, one worker's
+  shard of a `MemorySource` (`num_workers > 1`), a source with no records, a source whose
+  `element_spec()` is not implemented, an index space reaching the padding index, an epoch past
+  `sys.maxsize` and weights whose Grain proportions sum past `2**32 - 1`. A source without a host
+  read, `get_batch(indices, *, epochs, contiguous)`, is refused too.
+  `MixDataSourcesConfig` refuses a zero weight.
 - **Streams name their own records, take the pipeline's key and honour the epoch rule.** The
   pipeline keeps no counter for a stream: it passes its key to the stream's `get_batch` when it
   shuffles (`None` otherwise), applies `drop_last` and `num_epochs` to the stream's passes as to
@@ -383,6 +427,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `MixDataSourcesConfig.num_sources` (the weights give the count), the `rngs` argument of
+  `MixDataSourcesNode` (nothing in a mix is random), its `index` and `epoch` Variables, its
+  iteration (`__iter__`, `__next__`), `reset()` and `to_grain_iter_dataset()`. A pipeline state
+  saved over a mix holds those Variables and is refused.
+- `datarax.sources._grain_streaming` (`mix_streaming_sources`, `data_source_to_iter_dataset`,
+  `interleave_streaming_sources`, `repeat_streaming_records`, `limit_streaming_records`,
+  `ensure_iter_dataset`) and the `_grain_bridge` adapters `DataraxRandomAccessAdapter` and
+  `DataraxMapDatasetAdapter`, which nothing calls once the mix leaves Grain's `IterDataset.mix`.
 - The stream configs' `shuffle` (the pipeline's `shuffle` decides), `HFStreamingConfig.streaming`
   and `HFStreamingSource.is_iterable_mode`/`random_order_buffer_depth`, and
   `TFDSStreamingConfig`'s `try_gcs`, `download_and_prepare_kwargs`, `beam_num_workers`,
@@ -429,6 +481,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `MixDataSourcesNode.get_records` refuses a mix whose index space passes `2**31 - 1`, which its
+  int32 gather cannot address, naming `get_batch`; such indices reached the wrong child.
+- The docs no longer link to `performance/synchronization.md`, a page removed with the
+  synchronization helpers; `mkdocs build --strict` warned on both links.
 - `HFEagerSource` calls `load_dataset` once, taking its info and its columns from the one
   dataset (it loaded the dataset twice). The HuggingFace quick reference no longer suggests an
   `HFEagerConfig(subset=...)` field, and the data-sources guide shows a dataset configuration

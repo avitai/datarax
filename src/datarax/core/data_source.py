@@ -322,6 +322,22 @@ class DataSourceModule(StructuralModule):
         """
         raise NotImplementedError("This DataSourceModule does not support length determination.")
 
+    def index_space(self) -> int:  # noqa: DOC502 - __len__ raises
+        """How many record indices the source names; its indices run from 0 to one below it.
+
+        For most sources that is ``len(self)``, the positions one epoch serves. A source whose
+        epoch serves a part of the indices it names says so: a worker's shard of in-memory data
+        names positions of the whole data, and a mix names every record of its children while an
+        epoch serves Grain's length of them.
+
+        Returns:
+            The size of the source's index space.
+
+        Raises:
+            NotImplementedError: If the source cannot determine its length.
+        """
+        return len(self)
+
     def __getitem__(self, idx: int) -> PyTree | None:
         """Get element by index.
 
@@ -346,7 +362,7 @@ class DataSourceModule(StructuralModule):
         ``nnx.jit`` and ``nnx.scan``.
 
         Args:
-            indices: uint32 ``(n, 2)`` record indices in ``[0, len(self))``, each as its words
+            indices: uint32 ``(n, 2)`` record indices in ``[0, index_space())``, each as its words
                 ``(hi, lo)``.
 
         Returns:

@@ -6,7 +6,6 @@ useful computation rather than stalls.
 ## See Also
 
 - [Performance Overview](index.md) - All performance tools
-- [Synchronization](synchronization.md) - Host/device sync helpers
 
 ---
 

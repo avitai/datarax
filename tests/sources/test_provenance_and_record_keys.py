@@ -128,7 +128,7 @@ class TestProvenanceByIndex:
 
     def test_a_mix_serves_each_record_s_provenance_from_the_source_that_owns_it(self) -> None:
         mix = MixDataSourcesNode(
-            MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)),
+            MixDataSourcesConfig(weights=(0.5, 0.5)),
             [_memory("a", 3), _memory("b", 4)],
         )
 

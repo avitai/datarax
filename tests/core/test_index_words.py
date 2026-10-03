@@ -14,10 +14,12 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from substrax.testing.compiles import expect_compiles
 
 from datarax.core.element_batch import PADDING_INDEX
 from datarax.core.index_words import (
     add,
+    divmod_word,
     from_words,
     greater,
     low_words,
@@ -29,6 +31,8 @@ from datarax.core.index_words import (
     to_words,
 )
 from datarax.core.prng import per_record_keys
+from tests.test_common.compiles import expect_first_call_compiles
+from tests.test_common.step_jaxpr import host_callbacks
 
 
 _EDGES = [
@@ -139,6 +143,80 @@ class TestArithmetic:
 
         result = jax.jit(product)(x) if device else product(x)
         assert [int(v) for v in _joined(result)] == [(p * factor) & ((1 << 64) - 1) for p in a]
+
+
+_DIVISORS = [1, 3, 333, 0xFFFF, 0x10000, 0x10001, (1 << 31) - 1, 1 << 31, (1 << 32) - 1]
+
+
+def _quotient_and_remainder(pair: tuple[tuple[Any, Any], Any]) -> list[tuple[int, int]]:
+    quotient, remainder = pair
+    return [
+        (int(q), int(r))
+        for q, r in zip(_joined(quotient), np.asarray(remainder).tolist(), strict=True)
+    ]
+
+
+@pytest.mark.parametrize("device", [False, True], ids=["host", "device"])
+class TestDivmodWord:
+    """``divmod_word`` equals Python's ``divmod`` of a 64-bit value by a word, in uint32 only."""
+
+    @pytest.mark.parametrize("divisor", _DIVISORS)
+    def test_equals_python_divmod(self, device: bool, divisor: int) -> None:
+        values = _draws(512, divisor)
+        x = _pair(to_words(values), device=device)
+        result = (
+            jax.jit(divmod_word, static_argnums=1)(x, divisor)
+            if device
+            else divmod_word(x, divisor)
+        )
+        quotient, remainder = result
+        for part in (*quotient, remainder):
+            assert part.dtype == np.uint32
+            assert isinstance(part, jax.Array) is device
+        assert _quotient_and_remainder(result) == [divmod(v, divisor) for v in values]
+
+
+class TestDivmodWordTraced:
+    """The traced form: transforms, compiles, the program it builds, and refused divisors."""
+
+    def test_vmap_and_scan_equal_the_whole_array(self) -> None:
+        values = _draws(64, 9)
+        high, low = _pair(to_words(values), device=True)
+        expected = [divmod(v, 333) for v in values]
+
+        mapped = jax.jit(jax.vmap(lambda h, lo: divmod_word((h, lo), 333)))(high, low)
+        assert _quotient_and_remainder(mapped) == expected
+
+        def body(carry: None, word: tuple[jax.Array, jax.Array]) -> tuple[None, Any]:
+            return carry, divmod_word(word, 333)
+
+        scanned = jax.jit(lambda h, lo: jax.lax.scan(body, None, (h, lo))[1])(high, low)
+        assert _quotient_and_remainder(scanned) == expected
+
+    def test_one_compile_per_divisor(self) -> None:
+        divide = jax.jit(divmod_word, static_argnums=1)
+        first, second = (_pair(to_words(_draws(8, seed)), device=True) for seed in (1, 2))
+        with expect_first_call_compiles("jit(divmod_word)"):
+            jax.block_until_ready(divide(first, 333))
+        with expect_compiles(0):
+            jax.block_until_ready(divide(second, 333))
+        with expect_compiles(1):
+            jax.block_until_ready(divide(second, 7))
+
+    def test_the_program_holds_no_host_callback_and_no_64_bit_value(self) -> None:
+        x = _pair(to_words(_draws(8, 3)), device=True)
+        jaxpr = jax.make_jaxpr(lambda value: divmod_word(value, (1 << 31) - 1))(x)
+        assert host_callbacks(jaxpr) == []
+        dtypes = {
+            str(getattr(var.aval, "dtype", None)) for eqn in jaxpr.jaxpr.eqns for var in eqn.outvars
+        }
+        assert dtypes <= {"uint32", "bool"}, dtypes
+
+    @pytest.mark.parametrize("divisor", [0, -1, 1 << 32])
+    def test_a_divisor_outside_one_word_is_refused(self, divisor: int) -> None:
+        x = _pair(to_words([7]), device=False)
+        with pytest.raises(ValueError, match="divisor"):
+            divmod_word(x, divisor)
 
 
 class TestRecordKeys:

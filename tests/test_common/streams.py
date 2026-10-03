@@ -136,9 +136,9 @@ def record_chunks(
     return seen
 
 
-def non_array_state_leaves(stream: StreamingSourceBase) -> list[type]:
-    """The types of the stream's NNX state leaves that are not arrays: none, for a stream."""
-    leaves = jax.tree.leaves(nnx.state(stream))
+def non_array_state_leaves(module: nnx.Module) -> list[type]:
+    """The types of a module's NNX state leaves that are not arrays: none, for a source."""
+    leaves = jax.tree.leaves(nnx.state(module))
     return [type(leaf) for leaf in leaves if not isinstance(leaf, np.ndarray | jax.Array)]
 
 

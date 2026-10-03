@@ -1,239 +1,184 @@
-"""Contracts for ``MixDataSourcesNode``'s indexed read — weighted interleaved mix.
+"""``MixDataSourcesNode``'s indexed read: the names it gives, their order, and their transforms.
 
-``record_indices_at(start, size, key)`` deterministically chooses, for each output position,
-a source via weighted categorical sampling and a local index uniformly within that source;
-``get_records`` gathers each record with its source's own ``get_records``. The result is a
-batch of ``size`` records sampled in proportion to the configured weights.
-
-Test contract index:
-
-A. Construction validation:
-
-   1. ``test_mixed_rejects_sources_with_incompatible_element_specs`` —
-      sources must produce records with identical structure.
-   2. ``test_mixed_rejects_incompatible_element_specs_naming_the_field`` —
-      the rejection names the differing field and both of its shapes.
-
-B. Sampling semantics:
-
-   3. ``test_mixed_indexed_read_is_deterministic_for_fixed_key``
-   4. ``test_mixed_indexed_read_differs_across_keys``
-   5. ``test_mixed_indexed_read_returns_size_records``
-   6. ``test_mixed_indexed_read_respects_weights_in_distribution`` —
-      over many positions, source-A records appear roughly
-      ``weight_A / sum(weights)`` of the time.
-
-C. JIT compatibility:
-
-   7. ``test_mixed_indexed_read_traces_under_jit`` — calling under
-      ``jax.jit`` does not raise; output shape is correct.
-   8. ``test_mixed_indexed_read_accepts_traced_start``.
+``record_indices_at(start, size, key)`` names mix positions ``start .. start + size`` (wrapped at
+the epoch's length). Grain's selection says which child serves each position and at which of
+its positions; the child names that position in its own order, keyed by ``fold_in(key, c)``
+when the pipeline shuffles and sequential otherwise. ``get_records`` gathers each named record
+from its child. The naming is a pure function of ``(key, start, size)``, so it traces once per
+layout and any split of a range names what the whole range names.
 """
 
 from __future__ import annotations
+
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from flax import nnx
+from substrax.testing.compiles import expect_compiles
 
 from datarax.core.index_words import from_words, to_words
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
+from tests.test_common.mixing import offsets_of
+from tests.test_common.step_jaxpr import host_callbacks
 
 
-# ---------- Helpers ----------
+_LENGTHS = (9, 14)
+_BASES = (0.0, 100.0)
 
 
-def _source(values: list[float], *, key_name: str = "x") -> MemorySource:
-    return MemorySource(
-        MemorySourceConfig(),
-        {key_name: jnp.asarray(values, dtype=jnp.float32)},
-    )
-
-
-def _disjoint_pair() -> tuple[MemorySource, MemorySource]:
-    """Two sources whose values do not overlap, so we can identify the source from a record."""
-    src_a = _source([0.0, 1.0, 2.0, 3.0])  # values in [0, 4)
-    src_b = _source([100.0, 101.0, 102.0, 103.0])  # values in [100, 104)
-    return src_a, src_b
-
-
-# ---------- A. Construction validation ----------
-
-
-def test_mixed_rejects_sources_with_incompatible_element_specs() -> None:
-    """Sources must produce records with the same element_spec to be mix-able."""
-    src_a = _source([0.0, 1.0], key_name="x")
-    src_b = MemorySource(
-        MemorySourceConfig(),
-        {"y": jnp.asarray([0.0, 1.0], dtype=jnp.float32)},  # different key
-    )
-
-    with pytest.raises(ValueError, match="element_spec"):
-        MixDataSourcesNode(
-            MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)),
-            [src_a, src_b],
-        )
-
-
-def test_mixed_rejects_incompatible_element_specs_naming_the_field() -> None:
-    """The rejection names the differing field and both of its shapes."""
-    src_a = _source([0.0, 1.0])
-    src_b = MemorySource(
-        MemorySourceConfig(),
-        {"x": jnp.zeros((2, 3), dtype=jnp.float32)},
-    )
-
-    with pytest.raises(ValueError, match=r"\['x'\].*\(3,\).*\(\)"):
-        MixDataSourcesNode(
-            MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)),
-            [src_a, src_b],
-        )
-
-
-# ---------- B. Sampling semantics ----------
-
-
-def test_mixed_indexed_read_is_deterministic_for_fixed_key() -> None:
-    src_a, src_b = _disjoint_pair()
-    mix = MixDataSourcesNode(
-        MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)),
-        [src_a, src_b],
-    )
-
-    key = jax.random.key(7)
-    batch_1 = mix.get_records(mix.record_indices_at(0, 8, key))
-    batch_2 = mix.get_records(mix.record_indices_at(0, 8, key))
-
-    np.testing.assert_array_equal(np.asarray(batch_1["x"]), np.asarray(batch_2["x"]))
-
-
-def test_mixed_indexed_read_differs_across_keys() -> None:
-    src_a, src_b = _disjoint_pair()
-    mix = MixDataSourcesNode(
-        MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)),
-        [src_a, src_b],
-    )
-
-    batch_a = mix.get_records(mix.record_indices_at(0, 16, jax.random.key(0)))
-    batch_b = mix.get_records(mix.record_indices_at(0, 16, jax.random.key(1)))
-
-    assert not np.array_equal(np.asarray(batch_a["x"]), np.asarray(batch_b["x"]))
-
-
-def test_mixed_indexed_read_returns_size_records() -> None:
-    src_a, src_b = _disjoint_pair()
-    mix = MixDataSourcesNode(
-        MixDataSourcesConfig(num_sources=2, weights=(0.7, 0.3)),
-        [src_a, src_b],
-    )
-
-    batch = mix.get_records(mix.record_indices_at(0, 12, jax.random.key(0)))
-    assert batch["x"].shape == (12,)
-
-
-def test_mixed_indexed_read_respects_weights_in_distribution() -> None:
-    """Over many positions, source-A frequency ≈ weight_A / sum(weights)."""
-    src_a, src_b = _disjoint_pair()  # A has values in [0, 4), B has [100, 104)
-    mix = MixDataSourcesNode(
-        MixDataSourcesConfig(num_sources=2, weights=(0.8, 0.2)),
-        [src_a, src_b],
-    )
-
-    batch = mix.get_records(mix.record_indices_at(0, 512, jax.random.key(0)))
-    values = np.asarray(batch["x"])
-
-    # Records < 50 came from A; records >= 50 came from B.
-    from_a = int(np.sum(values < 50.0))
-    from_b = int(np.sum(values >= 50.0))
-
-    fraction_a = from_a / (from_a + from_b)
-    # 80/20 weighting; allow ±5% tolerance for sampling noise at n=512.
-    assert 0.75 <= fraction_a <= 0.85, (
-        f"expected ~80% from source A; observed {fraction_a:.2%} ({from_a}/{from_a + from_b})"
-    )
-
-
-def test_mixed_record_indices_name_the_source_and_record_served() -> None:
-    """A mixed record's id is its source's offset plus its index within that source."""
-    src_a, src_b = _disjoint_pair()  # A holds 0..3, B holds 100..103
-    mix = MixDataSourcesNode(
-        MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)),
-        [src_a, src_b],
-    )
-    key = jax.random.key(3)
-
-    ids = from_words(mix.record_indices_at(start=0, size=32, key=key)).astype(np.int64)
-    values = np.asarray(mix.get_records(mix.record_indices_at(0, 32, key))["x"])
-
-    assert set(ids.tolist()) <= set(range(8))
-    expected = np.where(ids < 4, ids.astype(np.float32), 100.0 + (ids - 4).astype(np.float32))
-    np.testing.assert_array_equal(values, expected)
-
-
-# ---------- C. JIT compatibility ----------
-
-
-def test_mixed_indexed_read_traces_under_jit() -> None:
-    src_a, src_b = _disjoint_pair()
-    mix = MixDataSourcesNode(
-        MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)),
-        [src_a, src_b],
-    )
-
-    @nnx.jit
-    def fetch(mix: MixDataSourcesNode, start: jax.Array, key: jax.Array) -> jax.Array:
-        return mix.get_records(mix.record_indices_at(start, 4, key))["x"]
-
-    out = fetch(mix, jnp.int32(0), jax.random.key(0))
-    assert out.shape == (4,)
-
-
-def test_mixed_indexed_read_accepts_traced_start() -> None:
-    src_a, src_b = _disjoint_pair()
-    mix = MixDataSourcesNode(
-        MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)),
-        [src_a, src_b],
-    )
-
-    out = mix.get_records(mix.record_indices_at(jnp.int32(2), 4, jax.random.key(0)))
-    assert out["x"].shape == (4,)
-
-
-def test_mixed_source_repr_lists_children_and_weights() -> None:
-    """S2: repr enumerates child-source reprs and mixing weights for checkpoint validation."""
-    src_a, src_b = _disjoint_pair()
-    mix = MixDataSourcesNode(
-        MixDataSourcesConfig(num_sources=2, weights=(0.25, 0.75)),
-        [src_a, src_b],
-    )
-
-    r = repr(mix)
-    assert "MixDataSourcesNode" in r
-    assert "MemorySource" in r  # child reprs are embedded
-    assert "0.25" in r and "0.75" in r
-    assert "length=8" in r
-
-
-# ---------- D. Record naming ----------
-
-
-def test_mixed_record_indices_name_the_records_served() -> None:
-    """A mixed record's index is its source's offset plus the child's record index."""
-    values_a = np.arange(8, dtype=np.float32)
-    values_b = 100.0 + np.arange(8, dtype=np.float32)
+def _mix(weights: tuple[float, ...] = (0.3, 0.7)) -> MixDataSourcesNode:
     children = [
-        MemorySource(MemorySourceConfig(), {"x": jnp.asarray(v)}) for v in (values_a, values_b)
+        MemorySource(MemorySourceConfig(), {"x": base + np.arange(n, dtype=np.float32)})
+        for n, base in zip(_LENGTHS, _BASES, strict=True)
     ]
-    mix = MixDataSourcesNode(MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)), children)
-    key = jax.random.key(5)
+    return MixDataSourcesNode(MixDataSourcesConfig(weights=weights), children)
 
-    ids = from_words(mix.record_indices_at(start=0, size=64, key=key)).astype(np.int64)
-    served = np.asarray(mix.get_records(mix.record_indices_at(0, 64, key))["x"])
 
-    np.testing.assert_array_equal(served, np.concatenate([values_a, values_b])[ids])
-    np.testing.assert_array_equal(
-        np.asarray(mix.get_records(jnp.asarray(to_words(ids)))["x"]), served
-    )
+def _owned(mix: MixDataSourcesNode, names: jax.Array) -> tuple[np.ndarray, np.ndarray]:
+    """Each named record's child and its index within that child."""
+    indices = from_words(names).astype(np.int64)
+    offsets = np.asarray(offsets_of(_LENGTHS), np.int64)
+    owners = np.searchsorted(offsets, indices, side="right") - 1
+    return owners, indices - offsets[owners]
+
+
+_ORDERS = ("keyed", "ordered")
+
+
+def _key(order: str) -> jax.Array | None:
+    """The key a pipeline passes for ``order``: built when a test asks, never at import."""
+    return jax.random.key(7) if order == "keyed" else None
+
+
+class TestTheNames:
+    @pytest.mark.parametrize("order", _ORDERS)
+    def test_the_records_named_are_the_records_gathered(self, order: str) -> None:
+        mix = _mix()
+        names = mix.record_indices_at(3, 12, _key(order))
+        owners, local = _owned(mix, names)
+        served = np.asarray(mix.get_records(names)["x"])
+        expected = np.asarray(_BASES, np.float32)[owners] + local.astype(np.float32)
+        np.testing.assert_array_equal(served, expected)
+
+    def test_without_a_key_each_child_serves_its_records_in_order(self) -> None:
+        mix = _mix()
+        owners, local = _owned(mix, mix.record_indices_at(0, len(mix), None))
+        for child in range(len(_LENGTHS)):
+            mine = local[owners == child]
+            np.testing.assert_array_equal(mine, np.arange(len(mine)))
+
+    def test_with_a_key_each_child_serves_its_own_keyed_order(self) -> None:
+        """The mix routes the key and never applies it: child c is keyed fold_in(key, c)."""
+        mix = _mix()
+        key = jax.random.key(11)
+        owners, local = _owned(mix, mix.record_indices_at(0, len(mix), key))
+        for child, source in enumerate(mix.sources):
+            mine = local[owners == child]
+            own = from_words(source.record_indices_at(0, len(mine), jax.random.fold_in(key, child)))
+            np.testing.assert_array_equal(mine, own.astype(np.int64))
+
+    @pytest.mark.parametrize("order", _ORDERS)
+    def test_an_epoch_names_each_record_at_most_once(self, order: str) -> None:
+        names = from_words(_mix().record_indices_at(0, len(_mix()), _key(order)))
+        assert len(np.unique(names)) == len(names)
+
+    def test_two_keys_name_different_orders(self) -> None:
+        mix = _mix()
+        first = mix.record_indices_at(0, len(mix), jax.random.key(0))
+        second = mix.record_indices_at(0, len(mix), jax.random.key(1))
+        assert not np.array_equal(first, second)
+
+    @pytest.mark.parametrize("order", _ORDERS)
+    def test_rows_past_the_epoch_name_records_of_the_mix(self, order: str) -> None:
+        """A crossing batch's rows past the end are discarded by the pipeline, yet stay valid."""
+        mix = _mix()
+        names = from_words(mix.record_indices_at(len(mix) - 3, 9, _key(order)))
+        assert (names < sum(_LENGTHS)).all()
+        np.asarray(mix.get_records(jnp.asarray(to_words(names)))["x"])
+
+    @pytest.mark.parametrize("order", _ORDERS)
+    @pytest.mark.parametrize("cut", [1, 5, 11])
+    def test_a_split_range_names_what_the_whole_range_names(self, order: str, cut: int) -> None:
+        """A pure function of (key, start, size): how a range is split never changes its names."""
+        mix, key = _mix(), _key(order)
+        whole = mix.record_indices_at(2, 16, key)
+        parts = np.concatenate(
+            [mix.record_indices_at(2, cut, key), mix.record_indices_at(2 + cut, 16 - cut, key)]
+        )
+        np.testing.assert_array_equal(parts, whole)
+
+
+def _names(order: str) -> Callable[..., jax.Array]:
+    mix = _mix()
+    if order == "keyed":
+        return jax.jit(lambda start, key: mix.record_indices_at(start, 6, key))
+    return jax.jit(lambda start: mix.record_indices_at(start, 6, None))
+
+
+class TestTransforms:
+    @pytest.mark.parametrize("order", _ORDERS)
+    def test_one_compile_per_layout_serves_every_start(self, order: str) -> None:
+        mix, names = _mix(), _names(order)
+        starts = (0, 5, 17, 40)
+        keys = [jax.random.key(seed) for seed in range(len(starts))]
+
+        def arguments(start: int, key: jax.Array) -> tuple:
+            return (jnp.int32(start), key) if order == "keyed" else (jnp.int32(start),)
+
+        calls = [arguments(s, k) for s, k in zip(starts, keys, strict=True)]
+        with expect_compiles(1):
+            jax.block_until_ready(names(*calls[0]))
+        with expect_compiles(0):
+            served = [names(*call) for call in calls]
+        for got, start, key in zip(served, starts, keys, strict=True):
+            want = mix.record_indices_at(start, 6, key if order == "keyed" else None)
+            assert got.dtype == jnp.uint32
+            np.testing.assert_array_equal(got, want)
+
+    def test_vmap_over_keys_equals_the_loop(self) -> None:
+        mix = _mix()
+        keys = jax.random.split(jax.random.key(4), 3)
+        starts = jnp.asarray([0, 0, 7], jnp.int32)
+        batched = jax.jit(jax.vmap(lambda s, k: mix.record_indices_at(s, 6, k)))(starts, keys)
+        for row, start, key in zip(batched, starts, keys, strict=True):
+            np.testing.assert_array_equal(row, mix.record_indices_at(int(start), 6, key))
+
+    @pytest.mark.parametrize("order", _ORDERS)
+    def test_scan_over_starts_equals_the_loop(self, order: str) -> None:
+        mix, key = _mix(), _key(order)
+        starts = jnp.arange(0, 30, 6, dtype=jnp.int32)
+
+        @jax.jit
+        def scanned(starts: jax.Array) -> jax.Array:
+            def body(carry: None, start: jax.Array) -> tuple[None, jax.Array]:
+                return carry, mix.record_indices_at(start, 6, key)
+
+            return jax.lax.scan(body, None, starts)[1]
+
+        served = scanned(starts)
+        for step, start in enumerate(np.asarray(starts)):
+            np.testing.assert_array_equal(served[step], mix.record_indices_at(int(start), 6, key))
+
+    def test_the_naming_and_gather_hold_no_host_callback(self) -> None:
+        mix = _mix()
+
+        def fetch(start: jax.Array, key: jax.Array) -> dict[str, jax.Array]:
+            return mix.get_records(mix.record_indices_at(start, 6, key))
+
+        jaxpr = jax.make_jaxpr(fetch)(jnp.int32(0), jax.random.key(0))
+        assert host_callbacks(jaxpr) == []
+
+    def test_a_module_argument_traces_once_under_nnx_jit(self) -> None:
+        fetch = nnx.jit(lambda mix, start: mix.get_records(mix.record_indices_at(start, 6))["x"])
+        mix, zero, four = _mix(), jnp.int32(0), jnp.int32(4)
+        with expect_compiles(1):
+            jax.block_until_ready(fetch(mix, zero))
+        with expect_compiles(0):
+            served = fetch(mix, four)
+        np.testing.assert_array_equal(
+            served, np.asarray(mix.get_records(mix.record_indices_at(4, 6))["x"])
+        )
