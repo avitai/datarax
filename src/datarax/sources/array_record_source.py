@@ -17,7 +17,7 @@ from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Batch
 from datarax.core.index_words import to_words
 from datarax.core.spec import array_to_spec
-from datarax.sources._grain_bridge import validate_index_batch
+from datarax.sources._index_validation import validate_index_batch
 from datarax.sources._source_base import empty_stream_batch
 from datarax.utils.state import build_state_with_iteration_fields, restore_iteration_fields
 

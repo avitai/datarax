@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from datarax.sources._grain_bridge import validate_index_batch
+from datarax.sources._index_validation import validate_index_batch
 
 
 def test_valid_indices_are_returned_as_integers_in_order() -> None:

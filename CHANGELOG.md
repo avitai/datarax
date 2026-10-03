@@ -123,6 +123,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `datarax.sources._grain_bridge` is `datarax.sources._index_validation`, named for the one
+  function it holds, `validate_index_batch`.
 - `MixDataSourcesNode` mixes on Grain's mix. Position `k` of an epoch belongs to the source
   `grain.MapDataset.mix` selects for `k`, at the source position Grain reads there; the weights
   become Grain's integer proportions. The selection runs in uint32 words, so it traces and runs

@@ -39,7 +39,7 @@ from datarax.core.data_source import (
 from datarax.core.element_batch import Batch, Element
 from datarax.core.index_words import low_words, to_words
 from datarax.core.spec import array_to_spec_strip_leading, device_spec
-from datarax.sources._grain_bridge import validate_index_batch
+from datarax.sources._index_validation import validate_index_batch
 from datarax.sources.source_ops import resolve_wrapped_indices
 
 
