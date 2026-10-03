@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `MixDataSourcesNode.get_batch(indices, *, epochs=0, contiguous=False)`: the host read of
+  mixed records with the indexed sources' signature, a `Batch` named by the given words and
+  epochs with draws 0, in the order named. It reads each source once with that source's own
+  `get_batch`, creates no device array and changes no state; a run declared contiguous is read
+  as each source's views.
+- Sources with different fields mix: a mixed record carries the union of its sources' fields
+  (`MixDataSourcesNode.element_spec()`, `mixed_source.union_spec`). A field some source lacks is
+  `Maybe(value, present)` in every batch of the mix, zeros where a record has none, and a
+  source's own `Maybe` keeps its `present`. Host columns of one field stored in different dtypes
+  of one kind join at NumPy's lossless promotion. A field whose shape, device dtype or nesting
+  differs between sources is refused naming both. The traced `get_records` refuses a mix whose
+  sources' fields differ, naming `get_batch`.
 - `datarax.core.index_words.divmod_word(a, divisor)`: the quotient and remainder of a two-word
   (64-bit) value by a word in uint32 arithmetic (Hacker's Delight `divlu`), the same code for
   NumPy and traced arrays, with x64 off. A jitted caller compiles once per divisor.
@@ -456,6 +468,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The docs no longer link to `performance/synchronization.md`, a page removed with the
+  synchronization helpers; `mkdocs build --strict` warned on both links.
 - `HFEagerSource` calls `load_dataset` once, taking its info and its columns from the one
   dataset (it loaded the dataset twice). The HuggingFace quick reference no longer suggests an
   `HFEagerConfig(subset=...)` field, and the data-sources guide shows a dataset configuration

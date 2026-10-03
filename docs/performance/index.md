@@ -31,7 +31,6 @@ print(f"Bottleneck: {result.bottleneck}")  # 'compute' or 'memory_bandwidth'
 ## Modules
 
 - [goodput](goodput.md) - Effective-training-time tracking
-- [synchronization](synchronization.md) - Host/device synchronization helpers
 
 ## Roofline Model
 

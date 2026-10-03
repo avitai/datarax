@@ -14,13 +14,14 @@ Which record a child serves at its ``j``-th position is the child's own order:
 ``record_indices_at(j, ...)`` under the pipeline's epoch key folded with the child's position,
 or the child's sequential order when the pipeline does not shuffle. A mixed record's index is its
 child's offset, the sum of the lengths of the children before it, plus the record's index within
-that child, so every record of every child has one 64-bit index.
+that child, so every record of every child has one 64-bit index. A mixed record carries the
+union of its children's fields, a field some child lacks being a ``Maybe``.
 """
 
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast, Protocol
 
 import jax
 import jax.numpy as jnp
@@ -29,6 +30,7 @@ from flax import nnx
 from jax.typing import ArrayLike
 
 from datarax.config.registry import register_component
+from datarax.core import batch_ops
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import (
     DataSourceModule,
@@ -36,6 +38,7 @@ from datarax.core.data_source import (
     RecordIdentity,
     refuse_padding,
 )
+from datarax.core.element_batch import Batch
 from datarax.core.index_words import (
     add,
     divmod_word,
@@ -49,6 +52,7 @@ from datarax.core.index_words import (
     to_words,
     wrapped_positions,
 )
+from datarax.core.maybe import Maybe
 from datarax.core.spec import spec_mismatches, SpecMismatchError
 from datarax.sources.memory_source import MemorySource
 from datarax.typing import DataDict
@@ -245,24 +249,222 @@ def _refuse_unmixable(position: int, source: DataSourceModule) -> None:
         )
 
 
-def _refuse_different_records(specs: Sequence[Any]) -> None:
-    """Refuse children whose records differ: the traced gather switches over equal records.
+type _Path = tuple[Any, ...]
+"""A field's key path in a record, as ``jax.tree_util`` gives it."""
+
+_PRESENT = jax.ShapeDtypeStruct((), jnp.bool_)
+"""The spec of one record's ``present`` flag."""
+
+
+def _is_field(node: Any) -> bool:
+    """A ``Maybe`` is one field, not two leaves."""
+    return isinstance(node, Maybe)
+
+
+def _fields_of(tree: Any) -> dict[_Path, Any]:
+    """Each field of a record's spec or a batch's data by its path, a ``Maybe`` as one field."""
+    flat, _ = jax.tree_util.tree_flatten_with_path(tree, is_leaf=_is_field)
+    return dict(flat)
+
+
+def _value_part(field: Any) -> Any:
+    """A field's values: a ``Maybe``'s value, or the field itself."""
+    return field.value if isinstance(field, Maybe) else field
+
+
+def _nested(fields: Mapping[_Path, Any]) -> dict[str, Any]:
+    """Rebuild a record's nested dictionaries from its fields' paths.
 
     Args:
-        specs: Each child's record spec.
+        fields: Each field by its path.
+
+    Returns:
+        The record as nested dictionaries.
 
     Raises:
-        SpecMismatchError: Naming every field where a child's records differ from child 0's.
+        TypeError: If a path steps through anything but a dictionary key.
     """
-    for position, spec in enumerate(specs[1:], start=1):
-        problems = spec_mismatches(specs[0], spec)
+    record: dict[str, Any] = {}
+    for path, field in fields.items():
+        if not all(isinstance(step, jax.tree_util.DictKey) for step in path):
+            raise TypeError(
+                f"a mix joins records whose fields are nested dictionaries; field "
+                f"{jax.tree_util.keystr(path)} is not"
+            )
+        node = record
+        for step in path[:-1]:
+            node = node.setdefault(step.key, {})
+        node[path[-1].key] = field
+    return record
+
+
+def _refuse_nesting_conflicts(held: Mapping[_Path, list[tuple[int, Any]]]) -> None:
+    """Refuse a field that holds values in one child and nested fields in another.
+
+    Args:
+        held: Each field path and the children holding it.
+
+    Raises:
+        SpecMismatchError: Naming the field and the nested one.
+    """
+    for path, holders in held.items():
+        for other, nested in held.items():
+            if other != path and other[: len(path)] == path:
+                raise SpecMismatchError(
+                    f"a mix's children disagree on field {jax.tree_util.keystr(path)}:",
+                    [
+                        f"child {holders[0][0]} holds values at {jax.tree_util.keystr(path)}, "
+                        f"child {nested[0][0]} fields under it ({jax.tree_util.keystr(other)})"
+                    ],
+                )
+
+
+def _union_field(path: _Path, holders: list[tuple[int, Any]], children: int) -> Any:
+    """One field of the union: as its holders declare it, or a ``Maybe`` if any child lacks it.
+
+    Args:
+        path: The field's path.
+        holders: The children holding the field, with their spec of it.
+        children: How many children the mix has.
+
+    Returns:
+        The field's spec, or a ``Maybe`` of it.
+
+    Raises:
+        SpecMismatchError: If two holders declare different shapes or device dtypes.
+    """
+    first_child, first = holders[0][0], _value_part(holders[0][1])
+    for child, field in holders[1:]:
+        value = _value_part(field)
+        problems = spec_mismatches(first, value)
         if problems:
             raise SpecMismatchError(
-                f"MixDataSourcesNode requires every source to produce records with the same "
-                f"element_spec (its traced gather switches between children whose records "
-                f"match); source {position} differs from source 0:",
+                f"a mix's children disagree on field {jax.tree_util.keystr(path)}: child "
+                f"{first_child} holds {first.shape} {first.dtype}, child {child} "
+                f"{value.shape} {value.dtype}:",
                 problems,
             )
+    optional = len(holders) < children or any(isinstance(f, Maybe) for _, f in holders)
+    return Maybe(first, _PRESENT) if optional else first
+
+
+def union_spec(specs: Sequence[Any]) -> Any:  # noqa: DOC502 - the checks it calls raise
+    """The union of the children's record specs: a field some child lacks is a ``Maybe``.
+
+    Fields are compared by their declared (device) specs. A field every child has stays as it
+    is; a field some child lacks, or that some child holds as a ``Maybe``, is
+    ``Maybe(value_spec, present_spec)``.
+
+    Args:
+        specs: Each child's record spec, a nested dictionary.
+
+    Returns:
+        The union, a nested dictionary of specs.
+
+    Raises:
+        SpecMismatchError: Naming a field whose shape or device dtype differs between two
+            children, or which holds values in one child and fields in another.
+    """
+    held: dict[_Path, list[tuple[int, Any]]] = {}
+    for child, spec in enumerate(specs):
+        for path, field in _fields_of(spec).items():
+            held.setdefault(path, []).append((child, field))
+    _refuse_nesting_conflicts(held)
+    return _nested(
+        {path: _union_field(path, holders, len(specs)) for path, holders in held.items()}
+    )
+
+
+def _union_rows(
+    held: Mapping[_Path, Any],
+    union: Mapping[_Path, Any],
+    dtypes: Mapping[_Path, np.dtype],
+    size: int,
+) -> dict[str, Any]:
+    """One child's host rows in the union's fields, each at the field's joined host dtype.
+
+    Args:
+        held: The child's rows by field path, as its ``get_batch`` returns them.
+        union: The union's fields by path.
+        dtypes: Each field's host dtype, joined over the children.
+        size: The rows read.
+
+    Returns:
+        The rows as a nested dictionary of the union's fields.
+    """
+    rows: dict[_Path, Any] = {}
+    for path, spec in union.items():
+        dtype = dtypes[path]
+        field = held.get(path)
+        if not isinstance(spec, Maybe):
+            rows[path] = np.asarray(field).astype(dtype, copy=False)
+        elif field is None:
+            shape = (size, *spec.value.shape)
+            rows[path] = Maybe(np.zeros(shape, dtype), np.zeros(size, np.bool_))
+        elif isinstance(field, Maybe):
+            rows[path] = Maybe(np.asarray(field.value).astype(dtype, copy=False), field.present)
+        else:
+            rows[path] = Maybe(np.asarray(field).astype(dtype, copy=False), np.ones(size, np.bool_))
+    return _nested(rows)
+
+
+def _host_dtypes(
+    reads: Sequence[Mapping[_Path, Any]], union: Mapping[_Path, Any]
+) -> dict[_Path, np.dtype]:
+    """Each union field's host dtype: NumPy's promotion of the dtypes the children store.
+
+    Args:
+        reads: Each child's read, its fields by path.
+        union: The union's fields by path.
+
+    Returns:
+        The joined dtype of each field.
+    """
+    return {
+        path: np.result_type(
+            *(np.asarray(_value_part(held[path])).dtype for held in reads if path in held)
+        )
+        for path in union
+    }
+
+
+def _joined(
+    reads: Sequence[tuple[np.ndarray, Mapping[_Path, Any]]], union: Mapping[_Path, Any]
+) -> Batch:
+    """Join the children's rows in the union's fields, in the order they were named.
+
+    Every field is held at its children's joined host dtype (NumPy's promotion of the dtypes
+    they store, empty reads included), so the result does not depend on which children its rows
+    come from. A single child's rows already in order are returned without a copy.
+
+    Args:
+        reads: Per child, the positions of its rows in the read and its fields by path.
+        union: The union's fields by path.
+
+    Returns:
+        The rows as a host ``Batch`` named by position.
+    """
+    dtypes = _host_dtypes([held for _, held in reads], union)
+    parts = [
+        (rows, batch_ops.from_arrays(_union_rows(held, union, dtypes, len(rows))))
+        for rows, held in reads
+        if len(rows)
+    ] or [(reads[0][0], batch_ops.from_arrays(_union_rows(reads[0][1], union, dtypes, 0)))]
+    order = np.concatenate([rows for rows, _ in parts])
+    joined = parts[0][1] if len(parts) == 1 else batch_ops.concatenate([b for _, b in parts])
+    if not np.array_equal(order, np.arange(len(order))):
+        joined = batch_ops.take(joined, np.argsort(order, kind="stable"))
+    return joined
+
+
+class _IndexedHostRead(Protocol):
+    """The host read of an indexed source (``EagerSource``, ``StreamingDiskSource``, a mix)."""
+
+    def get_batch(
+        self, indices: ArrayLike, *, epochs: ArrayLike = 0, contiguous: bool = False
+    ) -> Batch:
+        """Read the records ``indices`` names, as a ``Batch`` named with them, on the host."""
+        ...
 
 
 @register_component("source", "MixDataSources")
@@ -274,6 +476,11 @@ class MixDataSourcesNode(DataSourceModule):
     fewer of its records per epoch than it holds serves a different part of them each epoch when
     the pipeline shuffles (each child is then ordered by the epoch's key), and the same part when
     it does not. To weight a larger source up, give it a larger weight.
+
+    A mixed record carries the union of its children's fields: a field some child lacks is a
+    ``Maybe`` in every batch of the mix (:meth:`element_spec`). :meth:`get_batch` reads mixed
+    records on the host. The traced :meth:`get_records` gathers only from children whose fields
+    are equal.
 
     The mix holds its children and its static proportions, and nothing else: no counter, no key
     and no Variable of its own.
@@ -318,9 +525,7 @@ class MixDataSourcesNode(DataSourceModule):
         self._weights = tuple(weights)
         self._proportions = proportions
         self._layout()
-        _refuse_different_records(
-            [_child_spec(position, source) for position, source in enumerate(sources)]
-        )
+        self.element_spec()
 
     @property
     def sources(self) -> tuple[DataSourceModule, ...]:
@@ -369,9 +574,25 @@ class MixDataSourcesNode(DataSourceModule):
         """Positions in an epoch: Grain's length over the children as long as they are now."""
         return self._layout().epoch_length
 
-    def element_spec(self) -> Any:
-        """One mixed record's spec: its children's, which the constructor requires equal."""
-        return _child_spec(0, self._sources[0])
+    def _child_specs(self) -> list[Any]:
+        """Each child's record spec, as it declares it now."""
+        return [_child_spec(position, source) for position, source in enumerate(self._sources)]
+
+    def element_spec(self) -> Any:  # noqa: DOC502 - union_spec and _child_spec raise
+        """One mixed record's spec: the union of its children's fields (:func:`union_spec`).
+
+        A field every child has is as the children declare it; a field some child lacks, or holds
+        as a ``Maybe``, is a ``Maybe``.
+
+        Returns:
+            The union spec, a nested dictionary of ``jax.ShapeDtypeStruct`` and ``Maybe``.
+
+        Raises:
+            SpecMismatchError: If a field's shape, device dtype or nesting differs between
+                children.
+            ValueError: If a child cannot describe its records.
+        """
+        return union_spec(self._child_specs())
 
     def __repr__(self) -> str:
         """Config-identifying representation for checkpoint validation.
@@ -486,6 +707,76 @@ class MixDataSourcesNode(DataSourceModule):
         high, low = subtract(index, (offsets[owners, 0], offsets[owners, 1]))
         return owners, np.stack([high, low], axis=-1)
 
+    def get_batch(  # noqa: DOC503 - record_words, _owners and the children's reads raise
+        self, indices: ArrayLike, *, epochs: ArrayLike = 0, contiguous: bool = False
+    ) -> Batch:
+        """Read the mixed records ``indices`` names, as a ``Batch`` named with them, on the host.
+
+        Each child is read once, with its own ``get_batch``, for the rows it owns (none for some),
+        and its rows take the union's fields (:meth:`element_spec`): a field the child lacks is a
+        ``Maybe`` of zeros with ``present`` False. Every field is held at its children's joined
+        host dtype (NumPy's promotion of the dtypes they store), so the batch's structure and
+        dtypes do not depend on which children its rows come from. The rows are returned in the
+        order named, with the given words as ``indices``, the given epochs and draws 0. No
+        device array is created and no state changes. With ``contiguous=True`` the caller states
+        that ``indices`` is a run of consecutive mixed records; each child then reads its part
+        of the run as views of its columns.
+
+        Args:
+            indices: uint32 ``(n, 2)`` mixed record indices, each as its words ``(hi, lo)``.
+            epochs: The epoch of every record, or of each ``(n,)``.
+            contiguous: Whether ``indices`` is a run of consecutive mixed records.
+
+        Returns:
+            The records as a host ``Batch``.
+
+        Raises:
+            ValueError: If ``indices`` are not uint32 ``(n, 2)`` words, or a run declared
+                contiguous is not one.
+            IndexError: If an index is the padding index or outside the mix's index space.
+        """
+        words = record_words(indices)
+        owners, local = self._owners(words, self._layout())
+        if contiguous and len(words) > 1 and (np.diff(from_words(words)) != 1).any():
+            raise ValueError(
+                "a read declared contiguous names a run of consecutive mixed records; these "
+                "indices are not one"
+            )
+        epoch_of_each = np.ascontiguousarray(
+            np.broadcast_to(np.asarray(epochs, np.int32), (len(words),))
+        )
+        reads = [
+            (rows, _fields_of(read.data))
+            for rows, read in self._read_children(owners, local, epoch_of_each, contiguous)
+        ]
+        joined = _joined(reads, _fields_of(self.element_spec()))
+        return joined.replace(
+            indices=words, epochs=epoch_of_each, draws=np.zeros(len(words), np.int32)
+        )
+
+    def _read_children(
+        self, owners: np.ndarray, local: np.ndarray, epochs: np.ndarray, contiguous: bool
+    ) -> list[tuple[np.ndarray, Batch]]:
+        """Read each child once, for the rows it owns (none for some), with its host read.
+
+        Args:
+            owners: Each row's child.
+            local: Each row's index within its child, uint32 ``(n, 2)`` words.
+            epochs: Each row's epoch.
+            contiguous: Whether the rows are a run of consecutive mixed records.
+
+        Returns:
+            Per child, the rows it owns and its ``Batch`` of them.
+        """
+        reads = []
+        for child, source in enumerate(self._sources):
+            rows = np.flatnonzero(owners == child)
+            read = cast(_IndexedHostRead, source).get_batch(
+                local[rows], epochs=epochs[rows], contiguous=contiguous
+            )
+            reads.append((rows, read))
+        return reads
+
     def provenance(  # noqa: DOC502 - record_words and _owners raise
         self, indices: ArrayLike
     ) -> tuple[Mapping[str, Any], ...]:
@@ -528,13 +819,25 @@ class MixDataSourcesNode(DataSourceModule):
 
         Returns:
             Dict mapping each data key to a JAX array with leading dim ``len(indices)``.
+
+        Raises:
+            TypeError: If the children's fields differ, which only the host read joins.
         """
+        union = self.element_spec()
+        for position, spec in enumerate(self._child_specs()):
+            if spec_mismatches(union, spec):
+                raise TypeError(
+                    "MixDataSourcesNode.get_records gathers records whose fields every child "
+                    f"holds alike; child {position} lacks fields of the mix's union, so read the "
+                    "mix's records on the host with mix.get_batch(indices), which joins them as "
+                    "the union of the children's fields"
+                )
         layout = self._layout()
         offsets = jnp.asarray(layout.offsets, dtype=jnp.int32)
         indices = low_words(indices, layout.space).astype(jnp.int32)
         owners = jnp.searchsorted(offsets, indices, side="right") - 1
         # Each branch fetches one record from one source. All branches share the same output
-        # shape (the constructor refuses children whose records differ).
+        # shape (children whose records differ are refused above).
         branches = [
             lambda local, src=src: jax.tree.map(
                 lambda x: x[0], src.get_records(to_words(local[None]))

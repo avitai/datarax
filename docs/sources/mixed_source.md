@@ -56,6 +56,41 @@ Every source must be an `INDEXED` source with at least one record. The mix refus
 `MemorySource`. A mix is itself an `INDEXED` source, so mixes nest. Weights must be positive. The
 mix refuses weights so far apart that Grain's proportions sum past `2**32 - 1`.
 
+## Sources with different fields
+
+A mixed record carries the union of its sources' fields. A field every source has stays an
+array. A field some source lacks is a `Maybe(value, present)` in every batch of the mix: rows from
+a source that has the field hold its value with `present` True, and rows from a source that lacks
+it hold zeros with `present` False. A source whose field is already a `Maybe` keeps its own
+`present`. Every batch of the mix therefore has one structure, whichever sources its rows come
+from, and a compiled step over it compiles once.
+
+```python
+images = MemorySource(MemorySourceConfig(), {"image": image_array, "label": labels_a})
+captions = MemorySource(MemorySourceConfig(), {"text": text_array, "label": labels_b})
+mix = MixDataSourcesNode(MixDataSourcesConfig(weights=(0.5, 0.5)), [images, captions])
+
+batch = mix.get_batch(mix.record_indices_at(0, 8))
+batch["label"]                 # an array: every source has it
+batch["image"].present         # True for rows from `images`
+batch["image"].value_or(0.0)   # the values, zeros where missing
+```
+
+`Maybe` has no arithmetic, so a missing value is read only through `value_or` or with `present`
+in hand (see [Missing values](../core/maybe.md)).
+
+The mix compares the sources' declared specs, the dtypes the device holds. It refuses a field
+whose shape or device dtype differs between two sources, or which holds values in one source and
+nested fields in another, naming the field and both specs. Host columns of one field stored in
+different dtypes of one kind join at NumPy's lossless promotion: an `int64` label beside an
+`int32` one reads as `int64` on the host in every batch and as `int32` on the device.
+
+`mix.get_batch(indices, *, epochs=0, contiguous=False)` reads mixed records on the host. It reads
+each source once with that source's own `get_batch`, creates no device array and changes no
+state. A `Pipeline` iterates a mix whose sources hold equal fields; a mix whose sources' fields
+differ is read with `mix.get_batch`, and a `Pipeline` over it refuses its first batch naming that
+method.
+
 ## See Also
 
 - [Sources Overview](index.md) - All data sources

@@ -103,7 +103,7 @@ class TestTheChildren:
 
     def test_children_with_different_records_are_refused_naming_the_field(self) -> None:
         wide = MemorySource(MemorySourceConfig(), {"x": np.zeros((4, 3), np.float32)})
-        with pytest.raises(ValueError, match=r"\['x'\].*\(3,\).*\(\)"):
+        with pytest.raises(ValueError, match=r"\['x'\].*\(\).*\(3,\)"):
             _mix([_memory(np.arange(4)), wide], (0.5, 0.5))
 
     def test_a_mix_is_a_child_like_any_indexed_source(self) -> None:

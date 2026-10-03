@@ -15,9 +15,12 @@ from typing import Any, cast
 
 import grain
 import jax
+import numpy as np
 
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule, RecordIdentity
+from datarax.sources.memory_source import MemorySource, MemorySourceConfig
+from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
 
 
 def offsets_of(lengths: Sequence[int]) -> list[int]:
@@ -71,3 +74,36 @@ class Sized(DataSourceModule):
     def element_spec(self) -> Any:
         """One float32 scalar per record."""
         return {"x": jax.ShapeDtypeStruct((), jax.numpy.float32)}
+
+
+_SHAPES = {"image": (4, 4, 3), "text": (6,)}
+"""The image and text shapes of C4d's fill fixture (``tests/core/test_maybe.py``)."""
+
+_PRESENCE_CASES = (("image", "text", "label"), ("image", "label"), ("text", "label"), ("label",))
+"""Both present, image only, text only, neither."""
+
+_RECORDS = 6
+"""Records per child of :func:`four_presence_cases`."""
+
+
+def child_columns(child: int, names: Sequence[str]) -> dict[str, np.ndarray]:
+    """Host columns whose values name their child, so a wrong row is a wrong value."""
+    rng = np.random.default_rng(child)
+    columns = {
+        "image": rng.random((_RECORDS, *_SHAPES["image"])).astype(np.float32) + child + 1,
+        "text": rng.random((_RECORDS, *_SHAPES["text"])).astype(np.float32) + child + 1,
+        "label": np.full(_RECORDS, child, np.int32),
+    }
+    return {name: columns[name] for name in names}
+
+
+def four_presence_cases() -> MixDataSourcesNode:
+    """A 1:1:1:1 mix of one child per presence case of ``image`` and ``text``, all with ``label``.
+
+    Unshuffled, position ``k`` is child ``k % 4``'s record ``k // 4``.
+    """
+    children: list[DataSourceModule] = [
+        MemorySource(MemorySourceConfig(), child_columns(child, names))
+        for child, names in enumerate(_PRESENCE_CASES)
+    ]
+    return MixDataSourcesNode(MixDataSourcesConfig(weights=(0.25,) * 4), children)
