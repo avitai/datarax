@@ -252,8 +252,10 @@ def _refuse_unmixable(position: int, source: DataSourceModule) -> None:
 type _Path = tuple[Any, ...]
 """A field's key path in a record, as ``jax.tree_util`` gives it."""
 
-_PRESENT = jax.ShapeDtypeStruct((), jnp.bool_)
-"""The spec of one record's ``present`` flag."""
+
+def _present_spec() -> jax.ShapeDtypeStruct:
+    """The spec of one record's ``present`` flag, built when asked (no JAX value at import)."""
+    return jax.ShapeDtypeStruct((), jnp.bool_)
 
 
 def _is_field(node: Any) -> bool:
@@ -345,7 +347,7 @@ def _union_field(path: _Path, holders: list[tuple[int, Any]], children: int) -> 
                 problems,
             )
     optional = len(holders) < children or any(isinstance(f, Maybe) for _, f in holders)
-    return Maybe(first, _PRESENT) if optional else first
+    return Maybe(first, _present_spec()) if optional else first
 
 
 def union_spec(specs: Sequence[Any]) -> Any:  # noqa: DOC502 - the checks it calls raise
