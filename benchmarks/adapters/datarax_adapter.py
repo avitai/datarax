@@ -533,7 +533,7 @@ class DataraxAdapter(PipelineAdapter):
             f"Unknown transform '{transform_name}'. Available: {sorted(_ALL_TRANSFORM_FNS)}"
         )
 
-    def _create_mixed_source(self, data: Any, rngs: nnx.Rngs) -> Any:
+    def _create_mixed_source(self, data: Any) -> Any:
         """Build a MixDataSourcesNode that mixes two halves of the data 50/50 (IO-3).
 
         Splits each field down the leading (record) axis into two MemorySources and
@@ -546,8 +546,7 @@ class DataraxAdapter(PipelineAdapter):
             MemorySource(config=source_config, data=first),
             MemorySource(config=source_config, data=second),
         ]
-        mix_config = MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5))
-        return MixDataSourcesNode(mix_config, sub_sources, rngs=rngs)
+        return MixDataSourcesNode(MixDataSourcesConfig(weights=(0.5, 0.5)), sub_sources)
 
     def _create_source(
         self,
@@ -557,7 +556,7 @@ class DataraxAdapter(PipelineAdapter):
     ) -> Any:
         """Create the appropriate data source based on config."""
         if Capability.MIXED_SOURCE in set(config.required_capabilities):
-            return self._create_mixed_source(data, rngs)
+            return self._create_mixed_source(data)
 
         backend = config.extra.get("backend") if config.extra else None
 
@@ -717,9 +716,6 @@ class DataraxAdapter(PipelineAdapter):
             stages=stages,
             batch_size=config.batch_size,
             rngs=nnx.Rngs(config.seed),
-            # A mix draws its records from the pipeline's epoch key (until it moves onto
-            # Grain's mix), so its pipeline passes the key; no other scenario shuffles.
-            shuffle=Capability.MIXED_SOURCE in set(config.required_capabilities),
             drop_last=_DROP_LAST,
         )
 

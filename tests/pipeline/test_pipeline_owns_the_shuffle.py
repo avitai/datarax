@@ -5,7 +5,8 @@ sequential order when ``key`` is ``None``; the pipeline passes its epoch key exa
 built with ``shuffle=True``. Moving the flag from the source to the pipeline changes no order:
 the fixture holds the records every path served (iteration, ``step()``, ``scan``) on datarax
 ``611bf97``, when the flag lived on ``MemorySourceConfig``, and the same pipelines built the new
-way serve them bit for bit. Its provenance is stored in the file.
+way serve them bit for bit. Its provenance is stored in the file, and names the case family it
+does not hold and why.
 """
 
 from __future__ import annotations
@@ -43,7 +44,6 @@ _ORACLE = (
     / "served_records_before_the_shuffle_moved.npz"
 )
 _PATHS = ("iter", "step", "scan")
-_MIX_LENGTHS = (5, 9)
 
 
 def _columns(length: int) -> dict[str, np.ndarray]:
@@ -87,13 +87,6 @@ def _build(case: _Case, tmp_path: Path) -> Pipeline:
         )
     if case.family == "memory":
         source: DataSourceModule = MemorySource(MemorySourceConfig(), data=_columns(case.length))
-    elif case.family == "mix":
-        children = [MemorySource(MemorySourceConfig(), data=_columns(n)) for n in _MIX_LENGTHS]
-        source = MixDataSourcesNode(
-            MixDataSourcesConfig(num_sources=2, weights=(0.3, 0.7)),
-            children,
-            rngs=nnx.Rngs(case.seed),
-        )
     else:
         path = tmp_path / "records.npy"
         np.save(path, np.arange(case.length, dtype=np.float32))
@@ -145,7 +138,8 @@ def test_the_oracle_was_recorded_where_the_flag_lived_on_the_source() -> None:
     assert provenance["worktree_clean"] is True
     assert provenance["x64"] is False
     families = {case.split("|")[0] for case in _oracle_cases()}
-    assert families == {"memory", "arrays", "mix", "disk"}
+    assert families == {"memory", "arrays", "disk"}
+    assert "mix" in provenance["removed"]
 
 
 @pytest.mark.parametrize("name", _oracle_cases())
@@ -260,9 +254,7 @@ def _memory(length: int = 23, *, workers: int = 1, shard: int | None = None) -> 
 
 
 def _mixed() -> MixDataSourcesNode:
-    return MixDataSourcesNode(
-        MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)), [_memory(9), _memory(14)]
-    )
+    return MixDataSourcesNode(MixDataSourcesConfig(weights=(0.5, 0.5)), [_memory(9), _memory(14)])
 
 
 _KEYED_SOURCES: dict[str, Callable[[], DataSourceModule]] = {
@@ -271,6 +263,8 @@ _KEYED_SOURCES: dict[str, Callable[[], DataSourceModule]] = {
     "memory-worker": lambda: _memory(workers=3, shard=1),
     "mixed": _mixed,
 }
+# A mix interleaves its children, so the single-source references below do not describe it;
+# its orders are pinned in tests/sources/test_mixed_source_indexed_reads.py.
 _ORDERED_SOURCES = {name: make for name, make in _KEYED_SOURCES.items() if name != "mixed"}
 
 
@@ -326,10 +320,24 @@ class TestTheKeySelectsTheOrder:
         assert not np.array_equal(shuffled[0], np.arange(10))
         assert not np.array_equal(shuffled[0], shuffled[1])
 
-    def test_a_pipeline_over_mix_without_shuffle_is_refused_at_its_first_pull(self) -> None:
-        pipe = Pipeline(source=_mixed(), stages=[], batch_size=4, rngs=nnx.Rngs(0))
-        with pytest.raises(ValueError, match=r"Pipeline\(shuffle=True\)"):
-            next(iter(pipe))
+    @pytest.mark.parametrize("shuffle", [False, True], ids=["ordered", "shuffled"])
+    def test_a_pipeline_over_a_mix_serves_a_fixed_order_iff_it_does_not_shuffle(
+        self, shuffle: bool
+    ) -> None:
+        """Unshuffled, a mix is one interleave every epoch; shuffled, epochs draw other records."""
+        pipe = Pipeline(
+            source=_mixed(),
+            stages=[],
+            batch_size=6,
+            num_epochs=2,
+            drop_last=True,
+            rngs=nnx.Rngs(0),
+            shuffle=shuffle,
+        )
+        served = np.concatenate([_named(batch)[0] for batch in pipe])
+        first, second = np.split(served, 2)
+        assert np.array_equal(first, second) is not shuffle
+        assert (set(first.tolist()) == set(second.tolist())) is not shuffle
 
 
 def _layout(name: str) -> dict[str, int]:
@@ -342,8 +350,6 @@ class TestRecordIndicesUnderTransforms:
     @pytest.mark.parametrize("keyed", [False, True], ids=["ordered", "keyed"])
     @pytest.mark.parametrize("name", sorted(_KEYED_SOURCES))
     def test_one_compile_per_layout_serves_every_start(self, name: str, keyed: bool) -> None:
-        if name == "mixed" and not keyed:
-            pytest.skip("a mix draws from the key whatever the order (C5c)")
         source = _KEYED_SOURCES[name]()
         starts = (0, 5, 17, 40)
         keys = [jax.random.key(seed) if keyed else None for seed in range(len(starts))]
@@ -376,8 +382,6 @@ class TestRecordIndicesUnderTransforms:
     @pytest.mark.parametrize("keyed", [False, True], ids=["ordered", "keyed"])
     @pytest.mark.parametrize("name", sorted(_KEYED_SOURCES))
     def test_scan_over_starts_equals_the_loop(self, name: str, keyed: bool) -> None:
-        if name == "mixed" and not keyed:
-            pytest.skip("a mix draws from the key whatever the order (C5c)")
         source = _KEYED_SOURCES[name]()
         key = jax.random.key(5) if keyed else None
         starts = jnp.arange(0, 30, 6, dtype=jnp.int32)

@@ -1,16 +1,27 @@
-"""Mixed data source implementation for Datarax.
+"""A source mixing indexed sources in fixed proportions: Grain's mix, in one 64-bit index space.
 
-This module provides a data source that mixes elements from multiple child
-sources according to configurable weights. Useful for combining heterogeneous
-data streams (e.g., different image datasets, synthetic + real data).
+Grain's ``MapDataset.mix`` interleaves its parents deterministically: the weights become integer
+proportions (the smallest scaled to 100, the rest scaled alike and truncated), and position ``k``
+of the mix belongs to the parent whose share of the first ``k + 1`` positions first exceeds its
+share of the first ``k``, at the parent position that share counts. Its length is the most
+positions that serve each parent record at most once, the minimum over parents of
+``len_c * S / p_c`` for proportions ``p`` summing to ``S``. :class:`MixDataSourcesNode` serves
+exactly that selection and length. Grain evaluates the selection in Python per index; the mix
+evaluates the same integer arithmetic in uint32 words, so it runs inside traced programs and on
+the host alike, never as a table of Grain's period (which grows with the weight ratio).
+
+Which record a child serves at its ``j``-th position is the child's own order:
+``record_indices_at(j, ...)`` under the pipeline's epoch key folded with the child's position,
+or the child's sequential order when the pipeline does not shuffle. A mixed record's index is its
+child's offset, the sum of the lengths of the children before it, plus the record's index within
+that child, so every record of every child has one 64-bit index.
 """
 
-import logging
-from collections.abc import Iterator, Mapping, Sequence
+import sys
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-import grain
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -19,122 +30,253 @@ from jax.typing import ArrayLike
 
 from datarax.config.registry import register_component
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule, host_rows, record_words, RecordIdentity
-from datarax.core.index_words import low_words, to_words
+from datarax.core.data_source import (
+    DataSourceModule,
+    record_words,
+    RecordIdentity,
+    refuse_padding,
+)
+from datarax.core.index_words import (
+    add,
+    divmod_word,
+    from_words,
+    greater,
+    low_words,
+    MAX_RECORDS,
+    multiply_high,
+    multiply_word,
+    subtract,
+    to_words,
+    wrapped_positions,
+)
 from datarax.core.spec import spec_mismatches, SpecMismatchError
-from datarax.sources._grain_streaming import data_source_to_iter_dataset, mix_streaming_sources
+from datarax.sources.memory_source import MemorySource
 from datarax.typing import DataDict
 
 
-logger = logging.getLogger(__name__)
+_MAX_PERIOD = (1 << 32) - 1
+"""The largest sum of proportions the word arithmetic of the selection takes."""
 
 
-def _validate_compatible_element_specs(sources: Sequence[DataSourceModule]) -> None:  # noqa: DOC502
-    """Verify that every source produces records with the same element_spec.
+def grain_proportions(weights: Sequence[float]) -> tuple[int, ...]:
+    """Grain's integer proportions for ``weights``: the smallest scaled to 100, the rest alike.
 
-    Required so that the per-record ``lax.switch`` dispatch in
-    ``get_records`` has branches with matching output shapes — JAX
-    rejects ``lax.switch`` calls whose branches return differently-
-    shaped pytrees.
-
-    Args:
-        sources: Sources to check.
-
-    Raises:
-        ValueError: If any two sources produce records with different
-            ``element_spec`` structure (different keys, shapes, or dtypes).
-    """
-    if not sources:
-        return
-
-    # Only validate sources that can produce a numeric element_spec. Sources
-    # holding non-JAX data (string labels, Python objects) bypass this check
-    # — they still flow through the iterator/__next__ path; ``get_records``
-    # is the only path that requires matching specs (because of lax.switch).
-    try:
-        reference = sources[0].element_spec()
-    except Exception:  # noqa: BLE001 — opportunistic compatibility check
-        return
-
-    for index, source in enumerate(sources[1:], start=1):
-        try:
-            other = source.element_spec()
-        except Exception:  # noqa: BLE001 — opportunistic compatibility check  # nosec B112
-            continue
-        _assert_specs_match(reference, other, index)
-
-
-def _assert_specs_match(reference: Any, other: Any, index: int) -> None:
-    """Raise if ``other``'s element_spec differs from ``reference`` in structure or leaves.
+    The rule of Grain's ``MapDataset.mix`` (``_float_to_int_proportions`` in
+    ``grain/_src/python/dataset/transformations/mix.py``, grain 0.2.18): every weight is scaled by
+    ``100 / min(weights)`` and truncated.
 
     Args:
-        reference: Element spec of source 0 (the comparison baseline).
-        other: Element spec of the source at position ``index``.
-        index: Position of ``other`` among the sources, for error messages.
+        weights: Positive weights.
 
-    Raises:
-        SpecMismatchError: Naming every field where the two specs differ in
-            structure, shape or dtype.
+    Returns:
+        One positive integer proportion per weight.
     """
-    problems = spec_mismatches(reference, other)
-    if problems:
-        raise SpecMismatchError(
-            f"MixDataSourcesNode requires every source to produce records with the same "
-            f"element_spec (mixing under lax.switch needs matching output shapes across "
-            f"all branches); source {index} differs from source 0:",
-            problems,
+    scale = 100 / min(weights)
+    return tuple(int(weight * scale) for weight in weights)
+
+
+def _period_counts[A: (jax.Array, np.ndarray)](within: A, proportions: Sequence[int]) -> list[A]:
+    """How many of the first ``within`` positions of a period each child serves (Grain's loop).
+
+    Grain's ``_dataset_and_key_of_next_element`` walks the children in order: of the first
+    ``n`` positions held by children ``c`` onwards (whose proportions sum to ``R``), child ``c``
+    holds ``n - floor(n * (R - p_c) / R)`` and the rest pass on to child ``c + 1``. Within a
+    period ``n <= R < 2**32``, so the product is two words and the quotient one.
+
+    Args:
+        within: uint32 positions within the period, each at most the period.
+        proportions: The children's proportions.
+
+    Returns:
+        One uint32 count per child, shaped like ``within``.
+    """
+    remaining = sum(proportions)
+    current = within
+    counts = []
+    for proportion in proportions:
+        rest = remaining - proportion
+        if not rest:
+            counts.append(current)
+            break
+        factor = np.uint32(rest)
+        (_, following), _ = divmod_word(
+            (multiply_high(current, factor), current * factor), remaining
         )
+        counts.append(current - following)
+        current, remaining = following, rest
+    return counts
+
+
+def _counts_before[A: (jax.Array, np.ndarray)](
+    position: tuple[A, A], proportions: Sequence[int]
+) -> list[tuple[A, A]]:
+    """How many mix positions before ``position`` each child serves, in words.
+
+    Grain's selection repeats every period ``S = sum(proportions)``, in which child ``c`` serves
+    ``p_c`` positions, so before position ``q * S + r`` it serves ``q * p_c`` plus its count of
+    the first ``r`` positions of a period.
+
+    Args:
+        position: The mix positions' words ``(hi, lo)``.
+        proportions: The children's proportions.
+
+    Returns:
+        Each child's count, as words.
+    """
+    cycles, within = divmod_word(position, sum(proportions))
+    return [
+        add(multiply_word(cycles, np.uint32(proportion)), (within - within, count))
+        for proportion, count in zip(proportions, _period_counts(within, proportions), strict=True)
+    ]
+
+
+def _selection[A: (jax.Array, np.ndarray)](
+    position: tuple[A, A], proportions: Sequence[int]
+) -> tuple[A, tuple[A, A]]:
+    """The child Grain's mix selects at each position, and that child's position there.
+
+    The child serving position ``k`` is the one whose count rises from ``k`` to ``k + 1``, and
+    its position is its count before ``k`` (Grain's key into the parent).
+
+    Args:
+        position: The mix positions' words ``(hi, lo)``.
+        proportions: The children's proportions.
+
+    Returns:
+        ``(child, child_position)``: the child as uint32, its position as words.
+    """
+    cycles, within = divmod_word(position, sum(proportions))
+    before = _period_counts(within, proportions)
+    after = _period_counts(within + np.uint32(1), proportions)
+    zero = within - within
+    child, proportion, count = zero, zero, zero
+    for index, (earlier, later, share) in enumerate(zip(before, after, proportions, strict=True)):
+        here = later - earlier  # 1 for the selected child, 0 for every other
+        child = child + here * np.uint32(index)
+        proportion = proportion + here * np.uint32(share)
+        count = count + here * earlier
+    return child, add(multiply_word(cycles, proportion), (zero, count))
 
 
 @dataclass(frozen=True)
 class MixDataSourcesConfig(StructuralConfig):
-    """Configuration for MixDataSourcesNode.
+    """Configuration for :class:`MixDataSourcesNode`.
 
     Attributes:
-        num_sources: Number of child sources (validated against actual sources)
-        weights: Sampling weights per source (normalized automatically)
+        weights: One positive weight per child source, normalised to sum to 1.
     """
 
-    num_sources: int | None = None
     weights: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
-        """Validate and normalize mixed-source configuration fields."""
-        # Validate required fields
-        if self.num_sources is None:
-            raise ValueError("num_sources is required")
+        """Validate and normalise the weights.
+
+        Raises:
+            ValueError: If no weights are given or a weight is not positive: Grain mixes positive
+                proportions only, and a zero weight would never serve its source.
+        """
         if self.weights is None:
-            raise ValueError("weights is required")
-        if self.num_sources < 1:
-            raise ValueError("num_sources must be >= 1")
-        if len(self.weights) != self.num_sources:
-            raise ValueError(
-                f"len(weights) ({len(self.weights)}) must match num_sources ({self.num_sources})"
-            )
-        if any(w < 0 for w in self.weights):
-            raise ValueError("All weights must be positive (>= 0)")
-        total = sum(self.weights)
-        if total <= 0:
-            raise ValueError("Sum of weights must be > 0")
-
-        # Normalize weights to sum to 1.0
-        normalized = tuple(w / total for w in self.weights)
-        object.__setattr__(self, "weights", normalized)
-
+            raise ValueError("weights is required: one positive weight per source")
+        weights = tuple(float(weight) for weight in self.weights)
+        if not weights or not all(weight > 0 for weight in weights):
+            raise ValueError(f"a mix takes one positive weight per source; got {self.weights!r}")
+        total = sum(weights)
+        object.__setattr__(self, "weights", tuple(weight / total for weight in weights))
         object.__setattr__(self, "stochastic", False)
         object.__setattr__(self, "stream_name", None)
-
-        # Call parent validation (validates stochastic config, then freezes)
         super().__post_init__()
+
+
+@dataclass(frozen=True)
+class _Layout:
+    """Where the children stand now: their lengths, offsets, the index space and the epoch."""
+
+    lengths: tuple[int, ...]
+    offsets: tuple[int, ...]
+    space: int
+    epoch_length: int
+
+
+def _child_spec(position: int, source: DataSourceModule) -> Any:
+    """A child's record spec, refusing a child that cannot describe its records.
+
+    Args:
+        position: The child's position among the mix's sources.
+        source: The child.
+
+    Returns:
+        The child's ``element_spec()``.
+
+    Raises:
+        ValueError: If the child's ``element_spec()`` is not implemented.
+    """
+    try:
+        return source.element_spec()
+    except NotImplementedError as error:
+        raise ValueError(
+            f"child {position} ({type(source).__name__}) cannot describe its records: its "
+            f"element_spec() raised {error!r}; a mix reads each child's record spec"
+        ) from error
+
+
+def _refuse_unmixable(position: int, source: DataSourceModule) -> None:
+    """Refuse a child whose record indices a mix cannot name.
+
+    Args:
+        position: The child's position among the mix's sources.
+        source: The child.
+
+    Raises:
+        TypeError: If the child is not ``INDEXED``: a stream has no stable positions to mix.
+        ValueError: If the child is one worker's shard of a ``MemorySource``, whose indices name
+            positions of the whole data.
+    """
+    kind = source.record_identity
+    if kind is not RecordIdentity.INDEXED:
+        raise TypeError(
+            f"child {position} ({type(source).__name__}) names its records as {kind.name}; a mix "
+            "names each record by its stable position in its source, so every child is INDEXED"
+        )
+    if isinstance(source, MemorySource) and source.config.num_workers > 1:
+        raise ValueError(
+            f"child {position} (MemorySource) is one shard of num_workers="
+            f"{source.config.num_workers} workers, whose record indices name positions of the "
+            "whole data; mix unsharded sources"
+        )
+
+
+def _refuse_different_records(specs: Sequence[Any]) -> None:
+    """Refuse children whose records differ: the traced gather switches over equal records.
+
+    Args:
+        specs: Each child's record spec.
+
+    Raises:
+        SpecMismatchError: Naming every field where a child's records differ from child 0's.
+    """
+    for position, spec in enumerate(specs[1:], start=1):
+        problems = spec_mismatches(specs[0], spec)
+        if problems:
+            raise SpecMismatchError(
+                f"MixDataSourcesNode requires every source to produce records with the same "
+                f"element_spec (its traced gather switches between children whose records "
+                f"match); source {position} differs from source 0:",
+                problems,
+            )
 
 
 @register_component("source", "MixDataSources")
 class MixDataSourcesNode(DataSourceModule):
-    """Mix multiple data sources with configurable weights.
+    """Mix indexed sources in fixed proportions, as Grain's ``MapDataset.mix`` does.
 
-    Sampling strategy is delegated to Grain's weighted ``IterDataset.mix``.
+    An epoch is Grain's length, the most positions that serve each child record at most once,
+    so every record of an epoch is distinct and no two rows share a key. A child that serves
+    fewer of its records per epoch than it holds serves a different part of them each epoch when
+    the pipeline shuffles (each child is then ordered by the epoch's key), and the same part when
+    it does not. To weight a larger source up, give it a larger weight.
 
-    Total elements = sum of all source lengths.
+    The mix holds its children and its static proportions, and nothing else: no counter, no key
+    and no Variable of its own.
     """
 
     @property
@@ -147,66 +289,95 @@ class MixDataSourcesNode(DataSourceModule):
         config: MixDataSourcesConfig,
         sources: Sequence[DataSourceModule],
         *,
-        rngs: nnx.Rngs | None = None,
         name: str | None = None,
     ) -> None:
-        """Initialize MixDataSourcesModule.
+        """Mix ``sources`` with ``config.weights``.
 
         Args:
-            config: Configuration with num_sources and weights.
-            sources: List of data source modules to mix from.
-            rngs: Optional Flax NNX random number generators.
-            name: Optional module name for identification.
+            config: The mixing weights, one per source.
+            sources: The indexed sources to mix, in the order of the weights.
+            name: Optional module name.
 
         Raises:
-            ValueError: If ``sources`` does not match ``config.num_sources``, or ``config.weights``
-                is ``None``.
+            ValueError: If the weights and sources differ in number, Grain's proportions for
+                the weights pass one word, or a source is refused (see the checks it calls).
         """
-        if name is None:
-            name = "MixDataSourcesNode"
-
-        super().__init__(config, rngs=rngs, name=name)
-
-        # Validate sources count matches config
-        if len(sources) != config.num_sources:
-            raise ValueError(
-                f"len(sources) ({len(sources)}) must match "
-                f"config.num_sources ({config.num_sources})"
-            )
-
+        super().__init__(config, name=name or "MixDataSourcesNode")
         weights = config.weights
-        if weights is None:
-            raise ValueError("weights is required")
-
-        # Validate that every source produces records with the same element_spec.
-        # This is the constraint that lets get_records use lax.switch — every
-        # branch must produce identically-shaped records.
-        _validate_compatible_element_specs(sources)
-
+        if weights is None or len(sources) != len(weights):
+            raise ValueError(f"{len(weights or ())} weights for {len(sources)} sources")
+        for position, source in enumerate(sources):
+            _refuse_unmixable(position, source)
+        proportions = grain_proportions(weights)
+        if sum(proportions) > _MAX_PERIOD:
+            raise ValueError(
+                f"Grain's proportions for these weights, {proportions}, sum past one word "
+                f"(2**32 - 1); weights this far apart are not mixed"
+            )
         self._sources = nnx.List(list(sources))
         self._weights = tuple(weights)
-        self.index = nnx.Variable(0)
-        self.epoch = nnx.Variable(0)
-        self._iterator: Iterator[Any] | None = None
+        self._proportions = proportions
+        self._layout()
+        _refuse_different_records(
+            [_child_spec(position, source) for position, source in enumerate(sources)]
+        )
+
+    @property
+    def sources(self) -> tuple[DataSourceModule, ...]:
+        """The mixed sources, in the order of their weights."""
+        return tuple(self._sources)
+
+    @property
+    def weights(self) -> tuple[float, ...]:
+        """The mixing weights, normalised to sum to 1, in the order of the sources."""
+        return self._weights
+
+    def _layout(self) -> _Layout:
+        """The children's current lengths and offsets, the index space and the epoch length.
+
+        Returns:
+            The layout.
+
+        Raises:
+            ValueError: If a child holds no records, the index space reaches the padding index,
+                or the epoch is longer than ``len()`` can report.
+        """
+        lengths = tuple(len(source) for source in self._sources)
+        for position, length in enumerate(lengths):
+            if length < 1:
+                raise ValueError(f"child {position} has no records; a mix serves every child")
+        offsets = tuple(sum(lengths[:position]) for position in range(len(lengths)))
+        space = sum(lengths)
+        if space >= MAX_RECORDS:
+            raise ValueError(
+                f"the children hold {space} records, whose indices reach the padding index "
+                f"(2**64 - 1); a mix indexes at most {MAX_RECORDS - 1}"
+            )
+        period = sum(self._proportions)
+        epoch_length = min(
+            length * period // proportion
+            for length, proportion in zip(lengths, self._proportions, strict=True)
+        )
+        if epoch_length > sys.maxsize:
+            raise ValueError(
+                f"an epoch of this mix has {epoch_length} positions, past the sys.maxsize "
+                "records len() reports"
+            )
+        return _Layout(lengths, offsets, space, epoch_length)
 
     def __len__(self) -> int:
-        """Return total elements across all child sources, as long as they are now."""
-        return sum(len(source) for source in self._sources)
+        """Positions in an epoch: Grain's length over the children as long as they are now."""
+        return self._layout().epoch_length
 
-    def _offsets(self) -> tuple[int, ...]:
-        """Where each source's records start in the concatenation of the sources, now.
-
-        A mixed record's index is its source's offset plus its index within that source;
-        offsets follow the sources' current lengths, as the sampling does.
-        """
-        lengths = [len(source) for source in self._sources]
-        return tuple(sum(lengths[:position]) for position in range(len(lengths)))
+    def element_spec(self) -> Any:
+        """One mixed record's spec: its children's, which the constructor requires equal."""
+        return _child_spec(0, self._sources[0])
 
     def __repr__(self) -> str:
         """Config-identifying representation for checkpoint validation.
 
-        Enumerates the child-source reprs and mixing weights so a restore can
-        detect a change in the mixture composition or proportions.
+        Enumerates the child-source reprs, the mixing weights and the epoch length so a restore
+        can detect a change in the mixture's composition, proportions or size.
         """
         child_reprs = ", ".join(repr(source) for source in self._sources)
         return (
@@ -215,107 +386,107 @@ class MixDataSourcesNode(DataSourceModule):
             f"length={len(self)})"
         )
 
-    def __iter__(self) -> "MixDataSourcesNode":
-        """Reset iterators and start a new epoch."""
-        self.index.set_value(0)
-        self.epoch.set_value(self.epoch.get_value() + 1)
-        self._iterator = iter(self.to_grain_iter_dataset())
-        return self
-
-    def __next__(self) -> Any:
-        """Sample a source by weight and yield the next element from it."""
-        if self.index.get_value() >= len(self):
-            raise StopIteration
-
-        if self._iterator is None:
-            self._iterator = iter(self.to_grain_iter_dataset())
-        element = next(self._iterator)
-        self.index.set_value(self.index.get_value() + 1)
-        return element
-
-    def to_grain_iter_dataset(self) -> grain.IterDataset:
-        """Return the Grain mixed streaming dataset backing this source."""
-        return mix_streaming_sources(
-            [data_source_to_iter_dataset(source) for source in self._sources],
-            weights=self._weights,
-        )
-
-    def reset(self) -> None:
-        """Reset all internal state and child sources to initial conditions."""
-        self.index.set_value(0)
-        self.epoch.set_value(0)
-        self._iterator = None
-        for s in self._sources:
-            reset_fn = getattr(s, "reset", None)
-            if reset_fn is not None:
-                reset_fn()
-
-    def _selections(
-        self,
-        start: int | jax.Array,
-        size: int,
-        key: jax.Array | None,
-    ) -> tuple[jax.Array, jax.Array]:
-        """Choose, for each output position, a source and a record within it.
+    def _window_starts(
+        self, start: int | jax.Array, first: jax.Array, epoch_length: int
+    ) -> tuple[list[int] | list[jax.Array], jax.Array]:
+        """Where each child's positions start at mix position ``start``.
 
         Args:
-            start: Starting logical position (int or traced ``jax.Array``).
-            size: Number of records.
-            key: PRNG key for deterministic source / index selection.
+            start: The first mix position, a Python int or a traced int32.
+            first: ``start`` wrapped at the epoch's length, as uint32 ``(1, 2)`` words.
+            epoch_length: The epoch's length, where positions wrap.
 
         Returns:
-            ``(chosen_sources, local_indices)``, each with leading dim ``size``.
-
-        Raises:
-            ValueError: If ``key is None``.
+            Each child's first position as its ``record_indices_at`` takes it (a Python int,
+            or an int32 below the traced start), and all of them as uint32 ``(n, 2)`` words.
         """
-        if key is None:
-            raise ValueError(
-                "MixDataSourcesNode.record_indices_at requires a PRNG key for "
-                "deterministic mixing. Pass `key=jax.random.key(seed)`, or build its "
-                "pipeline with Pipeline(shuffle=True), which passes its epoch key."
-            )
+        if isinstance(start, int | np.integer):
+            exact = to_words(int(start) % epoch_length)
+            counts = _counts_before((exact[0:1], exact[1:2]), self._proportions)
+            starts = [int(from_words(np.stack(count, axis=-1))[0]) for count in counts]
+            return starts, jnp.asarray(to_words(starts))
+        counts = _counts_before((first[:, 0], first[:, 1]), self._proportions)
+        words = jnp.stack([jnp.concatenate(count) for count in counts])
+        # A traced start is an int32 position, and a child's count before it is at most it.
+        return [low.astype(jnp.int32)[0] for _, low in counts], words
 
-        log_weights = jnp.log(jnp.asarray(self._weights, dtype=jnp.float32))
-        source_lengths = jnp.asarray([len(s) for s in self._sources], dtype=jnp.int32)
-        positions = jnp.asarray(start, dtype=jnp.int32) + jnp.arange(size, dtype=jnp.int32)
-
-        def _select(position: jax.Array) -> tuple[jax.Array, jax.Array]:
-            src_key, idx_key = jax.random.split(jax.random.fold_in(key, position))
-            chosen_src = jax.random.categorical(src_key, log_weights)
-            local_idx = jax.random.randint(idx_key, (), 0, source_lengths[chosen_src])
-            return chosen_src, local_idx
-
-        return jax.vmap(_select)(positions)
-
-    def record_indices_at(  # noqa: DOC502
+    def record_indices_at(
         self,
         start: int | jax.Array,
         size: int,
         key: jax.Array | None = None,
     ) -> jax.Array:
-        """Return the index of each record at positions ``start .. start + size`` of the mix.
+        """Name the records at mix positions ``start .. start + size`` of an epoch.
 
-        A mixed record's index is its source's offset in the concatenation of the sources
-        plus its index within that source, so every record of every source has one index.
+        Grain's selection gives each position's child and the child's position there. A child's
+        positions in a run of the mix are consecutive, so each child names its whole window of
+        ``size`` positions with its own ``record_indices_at``, keyed ``fold_in(key, c)`` when a
+        key is given and sequential otherwise, and each row takes its child's name for its
+        position. The program is the same for every start. Positions wrap at the epoch's length;
+        a run that wraps names its rows past the end from inside their children's windows, which
+        the pipeline replaces with the next epoch's names.
 
         Args:
-            start: Starting logical position (int or traced ``jax.Array``).
-            size: Number of records.
-            key: PRNG key for deterministic source / index selection.
+            start: Starting position; a Python int of any size or a traced int32 ``jax.Array``.
+            size: Number of records (Python int).
+            key: The pipeline's epoch key, or ``None`` for the children's sequential orders.
 
         Returns:
-            uint32 ``jax.Array`` of shape ``(size, 2)``, each index as its words ``(hi, lo)``.
+            uint32 array of shape ``(size, 2)``, each index as its words ``(hi, lo)``.
+        """
+        layout = self._layout()
+        positions = wrapped_positions(start, size, layout.epoch_length)
+        child, child_position = _selection((positions[:, 0], positions[:, 1]), self._proportions)
+        starts, first = self._window_starts(start, positions[:1], layout.epoch_length)
+        names = jnp.stack(
+            [
+                jnp.asarray(
+                    source.record_indices_at(
+                        child_start, size, None if key is None else jax.random.fold_in(key, c)
+                    ),
+                    jnp.uint32,
+                )
+                for c, (source, child_start) in enumerate(zip(self._sources, starts, strict=True))
+            ]
+        )
+        owner = child.astype(jnp.int32)
+        high, low = subtract(child_position, (first[owner, 0], first[owner, 1]))
+        row = jnp.where((high == 0) & (low < size), low, 0).astype(jnp.int32)
+        named = names[owner, row]
+        offsets = jnp.asarray(to_words(layout.offsets))
+        high, low = add((named[:, 0], named[:, 1]), (offsets[owner, 0], offsets[owner, 1]))
+        return jnp.stack([high, low], axis=-1)
+
+    def _owners(self, words: np.ndarray, layout: _Layout) -> tuple[np.ndarray, np.ndarray]:
+        """Each mixed index's child and its index within that child, on the host.
+
+        Args:
+            words: uint32 ``(n, 2)`` mixed record indices.
+            layout: The children's layout.
+
+        Returns:
+            The children as ``(n,)`` integers and the local indices as uint32 ``(n, 2)`` words.
 
         Raises:
-            ValueError: If ``key is None``.
+            IndexError: If an index is the padding index or outside the mix's index space.
         """
-        chosen_sources, local_indices = self._selections(start, size, key)
-        return to_words(
-            jnp.asarray(self._offsets(), dtype=jnp.int32)[chosen_sources] + local_indices
-        )
+        refuse_padding(words)
+        index = (words[:, 0], words[:, 1])
+        space = to_words(layout.space)
+        outside = ~greater((space[0:1], space[1:2]), index)
+        if outside.any():
+            raise IndexError(
+                f"record index {int(from_words(words[outside][:1])[0])} is outside "
+                f"[0, {layout.space})"
+            )
+        offsets = to_words(layout.offsets)
+        owners = np.zeros(len(words), np.int64)
+        for offset in offsets[1:]:
+            owners += ~greater((offset[0:1], offset[1:2]), index)
+        high, low = subtract(index, (offsets[owners, 0], offsets[owners, 1]))
+        return owners, np.stack([high, low], axis=-1)
 
-    def provenance(  # noqa: DOC502 - record_words and host_rows raise
+    def provenance(  # noqa: DOC502 - record_words and _owners raise
         self, indices: ArrayLike
     ) -> tuple[Mapping[str, Any], ...]:
         """The provenance of the mixed records ``indices`` names, each from the source owning it.
@@ -331,17 +502,14 @@ class MixDataSourcesNode(DataSourceModule):
 
         Raises:
             ValueError: If ``indices`` are not uint32 ``(n, 2)`` words.
-            IndexError: If an index is the padding index or outside the mix.
+            IndexError: If an index is the padding index or outside the mix's index space.
         """
-        rows = host_rows(record_words(indices), len(self)).astype(np.int64)
-        offsets = np.asarray(self._offsets(), dtype=np.int64)
-        owners = np.searchsorted(offsets, rows, side="right") - 1
-        found: list[Mapping[str, Any]] = [{}] * len(rows)
+        owners, local = self._owners(record_words(indices), self._layout())
+        found: list[Mapping[str, Any]] = [{}] * len(owners)
         for owner in np.unique(owners):
             at = np.flatnonzero(owners == owner)
-            local = to_words((rows[at] - offsets[owner]).astype(np.uint64))
             for position, record in zip(
-                at, self._sources[int(owner)].provenance(local), strict=True
+                at, self._sources[int(owner)].provenance(local[at]), strict=True
             ):
                 found[position] = record
         return tuple(found)
@@ -351,7 +519,9 @@ class MixDataSourcesNode(DataSourceModule):
 
         A mixed index is a source's offset plus a record index within that source (see
         :meth:`record_indices_at`), so each record is fetched with its source's own
-        ``get_records``. Stateless; ``vmap`` over records builds the batch in one trace.
+        ``get_records``. Stateless; ``vmap`` over records builds the batch in one trace. The
+        gather addresses records with one int32 word, so a mix whose children hold more than
+        ``2**31 - 1`` records together is refused here.
 
         Args:
             indices: uint32 ``(n, 2)`` mixed record indices; concrete or traced.
@@ -359,11 +529,12 @@ class MixDataSourcesNode(DataSourceModule):
         Returns:
             Dict mapping each data key to a JAX array with leading dim ``len(indices)``.
         """
-        offsets = jnp.asarray(self._offsets(), dtype=jnp.int32)
-        indices = low_words(indices, len(self)).astype(jnp.int32)
+        layout = self._layout()
+        offsets = jnp.asarray(layout.offsets, dtype=jnp.int32)
+        indices = low_words(indices, layout.space).astype(jnp.int32)
         owners = jnp.searchsorted(offsets, indices, side="right") - 1
         # Each branch fetches one record from one source. All branches share the same output
-        # shape (validated at construction by _validate_compatible_element_specs).
+        # shape (the constructor refuses children whose records differ).
         branches = [
             lambda local, src=src: jax.tree.map(
                 lambda x: x[0], src.get_records(to_words(local[None]))

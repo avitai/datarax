@@ -147,8 +147,8 @@ def subtract[A: (jax.Array, np.ndarray)](
     return a[0] - b[0] - borrow, a[1] - b[1]
 
 
-def multiply_word[A: (jax.Array, np.ndarray)](a: tuple[A, A], factor: np.uint32) -> tuple[A, A]:
-    """``a * factor`` modulo ``2**64`` for a uint32 ``factor``, in words."""
+def multiply_word[A: (jax.Array, np.ndarray)](a: tuple[A, A], factor: A | np.uint32) -> tuple[A, A]:
+    """``a * factor`` modulo ``2**64`` for a uint32 ``factor``, one or one per element, in words."""
     return a[0] * factor + multiply_high(a[1], factor), a[1] * factor
 
 

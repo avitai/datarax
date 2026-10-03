@@ -101,6 +101,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `MixDataSourcesNode` mixes on Grain's mix. Position `k` of an epoch belongs to the source
+  `grain.MapDataset.mix` selects for `k`, at the source position Grain reads there; the weights
+  become Grain's integer proportions. The selection runs in uint32 words, so it traces and runs
+  on the host alike, with no table of Grain's period. `len(mix)` is Grain's length, the most
+  positions that serve each source record at most once (`min(len(source) * S / p)`, exact in
+  integers), where it was the sum of the source lengths: an epoch no longer repeats a record or
+  gives two rows one key. Each source serves its records in its own `record_indices_at` order,
+  keyed by `fold_in(key, c)` when the pipeline shuffles and in order when it does not, so a
+  `Pipeline(shuffle=False)` over a mix serves one fixed interleave every epoch instead of being
+  refused. Mixed record indices and the source offsets are 64-bit words; `provenance` checks
+  indices against the mix's index space (the sum of the source lengths).
+- `MixDataSourcesNode` refuses, at construction, a source that is not `INDEXED`, one worker's
+  shard of a `MemorySource` (`num_workers > 1`), a source with no records, a source whose
+  `element_spec()` is not implemented, an index space reaching the padding index, an epoch past
+  `sys.maxsize` and weights whose Grain proportions sum past `2**32 - 1`.
+  `MixDataSourcesConfig` refuses a zero weight.
 - **Streams name their own records, take the pipeline's key and honour the epoch rule.** The
   pipeline keeps no counter for a stream: it passes its key to the stream's `get_batch` when it
   shuffles (`None` otherwise), applies `drop_last` and `num_epochs` to the stream's passes as to
@@ -386,6 +402,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `MixDataSourcesConfig.num_sources` (the weights give the count), the `rngs` argument of
+  `MixDataSourcesNode` (nothing in a mix is random), its `index` and `epoch` Variables, its
+  iteration (`__iter__`, `__next__`), `reset()` and `to_grain_iter_dataset()`. A pipeline state
+  saved over a mix holds those Variables and is refused.
+- `datarax.sources._grain_streaming` (`mix_streaming_sources`, `data_source_to_iter_dataset`,
+  `interleave_streaming_sources`, `repeat_streaming_records`, `limit_streaming_records`,
+  `ensure_iter_dataset`) and the `_grain_bridge` adapters `DataraxRandomAccessAdapter` and
+  `DataraxMapDatasetAdapter`, which nothing calls once the mix leaves Grain's `IterDataset.mix`.
 - The stream configs' `shuffle` (the pipeline's `shuffle` decides), `HFStreamingConfig.streaming`
   and `HFStreamingSource.is_iterable_mode`/`random_order_buffer_depth`, and
   `TFDSStreamingConfig`'s `try_gcs`, `download_and_prepare_kwargs`, `beam_num_workers`,

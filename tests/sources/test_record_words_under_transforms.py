@@ -54,7 +54,7 @@ def _memory(length: int = 23, *, workers: int = 1, shard: int | None = None) -> 
 
 def _mixed() -> MixDataSourcesNode:
     return MixDataSourcesNode(
-        MixDataSourcesConfig(num_sources=2, weights=(0.5, 0.5)),
+        MixDataSourcesConfig(weights=(0.5, 0.5)),
         [_memory(9), MemorySource(MemorySourceConfig(), {"x": _values(14, 1000.0)})],
     )
 
