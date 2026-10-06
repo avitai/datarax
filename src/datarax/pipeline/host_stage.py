@@ -606,9 +606,12 @@ class HostStage:
                 )
             )
         if not isinstance(source, StreamingSourceBase):
+            kind = source.record_identity.name
+            article = "an" if kind[0] in "AEIOU" else "a"
             raise TypeError(
-                f"{type(source).__name__} is a {source.record_identity.name} stream that is not a "
-                "StreamingSourceBase, whose pass reader the host stage reads a stream with"
+                f"{type(source).__name__} is {article} {kind} stream that is not a "
+                "StreamingSourceBase, whose pass reader the host stage reads every stream with: "
+                "subclass datarax.sources.StreamingSourceBase and implement _open_pass"
             )
         return grain.experimental.ThreadPrefetchIterDataset(
             self._stream_elements(pipeline, chunk, with_provenance, key),

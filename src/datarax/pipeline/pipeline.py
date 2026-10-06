@@ -75,13 +75,11 @@ from substrax.typing import CheckpointState
 from datarax.core import batch_ops
 from datarax.core.data_source import DataSourceModule, Provenance, RecordIdentity
 from datarax.core.element_batch import Batch
-from datarax.core.spec import declared_spec, validate_batch, validate_device_dtypes
 from datarax.pipeline.dag import name_records, OperatorDag, Records
 from datarax.pipeline.dag_call import compile_dag
-from datarax.pipeline.epochs import batch_records, EpochPlan, stream_batches
+from datarax.pipeline.epochs import batch_records, EpochPlan
 from datarax.pipeline.host_stage import HostStage, HostStageHolder
 from datarax.pipeline.iteration import next_batch, PipelineIterator, staged_view
-from datarax.sources._source_base import StreamingSourceBase
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.typing import DataDict
 
@@ -738,7 +736,7 @@ class Pipeline(nnx.Module):
             shuffled=self.shuffle,
         )
 
-    def __iter__(self) -> Iterator[Batch]:
+    def __iter__(self) -> Iterator[Batch]:  # noqa: DOC502 - the host stage raises
         """Iterate processed batches: the host stage's batches through the DAG (Tier A).
 
         The host stage reads batches ahead on Grain threads and places each as it is taken
@@ -747,74 +745,21 @@ class Pipeline(nnx.Module):
         statistics) written back. A pipeline without stages serves the placed batches as they
         are: an empty DAG is the identity, so it compiles nothing and copies no batch. Iteration
         continues where the last batch taken ended and stops after the run's ``num_epochs``
-        epochs; :meth:`reset` starts the next run. A stream whose source is not a
-        :class:`~datarax.sources.StreamingSourceBase` pulls its own batches through
-        :meth:`_iter_streaming`.
+        epochs; :meth:`reset` starts the next run. A stream is read through
+        :class:`~datarax.sources.StreamingSourceBase`; any other stream is refused.
 
         Returns:
             The processed batches.
+
+        Raises:
+            TypeError: If the source has no host read the stage reads it with: an ``INDEXED``
+                source without ``get_batch(indices, ...)``, or a stream that is not a
+                ``StreamingSourceBase``.
         """
-        if self.source.record_identity is not RecordIdentity.INDEXED and not isinstance(
-            self.source, StreamingSourceBase
-        ):
-            return self._iter_streaming()
         if not self.dag.order:
             return iter(self.raw_batches())
         apply = compile_dag(self.dag)
         return (apply(batch) for batch in self.raw_batches())
-
-    def _iter_streaming(self) -> Iterator[Batch]:  # noqa: DOC502
-        """Iterate a stream (``STREAM_IDS`` or ``ARRIVAL``) through the DAG.
-
-        A stream names its records and counts its passes, so the pipeline keeps no counter for
-        it: batches are pulled on the host with the source's ``get_batch``, which takes the
-        pipeline's key when it shuffles (``None`` otherwise) and returns a host ``Batch`` named
-        by the stream. The epoch rule over the stream's passes is
-        :func:`~datarax.pipeline.epochs.stream_batches`: ``drop_last`` and ``num_epochs`` as
-        for an indexed source. Each batch runs through the stage DAG, compiled once per batch
-        shape by :func:`~datarax.pipeline.dag_call.compile_dag`.
-
-        The source's ``element_spec()`` is read once per source and x64 setting and is refused
-        if it declares a dtype JAX arrays cannot hold as declared: a ``float64`` field while x64
-        is off would otherwise be narrowed silently inside the compiled DAG. Every pulled batch
-        is checked against it, as the device will hold it, with
-        :func:`~datarax.core.spec.validate_batch` before it reaches the DAG, so a batch whose
-        structure, per-element shapes or dtypes disagree with the declaration stops iteration
-        with the fields named. Module state is current at every yield.
-
-        Yields:
-            The DAG's ``Batch`` for each batch of the run.
-
-        Raises:
-            SpecMismatchError: If the declared spec, or a pulled batch, breaks the contract above.
-            TypeError: If the source's ``get_batch`` does not return a ``Batch``.
-            ValueError: If a stage adds or removes state while it runs.
-        """
-        element_spec = declared_spec(self.source)
-        validate_device_dtypes(element_spec)
-        apply = compile_dag(self.dag)
-        key = jax.random.wrap_key_data(self._epoch_key_base[...]) if self.shuffle else None
-        source = self.source
-
-        def pull(size: int) -> tuple[Batch, Provenance]:
-            batch = source.get_batch(  # type: ignore[attr-defined]
-                size, key=key, read_size=self.batch_size
-            )
-            if not isinstance(batch, Batch):
-                raise TypeError(
-                    f"{type(source).__name__}.get_batch returned {type(batch).__name__}, but a "
-                    "stream serves a Batch named by the stream"
-                )
-            if batch.batch_size:
-                validate_batch(
-                    batch.data, element_spec, batch_size=self.batch_size, as_the_device_holds=True
-                )
-            return batch, ()
-
-        for batch, _ in stream_batches(
-            pull, self.batch_size, drop_last=self.drop_last, num_epochs=self.num_epochs
-        ):
-            yield apply(batch)
 
 
 def _source_length(source: DataSourceModule) -> int | None:

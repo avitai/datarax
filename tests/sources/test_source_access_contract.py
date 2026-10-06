@@ -195,7 +195,7 @@ def test_a_pipeline_over_record_list_data_serves_its_columns() -> None:
 
 
 class _ListStream(DataSourceModule):
-    """A forward-only source whose batches are lists."""
+    """A forward-only source that declares a stream kind but is not built on the stream base."""
 
     @property
     def record_identity(self) -> RecordIdentity:
@@ -215,8 +215,12 @@ class _ListStream(DataSourceModule):
         return {"x": jax.ShapeDtypeStruct((), jnp.float32)}
 
 
-def test_a_stream_yielding_something_other_than_a_batch_is_refused() -> None:
+@pytest.mark.parametrize("call", ["iter", "raw_batches"])
+def test_a_stream_not_built_on_the_stream_base_is_refused_naming_it(call: str) -> None:
+    """The host stage reads a stream through ``StreamingSourceBase``'s pass reader, and only so."""
     pipeline = Pipeline(source=_ListStream(), stages=[], batch_size=2, rngs=nnx.Rngs(0))
 
-    with pytest.raises(TypeError, match="_ListStream.get_batch returned list"):
-        next(iter(pipeline))
+    with pytest.raises(
+        TypeError, match=r"_ListStream is an ARRIVAL stream.*StreamingSourceBase.*_open_pass"
+    ):
+        iter(pipeline) if call == "iter" else pipeline.raw_batches()
