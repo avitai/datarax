@@ -59,6 +59,7 @@ from datarax.sources._source_base import (
     StreamChunk,
     StreamingSourceBase,
 )
+from datarax.sources.array_record_source import ArrayRecordSourceConfig, ArrayRecordSourceModule
 from datarax.sources.eager_source import EagerSource, HostValue, parts_of_records
 from datarax.sources.source_ops import filter_keys, validate_source_settings
 
@@ -238,6 +239,24 @@ def _not_prepared(name: str, data_dir: str | None, found: str) -> FileNotFoundEr
     )
 
 
+def _array_record_builder(name: str, data_dir: str | None) -> Any:  # noqa: DOC502
+    """The builder of ``name`` prepared as ArrayRecord in ``data_dir``, refused otherwise.
+
+    Args:
+        name: The TFDS dataset name, with its config when it has one.
+        data_dir: The data directory; TFDS's default when ``None``.
+
+    Returns:
+        The TFDS builder.
+
+    Raises:
+        FileNotFoundError: If the data directory holds no copy prepared as ArrayRecord.
+    """
+    return _prepared_builder(
+        name, data_dir, "array_record", lambda found: _not_prepared(name, data_dir, found)
+    )
+
+
 def open_prepared_split(  # noqa: DOC502 - _prepared_builder raises the FileNotFoundError
     name: str, split: str, data_dir: str | None
 ) -> tuple[Any, PreparedRecords]:
@@ -257,9 +276,7 @@ def open_prepared_split(  # noqa: DOC502 - _prepared_builder raises the FileNotF
         FileNotFoundError: If the data directory holds no copy of the dataset prepared as
             ArrayRecord: nothing prepared, or a copy in another format such as TFRecord.
     """
-    builder = _prepared_builder(
-        name, data_dir, "array_record", lambda found: _not_prepared(name, data_dir, found)
-    )
+    builder = _array_record_builder(name, data_dir)
     # tfds wraps as_data_source in a logging decorator whose type hides the parameters.
     records = builder.as_data_source(
         split=split,  # pyright: ignore[reportCallIssue]
@@ -297,6 +314,74 @@ def _supervised_keys(info: Any, dataset: str) -> list[str]:
     if declared is None:
         raise ValueError(f"{dataset} declares no supervised keys, which as_supervised keeps")
     return [str(key) for key in jax.tree.leaves(declared)]
+
+
+@dataclass(frozen=True, slots=True)
+class _ExampleDecoder:
+    """Decodes a batch of a prepared split's serialized examples as TFDS's reader decodes one.
+
+    Each record goes through the dataset's ``features.deserialize_example_np``, as
+    ``builder.as_data_source`` does, then keeps the features the source keeps
+    (:func:`_kept_features`), so a per-batch read holds what the eager source holds. It pickles
+    with the features, for a worker process.
+    """
+
+    features: Any
+    keys: tuple[str, ...] | None
+    include_keys: set[str] | None
+    exclude_keys: set[str] | None
+
+    def __call__(self, records: Sequence[bytes]) -> list[dict[str, Any]]:
+        """One kept mapping of decoded features per record."""
+        return [
+            _kept_features(
+                self.features.deserialize_example_np(record),
+                self.keys,
+                self.include_keys,
+                self.exclude_keys,
+            )
+            for record in records
+        ]
+
+
+def per_batch_split(  # noqa: DOC502 - _array_record_builder and _supervised_keys raise
+    name: str,
+    split: str,
+    *,
+    data_dir: str | None = None,
+    as_supervised: bool = False,
+    include_keys: set[str] | None = None,
+    exclude_keys: set[str] | None = None,
+) -> ArrayRecordSourceModule:
+    """A split prepared as ArrayRecord, read and decoded per batch instead of held in memory.
+
+    The source reads the split's records where TFDS's own reader would (the split's
+    ``file_instructions``, slices included) and decodes each batch with TFDS's decoder, keeping
+    the features ``TFDSEagerSource`` keeps; it holds no record between reads. TensorFlow is not
+    imported.
+
+    Args:
+        name: The TFDS dataset name, with its config when it has one.
+        split: The split, slices included (``"train[:5000]"``).
+        data_dir: The data directory; TFDS's default when ``None``.
+        as_supervised: If True, keeps only the supervised features, under their own names.
+        include_keys: Optional set of keys to include.
+        exclude_keys: Optional set of keys to exclude.
+
+    Returns:
+        An ``ArrayRecordSourceModule`` over the split.
+
+    Raises:
+        FileNotFoundError: If the dataset is not prepared as ArrayRecord in the data directory.
+        ValueError: If ``as_supervised`` is asked of a dataset without supervised keys.
+    """
+    info = _array_record_builder(name, data_dir).info
+    keys = tuple(_supervised_keys(info, name)) if as_supervised else None
+    return ArrayRecordSourceModule(
+        ArrayRecordSourceConfig(),
+        info.splits[split].file_instructions,
+        decode=_ExampleDecoder(info.features, keys, include_keys, exclude_keys),
+    )
 
 
 class TFDSEagerSource(DatasetSourceMixin, EagerSource):

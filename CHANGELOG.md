@@ -116,8 +116,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `datarax.core.RecordIdentity` (`INDEXED`, `STREAM_IDS`, `ARRIVAL`) and the abstract
   `DataSourceModule.record_identity`: every source declares what its record index means (a
   stable position, an id the stream reports, or the arrival ordinal), and a source that does
-  not is refused at construction. The in-memory sources, `StreamingDiskSource` and
-  `MixDataSourcesNode` are `INDEXED`, `TFDSStreamingSource` and `ArrayRecordSourceModule`
+  not is refused at construction. The in-memory sources, `StreamingDiskSource`,
+  `ArrayRecordSourceModule` and `MixDataSourcesNode` are `INDEXED`, `TFDSStreamingSource`
   `STREAM_IDS`, `HFStreamingSource` `ARRIVAL`. A source in another package declares its kind
   with a `record_identity` property returning it.
 - `datarax.sources.EagerSource`, the public base of every in-memory source (`MemorySource`,
@@ -245,12 +245,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seeds HuggingFace's buffer shuffle from its key, `set_epoch(pass)` ordering each pass (it used
   a literal seed of 42). Reads are batched NumPy columns in their features' dtypes, text and
   objects as provenance beside the batch.
-- `from_tfds(name, split, ...)` picks the source by the copy's prepared format (ArrayRecord:
-  `TFDSEagerSource`; TFRecord: `TFDSStreamingSource`); `from_hf(name, split, *, streaming=False,
+- `from_tfds(name, split, *, in_memory=True, ...)` picks the source by the copy's prepared
+  format: an ArrayRecord copy is decoded into memory by `TFDSEagerSource`, or with
+  `in_memory=False` read and decoded per batch by an `ArrayRecordSourceModule` over the split's
+  files with TFDS's decoder, for a split larger than RAM; a TFRecord copy is streamed by
+  `TFDSStreamingSource`; `from_hf(name, split, *, streaming=False,
   ...)` builds `HFEagerSource`, or `HFStreamingSource` with `streaming=True`.
-- `ArrayRecordSourceModule.get_batch(batch_size, *, key=None)` returns a host `Batch` named by
-  the records' positions and the source's epoch, and refuses a key (its order is
-  `shuffle_files`'s).
+- `ArrayRecordSourceModule` is an `INDEXED` source: a record's index is its position in the files,
+  and the pipeline orders, batches and resumes it. `get_batch(indices, *, epochs=0,
+  contiguous=False)` reads the named records with one batched read of ArrayRecord's
+  `ArrayRecordDataSource` (the reader Grain and TFDS use) and decodes them with one call of `decode`, which now takes a batch's
+  `bytes` records and returns one mapping per record; numeric values are the batch's columns and
+  the rest the records' provenance (`provenance(indices)`). `paths` may be TFDS
+  `FileInstruction`s. It pickles without open file handles and has no traced read, so `step()`
+  over it is refused naming `get_records`.
 - `source_ops.validate_eager_source_settings`, `validate_eager_config` and
   `finalize_eager_config_validation` are `validate_source_settings`, `validate_source_config` and
   `finalize_source_config_validation` (eager and stream
@@ -502,6 +510,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `ArrayRecordSourceConfig`'s `seed`, `num_epochs` and `shuffle_files`, and
+  `ArrayRecordSourceModule`'s own iteration and state: `rngs`, `grain_source`, `current_index`,
+  `current_epoch`, `total_records`, `prefetch_cache`, `iterator_initialized`, `shuffled_indices`,
+  `__iter__`, `__next__`, `__getitem__`, `get_state`/`set_state` and the stream
+  `get_batch(batch_size, *, key, read_size)`. Use `Pipeline(..., shuffle=True, num_epochs=...)`
+  and the pipeline's state.
 - `MixDataSourcesConfig.num_sources` (the weights give the count), the `rngs` argument of
   `MixDataSourcesNode` (nothing in a mix is random), its `index` and `epoch` Variables, its
   iteration (`__iter__`, `__next__`), `reset()` and `to_grain_iter_dataset()`. A pipeline state
@@ -546,7 +560,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `source_ops.validate_seed_range`, and the `shuffle`/`seed` parameters of the eager helpers
   (`eager_iter`, `eager_get_batch` and their defaults). Use `Pipeline(..., shuffle=True)`; a
   removed config field raises `TypeError`. Iterating a source directly serves its records in
-  order. The streaming sources and `ArrayRecordSourceModule` keep their own shuffle.
+  order. The streaming sources keep their own shuffle.
 - `PipelineSchema` and `NNXComponentSchema`: no field of either was ever read, so neither
   validated anything. Pipelines are built in Python; define a `ConfigSchema` for the parameters
   you configure. `examples/config/config_example.py` and its notebook, which exited on a

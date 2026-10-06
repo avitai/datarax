@@ -2,7 +2,7 @@
 
 `TFDSEagerSource` reads [TensorFlow Datasets (TFDS)](https://www.tensorflow.org/datasets) that TFDS has prepared as ArrayRecord, giving access to hundreds of ready-to-use datasets as host NumPy columns, without TensorFlow in the process. `TFDSStreamingSource` streams a split prepared as TFRecord (TFDS's default format), also without TensorFlow, for splits too large to hold.
 
-> **Note:** The factory `from_tfds(name, split, ...)` picks the source by the format the copy is prepared in: `TFDSEagerSource` for ArrayRecord, `TFDSStreamingSource` for TFRecord.
+> **Note:** The factory `from_tfds(name, split, ...)` picks the source by the format the copy is prepared in: for ArrayRecord, `TFDSEagerSource` (decoded into memory), or with `in_memory=False` an `ArrayRecordSourceModule` that reads and decodes each batch; `TFDSStreamingSource` for TFRecord.
 
 ## Key Features
 
@@ -103,9 +103,10 @@ source = TFDSEagerSource(TFDSEagerConfig(name="cifar10", split="train"))
 pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0), shuffle=True)
 ```
 
-For ImageNet-scale splits that do not fit in memory, prepare a TFRecord copy (TFDS's default
-format) and stream it with `TFDSStreamingSource` (or `from_tfds(name, split, ...)`, which picks it
-for a TFRecord copy):
+For ImageNet-scale splits that do not fit in memory, read an ArrayRecord copy per batch with
+`from_tfds(name, split, in_memory=False)`: an `ArrayRecordSourceModule` over the split's files
+that decodes each batch's records with TFDS's decoder, in the pipeline's order. A TFRecord copy
+(TFDS's default format) is streamed with `TFDSStreamingSource` (which `from_tfds` picks for it):
 
 ```python
 source = TFDSStreamingSource(
@@ -127,8 +128,7 @@ and the workers read the data once between them.
 
 Each record is named by its `tfds_id`, the shard file and the offset in it, so its text is
 looked up again by `source.provenance(batch.indices)`. A copy prepared as ArrayRecord is read by
-the eager source; reading one larger than host memory by index comes with the pipeline's host
-stage.
+index: whole by the eager source, or per batch with `from_tfds(..., in_memory=False)`.
 
 ## Custom Data Directory
 

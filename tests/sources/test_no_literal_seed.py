@@ -25,10 +25,6 @@ _LITERAL_SEED = re.compile(
     r"|\b(?:PRNGKey|key|Rngs|default_rng|RandomState|Philox|seed)\(\s*\d"  # key(0), Rngs(0)
 )
 
-# ArrayRecord orders its records by a seed of its own until C5a-4 reads it as an INDEXED source
-# (OWN-1001-ARRAYRECORD); this exclusion goes with that step.
-_ORDERED_BY_ITS_OWN_SEED = frozenset({"array_record_source.py"})
-
 
 def _code(path: Path) -> str:
     """The file's code with every string and comment blanked, line structure kept."""
@@ -52,7 +48,6 @@ def _literal_seeds(directory: Path) -> list[str]:
     return [
         f"{path.relative_to(directory)}:{number}"
         for path in sorted(directory.rglob("*.py"))
-        if path.name not in _ORDERED_BY_ITS_OWN_SEED
         for number, line in enumerate(_code(path).splitlines(), start=1)
         if _LITERAL_SEED.search(line)
     ]
@@ -60,12 +55,6 @@ def _literal_seeds(directory: Path) -> list[str]:
 
 def test_no_source_holds_a_literal_seed() -> None:
     assert _literal_seeds(_SOURCES) == []
-
-
-def test_the_excluded_source_still_holds_its_own_seed() -> None:
-    """The exclusion is live: once ArrayRecord holds no seed, this fails and the exclusion goes."""
-    for name in _ORDERED_BY_ITS_OWN_SEED:
-        assert _LITERAL_SEED.search(_code(_SOURCES / name)), name
 
 
 def test_a_literal_seed_planted_in_a_copy_is_found(tmp_path: Path) -> None:

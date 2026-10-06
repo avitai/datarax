@@ -16,7 +16,7 @@ Data source adapters for loading data from various formats and libraries. Source
 | **MixDataSourcesNode** | Multiple sources | Multi-dataset training |
 
 !!! tip "Factory functions"
-    `from_tfds(name, split, ...)` picks the TFDS source by the format the copy is prepared in (ArrayRecord: eager; TFRecord: streamed). `from_hf(name, split, ...)` builds the eager source, or the stream with `streaming=True`.
+    `from_tfds(name, split, ...)` picks the TFDS source by the format the copy is prepared in (ArrayRecord: eager, or read per batch with `in_memory=False`; TFRecord: streamed). `from_hf(name, split, ...)` builds the eager source, or the stream with `streaming=True`.
 
 ## Quick Start
 

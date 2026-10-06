@@ -15,24 +15,27 @@
 | Metadata | Value |
 |----------|-------|
 | **Level** | Intermediate |
-| **Runtime** | ~15 min |
+| **Runtime** | ~5 min |
 | **Prerequisites** | Simple Pipeline |
 | **Format** | Python + Jupyter |
 
 ## Overview
 
-Learn to use `ArrayRecordSourceModule` for loading data from Google's
-ArrayRecord format. ArrayRecord is a high-performance file format used
-by Google for ML datasets, similar to TFRecord but with better random access.
+ArrayRecord is Google's record file format with random access by position, the format TFDS
+prepares datasets in for Grain. `ArrayRecordSourceModule` serves ArrayRecord files to a
+Datarax pipeline as an indexed source: a record's index is its position in the files, the
+pipeline chooses which records each batch holds, and the source reads them with one batched
+read and decodes them with one call per batch. Nothing is held in memory between batches, so
+the files can be larger than RAM.
 
 ## Learning Goals
 
 By the end of this quick reference, you will be able to:
 
-1. Configure `ArrayRecordSourceConfig` for ArrayRecord files
-2. Create an `ArrayRecordSourceModule` from file paths
-3. Integrate ArrayRecord sources into Datarax pipelines
-4. Understand checkpointing and state management
+1. Write a decoder that turns a batch of `bytes` records into arrays and provenance
+2. Read named records with `get_batch` and their non-numeric values with `provenance`
+3. Serve ArrayRecord files through a shuffled `Pipeline` and resume it from its state
+4. Read a TFDS split prepared as ArrayRecord per batch with `from_tfds(..., in_memory=False)`
 """
 
 # %% [markdown]
@@ -41,374 +44,201 @@ By the end of this quick reference, you will be able to:
 
 | Grain | Datarax |
 |-------|---------|
-| `grain.ArrayRecordDataSource(paths)` | `ArrayRecordSourceModule(config, paths)` |
-| `grain.DataLoader(source)` | `Pipeline(source=source, stages=[],`<br>`...rngs=nnx.Rngs(0))` |
-| Manual iteration | Automatic stateful iteration |
-| Manual checkpointing | Built-in `get_state()` / `set_state()` |
+| `grain.sources.ArrayRecordDataSource(paths)` | `ArrayRecordSourceModule(config, paths, decode=decode)` |
+| `MapDataset.source(source).shuffle(seed)` | `Pipeline(source=source, ..., shuffle=True)` |
+| `.map(parse)` per record | `decode(records)`, one call per batch |
+| `iterator.get_state()` / `set_state()` | `pipeline.get_state()` / `set_state()` |
 
-## Key Differences
-
-1. **Stateful Iteration**: Datarax tracks position automatically via NNX Variables
-2. **Checkpointing**: Built-in state serialization for resume
-3. **Pipeline Integration**: Direct integration with DAG-based pipelines
-4. **Shuffling**: Internal shuffle handling per epoch
+The source reads through ArrayRecord's `ArrayRecordDataSource`, the reader Grain wraps; the order, the epochs and the
+position belong to the pipeline, as for every indexed source.
 """
 
 # %% [markdown]
 """
 ## Setup
 
-ArrayRecord requires the `array_record` package (Google's format):
+`array_record` and Grain are installed with Datarax on Linux.
 
 ```bash
-uv pip install "datarax[data]" array-record
+uv pip install datarax
 ```
-
-Note: ArrayRecord is primarily available on Linux. Check compatibility for your platform.
 """
 
 # %%
-# Imports
-# Note: These imports would be used with actual ArrayRecord files:
-# import numpy as np
-# from flax import nnx
-# from datarax.pipeline import Pipeline
-# from datarax.sources import ArrayRecordSourceModule, ArrayRecordSourceConfig
+import shutil
+import tempfile
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
 
-print("ArrayRecord Source Quick Reference")
-print("=" * 50)
-
-# %% [markdown]
-"""
-## Part 1: ArrayRecordSourceConfig
-
-Configuration for ArrayRecord data sources.
-
-### Configuration Options
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `seed` | int | 42 | Random seed for shuffling |
-| `num_epochs` | int | -1 | Epoch budget for direct source iteration (-1 for unbounded) |
-| `shuffle_files` | bool | False | Whether to shuffle file order |
-"""
-
-# %%
-# Configuration example (conceptual - actual usage requires ArrayRecord files)
-print("ArrayRecordSourceConfig Parameters:")
-print()
-print("  seed: int = 42")
-print("    - Random seed for epoch-based shuffling")
-print()
-print("  num_epochs: int = -1")
-print("    - Number of epochs to iterate")
-print("    - -1 means unbounded direct source iteration")
-print()
-print("  shuffle_files: bool = False")
-print("    - Whether to shuffle record order within epoch")
-print("    - Re-shuffles at each epoch boundary")
-
-# %% [markdown]
-"""
-## Part 2: Creating an ArrayRecord Source
-
-### Basic Usage Pattern
-
-```python
 import numpy as np
-from datarax.sources import ArrayRecordSourceModule, ArrayRecordSourceConfig
+from array_record.python.array_record_module import ArrayRecordWriter
+from flax import nnx
 
-
-def decode(record: bytes) -> dict[str, np.ndarray]:
-    # ArrayRecord records are bytes; turn one into a dict of arrays.
-    return {"data": np.frombuffer(record, dtype=np.float32)}
-
-
-# Single file
-source = ArrayRecordSourceModule(
-    ArrayRecordSourceConfig(seed=42),
-    paths="/path/to/data.riegeli",
-    decode=decode,
-    rngs=nnx.Rngs(0),
-)
-
-# Multiple files with glob pattern
-source = ArrayRecordSourceModule(
-    ArrayRecordSourceConfig(seed=42, shuffle_files=True),
-    paths="/path/to/data-*.riegeli",
-    decode=decode,
-    rngs=nnx.Rngs(0),
-)
-
-# List of specific files
-source = ArrayRecordSourceModule(
-    ArrayRecordSourceConfig(num_epochs=10),
-    paths=[
-        "/path/to/train-00000.riegeli",
-        "/path/to/train-00001.riegeli",
-    ],
-    decode=decode,
-    rngs=nnx.Rngs(0),
-)
-```
-"""
-
-# %%
-print()
-print("Creating ArrayRecordSourceModule:")
-print()
-print("  # Path options:")
-print('  paths = "/path/to/data.riegeli"          # Single file')
-print('  paths = "/path/to/data-*.riegeli"        # Glob pattern')
-print('  paths = ["file1.riegeli", "file2.riegeli"]  # List')
-print()
-print("  # Initialization:")
-print("  source = ArrayRecordSourceModule(")
-print("      ArrayRecordSourceConfig(seed=42),")
-print("      paths=paths,")
-print("      decode=decode,")
-print("      rngs=nnx.Rngs(0),")
-print("  )")
-
-# %% [markdown]
-"""
-## Part 3: Pipeline Integration
-
-### Using with Datarax Pipelines
-
-```python
+from datarax.core.index_words import from_words, to_words
 from datarax.pipeline import Pipeline
+from datarax.sources import ArrayRecordSourceConfig, ArrayRecordSourceModule
 
-# Create pipeline from ArrayRecord source; each pass covers one epoch
-pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
-
-# Add transformations
-# Pipeline stages are set at construction; rebuild with normalize_op in stages.
-pipeline = Pipeline(
-    source=pipeline.source,
-    stages=[normalize_op],
-    batch_size=pipeline.batch_size,
-    rngs=nnx.Rngs(0),
-)
-
-# Iterate
-for batch in pipeline:
-    # Process batch
-    print(f"Batch shape: {batch['data'].shape}")
-```
-"""
-
-# %%
-print()
-print("Pipeline Integration Pattern:")
-print()
-print("  # Create pipeline")
-print("  pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))")
-print()
-print("  # Add operators")
-print("  pipeline = Pipeline(source=src, stages=[my_operator], batch_size=N, rngs=nnx.Rngs(0))")
-print()
-print("  # Iterate")
-print("  for batch in pipeline:")
-print("      train_step(batch)")
 
 # %% [markdown]
 """
-## Part 4: Checkpointing and State Management
+## Part 1: ArrayRecord files
 
-ArrayRecordSourceModule supports full state serialization for training resume.
-
-### State Contents
-
-| State Key | Description |
-|-----------|-------------|
-| `current_index` | Current position in dataset |
-| `current_epoch` | Current epoch number |
-| `shuffled_indices` | Shuffle order (if enabled) |
-| `prefetch_cache` | Prefetched records cache |
-
-### Checkpointing Pattern
-
-```python
-# Save checkpoint
-state = source.get_state()
-# state = {"current_index": 1234, "current_epoch": 5, ...}
-
-# Later: restore from checkpoint
-source.set_state(state)
-# Resumes from exact position
-```
+Each record here is 4 float32 features, an int32 label and a text id, serialized to `bytes`.
+Two files hold 40 and 24 records; the source numbers them 0 to 63 across the files in order.
 """
 
 # %%
-print()
-print("Checkpointing API:")
-print()
-print("  # Save state")
-print("  checkpoint = {")
-print('      "source_state": source.get_state(),')
-print('      "model_params": model.params,')
-print("  }")
-print()
-print("  # Restore state")
-print('  source.set_state(checkpoint["source_state"])')
-print("  # Iteration resumes from saved position")
+FEATURES = 4
+SHARDS = (40, 24)
+
+
+def encode(index: int) -> bytes:
+    """One record: its features, its label and its id."""
+    features = np.full(FEATURES, index / 10, dtype=np.float32)
+    label = np.int32(index % 3)
+    return features.tobytes() + label.tobytes() + f"record-{index:03d}".encode()
+
+
+directory = Path(tempfile.mkdtemp(prefix="arrayrecord_quickref_"))
+paths, start = [], 0
+for shard, count in enumerate(SHARDS):
+    path = directory / f"train-{shard:05d}-of-{len(SHARDS):05d}.array_record"
+    writer = ArrayRecordWriter(str(path), "group_size:1")
+    for index in range(start, start + count):
+        writer.write(encode(index))
+    writer.close()
+    paths.append(str(path))
+    start += count
+print(f"Wrote {sum(SHARDS)} records to {len(paths)} files")
 
 # %% [markdown]
 """
-## Part 5: Epoch Control
+## Part 2: A decoder for a batch of records
 
-### Finite Epochs
-
-```python
-# Run for exactly 10 epochs
-config = ArrayRecordSourceConfig(num_epochs=10)
-source = ArrayRecordSourceModule(config, paths=paths, decode=decode, rngs=nnx.Rngs(0))
-
-pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
-for epoch in range(10):
-    for batch in pipeline:
-        train_step(batch)
-# Each iter(pipeline) session covers one pass over the source.
-```
-
-### Step-Based Training
-
-```python
-# Run until a step budget is reached, re-entering the pipeline per epoch
-pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
-
-step = 0
-while step < max_steps:
-    for batch in pipeline:
-        train_step(batch)
-        step += 1
-        if step >= max_steps:
-            break
-```
+`decode` receives the `bytes` of every record in a batch, in the order named, and returns one
+mapping of values per record. Numeric values become the batch's columns; strings and other
+objects become the record's provenance, which the source serves by index beside the batch.
 """
 
+
 # %%
-print()
-print("Epoch Control:")
-print()
-print("  # Finite epochs")
-print("  config = ArrayRecordSourceConfig(num_epochs=10)")
-print("  # Stops automatically after 10 epochs")
-print()
-print("  # Infinite iteration (step-based)")
-print("  config = ArrayRecordSourceConfig(num_epochs=-1)")
-print("  # Use break/max_steps for control")
+def decode(records: Sequence[bytes]) -> list[dict[str, Any]]:
+    """The batch's records as features, label and id."""
+    split = 4 * FEATURES
+    return [
+        {
+            "features": np.frombuffer(record[:split], dtype=np.float32),
+            "label": np.frombuffer(record[split : split + 4], dtype=np.int32)[0],
+            "id": record[split + 4 :].decode(),
+        }
+        for record in records
+    ]
+
+
+source = ArrayRecordSourceModule(ArrayRecordSourceConfig(), paths, decode=decode)
+print(f"Records: {len(source)}")
+print(f"Element spec: {source.element_spec()}")
 
 # %% [markdown]
 """
-## Part 6: Shuffling Behavior
+## Part 3: Reading named records
 
-### Per-Epoch Reshuffling
+`get_batch` takes record indices as their uint32 words (`to_words` names plain positions),
+reads the named records with one batched read, decodes them with one call and returns a host
+`Batch` named with them. `provenance` returns the same records' non-numeric values.
+"""
 
-When `shuffle_files=True`:
+# %%
+words = to_words(np.array([45, 2, 39, 40], dtype=np.uint64))
+batch = source.get_batch(words)
+print(f"Labels: {batch['label']}")
+print(f"Features of record 45: {batch['features'][0]}")
+print(f"Indices: {from_words(np.asarray(batch.indices))}")
+print(f"Ids: {[p['id'] for p in source.provenance(words)]}")
 
-1. At initialization, indices are shuffled using `seed`
-2. At each epoch boundary, indices are reshuffled using `seed + epoch`
-3. This ensures reproducible but varied order across epochs
+# %% [markdown]
+"""
+## Part 4: A shuffled pipeline
+
+The pipeline owns the order: with `shuffle=True` each epoch serves a new permutation of the 64
+records, drawn from the pipeline's key, and every batch names its records and their epoch.
+"""
+
+
+# %%
+def build() -> Pipeline:
+    """A shuffled pipeline over the files, two epochs of batches of 16."""
+    return Pipeline(
+        source=source, stages=[], batch_size=16, rngs=nnx.Rngs(0), shuffle=True, num_epochs=2
+    )
+
+
+pipeline = build()
+served = [(from_words(np.asarray(b.indices)), np.asarray(b.epochs)) for b in pipeline]
+first_epoch = np.concatenate([indices for indices, epochs in served if epochs[0] == 0])
+print(f"Batches served: {len(served)}")
+print(f"First batch: {served[0][0]}")
+print(f"Epoch 0 serves every record once: {sorted(first_epoch.tolist()) == list(range(64))}")
+
+# %% [markdown]
+"""
+## Part 5: Resuming from the pipeline's state
+
+The pipeline's state is its cursor: the epoch, the position and a fingerprint of its
+configuration. A pipeline built the same way and given that state serves the rest of the run.
+"""
+
+# %%
+interrupted = build()
+batches = iter(interrupted)
+for _ in range(3):
+    next(batches)
+state = interrupted.get_state()
+print(f"State after three batches: epoch {state['epoch']}, position {state['position']}")
+
+resumed = build()
+resumed.set_state(state)
+rest = [from_words(np.asarray(b.indices)) for b in resumed]
+same = all(np.array_equal(a, b) for a, (b, _) in zip(rest, served[3:], strict=True))
+print(f"The resumed run serves the uninterrupted run's last {len(rest)} batches: {same}")
+interrupted.close()
+
+# %% [markdown]
+"""
+## Part 6: A TFDS split prepared as ArrayRecord
+
+`from_tfds` decodes an ArrayRecord split into memory by default. With `in_memory=False` it
+returns an `ArrayRecordSourceModule` over the split's files, with TFDS's decoder, for a split
+larger than RAM; every record is then decoded each epoch.
 
 ```python
-# Enable shuffling with reproducible seed
-config = ArrayRecordSourceConfig(
-    seed=42,
-    shuffle_files=True,
-)
-# Epoch 0: shuffled with seed=42
-# Epoch 1: reshuffled with seed=43
-# Epoch 2: reshuffled with seed=44
-# ...
+from datarax.sources import from_tfds
+
+source = from_tfds("imagenet2012", "train", data_dir=data_dir, in_memory=False)
 ```
 """
 
 # %%
-print()
-print("Shuffling Behavior:")
-print()
-print("  shuffle_files=True:")
-print("    - Initial shuffle: seed=42")
-print("    - Epoch 1 reshuffle: seed=43")
-print("    - Epoch 2 reshuffle: seed=44")
-print("    - Ensures varied but reproducible order")
+source.close()
+shutil.rmtree(directory)
+print("Closed the source's file handles and removed the files.")
 
 # %% [markdown]
 """
 ## Results Summary
 
-### ArrayRecordSourceModule Features
+| Aspect | `ArrayRecordSourceModule` |
+|--------|---------------------------|
+| Record index | position in the files, across files in order |
+| Read | one batched read of a batch's records (a parallel read per file) |
+| Decode | one `decode` call per batch: numbers to columns, other values to provenance |
+| Order, epochs, resume | the pipeline's (`shuffle`, `num_epochs`, `get_state` / `set_state`) |
+| Memory | no records held between batches |
+| File handles | `close()` or a `with` block |
 
-| Feature | Description |
-|---------|-------------|
-| **Stateful** | Tracks position via NNX Variables |
-| **Checkpointing** | Full `get_state()` / `set_state()` |
-| **Shuffling** | Per-epoch reshuffling with seed control |
-| **Epoch Control** | Per-session passes; loop `iter(pipeline)` for epochs |
-| **Decoding** | `decode` turns each bytes record into arrays for batches |
-| **Grain Compatible** | Wraps Grain's ArrayRecordDataSource |
-
-### When to Use ArrayRecord
-
-- Large datasets (>10GB)
-- Need random access to records
-- Working with Google's ML infrastructure
-- Migrating from TFRecord to a modern format
-"""
-
-# %% [markdown]
-"""
 ## Next Steps
 
-- [HuggingFace Tutorial](../huggingface/hf-tutorial.ipynb) - Alternative data source
-- [TFDS Quick Reference](../tfds/tfds-quickref.ipynb) - TensorFlow Datasets
-- [Checkpointing Guide](../../advanced/checkpointing/checkpoint-quickref.ipynb) - Full checkpointing
+- [TFDS Quick Reference](../tfds/tfds-quickref.ipynb) - TFDS splits in memory or per batch
+- [Resumed Training Guide](../../comparison/resumed-training-guide.ipynb) - checkpointing a run
 """
-
-
-# %%
-def main():
-    """Run the ArrayRecord quick reference."""
-    print("=" * 60)
-    print("ArrayRecord Source Quick Reference")
-    print("=" * 60)
-
-    print()
-    print("This quick reference demonstrates the ArrayRecordSourceModule API.")
-    print("Actual usage requires ArrayRecord files (*.riegeli format).")
-
-    print()
-    print("Key API Summary:")
-    print()
-    print("  1. Configuration:")
-    print("     config = ArrayRecordSourceConfig(")
-    print("         seed=42,")
-    print("         num_epochs=-1,")
-    print("         shuffle_files=True,")
-    print("     )")
-    print()
-    print("  2. Source Creation:")
-    print("     source = ArrayRecordSourceModule(")
-    print("         config,")
-    print('         paths="/path/to/*.riegeli",')
-    print("         decode=decode,")
-    print("         rngs=nnx.Rngs(0),")
-    print("     )")
-    print()
-    print("  3. Pipeline Integration:")
-    print("     pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))")
-    print()
-    print("  4. Checkpointing:")
-    print("     state = source.get_state()")
-    print("     source.set_state(state)")
-
-    print()
-    print("=" * 60)
-    print("Quick reference completed!")
-    print("=" * 60)
-
-
-if __name__ == "__main__":
-    main()

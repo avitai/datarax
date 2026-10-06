@@ -22,6 +22,7 @@ from flax import nnx
 
 from datarax.core.index_words import to_words
 from datarax.sources import from_tfds, TFDSEagerConfig, TFDSEagerSource
+from datarax.sources.array_record_source import ArrayRecordSourceModule
 from tests.test_common.tfds_fixture import (
     FIXTURE,
     IMAGE_SHAPE,
@@ -207,6 +208,37 @@ class TestTheEagerSourceReadsArrayRecord:
 
         assert isinstance(source, TFDSEagerSource)
         assert len(source) == TRAIN_RECORDS
+
+    @pytest.mark.parametrize(
+        ("split", "options"),
+        [
+            ("train", {}),
+            ("train[3:11]", {}),
+            ("train", {"as_supervised": True}),
+            ("test", {"exclude_keys": {"score"}}),
+        ],
+    )
+    def test_from_tfds_not_in_memory_reads_per_batch_what_the_eager_source_holds(
+        self, tfds_fixture: TFDSFixture, split: str, options: dict[str, Any]
+    ) -> None:
+        data_dir = str(tfds_fixture.array_record)
+        per_batch = from_tfds(FIXTURE, split, data_dir=data_dir, in_memory=False, **options)
+        eager = from_tfds(FIXTURE, split, data_dir=data_dir, **options)
+        assert isinstance(per_batch, ArrayRecordSourceModule)
+        assert isinstance(eager, TFDSEagerSource)
+        words = to_words(np.arange(len(eager), dtype=np.uint64)[::-1])
+
+        got, want = per_batch.get_batch(words), eager.get_batch(words)
+
+        assert len(per_batch) == len(eager)
+        assert per_batch.element_spec() == eager.element_spec()
+        assert jax.tree.structure(got.data) == jax.tree.structure(want.data)
+        for value, expected in zip(
+            jax.tree.leaves(got.data), jax.tree.leaves(want.data), strict=True
+        ):
+            assert value.dtype == expected.dtype
+            np.testing.assert_array_equal(value, expected)
+        assert per_batch.provenance(words) == eager.provenance(words)
 
 
 # =============================================================================

@@ -87,7 +87,7 @@ for i, batch in enumerate(train_pipeline):
 
 `TFDSEagerSource` reads a dataset from the TensorFlow Datasets catalog that TFDS has prepared as ArrayRecord, without TensorFlow in the process; prepare it once, in a process of its own, with `tfds.builder("mnist", file_format="array_record").download_and_prepare()` (the `tfds` extra). Text features, such as CIFAR-10's `id`, are kept as each record's provenance.
 
-> **Tip:** `from_tfds(name, split, ...)` picks the source by the copy's prepared format: `TFDSEagerSource` for ArrayRecord, `TFDSStreamingSource` (no TensorFlow) for TFRecord.
+> **Tip:** `from_tfds(name, split, ...)` picks the source by the copy's prepared format: `TFDSEagerSource` for ArrayRecord (or, with `in_memory=False` for a split larger than RAM, an `ArrayRecordSourceModule` reading per batch), `TFDSStreamingSource` (no TensorFlow) for TFRecord.
 
 ### HFEagerSource
 
@@ -126,23 +126,25 @@ for i, batch in enumerate(pipeline):
 For array record format data (commonly used in large-scale ML training), use `ArrayRecordSourceModule`:
 
 ```python
+from collections.abc import Sequence
+
 import numpy as np
 from datarax.pipeline import Pipeline
 from datarax.sources import ArrayRecordSourceModule, ArrayRecordSourceConfig
 from flax import nnx
 
 
-def decode(record: bytes) -> dict[str, np.ndarray]:
-    # ArrayRecord records are bytes; turn one into a dict of arrays.
-    return {"features": np.frombuffer(record, dtype=np.float32)}
+def decode(records: Sequence[bytes]) -> list[dict[str, np.ndarray]]:
+    # ArrayRecord records are bytes; one call turns a batch's records into arrays.
+    return [{"features": np.frombuffer(record, dtype=np.float32)} for record in records]
 
 
-# Create source from array record file (config first, then path)
+# An indexed source over the files (config first, then paths); nothing is held in memory
 config = ArrayRecordSourceConfig()
 source = ArrayRecordSourceModule(config, "path/to/arrayrecord/file", decode=decode)
 
-# Each pass over the pipeline covers one epoch of decoded batches
-pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
+# The pipeline owns the order and the epochs
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0), shuffle=True)
 ```
 
 ## Creating Custom Data Sources

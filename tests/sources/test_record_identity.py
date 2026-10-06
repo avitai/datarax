@@ -53,8 +53,8 @@ def test_every_exported_source_declares_its_kind() -> None:
         HFEagerSource: RecordIdentity.INDEXED,
         StreamingDiskSource: RecordIdentity.INDEXED,
         MixDataSourcesNode: RecordIdentity.INDEXED,
+        ArrayRecordSourceModule: RecordIdentity.INDEXED,
         TFDSStreamingSource: RecordIdentity.STREAM_IDS,
-        ArrayRecordSourceModule: RecordIdentity.STREAM_IDS,
         HFStreamingSource: RecordIdentity.ARRIVAL,
     }
     for source_class, kind in expected.items():

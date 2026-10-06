@@ -265,7 +265,7 @@ def take_rows(columns: PyTree, rows: np.ndarray | slice) -> PyTree:
     return jax.tree.map(lambda column: column[rows], columns)
 
 
-def read_host_batch(
+def read_host_batch(  # noqa: DOC502 - record_words, host_rows and run_words raise
     columns: PyTree,
     length: int,
     indices: ArrayLike,
@@ -298,17 +298,49 @@ def read_host_batch(
     words = record_words(indices)
     rows = host_rows(words, length)
     if contiguous and len(rows):
+        words = run_words(rows)
         first = int(rows[0])
-        if int(rows[-1]) != first + len(rows) - 1:
-            raise ValueError(
-                f"a read declared contiguous names a run of records; {first} to "
-                f"{int(rows[-1])} is not a run of {len(rows)}"
-            )
         data = take_rows(columns, slice(first, first + len(rows)))
-        words = to_words(np.arange(first, first + len(rows), dtype=np.uint64))
     else:
         data = take_rows(columns, rows)
-    epoch_of_each = np.broadcast_to(np.asarray(epochs, np.int32), (len(rows),))
+    return named_batch(data, words, epochs)
+
+
+def run_words(rows: np.ndarray) -> np.ndarray:
+    """The words naming ``rows``, which a read declared contiguous: a run of consecutive records.
+
+    Only the run's ends are checked; its rows are named as the run.
+
+    Args:
+        rows: The read's row numbers, at least one.
+
+    Returns:
+        uint32 ``(n, 2)`` words of ``rows[0] .. rows[0] + n``.
+
+    Raises:
+        ValueError: If the ends do not bound a run of ``len(rows)`` records.
+    """
+    first = int(rows[0])
+    if int(rows[-1]) != first + len(rows) - 1:
+        raise ValueError(
+            f"a read declared contiguous names a run of records; {first} to "
+            f"{int(rows[-1])} is not a run of {len(rows)}"
+        )
+    return to_words(np.arange(first, first + len(rows), dtype=np.uint64))
+
+
+def named_batch(data: PyTree, words: np.ndarray, epochs: ArrayLike) -> Batch:
+    """A host ``Batch`` of ``data`` named with ``words`` and ``epochs``, its draws 0.
+
+    Args:
+        data: Host columns with one row per record.
+        words: uint32 ``(n, 2)`` record indices.
+        epochs: The epoch of every record, or of each ``(n,)``.
+
+    Returns:
+        The ``Batch``.
+    """
+    epoch_of_each = np.broadcast_to(np.asarray(epochs, np.int32), (len(words),))
     return batch_ops.from_arrays(data).replace(
         indices=words, epochs=np.ascontiguousarray(epoch_of_each)
     )

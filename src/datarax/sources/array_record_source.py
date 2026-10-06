@@ -1,396 +1,229 @@
-"""Data source for reading from ArrayRecord format files."""
+"""An indexed source over ArrayRecord files, read in batches on the host."""
 
-import logging
+from __future__ import annotations
+
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Self
 
-import grain
-import grain.sources
 import jax
 import numpy as np
-from flax import nnx
+from array_record.python.array_record_data_source import ArrayRecordDataSource
+from jax.typing import ArrayLike
 
-from datarax.core import batch_ops
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule, RecordIdentity
+from datarax.core.data_source import (
+    DataSourceModule,
+    host_rows,
+    NO_PROVENANCE,
+    record_words,
+    RecordIdentity,
+)
 from datarax.core.element_batch import Batch
-from datarax.core.index_words import to_words
-from datarax.core.spec import array_to_spec
-from datarax.sources._index_validation import validate_index_batch
-from datarax.sources._source_base import empty_stream_batch
-from datarax.utils.state import build_state_with_iteration_fields, restore_iteration_fields
+from datarax.core.spec import array_to_spec_strip_leading, device_spec
+from datarax.sources.eager_source import named_batch, parts_of_records, run_words
 
 
-logger = logging.getLogger(__name__)
+type RecordDecoder = Callable[[Sequence[bytes]], Sequence[Mapping[str, Any]]]
+"""Turns a batch's ``bytes`` records into one mapping of values per record, in one call."""
 
 
 @dataclass(frozen=True)
 class ArrayRecordSourceConfig(StructuralConfig):
-    """Configuration for ArrayRecordSourceModule.
-
-    Inherits from StructuralConfig for runtime immutability.
+    """Configuration for ``ArrayRecordSourceModule``.
 
     Attributes:
-        seed: Random seed for shuffling (used internally, not by Grain).
-        num_epochs: Number of epochs (-1 for infinite).
-        shuffle_files: Whether to shuffle file order (handled internally).
-        local_files_only: If True, validate every path exists at construction
-            time and raise ``FileNotFoundError`` with path context if any are
-            missing. ArrayRecord sources never download, so this flag is
-            primarily a UX improvement over Grain's lower-level errors.
+        local_files_only: If True, every path is checked to exist at construction, and a missing
+            one is refused with ``FileNotFoundError`` naming it. ArrayRecord sources never
+            download, so this replaces the reader's lower-level error with one naming the paths.
     """
 
-    seed: int = 42
-    num_epochs: int = -1
-    shuffle_files: bool = False
     local_files_only: bool = False
 
 
-class ArrayRecordSourceModule(DataSourceModule):
-    """Stateful wrapper for Grain's ArrayRecordDataSource.
+class _Records:
+    """ArrayRecord files read by position, kept on the host and out of NNX state.
 
-    This module wraps Grain's ArrayRecordDataSource while maintaining
-    stateful iteration through NNX Variables, following TDD principles
-    and critical technical guidelines.
-
-    Note: Grain's ArrayRecordDataSource doesn't accept a seed parameter directly.
-    Shuffling is handled at the sampler level or through file ordering.
-
-    ArrayRecord records are ``bytes``. Pass ``decode`` to turn one record into a
-    dict of arrays; ``get_batch`` then decodes and stacks records of the current
-    epoch and returns an empty batch at the epoch boundary, so every
-    ``for batch in pipeline`` pass covers one epoch.
-
-    Resource management: the underlying ArrayRecord readers hold C++ file handles
-    that are not reliably freed by garbage collection. Use the module as a context
-    manager (``with ArrayRecordSourceModule(...) as source:``) or call ``close()``
-    explicitly between phases to avoid "Too many open files" on long-running jobs.
+    ArrayRecord's data source (the reader Grain and TFDS read the format with) opens each file at
+    its first read; reads go through one lock, so two threads never open the same file twice. It
+    pickles as that data source does, without open readers, so a copy sent to a worker process
+    reopens the files where it reads them.
     """
 
-    # Narrow config type for pyright (base stores via nnx.static)
+    __slots__ = ("_lock", "paths", "source")
+
+    def __init__(self, paths: Any) -> None:
+        self.paths = paths
+        self.source = ArrayRecordDataSource(paths)
+        self._lock = threading.Lock()
+
+    def read(self, rows: Sequence[int]) -> Sequence[bytes]:
+        """The records at ``rows``, in one batched read (a parallel read per file)."""
+        with self._lock:
+            return self.source.__getitems__(rows)
+
+    def close(self) -> None:
+        """Close the open readers; the files reopen at the next read."""
+        with self._lock:
+            self.source.__exit__(None, None, None)
+
+    def __getstate__(self) -> dict[str, Any]:
+        """The paths and the data source, which pickles its files and not its open readers."""
+        return {"paths": self.paths, "source": self.source}
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Hold the reader; its files open at the next read."""
+        self.paths = state["paths"]
+        self.source = state["source"]
+        self._lock = threading.Lock()
+
+
+def _path_of(path: Any) -> str:
+    """A path's file name: the path itself, or a ``FileInstruction``'s ``filename``."""
+    return str(getattr(path, "filename", path))
+
+
+class ArrayRecordSourceModule(DataSourceModule):
+    """An indexed source over ArrayRecord files: a record's index is its position in the files.
+
+    ArrayRecord records are ``bytes``. A batch's records are read with one batched read of
+    ArrayRecord's ``ArrayRecordDataSource`` (a parallel read per file) and decoded with one call of
+    ``decode``, which returns one mapping of values per record. Numeric values become the
+    batch's columns and every other value the record's provenance, as in the eager sources
+    (:func:`~datarax.sources.eager_source.parts_of_records`). ``paths`` may be file paths or
+    ``FileInstruction`` s, which read a part of each file (TFDS's split slices).
+
+    The source holds no order, epoch or cursor: the pipeline that serves it names the records
+    of each batch (``Pipeline(shuffle=...)``) and its host stage reads them with
+    :meth:`get_batch`. It has no traced read, so a compiled ``step()`` over it is refused.
+
+    ArrayRecord readers hold file handles that garbage collection does not reliably release;
+    use the source as a context manager or call :meth:`close` between phases that open new
+    sources, to avoid "Too many open files" on long-running jobs.
+    """
+
     config: ArrayRecordSourceConfig  # pyright: ignore[reportIncompatibleVariableOverride]
 
     @property
     def record_identity(self) -> RecordIdentity:
-        """``STREAM_IDS``: the source streams decoded batches forward with ``get_batch``.
-
-        Its records are named by the ids it reports until batched random-access reads serve it
-        as an ``INDEXED`` source.
-        """
-        return RecordIdentity.STREAM_IDS
+        """A record's index is its position in the files, which the pipeline orders."""
+        return RecordIdentity.INDEXED
 
     def __init__(
         self,
         config: ArrayRecordSourceConfig,
-        paths: str | list[str],
+        paths: Any,
         *,
-        decode: Callable[[bytes], Mapping[str, Any]] | None = None,
-        rngs: nnx.Rngs | None = None,
+        decode: RecordDecoder,
         name: str | None = None,
     ) -> None:
-        """Initialize ArrayRecord source with state management.
+        """Open the ArrayRecord files, reading no record.
 
         Args:
             config: Configuration for the source.
-            paths: Path pattern or list of paths to ArrayRecord files.
-            decode: Turns one ``bytes`` record into a dict of arrays; required for
-                ``get_batch``, ``element_spec`` and ``Pipeline`` iteration.
-            rngs: NNX Rngs for additional randomness.
+            paths: A path or ``FileInstruction``, or a sequence of them.
+            decode: Turns a batch's ``bytes`` records into one mapping of values per record.
             name: Optional name for the module.
 
         Raises:
-            FileNotFoundError: If ``local_files_only`` is set and any of ``paths`` does not exist.
+            FileNotFoundError: If ``local_files_only`` is set and a path does not exist.
         """
-        super().__init__(config, rngs=rngs, name=name)
-
-        # When local_files_only is set, fail fast with a clear message instead
-        # of letting Grain raise its lower-level error on a missing file.
+        super().__init__(config, name=name)
         if config.local_files_only:
-            from pathlib import Path  # noqa: PLC0415
-
-            path_list = [paths] if isinstance(paths, str) else list(paths)
-            missing = [p for p in path_list if not Path(p).exists()]
+            listed = [paths] if isinstance(paths, str) or not isinstance(paths, Sequence) else paths
+            missing = [_path_of(p) for p in listed if not Path(_path_of(p)).exists()]
             if missing:
                 raise FileNotFoundError(
-                    f"ArrayRecordSourceModule: local_files_only=True but the "
-                    f"following path(s) do not exist: {missing}. Either populate "
-                    "the paths or set local_files_only=False to defer the error "
-                    "to Grain."
+                    f"ArrayRecordSourceModule: local_files_only=True but the following path(s) "
+                    f"do not exist: {missing}. Either populate the paths or set "
+                    "local_files_only=False to defer the error to the reader."
                 )
-
-        # Initialize Grain data source (doesn't take seed parameter)
-        self.grain_source = grain.sources.ArrayRecordDataSource(paths=paths)
+        self._records = _Records(paths)
         self._decode = decode
 
-        # Stateful variables using nnx.Variable
-        self.current_index = nnx.Variable(0)
-        self.current_epoch = nnx.Variable(0)
-        self.total_records = nnx.Variable(len(self.grain_source))  # type: ignore[arg-type]
-
-        # Cache for prefetched records
-        self.prefetch_cache: nnx.Variable[dict[str, Any]] = nnx.Variable({})
-
-        # Iterator state
-        self.iterator_initialized = nnx.Variable(False)
-        # NOTE: Don't use nnx.Variable for iterator storage - it causes copying
-        # issues with NNX modules. current_iterator was unused dead code.
-
-        # Shuffled indices if shuffling is enabled
-        self.shuffled_indices: nnx.Variable[np.ndarray | None] = nnx.Variable(None)
-        if self.config.shuffle_files:
-            self._initialize_shuffle()
-
-    def _initialize_shuffle(self) -> None:
-        """Initialize shuffled indices for the epoch."""
-        if self.config.shuffle_files:
-            # Create shuffled indices
-            rng = np.random.RandomState(self.config.seed + self.current_epoch.get_value())
-            indices = np.arange(self.total_records.get_value())
-            rng.shuffle(indices)
-            self.shuffled_indices.set_value(indices)
-
     def __len__(self) -> int:
-        """Return total number of records."""
-        return self.total_records.get_value()
+        """The number of records in the files."""
+        return len(self._records.source)
 
     def __repr__(self) -> str:
-        """Config-identifying representation for checkpoint validation.
+        """The files and the record count, which identify the records a checkpoint names."""
+        return f"ArrayRecordSourceModule(paths={self._records.paths!r}, num_records={len(self)})"
 
-        Enumerates every parameter that affects which records are read and in
-        what order (paths, record count, shuffle/seed/epoch settings) so a
-        checkpoint restore can detect an incompatible source configuration.
-        """
-        paths = getattr(self.grain_source, "paths", None)
-        return (
-            f"ArrayRecordSourceModule(paths={paths!r}, "
-            f"num_records={self.total_records.get_value()}, "
-            f"shuffle_files={self.config.shuffle_files}, "
-            f"seed={self.config.seed}, "
-            f"num_epochs={self.config.num_epochs})"
-        )
+    def _parts(self, rows: np.ndarray) -> tuple[Any, tuple[dict[str, Any], ...]]:
+        """The columns and provenance of the records at ``rows``: one read, one decode call."""
+        records = self._records.read([int(row) for row in rows])
+        return parts_of_records(self._decode(records))
 
-    def __iter__(self) -> Self:
-        """Initialize iteration with state tracking."""
-        self.current_index.set_value(0)
-        if self.current_epoch.get_value() == 0 or not self.iterator_initialized.get_value():
-            self._initialize_iterator()
-        return self
-
-    def __next__(self) -> Any:  # type: ignore[override]
-        """Get next element with state management."""
-        if self._epochs_exhausted():
-            raise StopIteration
-
-        current_index = self.current_index.get_value()
-        # Check if we need to start a new epoch
-        if current_index >= self.total_records.get_value():
-            self._start_next_epoch()
-            if self._epochs_exhausted():
-                raise StopIteration
-            current_index = 0
-
-        # Get the actual index (shuffled or sequential)
-        shuffled_indices = self.shuffled_indices.get_value()
-        if shuffled_indices is not None:
-            actual_idx = shuffled_indices[current_index]
-        else:
-            actual_idx = current_index
-
-        # Get from Grain source
-        element = self.grain_source[int(actual_idx)]
-        self.current_index.set_value(current_index + 1)
-
-        return element
-
-    def _initialize_iterator(self) -> None:
-        """Initialize internal iterator with proper state."""
-        if self.config.shuffle_files:
-            self._initialize_shuffle()
-        self.iterator_initialized.set_value(True)
-
-    def get_state(self) -> dict[str, Any]:
-        """Get complete state for checkpointing."""
-        shuffled_indices = self.shuffled_indices.get_value()
-        return build_state_with_iteration_fields(
-            super().get_state(),
-            current_index=self.current_index.get_value(),
-            current_epoch=self.current_epoch.get_value(),
-            extra_fields={
-                "prefetch_cache": self.prefetch_cache.get_value(),
-                "shuffled_indices": shuffled_indices.tolist()
-                if shuffled_indices is not None
-                else None,
-            },
-        )
-
-    def set_state(self, state: dict[str, Any]) -> None:
-        """Restore state from checkpoint."""
-        super().set_state(state)
-        restore_iteration_fields(
-            state,
-            current_index=self.current_index,
-            current_epoch=self.current_epoch,
-            prefetch_cache=self.prefetch_cache,
-        )
-        if "shuffled_indices" in state and state["shuffled_indices"] is not None:
-            self.shuffled_indices.set_value(np.array(state["shuffled_indices"]))
-
-    def __getitem__(self, idx: int) -> Any:
-        """Get element by index for subscriptable access.
-
-        Args:
-            idx: Index of the element to retrieve.
-
-        Returns:
-            Element at the given index.
-
-        Raises:
-            IndexError: If ``idx`` is outside the dataset after negative-index wrapping.
-        """
-        total_records = self.total_records.get_value()
-        # Handle negative indices
-        if idx < 0:
-            idx = total_records + idx
-
-        # Check bounds
-        if idx < 0 or idx >= total_records:
-            raise IndexError(f"Index {idx} out of range for dataset with {total_records} elements")
-
-        # Apply shuffling if enabled
-        shuffled_indices = self.shuffled_indices.get_value()
-        actual_idx = shuffled_indices[idx] if shuffled_indices is not None else idx
-
-        # Get from Grain source
-        return self.grain_source[int(actual_idx)]
-
-    def _epochs_exhausted(self) -> bool:
-        """Whether ``num_epochs`` epochs have been served."""
-        num_epochs = self.config.num_epochs
-        return num_epochs != -1 and self.current_epoch.get_value() >= num_epochs
-
-    def _start_next_epoch(self) -> None:
-        """Advance to the next epoch: first record, and a new order when shuffling."""
-        self.current_epoch.set_value(self.current_epoch.get_value() + 1)
-        self.current_index.set_value(0)
-        if self.config.shuffle_files:
-            self._initialize_shuffle()
-
-    def _require_decode(self) -> Callable[[bytes], Mapping[str, Any]]:
-        """Return the record decoder, refusing to produce arrays without one.
-
-        Returns:
-            The ``decode`` function the source was built with.
-
-        Raises:
-            TypeError: If the source was built without ``decode``.
-        """
-        if self._decode is None:
-            raise TypeError(
-                "ArrayRecordSourceModule needs decode= to produce batches: ArrayRecord "
-                "records are bytes, and batches are dicts of arrays."
-            )
-        return self._decode
-
-    def get_batch(
-        self, batch_size: int, *, key: jax.Array | None = None, read_size: int | None = None
+    def get_batch(  # noqa: DOC502 - record_words, host_rows and run_words raise
+        self, indices: ArrayLike, *, epochs: ArrayLike = 0, contiguous: bool = False
     ) -> Batch:
-        """Decode and stack up to ``batch_size`` records of the current epoch, as a host ``Batch``.
+        """Read and decode the records ``indices`` names, as a ``Batch`` named with them.
 
-        The batch's ``indices`` are the records' positions in the files (after ``shuffle_files``)
-        and its ``epochs`` the source's epoch. Returns an empty batch at the end of an epoch, and
-        the next call starts the next epoch, so each ``for batch in pipeline`` pass covers one
-        epoch. Once ``num_epochs`` epochs have been served every call returns an empty batch.
+        One batched read of the named records and one call of ``decode``; the batch's
+        ``indices`` are the given words, its ``epochs`` the given epochs and its draws 0. It
+        reads and changes no state and creates no device array. With ``contiguous=True`` the
+        caller states that ``indices`` is a run of consecutive records; only its ends are
+        checked, and its rows are named as the run.
 
         Args:
-            batch_size: Largest number of records to return.
-            key: Must be ``None``: the source orders its records by ``shuffle_files`` and its
-                ``seed``, so its pipeline is built with ``shuffle=False``.
-            read_size: The stream route's read size; unused, since each pull reads its own
-                records by position.
+            indices: uint32 ``(n, 2)`` record indices, each as its words ``(hi, lo)``.
+            epochs: The epoch of every record, or of each ``(n,)``.
+            contiguous: Whether ``indices`` is a run of consecutive records.
 
         Returns:
-            The records as a host ``Batch``, or an empty one at an epoch boundary.
+            The records' numeric values as a host ``Batch``.
 
         Raises:
-            ValueError: If a key is given.
+            ValueError: If ``indices`` are not uint32 ``(n, 2)`` words, a run declared
+                contiguous is not one, or the decoded records' numeric fields or shapes differ.
+            IndexError: If an index is the padding index or outside the files.
         """
-        if key is not None:
-            raise ValueError(
-                "ArrayRecordSourceModule orders its records by shuffle_files and its seed; build "
-                "its pipeline with shuffle=False"
-            )
-        del read_size
-        decode = self._require_decode()
-        if self._epochs_exhausted():
-            return empty_stream_batch()
-        index = self.current_index.get_value()
-        total = self.total_records.get_value()
-        if index >= total:
-            self._start_next_epoch()
-            return empty_stream_batch()
-        stop = min(index + batch_size, total)
-        records = [decode(record) for record in self._getitems(list(range(index, stop)))]
-        self.current_index.set_value(stop)
-        shuffled = self.shuffled_indices.get_value()
-        positions = np.arange(index, stop) if shuffled is None else shuffled[index:stop]
-        columns = {
-            field: np.stack([np.asarray(record[field]) for record in records])
-            for field in records[0]
-        }
-        return batch_ops.from_arrays(columns).replace(
-            indices=to_words(np.asarray(positions, dtype=np.uint64)),
-            epochs=np.full((stop - index,), self.current_epoch.get_value(), np.int32),
-        )
+        words = record_words(indices)
+        rows = host_rows(words, len(self))
+        if contiguous and len(rows):
+            words = run_words(rows)
+        columns, _ = self._parts(rows)
+        return named_batch(columns, words, epochs)
 
-    def element_spec(self) -> dict[str, jax.ShapeDtypeStruct]:
-        """Describe one decoded record exactly as ``get_batch`` stacks it.
+    def provenance(  # noqa: DOC502 - record_words and host_rows raise
+        self, indices: ArrayLike
+    ) -> tuple[Mapping[str, Any], ...]:
+        """The non-numeric values of the records ``indices`` names, read and decoded again.
+
+        Args:
+            indices: uint32 ``(n, 2)`` record indices.
 
         Returns:
-            The shape and dtype of each field of the first decoded record.
+            Each named record's mapping of strings and objects, in the order named; an empty
+            mapping for a record that holds nothing but numbers.
+
+        Raises:
+            ValueError: If ``indices`` are not uint32 ``(n, 2)`` words.
+            IndexError: If an index is the padding index or outside the files.
         """
-        record = self._require_decode()(self.grain_source[0])
-        return {key: array_to_spec(np.asarray(value)) for key, value in record.items()}
+        rows = host_rows(record_words(indices), len(self))
+        _, provenance = self._parts(rows)
+        return provenance or (NO_PROVENANCE,) * len(rows)
 
-    def _getitems(self, indices: Sequence[int]) -> list[Any]:
-        """Get multiple records using Grain's batched random-access protocol."""
-        total_records = self.total_records.get_value()
-        resolved = validate_index_batch(indices, total_records)
-        shuffled_indices = self.shuffled_indices.get_value()
-        actual_indices = (
-            [int(shuffled_indices[index]) for index in resolved]
-            if shuffled_indices is not None
-            else resolved
-        )
+    def element_spec(self) -> Any:
+        """The spec of one decoded record's numbers as the device holds them (record 0's).
 
-        getitems = getattr(self.grain_source, "_getitems", None)
-        if getitems is not None:
-            return list(getitems(actual_indices))
-        return [self.grain_source[index] for index in actual_indices]
+        Returns:
+            A pytree of ``jax.ShapeDtypeStruct``, the dtypes stated as JAX arrays hold them.
+        """
+        columns, _ = self._parts(np.zeros(1, np.int64))
+        return device_spec(jax.tree.map(array_to_spec_strip_leading, columns))
 
     def close(self) -> None:
-        """Release the underlying ArrayRecord C++ file handles.
+        """Release the ArrayRecord file handles; the files reopen at the next read.
 
-        ArrayRecord readers hold C++ file handles that Python garbage collection
-        does **not** reliably release; long-running pipelines that repeatedly
-        create sources can exhaust the file-descriptor limit ("Too many open
-        files"). Call ``close()`` — or use the source as a context manager —
-        between phases that open new sources.
-
-        Delegates to Grain's own cleanup: ``ArrayRecordDataSource.close()`` on
-        grain >= 0.2.19, falling back to its context-manager ``__exit__`` on
-        grain 0.2.18. Idempotent and safe to call multiple times.
+        ArrayRecord readers hold file handles that garbage collection does not reliably release,
+        so long-running jobs that create sources repeatedly can exhaust the descriptor limit.
+        Safe to call more than once.
         """
-        source = getattr(self, "grain_source", None)
-        if source is None:
-            return
-        closer = getattr(source, "close", None)
-        if callable(closer):
-            closer()
-            return
-        exiter = getattr(source, "__exit__", None)
-        if callable(exiter):
-            exiter(None, None, None)
+        self._records.close()
 
     def __enter__(self) -> Self:
         """Enter a context that guarantees ``close()`` on exit."""
@@ -399,3 +232,6 @@ class ArrayRecordSourceModule(DataSourceModule):
     def __exit__(self, *_exc_info: object) -> None:
         """Release ArrayRecord file handles on context exit."""
         self.close()
+
+
+__all__ = ["ArrayRecordSourceConfig", "ArrayRecordSourceModule", "RecordDecoder"]
