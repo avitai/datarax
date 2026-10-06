@@ -475,10 +475,25 @@ class HostStage:
         return self._run_iterator[0] if self._run_iterator else None
 
     def close(self) -> None:
-        """Close the run's Grain iterator and its threads; the cursor stays where it is."""
+        """Close the run's Grain iterator and its threads; the cursor stays where it is.
+
+        Iterators the run was serving are refused from then on, naming ``close()``.
+        """
+        self._end("close()")
+
+    def _end(self, by: str) -> None:
+        """End the open run, recording on its token what ended it, and close its iterator.
+
+        Args:
+            by: What ended the run: :data:`_RUN_END` at its last batch, else the call that ended
+                it, which the run's iterators name when they are refused.
+        """
+        token = None if self._token is None else self._token()
+        if token is not None and token.ended_by is None:
+            token.ended_by = by
         if self._finalizer is not None:
             self._finalizer()
-        self._opened_for, self._finalizer = None, None
+        self._opened_for, self._finalizer, self._token = None, None, None
 
     def _open(self, dataset: grain.IterDataset, options: tuple[Any, ...]) -> _RunToken:
         """Start the run's iterator: units read ahead, each placed as the consumer takes it.
@@ -550,15 +565,12 @@ class HostStage:
             self.read_buffer,
         )
         cursor = self.cursor
+        opened = (*options, cursor.epoch, cursor.position)
         token = None if self._token is None else self._token()
-        if (
-            token is None
-            or self.iterator is None
-            or self._opened_for != (*options, cursor.epoch, cursor.position)
-        ):
-            self.close()
+        if token is None or self.iterator is None or self._opened_for != opened:
+            self._end(_replaced_by(self._opened_for, opened))
             dataset = self._dataset(pipeline, chunk, with_provenance)
-            token = self._open(dataset, (*options, cursor.epoch, cursor.position))
+            token = self._open(dataset, opened)
         _RUN_HOLDERS[pipeline] = token
         return cast(
             Iterator[Batch] | Iterator[tuple[Batch, Provenance]],
@@ -710,7 +722,7 @@ class HostStage:
                     f"but this pipeline has {field}={value!r}; a state is only valid for the "
                     "configuration that produced it"
                 )
-        self.close()
+        self._end("set_state()")
         if kind == RecordIdentity.INDEXED.value:
             self.cursor = Cursor(
                 epoch=int(state["epoch"]),
@@ -734,7 +746,7 @@ class HostStage:
         Args:
             num_epochs: Epochs the new run serves, or ``None`` for no end.
         """
-        self.close()
+        self._end("reset()")
         epoch = self.cursor.epoch + 1
         self.cursor = Cursor(
             epoch=epoch,
@@ -839,7 +851,12 @@ class _RunElementsIterator(grain.DatasetIterator):
 
 
 class _Served:
-    """The units a call of ``raw_batches`` takes from the stage's run, advancing its cursor."""
+    """The units a call of ``raw_batches`` takes from the run it was created for.
+
+    It advances the stage's cursor as each unit is taken. Once its run reached its end it keeps
+    raising ``StopIteration``; once anything else ended its run it is refused, naming what did,
+    so it never serves a run opened after it.
+    """
 
     def __init__(
         self,
@@ -857,20 +874,28 @@ class _Served:
         return self
 
     def __next__(self) -> Batch | tuple[Batch, Provenance]:
-        stage = self._stage
-        iterator = stage.iterator
-        if iterator is None:
+        ended = self._token.ended_by
+        if ended is _RUN_END:
             raise StopIteration
+        if ended is not None:
+            raise RuntimeError(
+                f"this iterator's run was ended by {ended}; call raw_batches() or iter() on the "
+                "pipeline again to continue from where iteration stands"
+            )
+        stage = self._stage
+        # A token nothing ended belongs to the stage's open run: ending a run marks its token.
+        iterator = cast(_Placed, stage.iterator)
         try:
             batch, provenance, after = next(iterator)
         except StopIteration:
-            stage.close()
+            stage._end(_RUN_END)  # noqa: SLF001 - the run this iterator serves
             raise
         cursor = stage.cursor
         cursor.epoch, cursor.position, cursor.arrived = after
         stage._opened_for = (*self._options, cursor.epoch, cursor.position)  # noqa: SLF001
         if self._with_provenance:
-            return batch, () if provenance is None else provenance
+            # The run was opened with provenance (its options say so), so every unit carries it.
+            return batch, cast(Provenance, provenance)
         return batch
 
 
@@ -907,9 +932,53 @@ def _plain(value: Any) -> Any:
 
 
 class _RunToken:
-    """A run's lifetime: the run closes when the last holder of its token is gone."""
+    """A run's lifetime: the run closes when the last holder of its token is gone.
 
-    __slots__ = ("__weakref__",)
+    Attributes:
+        ended_by: What ended the run, or ``None`` while it is open: :data:`_RUN_END` once it
+            served its last batch, else the call that ended it.
+    """
+
+    __slots__ = ("__weakref__", "ended_by")
+
+    def __init__(self) -> None:
+        """An open run's token."""
+        self.ended_by: str | None = None
+
+
+_RUN_END = "the run's end"
+"""What a run that served its last batch was ended by; its iterators then stop."""
+
+_OPTION_NAMES = (
+    "source",
+    "epoch_plan",
+    "shuffle",
+    "chunk",
+    "with_provenance",
+    "x64",
+    "read_threads",
+    "read_buffer",
+    "epoch",
+    "position",
+)
+"""The names of a run's options, in the order :meth:`HostStage.batches` records them."""
+
+
+def _replaced_by(opened: tuple[Any, ...] | None, wanted: tuple[Any, ...]) -> str:
+    """The call that ends a run opened for ``opened`` to open one for ``wanted``, named."""
+    if opened is None:
+        return "a later call"
+    if opened[0] != wanted[0]:
+        return (
+            "a call over another source: a clone or merged copy of the pipeline, which shares "
+            "its host stage and cursor, continues them in turn, not interleaved"
+        )
+    changed = ", ".join(
+        f"{name}={new!r}"
+        for name, old, new in zip(_OPTION_NAMES, opened, wanted, strict=True)
+        if old != new
+    )
+    return f"a later call reading with {changed}"
 
 
 _RUN_HOLDERS: weakref.WeakKeyDictionary[Any, _RunToken] = weakref.WeakKeyDictionary()

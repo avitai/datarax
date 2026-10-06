@@ -399,6 +399,109 @@ class TestProvenance:
             ]
 
 
+class TestAnIteratorServesItsOwnRun:
+    """Each ``raw_batches()`` iterator serves the run it was created for, and no other.
+
+    Iterators of one run continue one cursor in turn. Once its run reached its end an iterator
+    keeps raising ``StopIteration``; once something else ended its run (``reset()``,
+    ``set_state()``, ``close()``, a later call reading with other options, a clone's call) its
+    next ``next()`` is refused, naming that call, so no iterator serves a run it was not made for.
+    """
+
+    def test_two_iterators_of_one_run_continue_one_cursor(self) -> None:
+        pipe = _pipeline(_memory(32), shuffle=False, num_epochs=1)
+        first, second = pipe.raw_batches(), pipe.raw_batches()
+        taken = [_names(next(iterator))[0] for iterator in (first, second, first, second)]
+        assert taken == [0, 8, 16, 24]
+        for iterator in (first, second):
+            with pytest.raises(StopIteration):
+                next(iterator)
+
+    def test_a_new_loop_after_a_break_continues_the_run(self) -> None:
+        pipe = _pipeline(_memory(32), shuffle=False, num_epochs=1)
+        for batch in pipe.raw_batches():
+            assert _names(batch)[0] == 0
+            break
+        assert [_names(b)[0] for b in pipe.raw_batches()] == [8, 16, 24]
+
+    def test_an_iterator_whose_run_ended_stays_ended_after_reset(self) -> None:
+        pipe = _pipeline(_memory(16), shuffle=False, num_epochs=1)
+        ended = pipe.raw_batches()
+        assert len(list(ended)) == 2
+        pipe.reset()
+        current = pipe.raw_batches()
+        assert _names(next(current))[0] == 0
+        with pytest.raises(StopIteration):
+            next(ended)
+        assert [_names(b)[0] for b in current] == [8]
+
+    @pytest.mark.parametrize(
+        ("end_it", "cause"),
+        [
+            (lambda pipe, state: pipe.reset(), r"reset\(\)"),
+            (lambda pipe, state: pipe.set_state(state), r"set_state\(\)"),
+            (lambda pipe, state: pipe.close(), r"close\(\)"),
+            (lambda pipe, state: next(pipe.raw_batches(chunk=2)), "chunk=2"),
+            (
+                lambda pipe, state: next(pipe.raw_batches(with_provenance=True)),
+                "with_provenance=True",
+            ),
+        ],
+    )
+    def test_a_live_iterator_whose_run_was_ended_is_refused_naming_the_call(
+        self, end_it: Any, cause: str
+    ) -> None:
+        pipe = _pipeline(_memory(), num_epochs=None)
+        state = pipe.get_state()
+        live = pipe.raw_batches()
+        next(live)
+        end_it(pipe, state)
+        with pytest.raises(RuntimeError, match=cause):
+            next(live)
+        with pytest.raises(RuntimeError, match=cause):  # and stays refused
+            next(live)
+
+    def test_a_processing_loop_held_while_raw_batches_reads_other_units_is_refused(self) -> None:
+        def double(element: Any, key: Any = None) -> Any:
+            del key
+            return element.update_data({"label": element.data["label"] * 2})
+
+        stage = ElementOperator(
+            ElementOperatorConfig(stochastic=False), fn=double, rngs=nnx.Rngs(0)
+        )
+        pipe = _pipeline(_memory(), stages=[stage], num_epochs=None)
+        processed = iter(pipe)
+        next(processed)
+        next(pipe.raw_batches(chunk=2))
+        with pytest.raises(RuntimeError, match="chunk=2"):
+            next(processed)
+
+    def test_a_clone_continues_the_cursor_in_turn_but_not_interleaved(self) -> None:
+        reference = [_names(b) for b in _pipeline(_memory(), num_epochs=1).raw_batches()]
+        pipe = _pipeline(_memory(), num_epochs=1)
+        original = pipe.raw_batches()
+        taken = [_names(next(original)) for _ in range(2)]
+        clone = nnx.clone(pipe)
+        assert clone.get_state() == pipe.get_state()
+        copied = clone.raw_batches()
+        taken.append(_names(next(copied)))
+        with pytest.raises(RuntimeError, match="another source"):
+            next(original)
+        taken.extend(_names(b) for b in copied)
+        assert taken == reference
+
+    def test_every_served_pair_holds_one_provenance_mapping_per_row(self) -> None:
+        source = MemorySource(
+            MemorySourceConfig(), [{"x": np.float32(i), "name": f"r{i}"} for i in range(13)]
+        )
+        pipe = _pipeline(source, batch_size=4, num_epochs=2)
+        pairs = list(pipe.raw_batches(with_provenance=True))
+        assert pairs
+        for batch, provenance in pairs:
+            assert len(provenance) == batch.batch_size
+            assert [p["name"] for p in provenance] == [f"r{n}" for n in _names(batch)]
+
+
 class TestEndToEnd:
     """``raw_batches()`` with ``pipe.dag`` inside the caller's differentiated step."""
 

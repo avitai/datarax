@@ -507,6 +507,12 @@ class Pipeline(nnx.Module):
         batch taken ended, so a later call continues the run with the same Grain iterator; the
         run ends after ``num_epochs`` epochs.
 
+        Each returned iterator serves the run it was created for. Iterators of one run continue
+        its cursor in turn; once the run served its last batch they stop. A later call with other
+        options, :meth:`reset`, :meth:`set_state` or :meth:`close` ends the run, and the
+        iterators it was serving then raise ``RuntimeError`` naming that call. A pipeline and its
+        clone share one host stage and cursor: they continue it in turn, not interleaved.
+
         Args:
             chunk: Batches per unit: ``None`` serves batches ``(B, ...)``; ``K`` serves chunks
                 ``(K, B, ...)`` of ``K`` full batches, each one host read and one transfer, while
