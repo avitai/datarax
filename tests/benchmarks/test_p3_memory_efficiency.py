@@ -6,6 +6,8 @@ Note: The comparative benchmark (vs SPDL adapter) requires the spdl package
 and is skipped if unavailable. The functional tests always run.
 """
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -55,8 +57,11 @@ class TestP3MemoryEfficiency:
         """Compare peak RSS against SPDL (requires spdl package).
 
         The CV-1 scenario uses 10K x 224x224x3 uint8 images = ~1.5 GB raw,
-        built before either measurement, so each delta is what the loader
-        allocates on top of the NumPy data it is handed. SPDL gathers each
+        built before either measurement, and JAX's CPU runtime and compiler
+        are started before either measurement too (a process pays them once,
+        whichever loader runs first), so each delta is what the loader
+        allocates on top of the NumPy data it is handed, Datarax's own first
+        compiles included, and no delta depends on which test ran first. SPDL gathers each
         batch from that data (about 20 MB at peak, below the noise floor),
         so Datarax is compared against the floor rather than skipped.
         Comparison logic (ratio target, skip conditions, absolute cap)
@@ -80,6 +85,7 @@ class TestP3MemoryEfficiency:
             seed=42,
         )
 
+        jax.block_until_ready(jax.jit(lambda x: x + 1)(jnp.zeros(())))  # runtime and compiler
         datarax_rss = measure_peak_rss_delta_mb(
             lambda: measure_adapter_throughput(DataraxAdapter(), config, cv1_large_image_data)
         )
