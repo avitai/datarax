@@ -427,4 +427,4 @@ class TestNothingOfADroppedSourceIsKept:
         with compiled_programs() as programs:
             run()
             run()
-        assert [str(program) for program in programs].count("jit(_names)") == 1
+        assert sum(str(program).startswith("jit(_names") for program in programs) == 1

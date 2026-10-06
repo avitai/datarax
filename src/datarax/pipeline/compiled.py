@@ -17,9 +17,7 @@ MAX_COMPILED_PROGRAMS = 16
 """Programs one cache keeps; past it the least recently used is dropped."""
 
 
-def cached_program(
-    cache: list[tuple[Any, Callable[..., Any]]], key: Any, build: Callable[[], Callable[..., Any]]
-) -> Callable[..., Any]:
+def cached_program[P](cache: list[tuple[Any, P]], key: Any, build: Callable[[], P]) -> P:
     """Return the compiled program cached under ``key``, building it on a miss.
 
     Keys are compared by equality, so structurally identical pipelines share one program. The
@@ -29,10 +27,10 @@ def cached_program(
     Args:
         cache: The cache, a list of ``(key, program)`` entries.
         key: What the program was compiled for.
-        build: Builds the program on a miss.
+        build: Builds the program (or the programs) on a miss.
 
     Returns:
-        The program.
+        What ``build`` built for ``key``.
     """
     for index, (cached_key, program) in enumerate(cache):
         if cached_key == key:

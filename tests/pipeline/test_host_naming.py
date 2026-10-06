@@ -339,10 +339,10 @@ class TestProgram:
             for _ in range(3):
                 run(50)
         # 100 records in batches of 8: the full batch and the run's short final batch.
-        assert [str(program) for program in programs].count("jit(_names)") == 2
+        assert sum(str(program).startswith("jit(_names") for program in programs) == 2
         with compiled_programs() as programs:
             run(51)
-        assert [str(program) for program in programs].count("jit(_names)") == 2
+        assert sum(str(program).startswith("jit(_names") for program in programs) == 2
 
     def test_runs_resets_restores_and_new_pipelines_compile_nothing_more(self) -> None:
         def build() -> Pipeline:
@@ -353,14 +353,14 @@ class TestProgram:
         jax.clear_caches()
         with compiled_programs() as programs:
             first = list(pipe.raw_batches())
-        assert [str(program) for program in programs].count("jit(_names)") == 1
+        assert sum(str(program).startswith("jit(_names") for program in programs) == 1
         with compiled_programs() as programs:
             pipe.reset()
             again = list(pipe.raw_batches())
             pipe.set_state(state)
             restored = list(pipe.raw_batches())
             fresh = list(other.raw_batches())
-        assert [str(program) for program in programs].count("jit(_names)") == 0
+        assert sum(str(program).startswith("jit(_names") for program in programs) == 0
         assert len(first) == len(again) == len(restored) == len(fresh) == 6
 
     def test_an_order_reading_a_host_resource_is_refused_naming_it(self) -> None:

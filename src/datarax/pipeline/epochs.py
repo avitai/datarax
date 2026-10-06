@@ -22,7 +22,7 @@ import dataclasses
 import enum
 import threading
 from collections.abc import Callable, Iterator
-from typing import Any, cast
+from typing import Any, cast, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -384,14 +384,16 @@ class HostNaming:
 
     The host stage names each batch's records here, before reading them: the start goes in as two
     uint32 words, so every position up to ``2**64 - 1`` is exact, and the program runs on the CPU
-    device (:func:`~datarax.core.prng.host_device`), off the accelerator's queue. The program
-    closes over a stand-in of the source holding its structure only (:func:`_structure`), never
-    the source and never as an argument, so none of its records is transferred and a cached
-    program keeps no source alive; an order reads lengths only. Every naming of a source
-    structured alike under the same plan shares the program: it compiles once per batch shape (a
-    run's short final batch is a second), whatever the pipeline, run, reset or restore. Every
-    input is placed on the CPU device and every output read back explicitly, so naming needs no
-    implicit transfer.
+    device (:func:`~datarax.core.prng.host_device`), off the accelerator's queue. It names one
+    batch (``naming(start, epoch, size, key)``) or a block of full batches in one call
+    (:meth:`block`): the same program vmapped over their starts, so each batch of a block is named
+    exactly as alone and the call's fixed cost is shared. The programs close over a stand-in of
+    the source holding its structure only (:func:`_structure`), never the source and never as an
+    argument, so none of its records is transferred and a cached program keeps no source alive;
+    an order reads lengths only. Every naming of a source structured alike under the same plan
+    shares the programs: the block compiles once, and one batch once per size (a run's short
+    final batch), whatever the pipeline, run, reset or restore. Every input is placed on the CPU
+    device and every output read back explicitly, so naming needs no implicit transfer.
     """
 
     def __init__(self, source: DataSourceModule, plan: EpochPlan, *, shuffled: bool) -> None:
@@ -406,7 +408,7 @@ class HostNaming:
         self._plan = plan
         self._shuffled = shuffled
         self._device = host_device()
-        self._program = _naming_program(source, plan)
+        self._programs = _naming_programs(source, plan)
 
     def __getstate__(self) -> dict[str, object]:
         """What a copy needs (a worker process's): the source, plan and order, not the program."""
@@ -420,7 +422,7 @@ class HostNaming:
             shuffled=bool(state["shuffled"]),
         )
 
-    def __call__(
+    def __call__(  # noqa: DOC502 - the key's check raises
         self, start: int, epoch: int, size: int, key: np.ndarray | None
     ) -> tuple[np.ndarray, np.ndarray]:
         """The records of the batch of ``size`` rows starting at ``start`` of epoch ``epoch``.
@@ -440,44 +442,93 @@ class HostNaming:
             ValueError: If a key is given to a pipeline that does not shuffle, or none to one
                 that does.
         """
+        indices, epochs = self._programs.alone(
+            jax.device_put(to_words(start), self._device),
+            jax.device_put(np.int32(epoch), self._device),
+            self._placed_key(key),
+            size=size,
+        )
+        return jax.device_get(indices), jax.device_get(epochs)
+
+    def block(  # noqa: DOC502 - the key's check raises
+        self, starts: np.ndarray, epochs: np.ndarray, key: np.ndarray | None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """The records of a block of full batches, each named as :meth:`__call__` names it alone.
+
+        Args:
+            starts: Each batch's start as its two uint32 words, ``(M, 2)``.
+            epochs: Each batch's first row's epoch, int32 ``(M,)``.
+            key: The pipeline's key as uint32 words on the host, or ``None`` when it does not
+                shuffle.
+
+        Returns:
+            Each batch's record indices, uint32 ``(M, B, 2)``, and epochs, int32 ``(M, B)``, on
+            the host.
+
+        Raises:
+            ValueError: If a key is given to a pipeline that does not shuffle, or none to one
+                that does.
+        """
+        indices, named_epochs = self._programs.block(
+            jax.device_put(np.asarray(starts, np.uint32), self._device),
+            jax.device_put(np.asarray(epochs, np.int32), self._device),
+            self._placed_key(key),
+        )
+        return jax.device_get(indices), jax.device_get(named_epochs)
+
+    def _placed_key(self, key: np.ndarray | None) -> jax.Array | None:
+        """The key's words on the CPU device, refused unless the pipeline's order takes one.
+
+        Args:
+            key: The pipeline's key as uint32 words on the host, or ``None``.
+
+        Returns:
+            The words placed on the CPU device, or ``None``.
+
+        Raises:
+            ValueError: If a key is given to a pipeline that does not shuffle, or none to one
+                that does.
+        """
         if (key is None) == self._shuffled:
             raise ValueError(
                 "a pipeline that shuffles orders each epoch by its key, which naming then takes"
                 if self._shuffled
                 else "this pipeline does not shuffle, so naming takes no key"
             )
-        device = self._device
-        placed_key = None if key is None else jax.device_put(np.asarray(key, np.uint32), device)
-        indices, epochs = self._program(
-            jax.device_put(to_words(start), device),
-            jax.device_put(np.int32(epoch), device),
-            placed_key,
-            size=size,
-        )
-        return jax.device_get(indices), jax.device_get(epochs)
+        return None if key is None else jax.device_put(np.asarray(key, np.uint32), self._device)
 
 
-_NAMING_PROGRAMS: list[tuple[Any, Callable[..., Any]]] = []
+class _NamingPrograms(NamedTuple):
+    """The naming programs of one source structure and plan.
+
+    Attributes:
+        alone: One batch: ``(start, epoch, key, *, size)``, its size static.
+        block: Full batches, the same program vmapped over ``(starts, epochs)``.
+    """
+
+    alone: Callable[..., tuple[jax.Array, jax.Array]]
+    block: Callable[..., tuple[jax.Array, jax.Array]]
+
+
+_NAMING_PROGRAMS: list[tuple[Any, _NamingPrograms]] = []
 """Naming programs by source structure and plan (:mod:`datarax.pipeline.compiled`)."""
 _NAMING_LOCK = threading.Lock()
 
 
-def _naming_program(
-    source: DataSourceModule, plan: EpochPlan
-) -> Callable[..., tuple[jax.Array, jax.Array]]:
-    """The naming program of every source structured as ``source`` is, under ``plan``.
+def _naming_programs(source: DataSourceModule, plan: EpochPlan) -> _NamingPrograms:
+    """The naming programs of every source structured as ``source`` is, under ``plan``.
 
     Args:
         source: The indexed source.
         plan: The pipeline's epoch plan.
 
     Returns:
-        :func:`batch_records` as a ``jax.jit`` program over the source's stand-in, its batch size
-        static.
+        :func:`batch_records` as ``jax.jit`` programs over the source's stand-in: one batch, its
+        size static, and a block of full batches.
     """
     structure, stand_in = _structure(source)
 
-    def build() -> Callable[..., Any]:
+    def build() -> _NamingPrograms:
         def _names(
             start: jax.Array, epoch: jax.Array, key: jax.Array | None, size: int
         ) -> tuple[jax.Array, jax.Array]:
@@ -486,7 +537,16 @@ def _naming_program(
             )
             return records.indices, records.epochs
 
-        return jax.jit(_names, static_argnames=("size",))
+        def _names_block(
+            starts: jax.Array, epochs: jax.Array, key: jax.Array | None
+        ) -> tuple[jax.Array, jax.Array]:
+            return jax.vmap(lambda start, epoch: _names(start, epoch, key, plan.batch_size))(
+                starts, epochs
+            )
+
+        return _NamingPrograms(
+            alone=jax.jit(_names, static_argnames=("size",)), block=jax.jit(_names_block)
+        )
 
     with _NAMING_LOCK:  # the host stage's naming is found on the consumer, and in each worker
         return cached_program(_NAMING_PROGRAMS, (structure, plan), build)

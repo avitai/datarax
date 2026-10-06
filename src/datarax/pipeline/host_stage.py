@@ -26,11 +26,13 @@ at the run's end, by ``close()``, and when collected.
 
 from __future__ import annotations
 
+import collections
 import dataclasses
 import inspect
 import logging
 import math
 import sys
+import threading
 import time
 import weakref
 from collections.abc import Callable, Iterator, Mapping
@@ -59,6 +61,15 @@ from datarax.sources.eager_source import HostValue
 
 
 logger = logging.getLogger(__name__)
+
+_NAMING_BLOCK_RECORDS = 16_384
+"""Records the host naming names per call (:class:`_BlockNames`): ``max(1, this // B)`` full
+batches, so a block holds at most this many records' names (192 KiB), or one batch's for a larger
+batch. Fixed, so the block program compiles once per source structure and plan. At B = 256 a
+block is 64 batches."""
+_BLOCKS_KEPT = 2
+"""Blocks of names a run holds at once: the read threads read consecutive units, so at most two
+blocks are in use; an evicted block asked for again is named again, identically."""
 
 _READ_THREADS = 1
 """Read threads per run. One host thread serves in-memory and memory-mapped gathers (millions of
@@ -149,15 +160,27 @@ class RunUnits:
         Returns:
             Its batches as ``(start, epoch, size)``.
         """
-        size = self.size
-        full = self._full_batches()
-        chunks = None if full is None else full // size
-        if chunks is None or ordinal < chunks:
-            first = ordinal * size
-            batches = tuple(self.run.batch(first + k) for k in range(size))
-            return None if None in batches else cast(tuple[tuple[int, int, int], ...], batches)
-        batch = self.run.batch(chunks * size + ordinal - chunks)
-        return None if batch is None else (batch,)
+        first = self.first_batch(ordinal)
+        count = self.size if self.is_chunk(ordinal) else 1
+        batches = tuple(self.run.batch(first + k) for k in range(count))
+        return None if None in batches else cast(tuple[tuple[int, int, int], ...], batches)
+
+    def first_batch(self, ordinal: int) -> int:
+        """The run's ordinal of unit ``ordinal``'s first batch.
+
+        Args:
+            ordinal: The unit's place in the run.
+
+        Returns:
+            Its first batch's place in the run.
+        """
+        if not self.is_chunk(ordinal):
+            full = self._full_batches()
+            if full is not None and self.chunk is not None:
+                chunks = full // self.chunk
+                return chunks * self.chunk + ordinal - chunks
+            return ordinal
+        return ordinal * self.size
 
     def units(self) -> int | None:
         """The run's units, or ``None`` for a run without an end."""
@@ -188,8 +211,9 @@ class RunUnits:
 class IndexedRead:
     """The read of an ``INDEXED`` source's run, unit by unit: what each Grain worker runs.
 
-    A unit's batches are named on the CPU device and read with one host read; a chunk is split
-    into its batches and stacked, ``(K, B, ...)``. Asked for provenance, a source implementing
+    A unit's batches are named on the CPU device (in blocks, :class:`_BlockNames`) and read with
+    one host read; a chunk is split into its batches and stacked, ``(K, B, ...)``. Asked for
+    provenance, a source implementing
     :class:`~datarax.core.data_source.IndexedHostReadWithProvenance` reads both at once; any
     other looks its records' provenance up by index. A read marks a run consecutive records as
     contiguous only when its names are (so a source reads it as views). It holds the source, the
@@ -217,7 +241,7 @@ class IndexedRead:
         """
         self.source = source
         self.units = units
-        self.naming = naming
+        self.names = _BlockNames(naming, units.run, key)
         self.key = key
         self.with_provenance = with_provenance
 
@@ -232,7 +256,8 @@ class IndexedRead:
         """
         batches = self.units.unit(ordinal)
         assert batches is not None  # noqa: S101 - Grain asks only for the run's units
-        named = [self.naming(start, epoch, size, self.key) for start, epoch, size in batches]
+        first = self.units.first_batch(ordinal)
+        named = [self.names(first + k, *batch) for k, batch in enumerate(batches)]
         indices = np.concatenate([indices for indices, _ in named])
         epochs = np.concatenate([epochs for _, epochs in named])
         values = from_words(indices)
@@ -252,6 +277,86 @@ class IndexedRead:
             batch = batch_ops.stack(batch_ops.split(batch, len(batches)))
         epoch, position = self.units.after(ordinal)
         return HostElement(batch, provenance, (epoch, position, 0))
+
+
+class _BlockNames:
+    """A run's batch names, a block of full batches named per call of the host naming.
+
+    Naming costs a fixed dispatch to the CPU device and back per call, which dominates a small
+    batch's read, so the run's full batches are named :data:`_NAMING_BLOCK_RECORDS` records at a
+    time: block ``b`` holds the run's batches ``b * M .. b * M + M - 1`` (``M`` full batches),
+    named by :meth:`~datarax.pipeline.epochs.HostNaming.block`, which names each exactly as alone.
+    Blocks count from the run's start, so a run resumed anywhere names the same records. The run's
+    short final batch is named alone, by the program that serves its size; a block's slots past
+    the run's full batches repeat a batch of the block and are never served. The read threads ask
+    in any order: a lock guards the blocks, of which the last :data:`_BLOCKS_KEPT` are held
+    (12 bytes a record: its index words and epoch). It pickles as the naming, run and key.
+    """
+
+    def __init__(self, naming: HostNaming, run: Run, key: np.ndarray | None) -> None:
+        """Hold what the run's names need; no block is named until a batch asks.
+
+        Args:
+            naming: The pipeline's host naming.
+            run: The run.
+            key: The pipeline's key as host words, or ``None`` when it does not shuffle.
+        """
+        self._naming = naming
+        self._run = run
+        self._key = key
+        self._per_block = max(1, _NAMING_BLOCK_RECORDS // run.plan.batch_size)
+        self._lock = threading.Lock()
+        self._blocks: collections.OrderedDict[int, tuple[np.ndarray, np.ndarray]] = (
+            collections.OrderedDict()
+        )
+
+    def __getstate__(self) -> dict[str, Any]:
+        """What a copy needs (a worker process's): the naming, run and key, no block."""
+        return {"naming": self._naming, "run": self._run, "key": self._key}
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Hold what was copied; the copy names its own blocks."""
+        self.__init__(state["naming"], state["run"], state["key"])
+
+    def __call__(
+        self, ordinal: int, start: int, epoch: int, size: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """The records of the run's batch ``ordinal``, which starts at ``start`` of ``epoch``.
+
+        Args:
+            ordinal: The batch's place in the run.
+            start: Where it starts in its epoch.
+            epoch: Its first row's epoch.
+            size: Its rows.
+
+        Returns:
+            Each row's record index, uint32 ``(size, 2)``, and epoch, int32 ``(size,)``.
+        """
+        if size != self._run.plan.batch_size:
+            return self._naming(start, epoch, size, self._key)
+        block, slot = divmod(ordinal, self._per_block)
+        with self._lock:
+            names = self._blocks.get(block)
+            if names is None:
+                names = self._name(block, (start, epoch))
+                self._blocks[block] = names
+                while len(self._blocks) > _BLOCKS_KEPT:
+                    self._blocks.popitem(last=False)
+            else:
+                self._blocks.move_to_end(block)
+        indices, epochs = names
+        return indices[slot], epochs[slot]
+
+    def _name(self, block: int, filler: tuple[int, int]) -> tuple[np.ndarray, np.ndarray]:
+        """Name block ``block``; ``filler``, a full batch of it, fills slots past the run's."""
+        starts = np.empty((self._per_block, 2), np.uint32)
+        epochs = np.empty(self._per_block, np.int32)
+        size = self._run.plan.batch_size
+        for slot in range(self._per_block):
+            batch = self._run.batch(block * self._per_block + slot)
+            start, epoch = filler if batch is None or batch[2] != size else batch[:2]
+            starts[slot], epochs[slot] = to_words(start), epoch
+        return self._naming.block(starts, epochs, self._key)
 
 
 class _Stream(grain.IterDataset):

@@ -826,8 +826,9 @@ class TestReadsPickle:
 
 
 def test_the_first_raw_batch_compiles_only_the_host_naming() -> None:
+    """The first unit's naming is a block of full batches named in one call."""
     pipe = _pipeline(_memory())
-    with expect_first_call_compiles("jit(_names)"):
+    with expect_first_call_compiles("jit(_names_block)"):
         batches = iter(pipe.raw_batches())
         next(batches)
     pipe.close()
