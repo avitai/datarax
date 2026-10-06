@@ -429,6 +429,12 @@ class TestState:
         assert [_rows(next(it)) for _ in range(5)] == rest
         checkpoint.close()
 
+    def test_a_state_without_a_fingerprint_is_refused(self) -> None:
+        state = _pipeline(_memory()).get_state()
+        del state["fingerprint"]
+        with pytest.raises(ValueError, match="fingerprint"):
+            _pipeline(_memory()).set_state(state)
+
     def test_no_rng_count_moves_while_iterating(self) -> None:
         pipe = _pipeline(_memory(), stages=[_Jitter()])
         before = jax.tree.leaves(nnx.state(pipe, nnx.RngCount))
@@ -647,3 +653,18 @@ class TestATracedReadIsNamed:
             NotImplementedError, match=r"get_records.*for batch in pipe.*raw_batches\(\)"
         ):
             pipe.step() if call == "step" else next(iter(pipe.session()))
+
+
+class _ForwardRead(_Wide):
+    """An INDEXED source whose ``get_batch`` is a stream's forward read."""
+
+    def get_batch(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self, batch_size: int, *, key: Any = None, read_size: int | None = None
+    ) -> Batch:
+        raise AssertionError("a run must refuse this source before reading it")
+
+
+def test_an_indexed_source_with_a_stream_s_read_is_refused_when_the_run_starts() -> None:
+    pipe = _pipeline(_ForwardRead(16), batch_size=4)
+    with pytest.raises(TypeError, match=r"get_batch\(indices, \*, epochs, contiguous\)"):
+        pipe.raw_batches()

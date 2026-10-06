@@ -2,7 +2,7 @@
 
 The fixture holds a ``Pipeline.get_state()`` and an iterator ``get_state()`` as datarax
 ``611bf97`` saved them, from a ``MemorySource`` that held an ``nnx.Rngs``, a drawn shuffle seed
-and its own position and epoch; its provenance is stored in the file. A pipeline's state is now
+and its own position and epoch; its provenance is stored in the file. A pipeline's state is
 its host stage's cursor, version 3: the saved module state (no version) and the saved session
 state (version 2) are both refused by ``Pipeline.set_state``, naming the version each is and the
 one the pipeline reads. The compiled session still refuses the old iterator state itself. No code

@@ -27,6 +27,7 @@ at the run's end, by ``close()``, and when collected.
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import logging
 import math
 import sys
@@ -600,7 +601,7 @@ class HostStage:
         )
         plan: EpochPlan = pipeline.epoch_plan
         if source.record_identity is RecordIdentity.INDEXED:
-            if not callable(getattr(source, "get_batch", None)):
+            if not _has_indexed_host_read(source):
                 raise TypeError(
                     f"{type(source).__name__} is INDEXED but has no host read, "
                     "get_batch(indices, *, epochs, contiguous), which the host stage reads with"
@@ -707,8 +708,9 @@ class HostStage:
             state: A state :meth:`state` produced, as saved or as a checkpoint store returns it.
 
         Raises:
-            ValueError: If the state is another version, another kind of source, or was produced
-                under another configuration, naming what differs; nothing converts a layout.
+            ValueError: If the state is another version, another kind of source, holds no
+                fingerprint, or was produced under another configuration, naming what differs;
+                nothing converts a layout.
         """
         state = _plain(state)
         version = state.get("version")
@@ -728,14 +730,7 @@ class HostStage:
             raise ValueError(
                 f"the state's kind is {state.get('kind')!r} but this pipeline's source is {kind!r}"
             )
-        mine = _fingerprint(pipeline)
-        for field, value in mine.items():
-            if state["fingerprint"].get(field) != value:
-                raise ValueError(
-                    f"the state was produced with {field}={state['fingerprint'].get(field)!r} "
-                    f"but this pipeline has {field}={value!r}; a state is only valid for the "
-                    "configuration that produced it"
-                )
+        _refuse_another_configuration(pipeline, state.get("fingerprint"))
         self._end("set_state()")
         if kind == RecordIdentity.INDEXED.value:
             self.cursor = Cursor(
@@ -939,6 +934,30 @@ def _fingerprint(pipeline: Any) -> dict[str, Any]:
     }
 
 
+def _refuse_another_configuration(pipeline: Any, saved: Any) -> None:
+    """Refuse a state's fingerprint unless it is the pipeline's, naming the first field differing.
+
+    Args:
+        pipeline: The pipeline the state is restored into.
+        saved: The state's fingerprint.
+
+    Raises:
+        ValueError: If the state holds no fingerprint, or a field differs from the pipeline's.
+    """
+    if not isinstance(saved, Mapping):
+        raise ValueError(
+            "the state holds no fingerprint of the configuration it was produced under, so it "
+            "cannot be checked against this pipeline: save it again from this pipeline"
+        )
+    for field, value in _fingerprint(pipeline).items():
+        if saved.get(field) != value:
+            raise ValueError(
+                f"the state was produced with {field}={saved.get(field)!r} "
+                f"but this pipeline has {field}={value!r}; a state is only valid for the "
+                "configuration that produced it"
+            )
+
+
 def _plain(value: Any) -> Any:
     """A saved state as plain Python values: a checkpoint store may return NumPy leaves."""
     if isinstance(value, Mapping):
@@ -1010,6 +1029,27 @@ def _close_run(run: list[_Placed]) -> None:
     """Close a run's Grain iterator and the threads behind it, and let it go."""
     while run:
         run.pop().close()
+
+
+def _has_indexed_host_read(source: DataSourceModule) -> bool:
+    """Whether ``source`` has a ``get_batch`` taking ``epochs`` and ``contiguous`` by keyword.
+
+    The shape :class:`~datarax.core.data_source.IndexedHostRead` declares, as far as a run's
+    start can see it: a stream's forward ``get_batch(batch_size, ...)`` has neither keyword.
+    """
+    get_batch = getattr(source, "get_batch", None)
+    if not callable(get_batch):
+        return False
+    parameters = inspect.signature(get_batch).parameters.values()
+    if any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters):
+        return True
+    names = {
+        parameter.name
+        for parameter in parameters
+        if parameter.kind
+        in (inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    }
+    return {"epochs", "contiguous"} <= names
 
 
 def _batch_bytes(source: DataSourceModule, batch_size: int) -> int:
