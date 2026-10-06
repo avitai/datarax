@@ -99,20 +99,37 @@ class TestOrder:
 
     @pytest.mark.parametrize("shuffle", [False, True])
     @pytest.mark.parametrize("drop_last", [False, True])
-    @pytest.mark.parametrize("batch_size", [1, 3, 4, 8])
-    @pytest.mark.parametrize("length", [7, 10, 23])
+    @pytest.mark.parametrize("num_epochs", [1, 3])
+    @pytest.mark.parametrize(
+        ("length", "batch_size"),
+        [
+            *((length, size) for length in (7, 10, 23, 64) for size in (1, 3, 4, 8)),
+            (64, 256),
+            (50_000, 256),
+        ],
+    )
     def test_iteration_equals_the_session(
-        self, shuffle: bool, drop_last: bool, batch_size: int, length: int
+        self, shuffle: bool, drop_last: bool, num_epochs: int, length: int, batch_size: int
     ) -> None:
         if drop_last and batch_size > length:
             return  # the plan refuses it
         session = list(
             _pipeline(
-                _memory(length), batch_size=batch_size, shuffle=shuffle, drop_last=drop_last
+                _memory(length),
+                batch_size=batch_size,
+                shuffle=shuffle,
+                drop_last=drop_last,
+                num_epochs=num_epochs,
             ).session()
         )
         served = list(
-            _pipeline(_memory(length), batch_size=batch_size, shuffle=shuffle, drop_last=drop_last)
+            _pipeline(
+                _memory(length),
+                batch_size=batch_size,
+                shuffle=shuffle,
+                drop_last=drop_last,
+                num_epochs=num_epochs,
+            )
         )
         assert len(served) == len(session)
         for got, expected in zip(served, session, strict=True):
@@ -290,34 +307,63 @@ class TestState:
         assert state["stream"] == {"pass": 1, "records": 6, "arrived": 16, "passes_left": None}
         assert state["epoch"] is None and state["position"] is None
 
-    @pytest.mark.parametrize("threads", [1, 4, 8])
     @pytest.mark.parametrize("drop_last", [False, True])
     def test_resume_after_any_batch_with_threads_ahead_is_exact(
-        self, threads: int, drop_last: bool
+        self, drop_last: bool, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        def build() -> Pipeline:
+        """1, 4 and 8 read threads with 8 units read ahead: Grain caps the threads at the buffer.
+
+        After every batch of a 3-epoch run the state is taken while reads are ahead of it, and
+        a rebuilt pipeline resumes it: the rest, the stochastic draws included, equals the
+        uninterrupted run, and the states are equal across thread counts.
+        """
+        reads = threading.Condition()
+        count = [0]
+        original = MemorySource.get_batch
+
+        def counted(self: MemorySource, indices: Any, **kwargs: Any) -> Batch:
+            batch = original(self, indices, **kwargs)
+            with reads:
+                count[0] += 1
+                reads.notify_all()
+            return batch
+
+        monkeypatch.setattr(MemorySource, "get_batch", counted)
+
+        def build(threads: int) -> Pipeline:
             pipe = _pipeline(_memory(), stages=[_Jitter()], drop_last=drop_last, num_epochs=3)
             pipe.host_stage._read_threads = threads
+            pipe.host_stage._read_buffer = 8
             return pipe
 
-        whole = [(_rows(b), np.asarray(b["image"])) for b in build()]
-        for done in range(len(whole)):
-            pipe = build()
-            served = []
-            it = iter(pipe)
-            for _ in range(done):
-                served.append(next(it))
-            threading.Event().wait(0.02)  # let the reads run ahead
-            state = pipe.get_state()
-            pipe.close()
-            resumed = build()
-            resumed.set_state(state)
-            rest = list(resumed)
-            got = [(_rows(b), np.asarray(b["image"])) for b in served + rest]
-            assert len(got) == len(whole)
-            for (rows, image), (expected_rows, expected_image) in zip(got, whole, strict=True):
-                assert rows == expected_rows
-                np.testing.assert_array_equal(image, expected_image)
+        whole = [(_rows(b), np.asarray(b["image"])) for b in build(1)]
+        states: dict[int, list[Any]] = {}
+        for threads in (1, 4, 8):
+            states[threads] = []
+            ahead = 0
+            for done in range(len(whole)):
+                with reads:
+                    count[0] = 0
+                pipe = build(threads)
+                it = iter(pipe)
+                served = [next(it) for _ in range(done)]
+                if done == 1:  # the reads run ahead of the batch taken
+                    with reads:
+                        reads.wait_for(lambda: count[0] > 1, timeout=30)
+                        ahead = count[0] - 1
+                state = pipe.get_state()
+                states[threads].append(state)
+                pipe.close()
+                resumed = build(threads)
+                resumed.set_state(state)
+                rest = list(resumed)
+                got = [(_rows(b), np.asarray(b["image"])) for b in served + rest]
+                assert len(got) == len(whole)
+                for (rows, image), (expected_rows, expected_image) in zip(got, whole, strict=True):
+                    assert rows == expected_rows
+                    np.testing.assert_array_equal(image, expected_image)
+            assert ahead > 0, threads
+        assert states[1] == states[4] == states[8]
 
     def test_a_stream_resumes_exactly(self) -> None:
         def build() -> Pipeline:
@@ -477,3 +523,94 @@ def test_the_session_still_serves_step_and_scan() -> None:
     pipe = _pipeline(_memory())
     assert pipe.step().batch_size == 4
     assert HostStage is not None
+
+
+class TestUnderNnxTransforms:
+    """The pipeline's own graph under NNX's split, merge and clone (brief section 7)."""
+
+    @pytest.mark.parametrize("graph", [True, False])
+    def test_the_graph_definition_does_not_move_across_a_pass(self, graph: bool) -> None:
+        pipe = _pipeline(_memory(), stages=[_Jitter()], num_epochs=1)
+        before = nnx.graphdef(pipe, graph=graph)
+        batches = iter(pipe)
+        next(batches)
+        during = nnx.graphdef(pipe, graph=graph)
+        list(batches)
+        assert before == during == nnx.graphdef(pipe, graph=graph)
+
+    @pytest.mark.parametrize("copy", ["merge", "tree merge", "clone"])
+    def test_a_copy_continues_the_cursor_after_the_original(self, copy: str) -> None:
+        """A copy shares the host stage: it continues where the original stopped, in turn."""
+        whole = [_rows(b) for b in _pipeline(_memory(), stages=[_Jitter()])]
+        pipe = _pipeline(_memory(), stages=[_Jitter()])
+        batches = iter(pipe)
+        served = [_rows(next(batches)) for _ in range(3)]
+        if copy == "clone":
+            other = nnx.clone(pipe)
+        else:
+            other = nnx.merge(*nnx.split(pipe, graph=copy == "merge"))
+        assert other.get_state() == pipe.get_state()
+        assert other.host_stage is pipe.host_stage
+        served += [_rows(b) for b in other]
+        assert served == whole
+
+    def test_tree_mode_round_trips_with_no_python_value_in_a_variable(self) -> None:
+        pipe = _pipeline(_memory(), stages=[_Jitter()])
+        graphdef, state = nnx.split(pipe, graph=False)
+        leaves = jax.tree.leaves(state)
+        assert leaves and all(isinstance(leaf, jax.Array | np.ndarray) for leaf in leaves)
+        merged = nnx.merge(graphdef, state)
+        reference = [_rows(b) for b in _pipeline(_memory(), stages=[_Jitter()])]
+        assert [_rows(b) for b in merged] == reference
+        # The pipeline's own attributes, not its stages': an operator's ``deterministic`` is
+        # Flax's mode flag, which ``train()``/``eval()`` are meant to set.
+        assert not {"deterministic", "use_running_average"} & set(vars(pipe))
+
+    def test_batch_norm_statistics_written_back_equal_a_jitted_dag_s(self) -> None:
+        """The Tier-A call writes back what ``nnx.jit(pipe.dag)`` would leave in the module."""
+
+        class Normalize(nnx.Module):
+            def __init__(self) -> None:
+                self.norm = nnx.BatchNorm(48, rngs=nnx.Rngs(0))
+
+            def __call__(self, batch: Batch) -> Batch:
+                image = batch["image"].astype(jnp.float32).reshape(batch.batch_size, -1)
+                return batch.replace(data={**batch.data, "image": self.norm(image)})
+
+        stage, twin = Normalize(), Normalize()
+        pipe = _pipeline(_memory(24), stages=[stage], num_epochs=1, shuffle=False)
+        reference = _pipeline(_memory(24), stages=[twin], num_epochs=1, shuffle=False)
+        apply = nnx.jit(lambda dag, batch: dag(batch))
+        expected = [apply(reference.dag, batch) for batch in reference.raw_batches()]
+        served = list(pipe)
+        for got, want in zip(served, expected, strict=True):
+            np.testing.assert_array_equal(got["image"], want["image"])
+        assert len(served) == len(expected) == 6
+        for name in ("mean", "var"):
+            np.testing.assert_array_equal(
+                np.asarray(getattr(stage.norm, name)[...]),
+                np.asarray(getattr(twin.norm, name)[...]),
+            )
+
+
+class TestTheCompiledPath:
+    @pytest.mark.parametrize("length", [(1 << 31) + 5, 1 << 40])
+    @pytest.mark.parametrize("call", ["step", "session"])
+    def test_it_still_refuses_a_source_past_int32(self, length: int, call: str) -> None:
+        """Positions are int32 on the compiled path; the host stage serves these lengths."""
+        pipe = _pipeline(_Wide(length), batch_size=256, num_epochs=None)
+        with pytest.raises(OverflowError):
+            pipe.step() if call == "step" else next(iter(pipe.session()))
+        assert len(_rows(next(iter(pipe)))[0]) == 256
+
+
+class TestATracedReadIsNamed:
+    """``step()`` and ``session()`` over an INDEXED source without a traced read: the host path."""
+
+    @pytest.mark.parametrize("call", ["step", "session"])
+    def test_the_refusal_names_iteration_and_raw_batches(self, call: str) -> None:
+        pipe = _pipeline(_Wide(64), batch_size=8)
+        with pytest.raises(
+            NotImplementedError, match=r"get_records.*for batch in pipe.*raw_batches\(\)"
+        ):
+            pipe.step() if call == "step" else next(iter(pipe.session()))

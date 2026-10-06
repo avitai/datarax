@@ -20,6 +20,7 @@ datasets = pytest.importorskip("datasets")
 PIL = pytest.importorskip("PIL.Image")
 
 from datarax.sources.hf_source import HFEagerConfig, HFEagerSource  # noqa: E402
+from tests.test_common.identity import check_identity_reaches_the_stages  # noqa: E402
 
 
 _N = 6
@@ -78,3 +79,13 @@ def test_a_text_column_is_provenance_not_refused_and_not_served(source: HFEagerS
     batch = source.get_batch(to_words(np.asarray([4, 1], np.uint64)))
     assert set(batch.data) == {"image", "label", "feature"}
     assert "text" not in source[2]
+
+
+def test_the_identity_of_each_record_reaches_the_stages_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset = _dataset()
+    monkeypatch.setattr(datasets, "load_dataset", lambda *args, **kwargs: dataset)
+    assert check_identity_reaches_the_stages(
+        lambda: HFEagerSource(HFEagerConfig(name="fake", split="train")), batch_size=2
+    )

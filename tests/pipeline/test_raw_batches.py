@@ -12,6 +12,7 @@ records' provenance. One Grain iterator serves a run across calls and leaves no 
 from __future__ import annotations
 
 import gc
+import json
 import subprocess
 import sys
 import threading
@@ -26,6 +27,7 @@ import numpy as np
 import optax
 import pytest
 from flax import nnx
+from substrax.testing import run_python
 from substrax.testing.compiles import expect_compiles
 
 from datarax.core.config import ElementOperatorConfig
@@ -358,6 +360,16 @@ class TestPlacement:
                 state = step(state, next(batches)["image"])
         assert not next(batches)["image"].committed
 
+    def test_an_int64_host_label_is_placed_as_the_device_holds_it(self) -> None:
+        """With x64 off an int64 host column reaches the device as int32, its bytes int32's."""
+        columns = _columns()
+        columns["label"] = columns["label"].astype(np.int64)
+        served = list(_pipeline(MemorySource(MemorySourceConfig(), columns)).raw_batches())
+        assert served
+        for batch in served:
+            assert batch["label"].dtype == jnp.int32
+            assert batch["label"].nbytes == 4 * batch.batch_size
+
 
 class TestIdentity:
     """Each kind's identity reaches the batch: the source's indices and epochs."""
@@ -576,6 +588,33 @@ class TestEndToEnd:
 
         stage = Scale()
         return _pipeline(_memory(), stages=[stage], num_epochs=None, drop_last=True), stage
+
+    def test_jit_partial_binding_the_dag_equals_nnx_jit_and_compiles_nothing_more(self) -> None:
+        """``pipe.dag`` bound once (the trainer's binding); the pipeline itself is never bound."""
+        pipe, stage = self._scale_pipeline()
+
+        def loss(dag: nnx.Module, batch: Batch) -> jax.Array:
+            return jnp.mean(dag(batch)["image"] ** 2)
+
+        def value_and_grad(dag: nnx.Module, batch: Batch) -> tuple[jax.Array, Any]:
+            return nnx.value_and_grad(loss)(dag, batch)
+
+        bound = nnx.jit_partial(value_and_grad, pipe.dag, graph=True, graph_updates=False)
+        reference = nnx.jit(value_and_grad)
+        batches = iter(pipe.raw_batches())
+        first = next(batches)
+        results = [(bound(first), reference(pipe.dag, first))]
+        with expect_compiles(0):
+            for _ in range(4):
+                batch = next(batches)
+                results.append((bound(batch), reference(pipe.dag, batch)))
+        for (value, grads), (expected_value, expected_grads) in results:
+            np.testing.assert_array_equal(np.asarray(value), np.asarray(expected_value))
+            for got, want in zip(
+                jax.tree.leaves(grads), jax.tree.leaves(expected_grads), strict=True
+            ):
+                np.testing.assert_array_equal(np.asarray(got), np.asarray(want))
+        del stage
 
     @pytest.mark.parametrize("graph", [True, False])
     def test_operator_parameters_get_gradients_and_steps_compile_once(self, graph: bool) -> None:
@@ -811,3 +850,73 @@ def test_on_a_gpu_only_the_placed_batches_reach_it() -> None:
     made_on_gpu = [a for a in jax.live_arrays() if id(a) not in known and gpu in a.devices()]
     assert made_on_gpu
     assert [a.shape for a in made_on_gpu if id(a) not in placed] == []
+
+
+_PEAK_WHILE_ITERATING = """
+import collections, json, sys
+import jax
+import numpy as np
+from flax import nnx
+from datarax.core.index_words import to_words
+from datarax.core.prng import key_words
+from datarax.pipeline import Pipeline
+from datarax.sources.memory_source import MemorySource, MemorySourceConfig
+
+mode, records, held = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+rng = np.random.default_rng(0)
+source = MemorySource(
+    MemorySourceConfig(),
+    {
+        "image": rng.integers(0, 256, (records, 32, 32, 3), dtype=np.uint8),
+        "label": np.arange(records, dtype=np.int32),
+    },
+)
+if mode == "pipeline":
+    pipe = Pipeline(source=source, stages=[], batch_size=256, rngs=nnx.Rngs(0), shuffle=True)
+    key_words(pipe._epoch_key_base.get_value())  # the run reads its key once, before the snapshot
+    batches = pipe.raw_batches()
+else:  # the control: each host batch placed by hand as it is taken
+    rows = [np.arange(k * 256, (k + 1) * 256, dtype=np.uint64) for k in range(records // 256)]
+    batches = (jax.device_put(source.get_batch(to_words(r))) for r in rows)
+device = jax.devices()[0]
+before = device.memory_stats()["bytes_in_use"]
+kept = collections.deque(maxlen=held)
+for batch in batches:
+    kept.append(batch)
+growth = device.memory_stats()["peak_bytes_in_use"] - before
+print(json.dumps({"platform": device.platform, "growth": growth}))
+"""
+
+
+@pytest.mark.accelerator(kind="gpu")
+def test_on_a_gpu_the_peak_is_what_placing_the_held_batches_takes_whatever_the_dataset() -> None:
+    """Each variant in its own process (a device's peak cannot be reset in one).
+
+    Batches are placed one at a time as they are taken, with no device buffer, so iterating
+    while holding the last ``held`` batches raises the device's peak no higher than placing the
+    same host batches by hand with ``jax.device_put`` does, and a dataset ten times larger
+    changes it by nothing. The device allocator holds more than a batch's ``nbytes`` per batch
+    (RTX 4090, jax 0.11.1: 2.90 MB peak for 3 batches of 0.79 MB, the same by hand), so the
+    control, not ``nbytes``, is the bound.
+    """
+    held = 2
+
+    def growth(mode: str, records: int) -> int:
+        result = run_python(
+            _PEAK_WHILE_ITERATING,
+            mode,
+            str(records),
+            str(held),
+            timeout=600,
+            # The order is named on the CPU device, so the CPU platform runs beside the GPU.
+            env={"JAX_PLATFORMS": "cuda,cpu", "XLA_PYTHON_CLIENT_PREALLOCATE": "false"},
+            cwd=Path(__file__).resolve().parents[2],
+        )
+        report = json.loads(result.check().stdout.strip().splitlines()[-1])
+        assert report["platform"] == "gpu"
+        return int(report["growth"])
+
+    small, large = growth("pipeline", 2560), growth("pipeline", 25600)
+    control = growth("by hand", 2560)
+    assert 0 < small <= control
+    assert large == small

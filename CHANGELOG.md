@@ -275,8 +275,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bytes` records and returns one mapping per record; numeric values are the batch's columns and
   the rest the records' provenance (`provenance(indices)`); `read_with_provenance(indices, ...)`
   returns the batch and its provenance from one read and one decode, which
-  `raw_batches(with_provenance=True)` reads it with. `paths` may be TFDS `FileInstruction`s. It pickles without open file handles and has no traced read, so `step()`
-  over it is refused naming `get_records`.
+  `raw_batches(with_provenance=True)` reads it with. `paths` may be TFDS `FileInstruction`s. It pickles without open file handles and has no traced read, so `step()`,
+  `scan()` and `session()` over it are refused naming `get_records` and the host path that reads
+  it, `for batch in pipe` and `raw_batches()`; so is any `INDEXED` source without `get_records`.
 - `source_ops.validate_eager_source_settings`, `validate_eager_config` and
   `finalize_eager_config_validation` are `validate_source_settings`, `validate_source_config` and
   `finalize_source_config_validation` (eager and stream

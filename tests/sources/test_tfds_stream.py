@@ -38,17 +38,20 @@ from datarax.pipeline.host_stage import RunUnits
 from datarax.sources import (
     from_tfds,
     tfds_source,
+    TFDSEagerConfig,
     TFDSEagerSource,
     TFDSStreamingConfig,
     TFDSStreamingSource,
 )
 from tests.jax_test_environment import forwarded_jax_environment
+from tests.test_common.identity import check_identity_reaches_the_stages, IdentitySpy
 from tests.test_common.streams import (
     graph_definitions_across_a_pass,
     non_array_state_leaves,
     second_pulls_after_a_tree_round_trip,
 )
 from tests.test_common.tfds_fixture import FIXTURE, IMAGE_SHAPE, TFDSFixture, TRAIN_RECORDS
+from tests.test_common.transfers import implicit_upload_raises
 
 
 pytestmark = pytest.mark.tfds
@@ -934,3 +937,65 @@ class TestThroughTheHostStage:
         assert pipe.get_state()["stream"]["records"] == 8
         served += [names(b) for b in pipe.raw_batches()]
         assert served == whole
+
+    def test_nothing_transfers_implicitly_through_run_creation_iteration_and_the_dag(
+        self, tfds_fixture: TFDSFixture
+    ) -> None:
+        assert implicit_upload_raises(), "the guard must fire on an implicit upload"
+        pipe = Pipeline(
+            source=_stream(tfds_fixture, shuffle_buffer_size=8),
+            stages=[IdentitySpy(4)],
+            batch_size=4,
+            rngs=nnx.Rngs(0),
+            shuffle=True,
+            num_epochs=2,
+        )
+        with jax.transfer_guard("disallow"):
+            served = list(pipe)
+        assert len(served) == 10
+
+    def test_provenance_comes_beside_each_batch_as_the_source_looks_it_up(
+        self, tfds_fixture: TFDSFixture
+    ) -> None:
+        source = _stream(tfds_fixture, shuffle_buffer_size=8)
+        pipe = Pipeline(
+            source=source, stages=[], batch_size=6, rngs=nnx.Rngs(4), shuffle=True, num_epochs=2
+        )
+        pairs = list(pipe.raw_batches(with_provenance=True))
+        assert len(pairs) == 7
+        for batch, provenance in pairs:
+            assert len(provenance) == batch.batch_size
+            assert list(provenance) == list(source.provenance(batch.indices))
+
+    def test_reset_starts_the_next_pass_and_batches_left_counts_the_run(
+        self, tfds_fixture: TFDSFixture
+    ) -> None:
+        pipe = Pipeline(
+            source=_stream(tfds_fixture), stages=[], batch_size=4, rngs=nnx.Rngs(0), num_epochs=1
+        )
+        assert pipe.batches_left() == 5
+        batches = iter(pipe)
+        next(batches)
+        assert pipe.batches_left() == 4 == len(list(batches))
+        assert pipe.batches_left() == 0
+        pipe.reset()
+        assert pipe.batches_left() == 5
+        served = list(pipe)
+        assert [int(e) for b in served for e in np.asarray(b.epochs)] == [1] * TRAIN_RECORDS
+
+    def test_identity_reaches_the_stages_unchanged(self, tfds_fixture: TFDSFixture) -> None:
+        assert check_identity_reaches_the_stages(
+            lambda: _stream(tfds_fixture, shuffle_buffer_size=8), batch_size=4
+        )
+
+    def test_an_eager_source_s_identity_reaches_the_stages_unchanged(
+        self, tfds_fixture: TFDSFixture
+    ) -> None:
+        def eager() -> TFDSEagerSource:
+            return TFDSEagerSource(
+                TFDSEagerConfig(
+                    name=FIXTURE, split="train", data_dir=str(tfds_fixture.array_record)
+                )
+            )
+
+        assert check_identity_reaches_the_stages(eager, batch_size=4)

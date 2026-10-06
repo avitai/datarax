@@ -32,6 +32,7 @@ from datarax.sources.array_record_source import (
     ArrayRecordSourceModule,
 )
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
+from tests.test_common.identity import check_identity_reaches_the_stages
 
 
 _RECORDS = 12
@@ -214,11 +215,21 @@ class TestThePipelineOwnsTheOrder:
         )
         assert jax.tree.leaves(nnx.state(source)) == []
 
-    def test_the_traced_read_is_refused_naming_get_records(self, shards: list[str]) -> None:
+    @pytest.mark.parametrize("call", ["step", "session"])
+    def test_the_traced_read_is_refused_naming_get_records_and_the_host_path(
+        self, shards: list[str], call: str
+    ) -> None:
         pipe = Pipeline(source=_source(shards), stages=[], batch_size=4, rngs=nnx.Rngs(0))
 
-        with pytest.raises(NotImplementedError, match="get_records"):
-            pipe.step()
+        with pytest.raises(
+            NotImplementedError, match=r"get_records.*for batch in pipe.*raw_batches\(\)"
+        ):
+            pipe.step() if call == "step" else next(iter(pipe.session()))
+
+    def test_the_identity_of_each_record_reaches_the_stages_unchanged(
+        self, shards: list[str]
+    ) -> None:
+        assert check_identity_reaches_the_stages(lambda: _source(shards), batch_size=4)
 
     def test_a_tree_mode_split_and_merge_reads_the_same_records(self, shards: list[str]) -> None:
         source = _source(shards)

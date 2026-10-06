@@ -19,6 +19,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from flax import nnx
+from substrax.testing.compiles import expect_compiles
 
 from datarax.core import Maybe
 from datarax.core.config import StructuralConfig
@@ -187,3 +188,32 @@ def test_the_words_named_are_the_words_read() -> None:
     mix = four_presence_cases()
     words = to_words(np.asarray([3, 22, 7], np.uint64))
     np.testing.assert_array_equal(mix.get_batch(words).indices, words)
+
+
+def test_one_dag_compile_serves_every_presence_pattern() -> None:
+    """A field's presence is data (``Maybe``), so batches holding different children's records
+    run through one compiled DAG call."""
+
+    class TouchesEveryField(nnx.Module):
+        def __call__(self, batch: Any) -> Any:
+            return batch.replace(data=jax.tree.map(lambda leaf: leaf, batch.data))
+
+    mix = four_presence_cases()
+    pipe = Pipeline(
+        source=mix,
+        stages=[TouchesEveryField()],
+        batch_size=3,
+        rngs=nnx.Rngs(0),
+        drop_last=True,
+        num_epochs=1,
+    )
+    batches = iter(pipe)
+    jax.clear_caches()
+    first = next(batches)
+    with expect_compiles(0):
+        rest = list(batches)
+    patterns = {
+        tuple(bool(present) for present in np.asarray(batch["text"].present))
+        for batch in [first, *rest]
+    }
+    assert len(patterns) > 1, patterns

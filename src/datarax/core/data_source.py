@@ -438,9 +438,19 @@ class DataSourceModule(StructuralModule):
             One array per field, with leading dim ``n``.
 
         Raises:
-            NotImplementedError: If the source does not implement it: an ``INDEXED`` source
-                must, a stream (``STREAM_IDS`` or ``ARRIVAL``) is pulled with ``get_batch``.
+            NotImplementedError: If the source does not implement it. An ``INDEXED`` source
+                without it is read on the host only (``for batch in pipe`` and
+                ``Pipeline.raw_batches()``); a stream (``STREAM_IDS`` or ``ARRIVAL``) is pulled
+                with ``get_batch``.
         """
+        del indices
+        if self.record_identity is RecordIdentity.INDEXED:
+            raise NotImplementedError(
+                f"{type(self).__name__} does not implement get_records(indices), the traced read "
+                "step(), scan() and session() gather an INDEXED source's records with; iterate "
+                "the pipeline with `for batch in pipe` or pipe.raw_batches(), which read it on "
+                "the host"
+            )
         raise NotImplementedError(
             f"{type(self).__name__} does not implement get_records(indices), which an INDEXED "
             "source serves its records with; a stream declares STREAM_IDS or ARRIVAL and "
