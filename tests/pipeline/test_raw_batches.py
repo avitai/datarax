@@ -502,6 +502,60 @@ class TestAnIteratorServesItsOwnRun:
             assert [p["name"] for p in provenance] == [f"r{n}" for n in _names(batch)]
 
 
+class _ReadFailed(Exception):
+    """A read that fails once, as a flaky file system or decode does."""
+
+
+class TestAReadError:
+    """A read error reaches the consumer unchanged and ends the run at the batches it delivered.
+
+    Iterating the pipeline again resumes at the batch whose read failed: nothing is lost and
+    nothing served twice, and the cursor never counts the failed batch as served.
+    """
+
+    @pytest.mark.parametrize("kind", ["indexed", "arrival stream"])
+    def test_iterating_again_resumes_at_the_failed_batch(
+        self, kind: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def build() -> Pipeline:
+            if kind == "indexed":
+                return _pipeline(_memory(40), batch_size=4, shuffle=False, num_epochs=1)
+            stream = RecordStream(_columns(40), kind=RecordIdentity.ARRIVAL, chunk=4)
+            return _pipeline(stream, batch_size=4, shuffle=False, num_epochs=1)
+
+        whole = [_names(b) for b in build().raw_batches()]
+        owner: Any = MemorySource if kind == "indexed" else RecordStream
+        name = "get_batch" if kind == "indexed" else "read_from"
+        original = getattr(owner, name)
+        reads: list[int] = []
+
+        def flaky(self: Any, *args: Any, **kwargs: Any) -> Any:
+            reads.append(1)
+            if len(reads) == 4:
+                raise _ReadFailed("read 4 failed")
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(owner, name, flaky)
+        pipe = build()
+        batches = pipe.raw_batches()
+        served: list[list[int]] = []
+        with pytest.raises(_ReadFailed, match="read 4 failed"):
+            for batch in batches:
+                served.append(_names(batch))
+        assert served and served == whole[: len(served)]
+        state = pipe.get_state()
+        delivered = 4 * len(served)
+        if kind == "indexed":
+            assert state["position"] == delivered
+        else:
+            assert (state["stream"]["records"], state["stream"]["arrived"]) == (delivered,) * 2
+        assert pipe.host_stage.iterator is None
+        with pytest.raises(RuntimeError, match="_ReadFailed"):
+            next(batches)
+        served += [_names(b) for b in pipe.raw_batches()]
+        assert served == whole
+
+
 class TestEndToEnd:
     """``raw_batches()`` with ``pipe.dag`` inside the caller's differentiated step."""
 

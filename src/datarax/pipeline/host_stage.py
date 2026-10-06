@@ -855,7 +855,8 @@ class _Served:
 
     It advances the stage's cursor as each unit is taken. Once its run reached its end it keeps
     raising ``StopIteration``; once anything else ended its run it is refused, naming what did,
-    so it never serves a run opened after it.
+    so it never serves a run opened after it. A read error ends the run where the delivered
+    units end, and reaches the caller unchanged.
     """
 
     def __init__(
@@ -889,6 +890,12 @@ class _Served:
             batch, provenance, after = next(iterator)
         except StopIteration:
             stage._end(_RUN_END)  # noqa: SLF001 - the run this iterator serves
+            raise
+        except BaseException as error:
+            # A read error (or an interrupt) leaves the Grain iterator past the unit it failed
+            # on; ending the run here lets the next call reopen it at the cursor, which counts
+            # only the units delivered, so iterating again loses and repeats nothing.
+            stage._end(f"the error it raised ({type(error).__name__})")  # noqa: SLF001
             raise
         cursor = stage.cursor
         cursor.epoch, cursor.position, cursor.arrived = after

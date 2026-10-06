@@ -888,3 +888,49 @@ class TestThroughTheHostStage:
                 break
             threading.Event().wait(0.05)
         assert threads == []
+
+    def test_a_decode_error_reaches_the_consumer_and_iterating_again_resumes_at_it(
+        self, tfds_fixture: TFDSFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A decode failing on the read thread is raised by ``next()`` unchanged and ends the run.
+
+        The cursor counts only the batches delivered, and the next call resumes at the batch whose
+        decode failed, so nothing is lost or served twice.
+        """
+
+        def build() -> Pipeline:
+            return Pipeline(
+                source=_stream(tfds_fixture),
+                stages=[],
+                batch_size=4,
+                rngs=nnx.Rngs(0),
+                shuffle=False,
+                num_epochs=1,
+            )
+
+        def names(batch: Batch) -> list[int]:
+            return [(int(hi) << 32) | int(lo) for hi, lo in np.asarray(batch.indices)]
+
+        whole = [names(b) for b in build().raw_batches()]
+        decode = tfds_source._decoded_batch  # noqa: SLF001 - the one decode of a TFDS stream
+        calls: list[int] = []
+
+        class DecodeFailed(Exception):
+            pass
+
+        def flaky(features: Any, frames: list[Any], kept: Any) -> Any:
+            calls.append(len(frames))
+            if len(calls) == 4:  # the spec's record, then the third unit
+                raise DecodeFailed("decode 4 failed")
+            return decode(features, frames, kept)
+
+        monkeypatch.setattr(tfds_source, "_decoded_batch", flaky)
+        pipe = build()
+        served: list[list[int]] = []
+        with pytest.raises(DecodeFailed, match="decode 4 failed"):
+            for batch in pipe.raw_batches():
+                served.append(names(batch))
+        assert served == whole[:2]
+        assert pipe.get_state()["stream"]["records"] == 8
+        served += [names(b) for b in pipe.raw_batches()]
+        assert served == whole

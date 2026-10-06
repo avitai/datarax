@@ -511,7 +511,9 @@ class Pipeline(nnx.Module):
         its cursor in turn; once the run served its last batch they stop. A later call with other
         options, :meth:`reset`, :meth:`set_state` or :meth:`close` ends the run, and the
         iterators it was serving then raise ``RuntimeError`` naming that call. A pipeline and its
-        clone share one host stage and cursor: they continue it in turn, not interleaved.
+        clone share one host stage and cursor: they continue it in turn, not interleaved. A read
+        error reaches the caller unchanged and ends the run at the batches delivered, so the next
+        call resumes at the batch whose read failed.
 
         Args:
             chunk: Batches per unit: ``None`` serves batches ``(B, ...)``; ``K`` serves chunks

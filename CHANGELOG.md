@@ -21,7 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   implicitly, and one Grain iterator serves a run across calls (`Pipeline.close()` ends it). Each
   returned iterator serves only the run it was created for: once `reset()`, `set_state()`,
   `close()` or a call with other options ended that run, its next `next()` raises `RuntimeError`
-  naming the call, and once the run served its last batch it stops. A run lives as long as the pipelines it served and the iterators serving it, though a compiled-step
+  naming the call, and once the run served its last batch it stops. A read error reaches the
+  caller unchanged and ends the run at the batches delivered, so iterating again resumes at the
+  batch whose read failed, losing and repeating nothing. A run lives as long as the pipelines it served and the iterators serving it, though a compiled-step
   cache keyed by the pipeline's graph keeps its host stage. Reads run in the caller's precision
   mode. `Pipeline.host_stage` holds where host iteration stands; its `read_threads` and
   `read_buffer` are the run's read options.
