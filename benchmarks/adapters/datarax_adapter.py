@@ -727,7 +727,9 @@ class DataraxAdapter(PipelineAdapter):
     def _set_read_buffer(self, config: ScenarioConfig) -> None:
         """Read ``prefetch_size`` batches ahead (2 by default) on the pipeline's host stage."""
         extra = config.extra or {}
-        self._pipeline.host_stage.read_buffer = int(extra.get("prefetch_size", 2))
+        # The host stage's read-ahead depth is internal until it takes a public resource budget,
+        # which replaces this setting; set here so the prefetch sweep still varies the depth.
+        self._pipeline.host_stage._read_buffer = int(extra.get("prefetch_size", 2))  # noqa: SLF001
 
     def _iterate_batches(self) -> Iterator[Any]:
         # The pipeline's host stage reads ``prefetch_size`` batches ahead and places each on the

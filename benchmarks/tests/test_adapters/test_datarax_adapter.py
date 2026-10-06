@@ -134,7 +134,7 @@ class TestDataraxAdapterPrefetchPolicy:
     def test_setup_defaults_prefetch_to_two(self, cv1_small_config, small_image_data):
         adapter = DataraxAdapter()
         adapter.setup(cv1_small_config, small_image_data)
-        assert adapter._pipeline.host_stage.read_buffer == 2
+        assert adapter._pipeline.host_stage._read_buffer == 2
         adapter.teardown()
 
     def test_setup_prefetch_override_from_extra(self, cv1_small_config, small_image_data):
@@ -150,7 +150,7 @@ class TestDataraxAdapterPrefetchPolicy:
             extra={**cv1_small_config.extra, "prefetch_size": 4},
         )
         adapter.setup(override_config, small_image_data)
-        assert adapter._pipeline.host_stage.read_buffer == 4
+        assert adapter._pipeline.host_stage._read_buffer == 4
         adapter.teardown()
 
 

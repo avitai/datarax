@@ -297,7 +297,7 @@ class TestState:
     ) -> None:
         def build() -> Pipeline:
             pipe = _pipeline(_memory(), stages=[_Jitter()], drop_last=drop_last, num_epochs=3)
-            pipe.host_stage.read_threads = threads
+            pipe.host_stage._read_threads = threads
             return pipe
 
         whole = [(_rows(b), np.asarray(b["image"])) for b in build()]

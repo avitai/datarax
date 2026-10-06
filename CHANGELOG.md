@@ -25,8 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   caller unchanged and ends the run at the batches delivered, so iterating again resumes at the
   batch whose read failed, losing and repeating nothing. A run lives as long as the pipelines it served and the iterators serving it, though a compiled-step
   cache keyed by the pipeline's graph keeps its host stage. Reads run in the caller's precision
-  mode. `Pipeline.host_stage` holds where host iteration stands; its `read_threads` and
-  `read_buffer` are the run's read options.
+  mode. `Pipeline.host_stage` holds where host iteration stands.
 - `datarax.core.data_source.IndexedHostReadWithProvenance`: the protocol of an indexed host read
   returning a batch and its records' provenance from one read, `read_with_provenance(indices, *,
   epochs=0, contiguous=False)`. The host stage reads a source implementing it once per batch

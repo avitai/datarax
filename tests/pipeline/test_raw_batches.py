@@ -164,8 +164,13 @@ class TestOrder:
     def test_any_number_of_read_threads_serves_the_same_batches(self, threads: int) -> None:
         reference = [_names(b) for b in _pipeline(_memory()).raw_batches()]
         pipe = _pipeline(_memory())
-        pipe.host_stage.read_threads = threads
+        pipe.host_stage._read_threads = threads
         assert [_names(b) for b in pipe.raw_batches()] == reference
+
+    def test_the_read_options_are_not_public(self) -> None:
+        """Threads and read-ahead are the host stage's own until a resource budget sets them."""
+        public = {name for name in dir(_pipeline(_memory()).host_stage) if not name.startswith("_")}
+        assert not public & {"read_threads", "read_buffer"}
 
     @pytest.mark.parametrize("depth", [1, 4])
     def test_reads_run_ahead_by_the_read_buffer(
@@ -180,7 +185,7 @@ class TestOrder:
 
         monkeypatch.setattr(MemorySource, "get_batch", counted)
         pipe = _pipeline(_memory(), num_epochs=None)
-        pipe.host_stage.read_buffer = depth
+        pipe.host_stage._read_buffer = depth
         batches = iter(pipe.raw_batches())
         next(batches)
         threading.Event().wait(0.3)  # time for the reads to run ahead
@@ -776,7 +781,7 @@ class TestReadsPickle:
         reference = [_names(b) for b in _pipeline(_disk(tmp_path)).raw_batches()]
         source = cloudpickle.loads(cloudpickle.dumps(_disk(tmp_path)))  # opens lazily
         pipe = _pipeline(source)
-        pipe.host_stage.read_threads = 8
+        pipe.host_stage._read_threads = 8
         served = list(pipe.raw_batches())
         assert [_names(b) for b in served] == reference
 

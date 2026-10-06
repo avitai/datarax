@@ -442,8 +442,6 @@ class HostStage:
 
     Attributes:
         cursor: Where iteration stands.
-        read_threads: Grain threads reading units of an indexed source's run.
-        read_buffer: Units read ahead of the consumer.
     """
 
     def __init__(self, *, end_epoch: int | None) -> None:
@@ -453,8 +451,10 @@ class HostStage:
             end_epoch: The epoch the first run stops before, or ``None`` for no end.
         """
         self.cursor = Cursor(epoch=0, position=0, arrived=0, end_epoch=end_epoch)
-        self.read_threads = _READ_THREADS
-        self.read_buffer = _READ_BUFFER
+        # The run's read options: Grain threads reading an indexed source's units, and units
+        # read ahead of the consumer. Internal: a public resource budget replaces them.
+        self._read_threads = _READ_THREADS
+        self._read_buffer = _READ_BUFFER
         # The run's Grain iterator, in a list the run's finalizer empties, so at exit the
         # iterator is closed and released before the interpreter tears Grain's modules down.
         self._run_iterator: list[_Placed] = []
@@ -554,8 +554,8 @@ class HostStage:
             chunk,
             with_provenance,
             x64,
-            self.read_threads,
-            self.read_buffer,
+            self._read_threads,
+            self._read_buffer,
         )
         cursor = self.cursor
         opened = (*options, cursor.epoch, cursor.position)
@@ -601,7 +601,7 @@ class HostStage:
                 .map(read)
                 .to_iter_dataset(
                     grain.ReadOptions(
-                        num_threads=self.read_threads, prefetch_buffer_size=self.read_buffer
+                        num_threads=self._read_threads, prefetch_buffer_size=self._read_buffer
                     )
                 )
             )
@@ -615,7 +615,7 @@ class HostStage:
             )
         return grain.experimental.ThreadPrefetchIterDataset(
             self._stream_elements(pipeline, chunk, with_provenance, key),
-            prefetch_buffer_size=self.read_buffer,
+            prefetch_buffer_size=self._read_buffer,
         )
 
     def _stream_elements(
