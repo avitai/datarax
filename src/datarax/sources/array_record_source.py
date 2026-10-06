@@ -142,10 +142,12 @@ class ArrayRecordSourceModule(DataSourceModule):
                 )
         self._records = _Records(paths)
         self._decode = decode
+        # The record count as a plain static: the source's order reads it, never the reader.
+        self._length = len(self._records.source)
 
     def __len__(self) -> int:
         """The number of records in the files."""
-        return len(self._records.source)
+        return self._length
 
     def __repr__(self) -> str:
         """The files and the record count, which identify the records a checkpoint names."""

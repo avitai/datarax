@@ -19,6 +19,7 @@ positions and epochs are Python integers, exact at every length up to ``2**64 - 
 from __future__ import annotations
 
 import dataclasses
+import enum
 import threading
 from collections.abc import Callable, Iterator
 from typing import Any, cast
@@ -27,6 +28,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from flax import nnx
+from flax.nnx import graphlib
 from jax.typing import ArrayLike
 
 from datarax.core import batch_ops
@@ -36,7 +38,6 @@ from datarax.core.index_words import is_word_start, split_constant, subtract, to
 from datarax.core.prng import host_device
 from datarax.pipeline.compiled import cached_program
 from datarax.pipeline.dag import Records
-from datarax.sources.eager_source import HostValue
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -494,10 +495,13 @@ def _naming_program(
 def _structure(source: DataSourceModule) -> tuple[Any, DataSourceModule]:
     """The source's structure, and a stand-in source holding that and nothing more.
 
-    The stand-in keeps the source's graph, configuration and statics; each array becomes a view
-    of its shape and dtype holding one element (zero strides), and each
-    :class:`~datarax.sources.eager_source.HostValue` an empty holder, since nothing traced reads
-    one. A source's order reads its lengths only, so the stand-in names the source's records.
+    A source's order reads its description only: its configuration, its lengths, its children's
+    orders. The stand-in keeps the source's graph and every static that is such a description (a
+    number, string, dtype, enum or class, a frozen configuration of them, a tuple of them); each
+    array becomes a view of its shape and dtype holding one element (zero strides), and every
+    other static (a reader, a memory map, a decoder, a host value) a :class:`_Released` marker
+    naming its type. A cached program therefore keeps no host resource of any source alive, and
+    an order that reads one fails while it is traced, naming it.
 
     Args:
         source: The indexed source.
@@ -511,14 +515,91 @@ def _structure(source: DataSourceModule) -> tuple[Any, DataSourceModule]:
     for _, node in nnx.iter_graph(stand_in):
         if isinstance(node, nnx.Module):
             for name, value in list(vars(node).items()):
-                if isinstance(value, HostValue):
-                    empty = object.__new__(type(value))
-                    empty.value = None
-                    setattr(node, name, empty)
+                if _is_static(name, value) and not _is_description(value):
+                    setattr(node, name, _Released(type(value)))
     graphdef, state = nnx.split(stand_in)
     leaves, treedef = jax.tree.flatten(state)
     shapes = tuple((np.shape(leaf), str(getattr(leaf, "dtype", type(leaf)))) for leaf in leaves)
     return (graphdef, treedef, shapes), stand_in
+
+
+def _is_static(name: str, value: Any) -> bool:
+    """Whether a module attribute is a static of its graph, not state, a node or NNX's own."""
+    if name.startswith(("_pytree__", "_object__")):
+        return False
+    return not isinstance(value, nnx.Variable | np.ndarray | jax.Array) and not graphlib.is_node(
+        value
+    )
+
+
+_DESCRIPTIONS = (
+    type(None),
+    bool,
+    int,
+    float,
+    complex,
+    str,
+    bytes,
+    enum.Enum,
+    np.dtype,
+    np.generic,
+    type,
+    jax.ShapeDtypeStruct,
+)
+
+
+def _is_description(value: Any) -> bool:
+    """Whether a static describes a source (plain values, frozen configurations of them)."""
+    if isinstance(value, _DESCRIPTIONS):
+        return True
+    if isinstance(value, tuple | frozenset):
+        return all(_is_description(item) for item in value)
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return all(
+            _is_description(getattr(value, field.name)) for field in dataclasses.fields(value)
+        )
+    return False
+
+
+class _Released:
+    """A stand-in's marker for a static holding a host resource, which an order never reads.
+
+    Markers of one type compare equal, so sources differing only in such statics share a
+    structure. Reading anything of one fails, naming the type it replaced.
+    """
+
+    __slots__ = ("kind",)
+
+    def __init__(self, kind: type) -> None:
+        """Name the type replaced.
+
+        Args:
+            kind: The static's type.
+        """
+        self.kind = kind
+
+    def __eq__(self, other: object) -> bool:
+        """Markers of one replaced type are equal."""
+        return isinstance(other, _Released) and other.kind is self.kind
+
+    def __hash__(self) -> int:
+        """One hash per replaced type, as ``__eq__`` requires."""
+        return hash((_Released, self.kind))
+
+    def __getattr__(self, name: str) -> Any:  # noqa: DOC201 - it never returns
+        """Refuse every read: an order reads its source's description only.
+
+        Args:
+            name: The attribute read.
+
+        Raises:
+            AttributeError: Always, naming the static and the attribute read.
+        """
+        raise AttributeError(
+            f"the host naming traces a source's order over its description, and the order read "
+            f"{name!r} of a {self.kind.__name__}, which holds a host resource: an order must read "
+            "the source's configuration and lengths only (keep a length as a plain static)"
+        )
 
 
 def _shape_only(leaf: Any) -> Any:

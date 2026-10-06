@@ -22,16 +22,19 @@ import numpy as np
 import pytest
 from array_record.python.array_record_module import ArrayRecordWriter
 from flax import nnx
+from substrax.testing.compiles import compiled_programs
 
 from datarax.core.data_source import IndexedHostReadWithProvenance, RecordIdentity
 from datarax.core.index_words import from_words, to_words
 from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 from datarax.sources.array_record_source import (
+    _Records,
     ArrayRecordSourceConfig,
     ArrayRecordSourceModule,
 )
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
+from tests.test_common.host_resources import live, open_descriptors, released
 from tests.test_common.identity import check_identity_reaches_the_stages
 
 
@@ -375,3 +378,53 @@ class TestFiles:
                 pass
 
         exited.assert_called_once()
+
+
+class TestNothingOfADroppedSourceIsKept:
+    """A dropped ArrayRecord pipeline leaves no reader and no open file, closed or not.
+
+    The host naming caches a program per source structure; it keeps the structure (the record
+    count, the configuration), never the source's reader, its files or its decoder.
+    """
+
+    @pytest.mark.parametrize("close", [True, False], ids=["closed", "dropped"])
+    def test_no_reader_and_no_open_file_is_left(self, shards: list[str], close: bool) -> None:
+        source = _source(shards)
+        pipe = Pipeline(
+            source=source, stages=[], batch_size=4, rngs=nnx.Rngs(0), shuffle=True, num_epochs=1
+        )
+        assert len(list(pipe.raw_batches())) == 3
+        pipe.close()
+        if close:
+            source.close()
+        del pipe, source
+        paths = set(shards)
+
+        def readers() -> int:
+            return live(lambda item: type(item) is _Records and set(item.paths) <= paths)
+
+        assert released(lambda: readers() == 0 and not open_descriptors(shards)), (
+            readers(),
+            open_descriptors(shards),
+        )
+
+    def test_two_sources_of_one_record_count_compile_the_naming_once(
+        self, shards: list[str]
+    ) -> None:
+        def run() -> None:
+            pipe = Pipeline(
+                source=_source(shards),
+                stages=[],
+                batch_size=4,
+                rngs=nnx.Rngs(0),
+                shuffle=True,
+                num_epochs=1,
+            )
+            list(pipe.raw_batches())
+            pipe.close()
+
+        jax.clear_caches()
+        with compiled_programs() as programs:
+            run()
+            run()
+        assert [str(program) for program in programs].count("jit(_names)") == 1

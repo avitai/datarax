@@ -43,8 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with it. `datarax.pipeline.epochs.HostNaming(source, plan, *, shuffled)` runs it as one
   `jax.jit` program on the CPU device for the host stage, taking the start as two uint32 words,
   so positions past `2**31` are named exactly. The program closes over a stand-in holding the
-  source's structure only (graph, configuration, array shapes and dtypes), so none of its records
-  is transferred and a cached program keeps no source alive; every pipeline over a source
+  source's description only (graph, configuration, lengths, array shapes and dtypes; every other
+  static, such as a reader, a memory map or a decoder, is replaced by a marker that refuses any
+  read), so none of its records is transferred and a cached program keeps no source and no host
+  resource alive; every pipeline over a source
   structured alike under the same plan shares it, compiled once per batch shape, and nothing
   transfers implicitly. The host stage holds no naming of its own, so a compiled-step cache that
   keeps a pipeline's host stage keeps none of its source.

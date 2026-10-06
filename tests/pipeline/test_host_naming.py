@@ -362,3 +362,24 @@ class TestProgram:
             fresh = list(other.raw_batches())
         assert [str(program) for program in programs].count("jit(_names)") == 0
         assert len(first) == len(again) == len(restored) == len(fresh) == 6
+
+    def test_an_order_reading_a_host_resource_is_refused_naming_it(self) -> None:
+        """The naming keeps a source's description only; an order reading more fails, named."""
+
+        class _Reader:
+            def __init__(self, rows: int) -> None:
+                self.rows = rows
+
+        class _ReadsItsReader(_Length):
+            def __init__(self, length: int) -> None:
+                super().__init__(length)
+                self.reader = _Reader(length)
+
+            def __len__(self) -> int:
+                return self.reader.rows
+
+        source = _ReadsItsReader(16)
+        plan = EpochPlan(length=16, batch_size=4, drop_last=False, num_epochs=1)
+        naming = HostNaming(source, plan, shuffled=False)
+        with pytest.raises(AttributeError, match=r"'rows' of a _Reader"):
+            naming(0, 0, 4, None)

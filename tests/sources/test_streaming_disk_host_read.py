@@ -16,13 +16,20 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from substrax.testing.compiles import expect_compiles
+from flax import nnx
+from substrax.testing.compiles import compiled_programs, expect_compiles
 
 from datarax.core.element_batch import Batch, PADDING_INDEX
 from datarax.core.index_words import from_words, to_words
+from datarax.pipeline import Pipeline
 from datarax.sources import EagerSource
-from datarax.sources.streaming_disk_source import StreamingDiskSource, StreamingDiskSourceConfig
+from datarax.sources.streaming_disk_source import (
+    _HostArray,
+    StreamingDiskSource,
+    StreamingDiskSourceConfig,
+)
 from tests.test_common.compiles import expect_first_call_compiles
+from tests.test_common.host_resources import live, mapped, open_descriptors, released
 
 
 _ROWS = 40
@@ -151,3 +158,52 @@ def test_the_session_over_the_disk_source_still_compiles_once(
         rest = list(session)
     served = np.concatenate([np.asarray(b["x"]) for b in (first, *rest)])
     np.testing.assert_array_equal(served, np.concatenate([_array(), _array()]))
+
+
+class TestNothingOfADroppedSourceIsKept:
+    """A dropped pipeline leaves no memory map, mapping or descriptor of its file.
+
+    The host naming caches a program per source structure; it keeps the structure (the record
+    count, the configuration), never the source's memory map.
+    """
+
+    def test_no_map_is_left(self, tmp_path: Path) -> None:
+        path = tmp_path / "data.npy"
+        np.save(path, _array())
+        source = StreamingDiskSource(StreamingDiskSourceConfig(path=str(path), feature_key="x"))
+        pipe = Pipeline(
+            source=source, stages=[], batch_size=8, rngs=nnx.Rngs(0), shuffle=True, num_epochs=1
+        )
+        assert len(list(pipe.raw_batches())) == 5
+        pipe.close()
+        del pipe, source
+
+        def holders() -> int:
+            return live(lambda item: type(item) is _HostArray and item.path == str(path))
+
+        assert released(
+            lambda: holders() == 0 and not mapped([path]) and not open_descriptors([path])
+        ), (holders(), mapped([path]), open_descriptors([path]))
+
+    def test_two_sources_of_one_file_compile_the_naming_once(self, tmp_path: Path) -> None:
+        path = tmp_path / "data.npy"
+        np.save(path, _array())
+
+        def run() -> None:
+            source = StreamingDiskSource(StreamingDiskSourceConfig(path=str(path), feature_key="x"))
+            pipe = Pipeline(
+                source=source,
+                stages=[],
+                batch_size=8,
+                rngs=nnx.Rngs(0),
+                shuffle=True,
+                num_epochs=1,
+            )
+            list(pipe.raw_batches())
+            pipe.close()
+
+        jax.clear_caches()
+        with compiled_programs() as programs:
+            run()
+            run()
+        assert [str(program) for program in programs].count("jit(_names)") == 1
