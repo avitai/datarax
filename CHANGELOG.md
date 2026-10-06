@@ -14,8 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uncommitted, as each is taken (reads run ahead): the form whose DAG (`pipe.dag`) runs inside the
   caller's differentiated step. An indexed source's batches are named on the CPU device and read
   with its stateless host read (`datarax.core.data_source.IndexedHostRead`) by Grain threads; a
-  TFDS stream reads its run through one sliceable Grain dataset; any other stream is read pass by
-  pass on one producer thread. `chunk=K` serves `(K, B, ...)` chunks of full batches, one host
+  stream's run is read and decoded on one producer thread ahead of the consumer, through one
+  sliceable Grain dataset for a TFDS stream and pass by pass for any other. `chunk=K` serves `(K, B, ...)` chunks of full batches, one host
   read and one transfer each, then the rest singly; `with_provenance=True` serves
   `(batch, provenance)` pairs. Nothing but the batches reaches the device, nothing transfers
   implicitly, and one Grain iterator serves a run across calls (`Pipeline.close()` ends it); a run

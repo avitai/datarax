@@ -11,8 +11,10 @@ Every source kind reads through one stage, which does nothing but read:
   (:class:`~datarax.core.data_source.IndexedHostRead`).
 - A stream with a run dataset (TFDS) reads the same units of its passes through that dataset: one
   Grain dataset for the run, numbered from the run's start, which Grain can slice across workers.
-- Any other stream (HuggingFace) is read pass by pass on one producer thread, at a position of the
-  host stage's own, its batches cut by :func:`~datarax.pipeline.epochs.stream_batches`.
+- Any other stream (HuggingFace) is read pass by pass, at a position of the host stage's own, its
+  batches cut by :func:`~datarax.pipeline.epochs.stream_batches`.
+
+A stream's run, either way, is read and decoded on one producer thread ahead of the consumer.
 
 A batch's provenance comes beside it when asked. Units are read ahead of the consumer and each is
 placed on the default device as it is taken, uncommitted, so a jitted step taking them compiles
@@ -568,7 +570,6 @@ class HostStage:
     ) -> grain.IterDataset:
         """The run's dataset of host elements, from the cursor."""
         source: DataSourceModule = pipeline.source
-        cursor = self.cursor
         key = (
             key_words(pipeline._epoch_key_base.get_value())  # noqa: SLF001 - the pipeline's key base
             if pipeline.shuffle
@@ -604,7 +605,18 @@ class HostStage:
                 f"{type(source).__name__} is a {source.record_identity.name} stream that is not a "
                 "StreamingSourceBase, whose pass reader the host stage reads a stream with"
             )
+        return grain.experimental.ThreadPrefetchIterDataset(
+            self._stream_elements(pipeline, chunk, with_provenance, key),
+            prefetch_buffer_size=self.read_buffer,
+        )
+
+    def _stream_elements(
+        self, pipeline: Any, chunk: int | None, with_provenance: bool, key: np.ndarray | None
+    ) -> grain.IterDataset:
+        """A stream's run as host elements: through its run dataset when it has one (TFDS)."""
+        source: StreamingSourceBase = pipeline.source
         check = _checker(source, pipeline.batch_size)
+        plan: EpochPlan = pipeline.epoch_plan
         if plan.length is not None:
             units = RunUnits(run=self._run(plan), chunk=chunk)
             run = source.run_dataset(units, key)
@@ -618,9 +630,7 @@ class HostStage:
             with_provenance=with_provenance,
             check=check,
         )
-        return grain.experimental.ThreadPrefetchIterDataset(
-            _Stream(source, cursor, config), prefetch_buffer_size=self.read_buffer
-        )
+        return _Stream(source, self.cursor, config)
 
     def _run(self, plan: EpochPlan) -> Run:
         cursor = self.cursor

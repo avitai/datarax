@@ -12,11 +12,13 @@ blocks of 16, then tf.data's buffer shuffle, its picks drawn from a generator ke
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import os
 import shutil
 import struct
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -777,3 +779,112 @@ class TestThroughTheHostStage:
             [(int(hi) << 32) | int(lo) for hi, lo in np.asarray(batch.indices)] for batch in served
         ]
         assert names == expected
+
+    def test_units_are_read_ahead_of_the_consumer_on_a_thread(
+        self, tfds_fixture: TFDSFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Decode runs on the stream's read thread, ahead of the consumer, as an indexed read does.
+
+        At run creation the consumer reads one record for the declared spec; every unit is then
+        decoded on the read thread, which fills the read buffer while the consumer holds a batch.
+        """
+        decode = tfds_source._decoded_batch  # noqa: SLF001 - the one decode of a TFDS stream
+        threads: list[str] = []
+        decoded = threading.Condition()
+
+        def watched(features: Any, frames: list[Any], kept: Any) -> Any:
+            batch = decode(features, frames, kept)
+            with decoded:
+                threads.append(threading.current_thread().name)
+                decoded.notify_all()
+            return batch
+
+        monkeypatch.setattr(tfds_source, "_decoded_batch", watched)
+        pipe = Pipeline(
+            source=_stream(tfds_fixture), stages=[], batch_size=4, rngs=nnx.Rngs(0), num_epochs=None
+        )
+        batches = iter(pipe.raw_batches())
+        next(batches)
+        consumer = threading.current_thread().name
+        with decoded:  # the spec's record, the batch taken, and the read buffer's two units
+            decoded.wait_for(lambda: len(threads) >= 4, timeout=30)
+            seen = list(threads)
+        pipe.close()
+        assert len(seen) >= 4, seen
+        assert seen[0] == consumer
+        assert consumer not in seen[1:], seen
+
+    @pytest.mark.parametrize("drop_last", [False, True])
+    def test_resume_after_any_batch_is_exact_and_replays_no_payload(
+        self, tfds_fixture: TFDSFixture, drop_last: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``get_state`` after every batch of a 3-pass shuffled run, read ahead; the rest resumes.
+
+        A resumed run reads the payloads of the records it serves and of the spec's one record,
+        never those before the saved position.
+        """
+
+        def build() -> Pipeline:
+            return Pipeline(
+                source=_stream(tfds_fixture, shuffle_buffer_size=8),
+                stages=[],
+                batch_size=6,
+                rngs=nnx.Rngs(5),
+                shuffle=True,
+                drop_last=drop_last,
+                num_epochs=3,
+            )
+
+        def rows(batch: Batch) -> tuple[list[tuple[int, int]], list[int], bytes]:
+            return (
+                [(int(hi), int(lo)) for hi, lo in np.asarray(batch.indices)],
+                [int(e) for e in np.asarray(batch.epochs)],
+                hashlib.sha256(np.asarray(batch["image"]).tobytes()).digest(),
+            )
+
+        whole = [rows(b) for b in build().raw_batches()]
+        assert len(whole) == (9 if drop_last else 10)  # 3 passes of 20 records, 6 a batch
+        payloads: list[int] = []
+        payload = tfds_source._payload  # noqa: SLF001 - a record's payload read
+
+        def counted(file: Any, path: str, index: Any, offset: int) -> bytes:
+            payloads.append(offset)
+            return payload(file, path, index, offset)
+
+        monkeypatch.setattr(tfds_source, "_payload", counted)
+        for done in range(len(whole) + 1):
+            pipe = build()
+            batches = iter(pipe.raw_batches())
+            served = [rows(next(batches)) for _ in range(done)]
+            state = pipe.get_state()
+            pipe.close()
+            resumed = build()
+            resumed.set_state(state)
+            assert resumed.batches_left() == len(whole) - done
+            payloads.clear()
+            rest = [rows(b) for b in resumed.raw_batches()]
+            assert served + rest == whole
+            assert len(payloads) == 1 + sum(len(names) for names, _, _ in rest)
+
+    @pytest.mark.parametrize("ending", ["exhausted", "close", "break"])
+    def test_no_read_thread_is_left(self, tfds_fixture: TFDSFixture, ending: str) -> None:
+        pipe = Pipeline(
+            source=_stream(tfds_fixture), stages=[], batch_size=4, rngs=nnx.Rngs(0), num_epochs=2
+        )
+        batches = pipe.raw_batches()
+        if ending == "exhausted":
+            list(batches)
+        else:
+            next(iter(batches))
+            if ending == "close":
+                pipe.close()
+            else:
+                del batches, pipe
+                gc.collect()
+        threads = []
+        for _ in range(100):
+            threads = [t.name for t in threading.enumerate() if "grain" in t.name.lower()]
+            if not threads:
+                break
+            threading.Event().wait(0.05)
+        assert threads == []
