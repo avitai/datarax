@@ -19,7 +19,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from flax import nnx
-from substrax.testing.compiles import expect_compiles
+from substrax.testing.compiles import compiled_programs, expect_compiles
 
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule, RecordIdentity
@@ -270,7 +270,7 @@ class TestProgram:
             naming(46, 3, 4, key)  # the run's short final batch: one more shape
 
     def test_the_source_s_columns_are_never_an_argument(self) -> None:
-        """Naming transfers none of the source's data: it is closed over, never passed."""
+        """Naming transfers none of the source's data: a stand-in is closed over, never passed."""
         assert implicit_upload_raises(), "the guard must fire on an implicit upload"
         pipe = _pipeline(_memory(50), batch_size=8, shuffle=True, drop_last=False)
         naming = HostNaming(pipe.source, pipe.epoch_plan, shuffled=True)
@@ -319,3 +319,46 @@ class TestProgram:
         naming = HostNaming(pipe.source, pipe.epoch_plan, shuffled=True)
         with pytest.raises(ValueError, match="key"):
             naming(0, 0, 4, None)
+
+    def test_pipelines_built_alike_share_one_program(self) -> None:
+        """Naming compiles once per source structure and plan, not once per pipeline.
+
+        A loop building pipelines (an evaluation per epoch, a sweep) pays one compile per batch
+        shape for all of them; a source of another length is another structure and compiles.
+        """
+
+        def run(length: int) -> None:
+            pipe = _pipeline(
+                _memory(length), batch_size=8, shuffle=True, drop_last=False, num_epochs=2
+            )
+            list(pipe.raw_batches())
+            pipe.close()
+
+        jax.clear_caches()
+        with compiled_programs() as programs:
+            for _ in range(3):
+                run(50)
+        # 100 records in batches of 8: the full batch and the run's short final batch.
+        assert [str(program) for program in programs].count("jit(_names)") == 2
+        with compiled_programs() as programs:
+            run(51)
+        assert [str(program) for program in programs].count("jit(_names)") == 2
+
+    def test_runs_resets_restores_and_new_pipelines_compile_nothing_more(self) -> None:
+        def build() -> Pipeline:
+            return _pipeline(_memory(48), batch_size=8, shuffle=True, drop_last=False, num_epochs=1)
+
+        pipe, other = build(), build()
+        state = pipe.get_state()
+        jax.clear_caches()
+        with compiled_programs() as programs:
+            first = list(pipe.raw_batches())
+        assert [str(program) for program in programs].count("jit(_names)") == 1
+        with compiled_programs() as programs:
+            pipe.reset()
+            again = list(pipe.raw_batches())
+            pipe.set_state(state)
+            restored = list(pipe.raw_batches())
+            fresh = list(other.raw_batches())
+        assert [str(program) for program in programs].count("jit(_names)") == 0
+        assert len(first) == len(again) == len(restored) == len(fresh) == 6

@@ -21,11 +21,12 @@ from __future__ import annotations
 import dataclasses
 import threading
 from collections.abc import Callable, Iterator
-from typing import cast
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+from flax import nnx
 from jax.typing import ArrayLike
 
 from datarax.core import batch_ops
@@ -33,7 +34,9 @@ from datarax.core.data_source import DataSourceModule, Provenance
 from datarax.core.element_batch import Batch
 from datarax.core.index_words import is_word_start, split_constant, subtract, to_words
 from datarax.core.prng import host_device
+from datarax.pipeline.compiled import cached_program
 from datarax.pipeline.dag import Records
+from datarax.sources.eager_source import HostValue
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -380,16 +383,18 @@ class HostNaming:
 
     The host stage names each batch's records here, before reading them: the start goes in as two
     uint32 words, so every position up to ``2**64 - 1`` is exact, and the program runs on the CPU
-    device (:func:`~datarax.core.prng.host_device`), off the accelerator's queue. The source is
-    closed over, never an argument, so none of its records is transferred; its order reads its
-    lengths only. One program is compiled per batch shape (a run's short final batch is a second)
-    and reused for every batch, run, reset and restore of the pipeline that holds this object.
-    Every input is placed on the CPU device and every output read back explicitly, so naming
-    needs no implicit transfer.
+    device (:func:`~datarax.core.prng.host_device`), off the accelerator's queue. The program
+    closes over a stand-in of the source holding its structure only (:func:`_structure`), never
+    the source and never as an argument, so none of its records is transferred and a cached
+    program keeps no source alive; an order reads lengths only. Every naming of a source
+    structured alike under the same plan shares the program: it compiles once per batch shape (a
+    run's short final batch is a second), whatever the pipeline, run, reset or restore. Every
+    input is placed on the CPU device and every output read back explicitly, so naming needs no
+    implicit transfer.
     """
 
     def __init__(self, source: DataSourceModule, plan: EpochPlan, *, shuffled: bool) -> None:
-        """Hold the source and the plan; the program is built and compiled at first use.
+        """Hold the source and the plan, and find the program; it compiles at first use.
 
         Args:
             source: The indexed source.
@@ -400,40 +405,19 @@ class HostNaming:
         self._plan = plan
         self._shuffled = shuffled
         self._device = host_device()
-        self._lock = threading.Lock()
-        self._program: Callable[..., tuple[jax.Array, jax.Array]] | None = None
+        self._program = _naming_program(source, plan)
 
     def __getstate__(self) -> dict[str, object]:
         """What a copy needs (a worker process's): the source, plan and order, not the program."""
         return {"source": self._source, "plan": self._plan, "shuffled": self._shuffled}
 
     def __setstate__(self, state: dict[str, object]) -> None:
-        """Hold what was copied; the copy builds its own program at first use."""
+        """Hold what was copied; the copy finds its process's program."""
         self.__init__(
             cast(DataSourceModule, state["source"]),
             cast(EpochPlan, state["plan"]),
             shuffled=bool(state["shuffled"]),
         )
-
-    def _built(self) -> Callable[..., tuple[jax.Array, jax.Array]]:
-        """The program, built once however many threads ask for it at once."""
-        program = self._program
-        if program is None:
-            with self._lock:
-                if self._program is None:
-                    source, plan = self._source, self._plan
-
-                    def _names(
-                        start: jax.Array, epoch: jax.Array, key: jax.Array | None, size: int
-                    ) -> tuple[jax.Array, jax.Array]:
-                        records = batch_records(
-                            source, plan, key_base=key, start=start, epoch=epoch, size=size
-                        )
-                        return records.indices, records.epochs
-
-                    self._program = jax.jit(_names, static_argnames=("size",))
-                program = self._program
-        return program
 
     def __call__(
         self, start: int, epoch: int, size: int, key: np.ndarray | None
@@ -463,13 +447,86 @@ class HostNaming:
             )
         device = self._device
         placed_key = None if key is None else jax.device_put(np.asarray(key, np.uint32), device)
-        indices, epochs = self._built()(
+        indices, epochs = self._program(
             jax.device_put(to_words(start), device),
             jax.device_put(np.int32(epoch), device),
             placed_key,
             size=size,
         )
         return jax.device_get(indices), jax.device_get(epochs)
+
+
+_NAMING_PROGRAMS: list[tuple[Any, Callable[..., Any]]] = []
+"""Naming programs by source structure and plan (:mod:`datarax.pipeline.compiled`)."""
+_NAMING_LOCK = threading.Lock()
+
+
+def _naming_program(
+    source: DataSourceModule, plan: EpochPlan
+) -> Callable[..., tuple[jax.Array, jax.Array]]:
+    """The naming program of every source structured as ``source`` is, under ``plan``.
+
+    Args:
+        source: The indexed source.
+        plan: The pipeline's epoch plan.
+
+    Returns:
+        :func:`batch_records` as a ``jax.jit`` program over the source's stand-in, its batch size
+        static.
+    """
+    structure, stand_in = _structure(source)
+
+    def build() -> Callable[..., Any]:
+        def _names(
+            start: jax.Array, epoch: jax.Array, key: jax.Array | None, size: int
+        ) -> tuple[jax.Array, jax.Array]:
+            records = batch_records(
+                stand_in, plan, key_base=key, start=start, epoch=epoch, size=size
+            )
+            return records.indices, records.epochs
+
+        return jax.jit(_names, static_argnames=("size",))
+
+    with _NAMING_LOCK:  # the host stage's naming is found on the consumer, and in each worker
+        return cached_program(_NAMING_PROGRAMS, (structure, plan), build)
+
+
+def _structure(source: DataSourceModule) -> tuple[Any, DataSourceModule]:
+    """The source's structure, and a stand-in source holding that and nothing more.
+
+    The stand-in keeps the source's graph, configuration and statics; each array becomes a view
+    of its shape and dtype holding one element (zero strides), and each
+    :class:`~datarax.sources.eager_source.HostValue` an empty holder, since nothing traced reads
+    one. A source's order reads its lengths only, so the stand-in names the source's records.
+
+    Args:
+        source: The indexed source.
+
+    Returns:
+        The stand-in's graph definition, state structure and array shapes and dtypes, which two
+        sources share exactly when their stand-ins name records alike, and the stand-in.
+    """
+    graphdef, state = nnx.split(source)
+    stand_in = nnx.merge(graphdef, jax.tree.map(_shape_only, state))
+    for _, node in nnx.iter_graph(stand_in):
+        if isinstance(node, nnx.Module):
+            for name, value in list(vars(node).items()):
+                if isinstance(value, HostValue):
+                    empty = object.__new__(type(value))
+                    empty.value = None
+                    setattr(node, name, empty)
+    graphdef, state = nnx.split(stand_in)
+    leaves, treedef = jax.tree.flatten(state)
+    shapes = tuple((np.shape(leaf), str(getattr(leaf, "dtype", type(leaf)))) for leaf in leaves)
+    return (graphdef, treedef, shapes), stand_in
+
+
+def _shape_only(leaf: Any) -> Any:
+    """An array as its shape and dtype, holding one element; a key array or a scalar as it is."""
+    dtype = getattr(leaf, "dtype", None)
+    if dtype is None or jnp.issubdtype(dtype, jax.dtypes.extended):
+        return leaf
+    return np.broadcast_to(np.zeros((), dtype), np.shape(leaf))
 
 
 def stream_batches(

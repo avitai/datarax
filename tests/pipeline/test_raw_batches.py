@@ -15,6 +15,7 @@ import gc
 import subprocess
 import sys
 import threading
+import weakref
 from pathlib import Path
 from typing import Any
 
@@ -692,6 +693,34 @@ class TestLifetime:
         del pipe
         gc.collect()
         assert stage.iterator is None
+
+    @pytest.mark.parametrize("cached_by", ["step", "session", "a user's nnx.jit"])
+    def test_a_dropped_pipeline_frees_its_source_though_a_cache_holds_its_graph(
+        self, cached_by: str
+    ) -> None:
+        """A compiled-step cache keyed by the pipeline's graph keeps its host stage, which holds
+        no source: the host naming keeps a stand-in of the source's structure, not the source.
+
+        Each variant's batch size is its own, so its pipeline's graph is a new cache entry, as
+        the first pipeline of a structure is, whatever ran before it in the process.
+        """
+        batch_size = {"step": 11, "session": 12, "a user's nnx.jit": 13}[cached_by]
+        pipe = _pipeline(_memory(), batch_size=batch_size, num_epochs=None)
+        source = weakref.ref(pipe.source)
+        if cached_by == "step":
+            pipe.step()
+        elif cached_by == "session":
+            next(iter(pipe.session()))
+        else:
+            _user_step(pipe)
+        next(iter(pipe.raw_batches()))
+        del pipe
+        for _ in range(100):  # the run's read thread lets go of its read when it exits
+            gc.collect()
+            if source() is None:
+                break
+            threading.Event().wait(0.05)
+        assert source() is None
 
     def test_an_iterator_keeps_its_run_when_its_pipeline_is_dropped(self) -> None:
         reference = [_names(b) for b in _pipeline(_memory(), num_epochs=1).raw_batches()]

@@ -40,9 +40,9 @@ from flax import nnx
 
 from datarax.core.element_batch import Batch
 from datarax.core.operator import OperatorModule
+from datarax.pipeline.compiled import cached_program
 from datarax.pipeline.dag_call import (
     apply_writes,
-    cached_step,
     is_per_batch_state,
     run_tracking_writes,
     state_leaves,
@@ -99,7 +99,7 @@ def _session_step(graphdef: Any, body: StepBody, size: int) -> Callable[..., Any
 
         return session_step
 
-    return cached_step(_SESSION_STEPS, (graphdef, body, size), build)
+    return cached_program(_SESSION_STEPS, (graphdef, body, size), build)
 
 
 def _host_copies(module: nnx.Module) -> _HostCopies:

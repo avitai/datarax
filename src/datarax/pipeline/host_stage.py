@@ -459,25 +459,8 @@ class HostStage:
         # iterator is closed and released before the interpreter tears Grain's modules down.
         self._run_iterator: list[_Placed] = []
         self._opened_for: tuple[Any, ...] | None = None
-        self._naming: tuple[Any, HostNaming] | None = None
         self._finalizer: weakref.finalize | None = None
         self._token: weakref.ref[_RunToken] | None = None
-
-    def naming(self, source: DataSourceModule, plan: EpochPlan, shuffled: bool) -> HostNaming:
-        """The pipeline's host naming, built once per source, plan and order.
-
-        Args:
-            source: The indexed source.
-            plan: The pipeline's epoch plan.
-            shuffled: Whether the pipeline shuffles.
-
-        Returns:
-            The naming, reused across runs so its program compiles once per batch shape.
-        """
-        identity = (id(source), plan, shuffled)
-        if self._naming is None or self._naming[0] != identity:
-            self._naming = (identity, HostNaming(source, plan, shuffled=shuffled))
-        return self._naming[1]
 
     @property
     def iterator(self) -> _Placed | None:
@@ -608,7 +591,7 @@ class HostStage:
             read = IndexedRead(
                 source,
                 units,
-                self.naming(source, plan, pipeline.shuffle),
+                HostNaming(source, plan, shuffled=pipeline.shuffle),
                 key=key,
                 with_provenance=with_provenance,
             )
@@ -794,7 +777,7 @@ class HostStage:
         return IndexedRead(
             pipeline.source,
             RunUnits(run=self._run(plan)),
-            self.naming(pipeline.source, plan, pipeline.shuffle),
+            HostNaming(pipeline.source, plan, shuffled=pipeline.shuffle),
             key=key,
             with_provenance=False,
         )

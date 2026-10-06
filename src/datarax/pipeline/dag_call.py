@@ -19,15 +19,11 @@ import jax
 from flax import nnx
 
 from datarax.core.element_batch import Batch
+from datarax.pipeline.compiled import cached_program
 from datarax.pipeline.dag import OperatorDag
 
 
-# Compiled steps shared across pipelines, matched by structural equality of their
-# key (graphs holding lists are unhashable, so the caches are lists, not dicts).
-# The most recently used entry is kept last; the oldest is dropped past the bound.
-# Held OUTSIDE the modules: storing graphdefs as module attributes would embed them
-# into the next split's graphdef, making GraphDef.__eq__ recurse into itself.
-_MAX_COMPILED_STEPS = 16
+# Compiled DAG steps shared across pipelines (datarax.pipeline.compiled).
 _DAG_STEPS: list[tuple[Any, Callable[..., Any]]] = []
 
 # A compiled step's writes: raw values by position within each state partition,
@@ -45,26 +41,6 @@ def is_per_batch_state(path: Any, value: Any) -> bool:
     """
     del path
     return isinstance(value, nnx.RngCount) or type(value) is nnx.Variable
-
-
-def cached_step(
-    cache: list[tuple[Any, Callable[..., Any]]], key: Any, build: Callable[[], Callable[..., Any]]
-) -> Callable[..., Any]:
-    """Return the compiled step cached under ``key``, building it on a miss.
-
-    Keys are compared by equality, so structurally identical pipelines share one
-    compiled step. The most recently used entry moves last; the oldest is dropped past
-    :data:`_MAX_COMPILED_STEPS`.
-    """
-    for index, (cached_key, step) in enumerate(cache):
-        if cached_key == key:
-            cache.append(cache.pop(index))
-            return step
-    step = build()
-    cache.append((key, step))
-    if len(cache) > _MAX_COMPILED_STEPS:
-        cache.pop(0)
-    return step
 
 
 def state_leaves(state: Any) -> list[Any]:
@@ -166,7 +142,7 @@ def _dag_step(graphdef: Any) -> Callable[..., Any]:
 
         return step
 
-    return cached_step(_DAG_STEPS, graphdef, build)
+    return cached_program(_DAG_STEPS, graphdef, build)
 
 
 def compile_dag(dag: OperatorDag) -> Callable[[Batch], Batch]:

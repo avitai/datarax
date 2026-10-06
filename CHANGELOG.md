@@ -41,8 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (the rows past an epoch's end are the next epoch's head). The compiled session names its batches
   with it. `datarax.pipeline.epochs.HostNaming(source, plan, *, shuffled)` runs it as one
   `jax.jit` program on the CPU device for the host stage, taking the start as two uint32 words,
-  so positions past `2**31` are named exactly; the source is closed over (none of its records is
-  transferred), one program is compiled per batch shape, and nothing transfers implicitly.
+  so positions past `2**31` are named exactly. The program closes over a stand-in holding the
+  source's structure only (graph, configuration, array shapes and dtypes), so none of its records
+  is transferred and a cached program keeps no source alive; every pipeline over a source
+  structured alike under the same plan shares it, compiled once per batch shape, and nothing
+  transfers implicitly. The host stage holds no naming of its own, so a compiled-step cache that
+  keeps a pipeline's host stage keeps none of its source.
 - `datarax.pipeline.epochs.Run`: the batches a run serves, batch `ordinal` found without walking
   to it, until a recorded end epoch, so a run resumed anywhere ends where the uninterrupted run
   would. `Run.starting(plan, position, epoch)` counts the run as a session from that position.
@@ -187,8 +191,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `module_state`, a session's version 2) or of another configuration is refused, naming it; a
   refused state changes nothing. `Pipeline.batches_left()` counts the host stage's run.
 - The Tier-A DAG call moves from `datarax.pipeline.iteration` to `datarax.pipeline.dag_call`, its
-  helpers public (`is_per_batch_state`, `cached_step`, `state_leaves`, `run_tracking_writes`,
-  `apply_writes`, `Writes`); `compile_streaming_dag` is `compile_dag`.
+  helpers public (`is_per_batch_state`, `state_leaves`, `run_tracking_writes`, `apply_writes`,
+  `Writes`); `compile_streaming_dag` is `compile_dag`. The cache of compiled programs shared by
+  structurally equal pipelines is `datarax.pipeline.compiled.cached_program`, which the DAG
+  call, the compiled session and the host naming use.
 - `datarax.pipeline.epochs.stream_batches(pull, ...)` takes a pull returning `(Batch, provenance)`
   and yields `(Batch, provenance)` pairs, the provenance joined with its rows.
 - A `TFDSStreamDataset` element is `(columns, provenance, ids, epochs)`, each record's pass beside
