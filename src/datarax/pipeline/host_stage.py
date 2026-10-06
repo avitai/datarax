@@ -27,8 +27,10 @@ at the run's end, by ``close()``, and when collected.
 from __future__ import annotations
 
 import dataclasses
+import logging
 import math
 import sys
+import time
 import weakref
 from collections.abc import Callable, Iterator, Mapping
 from types import MappingProxyType
@@ -54,6 +56,8 @@ from datarax.pipeline.epochs import EpochPlan, HostNaming, Run, stream_batches
 from datarax.sources._source_base import StreamCursor, StreamingSourceBase
 from datarax.sources.eager_source import HostValue
 
+
+logger = logging.getLogger(__name__)
 
 _READ_THREADS = 1
 """Read threads per run. One host thread serves in-memory and memory-mapped gathers (millions of
@@ -293,7 +297,14 @@ class _StreamIterator(grain.DatasetIterator):
         weakref.finalize(self, self._stream.close)
 
     def _skip(self, records: int) -> None:
-        """Read past ``records`` of the cursor's pass without naming them (a resumed pass)."""
+        """Read past ``records`` of the cursor's pass without naming them (a resumed pass).
+
+        The stream has no position to seek to, so its pass is read again from the start to the
+        saved count, as it was first read; the replay's cost is logged at ``INFO``.
+        """
+        if not records:
+            return
+        started = time.perf_counter()
         left = records
         while left:
             batch, _ = self._source.read_from(
@@ -303,6 +314,13 @@ class _StreamIterator(grain.DatasetIterator):
                 break
             left -= batch.batch_size
         self._stream.arrived -= records - left if self._named_by_arrival() else 0
+        logger.info(
+            "%s resumed mid-pass: replayed %d records of pass %d in %.3f s",
+            type(self._source).__name__,
+            records - left,
+            self._epoch,
+            time.perf_counter() - started,
+        )
 
     def _named_by_arrival(self) -> bool:
         return self._source.record_identity is RecordIdentity.ARRIVAL

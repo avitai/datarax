@@ -10,6 +10,7 @@ read threads had read ahead. Any other state layout is refused, naming both vers
 
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -380,6 +381,38 @@ class TestState:
             resumed = build()
             resumed.set_state(state)
             assert served + [_rows(b) for b in resumed] == whole
+
+    def test_a_stream_resumed_mid_pass_logs_its_replay(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        def build() -> Pipeline:
+            stream = RecordStream(_columns(10), kind=RecordIdentity.ARRIVAL, chunk=3)
+            return _pipeline(stream, num_epochs=2, shuffle=True)
+
+        pipe = build()
+        it = iter(pipe)
+        next(it)
+        next(it)
+        state = pipe.get_state()
+        pipe.close()
+        assert state["stream"]["records"] == 8
+        resumed = build()
+        resumed.set_state(state)
+        with caplog.at_level(logging.INFO, logger="datarax.pipeline.host_stage"):
+            next(iter(resumed))
+        replays = [r.getMessage() for r in caplog.records if "replayed" in r.getMessage()]
+        assert len(replays) == 1
+        assert "RecordStream" in replays[0] and "replayed 8 records of pass 0" in replays[0]
+
+    def test_a_stream_resumed_at_a_pass_start_replays_nothing(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        stream = RecordStream(_columns(10), kind=RecordIdentity.ARRIVAL, chunk=3)
+        pipe = _pipeline(stream, num_epochs=2, shuffle=True)
+        pipe.set_state(pipe.get_state())
+        with caplog.at_level(logging.INFO, logger="datarax.pipeline.host_stage"):
+            next(iter(pipe))
+        assert not [r for r in caplog.records if "replayed" in r.getMessage()]
 
     def test_the_state_round_trips_through_the_checkpoint_store(self, tmp_path: Path) -> None:
         pipe = _pipeline(_memory(), num_epochs=None)
