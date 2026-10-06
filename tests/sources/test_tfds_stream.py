@@ -44,7 +44,6 @@ from tests.jax_test_environment import forwarded_jax_environment
 from tests.test_common.streams import (
     graph_definitions_across_a_pass,
     non_array_state_leaves,
-    record_chunks,
     second_pulls_after_a_tree_round_trip,
 )
 from tests.test_common.tfds_fixture import FIXTURE, IMAGE_SHAPE, TFDSFixture, TRAIN_RECORDS
@@ -281,16 +280,26 @@ class TestProvenanceByIdentity:
 def test_every_pass_decodes_in_the_pipeline_s_batch_size(
     tfds_fixture: TFDSFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    chunks = record_chunks(monkeypatch, TFDSStreamingSource)
+    decoded: list[int] = []
+    decode = tfds_source._decoded_batch  # noqa: SLF001 - the one decode of a TFDS stream
+
+    def watched(features: Any, frames: list[Any], kept: Any) -> Any:
+        decoded.append(len(frames))
+        return decode(features, frames, kept)
+
+    monkeypatch.setattr(tfds_source, "_decoded_batch", watched)
     pipeline = Pipeline(
         source=_stream(tfds_fixture), stages=[], batch_size=6, rngs=nnx.Rngs(0), num_epochs=3
     )
 
-    list(pipeline)
+    served = [batch.batch_size for batch in pipeline]
 
     assert TRAIN_RECORDS % 6 != 0
-    # The declared spec's read of one record, then each pass in batches of 6.
-    assert chunks == [(0, 1, 1)] + [(p, 6, n) for p in range(3) for n in (6, 6, 6, 2)]
+    # A pass's last records are completed from the next pass's head (stream_batches), so three
+    # passes of 20 records serve ten full batches; each is decoded once, after the declared
+    # spec's read of one record.
+    assert served == [6] * 10
+    assert decoded == [1] + [6] * 10
 
 
 class TestNnxHygiene:
