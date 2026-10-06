@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cache keyed by the pipeline's graph keeps its host stage. Reads run in the caller's precision
   mode. `Pipeline.host_stage` holds where host iteration stands; its `read_threads` and
   `read_buffer` are the run's read options.
+- `datarax.core.data_source.IndexedHostReadWithProvenance`: the protocol of an indexed host read
+  returning a batch and its records' provenance from one read, `read_with_provenance(indices, *,
+  epochs=0, contiguous=False)`. The host stage reads a source implementing it once per batch
+  asked for with provenance; any other indexed source serves the pair by `get_batch` and
+  `provenance(indices)`.
 - `TFDSStreamingSource.run_dataset(schedule, key)`: a run of passes as one Grain dataset of decoded
   units numbered from the run's start (`datarax.core.data_source.BatchSchedule`), so Grain's
   process prefetch starts its workers once per run and `k` slices interleaved from the first
@@ -260,8 +265,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   contiguous=False)` reads the named records with one batched read of ArrayRecord's
   `ArrayRecordDataSource` (the reader Grain and TFDS use) and decodes them with one call of `decode`, which now takes a batch's
   `bytes` records and returns one mapping per record; numeric values are the batch's columns and
-  the rest the records' provenance (`provenance(indices)`). `paths` may be TFDS
-  `FileInstruction`s. It pickles without open file handles and has no traced read, so `step()`
+  the rest the records' provenance (`provenance(indices)`); `read_with_provenance(indices, ...)`
+  returns the batch and its provenance from one read and one decode, which
+  `raw_batches(with_provenance=True)` reads it with. `paths` may be TFDS `FileInstruction`s. It pickles without open file handles and has no traced read, so `step()`
   over it is refused naming `get_records`.
 - `source_ops.validate_eager_source_settings`, `validate_eager_config` and
   `finalize_eager_config_validation` are `validate_source_settings`, `validate_source_config` and

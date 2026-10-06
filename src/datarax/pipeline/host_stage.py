@@ -42,6 +42,7 @@ from datarax.core import batch_ops
 from datarax.core.data_source import (
     DataSourceModule,
     IndexedHostRead,
+    IndexedHostReadWithProvenance,
     Provenance,
     RecordIdentity,
 )
@@ -183,7 +184,9 @@ class IndexedRead:
     """The read of an ``INDEXED`` source's run, unit by unit: what each Grain worker runs.
 
     A unit's batches are named on the CPU device and read with one host read; a chunk is split
-    into its batches and stacked, ``(K, B, ...)``. A read marks a run consecutive records as
+    into its batches and stacked, ``(K, B, ...)``. Asked for provenance, a source implementing
+    :class:`~datarax.core.data_source.IndexedHostReadWithProvenance` reads both at once; any
+    other looks its records' provenance up by index. A read marks a run consecutive records as
     contiguous only when its names are (so a source reads it as views). It holds the source, the
     run's units, the naming and the key as host words, and pickles with them, so a worker process
     reads with a copy of it.
@@ -229,12 +232,19 @@ class IndexedRead:
         epochs = np.concatenate([epochs for _, epochs in named])
         values = from_words(indices)
         contiguous = len(values) > 1 and bool(np.all(np.diff(values.astype(np.int64)) == 1))
-        batch = cast(IndexedHostRead, self.source).get_batch(
-            indices, epochs=epochs, contiguous=contiguous
-        )
+        source = self.source
+        provenance: Provenance | None = None
+        if self.with_provenance and isinstance(source, IndexedHostReadWithProvenance):
+            batch, provenance = source.read_with_provenance(
+                indices, epochs=epochs, contiguous=contiguous
+            )
+        else:
+            batch = cast(IndexedHostRead, source).get_batch(
+                indices, epochs=epochs, contiguous=contiguous
+            )
+            provenance = source.provenance(indices) if self.with_provenance else None
         if self.units.is_chunk(ordinal):
             batch = batch_ops.stack(batch_ops.split(batch, len(batches)))
-        provenance = self.source.provenance(indices) if self.with_provenance else None
         epoch, position = self.units.after(ordinal)
         return HostElement(batch, provenance, (epoch, position, 0))
 

@@ -11,7 +11,7 @@ import logging
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 import jax
 import numpy as np
@@ -185,6 +185,33 @@ class IndexedHostRead(Protocol):
 
         Returns:
             The records as a host ``Batch``.
+        """
+        ...
+
+
+@runtime_checkable
+class IndexedHostReadWithProvenance(Protocol):
+    """An indexed host read returning a batch and its records' provenance from one read.
+
+    A source whose provenance would cost a second read and decode of the records implements it
+    (``ArrayRecordSourceModule``), so the host stage reads a batch asked for with provenance
+    once. Every other indexed source serves the pair by ``get_batch`` and
+    :meth:`DataSourceModule.provenance`.
+    """
+
+    def read_with_provenance(
+        self, indices: ArrayLike, *, epochs: ArrayLike = 0, contiguous: bool = False
+    ) -> tuple[Batch, Provenance]:
+        """Read the records ``indices`` names, as ``get_batch`` does, with their provenance.
+
+        Args:
+            indices: uint32 ``(n, 2)`` record indices.
+            epochs: The epoch of every record, or of each ``(n,)``.
+            contiguous: Whether ``indices`` is a run of consecutive records, read as views.
+
+        Returns:
+            The records as a host ``Batch``, and one mapping of strings and objects per record,
+            in row order.
         """
         ...
 

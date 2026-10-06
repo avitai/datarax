@@ -180,17 +180,43 @@ class ArrayRecordSourceModule(DataSourceModule):
                 contiguous is not one, or the decoded records' numeric fields or shapes differ.
             IndexError: If an index is the padding index or outside the files.
         """
+        return self.read_with_provenance(indices, epochs=epochs, contiguous=contiguous)[0]
+
+    def read_with_provenance(  # noqa: DOC502 - record_words, host_rows and run_words raise
+        self, indices: ArrayLike, *, epochs: ArrayLike = 0, contiguous: bool = False
+    ) -> tuple[Batch, tuple[Mapping[str, Any], ...]]:
+        """Read and decode the records ``indices`` names once: the batch and their provenance.
+
+        The batch is :meth:`get_batch`'s and the provenance :meth:`provenance`'s, from one batched
+        read and one call of ``decode``
+        (:class:`~datarax.core.data_source.IndexedHostReadWithProvenance`).
+
+        Args:
+            indices: uint32 ``(n, 2)`` record indices, each as its words ``(hi, lo)``.
+            epochs: The epoch of every record, or of each ``(n,)``.
+            contiguous: Whether ``indices`` is a run of consecutive records.
+
+        Returns:
+            The records' numeric values as a host ``Batch``, and each record's mapping of strings
+            and objects, in row order; an empty mapping for a record that holds nothing but
+            numbers.
+
+        Raises:
+            ValueError: If ``indices`` are not uint32 ``(n, 2)`` words, a run declared
+                contiguous is not one, or the decoded records' numeric fields or shapes differ.
+            IndexError: If an index is the padding index or outside the files.
+        """
         words = record_words(indices)
         rows = host_rows(words, len(self))
         if contiguous and len(rows):
             words = run_words(rows)
-        columns, _ = self._parts(rows)
-        return named_batch(columns, words, epochs)
+        columns, provenance = self._parts(rows)
+        return named_batch(columns, words, epochs), provenance or (NO_PROVENANCE,) * len(rows)
 
     def provenance(  # noqa: DOC502 - record_words and host_rows raise
         self, indices: ArrayLike
     ) -> tuple[Mapping[str, Any], ...]:
-        """The non-numeric values of the records ``indices`` names, read and decoded again.
+        """The non-numeric values of the records ``indices`` names, read and decoded.
 
         Args:
             indices: uint32 ``(n, 2)`` record indices.

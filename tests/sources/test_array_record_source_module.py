@@ -23,7 +23,7 @@ import pytest
 from array_record.python.array_record_module import ArrayRecordWriter
 from flax import nnx
 
-from datarax.core.data_source import RecordIdentity
+from datarax.core.data_source import IndexedHostReadWithProvenance, RecordIdentity
 from datarax.core.index_words import from_words, to_words
 from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
@@ -259,6 +259,68 @@ class TestThePipelineOwnsTheOrder:
         assert labels
         assert set(labels) - {100} <= set(range(_RECORDS))
         assert set(labels) - {100}
+
+
+class TestOneReadWithProvenance:
+    """A batch and its records' provenance come from one batched read and one decode call."""
+
+    def test_the_read_with_provenance_equals_get_batch_and_provenance_from_one_decode(
+        self, shards: list[str]
+    ) -> None:
+        calls: list[int] = []
+
+        def counted(records: Sequence[bytes]) -> list[dict[str, Any]]:
+            calls.append(len(records))
+            return _decode(records)
+
+        source = _source(shards, decode=counted)
+        words = to_words(np.array([1, 8, 2], np.uint64))
+        assert isinstance(source, IndexedHostReadWithProvenance)
+        batch, provenance = source.read_with_provenance(words, epochs=2)
+        assert calls == [3]
+        expected = _source(shards).get_batch(words, epochs=2)
+        np.testing.assert_array_equal(batch.indices, expected.indices)
+        np.testing.assert_array_equal(batch.epochs, expected.epochs)
+        for field in ("x", "label"):
+            np.testing.assert_array_equal(batch[field], expected[field])
+        assert provenance == _source(shards).provenance(words)
+
+    def test_raw_batches_with_provenance_decode_each_batch_once(self, shards: list[str]) -> None:
+        def run(with_provenance: bool) -> tuple[list[Any], list[int]]:
+            calls: list[int] = []
+
+            def counted(records: Sequence[bytes]) -> list[dict[str, Any]]:
+                calls.append(len(records))
+                return _decode(records)
+
+            pipe = Pipeline(
+                source=_source(shards, decode=counted),
+                stages=[],
+                batch_size=4,
+                rngs=nnx.Rngs(0),
+                shuffle=True,
+                num_epochs=2,
+            )
+            calls.clear()
+            served = list(pipe.raw_batches(with_provenance=with_provenance))
+            return served, calls
+
+        plain, plain_calls = run(False)
+        pairs, pair_calls = run(True)
+        assert pair_calls == plain_calls == [4] * 6
+        for batch, (paired, provenance) in zip(plain, pairs, strict=True):
+            np.testing.assert_array_equal(batch.indices, paired.indices)
+            np.testing.assert_array_equal(batch["x"], paired["x"])
+            assert [p["name"] for p in provenance] == [f"name-{i}" for i in _names(paired.indices)]
+
+    def test_an_eager_source_serves_pairs_by_its_lookup(self) -> None:
+        source = MemorySource(
+            MemorySourceConfig(), [{"x": np.float32(i), "name": f"r{i}"} for i in range(8)]
+        )
+        assert not isinstance(source, IndexedHostReadWithProvenance)
+        pipe = Pipeline(source=source, stages=[], batch_size=4, rngs=nnx.Rngs(0), shuffle=True)
+        for batch, provenance in pipe.raw_batches(with_provenance=True):
+            assert [p["name"] for p in provenance] == [f"r{i}" for i in _names(batch.indices)]
 
 
 class TestFiles:
