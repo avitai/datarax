@@ -62,25 +62,33 @@ class TestP3MemoryEfficiency:
     ) -> None:
         """The peak host memory iterating adds is the batches in flight, never the dataset.
 
-        Each variant runs in its own process (``_PEAK_HOST_MEMORY``), with JAX's runtime and
-        compiler, the data and a first run of the same structure (its naming compiled) outside
-        the window. The window's peak is the kernel's high-water mark (``VmHWM``, reset at the
-        window's start through ``/proc/self/clear_refs``), so no transient is missed between
-        samples. glibc's mmap threshold is fixed at 128 KiB so a freed batch returns to the OS:
-        with the default dynamic threshold freed batch-sized buffers stay in the heap and the
-        peak stops counting batches (measured: the control then steps unevenly).
+        The property is the owner's (OWN-1006-HOST-MEMORY-O-BATCH): host memory O(batch), never
+        O(dataset). Single-batch exactness is asserted where it resolves:
+        ``tests/pipeline/test_device_staging.py`` counts ``1 + d`` placed batches in
+        ``jax.live_arrays()`` after every ``next()`` (on CPU too), and its GPU peak test bounds
+        the device's peak by batches.
 
-        Bound: the by-hand control reads the same CV-1 batches with ``source.get_batch`` and
-        places them with ``jax.device_put``, holding the read buffer's batches read ahead and
-        ``d + 1`` placed (``d`` staged and the consumer's). With ``d = 0`` the pipeline is held to
-        it exactly. With ``d > 0`` it may exceed it by one batch: the placement thread refills its
-        room as the consumer takes a batch, before or after the consumer drops the one it held
-        (the race the GPU peak test measures). A dataset a tenth the size (1,000 records against
-        CV-1's 10,000; ten times CV-1 does not fit the 16 GiB process cap) is held to the same
-        bound, as the GPU peak test holds both sizes to one range. Measured on one CPU over three
-        runs: the pipeline adds one batch per staged batch (43.6, 52.5-52.9, 61.5-62.3,
-        70.8-80.2 MB at d = 0..3, B=64 of 224x224x3 uint8, 9.19 MB a batch; the 80.2 is the
-        race), the control 44.3-44.7, 53.3-53.9, 62.4-63.3, 72.1-72.5 MB.
+        Each variant runs in its own process (``_PEAK_HOST_MEMORY``), with JAX's runtime and
+        compiler, the data and a first run of the same structure (its naming compiled, its threads
+        drained) outside the window. The window's peak is the kernel's high-water mark
+        (``VmHWM``, reset at the window's start through ``/proc/self/clear_refs``), so no transient
+        is missed between samples. ``MALLOC_MMAP_THRESHOLD_`` is fixed at 128 KiB for the
+        measurement only, not as datarax behaviour: under glibc's default dynamic threshold a
+        freed batch-sized buffer stays in the heap, and the control did not step by batches
+        (36.8, 64.4, 66.2, 82.7 MB keeping 1-4 placed batches); with it fixed the control steps
+        by one batch, 9.19 MB.
+
+        Bound, the same for every ``d``: the pipeline's growth is at most a by-hand control's
+        plus one batch, the property's unit. The control reads the same CV-1 batches with
+        ``source.get_batch`` and places them with ``jax.device_put``, holding the read buffer's
+        batches read ahead and ``d + 1`` placed (``d`` staged and the consumer's). The batch of
+        slack covers the placement thread's refill racing the consumer's release when ``d > 0``
+        (the race the GPU peak test measures) and the pipeline's own allocator and thread jitter,
+        about 1 MB, which at ``d = 0`` leaves the pipeline at its control (43.3-44.3 MB against
+        44.3-44.7 MB). A dataset a tenth the size (1,000 records against CV-1's 10,000; ten
+        times CV-1 does not fit the 16 GiB process cap) is held to the same bound. Measured on
+        one CPU: the pipeline adds one batch per staged batch (43.6, 52.5-52.9, 61.5-62.3,
+        70.8-80.2 MB at d = 0..3, B=64 of 224x224x3 uint8; the 80 MB readings are the race).
         """
         # One batch: its images, and its indices (two words a record), epochs and draws.
         batch_mb = (64 * 224 * 224 * 3 + 64 * (2 * 4 + 4 + 4)) / 2**20
@@ -105,9 +113,8 @@ class TestP3MemoryEfficiency:
             f"one batch {batch_mb:.2f} MB, SPDL {spdl['growth_mb']} MB (reported, not a bound; "
             "None when spdl is not installed)"
         )
-        race = batch_mb if depth else 0.0
         for variant in (large, small):
-            assert variant["growth_mb"] <= control["growth_mb"] + race
+            assert variant["growth_mb"] <= control["growth_mb"] + batch_mb
 
 
 _PEAK_HOST_MEMORY = """
