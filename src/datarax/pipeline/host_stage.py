@@ -31,6 +31,7 @@ import dataclasses
 import inspect
 import logging
 import math
+import queue
 import sys
 import threading
 import time
@@ -75,6 +76,9 @@ _READ_THREADS = 1
 """Read threads per run. One host thread serves in-memory and memory-mapped gathers (millions of
 records a second); a decode-bound read gains little from a second thread (the GIL), and Grain
 processes are the remedy there."""
+_DEVICE_BUFFER = 0
+"""Placed batches staged on the device ahead of the one the consumer holds (:class:`_StagedAhead`);
+0 places each batch on the consumer as it is taken."""
 _READ_BUFFER = 2
 """Units read ahead of the consumer. Each is placed when the consumer takes it: ``device_put`` is
 asynchronous on an accelerator, so the transfer still overlaps the step before. A placement thread
@@ -559,6 +563,134 @@ def _place(element: HostElement) -> tuple[Batch, Provenance | None, tuple[int, i
 
 
 type _Placed = grain.DatasetIterator[tuple[Batch, Provenance | None, tuple[int, int, int]]]
+type _PlacedElement = tuple[Batch, Provenance | None, tuple[int, int, int]]
+
+
+def _placer(x64: bool, device: Any) -> Callable[[HostElement], _PlacedElement]:
+    """:func:`_place` in the caller's precision mode and default device, for another thread.
+
+    ``jax.enable_x64`` and ``jax.default_device`` are thread-local, and a placement thread does
+    not inherit them, so the caller's are captured when the run opens.
+
+    Args:
+        x64: The caller's precision mode.
+        device: The caller's default device, or ``None``.
+
+    Returns:
+        The placement, run on the placement thread.
+    """
+
+    def place(element: HostElement) -> _PlacedElement:
+        with jax.enable_x64(x64), jax.default_device(device):
+            return _place(element)
+
+    return place
+
+
+class _StagedAhead(grain.IterDataset):
+    """Placed elements staged on the device ahead of the consumer, exactly ``depth`` at most.
+
+    Grain's ``experimental.device_put`` (``grain/_src/python/experimental/device_put/
+    device_put.py``, grain ``2eef044``) composes a host prefetch, ``map(jax.device_put)`` and a
+    ``ThreadPrefetchIterDataset(device_buffer_size)``. That prefetch's producer places an element
+    and then waits for room in its queue, so it holds one placed element beyond its buffer. This
+    stage is the same composition with the wait moved before the placement: the producer takes a
+    slot of ``depth`` first, places, and the consumer frees the slot as it takes the element. The
+    device therefore holds at most ``depth`` placed batches ahead of the one the consumer holds.
+    """
+
+    def __init__(self, parent: grain.IterDataset, depth: int) -> None:
+        super().__init__(parent)
+        self._depth = depth
+
+    def __iter__(self) -> _StagedAheadIterator:
+        return _StagedAheadIterator(iter(self._parent), self._depth)
+
+
+class _Raised(NamedTuple):
+    """An error the placement thread met, raised on the consumer in its place in the order."""
+
+    error: BaseException
+
+
+_STAGED_END = object()
+"""The placement thread's mark of its parent's end."""
+
+
+class _StagedAheadIterator(grain.DatasetIterator):
+    """The consumer's side of :class:`_StagedAhead`, and the placement thread it starts."""
+
+    def __init__(self, parent: grain.DatasetIterator, depth: int) -> None:
+        super().__init__(parent)
+        self._room = threading.Semaphore(depth)
+        self._ready: queue.SimpleQueue[Any] = queue.SimpleQueue()
+        self._stop = threading.Event()
+        self._ended: _Raised | object | None = None
+        self._thread: threading.Thread | None = None
+
+    def _produce(self) -> None:
+        """Place the parent's elements while there is room, until the end, an error or close."""
+        while True:
+            self._room.acquire()
+            if self._stop.is_set():
+                return
+            try:
+                element = next(self._parent)
+            except StopIteration:
+                self._ready.put(_STAGED_END)
+                return
+            except BaseException as error:  # noqa: BLE001 - raised on the consumer, in order
+                self._ready.put(_Raised(error))
+                return
+            if self._stop.is_set():
+                return
+            self._ready.put(element)
+
+    def __next__(self) -> Any:
+        if self._ended is not None:
+            if isinstance(self._ended, _Raised):
+                raise self._ended.error
+            raise StopIteration
+        if self._thread is None:
+            self._thread = threading.Thread(
+                target=self._produce, name="datarax-device-staging", daemon=True
+            )
+            self._thread.start()
+        item = self._ready.get()
+        if item is _STAGED_END or isinstance(item, _Raised):
+            self._ended = item
+            return self.__next__()
+        self._room.release()
+        return item
+
+    def get_state(self) -> dict[str, Any]:
+        """Not used: the host stage's cursor is where a run resumes."""
+        return {}
+
+    def set_state(self, state: dict[str, Any]) -> None:  # noqa: DOC502
+        """Not supported: a run resumes through the host stage's cursor.
+
+        Args:
+            state: The state to restore.
+
+        Raises:
+            NotImplementedError: Always.
+        """
+        del state
+        raise NotImplementedError("a run resumes through the pipeline's host stage")
+
+    def close(self) -> None:
+        """Stop the placement thread, close the parent, and drop the batches staged ahead."""
+        self._stop.set()
+        self._room.release()  # wakes a producer waiting for room
+        self._parent.close()  # ends a producer waiting on a read
+        if self._thread is not None:
+            self._thread.join(timeout=10)
+        while True:
+            try:
+                self._ready.get_nowait()
+            except queue.Empty:
+                break
 
 
 class HostStage:
@@ -579,6 +711,9 @@ class HostStage:
         # read ahead of the consumer. Internal: a public resource budget replaces them.
         self._read_threads = _READ_THREADS
         self._read_buffer = _READ_BUFFER
+        # Placed batches staged on the device ahead of the one the consumer holds; 0 places each
+        # on the consumer as it is taken. Internal until measurement chooses its default.
+        self._device_buffer = _DEVICE_BUFFER
         # The run's Grain iterator, in a list the run's finalizer empties, so at exit the
         # iterator is closed and released before the interpreter tears Grain's modules down.
         self._run_iterator: list[_Placed] = []
@@ -613,7 +748,11 @@ class HostStage:
         self._opened_for, self._finalizer, self._token = None, None, None
 
     def _open(self, dataset: grain.IterDataset, options: tuple[Any, ...]) -> _RunToken:
-        """Start the run's iterator: units read ahead, each placed as the consumer takes it.
+        """Start the run's iterator: units read ahead, placed on the device ahead or as taken.
+
+        With a device buffer of ``d`` batches (:class:`_StagedAhead`) a placement thread keeps up
+        to ``d`` placed batches ahead of the one the consumer holds; with ``d = 0`` each batch is
+        placed on the consumer as it is taken.
 
         The run lives as long as its token: the pipelines it served and the iterators serving
         it hold the token, and the stage only a weak reference. A compiled-step cache keyed by
@@ -627,7 +766,17 @@ class HostStage:
         Returns:
             The run's token.
         """
-        self._run_iterator.append(iter(dataset.map(_place)))
+        depth = self._device_buffer
+        if depth:
+            placed = _StagedAhead(
+                dataset.map(
+                    _placer(bool(jax.config.read("jax_enable_x64")), jax.config.jax_default_device)
+                ),
+                depth,
+            )
+        else:
+            placed = dataset.map(_place)
+        self._run_iterator.append(iter(placed))
         self._opened_for = options
         token = _RunToken()
         self._token = weakref.ref(token)
@@ -680,6 +829,7 @@ class HostStage:
             x64,
             self._read_threads,
             self._read_buffer,
+            self._device_buffer,
         )
         cursor = self.cursor
         opened = (*options, cursor.epoch, cursor.position)
@@ -1103,6 +1253,7 @@ _OPTION_NAMES = (
     "x64",
     "read_threads",
     "read_buffer",
+    "device_buffer",
     "epoch",
     "position",
 )
