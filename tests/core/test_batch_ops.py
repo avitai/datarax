@@ -218,6 +218,32 @@ class TestRows:
         ):
             np.testing.assert_array_equal(got, want)
 
+    @pytest.mark.parametrize("parts", [1, 2, 4, 8])
+    def test_as_chunk_equals_the_stack_of_the_split(self, parts: int) -> None:
+        batch = host_batch(offset=3)
+
+        chunk = batch_ops.as_chunk(batch, parts)
+
+        want = batch_ops.stack(batch_ops.split(batch, parts))
+        assert jax.tree.structure(chunk) == jax.tree.structure(want)
+        for got, expected in zip(jax.tree.leaves(chunk), jax.tree.leaves(want), strict=True):
+            assert got.shape == expected.shape and got.dtype == expected.dtype
+            np.testing.assert_array_equal(got, expected)
+
+    def test_as_chunk_reshapes_the_rows_without_copying_them(self) -> None:
+        """A chunk read as one gather is regrouped as views of the gathered rows."""
+        batch = host_batch()
+
+        chunk = batch_ops.as_chunk(batch, 4)
+
+        rows, chunk_rows = (b.replace(batch_state={}) for b in (batch, chunk))
+        for got, gathered in zip(jax.tree.leaves(chunk_rows), jax.tree.leaves(rows), strict=True):
+            assert np.shares_memory(got, gathered)
+
+    def test_as_chunk_refuses_a_batch_that_does_not_divide(self) -> None:
+        with pytest.raises(ValueError, match="divide"):
+            batch_ops.as_chunk(host_batch(size=6), 4)
+
     def test_host_operations_on_numpy_data_stay_on_the_host(self) -> None:
         """A host reader builds batches as NumPy views; nothing reaches a device yet."""
         batch = host_batch()

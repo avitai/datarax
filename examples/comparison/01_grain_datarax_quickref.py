@@ -35,7 +35,7 @@ no speed claim.
 By the end of this example, you will be able to:
 
 1. Build a Grain `DataLoader` and a Datarax `Pipeline` over the same records
-2. Save iterator state mid-epoch in both libraries and resume from it exactly
+2. Save loader state mid-epoch in both libraries and resume from it exactly
 3. Say what each library's checkpoint holds and where its randomness comes from
 """
 
@@ -59,7 +59,7 @@ import numpy as np
 from flax import nnx
 
 from datarax.operators import ElementOperator, ElementOperatorConfig
-from datarax.pipeline import Pipeline, PipelineIterator
+from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -171,7 +171,9 @@ print(f"Grain resumes exactly: {grain_matches}")
 A Datarax `Pipeline` is an `nnx.Module`. The pipeline shuffles, and the stochastic
 operator draws each record's key from its own stable base key, folding in the record's
 epoch, draw and index (`per_record_keys`). The operator is a JAX function of one
-record, and iteration runs source, stages and batching as one compiled step.
+record. Iteration reads each batch on host threads, names the shuffled order on the
+CPU, places the batch on the device as the loop takes it, and runs the stages over it
+in one compiled call.
 """
 
 
@@ -195,10 +197,8 @@ def build_datarax_pipeline() -> Pipeline:
     )
 
 
-# A pipeline over a random-access source iterates through a checkpointable PipelineIterator.
-datarax_iterator = iter(build_datarax_pipeline())
-if not isinstance(datarax_iterator, PipelineIterator):
-    raise TypeError("a MemorySource pipeline iterates through a PipelineIterator")
+datarax_pipeline = build_datarax_pipeline()
+datarax_iterator = iter(datarax_pipeline)
 first_datarax_batch = next(datarax_iterator)
 print(
     f"Datarax batch: x={first_datarax_batch['x'].shape} {type(first_datarax_batch['x']).__name__}"
@@ -210,22 +210,23 @@ print(
 """
 ## Step 4: Resume the Datarax Pipeline
 
-The iterator's `get_state()` returns the records consumed, the epoch, one count per
-random stream, and the `version` those counts are in. The counts are the pipeline's
-and the source's: an operator keys each record on its stable base key and holds no
-count. Position and epoch decide the batches, so a pipeline built with
-the same seeds continues with the same ones.
+The pipeline's `get_state()` returns where iteration stands: the epoch and the
+records served in it, the epoch the run ends at, the `version` of that layout, and a
+fingerprint of the configuration it is valid for (batch size, length, the shuffle seed).
+No random stream advances while iterating: an operator keys each record on its stable
+base key, so epoch and position decide the batches and their draws, and a pipeline
+built with the same seeds continues with the same ones. `set_state()` refuses a state
+saved by a pipeline configured differently.
 """
 
 # %%
-datarax_state = datarax_iterator.get_state()
+datarax_state = datarax_pipeline.get_state()
 print(f"Datarax checkpoint: {datarax_state}")
 expected_datarax = [np.asarray(next(datarax_iterator)["x"]) for _ in range(2)]
 
-resumed_datarax = iter(build_datarax_pipeline())
-if not isinstance(resumed_datarax, PipelineIterator):
-    raise TypeError("a MemorySource pipeline iterates through a PipelineIterator")
-resumed_datarax.set_state(datarax_state)
+resumed_pipeline = build_datarax_pipeline()
+resumed_pipeline.set_state(datarax_state)
+resumed_datarax = iter(resumed_pipeline)
 resumed_datarax_batches = [np.asarray(next(resumed_datarax)["x"]) for _ in range(2)]
 datarax_matches = all(
     np.array_equal(got, want)
@@ -233,7 +234,7 @@ datarax_matches = all(
 )
 print(f"Datarax resumes exactly: {datarax_matches}")
 # Expected output:
-# Datarax checkpoint: {'position': 8, 'epoch': 0, 'rng_counts': [1], 'version': 2, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 1, 'shuffled': True}}  # noqa: E501
+# Datarax checkpoint: {'version': 3, 'kind': 'indexed', 'epoch': 0, 'position': 8, 'run_end_epoch': 1, 'stream': None, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 1, 'shuffled': True, 'seed': [1797259609, 2579123966], 'order': {'kind': 'global'}}}  # noqa: E501
 # Datarax resumes exactly: True
 
 # %% [markdown]
@@ -243,14 +244,14 @@ print(f"Datarax resumes exactly: {datarax_matches}")
 | | Grain | Datarax |
 |---|---|---|
 | Loop object | `DataLoader` iterator | `Pipeline` (an `nnx.Module`) iterator |
-| Checkpoint | JSON bytes: last index per worker, sampler and source description | `position`, `epoch`, one count per random stream, and their `version` |
+| Checkpoint | JSON bytes: last index per worker, sampler and source description | the pipeline's `get_state()`: `epoch`, `position`, the run's last epoch, `version`, a configuration fingerprint |
 | Per-record randomness | `np.random.Generator(Philox(key=seed + draw index))` from the sampler | the record's epoch, draw and index folded into the operator's stable base key |
-| Where transforms run | Python, per record, optionally in worker processes | Inside one `jax.jit` step with batching |
+| Where transforms run | Python, per record, optionally in worker processes | Inside one `jax.jit` call per batch, on the device |
 
 Both loops resume mid-epoch exactly. The difference is where the work runs: Grain keeps
-transforms in Python around the data source, while Datarax traces them into the same
-compiled program as batching, which is also what lets a later example differentiate
-through a pipeline.
+transforms in Python around the data source, while Datarax traces them into a compiled
+program over the batch, which is also what lets a later example differentiate through a
+pipeline.
 
 ## Next Steps
 
@@ -258,7 +259,7 @@ through a pipeline.
    where each record's randomness comes from, and gradients through operators, in both
    libraries
 2. [Checkpoint Quick Reference](../advanced/checkpointing/01_checkpoint_quickref.py):
-   saving iterator state with Orbax
+   saving loader state with Orbax
 3. [Framework comparison](../../docs/benchmarks/comparison.md): measured throughput and
    memory
 """

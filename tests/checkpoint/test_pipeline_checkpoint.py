@@ -1,14 +1,16 @@
-"""A pipeline is a checkpoint target: its tuned parameters and its place in the data resume.
+"""A pipeline checkpoint is its place in the data plus its stages' parameters, saved apart.
 
-Stages carry learnable parameters that training optimizes through the pipeline, so restoring a
-pipeline must bring back those parameters as well as where iteration stands (position, epoch,
-the epoch key, RNG counts and the source's own state), and nothing of the data. ``Pipeline``
-implements the ``Checkpointable`` protocol with the state logic ``DataraxModule`` uses.
+``Pipeline`` implements the ``Checkpointable`` protocol: ``get_state()`` is where iteration
+stands (the host stage's versioned cursor) and holds no parameters and no data. Stages carry
+learnable parameters and statistics that training moves, and those are the DAG's ``nnx`` state,
+checkpointed as ``module_state(pipeline.dag)`` beside the cursor. ``step()`` and ``scan`` keep
+their place in the pipeline's own Variables, so a run driven by ``step()`` checkpoints
+``module_state(pipeline)``, which holds that place and the parameters together.
 """
 
 from __future__ import annotations
 
-import copy
+from collections.abc import Iterator
 from pathlib import Path
 
 import jax
@@ -16,17 +18,21 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from flax import nnx
+from substrax.checkpoint import OrbaxCheckpointStore
 from substrax.typing import Checkpointable
 
 from datarax.checkpoint import IteratorCheckpoint
+from datarax.checkpoint.iterators import ITEM
 from datarax.core.config import ElementOperatorConfig
 from datarax.core.element_batch import Batch
+from datarax.core.module import module_state, restore_module_state
 from datarax.operators import ElementOperator
 from datarax.pipeline import Pipeline
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
 
 _RECORDS = 20
+_MODEL_ITEM = "model"  # the stages' parameters are trained, and saved, with the model
 
 
 class _Scale(nnx.Module):
@@ -65,14 +71,18 @@ def _scale(pipeline: Pipeline) -> _Scale:
     return stage
 
 
-def _operator(pipeline: Pipeline) -> ElementOperator:
-    stage = pipeline.stages[1]
-    assert isinstance(stage, ElementOperator)
-    return stage
+def _tuned_iteration() -> tuple[Pipeline, Iterator[Batch]]:
+    """A pipeline three batches into iteration, whose parameter an optimizer has moved."""
+    pipeline = _build()
+    batches = iter(pipeline)
+    for _ in range(3):
+        next(batches)
+    _scale(pipeline).factor[...] = jnp.float32(2.5)
+    return pipeline, batches
 
 
-def _tuned() -> Pipeline:
-    """A pipeline three batches in, whose parameter an optimizer has moved."""
+def _tuned_steps() -> Pipeline:
+    """A pipeline three ``step()`` calls in, whose parameter an optimizer has moved."""
     pipeline = _build()
     for _ in range(3):
         pipeline.step()
@@ -90,27 +100,68 @@ def _train_step(pipeline: Pipeline) -> None:
     _scale(pipeline).factor[...] -= 1e-4 * grads["dag"]["stages"]["stage_0"]["factor"][...]
 
 
+def _save_and_restore_steps(tuned: Pipeline, tmp_path: Path) -> Pipeline:
+    """Checkpoint a ``step()``-driven pipeline as its module state; restore it into a new one."""
+    with OrbaxCheckpointStore(tmp_path) as store:
+        store.save(3, {_MODEL_ITEM: module_state(tuned)})
+        saved = store.restore(3).items[_MODEL_ITEM]
+    restored = _build()
+    restore_module_state(restored, saved)
+    return restored
+
+
 def test_a_pipeline_is_checkpointable() -> None:
     assert isinstance(_build(), Checkpointable)
 
 
-def test_the_state_holds_parameters_and_iteration_but_no_data() -> None:
-    state = _tuned().get_state()
+def test_the_state_is_the_cursor_without_parameters_or_data() -> None:
+    pipeline, _ = _tuned_iteration()
+    state = pipeline.get_state()
     leaves = jax.tree_util.tree_flatten_with_path(state)[0]
     paths = {jax.tree_util.keystr(path) for path, _ in leaves}
 
-    assert "['dag']['stages']['stage_0']['factor']" in paths
-    assert {"['_position']", "['_epoch']", "['_epoch_key_base']"} <= paths
+    assert state["version"] == 3
+    assert state["position"] == 12
+    assert not any("dag" in path or "factor" in path or "_position" in path for path in paths)
     assert not any(getattr(leaf, "shape", ())[:1] == (_RECORDS,) for _, leaf in leaves)
 
 
 def test_a_tuned_pipeline_restores_its_parameters_and_its_place(tmp_path: Path) -> None:
-    tuned = _tuned()
+    tuned, batches = _tuned_iteration()
+    with OrbaxCheckpointStore(tmp_path) as store:
+        store.save(3, {ITEM: tuned.get_state(), _MODEL_ITEM: module_state(tuned.dag)})
+        items = store.restore(3).items
+    restored = _build()
+    restored.set_state(items[ITEM])
+    restore_module_state(restored.dag, items[_MODEL_ITEM])
+
+    assert float(_scale(restored).factor[...]) == 2.5
+    assert restored.get_state()["position"] == 12
+    np.testing.assert_array_equal(
+        np.asarray(next(iter(restored))["x"]), np.asarray(next(batches)["x"])
+    )
+
+
+def test_the_iteration_checkpoint_resumes_the_batches_not_yet_served(tmp_path: Path) -> None:
+    """``IteratorCheckpoint`` saves ``get_state()``: the next batch is the one not yet taken."""
+    pipeline = _build()
+    batches = iter(pipeline)
+    served = [next(batches) for _ in range(3)]
     with IteratorCheckpoint(tmp_path) as checkpoint:
-        checkpoint.save(tuned, step=3)
+        checkpoint.save(pipeline, step=3)
     restored = _build()
     with IteratorCheckpoint(tmp_path) as checkpoint:
         checkpoint.restore(restored)
+
+    assert len(served) == 3
+    np.testing.assert_array_equal(
+        np.asarray(next(iter(restored))["x"]), np.asarray(next(batches)["x"])
+    )
+
+
+def test_a_step_driven_pipeline_restores_its_parameters_and_its_place(tmp_path: Path) -> None:
+    tuned = _tuned_steps()
+    restored = _save_and_restore_steps(tuned, tmp_path)
 
     assert float(_scale(restored).factor[...]) == 2.5
     assert (int(restored._position[...]), int(restored._epoch[...])) == (12, 0)
@@ -119,12 +170,8 @@ def test_a_tuned_pipeline_restores_its_parameters_and_its_place(tmp_path: Path) 
 
 def test_a_restored_pipeline_keeps_training_as_the_original_would(tmp_path: Path) -> None:
     """Training continued from a checkpoint follows the run that never stopped, step for step."""
-    tuned = _tuned()
-    with IteratorCheckpoint(tmp_path) as checkpoint:
-        checkpoint.save(tuned, step=3)
-    restored = _build()
-    with IteratorCheckpoint(tmp_path) as checkpoint:
-        checkpoint.restore(restored)
+    tuned = _tuned_steps()
+    restored = _save_and_restore_steps(tuned, tmp_path)
 
     for _ in range(3):
         _train_step(tuned)
@@ -134,12 +181,8 @@ def test_a_restored_pipeline_keeps_training_as_the_original_would(tmp_path: Path
 
 
 def test_a_restored_pipeline_scans_as_the_original_would(tmp_path: Path) -> None:
-    tuned = _tuned()
-    with IteratorCheckpoint(tmp_path) as checkpoint:
-        checkpoint.save(tuned, step=3)
-    restored = _build()
-    with IteratorCheckpoint(tmp_path) as checkpoint:
-        checkpoint.restore(restored)
+    tuned = _tuned_steps()
+    restored = _save_and_restore_steps(tuned, tmp_path)
 
     def total(batch: dict) -> jax.Array:
         return jnp.sum(batch["x"])
@@ -149,43 +192,25 @@ def test_a_restored_pipeline_scans_as_the_original_would(tmp_path: Path) -> None
     )
 
 
-def test_a_save_during_iteration_holds_the_batches_served(tmp_path: Path) -> None:
-    """A session writes its progress into the pipeline at every batch it yields."""
-    pipeline = _build()
-    session = pipeline.session()
-    served = [next(session) for _ in range(3)]
-    with IteratorCheckpoint(tmp_path) as checkpoint:
-        checkpoint.save(pipeline, step=3)
-    restored = _build()
-    with IteratorCheckpoint(tmp_path) as checkpoint:
-        checkpoint.restore(restored)
-
-    assert len(served) == 3
-    assert int(restored._position[...]) == 12
-    np.testing.assert_array_equal(
-        np.asarray(next(restored.session())["x"]), np.asarray(next(session)["x"])
-    )
-
-
-def test_a_pipeline_of_another_structure_is_refused() -> None:
-    state = _tuned().get_state()
+def test_stages_of_another_structure_are_refused() -> None:
+    saved = module_state(_build().dag)
     other = _build(stages=[_Scale()])
 
     with pytest.raises(ValueError, match="structurally incompatible"):
-        other.set_state(state)
+        restore_module_state(other.dag, saved)
 
 
 def test_an_operator_state_carrying_a_stream_is_refused_inside_a_pipeline_checkpoint() -> None:
     """An operator's state is its base key and statistics; a subtree holding more is refused."""
-    state = copy.deepcopy(_tuned().get_state())
-    operator_state = state["dag"]["stages"]["stage_1"]
+    saved = module_state(_build().dag)
+    operator_state = saved["stages"]["stage_1"]
     operator_state["_rng_stream"] = {
         "count": jnp.zeros((), jnp.uint32),
         "key": operator_state["_base_key"],
     }
 
     with pytest.raises(ValueError, match="structurally incompatible"):
-        _build().set_state(state)
+        restore_module_state(_build().dag, saved)
 
 
 def _host_values(state: dict) -> dict:
@@ -199,14 +224,27 @@ def _host_values(state: dict) -> dict:
     return jax.tree.map(to_host, state)
 
 
-def test_a_refused_restore_changes_nothing() -> None:
+def test_a_refused_restore_of_the_stages_changes_nothing() -> None:
     """Validation covers every stage before any value is written, so a refusal is atomic."""
-    state = copy.deepcopy(_tuned().get_state())
-    state["dag"]["stages"]["stage_1"]["unexpected"] = jnp.zeros(())
+    saved = module_state(_tuned_steps().dag)
+    saved["stages"]["stage_1"]["unexpected"] = jnp.zeros(())
     target = _build()
-    before = _host_values(target.get_state())
+    before = _host_values(module_state(target.dag))
 
     with pytest.raises(ValueError, match="structurally incompatible"):
+        restore_module_state(target.dag, saved)
+
+    jax.tree.map(np.testing.assert_array_equal, _host_values(module_state(target.dag)), before)
+
+
+def test_a_refused_restore_of_the_cursor_changes_nothing() -> None:
+    pipeline, _ = _tuned_iteration()
+    state = pipeline.get_state()
+    state["fingerprint"]["batch_size"] = 8
+    target, _ = _tuned_iteration()
+    before = target.get_state()
+
+    with pytest.raises(ValueError, match="batch_size"):
         target.set_state(state)
 
-    jax.tree.map(np.testing.assert_array_equal, _host_values(target.get_state()), before)
+    assert target.get_state() == before

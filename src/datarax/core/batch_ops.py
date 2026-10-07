@@ -3,9 +3,10 @@
 Inside a compiled step they trace into the step and fuse with what consumes them, so a slice or a
 concatenation costs no copy of its own. On a host batch of NumPy arrays the construction and
 regrouping operations (``from_arrays``, ``from_stacked``, ``element``, ``slice_rows``, ``take``,
-``split``, ``concatenate``, ``stack``) stay on the host, slices as NumPy views, until the batch is
-placed. The padding operations (``mask``, ``compact``, ``record_count``) are step operations and
-use ``jax.numpy``. Called eagerly on device arrays every operation works, one dispatch per leaf.
+``split``, ``as_chunk``, ``concatenate``, ``stack``) stay on the host, slices and reshapes as NumPy
+views, until the batch is placed. The padding operations (``mask``, ``compact``,
+``record_count``) are step operations and use ``jax.numpy``. Called eagerly on device arrays every
+operation works, one dispatch per leaf.
 
 A padding row carries ``PADDING_INDEX`` and ``state_keys.WEIGHT`` 0; filtering keeps a batch's
 static shape by turning rows into padding rather than removing them.
@@ -197,7 +198,7 @@ def take(batch: Batch, rows: ArrayValue) -> Batch:
     return _map_rows(batch, lambda x: x[rows])
 
 
-def split(batch: Batch, parts: int) -> list[Batch]:
+def split(batch: Batch, parts: int) -> list[Batch]:  # noqa: DOC502 - _part_size raises
     """Split the rows into ``parts`` equal batches, each with the batch-level state.
 
     Args:
@@ -210,10 +211,48 @@ def split(batch: Batch, parts: int) -> list[Batch]:
     Raises:
         ValueError: If ``parts`` does not divide the batch size.
     """
+    size = _part_size(batch, parts)
+    return [slice_rows(batch, k * size, (k + 1) * size) for k in range(parts)]
+
+
+def as_chunk(batch: Batch, parts: int) -> Batch:  # noqa: DOC502 - _part_size raises
+    """The rows as a ``(parts, B / parts, ...)`` chunk, equal to ``stack(split(batch, parts))``.
+
+    Every per-record leaf is reshaped, not copied, so a host batch's chunk holds views of its
+    rows; the batch-level state is repeated per part, as each part of a split carries it.
+
+    Args:
+        batch: The batch.
+        parts: Batches in the chunk.
+
+    Returns:
+        The chunk.
+
+    Raises:
+        ValueError: If ``parts`` does not divide the batch size.
+    """
+    size = _part_size(batch, parts)
+    rows = _map_rows(batch, lambda x: x.reshape(parts, size, *x.shape[1:]))
+    repeated = jax.tree.map(lambda leaf: _namespace(leaf).stack([leaf] * parts), batch.batch_state)
+    return rows.replace(batch_state=repeated)
+
+
+def _part_size(batch: Batch, parts: int) -> int:
+    """Rows per part when the batch is cut into ``parts`` equal batches.
+
+    Args:
+        batch: The batch.
+        parts: How many batches to make.
+
+    Returns:
+        The rows of each part.
+
+    Raises:
+        ValueError: If ``parts`` does not divide the batch size.
+    """
     if parts <= 0 or batch.batch_size % parts:
         raise ValueError(f"{parts} parts do not divide a batch of {batch.batch_size} rows")
-    size = batch.batch_size // parts
-    return [slice_rows(batch, k * size, (k + 1) * size) for k in range(parts)]
+    return batch.batch_size // parts
 
 
 def concatenate(batches: Sequence[Batch]) -> Batch:

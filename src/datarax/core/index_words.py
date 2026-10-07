@@ -234,18 +234,28 @@ def _divide_below_word[A: (jax.Array, np.ndarray)](high: A, low: A, divisor: int
     return quotient, partial >> np.uint32(shift)
 
 
-def wrapped_positions(start: int | jax.Array, size: int, length: int | None) -> jax.Array:
+def is_word_start(start: int | ArrayLike) -> bool:
+    """Whether a start position is given as its two uint32 words ``(hi, lo)``, shape ``(2,)``.
+
+    The host stage names positions past ``2**31`` in this form; an int32 scalar is the compiled
+    session's, a Python int any caller's.
+    """
+    return not isinstance(start, int | np.integer) and np.shape(start) == (2,)
+
+
+def wrapped_positions(start: int | ArrayLike, size: int, length: int | None) -> jax.Array:
     """Positions ``start + arange(size)`` wrapped at ``length``, as uint32 ``(size, 2)`` words.
 
-    A Python integer ``start`` may be any nonnegative size and is reduced on the host exactly. A
-    traced ``start`` is an int32 position: below ``2**31`` and so below any length past that,
-    and wrapped in int32 for a shorter length (negative positions wrap from the end). Each
-    offset ``i mod length`` is a host constant, so a position is ``first + offset`` less
-    ``length`` when it reaches it, which ``first >= length - offset`` decides without
-    overflowing 64 bits.
+    ``start`` comes in three forms. A Python integer may be any nonnegative size and is reduced on
+    the host exactly. Two uint32 words ``(hi, lo)``, NumPy or traced (:func:`is_word_start`), are a
+    64-bit position of the order, in ``[0, length)``. A traced integer scalar is an int32 position:
+    below ``2**31`` and so below any length past that, and wrapped in int32 for a shorter length
+    (negative positions wrap from the end). Each offset ``i mod length`` is a host constant, so a
+    position is ``first + offset`` less ``length`` when it reaches it, which
+    ``first >= length - offset`` decides without overflowing 64 bits.
 
     Args:
-        start: The first position; a Python int or a traced integer scalar.
+        start: The first position: a Python int, two uint32 words, or a traced int32 scalar.
         size: Positions (static).
         length: The length positions wrap at, or ``None`` for positions that never wrap.
 
@@ -258,6 +268,9 @@ def wrapped_positions(start: int | jax.Array, size: int, length: int | None) -> 
     if isinstance(start, int | np.integer):
         first_high, first_low = split_constant(int(start) % (length or MAX_RECORDS + 1))
         first = (jnp.asarray(first_high), jnp.asarray(first_low))
+    elif is_word_start(start):
+        words = jnp.asarray(start, jnp.uint32)
+        first = (words[0], words[1])
     else:
         position = jnp.asarray(start)
         if length is not None and length <= np.iinfo(np.int32).max:
@@ -321,6 +334,7 @@ __all__ = [
     "divmod_word",
     "from_words",
     "greater",
+    "is_word_start",
     "low_words",
     "multiply_high",
     "multiply_word",

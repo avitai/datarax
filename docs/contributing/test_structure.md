@@ -28,7 +28,7 @@ For GPU-accelerated testing (requires CUDA setup):
 bash scripts/run_gpu_tests.sh
 
 # Or run the suite on the GPU directly
-DATARAX_TEST_JAX_PLATFORMS=cuda uv run pytest tests/ -v
+DATARAX_TEST_JAX_PLATFORMS=cuda,cpu uv run pytest tests/ -v
 ```
 
 ### Full Test Suite
@@ -113,7 +113,7 @@ Tests are organized using pytest markers defined in `conftest.py`:
 | `@pytest.mark.integration` | Component interaction tests | `test_*_integration.py` files |
 | `@pytest.mark.end_to_end` | Complete workflow tests | `integration/` directory |
 | `@pytest.mark.benchmark` | Performance measurement | `benchmarks/` directory |
-| `@pytest.mark.accelerator(kind="gpu")` | Requires a GPU backend | Skips unless `DATARAX_TEST_JAX_PLATFORMS=cuda` selects one |
+| `@pytest.mark.accelerator(kind="gpu")` | Requires a GPU backend | Skips unless `DATARAX_TEST_JAX_PLATFORMS=cuda,cpu` selects one |
 | `@pytest.mark.devices(count)` | Requires `count` devices | Skips below `count` visible devices |
 | `@pytest.mark.tfds` | Reads the offline TFDS fixture (prepared with TensorFlow by `python -m tests.test_common.tfds_fixture <dir>`, named in `DATARAX_TFDS_FIXTURE_DIR`) or the prepared example datasets; runs in CI's long-running job only | TFDS source tests |
 | `@pytest.mark.hf` | Requires HuggingFace Datasets | HF integration tests |
@@ -131,7 +131,7 @@ uv run pytest -m integration
 uv run pytest -m "not slow"
 
 # Run the tests that need a GPU backend
-DATARAX_TEST_JAX_PLATFORMS=cuda uv run pytest -m accelerator
+DATARAX_TEST_JAX_PLATFORMS=cuda,cpu uv run pytest -m accelerator
 
 # Run HuggingFace integration tests
 uv run pytest -m hf

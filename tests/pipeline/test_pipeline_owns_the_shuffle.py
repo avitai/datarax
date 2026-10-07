@@ -435,7 +435,7 @@ class TestThePipelineUnderTransforms:
         pipe = _pipeline(shuffle=shuffle, drop_last=drop_last, length=length, batch=batch)
         batches = len(pipe)
         short = int(not drop_last and (2 * length) % batch != 0)
-        session = iter(pipe)
+        session = pipe.session()
         with expect_first_call_compiles("jit(session_step)"):
             jax.block_until_ready(next(session).indices)
         with expect_compiles(0):

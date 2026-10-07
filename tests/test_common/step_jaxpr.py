@@ -9,25 +9,25 @@ from flax import nnx
 from jax.extend.core import ClosedJaxpr, Jaxpr
 
 from datarax.pipeline import Pipeline
-from datarax.pipeline.iteration import _is_per_batch_state, _run_tracking_writes, _Writes
+from datarax.pipeline.dag_call import is_per_batch_state, run_tracking_writes, Writes
 
 
-type _Step = Callable[[nnx.State, nnx.State], tuple[dict, _Writes]]
+type _Step = Callable[[nnx.State, nnx.State], tuple[dict, Writes]]
 
 
 def _one_batch(pipeline: Pipeline) -> tuple[_Step, nnx.State, nnx.State]:
     """The pure function serving one full batch, and the state partitions it takes."""
-    graphdef, per_batch, staged = nnx.split(pipeline, _is_per_batch_state, ..., graph=True)
+    graphdef, per_batch, staged = nnx.split(pipeline, is_per_batch_state, ..., graph=True)
 
-    def step(per_batch: nnx.State, staged: nnx.State) -> tuple[dict, _Writes]:
-        return _run_tracking_writes(
+    def step(per_batch: nnx.State, staged: nnx.State) -> tuple[dict, Writes]:
+        return run_tracking_writes(
             graphdef, (per_batch, staged), lambda module: module._next_batch(module.batch_size)
         )
 
     return step, per_batch, staged
 
 
-def traced_step(pipeline: Pipeline) -> tuple[ClosedJaxpr, tuple[dict, _Writes]]:
+def traced_step(pipeline: Pipeline) -> tuple[ClosedJaxpr, tuple[dict, Writes]]:
     """The jaxpr of one full batch, and the shapes of the batch and the state it writes."""
     step, per_batch, staged = _one_batch(pipeline)
     return jax.make_jaxpr(step)(per_batch, staged), jax.eval_shape(step, per_batch, staged)

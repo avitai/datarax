@@ -28,12 +28,7 @@ DATASET_DIR = Path("tests/data/imagenet64_arrayrecord")
 )
 class TestRealIO:
     def test_array_record_throughput(self):
-        """Measures throughput of ArrayRecord reading with varying worker counts."""
-        from datarax.sources.array_record_source import (
-            ArrayRecordSourceConfig,
-            ArrayRecordSourceModule,
-        )
-
+        """Measures Grain's throughput reading the ArrayRecord files with varying worker counts."""
         shards = sorted(list(DATASET_DIR.glob("*.array_record")))
         if not shards:
             pytest.skip("No .array_record files found in dataset directory.")
@@ -41,13 +36,12 @@ class TestRealIO:
         results = {}
 
         for workers in [0, 4, 8, 16]:
-            src_config = ArrayRecordSourceConfig(shuffle_files=False)
-            source = ArrayRecordSourceModule(config=src_config, paths=[str(p) for p in shards])
+            records = grain.sources.ArrayRecordDataSource([str(p) for p in shards])
 
             loader = grain.DataLoader(
-                data_source=source.grain_source,  # type: ignore[reportArgumentType]
+                data_source=records,
                 sampler=grain.samplers.SequentialSampler(
-                    num_records=len(source.grain_source),  # type: ignore[reportArgumentType]
+                    num_records=len(records),
                     shard_options=grain.sharding.ShardOptions(
                         shard_index=0, shard_count=1, drop_remainder=True
                     ),

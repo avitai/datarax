@@ -9,6 +9,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Pipeline.raw_batches(chunk=None, *, max_chunk_bytes=None, with_provenance=False)`: unprocessed
+  batches read by the host stage (`datarax.pipeline.host_stage`) and placed on the default device,
+  uncommitted, by the consumer (reads run ahead; one batch is staged on the device ahead of the one
+  taken on a GPU, none on the CPU and TPU): the form whose DAG (`pipe.dag`) runs inside the
+  caller's differentiated step. An indexed source's batches are named on the CPU device and read
+  with its stateless host read (`datarax.core.data_source.IndexedHostRead`) by Grain threads; a
+  stream's run is read and decoded on one producer thread ahead of the consumer, through one
+  sliceable Grain dataset for a TFDS stream and pass by pass for any other. `chunk=K` serves `(K, B, ...)` chunks of full batches, one host
+  read and one transfer each, then the rest singly; `with_provenance=True` serves
+  `(batch, provenance)` pairs. Nothing but the batches reaches the device, nothing transfers
+  implicitly, and one Grain iterator serves a run across calls (`Pipeline.close()` ends it). Each
+  returned iterator serves only the run it was created for: once `reset()`, `set_state()`,
+  `close()` or a call with other options ended that run, its next `next()` raises `RuntimeError`
+  naming the call, and once the run served its last batch it stops. A read error reaches the
+  caller unchanged and ends the run at the batches delivered, so iterating again resumes at the
+  batch whose read failed, losing and repeating nothing. A stream without a run dataset
+  (HuggingFace) resumed mid-pass replays the pass to the saved count, logging the pass, the
+  records replayed and the seconds taken at `INFO`. A run lives as long as the pipelines it served and the iterators serving it, though a compiled-step
+  cache keyed by the pipeline's graph keeps its host stage. Reads run in the caller's precision
+  mode. `Pipeline.host_stage` holds where host iteration stands.
+- `datarax.core.data_source.IndexedHostReadWithProvenance`: the protocol of an indexed host read
+  returning a batch and its records' provenance from one read, `read_with_provenance(indices, *,
+  epochs=0, contiguous=False)`. The host stage reads a source implementing it once per batch
+  asked for with provenance; any other indexed source serves the pair by `get_batch` and
+  `provenance(indices)`.
+- `TFDSStreamingSource.run_dataset(schedule, key)`: a run of passes as one Grain dataset of decoded
+  units numbered from the run's start (`datarax.core.data_source.BatchSchedule`), so Grain's
+  process prefetch starts its workers once per run and `k` slices interleaved from the first
+  serve a resumed run in order.
+- `datarax.pipeline.epochs.batch_records(source, plan, *, key_base, start, epoch, size)`: the
+  records a batch of an indexed source holds, by the epoch plan, each row by its own epoch's order
+  (the rows past an epoch's end are the next epoch's head). The compiled session names its batches
+  with it. `datarax.pipeline.epochs.HostNaming(source, plan, *, shuffled)` runs it as one
+  `jax.jit` program on the CPU device for the host stage, taking the start as two uint32 words,
+  so positions past `2**31` are named exactly. The program closes over a stand-in holding the
+  source's description only (graph, configuration, lengths, array shapes and dtypes; every other
+  static, such as a reader, a memory map or a decoder, is replaced by a marker that refuses any
+  read), so none of its records is transferred and a cached program keeps no source and no host
+  resource alive; every pipeline over a source structured alike under the same plan shares it,
+  and nothing transfers implicitly. `HostNaming.block(starts, epochs, key)` names a block of full
+  batches in one call, the same program vmapped over their starts, so each is named exactly as
+  alone: the host stage names a run's full batches 16,384 records per call and its short final
+  batch alone, so the program compiles once per structure for the block and once for the short
+  batch, and a run holds at most two blocks of names (12 bytes a record). The host stage holds
+  no naming of its own, so a compiled-step cache that keeps a pipeline's host stage keeps none of
+  its source.
+- `datarax.pipeline.epochs.Run`: the batches a run serves, batch `ordinal` found without walking
+  to it, until a recorded end epoch, so a run resumed anywhere ends where the uninterrupted run
+  would. `Run.starting(plan, position, epoch)` counts the run as a session from that position.
+- `record_indices_at(start, ...)` of every source (the default, `EagerSource`, `MemorySource`
+  sharded or not, `MixDataSourcesNode`, `resolve_wrapped_indices`) takes the start as its two
+  uint32 words `(hi, lo)`, NumPy or traced, beside a Python int and a traced int32
+  (`index_words.is_word_start`, `index_words.wrapped_positions`).
+- `datarax.core.prng.key_words(key)`, `fold_on_host(words, data)` and `host_device()`: a key's
+  data as host words, read once with an explicit `jax.device_get`, and `fold_in` computed on the
+  CPU device from them, with no implicit transfer and no read back from an accelerator.
+
+
 - `mixed_source.grain_proportions(weights)`: Grain's integer proportions for mixing weights (the
   smallest scaled to 100, the others alike and truncated), the rule of `grain.MapDataset.mix`.
   `MixDataSourcesConfig.weights` keeps the weights as given, so a mix's proportions are the ones
@@ -79,8 +137,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `datarax.core.RecordIdentity` (`INDEXED`, `STREAM_IDS`, `ARRIVAL`) and the abstract
   `DataSourceModule.record_identity`: every source declares what its record index means (a
   stable position, an id the stream reports, or the arrival ordinal), and a source that does
-  not is refused at construction. The in-memory sources, `StreamingDiskSource` and
-  `MixDataSourcesNode` are `INDEXED`, `TFDSStreamingSource` and `ArrayRecordSourceModule`
+  not is refused at construction. The in-memory sources, `StreamingDiskSource`,
+  `ArrayRecordSourceModule` and `MixDataSourcesNode` are `INDEXED`, `TFDSStreamingSource`
   `STREAM_IDS`, `HFStreamingSource` `ARRIVAL`. A source in another package declares its kind
   with a `record_identity` property returning it.
 - `datarax.sources.EagerSource`, the public base of every in-memory source (`MemorySource`,
@@ -123,6 +181,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `for batch in pipeline` runs on the host stage: each batch is read by Grain threads, named on the
+  CPU device, placed on the device by the consumer and run through `pipeline.dag` in one compiled
+  call (`datarax.pipeline.dag_call.compile_dag`), split once per iteration, compiled once per
+  batch shape, the state the stages write written back. Iteration serves the records and draws the
+  compiled session served, uploads no dataset, and continues where the last batch taken ended
+  until the run's `num_epochs`; `reset()` starts the next run. `iter(pipeline)` is no longer a
+  `PipelineIterator`: `pipeline.session()` is the compiled session. `step()`, `scan` and the
+  session keep their place in the pipeline's Variables, apart from iteration's. A pipeline without
+  stages serves the placed batches as they are, with no DAG call: no compile and no copy. A
+  stream is read through `StreamingSourceBase`; one that declares `STREAM_IDS` or `ARRIVAL`
+  without building on it is refused by `iter(pipeline)` and `raw_batches()`, naming the base and
+  its `_open_pass`.
+- `Pipeline.get_state()` / `set_state(state, /)` are the host stage's cursor, version 3, typed
+  `substrax.typing.CheckpointState`: `version`, `kind`, `epoch`, `position`, `run_end_epoch`,
+  `stream` (a stream's pass, records, arrivals and passes left) and `fingerprint` (batch size,
+  length, `drop_last`, `num_epochs`, whether it shuffles, the seed's words, the order). They no
+  longer hold stage parameters or the position Variables: stage parameters and statistics are
+  checkpointed as `nnx.state(pipeline.dag)`. A state of any other layout (an unversioned
+  `module_state`, a session's version 2) or of another configuration is refused, naming it; a
+  refused state changes nothing. `Pipeline.batches_left()` counts the host stage's run.
+- The Tier-A DAG call moves from `datarax.pipeline.iteration` to `datarax.pipeline.dag_call`, its
+  helpers public (`is_per_batch_state`, `state_leaves`, `run_tracking_writes`, `apply_writes`,
+  `Writes`); `compile_streaming_dag` is `compile_dag`. The cache of compiled programs shared by
+  structurally equal pipelines is `datarax.pipeline.compiled.cached_program`, which the DAG
+  call, the compiled session and the host naming use.
+- `datarax.pipeline.epochs.stream_batches(pull, ...)` takes a pull returning `(Batch, provenance)`
+  and yields `(Batch, provenance)` pairs, the provenance joined with its rows.
+- A `TFDSStreamDataset` element is `(columns, provenance, ids, epochs)`, each record's pass beside
+  its id; `pass_dataset` is a run of one pass.
+- `StreamingSourceBase.read_from(cursor, batch_size, *, key, read_size)` is the read `get_batch`
+  makes at the stream's own position, open to a caller keeping a position of its own
+  (`StreamCursor`).
+- `StreamingDiskSource` pickles as its path and opens its memory map at first use, once, under
+  concurrent readers.
+- The GPU test recipe is `DATARAX_TEST_JAX_PLATFORMS=cuda,cpu`: the host stage names records on the
+  CPU device beside the GPU.
+- A stream's pass key is folded on the CPU device from the key's host words:
+  `StreamingSourceBase._open_pass(pass_index, key, read_size)` and
+  `TFDSStreamingSource.pass_dataset(pass_index, key, batch_size)` take `key` as uint32 words on the
+  host (`datarax.core.prng.key_words`), `pass_seed(key, pass_index)`, `pass_generator` and
+  `key_integer` take the words, and `get_batch(..., key=...)` reads a typed or raw key's words once
+  per pass. A pass opens under `jax.transfer_guard("disallow")`. `_source_base.typed_key` is
+  removed.
 - `datarax.sources._grain_bridge` is `datarax.sources._index_validation`, named for the one
   function it holds, `validate_index_batch`.
 - `MixDataSourcesNode` mixes on Grain's mix. Position `k` of an epoch belongs to the source
@@ -170,12 +271,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seeds HuggingFace's buffer shuffle from its key, `set_epoch(pass)` ordering each pass (it used
   a literal seed of 42). Reads are batched NumPy columns in their features' dtypes, text and
   objects as provenance beside the batch.
-- `from_tfds(name, split, ...)` picks the source by the copy's prepared format (ArrayRecord:
-  `TFDSEagerSource`; TFRecord: `TFDSStreamingSource`); `from_hf(name, split, *, streaming=False,
+- `from_tfds(name, split, *, in_memory=True, ...)` picks the source by the copy's prepared
+  format: an ArrayRecord copy is decoded into memory by `TFDSEagerSource`, or with
+  `in_memory=False` read and decoded per batch by an `ArrayRecordSourceModule` over the split's
+  files with TFDS's decoder, for a split larger than RAM; a TFRecord copy is streamed by
+  `TFDSStreamingSource`; `from_hf(name, split, *, streaming=False,
   ...)` builds `HFEagerSource`, or `HFStreamingSource` with `streaming=True`.
-- `ArrayRecordSourceModule.get_batch(batch_size, *, key=None)` returns a host `Batch` named by
-  the records' positions and the source's epoch, and refuses a key (its order is
-  `shuffle_files`'s).
+- `ArrayRecordSourceModule` is an `INDEXED` source: a record's index is its position in the files,
+  and the pipeline orders, batches and resumes it. `get_batch(indices, *, epochs=0,
+  contiguous=False)` reads the named records with one batched read of ArrayRecord's
+  `ArrayRecordDataSource` (the reader Grain and TFDS use) and decodes them with one call of `decode`, which now takes a batch's
+  `bytes` records and returns one mapping per record; numeric values are the batch's columns and
+  the rest the records' provenance (`provenance(indices)`); `read_with_provenance(indices, ...)`
+  returns the batch and its provenance from one read and one decode, which
+  `raw_batches(with_provenance=True)` reads it with. `paths` may be TFDS `FileInstruction`s. It pickles without open file handles and has no traced read, so `step()`,
+  `scan()` and `session()` over it are refused naming `get_records` and the host path that reads
+  it, `for batch in pipe` and `raw_batches()`; so is any `INDEXED` source without `get_records`.
 - `source_ops.validate_eager_source_settings`, `validate_eager_config` and
   `finalize_eager_config_validation` are `validate_source_settings`, `validate_source_config` and
   `finalize_source_config_validation` (eager and stream
@@ -427,6 +538,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `ArrayRecordSourceConfig`'s `seed`, `num_epochs` and `shuffle_files`, and
+  `ArrayRecordSourceModule`'s own iteration and state: `rngs`, `grain_source`, `current_index`,
+  `current_epoch`, `total_records`, `prefetch_cache`, `iterator_initialized`, `shuffled_indices`,
+  `__iter__`, `__next__`, `__getitem__`, `get_state`/`set_state` and the stream
+  `get_batch(batch_size, *, key, read_size)`. Use `Pipeline(..., shuffle=True, num_epochs=...)`
+  and the pipeline's state.
 - `MixDataSourcesConfig.num_sources` (the weights give the count), the `rngs` argument of
   `MixDataSourcesNode` (nothing in a mix is random), its `index` and `epoch` Variables, its
   iteration (`__iter__`, `__next__`), `reset()` and `to_grain_iter_dataset()`. A pipeline state
@@ -471,7 +588,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `source_ops.validate_seed_range`, and the `shuffle`/`seed` parameters of the eager helpers
   (`eager_iter`, `eager_get_batch` and their defaults). Use `Pipeline(..., shuffle=True)`; a
   removed config field raises `TypeError`. Iterating a source directly serves its records in
-  order. The streaming sources and `ArrayRecordSourceModule` keep their own shuffle.
+  order. The streaming sources keep their own shuffle.
 - `PipelineSchema` and `NNXComponentSchema`: no field of either was ever read, so neither
   validated anything. Pipelines are built in Python; define a `ConfigSchema` for the parameters
   you configure. `examples/config/config_example.py` and its notebook, which exited on a

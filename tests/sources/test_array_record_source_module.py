@@ -1,307 +1,430 @@
-# File: tests/sources/test_array_record_source.py
+"""``ArrayRecordSourceModule`` is an ``INDEXED`` source read in batches on the host.
 
-import tempfile
+ArrayRecord files hold ``bytes`` records. The source names a record by its position in the files
+and reads the records a batch names with one batched read (``__getitems__``, the reader's
+per-file parallel read), then decodes them with one call of its ``decode``, which turns the
+batch's records into one mapping of values per record. Numeric values become the batch's
+columns and every other value the record's provenance, as in the eager sources. The order and
+the position belong to the pipeline: the source holds no seed, no epoch and no cursor.
+"""
+
+from __future__ import annotations
+
+import inspect
+import pickle
+from collections.abc import Sequence
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from typing import Any
+from unittest.mock import patch
 
-import flax.nnx as nnx
+import jax
 import numpy as np
 import pytest
+from array_record.python.array_record_module import ArrayRecordWriter
+from flax import nnx
+from substrax.testing.compiles import compiled_programs
 
-from datarax.core.data_source import DataSourceModule
-from datarax.sources.array_record_source import ArrayRecordSourceConfig, ArrayRecordSourceModule
-
-
-class TestArrayRecordSourceModule:
-    """Test suite for ArrayRecordSourceModule following TDD principles."""
-
-    @pytest.fixture
-    def mock_grain_source(self):
-        """Create mock Grain ArrayRecordDataSource."""
-        mock = MagicMock()
-        mock.__len__.return_value = 100
-        mock.__getitem__.side_effect = lambda idx: {"data": np.array([idx])}
-        return mock
-
-    @pytest.fixture
-    def temp_array_record_files(self):
-        """Create temporary ArrayRecord files for testing."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Create mock .array_record files
-            paths = []
-            for i in range(3):
-                path = Path(tmpdir) / f"data_{i}.array_record"
-                path.touch()
-                paths.append(str(path))
-            yield paths
-
-    def test_initialization(self, temp_array_record_files):
-        """Test that ArrayRecordSourceModule initializes correctly."""
-        with patch("grain.sources.ArrayRecordDataSource") as mock_grain_class:
-            # Setup mock to return an object with __len__
-            mock_instance = MagicMock()
-            mock_instance.__len__.return_value = 100
-            mock_grain_class.return_value = mock_instance
-
-            # Test basic initialization
-            config = ArrayRecordSourceConfig(seed=42, num_epochs=3, shuffle_files=True)
-            source = ArrayRecordSourceModule(config, paths=temp_array_record_files[0])
-
-            # Verify it's a proper NNX module
-            assert isinstance(source, nnx.Module)
-            assert isinstance(source, DataSourceModule)
-
-            # Verify state variables are initialized
-            assert source.current_index.get_value() == 0
-            assert source.current_epoch.get_value() == 0
-            assert source.config.num_epochs == 3
-            assert source.config.shuffle_files
-
-            # Verify Grain source was created (without seed parameter)
-            mock_grain_class.assert_called_once_with(paths=temp_array_record_files[0])
-
-    def test_initialization_with_pattern(self):
-        """Test initialization with glob pattern."""
-        with patch("grain.sources.ArrayRecordDataSource") as mock_grain_class:
-            mock_instance = MagicMock()
-            mock_instance.__len__.return_value = 100
-            mock_grain_class.return_value = mock_instance
-
-            config = ArrayRecordSourceConfig(shuffle_files=False)
-            source = ArrayRecordSourceModule(config, paths="/data/*.array_record")
-
-            # Verify Grain source was created
-            mock_grain_class.assert_called_once_with(paths="/data/*.array_record")
-            assert not source.config.shuffle_files
-
-    def test_length(self, mock_grain_source):
-        """Test that length returns correct number of records."""
-        with patch("grain.sources.ArrayRecordDataSource", return_value=mock_grain_source):
-            config = ArrayRecordSourceConfig()
-            source = ArrayRecordSourceModule(config, paths="dummy.array_record")
-
-            assert len(source) == 100
-            assert source.total_records.get_value() == 100
-
-    def test_iteration_single_epoch(self, mock_grain_source):
-        """Test iteration through a single epoch."""
-        with patch("grain.sources.ArrayRecordDataSource", return_value=mock_grain_source):
-            config = ArrayRecordSourceConfig(num_epochs=1)
-            source = ArrayRecordSourceModule(config, paths="dummy.array_record")
-
-            # Collect all elements
-            elements = list(source)
-
-            # Verify correct number of elements
-            assert len(elements) == 100
-
-            # Verify elements are correct
-            for i, element in enumerate(elements):
-                assert element["data"][0] == i  # type: ignore
-
-            # Verify state after iteration
-            assert source.current_epoch.get_value() == 1
-            # After StopIteration, index resets to 0
-            assert source.current_index.get_value() == 0
-
-    def test_iteration_multiple_epochs(self, mock_grain_source):
-        """Test iteration through multiple epochs."""
-        with patch("grain.sources.ArrayRecordDataSource", return_value=mock_grain_source):
-            config = ArrayRecordSourceConfig(num_epochs=2)
-            source = ArrayRecordSourceModule(config, paths="dummy.array_record")
-
-            # Iterate through all epochs
-            all_elements = []
-            for element in source:
-                all_elements.append(element)
-
-            # Should have 2 epochs worth of data
-            assert len(all_elements) == 200
-
-            # Verify epoch transitions
-            assert source.current_epoch.get_value() == 2
-
-    def test_infinite_epochs(self, mock_grain_source):
-        """Test infinite epoch iteration."""
-        with patch("grain.sources.ArrayRecordDataSource", return_value=mock_grain_source):
-            config = ArrayRecordSourceConfig(num_epochs=-1)  # Infinite
-            source = ArrayRecordSourceModule(config, paths="dummy.array_record")
-
-            # Take more than one epoch worth
-            count = 0
-            for i, element in enumerate(source):
-                count += 1
-                if count > 250:  # More than 2 epochs
-                    break
-
-            # Should have iterated through multiple epochs
-            assert count == 251
-            assert source.current_epoch.get_value() >= 2
-
-    def test_state_checkpointing(self, mock_grain_source):
-        """Test state saving and restoration."""
-        with patch("grain.sources.ArrayRecordDataSource", return_value=mock_grain_source):
-            config = ArrayRecordSourceConfig()
-            source = ArrayRecordSourceModule(config, paths="dummy.array_record")
-
-            # Iterate partway through
-            iterator = iter(source)
-            for _ in range(50):
-                next(iterator)
-
-            # Save state
-            state = source.get_state()
-
-            # Verify state contains required fields
-            assert "current_index" in state
-            assert "current_epoch" in state
-            assert state["current_index"] == 50
-
-            # Create new source and restore state
-            new_source = ArrayRecordSourceModule(config, paths="dummy.array_record")
-            new_source.set_state(state)
-
-            # Verify state was restored
-            assert new_source.current_index.get_value() == 50
-            assert new_source.current_epoch.get_value() == 0
-
-            # Continue iteration from checkpoint
-            iterator = iter(new_source)
-            # Need to manually advance iterator to the checkpoint position
-            new_source.current_index.set_value(50)  # Restore position
-            next_element = next(iterator)
-            assert next_element["data"][0] == 50  # type: ignore
-
-    def test_shuffling_with_seed(self):
-        """Test that shuffling with seed is deterministic."""
-        with patch("grain.sources.ArrayRecordDataSource") as mock_grain_class:
-            mock_instance = MagicMock()
-            mock_instance.__len__.return_value = 100
-            mock_grain_class.return_value = mock_instance
-
-            # Create two sources with same seed
-            config = ArrayRecordSourceConfig(seed=42, shuffle_files=True)
-            source1 = ArrayRecordSourceModule(config, paths="dummy.array_record")
-            source2 = ArrayRecordSourceModule(config, paths="dummy.array_record")
-
-            # Both should have same initialization
-            assert source1.current_index.get_value() == source2.current_index.get_value()
-
-    def test_prefetch_cache(self, mock_grain_source):
-        """Test prefetch cache functionality."""
-        with patch("grain.sources.ArrayRecordDataSource", return_value=mock_grain_source):
-            config = ArrayRecordSourceConfig()
-            source = ArrayRecordSourceModule(config, paths="dummy.array_record")
-
-            # Access some elements
-            elements = []
-            for i, el in enumerate(source):
-                elements.append(el)
-                if i >= 10:
-                    break
-
-            # Cache should have been used (implementation specific)
-            assert isinstance(source.prefetch_cache.get_value(), dict)
-
-    def test_error_handling_missing_file(self):
-        """Test error handling for missing files."""
-        with patch("grain.sources.ArrayRecordDataSource") as mock_grain_class:
-            # Make ArrayRecordDataSource raise an error
-            mock_grain_class.side_effect = Exception("File not found")
-            config = ArrayRecordSourceConfig()
-
-            with pytest.raises(Exception, match="File not found"):
-                ArrayRecordSourceModule(config, paths="/nonexistent/path/*.array_record")
-
-    def test_integration_with_rngs(self):
-        """Test integration with NNX Rngs."""
-        with patch("grain.sources.ArrayRecordDataSource") as mock_grain_class:
-            mock_instance = MagicMock()
-            mock_instance.__len__.return_value = 100
-            mock_grain_class.return_value = mock_instance
-
-            rngs = nnx.Rngs(params=0, shuffle=42)
-            config = ArrayRecordSourceConfig()
-            source = ArrayRecordSourceModule(config, paths="dummy.array_record", rngs=rngs)
-
-            assert source.rngs is not None
-            assert "shuffle" in source.rngs
+from datarax.core.data_source import IndexedHostReadWithProvenance, RecordIdentity
+from datarax.core.index_words import from_words, to_words
+from datarax.pipeline import Pipeline
+from datarax.sources import MemorySource, MemorySourceConfig
+from datarax.sources.array_record_source import (
+    _Records,
+    ArrayRecordSourceConfig,
+    ArrayRecordSourceModule,
+)
+from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
+from tests.test_common.host_resources import live, open_descriptors, released
+from tests.test_common.identity import check_identity_reaches_the_stages
 
 
-class TestArrayRecordSourceCleanup:
-    """S4: explicit ArrayRecord C++ file-handle cleanup via close()/context manager."""
+_RECORDS = 12
+_SHARD_RECORDS = (5, 7)
 
-    @staticmethod
-    def _build(grain_instance):
-        with patch("grain.sources.ArrayRecordDataSource", return_value=grain_instance):
-            return ArrayRecordSourceModule(ArrayRecordSourceConfig(), paths="d.array_record")
 
-    def test_close_calls_grain_close_when_available(self):
-        """On grain >= 0.2.19 the source exposes close(); delegate to it."""
-        grain_instance = MagicMock()
-        grain_instance.__len__.return_value = 10
-        source = self._build(grain_instance)
+def _encode(index: int) -> bytes:
+    return np.full(3, index, dtype=np.float32).tobytes() + f"name-{index}".encode()
+
+
+def _decode_one(record: bytes) -> dict[str, Any]:
+    values = np.frombuffer(record[:12], dtype=np.float32)
+    return {"x": values, "label": np.int32(values[0]), "name": record[12:].decode()}
+
+
+def _decode(records: Sequence[bytes]) -> list[dict[str, Any]]:
+    return [_decode_one(record) for record in records]
+
+
+def _numeric(records: Sequence[bytes]) -> list[dict[str, Any]]:
+    return [{k: v for k, v in _decode_one(r).items() if k != "name"} for r in records]
+
+
+@pytest.fixture
+def shards(tmp_path: Path) -> list[str]:
+    """Two ArrayRecord files holding records 0..4 and 5..11."""
+    paths, start = [], 0
+    for shard, count in enumerate(_SHARD_RECORDS):
+        path = tmp_path / f"records-{shard}.array_record"
+        writer = ArrayRecordWriter(str(path), "group_size:1")
+        for index in range(start, start + count):
+            writer.write(_encode(index))
+        writer.close()
+        paths.append(str(path))
+        start += count
+    return paths
+
+
+def _source(paths: list[str], decode: Any = _decode) -> ArrayRecordSourceModule:
+    return ArrayRecordSourceModule(ArrayRecordSourceConfig(), paths, decode=decode)
+
+
+def _names(indices: Any) -> list[int]:
+    return [int(i) for i in from_words(np.asarray(indices))]
+
+
+class TestTheIndexedRead:
+    def test_it_is_an_indexed_source_over_every_record_of_its_files(
+        self, shards: list[str]
+    ) -> None:
+        source = _source(shards)
+
+        assert source.record_identity is RecordIdentity.INDEXED
+        assert len(source) == _RECORDS
+
+    def test_a_batch_holds_the_named_records_decoded_named_with_the_given_words(
+        self, shards: list[str]
+    ) -> None:
+        rows = np.array([9, 0, 4, 5], np.uint64)
+
+        batch = _source(shards).get_batch(to_words(rows), epochs=3)
+
+        assert [int(v) for v in batch["label"]] == [9, 0, 4, 5]
+        np.testing.assert_array_equal(batch["x"][0], np.full(3, 9, np.float32))
+        assert batch["x"].dtype == np.float32
+        assert _names(batch.indices) == [9, 0, 4, 5]
+        assert [int(e) for e in batch.epochs] == [3, 3, 3, 3]
+        assert "name" not in batch.data
+
+    def test_one_batched_read_and_one_decode_call_serve_a_batch(self, shards: list[str]) -> None:
+        calls: list[int] = []
+
+        def counted(records: Sequence[bytes]) -> list[dict[str, Any]]:
+            calls.append(len(records))
+            return _decode(records)
+
+        source = _source(shards, decode=counted)
+        reader = type(source._records.source)
+        with patch.object(
+            reader, "__getitems__", autospec=True, side_effect=reader.__getitems__
+        ) as read:
+            source.get_batch(to_words(np.array([1, 8, 2], np.uint64)))
+
+        assert read.call_count == 1
+        assert calls == [3]
+
+    def test_a_contiguous_read_names_its_rows_as_the_run_and_refuses_a_gap(
+        self, shards: list[str]
+    ) -> None:
+        source = _source(shards)
+
+        batch = source.get_batch(to_words(np.arange(3, 7, dtype=np.uint64)), contiguous=True)
+
+        assert _names(batch.indices) == [3, 4, 5, 6]
+        with pytest.raises(ValueError, match="not a run"):
+            source.get_batch(to_words(np.array([3, 5], np.uint64)), contiguous=True)
+
+    def test_an_index_outside_the_files_is_refused(self, shards: list[str]) -> None:
+        with pytest.raises(IndexError, match="outside"):
+            _source(shards).get_batch(to_words(np.array([_RECORDS], np.uint64)))
+
+    def test_provenance_holds_each_named_record_s_other_values(self, shards: list[str]) -> None:
+        source = _source(shards)
+
+        provenance = source.provenance(to_words(np.array([7, 2], np.uint64)))
+
+        assert [dict(p) for p in provenance] == [{"name": "name-7"}, {"name": "name-2"}]
+
+    def test_the_element_spec_describes_a_decoded_record_s_numbers(self, shards: list[str]) -> None:
+        assert _source(shards).element_spec() == {
+            "x": jax.ShapeDtypeStruct((3,), np.float32),
+            "label": jax.ShapeDtypeStruct((), np.int32),
+        }
+
+    def test_a_decoder_whose_records_disagree_is_refused_naming_the_field(
+        self, shards: list[str]
+    ) -> None:
+        def ragged(records: Sequence[bytes]) -> list[dict[str, Any]]:
+            decoded = _numeric(records)
+            decoded[-1]["x"] = decoded[-1]["x"][:2]
+            return decoded
+
+        with pytest.raises(ValueError, match="'x'"):
+            _source(shards, decode=ragged).get_batch(to_words(np.arange(3, dtype=np.uint64)))
+
+
+class TestThePipelineOwnsTheOrder:
+    def test_a_shuffled_pipeline_serves_the_order_of_a_memory_source_of_the_same_records(
+        self, shards: list[str]
+    ) -> None:
+        columns = {
+            "x": np.stack([np.full(3, i, np.float32) for i in range(_RECORDS)]),
+            "label": np.arange(_RECORDS, dtype=np.int32),
+        }
+        memory = MemorySource(MemorySourceConfig(), columns)
+        source = _source(shards, decode=_numeric)
+
+        def served(pipe_source: Any) -> list[tuple[list[int], list[int]]]:
+            pipe = Pipeline(
+                source=pipe_source,
+                stages=[],
+                batch_size=4,
+                rngs=nnx.Rngs(5),
+                shuffle=True,
+                num_epochs=2,
+            )
+            out = [([int(v) for v in b["label"]], _names(b.indices)) for b in pipe]
+            pipe.close()
+            return out
+
+        assert served(source) == served(memory)
+
+    def test_the_source_holds_no_order_epoch_or_cursor_of_its_own(self, shards: list[str]) -> None:
+        source = _source(shards)
+        absent = (
+            "current_index",
+            "current_epoch",
+            "total_records",
+            "prefetch_cache",
+            "iterator_initialized",
+            "shuffled_indices",
+            "_initialize_shuffle",
+            "__iter__",
+            "__next__",
+            "_epochs_exhausted",
+            "_start_next_epoch",
+            "grain_source",
+            "get_state",
+            "set_state",
+            "_getitems",
+            "__getitem__",
+        )
+        own = set(vars(ArrayRecordSourceModule)) | set(vars(source))
+
+        assert [name for name in absent if name in own] == []
+        assert "rngs" not in inspect.signature(ArrayRecordSourceModule).parameters
+        assert {f for f in ArrayRecordSourceConfig.__dataclass_fields__} >= {"local_files_only"}
+        assert not {"seed", "num_epochs", "shuffle_files"} & set(
+            ArrayRecordSourceConfig.__dataclass_fields__
+        )
+        assert jax.tree.leaves(nnx.state(source)) == []
+
+    @pytest.mark.parametrize("call", ["step", "session"])
+    def test_the_traced_read_is_refused_naming_get_records_and_the_host_path(
+        self, shards: list[str], call: str
+    ) -> None:
+        pipe = Pipeline(source=_source(shards), stages=[], batch_size=4, rngs=nnx.Rngs(0))
+
+        with pytest.raises(
+            NotImplementedError, match=r"get_records.*for batch in pipe.*raw_batches\(\)"
+        ):
+            pipe.step() if call == "step" else next(iter(pipe.session()))
+
+    def test_the_identity_of_each_record_reaches_the_stages_unchanged(
+        self, shards: list[str]
+    ) -> None:
+        assert check_identity_reaches_the_stages(lambda: _source(shards), batch_size=4)
+
+    def test_a_tree_mode_split_and_merge_reads_the_same_records(self, shards: list[str]) -> None:
+        source = _source(shards)
+        graphdef, state = nnx.split(source, graph=False)
+        merged = nnx.merge(graphdef, state)
+        words = to_words(np.array([10, 1], np.uint64))
+
+        assert [int(v) for v in merged.get_batch(words)["label"]] == [10, 1]
+
+    def test_a_pickled_copy_reads_the_same_records_and_carries_none(
+        self, shards: list[str]
+    ) -> None:
+        source = _source(shards, decode=_numeric)
+        words = to_words(np.array([11, 3], np.uint64))
+        source.get_batch(words)  # its readers are open
+
+        # Round-trips the test's own object: no untrusted payload is loaded.
+        payload = pickle.dumps(source)
+        copy = pickle.loads(payload)
+
+        assert len(payload) < 4096
+        assert [int(v) for v in copy.get_batch(words)["label"]] == [11, 3]
+
+    def test_a_mix_with_an_array_record_child_iterates(self, shards: list[str]) -> None:
+        columns = {
+            "x": np.zeros((6, 3), np.float32),
+            "label": np.full(6, 100, np.int32),
+        }
+        mix = MixDataSourcesNode(
+            MixDataSourcesConfig(weights=(0.5, 0.5)),
+            [_source(shards, decode=_numeric), MemorySource(MemorySourceConfig(), columns)],
+        )
+        pipe = Pipeline(source=mix, stages=[], batch_size=4, rngs=nnx.Rngs(1), num_epochs=1)
+
+        labels = [int(v) for b in pipe for v in b["label"]]
+        pipe.close()
+
+        assert labels
+        assert set(labels) - {100} <= set(range(_RECORDS))
+        assert set(labels) - {100}
+
+
+class TestOneReadWithProvenance:
+    """A batch and its records' provenance come from one batched read and one decode call."""
+
+    def test_the_read_with_provenance_equals_get_batch_and_provenance_from_one_decode(
+        self, shards: list[str]
+    ) -> None:
+        calls: list[int] = []
+
+        def counted(records: Sequence[bytes]) -> list[dict[str, Any]]:
+            calls.append(len(records))
+            return _decode(records)
+
+        source = _source(shards, decode=counted)
+        words = to_words(np.array([1, 8, 2], np.uint64))
+        assert isinstance(source, IndexedHostReadWithProvenance)
+        batch, provenance = source.read_with_provenance(words, epochs=2)
+        assert calls == [3]
+        expected = _source(shards).get_batch(words, epochs=2)
+        np.testing.assert_array_equal(batch.indices, expected.indices)
+        np.testing.assert_array_equal(batch.epochs, expected.epochs)
+        for field in ("x", "label"):
+            np.testing.assert_array_equal(batch[field], expected[field])
+        assert provenance == _source(shards).provenance(words)
+
+    def test_raw_batches_with_provenance_decode_each_batch_once(self, shards: list[str]) -> None:
+        def run(with_provenance: bool) -> tuple[list[Any], list[int]]:
+            calls: list[int] = []
+
+            def counted(records: Sequence[bytes]) -> list[dict[str, Any]]:
+                calls.append(len(records))
+                return _decode(records)
+
+            pipe = Pipeline(
+                source=_source(shards, decode=counted),
+                stages=[],
+                batch_size=4,
+                rngs=nnx.Rngs(0),
+                shuffle=True,
+                num_epochs=2,
+            )
+            calls.clear()
+            served = list(pipe.raw_batches(with_provenance=with_provenance))
+            return served, calls
+
+        plain, plain_calls = run(False)
+        pairs, pair_calls = run(True)
+        assert pair_calls == plain_calls == [4] * 6
+        for batch, (paired, provenance) in zip(plain, pairs, strict=True):
+            np.testing.assert_array_equal(batch.indices, paired.indices)
+            np.testing.assert_array_equal(batch["x"], paired["x"])
+            assert [p["name"] for p in provenance] == [f"name-{i}" for i in _names(paired.indices)]
+
+    def test_an_eager_source_serves_pairs_by_its_lookup(self) -> None:
+        source = MemorySource(
+            MemorySourceConfig(), [{"x": np.float32(i), "name": f"r{i}"} for i in range(8)]
+        )
+        assert not isinstance(source, IndexedHostReadWithProvenance)
+        pipe = Pipeline(source=source, stages=[], batch_size=4, rngs=nnx.Rngs(0), shuffle=True)
+        for batch, provenance in pipe.raw_batches(with_provenance=True):
+            assert [p["name"] for p in provenance] == [f"r{i}" for i in _names(batch.indices)]
+
+
+class TestFiles:
+    def test_local_files_only_refuses_a_missing_path_by_name(self, tmp_path: Path) -> None:
+        missing = tmp_path / "missing.array_record"
+
+        with pytest.raises(FileNotFoundError, match=r"(?s)local_files_only.*missing\.array_record"):
+            ArrayRecordSourceModule(
+                ArrayRecordSourceConfig(local_files_only=True), str(missing), decode=_decode
+            )
+
+    def test_local_files_only_reads_present_files(self, shards: list[str]) -> None:
+        source = ArrayRecordSourceModule(
+            ArrayRecordSourceConfig(local_files_only=True), shards, decode=_decode
+        )
+
+        assert len(source) == _RECORDS
+
+    def test_the_repr_names_the_files_and_the_record_count(self, shards: list[str]) -> None:
+        text = repr(_source(shards))
+
+        assert "ArrayRecordSourceModule" in text
+        assert shards[0] in text
+        assert f"num_records={_RECORDS}" in text
+
+    def test_close_releases_the_readers_and_may_repeat(self, shards: list[str]) -> None:
+        source = _source(shards)
+        source.get_batch(to_words(np.array([0], np.uint64)))
 
         source.close()
-
-        grain_instance.close.assert_called_once()
-
-    def test_close_falls_back_to_exit_on_older_grain(self):
-        """On grain 0.2.18 there is no close(); fall back to context-manager __exit__."""
-
-        class _NoCloseSource:
-            def __init__(self) -> None:
-                self.exited = False
-
-            def __len__(self) -> int:
-                return 10
-
-            def __exit__(self, *exc: object) -> None:
-                self.exited = True
-
-        grain_instance = _NoCloseSource()
-        source = self._build(grain_instance)
-
         source.close()
 
-        assert grain_instance.exited is True
+        assert [int(v) for v in source.get_batch(to_words(np.array([6], np.uint64)))["label"]] == [
+            6
+        ]
 
-    def test_context_manager_closes_on_exit(self):
-        """Using the module as a context manager releases handles on exit."""
-        grain_instance = MagicMock()
-        grain_instance.__len__.return_value = 10
-        with patch("grain.sources.ArrayRecordDataSource", return_value=grain_instance):
-            with ArrayRecordSourceModule(
-                ArrayRecordSourceConfig(), paths="d.array_record"
-            ) as source:
-                assert source is not None
-        grain_instance.close.assert_called_once()
+    def test_the_context_manager_closes_the_readers(self, shards: list[str]) -> None:
+        reader = type(_source(shards)._records.source)
+        with patch.object(reader, "__exit__", autospec=True) as exited:
+            with _source(shards):
+                pass
 
-    def test_close_is_idempotent(self):
-        """Calling close() repeatedly must not raise."""
-        grain_instance = MagicMock()
-        grain_instance.__len__.return_value = 10
-        source = self._build(grain_instance)
-
-        source.close()
-        source.close()  # second call must be safe
+        exited.assert_called_once()
 
 
-class TestArrayRecordSourceRepr:
-    """S2: config-identifying __repr__ for checkpoint validation."""
+class TestNothingOfADroppedSourceIsKept:
+    """A dropped ArrayRecord pipeline leaves no reader and no open file, closed or not.
 
-    def test_repr_identifies_source_config(self):
-        grain_instance = MagicMock()
-        grain_instance.__len__.return_value = 42
-        grain_instance.paths = ["a.array_record", "b.array_record"]
-        with patch("grain.sources.ArrayRecordDataSource", return_value=grain_instance):
-            config = ArrayRecordSourceConfig(seed=7, num_epochs=3, shuffle_files=True)
-            source = ArrayRecordSourceModule(config, paths=["a.array_record", "b.array_record"])
+    The host naming caches a program per source structure; it keeps the structure (the record
+    count, the configuration), never the source's reader, its files or its decoder.
+    """
 
-        r = repr(source)
-        assert "ArrayRecordSourceModule" in r
-        assert "a.array_record" in r
-        assert "num_records=42" in r
-        assert "shuffle_files=True" in r
-        assert "seed=7" in r
-        assert "num_epochs=3" in r
+    @pytest.mark.parametrize("close", [True, False], ids=["closed", "dropped"])
+    def test_no_reader_and_no_open_file_is_left(self, shards: list[str], close: bool) -> None:
+        source = _source(shards)
+        pipe = Pipeline(
+            source=source, stages=[], batch_size=4, rngs=nnx.Rngs(0), shuffle=True, num_epochs=1
+        )
+        assert len(list(pipe.raw_batches())) == 3
+        pipe.close()
+        if close:
+            source.close()
+        del pipe, source
+        paths = set(shards)
+
+        def readers() -> int:
+            return live(lambda item: type(item) is _Records and set(item.paths) <= paths)
+
+        assert released(lambda: readers() == 0 and not open_descriptors(shards)), (
+            readers(),
+            open_descriptors(shards),
+        )
+
+    def test_two_sources_of_one_record_count_compile_the_naming_once(
+        self, shards: list[str]
+    ) -> None:
+        def run() -> None:
+            pipe = Pipeline(
+                source=_source(shards),
+                stages=[],
+                batch_size=4,
+                rngs=nnx.Rngs(0),
+                shuffle=True,
+                num_epochs=1,
+            )
+            list(pipe.raw_batches())
+            pipe.close()
+
+        jax.clear_caches()
+        with compiled_programs() as programs:
+            run()
+            run()
+        assert sum(str(program).startswith("jit(_names") for program in programs) == 1

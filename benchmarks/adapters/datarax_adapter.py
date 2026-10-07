@@ -494,7 +494,6 @@ class DataraxAdapter(PipelineAdapter):
         super().__init__()
         self._pipeline: Any = None
         self._cached_iter: CachingIterator[Any] | None = None
-        self._buffer_depth: int = 2
         self._rebatch_parts: int = 1
 
     @property
@@ -693,13 +692,13 @@ class DataraxAdapter(PipelineAdapter):
         if Capability.REBATCHING in set(config.required_capabilities):
             target = int(config.extra.get("target_batch_size", config.batch_size))
             self._rebatch_parts = max(1, config.batch_size // target)
-        self._buffer_depth = int(config.extra.get("prefetch_size", 2)) if config.extra else 2
         rngs = nnx.Rngs(config.seed, augment=config.seed + 1, batch_mix=config.seed + 2)
 
         source = self._create_source(config, data, rngs)
 
         if Capability.DAG_BRANCHING in set(config.required_capabilities):
             self._pipeline = self._build_branching_pipeline(source, config, rngs)
+            self._set_read_buffer(config)
             return
 
         missing = [name for name in config.transforms if name not in _ALL_TRANSFORM_FNS]
@@ -718,17 +717,23 @@ class DataraxAdapter(PipelineAdapter):
             rngs=nnx.Rngs(config.seed),
             drop_last=_DROP_LAST,
         )
+        self._set_read_buffer(config)
 
         if Capability.CACHING in set(config.required_capabilities):
             # Iteration-boundary cache: the expensive pipeline runs once, later
             # passes replay cached batches (see CachingIterator).
             self._cached_iter = CachingIterator(iter(self._pipeline))
 
+    def _set_read_buffer(self, config: ScenarioConfig) -> None:
+        """Read ``prefetch_size`` batches ahead (2 by default) on the pipeline's host stage."""
+        extra = config.extra or {}
+        # The host stage's read-ahead depth is internal until it takes a public resource budget,
+        # which replaces this setting; set here so the prefetch sweep still varies the depth.
+        self._pipeline.host_stage._read_buffer = int(extra.get("prefetch_size", 2))  # noqa: SLF001
+
     def _iterate_batches(self) -> Iterator[Any]:
-        # The Pipeline yields device-resident JAX batches, so no separate host->device
-        # prefetch stage is needed (unlike host-loader frameworks). ``_buffer_depth``
-        # records the requested prefetch policy for parity/metadata; the pipeline keeps
-        # data on device inherently.
+        # The pipeline's host stage reads ``prefetch_size`` batches ahead and stages its platform's
+        # depth of placed batches on the device, so no separate prefetch stage is added here.
         batches = iter(self._cached_iter) if self._cached_iter is not None else self._pipeline
         for batch in batches:
             if self._rebatch_parts > 1:

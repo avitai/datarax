@@ -83,6 +83,9 @@ source = from_tfds(
 
 # Load subset with split slicing
 source = from_tfds("cifar10", "train[:5000]")
+
+# A split larger than RAM: read and decode each batch instead of holding the split
+source = from_tfds("imagenet2012", "train", in_memory=False)
 ```
 
 !!! note "Prepare once, read without TensorFlow"

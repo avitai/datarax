@@ -87,7 +87,7 @@ for i, batch in enumerate(train_pipeline):
 
 `TFDSEagerSource` reads a dataset from the TensorFlow Datasets catalog that TFDS has prepared as ArrayRecord, without TensorFlow in the process; prepare it once, in a process of its own, with `tfds.builder("mnist", file_format="array_record").download_and_prepare()` (the `tfds` extra). Text features, such as CIFAR-10's `id`, are kept as each record's provenance.
 
-> **Tip:** `from_tfds(name, split, ...)` picks the source by the copy's prepared format: `TFDSEagerSource` for ArrayRecord, `TFDSStreamingSource` (no TensorFlow) for TFRecord.
+> **Tip:** `from_tfds(name, split, ...)` picks the source by the copy's prepared format: `TFDSEagerSource` for ArrayRecord (or, with `in_memory=False` for a split larger than RAM, an `ArrayRecordSourceModule` reading per batch), `TFDSStreamingSource` (no TensorFlow) for TFRecord.
 
 ### HFEagerSource
 
@@ -126,23 +126,25 @@ for i, batch in enumerate(pipeline):
 For array record format data (commonly used in large-scale ML training), use `ArrayRecordSourceModule`:
 
 ```python
+from collections.abc import Sequence
+
 import numpy as np
 from datarax.pipeline import Pipeline
 from datarax.sources import ArrayRecordSourceModule, ArrayRecordSourceConfig
 from flax import nnx
 
 
-def decode(record: bytes) -> dict[str, np.ndarray]:
-    # ArrayRecord records are bytes; turn one into a dict of arrays.
-    return {"features": np.frombuffer(record, dtype=np.float32)}
+def decode(records: Sequence[bytes]) -> list[dict[str, np.ndarray]]:
+    # ArrayRecord records are bytes; one call turns a batch's records into arrays.
+    return [{"features": np.frombuffer(record, dtype=np.float32)} for record in records]
 
 
-# Create source from array record file (config first, then path)
+# An indexed source over the files (config first, then paths); nothing is held in memory
 config = ArrayRecordSourceConfig()
 source = ArrayRecordSourceModule(config, "path/to/arrayrecord/file", decode=decode)
 
-# Each pass over the pipeline covers one epoch of decoded batches
-pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))
+# The pipeline owns the order and the epochs
+pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0), shuffle=True)
 ```
 
 ## Creating Custom Data Sources
@@ -194,15 +196,20 @@ Any other source subclasses `DataSourceModule` and declares what its record inde
 3. You declare the kind with a `record_identity` property returning `RecordIdentity.INDEXED`
    (a stable position in the source), `STREAM_IDS` (an id the stream reports) or `ARRIVAL`
    (the arrival ordinal); a source without one is refused at construction. The kind routes it: an `INDEXED` source
-   implements a stateless, JAX-traceable `get_records(indices)` and the pipeline serves it
-   through its compiled session; a `STREAM_IDS` or `ARRIVAL` source builds on
+   implements a stateless, JAX-traceable `get_records(indices)` (what `step()` and `scan`
+   call) and the host read `get_batch(indices, *, epochs, contiguous)` (what
+   `for batch in pipeline` calls on the host stage); a `STREAM_IDS` or `ARRIVAL` source builds on
    `datarax.sources.StreamingSourceBase`, implements `_open_pass(pass_index, key, read_size)`
    (a generator of `StreamChunk`s: host columns, provenance and ids, read `read_size` records
-   at a time), and is served by the streaming path. An indexed source that
+   at a time; `key` is the pipeline's key as uint32 words on the host, or `None` for the
+   stream's own order, and a pass's order is drawn from `pass_seed(key, pass_index)`), and is
+   read forward by the host stage. An indexed source that
    partitions or mixes records also overrides `record_indices_at(start, size, key)` to return
    the stable index of the record at each position of the order the key selects (the
    sequential order when the key is `None`), uint32 `(size, 2)` with each 64-bit index as its
-   words `(hi, lo)` (`datarax.core.index_words`); the pipeline computes those indices once per
+   words `(hi, lo)` (`datarax.core.index_words`). `start` is a Python int, its two uint32
+   words `(hi, lo)` (a position of the order, below its length: how the host names positions
+   past `2**31`), or a traced int32; the pipeline computes those indices once per
    batch, gathers them with `get_records`, and stochastic operators key each record's
    randomness on the same indices. The default names records by position, shuffled by the
    key when the pipeline shuffles

@@ -12,11 +12,13 @@ blocks of 16, then tf.data's buffer shuffle, its picks drawn from a generator ke
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import os
 import shutil
 import struct
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -29,22 +31,27 @@ from substrax.testing import run_python
 
 from datarax.core.data_source import RecordIdentity
 from datarax.core.element_batch import Batch, PADDING_INDEX
+from datarax.core.prng import key_words
 from datarax.pipeline import Pipeline
+from datarax.pipeline.epochs import EpochPlan, Run
+from datarax.pipeline.host_stage import RunUnits
 from datarax.sources import (
     from_tfds,
     tfds_source,
+    TFDSEagerConfig,
     TFDSEagerSource,
     TFDSStreamingConfig,
     TFDSStreamingSource,
 )
 from tests.jax_test_environment import forwarded_jax_environment
+from tests.test_common.identity import check_identity_reaches_the_stages, IdentitySpy
 from tests.test_common.streams import (
     graph_definitions_across_a_pass,
     non_array_state_leaves,
-    record_chunks,
     second_pulls_after_a_tree_round_trip,
 )
 from tests.test_common.tfds_fixture import FIXTURE, IMAGE_SHAPE, TFDSFixture, TRAIN_RECORDS
+from tests.test_common.transfers import implicit_upload_raises
 
 
 pytestmark = pytest.mark.tfds
@@ -278,16 +285,26 @@ class TestProvenanceByIdentity:
 def test_every_pass_decodes_in_the_pipeline_s_batch_size(
     tfds_fixture: TFDSFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    chunks = record_chunks(monkeypatch, TFDSStreamingSource)
+    decoded: list[int] = []
+    decode = tfds_source._decoded_batch  # noqa: SLF001 - the one decode of a TFDS stream
+
+    def watched(features: Any, frames: list[Any], kept: Any) -> Any:
+        decoded.append(len(frames))
+        return decode(features, frames, kept)
+
+    monkeypatch.setattr(tfds_source, "_decoded_batch", watched)
     pipeline = Pipeline(
         source=_stream(tfds_fixture), stages=[], batch_size=6, rngs=nnx.Rngs(0), num_epochs=3
     )
 
-    list(pipeline)
+    served = [batch.batch_size for batch in pipeline]
 
     assert TRAIN_RECORDS % 6 != 0
-    # The declared spec's read of one record, then each pass in batches of 6.
-    assert chunks == [(0, 1, 1)] + [(p, 6, n) for p in range(3) for n in (6, 6, 6, 2)]
+    # A pass's last records are completed from the next pass's head (stream_batches), so three
+    # passes of 20 records serve ten full batches; each is decoded once, after the declared
+    # spec's read of one record.
+    assert served == [6] * 10
+    assert decoded == [1] + [6] * 10
 
 
 class TestNnxHygiene:
@@ -514,7 +531,7 @@ class TestThePassDatasetForWorkers:
     def _batches(dataset: Any) -> list[tuple[list[int], bytes]]:
         return [
             (ids.tolist(), hashlib.sha256(columns["image"].tobytes()).digest())
-            for columns, _, ids in dataset
+            for columns, _, ids, _ in dataset
         ]
 
     @pytest.mark.parametrize(("seed", "pass_index"), sorted(_DECIDED_ORDER))
@@ -522,10 +539,10 @@ class TestThePassDatasetForWorkers:
         self, tfds_fixture: TFDSFixture, seed: int, pass_index: int
     ) -> None:
         dataset = _stream(tfds_fixture, shuffle_buffer_size=8).pass_dataset(
-            pass_index, jax.random.key(seed), 4
+            pass_index, key_words(jax.random.key(seed)), 4
         )
 
-        served = [int(i) & 0xFFFFFFFF for _, _, ids in dataset for i in ids]
+        served = [int(i) & 0xFFFFFFFF for _, _, ids, _ in dataset for i in ids]
 
         assert served == _DECIDED_ORDER[(seed, pass_index)]
 
@@ -534,7 +551,7 @@ class TestThePassDatasetForWorkers:
         self, tfds_fixture: TFDSFixture, slices: int, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         source = _stream(tfds_fixture, shuffle_buffer_size=8)
-        key = jax.random.key(4)
+        key = key_words(jax.random.key(4))
         whole = self._batches(source.pass_dataset(1, key, 2))
         decoded: list[int] = []
         decode = tfds_source._decoded_batch
@@ -561,14 +578,14 @@ class TestThePassDatasetForWorkers:
         self, tfds_fixture: TFDSFixture, slices: int, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         source = _stream(tfds_fixture, shuffle_buffer_size=8)
-        key = jax.random.key(4)
+        key = key_words(jax.random.key(4))
         source.pass_dataset(0, key, 2)  # the parent builds the offset index here, once
         reads = _CountingReads(monkeypatch)
         for i in range(slices):
             dataset = source.pass_dataset(0, key, 2)
             dataset.set_slice(slice(i, None, slices))
             reads.calls.clear()
-            served = [int(r) & 0xFFFFFFFF for _, _, ids in dataset for r in ids]
+            served = [int(r) & 0xFFFFFFFF for _, _, ids, _ in dataset for r in ids]
 
             assert len(reads.calls) == len(served)  # one read per own record, no header reads
             lengths = _payload_lengths(tfds_fixture)
@@ -597,7 +614,9 @@ class TestThePassDatasetForWorkers:
     ) -> None:
         import cloudpickle  # noqa: PLC0415 - Grain's process prefetch pickles with it
 
-        dataset = _stream(tfds_fixture, shuffle_buffer_size=8).pass_dataset(0, jax.random.key(9), 4)
+        dataset = _stream(tfds_fixture, shuffle_buffer_size=8).pass_dataset(
+            0, key_words(jax.random.key(9)), 4
+        )
         copy = cloudpickle.loads(cloudpickle.dumps(dataset))
 
         assert self._batches(copy) == self._batches(dataset)
@@ -607,10 +626,376 @@ class TestThePassDatasetForWorkers:
     ) -> None:
         from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
 
-        dataset = _stream(tfds_fixture, shuffle_buffer_size=8).pass_dataset(0, jax.random.key(9), 4)
+        dataset = _stream(tfds_fixture, shuffle_buffer_size=8).pass_dataset(
+            0, key_words(jax.random.key(9)), 4
+        )
         reference = self._batches(dataset)
 
         with ThreadPoolExecutor(8) as pool:
             results = list(pool.map(lambda _: self._batches(dataset), range(8)))
 
         assert all(result == reference for result in results)
+
+
+def _run_units(
+    length: int,
+    batch_size: int,
+    *,
+    start: tuple[int, int] = (0, 0),
+    passes: int = 3,
+    drop_last: bool = False,
+    chunk: int = 1,
+) -> RunUnits:
+    """A run of ``passes`` passes from ``(position, pass)``, cut into the host stage's units."""
+    plan = EpochPlan(length=length, batch_size=batch_size, drop_last=drop_last, num_epochs=passes)
+    run = Run(plan=plan, position=start[0], epoch=start[1], end_epoch=passes)
+    return RunUnits(run=run, chunk=chunk)
+
+
+class TestRunDataset:
+    """A run's passes as one Grain dataset of decoded batches, numbered from where the run starts.
+
+    One dataset spans the run, so a worker process slicing it starts once per run, and its batches
+    are numbered from the run's first, so ``k`` slices interleaved from worker 0 serve the run's
+    order wherever it resumed.
+    """
+
+    @staticmethod
+    def _rows(dataset: Any) -> list[tuple[list[int], list[int], bytes]]:
+        return [
+            (
+                [int(i) for i in ids],
+                [int(e) for e in epochs],
+                hashlib.sha256(columns["image"].tobytes()).digest(),
+            )
+            for columns, _, ids, epochs in dataset
+        ]
+
+    @staticmethod
+    def _pass_ids(source: TFDSStreamingSource, key: Any, pass_index: int) -> list[int]:
+        return [int(i) for _, _, ids, _ in source.pass_dataset(pass_index, key, 64) for i in ids]
+
+    @pytest.mark.parametrize("drop_last", [False, True])
+    def test_the_run_is_its_passes_cut_into_batches_by_the_plan(
+        self, tfds_fixture: TFDSFixture, drop_last: bool
+    ) -> None:
+        source = _stream(tfds_fixture, shuffle_buffer_size=8)
+        key = key_words(jax.random.key(4))
+        served = self._rows(
+            source.run_dataset(_run_units(TRAIN_RECORDS, 6, drop_last=drop_last), key)
+        )
+        expected_ids: list[int] = []
+        expected_epochs: list[int] = []
+        for pass_index in range(3):
+            ids = self._pass_ids(source, key, pass_index)
+            if drop_last:
+                ids = ids[: len(ids) // 6 * 6]
+            expected_ids += ids
+            expected_epochs += [pass_index] * len(ids)
+        assert [i for ids, _, _ in served for i in ids] == expected_ids
+        assert [e for _, epochs, _ in served for e in epochs] == expected_epochs
+        assert [len(ids) for ids, _, _ in served][:-1] == [6] * (len(served) - 1)
+
+    @pytest.mark.parametrize("slices", [2, 3, 8])
+    def test_slices_interleaved_from_the_first_serve_the_run_each_batch_decoded_once(
+        self, tfds_fixture: TFDSFixture, slices: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source = _stream(tfds_fixture, shuffle_buffer_size=8)
+        key = key_words(jax.random.key(4))
+        whole = self._rows(source.run_dataset(_run_units(TRAIN_RECORDS, 4), key))
+        decoded: list[int] = []
+        decode = tfds_source._decoded_batch
+
+        def counting(features: Any, frames: Any, read: Any) -> Any:
+            decoded.append(len(frames))
+            return decode(features, frames, read)
+
+        monkeypatch.setattr(tfds_source, "_decoded_batch", counting)
+        parts = []
+        for i in range(slices):
+            dataset = source.run_dataset(_run_units(TRAIN_RECORDS, 4), key)
+            dataset.set_slice(slice(i, None, slices))
+            parts.append(self._rows(dataset))
+        interleaved = [
+            part[j] for j in range(max(map(len, parts))) for part in parts if j < len(part)
+        ]
+        assert interleaved == whole
+        assert len(decoded) == len(whole)
+
+    @pytest.mark.parametrize("slices", [2, 3])
+    @pytest.mark.parametrize("resume_at", [1, 5, 7])
+    def test_a_resumed_run_sliced_serves_the_rest_in_order_reading_no_skipped_payload(
+        self,
+        tfds_fixture: TFDSFixture,
+        slices: int,
+        resume_at: int,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Resumed at a batch not divisible by ``k``, the slices still interleave from worker 0."""
+        source = _stream(tfds_fixture, shuffle_buffer_size=8)
+        key = key_words(jax.random.key(7))
+        units = _run_units(TRAIN_RECORDS, 4)
+        whole = self._rows(source.run_dataset(units, key))
+        position, epoch = 0, 0
+        for ordinal in range(resume_at):
+            batch = units.run.batch(ordinal)
+            assert batch is not None
+            position, epoch = units.run.plan.advance(*batch)
+        resumed = _run_units(TRAIN_RECORDS, 4, start=(position, epoch))
+        source.run_dataset(resumed, key)  # the parent builds the offset index here, once
+        reads = _CountingReads(monkeypatch)
+        parts = []
+        for i in range(slices):
+            dataset = source.run_dataset(resumed, key)
+            dataset.set_slice(slice(i, None, slices))
+            parts.append(self._rows(dataset))
+        interleaved = [
+            part[j] for j in range(max(map(len, parts))) for part in parts if j < len(part)
+        ]
+        assert interleaved == whole[resume_at:]
+        assert len(reads.calls) == sum(len(ids) for ids, _, _ in whole[resume_at:])
+
+    def test_the_run_dataset_pickles_and_reads_the_same_batches(
+        self, tfds_fixture: TFDSFixture
+    ) -> None:
+        import cloudpickle  # noqa: PLC0415 - Grain's process prefetch pickles with it
+
+        source = _stream(tfds_fixture, shuffle_buffer_size=8)
+        dataset = source.run_dataset(_run_units(TRAIN_RECORDS, 4), key_words(jax.random.key(1)))
+        copy = cloudpickle.loads(cloudpickle.dumps(dataset))
+        assert self._rows(copy) == self._rows(dataset)
+
+
+class TestThroughTheHostStage:
+    def test_raw_batches_serve_the_run_dataset_s_batches(self, tfds_fixture: TFDSFixture) -> None:
+        source = _stream(tfds_fixture, shuffle_buffer_size=8)
+        pipe = Pipeline(
+            source=source, stages=[], batch_size=6, rngs=nnx.Rngs(2), shuffle=True, num_epochs=2
+        )
+        served = list(pipe.raw_batches())
+        key = key_words(pipe._epoch_key_base[...])  # noqa: SLF001
+        expected = [
+            [int(i) for i in ids]
+            for _, _, ids, _ in source.run_dataset(_run_units(TRAIN_RECORDS, 6, passes=2), key)
+        ]
+        names = [
+            [(int(hi) << 32) | int(lo) for hi, lo in np.asarray(batch.indices)] for batch in served
+        ]
+        assert names == expected
+
+    def test_units_are_read_ahead_of_the_consumer_on_a_thread(
+        self, tfds_fixture: TFDSFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Decode runs on the stream's read thread, ahead of the consumer, as an indexed read does.
+
+        At run creation the consumer reads one record for the declared spec; every unit is then
+        decoded on the read thread, which fills the read buffer while the consumer holds a batch.
+        """
+        decode = tfds_source._decoded_batch  # noqa: SLF001 - the one decode of a TFDS stream
+        threads: list[str] = []
+        decoded = threading.Condition()
+
+        def watched(features: Any, frames: list[Any], kept: Any) -> Any:
+            batch = decode(features, frames, kept)
+            with decoded:
+                threads.append(threading.current_thread().name)
+                decoded.notify_all()
+            return batch
+
+        monkeypatch.setattr(tfds_source, "_decoded_batch", watched)
+        pipe = Pipeline(
+            source=_stream(tfds_fixture), stages=[], batch_size=4, rngs=nnx.Rngs(0), num_epochs=None
+        )
+        batches = iter(pipe.raw_batches())
+        next(batches)
+        consumer = threading.current_thread().name
+        with decoded:  # the spec's record, the batch taken, and the read buffer's two units
+            decoded.wait_for(lambda: len(threads) >= 4, timeout=30)
+            seen = list(threads)
+        pipe.close()
+        assert len(seen) >= 4, seen
+        assert seen[0] == consumer
+        assert consumer not in seen[1:], seen
+
+    @pytest.mark.parametrize("drop_last", [False, True])
+    def test_resume_after_any_batch_is_exact_and_replays_no_payload(
+        self, tfds_fixture: TFDSFixture, drop_last: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``get_state`` after every batch of a 3-pass shuffled run, read ahead; the rest resumes.
+
+        A resumed run reads the payloads of the records it serves and of the spec's one record,
+        never those before the saved position.
+        """
+
+        def build() -> Pipeline:
+            return Pipeline(
+                source=_stream(tfds_fixture, shuffle_buffer_size=8),
+                stages=[],
+                batch_size=6,
+                rngs=nnx.Rngs(5),
+                shuffle=True,
+                drop_last=drop_last,
+                num_epochs=3,
+            )
+
+        def rows(batch: Batch) -> tuple[list[tuple[int, int]], list[int], bytes]:
+            return (
+                [(int(hi), int(lo)) for hi, lo in np.asarray(batch.indices)],
+                [int(e) for e in np.asarray(batch.epochs)],
+                hashlib.sha256(np.asarray(batch["image"]).tobytes()).digest(),
+            )
+
+        whole = [rows(b) for b in build().raw_batches()]
+        assert len(whole) == (9 if drop_last else 10)  # 3 passes of 20 records, 6 a batch
+        payloads: list[int] = []
+        payload = tfds_source._payload  # noqa: SLF001 - a record's payload read
+
+        def counted(file: Any, path: str, index: Any, offset: int) -> bytes:
+            payloads.append(offset)
+            return payload(file, path, index, offset)
+
+        monkeypatch.setattr(tfds_source, "_payload", counted)
+        for done in range(len(whole) + 1):
+            pipe = build()
+            batches = iter(pipe.raw_batches())
+            served = [rows(next(batches)) for _ in range(done)]
+            state = pipe.get_state()
+            pipe.close()
+            resumed = build()
+            resumed.set_state(state)
+            assert resumed.batches_left() == len(whole) - done
+            payloads.clear()
+            rest = [rows(b) for b in resumed.raw_batches()]
+            assert served + rest == whole
+            assert len(payloads) == 1 + sum(len(names) for names, _, _ in rest)
+
+    @pytest.mark.parametrize("ending", ["exhausted", "close", "break"])
+    def test_no_read_thread_is_left(self, tfds_fixture: TFDSFixture, ending: str) -> None:
+        pipe = Pipeline(
+            source=_stream(tfds_fixture), stages=[], batch_size=4, rngs=nnx.Rngs(0), num_epochs=2
+        )
+        batches = pipe.raw_batches()
+        if ending == "exhausted":
+            list(batches)
+        else:
+            next(iter(batches))
+            if ending == "close":
+                pipe.close()
+            else:
+                del batches, pipe
+                gc.collect()
+        threads = []
+        for _ in range(100):
+            threads = [t.name for t in threading.enumerate() if "grain" in t.name.lower()]
+            if not threads:
+                break
+            threading.Event().wait(0.05)
+        assert threads == []
+
+    def test_a_decode_error_reaches_the_consumer_and_iterating_again_resumes_at_it(
+        self, tfds_fixture: TFDSFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A decode failing on the read thread is raised by ``next()`` unchanged and ends the run.
+
+        The cursor counts only the batches delivered, and the next call resumes at the batch whose
+        decode failed, so nothing is lost or served twice.
+        """
+
+        def build() -> Pipeline:
+            return Pipeline(
+                source=_stream(tfds_fixture),
+                stages=[],
+                batch_size=4,
+                rngs=nnx.Rngs(0),
+                shuffle=False,
+                num_epochs=1,
+            )
+
+        def names(batch: Batch) -> list[int]:
+            return [(int(hi) << 32) | int(lo) for hi, lo in np.asarray(batch.indices)]
+
+        whole = [names(b) for b in build().raw_batches()]
+        decode = tfds_source._decoded_batch  # noqa: SLF001 - the one decode of a TFDS stream
+        calls: list[int] = []
+
+        class DecodeFailed(Exception):
+            pass
+
+        def flaky(features: Any, frames: list[Any], kept: Any) -> Any:
+            calls.append(len(frames))
+            if len(calls) == 4:  # the spec's record, then the third unit
+                raise DecodeFailed("decode 4 failed")
+            return decode(features, frames, kept)
+
+        monkeypatch.setattr(tfds_source, "_decoded_batch", flaky)
+        pipe = build()
+        served: list[list[int]] = []
+        with pytest.raises(DecodeFailed, match="decode 4 failed"):
+            for batch in pipe.raw_batches():
+                served.append(names(batch))
+        assert served == whole[:2]
+        assert pipe.get_state()["stream"]["records"] == 8
+        served += [names(b) for b in pipe.raw_batches()]
+        assert served == whole
+
+    def test_nothing_transfers_implicitly_through_run_creation_iteration_and_the_dag(
+        self, tfds_fixture: TFDSFixture
+    ) -> None:
+        assert implicit_upload_raises(), "the guard must fire on an implicit upload"
+        pipe = Pipeline(
+            source=_stream(tfds_fixture, shuffle_buffer_size=8),
+            stages=[IdentitySpy(4)],
+            batch_size=4,
+            rngs=nnx.Rngs(0),
+            shuffle=True,
+            num_epochs=2,
+        )
+        with jax.transfer_guard("disallow"):
+            served = list(pipe)
+        assert len(served) == 10
+
+    def test_provenance_comes_beside_each_batch_as_the_source_looks_it_up(
+        self, tfds_fixture: TFDSFixture
+    ) -> None:
+        source = _stream(tfds_fixture, shuffle_buffer_size=8)
+        pipe = Pipeline(
+            source=source, stages=[], batch_size=6, rngs=nnx.Rngs(4), shuffle=True, num_epochs=2
+        )
+        pairs = list(pipe.raw_batches(with_provenance=True))
+        assert len(pairs) == 7
+        for batch, provenance in pairs:
+            assert len(provenance) == batch.batch_size
+            assert list(provenance) == list(source.provenance(batch.indices))
+
+    def test_reset_starts_the_next_pass_and_batches_left_counts_the_run(
+        self, tfds_fixture: TFDSFixture
+    ) -> None:
+        pipe = Pipeline(
+            source=_stream(tfds_fixture), stages=[], batch_size=4, rngs=nnx.Rngs(0), num_epochs=1
+        )
+        assert pipe.batches_left() == 5
+        batches = iter(pipe)
+        next(batches)
+        assert pipe.batches_left() == 4 == len(list(batches))
+        assert pipe.batches_left() == 0
+        pipe.reset()
+        assert pipe.batches_left() == 5
+        served = list(pipe)
+        assert [int(e) for b in served for e in np.asarray(b.epochs)] == [1] * TRAIN_RECORDS
+
+    def test_identity_reaches_the_stages_unchanged(self, tfds_fixture: TFDSFixture) -> None:
+        assert check_identity_reaches_the_stages(
+            lambda: _stream(tfds_fixture, shuffle_buffer_size=8), batch_size=4
+        )
+
+    def test_an_eager_source_s_identity_reaches_the_stages_unchanged(
+        self, tfds_fixture: TFDSFixture
+    ) -> None:
+        def eager() -> TFDSEagerSource:
+            return TFDSEagerSource(
+                TFDSEagerConfig(
+                    name=FIXTURE, split="train", data_dir=str(tfds_fixture.array_record)
+                )
+            )
+
+        assert check_identity_reaches_the_stages(eager, batch_size=4)

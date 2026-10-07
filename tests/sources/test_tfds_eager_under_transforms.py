@@ -92,7 +92,7 @@ def _same_batches(got: Batch, want: Batch) -> None:
 
 class TestTheCompiledPathsOverATFDSSource:
     def test_a_session_compiles_once(self, tfds_fixture: TFDSFixture) -> None:
-        session = iter(_pipeline(_source(tfds_fixture)))
+        session = _pipeline(_source(tfds_fixture)).session()
         with expect_first_call_compiles("jit(session_step)"):
             jax.block_until_ready(next(session).indices)
         with expect_compiles(0):

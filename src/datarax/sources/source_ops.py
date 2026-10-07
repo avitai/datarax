@@ -21,6 +21,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import ArrayLike
 
 from datarax.core import index_words
 from datarax.core.index_shuffle import shuffle_positions
@@ -44,7 +45,7 @@ def partition_length(length: int, num_workers: int = 1, shard_id: int = 0) -> in
 
 
 def resolve_wrapped_indices(
-    start: jax.Array | int,
+    start: int | ArrayLike,
     size: int,
     length: int,
     key: jax.Array | None,
@@ -65,8 +66,9 @@ def resolve_wrapped_indices(
     to ``2**64 - 1`` (:func:`~datarax.core.index_words.wrapped_positions`).
 
     Args:
-        start: Starting logical position: a Python int of any size, or a traced int32
-            ``jax.Array``.
+        start: Starting logical position: a Python int of any size, its two uint32 words
+            ``(hi, lo)`` (a position of the worker's order, below its length), or a traced
+            int32 ``jax.Array``.
         size: Number of records to return (static Python int).
         length: Total number of records in the dataset.
         key: The key selecting the order, or ``None`` for the sequential order.

@@ -22,18 +22,15 @@ Semantics:
   expose iterator-owned state (position and RNG counts), valid at every
   yield boundary, for exact mid-epoch resume without touching the module.
 
-Streaming sources pull batches on the host, so :func:`compile_streaming_dag`
-applies the same pattern to the pipeline's DAG and the position counter only.
-The source never enters the compiled step: its state stays with the live
-module, and a source that replaces its backend iterator between passes does
-not force a recompile. Structurally identical pipelines share compiled steps.
+The pattern, and the step running a DAG over one host batch, live in
+:mod:`datarax.pipeline.dag_call`. Structurally identical pipelines share compiled steps.
 """
 
 from __future__ import annotations
 
 import contextlib
 import weakref
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import jax
@@ -43,7 +40,14 @@ from flax import nnx
 
 from datarax.core.element_batch import Batch
 from datarax.core.operator import OperatorModule
-from datarax.pipeline.dag import OperatorDag
+from datarax.pipeline.compiled import cached_program
+from datarax.pipeline.dag_call import (
+    apply_writes,
+    is_per_batch_state,
+    run_tracking_writes,
+    state_leaves,
+    Writes,
+)
 from datarax.pipeline.epochs import EpochPlan
 
 
@@ -57,9 +61,7 @@ type StepBody = Callable[[Any, int], Batch]
 # The most recently used entry is kept last; the oldest is dropped past the bound.
 # Held OUTSIDE the modules: storing graphdefs as module attributes would embed them
 # into the next split's graphdef, making GraphDef.__eq__ recurse into itself.
-_MAX_COMPILED_STEPS = 16
 _SESSION_STEPS: list[tuple[Any, Callable[..., Any]]] = []
-_DAG_STEPS: list[tuple[Any, Callable[..., Any]]] = []
 
 # Device copies of each pipeline's host (NumPy) arrays, uploaded at first use and shared by
 # every path that stages the pipeline (``step()`` and iteration sessions). Keyed weakly by the
@@ -69,10 +71,6 @@ _DAG_STEPS: list[tuple[Any, Callable[..., Any]]] = []
 type _HostCopies = dict[int, tuple[weakref.ref[np.ndarray], jax.Array]]
 _HOST_COPIES: weakref.WeakKeyDictionary[Any, _HostCopies] = weakref.WeakKeyDictionary()
 
-# A compiled step's writes: raw values by position within each state partition,
-# per-batch state first and staged state second.
-_Writes = tuple[dict[int, Any], dict[int, Any]]
-
 # The layout of PipelineIterator.get_state(). Operators hold no RNG counts, so ``rng_counts`` is
 # the pipeline's and those of a source that holds a stream (an in-memory source holds none). A
 # state without the field keeps only its counts outside operators.
@@ -80,121 +78,6 @@ _ITERATOR_STATE_VERSION = 2
 # Version 1 carried ``rng_counts`` in the per-operator layout; version 2 adds ``fingerprint``,
 # the configuration that produced the state, which ``set_state`` checks.
 _FINGERPRINT_FIELDS = ("batch_size", "length", "drop_last", "num_epochs", "shuffled")
-
-
-def _is_per_batch_state(path: Any, value: Any) -> bool:
-    """Filter for state expected to change on every batch: RNG counts and counters.
-
-    It decides where state lives between batches, not what a step may write.
-    These leaves are uploaded to the device once per session; everything else
-    (source payloads, parameters, RNG keys) is staged once per pipeline and
-    reused across sessions. A step may write state in either partition.
-    """
-    del path
-    return isinstance(value, nnx.RngCount) or type(value) is nnx.Variable
-
-
-def _cached_step(
-    cache: list[tuple[Any, Callable[..., Any]]], key: Any, build: Callable[[], Callable[..., Any]]
-) -> Callable[..., Any]:
-    """Return the compiled step cached under ``key``, building it on a miss.
-
-    Keys are compared by equality, so structurally identical pipelines share one
-    compiled step. The most recently used entry moves last; the oldest is dropped past
-    :data:`_MAX_COMPILED_STEPS`.
-    """
-    for index, (cached_key, step) in enumerate(cache):
-        if cached_key == key:
-            cache.append(cache.pop(index))
-            return step
-    step = build()
-    cache.append((key, step))
-    if len(cache) > _MAX_COMPILED_STEPS:
-        cache.pop(0)
-    return step
-
-
-def _state_leaves(state: Any) -> list[Any]:
-    """Variables of a state pytree, in deterministic traversal order."""
-    return [
-        leaf
-        for leaf in jax.tree.leaves(state, is_leaf=lambda x: isinstance(x, nnx.Variable))
-        if isinstance(leaf, nnx.Variable)
-    ]
-
-
-def _snapshot(variables: list[nnx.Variable]) -> list[tuple[list[Any], Any]]:
-    """The raw value leaves and tree structure each Variable holds now."""
-    return [jax.tree.flatten(variable.get_raw_value()) for variable in variables]
-
-
-def _written(
-    variables: list[nnx.Variable], snapshot: list[tuple[list[Any], Any]]
-) -> dict[int, Any]:
-    """Values of the Variables rebound since ``snapshot``, keyed by position.
-
-    A write replaces a leaf object or changes the value's tree structure, so
-    comparing leaves by identity finds every write, including an in-place update
-    of a container value, without comparing array contents.
-    """
-    writes: dict[int, Any] = {}
-    for index, (variable, (leaves, treedef)) in enumerate(zip(variables, snapshot, strict=True)):
-        now_leaves, now_treedef = jax.tree.flatten(variable.get_raw_value())
-        if now_treedef != treedef or any(
-            new is not old for new, old in zip(now_leaves, leaves, strict=True)
-        ):
-            writes[index] = variable.get_value()
-    return writes
-
-
-def _state_paths(graph: Any) -> set[tuple[Any, ...]]:
-    """Paths of every state leaf in ``graph``."""
-    return {path for path, _ in nnx.to_flat_state(nnx.state(graph, graph=True))}
-
-
-def _run_tracking_writes(
-    graphdef: Any, states: tuple[Any, Any], run: Callable[[Any], Any]
-) -> tuple[Any, _Writes]:
-    """Merge ``states``, call ``run`` on the graph, and return its output with the writes.
-
-    Called while tracing a compiled step. The writes are found by comparing each
-    Variable before and after ``run``, so the step returns exactly the state it
-    changed, in either partition.
-
-    Args:
-        graphdef: The graph definition the step is compiled for.
-        states: The per-batch and staged state partitions.
-        run: The step body, taking the merged graph.
-
-    Returns:
-        ``run``'s output and the writes for each partition.
-
-    Raises:
-        ValueError: If ``run`` added or removed state, which a step compiled for a
-            fixed module graph cannot return.
-    """
-    graph = nnx.merge(graphdef, *states)
-    partitions = [
-        _state_leaves(part) for part in nnx.state(graph, _is_per_batch_state, ..., graph=True)
-    ]
-    snapshots = [_snapshot(part) for part in partitions]
-    paths = _state_paths(graph)
-    output = run(graph)
-    if _state_paths(graph) != paths:
-        raise ValueError(
-            "A stage changed the module structure while the step ran: it added or removed "
-            "state, which a step compiled for a fixed module graph cannot keep. Create state "
-            "in __init__."
-        )
-    return output, (_written(partitions[0], snapshots[0]), _written(partitions[1], snapshots[1]))
-
-
-def _apply_writes(writes: _Writes, receivers: Sequence[Sequence[list[nnx.Variable]]]) -> None:
-    """Set each written value on every Variable list that mirrors its partition."""
-    for partition_writes, variable_lists in zip(writes, receivers, strict=True):
-        for index, value in partition_writes.items():
-            for variables in variable_lists:
-                variables[index].set_value(value)
 
 
 def _session_step(graphdef: Any, body: StepBody, size: int) -> Callable[..., Any]:
@@ -211,12 +94,12 @@ def _session_step(graphdef: Any, body: StepBody, size: int) -> Callable[..., Any
 
     def build() -> Callable[..., Any]:
         @jax.jit
-        def session_step(mutable_state: Any, immutable_state: Any) -> tuple[Batch, _Writes]:
-            return _run_tracking_writes(graphdef, (mutable_state, immutable_state), run)
+        def session_step(mutable_state: Any, immutable_state: Any) -> tuple[Batch, Writes]:
+            return run_tracking_writes(graphdef, (mutable_state, immutable_state), run)
 
         return session_step
 
-    return _cached_step(_SESSION_STEPS, (graphdef, body, size), build)
+    return cached_program(_SESSION_STEPS, (graphdef, body, size), build)
 
 
 def _host_copies(module: nnx.Module) -> _HostCopies:
@@ -287,56 +170,10 @@ def next_batch(module: nnx.Module, body: StepBody, size: int) -> Batch:
     Returns:
         The body's output.
     """
-    graphdef, per_batch, staged = nnx.split(module, _is_per_batch_state, ..., graph=True)
+    graphdef, per_batch, staged = nnx.split(module, is_per_batch_state, ..., graph=True)
     batch, writes = _session_step(graphdef, body, size)(per_batch, _on_device(module, staged))
-    _apply_writes(writes, ((_state_leaves(per_batch),), (_state_leaves(staged),)))
+    apply_writes(writes, ((state_leaves(per_batch),), (state_leaves(staged),)))
     return batch
-
-
-def _dag_step(graphdef: Any) -> Callable[..., Any]:
-    """Return the compiled step running a DAG over one streamed batch.
-
-    Keyed by the graph definition, which holds the DAG's static plan.
-    """
-
-    def build() -> Callable[..., Any]:
-        @jax.jit
-        def step(mutable_state: Any, read_only_state: Any, batch: Batch) -> tuple[Batch, _Writes]:
-            def run(dag: OperatorDag) -> Batch:
-                return dag(batch)
-
-            return _run_tracking_writes(graphdef, (mutable_state, read_only_state), run)
-
-        return step
-
-    return _cached_step(_DAG_STEPS, graphdef, build)
-
-
-def compile_streaming_dag(dag: OperatorDag) -> Callable[[Batch], Batch]:
-    """Return a function running a pipeline's DAG over one host ``Batch`` a stream served.
-
-    The stream names the batch's records and epochs; the DAG is split once and each batch runs
-    through a cached ``jax.jit`` step, so the module graph is not traversed per batch. The split
-    state references the live Variables: every call reads their current values, including
-    changes made between batches, and writes every Variable the step changed back into the live
-    module. A stage that adds or removes state is refused while tracing.
-
-    Args:
-        dag: The pipeline's DAG.
-
-    Returns:
-        A function taking a validated host ``Batch`` and returning the DAG's ``Batch``.
-    """
-    graphdef, per_batch_state, staged_state = nnx.split(dag, _is_per_batch_state, ..., graph=True)
-    step = _dag_step(graphdef)
-    receivers = ((_state_leaves(per_batch_state),), (_state_leaves(staged_state),))
-
-    def apply(batch: Any) -> Batch:
-        output, writes = step(per_batch_state, staged_state, batch)
-        _apply_writes(writes, receivers)
-        return output
-
-    return apply
 
 
 def _operator_owned_counts(
@@ -364,7 +201,7 @@ def _operator_owned_counts(
         id(variable)
         for _, node in nnx.iter_graph(module, graph=True)
         if isinstance(node, OperatorModule)
-        for variable in _state_leaves(nnx.state(node, nnx.RngCount, graph=True))
+        for variable in state_leaves(nnx.state(node, nnx.RngCount, graph=True))
     }
     return [id(live_variables[index]) in owned for index in rng_count_indices]
 
@@ -399,7 +236,7 @@ class PipelineIterator:
                 the state's fingerprint.
         """
         graphdef, mutable_state, immutable_state = nnx.split(
-            module, _is_per_batch_state, ..., graph=True
+            module, is_per_batch_state, ..., graph=True
         )
         # A session carries its own Variables for the per-batch state, holding the live values
         # as they are: ``step()`` passes the same values, so both paths present the shared
@@ -409,8 +246,8 @@ class PipelineIterator:
         self._state: Any = jax.tree.map(lambda leaf: leaf, mutable_state)
         # The split state holds the module's live Variables by reference;
         # keeping them lets each yield sync the module in O(written leaves).
-        self._live_variables = _state_leaves(mutable_state)
-        self._carried_variables = _state_leaves(self._state)
+        self._live_variables = state_leaves(mutable_state)
+        self._carried_variables = state_leaves(self._state)
         self._graphdef = graphdef
         self._body = body
         # The step every full batch runs, shared with ``step()``; a run's short final batch
@@ -419,7 +256,7 @@ class PipelineIterator:
         self._immutable_state = _on_device(module, immutable_state)
         self._receivers = (
             (self._live_variables, self._carried_variables),
-            (_state_leaves(immutable_state), _state_leaves(self._immutable_state)),
+            (state_leaves(immutable_state), state_leaves(self._immutable_state)),
         )
         self._plan = plan
         self._shuffled = shuffled
@@ -469,7 +306,7 @@ class PipelineIterator:
         batch, writes = step(self._state, self._immutable_state)
         # Sync the live module and the session copies at every yield boundary:
         # mid-loop checkpointing (nnx.state on the pipeline) must see the truth.
-        _apply_writes(writes, self._receivers)
+        apply_writes(writes, self._receivers)
         # The host mirror of the counters the step just wrote, by the same rule.
         start, epoch = self._plan.batch_start(self._position, self._epoch)
         self._position, self._epoch = self._plan.advance(start, epoch, size)

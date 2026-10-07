@@ -137,7 +137,7 @@ def test_the_memory_map_is_not_module_state(tmp_path: Path) -> None:
 
 
 def test_pipeline_iterates_the_disk_array_in_order(tmp_path: Path) -> None:
-    """``for batch in pipeline`` and ``step()`` both read through the compiled session."""
+    """``for batch in pipeline`` reads on the host stage; ``step()`` and the session in-trace."""
     from datarax.pipeline import Pipeline, PipelineIterator  # noqa: PLC0415
 
     array = np.arange(16 * 3, dtype=np.float32).reshape(16, 3)
@@ -147,9 +147,10 @@ def test_pipeline_iterates_the_disk_array_in_order(tmp_path: Path) -> None:
         source = StreamingDiskSource(StreamingDiskSourceConfig(path=str(path)), rngs=nnx.Rngs(0))
         return Pipeline(source=source, stages=[], batch_size=4, rngs=nnx.Rngs(0))
 
-    iterator = iter(pipeline())
-    assert isinstance(iterator, PipelineIterator)
-    np.testing.assert_array_equal(np.concatenate([np.asarray(b["x"]) for b in iterator]), array)
+    np.testing.assert_array_equal(np.concatenate([np.asarray(b["x"]) for b in pipeline()]), array)
+    session = pipeline().session()
+    assert isinstance(session, PipelineIterator)
+    np.testing.assert_array_equal(np.concatenate([np.asarray(b["x"]) for b in session]), array)
     np.testing.assert_array_equal(np.asarray(pipeline().step()["x"]), array[:4])
 
 

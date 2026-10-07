@@ -96,15 +96,15 @@ def test_the_final_batch_rule_and_the_epoch_count_reach_the_pipeline(
 
 def test_its_position_resumes_where_it_was_saved() -> None:
     pipeline = Pipeline.from_arrays(_data(), batch_size=_BATCH, seed=5, shuffle=True)
-    session = pipeline.session()
-    next(session)
+    batches = iter(pipeline)
+    next(batches)
     state = pipeline.get_state()
 
     restored = Pipeline.from_arrays(_data(), batch_size=_BATCH, seed=5, shuffle=True)
     restored.set_state(state)
 
     np.testing.assert_array_equal(
-        np.asarray(next(restored.session())["x"]), np.asarray(next(session)["x"])
+        np.asarray(next(iter(restored))["x"]), np.asarray(next(batches)["x"])
     )
 
 

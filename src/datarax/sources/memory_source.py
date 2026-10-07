@@ -14,6 +14,7 @@ from typing import Any
 
 import jax
 import numpy as np
+from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from datarax.config.registry import register_component
@@ -164,7 +165,7 @@ class MemorySource(EagerSource):
 
     def record_indices_at(
         self,
-        start: int | jax.Array,
+        start: int | ArrayLike,
         size: int,
         key: jax.Array | None = None,
     ) -> jax.Array:
@@ -176,7 +177,9 @@ class MemorySource(EagerSource):
         record has one index on every worker.
 
         Args:
-            start: Starting logical position; concrete int or traced ``jax.Array``.
+            start: Starting logical position: a Python int, its two uint32 words ``(hi, lo)``,
+                or a traced int32 ``jax.Array`` (see
+                :func:`~datarax.core.index_words.wrapped_positions`).
             size: Number of records (Python int).
             key: The key selecting the order, or ``None`` for the sequential order.
 

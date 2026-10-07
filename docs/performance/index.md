@@ -106,10 +106,10 @@ linear model trained with SGD:
 | ``pipeline.step()`` in a Python loop | 0.35 ms per batch | - | Single batches, debugging, interactive use |
 | ``pipeline.step()`` inside your default ``nnx.jit`` step | 3.4-3.6 ms per train step | 2-3 GiB | Avoid: see below |
 
-The session behind ``for batch in pipeline`` and ``scan`` uploads NumPy source data to the device
-once and reads device data in place, so neither copies the dataset per batch. The iterator keeps
-module state live at every yield boundary (mid-epoch checkpointing works) and exposes
-``get_state()``/``set_state()`` for the iteration state (see the checkpointing guide).
+``for batch in pipeline`` reads each batch on host threads and places only that batch on the
+device as the loop takes it, so no dataset is uploaded; the pipeline's ``get_state()`` /
+``set_state()`` hold where iteration stands (see the checkpointing guide). ``scan`` uploads NumPy
+source data to the device once and reads device data in place, so it copies no dataset per batch.
 
 A pipeline passed into your own jitted step is an argument of that step, so the dataset goes
 with it into every call:

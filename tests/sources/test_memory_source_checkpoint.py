@@ -1,8 +1,8 @@
 """An in-memory source holds no checkpoint state, and a pipeline's checkpoint holds no records.
 
-The records a ``MemorySource`` was built with belong to its construction, and the position and
-epoch of iteration belong to the pipeline, so the source has nothing to save; a pipeline's
-checkpoint holds its position, epoch and keys and none of the source's records.
+The records a ``MemorySource`` was built with belong to its construction, and where iteration
+stands belongs to the pipeline, so the source has nothing to save; a pipeline's checkpoint holds
+its cursor and seed and none of the source's records.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ def test_an_in_memory_source_has_no_checkpoint_state() -> None:
 
 def test_a_pipeline_checkpoint_holds_no_record_data() -> None:
     pipeline = Pipeline(source=_source(), stages=[], batch_size=8, rngs=nnx.Rngs(0), shuffle=True)
-    pipeline.step()
+    next(iter(pipeline))
     sizes = [int(np.size(leaf)) for leaf in jax.tree.leaves(pipeline.get_state())]
     assert sizes, "the checkpoint holds nothing"
     assert max(sizes) < _N
@@ -40,10 +40,11 @@ def test_a_pipeline_round_trip_resumes_the_same_records() -> None:
         return Pipeline(source=_source(), stages=[], batch_size=8, rngs=nnx.Rngs(0), shuffle=True)
 
     running = pipeline()
-    running.step()
+    batches = iter(running)
+    next(batches)
     state = running.get_state()
-    expected = np.asarray(running.step()["x"])
+    expected = np.asarray(next(batches)["x"])
 
     resumed = pipeline()
     resumed.set_state(state)
-    np.testing.assert_array_equal(np.asarray(resumed.step()["x"]), expected)
+    np.testing.assert_array_equal(np.asarray(next(iter(resumed))["x"]), expected)

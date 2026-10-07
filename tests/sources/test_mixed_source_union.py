@@ -19,6 +19,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from flax import nnx
+from substrax.testing.compiles import expect_compiles
 
 from datarax.core import Maybe
 from datarax.core.config import StructuralConfig
@@ -177,19 +178,42 @@ class TestConflictsAndHostDtypes:
             assert held == mix.element_spec()
 
 
-class TestUntilTheHostStageServesIt:
-    def test_a_pipeline_over_a_union_mix_is_refused_naming_the_host_read(self) -> None:
-        pipe = Pipeline(source=four_presence_cases(), stages=[], batch_size=4, rngs=nnx.Rngs(0))
-        with pytest.raises(TypeError, match=r"get_batch"):
-            next(iter(pipe))
-
-    def test_an_equal_mix_still_iterates_through_the_session(self) -> None:
-        mix = _mix([_memory(child_columns(c, ("text", "label"))) for c in range(2)])
-        pipe = Pipeline(source=mix, stages=[], batch_size=4, rngs=nnx.Rngs(0))
-        assert sum(batch.batch_size for batch in pipe) == len(mix)
+def test_a_pipeline_over_a_union_mix_serves_every_record_once() -> None:
+    mix = four_presence_cases()
+    pipe = Pipeline(source=mix, stages=[], batch_size=4, rngs=nnx.Rngs(0))
+    assert sum(batch.batch_size for batch in pipe) == len(mix)
 
 
 def test_the_words_named_are_the_words_read() -> None:
     mix = four_presence_cases()
     words = to_words(np.asarray([3, 22, 7], np.uint64))
     np.testing.assert_array_equal(mix.get_batch(words).indices, words)
+
+
+def test_one_dag_compile_serves_every_presence_pattern() -> None:
+    """A field's presence is data (``Maybe``), so batches holding different children's records
+    run through one compiled DAG call."""
+
+    class TouchesEveryField(nnx.Module):
+        def __call__(self, batch: Any) -> Any:
+            return batch.replace(data=jax.tree.map(lambda leaf: leaf, batch.data))
+
+    mix = four_presence_cases()
+    pipe = Pipeline(
+        source=mix,
+        stages=[TouchesEveryField()],
+        batch_size=3,
+        rngs=nnx.Rngs(0),
+        drop_last=True,
+        num_epochs=1,
+    )
+    batches = iter(pipe)
+    jax.clear_caches()
+    first = next(batches)
+    with expect_compiles(0):
+        rest = list(batches)
+    patterns = {
+        tuple(bool(present) for present in np.asarray(batch["text"].present))
+        for batch in [first, *rest]
+    }
+    assert len(patterns) > 1, patterns

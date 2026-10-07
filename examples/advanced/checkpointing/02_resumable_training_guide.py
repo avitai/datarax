@@ -25,12 +25,12 @@
 This guide implements fault-tolerant training pipelines that can resume
 from interruptions using the **NNX-standard checkpoint pattern** —
 ``nnx.to_pure_dict`` for snapshotting state and ``nnx.replace_by_pure_dict``
-for restoring it, with ``orbax.checkpoint.StandardCheckpointer`` handling
-the on-disk serialization.
+for restoring it — with Orbax handling the on-disk serialization.
 
-The triple ``(pipeline, model, optimizer)`` is checkpointed together so
-resumption restores the data-cursor position, the model weights, and
-the optimizer state — all from a single Orbax directory.
+The model, the optimizer and the pipeline are checkpointed together so
+resumption restores the model weights, the optimizer state, the
+pipeline stages' state, and where iteration stands in the data — all
+from a single Orbax directory.
 
 ## Setup
 
@@ -43,12 +43,14 @@ uv pip install datarax flax optax orbax-checkpoint matplotlib
 By the end of this guide, you will be able to:
 
 1. Snapshot an NNX module's state with ``nnx.to_pure_dict``.
-2. Persist that snapshot with ``orbax.checkpoint.StandardCheckpointer``.
+2. Persist that snapshot, and the pipeline's ``get_state()``, in one
+   Orbax checkpoint.
 3. Restore the snapshot back into a freshly-constructed module with
-   ``nnx.replace_by_pure_dict``.
-4. Checkpoint a ``(pipeline, model, optimizer)`` triple atomically so
-   resumption preserves data position, model weights, and optimizer
-   state simultaneously.
+   ``nnx.replace_by_pure_dict``, and the pipeline's place with
+   ``set_state``.
+4. Checkpoint model, optimizer and pipeline atomically so resumption
+   preserves data position, model weights, and optimizer state
+   simultaneously.
 5. Verify deterministic resumption: a run that checkpoints at step ``k``,
    loads, and continues should match a never-interrupted run.
 """
@@ -142,10 +144,17 @@ def cross_entropy_loss(model: TinyCNN, batch: Batch) -> jax.Array:
 """
 ## Part 2: NNX-Standard Checkpoint Helpers
 
-The two functions below are the entire NNX checkpoint pattern. The
-``orbax.checkpoint.StandardCheckpointer`` writes any PyTree to disk;
-``nnx.to_pure_dict`` and ``nnx.replace_by_pure_dict`` translate
-``nnx.Module`` state to and from such PyTrees.
+The two functions below are the entire checkpoint pattern. Orbax's
+``CompositeCheckpointHandler`` writes named items into one checkpoint
+directory: ``StandardSave`` writes a PyTree of arrays, ``JsonSave`` a
+small dictionary. ``nnx.to_pure_dict`` and ``nnx.replace_by_pure_dict``
+translate ``nnx.Module`` state to and from such PyTrees.
+
+The pipeline contributes two items. Its stages' state (parameters,
+statistics, random keys) is ``nnx.state(pipeline.dag)``, a PyTree like
+the model's. Where iteration stands is ``pipeline.get_state()``: a
+small dictionary of plain values (epoch, position, a fingerprint of the
+configuration), written as JSON and put back with ``set_state``.
 
 The key insight: NNX modules cannot be passed to Orbax directly because
 they hold non-serializable graph metadata. ``to_pure_dict`` strips the
@@ -157,7 +166,7 @@ target module's state in place.
 
 # %%
 def snapshot(model: TinyCNN, optimizer: nnx.Optimizer, pipeline: Pipeline) -> dict:
-    """Capture the full training state as a serialisable PyTree.
+    """Capture the arrays of the training state as a serialisable PyTree.
 
     Each entry uses ``nnx.to_pure_dict`` so the result contains only
     JAX arrays (no graph metadata, no closures, no class objects).
@@ -165,29 +174,31 @@ def snapshot(model: TinyCNN, optimizer: nnx.Optimizer, pipeline: Pipeline) -> di
     return {
         "model": nnx.to_pure_dict(nnx.state(model)),
         "optimizer": nnx.to_pure_dict(nnx.state(optimizer)),
-        "pipeline": nnx.to_pure_dict(nnx.state(pipeline)),
+        "stages": nnx.to_pure_dict(nnx.state(pipeline.dag)),
     }
 
 
 def save_checkpoint(
-    checkpointer: ocp.StandardCheckpointer,
+    checkpointer: ocp.Checkpointer,
     directory: Path,
     step: int,
     model: TinyCNN,
     optimizer: nnx.Optimizer,
     pipeline: Pipeline,
 ) -> None:
-    """Snapshot and persist the (model, optimizer, pipeline) triple."""
-    snapshot_dict = snapshot(model, optimizer, pipeline)
+    """Persist the training state's arrays and the pipeline's place as one checkpoint."""
     target = directory / f"step_{step}"
-    if target.exists():
-        shutil.rmtree(target)
-    checkpointer.save(target, snapshot_dict)
-    checkpointer.wait_until_finished()
+    checkpointer.save(
+        target,
+        args=ocp.args.Composite(
+            arrays=ocp.args.StandardSave(snapshot(model, optimizer, pipeline)),
+            data=ocp.args.JsonSave(pipeline.get_state()),
+        ),
+    )
 
 
 def load_checkpoint(
-    checkpointer: ocp.StandardCheckpointer,
+    checkpointer: ocp.Checkpointer,
     directory: Path,
     step: int,
     model: TinyCNN,
@@ -203,18 +214,28 @@ def load_checkpoint(
     returns a *copy* — without ``nnx.update`` the original modules
     keep their fresh initial state and the resume looks like a
     reset.
+
+    The pipeline's place goes back through ``set_state``, which refuses
+    a state saved by a pipeline built differently.
     """
     target = directory / f"step_{step}"
-    saved = checkpointer.restore(target, snapshot(model, optimizer, pipeline))
-
+    restored = checkpointer.restore(
+        target,
+        args=ocp.args.Composite(
+            arrays=ocp.args.StandardRestore(snapshot(model, optimizer, pipeline)),
+            data=ocp.args.JsonRestore(),
+        ),
+    )
+    saved = restored["arrays"]
     for module, pure in (
         (model, saved["model"]),
         (optimizer, saved["optimizer"]),
-        (pipeline, saved["pipeline"]),
+        (pipeline.dag, saved["stages"]),
     ):
         state = nnx.state(module)
         nnx.replace_by_pure_dict(state, pure)
         nnx.update(module, state)
+    pipeline.set_state(restored["data"])
 
 
 # %% [markdown]
@@ -222,9 +243,9 @@ def load_checkpoint(
 ## Part 3: Build the Training Pieces
 
 Two augmentation stages (normalize + horizontal flip) pushed through a
-``Pipeline``. The pipeline owns its iteration cursor and all stochastic
-RNG state, so checkpointing it captures the data-loading position
-exactly.
+``Pipeline``. The pipeline owns where iteration stands and its stages
+own their random keys, so checkpointing both captures the data-loading
+position and the augmentation draws exactly.
 """
 
 
@@ -269,8 +290,8 @@ def build_model_and_optimizer(seed: int) -> tuple[TinyCNN, nnx.Optimizer]:
 ## Part 4: Train Step + Run Loop
 
 Standard NNX training step: ``nnx.value_and_grad`` over the loss,
-followed by ``optimizer.update``. The pipeline iterator yields each
-batch.
+followed by ``optimizer.update``. ``for batch in pipeline`` yields each
+batch, continuing where the pipeline stands.
 """
 
 
@@ -290,7 +311,7 @@ def run(
     optimizer: nnx.Optimizer,
     *,
     max_steps: int,
-    checkpointer: ocp.StandardCheckpointer | None = None,
+    checkpointer: ocp.Checkpointer | None = None,
     ckpt_dir: Path | None = None,
     ckpt_every: int = 0,
     interrupt_at: int | None = None,
@@ -368,7 +389,7 @@ print()
 print("=" * 60)
 print(f"PHASE 2: train, checkpoint every {CKPT_EVERY}, interrupt at step {INTERRUPT_AT}")
 print("=" * 60)
-checkpointer = ocp.StandardCheckpointer()
+checkpointer = ocp.Checkpointer(ocp.CompositeCheckpointHandler())
 phase2_pipeline = build_pipeline(SEED)
 phase2_model, phase2_optimizer = build_model_and_optimizer(SEED)
 phase2_losses, phase2_step = run(
@@ -493,20 +514,22 @@ print(f"Removed checkpoint directory: {ckpt_dir}")
 """
 ## Results Summary
 
-The NNX-standard checkpoint pattern is exactly three calls per object:
+The NNX-standard checkpoint pattern is three calls per module:
 
 1. ``nnx.to_pure_dict(nnx.state(module))`` — convert to a plain PyTree
-2. ``StandardCheckpointer.save(path, pure_dict)`` — write to disk
+2. ``ocp.args.StandardSave(pure_dict)`` — write to disk
 3. ``nnx.replace_by_pure_dict(nnx.state(target), pure_dict)`` — restore
 
-No subclass is required; no datarax-specific wrapper is required.
-``Pipeline`` checkpoints the same way every other ``nnx.Module`` does
-because it *is* one.
+The pipeline's stages are such a module (``pipeline.dag``). Where
+iteration stands is ``pipeline.get_state()``, a small dictionary written
+beside them (``ocp.args.JsonSave``) and put back with
+``pipeline.set_state``. No subclass and no datarax-specific wrapper is
+required.
 
 ## Next Steps
 
 - For periodic-cleanup checkpoint policies, wrap the
-  ``StandardCheckpointer`` calls in an ``orbax.checkpoint.CheckpointManager``;
+  ``Checkpointer`` calls in an ``orbax.checkpoint.CheckpointManager``;
   it understands keep-last-N, async writes, and metadata.
 - For very large models, ``nnx.split`` and ``nnx.merge`` give the same
   semantics with reduced peak memory.

@@ -808,7 +808,7 @@ If you're familiar with PyTorch DataLoader, here's how Datarax compares:
 
 | Grain | Datarax |
 |-------|---------|
-| `grain.ArrayRecordDataSource(paths)` | `ArrayRecordSourceModule(config, paths)` |
+| `grain.sources.ArrayRecordDataSource(paths)` | `ArrayRecordSourceModule(config, paths, decode=decode)` |
 | `grain.MapDataset(source, transforms)` | `Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0)).add(operators)` |
 | `grain.DataLoader(dataset)` | `Pipeline(source=source, stages=[], batch_size=N, rngs=nnx.Rngs(0))` |
 | Manual checkpointing | Built-in `get_state()` / `set_state()` |

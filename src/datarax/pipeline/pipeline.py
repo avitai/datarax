@@ -8,13 +8,15 @@ position counter so a full training epoch can be expressed as a single
 
 Three integration tiers (measured costs: ``docs/performance/index.md``):
 
-- **Tier A — ``for batch in pipeline:``** — the data loader: a compiled
-  iteration session (:class:`~datarax.pipeline.iteration.PipelineIterator`)
-  whose batches go to a train or inference step written as the Flax and
-  JAX examples write it. The module graph is split once per session and
-  batches run through a cached ``jax.jit`` step, so per-batch cost is one
-  compiled dispatch; host data is uploaded once. A stream's host
-  batches run through the stage DAG compiled the same way. Works with any
+- **Tier A — ``for batch in pipeline:``** — the data loader: the host stage
+  (:class:`~datarax.pipeline.host_stage.HostStage`) reads each batch on Grain
+  threads, names the run's order on the CPU device, and places batches on the
+  device on the consumer's thread, one ahead on a GPU; the batch then runs
+  through the stage DAG in one cached ``jax.jit`` call
+  (:func:`~datarax.pipeline.dag_call.compile_dag`), split once per iteration.
+  Its batches go to a train or inference step written as the Flax and JAX
+  examples write it, and no dataset is uploaded.
+  :meth:`Pipeline.get_state` is where iteration stands. Works with any
   framework that takes batches; the recommended path.
 - **Tier B — ``Pipeline.step()``** — one batch, traceable, with live
   module state: single batches and debugging eagerly, and inside a
@@ -52,32 +54,33 @@ Public surface:
   ``length`` steps under ``nnx.scan``, lifting pipeline + ``modules``
   state via ``StateAxes``. See method docstring for the two ``step_fn``
   signatures.
-- ``__iter__()`` — compiled iteration session; see Tier A above and
-  ``datarax.pipeline.iteration`` for state/checkpoint semantics.
+- ``__iter__()`` — the host stage's batches through the DAG; see Tier A above.
+- ``get_state()`` / ``set_state(state)`` — where iteration stands, a versioned
+  cursor (:mod:`datarax.pipeline.host_stage`); the stages' parameters and
+  statistics are ``nnx.state(pipeline.dag)``.
+- ``session()`` — the compiled iteration session
+  (:class:`~datarax.pipeline.iteration.PipelineIterator`), which keeps its
+  place in the pipeline's Variables as ``step()`` does.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import Any
+from typing import Any, Literal, overload
 
 import jax
 import jax.numpy as jnp
 from flax import nnx
+from substrax.typing import CheckpointState
 
 from datarax.core import batch_ops
-from datarax.core.data_source import DataSourceModule, RecordIdentity
+from datarax.core.data_source import DataSourceModule, Provenance, RecordIdentity
 from datarax.core.element_batch import Batch
-from datarax.core.module import module_state, restore_module_state
-from datarax.core.spec import declared_spec, validate_batch, validate_device_dtypes
 from datarax.pipeline.dag import name_records, OperatorDag, Records
-from datarax.pipeline.epochs import EpochPlan, stream_batches
-from datarax.pipeline.iteration import (
-    compile_streaming_dag,
-    next_batch,
-    PipelineIterator,
-    staged_view,
-)
+from datarax.pipeline.dag_call import compile_dag
+from datarax.pipeline.epochs import batch_records, EpochPlan
+from datarax.pipeline.host_stage import HostStage, HostStageHolder
+from datarax.pipeline.iteration import next_batch, PipelineIterator, staged_view
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.typing import DataDict
 
@@ -183,6 +186,9 @@ class Pipeline(nnx.Module):
         # under nnx.split/merge — it lives on the Python side of the
         # module boundary.
         self._scan_body_cache: dict[Any, Any] = {}
+        # Where host-stage iteration stands and the Grain iterator of its current run, held on
+        # the host and out of NNX state, so the graph definition does not move as it advances.
+        self._host = HostStageHolder(HostStage(end_epoch=num_epochs))
 
     @staticmethod
     def _build_dag(
@@ -356,13 +362,9 @@ class Pipeline(nnx.Module):
     def _records_at(self, start: jax.Array, epoch: jax.Array, size: int) -> Records:
         """The ``size`` records served from ``start`` of epoch ``epoch``'s order.
 
-        When the plan crosses epochs, rows past the epoch's end are the head of the following
-        epochs' orders, so no row is padding. Every epoch the batch can touch is named by one
-        ``record_indices_at`` vmapped over the epochs' keys (the first from ``start``, the rest
-        from their heads) and each row takes its own epoch's name: no conditional, one batched
-        index computation (a shuffle's cycle-walking loop runs once for all epochs), the same
-        program for every batch, and index arrays of O(``size``) per epoch touched. The source
-        receives its epoch's key when the pipeline shuffles and ``None`` otherwise.
+        :func:`~datarax.pipeline.epochs.batch_records` over this pipeline's source and plan, the
+        rule the host stage names its batches by. The source receives its epoch's key when the
+        pipeline shuffles and ``None`` otherwise.
 
         Args:
             start: Where the rows start in epoch ``epoch``.
@@ -372,29 +374,14 @@ class Pipeline(nnx.Module):
         Returns:
             Each row's record index and epoch.
         """
-        plan = self.epoch_plan
-        start = jnp.asarray(start, dtype=jnp.int32)
-        epoch = jnp.asarray(epoch, dtype=jnp.int32)
-
-        shuffle = self.shuffle
-
-        def names(first: jax.Array, key: jax.Array) -> jax.Array:
-            order = key if shuffle else None
-            return jnp.asarray(self.source.record_indices_at(first, size, order), jnp.uint32)
-
-        if not plan.crosses:
-            return Records(names(start, self._key_of(epoch)), jnp.full((size,), epoch, jnp.int32))
-        length = plan.length
-        assert length is not None  # noqa: S101 - a crossing plan has a length
-        offsets = jnp.arange(plan.epochs_touched(size), dtype=jnp.int32)
-        starts = jnp.where(offsets == 0, start, 0)
-        named = jax.vmap(names)(starts, jax.vmap(self._key_of)(epoch + offsets))
-        rows = start + jnp.arange(size, dtype=jnp.int32)
-        later = rows // length  # epochs after ``epoch`` each row belongs to
-        # A row of the first epoch is its own row of that epoch's names; a later epoch's row is
-        # the position it reaches within that epoch, counted from its head.
-        column = jnp.where(later == 0, jnp.arange(size, dtype=jnp.int32), rows - later * length)
-        return Records(named[later, column], epoch + later)
+        return batch_records(
+            self.source,
+            self.epoch_plan,
+            key_base=self._epoch_key_base[...] if self.shuffle else None,
+            start=jnp.asarray(start, dtype=jnp.int32),
+            epoch=jnp.asarray(epoch, dtype=jnp.int32),
+            size=size,
+        )
 
     @property
     def epoch_plan(self) -> EpochPlan:
@@ -432,52 +419,126 @@ class Pipeline(nnx.Module):
         return extent[0]
 
     def batches_left(self) -> int | None:
-        """Batches a session started now would serve: the rest of the run from the position.
-
-        Host-side: it reads the position as a number, so call it outside traced code.
+        """Batches the rest of the run serves, from where host iteration stands.
 
         Returns:
-            The count, or ``None`` for a pipeline that never ends: a source without a
-            length, or a stream (``num_epochs=None``).
+            The count, or ``None`` for a run that never ends: a source without a length, or
+            ``num_epochs=None``.
         """
-        extent = self.epoch_plan.run_extent(int(self._position[...]))
-        return None if extent is None else extent[0]
+        return self.host_stage.batches_left(self.epoch_plan)
 
     def reset(self) -> None:
-        """Start the next epoch: position 0, epoch counter advanced.
+        """Start a new run at the next epoch's start (a stream's next pass).
 
-        A shuffling pipeline serves a new permutation; a sequential one serves
-        the same order again. Sessions in progress see the change at their next
-        ``iter()``.
+        A shuffling pipeline serves a new permutation; a sequential one serves the same order
+        again. The run open now is closed. ``step()`` and ``session()`` start the next epoch too.
         """
+        self.host_stage.reset(self.num_epochs)
         position, epoch = EpochPlan.next_epoch(self._epoch[...])
         self._position[...] = jnp.asarray(position, dtype=jnp.int32)
         self._epoch[...] = epoch
 
-    def get_state(self) -> dict[str, Any]:
-        """The pipeline's checkpoint state: its parameters, its source's and where it stands.
+    def get_state(self) -> CheckpointState:
+        """Where iteration stands: the host stage's cursor, version 3, and what it is valid for.
 
-        That is every stage's parameters and state, the source's state, and where iteration
-        stands (position, epoch, the epoch key and RNG counts); never the data. A session
-        writes its progress into the pipeline at every batch it yields, so state taken during
-        iteration holds the batches already served.
+        ``{"version": 3, "kind", "epoch", "position", "run_end_epoch", "stream", "fingerprint"}``:
+        an indexed source's next batch starts at ``position`` of ``epoch`` and the run stops
+        before ``run_end_epoch``; a stream's cursor is ``stream`` (its pass, the records of the
+        pass served, the arrival ordinals served and the passes left). The fingerprint names the
+        batch rule, length, epochs, key and order the state fits. It names the batches taken,
+        whatever the read threads read ahead. Operator parameters and statistics are not in it:
+        checkpoint them with the model through ``nnx.state(pipe.dag)``.
 
         Returns:
-            The state as a pure dictionary (see :func:`~datarax.core.module.module_state`).
+            The state, ints, bools, strings, lists of ints and ``None``.
         """
-        return module_state(self)
+        return self.host_stage.state(self)
 
-    def set_state(self, state: dict[str, Any]) -> None:
-        """Restore :meth:`get_state` into this pipeline, built the way the saved one was.
+    def set_state(self, state: CheckpointState, /) -> None:
+        """Resume iteration where ``state`` stands, in a pipeline built as the saved one was.
 
-        A restored pipeline resumes where the saved one stood, with its tuned parameters, for
-        inference or further training. A session opened before the restore keeps its own record
-        of the position, as it does across :meth:`reset`; iterate again for a new one.
+        A resumed run serves the records the uninterrupted run would have served, and ends where
+        it would have ended. Another version of the state, another kind of source, or a state
+        produced under another configuration is refused, naming what differs.
 
         Args:
-            state: The saved state (see :func:`~datarax.core.module.restore_module_state`).
+            state: A state :meth:`get_state` produced.
         """
-        restore_module_state(self, state)
+        self.host_stage.restore(self, state)
+
+    @property
+    def host_stage(self) -> HostStage:
+        """The host stage: where host iteration stands, and the Grain iterator of its run."""
+        return self._host.value
+
+    @overload
+    def raw_batches(
+        self,
+        chunk: int | None = None,
+        *,
+        max_chunk_bytes: int | None = None,
+        with_provenance: Literal[False] = False,
+    ) -> Iterator[Batch]: ...
+
+    @overload
+    def raw_batches(
+        self,
+        chunk: int | None = None,
+        *,
+        max_chunk_bytes: int | None = None,
+        with_provenance: Literal[True],
+    ) -> Iterator[tuple[Batch, Provenance]]: ...
+
+    def raw_batches(  # noqa: DOC502 - the host stage raises
+        self,
+        chunk: int | None = None,
+        *,
+        max_chunk_bytes: int | None = None,
+        with_provenance: bool = False,
+    ) -> Iterator[Batch] | Iterator[tuple[Batch, Provenance]]:
+        """Unprocessed batches read by the host stage and placed on the device: the E2E form.
+
+        The DAG is not applied: pass :attr:`dag` into your differentiated train step and call it
+        on each batch, so its operators' parameters train with the model. Records are served in
+        the pipeline's order and epoch rule, named on the CPU device, read on the host by Grain
+        threads ahead of the consumer and placed on the default device by the consumer,
+        uncommitted, one batch ahead of the one taken on a GPU and none on the CPU and TPU;
+        nothing else of the source reaches the device. Iteration stands where the last
+        batch taken ended, so a later call continues the run with the same Grain iterator; the
+        run ends after ``num_epochs`` epochs.
+
+        Each returned iterator serves the run it was created for. Iterators of one run continue
+        its cursor in turn; once the run served its last batch they stop. A later call with other
+        options, :meth:`reset`, :meth:`set_state` or :meth:`close` ends the run, and the
+        iterators it was serving then raise ``RuntimeError`` naming that call. A pipeline and its
+        clone share one host stage and cursor: they continue it in turn, not interleaved. A read
+        error reaches the caller unchanged and ends the run at the batches delivered, so the next
+        call resumes at the batch whose read failed.
+
+        Args:
+            chunk: Batches per unit: ``None`` serves batches ``(B, ...)``; ``K`` serves chunks
+                ``(K, B, ...)`` of ``K`` full batches, each one host read and one transfer, while
+                ``K`` remain, then the remaining batches singly, the run's short final batch
+                last.
+            max_chunk_bytes: The most bytes a chunk's data may hold; a larger chunk is refused.
+            with_provenance: Whether each unit comes as ``(batch, provenance)``, one mapping of
+                strings and objects per record, in row order.
+
+        Returns:
+            The units.
+
+        Raises:
+            ValueError: If ``chunk`` is below 1, or a chunk would hold more than
+                ``max_chunk_bytes``.
+            TypeError: If the source has no host read the stage reads it with.
+        """
+        return self.host_stage.batches(
+            self, chunk=chunk, max_chunk_bytes=max_chunk_bytes, with_provenance=with_provenance
+        )
+
+    def close(self) -> None:
+        """Close the host stage's run and its read threads; where iteration stands is kept."""
+        self.host_stage.close()
 
     def step(self) -> Batch:
         """Serve the next batch from the source through the DAG.
@@ -677,79 +738,30 @@ class Pipeline(nnx.Module):
             shuffled=self.shuffle,
         )
 
-    def __iter__(self) -> PipelineIterator | Iterator[Batch]:
-        """Iterate batches through a compiled session (the Tier-A fast path).
+    def __iter__(self) -> Iterator[Batch]:  # noqa: DOC502 - the host stage raises
+        """Iterate processed batches: the host stage's batches through the DAG (Tier A).
 
-        The source's declared kind routes it. An ``INDEXED`` source returns a
-        :class:`~datarax.pipeline.iteration.PipelineIterator`: the module graph is
-        split once per session and batches are driven through a cached ``jax.jit``
-        step, with module state written back when the session ends (exhaustion,
-        ``close()``, or garbage collection after an early break). Iteration stops
-        after ``num_epochs`` epochs; a stream (``num_epochs=None``) and a source
-        without ``__len__`` iterate indefinitely. A ``STREAM_IDS`` or ``ARRIVAL``
-        source pulls batches on the host and runs them through the compiled stage
-        DAG via :meth:`_iter_streaming` instead.
+        The host stage reads batches ahead on Grain threads and places them on the consumer's
+        thread (:meth:`raw_batches`); each runs through :attr:`dag` in one compiled call, split
+        once per call and compiled once per batch shape, the state its stages write (BatchNorm
+        statistics) written back. A pipeline without stages serves the placed batches as they
+        are: an empty DAG is the identity, so it compiles nothing and copies no batch. Iteration
+        continues where the last batch taken ended and stops after the run's ``num_epochs``
+        epochs; :meth:`reset` starts the next run. A stream is read through
+        :class:`~datarax.sources.StreamingSourceBase`; any other stream is refused.
 
         Returns:
-            A :class:`~datarax.pipeline.iteration.PipelineIterator` for an ``INDEXED``
-            source, otherwise a generator over streamed batches.
-        """
-        if self.source.record_identity is RecordIdentity.INDEXED:
-            return self.session()
-        return self._iter_streaming()
-
-    def _iter_streaming(self) -> Iterator[Batch]:  # noqa: DOC502
-        """Iterate a stream (``STREAM_IDS`` or ``ARRIVAL``) through the DAG.
-
-        A stream names its records and counts its passes, so the pipeline keeps no counter for
-        it: batches are pulled on the host with the source's ``get_batch``, which takes the
-        pipeline's key when it shuffles (``None`` otherwise) and returns a host ``Batch`` named
-        by the stream. The epoch rule over the stream's passes is
-        :func:`~datarax.pipeline.epochs.stream_batches`: ``drop_last`` and ``num_epochs`` as
-        for an indexed source. Each batch runs through the stage DAG, compiled once per batch
-        shape by :func:`~datarax.pipeline.iteration.compile_streaming_dag`.
-
-        The source's ``element_spec()`` is read once per source and x64 setting and is refused
-        if it declares a dtype JAX arrays cannot hold as declared: a ``float64`` field while x64
-        is off would otherwise be narrowed silently inside the compiled DAG. Every pulled batch
-        is checked against it, as the device will hold it, with
-        :func:`~datarax.core.spec.validate_batch` before it reaches the DAG, so a batch whose
-        structure, per-element shapes or dtypes disagree with the declaration stops iteration
-        with the fields named. Module state is current at every yield.
-
-        Yields:
-            The DAG's ``Batch`` for each batch of the run.
+            The processed batches.
 
         Raises:
-            SpecMismatchError: If the declared spec, or a pulled batch, breaks the contract above.
-            TypeError: If the source's ``get_batch`` does not return a ``Batch``.
-            ValueError: If a stage adds or removes state while it runs.
+            TypeError: If the source has no host read the stage reads it with: an ``INDEXED``
+                source without ``get_batch(indices, ...)``, or a stream that is not a
+                ``StreamingSourceBase``.
         """
-        element_spec = declared_spec(self.source)
-        validate_device_dtypes(element_spec)
-        apply = compile_streaming_dag(self.dag)
-        key = jax.random.wrap_key_data(self._epoch_key_base[...]) if self.shuffle else None
-        source = self.source
-
-        def pull(size: int) -> Batch:
-            batch = source.get_batch(  # type: ignore[attr-defined]
-                size, key=key, read_size=self.batch_size
-            )
-            if not isinstance(batch, Batch):
-                raise TypeError(
-                    f"{type(source).__name__}.get_batch returned {type(batch).__name__}, but a "
-                    "stream serves a Batch named by the stream"
-                )
-            if batch.batch_size:
-                validate_batch(
-                    batch.data, element_spec, batch_size=self.batch_size, as_the_device_holds=True
-                )
-            return batch
-
-        for batch in stream_batches(
-            pull, self.batch_size, drop_last=self.drop_last, num_epochs=self.num_epochs
-        ):
-            yield apply(batch)
+        if not self.dag.order:
+            return iter(self.raw_batches())
+        apply = compile_dag(self.dag)
+        return (apply(batch) for batch in self.raw_batches())
 
 
 def _source_length(source: DataSourceModule) -> int | None:

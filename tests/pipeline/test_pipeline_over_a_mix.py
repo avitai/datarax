@@ -146,11 +146,11 @@ class TestThePipelineOwnsTheOrder:
 
 
 class TestTheCompiledSession:
-    """A mix of equal children iterates through the compiled session, as any indexed source."""
+    """A mix of equal children resumes as any indexed source, and its session compiles once."""
 
     def test_a_session_compiles_once(self) -> None:
         pipe = _pipeline("two", shuffle=True, drop_last=True)
-        session = iter(pipe)
+        session = pipe.session()
         with expect_first_call_compiles("jit(session_step)"):
             jax.block_until_ready(next(session).indices)
         with expect_compiles(0):
@@ -177,14 +177,17 @@ class TestTheCompiledSession:
 
     def test_a_restored_state_resumes_the_stream_bit_for_bit(self) -> None:
         running = _pipeline("three", shuffle=True)
+        batches = iter(running)
         for _ in range(5):
-            running.step()
+            next(batches)
         state = running.get_state()
-        expected = [np.asarray(running.step().indices) for _ in range(9)]
+        expected = [np.asarray(batch.indices) for batch in batches]
         resumed = _pipeline("three", shuffle=True)
         resumed.set_state(state)
-        for want in expected:
-            np.testing.assert_array_equal(np.asarray(resumed.step().indices), want)
+        served = [np.asarray(batch.indices) for batch in resumed]
+        assert len(served) == len(expected)
+        for got, want in zip(served, expected, strict=True):
+            np.testing.assert_array_equal(got, want)
 
     def test_equal_seeds_serve_equal_streams(self) -> None:
         first = _served(_pipeline("three", shuffle=True, seed=4))

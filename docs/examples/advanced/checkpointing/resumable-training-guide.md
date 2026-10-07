@@ -12,21 +12,24 @@
 
 Implement fault-tolerant training pipelines that can resume from
 interruptions using the **NNX-standard checkpoint pattern** —
-`nnx.to_pure_dict` for snapshotting state, `orbax.checkpoint.StandardCheckpointer`
-for persistence, and `nnx.replace_by_pure_dict` + `nnx.update` for
-restoration. The triple `(pipeline, model, optimizer)` is checkpointed
-together so resumption restores data-cursor position, model weights,
-and optimizer state from a single Orbax directory.
+`nnx.to_pure_dict` for snapshotting state, Orbax for persistence, and
+`nnx.replace_by_pure_dict` + `nnx.update` for restoration. The model,
+the optimizer and the pipeline are checkpointed together so resumption
+restores the model weights, the optimizer state, the pipeline stages'
+state and where iteration stands in the data, from a single Orbax
+directory.
 
 ## Learning Goals
 
 1. Snapshot an `nnx.Module`'s state with `nnx.to_pure_dict`.
-2. Persist that snapshot with `orbax.checkpoint.StandardCheckpointer`.
+2. Persist that snapshot, and the pipeline's `get_state()`, in one
+   Orbax checkpoint.
 3. Restore the snapshot back into a freshly-constructed module with
-   `nnx.replace_by_pure_dict` followed by `nnx.update`.
-4. Checkpoint a `(pipeline, model, optimizer)` triple atomically so
-   resumption preserves data position, model weights, and optimizer
-   state simultaneously.
+   `nnx.replace_by_pure_dict` followed by `nnx.update`, and the
+   pipeline's place with `set_state`.
+4. Checkpoint model, optimizer and pipeline atomically so resumption
+   preserves data position, model weights, and optimizer state
+   simultaneously.
 5. Verify deterministic resumption: a run that checkpoints at step `k`,
    loads, and continues should match a never-interrupted run exactly.
 
@@ -36,19 +39,20 @@ and optimizer state from a single Orbax directory.
 |---------|---------|
 | `torch.save({'model': model.state_dict(), 'optimizer': opt.state_dict()})` | `checkpointer.save(path, {'model': nnx.to_pure_dict(nnx.state(model)), ...})` |
 | `model.load_state_dict(torch.load(path)['model'])` | `nnx.replace_by_pure_dict(nnx.state(model), saved)` then `nnx.update(model, state)` |
-| DataLoader state not saved | `Pipeline` is itself an `nnx.Module` — same checkpoint API includes its state |
+| DataLoader state not saved | `pipeline.get_state()` is where iteration stands, saved beside the model |
 
-**Key difference:** Datarax `Pipeline` is an `nnx.Module`, so the
-data-cursor position, sampler state, and stochastic-stage RNGs
-checkpoint with the exact same three-call pattern as the model.
+**Key difference:** the stages of a Datarax `Pipeline` are an
+`nnx.Module` (`pipeline.dag`), so their parameters and random keys
+checkpoint with the same three-call pattern as the model, and the
+pipeline's place in the data is a small dictionary saved beside them.
 
 ## Coming from TensorFlow?
 
 | TensorFlow | Datarax |
 |------------|---------|
 | `tf.train.Checkpoint(model=model, optimizer=opt)` | `nnx.to_pure_dict(nnx.state(...))` per object |
-| `ckpt_manager.save()` | `StandardCheckpointer.save(path, snapshot_dict)` |
-| `ckpt.restore(...)` | `StandardCheckpointer.restore(path, template)` then `nnx.update` |
+| `ckpt_manager.save()` | `checkpointer.save(path, args=ocp.args.Composite(...))` |
+| `ckpt.restore(...)` | `checkpointer.restore(path, args=ocp.args.Composite(...))` then `nnx.update` |
 | `tf.train.CheckpointManager(max_to_keep=3)` | `orbax.checkpoint.CheckpointManager(max_to_keep=3)` |
 
 ## Files
@@ -74,31 +78,37 @@ jupyter lab examples/advanced/checkpointing/02_resumable_training_guide.ipynb
 import orbax.checkpoint as ocp
 from flax import nnx
 
-# Save
-checkpointer = ocp.StandardCheckpointer()
-checkpointer.save(path, {
-    "model": nnx.to_pure_dict(nnx.state(model)),
-    "optimizer": nnx.to_pure_dict(nnx.state(optimizer)),
-    "pipeline": nnx.to_pure_dict(nnx.state(pipeline)),
-})
-checkpointer.wait_until_finished()
+
+def snapshot(model, optimizer, pipeline):
+    return {
+        "model": nnx.to_pure_dict(nnx.state(model)),
+        "optimizer": nnx.to_pure_dict(nnx.state(optimizer)),
+        "stages": nnx.to_pure_dict(nnx.state(pipeline.dag)),
+    }
+
+
+# Save: the arrays as one item, where iteration stands as a JSON item
+checkpointer = ocp.Checkpointer(ocp.CompositeCheckpointHandler())
+checkpointer.save(path, args=ocp.args.Composite(
+    arrays=ocp.args.StandardSave(snapshot(model, optimizer, pipeline)),
+    data=ocp.args.JsonSave(pipeline.get_state()),
+))
 
 # Restore — into freshly-constructed objects
-template = {
-    "model": nnx.to_pure_dict(nnx.state(model)),
-    "optimizer": nnx.to_pure_dict(nnx.state(optimizer)),
-    "pipeline": nnx.to_pure_dict(nnx.state(pipeline)),
-}
-saved = checkpointer.restore(path, template)
-
+restored = checkpointer.restore(path, args=ocp.args.Composite(
+    arrays=ocp.args.StandardRestore(snapshot(model, optimizer, pipeline)),
+    data=ocp.args.JsonRestore(),
+))
+saved = restored["arrays"]
 for module, pure in (
     (model, saved["model"]),
     (optimizer, saved["optimizer"]),
-    (pipeline, saved["pipeline"]),
+    (pipeline.dag, saved["stages"]),
 ):
     state = nnx.state(module)
     nnx.replace_by_pure_dict(state, pure)
     nnx.update(module, state)
+pipeline.set_state(restored["data"])
 ```
 
 ### Why `nnx.update`?
@@ -132,17 +142,16 @@ assert max_param_diff < 1e-3
 
 ## Pipeline State Captured
 
-The `Pipeline` `nnx.Module` includes:
+Two items hold a pipeline:
 
-- `_position` — current iteration index (advances by `batch_size` per step).
-- `rngs` — the Pipeline's own `nnx.Rngs`, used to generate per-step keys.
-- `source` — the data source as a child module (its index, RNGs, cached
-  state are all part of the tree).
-- Each stage in `stages=[...]` — including any stochastic operator's
-  `nnx.Rngs`.
-
-`nnx.to_pure_dict(nnx.state(pipeline))` captures all of these in a
-single call.
+- `pipeline.get_state()` — where `for batch in pipeline` stands: the
+  epoch, the records served in it, the epoch the run ends at, and a
+  fingerprint of the configuration it is valid for (batch size, length,
+  the shuffle seed). `set_state` refuses a state saved by a pipeline
+  configured differently.
+- `nnx.state(pipeline.dag)` — every stage's parameters, statistics and
+  random keys. A stochastic operator keys each record on its stable
+  base key, so no random stream advances while iterating.
 
 ## Results
 
@@ -185,14 +194,13 @@ checkpoint produces the same loss in both runs.
 If you forget to checkpoint a piece of state that the training step
 mutates, the resumed run will diverge silently. The state-equality
 assertion in this example surfaces such bugs immediately. The
-canonical "everything that mutates" set is `(model, optimizer,
-pipeline)` — Pipeline being an `nnx.Module` is what makes the data
-position checkpointable on equal footing with model weights.
+canonical "everything that mutates" set is the model, the optimizer,
+the pipeline's stages and the pipeline's place in the data.
 
 ### Use `CheckpointManager` for Production
 
 For periodic-cleanup, async writes, and atomic step-N labeling, wrap
-the `StandardCheckpointer` calls in
+the `Checkpointer` calls in
 `orbax.checkpoint.CheckpointManager`:
 
 ```python
@@ -206,8 +214,8 @@ manager.wait_until_finished()
 
 ### Restore Templates Must Match
 
-`StandardCheckpointer.restore(path, template)` requires the template
-to have the same PyTree structure as the saved data. Build the
+`ocp.args.StandardRestore(template)` requires the template to have the
+same PyTree structure as the saved data. Build the
 template by snapshotting the freshly-constructed modules — that
 guarantees the structures match.
 
@@ -216,7 +224,7 @@ guarantees the structures match.
 | Pitfall | Symptom | Fix |
 |---------|---------|-----|
 | Forgot `nnx.update` after `replace_by_pure_dict` | Resumed run produces same losses as a fresh run, ignoring restore | Add `nnx.update(module, state)` |
-| Missing pipeline in snapshot | Resumed run sees the same data again from step 0 | Include pipeline in the snapshot dict |
+| Missing `pipeline.get_state()` in the checkpoint | Resumed run sees the same data again from step 0 | Save it beside the arrays and restore it with `set_state` |
 | Saving `nnx.Module` directly to Orbax | `TypeError: cannot serialize <Module>` | Always wrap in `nnx.to_pure_dict(nnx.state(...))` |
 | Template mismatch on restore | Orbax raises a structure-mismatch error | Build template by snapshotting freshly-constructed objects |
 
@@ -229,5 +237,5 @@ guarantees the structures match.
 ## API Reference
 
 - [`Pipeline`](../../../user_guide/dag_construction.md) — Pipeline class as an `nnx.Module`
-- [Orbax Checkpoint Documentation](https://orbax.readthedocs.io/) — `StandardCheckpointer`, `CheckpointManager`
+- [Orbax Checkpoint Documentation](https://orbax.readthedocs.io/) — `CompositeCheckpointHandler`, `CheckpointManager`
 - [Flax NNX Checkpointing Guide](https://flax.readthedocs.io/en/latest/nnx_basics.html#checkpointing) — `nnx.to_pure_dict`, `nnx.replace_by_pure_dict`, `nnx.update`

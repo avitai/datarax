@@ -77,14 +77,14 @@ def test_iterator_state_carries_the_epoch_and_resumes_exactly() -> None:
     reference = _pipeline()
     _epoch_ids(reference)
     reference.reset()
-    session = iter(reference)
+    session = reference.session()
     next(session)
-    state = session.get_state()  # type: ignore[union-attr]
+    state = session.get_state()
     expected = [np.asarray(next(session)["id"]) for _ in range(2)]
 
     assert state["epoch"] == 1
-    resumed = iter(_pipeline())
-    resumed.set_state(state)  # type: ignore[union-attr]
+    resumed = _pipeline().session()
+    resumed.set_state(state)
     got = [np.asarray(next(resumed)["id"]) for _ in range(2)]
 
     for g, e in zip(got, expected, strict=True):

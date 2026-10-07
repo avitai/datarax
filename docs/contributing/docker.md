@@ -54,7 +54,7 @@ docker run --rm -e JAX_PLATFORMS=cpu datarax:latest \
     python -m pytest tests/ -x --timeout=60 -m "not slow" -q
 
 # Run tests with GPU (test runs stay on the CPU unless they ask for CUDA)
-docker run --rm --gpus all -e DATARAX_TEST_JAX_PLATFORMS=cuda datarax:latest \
+docker run --rm --gpus all -e DATARAX_TEST_JAX_PLATFORMS=cuda,cpu datarax:latest \
     python -m pytest tests/ -x --timeout=120 -q
 
 # Run a specific example
@@ -106,7 +106,7 @@ Key variables for controlling JAX behavior inside containers:
 | `XLA_PYTHON_CLIENT_PREALLOCATE` | `false` | Disable full GPU memory grab at startup |
 | `XLA_CLIENT_MEM_FRACTION` | `0.75` | Fraction of GPU memory JAX may use |
 | `XLA_FLAGS` | (none) | XLA compiler flags (e.g., simulated devices) |
-| `DATARAX_TEST_JAX_PLATFORMS` | (unset) | Backend for test runs: `cuda` runs tests on the GPU; unset keeps them on the CPU with emulated devices |
+| `DATARAX_TEST_JAX_PLATFORMS` | (unset) | Backend for test runs: `cuda,cpu` runs tests on the GPU with the CPU device beside it, where the host stage names records; unset keeps them on the CPU with emulated devices |
 
 ## Use Cases
 

@@ -45,15 +45,21 @@ import jax
 import numpy as np
 from jax.typing import ArrayLike
 
-from datarax.core.data_source import record_words, RecordIdentity, refuse_padding
+from datarax.core.data_source import (
+    BatchSchedule,
+    Provenance,
+    record_words,
+    RecordIdentity,
+    refuse_padding,
+)
 from datarax.sources._config_base import SourceConfigBase
 from datarax.sources._source_base import (
     DatasetSourceMixin,
     pass_seed,
-    Provenance,
     StreamChunk,
     StreamingSourceBase,
 )
+from datarax.sources.array_record_source import ArrayRecordSourceConfig, ArrayRecordSourceModule
 from datarax.sources.eager_source import EagerSource, HostValue, parts_of_records
 from datarax.sources.source_ops import filter_keys, validate_source_settings
 
@@ -233,6 +239,24 @@ def _not_prepared(name: str, data_dir: str | None, found: str) -> FileNotFoundEr
     )
 
 
+def _array_record_builder(name: str, data_dir: str | None) -> Any:  # noqa: DOC502
+    """The builder of ``name`` prepared as ArrayRecord in ``data_dir``, refused otherwise.
+
+    Args:
+        name: The TFDS dataset name, with its config when it has one.
+        data_dir: The data directory; TFDS's default when ``None``.
+
+    Returns:
+        The TFDS builder.
+
+    Raises:
+        FileNotFoundError: If the data directory holds no copy prepared as ArrayRecord.
+    """
+    return _prepared_builder(
+        name, data_dir, "array_record", lambda found: _not_prepared(name, data_dir, found)
+    )
+
+
 def open_prepared_split(  # noqa: DOC502 - _prepared_builder raises the FileNotFoundError
     name: str, split: str, data_dir: str | None
 ) -> tuple[Any, PreparedRecords]:
@@ -252,9 +276,7 @@ def open_prepared_split(  # noqa: DOC502 - _prepared_builder raises the FileNotF
         FileNotFoundError: If the data directory holds no copy of the dataset prepared as
             ArrayRecord: nothing prepared, or a copy in another format such as TFRecord.
     """
-    builder = _prepared_builder(
-        name, data_dir, "array_record", lambda found: _not_prepared(name, data_dir, found)
-    )
+    builder = _array_record_builder(name, data_dir)
     # tfds wraps as_data_source in a logging decorator whose type hides the parameters.
     records = builder.as_data_source(
         split=split,  # pyright: ignore[reportCallIssue]
@@ -292,6 +314,74 @@ def _supervised_keys(info: Any, dataset: str) -> list[str]:
     if declared is None:
         raise ValueError(f"{dataset} declares no supervised keys, which as_supervised keeps")
     return [str(key) for key in jax.tree.leaves(declared)]
+
+
+@dataclass(frozen=True, slots=True)
+class _ExampleDecoder:
+    """Decodes a batch of a prepared split's serialized examples as TFDS's reader decodes one.
+
+    Each record goes through the dataset's ``features.deserialize_example_np``, as
+    ``builder.as_data_source`` does, then keeps the features the source keeps
+    (:func:`_kept_features`), so a per-batch read holds what the eager source holds. It pickles
+    with the features, for a worker process.
+    """
+
+    features: Any
+    keys: tuple[str, ...] | None
+    include_keys: set[str] | None
+    exclude_keys: set[str] | None
+
+    def __call__(self, records: Sequence[bytes]) -> list[dict[str, Any]]:
+        """One kept mapping of decoded features per record."""
+        return [
+            _kept_features(
+                self.features.deserialize_example_np(record),
+                self.keys,
+                self.include_keys,
+                self.exclude_keys,
+            )
+            for record in records
+        ]
+
+
+def per_batch_split(  # noqa: DOC502 - _array_record_builder and _supervised_keys raise
+    name: str,
+    split: str,
+    *,
+    data_dir: str | None = None,
+    as_supervised: bool = False,
+    include_keys: set[str] | None = None,
+    exclude_keys: set[str] | None = None,
+) -> ArrayRecordSourceModule:
+    """A split prepared as ArrayRecord, read and decoded per batch instead of held in memory.
+
+    The source reads the split's records where TFDS's own reader would (the split's
+    ``file_instructions``, slices included) and decodes each batch with TFDS's decoder, keeping
+    the features ``TFDSEagerSource`` keeps; it holds no record between reads. TensorFlow is not
+    imported.
+
+    Args:
+        name: The TFDS dataset name, with its config when it has one.
+        split: The split, slices included (``"train[:5000]"``).
+        data_dir: The data directory; TFDS's default when ``None``.
+        as_supervised: If True, keeps only the supervised features, under their own names.
+        include_keys: Optional set of keys to include.
+        exclude_keys: Optional set of keys to exclude.
+
+    Returns:
+        An ``ArrayRecordSourceModule`` over the split.
+
+    Raises:
+        FileNotFoundError: If the dataset is not prepared as ArrayRecord in the data directory.
+        ValueError: If ``as_supervised`` is asked of a dataset without supervised keys.
+    """
+    info = _array_record_builder(name, data_dir).info
+    keys = tuple(_supervised_keys(info, name)) if as_supervised else None
+    return ArrayRecordSourceModule(
+        ArrayRecordSourceConfig(),
+        info.splits[split].file_instructions,
+        decode=_ExampleDecoder(info.features, keys, include_keys, exclude_keys),
+    )
 
 
 class TFDSEagerSource(DatasetSourceMixin, EagerSource):
@@ -670,7 +760,7 @@ class _KeptFeatures:
 
 @dataclass(frozen=True, slots=True)
 class StreamRead:
-    """What one pass of a TFDS stream reads, as plain values that pickle to a worker process.
+    """What a run of a TFDS stream reads, as plain values that pickle to a worker process.
 
     Attributes:
         name: The TFDS dataset name.
@@ -678,10 +768,11 @@ class StreamRead:
         shards: The shard files and offsets the split reads, in file order.
         index: Each shard's record index, aligned with ``shards``; built once by the source and
             pickled with the read, so no worker reads a frame header.
-        seed: The pass's order as an integer key (``fold_in(key, pass)``'s data), or ``None`` for
-            file order.
+        length: The records one pass serves.
+        key: The pipeline's key as host words, each pass ordered by ``fold_in(key, pass)``, or
+            ``None`` for file order.
         buffer_size: Records the shuffle buffer holds.
-        batch_size: Records decoded together, one element of the dataset.
+        schedule: The run's units, each a run of batches ``(start, pass, size)``.
         kept: The features kept of each record.
     """
 
@@ -689,21 +780,22 @@ class StreamRead:
     data_dir: str | None
     shards: tuple[_Shard, ...]
     index: tuple[ShardIndex, ...]
-    seed: int | None
+    length: int
+    key: np.ndarray | None
     buffer_size: int
-    batch_size: int
+    schedule: BatchSchedule
     kept: _KeptFeatures
 
 
-def _ordered_ids(read: StreamRead) -> Iterator[_RecordId]:
-    """The pass's records in its order, as ids: file order, or TFDS's training read's.
+def _ordered_ids(read: StreamRead, pass_index: int) -> Iterator[_RecordId]:
+    """Pass ``pass_index``'s records in its order, as ids: file order, or TFDS's training read's.
 
-    The same order every worker of the pass computes, from the read alone, with no file read.
+    The same order every worker of the run computes, from the read alone, with no file read.
     """
     streams = [_shard_ids(position, shard) for position, shard in enumerate(read.shards)]
-    if read.seed is None:
+    if read.key is None:
         return itertools.chain.from_iterable(streams)
-    generator = np.random.Generator(np.random.Philox(key=read.seed))
+    generator = np.random.Generator(np.random.Philox(key=pass_seed(read.key, pass_index)))
     order = generator.permutation(len(streams))
     return _buffer_shuffled(_interleaved([streams[i] for i in order]), read.buffer_size, generator)
 
@@ -727,36 +819,55 @@ def _decoded_batch(
     return columns, provenance or tuple({} for _ in frames), ids
 
 
-class TFDSStreamDataset(grain.IterDataset):
-    """One pass of a TFDS stream as a Grain dataset of decoded batches.
+@dataclass(frozen=True, slots=True)
+class _PassUnits:
+    """One pass from its start in units of ``size`` records, the last one short: a schedule."""
 
-    Its iterator computes the pass's order over record ids (no file read), cuts it into batches of
-    ``batch_size``, and for each of its batches reads the records' payloads by their offsets in the
-    index and decodes them last. It implements Grain's slicing hook: with
-    ``set_slice(slice(i, None, k))`` the iterator computes the same order over ids but reads and
-    decodes only batches ``j`` with ``j % k == i``, so ``k`` such slices interleaved round robin
-    give the unsliced batches, the stream's order not depending on ``k``, and the k slices read
-    each record once between them. That is how Grain's process prefetch splits a dataset across
-    workers. The dataset pickles (its read is plain values, the offset index included), and each
-    iterator opens its own files and decoder, so iterators in threads or processes share no lazy
-    state.
+    pass_index: int
+    length: int
+    size: int
+
+    def unit(self, ordinal: int) -> tuple[tuple[int, int, int], ...] | None:
+        """Batch ``ordinal`` of the pass, or ``None`` past its end."""
+        start = ordinal * self.size
+        if start >= self.length:
+            return None
+        return ((start, self.pass_index, min(self.size, self.length - start)),)
+
+
+class TFDSStreamDataset(grain.IterDataset):
+    """A run of a TFDS stream's passes as a Grain dataset of decoded units.
+
+    Its iterator computes each pass's order over record ids (no file read) and walks the run's
+    schedule: for each unit it takes the ids at the unit's positions, a batch crossing a pass's
+    end continuing at the next pass's head, reads those records' payloads by their offsets in the
+    index and decodes them last. An element is the unit's host columns, provenance, ids and each
+    record's pass. Units are numbered from the run's first, wherever the run starts, and records
+    before the run's start are skipped as ids, never read. It implements Grain's slicing hook:
+    with ``set_slice(slice(i, None, k))`` the iterator walks the same schedule but reads and
+    decodes only units ``j`` with ``j % k == i``, so ``k`` such slices interleaved round robin from
+    the first give the unsliced run, the stream's order not depending on ``k``, and the slices
+    read each record once between them. That is how Grain's process prefetch splits a dataset
+    across workers. The dataset pickles (its read is plain values, the offset index included),
+    and each iterator opens its own files and decoder, so iterators in threads or processes share
+    no lazy state.
     """
 
     def __init__(self, read: StreamRead) -> None:
-        """Hold the pass's read; nothing is opened until iteration.
+        """Hold the run's read; nothing is opened until iteration.
 
         Args:
-            read: What the pass reads.
+            read: What the run reads.
         """
         super().__init__()
         self._read = read
         self._slice = slice(0, None, 1)
 
     def set_slice(self, sl: slice, sequential_slice: bool = False) -> None:
-        """Keep batches ``j`` with ``j % sl.step == sl.start``: Grain's slicing hook.
+        """Keep units ``j`` with ``j % sl.step == sl.start``: Grain's slicing hook.
 
         Args:
-            sl: The slice of batches this dataset serves.
+            sl: The slice of units this dataset serves.
             sequential_slice: Must be ``False``: a stream of unknown length cannot be cut into
                 contiguous blocks.
 
@@ -771,34 +882,61 @@ class TFDSStreamDataset(grain.IterDataset):
         self._slice = sl
 
     def __iter__(self) -> _TFDSStreamIterator:
-        """A fresh iterator over the pass, opening its own files and decoder."""
+        """A fresh iterator over the run, opening its own files and decoder."""
         return _TFDSStreamIterator(self._read, self._slice)
 
 
+type _Unit = tuple[dict[str, Any], tuple[dict[str, Any], ...], np.ndarray, np.ndarray]
+
+
 class _TFDSStreamIterator(grain.DatasetIterator):
-    """Batches of one pass of a TFDS stream, those of its slice read and decoded."""
+    """Units of a run of a TFDS stream, those of its slice read and decoded."""
 
     def __init__(self, read: StreamRead, sl: slice) -> None:
         super().__init__()
         self._read = read
-        self._ids = _ordered_ids(read)
         self._features = _features(read.name, read.data_dir)
         self._start, self._step = sl.start or 0, sl.step or 1
-        self._batch = 0
+        self._unit = 0
+        self._pass: int | None = None
+        self._ids: Iterator[_RecordId] = iter(())
+        self._at = 0  # ids of the current pass taken
         self._files = contextlib.ExitStack()
         self._open: dict[int, Any] = {}
         weakref.finalize(self, self._files.close)
 
-    def __next__(self) -> tuple[dict[str, Any], tuple[dict[str, Any], ...], np.ndarray]:
+    def __next__(self) -> _Unit:
         while True:
-            ids = list(itertools.islice(self._ids, self._read.batch_size))
-            if not ids:
+            batches = self._read.schedule.unit(self._unit)
+            if batches is None:
                 self._files.close()
                 raise StopIteration
-            batch, self._batch = self._batch, self._batch + 1
-            if batch % self._step == self._start:
-                frames = [self._frame(record) for record in ids]
-                return _decoded_batch(self._features, frames, self._read.kept)
+            unit, self._unit = self._unit, self._unit + 1
+            records = [record for batch in batches for record in self._take(*batch)]
+            if unit % self._step == self._start:
+                frames = [self._frame(record) for record, _ in records]
+                columns, provenance, ids = _decoded_batch(self._features, frames, self._read.kept)
+                epochs = np.asarray([pass_index for _, pass_index in records], dtype=np.int32)
+                return columns, provenance, ids, epochs
+
+    def _take(self, start: int, pass_index: int, size: int) -> list[tuple[_RecordId, int]]:
+        """The ids of ``size`` positions from ``start`` of pass ``pass_index`` on, across passes."""
+        taken: list[tuple[_RecordId, int]] = []
+        while len(taken) < size:
+            self._seek(pass_index, start)
+            count = min(size - len(taken), self._read.length - start)
+            taken.extend((record, pass_index) for record in itertools.islice(self._ids, count))
+            self._at += count
+            pass_index, start = pass_index + 1, 0
+        return taken
+
+    def _seek(self, pass_index: int, position: int) -> None:
+        """Move to ``position`` of pass ``pass_index``'s order, skipping ids, reading nothing."""
+        if pass_index != self._pass or position < self._at:
+            self._pass, self._ids, self._at = pass_index, _ordered_ids(self._read, pass_index), 0
+        for _ in itertools.islice(self._ids, position - self._at):
+            pass
+        self._at = position
 
     def _frame(self, record: _RecordId) -> _Frame:
         """The record's payload, read at its offset, and its id."""
@@ -812,8 +950,8 @@ class _TFDSStreamIterator(grain.DatasetIterator):
         return _Frame(shard.shard, record.offset, raw)
 
     def get_state(self) -> dict[str, Any]:
-        """The batches of the pass this iterator has passed."""
-        return {"batches": self._batch}
+        """The units of the run this iterator has passed."""
+        return {"units": self._unit}
 
     def set_state(self, state: dict[str, Any]) -> None:
         """Not supported: a stream's exact resume is the host stage's.
@@ -937,48 +1075,67 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
         return {"shuffle_buffer_size": self.config.shuffle_buffer_size}
 
     def pass_dataset(
-        self, pass_index: int, key: jax.Array | None, batch_size: int
+        self, pass_index: int, key: np.ndarray | None, batch_size: int
     ) -> TFDSStreamDataset:
         """Pass ``pass_index`` as a Grain dataset of decoded batches, a :class:`TFDSStreamDataset`.
 
+        A run of one pass from its start, in batches of ``batch_size``, the last one short.
+
         Args:
             pass_index: The pass, from 0.
-            key: The pipeline's key when it shuffles, ``None`` for file order.
+            key: The pipeline's key as its uint32 words on the host
+                (:func:`~datarax.core.prng.key_words`) when it shuffles, ``None`` for file
+                order.
             batch_size: Records per decoded batch.
 
         Returns:
             The pass's dataset.
         """
-        return TFDSStreamDataset(self._stream_read(pass_index, key, batch_size))
+        return TFDSStreamDataset(
+            self._stream_read(_PassUnits(pass_index, self.length, batch_size), key)
+        )
 
-    def _stream_read(self, pass_index: int, key: jax.Array | None, batch_size: int) -> StreamRead:
-        """What pass ``pass_index`` reads, as plain values, the shards' record index included."""
+    def run_dataset(self, schedule: BatchSchedule, key: np.ndarray | None) -> TFDSStreamDataset:
+        """A run of passes as one Grain dataset of decoded units, numbered from the run's start.
+
+        Args:
+            schedule: The run's units, each a run of batches ``(start, pass, size)``.
+            key: The pipeline's key as host words, or ``None`` for file order.
+
+        Returns:
+            The run's dataset (:class:`TFDSStreamDataset`).
+        """
+        return TFDSStreamDataset(self._stream_read(schedule, key))
+
+    def _stream_read(self, schedule: BatchSchedule, key: np.ndarray | None) -> StreamRead:
+        """What a run reads, as plain values, the shards' record index included."""
         config = self.config
         return StreamRead(
             name=self._dataset,
             data_dir=config.data_dir,
             shards=self._shards.value,
             index=tuple(self._shard_index(shard.shard) for shard in self._shards.value),
-            seed=None if key is None else pass_seed(key, pass_index),
+            length=self.length,
+            key=None if key is None else np.asarray(key, np.uint32),
             buffer_size=config.shuffle_buffer_size,
-            batch_size=batch_size,
+            schedule=schedule,
             kept=self._kept.value,
         )
 
     def _open_pass(
-        self, pass_index: int, key: jax.Array | None, read_size: int
+        self, pass_index: int, key: np.ndarray | None, read_size: int
     ) -> Iterator[StreamChunk]:
         """Read pass ``pass_index``: in file order, or as TFDS's training read under ``key``.
 
         Args:
             pass_index: The pass, from 0.
-            key: The pipeline's key when it shuffles, ``None`` for file order.
+            key: The pipeline's key as its host words when it shuffles, ``None`` for file order.
             read_size: Records decoded together.
 
         Yields:
             The pass's records as decoded chunks.
         """
-        for columns, provenance, ids in self.pass_dataset(pass_index, key, read_size):
+        for columns, provenance, ids, _ in self.pass_dataset(pass_index, key, read_size):
             yield StreamChunk(columns, tuple(MappingProxyType(p) for p in provenance), ids)
 
     def provenance(  # noqa: DOC502 - record_words, refuse_padding and _frame_at raise

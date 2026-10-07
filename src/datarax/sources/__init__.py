@@ -99,16 +99,21 @@ def from_tfds(
     split: str,
     *,
     data_dir: str | None = None,
+    in_memory: bool = True,
     as_supervised: bool = False,
     include_keys: set[str] | None = None,
     exclude_keys: set[str] | None = None,
 ) -> DataSourceModule:
     """Create the TFDS source that reads the copy prepared in ``data_dir``, by its format.
 
-    - A copy prepared as ArrayRecord has random access: ``TFDSEagerSource`` reads it into host
-      columns at init, without TensorFlow.
+    - A copy prepared as ArrayRecord has random access. With ``in_memory=True`` (the default)
+      ``TFDSEagerSource`` decodes it into host columns at init; with ``in_memory=False`` an
+      ``ArrayRecordSourceModule`` reads and decodes each batch's records when the pipeline reads
+      them, for a split larger than RAM, at the cost of decoding every record every epoch.
     - A copy prepared as TFRecord (TFDS's default format) is streamed by
-      ``TFDSStreamingSource``, without TensorFlow.
+      ``TFDSStreamingSource``, which holds no split in memory, whatever ``in_memory`` says.
+
+    Both read without TensorFlow.
 
     Neither prepares a dataset; a split that is not prepared is refused, naming the call that
     prepares it as ArrayRecord. The order records are served in belongs to the pipeline
@@ -118,12 +123,15 @@ def from_tfds(
         name: TFDS dataset name (e.g., "mnist", "cifar10", "imagenet2012")
         split: Dataset split (e.g., "train", "test", "train[:1000]")
         data_dir: Optional directory where the dataset is prepared
+        in_memory: Whether an ArrayRecord copy is decoded into memory at init (True) or read
+            per batch (False)
         as_supervised: If True, keeps only the supervised features, under their own names
         include_keys: Optional set of keys to include
         exclude_keys: Optional set of keys to exclude
 
     Returns:
-        TFDSEagerSource for an ArrayRecord copy, TFDSStreamingSource for a TFRecord copy.
+        TFDSEagerSource or ArrayRecordSourceModule for an ArrayRecord copy, TFDSStreamingSource
+        for a TFRecord copy.
 
     Example:
         ```python
@@ -133,6 +141,7 @@ def from_tfds(
         ```
     """
     from datarax.sources.tfds_source import (
+        per_batch_split,
         TFDSEagerConfig,
         TFDSEagerSource,
         TFDSStreamingConfig,
@@ -150,6 +159,15 @@ def from_tfds(
                 include_keys=include_keys,
                 exclude_keys=exclude_keys,
             )
+        )
+    if not in_memory:
+        return per_batch_split(
+            name,
+            split,
+            data_dir=data_dir,
+            as_supervised=as_supervised,
+            include_keys=include_keys,
+            exclude_keys=exclude_keys,
         )
     return TFDSEagerSource(
         TFDSEagerConfig(

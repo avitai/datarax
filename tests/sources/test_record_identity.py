@@ -4,8 +4,9 @@
 ``STREAM_IDS`` (an id the stream reports) and ``ARRIVAL`` (the arrival ordinal).
 ``DataSourceModule.record_identity`` is abstract, so a source that does not declare its kind is
 refused at construction. The access predicates and ``get_batch_at`` are gone: the declared kind
-is the one source of truth, and ``Pipeline`` serves an ``INDEXED`` source through its compiled
-session and every other through the streaming path.
+is the one source of truth. ``for batch in pipeline`` reads every kind on the host stage: an
+``INDEXED`` source with its stateless host read, a stream pass by pass at a position of the stage's
+own; the compiled session (``pipeline.session()``) serves ``INDEXED`` sources only.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.pipeline import iteration
 from datarax.pipeline.pipeline import Pipeline
 from datarax.sources import EagerSource, MemorySource
+from datarax.sources.eager_source import read_host_batch
 from datarax.sources.mixed_source import MixDataSourcesNode
 from datarax.sources.streaming_disk_source import StreamingDiskSource
 from tests.test_common.streams import RecordStream
@@ -51,8 +53,8 @@ def test_every_exported_source_declares_its_kind() -> None:
         HFEagerSource: RecordIdentity.INDEXED,
         StreamingDiskSource: RecordIdentity.INDEXED,
         MixDataSourcesNode: RecordIdentity.INDEXED,
+        ArrayRecordSourceModule: RecordIdentity.INDEXED,
         TFDSStreamingSource: RecordIdentity.STREAM_IDS,
-        ArrayRecordSourceModule: RecordIdentity.STREAM_IDS,
         HFStreamingSource: RecordIdentity.ARRIVAL,
     }
     for source_class, kind in expected.items():
@@ -103,6 +105,10 @@ class _Indexed(DataSourceModule):
     def get_records(self, indices: jax.Array) -> dict[str, jax.Array]:
         return {"x": jax.numpy.take(jax.numpy.asarray(self.data["x"]), indices[:, 1])}
 
+    def get_batch(self, indices: Any, *, epochs: Any = 0, contiguous: bool = False) -> Any:
+        """The host read the host stage serves the source with."""
+        return read_host_batch(self.data, 8, indices, epochs=epochs, contiguous=contiguous)
+
     def element_spec(self) -> Any:
         return {"x": jax.ShapeDtypeStruct((), np.float32)}
 
@@ -121,19 +127,23 @@ def _served(source: DataSourceModule) -> tuple[list[float], bool]:
     return values, in_session
 
 
-def test_an_indexed_source_is_served_by_the_compiled_session() -> None:
+def test_an_indexed_source_is_served_by_the_host_stage() -> None:
     values, in_session = _served(_Indexed())
-    assert in_session
+    assert not in_session
     assert values == [float(i) for i in range(8)]
+    session = Pipeline(source=_Indexed(), stages=[], batch_size=4, rngs=nnx.Rngs(0)).session()
+    assert [float(v) for batch in session for v in np.asarray(batch["x"])] == values
 
 
 @pytest.mark.parametrize("kind", [RecordIdentity.STREAM_IDS, RecordIdentity.ARRIVAL])
-def test_a_stream_is_served_by_the_streaming_path(kind: RecordIdentity) -> None:
+def test_a_stream_is_served_by_the_host_stage_at_a_position_of_its_own(
+    kind: RecordIdentity,
+) -> None:
     source = _stream(kind)
     values, in_session = _served(source)
     assert not in_session
     assert values == [float(i) for i in range(8)]
-    assert source.pass_index == 1
+    assert source.pass_index == 0  # the stream's own position is the standalone API's
 
 
 def test_a_session_of_a_stream_is_refused_naming_its_kind() -> None:
@@ -151,5 +161,5 @@ def test_a_memory_mapped_source_is_indexed(tmp_path: Path) -> None:
     np.save(path, np.arange(8, dtype=np.float32))
     source = StreamingDiskSource(StreamingDiskSourceConfig(path=str(path)))
     values, in_session = _served(source)
-    assert in_session
+    assert not in_session
     assert values == [float(i) for i in range(8)]

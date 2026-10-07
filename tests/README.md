@@ -28,7 +28,7 @@ For GPU-accelerated testing (requires CUDA setup):
 bash scripts/run_gpu_tests.sh
 
 # Or run the suite on the GPU directly
-DATARAX_TEST_JAX_PLATFORMS=cuda uv run pytest tests/ -v
+DATARAX_TEST_JAX_PLATFORMS=cuda,cpu uv run pytest tests/ -v
 ```
 
 ### Full Test Suite
@@ -93,7 +93,7 @@ Tests are organized using pytest markers defined in `conftest.py` and `pyproject
 
 ```bash
 # Run the tests that need a GPU backend
-DATARAX_TEST_JAX_PLATFORMS=cuda uv run pytest -m accelerator
+DATARAX_TEST_JAX_PLATFORMS=cuda,cpu uv run pytest -m accelerator
 
 # Run integration tests
 uv run pytest -m integration

@@ -22,7 +22,7 @@ union of its children's fields, a field some child lacks being a ``Maybe``.
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, cast, Protocol
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -35,6 +35,7 @@ from datarax.core import batch_ops
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import (
     DataSourceModule,
+    IndexedHostRead,
     record_words,
     RecordIdentity,
     refuse_padding,
@@ -45,6 +46,7 @@ from datarax.core.index_words import (
     divmod_word,
     from_words,
     greater,
+    is_word_start,
     low_words,
     MAX_RECORDS,
     multiply_high,
@@ -505,16 +507,6 @@ def _joined(reads: Sequence[tuple[np.ndarray, Mapping[_Path, Any]]]) -> Batch:
     return joined
 
 
-class _IndexedHostRead(Protocol):
-    """The host read of an indexed source (``EagerSource``, ``StreamingDiskSource``, a mix)."""
-
-    def get_batch(
-        self, indices: ArrayLike, *, epochs: ArrayLike = 0, contiguous: bool = False
-    ) -> Batch:
-        """Read the records ``indices`` names, as a ``Batch`` named with them, on the host."""
-        ...
-
-
 @register_component("source", "MixDataSources")
 class MixDataSourcesNode(DataSourceModule):
     """Mix indexed sources in fixed proportions, as Grain's ``MapDataset.mix`` does.
@@ -661,18 +653,19 @@ class MixDataSourcesNode(DataSourceModule):
         )
 
     def _window_starts(
-        self, start: int | jax.Array, first: jax.Array, epoch_length: int
+        self, start: int | ArrayLike, first: jax.Array, epoch_length: int
     ) -> tuple[list[int] | list[jax.Array], jax.Array]:
         """Where each child's positions start at mix position ``start``.
 
         Args:
-            start: The first mix position, a Python int or a traced int32.
+            start: The first mix position: a Python int, its two uint32 words, or a traced int32.
             first: ``start`` wrapped at the epoch's length, as uint32 ``(1, 2)`` words.
             epoch_length: The epoch's length, where positions wrap.
 
         Returns:
-            Each child's first position as its ``record_indices_at`` takes it (a Python int,
-            or an int32 below the traced start), and all of them as uint32 ``(n, 2)`` words.
+            Each child's first position in the form its ``record_indices_at`` takes the mix's
+            start (a Python int, two words below the child's length, or an int32 below the traced
+            start), and all of them as uint32 ``(n, 2)`` words.
         """
         if isinstance(start, int | np.integer):
             exact = to_words(int(start) % epoch_length)
@@ -681,12 +674,24 @@ class MixDataSourcesNode(DataSourceModule):
             return starts, jnp.asarray(to_words(starts))
         counts = _counts_before((first[:, 0], first[:, 1]), self._proportions)
         words = jnp.stack([jnp.concatenate(count) for count in counts])
+        if is_word_start(start):
+            # A child's count before a position of the epoch is at most the child's length, where
+            # its order starts again.
+            lengths = to_words([len(source) for source in self._sources])
+            return [
+                jnp.where(
+                    (high == length[0]) & (low == length[1]),
+                    jnp.zeros(2, jnp.uint32),
+                    jnp.concatenate([high, low]),
+                )
+                for (high, low), length in zip(counts, lengths, strict=True)
+            ], words
         # A traced start is an int32 position, and a child's count before it is at most it.
         return [low.astype(jnp.int32)[0] for _, low in counts], words
 
     def record_indices_at(
         self,
-        start: int | jax.Array,
+        start: int | ArrayLike,
         size: int,
         key: jax.Array | None = None,
     ) -> jax.Array:
@@ -701,7 +706,8 @@ class MixDataSourcesNode(DataSourceModule):
         the pipeline replaces with the next epoch's names.
 
         Args:
-            start: Starting position; a Python int of any size or a traced int32 ``jax.Array``.
+            start: Starting position: a Python int of any size, its two uint32 words
+                ``(hi, lo)`` (a position of the epoch), or a traced int32 ``jax.Array``.
             size: Number of records (Python int).
             key: The pipeline's epoch key, or ``None`` for the children's sequential orders.
 
@@ -824,7 +830,7 @@ class MixDataSourcesNode(DataSourceModule):
         reads = []
         for child, source in enumerate(self._sources):
             rows = np.flatnonzero(owners == child)
-            read = cast(_IndexedHostRead, source).get_batch(
+            read = cast(IndexedHostRead, source).get_batch(
                 local[rows], epochs=epochs[rows], contiguous=contiguous
             )
             reads.append((rows, read))

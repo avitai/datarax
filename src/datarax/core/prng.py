@@ -5,10 +5,20 @@ architectural layer) derives per-record keys here. The named ``nnx.Rngs``
 streams a component draws from are :data:`DEFAULT_RNG_STREAMS`; an ``nnx.Rngs``
 over them comes from :func:`substrax.rng.rngs_from_seed`, which derives each
 stream's key from the seed and the stream's name.
+
+The host stage orders records and seeds stream passes on the host. It reads a key's data once
+as uint32 words (:func:`key_words`) and folds them on the CPU device (:func:`host_device`,
+:func:`fold_on_host`), so no fold reads back from an accelerator and none needs an implicit
+transfer.
 """
+
+import functools
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
+import numpy as np
+from jax.sharding import SingleDeviceSharding
 from jax.typing import ArrayLike
 
 
@@ -66,3 +76,73 @@ def per_record_keys(
     return jax.vmap(record_key, in_axes=(None, 0, 0, 0))(
         base_key, jnp.asarray(indices, jnp.uint32), jnp.asarray(epochs), jnp.asarray(draws)
     )
+
+
+def host_device() -> SingleDeviceSharding:
+    """The CPU device, where the host stage names records and folds keys, as a placement.
+
+    Returns:
+        A sharding placing an array whole on the process's first CPU device.
+
+    Raises:
+        RuntimeError: If JAX was started without its CPU platform (``JAX_PLATFORMS=cuda``), which
+            the host stage computes on; the message names the setting that includes it.
+    """
+    try:
+        return SingleDeviceSharding(jax.devices("cpu")[0])
+    except RuntimeError as error:
+        raise RuntimeError(
+            "datarax names records and folds keys on the CPU device, which this process has "
+            "not started: include the CPU platform, e.g. JAX_PLATFORMS=cuda,cpu"
+        ) from error
+
+
+def key_words(key: ArrayLike) -> np.ndarray:
+    """A key's data as uint32 words on the host: typed, raw or already host words.
+
+    A device key is read back with one explicit ``jax.device_get``, which a
+    ``jax.transfer_guard("disallow")`` allows; host words are returned as they are.
+
+    Args:
+        key: A typed key, its raw ``key_data``, or its uint32 words as a NumPy array.
+
+    Returns:
+        The key's data, uint32.
+    """
+    if isinstance(key, np.ndarray):
+        return np.asarray(key, np.uint32)
+    if isinstance(key, jax.Array) and jnp.issubdtype(key.dtype, jax.dtypes.prng_key):
+        key = jax.random.key_data(key)
+    return np.asarray(jax.device_get(key), np.uint32)
+
+
+@functools.cache
+def _fold() -> Callable[[jax.Array, jax.Array], jax.Array]:
+    """``fold_in`` of raw key words by uint32 data, returning the folded key's words."""
+
+    def fold(words: jax.Array, data: jax.Array) -> jax.Array:
+        return jax.random.key_data(jax.random.fold_in(jax.random.wrap_key_data(words), data))
+
+    return jax.jit(fold)
+
+
+def fold_on_host(words: np.ndarray, data: int) -> np.ndarray:
+    """``fold_in(key, data)`` of the key whose words are ``words``, computed on the CPU device.
+
+    Both operands are placed on the CPU device explicitly and the result is read back explicitly,
+    so the fold runs under a ``jax.transfer_guard("disallow")`` and reads nothing back from an
+    accelerator.
+
+    Args:
+        words: The key's uint32 words (:func:`key_words`).
+        data: The datum folded in, taken modulo ``2**32`` as ``fold_in`` takes it.
+
+    Returns:
+        The folded key's uint32 words.
+    """
+    cpu = host_device()
+    folded = _fold()(
+        jax.device_put(np.asarray(words, np.uint32), cpu),
+        jax.device_put(np.uint32(data % (1 << 32)), cpu),
+    )
+    return np.asarray(jax.device_get(folded), np.uint32)

@@ -80,7 +80,7 @@ Tests are configured with several pytest markers and command-line options:
 ### Test Backend
 
 - Tests run on eight emulated CPU devices by default
-- `DATARAX_TEST_JAX_PLATFORMS=cuda`: run the tests on the GPU
+- `DATARAX_TEST_JAX_PLATFORMS=cuda,cpu`: run the tests on the GPU
 - `DATARAX_TEST_DEVICE_COUNT=N`: emulate `N` CPU devices
 
 ### Test Categories
