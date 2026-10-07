@@ -732,8 +732,8 @@ class DataraxAdapter(PipelineAdapter):
         self._pipeline.host_stage._read_buffer = int(extra.get("prefetch_size", 2))  # noqa: SLF001
 
     def _iterate_batches(self) -> Iterator[Any]:
-        # The pipeline's host stage reads ``prefetch_size`` batches ahead and places each on the
-        # device as it is taken, so no separate prefetch stage is added here.
+        # The pipeline's host stage reads ``prefetch_size`` batches ahead and stages its platform's
+        # depth of placed batches on the device, so no separate prefetch stage is added here.
         batches = iter(self._cached_iter) if self._cached_iter is not None else self._pipeline
         for batch in batches:
             if self._rebatch_parts > 1:

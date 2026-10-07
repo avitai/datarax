@@ -151,7 +151,7 @@ if mode == "pipeline":
     del warm
     for _ in range(200):  # its read threads exit, and what they held is freed, before the window
         gc.collect()
-        if not [t for t in threading.enumerate() if "grain" in t.name or "staging" in t.name]:
+        if not [t for t in threading.enumerate() if "grain" in t.name]:
             break
         threading.Event().wait(0.05)
     pipe = build(source)

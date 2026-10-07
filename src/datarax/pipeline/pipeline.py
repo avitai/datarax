@@ -10,11 +10,12 @@ Three integration tiers (measured costs: ``docs/performance/index.md``):
 
 - **Tier A — ``for batch in pipeline:``** — the data loader: the host stage
   (:class:`~datarax.pipeline.host_stage.HostStage`) reads each batch on Grain
-  threads, names the run's order on the CPU device, and places a batch on the
-  device as it is taken; the batch then runs through the stage DAG in one
-  cached ``jax.jit`` call (:func:`~datarax.pipeline.dag_call.compile_dag`),
-  split once per iteration. Its batches go to a train or inference step
-  written as the Flax and JAX examples write it, and no dataset is uploaded.
+  threads, names the run's order on the CPU device, and places batches on the
+  device on the consumer's thread, one ahead on a GPU; the batch then runs
+  through the stage DAG in one cached ``jax.jit`` call
+  (:func:`~datarax.pipeline.dag_call.compile_dag`), split once per iteration.
+  Its batches go to a train or inference step written as the Flax and JAX
+  examples write it, and no dataset is uploaded.
   :meth:`Pipeline.get_state` is where iteration stands. Works with any
   framework that takes batches; the recommended path.
 - **Tier B — ``Pipeline.step()``** — one batch, traceable, with live
@@ -500,8 +501,9 @@ class Pipeline(nnx.Module):
         The DAG is not applied: pass :attr:`dag` into your differentiated train step and call it
         on each batch, so its operators' parameters train with the model. Records are served in
         the pipeline's order and epoch rule, named on the CPU device, read on the host by Grain
-        threads ahead of the consumer and placed on the default device as each is taken,
-        uncommitted; nothing else of the source reaches the device. Iteration stands where the last
+        threads ahead of the consumer and placed on the default device by the consumer,
+        uncommitted, one batch ahead of the one taken on a GPU and none on the CPU and TPU;
+        nothing else of the source reaches the device. Iteration stands where the last
         batch taken ended, so a later call continues the run with the same Grain iterator; the
         run ends after ``num_epochs`` epochs.
 
@@ -739,9 +741,9 @@ class Pipeline(nnx.Module):
     def __iter__(self) -> Iterator[Batch]:  # noqa: DOC502 - the host stage raises
         """Iterate processed batches: the host stage's batches through the DAG (Tier A).
 
-        The host stage reads batches ahead on Grain threads and places each as it is taken
-        (:meth:`raw_batches`); each runs through :attr:`dag` in one compiled call, split once per
-        call and compiled once per batch shape, the state its stages write (BatchNorm
+        The host stage reads batches ahead on Grain threads and places them on the consumer's
+        thread (:meth:`raw_batches`); each runs through :attr:`dag` in one compiled call, split
+        once per call and compiled once per batch shape, the state its stages write (BatchNorm
         statistics) written back. A pipeline without stages serves the placed batches as they
         are: an empty DAG is the identity, so it compiles nothing and copies no batch. Iteration
         continues where the last batch taken ended and stops after the run's ``num_epochs``

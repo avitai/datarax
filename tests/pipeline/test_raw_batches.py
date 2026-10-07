@@ -1,7 +1,7 @@
 """``pipe.raw_batches()``: host-read batches placed on the device, read ahead by Grain threads.
 
 The host stage names each batch's records on the CPU device, reads them with the source's
-stateless host read ahead of the consumer and places each batch as it is taken, uncommitted.
+stateless host read ahead of the consumer, which places the batches, uncommitted.
 Nothing of the source moves to the device but the batches, every transfer is explicit, and where
 iteration stands advances as the consumer takes batches. The DAG is not applied: ``pipe.dag`` runs
 inside the caller's differentiated step (OWN-0926-E2E). Chunks of ``K`` batches are one host read
@@ -37,6 +37,7 @@ from datarax.core.index_words import from_words
 from datarax.core.prng import key_words
 from datarax.operators import ElementOperator
 from datarax.pipeline import Pipeline
+from datarax.pipeline.host_stage import default_device_buffer
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
 from datarax.sources.streaming_disk_source import StreamingDiskSource, StreamingDiskSourceConfig
@@ -174,10 +175,11 @@ class TestOrder:
         public = {name for name in dir(_pipeline(_memory()).host_stage) if not name.startswith("_")}
         assert not public & {"read_threads", "read_buffer"}
 
-    @pytest.mark.parametrize("depth", [1, 4])
+    @pytest.mark.parametrize("read_buffer", [1, 4])
     def test_reads_run_ahead_by_the_read_buffer(
-        self, monkeypatch: pytest.MonkeyPatch, depth: int
+        self, monkeypatch: pytest.MonkeyPatch, read_buffer: int
     ) -> None:
+        """Beyond the batch taken: the read buffer, and the batches staged on the device ahead."""
         calls: list[int] = []
         original = MemorySource.get_batch
 
@@ -187,11 +189,11 @@ class TestOrder:
 
         monkeypatch.setattr(MemorySource, "get_batch", counted)
         pipe = _pipeline(_memory(), num_epochs=None)
-        pipe.host_stage._read_buffer = depth
+        pipe.host_stage._read_buffer = read_buffer
         batches = iter(pipe.raw_batches())
-        next(batches)
+        staged = default_device_buffer(next(batches)["image"].device.platform)
         threading.Event().wait(0.3)  # time for the reads to run ahead
-        assert len(calls) - 1 == depth
+        assert len(calls) - 1 == read_buffer + staged
         pipe.close()
 
     def test_one_host_read_per_batch(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -325,30 +327,6 @@ class TestPlacement:
         with jax.transfer_guard("disallow"):
             served = list(pipe.raw_batches())
         assert served
-
-    def test_a_batch_is_placed_when_it_is_taken_never_ahead(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Reads run ahead on a thread; placement waits for the consumer (P3's peak RSS bound).
-
-        A placement thread running ahead holds more device copies and, measured on the P3 shape,
-        raises peak RSS past the 75 MiB bound; an accelerator's ``device_put`` is asynchronous, so
-        a batch placed when taken still transfers while the previous step computes.
-        """
-        placed: list[int] = []
-        original_put = jax.device_put
-
-        def watched(value: Any, *args: Any, **kwargs: Any) -> Any:
-            if isinstance(value, Batch):
-                placed.append(1)
-            return original_put(value, *args, **kwargs)
-
-        monkeypatch.setattr(jax, "device_put", watched)
-        batches = iter(_pipeline(_memory(), num_epochs=None).raw_batches())
-        for taken in range(1, 4):
-            next(batches)
-            threading.Event().wait(0.3)  # time for any thread to run ahead
-            assert len(placed) == taken
 
     def test_batches_are_uncommitted_so_a_jitted_step_compiles_once(self) -> None:
         step = jax.jit(lambda x, image: x + jnp.sum(image.astype(jnp.float32)))
@@ -893,21 +871,21 @@ print(json.dumps({"platform": device.platform, "growth": growth}))
 def test_on_a_gpu_the_peak_is_what_placing_the_held_batches_takes_whatever_the_dataset() -> None:
     """Each variant in its own process (a device's peak cannot be reset in one).
 
-    Batches are placed one at a time as they are taken, with no device buffer, so iterating
-    while holding the last ``held`` batches raises the device's peak no higher than placing the
-    same host batches by hand with ``jax.device_put`` does, and a dataset ten times larger
-    changes it by nothing. The device allocator holds more than a batch's ``nbytes`` per batch
-    (RTX 4090, jax 0.11.1: 2.90 MB peak for 3 batches of 0.79 MB, the same by hand), so the
-    control, not ``nbytes``, is the bound.
+    On a GPU the host stage stages one batch ahead of the one taken (:func:`default_device_buffer`),
+    so iterating while holding the last ``held`` batches raises the device's peak no higher than
+    placing the same host batches by hand while keeping ``held`` plus that one, and a dataset ten
+    times larger changes it by nothing. The device allocator holds more than a batch's ``nbytes``
+    per batch (RTX 4090, jax 0.11.1: 2.90 MB peak for 3 batches of 0.79 MB, the same by hand), so
+    the control, not ``nbytes``, is the bound.
     """
     held = 2
 
-    def growth(mode: str, records: int) -> int:
+    def growth(mode: str, records: int, kept: int = held) -> int:
         result = run_python(
             _PEAK_WHILE_ITERATING,
             mode,
             str(records),
-            str(held),
+            str(kept),
             timeout=600,
             # The order is named on the CPU device, so the CPU platform runs beside the GPU.
             env={"JAX_PLATFORMS": "cuda,cpu", "XLA_PYTHON_CLIENT_PREALLOCATE": "false"},
@@ -918,6 +896,6 @@ def test_on_a_gpu_the_peak_is_what_placing_the_held_batches_takes_whatever_the_d
         return int(report["growth"])
 
     small, large = growth("pipeline", 2560), growth("pipeline", 25600)
-    control = growth("by hand", 2560)
+    control = growth("by hand", 2560, held + default_device_buffer("gpu"))
     assert 0 < small <= control
     assert large == small

@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Pipeline.raw_batches(chunk=None, *, max_chunk_bytes=None, with_provenance=False)`: unprocessed
   batches read by the host stage (`datarax.pipeline.host_stage`) and placed on the default device,
-  uncommitted, as each is taken (reads run ahead): the form whose DAG (`pipe.dag`) runs inside the
+  uncommitted, by the consumer (reads run ahead; one batch is staged on the device ahead of the one
+  taken on a GPU, none on the CPU and TPU): the form whose DAG (`pipe.dag`) runs inside the
   caller's differentiated step. An indexed source's batches are named on the CPU device and read
   with its stateless host read (`datarax.core.data_source.IndexedHostRead`) by Grain threads; a
   stream's run is read and decoded on one producer thread ahead of the consumer, through one
@@ -181,7 +182,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `for batch in pipeline` runs on the host stage: each batch is read by Grain threads, named on the
-  CPU device, placed on the device as it is taken and run through `pipeline.dag` in one compiled
+  CPU device, placed on the device by the consumer and run through `pipeline.dag` in one compiled
   call (`datarax.pipeline.dag_call.compile_dag`), split once per iteration, compiled once per
   batch shape, the state the stages write written back. Iteration serves the records and draws the
   compiled session served, uploads no dataset, and continues where the last batch taken ended

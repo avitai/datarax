@@ -1,11 +1,12 @@
 """The host stage stages up to ``d`` placed batches on the device ahead of the consumer.
 
-With a device buffer of ``d`` batches the placement runs on a thread of its own, Grain's
-``experimental.device_put`` composition (a host read buffer, ``map(jax.device_put)``, a thread
-prefetch of ``d``); ``d = 0`` places each batch on the consumer as it is taken. Whatever ``d``,
-the cursor names only the batches delivered, a read or placement error ends the run at them,
-``close()``/``reset()``/``set_state()`` release the batches placed ahead and the thread, and the
-placement stays explicit, uncommitted and in the caller's precision mode.
+The consumer places them, as Flax's ``prefetch_to_device`` does: taking a batch first places
+batches until ``d`` wait beside it, and ``jax.device_put`` returns before the transfer completes,
+so the transfers overlap the step. ``d`` is one on a GPU and zero on the CPU and TPU. Whatever
+``d``, the cursor names only the batches delivered, a read or placement error ends the run at
+them, ``close()``/``reset()``/``set_state()`` release the batches placed ahead, and the placement
+stays explicit, uncommitted, under the caller's transfer guard, in the caller's precision mode and
+on the caller's default device.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Batch
 from datarax.core.index_words import from_words
 from datarax.pipeline import Pipeline
+from datarax.pipeline.host_stage import default_device_buffer
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from tests.test_common.streams import RecordStream
 from tests.test_common.transfers import implicit_upload_raises
@@ -83,12 +85,8 @@ def _placed_batches() -> int:
 
 
 def _grain_threads() -> list[str]:
-    """The run's read threads (Grain's) and its placement thread."""
-    return [
-        t.name
-        for t in threading.enumerate()
-        if "grain" in t.name.lower() or t.name == "datarax-device-staging"
-    ]
+    """The run's read threads (Grain's)."""
+    return [t.name for t in threading.enumerate() if "grain" in t.name.lower()]
 
 
 class _Placements:
@@ -124,8 +122,7 @@ def test_the_device_holds_exactly_the_depth_ahead_of_the_batch_taken(
     """``d`` placed batches wait on the device beside the one the consumer holds, never more.
 
     Counted twice: the placements (a spy on ``jax.device_put``) and the live device arrays of
-    a batch's shape, after each ``next()`` once the placement thread has filled its room. ``d = 0``
-    places each batch on the consumer as it is taken.
+    a batch's shape, after each ``next()``. Every placement runs on the consumer's thread.
     """
     gc.collect()
     assert _placed_batches() == 0
@@ -135,14 +132,55 @@ def test_the_device_holds_exactly_the_depth_ahead_of_the_batch_taken(
     held = None
     for taken in range(1, 5):
         held = next(batches)
-        placements.wait_for(taken + depth)
-        threading.Event().wait(0.3)  # time for a placement past the room, were there one
+        threading.Event().wait(0.3)  # time for a placement past the depth, were there one
         assert placements.count - taken == depth
         assert _placed_batches() == 1 + depth
-    consumer = threading.current_thread().name
-    assert (consumer in placements.threads) == (depth == 0), placements.threads
+    assert placements.threads == {threading.current_thread().name}
     del held
     pipe.close()
+
+
+@pytest.mark.parametrize(
+    ("platform", "depth"), [("gpu", 1), ("cuda", 1), ("rocm", 1), ("cpu", 0), ("tpu", 0)]
+)
+def test_the_depth_is_one_on_a_gpu_and_zero_on_the_cpu_and_tpu(platform: str, depth: int) -> None:
+    """The fewest batches staged that keep the device busy (Flax's ``prefetch_to_device``: staging
+    is "mostly useful for GPUs, for TPUs and CPUs it should not be necessary")."""
+    assert default_device_buffer(platform) == depth
+
+
+def test_a_pipeline_stages_its_platform_s_depth_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    placements = _Placements(monkeypatch)
+    pipe = Pipeline(
+        source=_memory(), stages=[], batch_size=4, rngs=nnx.Rngs(3), shuffle=True, num_epochs=None
+    )
+    batches = iter(pipe.raw_batches())
+    for taken in range(1, 4):
+        held = next(batches)
+        threading.Event().wait(0.3)  # time for a placement past the depth, were there one
+        assert placements.count - taken == default_device_buffer(held["image"].device.platform)
+    pipe.close()
+
+
+@pytest.mark.parametrize("depth", _DEPTHS)
+def test_the_caller_s_transfer_guard_refuses_every_placement(depth: int) -> None:
+    pipe = _pipeline(_memory(), depth)
+    with (
+        jax.transfer_guard_host_to_device("disallow_explicit"),
+        pytest.raises(Exception, match="host-to-device transfer"),
+    ):
+        next(iter(pipe.raw_batches()))
+    pipe.close()
+
+
+@pytest.mark.parametrize("depth", _DEPTHS)
+def test_every_batch_lands_on_the_caller_s_default_device(depth: int) -> None:
+    default = jax.devices()[0]
+    other = next(d for d in (*jax.devices(), *jax.devices("cpu")) if d != default)
+    pipe = _pipeline(_memory(), depth, num_epochs=1)
+    with jax.default_device(other):
+        devices = {batch["image"].device for batch in pipe.raw_batches()}
+    assert devices == {other}
 
 
 @pytest.mark.parametrize("threads", [1, 4, 8])
@@ -316,7 +354,7 @@ kept = collections.deque(maxlen=held)
 for batch in batches:
     kept.append(batch)
     if mode == "pipeline":
-        threading.Event().wait(0.02)  # a step's time, in which the placement thread fills its room
+        threading.Event().wait(0.02)  # a step's time
 growth = device.memory_stats()["peak_bytes_in_use"] - before
 print(json.dumps({"platform": device.platform, "growth": growth}))
 """
@@ -327,12 +365,11 @@ print(json.dumps({"platform": device.platform, "growth": growth}))
 def test_on_a_gpu_the_peak_is_the_control_s_with_the_depth_more_batches(depth: int) -> None:
     """Each variant in its own process (a device's peak cannot be reset in one).
 
-    The consumer keeps its last ``held`` batches and takes the next after a step's time; the
-    device then holds ``held + d`` batches. Placing by hand while keeping ``k`` peaks at ``k + 1``,
-    the new batch placed beside the kept ones. Staged, the placement thread refills its room as
-    the consumer takes a batch, before or after the consumer drops its oldest (a race), so the
-    peak lies between the controls keeping ``held + d - 1`` and ``held + d``: the by-hand control
-    plus at most ``d`` batches, whatever the dataset's size (measured on an RTX 4090).
+    The consumer keeps its last ``held`` batches and takes the next after a step's time. Placing
+    by hand while keeping ``k`` peaks at ``k + 1``, the new batch placed beside the kept ones.
+    Staged, taking a batch places the one ``d`` ahead while the consumer still keeps ``held``, so
+    the peak lies above the control keeping ``held + d - 1`` and at most the control keeping
+    ``held + d``: the by-hand control plus at most ``d`` batches, whatever the dataset's size.
     """
     held = 2
 
