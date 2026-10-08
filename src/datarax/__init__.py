@@ -17,6 +17,7 @@ from datarax.core.data_source import DataSourceModule
 
 # Record and batch types
 from datarax.core.element_batch import Batch, Element
+from datarax.core.host_resources import HostResources
 from datarax.core.operator import OperatorModule
 from datarax.core.sampler import SamplerModule
 from datarax.core.temporal import TimeSeriesSpec
@@ -52,8 +53,9 @@ __all__ = [
     "DataSourceModule",
     "OperatorModule",
     "SamplerModule",
-    # Pipeline (linear stages + Pipeline.from_dag for branching)
+    # Pipeline (linear stages + Pipeline.from_dag for branching) and its host stage's budget
     "Pipeline",
+    "HostResources",
     # Host-to-device prefetching
     "prefetch_to_device",
     # Time-series contracts

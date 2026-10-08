@@ -28,10 +28,13 @@ extra, in a process of its own.
 from __future__ import annotations
 
 import contextlib
+import functools
 import itertools
 import logging
 import os
 import struct
+import sys
+import tempfile
 import weakref
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
@@ -47,6 +50,7 @@ from jax.typing import ArrayLike
 
 from datarax.core.data_source import (
     BatchSchedule,
+    HostRead,
     Provenance,
     record_words,
     RecordIdentity,
@@ -527,13 +531,95 @@ class _RecordId(NamedTuple):
 class ShardIndex:
     """Where each record of a TFRecord shard file sits: its payload's byte offset and length.
 
+    An index read from the copy shared with worker processes (:func:`_share_index`) pickles as
+    its place in that copy, so a worker maps the one copy instead of receiving its own.
+
     Attributes:
         payloads: int64 byte offset of each record's payload in the file, by record offset.
         lengths: int64 byte length of each record's payload, by record offset.
+        shared: ``(file, first)``: the shared copy holding the index and its first entry there,
+            or ``None`` for an index held by this process alone.
     """
 
     payloads: np.ndarray
     lengths: np.ndarray
+    shared: tuple[str, int] | None = None
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """A shared index by its place in the shared copy; any other by its arrays."""
+        if self.shared is None:
+            return ShardIndex, (self.payloads, self.lengths)
+        path, first = self.shared
+        return _shared_shard_index, (path, first, len(self.lengths))
+
+    @property
+    def nbytes(self) -> int:
+        """The bytes of its two arrays."""
+        return self.payloads.nbytes + self.lengths.nbytes
+
+
+# Memory every process maps; mkstemp makes each copy's file unique and its owner's only.
+_SHARED_DIRECTORY = Path("/dev/shm")  # nosec B108
+
+
+def _share_index(indexes: Sequence[ShardIndex]) -> tuple[str, tuple[ShardIndex, ...]]:
+    """One read-only copy of ``indexes`` for every worker of a run: a file in shared memory.
+
+    The offsets and lengths are written once, as one ``(2, records)`` int64 ``.npy`` file in
+    ``/dev/shm`` (memory every process maps once) or the temporary directory where there is none,
+    and read back as a memory map of it, which replaces the indexes this process held. The map
+    is read through once, so the copy is resident in this process, as its own copy was.
+
+    Args:
+        indexes: The split's shard indexes, in shard order.
+
+    Returns:
+        The file's path, and each index as a view of the one copy.
+    """
+    total = sum(len(index.lengths) for index in indexes)
+    directory = _SHARED_DIRECTORY if _SHARED_DIRECTORY.is_dir() else Path(tempfile.gettempdir())
+    descriptor, path = tempfile.mkstemp(prefix="datarax-tfds-index-", suffix=".npy", dir=directory)
+    os.close(descriptor)
+    table = np.lib.format.open_memmap(path, mode="w+", dtype=np.int64, shape=(2, total))
+    first = 0
+    for index in indexes:
+        count = len(index.lengths)
+        table[0, first : first + count] = index.payloads
+        table[1, first : first + count] = index.lengths
+        first += count
+    table.flush()
+    del table
+    mapped = np.load(path, mmap_mode="r")
+    int(np.asarray(mapped).sum())  # every page mapped in, so this process holds the one copy
+    shared, first = [], 0
+    for index in indexes:
+        count = len(index.lengths)
+        shared.append(
+            ShardIndex(
+                mapped[0, first : first + count], mapped[1, first : first + count], (path, first)
+            )
+        )
+        first += count
+    return path, tuple(shared)
+
+
+@functools.cache
+def _mapped_index(path: str) -> np.ndarray:
+    """A worker's one memory map of a shared index copy, however many shards read from it."""
+    return np.load(path, mmap_mode="r")
+
+
+def _shared_shard_index(path: str, first: int, count: int) -> ShardIndex:
+    """A shard's index read from the shared copy at ``path``: what a worker unpickles."""
+    table = _mapped_index(path)
+    payloads, lengths = table[0, first : first + count], table[1, first : first + count]
+    return ShardIndex(payloads, lengths, (path, first))
+
+
+def _remove(path: str) -> None:
+    """Remove a shared index copy once its source is gone."""
+    with contextlib.suppress(FileNotFoundError):
+        Path(path).unlink()
 
 
 def _pread(file: Any, size: int, position: int) -> bytes:
@@ -841,16 +927,19 @@ class TFDSStreamDataset(grain.IterDataset):
     Its iterator computes each pass's order over record ids (no file read) and walks the run's
     schedule: for each unit it takes the ids at the unit's positions, a batch crossing a pass's
     end continuing at the next pass's head, reads those records' payloads by their offsets in the
-    index and decodes them last. An element is the unit's host columns, provenance, ids and each
-    record's pass. Units are numbered from the run's first, wherever the run starts, and records
-    before the run's start are skipped as ids, never read. It implements Grain's slicing hook:
+    index and decodes them last. An element is the unit's host columns, provenance, ids, each
+    record's pass and the unit's place in the run. Units are numbered from the run's first,
+    wherever the run starts, and records before the run's start are skipped as ids, never read.
+    It implements Grain's slicing hook:
     with ``set_slice(slice(i, None, k))`` the iterator walks the same schedule but reads and
     decodes only units ``j`` with ``j % k == i``, so ``k`` such slices interleaved round robin from
     the first give the unsliced run, the stream's order not depending on ``k``, and the slices
     read each record once between them. That is how Grain's process prefetch splits a dataset
-    across workers. The dataset pickles (its read is plain values, the offset index included),
-    and each iterator opens its own files and decoder, so iterators in threads or processes share
-    no lazy state.
+    across workers. The dataset pickles (its read is plain values; the offset index goes as its
+    arrays, or, for a run read by worker processes, as its place in the one copy they share), and
+    each iterator opens its own files and decoder, so iterators in threads or processes share no
+    lazy state. It reports what workers reading it share and hold
+    (:class:`~datarax.core.host_resources.WorkerFootprint`).
     """
 
     def __init__(self, read: StreamRead) -> None:
@@ -885,8 +974,22 @@ class TFDSStreamDataset(grain.IterDataset):
         """A fresh iterator over the run, opening its own files and decoder."""
         return _TFDSStreamIterator(self._read, self._slice)
 
+    def shared_bytes(self) -> int:
+        """The offset index's bytes when every worker reads one shared copy of it, else 0."""
+        index = self._read.index
+        return sum(shard.nbytes for shard in index) if index and index[0].shared else 0
 
-type _Unit = tuple[dict[str, Any], tuple[dict[str, Any], ...], np.ndarray, np.ndarray]
+    def working_bytes(self) -> int:
+        """A worker's shuffle buffer of record ids, when the run is shuffled."""
+        if self._read.key is None:
+            return 0
+        held = _RecordId(1 << 20, 1 << 20)
+        return self._read.buffer_size * (sys.getsizeof(held) + 2 * sys.getsizeof(1 << 20) + 8)
+
+
+type _Unit = tuple[dict[str, Any], tuple[dict[str, Any], ...], np.ndarray, np.ndarray, int]
+"""A decoded unit: its host columns, provenance, ids, each record's pass, and its place in the
+run."""
 
 
 class _TFDSStreamIterator(grain.DatasetIterator):
@@ -917,7 +1020,7 @@ class _TFDSStreamIterator(grain.DatasetIterator):
                 frames = [self._frame(record) for record, _ in records]
                 columns, provenance, ids = _decoded_batch(self._features, frames, self._read.kept)
                 epochs = np.asarray([pass_index for _, pass_index in records], dtype=np.int32)
-                return columns, provenance, ids, epochs
+                return columns, provenance, ids, epochs, unit
 
     def _take(self, start: int, pass_index: int, size: int) -> list[tuple[_RecordId, int]]:
         """The ids of ``size`` positions from ``start`` of pass ``pass_index`` on, across passes."""
@@ -1009,6 +1112,11 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
         """A TFDS record's id is its shard file and offset: the stream's own names."""
         return RecordIdentity.STREAM_IDS
 
+    @property
+    def host_read(self) -> HostRead:
+        """TFDS's NumPy decode holds the GIL: under a budget, worker processes read the run."""
+        return HostRead.GIL_BOUND
+
     def __init__(  # noqa: DOC502 - _prepared_builder, _supervised_keys and _split_shard raise
         self, config: TFDSStreamingConfig, *, name: str | None = None
     ) -> None:
@@ -1059,6 +1167,8 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
             )
         )
         self._index = HostValue({})
+        # The split's index as the one copy every worker of a run reads, made once it is needed.
+        self._shared_index = HostValue(None)
         self.length = sum(shard.take for shard in self._shards.value)
 
     @property
@@ -1095,26 +1205,38 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
             self._stream_read(_PassUnits(pass_index, self.length, batch_size), key)
         )
 
-    def run_dataset(self, schedule: BatchSchedule, key: np.ndarray | None) -> TFDSStreamDataset:
+    def run_dataset(
+        self, schedule: BatchSchedule, key: np.ndarray | None, *, for_workers: bool = False
+    ) -> TFDSStreamDataset:
         """A run of passes as one Grain dataset of decoded units, numbered from the run's start.
 
         Args:
             schedule: The run's units, each a run of batches ``(start, pass, size)``.
             key: The pipeline's key as host words, or ``None`` for file order.
+            for_workers: Whether worker processes read the run: its offset index then goes to
+                them as one shared read-only copy, made once for the source, so a worker holds
+                none of its own.
 
         Returns:
             The run's dataset (:class:`TFDSStreamDataset`).
         """
-        return TFDSStreamDataset(self._stream_read(schedule, key))
+        return TFDSStreamDataset(self._stream_read(schedule, key, for_workers=for_workers))
 
-    def _stream_read(self, schedule: BatchSchedule, key: np.ndarray | None) -> StreamRead:
+    def _stream_read(
+        self, schedule: BatchSchedule, key: np.ndarray | None, *, for_workers: bool = False
+    ) -> StreamRead:
         """What a run reads, as plain values, the shards' record index included."""
         config = self.config
+        index = (
+            self._shared()
+            if for_workers
+            else tuple(self._shard_index(shard.shard) for shard in self._shards.value)
+        )
         return StreamRead(
             name=self._dataset,
             data_dir=config.data_dir,
             shards=self._shards.value,
-            index=tuple(self._shard_index(shard.shard) for shard in self._shards.value),
+            index=index,
             length=self.length,
             key=None if key is None else np.asarray(key, np.uint32),
             buffer_size=config.shuffle_buffer_size,
@@ -1135,7 +1257,7 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
         Yields:
             The pass's records as decoded chunks.
         """
-        for columns, provenance, ids, _ in self.pass_dataset(pass_index, key, read_size):
+        for columns, provenance, ids, _, _ in self.pass_dataset(pass_index, key, read_size):
             yield StreamChunk(columns, tuple(MappingProxyType(p) for p in provenance), ids)
 
     def provenance(  # noqa: DOC502 - record_words, refuse_padding and _frame_at raise
@@ -1165,6 +1287,26 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
             MappingProxyType(record)
             for record in _decoded_batch(features, frames, self._kept.value)[1]
         )
+
+    def _shared(self) -> tuple[ShardIndex, ...]:
+        """The split's index as one read-only copy in shared memory, the index this source reads.
+
+        Made once: the indexes this process built are written to
+        one file and replaced by views of it, so the host holds one copy, which every worker maps
+        instead of receiving its own; the file goes with the source.
+
+        Returns:
+            Each of the split's shards' index, in shard order, as a view of the shared copy.
+        """
+        shared = self._shared_index.value
+        if shared is None:
+            indexes = [self._shard_index(shard.shard) for shard in self._shards.value]
+            path, shared = _share_index(indexes)
+            for shard, index in zip(self._shards.value, shared, strict=True):
+                self._index.value[shard.shard] = index
+            self._shared_index.value = shared
+            weakref.finalize(self, _remove, path)
+        return shared
 
     def _shard_index(self, shard: int) -> ShardIndex:
         """Shard ``shard``'s record index, built from its frame headers on first use, then kept."""

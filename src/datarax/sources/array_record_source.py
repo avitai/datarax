@@ -17,6 +17,7 @@ from datarax.core.config import StructuralConfig
 from datarax.core.data_source import (
     DataSourceModule,
     host_rows,
+    HostRead,
     NO_PROVENANCE,
     record_words,
     RecordIdentity,
@@ -47,9 +48,10 @@ class _Records:
     """ArrayRecord files read by position, kept on the host and out of NNX state.
 
     ArrayRecord's data source (the reader Grain and TFDS read the format with) opens each file at
-    its first read; reads go through one lock, so two threads never open the same file twice. It
-    pickles as that data source does, without open readers, so a copy sent to a worker process
-    reopens the files where it reads them.
+    its first read, without a lock, so two threads reading one fresh source could open a file
+    twice. Opening goes through one lock; reads of open files run side by side, as Grain's
+    read threads run them. It pickles as that data source does, without open readers, so a copy
+    sent to a worker process reopens the files where it reads them.
     """
 
     __slots__ = ("_lock", "paths", "source")
@@ -61,8 +63,17 @@ class _Records:
 
     def read(self, rows: Sequence[int]) -> Sequence[bytes]:
         """The records at ``rows``, in one batched read (a parallel read per file)."""
+        self._open(rows)
+        return self.source.__getitems__(rows)
+
+    def _open(self, rows: Sequence[int]) -> None:
+        """Open, under the lock, every file of ``rows`` not open yet (ArrayRecord 0.8 internals)."""
+        source = self.source
+        if None not in source._readers:  # noqa: SLF001 - every file open: nothing to lock
+            return
         with self._lock:
-            return self.source.__getitems__(rows)
+            for reader in {source._reader_idx_and_position(row)[0] for row in rows}:  # noqa: SLF001
+                source._ensure_reader_exists(reader)  # noqa: SLF001
 
     def close(self) -> None:
         """Close the open readers; the files reopen at the next read."""
@@ -117,6 +128,7 @@ class ArrayRecordSourceModule(DataSourceModule):
         paths: Any,
         *,
         decode: RecordDecoder,
+        decode_read: HostRead = HostRead.GIL_BOUND,
         name: str | None = None,
     ) -> None:
         """Open the ArrayRecord files, reading no record.
@@ -125,6 +137,10 @@ class ArrayRecordSourceModule(DataSourceModule):
             config: Configuration for the source.
             paths: A path or ``FileInstruction``, or a sequence of them.
             decode: Turns a batch's ``bytes`` records into one mapping of values per record.
+            decode_read: Whether ``decode`` holds the GIL: ``GIL_BOUND`` (a Python decode, the
+                default) is read in worker processes under a budget; ``GIL_FREE`` declares a
+                decoder that releases it (soundfile, tensorstore, a batch tokenizer), read on
+                threads.
             name: Optional name for the module.
 
         Raises:
@@ -142,12 +158,18 @@ class ArrayRecordSourceModule(DataSourceModule):
                 )
         self._records = _Records(paths)
         self._decode = decode
+        self._decode_read = decode_read
         # The record count as a plain static: the source's order reads it, never the reader.
         self._length = len(self._records.source)
 
     def __len__(self) -> int:
         """The number of records in the files."""
         return self._length
+
+    @property
+    def host_read(self) -> HostRead:
+        """What ``decode`` was declared as: it decodes every batch read."""
+        return self._decode_read
 
     def __repr__(self) -> str:
         """The files and the record count, which identify the records a checkpoint names."""

@@ -34,7 +34,7 @@ from datarax.core.element_batch import Batch, PADDING_INDEX
 from datarax.core.prng import key_words
 from datarax.pipeline import Pipeline
 from datarax.pipeline.epochs import EpochPlan, Run
-from datarax.pipeline.host_stage import RunUnits
+from datarax.pipeline.run_units import RunUnits
 from datarax.sources import (
     from_tfds,
     tfds_source,
@@ -531,7 +531,7 @@ class TestThePassDatasetForWorkers:
     def _batches(dataset: Any) -> list[tuple[list[int], bytes]]:
         return [
             (ids.tolist(), hashlib.sha256(columns["image"].tobytes()).digest())
-            for columns, _, ids, _ in dataset
+            for columns, _, ids, _, _ in dataset
         ]
 
     @pytest.mark.parametrize(("seed", "pass_index"), sorted(_DECIDED_ORDER))
@@ -542,7 +542,7 @@ class TestThePassDatasetForWorkers:
             pass_index, key_words(jax.random.key(seed)), 4
         )
 
-        served = [int(i) & 0xFFFFFFFF for _, _, ids, _ in dataset for i in ids]
+        served = [int(i) & 0xFFFFFFFF for _, _, ids, _, _ in dataset for i in ids]
 
         assert served == _DECIDED_ORDER[(seed, pass_index)]
 
@@ -585,7 +585,7 @@ class TestThePassDatasetForWorkers:
             dataset = source.pass_dataset(0, key, 2)
             dataset.set_slice(slice(i, None, slices))
             reads.calls.clear()
-            served = [int(r) & 0xFFFFFFFF for _, _, ids, _ in dataset for r in ids]
+            served = [int(r) & 0xFFFFFFFF for _, _, ids, _, _ in dataset for r in ids]
 
             assert len(reads.calls) == len(served)  # one read per own record, no header reads
             lengths = _payload_lengths(tfds_fixture)
@@ -668,12 +668,25 @@ class TestRunDataset:
                 [int(e) for e in epochs],
                 hashlib.sha256(columns["image"].tobytes()).digest(),
             )
-            for columns, _, ids, epochs in dataset
+            for columns, _, ids, epochs, _ in dataset
         ]
+
+    def test_each_unit_carries_its_place_in_the_run_under_any_slice(
+        self, tfds_fixture: TFDSFixture
+    ) -> None:
+        """The training process checks units arrive in turn by this place (none is lost)."""
+        source = _stream(tfds_fixture)
+        units = _run_units(TRAIN_RECORDS, 6, passes=2)
+        count = units.units()
+        assert count is not None
+        assert [unit for *_, unit in source.run_dataset(units, None)] == list(range(count))
+        sliced = source.run_dataset(units, None)
+        sliced.set_slice(slice(1, None, 3))
+        assert [unit for *_, unit in sliced] == list(range(1, count, 3))
 
     @staticmethod
     def _pass_ids(source: TFDSStreamingSource, key: Any, pass_index: int) -> list[int]:
-        return [int(i) for _, _, ids, _ in source.pass_dataset(pass_index, key, 64) for i in ids]
+        return [int(i) for _, _, ids, _, _ in source.pass_dataset(pass_index, key, 64) for i in ids]
 
     @pytest.mark.parametrize("drop_last", [False, True])
     def test_the_run_is_its_passes_cut_into_batches_by_the_plan(
@@ -776,7 +789,7 @@ class TestThroughTheHostStage:
         key = key_words(pipe._epoch_key_base[...])  # noqa: SLF001
         expected = [
             [int(i) for i in ids]
-            for _, _, ids, _ in source.run_dataset(_run_units(TRAIN_RECORDS, 6, passes=2), key)
+            for _, _, ids, _, _ in source.run_dataset(_run_units(TRAIN_RECORDS, 6, passes=2), key)
         ]
         names = [
             [(int(hi) << 32) | int(lo) for hi, lo in np.asarray(batch.indices)] for batch in served

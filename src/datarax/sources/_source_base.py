@@ -395,21 +395,26 @@ class StreamingSourceBase(DataSourceModule):
             return empty_stream_batch(), ()
         return self._named(chunk, cursor), chunk.provenance
 
-    def run_dataset(self, schedule: BatchSchedule, key: np.ndarray | None) -> Any:
+    def run_dataset(
+        self, schedule: BatchSchedule, key: np.ndarray | None, *, for_workers: bool = False
+    ) -> Any:
         """A run of this stream's passes as one sliceable Grain dataset, if the stream has one.
 
         A stream whose passes' orders are computed without reading its records (TFDS) returns
-        a dataset serving the schedule's units, numbered from the run's start, which Grain can
-        slice across workers. This base has none, and the host stage reads it pass by pass.
+        a dataset serving the schedule's units, numbered from the run's start (each element's
+        last item is its unit's place in the run), which Grain can slice across workers. This
+        base has none, and the host stage reads it pass by pass.
 
         Args:
             schedule: The run's units, each a run of batches ``(start, pass, size)``.
             key: The pipeline's key as host words, or ``None`` for the stream's own order.
+            for_workers: Whether worker processes read the run, so what every worker reads
+                alike is shared among them rather than sent to each.
 
         Returns:
             ``None``: the base reads no run as one dataset.
         """
-        del schedule, key
+        del schedule, key, for_workers
         return None
 
     @staticmethod

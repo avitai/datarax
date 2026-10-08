@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import configparser
 import fnmatch
 import re
 import shlex
@@ -138,6 +139,45 @@ def test_importlinter_contract_exists_for_datarax_layers() -> None:
         "datarax.utils",
     ):
         assert layer in content
+
+
+_PIPELINE_INTERNAL_LAYERS = (
+    "datarax.pipeline.pipeline",
+    "datarax.pipeline.host_stage | datarax.pipeline.iteration",
+    "datarax.pipeline.run_configuration | datarax.pipeline.run_units",
+    "datarax.pipeline.epochs | datarax.pipeline.dag_call | datarax.pipeline.read_plan",
+    "datarax.pipeline.host_workers",
+)
+"""The pipeline's internal layers, top first; ``|`` joins independent siblings."""
+
+
+def _layers(lines: list[str]) -> list[frozenset[str]]:
+    """Each layer as the set of its modules, top first."""
+    return [frozenset(part.strip() for part in line.split("|")) for line in lines if line.strip()]
+
+
+def _contract_layers(path: Path, contract: str) -> list[frozenset[str]]:
+    """The layers an Import Linter file declares for ``contract``, parsed."""
+    parser = configparser.ConfigParser()
+    parser.read_string(path.read_text())
+    return _layers(parser[f"importlinter:contract:{contract}"]["layers"].splitlines())
+
+
+def test_the_pipeline_internal_contract_declares_its_layers_exactly() -> None:
+    """The host stage and the iteration sit above the run configuration, the plan and naming,
+    and the worker machinery at the bottom, which every reader of a run imports."""
+    assert _contract_layers(IMPORTLINTER, "pipeline-internal") == _layers(
+        list(_PIPELINE_INTERNAL_LAYERS)
+    )
+
+
+def test_positive_control_a_layer_missing_from_the_contract_is_seen(tmp_path: Path) -> None:
+    declared = IMPORTLINTER.read_text()
+    missing = declared.replace(" | datarax.pipeline.read_plan", "")
+    assert missing != declared, "the control removes nothing: read_plan is not declared"
+    copy = tmp_path / ".importlinter"
+    copy.write_text(missing)
+    assert _contract_layers(copy, "pipeline-internal") != _layers(list(_PIPELINE_INTERNAL_LAYERS))
 
 
 def test_protected_directories_are_excluded_from_tooling() -> None:

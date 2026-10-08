@@ -5,6 +5,7 @@ Uses TimingCollector for measurement (replaces AdvancedProfiler).
 
 import pytest
 
+from datarax.pipeline.host_workers import mark_grain_worker_flag
 from datarax.utils.console import emit
 
 
@@ -34,6 +35,8 @@ class TestRealIO:
             pytest.skip("No .array_record files found in dataset directory.")
 
         results = {}
+        # Grain reads one absl flag as it starts a worker, which absl refuses outside app.run.
+        mark_grain_worker_flag()
 
         for workers in [0, 4, 8, 16]:
             records = grain.sources.ArrayRecordDataSource([str(p) for p in shards])

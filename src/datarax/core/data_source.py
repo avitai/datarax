@@ -11,7 +11,7 @@ import logging
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, cast, Protocol, runtime_checkable
 
 import jax
 import numpy as np
@@ -164,6 +164,23 @@ class RecordIdentity(enum.Enum):
     record's provenance travels beside the batch, and a table keyed by record is refused."""
 
 
+class HostRead(enum.Enum):
+    """Whether a source's host read holds the GIL, which decides what reads it in parallel.
+
+    Every source declares one (:attr:`DataSourceModule.host_read`). Given a RAM budget
+    (``Pipeline(host_resources=...)``), the host stage reads a GIL-free read on threads and a
+    GIL-bound one in Grain worker processes, as Grain advises; without one, on threads.
+    """
+
+    GIL_FREE = "gil_free"
+    """NumPy gathers, memory maps, or a decode that releases the GIL: threads read it in
+    parallel, and processes would only add a copy of the source per worker."""
+
+    GIL_BOUND = "gil_bound"
+    """A decode in Python that holds the GIL (TFDS's NumPy decode, a Pillow decode per record):
+    one thread reads at the speed of one core, so worker processes read it."""
+
+
 class IndexedHostRead(Protocol):
     """The stateless host read of an ``INDEXED`` source, which the host stage reads it with.
 
@@ -279,6 +296,15 @@ class DataSourceModule(StructuralModule):
         forward with ``get_batch(batch_size)``, which the host stage calls in order. A subclass
         declares it with a property returning its kind.
         """
+
+    @property
+    def host_read(self) -> HostRead:
+        """Whether this source's host read holds the GIL (see :class:`HostRead`).
+
+        This base reads arrays it holds or maps, without the GIL: ``GIL_FREE``. A source that
+        decodes in Python on each read declares ``GIL_BOUND``.
+        """
+        return HostRead.GIL_FREE
 
     def provenance(  # noqa: DOC502 - the checks it calls raise
         self, indices: ArrayLike
@@ -522,3 +548,34 @@ class DataSourceModule(StructuralModule):
             f"{self.__class__.__name__} must implement element_spec(). "
             "Return a PyTree of jax.ShapeDtypeStruct describing one emitted element."
         )
+
+
+def read_records(
+    source: DataSourceModule,
+    indices: ArrayLike,
+    *,
+    epochs: ArrayLike,
+    contiguous: bool,
+    with_provenance: bool,
+) -> tuple[Batch, Provenance | None]:
+    """The records ``indices`` names from an ``INDEXED`` source, and their provenance when asked.
+
+    A source implementing :class:`IndexedHostReadWithProvenance` reads both at once (its
+    provenance would cost a second decode); any other reads its batch with
+    :class:`IndexedHostRead`'s ``get_batch`` and looks its records' provenance up by index.
+
+    Args:
+        source: The indexed source, implementing :class:`IndexedHostRead`.
+        indices: uint32 ``(n, 2)`` record indices.
+        epochs: The epoch of every record, or of each ``(n,)``.
+        contiguous: Whether ``indices`` is a run of consecutive records, read as views.
+        with_provenance: Whether the records' provenance is read too.
+
+    Returns:
+        The records as a host ``Batch``, and one mapping per record in row order, or ``None``
+        when not asked for.
+    """
+    if with_provenance and isinstance(source, IndexedHostReadWithProvenance):
+        return source.read_with_provenance(indices, epochs=epochs, contiguous=contiguous)
+    batch = cast(IndexedHostRead, source).get_batch(indices, epochs=epochs, contiguous=contiguous)
+    return batch, source.provenance(indices) if with_provenance else None

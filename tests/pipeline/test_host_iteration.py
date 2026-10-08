@@ -30,12 +30,14 @@ from datarax.core import batch_ops
 from datarax.core.config import OperatorConfig, StructuralConfig
 from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Batch, Element
+from datarax.core.host_resources import HostResources
 from datarax.core.index_words import from_words
 from datarax.core.operator import OperatorModule, require_key
 from datarax.pipeline import Pipeline
 from datarax.pipeline.host_stage import HostStage
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
+from tests.test_common.host_plans import reading_with
 from tests.test_common.streams import RecordStream
 from tests.test_common.transfers import implicit_upload_raises
 
@@ -61,6 +63,7 @@ def _pipeline(
     num_epochs: int | None = 3,
     stages: list[nnx.Module] | None = None,
     seed: int = 3,
+    host_resources: HostResources | None = None,
 ) -> Pipeline:
     return Pipeline(
         source=source,
@@ -70,6 +73,7 @@ def _pipeline(
         shuffle=shuffle,
         drop_last=drop_last,
         num_epochs=num_epochs,
+        host_resources=host_resources,
     )
 
 
@@ -308,6 +312,7 @@ class TestState:
         assert state["stream"] == {"pass": 1, "records": 6, "arrived": 16, "passes_left": None}
         assert state["epoch"] is None and state["position"] is None
 
+    @pytest.mark.usefixtures("still_resident")
     @pytest.mark.parametrize("drop_last", [False, True])
     def test_resume_after_any_batch_with_threads_ahead_is_exact(
         self, drop_last: bool, monkeypatch: pytest.MonkeyPatch
@@ -332,10 +337,15 @@ class TestState:
         monkeypatch.setattr(MemorySource, "get_batch", counted)
 
         def build(threads: int) -> Pipeline:
-            pipe = _pipeline(_memory(), stages=[_Jitter()], drop_last=drop_last, num_epochs=3)
-            pipe.host_stage._read_threads = threads
-            pipe.host_stage._read_buffer = 8
-            return pipe
+            source = _memory()
+            resources = reading_with(source, 4, threads=threads, read_buffer=8)
+            return _pipeline(
+                source,
+                stages=[_Jitter()],
+                drop_last=drop_last,
+                num_epochs=3,
+                host_resources=resources,
+            )
 
         whole = [(_rows(b), np.asarray(b["image"])) for b in build(1)]
         states: dict[int, list[Any]] = {}

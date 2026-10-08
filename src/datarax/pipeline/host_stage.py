@@ -3,9 +3,10 @@
 Every source kind reads through one stage, which does nothing but read:
 
 - An ``INDEXED`` source's run is a :class:`~datarax.pipeline.epochs.Run` of the pipeline's plan,
-  cut into units (:class:`RunUnits`: one batch, or a chunk of ``K`` batches read together).
-  Grain maps each unit's number to a read on worker threads
-  (``grain.MapDataset.range(...).map(...)``): the batch's records are named on the CPU device
+  cut into units (:class:`~datarax.pipeline.run_units.RunUnits`: one batch, or a chunk of ``K``
+  batches read together). Grain maps each unit's number to a read on worker threads
+  (``grain.MapDataset.range(...).map(...)``) by :class:`~datarax.pipeline.run_units.IndexedRead`:
+  the batch's records are named on the CPU device
   (:class:`~datarax.pipeline.epochs.HostNaming`) and read with the source's stateless host read,
   ``get_batch(indices, *, epochs, contiguous)``
   (:class:`~datarax.core.data_source.IndexedHostRead`).
@@ -14,7 +15,13 @@ Every source kind reads through one stage, which does nothing but read:
 - Any other stream (HuggingFace) is read pass by pass, at a position of the host stage's own, its
   batches cut by :func:`~datarax.pipeline.epochs.stream_batches`.
 
-A stream's run, either way, is read and decoded on one producer thread ahead of the consumer.
+How a run is read is its plan (:meth:`HostStage.plan`): without a RAM budget, an indexed source
+on one Grain read thread two units ahead and a stream on its one producer thread, as C5a-4 left
+them; with ``Pipeline(host_resources=...)``, a GIL-free read on threads and a GIL-bound one
+(a Python decode) in Grain worker processes (``mp_prefetch``), as many as the budget admits
+(:mod:`datarax.pipeline.read_plan`). A worker reads and decodes, and sends its unit back through
+shared memory with its provenance as plain values (:mod:`datarax.pipeline.host_workers`); the
+consumer checks every unit arrives in order.
 
 A batch's provenance comes beside it when asked. Units are read ahead of the consumer, which places
 them on the default device, uncommitted, so a jitted step taking them compiles once; nothing else
@@ -33,14 +40,12 @@ import collections
 import dataclasses
 import inspect
 import logging
-import math
 import sys
-import threading
 import time
 import weakref
 from collections.abc import Callable, Iterator, Mapping
 from types import MappingProxyType
-from typing import Any, cast, NamedTuple
+from typing import Any, cast
 
 import grain
 import jax
@@ -49,40 +54,41 @@ import numpy as np
 from datarax.core import batch_ops
 from datarax.core.data_source import (
     DataSourceModule,
-    IndexedHostRead,
-    IndexedHostReadWithProvenance,
+    HostRead,
     Provenance,
     RecordIdentity,
 )
 from datarax.core.element_batch import Batch
-from datarax.core.index_words import from_words, to_words
+from datarax.core.host_resources import HostResources
+from datarax.core.index_words import to_words
 from datarax.core.prng import key_words
 from datarax.core.spec import declared_spec, validate_batch, validate_device_dtypes
+from datarax.pipeline import host_workers, run_configuration as configuration
 from datarax.pipeline.epochs import EpochPlan, HostNaming, Run, stream_batches
+from datarax.pipeline.host_workers import JaxSettings
+from datarax.pipeline.read_plan import (
+    budget_plan,
+    default_plan,
+    host_batch_bytes,
+    host_read_path,
+    HostPlan,
+    HostReadPath,
+    HostTerms,
+    measure_terms,
+    ReadAccess,
+    spec_bytes,
+)
+from datarax.pipeline.run_units import HostElement, IndexedRead, RunUnits
 from datarax.sources._source_base import StreamCursor, StreamingSourceBase
 from datarax.sources.eager_source import HostValue
 
 
 logger = logging.getLogger(__name__)
 
-_NAMING_BLOCK_RECORDS = 16_384
-"""Records the host naming names per call (:class:`_BlockNames`): ``max(1, this // B)`` full
-batches, so a block holds at most this many records' names (192 KiB), or one batch's for a larger
-batch. Fixed, so the block program compiles once per source structure and plan. At B = 256 a
-block is 64 batches."""
-_BLOCKS_KEPT = 2
-"""Blocks of names a run holds at once: the read threads read consecutive units, so at most two
-blocks are in use; an evicted block asked for again is named again, identically."""
 
-_READ_THREADS = 1
-"""Read threads per run. One host thread serves in-memory and memory-mapped gathers (millions of
-records a second); a decode-bound read gains little from a second thread (the GIL), and Grain
-processes are the remedy there."""
 _GPU_PLATFORMS = frozenset({"gpu", "cuda", "rocm"})
 """Platform names a GPU goes by: ``Device.platform`` and ``jax.default_backend()`` say ``gpu``,
 a ``JAX_PLATFORMS`` entry or a default-device string may say ``cuda`` or ``rocm``."""
-_READ_BUFFER = 2
-"""Units read ahead of the consumer, on the host, before the consumer places them."""
 
 
 def default_device_buffer(platform: str) -> int:
@@ -120,266 +126,6 @@ class Cursor:
     end_epoch: int | None
 
 
-class HostElement(NamedTuple):
-    """A unit as read on the host: its batch, its records' provenance, where the run stands after.
-
-    Attributes:
-        batch: The unit's batch, ``(B, ...)`` or a chunk ``(K, B, ...)``, on the host.
-        provenance: One mapping per record, in row order, or ``None`` when not asked for.
-        after: ``(epoch, position, arrived)`` once the unit is served.
-    """
-
-    batch: Batch
-    provenance: Provenance | None
-    after: tuple[int, int, int]
-
-
-@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class RunUnits:
-    """A run cut into units: chunks of ``chunk`` full batches, then the rest one at a time.
-
-    While ``chunk`` full batches remain, a unit holds that many; the full batches left over come
-    singly, and the run's short final batch last, so a scan over chunks needs a ``chunk``-step
-    body, a one-step body, and one more compile for the short batch. Units are numbered from the
-    run's start. A :class:`~datarax.core.data_source.BatchSchedule`.
-
-    Attributes:
-        run: The run.
-        chunk: Full batches per chunk, or ``None`` for single batches.
-    """
-
-    run: Run
-    chunk: int | None = None
-
-    @property
-    def size(self) -> int:
-        """Batches in a chunk; 1 when the run is served in single batches."""
-        return 1 if self.chunk is None else self.chunk
-
-    def is_chunk(self, ordinal: int) -> bool:
-        """Whether unit ``ordinal`` is a chunk ``(K, B, ...)`` rather than a single batch."""
-        if self.chunk is None:
-            return False
-        full = self._full_batches()
-        return full is None or ordinal < full // self.chunk
-
-    def _full_batches(self) -> int | None:
-        """The run's full batches, or ``None`` for a run without an end."""
-        total = self.run.batches()
-        if total is None or total == 0:
-            return total
-        last = self.run.batch(total - 1)
-        assert last is not None  # noqa: S101 - a batch below the run's count exists
-        return total - (last[2] < self.run.plan.batch_size)
-
-    def unit(self, ordinal: int) -> tuple[tuple[int, int, int], ...] | None:
-        """The batches of unit ``ordinal``, or ``None`` past the run's end.
-
-        Args:
-            ordinal: The unit's place in the run.
-
-        Returns:
-            Its batches as ``(start, epoch, size)``.
-        """
-        first = self.first_batch(ordinal)
-        count = self.size if self.is_chunk(ordinal) else 1
-        batches = tuple(self.run.batch(first + k) for k in range(count))
-        return None if None in batches else cast(tuple[tuple[int, int, int], ...], batches)
-
-    def first_batch(self, ordinal: int) -> int:
-        """The run's ordinal of unit ``ordinal``'s first batch.
-
-        Args:
-            ordinal: The unit's place in the run.
-
-        Returns:
-            Its first batch's place in the run.
-        """
-        if not self.is_chunk(ordinal):
-            full = self._full_batches()
-            if full is not None and self.chunk is not None:
-                chunks = full // self.chunk
-                return chunks * self.chunk + ordinal - chunks
-            return ordinal
-        return ordinal * self.size
-
-    def units(self) -> int | None:
-        """The run's units, or ``None`` for a run without an end."""
-        full = self._full_batches()
-        if full is None:
-            return None
-        total = self.run.batches()
-        assert total is not None  # noqa: S101 - a run with full batches counted has an end
-        size = self.size
-        return full // size + total - full // size * size
-
-    def after(self, ordinal: int) -> tuple[int, int]:
-        """``(epoch, position)`` once unit ``ordinal`` is served.
-
-        Args:
-            ordinal: A unit of the run.
-
-        Returns:
-            Where the next unit starts.
-        """
-        batches = self.unit(ordinal)
-        assert batches is not None  # noqa: S101 - only a served unit is asked for
-        start, epoch, size = batches[-1]
-        position, epoch = self.run.plan.advance(start, epoch, size)
-        return epoch, position
-
-
-class IndexedRead:
-    """The read of an ``INDEXED`` source's run, unit by unit: what each Grain worker runs.
-
-    A unit's batches are named on the CPU device (in blocks, :class:`_BlockNames`) and read with
-    one host read; a chunk is split into its batches and stacked, ``(K, B, ...)``. Asked for
-    provenance, a source implementing
-    :class:`~datarax.core.data_source.IndexedHostReadWithProvenance` reads both at once; any
-    other looks its records' provenance up by index. A read marks a run consecutive records as
-    contiguous only when its names are (so a source reads it as views). It holds the source, the
-    run's units, the naming and the key as host words, and pickles with them, so a worker process
-    reads with a copy of it.
-    """
-
-    def __init__(
-        self,
-        source: DataSourceModule,
-        units: RunUnits,
-        naming: HostNaming,
-        *,
-        key: np.ndarray | None,
-        with_provenance: bool,
-    ) -> None:
-        """Hold what a unit's read needs.
-
-        Args:
-            source: The indexed source.
-            units: The run's units.
-            naming: The pipeline's host naming.
-            key: The pipeline's key as host words, or ``None`` when it does not shuffle.
-            with_provenance: Whether each unit's provenance is looked up.
-        """
-        self.source = source
-        self.units = units
-        self.names = _BlockNames(naming, units.run, key)
-        self.key = key
-        self.with_provenance = with_provenance
-
-    def __call__(self, ordinal: int) -> HostElement:
-        """Read unit ``ordinal``.
-
-        Args:
-            ordinal: The unit, from the run's start.
-
-        Returns:
-            The unit as read on the host.
-        """
-        batches = self.units.unit(ordinal)
-        assert batches is not None  # noqa: S101 - Grain asks only for the run's units
-        first = self.units.first_batch(ordinal)
-        named = [self.names(first + k, *batch) for k, batch in enumerate(batches)]
-        indices = np.concatenate([indices for indices, _ in named])
-        epochs = np.concatenate([epochs for _, epochs in named])
-        values = from_words(indices)
-        contiguous = len(values) > 1 and bool(np.all(np.diff(values.astype(np.int64)) == 1))
-        source = self.source
-        provenance: Provenance | None = None
-        if self.with_provenance and isinstance(source, IndexedHostReadWithProvenance):
-            batch, provenance = source.read_with_provenance(
-                indices, epochs=epochs, contiguous=contiguous
-            )
-        else:
-            batch = cast(IndexedHostRead, source).get_batch(
-                indices, epochs=epochs, contiguous=contiguous
-            )
-            provenance = source.provenance(indices) if self.with_provenance else None
-        if self.units.is_chunk(ordinal):
-            batch = batch_ops.as_chunk(batch, len(batches))
-        epoch, position = self.units.after(ordinal)
-        return HostElement(batch, provenance, (epoch, position, 0))
-
-
-class _BlockNames:
-    """A run's batch names, a block of full batches named per call of the host naming.
-
-    Naming costs a fixed dispatch to the CPU device and back per call, which dominates a small
-    batch's read, so the run's full batches are named :data:`_NAMING_BLOCK_RECORDS` records at a
-    time: block ``b`` holds the run's batches ``b * M .. b * M + M - 1`` (``M`` full batches),
-    named by :meth:`~datarax.pipeline.epochs.HostNaming.block`, which names each exactly as alone.
-    Blocks count from the run's start, so a run resumed anywhere names the same records. The run's
-    short final batch is named alone, by the program that serves its size; a block's slots past
-    the run's full batches repeat a batch of the block and are never served. The read threads ask
-    in any order: a lock guards the blocks, of which the last :data:`_BLOCKS_KEPT` are held
-    (12 bytes a record: its index words and epoch). It pickles as the naming, run and key.
-    """
-
-    def __init__(self, naming: HostNaming, run: Run, key: np.ndarray | None) -> None:
-        """Hold what the run's names need; no block is named until a batch asks.
-
-        Args:
-            naming: The pipeline's host naming.
-            run: The run.
-            key: The pipeline's key as host words, or ``None`` when it does not shuffle.
-        """
-        self._naming = naming
-        self._run = run
-        self._key = key
-        self._per_block = max(1, _NAMING_BLOCK_RECORDS // run.plan.batch_size)
-        self._lock = threading.Lock()
-        self._blocks: collections.OrderedDict[int, tuple[np.ndarray, np.ndarray]] = (
-            collections.OrderedDict()
-        )
-
-    def __getstate__(self) -> dict[str, Any]:
-        """What a copy needs (a worker process's): the naming, run and key, no block."""
-        return {"naming": self._naming, "run": self._run, "key": self._key}
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Hold what was copied; the copy names its own blocks."""
-        self.__init__(state["naming"], state["run"], state["key"])
-
-    def __call__(
-        self, ordinal: int, start: int, epoch: int, size: int
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """The records of the run's batch ``ordinal``, which starts at ``start`` of ``epoch``.
-
-        Args:
-            ordinal: The batch's place in the run.
-            start: Where it starts in its epoch.
-            epoch: Its first row's epoch.
-            size: Its rows.
-
-        Returns:
-            Each row's record index, uint32 ``(size, 2)``, and epoch, int32 ``(size,)``.
-        """
-        if size != self._run.plan.batch_size:
-            return self._naming(start, epoch, size, self._key)
-        block, slot = divmod(ordinal, self._per_block)
-        with self._lock:
-            names = self._blocks.get(block)
-            if names is None:
-                names = self._name(block, (start, epoch))
-                self._blocks[block] = names
-                while len(self._blocks) > _BLOCKS_KEPT:
-                    self._blocks.popitem(last=False)
-            else:
-                self._blocks.move_to_end(block)
-        indices, epochs = names
-        return indices[slot], epochs[slot]
-
-    def _name(self, block: int, filler: tuple[int, int]) -> tuple[np.ndarray, np.ndarray]:
-        """Name block ``block``; ``filler``, a full batch of it, fills slots past the run's."""
-        starts = np.empty((self._per_block, 2), np.uint32)
-        epochs = np.empty(self._per_block, np.int32)
-        size = self._run.plan.batch_size
-        for slot in range(self._per_block):
-            batch = self._run.batch(block * self._per_block + slot)
-            start, epoch = filler if batch is None or batch[2] != size else batch[:2]
-            starts[slot], epochs[slot] = to_words(start), epoch
-        return self._naming.block(starts, epochs, self._key)
-
-
 class _Stream(grain.IterDataset):
     """A stream's run read pass by pass at a position of the host stage's own, on one thread."""
 
@@ -395,7 +141,7 @@ class _Stream(grain.IterDataset):
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class _StreamRead:
-    """What a stream's run reads: its batch rule, key, chunking and spec."""
+    """What a stream's run reads: its batch rule, key, chunking, spec and JAX settings."""
 
     batch_size: int
     drop_last: bool
@@ -403,6 +149,7 @@ class _StreamRead:
     chunk: int | None
     with_provenance: bool
     check: Callable[[Batch], None]
+    settings: JaxSettings
 
 
 class _StreamIterator(grain.DatasetIterator):
@@ -415,12 +162,14 @@ class _StreamIterator(grain.DatasetIterator):
         self._stream = StreamCursor(pass_index=cursor.epoch, arrived=cursor.arrived)
         self._epoch, self._position = cursor.epoch, cursor.position
         passes = None if cursor.end_epoch is None else max(0, cursor.end_epoch - cursor.epoch)
-        self._skip(cursor.position)
+        with config.settings.entered():
+            self._skip(cursor.position)
         self._batches = stream_batches(
             self._pull, config.batch_size, drop_last=config.drop_last, num_epochs=passes
         )
         self._held: list[tuple[Batch, Provenance, tuple[int, int, int]]] = []
         self._ended = False
+        self._units = 0
         weakref.finalize(self, self._stream.close)
 
     def _skip(self, records: int) -> None:
@@ -498,14 +247,16 @@ class _StreamIterator(grain.DatasetIterator):
     def __next__(self) -> HostElement:
         stacked = self._config.chunk is not None
         chunk = self._config.chunk or 1
-        self._fill(chunk)
+        with self._config.settings.entered():
+            self._fill(chunk)
         if not self._held:
             raise StopIteration
         parts, full = self._unit(chunk)
         batch = batch_ops.stack([b for b, _, _ in parts]) if full and stacked else parts[0][0]
         provenance = tuple(record for _, part, _ in parts for record in part)
+        unit, self._units = self._units, self._units + 1
         return HostElement(
-            batch, provenance if self._config.with_provenance else None, parts[-1][2]
+            batch, provenance if self._config.with_provenance else None, parts[-1][2], unit
         )
 
     def get_state(self) -> dict[str, Any]:
@@ -547,26 +298,28 @@ def _stream_unit(
     )
 
 
-def _checker(source: DataSourceModule, batch_size: int) -> Callable[[Batch], None]:
+def _checker(
+    source: DataSourceModule, batch_size: int, settings: JaxSettings
+) -> Callable[[Batch], None]:
     """A check of a stream's batches against the spec its source declares, as the device holds it.
 
     The spec is read once and refused if it declares a dtype JAX arrays cannot hold as declared.
-    Batches are checked in the precision mode the spec was read in, on whichever thread reads
-    them: ``jax.enable_x64`` is thread-local, and the read threads do not inherit it.
+    Batches are checked under the run's settings on whichever thread reads them: a context
+    manager's setting is thread-local, and the read threads do not inherit it.
 
     Args:
         source: The stream.
         batch_size: Records per batch.
+        settings: The run's JAX settings, in which the spec was read.
 
     Returns:
         A function refusing a batch whose structure, shapes or dtypes disagree with the spec.
     """
     element_spec = declared_spec(source)
     validate_device_dtypes(element_spec)
-    x64 = bool(jax.config.read("jax_enable_x64"))
 
     def check(batch: Batch) -> None:
-        with jax.enable_x64(x64):
+        with settings.entered():
             validate_batch(
                 batch.data, element_spec, batch_size=batch_size, as_the_device_holds=True
             )
@@ -674,10 +427,10 @@ class HostStage:
             end_epoch: The epoch the first run stops before, or ``None`` for no end.
         """
         self.cursor = Cursor(epoch=0, position=0, arrived=0, end_epoch=end_epoch)
-        # The run's read options: Grain threads reading an indexed source's units, and units
-        # read ahead of the consumer. Internal: a public resource budget replaces them.
-        self._read_threads = _READ_THREADS
-        self._read_buffer = _READ_BUFFER
+        # How runs are read, by what shapes a run's reads (:meth:`plan`), and the plan of the
+        # run opened last. The plan is the read options' only source.
+        self._plans: dict[tuple[Any, ...], HostPlan] = {}
+        self._plan: HostPlan | None = None
         # Placed batches staged on the device ahead of the one the consumer holds, or ``None``
         # for the default device's platform's (:func:`default_device_buffer`). Internal.
         self._device_buffer: int | None = None
@@ -719,6 +472,165 @@ class HostStage:
         if self._device_buffer is not None:
             return self._device_buffer
         return default_device_buffer(_placement_platform())
+
+    def plan(self, pipeline: Any, chunk: int | None = None) -> HostPlan:
+        """How a run of the pipeline reads its units: threads or processes, and their buffers.
+
+        Made once for each shape of run (source, epoch plan, order, chunk, depth, resources) and
+        kept: measuring it reads the source's spec, counts what a worker is sent and, without a
+        caller's ``worker_bytes``, starts one probe worker.
+
+        Args:
+            pipeline: The pipeline whose run is read.
+            chunk: Batches per chunk, or ``None`` for single batches.
+
+        Returns:
+            The plan.
+        """
+        depth = self._depth()
+        resources: HostResources | None = pipeline.host_resources
+        source = pipeline.source
+        shape = (id(source), pipeline.epoch_plan, pipeline.shuffle, chunk, depth, resources)
+        plan = self._plans.get(shape)
+        if plan is None:
+            plan = self._new_plan(pipeline, chunk, depth, resources)
+            self._plans[shape] = plan
+        self._plan = plan
+        return plan
+
+    def last_plan(self, pipeline: Any) -> HostPlan:
+        """The plan of the run opened last, or a run of single batches' when none was.
+
+        Args:
+            pipeline: The pipeline whose run is read.
+
+        Returns:
+            The plan.
+        """
+        return self._plan if self._plan is not None else self.plan(pipeline)
+
+    def _new_plan(
+        self, pipeline: Any, chunk: int | None, depth: int, resources: HostResources | None
+    ) -> HostPlan:
+        source: DataSourceModule = pipeline.source
+        access = self._access(pipeline, chunk)
+        path = host_read_path(resources, source.host_read, access)
+        if resources is None:
+            if source.host_read is HostRead.GIL_BOUND and access is not ReadAccess.STREAM:
+                logger.warning(
+                    "%s decodes in Python on each read, on one thread: pass "
+                    "Pipeline(host_resources=HostResources(ram_budget_bytes=..., max_workers=...)) "
+                    "to read it in worker processes",
+                    type(source).__name__,
+                )
+            return default_plan(path, device_buffer=depth)
+        terms = self._terms(
+            source,
+            batch_size=pipeline.batch_size,
+            epoch_plan=pipeline.epoch_plan,
+            shuffle=pipeline.shuffle,
+            key=_key(pipeline),
+            chunk=chunk,
+            depth=depth,
+            path=path,
+            resources=resources,
+            settings=JaxSettings.current(),
+        )
+        return budget_plan(resources, path, terms)
+
+    def _access(self, pipeline: Any, chunk: int | None) -> ReadAccess:
+        """How the pipeline's run can be read: by unit, as a sliceable dataset, or pass by pass."""
+        source = pipeline.source
+        if source.record_identity is RecordIdentity.INDEXED:
+            return ReadAccess.BY_UNIT
+        plan: EpochPlan = pipeline.epoch_plan
+        if isinstance(source, StreamingSourceBase) and plan.length is not None:
+            units = RunUnits(run=self._run(plan), chunk=chunk)
+            if source.run_dataset(units, None) is not None:
+                return ReadAccess.SLICEABLE_STREAM
+        return ReadAccess.STREAM
+
+    def _terms(  # noqa: PLR0913 - the terms of one run shape
+        self,
+        source: DataSourceModule,
+        *,
+        batch_size: int,
+        epoch_plan: EpochPlan,
+        shuffle: bool,
+        key: np.ndarray | None,
+        chunk: int | None,
+        depth: int,
+        path: HostReadPath,
+        resources: HostResources,
+        settings: JaxSettings,
+    ) -> HostTerms:
+        """What a run of ``source`` read along ``path`` costs (:func:`measure_terms`).
+
+        Args:
+            source: The source the run reads.
+            batch_size: Records per batch.
+            epoch_plan: The run's epoch plan.
+            shuffle: Whether the run is shuffled.
+            key: The pipeline's key as host words, or ``None`` when it does not shuffle.
+            chunk: Batches per chunk, or ``None`` for single batches.
+            depth: Placed units staged on the device ahead of the consumer's.
+            path: Where the run is read.
+            resources: The caller's budget and cap.
+            settings: The run's JAX settings.
+
+        Returns:
+            The terms.
+        """
+        size = 1 if chunk is None else chunk
+        return measure_terms(
+            unit_bytes=size * host_batch_bytes(source, batch_size),
+            depth=depth,
+            path=path,
+            resources=resources,
+            read=lambda: self._read(
+                source, epoch_plan, shuffle=shuffle, key=key, chunk=chunk, settings=settings
+            ),
+            first_unit=_FirstUnit,
+            settings=settings,
+        )
+
+    def _read(  # noqa: PLR0913 - what one run's worker read is built from
+        self,
+        source: DataSourceModule,
+        plan: EpochPlan,
+        *,
+        shuffle: bool,
+        key: np.ndarray | None,
+        chunk: int | None,
+        settings: JaxSettings,
+    ) -> Any:
+        """What worker processes read a run of ``source`` with: an indexed read or a run dataset.
+
+        Args:
+            source: An indexed source, or a stream with a run dataset.
+            plan: The run's epoch plan.
+            shuffle: Whether the run is shuffled.
+            key: The pipeline's key as host words, or ``None`` when it does not shuffle.
+            chunk: Batches per chunk, or ``None`` for single batches.
+            settings: The run's JAX settings.
+
+        Returns:
+            The read, which pickles to the workers.
+        """
+        units = RunUnits(run=self._run(plan), chunk=chunk)
+        if source.record_identity is RecordIdentity.INDEXED:
+            return IndexedRead(
+                source,
+                units,
+                HostNaming(source, plan, shuffled=shuffle),
+                key=key,
+                with_provenance=False,
+                settings=settings,
+                crossing=True,
+            )
+        # Only an indexed source or a stream with a run dataset is read in processes.
+        stream = cast(StreamingSourceBase, source)
+        return stream.run_dataset(units, key, for_workers=True)
 
     def _open(self, dataset: grain.IterDataset, options: tuple[Any, ...], depth: int) -> _RunToken:
         """Start the run's iterator: units read ahead, placed by the consumer ``depth`` ahead.
@@ -777,46 +689,46 @@ class HostStage:
                     f"a chunk of {size} batches holds {size * batch_bytes} bytes, over "
                     f"max_chunk_bytes={max_chunk_bytes}; one batch holds {batch_bytes} bytes"
                 )
-        # A run is read in the caller's precision mode (a thread-local setting the read threads
-        # do not inherit), with the stage's read options and its depth on the default device's
-        # platform; a change of any opens a new run.
-        x64 = bool(jax.config.read("jax_enable_x64"))
-        depth = self._depth()
+        # A run is read under the caller's JAX settings (precision and the PRNG settings, which
+        # read threads and worker processes do not inherit) and by its plan, which holds its read
+        # options and its depth on the default device's platform; a change of any opens a new run.
+        settings = JaxSettings.current()
+        reads = self.plan(pipeline, chunk)
         options = (
             id(source),
             pipeline.epoch_plan,
             pipeline.shuffle,
             chunk,
             with_provenance,
-            x64,
-            self._read_threads,
-            self._read_buffer,
-            depth,
+            settings,
+            reads,
         )
         cursor = self.cursor
         opened = (*options, cursor.epoch, cursor.position)
         token = None if self._token is None else self._token()
         if token is None or self.iterator is None or self._opened_for != opened:
             self._end(_replaced_by(self._opened_for, opened))
-            dataset = self._dataset(pipeline, chunk, with_provenance)
-            token = self._open(dataset, opened, depth)
+            dataset = self._dataset(pipeline, chunk, with_provenance, reads, settings)
+            token = self._open(dataset, opened, reads.device_buffer)
         _RUN_HOLDERS[pipeline] = token
         return cast(
             Iterator[Batch] | Iterator[tuple[Batch, Provenance]],
             _Served(self, (*options,), with_provenance, token),
         )
 
-    def _dataset(
-        self, pipeline: Any, chunk: int | None, with_provenance: bool
+    def _dataset(  # noqa: PLR0913 - a run's dataset is built from all of them
+        self,
+        pipeline: Any,
+        chunk: int | None,
+        with_provenance: bool,
+        reads: HostPlan,
+        settings: JaxSettings,
     ) -> grain.IterDataset:
-        """The run's dataset of host elements, from the cursor."""
+        """The run's dataset of host elements, from the cursor, read as ``reads`` plans."""
         source: DataSourceModule = pipeline.source
-        key = (
-            key_words(pipeline._epoch_key_base.get_value())  # noqa: SLF001 - the pipeline's key base
-            if pipeline.shuffle
-            else None
-        )
+        key = _key(pipeline)
         plan: EpochPlan = pipeline.epoch_plan
+        processes = reads.path is HostReadPath.PROCESSES
         if source.record_identity is RecordIdentity.INDEXED:
             if not _has_indexed_host_read(source):
                 raise TypeError(
@@ -830,16 +742,25 @@ class HostStage:
                 HostNaming(source, plan, shuffled=pipeline.shuffle),
                 key=key,
                 with_provenance=with_provenance,
+                settings=settings,
+                crossing=processes,
             )
             count = units.units()
-            return (
-                grain.MapDataset.range(sys.maxsize if count is None else count)
-                .map(read)
-                .to_iter_dataset(
-                    grain.ReadOptions(
-                        num_threads=self._read_threads, prefetch_buffer_size=self._read_buffer
-                    )
+            mapped = grain.MapDataset.range(sys.maxsize if count is None else count).map(read)
+            if processes:
+                # Each worker reads its units itself, one at a time; its queue reads ahead.
+                inline = mapped.to_iter_dataset(
+                    grain.ReadOptions(num_threads=0, prefetch_buffer_size=0)
                 )
+                workers = host_workers.in_workers(
+                    inline,
+                    workers=reads.workers,
+                    worker_buffer=reads.worker_buffer,
+                    settings=settings,
+                )
+                return _Received(workers, units)
+            return mapped.to_iter_dataset(
+                grain.ReadOptions(num_threads=reads.threads, prefetch_buffer_size=reads.read_buffer)
             )
         if not isinstance(source, StreamingSourceBase):
             kind = source.record_identity.name
@@ -849,23 +770,39 @@ class HostStage:
                 "StreamingSourceBase, whose pass reader the host stage reads every stream with: "
                 "subclass datarax.sources.StreamingSourceBase and implement _open_pass"
             )
+        elements = self._stream_elements(pipeline, chunk, with_provenance, key, reads, settings)
+        if processes:  # the workers' buffers hold the units read ahead
+            return elements
         return grain.experimental.ThreadPrefetchIterDataset(
-            self._stream_elements(pipeline, chunk, with_provenance, key),
-            prefetch_buffer_size=self._read_buffer,
+            elements, prefetch_buffer_size=reads.read_buffer
         )
 
-    def _stream_elements(
-        self, pipeline: Any, chunk: int | None, with_provenance: bool, key: np.ndarray | None
+    def _stream_elements(  # noqa: PLR0913 - a stream run's dataset is built from all of them
+        self,
+        pipeline: Any,
+        chunk: int | None,
+        with_provenance: bool,
+        key: np.ndarray | None,
+        reads: HostPlan,
+        settings: JaxSettings,
     ) -> grain.IterDataset:
         """A stream's run as host elements: through its run dataset when it has one (TFDS)."""
         source: StreamingSourceBase = pipeline.source
-        check = _checker(source, pipeline.batch_size)
+        check = _checker(source, pipeline.batch_size, settings)
         plan: EpochPlan = pipeline.epoch_plan
         if plan.length is not None:
             units = RunUnits(run=self._run(plan), chunk=chunk)
-            run = source.run_dataset(units, key)
+            processes = reads.path is HostReadPath.PROCESSES
+            run = source.run_dataset(units, key, for_workers=processes)
             if run is not None:
-                return _RunElements(run, units, check, with_provenance)
+                if processes:
+                    run = host_workers.in_workers(
+                        run,
+                        workers=reads.workers,
+                        worker_buffer=reads.worker_buffer,
+                        settings=settings,
+                    )
+                return _RunElements(run, units, check, with_provenance, settings)
         config = _StreamRead(
             batch_size=pipeline.batch_size,
             drop_last=pipeline.drop_last,
@@ -873,6 +810,7 @@ class HostStage:
             chunk=chunk,
             with_provenance=with_provenance,
             check=check,
+            settings=settings,
         )
         return _Stream(source, self.cursor, config)
 
@@ -914,7 +852,7 @@ class HostStage:
             "position": cursor.position if indexed else None,
             "run_end_epoch": cursor.end_epoch if indexed else None,
             "stream": stream,
-            "fingerprint": _fingerprint(pipeline),
+            "fingerprint": configuration.run_configuration(pipeline),
         }
 
     def restore(self, pipeline: Any, state: Mapping[str, Any]) -> None:
@@ -929,12 +867,12 @@ class HostStage:
                 fingerprint, or was produced under another configuration, naming what differs;
                 nothing converts a layout.
         """
-        state = _plain(state)
+        state = configuration.plain_state(state)
         version = state.get("version")
         if version != STATE_VERSION:
             if version is None:
                 saved = "a state without a version (a pipeline module_state layout)"
-            elif version == _SESSION_VERSION:
+            elif version == configuration.SESSION_VERSION:
                 saved = f"version {version} (the session layout of PipelineIterator)"
             else:
                 saved = f"version {version}"
@@ -947,7 +885,7 @@ class HostStage:
             raise ValueError(
                 f"the state's kind is {state.get('kind')!r} but this pipeline's source is {kind!r}"
             )
-        _refuse_another_configuration(pipeline, state.get("fingerprint"))
+        configuration.refuse_another_configuration(pipeline, state.get("fingerprint"))
         self._end("set_state()")
         if kind == RecordIdentity.INDEXED.value:
             self.cursor = Cursor(
@@ -1002,17 +940,13 @@ class HostStage:
             The read, which pickles with what it holds.
         """
         plan: EpochPlan = pipeline.epoch_plan
-        key = (
-            key_words(pipeline._epoch_key_base.get_value())  # noqa: SLF001 - the pipeline's key base
-            if pipeline.shuffle
-            else None
-        )
         return IndexedRead(
             pipeline.source,
             RunUnits(run=self._run(plan)),
             HostNaming(pipeline.source, plan, shuffled=pipeline.shuffle),
-            key=key,
+            key=_key(pipeline),
             with_provenance=False,
+            settings=JaxSettings.current(),
         )
 
 
@@ -1025,12 +959,14 @@ class _RunElements(grain.IterDataset):
         units: RunUnits,
         check: Callable[[Batch], None],
         with_provenance: bool,
+        settings: JaxSettings,
     ) -> None:
         super().__init__()
         self._run = run
         self._units = units
         self._check = check
         self._with_provenance = with_provenance
+        self._settings = settings
 
     def __iter__(self) -> _RunElementsIterator:
         return _RunElementsIterator(self)
@@ -1045,19 +981,26 @@ class _RunElementsIterator(grain.DatasetIterator):
         self._ordinal = 0
 
     def __next__(self) -> HostElement:
-        element = next(self._parent)  # Grain's single-parent accessor
-        ordinal, self._ordinal = self._ordinal, self._ordinal + 1
         units = self._dataset._units  # noqa: SLF001
+        try:
+            with self._dataset._settings.entered():  # noqa: SLF001 - the run read on this thread
+                element = next(self._parent)  # Grain's single-parent accessor
+        except StopIteration:
+            host_workers.check_all_arrived(self._ordinal, units.units())
+            raise
+        ordinal = self._ordinal
+        host_workers.check_arrival(ordinal, element[4])
+        self._ordinal += 1
         batches = units.unit(ordinal)
         assert batches is not None  # noqa: S101 - the dataset serves the schedule's units
         batch, provenance = _stream_unit(
-            element,
+            element[:4],
             chunk=len(batches) if units.is_chunk(ordinal) else None,
             check=self._dataset._check,  # noqa: SLF001
             with_provenance=self._dataset._with_provenance,  # noqa: SLF001
         )
         epoch, position = units.after(ordinal)
-        return HostElement(batch, provenance, (epoch, position, 0))
+        return HostElement(batch, provenance, (epoch, position, 0), ordinal)
 
     def get_state(self) -> dict[str, Any]:
         """Units served; a stream resumes through the host stage's cursor, not this state."""
@@ -1074,6 +1017,76 @@ class _RunElementsIterator(grain.DatasetIterator):
         """
         del state
         raise NotImplementedError("a stream resumes through the pipeline's host stage")
+
+
+class _Received(grain.IterDataset):
+    """An indexed run's units from worker processes, checked to arrive in turn and restored."""
+
+    def __init__(self, parent: grain.IterDataset, units: RunUnits) -> None:
+        super().__init__(parent)
+        self._units = units
+
+    def __iter__(self) -> _ReceivedIterator:
+        return _ReceivedIterator(iter(self._parent), self._units)
+
+
+class _ReceivedIterator(grain.DatasetIterator):
+    """Units in turn, their provenance the read-only mappings a thread read serves."""
+
+    def __init__(self, parent: grain.DatasetIterator, units: RunUnits) -> None:
+        super().__init__(parent)
+        self._units = units
+        self._next = 0
+
+    def __next__(self) -> HostElement:
+        try:
+            element: HostElement = next(self._parent)
+        except StopIteration:
+            host_workers.check_all_arrived(self._next, self._units.units())
+            raise
+        host_workers.check_arrival(self._next, element.unit)
+        self._next += 1
+        return element._replace(provenance=host_workers.received_provenance(element.provenance))
+
+    def get_state(self) -> dict[str, Any]:
+        """Units received; a run resumes through the host stage's cursor, not this state."""
+        return {"units": self._next}
+
+    def set_state(self, state: dict[str, Any]) -> None:  # noqa: DOC502
+        """Not supported: a run resumes through the host stage's cursor.
+
+        Args:
+            state: The state to restore.
+
+        Raises:
+            NotImplementedError: Always.
+        """
+        del state
+        raise NotImplementedError("a run resumes through the pipeline's host stage")
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _FirstUnit:
+    """Reads a run's first unit: what the footprint probe worker does once.
+
+    Attributes:
+        read: An indexed read, or a stream's run dataset.
+    """
+
+    read: Any
+
+    def __call__(self) -> Any:
+        """The run's first unit, as a worker reads it."""
+        if isinstance(self.read, IndexedRead):
+            return self.read(0)
+        return next(iter(self.read))
+
+
+def _key(pipeline: Any) -> np.ndarray | None:
+    """The pipeline's key as host words when it shuffles, else ``None``."""
+    if not pipeline.shuffle:
+        return None
+    return key_words(pipeline._epoch_key_base.get_value())  # noqa: SLF001 - the pipeline's key base
 
 
 class _Served:
@@ -1134,58 +1147,6 @@ class _Served:
 
 STATE_VERSION = 3
 """The layout of ``Pipeline.get_state()``: the host stage's cursor and the configuration it fits."""
-_SESSION_VERSION = 2  # the layout of ``PipelineIterator.get_state()``, named when refused
-
-
-def _fingerprint(pipeline: Any) -> dict[str, Any]:
-    """The configuration a state is only valid for: batch rule, length, epochs, key and order."""
-    plan: EpochPlan = pipeline.epoch_plan
-    return {
-        "batch_size": plan.batch_size,
-        "length": plan.length,
-        "drop_last": plan.drop_last,
-        "num_epochs": plan.num_epochs,
-        "shuffled": bool(pipeline.shuffle),
-        "seed": [int(word) for word in key_words(pipeline._epoch_key_base.get_value())],  # noqa: SLF001
-        "order": {"kind": "global"},
-    }
-
-
-def _refuse_another_configuration(pipeline: Any, saved: Any) -> None:
-    """Refuse a state's fingerprint unless it is the pipeline's, naming the first field differing.
-
-    Args:
-        pipeline: The pipeline the state is restored into.
-        saved: The state's fingerprint.
-
-    Raises:
-        ValueError: If the state holds no fingerprint, or a field differs from the pipeline's.
-    """
-    if not isinstance(saved, Mapping):
-        raise ValueError(
-            "the state holds no fingerprint of the configuration it was produced under, so it "
-            "cannot be checked against this pipeline: save it again from this pipeline"
-        )
-    for field, value in _fingerprint(pipeline).items():
-        if saved.get(field) != value:
-            raise ValueError(
-                f"the state was produced with {field}={saved.get(field)!r} "
-                f"but this pipeline has {field}={value!r}; a state is only valid for the "
-                "configuration that produced it"
-            )
-
-
-def _plain(value: Any) -> Any:
-    """A saved state as plain Python values: a checkpoint store may return NumPy leaves."""
-    if isinstance(value, Mapping):
-        return {key: _plain(item) for key, item in value.items()}
-    if isinstance(value, list | tuple):
-        return [_plain(item) for item in value]
-    if isinstance(value, np.ndarray):
-        return _plain(value.tolist())
-    if isinstance(value, np.generic):
-        return value.item()
-    return value
 
 
 class _RunToken:
@@ -1212,10 +1173,8 @@ _OPTION_NAMES = (
     "shuffle",
     "chunk",
     "with_provenance",
-    "x64",
-    "read_threads",
-    "read_buffer",
-    "device_buffer",
+    "jax_settings",
+    "plan",
     "epoch",
     "position",
 )
@@ -1272,10 +1231,7 @@ def _has_indexed_host_read(source: DataSourceModule) -> bool:
 
 def _batch_bytes(source: DataSourceModule, batch_size: int) -> int:
     """The bytes of one batch's data, as the device holds it, from the source's spec."""
-    spec = declared_spec(source)
-    return batch_size * sum(
-        math.prod(leaf.shape) * np.dtype(leaf.dtype).itemsize for leaf in jax.tree.leaves(spec)
-    )
+    return batch_size * spec_bytes(declared_spec(source))
 
 
 class HostStageHolder(HostValue):
@@ -1288,9 +1244,6 @@ class HostStageHolder(HostValue):
 __all__ = [
     "STATE_VERSION",
     "Cursor",
-    "HostElement",
     "HostStage",
     "HostStageHolder",
-    "IndexedRead",
-    "RunUnits",
 ]

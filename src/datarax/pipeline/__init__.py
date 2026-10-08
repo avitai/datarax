@@ -15,8 +15,9 @@ Public API:
   ``nnx.scan``.
 """
 
+from datarax.core.host_resources import HostResources
 from datarax.pipeline.pipeline import Pipeline, PipelineIterator
 from datarax.pipeline.topo import topological_sort, validate_dag
 
 
-__all__ = ["Pipeline", "PipelineIterator", "topological_sort", "validate_dag"]
+__all__ = ["HostResources", "Pipeline", "PipelineIterator", "topological_sort", "validate_dag"]

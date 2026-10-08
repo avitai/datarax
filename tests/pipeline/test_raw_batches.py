@@ -33,6 +33,7 @@ from substrax.testing.compiles import expect_compiles
 from datarax.core.config import ElementOperatorConfig
 from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Batch
+from datarax.core.host_resources import HostResources
 from datarax.core.index_words import from_words
 from datarax.core.prng import key_words
 from datarax.operators import ElementOperator
@@ -42,6 +43,7 @@ from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
 from datarax.sources.streaming_disk_source import StreamingDiskSource, StreamingDiskSourceConfig
 from tests.test_common.compiles import expect_first_call_compiles
+from tests.test_common.host_plans import reading_with
 from tests.test_common.streams import RecordStream
 from tests.test_common.transfers import implicit_upload_raises
 
@@ -82,6 +84,7 @@ def _pipeline(
     drop_last: bool = False,
     num_epochs: int | None = 2,
     stages: list[nnx.Module] | None = None,
+    host_resources: HostResources | None = None,
 ) -> Pipeline:
     return Pipeline(
         source=source,
@@ -91,6 +94,7 @@ def _pipeline(
         shuffle=shuffle,
         drop_last=drop_last,
         num_epochs=num_epochs,
+        host_resources=host_resources,
     )
 
 
@@ -163,19 +167,22 @@ class TestOrder:
         for raw, session in zip(served, reference, strict=True):
             np.testing.assert_array_equal(raw["x"], session["x"])
 
+    @pytest.mark.usefixtures("still_resident")
     @pytest.mark.parametrize("threads", [1, 4, 8])
     def test_any_number_of_read_threads_serves_the_same_batches(self, threads: int) -> None:
         reference = [_names(b) for b in _pipeline(_memory()).raw_batches()]
-        pipe = _pipeline(_memory())
-        pipe.host_stage._read_threads = threads
+        source = _memory()
+        resources = reading_with(source, 8, threads=threads, read_buffer=2)
+        pipe = _pipeline(source, host_resources=resources)
         assert [_names(b) for b in pipe.raw_batches()] == reference
 
     def test_the_read_options_are_not_public(self) -> None:
-        """Threads and read-ahead are the host stage's own until a resource budget sets them."""
+        """Threads and read-ahead come only from the plan, which a resource budget sets."""
         public = {name for name in dir(_pipeline(_memory()).host_stage) if not name.startswith("_")}
         assert not public & {"read_threads", "read_buffer"}
 
-    @pytest.mark.parametrize("read_buffer", [1, 4])
+    @pytest.mark.usefixtures("still_resident")
+    @pytest.mark.parametrize("read_buffer", [2, 4])
     def test_reads_run_ahead_by_the_read_buffer(
         self, monkeypatch: pytest.MonkeyPatch, read_buffer: int
     ) -> None:
@@ -187,9 +194,11 @@ class TestOrder:
             calls.append(1)
             return original(self, indices, **kwargs)
 
+        source = _memory()
+        resources = reading_with(source, 8, threads=1, read_buffer=read_buffer)
         monkeypatch.setattr(MemorySource, "get_batch", counted)
-        pipe = _pipeline(_memory(), num_epochs=None)
-        pipe.host_stage._read_buffer = read_buffer
+        pipe = _pipeline(source, num_epochs=None, host_resources=resources)
+        assert pipe.host_plan.read_buffer == read_buffer
         batches = iter(pipe.raw_batches())
         staged = default_device_buffer(next(batches)["image"].device.platform)
         threading.Event().wait(0.3)  # time for the reads to run ahead
@@ -794,11 +803,12 @@ class TestReadsPickle:
         source = _disk(tmp_path, length=100_000)
         assert len(cloudpickle.dumps(source)) < 32 * 1024
 
+    @pytest.mark.usefixtures("still_resident")
     def test_eight_threads_on_a_fresh_disk_source_read_what_one_reads(self, tmp_path: Path) -> None:
         reference = [_names(b) for b in _pipeline(_disk(tmp_path)).raw_batches()]
         source = cloudpickle.loads(cloudpickle.dumps(_disk(tmp_path)))  # opens lazily
-        pipe = _pipeline(source)
-        pipe.host_stage._read_threads = 8
+        resources = reading_with(source, 8, threads=8, read_buffer=8)
+        pipe = _pipeline(source, host_resources=resources)
         served = list(pipe.raw_batches())
         assert [_names(b) for b in served] == reference
 

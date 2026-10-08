@@ -35,6 +35,7 @@ from datarax.core import batch_ops
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import (
     DataSourceModule,
+    HostRead,
     IndexedHostRead,
     record_words,
     RecordIdentity,
@@ -571,6 +572,13 @@ class MixDataSourcesNode(DataSourceModule):
     def sources(self) -> tuple[DataSourceModule, ...]:
         """The mixed sources, in the order of their weights."""
         return tuple(self._sources)
+
+    @property
+    def host_read(self) -> HostRead:
+        """The strictest child's: one child decoding under the GIL makes the mix's read do so."""
+        if any(source.host_read is HostRead.GIL_BOUND for source in self._sources):
+            return HostRead.GIL_BOUND
+        return HostRead.GIL_FREE
 
     @property
     def weights(self) -> tuple[float, ...]:
