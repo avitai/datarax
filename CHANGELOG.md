@@ -604,6 +604,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `datarax.workers` (a reserved namespace for a multiprocessing backend) and `datarax.memory`
+  (`SharedMemoryManager`, used by nothing in datarax): worker processes are Grain's, sized and
+  started by the host stage through `HostResources`. Their tests and documentation pages go with
+  them.
 - `ArrayRecordSourceConfig`'s `seed`, `num_epochs` and `shuffle_files`, and
   `ArrayRecordSourceModule`'s own iteration and state: `rngs`, `grain_source`, `current_index`,
   `current_epoch`, `total_records`, `prefetch_cache`, `iterator_initialized`, `shuffled_indices`,
