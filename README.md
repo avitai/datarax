@@ -193,8 +193,6 @@ src/datarax/
   monitoring/   # MetricsCollector, callbacks, reporters (console/file)
   performance/  # Goodput tracking, host/device synchronization
   control/      # Prefetcher for asynchronous data loading
-  memory/       # Shared memory manager for multi-process data sharing
-  workers/      # Reserved namespace for the planned multiprocessing backend
   config/       # TOML-based configuration system with schema validation
   cli/          # datarax CLI entry point
   utils/        # PyTree utilities, external integration helpers
