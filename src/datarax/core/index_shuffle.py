@@ -47,6 +47,7 @@ import numpy as np
 
 from datarax.core import index_words
 from datarax.core.index_words import HostIntegers, MAX_RECORDS, WORD_BITS
+from datarax.core.prng import NAMING_PRNG_IMPL
 
 
 logger = logging.getLogger(__name__)
@@ -273,10 +274,15 @@ def _cycle_walk(positions: jax.Array, length: int, key: jax.Array, fixed: int) -
 
 
 @functools.lru_cache(maxsize=64)
-def _host_round_keys(seed: int, epoch: int) -> np.ndarray:
-    """Round keys of the order for ``seed`` at ``epoch``: those of ``fold_in(key(seed), epoch)``."""
-    key = jax.random.fold_in(jax.random.key(seed), epoch)
-    round_keys = np.asarray(jax.random.bits(key, (_ROUNDS,), jnp.uint32))
+def _host_round_keys(seed: int, epoch: int, partitionable: bool) -> np.ndarray:
+    """Round keys of the order for ``seed`` at ``epoch``: those of ``fold_in(key(seed), epoch)``.
+
+    The key is a :data:`~datarax.core.prng.NAMING_PRNG_IMPL` key; its bits depend on
+    ``jax_threefry_partitionable``, which the cache is therefore keyed by.
+    """
+    with jax.threefry_partitionable(partitionable):
+        key = jax.random.fold_in(jax.random.key(seed, impl=NAMING_PRNG_IMPL), epoch)
+        round_keys = np.asarray(jax.random.bits(key, (_ROUNDS,), jnp.uint32))
     round_keys.flags.writeable = False
     return round_keys
 
@@ -302,9 +308,21 @@ def shuffle_positions_host(  # noqa: DOC502
     Raises:
         ValueError: If ``length`` is out of range or a position is negative.
     """
+    return _shuffled_host(positions, length, seed, epoch, _partitionable())
+
+
+def _partitionable() -> bool:
+    """The calling thread's ``jax_threefry_partitionable``, which the round keys depend on."""
+    return bool(jax.config.jax_threefry_partitionable)
+
+
+def _shuffled_host(
+    positions: HostIntegers, length: int, seed: int, epoch: int, partitionable: bool
+) -> np.ndarray:
+    """:func:`shuffle_positions_host` with the round keys of ``partitionable``."""
     _check_length(length)
     bits = _block_bits(length)
-    round_keys = _host_round_keys(seed, epoch)
+    round_keys = _host_round_keys(seed, epoch, partitionable)
     top = index_words.split_constant(length - 1)
     words = np.asarray(index_words.to_words(positions))
     flat = words.reshape(-1, 2)
@@ -319,12 +337,12 @@ def shuffle_positions_host(  # noqa: DOC502
 
 
 @functools.lru_cache(maxsize=64)
-def _host_block(length: int, seed: int, epoch: int, block: int) -> np.ndarray:
+def _host_block(length: int, seed: int, epoch: int, block: int, partitionable: bool) -> np.ndarray:
     """Record indices of positions ``[block * _HOST_BLOCK, ...)`` of one order, cached."""
     start = block * _HOST_BLOCK
     count = min(_HOST_BLOCK, length - start)
-    indices = shuffle_positions_host(
-        np.arange(count, dtype=np.uint64) + np.uint64(start), length, seed, epoch
+    indices = _shuffled_host(
+        np.arange(count, dtype=np.uint64) + np.uint64(start), length, seed, epoch, partitionable
     )
     indices.flags.writeable = False
     return indices
@@ -351,4 +369,4 @@ def index_shuffle(index: int, seed: int, num_elements: int, epoch: int = 0) -> i
     if index < 0 or index >= num_elements:
         raise IndexError(f"Index {index} out of range for {num_elements} elements")
     block, offset = divmod(index, _HOST_BLOCK)
-    return int(_host_block(num_elements, seed, epoch, block)[offset])
+    return int(_host_block(num_elements, seed, epoch, block, _partitionable())[offset])

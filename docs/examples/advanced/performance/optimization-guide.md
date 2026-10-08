@@ -26,18 +26,21 @@ thorough benchmarking methodology.
 
 | PyTorch | Datarax |
 |---------|---------|
-| `num_workers` in DataLoader | Single-threaded (JAX handles parallelism) |
+| `num_workers` in DataLoader | `Pipeline(host_resources=HostResources(ram_budget_bytes, max_workers))`: Grain worker processes for a read that decodes in Python, sized from the RAM budget |
 | `pin_memory=True` | JAX device placement |
 | `torch.utils.benchmark` | Custom timing with `time.time()` |
-| `prefetch_factor` | JAX async dispatch |
+| `prefetch_factor` | Units read ahead, from the same budget (`pipe.host_plan`) |
 
-**Key difference:** Datarax relies on JAX's XLA compilation for performance rather than Python multiprocessing.
+**Key difference:** the host stage only reads; everything after the read runs in JAX on the
+device. Worker processes read and decode, and the number of them comes from a RAM budget you
+give, never from the CPU count alone (see Strategy 4).
 
 ## Coming from TensorFlow?
 
 | TensorFlow | Datarax |
 |------------|---------|
-| `dataset.prefetch(AUTOTUNE)` | JAX async execution |
+| `dataset.prefetch(AUTOTUNE)` | Units read ahead, sized from `host_resources` |
+| `num_parallel_calls` | Grain worker processes, sized from `host_resources` |
 | `dataset.interleave()` | Explicit interleaving |
 | `tf.profiler` | Custom profiling |
 | `dataset.cache()` | Manual caching strategies |
@@ -351,6 +354,53 @@ def efficient(element, key=None):
     return element.update_data({"image": result})
 ```
 
+### Strategy 4: Read in Parallel From a RAM Budget
+
+The host stage reads each batch before the device sees it. How it reads is the pipeline's plan,
+`pipe.host_plan`, which comes from `host_resources`. The RAM budget is the training process's:
+it counts the process's resident memory when a run is planned (the data an in-memory source
+holds included), then the batches in flight and every worker the plan starts.
+
+```python
+from datarax import HostResources, Pipeline
+
+pipeline = Pipeline(
+    source=source,
+    stages=stages,
+    batch_size=256,
+    rngs=nnx.Rngs(0),
+    shuffle=True,
+    host_resources=HostResources(ram_budget_bytes=16 << 30, max_workers=8),
+)
+print(pipeline.host_plan)  # threads or worker processes, buffers, and what they cost
+```
+
+- **Without `host_resources`** a run reads on one Grain thread, two batches ahead. There is no
+  default budget: the training process knows its share of the host.
+- **A GIL-free read** (in-memory columns, memory-mapped files, a decoder that releases the GIL)
+  reads on more threads, fewer than the CPUs and at most `max_workers`, as many batches ahead as
+  the budget holds (2 to 1,000).
+- **A read that decodes in Python** (an `ArrayRecordSourceModule` with a `decode` callable, which
+  is the default it declares; `from_tfds(..., in_memory=False)`; `TFDSStreamingSource`; a mix with
+  such a child) is read in Grain worker processes. Their number is the largest the budget holds
+  once each worker's own memory (a few hundred MB of interpreter, imports and JAX's CPU runtime,
+  measured once by a probe worker, or `worker_bytes` if you pass it), its copy of the read and
+  the batches in its queues are counted, and at most `max_workers`. A budget that holds no worker
+  is refused, naming what each term costs. A source declares its read with `host_read`; an
+  `ArrayRecordSourceModule` whose decoder releases the GIL passes
+  `decode_read=HostRead.GIL_FREE`.
+- **HuggingFace streams** read on one thread whatever the budget.
+
+Workers read and decode; the training process places every batch on the device, so batches from
+workers meet `jax.jit` and `nnx.jit` exactly as thread-read batches do, and the stream is the
+same batch for batch whatever the number of workers. Workers are started by spawning: guard the
+training script's work with `if __name__ == "__main__":`, since every worker imports the main
+module (a worker that finds JAX already started there is refused, naming the guard). Batches
+travel from the workers through shared memory, so `/dev/shm` bounds the plan too; Docker's
+default is 64 MiB, and a plan that does not fit is refused naming the bytes it needs (raise it
+with `--shm-size`). `max_workers` counts this training process's share: with one process per
+GPU, give each process its part of the machine.
+
 ## Part 5: Visualization
 
 The batch-size sweep is rendered as a 2-panel figure: a line plot of
@@ -509,6 +559,8 @@ Measure each change with the profiling steps above, on the hardware you deploy o
 3. **Batch size**: Start at 64-128, sweep to find optimal
 4. **Combine operators**: Fewer operators = less overhead
 5. **JIT everything**: Use `@jax.jit` for custom transforms
+6. **Give the host stage a budget**: a read that decodes in Python needs `host_resources` to
+   read in worker processes
 
 ## Next Steps
 

@@ -9,7 +9,8 @@ stream's key from the seed and the stream's name.
 The host stage orders records and seeds stream passes on the host. It reads a key's data once
 as uint32 words (:func:`key_words`) and folds them on the CPU device (:func:`host_device`,
 :func:`fold_on_host`), so no fold reads back from an accelerator and none needs an implicit
-transfer.
+transfer. Every key that names records is a :data:`NAMING_PRNG_IMPL` key, whatever the caller's
+``jax_default_prng_impl``.
 """
 
 import functools
@@ -24,6 +25,14 @@ from jax.typing import ArrayLike
 
 DEFAULT_RNG_STREAMS: tuple[str, ...] = ("augment", "dropout", "params", "shuffling", "default")
 """The streams a component built from a seeded configuration receives."""
+
+NAMING_PRNG_IMPL = "threefry2x32"
+"""The implementation of every key that orders or names records: an epoch's order, a stream's
+pass seed. Pinned, so record identity never depends on the caller's ``jax_default_prng_impl``
+(which is not part of a jitted program's cache key either, so a cached naming program would
+otherwise keep the impl it was first traced under), and exact under ``jax.vmap`` over keys,
+which a block of batches named in one call needs. A training step's own randomness follows the
+caller's setting."""
 
 
 def record_key(
@@ -116,22 +125,40 @@ def key_words(key: ArrayLike) -> np.ndarray:
     return np.asarray(jax.device_get(key), np.uint32)
 
 
+def naming_key_data(key: jax.Array) -> jax.Array:
+    """The data of a :data:`NAMING_PRNG_IMPL` key drawn from ``key``, a typed key of any impl.
+
+    A key of that impl gives its own data; any other seeds one from 64 of its bits, so a caller
+    whose default impl is another still orders records with a threefry key, derived from theirs.
+
+    Args:
+        key: A typed key.
+
+    Returns:
+        The naming key's raw data, uint32 ``(2,)``.
+    """
+    if str(jax.random.key_impl(key)) == NAMING_PRNG_IMPL:
+        return jax.random.key_data(key)
+    return jax.random.bits(key, (2,), jnp.uint32)
+
+
 @functools.cache
 def _fold() -> Callable[[jax.Array, jax.Array], jax.Array]:
     """``fold_in`` of raw key words by uint32 data, returning the folded key's words."""
 
     def fold(words: jax.Array, data: jax.Array) -> jax.Array:
-        return jax.random.key_data(jax.random.fold_in(jax.random.wrap_key_data(words), data))
+        key = jax.random.wrap_key_data(words, impl=NAMING_PRNG_IMPL)
+        return jax.random.key_data(jax.random.fold_in(key, data))
 
     return jax.jit(fold)
 
 
 def fold_on_host(words: np.ndarray, data: int) -> np.ndarray:
-    """``fold_in(key, data)`` of the key whose words are ``words``, computed on the CPU device.
+    """``fold_in(key, data)`` of the :data:`NAMING_PRNG_IMPL` key whose words are ``words``.
 
-    Both operands are placed on the CPU device explicitly and the result is read back explicitly,
-    so the fold runs under a ``jax.transfer_guard("disallow")`` and reads nothing back from an
-    accelerator.
+    Computed on the CPU device: both operands are placed there explicitly and the result is read
+    back explicitly, so the fold runs under a ``jax.transfer_guard("disallow")`` and reads
+    nothing back from an accelerator.
 
     Args:
         words: The key's uint32 words (:func:`key_words`).

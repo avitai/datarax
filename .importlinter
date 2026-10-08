@@ -25,4 +25,6 @@ type = layers
 layers =
     datarax.pipeline.pipeline
     datarax.pipeline.host_stage | datarax.pipeline.iteration
-    datarax.pipeline.epochs | datarax.pipeline.dag_call
+    datarax.pipeline.run_configuration | datarax.pipeline.run_units
+    datarax.pipeline.epochs | datarax.pipeline.dag_call | datarax.pipeline.read_plan
+    datarax.pipeline.host_workers

@@ -155,7 +155,7 @@ if mode == "pipeline":
             break
         threading.Event().wait(0.05)
     pipe = build(source)
-    read_buffer = pipe.host_stage._read_buffer if hasattr(pipe, "host_stage") else 0
+    read_buffer = pipe.host_plan.read_buffer if hasattr(pipe, "host_plan") else 0
 
     def run():
         held = collections.deque(maxlen=last)  # the batches the consumer keeps

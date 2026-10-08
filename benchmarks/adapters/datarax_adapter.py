@@ -23,7 +23,7 @@ from flax import nnx
 from benchmarks.adapters import register
 from benchmarks.adapters._utils import cast_to_float32, normalize_uint8
 from benchmarks.adapters.base import Capability, PipelineAdapter, ScenarioConfig
-from datarax import Pipeline
+from datarax import HostResources, Pipeline
 from datarax.core import batch_ops
 from datarax.core.config import BatchMixOperatorConfig, ElementOperatorConfig
 from datarax.core.data_source import DataSourceModule
@@ -44,6 +44,19 @@ from datarax.sources import (
     MixDataSourcesConfig,
     MixDataSourcesNode,
 )
+
+
+def _host_resources(config: ScenarioConfig) -> HostResources | None:
+    """The host stage's budget a scenario sets: its CPU workers and its RAM budget, or none.
+
+    A scenario that names ``num_workers`` and ``extra["ram_budget_bytes"]`` gives the pipeline
+    that budget and cap; any other reads as datarax does without one. The host stage's read-ahead
+    comes from its plan, so a scenario's ``prefetch_size`` does not reach it.
+    """
+    budget = (config.extra or {}).get("ram_budget_bytes")
+    if config.num_workers < 1 or budget is None:
+        return None
+    return HostResources(ram_budget_bytes=int(budget), max_workers=config.num_workers)
 
 
 # ---------------------------------------------------------------------------
@@ -680,6 +693,7 @@ class DataraxAdapter(PipelineAdapter):
             batch_size=config.batch_size,
             rngs=nnx.Rngs(config.seed),
             drop_last=_DROP_LAST,
+            host_resources=_host_resources(config),
         )
 
     def setup(self, config: ScenarioConfig, data: Any) -> None:
@@ -698,7 +712,6 @@ class DataraxAdapter(PipelineAdapter):
 
         if Capability.DAG_BRANCHING in set(config.required_capabilities):
             self._pipeline = self._build_branching_pipeline(source, config, rngs)
-            self._set_read_buffer(config)
             return
 
         missing = [name for name in config.transforms if name not in _ALL_TRANSFORM_FNS]
@@ -716,24 +729,17 @@ class DataraxAdapter(PipelineAdapter):
             batch_size=config.batch_size,
             rngs=nnx.Rngs(config.seed),
             drop_last=_DROP_LAST,
+            host_resources=_host_resources(config),
         )
-        self._set_read_buffer(config)
 
         if Capability.CACHING in set(config.required_capabilities):
             # Iteration-boundary cache: the expensive pipeline runs once, later
             # passes replay cached batches (see CachingIterator).
             self._cached_iter = CachingIterator(iter(self._pipeline))
 
-    def _set_read_buffer(self, config: ScenarioConfig) -> None:
-        """Read ``prefetch_size`` batches ahead (2 by default) on the pipeline's host stage."""
-        extra = config.extra or {}
-        # The host stage's read-ahead depth is internal until it takes a public resource budget,
-        # which replaces this setting; set here so the prefetch sweep still varies the depth.
-        self._pipeline.host_stage._read_buffer = int(extra.get("prefetch_size", 2))  # noqa: SLF001
-
     def _iterate_batches(self) -> Iterator[Any]:
-        # The pipeline's host stage reads ``prefetch_size`` batches ahead and stages its platform's
-        # depth of placed batches on the device, so no separate prefetch stage is added here.
+        # The pipeline's host stage reads ahead by its plan (``host_resources``) and stages its
+        # platform's depth of placed batches on the device, so no separate prefetch stage is added.
         batches = iter(self._cached_iter) if self._cached_iter is not None else self._pipeline
         for batch in batches:
             if self._rebatch_parts > 1:

@@ -16,6 +16,7 @@ from datarax.core.config import StructuralConfig
 from datarax.core.data_source import (
     DataSourceModule,
     host_rows,
+    HostRead,
     NO_PROVENANCE,
     record_words,
     RecordIdentity,
@@ -103,6 +104,7 @@ class ArrayRecordSourceModule(DataSourceModule):
         paths: Any,
         *,
         decode: RecordDecoder,
+        decode_read: HostRead = HostRead.GIL_BOUND,
         name: str | None = None,
     ) -> None:
         """Open the ArrayRecord files, reading no record.
@@ -111,6 +113,10 @@ class ArrayRecordSourceModule(DataSourceModule):
             config: Configuration for the source.
             paths: A path or ``FileInstruction``, or a sequence of them.
             decode: Turns a batch's ``bytes`` records into one mapping of values per record.
+            decode_read: Whether ``decode`` holds the GIL: ``GIL_BOUND`` (a Python decode, the
+                default) is read in worker processes under a budget; ``GIL_FREE`` declares a
+                decoder that releases it (soundfile, tensorstore, a batch tokenizer), read on
+                threads.
             name: Optional name for the module.
 
         Raises:
@@ -128,12 +134,18 @@ class ArrayRecordSourceModule(DataSourceModule):
                 )
         self._records = _Records(paths)
         self._decode = decode
+        self._decode_read = decode_read
         # The record count as a plain static: the source's order reads it, never the reader.
         self._length = len(self._records.source)
 
     def __len__(self) -> int:
         """The number of records in the files."""
         return self._length
+
+    @property
+    def host_read(self) -> HostRead:
+        """What ``decode`` was declared as: it decodes every batch read."""
+        return self._decode_read
 
     def __repr__(self) -> str:
         """The files and the record count, which identify the records a checkpoint names."""
