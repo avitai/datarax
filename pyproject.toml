@@ -23,7 +23,7 @@ classifiers = [
   "Operating System :: MacOS :: MacOS X"
 ]
 dependencies = [
-  "array-record>=0.4",
+  "array-record>=0.8.4",
   "calibrax>=0.1.14",
   # The flax, jax, orbax and numpy floors are what every release since 0.1.5 has
   # resolved and run CI against. Below flax 0.12.1 nnx Variable lacks set_value /

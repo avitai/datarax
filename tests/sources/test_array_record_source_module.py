@@ -11,7 +11,10 @@ the position belong to the pipeline: the source holds no seed, no epoch and no c
 from __future__ import annotations
 
 import inspect
+import os
 import pickle
+import threading
+from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -20,6 +23,8 @@ from unittest.mock import patch
 import jax
 import numpy as np
 import pytest
+from array_record.python import array_record_data_source
+from array_record.python.array_record_data_source import ArrayRecordDataSource
 from array_record.python.array_record_module import ArrayRecordWriter
 from flax import nnx
 from substrax.testing.compiles import compiled_programs
@@ -335,6 +340,90 @@ class TestOneReadWithProvenance:
         pipe = Pipeline(source=source, stages=[], batch_size=4, rngs=nnx.Rngs(0), shuffle=True)
         for batch, provenance in pipe.raw_batches(with_provenance=True):
             assert [p["name"] for p in provenance] == [f"r{i}" for i in _names(batch.indices)]
+
+
+class TestConcurrentReads:
+    """Threads read one source at once: ArrayRecord's data source opens each file once.
+
+    array-record 0.8.4 creates a file's reader under its own lock and reads the shared readers
+    without one, so the source adds no lock of its own. Both properties are observed by what
+    the threads do, not by wall time: a widened window around each file's opening lets a second
+    opener arrive if anything allowed one, and a counter of threads inside the batched read
+    records whether the two reads ran at once.
+    """
+
+    _WAIT = 1.0
+
+    @staticmethod
+    def _read_in_two_threads(source: ArrayRecordSourceModule) -> list[list[int]]:
+        """Read every record from two threads started together; each thread's labels."""
+        start = threading.Barrier(2)
+        served: list[list[int]] = [[], []]
+
+        def read(slot: int) -> None:
+            start.wait()
+            batch = source.get_batch(to_words(np.arange(_RECORDS, dtype=np.uint64)))
+            served[slot] = [int(v) for v in batch["label"]]
+
+        threads = [threading.Thread(target=read, args=(slot,)) for slot in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        return served
+
+    def test_two_threads_reading_a_fresh_source_open_each_file_once(
+        self, shards: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        opened: Counter[str] = Counter()
+        gates: dict[str, threading.Barrier] = {}
+        guard = threading.Lock()
+        create = array_record_data_source._create_reader
+
+        def counted(filename: Any, options: str) -> Any:
+            with guard:
+                opened[os.path.realpath(filename)] += 1
+                gate = gates.setdefault(os.path.realpath(filename), threading.Barrier(2))
+            try:  # a second opener of this file, if any could arrive, meets the first here
+                gate.wait(timeout=self._WAIT)
+            except threading.BrokenBarrierError:
+                pass
+            return create(filename, options)
+
+        monkeypatch.setattr(array_record_data_source, "_create_reader", counted)
+
+        served = self._read_in_two_threads(_source(shards))
+
+        assert served == [list(range(_RECORDS))] * 2
+        assert opened == Counter({os.path.realpath(path): 1 for path in shards})
+
+    def test_two_threads_read_one_source_at_the_same_time(self, shards: list[str]) -> None:
+        inside, most = 0, 0
+        guard = threading.Lock()
+        both = threading.Barrier(2)
+        read = ArrayRecordDataSource.__getitems__
+
+        def counted(self: ArrayRecordDataSource, keys: Sequence[int]) -> Sequence[bytes]:
+            nonlocal inside, most
+            with guard:
+                inside += 1
+                most = max(most, inside)
+            try:  # the other thread's read, if it may run now, enters before this one leaves
+                both.wait(timeout=TestConcurrentReads._WAIT)
+            except threading.BrokenBarrierError:
+                pass
+            try:
+                return read(self, keys)
+            finally:
+                with guard:
+                    inside -= 1
+
+        source = _source(shards)
+        with patch.object(ArrayRecordDataSource, "__getitems__", counted):
+            served = self._read_in_two_threads(source)
+
+        assert served == [list(range(_RECORDS))] * 2
+        assert most == 2
 
 
 class TestFiles:
