@@ -639,6 +639,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   constructs. Each config validated through `super(type(config), config).__post_init__`, which
   for a subclass named the config's own parent again, so constructing a subclass recursed until
   `RecursionError`.
+- The tests asserting that a call creates no device array no longer fail when a garbage
+  collection frees an unrelated array during the call. They compared the ids, or the count, of
+  `jax.live_arrays()` before and after for equality without holding the "before" arrays, so a
+  collection that freed a reference cycle (an `nnx` transform leaves its flattened Variables in
+  one until the cyclic collector runs) read as a change, and an id freed during the call could be
+  reused by a new array. Every such check now holds the snapshot and asserts on the arrays made
+  since it, through `tests.test_common.device_arrays.arrays_made_since`.
 - Building a TFDS source, or calling `from_tfds`, no longer imports TFDS in the middle of a run.
   `datarax.sources.tfds_source` imports `tensorflow_datasets` at its top, and `from_tfds` moved
   there, exported lazily from `datarax.sources` like the TFDS sources. TFDS's first import enters

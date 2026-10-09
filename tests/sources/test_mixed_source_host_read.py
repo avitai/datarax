@@ -26,6 +26,7 @@ from datarax.core.spec import array_to_spec_strip_leading, device_spec
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
 from datarax.sources.streaming_disk_source import StreamingDiskSource, StreamingDiskSourceConfig
+from tests.test_common.device_arrays import arrays_made_since
 from tests.test_common.mixing import Sized
 from tests.test_common.streams import non_array_state_leaves
 from tests.test_common.tfds_fixture import FIXTURE, TFDSFixture
@@ -135,16 +136,16 @@ class TestTheHostRead:
     def test_the_read_creates_no_device_array(self) -> None:
         mix = _pair()
         words = _words([12, 3, 9, 0])
-        before = len(jax.live_arrays())
+        before = jax.live_arrays()
         batch = mix.get_batch(words)
-        assert len(jax.live_arrays()) == before
+        assert arrays_made_since(before) == []
         # Control: the instrument sees a read that keeps device arrays (a child's own read over
         # columns held on the device).
         child = cast(MemorySource, mix.sources[0])
         child.data = {name: jnp.asarray(column) for name, column in child.data.items()}
-        before = len(jax.live_arrays())
+        before = jax.live_arrays()
         kept = child.get_batch(_words([3, 0]))
-        assert len(jax.live_arrays()) > before
+        assert arrays_made_since(before)
         del batch, kept
 
     def test_the_read_builds_no_spec(self, monkeypatch: pytest.MonkeyPatch) -> None:

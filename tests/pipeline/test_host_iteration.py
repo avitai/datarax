@@ -36,6 +36,7 @@ from datarax.pipeline import Pipeline
 from datarax.pipeline.host_stage import HostStage
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
+from tests.test_common.device_arrays import arrays_made_since
 from tests.test_common.streams import RecordStream
 from tests.test_common.transfers import implicit_upload_raises
 
@@ -248,9 +249,8 @@ class TestPlacement:
     def test_no_dataset_shaped_array_is_made(self) -> None:
         pipe = _pipeline(_memory(50), stages=[_Jitter()])
         before = jax.live_arrays()
-        known = {id(a) for a in before}  # ``before`` holds them, so no id is reused
         for _ in pipe:
-            made = [a for a in jax.live_arrays() if id(a) not in known and a.ndim]
+            made = [a for a in arrays_made_since(before) if a.ndim]
             assert all(a.shape[0] <= 4 for a in made), [a.shape for a in made]
 
 
