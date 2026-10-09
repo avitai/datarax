@@ -186,6 +186,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it held around every read: threads reading one source read in parallel, and each file is still
   opened once. `ArrayRecordSourceModule.close()` no longer waits for a read in flight; call it
   between phases, as ArrayRecord's own `__exit__`.
+- A stream's run builds each batch's provenance only when it was asked for
+  (`raw_batches(with_provenance=True)`); `for batch in pipe` and `raw_batches()` no longer gather
+  and drop it on every batch.
 - `for batch in pipeline` runs on the host stage: each batch is read by Grain threads, named on the
   CPU device, placed on the device by the consumer and run through `pipeline.dag` in one compiled
   call (`datarax.pipeline.dag_call.compile_dag`), split once per iteration, compiled once per
@@ -421,6 +424,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a short final batch compiled inside the timed region.
 - Tests count compiles with `substrax.testing.compiles` only; `tests/test_common/compiles.py`,
   which parsed JAX's compile log, is removed.
+- The streaming-iteration guards count a stream pass's per-batch work instead of timing it.
+  The timed guards compared a stream pass with the same work done through `nnx.jit` or by
+  hand; the ratio measured how long the consumer waited on the read thread, which the
+  scheduler and the cores decide, so it passed on one machine and failed on another at the
+  same commit, and it could not see a per-batch host copy. The counted guards
+  (`substrax.testing.counted_calls`, per batch as the slope of a short and a long pass) hold a
+  stream pass to one `jax.device_put` and one compiled dispatch per batch, to the datarax
+  functions of the stream path by name, and to an itemized allowance per library beyond the
+  same work written by hand. They run in every test lane.
 - An operator implements one method, `apply(element, key, stats) -> Element`: one record, its
   key and the batch's statistics. `__call__(batch)` is the one entry: it computes the statistics
   (`compute_statistics(batch)`, which takes the `Batch`), derives one key per record, applies the
@@ -500,7 +512,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `datarax.typing` the re-exports of `Element`, `Batch` and `Metadata` (import them from
   `datarax`) and the aliases `StateDict`, `MetadataDict`, `ElementTransform`, `BatchTransform`,
   `DataProcessor`, `StateProcessor`, `MetadataProcessor`, `ScanFn`, `CondFn`, `WhileBodyFn`.
-- Requires substrax 0.1.20. The version has one source, `pyproject.toml`; `datarax.__version__`
+- Requires substrax 0.1.21. The version has one source, `pyproject.toml`; `datarax.__version__`
   reads the installed package's metadata.
 - CI runs only what a change needs. A merge whose tree its pull request already tested, with every
   check of that pull request succeeded, stands the repeating jobs down through substrax's
