@@ -163,10 +163,13 @@ print(len(sampler))  # 1000
 
 ### `ModuleNotFoundError: No module named 'tensorflow_datasets'`
 
-**Cause**: TFDS sources require `tensorflow-datasets` to be installed.
+**Cause**: `datarax.sources.tfds_source` imports `tensorflow_datasets` at its top, so the error is
+raised by the line that imports a TFDS source (`from datarax.sources import TFDSEagerSource`,
+`TFDSStreamingSource` or `from_tfds`), not when the source is built. `import datarax.sources`
+alone does not need it. The `data` extra installs it:
 
 ```bash
-uv pip install tensorflow-datasets
+uv pip install "datarax[data]"
 ```
 
 ### `ModuleNotFoundError: No module named 'datasets'`
