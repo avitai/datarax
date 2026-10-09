@@ -39,11 +39,10 @@ from __future__ import annotations
 
 import contextlib
 import itertools
-import logging
 import os
 import struct
 import weakref
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence, Set as AbstractSet
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -64,19 +63,16 @@ from datarax.core.data_source import (
     RecordIdentity,
     refuse_padding,
 )
-from datarax.sources._config_base import SourceConfigBase
+from datarax.sources._config_base import SourceConfigBase, StreamingSourceConfigBase
 from datarax.sources._source_base import (
     DatasetSourceMixin,
-    pass_seed,
+    pass_generator,
     StreamChunk,
     StreamingSourceBase,
 )
 from datarax.sources.array_record_source import ArrayRecordSourceConfig, ArrayRecordSourceModule
 from datarax.sources.eager_source import EagerSource, HostValue, parts_of_records
-from datarax.sources.source_ops import filter_keys, validate_source_settings
-
-
-logger = logging.getLogger(__name__)
+from datarax.sources.source_ops import filter_keys
 
 
 # =============================================================================
@@ -174,13 +170,9 @@ class TFDSEagerConfig(SourceConfigBase):
 
     as_supervised: bool = False
 
-    def __post_init__(self) -> None:
-        """Validate configuration after initialization."""
-        validate_source_settings(self, "TFDSEagerConfig")
-
 
 @dataclass(frozen=True)
-class TFDSStreamingConfig(SourceConfigBase):
+class TFDSStreamingConfig(StreamingSourceConfigBase):
     """Configuration for TFDSStreamingSource (streams a split prepared as TFRecord).
 
     Args:
@@ -200,21 +192,7 @@ class TFDSStreamingConfig(SourceConfigBase):
         :class:`TFDSStreamingSource`.
     """
 
-    shuffle_buffer_size: int = 1000
     as_supervised: bool = False
-
-    def __post_init__(self) -> None:
-        """Validate configuration after initialization.
-
-        Raises:
-            ValueError: If the name, split or key filters are invalid, or the buffer holds no
-                record.
-        """
-        validate_source_settings(self, "TFDSStreamingConfig")
-        if self.shuffle_buffer_size < 1:
-            raise ValueError(
-                f"shuffle_buffer_size must be at least 1; got {self.shuffle_buffer_size}"
-            )
 
 
 # =============================================================================
@@ -296,8 +274,8 @@ def open_prepared_split(  # noqa: DOC502 - _prepared_builder raises the FileNotF
 def _kept_features(
     record: dict[str, Any],
     keys: Sequence[str] | None,
-    include_keys: set[str] | None,
-    exclude_keys: set[str] | None,
+    include_keys: AbstractSet[str] | None,
+    exclude_keys: AbstractSet[str] | None,
 ) -> dict[str, Any]:
     """The features of ``record`` a source keeps: the supervised ones if asked, then filtered."""
     if keys is not None:
@@ -336,8 +314,8 @@ class _ExampleDecoder:
 
     features: Any
     keys: tuple[str, ...] | None
-    include_keys: set[str] | None
-    exclude_keys: set[str] | None
+    include_keys: AbstractSet[str] | None
+    exclude_keys: AbstractSet[str] | None
 
     def __call__(self, records: Sequence[bytes]) -> list[dict[str, Any]]:
         """One kept mapping of decoded features per record."""
@@ -358,8 +336,8 @@ def _per_batch_split(  # noqa: DOC502 - _array_record_builder and _supervised_ke
     *,
     data_dir: str | None = None,
     as_supervised: bool = False,
-    include_keys: set[str] | None = None,
-    exclude_keys: set[str] | None = None,
+    include_keys: AbstractSet[str] | None = None,
+    exclude_keys: AbstractSet[str] | None = None,
 ) -> ArrayRecordSourceModule:
     """A split prepared as ArrayRecord, read and decoded per batch instead of held in memory.
 
@@ -801,7 +779,7 @@ def _ordered_ids(read: StreamRead, pass_index: int) -> Iterator[_RecordId]:
     streams = [_shard_ids(position, shard) for position, shard in enumerate(read.shards)]
     if read.key is None:
         return itertools.chain.from_iterable(streams)
-    generator = np.random.Generator(np.random.Philox(key=pass_seed(read.key, pass_index)))
+    generator = pass_generator(read.key, pass_index)
     order = generator.permutation(len(streams))
     return _buffer_shuffled(_interleaved([streams[i] for i in order]), read.buffer_size, generator)
 
@@ -1222,8 +1200,8 @@ def from_tfds(
     data_dir: str | None = None,
     in_memory: bool = True,
     as_supervised: bool = False,
-    include_keys: set[str] | None = None,
-    exclude_keys: set[str] | None = None,
+    include_keys: AbstractSet[str] | None = None,
+    exclude_keys: AbstractSet[str] | None = None,
 ) -> DataSourceModule:
     """Create the TFDS source that reads the copy prepared in ``data_dir``, by its format.
 

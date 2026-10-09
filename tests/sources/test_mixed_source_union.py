@@ -165,6 +165,24 @@ class TestConflictsAndHostDtypes:
         with pytest.raises(ValueError, match=r"\['image'\].*\['image'\]\['rgb'\]"):
             _mix([Specified({"image": image}), Specified({"image": {"rgb": image}})])
 
+    def test_nested_fields_keep_their_nesting_and_a_missing_one_is_maybe(self) -> None:
+        both = [{"meta": {"a": np.int32(i)}, "x": np.float32(0)} for i in range(_N)]
+        more = [
+            {"meta": {"a": np.int32(i), "b": np.ones(2, np.float32)}, "x": np.float32(1)}
+            for i in range(_N)
+        ]
+        mix = _mix(
+            [MemorySource(MemorySourceConfig(), both), MemorySource(MemorySourceConfig(), more)]
+        )
+
+        batch = _batch_of(mix, list(range(2 * _N)))
+
+        assert sorted(batch.data) == ["meta", "x"]
+        assert sorted(batch["meta"]) == ["a", "b"]
+        assert isinstance(batch["meta"]["a"], np.ndarray)
+        assert isinstance(batch["meta"]["b"], Maybe)
+        assert batch["meta"]["b"].value.shape == (2 * _N, 2)
+
     def test_host_labels_of_one_kind_join_at_the_lossless_promotion(self) -> None:
         """An int64 host label beside an int32 one: both int32 on the device, int64 on the host."""
         wide = _memory({"label": np.arange(_N, dtype=np.int64)})

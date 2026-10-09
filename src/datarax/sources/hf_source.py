@@ -18,16 +18,23 @@ from __future__ import annotations
 
 import contextlib
 import gc
-import logging
-from collections.abc import Collection, Iterator, Mapping
+from collections.abc import Collection, Iterator, Mapping, Set as AbstractSet
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
 import numpy as np
 
-from datarax.core.data_source import NO_PROVENANCE, RecordIdentity
-from datarax.sources._config_base import SourceConfigBase
+
+try:
+    import datasets
+except ImportError as error:
+    msg = 'datarax.sources.hf_source needs datasets: uv pip install "datarax[data]"'
+    raise ImportError(msg) from error
+
+from datarax.core.data_source import DataSourceModule, NO_PROVENANCE, RecordIdentity
+from datarax.core.spec import JAX_ARRAY_KINDS
+from datarax.sources._config_base import SourceConfigBase, StreamingSourceConfigBase
 from datarax.sources._source_base import (
     DatasetSourceMixin,
     key_integer,
@@ -35,10 +42,6 @@ from datarax.sources._source_base import (
     StreamingSourceBase,
 )
 from datarax.sources.eager_source import EagerSource, HostValue, is_array_leaf, stack_records
-from datarax.sources.source_ops import validate_source_settings
-
-
-logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -63,23 +66,18 @@ def _resolve_hf_download_options(
     resolved.pop("trust_remote_code", None)
     resolved.setdefault("revision", "main")
     if local_files_only:
-        from datasets import DownloadConfig  # noqa: PLC0415  (lazy: optional dep)
-
         existing = resolved.get("download_config")
-        if isinstance(existing, DownloadConfig):
+        if isinstance(existing, datasets.DownloadConfig):
             existing.local_files_only = True
         else:
-            resolved["download_config"] = DownloadConfig(local_files_only=True)
+            resolved["download_config"] = datasets.DownloadConfig(local_files_only=True)
     return resolved
 
 
-def _load_hf_dataset(
-    datasets_module: Any, config: HFEagerConfig | HFStreamingConfig, **extra: Any
-) -> Any:
+def _load_hf_dataset(config: HFEagerConfig | HFStreamingConfig, **extra: Any) -> Any:
     """Call ``datasets.load_dataset`` with a config's name, split, folders and download options.
 
     Args:
-        datasets_module: The ``datasets`` module.
         config: The source's configuration.
         **extra: Further ``load_dataset`` arguments (``streaming``).
 
@@ -89,7 +87,7 @@ def _load_hf_dataset(
     # name/split validated non-None by config __post_init__
     assert config.name is not None  # noqa: S101 (invariant, not control flow)
     assert config.split is not None  # noqa: S101 (invariant, not control flow)
-    return datasets_module.load_dataset(  # nosec B615
+    return datasets.load_dataset(  # nosec B615
         config.name,
         split=config.split,
         data_dir=config.data_dir,
@@ -189,13 +187,9 @@ class HFEagerConfig(SourceConfigBase):
     download_kwargs: dict[str, Any] | None = None
     local_files_only: bool = False
 
-    def __post_init__(self) -> None:
-        """Validate configuration after initialization."""
-        validate_source_settings(self, "HFEagerConfig")
-
 
 @dataclass(frozen=True)
-class HFStreamingConfig(SourceConfigBase):
+class HFStreamingConfig(StreamingSourceConfigBase):
     """Configuration for HFStreamingSource (streams a dataset with HF's streaming mode).
 
     Args:
@@ -215,23 +209,9 @@ class HFStreamingConfig(SourceConfigBase):
         (``Pipeline(shuffle=...)``). A map-style dataset is read by ``HFEagerSource``.
     """
 
-    shuffle_buffer_size: int = 1000
     cache_dir: str | None = None
     download_kwargs: dict[str, Any] | None = None
     local_files_only: bool = False
-
-    def __post_init__(self) -> None:
-        """Validate configuration after initialization.
-
-        Raises:
-            ValueError: If the name, split or key filters are invalid, or the buffer holds no
-                record.
-        """
-        validate_source_settings(self, "HFStreamingConfig")
-        if self.shuffle_buffer_size < 1:
-            raise ValueError(
-                f"shuffle_buffer_size must be at least 1; got {self.shuffle_buffer_size}"
-            )
 
 
 # =============================================================================
@@ -278,25 +258,10 @@ class HFEagerSource(DatasetSourceMixin, EagerSource):
         Args:
             config: Configuration for the source
             name: Optional name (defaults to HFEagerSource(dataset:split))
-
-        Raises:
-            ImportError: If the datasets package is not installed
         """
         if name is None:
             name = f"HFEagerSource({config.name}:{config.split})"
         super().__init__(config, name=name)
-
-        # Import datasets lazily
-        try:
-            import datasets  # type: ignore[import-not-found]
-
-            self._datasets_module = datasets
-        except ImportError as e:
-            raise ImportError(
-                "Loading from HuggingFace Datasets requires additional "
-                "dependencies. Install Datarax with optional HF dependencies "
-                "using: pip install datarax[data]"
-            ) from e
 
         # Store config for feature access
         self.dataset_name = config.name
@@ -305,7 +270,7 @@ class HFEagerSource(DatasetSourceMixin, EagerSource):
         self.exclude_keys = config.exclude_keys
 
         # Load the dataset once: its info and ALL its data, at init
-        dataset = _load_hf_dataset(self._datasets_module, config)
+        dataset = _load_hf_dataset(config)
         # Only the single-split Dataset variants of load_dataset's return union carry ``info``.
         self._dataset_info = HostValue(getattr(dataset, "info", None))
         self._store(*self._load_columns(dataset, config))
@@ -361,7 +326,7 @@ def _feature_dtypes(features: Any, keys: Collection[str]) -> dict[str, np.dtype]
             resolved = np.dtype(dtype) if dtype is not None else None
         except TypeError:  # a feature dtype NumPy does not name, such as "string"
             resolved = None
-        if resolved is not None and resolved.kind in "biuf":
+        if resolved is not None and resolved.kind in JAX_ARRAY_KINDS:
             dtypes[key] = resolved
     return dtypes
 
@@ -404,22 +369,11 @@ class HFStreamingSource(StreamingSourceBase):
         Args:
             config: Configuration for the source
             name: Optional name (defaults to HFStreamingSource(dataset:split))
-
-        Raises:
-            ImportError: If the datasets package is not installed
         """
         if name is None:
             name = f"HFStreamingSource({config.name}:{config.split})"
         super().__init__(config, name=name)
-        try:
-            import datasets  # type: ignore[import-not-found]
-        except ImportError as e:
-            raise ImportError(
-                "Loading from HuggingFace Datasets requires additional "
-                "dependencies. Install Datarax with optional HF dependencies "
-                "using: pip install datarax[data]"
-            ) from e
-        self._dataset = HostValue(_load_hf_dataset(datasets, config, streaming=True))
+        self._dataset = HostValue(_load_hf_dataset(config, streaming=True))
 
     @property
     def dataset_name(self) -> str | None:
@@ -498,3 +452,81 @@ class HFStreamingSource(StreamingSourceBase):
                     else (NO_PROVENANCE,) * size,
                     None,
                 )
+
+
+# =============================================================================
+# Choosing the source
+# =============================================================================
+
+
+def from_hf(
+    name: str,
+    split: str,
+    *,
+    streaming: bool = False,
+    data_dir: str | None = None,
+    cache_dir: str | None = None,
+    include_keys: AbstractSet[str] | None = None,
+    exclude_keys: AbstractSet[str] | None = None,
+    download_kwargs: dict[str, Any] | None = None,
+) -> DataSourceModule:
+    """Create a HuggingFace source: the eager source, or the stream when asked.
+
+    ``HFEagerSource`` loads the dataset whole into host columns at init; with ``streaming=True``,
+    ``HFStreamingSource`` streams it with HuggingFace's streaming mode, for datasets too large to
+    hold. The order records are served in belongs to the pipeline (``Pipeline(shuffle=...)``).
+
+    Args:
+        name: HuggingFace dataset name (e.g., "mnist", "imdb", "allenai/c4")
+        split: Dataset split (e.g., "train", "test")
+        streaming: Whether to stream the dataset rather than load it whole
+        data_dir: Optional folder inside the dataset's repository whose data files are
+            loaded (``datasets.load_dataset``'s ``data_dir``), not a storage location
+        cache_dir: Optional folder where downloaded files are cached
+        include_keys: Optional set of keys to include
+        exclude_keys: Optional set of keys to exclude
+        download_kwargs: Optional kwargs for datasets.load_dataset
+
+    Returns:
+        HFEagerSource, or HFStreamingSource with ``streaming=True``.
+
+    Example:
+        ```python
+        from datarax.sources import from_hf
+
+        source = from_hf("ylecun/mnist", "train")  # loaded whole
+        stream = from_hf("allenai/c4", "train", streaming=True, download_kwargs={"name": "en"})
+        ```
+    """
+    if streaming:
+        return HFStreamingSource(
+            HFStreamingConfig(
+                name=name,
+                split=split,
+                data_dir=data_dir,
+                cache_dir=cache_dir,
+                include_keys=include_keys,
+                exclude_keys=exclude_keys,
+                download_kwargs=download_kwargs,
+            )
+        )
+    return HFEagerSource(
+        HFEagerConfig(
+            name=name,
+            split=split,
+            data_dir=data_dir,
+            cache_dir=cache_dir,
+            include_keys=include_keys,
+            exclude_keys=exclude_keys,
+            download_kwargs=download_kwargs,
+        )
+    )
+
+
+__all__ = [
+    "HFEagerConfig",
+    "HFEagerSource",
+    "HFStreamingConfig",
+    "HFStreamingSource",
+    "from_hf",
+]

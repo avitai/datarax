@@ -287,10 +287,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `raw_batches(with_provenance=True)` reads it with. `paths` may be TFDS `FileInstruction`s. It pickles without open file handles and has no traced read, so `step()`,
   `scan()` and `session()` over it are refused naming `get_records` and the host path that reads
   it, `for batch in pipe` and `raw_batches()`; so is any `INDEXED` source without `get_records`.
-- `source_ops.validate_eager_source_settings`, `validate_eager_config` and
-  `finalize_eager_config_validation` are `validate_source_settings`, `validate_source_config` and
-  `finalize_source_config_validation` (eager and stream
-  configs share it).
+- A named-dataset source config validates in its base: `SourceConfigBase.__post_init__` refuses
+  a missing name or split (naming the class constructed) and both key filters together, and holds
+  `include_keys`/`exclude_keys` as `frozenset`s, so a config is hashable whichever set type it was
+  given. `HFStreamingConfig` and `TFDSStreamingConfig` take `shuffle_buffer_size` and its check
+  from `StreamingSourceConfigBase`. `source_ops.validate_eager_source_settings`,
+  `validate_eager_config` and `finalize_eager_config_validation` are gone, with nothing in their
+  place: a subclass validates through `super().__post_init__()`.
+- `datarax.sources.hf_source` imports `datasets` at its top, and `from_hf` moved there; without
+  the `data` extra, importing it raises `ImportError` naming the extra, rather than the first
+  constructor call. `datarax.sources` lists its exports in `__init__.pyi`, which type checkers
+  read, and loads the ArrayRecord, TFDS and HuggingFace names on first use through `lazy-loader`
+  (a new direct dependency, already installed with calibrax); `import datarax.sources` imports
+  neither TFDS nor `datasets`.
 - The HuggingFace examples that read raw text (the IMDB quick reference and the SST-2 training
   example) load with `HFEagerSource` and read each record's text with `provenance(indices)`.
 - **`TFDSEagerSource` reads TFDS without TensorFlow.** It reads a split TFDS has prepared as
@@ -538,6 +547,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `MemorySourceConfig.cache_size`, which nothing read, and
+  `datarax.core.data_source.LocalFilesOnlyMixin`, which no source used (HuggingFace and
+  ArrayRecord sources check `local_files_only` their own way).
 - `ArrayRecordSourceConfig`'s `seed`, `num_epochs` and `shuffle_files`, and
   `ArrayRecordSourceModule`'s own iteration and state: `rngs`, `grain_source`, `current_index`,
   `current_epoch`, `total_records`, `prefetch_cache`, `iterator_initialized`, `shuffled_indices`,
@@ -598,6 +610,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A stream is no longer a Grain `RandomAccessDataSource`, and `stream[0]` no longer returns
+  `None`. `DataSourceModule` defined `__getitem__` returning `None` and `__len__`, `__iter__` and
+  `__next__` that raised, so every source passed `isinstance(source,
+  grain.sources.RandomAccessDataSource)`; the base now defines none of them, and a source supports
+  only the protocols it implements (the eager sources implement `__len__` and `__getitem__`).
+  Indexing, sizing or iterating a source that does not implement it raises Python's `TypeError`,
+  and `DataSourceModule.index_space()` of a source without a length raises `TypeError` (was
+  `NotImplementedError`). `datarax.core.data_source.known_length(source)` returns a source's
+  length or `None`, the one probe the source base, the pipeline and the mix use; a mix refuses a
+  child without a length by name.
+- A subclass of `HFEagerConfig`, `HFStreamingConfig`, `TFDSEagerConfig` or `TFDSStreamingConfig`
+  constructs. Each config validated through `super(type(config), config).__post_init__`, which
+  for a subclass named the config's own parent again, so constructing a subclass recursed until
+  `RecursionError`.
 - Building a TFDS source, or calling `from_tfds`, no longer imports TFDS in the middle of a run.
   `datarax.sources.tfds_source` imports `tensorflow_datasets` at its top, and `from_tfds` moved
   there, exported lazily from `datarax.sources` like the TFDS sources. TFDS's first import enters

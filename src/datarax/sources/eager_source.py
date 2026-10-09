@@ -38,12 +38,9 @@ from datarax.core.data_source import (
 )
 from datarax.core.element_batch import Batch, Element
 from datarax.core.index_words import low_words, to_words
-from datarax.core.spec import array_to_spec_strip_leading, device_spec
+from datarax.core.spec import array_to_spec_strip_leading, device_spec, JAX_ARRAY_KINDS
 from datarax.sources._index_validation import validate_index_batch
 from datarax.sources.source_ops import resolve_wrapped_indices
-
-
-_NUMERIC_KINDS = frozenset("biufc")
 
 
 class HostValue:
@@ -104,12 +101,12 @@ def is_array_leaf(value: Any) -> bool:
         return False
     if isinstance(value, bool | int | float | complex | np.generic | np.ndarray | jax.Array):
         try:
-            return np.dtype(getattr(value, "dtype", type(value))).kind in _NUMERIC_KINDS
+            return np.dtype(getattr(value, "dtype", type(value))).kind in JAX_ARRAY_KINDS
         except TypeError:  # an extended dtype, such as a PRNG key's, is not a column
             return False
     if isinstance(value, list | tuple):
         try:
-            return np.asarray(value).dtype.kind in _NUMERIC_KINDS
+            return np.asarray(value).dtype.kind in JAX_ARRAY_KINDS
         except ValueError:  # ragged nesting is not one array
             return False
     return False
@@ -146,15 +143,22 @@ def _split(node: Any, path: tuple[str, ...], provenance: dict[str, Any]) -> Any:
         return part if part else _ABSENT
     if is_array_leaf(node):
         return np.asarray(node)
-    provenance["/".join(path)] = node
+    provenance[_field_name(path)] = node
     return _ABSENT
 
 
+def _field_name(path: Sequence[Any]) -> str:
+    """A field's name: its path's steps joined by ``/``, a dictionary key by the key itself.
+
+    Provenance keys and the field names refusals print are written this way. A step without a
+    ``key`` (a list position, ``SequenceKey``) prints as JAX prints it, ``[0]``;
+    ``jax.tree_util.keystr(path, simple=True, separator="/")`` would print ``0`` there instead.
+    """
+    return "/".join(str(getattr(step, "key", step)) for step in path)
+
+
 def _field_paths(part: PyTree) -> list[str]:
-    return [
-        "/".join(str(getattr(key, "key", key)) for key in path)
-        for path, _ in jax.tree_util.tree_flatten_with_path(part)[0]
-    ]
+    return [_field_name(path) for path, _ in jax.tree_util.tree_flatten_with_path(part)[0]]
 
 
 def stack_records(parts: Sequence[PyTree]) -> PyTree:
@@ -243,7 +247,7 @@ def column_length(columns: PyTree) -> int:
         ValueError: If the columns disagree on their record count.
     """
     flat = jax.tree_util.tree_flatten_with_path(columns)[0]
-    lengths = {"/".join(str(getattr(k, "key", k)) for k in path): len(leaf) for path, leaf in flat}
+    lengths = {_field_name(path): len(leaf) for path, leaf in flat}
     if len(set(lengths.values())) > 1:
         raise ValueError(f"columns must hold one row per record; their lengths are {lengths}")
     return next(iter(lengths.values()), 0)
@@ -341,9 +345,7 @@ def named_batch(data: PyTree, words: np.ndarray, epochs: ArrayLike) -> Batch:
         The ``Batch``.
     """
     epoch_of_each = np.broadcast_to(np.asarray(epochs, np.int32), (len(words),))
-    return batch_ops.from_arrays(data).replace(
-        indices=words, epochs=np.ascontiguousarray(epoch_of_each)
-    )
+    return batch_ops.from_arrays(data, indices=words, epochs=np.ascontiguousarray(epoch_of_each))
 
 
 class EagerSource(DataSourceModule):

@@ -27,7 +27,7 @@ If you're familiar with PyTorch's torchvision datasets, here's how Datarax + TFD
 |---------|---------|
 | `torchvision.datasets.MNIST(train=True)` | `TFDSEagerSource(TFDSEagerConfig(name="mnist", split="train"))` |
 | `DataLoader(dataset, shuffle=True)` | `Pipeline(source=TFDSEagerSource(...), ..., shuffle=True)` |
-| `transforms.ToTensor()` | JAX arrays by default (no conversion needed) |
+| `transforms.ToTensor()` | Host NumPy columns; the pipeline places each batch on the device |
 | `transforms.Normalize(mean, std)` | Custom operator with JAX operations |
 
 **Key difference:** TFDS prepares a dataset once (downloads it and writes it as ArrayRecord), while Datarax reads the prepared copy into host NumPy columns without TensorFlow.
@@ -38,8 +38,8 @@ If you're familiar with PyTorch's torchvision datasets, here's how Datarax + TFD
 |--------------------|---------|
 | `tfds.load('mnist', split='train')` | `TFDSEagerSource(TFDSEagerConfig(name='mnist', split='train'))` |
 | `dataset.map(normalize).batch(32)` | `Pipeline(source=source, stages=[normalizer], batch_size=32, rngs=nnx.Rngs(0))` |
-| `dataset.shuffle(buffer_size=1000)` | `shuffle=True` in config |
-| TensorFlow tensors | JAX arrays |
+| `dataset.shuffle(buffer_size=1000)` | `Pipeline(..., shuffle=True)` |
+| TensorFlow tensors | Host NumPy batches, JAX arrays once placed on the device |
 
 **Key difference:** Datarax uses JAX instead of TensorFlow for computation.
 

@@ -42,8 +42,8 @@ from numpy.typing import ArrayLike
 from datarax.core.data_source import DataSourceModule
 
 
-# NumPy dtype kinds a JAX array can hold: bool, signed, unsigned, float, complex.
-_JAX_ARRAY_KINDS = frozenset("biufc")
+JAX_ARRAY_KINDS = frozenset("biufc")
+"""The NumPy dtype kinds a JAX array can hold: bool, signed, unsigned, float, complex."""
 
 
 class SpecMismatchError(ValueError):
@@ -177,7 +177,7 @@ def _field(path: tuple[Any, ...]) -> str:
 def _device_dtype(dtype: Any) -> Any | None:
     """The dtype a JAX array holds for data of ``dtype``, or None if it cannot hold it."""
     is_extended = jnp.issubdtype(dtype, jax.dtypes.extended)
-    if not is_extended and np.dtype(dtype).kind not in _JAX_ARRAY_KINDS:
+    if not is_extended and np.dtype(dtype).kind not in JAX_ARRAY_KINDS:
         return None
     return jax.dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True)
 
@@ -510,6 +510,7 @@ def declared_spec(source: DataSourceModule) -> Any:
 
 
 __all__ = [
+    "JAX_ARRAY_KINDS",
     "SpecMismatchError",
     "add_leading_dim",
     "array_to_spec",

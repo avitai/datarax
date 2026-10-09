@@ -1,6 +1,6 @@
 # Sources
 
-Data source adapters for loading data from various formats and libraries. Sources provide a unified interface for accessing datasets, with automatic conversion to JAX arrays.
+Data source adapters for loading data from various formats and libraries. Sources provide a unified interface for accessing datasets: they hold and read host NumPy data, and the pipeline places each batch on the device.
 
 ## Available Sources
 
@@ -41,7 +41,7 @@ batch = source.get_batch(to_words(np.arange(32)))
 
 - [eager_source](eager_source.md) - The in-memory base: host columns, provenance and the host read
 - [hf_source](hf_source.md) - HuggingFace Datasets integration (recommended)
-- [source_ops](source_ops.md) - The helpers a source is built from: wrapped index resolution, worker shares and config validation
+- [source_ops](source_ops.md) - The helpers a source is built from: wrapped index resolution, worker shares, key filters and the named-dataset repr
 - [tfds_source](tfds_source.md) - TensorFlow Datasets integration
 - [memory_source](memory_source.md) - In-memory data for testing
 - [streaming_disk_source](streaming_disk_source.md) - A `.npy` array larger than RAM, read through a memory map

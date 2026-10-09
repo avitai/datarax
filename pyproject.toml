@@ -31,6 +31,7 @@ dependencies = [
   "flax>=0.12.9",
   "jax>=0.11.1",
   "jaxtyping>=0.2.20",
+  "lazy-loader>=0.5", # datarax.sources exports its optional integrations from __init__.pyi
   # 0.2.8 removed optax's module-level jax.config.update("jax_pmap_shmap_merge");
   # jax removed that option in 0.10, so older optax breaks flax's import outright.
   "optax>=0.2.8",

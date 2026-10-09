@@ -7,16 +7,13 @@ compatibility.
 
 import abc
 import enum
-import logging
-from collections.abc import Iterator, Mapping, Sequence
-from pathlib import Path
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 
 import jax
 import numpy as np
 from jax.typing import ArrayLike
-from jaxtyping import PyTree
 
 from datarax.core.element_batch import Batch, PADDING_INDEX
 from datarax.core.index_shuffle import shuffle_positions
@@ -25,52 +22,22 @@ from datarax.core.structural import StructuralModule
 from datarax.typing import DataDict
 
 
-logger = logging.getLogger(__name__)
+def known_length(source: Any) -> int | None:
+    """``len(source)``, or ``None`` for a source without a length.
 
+    A source without a length either defines no ``__len__`` or defines one that raises
+    ``NotImplementedError`` (a stream whose backend reports none).
 
-class LocalFilesOnlyMixin:
-    """Adds a uniform ``local_files_only`` flag to data sources.
+    Args:
+        source: A data source.
 
-    Sources that download external archives (HuggingFace, TFDS, ArrayRecord,
-    etc.) compose this mixin and call ``_check_local_cache`` before any
-    network attempt. The check enforces the air-gapped contract: when
-    ``local_files_only=True`` and the cache is missing, the source raises a
-    ``FileNotFoundError`` whose message names the dataset and the exact paths
-    the user must populate, instead of a generic "file not found".
-
-    Subclasses must define ``self.local_files_only: bool`` (typically wired
-    through their config dataclass).
+    Returns:
+        The number of records, or ``None``.
     """
-
-    local_files_only: bool
-
-    def _check_local_cache(
-        self,
-        expected_paths: Sequence[Path],
-        *,
-        dataset_name: str,
-    ) -> None:
-        """Raise if ``local_files_only`` is set but the cache is missing.
-
-        Args:
-            expected_paths: Files whose presence indicates a populated cache.
-            dataset_name: Human-readable name of the dataset (included in the
-                error message so users know which source raised).
-
-        Raises:
-            FileNotFoundError: If ``local_files_only`` is True and any
-                ``expected_paths`` entry does not exist.
-        """
-        if not self.local_files_only:
-            return
-        missing = [str(p.resolve()) for p in expected_paths if not p.exists()]
-        if missing:
-            raise FileNotFoundError(
-                f"{dataset_name}: local_files_only=True but the local cache is "
-                f"incomplete. Expected the following file(s) to exist: {missing}. "
-                "Populate the cache offline or set local_files_only=False to "
-                "allow the source to download."
-            )
+    try:
+        return len(source)
+    except (TypeError, NotImplementedError):
+        return None
 
 
 def record_words(indices: ArrayLike) -> np.ndarray:
@@ -304,10 +271,7 @@ class DataSourceModule(StructuralModule):
         """
         self._refuse_arrival("look a record's provenance up by its index")
         words = record_words(indices)
-        try:
-            length: int | None = len(self)
-        except (NotImplementedError, TypeError):
-            length = None
+        length = known_length(self)
         if length is None:
             refuse_padding(words)
         else:
@@ -353,45 +317,7 @@ class DataSourceModule(StructuralModule):
                 "records by arrival hands each record's provenance out beside each batch it serves."
             )
 
-    def __iter__(self) -> Iterator[PyTree]:
-        """Return an iterator over individual data elements.
-
-        Returns:
-            An iterator that yields data elements as PyTrees.
-
-        Raises:
-            NotImplementedError: If a subclass does not override this method.
-        """
-        raise NotImplementedError("Subclasses must implement __iter__")
-
-    def __next__(self) -> PyTree:  # noqa: DOC503
-        """Get the next element from this data source.
-
-        Returns:
-            The next data element as a PyTree.
-
-        Raises:
-            StopIteration: When there are no more elements to yield.
-            NotImplementedError: If a subclass does not override this method.
-        """
-        raise NotImplementedError("Subclasses must implement __next__")
-
-    def __len__(self) -> int:
-        """Return the total number of data elements.
-
-        Implementing this method allows downstream components to know the
-        dataset size in advance, which can be useful for progress tracking
-        or specific sampling strategies.
-
-        Returns:
-            The total number of data elements in the source.
-
-        Raises:
-            NotImplementedError: If the source cannot determine its length.
-        """
-        raise NotImplementedError("This DataSourceModule does not support length determination.")
-
-    def index_space(self) -> int:  # noqa: DOC502 - __len__ raises
+    def index_space(self) -> int:
         """How many record indices the source names; its indices run from 0 to one below it.
 
         For most sources that is ``len(self)``, the positions one epoch serves. A source whose
@@ -403,23 +329,12 @@ class DataSourceModule(StructuralModule):
             The size of the source's index space.
 
         Raises:
-            NotImplementedError: If the source cannot determine its length.
+            TypeError: If the source has no length.
         """
-        return len(self)
-
-    def __getitem__(self, idx: int) -> PyTree | None:
-        """Get element by index.
-
-        This method provides subscriptable access to data elements.
-        Subclasses should override this method if they support random access.
-
-        Args:
-            idx: Index of the element to retrieve.
-
-        Returns:
-            The data element at the given index, or None if not implemented.
-        """
-        return None
+        length = known_length(self)
+        if length is None:
+            raise TypeError(f"{type(self).__name__} has no length, so it names no index space")
+        return length
 
     def get_records(self, indices: jax.Array) -> DataDict:
         """Gather the records at ``indices``: indexed access for ``Pipeline``-driven iteration.
@@ -490,10 +405,7 @@ class DataSourceModule(StructuralModule):
             ValueError: If a key is given to a source without a length, which has no order to
                 shuffle.
         """
-        try:
-            length: int | None = len(self)
-        except NotImplementedError:
-            length = None
+        length = known_length(self)
         if key is None:
             return wrapped_positions(start, size, length)
         if length is None:

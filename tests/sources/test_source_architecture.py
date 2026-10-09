@@ -35,14 +35,14 @@ class TestEagerSourceArchitecture:
     """
 
     @pytest.mark.unit
-    def test_memory_source_stores_jax_arrays(self):
-        """Verify that MemorySource stores data as JAX arrays."""
+    def test_memory_source_stores_host_numpy_columns(self):
+        """Verify that MemorySource holds its records as host NumPy columns, not JAX arrays."""
         data = {"image": np.random.randn(100, 28, 28).astype(np.float32)}
         config = MemorySourceConfig()
         source = MemorySource(config, data)
 
-        # Data should be stored and accessible
         assert len(source) == 100
+        assert type(source.data["image"]) is np.ndarray
 
     @pytest.mark.unit
     def test_eager_source_iteration_is_pure_python(self):
