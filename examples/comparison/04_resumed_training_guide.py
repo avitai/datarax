@@ -365,7 +365,7 @@ print(f"Datarax loader state: {saved_payload(datarax_payload)['data_iterator']}"
 # Expected output:
 # Latest step in each store: 20, 20
 # Grain loader state keys: ['data_source', 'last_seen_indices', 'last_worker_index', 'sampler', 'version', 'worker_count']
-# Datarax loader state: {'version': 3, 'kind': 'indexed', 'epoch': 2, 'position': 32, 'run_end_epoch': 5, 'stream': None, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 5, 'shuffled': True, 'seed': [1797259609, 2579123966], 'order': {'kind': 'global'}}}  # noqa: E501
+# Datarax loader state: {'version': 3, 'kind': 'indexed', 'epoch': 2, 'position': 32, 'run_end_epoch': 5, 'stream': None, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 5, 'shuffled': True, 'seed': [1797259609, 2579123966], 'order': {'kind': 'global'}, 'shard': None}}  # noqa: E501
 
 # %% [markdown]
 """

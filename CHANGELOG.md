@@ -610,6 +610,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A pipeline's state names the shard of the records its source serves, and a state saved on
+  another shard is refused. A `MemorySource` split between workers
+  (`MemorySourceConfig(shard_id=k, num_workers=n)`) serves positions `[k::n]`, so every shard has
+  the same length and a state saved on shard 0 was accepted by shard 1, which then served shard
+  1's records from shard 0's position. The fingerprint of `Pipeline.get_state()` and of the
+  session's `get_state()` gains `shard`: `None` for a source serving all its records, else
+  `{"index", "count", "records"}` (`datarax.core.data_source.shard_identity`, from the new
+  `DataSourceModule.shard`; `records` is the whole dataset's, which a shard's length does not
+  tell). The state versions are unchanged: a state saved before carries no `shard` and is
+  accepted exactly where it is valid, by a pipeline over all the records.
 - A stream is no longer a Grain `RandomAccessDataSource`, and `stream[0]` no longer returns
   `None`. `DataSourceModule` defined `__getitem__` returning `None` and `__len__`, `__iter__` and
   `__next__` that raised, so every source passed `isinstance(source,

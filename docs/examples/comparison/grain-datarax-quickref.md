@@ -220,13 +220,13 @@ datarax_matches = all(
 )
 print(f"Datarax resumes exactly: {datarax_matches}")
 # Expected output:
-# Datarax checkpoint: {'version': 3, 'kind': 'indexed', 'epoch': 0, 'position': 8, 'run_end_epoch': 1, 'stream': None, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 1, 'shuffled': True, 'seed': [1797259609, 2579123966], 'order': {'kind': 'global'}}}  # noqa: E501
+# Datarax checkpoint: {'version': 3, 'kind': 'indexed', 'epoch': 0, 'position': 8, 'run_end_epoch': 1, 'stream': None, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 1, 'shuffled': True, 'seed': [1797259609, 2579123966], 'order': {'kind': 'global'}, 'shard': None}}  # noqa: E501
 # Datarax resumes exactly: True
 ```
 
 **Terminal Output:**
 ```
-Datarax checkpoint: {'version': 3, 'kind': 'indexed', 'epoch': 0, 'position': 8, 'run_end_epoch': 1, 'stream': None, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 1, 'shuffled': True, 'seed': [1797259609, 2579123966], 'order': {'kind': 'global'}}}
+Datarax checkpoint: {'version': 3, 'kind': 'indexed', 'epoch': 0, 'position': 8, 'run_end_epoch': 1, 'stream': None, 'fingerprint': {'batch_size': 8, 'length': 64, 'drop_last': False, 'num_epochs': 1, 'shuffled': True, 'seed': [1797259609, 2579123966], 'order': {'kind': 'global'}, 'shard': None}}
 Datarax resumes exactly: True
 ```
 

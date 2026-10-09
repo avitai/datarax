@@ -79,6 +79,7 @@ from datarax.core.data_source import (
     known_length,
     Provenance,
     RecordIdentity,
+    shard_identity,
 )
 from datarax.core.element_batch import Batch
 from datarax.pipeline.dag import name_records, OperatorDag, Records
@@ -741,6 +742,7 @@ class Pipeline(nnx.Module):
             position=self._position,
             epoch=self._epoch,
             shuffled=self.shuffle,
+            shard=shard_identity(self.source),
         )
 
     def __iter__(self) -> Iterator[Batch]:  # noqa: DOC502 - the host stage raises

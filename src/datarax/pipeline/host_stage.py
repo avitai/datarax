@@ -53,6 +53,7 @@ from datarax.core.data_source import (
     IndexedHostReadWithProvenance,
     Provenance,
     RecordIdentity,
+    shard_identity,
 )
 from datarax.core.element_batch import Batch
 from datarax.core.index_words import from_words, to_words
@@ -1138,7 +1139,11 @@ _SESSION_VERSION = 2  # the layout of ``PipelineIterator.get_state()``, named wh
 
 
 def _fingerprint(pipeline: Any) -> dict[str, Any]:
-    """The configuration a state is only valid for: batch rule, length, epochs, key and order."""
+    """The configuration a state is only valid for: batch rule, length, epochs, key, order, shard.
+
+    ``shard`` is :func:`~datarax.core.data_source.shard_identity`: a worker's shard serves other
+    records at the same position, so a state saved on one shard is refused by every other.
+    """
     plan: EpochPlan = pipeline.epoch_plan
     return {
         "batch_size": plan.batch_size,
@@ -1148,6 +1153,7 @@ def _fingerprint(pipeline: Any) -> dict[str, Any]:
         "shuffled": bool(pipeline.shuffle),
         "seed": [int(word) for word in key_words(pipeline._epoch_key_base.get_value())],  # noqa: SLF001
         "order": {"kind": "global"},
+        "shard": shard_identity(pipeline.source),
     }
 
 
