@@ -504,10 +504,12 @@ class _StreamIterator(grain.DatasetIterator):
             raise StopIteration
         parts, full = self._unit(chunk)
         batch = batch_ops.stack([b for b, _, _ in parts]) if full and stacked else parts[0][0]
-        provenance = tuple(record for _, part, _ in parts for record in part)
-        return HostElement(
-            batch, provenance if self._config.with_provenance else None, parts[-1][2]
+        provenance = (
+            tuple(record for _, part, _ in parts for record in part)
+            if self._config.with_provenance
+            else None
         )
+        return HostElement(batch, provenance, parts[-1][2])
 
     def get_state(self) -> dict[str, Any]:
         """Not used: the host stage's cursor is where a stream resumes."""
