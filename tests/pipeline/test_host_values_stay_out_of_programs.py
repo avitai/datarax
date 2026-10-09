@@ -44,7 +44,11 @@ from datarax.sources.hf_source import (
 )
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
-from datarax.sources.streaming_disk_source import StreamingDiskSource, StreamingDiskSourceConfig
+from datarax.sources.streaming_disk_source import (
+    DiskColumn,
+    StreamingDiskSource,
+    StreamingDiskSourceConfig,
+)
 from tests.test_common.holder_reads import HolderRecorder
 from tests.test_common.streams import RecordStream
 from tests.test_common.tfds_fixture import FIXTURE, TFDSFixture
@@ -69,7 +73,7 @@ def _disk(directory: Path, monkeypatch: pytest.MonkeyPatch) -> StreamingDiskSour
     path = directory / "rows.npy"
     if not path.exists():
         np.save(path, np.arange(_RECORDS * 3, dtype=np.float32).reshape(_RECORDS, 3))
-    return StreamingDiskSource(StreamingDiskSourceConfig(path=str(path)))
+    return StreamingDiskSource(StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("x", path),)))
 
 
 def _decode(records: Sequence[bytes]) -> list[dict[str, np.ndarray]]:

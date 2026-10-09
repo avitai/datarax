@@ -11,7 +11,7 @@ Data source adapters for loading data from various formats and libraries. Source
 | **TFDSEagerSource** | TensorFlow Datasets prepared as ArrayRecord, read without TensorFlow | Small/medium TFDS catalog |
 | **TFDSStreamingSource** | TensorFlow Datasets prepared as TFRecord, read without TensorFlow | Large datasets (streaming) |
 | **MemorySource** | In-memory arrays | Testing, small data |
-| **StreamingDiskSource** | A `.npy` array read through a memory map | Arrays larger than RAM |
+| **StreamingDiskSource** | Columns of arrays stored raw on disk (`.npy`, contiguous HDF5), read through memory maps | Arrays larger than RAM |
 | **ArrayRecordSourceModule** | ArrayRecord format | Large-scale training |
 | **MixDataSourcesNode** | Multiple sources | Multi-dataset training |
 

@@ -27,7 +27,11 @@ from datarax.sources.eager_source import EagerSource
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
 from datarax.sources.source_ops import partition_length, resolve_wrapped_indices
-from datarax.sources.streaming_disk_source import StreamingDiskSource, StreamingDiskSourceConfig
+from datarax.sources.streaming_disk_source import (
+    DiskColumn,
+    StreamingDiskSource,
+    StreamingDiskSourceConfig,
+)
 
 
 @dataclass(frozen=True)
@@ -86,7 +90,7 @@ def _mixed() -> MixDataSourcesNode:
 def _disk(tmp_path: Path) -> StreamingDiskSource:
     path = tmp_path / "data.npy"
     np.save(path, np.arange(16, dtype=np.float32))
-    return StreamingDiskSource(StreamingDiskSourceConfig(path=str(path), feature_key="x"))
+    return StreamingDiskSource(StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("x", path),)))
 
 
 def _sources(tmp_path: Path) -> dict[str, DataSourceModule]:

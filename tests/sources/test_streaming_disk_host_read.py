@@ -24,7 +24,11 @@ from datarax.core.host_values import HostArray
 from datarax.core.index_words import from_words, to_words
 from datarax.pipeline import Pipeline
 from datarax.sources import EagerSource
-from datarax.sources.streaming_disk_source import StreamingDiskSource, StreamingDiskSourceConfig
+from datarax.sources.streaming_disk_source import (
+    DiskColumn,
+    StreamingDiskSource,
+    StreamingDiskSourceConfig,
+)
 from tests.test_common.compiles import expect_first_call_compiles
 from tests.test_common.device_arrays import arrays_made_since
 from tests.test_common.host_resources import live, mapped, open_descriptors, released
@@ -42,7 +46,7 @@ def _array() -> np.ndarray:
 def source(tmp_path: Path) -> StreamingDiskSource:
     path = tmp_path / "data.npy"
     np.save(path, _array())
-    return StreamingDiskSource(StreamingDiskSourceConfig(path=str(path), feature_key="x"))
+    return StreamingDiskSource(StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("x", path),)))
 
 
 def _words(rows: Sequence[int] | np.ndarray) -> np.ndarray:
@@ -75,7 +79,7 @@ def test_a_contiguous_run_is_a_view_of_the_memory_map(source: StreamingDiskSourc
     batch = source.get_batch(_words(range(8, 16)), contiguous=True)
 
     np.testing.assert_array_equal(batch["x"], _array()[8:16])
-    assert np.shares_memory(batch["x"], source._host.array)
+    assert np.shares_memory(batch["x"], source._hosts.arrays[0].array)
     np.testing.assert_array_equal(from_words(np.asarray(batch.indices)), np.arange(8, 16))
 
 
@@ -130,12 +134,16 @@ def test_the_host_read_takes_the_eager_sources_signature() -> None:
     assert {name: p.kind for name, p in disk.items()} == {name: p.kind for name, p in eager.items()}
 
 
-def test_the_source_and_its_config_are_exported() -> None:
+def test_the_source_its_config_and_its_column_are_exported() -> None:
+    import datarax  # noqa: PLC0415
     import datarax.sources as sources  # noqa: PLC0415
 
     assert sources.StreamingDiskSource is StreamingDiskSource
     assert sources.StreamingDiskSourceConfig is StreamingDiskSourceConfig
-    assert {"StreamingDiskSource", "StreamingDiskSourceConfig"} <= set(sources.__all__)
+    assert sources.DiskColumn is DiskColumn
+    exported = {"DiskColumn", "StreamingDiskSource", "StreamingDiskSourceConfig"}
+    assert exported <= set(sources.__all__)
+    assert exported <= set(datarax.__all__)
 
 
 def test_the_session_over_the_disk_source_still_compiles_once(
@@ -168,7 +176,9 @@ class TestNothingOfADroppedSourceIsKept:
     def test_no_map_is_left(self, tmp_path: Path) -> None:
         path = tmp_path / "data.npy"
         np.save(path, _array())
-        source = StreamingDiskSource(StreamingDiskSourceConfig(path=str(path), feature_key="x"))
+        source = StreamingDiskSource(
+            StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("x", path),))
+        )
         pipe = Pipeline(
             source=source, stages=[], batch_size=8, rngs=nnx.Rngs(0), shuffle=True, num_epochs=1
         )
@@ -188,7 +198,9 @@ class TestNothingOfADroppedSourceIsKept:
         np.save(path, _array())
 
         def run() -> None:
-            source = StreamingDiskSource(StreamingDiskSourceConfig(path=str(path), feature_key="x"))
+            source = StreamingDiskSource(
+                StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("x", path),))
+            )
             pipe = Pipeline(
                 source=source,
                 stages=[],

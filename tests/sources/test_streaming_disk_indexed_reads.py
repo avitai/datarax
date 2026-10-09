@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from datarax.sources.streaming_disk_source import (
+    DiskColumn,
     StreamingDiskSource,
     StreamingDiskSourceConfig,
 )
@@ -34,7 +35,7 @@ def test_streaming_disk_indexed_read_returns_contiguous_slice(
     synthetic_disk_array: Path,
 ) -> None:
     src = StreamingDiskSource(
-        StreamingDiskSourceConfig(path=str(synthetic_disk_array), feature_key="x")
+        StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("x", synthetic_disk_array),))
     )
 
     batch = src.get_records(src.record_indices_at(4, 4, None))
@@ -46,7 +47,7 @@ def test_streaming_disk_indexed_read_returns_contiguous_slice(
 
 def test_streaming_disk_indexed_read_wraps_at_end(synthetic_disk_array: Path) -> None:
     src = StreamingDiskSource(
-        StreamingDiskSourceConfig(path=str(synthetic_disk_array), feature_key="x")
+        StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("x", synthetic_disk_array),))
     )
 
     # start=14, size=4 → indices 14, 15, 0, 1
@@ -62,7 +63,7 @@ def test_streaming_disk_indexed_read_accepts_traced_start(
 ) -> None:
     """Traced start (jax.Array) is required for nnx.scan-driven iteration."""
     src = StreamingDiskSource(
-        StreamingDiskSourceConfig(path=str(synthetic_disk_array), feature_key="x")
+        StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("x", synthetic_disk_array),))
     )
 
     batch = src.get_records(src.record_indices_at(jnp.int32(4), 4, None))

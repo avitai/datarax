@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from datarax.sources import _field_paths
-from datarax.sources._field_paths import field_name, field_names
+from datarax.sources._field_paths import field_name, field_names, LEVEL, nested
 
 
 def _record() -> dict:
@@ -39,6 +39,27 @@ class TestFieldNames:
         assert [field_name(path) for path in paths] == field_names(_record())
 
 
+class TestNested:
+    def test_names_become_one_mapping_level_per_step(self) -> None:
+        assert nested({"meta/label": 1, "meta/box": 2, "image": 3}) == {
+            "meta": {"label": 1, "box": 2},
+            "image": 3,
+        }
+
+    def test_nesting_inverts_naming(self) -> None:
+        record = {"image": np.zeros(2), "meta": {"label": np.int32(1)}}
+        import jax  # noqa: PLC0415 - the path type is JAX's
+
+        leaves = {
+            field_name(p): leaf for p, leaf in jax.tree_util.tree_flatten_with_path(record)[0]
+        }
+        assert field_names(nested(leaves)) == field_names(record)
+
+    def test_one_separator_names_and_nests(self) -> None:
+        assert LEVEL == "/"
+        assert nested({f"a{LEVEL}b": 1}) == {"a": {"b": 1}}
+
+
 @pytest.mark.parametrize("name", ["field_name", "field_names"])
 def test_the_module_is_the_one_home_of_field_naming(name: str) -> None:
     """``eager_source`` reads these names; no second copy of the joiner is kept there."""
@@ -46,3 +67,11 @@ def test_the_module_is_the_one_home_of_field_naming(name: str) -> None:
 
     assert getattr(eager_source, name) is getattr(_field_paths, name)
     assert f"_{name}" not in vars(eager_source)
+
+
+def test_the_column_sets_nest_with_the_same_function() -> None:
+    from datarax.sources import streaming_disk_source  # noqa: PLC0415 - the module under test
+
+    assert streaming_disk_source.nested is _field_paths.nested
+    assert "_nested" not in vars(streaming_disk_source)
+    assert "_LEVEL" not in vars(streaming_disk_source)

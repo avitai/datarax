@@ -14,7 +14,6 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 import pytest
 from flax import nnx
 
@@ -86,7 +85,7 @@ def _second_traces(name: str, first: Any, second: Any) -> int:
 
 
 def _map(path: str) -> HostArray:
-    return HostArray(path, np.zeros((4, 3), np.float32))
+    return HostArray(path, offset=0, dtype="<f4", shape=(4, 3))  # never opened: compared only
 
 
 @pytest.mark.parametrize("name", list(_transforms()))

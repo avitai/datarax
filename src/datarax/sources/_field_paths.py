@@ -7,11 +7,15 @@ names a refusal prints and the columns a source holds on disk are all named this
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import jax
 from jaxtyping import PyTree
+
+
+LEVEL = "/"
+"""What joins a field's path steps, one per level of its record's nesting."""
 
 
 def field_name(path: Sequence[Any]) -> str:
@@ -27,7 +31,7 @@ def field_name(path: Sequence[Any]) -> str:
     Returns:
         The field's name.
     """
-    return "/".join(str(getattr(step, "key", step)) for step in path)
+    return LEVEL.join(str(getattr(step, "key", step)) for step in path)
 
 
 def field_names(tree: PyTree) -> list[str]:
@@ -42,4 +46,23 @@ def field_names(tree: PyTree) -> list[str]:
     return [field_name(path) for path, _ in jax.tree_util.tree_flatten_with_path(tree)[0]]
 
 
-__all__ = ["field_name", "field_names"]
+def nested(leaves: Mapping[str, Any]) -> dict[str, Any]:
+    """Leaves keyed by field name as nested mappings, one level per path step: naming inverted.
+
+    Args:
+        leaves: Values keyed by field name, :data:`LEVEL` between levels.
+
+    Returns:
+        The nested mappings.
+    """
+    tree: dict[str, Any] = {}
+    for name, leaf in leaves.items():
+        *levels, last = name.split(LEVEL)
+        node = tree
+        for level in levels:
+            node = node.setdefault(level, {})
+        node[last] = leaf
+    return tree
+
+
+__all__ = ["LEVEL", "field_name", "field_names", "nested"]

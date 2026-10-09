@@ -12,12 +12,20 @@ import numpy as np
 import pytest
 from flax import nnx
 
-from datarax.core.host_values import HostArray, HostProvenance, HostValue
+from datarax.core.host_values import HostArray, HostArrays, HostProvenance, HostValue
 
 
-@pytest.mark.parametrize("holder", [HostValue, HostProvenance, HostArray])
+@pytest.mark.parametrize("holder", [HostValue, HostProvenance, HostArray, HostArrays])
 def test_each_holder_is_defined_once_in_core(holder: type) -> None:
     assert holder.__module__ == "datarax.core.host_values"
+
+
+def _npy_map(path) -> HostArray:
+    """A map of the array a ``.npy`` file stores: its offset is the header's length."""
+    stored = np.load(path, mmap_mode="r")
+    return HostArray(
+        str(path), offset=int(stored.offset), dtype=stored.dtype.str, shape=stored.shape
+    )
 
 
 def test_host_values_of_a_kind_are_equal_whatever_they_hold() -> None:
@@ -33,19 +41,25 @@ def test_host_values_of_different_kinds_differ() -> None:
 def test_a_host_array_is_equal_only_to_itself(tmp_path) -> None:
     path = tmp_path / "rows.npy"
     np.save(path, np.arange(6, dtype=np.float32))
-    one, other = HostArray(str(path)), HostArray(str(path))
+    one, other = _npy_map(path), _npy_map(path)
     assert one == one
     assert one != other
+    assert HostArrays((one,)) != HostArrays((one,))
 
 
-def test_a_host_array_opens_its_map_at_first_use_and_pickles_as_its_path(tmp_path) -> None:
+def test_a_host_array_opens_its_map_at_first_use_and_pickles_as_its_place_on_disk(tmp_path) -> None:
     path = tmp_path / "rows.npy"
     np.save(path, np.arange(6, dtype=np.float32))
-    held = HostArray(str(path))
+    held = _npy_map(path)
     np.testing.assert_array_equal(held.array, np.arange(6, dtype=np.float32))
     copy = pickle.loads(pickle.dumps(held))  # the holder this test built, as a worker receives it
     assert copy.path == str(path)
-    assert copy.__getstate__() == {"path": str(path)}
+    assert copy.__getstate__() == {
+        "path": str(path),
+        "offset": held.offset,
+        "dtype": "<f4",
+        "shape": (6,),
+    }
     np.testing.assert_array_equal(copy.array, held.array)
 
 
