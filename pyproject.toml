@@ -214,6 +214,9 @@ test = [
   "coverage>=7",
   # The changed-line coverage gate in CI (ci.yml, the coverage job on a pull request).
   "diff-cover>=10.6.0",
+  # Writes the contiguous HDF5 dataset a raw-region disk column reads
+  # (tests/sources/test_streaming_disk_columns.py).
+  "h5py>=3.0",
   "hypothesis>=6.100",
   "matplotlib>=3.8",
   "pytest>=8.3.5",

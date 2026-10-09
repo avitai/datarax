@@ -320,6 +320,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A stream's run builds each batch's provenance only when it was asked for
   (`raw_batches(with_provenance=True)`); `for batch in pipe` and `raw_batches()` no longer gather
   and drop it on every batch.
+- **Breaking:** `StreamingDiskSource` reads a column set. `StreamingDiskSourceConfig(columns=...)`
+  takes `DiskColumn(name, file, offset, dtype, shape)`s, each an array stored raw in a file at a
+  byte offset, its leading axis the record axis, in place of `path` and `feature_key`.
+  `DiskColumn.from_npy(name, path)` is a `.npy` file's array, its offset the header's length (a
+  Fortran-ordered file is refused); an uncompressed contiguous HDF5 dataset reads at the offset its
+  file reports. A column's name is its field's path, `/` between levels, so records keep their
+  nesting. Columns hold numeric dtypes and one row per record; a column whose file is shorter than
+  its offset and bytes, a name given twice, or a name that is also another's level is refused. Each
+  column pickles as its place on disk. `element_spec()` states dtypes as the device holds them, and
+  the traced read returns a stored 64-bit column at 32 bits while x64 is off, as the eager sources
+  do. `DiskColumn` is exported from `datarax` and `datarax.sources`.
+- `TFDSEagerSource(config, *, host_resources=None)` and `from_tfds(..., host_resources=None)`:
+  with a RAM budget the in-memory build computes the split's decoded size from its fixed-shape
+  features (each kept numeric feature at its stored dtype, times the split's records) before
+  reading a record, and refuses a size above `ram_budget_bytes`, naming the size, the budget and
+  `in_memory=False`; a numeric feature without a fixed shape is refused there too. `from_tfds`
+  refuses `host_resources` for a source read per batch (`in_memory=False`, or a TFRecord copy),
+  naming `Pipeline(host_resources=...)`.
 - The host stage's read options (threads and units read ahead) come only from its plan; tests and
   the benchmark adapter no longer set them. The adapter passes a scenario's `num_workers` and
   `extra["ram_budget_bytes"]` as `HostResources`; a scenario's `prefetch_size` no longer reaches
@@ -353,8 +371,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   call, the compiled session and the host naming use.
 - A `TFDSStreamDataset` element is `(columns, provenance, ids, epochs)`, each record's pass beside
   its id; `pass_dataset` is a run of one pass.
-- `StreamingDiskSource` pickles as its path and opens its memory map at first use, once, under
-  concurrent readers.
+- `StreamingDiskSource` pickles as its columns' places on disk and opens each memory map at first
+  use, once, under concurrent readers.
 - The GPU test recipe is `DATARAX_TEST_JAX_PLATFORMS=cuda,cpu`: the host stage names records on the
   CPU device beside the GPU.
 - A stream's pass key is folded on the CPU device from the key's host words:

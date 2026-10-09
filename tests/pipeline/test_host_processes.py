@@ -38,7 +38,11 @@ from datarax.pipeline.run_units import RunUnits
 from datarax.sources import from_tfds, TFDSStreamingConfig, TFDSStreamingSource
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
-from datarax.sources.streaming_disk_source import StreamingDiskSource, StreamingDiskSourceConfig
+from datarax.sources.streaming_disk_source import (
+    DiskColumn,
+    StreamingDiskSource,
+    StreamingDiskSourceConfig,
+)
 from tests.test_common.streams import RecordStream
 from tests.test_common.tensor_records import TensorDecoder, write_tensor_records
 from tests.test_common.tfds_fixture import FIXTURE, TFDSFixture
@@ -243,7 +247,9 @@ class TestNonImageAndLargeRecords:
     def test_a_large_record_memmap_plans_threads(self, tmp_path: Path) -> None:
         path = tmp_path / "rows.npy"
         np.save(path, np.zeros((16, 256, 1024), np.float32))  # 1 MiB records
-        source = StreamingDiskSource(StreamingDiskSourceConfig(path=str(path), feature_key="x"))
+        source = StreamingDiskSource(
+            StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("x", path),))
+        )
         assert source.host_read is HostRead.GIL_FREE
         pipe = _pipeline(source, workers=2)
         next(iter(pipe.raw_batches()))

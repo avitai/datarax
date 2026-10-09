@@ -32,6 +32,7 @@ from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Batch, PADDING_INDEX
 from datarax.core.index_words import to_words
 from datarax.sources import (
+    DiskColumn,
     MemorySource,
     MemorySourceConfig,
     MixDataSourcesConfig,
@@ -101,7 +102,9 @@ class TestProvenanceByIndex:
         path = tmp_path / "rows.npy"
         np.save(path, np.zeros((5, 2), np.float32))
         numeric = MemorySource(MemorySourceConfig(), {"x": np.arange(5.0)})
-        disk = StreamingDiskSource(StreamingDiskSourceConfig(path=str(path)))
+        disk = StreamingDiskSource(
+            StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("x", path),))
+        )
 
         for source in (numeric, disk, _Kind(RecordIdentity.STREAM_IDS)):
             provenance = source.provenance(_words([3, 1]))
@@ -231,7 +234,9 @@ class TestABareBatchNamesNoRecord:
         mix = MixDataSourcesNode(
             MixDataSourcesConfig(weights=(0.5, 0.5)), [_memory("a", 3), _memory("b", 4)]
         )
-        disk = StreamingDiskSource(StreamingDiskSourceConfig(path=str(path)))
+        disk = StreamingDiskSource(
+            StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("x", path),))
+        )
         for source in (_memory(), mix, disk):
             with pytest.raises(IndexError, match="built without record identities"):
                 source.provenance(_bare_words(2))

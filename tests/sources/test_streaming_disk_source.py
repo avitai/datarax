@@ -18,6 +18,7 @@ from flax import nnx
 
 from datarax.core.index_words import to_words
 from datarax.sources.streaming_disk_source import (
+    DiskColumn,
     StreamingDiskSource,
     StreamingDiskSourceConfig,
 )
@@ -34,7 +35,7 @@ def test_streaming_disk_source_reads_requested_indices(tmp_path: Path) -> None:
     array = np.arange(40, dtype=np.float32).reshape(10, 4)
     path = _write_npy(tmp_path / "data.npy", array)
 
-    config = StreamingDiskSourceConfig(path=str(path), feature_key="x")
+    config = StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("x", path),))
     source = StreamingDiskSource(config, rngs=nnx.Rngs(0))
 
     indices = jnp.asarray(to_words([0, 2, 4, 9]))
@@ -50,7 +51,7 @@ def test_streaming_disk_source_length_matches_array(tmp_path: Path) -> None:
     array = np.zeros((25, 7), dtype=np.float32)
     path = _write_npy(tmp_path / "data.npy", array)
 
-    config = StreamingDiskSourceConfig(path=str(path), feature_key="x")
+    config = StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("x", path),))
     source = StreamingDiskSource(config, rngs=nnx.Rngs(0))
 
     assert len(source) == 25
@@ -61,7 +62,7 @@ def test_streaming_disk_source_element_spec_strips_leading_axis(tmp_path: Path) 
     array = np.zeros((30, 5, 3), dtype=np.float32)
     path = _write_npy(tmp_path / "data.npy", array)
 
-    config = StreamingDiskSourceConfig(path=str(path), feature_key="img")
+    config = StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("img", path),))
     source = StreamingDiskSource(config, rngs=nnx.Rngs(0))
 
     spec = source.element_spec()
@@ -85,7 +86,7 @@ def test_streaming_disk_source_usable_in_downstream_gradient(tmp_path: Path) -> 
     array = np.arange(20, dtype=np.float32).reshape(5, 4)
     path = _write_npy(tmp_path / "data.npy", array)
 
-    config = StreamingDiskSourceConfig(path=str(path), feature_key="x")
+    config = StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("x", path),))
     source = StreamingDiskSource(config, rngs=nnx.Rngs(0))
 
     indices = jnp.asarray(to_words([0, 1, 2]))
@@ -105,33 +106,34 @@ def test_streaming_disk_source_usable_in_downstream_gradient(tmp_path: Path) -> 
 
 
 def test_streaming_disk_source_rejects_missing_path(tmp_path: Path) -> None:
-    """Constructor fails fast when the on-disk file does not exist."""
+    """A column over a ``.npy`` file that does not exist fails fast, naming the file."""
     missing = tmp_path / "missing.npy"
-    config = StreamingDiskSourceConfig(path=str(missing), feature_key="x")
 
-    with pytest.raises(FileNotFoundError):
-        StreamingDiskSource(config, rngs=nnx.Rngs(0))
+    with pytest.raises(FileNotFoundError, match="missing.npy"):
+        DiskColumn.from_npy("x", missing)
 
 
 def test_streaming_disk_source_repr_identifies_config(tmp_path: Path) -> None:
-    """S2: repr enumerates path/feature_key/length so checkpoint restore can validate."""
+    """S2: repr enumerates each column and the length so checkpoint restore can validate."""
     array = np.zeros((12, 3), dtype=np.float32)
     path = _write_npy(tmp_path / "data.npy", array)
 
-    config = StreamingDiskSourceConfig(path=str(path), feature_key="feat")
+    config = StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("feat", path),))
     source = StreamingDiskSource(config, rngs=nnx.Rngs(0))
 
     r = repr(source)
     assert "StreamingDiskSource" in r
     assert str(path) in r
-    assert "feature_key='feat'" in r
+    assert f"feat: {path}@128 float32[12, 3]" in r
     assert "length=12" in r
 
 
 def test_the_memory_map_is_not_module_state(tmp_path: Path) -> None:
     """The on-disk array stays on the host; NNX state holds none of it."""
     path = _write_npy(tmp_path / "data.npy", np.ones((6, 2), dtype=np.float32))
-    source = StreamingDiskSource(StreamingDiskSourceConfig(path=str(path)), rngs=nnx.Rngs(0))
+    source = StreamingDiskSource(
+        StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("x", path),)), rngs=nnx.Rngs(0)
+    )
 
     assert all(np.shape(leaf) != (6, 2) for leaf in jax.tree.leaves(nnx.state(source)))
 
@@ -144,7 +146,9 @@ def test_pipeline_iterates_the_disk_array_in_order(tmp_path: Path) -> None:
     path = _write_npy(tmp_path / "data.npy", array)
 
     def pipeline() -> Pipeline:
-        source = StreamingDiskSource(StreamingDiskSourceConfig(path=str(path)), rngs=nnx.Rngs(0))
+        source = StreamingDiskSource(
+            StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("x", path),)), rngs=nnx.Rngs(0)
+        )
         return Pipeline(source=source, stages=[], batch_size=4, rngs=nnx.Rngs(0))
 
     np.testing.assert_array_equal(np.concatenate([np.asarray(b["x"]) for b in pipeline()]), array)
@@ -158,7 +162,9 @@ def test_a_tree_mode_split_and_merge_reads_the_same_rows(tmp_path: Path) -> None
     """The memory-map holder is static, so a tree-mode round trip keeps the source's reads."""
     array = np.arange(8 * 2, dtype=np.float32).reshape(8, 2)
     source = StreamingDiskSource(
-        StreamingDiskSourceConfig(path=str(_write_npy(tmp_path / "data.npy", array)))
+        StreamingDiskSourceConfig(
+            columns=(DiskColumn.from_npy("x", _write_npy(tmp_path / "data.npy", array)),)
+        )
     )
     graphdef, state = nnx.split(source, graph=False)
     merged = nnx.merge(graphdef, state)

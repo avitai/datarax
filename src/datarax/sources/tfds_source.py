@@ -30,14 +30,18 @@ of a run.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence, Set as AbstractSet
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+import numpy as np
 import tensorflow_datasets as tfds
 
 from datarax.core.data_source import DataSourceModule
+from datarax.core.host_resources import HostResources
 from datarax.core.host_values import HostValue
+from datarax.core.spec import JAX_ARRAY_KINDS
 from datarax.sources._config_base import SourceConfigBase
 from datarax.sources._source_base import DatasetSourceMixin
 from datarax.sources._tfds_prepared import (
@@ -236,6 +240,79 @@ def _per_batch_split(  # noqa: DOC502 - _array_record_builder and supervised_key
     )
 
 
+def _decoded_bytes(features: Any, path: str = "") -> int:
+    """The bytes one record's numeric features decode to, at their stored dtypes.
+
+    Strings and other non-numeric features are a record's provenance, not columns, and their
+    size is not known before reading; they are not counted.
+
+    Args:
+        features: A TFDS feature, or a mapping of them (a record's kept features, or a
+            ``FeaturesDict``, which maps its names to features without being a ``Mapping``).
+        path: The feature's path, for the refusal.
+
+    Returns:
+        The bytes.
+
+    Raises:
+        ValueError: If a numeric feature has no fixed shape, naming it and its shape.
+    """
+    if callable(getattr(features, "items", None)):
+        return sum(
+            _decoded_bytes(feature, f"{path}/{key}" if path else str(key))
+            for key, feature in features.items()
+        )
+    dtype = np.dtype(features.np_dtype)
+    if dtype.kind not in JAX_ARRAY_KINDS:
+        return 0
+    shape = tuple(features.shape)
+    if any(size is None for size in shape):
+        raise ValueError(
+            f"feature {path!r} has shape {shape}, so its decoded size is not known before "
+            "reading: an in-memory build under a RAM budget holds features of a fixed shape, as "
+            "a batch's shapes are static"
+        )
+    return math.prod(shape) * dtype.itemsize
+
+
+def _refuse_over_budget(  # noqa: PLR0913 - what the decoded size is computed from
+    info: Any,
+    dataset: str,
+    split: str,
+    keys: Sequence[str] | None,
+    include_keys: AbstractSet[str] | None,
+    exclude_keys: AbstractSet[str] | None,
+    resources: HostResources,
+) -> None:
+    """Refuse an in-memory build of ``split`` whose decoded size is above the caller's budget.
+
+    The size is exact from TFDS's fixed-shape features: each kept numeric feature's values at its
+    stored dtype, times the split's records, computed before any record is read.
+
+    Args:
+        info: The dataset's ``DatasetInfo``.
+        dataset: The dataset's name.
+        split: The split, slices included.
+        keys: The supervised features ``as_supervised`` keeps, or ``None``.
+        include_keys: Features to include, or ``None``.
+        exclude_keys: Features to exclude, or ``None``.
+        resources: The caller's budget.
+
+    Raises:
+        ValueError: If the decoded size is above ``resources.ram_budget_bytes``, naming the size,
+            the budget and the per-batch read; or a kept numeric feature has no fixed shape.
+    """
+    kept = kept_features(dict(info.features), keys, include_keys, exclude_keys)
+    size = info.splits[split].num_examples * _decoded_bytes(kept)
+    if size > resources.ram_budget_bytes:
+        raise ValueError(
+            f"{dataset} {split} decodes to {size} bytes in memory (its numeric features; strings "
+            f"kept as provenance come on top), above ram_budget_bytes="
+            f"{resources.ram_budget_bytes}: read it per batch with from_tfds(..., "
+            "in_memory=False), or raise the budget"
+        )
+
+
 class TFDSEagerSource(DatasetSourceMixin, EagerSource):
     """Eager TFDS source: a split prepared as ArrayRecord, read whole into host columns.
 
@@ -269,18 +346,22 @@ class TFDSEagerSource(DatasetSourceMixin, EagerSource):
         self,
         config: TFDSEagerConfig,
         *,
+        host_resources: HostResources | None = None,
         name: str | None = None,
     ) -> None:
         """Read the prepared split into host columns and provenance.
 
         Args:
             config: Configuration for the source
+            host_resources: The caller's RAM budget, or ``None``; with one, a split whose
+                decoded size is above it is refused before any record is read.
             name: Optional name (defaults to TFDSEagerSource(dataset:split))
 
         Raises:
             FileNotFoundError: If the dataset is not prepared as ArrayRecord in the data directory.
             ValueError: If ``as_supervised`` is asked of a dataset without supervised keys, the
-                split and key filters leave nothing, or a feature's shape varies between records.
+                split and key filters leave nothing, a feature's shape varies between records, or
+                the decoded split is above ``host_resources``'s budget.
         """
         if name is None:
             name = f"TFDSEagerSource({config.name}:{config.split})"
@@ -297,6 +378,16 @@ class TFDSEagerSource(DatasetSourceMixin, EagerSource):
         info, records = open_prepared_split(dataset, split, config.data_dir)
         self._dataset_info = HostValue(info)
         keys = self.supervised_keys(dataset) if config.as_supervised else None
+        if host_resources is not None:
+            _refuse_over_budget(
+                info,
+                dataset,
+                split,
+                keys,
+                config.include_keys,
+                config.exclude_keys,
+                host_resources,
+            )
         rows = [
             kept_features(record, keys, config.include_keys, config.exclude_keys)
             for record in records.__getitems__(list(range(len(records))))
@@ -319,6 +410,7 @@ def from_tfds(
     *,
     data_dir: str | None = None,
     in_memory: bool = True,
+    host_resources: HostResources | None = None,
     as_supervised: bool = False,
     include_keys: AbstractSet[str] | None = None,
     exclude_keys: AbstractSet[str] | None = None,
@@ -334,6 +426,10 @@ def from_tfds(
 
     Both read without TensorFlow.
 
+    With ``host_resources`` the in-memory build refuses a split whose decoded size is above the
+    RAM budget, before reading a record. A source read per batch takes its budget from the
+    pipeline that reads it, ``Pipeline(host_resources=...)``, and refuses one here.
+
     Neither prepares a dataset; a split that is not prepared is refused, naming the call that
     prepares it as ArrayRecord. The order records are served in belongs to the pipeline
     (``Pipeline(shuffle=...)``).
@@ -344,6 +440,7 @@ def from_tfds(
         data_dir: Optional directory where the dataset is prepared
         in_memory: Whether an ArrayRecord copy is decoded into memory at init (True) or read
             per batch (False)
+        host_resources: The RAM budget the in-memory build is checked against, or ``None``
         as_supervised: If True, keeps only the supervised features, under their own names
         include_keys: Optional set of keys to include
         exclude_keys: Optional set of keys to exclude
@@ -352,6 +449,10 @@ def from_tfds(
         TFDSEagerSource or ArrayRecordSourceModule for an ArrayRecord copy, TFDSStreamingSource
         for a TFRecord copy.
 
+    Raises:
+        ValueError: If ``host_resources`` is given for a source read per batch, or the in-memory
+            build is over its budget.
+
     Example:
         ```python
         from datarax.sources import from_tfds
@@ -359,7 +460,13 @@ def from_tfds(
         source = from_tfds("mnist", "train")  # prepared as ArrayRecord: the eager source
         ```
     """
-    if _tfrecord_only(name, data_dir):
+    stream = _tfrecord_only(name, data_dir)
+    if host_resources is not None and (stream or not in_memory):
+        raise ValueError(
+            f"{name} {split} is read per batch, so its RAM budget is the pipeline's that reads "
+            "it: pass Pipeline(host_resources=...) instead of from_tfds(host_resources=...)"
+        )
+    if stream:
         return TFDSStreamingSource(
             TFDSStreamingConfig(
                 name=name,
@@ -387,5 +494,6 @@ def from_tfds(
             as_supervised=as_supervised,
             include_keys=include_keys,
             exclude_keys=exclude_keys,
-        )
+        ),
+        host_resources=host_resources,
     )

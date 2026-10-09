@@ -24,7 +24,11 @@ from datarax.core.index_words import to_words
 from datarax.core.spec import array_to_spec_strip_leading, device_spec
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
-from datarax.sources.streaming_disk_source import StreamingDiskSource, StreamingDiskSourceConfig
+from datarax.sources.streaming_disk_source import (
+    DiskColumn,
+    StreamingDiskSource,
+    StreamingDiskSourceConfig,
+)
 from tests.test_common.device_arrays import arrays_made_since
 from tests.test_common.mixing import Sized
 from tests.test_common.streams import non_array_state_leaves
@@ -170,7 +174,9 @@ class TestTheHostRead:
     def test_a_streaming_disk_child_is_read_on_the_host(self, tmp_path: Any) -> None:
         path = tmp_path / "x.npy"
         np.save(path, 50 + np.arange(6, dtype=np.float32))
-        disk = StreamingDiskSource(StreamingDiskSourceConfig(path=str(path), feature_key="x"))
+        disk = StreamingDiskSource(
+            StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("x", path),))
+        )
         mix = _mix([disk, _memory({"x": np.arange(4, dtype=np.float32)})])
         batch = mix.get_batch(_words([1, 7, 5]))
         np.testing.assert_array_equal(batch["x"], [51, 1, 55])

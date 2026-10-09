@@ -3,8 +3,8 @@
 A holder is a plain object, so NNX treats it as a static of the module graph: it is not module
 state, never a jit argument and never traced. Its equality decides whether two modules share a
 graphdef, and with it a compiled program. ``HostValue`` and its subclasses compare equal by kind,
-because nothing a program runs reads what they hold. ``HostArray`` compares equal only to itself,
-because a compiled program's host callback reads its memory map.
+because nothing a program runs reads what they hold. ``HostArray`` and ``HostArrays`` compare
+equal only to themselves, because a compiled program's host callback reads their memory maps.
 
 Equality reflects what compiled code reads: no program takes a kind-equal holder off a module,
 reads what it holds, or captures it in a host callback, and a holder a program must read compares
@@ -79,26 +79,37 @@ class HostColumns(HostValue):
 
 
 class HostArray:
-    """A memory map of an on-disk array, kept on the host and out of NNX state.
+    """A memory map of an array stored raw in a file at an offset, held on the host, not in NNX.
 
     A memory map stored as ``nnx.data`` would become a traced input of every compiled step, and
     the host callback would then close over a tracer. As a plain object it stays static and
-    compares equal only to itself. It pickles as its path, so a copy sent to a worker process
-    carries no rows, and it opens its map at first use, once, however many threads read it at
-    once.
+    compares equal only to itself. It pickles as its place on disk (file, offset, dtype and
+    shape), so a copy sent to a worker process carries no rows, and it opens its map at first use,
+    once, however many threads read it at once.
+
+    Attributes:
+        path: The file the array is stored in.
+        offset: The byte offset of the array's first byte in the file.
+        dtype: The stored dtype, a NumPy dtype string.
+        shape: The array's shape.
     """
 
-    __slots__ = ("_array", "_lock", "path")
+    __slots__ = ("_array", "_lock", "dtype", "offset", "path", "shape")
 
-    def __init__(self, path: str, array: np.ndarray | None = None) -> None:
-        """Hold the map of the array at ``path``.
+    def __init__(self, path: str, *, offset: int, dtype: str, shape: tuple[int, ...]) -> None:
+        """Hold the array's place on disk; the map opens at first use.
 
         Args:
-            path: The ``.npy`` file.
-            array: The map when the caller has already opened it; otherwise it opens at first use.
+            path: The file.
+            offset: The byte offset of the array's first byte.
+            dtype: The stored dtype.
+            shape: The array's shape.
         """
         self.path = path
-        self._array = array
+        self.offset = offset
+        self.dtype = dtype
+        self.shape = shape
+        self._array: np.ndarray | None = None
         self._lock = threading.Lock()
 
     @property
@@ -108,19 +119,48 @@ class HostArray:
         if array is None:
             with self._lock:
                 if self._array is None:
-                    self._array = np.load(self.path, mmap_mode="r")
+                    self._array = np.memmap(
+                        self.path,
+                        dtype=np.dtype(self.dtype),
+                        mode="r",
+                        offset=self.offset,
+                        shape=self.shape,
+                    )
                 array = self._array
         return array
 
-    def __getstate__(self) -> dict[str, str]:
-        """The path alone: a copy opens the file again where it is used."""
-        return {"path": self.path}
+    def __getstate__(self) -> dict[str, Any]:
+        """The array's place on disk alone: a copy maps the file again where it is used."""
+        return {"path": self.path, "offset": self.offset, "dtype": self.dtype, "shape": self.shape}
 
-    def __setstate__(self, state: dict[str, str]) -> None:
-        """Hold the path; the map opens at first use."""
-        self.path = state["path"]
-        self._array = None
-        self._lock = threading.Lock()
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Hold the place on disk; the map opens at first use."""
+        self.__init__(
+            state["path"], offset=state["offset"], dtype=state["dtype"], shape=state["shape"]
+        )
 
 
-__all__ = ["HostArray", "HostColumns", "HostProvenance", "HostValue"]
+class HostArrays:
+    """A source's memory maps (:class:`HostArray`), held as one static of its graph.
+
+    A tuple of them would be a node of the graph, its maps statics of the graph definition, which
+    a program cached by source structure would keep; this holder is one static, which the host
+    naming's stand-in replaces (``datarax.pipeline.epochs``). It compares equal only to itself, as
+    the maps it holds do.
+
+    Attributes:
+        arrays: The maps, in the source's order.
+    """
+
+    __slots__ = ("arrays",)
+
+    def __init__(self, arrays: tuple[HostArray, ...]) -> None:
+        """Hold ``arrays``.
+
+        Args:
+            arrays: The maps.
+        """
+        self.arrays = arrays
+
+
+__all__ = ["HostArray", "HostArrays", "HostColumns", "HostProvenance", "HostValue"]

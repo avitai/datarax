@@ -152,11 +152,13 @@ def test_a_session_of_a_stream_is_refused_naming_its_kind() -> None:
 
 
 def test_a_memory_mapped_source_is_indexed(tmp_path: Path) -> None:
-    from datarax.sources.streaming_disk_source import StreamingDiskSourceConfig
+    from datarax.sources.streaming_disk_source import DiskColumn, StreamingDiskSourceConfig
 
     path = tmp_path / "x.npy"
     np.save(path, np.arange(8, dtype=np.float32))
-    source = StreamingDiskSource(StreamingDiskSourceConfig(path=str(path)))
+    source = StreamingDiskSource(
+        StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("x", path),))
+    )
     values, in_session = _served(source)
     assert not in_session
     assert values == [float(i) for i in range(8)]

@@ -41,7 +41,11 @@ from datarax.pipeline import Pipeline
 from datarax.pipeline.host_stage import default_device_buffer
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
-from datarax.sources.streaming_disk_source import StreamingDiskSource, StreamingDiskSourceConfig
+from datarax.sources.streaming_disk_source import (
+    DiskColumn,
+    StreamingDiskSource,
+    StreamingDiskSourceConfig,
+)
 from tests.test_common.compiles import expect_first_call_compiles
 from tests.test_common.device_arrays import arrays_made_since
 from tests.test_common.host_plans import reading_with
@@ -75,7 +79,7 @@ def _mix() -> MixDataSourcesNode:
 def _disk(tmp_path: Path, length: int = _N) -> StreamingDiskSource:
     path = tmp_path / "rows.npy"
     np.save(path, np.arange(length * 3, dtype=np.float32).reshape(length, 3))
-    return StreamingDiskSource(StreamingDiskSourceConfig(path=str(path), feature_key="x"))
+    return StreamingDiskSource(StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("x", path),)))
 
 
 def _pipeline(

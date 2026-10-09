@@ -27,6 +27,7 @@ from .mixed_source import (
 from .source_ops import resolve_wrapped_indices as resolve_wrapped_indices
 from .stream_iterator import StreamChunk as StreamChunk
 from .streaming_disk_source import (
+    DiskColumn as DiskColumn,
     StreamingDiskSource as StreamingDiskSource,
     StreamingDiskSourceConfig as StreamingDiskSourceConfig,
 )

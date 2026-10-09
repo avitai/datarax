@@ -33,7 +33,11 @@ from datarax.sources import source_ops
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
 from datarax.sources.source_ops import resolve_wrapped_indices
-from datarax.sources.streaming_disk_source import StreamingDiskSource, StreamingDiskSourceConfig
+from datarax.sources.streaming_disk_source import (
+    DiskColumn,
+    StreamingDiskSource,
+    StreamingDiskSourceConfig,
+)
 from tests.test_common.compiles import expect_first_call_compiles
 
 
@@ -90,7 +94,9 @@ def _build(case: _Case, tmp_path: Path) -> Pipeline:
     else:
         path = tmp_path / "records.npy"
         np.save(path, np.arange(case.length, dtype=np.float32))
-        source = StreamingDiskSource(StreamingDiskSourceConfig(path=str(path)))
+        source = StreamingDiskSource(
+            StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("x", path),))
+        )
     return Pipeline(
         source=source,
         stages=[],
@@ -302,7 +308,9 @@ class TestTheKeySelectsTheOrder:
 
         def epochs(shuffle: bool) -> list[np.ndarray]:
             pipe = Pipeline(
-                source=StreamingDiskSource(StreamingDiskSourceConfig(path=str(path))),
+                source=StreamingDiskSource(
+                    StreamingDiskSourceConfig(columns=(DiskColumn.from_npy("x", path),))
+                ),
                 stages=[],
                 batch_size=5,
                 num_epochs=2,
