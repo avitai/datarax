@@ -7,7 +7,6 @@ values are stacked into columns and whose strings and other objects become prove
 is one column.
 """
 
-import logging
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -29,9 +28,6 @@ from datarax.sources.eager_source import (
 from datarax.sources.source_ops import partition_length, resolve_wrapped_indices
 
 
-logger = logging.getLogger(__name__)
-
-
 @dataclass(frozen=True)
 class MemorySourceConfig(StructuralConfig):
     """Configuration for MemorySource (in-memory data source).
@@ -40,7 +36,6 @@ class MemorySourceConfig(StructuralConfig):
     to the source.
 
     Args:
-        cache_size: Number of batches to cache (0 = no caching)
         prefetch_size: Number of items to prefetch (0 = no prefetching)
         shard_id: Optional shard identifier for distributed processing
         num_workers: Number of parallel workers (default 1). When > 1,
@@ -50,7 +45,6 @@ class MemorySourceConfig(StructuralConfig):
     """
 
     # Optional parameters with defaults
-    cache_size: int = 0
     prefetch_size: int = 0
     shard_id: int | None = None
     num_workers: int = 1

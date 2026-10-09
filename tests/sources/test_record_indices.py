@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule, RecordIdentity
+from datarax.core.data_source import DataSourceModule, known_length, RecordIdentity
 from datarax.core.index_shuffle import shuffle_positions_host
 from datarax.core.index_words import from_words, MAX_RECORDS, to_words
 from datarax.pipeline.epochs import EpochPlan
@@ -258,7 +258,9 @@ class TestWordStart:
         source = _sources(tmp_path)[name]
         key = jax.random.key(4) if keyed else None
         named = jax.jit(lambda start, key: source.record_indices_at(start, 5, key))
-        for start in range(len(source)):
+        length = known_length(source)
+        assert length is not None
+        for start in range(length):
             expected = np.asarray(source.record_indices_at(start, 5, key))
             words = to_words(start)
             np.testing.assert_array_equal(source.record_indices_at(words, 5, key), expected)

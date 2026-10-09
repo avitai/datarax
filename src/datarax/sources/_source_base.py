@@ -12,7 +12,6 @@ stream, the merged module reading on from the same place.
 
 from __future__ import annotations
 
-import logging
 import weakref
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
@@ -37,9 +36,6 @@ from datarax.core.prng import fold_on_host, key_words
 from datarax.core.spec import array_to_spec_strip_leading, device_spec
 from datarax.sources.eager_source import HostValue
 from datarax.sources.source_ops import format_source_repr
-
-
-logger = logging.getLogger(__name__)
 
 
 class DatasetSourceMixin:

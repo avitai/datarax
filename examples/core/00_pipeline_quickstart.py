@@ -124,14 +124,15 @@ Pass the source, the ordered list of stages, the batch size, and an
 """
 
 # %%
+source = MemorySource(MemorySourceConfig(), data)
 pipeline = Pipeline(
-    source=MemorySource(MemorySourceConfig(), data),
+    source=source,
     stages=[Brightness(factor=1.1), Normalize()],
     batch_size=32,
     rngs=nnx.Rngs(0),
 )
 
-print(f"pipeline: source length = {len(pipeline.source)}, batch_size = {pipeline.batch_size}")
+print(f"pipeline: source length = {len(source)}, batch_size = {pipeline.batch_size}")
 
 
 # %% [markdown]

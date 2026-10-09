@@ -801,7 +801,7 @@ If you're familiar with PyTorch DataLoader, here's how Datarax compares:
 | `tf.data.Dataset.from_tensor_slices(data)` | `MemorySource(config, data=data)` |
 | `dataset.batch(32).prefetch(2)` | `Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))` |
 | `dataset.map(transform_fn)` | `Pipeline(source=..., stages=[operator], ...)` |
-| `dataset.shuffle(buffer_size)` | `ShuffleSampler(config)` |
+| `dataset.shuffle(buffer_size)` | `Pipeline(..., shuffle=True)` |
 | `dataset.cache()` | `CachingIterator` (from `datarax.pipeline.nodes`) |
 
 ## Coming from Google Grain?
@@ -841,7 +841,7 @@ Use this reference when creating migration sections:
 | Concept | PyTorch | TensorFlow | Datarax |
 |---------|---------|------------|---------|
 | Sequential | `SequentialSampler` | Default order | `SequentialSamplerModule` |
-| Shuffled | `RandomSampler` | `.shuffle()` | `ShuffleSampler` |
+| Shuffled | `RandomSampler` | `.shuffle()` | `Pipeline(..., shuffle=True)` |
 | Subset | `SubsetRandomSampler` | `.take()` | `RangeSampler` |
 | Distributed | `DistributedSampler` | `tf.distribute` | `JaxProcessSharder` |
 

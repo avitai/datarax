@@ -263,6 +263,17 @@ class TestRecordsBecomeColumns:
         with pytest.raises(ValueError, match="record 1"):
             _memory([{"a": 1, "b": 2}, {"a": 1}])
 
+    def test_a_refusal_names_a_nested_field_by_its_slash_path(self) -> None:
+        records = [{"a": {"b": np.zeros(3)}}, {"a": {"b": np.zeros(5)}}]
+        with pytest.raises(ValueError, match="field 'a/b' is"):
+            _memory(records)
+
+    def test_columns_of_unequal_lengths_are_refused_naming_each_path(self) -> None:
+        """A dictionary key is named by its key and a list position by ``[i]``, joined by ``/``."""
+        columns = {"a": {"b": np.zeros(2)}, "c": [np.zeros(3)]}
+        with pytest.raises(ValueError, match=r"\{'a/b': 2, 'c/\[0\]': 3\}"):
+            eager_source.column_length(columns)
+
     def test_elements_contribute_their_data(self) -> None:
         records = [Element({"x": np.full(2, i, np.float32), "id": f"e{i}"}) for i in range(3)]
         source = _memory(records)

@@ -74,7 +74,12 @@ from flax import nnx
 from substrax.typing import CheckpointState
 
 from datarax.core import batch_ops
-from datarax.core.data_source import DataSourceModule, Provenance, RecordIdentity
+from datarax.core.data_source import (
+    DataSourceModule,
+    known_length,
+    Provenance,
+    RecordIdentity,
+)
 from datarax.core.element_batch import Batch
 from datarax.pipeline.dag import name_records, OperatorDag, Records
 from datarax.pipeline.dag_call import compile_dag
@@ -160,7 +165,7 @@ class Pipeline(nnx.Module):
         super().__init__()
         # Refuses an epoch rule no pipeline can serve.
         EpochPlan(
-            length=_source_length(source),
+            length=known_length(source),
             batch_size=batch_size,
             drop_last=drop_last,
             num_epochs=num_epochs,
@@ -391,7 +396,7 @@ class Pipeline(nnx.Module):
         so a length or batch size changed since construction is what it reports.
         """
         return EpochPlan(
-            length=_source_length(self.source),
+            length=known_length(self.source),
             batch_size=self.batch_size,
             drop_last=self.drop_last,
             num_epochs=self.num_epochs,
@@ -762,11 +767,3 @@ class Pipeline(nnx.Module):
             return iter(self.raw_batches())
         apply = compile_dag(self.dag)
         return (apply(batch) for batch in self.raw_batches())
-
-
-def _source_length(source: DataSourceModule) -> int | None:
-    """The source's length, or ``None`` when it has none."""
-    try:
-        return len(source)
-    except (TypeError, NotImplementedError):
-        return None

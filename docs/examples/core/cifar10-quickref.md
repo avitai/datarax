@@ -25,7 +25,7 @@ This quick reference demonstrates loading and processing CIFAR-10 from TensorFlo
 | PyTorch | Datarax |
 |---------|---------|
 | `datasets.CIFAR10(root, train=True)` | `TFDSEagerSource(TFDSEagerConfig(name="cifar10", split="train"))` |
-| `transforms.ToTensor()` | Automatic conversion to JAX arrays |
+| `transforms.ToTensor()` | Host NumPy columns; the pipeline places each batch on the device |
 | `transforms.Normalize(mean, std)` | `ElementOperator` with custom normalization fn |
 | `DataLoader(dataset, batch_size=32, shuffle=True)` | `Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0))` with shuffle config |
 

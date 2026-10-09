@@ -221,7 +221,8 @@ Any other source subclasses `DataSourceModule` and declares what its record inde
    device holds as declared: while `jax_enable_x64` is off, a declared `float64` or
    `int64` field is refused rather than narrowed, so cast in the source or enable
    x64. See [Element Specs](../core/spec.md).
-5. Any mutable state is managed appropriately for checkpointing
+5. It keeps no iteration state: the pipeline owns the order, the position and the epoch, and
+   checkpoints them
 
 ## Using Data Sources in Pipelines
 
@@ -282,9 +283,9 @@ When working with data sources:
 1. **Use appropriate source types**: Choose the right data source for your data to optimize loading and processing
 2. **Leverage shuffling**: For training, build the pipeline with `shuffle=True`, e.g. `Pipeline(source=TFDSEagerSource(TFDSEagerConfig(name="mnist", split="train")), stages=[], batch_size=128, rngs=nnx.Rngs(42), shuffle=True)`. The pipeline owns the order and shuffles in O(1) memory via a keyed Feistel bijection — there is no shuffle buffer to size.
 3. **Batch appropriately**: Batching is the Pipeline's job — set `Pipeline(source=source, stages=[], batch_size=N, rngs=nnx.Rngs(0))`. Sources do not expose a `.batch()` method.
-4. **Handle state properly**: Ensure your custom data sources properly manage their state
+4. **Keep sources stateless**: A custom source reads what it is asked for and keeps no position; the pipeline owns the order, the position and the epoch
 5. **Monitor performance**: Watch for bottlenecks in data loading, especially with large datasets
-6. **Use JAX arrays**: Convert to JAX arrays early in the pipeline for better performance
+6. **Keep host data on the host**: Hand a source NumPy data; the pipeline places each batch on the device, so a dataset never occupies device memory
 
 ## Available Sources Summary
 

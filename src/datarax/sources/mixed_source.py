@@ -27,7 +27,7 @@ from typing import Any, cast
 import jax
 import jax.numpy as jnp
 import numpy as np
-from flax import nnx
+from flax import nnx, traverse_util
 from jax.typing import ArrayLike
 
 from datarax.config.registry import register_component
@@ -36,6 +36,7 @@ from datarax.core.config import StructuralConfig
 from datarax.core.data_source import (
     DataSourceModule,
     IndexedHostRead,
+    known_length,
     record_words,
     RecordIdentity,
     refuse_padding,
@@ -307,18 +308,15 @@ def _nested(fields: Mapping[_Path, Any]) -> dict[str, Any]:
     Raises:
         TypeError: If a path steps through anything but a dictionary key.
     """
-    record: dict[str, Any] = {}
-    for path, field in fields.items():
+    for path in fields:
         if not all(isinstance(step, jax.tree_util.DictKey) for step in path):
             raise TypeError(
                 f"a mix joins records whose fields are nested dictionaries; field "
                 f"{jax.tree_util.keystr(path)} is not"
             )
-        node = record
-        for step in path[:-1]:
-            node = node.setdefault(step.key, {})
-        node[path[-1].key] = field
-    return record
+    return traverse_util.unflatten_dict(
+        {tuple(step.key for step in path): field for path, field in fields.items()}
+    )
 
 
 def _refuse_nesting_conflicts(held: Mapping[_Path, list[tuple[int, Any]]]) -> None:
@@ -587,7 +585,7 @@ class MixDataSourcesNode(DataSourceModule):
             ValueError: If a child holds no records, the index space reaches the padding index,
                 or the epoch is longer than ``len()`` can report.
         """
-        lengths = tuple(len(source) for source in self._sources)
+        lengths = self._child_lengths()
         for position, length in enumerate(lengths):
             if length < 1:
                 raise ValueError(f"child {position} has no records; a mix serves every child")
@@ -610,6 +608,25 @@ class MixDataSourcesNode(DataSourceModule):
                 "records len() reports"
             )
         return _Layout(offsets, space, epoch_length)
+
+    def _child_lengths(self) -> tuple[int, ...]:
+        """Each child's length now.
+
+        Returns:
+            The lengths, in the order of the children.
+
+        Raises:
+            ValueError: If a child has no length; a mix's proportions are over its children's
+                lengths.
+        """
+        lengths = tuple(known_length(source) for source in self._sources)
+        for position, length in enumerate(lengths):
+            if length is None:
+                raise ValueError(
+                    f"child {position} ({type(self._sources[position]).__name__}) has no length; "
+                    "a mix serves its children in proportion to their lengths"
+                )
+        return cast(tuple[int, ...], lengths)
 
     def __len__(self) -> int:
         """Positions in an epoch: Grain's length over the children as long as they are now."""
@@ -677,7 +694,7 @@ class MixDataSourcesNode(DataSourceModule):
         if is_word_start(start):
             # A child's count before a position of the epoch is at most the child's length, where
             # its order starts again.
-            lengths = to_words([len(source) for source in self._sources])
+            lengths = to_words(list(self._child_lengths()))
             return [
                 jnp.where(
                     (high == length[0]) & (low == length[1]),

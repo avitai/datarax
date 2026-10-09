@@ -25,6 +25,7 @@ import pytest
 from flax import nnx
 
 from datarax.core.config import ElementOperatorConfig
+from datarax.core.data_source import known_length
 from datarax.core.element_batch import Batch
 from datarax.core.index_shuffle import shuffle_positions
 from datarax.core.index_words import from_words, to_words
@@ -172,7 +173,8 @@ def _composed(
     that epoch's record at that position: ``shuffle_positions`` under the epoch's key for a
     shuffling pipeline, the position itself otherwise.
     """
-    n = len(pipeline.source)
+    n = known_length(pipeline.source)
+    assert n is not None
     records, epochs = [], []
     for row in range(start, start + size):
         row_epoch, position = epoch + row // n, row % n

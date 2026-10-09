@@ -5,7 +5,7 @@ TFDSStreamingSource, MemorySource) and sources in other packages delegate to
 these helpers for:
 - Wrapped index resolution, in the order a key selects (``resolve_wrapped_indices``)
 - A worker's share of the records (``partition_length``)
-- Config validation of named datasets (``validate_source_settings``)
+- A named-dataset source's repr (``format_source_repr``)
 - Key filtering
 
 In-memory sources read through ``datarax.sources.EagerSource``; streams build on
@@ -14,8 +14,7 @@ In-memory sources read through ``datarax.sources.EagerSource``; streams build on
 
 from __future__ import annotations
 
-import logging
-from collections.abc import Callable
+from collections.abc import Set as AbstractSet
 from typing import Any
 
 import jax
@@ -91,30 +90,6 @@ def resolve_wrapped_indices(
     return positions
 
 
-logger = logging.getLogger(__name__)
-
-
-def validate_required_name_split(
-    name: str | None,
-    split: str | None,
-    config_class_name: str,
-) -> None:
-    """Validate required name/split fields."""
-    if name is None:
-        raise ValueError(f"name is required for {config_class_name}")
-    if split is None:
-        raise ValueError(f"split is required for {config_class_name}")
-
-
-def validate_include_exclude_keys(
-    include_keys: set[str] | None,
-    exclude_keys: set[str] | None,
-) -> None:
-    """Validate include/exclude key filters are not both set."""
-    if include_keys is not None and exclude_keys is not None:
-        raise ValueError("Cannot specify both include_keys and exclude_keys")
-
-
 def format_source_repr(
     class_name: str,
     dataset_name: str | None,
@@ -133,74 +108,10 @@ def format_source_repr(
     return f"{class_name}({serialized})"
 
 
-def validate_source_config(  # noqa: DOC502 - the two validators it calls raise the ValueError
-    name: str | None,
-    split: str | None,
-    include_keys: set[str] | None,
-    exclude_keys: set[str] | None,
-    config_class_name: str,
-) -> None:
-    """Shared config validation for the configs of sources reading a named dataset.
-
-    Args:
-        name: Dataset name (required)
-        split: Dataset split (required)
-        include_keys: Optional include keys
-        exclude_keys: Optional exclude keys
-        config_class_name: Name of config class for error messages
-
-    Raises:
-        ValueError: If validation fails
-    """
-    validate_required_name_split(name, split, config_class_name)
-    validate_include_exclude_keys(include_keys, exclude_keys)
-
-
-def finalize_source_config_validation(
-    *,
-    super_post_init: Callable[[], None],
-    config_class_name: str,
-    name: str | None,
-    split: str | None,
-    include_keys: set[str] | None,
-    exclude_keys: set[str] | None,
-) -> None:
-    """Run the shared validation of a named-dataset source config, after its parent's."""
-    super_post_init()
-    validate_source_config(name, split, include_keys, exclude_keys, config_class_name)
-
-
-def _get_super_post_init(config: Any) -> Callable[[], None]:
-    """Get the __post_init__ method from the parent class of the given config instance."""
-    parent_post_init = getattr(super(type(config), config), "__post_init__", None)
-    if parent_post_init is None:
-
-        def noop() -> None:
-            pass
-
-        return noop
-    return parent_post_init
-
-
-def validate_source_settings(
-    config: Any,
-    config_class_name: str,
-) -> None:
-    """Validate a named-dataset source config (eager or stream) from its standard fields."""
-    finalize_source_config_validation(
-        super_post_init=_get_super_post_init(config),
-        config_class_name=config_class_name,
-        name=config.name,
-        split=config.split,
-        include_keys=config.include_keys,
-        exclude_keys=config.exclude_keys,
-    )
-
-
 def filter_keys(
     element: dict[str, Any],
-    include_keys: set[str] | None,
-    exclude_keys: set[str] | None,
+    include_keys: AbstractSet[str] | None,
+    exclude_keys: AbstractSet[str] | None,
 ) -> dict[str, Any]:
     """Filter element keys based on include/exclude sets.
 

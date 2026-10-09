@@ -39,7 +39,7 @@ If you're familiar with PyTorch's dataset ecosystem, here's how Datarax + Huggin
 | TensorFlow tf.data | Datarax |
 |--------------------|---------|
 | `tfds.load('mnist', split='train')` | `HFEagerSource(HFEagerConfig(name='mnist', split='train'))` |
-| `dataset.shuffle(buffer_size=1000)` | `shuffle=True` in config (O(1) index shuffle, no buffer) |
+| `dataset.shuffle(buffer_size=1000)` | `Pipeline(..., shuffle=True)` (an O(1) index shuffle, no buffer) |
 | `dataset.take(1000)` | `split='train[:1000]'` syntax |
 | `dataset.skip(1000)` | `split='train[1000:]'` syntax |
 | `dataset.map(fn).filter(pred)` | Chain operators by passing them in the `stages=[...]` list |
