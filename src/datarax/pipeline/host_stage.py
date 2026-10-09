@@ -79,6 +79,7 @@ from datarax.pipeline.read_plan import (
     measure_terms,
     ReadAccess,
     spec_bytes,
+    warn_one_thread,
 )
 from datarax.pipeline.run_units import HostElement, IndexedRead, RunUnits
 
@@ -498,12 +499,7 @@ class HostStage:
         path = host_read_path(resources, source.host_read, access)
         if resources is None:
             if source.host_read is HostRead.GIL_BOUND and access is not ReadAccess.STREAM:
-                logger.warning(
-                    "%s decodes in Python on each read, on one thread: pass "
-                    "Pipeline(host_resources=HostResources(ram_budget_bytes=..., max_workers=...)) "
-                    "to read it in worker processes",
-                    type(source).__name__,
-                )
+                warn_one_thread(source, "Pipeline")
             return default_plan(path, device_buffer=depth)
         terms = self._terms(
             source,

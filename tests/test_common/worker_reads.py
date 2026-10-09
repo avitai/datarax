@@ -17,9 +17,12 @@ process, which imports this module to call it.
 from __future__ import annotations
 
 import io
+import multiprocessing
 import os
+import signal
 import struct
 import threading
+import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -130,16 +133,21 @@ class PngDecoder:
             ``None``.
         unpicklable: A label whose record's provenance holds a value no pickler can copy, or
             ``None``.
+        kill_at: A label whose decoding kills the decoding process with ``SIGKILL`` when it is a
+            worker process (a crash halfway through a unit), or ``None``.
     """
 
     names: bool = True
     float64: bool = False
     log: str | None = None
     unpicklable: int | None = None
+    kill_at: int | None = None
 
     def __call__(self, records: Sequence[bytes]) -> list[dict[str, Any]]:
         """One mapping per record: ``image``, ``label`` and what the options add."""
         decoded = [self._one(record) for record in records]
+        if self.kill_at in {int(r["label"]) for r in decoded} and _in_a_worker():
+            os.kill(os.getpid(), signal.SIGKILL)
         if self.log is not None:
             with Path(self.log).open("a") as log:
                 log.writelines(f"{os.getpid()} {int(r['label'])}\n" for r in decoded)
@@ -158,6 +166,46 @@ class PngDecoder:
         if self.unpicklable == label:
             values["handle"] = _Unpicklable()
         return values
+
+
+def _in_a_worker() -> bool:
+    """Whether this process was spawned by another (a Grain worker)."""
+    return multiprocessing.parent_process() is not None
+
+
+@dataclass(frozen=True, slots=True)
+class BarrierDecoder:
+    """A :class:`PngDecoder` whose first decode in each process waits for the other builders.
+
+    It forces processes building one copy to decode at the same time when nothing keeps them
+    apart: each process's first call records its arrival as a file in ``arrivals`` and waits
+    until ``parties`` processes have arrived, or ``timeout`` seconds have passed (a process that
+    never decodes, because a lock kept it out, never arrives), then decodes.
+
+    Attributes:
+        log: The decode log, as :class:`PngDecoder` writes it.
+        arrivals: A directory of one file per process that reached its first decode.
+        parties: The processes to wait for.
+        timeout: Seconds to wait for them at most.
+    """
+
+    log: str
+    arrivals: str
+    parties: int
+    timeout: float
+
+    def __call__(self, records: Sequence[bytes]) -> list[dict[str, Any]]:
+        """Wait at the barrier on this process's first call, then decode as PngDecoder does."""
+        mine = Path(self.arrivals) / str(os.getpid())
+        if not mine.exists():
+            mine.touch()
+            deadline = time.monotonic() + self.timeout
+            while (
+                len(list(Path(self.arrivals).iterdir())) < self.parties
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.05)
+        return PngDecoder(log=self.log)(records)
 
 
 def worker_facts() -> dict[str, Any]:
@@ -273,8 +321,6 @@ def logged(log: Path) -> list[tuple[int, int]]:
 
 def worker_children() -> list[Any]:
     """The live ``multiprocessing`` children Grain started as prefetch workers."""
-    import multiprocessing  # noqa: PLC0415
-
     return [p for p in multiprocessing.active_children() if "grain-process-prefetch" in p.name]
 
 

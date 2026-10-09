@@ -162,7 +162,7 @@ def test_positive_control_a_top_level_module_missing_from_the_layers_is_seen(
 
 _PIPELINE_INTERNAL_LAYERS = (
     "datarax.pipeline.pipeline",
-    "datarax.pipeline.host_stage | datarax.pipeline.iteration",
+    "datarax.pipeline.host_stage | datarax.pipeline.iteration | datarax.pipeline.materialization",
     "datarax.pipeline.run_configuration | datarax.pipeline.run_units",
     "datarax.pipeline.epochs | datarax.pipeline.dag_call | datarax.pipeline.read_plan",
     "datarax.pipeline.host_workers",

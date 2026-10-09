@@ -401,6 +401,59 @@ default is 64 MiB, and a plan that does not fit is refused naming the bytes it n
 with `--shm-size`). `max_workers` counts this training process's share: with one process per
 GPU, give each process its part of the machine.
 
+### Strategy 5: Decode Once, Into RAM or a Decoded Copy
+
+A read that decodes every record decodes it again every epoch. `materialize` decodes a source
+once and returns a source serving the same records, record for record, from decoded columns:
+
+```python
+from datarax import HostResources
+from datarax.pipeline import materialize, Pipeline
+from datarax.sources import from_tfds
+
+resources = HostResources(ram_budget_bytes=32 << 30, max_workers=8)
+split = from_tfds("cifar10", "train", in_memory=False)
+
+# into RAM: O(dataset) host memory, held out of NNX state
+source = materialize(split, host_resources=resources)
+
+# or once on disk, reused by every later run, process and host
+source = materialize(split, host_resources=resources, directory="/data/cifar10-train")
+source = from_tfds("cifar10", "train", in_memory=False, decoded_dir="/data/cifar10-train")
+
+pipeline = Pipeline(source=source, stages=stages, batch_size=256, rngs=nnx.Rngs(0),
+                    shuffle=True, host_resources=resources)
+```
+
+- **Who decodes follows the read, as for a run.** A read that decodes in Python is decoded by the
+  worker processes the budget admits, from two (one worker decodes slower than the calling
+  thread); a GIL-free read (columns, memory maps) by the calling thread, which outpaces any
+  worker count; without a budget, by the calling thread. Workers write a copy's rows straight
+  into its files and send back only each unit's provenance and digest.
+- **The budget counts the build.** `materialize` refuses a budget below the training process's
+  resident memory plus the decoded columns (in RAM) plus one unit, before a worker starts, naming
+  the per-batch read and `directory=` as the ways out. `from_tfds(..., in_memory=True,
+  host_resources=...)` builds on one thread and checks the split's decoded size alone, so a budget
+  can pass there and be refused by `materialize`.
+- **A copy is reused.** A directory holding a complete copy of the same source (checked by what
+  the source declares, never by paths, and by file sizes) is returned as it is, wherever it was
+  moved; a changed source, a decoder library of another version, an incomplete copy or
+  `rebuild=True` writes it again, its manifest first unlinked, so a reader opening it meanwhile
+  is refused while one that mapped the old files keeps reading them.
+- **One writer per copy, on a local disk.** An exclusive lock on `<copy>/.lock` lets one process
+  write a copy; N training processes on a host calling `materialize` on one directory build it
+  once and reuse it N - 1 times. Writing to a networked or FUSE filesystem is refused; write the
+  copy on a local disk and copy the finished directory, which opens from anywhere. Across hosts,
+  build on one host (or rank 0 in a preparation step), wait at a barrier, then let every rank
+  call `materialize` (which reuses) or `open_decoded_copy`.
+- **A copy read cold needs read threads.** A copy larger than the page cache is read from disk:
+  one reader is a fraction of a warm read, and concurrent readers recover it; with a budget the
+  pipeline reads the copy (a GIL-free read) on several threads.
+- **Pass `pipe.dag` to a transform, never the pipeline.** The RAM result holds its columns as
+  every eager source does, on the host and out of NNX state, so a transform taking a module that
+  holds the source transfers no data in any Flax mode; a train step still takes `raw_batches()` and
+  `pipe.dag`.
+
 ## Part 5: Visualization
 
 The batch-size sweep is rendered as a 2-panel figure: a line plot of

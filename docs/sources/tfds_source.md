@@ -112,7 +112,12 @@ fixed-shape features (each kept numeric feature at its stored dtype, times the r
 reading a record, and refuses a split above the budget, naming the size and `in_memory=False`.
 Strings kept as provenance are not counted. Without a budget nothing is checked. A source read
 per batch takes its budget from the pipeline, so `from_tfds(..., in_memory=False,
-host_resources=...)` is refused, naming `Pipeline(host_resources=...)`.
+host_resources=...)` is refused, naming `Pipeline(host_resources=...)`. This build runs on the
+calling thread; `datarax.pipeline.materialize(from_tfds(name, split, in_memory=False),
+host_resources=...)` decodes the split in the budget's worker processes instead, into RAM or as a
+[decoded copy](decoded_copy.md) on disk (`directory=...`), which
+`from_tfds(name, split, in_memory=False, decoded_dir=...)` opens. It also counts the training
+process's own memory, so a budget can admit the build here and be refused there.
 
 For ImageNet-scale splits that do not fit in memory, read an ArrayRecord copy per batch with
 `from_tfds(name, split, in_memory=False)`: an `ArrayRecordSourceModule` over the split's files
