@@ -106,14 +106,18 @@ pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0), s
 For ImageNet-scale splits that do not fit in memory, read an ArrayRecord copy per batch with
 `from_tfds(name, split, in_memory=False)`: an `ArrayRecordSourceModule` over the split's files
 that decodes each batch's records with TFDS's decoder, in the pipeline's order. A TFRecord copy
-(TFDS's default format) is streamed with `TFDSStreamingSource` (which `from_tfds` picks for it):
+(TFDS's default format) is streamed with `TFDSStreamingSource` (which `from_tfds` picks for it).
+Both decode in Python, one core's worth on one thread; give the pipeline a RAM budget,
+`host_resources=HostResources(ram_budget_bytes=..., max_workers=...)`, and they are read in Grain
+worker processes, as many as the budget holds:
 
 ```python
 source = TFDSStreamingSource(
     TFDSStreamingConfig(name="imagenet2012", split="train", shuffle_buffer_size=10_000)
 )
 pipeline = Pipeline(source=source, stages=[], batch_size=256, rngs=nnx.Rngs(0),
-                    shuffle=True, num_epochs=None)
+                    shuffle=True, num_epochs=None,
+                    host_resources=HostResources(ram_budget_bytes=32 << 30, max_workers=8))
 ```
 
 A pass is also a Grain dataset of decoded batches, `source.pass_dataset(pass_index, key,
@@ -121,10 +125,12 @@ batch_size)`, where `key` is the pipeline's key as uint32 words on the host
 (`datarax.core.prng.key_words(key)`), or `None` for file order. It computes the pass's order over record ids, reads each record's payload at its
 offset in an index built once from the shard files' frame headers, checks each frame's CRCs as
 tf.data's TFRecord reader does (a damaged frame raises `datarax.sources.tfds_source.DamagedRecordError` naming its file and
-record), and decodes last. The shuffle buffer holds record ids, not records. It pickles
-with its index and implements Grain's `set_slice`: each of k worker processes computes the same
-order and reads and decodes only its own batches (every k-th), so the order does not depend on k
-and the workers read the data once between them.
+record), and decodes last. The shuffle buffer holds record ids, not records. It implements
+Grain's `set_slice`: each of k worker processes computes the same order and reads and decodes
+only its own batches (every k-th), so the order does not depend on k and the workers read the
+data once between them. A run read by worker processes sends them the offset index as one
+read-only copy in shared memory (16 bytes a record), made once for the source and removed with
+it, so a worker holds none of its own.
 
 Each record is named by its `tfds_id`, the shard file and the offset in it, so its text is
 looked up again by `source.provenance(batch.indices)`. A copy prepared as ArrayRecord is read by

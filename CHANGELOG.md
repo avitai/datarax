@@ -9,6 +9,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `datarax.HostResources(ram_budget_bytes, max_workers, worker_bytes=None)` and
+  `Pipeline(host_resources=...)` (also `Pipeline.from_dag`): what the host stage may spend reading,
+  a RAM budget and a cap on read threads or worker processes (at most the CPUs the process may run
+  on). With it, a source whose host read holds the GIL is read in Grain worker processes
+  (`mp_prefetch`), as many as the budget holds once each worker's own memory (measured by one
+  probe worker, or `worker_bytes`), its copy of the read, the source's working set and the units
+  in its queues (`2o + 2`) are counted beside the training process's resident memory when the run
+  is planned (`psutil`, after JAX's runtime and compiler start) and the units at the device;
+  `/dev/shm` bounds it too. Only the process path pickles the read, to measure what each worker
+  is sent. A GIL-free read reads on threads, fewer than the CPUs and at
+  most the cap, as many units ahead as the budget holds (2 to 1,000). A budget below what a run
+  holds before reading ahead (the training process's resident memory and the units at the device)
+  is refused on either path, and a budget holding no worker, or a `/dev/shm` too small for one,
+  is refused too, each naming the terms. Without it the host stage reads as before, on one thread
+  two units ahead, and a GIL-bound read logs one line naming `HostResources`. The arithmetic is
+  `datarax.pipeline.read_plan` (`host_read_path`, `default_plan`, `budget_plan`, `HostPlan`,
+  `HostTerms`, and `measure_terms`, which measures a run's terms from a source and its values);
+  `datarax.core.host_resources` holds `HostResources`, `available_cpus` and `WorkerFootprint`.
+- `Pipeline.host_plan`: the plan of the run opened last (path, threads, workers, buffers, and
+  the terms the budget was charged with). It is the only source of the run's read options and
+  part of the run's identity: a different plan opens a new run.
+- Record naming pins its key's implementation: every key that orders or names records (an
+  epoch's order, the host stage's naming, a stream's pass seed, the host index shuffle) is a
+  `threefry2x32` key (`datarax.core.prng.NAMING_PRNG_IMPL`), whatever the global
+  `jax_default_prng_impl`, which is not part of a jitted program's cache key; a pipeline over
+  streams of another impl draws its order key's data from them
+  (`datarax.core.prng.naming_key_data`). Record names no longer depend on the default impl, and a
+  block of batches named in one vmapped call names each exactly as alone. A training step's own
+  randomness follows the caller's setting.
+- `datarax.pipeline.run_units`: `RunUnits`, `HostElement` and `IndexedRead`, the run's units and
+  an indexed source's unit read, moved out of `datarax.pipeline.host_stage`.
+- `datarax.core.data_source.read_records(source, indices, *, epochs, contiguous,
+  with_provenance)`: an indexed source's records, and their provenance when asked, from one read.
+- `datarax.core.data_source.HostRead` (`GIL_FREE`, `GIL_BOUND`) and
+  `DataSourceModule.host_read`, `GIL_FREE` unless a source declares otherwise.
+  `ArrayRecordSourceModule(..., decode_read=HostRead.GIL_BOUND)` declares its decoder's;
+  `TFDSStreamingSource` is `GIL_BOUND`; a `MixDataSourcesNode` takes its strictest child's.
+- Worker processes start with `datarax.pipeline.host_workers.WorkerSetUp`: the GPU hidden, JAX on
+  the CPU platform only, under the run's `JaxSettings` (`jax_enable_x64` and
+  `jax_threefry_partitionable`, which changes the order a threefry key gives, read on the
+  consumer's thread, a context manager's override included, set in each worker and entered on
+  each read thread, so every reader names records as the consumer would; a change of either
+  opens a new run); a worker whose
+  JAX the training script's main module already started is refused, naming the
+  `if __name__ == "__main__":` guard; a worker ends when the training process dies, however it
+  dies (a thread waiting on `multiprocessing.parent_process().sentinel`), where Grain leaves it
+  running (google/grain#1423). Workers
+  send provenance as plain dicts and the training process restores the read-only mappings; a
+  value that cannot be pickled stops the run naming its unit, and the training process checks
+  every unit arrives in turn, so Grain's silent loss of an element it cannot pickle
+  (google/grain#1415) is an error naming the missing unit, never a short run. Outside
+  `absl.app.run`, datarax marks Grain's `--grain_enable_multiprocess_worker_profiling` present
+  (Grain reads it as a worker starts; a later `FLAGS(argv)` still sets it).
+- `TFDSStreamingSource.run_dataset(schedule, key, *, for_workers=False)`: a run read by worker
+  processes sends them the offset index as one read-only copy in shared memory, made once for the
+  source and removed with it; the source reads that copy too, so the host holds one.
+
 - `Pipeline.raw_batches(chunk=None, *, max_chunk_bytes=None, with_provenance=False)`: unprocessed
   batches read by the host stage (`datarax.pipeline.host_stage`) and placed on the default device,
   uncommitted, by the consumer (reads run ahead; one batch is staged on the device ahead of the one
@@ -180,6 +237,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sets that size; every `data_generator` takes the number of records to generate.
 
 ### Changed
+
+- The host stage's read options (threads and units read ahead) come only from its plan; tests and
+  the benchmark adapter no longer set them. The adapter passes a scenario's `num_workers` and
+  `extra["ram_budget_bytes"]` as `HostResources`; a scenario's `prefetch_size` no longer reaches
+  datarax.
+- `ArrayRecordSourceModule` locks only the opening of its files: reads of open files run side by
+  side on read threads, and two threads on a fresh source still open each file once.
+- A TFDS stream's decoded unit carries its place in the run as its last item.
+- The test suite no longer marks every absl flag parsed.
 
 - `for batch in pipeline` runs on the host stage: each batch is read by Grain threads, named on the
   CPU device, placed on the device by the consumer and run through `pipeline.dag` in one compiled
@@ -538,6 +604,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `datarax.workers` (a reserved namespace for a multiprocessing backend) and `datarax.memory`
+  (`SharedMemoryManager`, used by nothing in datarax): worker processes are Grain's, sized and
+  started by the host stage through `HostResources`. Their tests and documentation pages go with
+  them.
 - `ArrayRecordSourceConfig`'s `seed`, `num_epochs` and `shuffle_files`, and
   `ArrayRecordSourceModule`'s own iteration and state: `rngs`, `grain_source`, `current_index`,
   `current_epoch`, `total_records`, `prefetch_cache`, `iterator_initialized`, `shuffled_indices`,

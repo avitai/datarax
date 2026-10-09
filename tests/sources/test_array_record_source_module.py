@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import inspect
 import pickle
+import threading
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -428,3 +430,56 @@ class TestNothingOfADroppedSourceIsKept:
             run()
             run()
         assert sum(str(program).startswith("jit(_names") for program in programs) == 1
+
+
+class TestConcurrentReads:
+    """Read threads share one source: each file opens once, then reads run side by side."""
+
+    def test_two_threads_on_a_fresh_source_open_each_file_once(
+        self, shards: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from array_record.python import array_record_data_source  # noqa: PLC0415
+
+        opened: list[str] = []
+        create = array_record_data_source._create_reader  # noqa: SLF001
+
+        def counted(filename: Any, options: str) -> Any:
+            opened.append(str(filename))
+            threading.Event().wait(0.1)  # a slow open widens any race between the threads
+            return create(filename, options)
+
+        monkeypatch.setattr(array_record_data_source, "_create_reader", counted)
+        source = _source(shards)
+        rows = to_words(np.arange(_RECORDS, dtype=np.uint64))
+        threads = [threading.Thread(target=source.get_batch, args=(rows,)) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert sorted(opened) == sorted(shards)
+
+    def test_reads_of_an_open_source_overlap(
+        self, shards: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source = _source(shards)
+        rows = to_words(np.arange(_RECORDS, dtype=np.uint64))
+        source.get_batch(rows)  # every file open
+        spans: list[tuple[float, float]] = []
+        records = source._records.source  # noqa: SLF001 - the reader the lock guards
+        read = records.__getitems__
+
+        def slow(keys: Any) -> Any:
+            started = time.perf_counter()
+            threading.Event().wait(0.2)  # releases the GIL, as ArrayRecord's C++ read does
+            found = read(keys)
+            spans.append((started, time.perf_counter()))
+            return found
+
+        monkeypatch.setattr(records, "__getitems__", slow)
+        threads = [threading.Thread(target=source.get_batch, args=(rows,)) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        (first_start, first_end), (second_start, second_end) = sorted(spans)
+        assert second_start < first_end, "the second read waited for the first"

@@ -17,6 +17,7 @@ from benchmarks.tests.test_adapters.conftest import (
     assert_supported_scenarios,
     assert_valid_iteration_result,
 )
+from datarax import HostResources
 
 
 class TestDataraxAdapterProperties:
@@ -128,30 +129,48 @@ class TestDataraxAdapterNLP:
         adapter.teardown()
 
 
-class TestDataraxAdapterPrefetchPolicy:
-    """The scenario's ``prefetch_size`` is the depth the host stage reads ahead."""
+class TestDataraxAdapterHostResources:
+    """The scenario's CPU workers and RAM budget are the host stage's ``HostResources``."""
 
-    def test_setup_defaults_prefetch_to_two(self, cv1_small_config, small_image_data):
+    def test_a_scenario_without_a_budget_reads_as_datarax_does_without_one(
+        self, cv1_small_config, small_image_data
+    ):
         adapter = DataraxAdapter()
         adapter.setup(cv1_small_config, small_image_data)
-        assert adapter._pipeline.host_stage._read_buffer == 2
+        plan = adapter._pipeline.host_plan
+        assert adapter._pipeline.host_resources is None
+        assert (plan.threads, plan.read_buffer) == (1, 2)
         adapter.teardown()
 
-    def test_setup_prefetch_override_from_extra(self, cv1_small_config, small_image_data):
+    def test_prefetch_size_does_not_reach_the_host_stage(self, cv1_small_config, small_image_data):
         adapter = DataraxAdapter()
-        override_config = ScenarioConfig(
-            scenario_id=cv1_small_config.scenario_id,
-            dataset_size=cv1_small_config.dataset_size,
-            element_shape=cv1_small_config.element_shape,
-            batch_size=cv1_small_config.batch_size,
-            transforms=cv1_small_config.transforms,
-            num_workers=cv1_small_config.num_workers,
-            seed=cv1_small_config.seed,
-            extra={**cv1_small_config.extra, "prefetch_size": 4},
-        )
-        adapter.setup(override_config, small_image_data)
-        assert adapter._pipeline.host_stage._read_buffer == 4
+        adapter.setup(_with(cv1_small_config, extra={"prefetch_size": 4}), small_image_data)
+        assert adapter._pipeline.host_plan.read_buffer == 2
         adapter.teardown()
+
+    def test_num_workers_and_a_ram_budget_become_host_resources(
+        self, cv1_small_config, small_image_data
+    ):
+        adapter = DataraxAdapter()
+        config = _with(cv1_small_config, num_workers=1, extra={"ram_budget_bytes": 1 << 30})
+        adapter.setup(config, small_image_data)
+        assert adapter._pipeline.host_resources == HostResources(
+            ram_budget_bytes=1 << 30, max_workers=1
+        )
+        adapter.teardown()
+
+
+def _with(config, *, num_workers=None, extra=None):
+    return ScenarioConfig(
+        scenario_id=config.scenario_id,
+        dataset_size=config.dataset_size,
+        element_shape=config.element_shape,
+        batch_size=config.batch_size,
+        transforms=config.transforms,
+        num_workers=config.num_workers if num_workers is None else num_workers,
+        seed=config.seed,
+        extra={**config.extra, **(extra or {})},
+    )
 
 
 class TestDataraxAdapterSteadyState:

@@ -32,8 +32,13 @@ from datarax.core.index_words import from_words
 from datarax.pipeline import Pipeline
 from datarax.pipeline.host_stage import default_device_buffer
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
+from tests.test_common.host_plans import reading_with
 from tests.test_common.streams import RecordStream
 from tests.test_common.transfers import implicit_upload_raises
+
+
+pytestmark = pytest.mark.usefixtures("still_resident")
+"""Plans read with chosen threads and buffers (:func:`reading_with`): ``M_main`` held still."""
 
 
 _DEPTHS = [0, 1, 2, 3]
@@ -61,6 +66,11 @@ def _pipeline(
     num_epochs: int | None = 2,
     threads: int = 1,
 ) -> Pipeline:
+    resources = (
+        None
+        if threads == 1
+        else reading_with(source, batch_size, threads=threads, read_buffer=threads, depth=depth)
+    )
     pipe = Pipeline(
         source=source,
         stages=[],
@@ -68,10 +78,9 @@ def _pipeline(
         rngs=nnx.Rngs(3),
         shuffle=shuffle,
         num_epochs=num_epochs,
+        host_resources=resources,
     )
     pipe.host_stage._device_buffer = depth
-    pipe.host_stage._read_threads = threads
-    pipe.host_stage._read_buffer = max(2, threads)
     return pipe
 
 

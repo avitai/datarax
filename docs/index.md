@@ -70,7 +70,6 @@ Datarax's differentiable pipeline architecture enables optimization paradigms th
 - [Core Components](core/index.md) - Core abstractions
 - [DAG](dag/index.md) - Directed acyclic graph execution
 - [Distributed](distributed/index.md) - Multi-device processing
-- [Memory](memory/index.md) - Memory management
 - [Monitoring](monitoring/index.md) - Metrics and observability
 - [Operators](operators/index.md) - Data transformation operators
 - [Performance](performance/index.md) - Performance optimization

@@ -10,8 +10,10 @@ Three integration tiers (measured costs: ``docs/performance/index.md``):
 
 - **Tier A — ``for batch in pipeline:``** — the data loader: the host stage
   (:class:`~datarax.pipeline.host_stage.HostStage`) reads each batch on Grain
-  threads, names the run's order on the CPU device, and places batches on the
-  device on the consumer's thread, one ahead on a GPU; the batch then runs
+  threads, or in Grain worker processes for a GIL-bound read given
+  ``host_resources`` (a RAM budget), names the run's order on the CPU device,
+  and places batches on the device on the consumer's thread, one ahead on a
+  GPU; the batch then runs
   through the stage DAG in one cached ``jax.jit`` call
   (:func:`~datarax.pipeline.dag_call.compile_dag`), split once per iteration.
   Its batches go to a train or inference step written as the Flax and JAX
@@ -76,11 +78,14 @@ from substrax.typing import CheckpointState
 from datarax.core import batch_ops
 from datarax.core.data_source import DataSourceModule, Provenance, RecordIdentity
 from datarax.core.element_batch import Batch
+from datarax.core.host_resources import HostResources
+from datarax.core.prng import naming_key_data, NAMING_PRNG_IMPL
 from datarax.pipeline.dag import name_records, OperatorDag, Records
 from datarax.pipeline.dag_call import compile_dag
 from datarax.pipeline.epochs import batch_records, EpochPlan
 from datarax.pipeline.host_stage import HostStage, HostStageHolder
 from datarax.pipeline.iteration import next_batch, PipelineIterator, staged_view
+from datarax.pipeline.read_plan import HostPlan
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.typing import DataDict
 
@@ -112,6 +117,12 @@ class Pipeline(nnx.Module):
             ``None`` for a stream that never stops. Under ``drop_last=False`` it stops
             after exactly ``num_epochs * len(source)`` records, so its final batch may
             be short.
+        host_resources: What the host stage may spend reading
+            (:class:`~datarax.core.host_resources.HostResources`): a RAM budget and a cap
+            on read threads or worker processes. With it, a source whose host read holds
+            the GIL is read in Grain worker processes, as many as the budget admits, and a
+            GIL-free read on more threads; without it, one read thread (see
+            :attr:`host_plan`). No default budget: the training process knows its share.
 
     Epochs: the pipeline owns the iteration position, the epoch counter and the order. With
     ``shuffle=True`` every batch passes each record's epoch key to ``record_indices_at``, so
@@ -137,6 +148,7 @@ class Pipeline(nnx.Module):
         shuffle: bool = False,
         drop_last: bool = False,
         num_epochs: int | None = 1,
+        host_resources: HostResources | None = None,
     ) -> None:
         """Initialize the module.
 
@@ -151,6 +163,8 @@ class Pipeline(nnx.Module):
             shuffle: Whether each epoch serves a new random order (see the class docstring).
             drop_last: The last-batch rule (see the class docstring).
             num_epochs: Epochs ``iter`` serves, or ``None`` for a stream that never stops.
+            host_resources: The host stage's RAM budget and cap, or ``None`` (see the class
+                docstring).
 
         Raises:
             ValueError: If ``num_epochs`` is neither ``None`` nor at least 1, the source
@@ -168,6 +182,7 @@ class Pipeline(nnx.Module):
         self.shuffle = shuffle
         self.drop_last = drop_last
         self.num_epochs = num_epochs
+        self.host_resources = host_resources
 
         self.dag = self._build_dag(stages, nodes, edges, sink)
         self.source = source
@@ -176,8 +191,9 @@ class Pipeline(nnx.Module):
         self._position: nnx.Variable[jax.Array] = nnx.Variable(jnp.zeros((), dtype=jnp.int32))
         self._epoch: nnx.Variable[jax.Array] = nnx.Variable(jnp.zeros((), dtype=jnp.int32))
         # The epoch key is derived from this base and the epoch counter, so
-        # iterator state (position, epoch, rng counts) reproduces every slice.
-        self._epoch_key_base: nnx.Variable[jax.Array] = nnx.Variable(jax.random.key_data(rngs()))
+        # iterator state (position, epoch, rng counts) reproduces every slice. It is a naming
+        # key (NAMING_PRNG_IMPL), whatever impl the caller's streams draw with.
+        self._epoch_key_base: nnx.Variable[jax.Array] = nnx.Variable(naming_key_data(rngs()))
         # Cache of compiled @nnx.scan bodies, keyed on the call signature.
         # The decorator must be applied to a stable function identity for
         # nnx.scan's JIT cache to hit on subsequent calls; rebuilding on
@@ -235,6 +251,7 @@ class Pipeline(nnx.Module):
         shuffle: bool = False,
         drop_last: bool = False,
         num_epochs: int | None = 1,
+        host_resources: HostResources | None = None,
     ) -> Pipeline:
         """Build a Pipeline whose stages execute in user-specified topological order.
 
@@ -253,6 +270,8 @@ class Pipeline(nnx.Module):
             shuffle: Whether each epoch serves a new random order (see the class docstring).
             drop_last: The last-batch rule (see the class docstring).
             num_epochs: Epochs ``iter`` serves, or ``None`` for a stream.
+            host_resources: The host stage's RAM budget and cap, or ``None`` (see the class
+                docstring).
 
         Raises:
             ValueError: If ``edges`` describes a cycle, references
@@ -271,6 +290,7 @@ class Pipeline(nnx.Module):
             shuffle=shuffle,
             drop_last=drop_last,
             num_epochs=num_epochs,
+            host_resources=host_resources,
         )
 
     @classmethod
@@ -357,7 +377,8 @@ class Pipeline(nnx.Module):
 
     def _key_of(self, epoch: jax.Array) -> jax.Array:
         """The key ``record_indices_at`` orders epoch ``epoch`` by."""
-        return jax.random.fold_in(jax.random.wrap_key_data(self._epoch_key_base[...]), epoch)
+        key = jax.random.wrap_key_data(self._epoch_key_base[...], impl=NAMING_PRNG_IMPL)
+        return jax.random.fold_in(key, epoch)
 
     def _records_at(self, start: jax.Array, epoch: jax.Array, size: int) -> Records:
         """The ``size`` records served from ``start`` of epoch ``epoch``'s order.
@@ -470,6 +491,17 @@ class Pipeline(nnx.Module):
     def host_stage(self) -> HostStage:
         """The host stage: where host iteration stands, and the Grain iterator of its run."""
         return self._host.value
+
+    @property
+    def host_plan(self) -> HostPlan:
+        """How the host stage reads: the plan of the run opened last, or of single batches.
+
+        Its path (threads, worker processes, or a stream's one thread), threads, workers and
+        buffers, and with ``host_resources`` the terms it charged the budget with
+        (:class:`~datarax.pipeline.read_plan.HostPlan`). Held on the host, never in the
+        pipeline's state.
+        """
+        return self.host_stage.last_plan(self)
 
     @overload
     def raw_batches(
