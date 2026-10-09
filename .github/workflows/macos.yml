@@ -52,6 +52,11 @@ jobs:
       max-parallel: 2
       matrix:
         python-version: ['3.12', '3.13']
+    env:
+      # uv takes its interpreter from .python-version (3.12) unless told otherwise, whatever
+      # setup-python put on the path, and a later uv sync replaces a venv made with --python.
+      # UV_PYTHON applies the matrix version to every uv command in the job.
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -74,6 +79,10 @@ jobs:
       - name: Install dependencies
         run: |
           uv sync --locked --extra dev --extra test --extra data --extra wandb
+
+      - name: Check the interpreter is the matrix's Python
+        run: |
+          uv run python scripts/require_python.py ${{ matrix.python-version }}
 
       - name: Setup PYTHONPATH for tests
         run: |

@@ -31,6 +31,11 @@ jobs:
       max-parallel: 2
       matrix:
         python-version: ['3.12', '3.13']
+    env:
+      # uv takes its interpreter from .python-version (3.12) unless told otherwise, whatever
+      # setup-python put on the path, and a later uv sync replaces a venv made with --python.
+      # UV_PYTHON applies the matrix version to every uv command in the job.
+      UV_PYTHON: ${{ matrix.python-version }}
 
     steps:
       - uses: actions/checkout@v4
@@ -57,6 +62,10 @@ jobs:
           # Install type stubs for common libraries
           uv pip install types-requests types-setuptools
 
+      - name: Check the interpreter is the matrix's Python
+        run: |
+          uv run python scripts/require_python.py ${{ matrix.python-version }}
+
       - name: Setup PYTHONPATH for tests
         run: |
           echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
@@ -81,7 +90,8 @@ jobs:
           . test_venv/bin/activate
           uv pip install dist/*.whl
 
-          # Verify the package can be imported
+          # Verify the package can be imported, on the matrix's Python
+          python scripts/require_python.py ${{ matrix.python-version }}
           python -c "import datarax; print(f'Successfully imported datarax version {datarax.__version__}')"
           deactivate
 

@@ -798,6 +798,52 @@ def test_a_quiet_night_runs_no_macos_job() -> None:
             assert job.get("if") == "needs.main_moved.outputs.unchanged != 'true'", name
 
 
+MATRIX_PYTHON = "${{ matrix.python-version }}"
+REQUIRE_PYTHON = "scripts/require_python.py"
+
+
+def _python_matrix_jobs() -> dict[str, dict]:
+    """Every job, by ``workflow:job``, whose own steps run once per matrix Python version."""
+    return {
+        f"{path.name}:{name}": job
+        for path in sorted(WORKFLOWS.glob("*.yml"))
+        for name, job in yaml.safe_load(path.read_text())["jobs"].items()
+        if "python-version" in job.get("strategy", {}).get("matrix", {}) and "steps" in job
+    }
+
+
+def matrix_python_violations(name: str, job: dict) -> list[str]:
+    """Why a leg of a Python version matrix could run another interpreter, if it could."""
+    problems = []
+    if job.get("env", {}).get("UV_PYTHON") != MATRIX_PYTHON:
+        problems.append(f"{name} does not set UV_PYTHON to {MATRIX_PYTHON}")
+    check = f"uv run python {REQUIRE_PYTHON} {MATRIX_PYTHON}"
+    if not any(check in str(step.get("run", "")) for step in job["steps"]):
+        problems.append(f"{name} never runs `{check}`")
+    return problems
+
+
+def test_every_python_matrix_leg_runs_its_matrix_version() -> None:
+    """A leg named for a Python version runs that version, or fails.
+
+    ``uv venv``, ``uv sync`` and ``uv run`` take their interpreter from ``.python-version``
+    (3.12) unless told otherwise. ``setup-python`` putting 3.13 first on the path does not
+    change that, and neither does ``uv venv --python`` alone: the next ``uv sync`` replaces the
+    environment with one satisfying ``.python-version``. The "Python 3.13" legs ran CPython
+    3.12. ``UV_PYTHON`` on the job applies to every uv command in it, and
+    ``scripts/require_python.py`` fails the leg whose interpreter is another version all the
+    same.
+    """
+    jobs = _python_matrix_jobs()
+
+    assert {"ci.yml:unit_tests", "macos.yml:unit_tests", "build-verification.yml:build"} <= set(
+        jobs
+    )
+    assert [
+        problem for name, job in jobs.items() for problem in matrix_python_violations(name, job)
+    ] == []
+
+
 def test_the_release_checklist_runs_macos_before_the_tag() -> None:
     releasing = (REPO_ROOT / "RELEASING.md").read_text()
 
