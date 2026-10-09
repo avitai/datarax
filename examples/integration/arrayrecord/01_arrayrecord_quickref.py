@@ -36,6 +36,7 @@ By the end of this quick reference, you will be able to:
 2. Read named records with `get_batch` and their non-numeric values with `provenance`
 3. Serve ArrayRecord files through a shuffled `Pipeline` and resume it from its state
 4. Read a TFDS split prepared as ArrayRecord per batch with `from_tfds(..., in_memory=False)`
+5. Decode the files once with `materialize`, into RAM or as a decoded copy on disk
 """
 
 # %% [markdown]
@@ -76,8 +77,8 @@ from array_record.python.array_record_module import ArrayRecordWriter
 from flax import nnx
 
 from datarax.core.index_words import from_words, to_words
-from datarax.pipeline import Pipeline
-from datarax.sources import ArrayRecordSourceConfig, ArrayRecordSourceModule
+from datarax.pipeline import materialize, Pipeline
+from datarax.sources import ArrayRecordSourceConfig, ArrayRecordSourceModule, open_decoded_copy
 
 
 # %% [markdown]
@@ -219,6 +220,45 @@ source = from_tfds("imagenet2012", "train", data_dir=data_dir, in_memory=False)
 ```
 """
 
+# %% [markdown]
+"""
+## Part 7: Decode once with `materialize`
+
+`decode` runs on every read, every epoch. `materialize` decodes every record once and returns a
+source serving the same records from decoded columns: into RAM without `directory`, or as a
+decoded copy on disk with it, reused by every later run (a complete copy of the same files is
+returned as it is). Both serve what the files serve, record for record, provenance included.
+"""
+
+# %%
+in_memory = materialize(source, unit_records=16)
+copy_dir = directory / "decoded"
+copy = materialize(source, directory=copy_dir, unit_records=16)
+again = materialize(source, directory=copy_dir, unit_records=16)  # reused, nothing decoded
+same_labels = np.array_equal(in_memory.get_batch(words)["label"], batch["label"])
+print(f"In RAM, records 45, 2, 39, 40 have the labels read per batch: {same_labels}")
+print(
+    f"From the copy: {copy.get_batch(words)['label']}, ids {[p['id'] for p in copy.provenance(words)]}"
+)
+print(f"The copy opens without its source: {len(open_decoded_copy(copy_dir))} records")
+
+# %% [markdown]
+"""
+A decode in Python runs on one core. With a RAM budget, `materialize` decodes in the budget's
+Grain worker processes instead, each writing its records' rows straight into the copy's files:
+
+```python
+from datarax import HostResources
+
+if __name__ == "__main__":  # every spawned worker imports the main module
+    resources = HostResources(ram_budget_bytes=16 << 30, max_workers=8)
+    source = materialize(source, host_resources=resources, directory=copy_dir)
+```
+
+The budget counts the training process's memory, the decoded columns held in RAM (none for a
+copy) and every worker; a budget that cannot hold the build is refused before a worker starts.
+"""
+
 # %%
 source.close()
 shutil.rmtree(directory)
@@ -236,6 +276,7 @@ print("Closed the source's file handles and removed the files.")
 | Order, epochs, resume | the pipeline's (`shuffle`, `num_epochs`, `get_state` / `set_state`) |
 | Memory | no records held between batches |
 | File handles | `close()` or a `with` block |
+| Decode once | `materialize(source)` into RAM, or `directory=` for a decoded copy on disk |
 
 ## Next Steps
 

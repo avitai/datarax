@@ -5,7 +5,18 @@ per numeric field and the records' provenance (their strings and objects) in one
 file, beside a `manifest.json` written last. It serves a source whose read decodes every record
 on every epoch (a TFDS split read per batch, ArrayRecord files of encoded images) from memory
 maps instead: a gather, with no decode. The copy is opt-in; it has no default directory, and
-`datarax.pipeline.materialize(source, directory=...)` writes it.
+`datarax.pipeline.materialize(source, directory=...)` writes it: on the calling thread, or in the
+RAM budget's worker processes for a read that decodes in Python, each worker writing its units'
+rows in place. It returns a complete copy of the same source already in the directory as it is,
+so every later run, and every other training process on the host, reuses it.
+
+```python
+from datarax.pipeline import materialize
+from datarax.sources import from_tfds
+
+materialize(from_tfds("cifar10", "train", in_memory=False), host_resources=resources,
+            directory="/data/cifar10-train")
+```
 
 `open_decoded_copy(directory)` opens a finished copy as a `StreamingDiskSource`, an `INDEXED`
 source serving what the source serves, record for record, its provenance by index:
@@ -53,6 +64,15 @@ source, naming every field that differs.
 The copy is also identified by its own bytes: the manifest's content digest is the SHA-256 of the
 units' SHA-256 digests, in unit order. `open_decoded_copy(directory, verify=True)` reads every
 column and refuses a copy whose bytes no longer give it (a full read).
+
+## Writing and reading safely
+
+- One process writes a copy at a time (an exclusive `fcntl.flock` on `.lock`, freed by the kernel
+  when its holder dies); a process that waited returns the copy the first one finished.
+- A rebuild unlinks the old manifest first, so a reader opening the copy meanwhile is refused; a
+  reader that already mapped the old files keeps reading them, and the rebuild writes new files.
+- A copy read cold from disk needs concurrent readers to keep a GPU fed: a pipeline over it with
+  `host_resources` reads it on several threads.
 
 ## Refusals
 

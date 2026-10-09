@@ -8,6 +8,8 @@ canonical Flax NNX pattern: stateful ``nnx.Module`` composition with
 
 Public API:
 
+- :func:`materialize` — decode a source's records once, into RAM or as a decoded copy on disk,
+  through the RAM budget's worker processes.
 - :class:`Pipeline` — linear chain of stages over a data source. Each
   stage is an ``nnx.Module`` whose ``__call__(batch) -> batch``
   transforms the batch. ``Pipeline.epoch`` runs the entire epoch
@@ -16,8 +18,16 @@ Public API:
 """
 
 from datarax.core.host_resources import HostResources
+from datarax.pipeline.materialization import materialize
 from datarax.pipeline.pipeline import Pipeline, PipelineIterator
 from datarax.pipeline.topo import topological_sort, validate_dag
 
 
-__all__ = ["HostResources", "Pipeline", "PipelineIterator", "topological_sort", "validate_dag"]
+__all__ = [
+    "HostResources",
+    "Pipeline",
+    "PipelineIterator",
+    "materialize",
+    "topological_sort",
+    "validate_dag",
+]

@@ -245,6 +245,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   generates a variant's data at its configured size and `ScenarioVariant.with_dataset_size(n)`
   sets that size; every `data_generator` takes the number of records to generate.
 
+- **`datarax.pipeline.materialize(source, *, host_resources=None, directory=None,
+  unit_records=256, rebuild=False)`** decodes an indexed source's records once and returns a
+  source serving them, record for record, without decoding again: a `MemorySource` over the
+  decoded columns (`MemorySource.of_columns`, out of NNX state) or, with `directory`, the source's
+  decoded copy there, a `StreamingDiskSource`. A read that decodes in Python is decoded by the
+  worker processes a RAM budget admits (from two; one worker is slower than the calling thread),
+  a GIL-free read and any read without a budget on the calling thread. Workers write a copy's
+  rows in place and send back only each unit's provenance and digest; for RAM they send each
+  decoded unit, copied into the columns. The budget is refused before a worker starts when it
+  cannot hold `M_main + C + E` (`C`, the decoded columns in RAM), naming the per-batch read and
+  `directory=`; `from_tfds(..., in_memory=True, host_resources=...)` checks the decoded size
+  alone. A complete copy of the same source in `directory` is returned as it is (wherever the
+  directory was moved); a changed source, an incomplete copy or `rebuild=True` writes it again
+  under the copy's lock, so N processes on a host build it once. The plan's one-thread warning
+  is shared with the host stage (`datarax.pipeline.read_plan.warn_one_thread`).
 - **Decoded copies** (`datarax.sources.decoded_copy`): a source's records decoded once into one
   `.npy` file per numeric field and their provenance in one ArrayRecord file of UTF-8 JSON
   (`bytes` base64-encoded), beside a `manifest.json` written last. `open_decoded_copy(directory,

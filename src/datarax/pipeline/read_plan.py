@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import dataclasses
 import enum
+import logging
 import math
 from collections.abc import Callable
 from typing import Any
@@ -52,6 +53,8 @@ from datarax.core.spec import declared_spec
 from datarax.pipeline import host_workers
 from datarax.pipeline.host_workers import JaxSettings
 
+
+logger = logging.getLogger(__name__)
 
 READ_THREADS = 1
 """Read threads without a budget: one host thread gathers millions of in-memory records a second;
@@ -108,6 +111,21 @@ def host_read_path(
     if access is ReadAccess.BY_UNIT:
         return HostReadPath.THREADS
     return HostReadPath.ONE_THREAD
+
+
+def warn_one_thread(source: DataSourceModule, call: str) -> None:
+    """Log that ``source``'s GIL-bound read runs on one thread for want of a budget.
+
+    Args:
+        source: The source whose read decodes in Python.
+        call: What takes the budget that would read it in worker processes (``"Pipeline"``).
+    """
+    logger.warning(
+        "%s decodes in Python on each read, on one thread: pass %s(host_resources="
+        "HostResources(ram_budget_bytes=..., max_workers=...)) to read it in worker processes",
+        type(source).__name__,
+        call,
+    )
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -417,4 +435,5 @@ __all__ = [
     "host_read_path",
     "measure_terms",
     "spec_bytes",
+    "warn_one_thread",
 ]

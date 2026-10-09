@@ -26,10 +26,11 @@ from substrax.testing.compiles import expect_compiles
 
 from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import Batch, Element
+from datarax.core.host_resources import available_cpus
 from datarax.core.operator import OperatorModule
-from datarax.pipeline import host_stage, Pipeline
-from datarax.pipeline.run_units import HostElement
+from datarax.pipeline import Pipeline
 from tests.test_common.compiles import expect_first_call_compiles
+from tests.test_common.placement import PlacementSpy
 from tests.test_common.worker_reads import png_source, resources, stream_of, write_png_records
 
 
@@ -65,31 +66,16 @@ def _pipeline(
         rngs=nnx.Rngs(2),
         shuffle=True,
         num_epochs=num_epochs,
-        host_resources=resources(workers) if workers else None,
+        # Workers within the CPUs this process may run on: one under a one-CPU affinity.
+        host_resources=resources(min(workers, available_cpus())) if workers else None,
     )
-
-
-class _PlacementSpy:
-    """Every unit the host stage places, and the thread that placed it."""
-
-    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        self.threads: list[int] = []
-        self.leaf_types: set[type] = set()
-        place = host_stage._place  # noqa: SLF001 - the one placement the spy counts
-
-        def counted(element: HostElement) -> Any:
-            self.threads.append(threading.get_ident())
-            self.leaf_types |= {type(leaf) for leaf in jax.tree.leaves(element.batch)}
-            return place(element)
-
-        monkeypatch.setattr(host_stage, "_place", counted)
 
 
 class TestPlacementOnTheConsumer:
     def test_one_placement_per_unit_on_the_consumer_s_thread(
         self, png_paths: list[str], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        spy = _PlacementSpy(monkeypatch)
+        spy = PlacementSpy(monkeypatch)
         pipe = _pipeline(png_paths)
         served = list(pipe.raw_batches())
         assert len(spy.threads) == len(served)

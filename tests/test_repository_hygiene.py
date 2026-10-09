@@ -8,6 +8,9 @@ Enforces structural invariants that protect the source tree:
   shadow the repository's own ``benchmarks``, ``examples`` and ``scripts``.
 - The decoded copy's files, locks and writers are used through ``with`` only: no ``.close()``
   call is written by hand in the modules that write a copy.
+- Grain's shared-memory defects (google/grain#1420) are recorded, never suppressed: no warning
+  filter over the resource tracker's leak report in ``src`` or ``tests``, and no garbage
+  collection forced in a ``src`` module that runs Grain iterators.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from __future__ import annotations
 import ast
 import importlib
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
@@ -26,6 +30,7 @@ TEST_SUBPACKAGES = sorted(path.parent.name for path in TESTS_DIR.glob("*/__init_
 COPY_WRITERS = (
     "src/datarax/sources/decoded_copy/_files.py",
     "src/datarax/sources/decoded_copy/_units.py",
+    "src/datarax/pipeline/materialization.py",
 )
 """The modules that write a decoded copy: their resources are released by ``with`` alone."""
 
@@ -80,3 +85,62 @@ def test_a_copy_writer_closes_nothing_by_hand(module: str) -> None:
 
 def test_positive_control_a_hand_written_close_is_found() -> None:
     assert _close_calls("handle = open('x')\nhandle.close()\nos.close(3)\n") == [2]
+
+
+_SUPPRESSIONS = re.compile(
+    r"(filterwarnings|simplefilter)\([^)]*(resource_tracker|leaked shared_memory)", re.S
+)
+
+
+_GRAIN_IMPORT = re.compile(r"^(import grain|from grain)\b", re.M)
+"""A module that runs Grain iterators, where a forced collection would hide a leak."""
+
+
+def _suppressions(source: str) -> list[str]:
+    """Warning filters over the resource tracker's leak report in ``source``."""
+    return [match.group(0) for match in _SUPPRESSIONS.finditer(source)]
+
+
+def _gc_collects(source: str) -> list[int]:
+    """The lines of every ``gc.collect()`` call in ``source``."""
+    return [
+        node.lineno
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "collect"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "gc"
+    ]
+
+
+def test_grain_s_shared_memory_symptoms_are_not_suppressed() -> None:
+    """A leak report is a measurement (google/grain#1420); hiding it would hide the defect."""
+    found = {
+        str(path.relative_to(REPOSITORY)): _suppressions(path.read_text())
+        for root in ("src", "tests")
+        for path in (REPOSITORY / root).rglob("*.py")
+    }
+    assert {path: hits for path, hits in found.items() if hits} == {}
+    collected = {
+        str(path.relative_to(REPOSITORY)): _gc_collects(path.read_text())
+        for path in (REPOSITORY / "src").rglob("*.py")
+        if _GRAIN_IMPORT.search(path.read_text())
+    }
+    assert {path: lines for path, lines in collected.items() if lines} == {}
+
+
+def test_positive_control_a_suppression_and_a_forced_collection_are_found() -> None:
+    # Assembled here, so the check over this file does not find its own fixture.
+    fixture = (
+        "import gc, warnings\n"
+        "warnings."
+        + "filter"
+        + "warnings('ignore', module='multiprocessing.resource_"
+        + "tracker')\n"
+        "gc.collect()\n"
+    )
+    assert _suppressions(fixture)
+    assert _gc_collects(fixture) == [3]
+    assert _GRAIN_IMPORT.search("import grain\n")
+    assert _GRAIN_IMPORT.search("from grain import MapDataset\n")

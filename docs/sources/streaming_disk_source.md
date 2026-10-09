@@ -21,7 +21,9 @@ Two reads serve it:
 With `StreamingDiskSourceConfig(provenance=DiskProvenance(file, records))` the source also serves
 its records' provenance (their strings and objects) by index from one ArrayRecord file, as a
 [decoded copy](decoded_copy.md) holds it; `source_identity()` declares its columns (and the copy
-they are), which a copy written from it is checked against.
+they are), which a copy written from it is checked against. A cold copy read from disk is
+faster on several read threads: with `Pipeline(host_resources=...)` the host stage reads it (a
+GIL-free read) on threads from the plan.
 
 ```python
 import numpy as np
