@@ -115,8 +115,8 @@ source = from_hf("allenai/c4", "train", streaming=True)
 ```
 
 !!! note "HF Datasets requires `datasets`"
-    Install with `uv pip install datasets`. Like TFDS, Datarax lazy-imports
-    the HuggingFace `datasets` library.
+    Install with `uv pip install datasets`. Datarax imports the HuggingFace
+    `datasets` library when an HF source is built.
 
 ## Using Sources in Pipelines
 

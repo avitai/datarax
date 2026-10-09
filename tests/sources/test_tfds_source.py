@@ -18,6 +18,7 @@ from typing import Any
 import jax
 import numpy as np
 import pytest
+import tensorflow_datasets as tfds
 from flax import nnx
 
 from datarax.core.index_words import to_words
@@ -103,8 +104,6 @@ class TestTheEagerSourceReadsArrayRecord:
     def test_each_row_is_the_record_tfds_reads_at_that_position(
         self, tfds_fixture: TFDSFixture
     ) -> None:
-        import tensorflow_datasets as tfds
-
         source = _eager(tfds_fixture)
         records: Any = tfds.data_source(
             FIXTURE, split="train", data_dir=str(tfds_fixture.array_record), download=False

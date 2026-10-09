@@ -33,6 +33,8 @@ pip install "datarax[data]"          # read prepared datasets with TFDSEagerSour
 pip install "datarax[data,tfds]"     # also prepare datasets
 ```
 
+`import datarax.sources` does not import TFDS. Importing a TFDS source or `from_tfds` does, on that line, so a missing `data` extra fails there with `ModuleNotFoundError: No module named 'tensorflow_datasets'`. Import them at the top of a program, as you would TFDS itself. The first import of TFDS in a process swaps Python's import function for the whole process while it runs (`etils.epy.lazy_imports`), and a garbage collection during that swap leaves Grain worker semaphores linked in `/dev/shm`.
+
 ## Preparing a Dataset
 
 Prepare each dataset once as ArrayRecord, in a process of its own (it imports TensorFlow):

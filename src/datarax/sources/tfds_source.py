@@ -23,6 +23,16 @@ source prepares a dataset, because preparing imports TensorFlow: a split that is
 is prepared only in the format the other source reads, is refused, naming the call that prepares
 it or the source that reads it. Reading needs the ``data`` extra; preparing needs the ``tfds``
 extra, in a process of its own.
+
+``from_tfds`` picks between the two sources by the format the copy is prepared in.
+
+This module is TFDS's integration module and imports ``tensorflow_datasets`` at its top, so
+importing it without the ``data`` extra raises ``ImportError``. ``datarax.sources`` exports these
+names lazily, so ``import datarax.sources`` imports no TFDS. The import happens on the line that
+imports a TFDS source or ``from_tfds``. TFDS's first import enters ``etils.epy.lazy_imports()``,
+which replaces ``builtins.__import__`` for the whole process while it runs. A garbage collection
+in that window runs finalizers whose imports fail, so the window must not open inside a
+constructor in the middle of a run.
 """
 
 from __future__ import annotations
@@ -43,10 +53,12 @@ import google_crc32c
 import grain
 import jax
 import numpy as np
+import tensorflow_datasets as tfds
 from jax.typing import ArrayLike
 
 from datarax.core.data_source import (
     BatchSchedule,
+    DataSourceModule,
     Provenance,
     record_words,
     RecordIdentity,
@@ -89,8 +101,6 @@ def _prepared_builder(  # noqa: DOC503 - the exception raised is the one ``refus
     Raises:
         Exception: What ``refuse`` builds, if the copy is not prepared in ``file_format``.
     """
-    import tensorflow_datasets as tfds
-
     try:
         builder = tfds.builder(name, data_dir=data_dir)
     except tfds.core.DatasetNotFoundError as error:
@@ -104,7 +114,7 @@ def _prepared_builder(  # noqa: DOC503 - the exception raised is the one ``refus
     return builder
 
 
-def tfrecord_only(name: str, data_dir: str | None) -> bool:
+def _tfrecord_only(name: str, data_dir: str | None) -> bool:
     """Whether ``name`` is prepared in ``data_dir`` as TFRecord and not as ArrayRecord.
 
     Such a copy has no random access, so it is streamed; any other (ArrayRecord, or nothing
@@ -117,8 +127,6 @@ def tfrecord_only(name: str, data_dir: str | None) -> bool:
     Returns:
         Whether the prepared copy is TFRecord only.
     """
-    import tensorflow_datasets as tfds
-
     try:
         builder = tfds.builder(name, data_dir=data_dir)
     except tfds.core.DatasetNotFoundError:
@@ -344,7 +352,7 @@ class _ExampleDecoder:
         ]
 
 
-def per_batch_split(  # noqa: DOC502 - _array_record_builder and _supervised_keys raise
+def _per_batch_split(  # noqa: DOC502 - _array_record_builder and _supervised_keys raise
     name: str,
     split: str,
     *,
@@ -705,8 +713,6 @@ def _buffer_shuffled(
 
 def _features(name: str, data_dir: str | None) -> Any:
     """The dataset's TFDS features, which decode its serialized records with NumPy."""
-    import tensorflow_datasets as tfds  # noqa: PLC0415 - opened where the records are decoded
-
     return tfds.builder(name, data_dir=data_dir).info.features
 
 
@@ -1202,3 +1208,86 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
         with Path(instruction.filename).open("rb", buffering=0) as file:
             raw = _payload(file, instruction.filename, index, offset)
         return _Frame(shard, offset, raw)
+
+
+# =============================================================================
+# Choosing the source by the prepared format
+# =============================================================================
+
+
+def from_tfds(
+    name: str,
+    split: str,
+    *,
+    data_dir: str | None = None,
+    in_memory: bool = True,
+    as_supervised: bool = False,
+    include_keys: set[str] | None = None,
+    exclude_keys: set[str] | None = None,
+) -> DataSourceModule:
+    """Create the TFDS source that reads the copy prepared in ``data_dir``, by its format.
+
+    - A copy prepared as ArrayRecord has random access. With ``in_memory=True`` (the default)
+      ``TFDSEagerSource`` decodes it into host columns at init; with ``in_memory=False`` an
+      ``ArrayRecordSourceModule`` reads and decodes each batch's records when the pipeline reads
+      them, for a split larger than RAM, at the cost of decoding every record every epoch.
+    - A copy prepared as TFRecord (TFDS's default format) is streamed by
+      ``TFDSStreamingSource``, which holds no split in memory, whatever ``in_memory`` says.
+
+    Both read without TensorFlow.
+
+    Neither prepares a dataset; a split that is not prepared is refused, naming the call that
+    prepares it as ArrayRecord. The order records are served in belongs to the pipeline
+    (``Pipeline(shuffle=...)``).
+
+    Args:
+        name: TFDS dataset name (e.g., "mnist", "cifar10", "imagenet2012")
+        split: Dataset split (e.g., "train", "test", "train[:1000]")
+        data_dir: Optional directory where the dataset is prepared
+        in_memory: Whether an ArrayRecord copy is decoded into memory at init (True) or read
+            per batch (False)
+        as_supervised: If True, keeps only the supervised features, under their own names
+        include_keys: Optional set of keys to include
+        exclude_keys: Optional set of keys to exclude
+
+    Returns:
+        TFDSEagerSource or ArrayRecordSourceModule for an ArrayRecord copy, TFDSStreamingSource
+        for a TFRecord copy.
+
+    Example:
+        ```python
+        from datarax.sources import from_tfds
+
+        source = from_tfds("mnist", "train")  # prepared as ArrayRecord: the eager source
+        ```
+    """
+    if _tfrecord_only(name, data_dir):
+        return TFDSStreamingSource(
+            TFDSStreamingConfig(
+                name=name,
+                split=split,
+                data_dir=data_dir,
+                as_supervised=as_supervised,
+                include_keys=include_keys,
+                exclude_keys=exclude_keys,
+            )
+        )
+    if not in_memory:
+        return _per_batch_split(
+            name,
+            split,
+            data_dir=data_dir,
+            as_supervised=as_supervised,
+            include_keys=include_keys,
+            exclude_keys=exclude_keys,
+        )
+    return TFDSEagerSource(
+        TFDSEagerConfig(
+            name=name,
+            split=split,
+            data_dir=data_dir,
+            as_supervised=as_supervised,
+            include_keys=include_keys,
+            exclude_keys=exclude_keys,
+        )
+    )

@@ -598,6 +598,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Building a TFDS source, or calling `from_tfds`, no longer imports TFDS in the middle of a run.
+  `datarax.sources.tfds_source` imports `tensorflow_datasets` at its top, and `from_tfds` moved
+  there, exported lazily from `datarax.sources` like the TFDS sources. TFDS's first import enters
+  `etils.epy.lazy_imports()`, which swaps `builtins.__import__` for the whole process. When a
+  garbage collection ran in that window, each finished Grain worker read left in a reference cycle
+  (google/grain#1420) failed to unlink its 50 named semaphores, printed 50 `Exception ignored`
+  tracebacks, and under pytest failed whichever test built the first TFDS source. The import now
+  runs on the line that imports a TFDS source, and a missing `data` extra raises
+  `ModuleNotFoundError` there rather than at construction. `import datarax.sources` still imports
+  no TFDS. `tfrecord_only` and `per_batch_split` in `datarax.sources.tfds_source` are private now.
 - TFDS records decode on the protobuf runtime a plain install selects (`upb`). The managed env
   file, the test conftest and the TFDS sources each chose protobuf's pure-Python runtime, which
   nearly doubles TFDS's per-record decode (CIFAR-10: about 130 us against 72 us). The sources
