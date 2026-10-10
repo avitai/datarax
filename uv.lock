@@ -267,19 +267,19 @@ wheels = [
 
 [[package]]
 name = "array-record"
-version = "0.8.3"
+version = "0.8.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "absl-py" },
     { name = "etils", extra = ["epath"] },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/44/ff/8238c28f9bfda365ba991fc2b8a566c71847fc5a2d0913158aeadafd4e63/array_record-0.8.3-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:dada305fa0dfa3fd6f5f263c43ed37546f815e4f33ce30b066175384dead752e", size = 3989102, upload-time = "2025-11-13T16:15:33.845Z" },
-    { url = "https://files.pythonhosted.org/packages/fb/67/4b4cd9891a36aec236e35688b47c44648bb645946e98653a7ad54f890128/array_record-0.8.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:718403dc9a364519a5fc440ed9e2784077e965489d5a44c96970d3101101e1cd", size = 4838611, upload-time = "2025-11-13T16:15:35.016Z" },
-    { url = "https://files.pythonhosted.org/packages/50/65/2f60b9ca59e5fce140be36f4136ebcc83385c9e56cd499e2942f9fb4b250/array_record-0.8.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:458f6658de86c9369b23ffe64dcb31393a919b91ae2f15147ee2beb2010b122a", size = 4995925, upload-time = "2025-11-13T16:15:37.091Z" },
-    { url = "https://files.pythonhosted.org/packages/d6/63/fd734c5f2be8017d4f33cff0dd3d3e2f91de3ab988f93755cdc54d67b654/array_record-0.8.3-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:fa94fa053c1afaecc183a1c31463fd89d1b7b148cc526095bfc50ab58967e47c", size = 3989122, upload-time = "2025-11-13T16:15:38.375Z" },
-    { url = "https://files.pythonhosted.org/packages/e9/b0/9f649781c8e630cbb8724fb56627430b4249b51e8536e6e0a31d6f85f147/array_record-0.8.3-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:adfe6c92918363747539c0caa579f568f75aac079ad7bbd4ebcf7fdb02e5461b", size = 4838733, upload-time = "2025-11-13T16:15:39.767Z" },
-    { url = "https://files.pythonhosted.org/packages/d7/6d/5575a1d64cffecb72de5743b35a1532b1801a0350b9b45f277090d02b3c2/array_record-0.8.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:13df1aec9b38afe98973bf5fe3cf523f83ca904b0423d85319930877145b8f28", size = 4995837, upload-time = "2025-11-13T16:15:40.973Z" },
+    { url = "https://files.pythonhosted.org/packages/9f/cf/82d6e2ab9b5fc0e73d8cb9c7db6d5359fcc72bfdac7862002dcc19ed5698/array_record-0.8.4-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:ffc9749979f84bc021af339dbf5fbc6d15f07e8af4db12b3164dd20edf974ec2", size = 3213779, upload-time = "2026-10-08T15:30:46.941Z" },
+    { url = "https://files.pythonhosted.org/packages/91/08/fd3a85467e3585704815365677f5ca16aaa16806be30d2d4dd81c77f0153/array_record-0.8.4-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:a315799a5a85a63cdafa18ab4598cc14edcf1ccc0461d79a94b4908f45ca5733", size = 3686259, upload-time = "2026-10-08T15:30:48.727Z" },
+    { url = "https://files.pythonhosted.org/packages/11/52/fbee2ab45f38291303456acc60f5cb97b70159777ee9e1f36efa3d73cf22/array_record-0.8.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:fac49c610a8cbecf19ec9032fa3c19bb3a9b3dd35805d1ce806c4e32f730f67c", size = 3835341, upload-time = "2026-10-08T15:30:50.31Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/5a/791570cd7aa13774d7e70b3e548c1e5de1f40bd8b3ee1659055d28747ed7/array_record-0.8.4-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:4ade949cccd7a34d531c09d5794f9b515a0488a17a3302051972a8ddac7c3be4", size = 3213748, upload-time = "2026-10-08T15:30:51.962Z" },
+    { url = "https://files.pythonhosted.org/packages/59/8d/6256d0e3c208730195e318202cacc11cdd6b34c415be582cc28e4c442214/array_record-0.8.4-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:a80a45c94101e45dafa8ceea27012103278b1517585a3a5c4d1c684760012277", size = 3686367, upload-time = "2026-10-08T15:30:53.312Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/75/ce4cd320433a3b2c8c95f2dab5815917a26f06629a2ae59dd14caea562d3/array_record-0.8.4-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:ea8a42227268a10bfecf20f59485421bef50d0fb21459384779baf5ba6b63589", size = 3835264, upload-time = "2026-10-08T15:30:55.383Z" },
 ]
 
 [[package]]
@@ -1551,7 +1551,7 @@ wandb = [
 
 [package.metadata]
 requires-dist = [
-    { name = "array-record", specifier = ">=0.4" },
+    { name = "array-record", specifier = ">=0.8.4" },
     { name = "bandit", extras = ["toml"], marker = "extra == 'dev'", specifier = ">=1.8.0" },
     { name = "beartype", marker = "extra == 'test'", specifier = ">=0.14.1" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0.3" },

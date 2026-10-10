@@ -181,6 +181,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `array-record>=0.8.4` (was `>=0.4`). Its `ArrayRecordDataSource` now opens a file's reader under
+  its own lock and shares the readers between threads, so `ArrayRecordSourceModule` drops the lock
+  it held around every read: threads reading one source read in parallel, and each file is still
+  opened once. `ArrayRecordSourceModule.close()` no longer waits for a read in flight; call it
+  between phases, as ArrayRecord's own `__exit__`.
 - `for batch in pipeline` runs on the host stage: each batch is read by Grain threads, named on the
   CPU device, placed on the device by the consumer and run through `pipeline.dag` in one compiled
   call (`datarax.pipeline.dag_call.compile_dag`), split once per iteration, compiled once per

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,37 +46,24 @@ class _Records:
     """ArrayRecord files read by position, kept on the host and out of NNX state.
 
     ArrayRecord's data source (the reader Grain and TFDS read the format with) opens each file at
-    its first read; reads go through one lock, so two threads never open the same file twice. It
-    pickles as that data source does, without open readers, so a copy sent to a worker process
-    reopens the files where it reads them.
+    its first read, under its own lock, so threads reading one source at once share one reader
+    per file and read in parallel. It pickles without open readers, so a copy sent to a worker
+    process reopens the files where it reads them.
     """
 
-    __slots__ = ("_lock", "paths", "source")
+    __slots__ = ("paths", "source")
 
     def __init__(self, paths: Any) -> None:
         self.paths = paths
         self.source = ArrayRecordDataSource(paths)
-        self._lock = threading.Lock()
 
     def read(self, rows: Sequence[int]) -> Sequence[bytes]:
         """The records at ``rows``, in one batched read (a parallel read per file)."""
-        with self._lock:
-            return self.source.__getitems__(rows)
+        return self.source.__getitems__(rows)
 
     def close(self) -> None:
         """Close the open readers; the files reopen at the next read."""
-        with self._lock:
-            self.source.__exit__(None, None, None)
-
-    def __getstate__(self) -> dict[str, Any]:
-        """The paths and the data source, which pickles its files and not its open readers."""
-        return {"paths": self.paths, "source": self.source}
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Hold the reader; its files open at the next read."""
-        self.paths = state["paths"]
-        self.source = state["source"]
-        self._lock = threading.Lock()
+        self.source.__exit__(None, None, None)
 
 
 def _path_of(path: Any) -> str:
@@ -249,7 +235,8 @@ class ArrayRecordSourceModule(DataSourceModule):
 
         ArrayRecord readers hold file handles that garbage collection does not reliably release,
         so long-running jobs that create sources repeatedly can exhaust the descriptor limit.
-        Safe to call more than once.
+        Safe to call more than once. Call it between phases, once no read of the source is in
+        flight: like ArrayRecord's own ``__exit__``, it does not wait for a read to finish.
         """
         self._records.close()
 
