@@ -21,6 +21,7 @@ from substrax.testing import run_python
 
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 from tests.jax_test_environment import forwarded_jax_environment
+from tests.test_common.device_arrays import arrays_made_since
 from tests.test_common.tfds_fixture import FIXTURE, TFDSFixture, TRAIN_RECORDS
 
 
@@ -100,23 +101,24 @@ def test_the_check_sees_tensorflow_when_a_process_imports_it() -> None:
     assert result.check().last_json() is True
 
 
-def _dataset_sized_device_arrays() -> set[int]:
-    return {id(a) for a in jax.live_arrays() if a.ndim and a.shape[0] == TRAIN_RECORDS}
+def _dataset_sized_arrays_made_since(before: list[jax.Array]) -> list[jax.Array]:
+    return [a for a in arrays_made_since(before) if a.ndim and a.shape[0] == TRAIN_RECORDS]
 
 
 def test_building_the_source_places_nothing_on_a_device(tfds_fixture: TFDSFixture) -> None:
     config = TFDSEagerConfig(name=FIXTURE, split="train", data_dir=str(tfds_fixture.array_record))
+    before = jax.live_arrays()
     control = jnp.zeros((TRAIN_RECORDS, 2))  # the instrument finds a dataset-sized device array
-    assert id(control) in _dataset_sized_device_arrays()
+    assert any(a is control for a in _dataset_sized_arrays_made_since(before))
     with jax.transfer_guard("disallow_explicit"):
         with pytest.raises(RuntimeError, match="[Dd]isallowed"):
             jax.device_put(np.zeros(3))  # the guard fires on an upload here
-    before = _dataset_sized_device_arrays()
+    before = jax.live_arrays()
 
     with jax.transfer_guard("disallow_explicit"):
         source = TFDSEagerSource(config)
 
-    assert _dataset_sized_device_arrays() - before == set()
+    assert _dataset_sized_arrays_made_since(before) == []
     assert len(source) == TRAIN_RECORDS
 
 

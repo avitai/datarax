@@ -20,6 +20,7 @@ datasets = pytest.importorskip("datasets")
 PIL = pytest.importorskip("PIL.Image")
 
 from datarax.sources.hf_source import HFEagerConfig, HFEagerSource  # noqa: E402
+from tests.test_common.device_arrays import arrays_made_since  # noqa: E402
 from tests.test_common.identity import check_identity_reaches_the_stages  # noqa: E402
 
 
@@ -45,8 +46,8 @@ def source(monkeypatch: pytest.MonkeyPatch) -> HFEagerSource:
     return HFEagerSource(HFEagerConfig(name="fake", split="train"))
 
 
-def _dataset_sized_device_arrays() -> set[int]:
-    return {id(array) for array in jax.live_arrays() if array.ndim and array.shape[0] == _N}
+def _dataset_sized_arrays_made_since(before: list[jax.Array]) -> list[jax.Array]:
+    return [array for array in arrays_made_since(before) if array.ndim and array.shape[0] == _N]
 
 
 def test_building_the_source_leaves_no_dataset_sized_device_array(
@@ -54,12 +55,12 @@ def test_building_the_source_leaves_no_dataset_sized_device_array(
 ) -> None:
     dataset = _dataset()
     monkeypatch.setattr(datasets, "load_dataset", lambda *args, **kwargs: dataset)
-    before = _dataset_sized_device_arrays()
+    before = jax.live_arrays()
     control = jnp.zeros((_N, 2))  # the instrument finds a dataset-sized device array
-    assert id(control) in _dataset_sized_device_arrays() - before
-    before = _dataset_sized_device_arrays()
+    assert any(array is control for array in _dataset_sized_arrays_made_since(before))
+    before = jax.live_arrays()
     source = HFEagerSource(HFEagerConfig(name="fake", split="train"))
-    assert _dataset_sized_device_arrays() - before == set()
+    assert _dataset_sized_arrays_made_since(before) == []
     assert len(source) == _N
 
 

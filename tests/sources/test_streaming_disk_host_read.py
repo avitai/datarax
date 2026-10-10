@@ -29,6 +29,7 @@ from datarax.sources.streaming_disk_source import (
     StreamingDiskSourceConfig,
 )
 from tests.test_common.compiles import expect_first_call_compiles
+from tests.test_common.device_arrays import arrays_made_since
 from tests.test_common.host_resources import live, mapped, open_descriptors, released
 
 
@@ -99,11 +100,11 @@ def test_the_epochs_given_name_the_rows(source: StreamingDiskSource) -> None:
 def test_a_host_read_creates_no_device_array(source: StreamingDiskSource) -> None:
     words = _words([5, 1, 30, 2])
     source.get_batch(words)  # first use builds nothing on the device either
-    before = len(jax.live_arrays())
+    before = jax.live_arrays()
 
     batches = [source.get_batch(words), source.get_batch(_words(range(4)), contiguous=True)]
 
-    assert len(jax.live_arrays()) == before
+    assert arrays_made_since(before) == []
     assert all(isinstance(leaf, np.ndarray) for b in batches for leaf in jax.tree.leaves(b))
 
 

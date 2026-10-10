@@ -42,6 +42,7 @@ from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
 from datarax.sources.streaming_disk_source import StreamingDiskSource, StreamingDiskSourceConfig
 from tests.test_common.compiles import expect_first_call_compiles
+from tests.test_common.device_arrays import arrays_made_since
 from tests.test_common.streams import RecordStream
 from tests.test_common.transfers import implicit_upload_raises
 
@@ -272,10 +273,7 @@ class TestPlacement:
 
     @staticmethod
     def _new_dataset_shaped(before: list[jax.Array]) -> list[tuple[int, ...]]:
-        known = {id(a) for a in before}  # ``before`` holds them, so no id is reused
-        return [
-            a.shape for a in jax.live_arrays() if id(a) not in known and a.ndim and a.shape[0] == _N
-        ]
+        return [a.shape for a in arrays_made_since(before) if a.ndim and a.shape[0] == _N]
 
     @pytest.mark.parametrize("from_device", [False, True])
     def test_no_dataset_shaped_array_is_made_and_the_columns_stay_on_the_host(
@@ -823,10 +821,9 @@ def test_on_a_gpu_only_the_placed_batches_reach_it() -> None:
     key_words(pipe._epoch_key_base.get_value())  # noqa: SLF001
     gc.collect()  # other tests' runs close here, so no other thread places batches meanwhile
     before = jax.live_arrays()
-    known = {id(a) for a in before}  # ``before`` holds them, so no id is reused
     held = list(pipe.raw_batches())
     placed = {id(leaf) for b in held for leaf in jax.tree.leaves(b)}
-    made_on_gpu = [a for a in jax.live_arrays() if id(a) not in known and gpu in a.devices()]
+    made_on_gpu = [a for a in arrays_made_since(before) if gpu in a.devices()]
     assert made_on_gpu
     assert [a.shape for a in made_on_gpu if id(a) not in placed] == []
 

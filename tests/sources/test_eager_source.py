@@ -25,6 +25,7 @@ from datarax.core.config import StructuralConfig
 from datarax.core.element_batch import Batch, Element, PADDING_INDEX
 from datarax.core.index_words import from_words, to_words
 from datarax.sources import eager_source, EagerSource, MemorySource, MemorySourceConfig, source_ops
+from tests.test_common.device_arrays import arrays_made_since
 
 
 _N = 12
@@ -59,10 +60,6 @@ _SOURCES: dict[str, Callable[[], EagerSource]] = {
 
 def _words(rows: list[int]) -> np.ndarray:
     return to_words(np.asarray(rows, np.uint64))
-
-
-def _live_device_arrays() -> set[int]:
-    return {id(array) for array in jax.live_arrays()}
 
 
 @pytest.mark.parametrize("name", sorted(_SOURCES))
@@ -128,12 +125,12 @@ class TestTheHostRead:
     def test_a_read_creates_no_device_array(self, name: str) -> None:
         source = _SOURCES[name]()
         indices = _words([3, 1, 8])
-        live = _live_device_arrays()
+        before = jax.live_arrays()
         control = jnp.asarray(np.zeros(3))  # the instrument sees a device array made in between
-        assert _live_device_arrays() - live, "the live-array check does not see new arrays"
-        live = _live_device_arrays()
+        assert any(a is control for a in arrays_made_since(before)), "the check sees no new array"
+        before = jax.live_arrays()
         batch = source.get_batch(indices, epochs=1)
-        assert _live_device_arrays() == live
+        assert arrays_made_since(before) == []
         del control, batch
 
     def test_iteration_is_stateless_and_sequential(self, name: str) -> None:
@@ -203,9 +200,9 @@ class TestRecordsBecomeColumns:
         records = [
             {"a": i, "b": float(i) / 2, "c": np.float32(i), "d": [i, i + 1]} for i in range(6)
         ]
-        live = _live_device_arrays()
+        before = jax.live_arrays()
         source = _memory(records)
-        assert _live_device_arrays() == live
+        assert arrays_made_since(before) == []
         for column in jax.tree.leaves(source.data):
             assert isinstance(column, np.ndarray)
         np.testing.assert_array_equal(source.data["a"], np.arange(6))
