@@ -34,6 +34,7 @@ from datarax.pipeline.host_stage import default_device_buffer
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from tests.test_common.streams import RecordStream
 from tests.test_common.transfers import implicit_upload_raises
+from tests.thread_check import grain_thread_names
 
 
 _DEPTHS = [0, 1, 2, 3]
@@ -82,11 +83,6 @@ def _names(batch: Batch) -> list[int]:
 def _placed_batches() -> int:
     """Live arrays holding a placed batch's images."""
     return sum(1 for array in jax.live_arrays() if array.shape[1:] == _IMAGE)
-
-
-def _grain_threads() -> list[str]:
-    """The run's read threads (Grain's)."""
-    return [t.name for t in threading.enumerate() if "grain" in t.name.lower()]
 
 
 class _Placements:
@@ -280,10 +276,10 @@ def test_the_batches_placed_ahead_and_the_thread_are_released(depth: int, ending
     del batches
     for _ in range(100):
         gc.collect()
-        if not _grain_threads() and _placed_batches() == 0:
+        if not grain_thread_names() and _placed_batches() == 0:
             break
         threading.Event().wait(0.05)
-    assert _grain_threads() == []
+    assert grain_thread_names() == []
     assert _placed_batches() == 0
 
 

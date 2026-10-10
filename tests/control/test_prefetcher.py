@@ -1,9 +1,11 @@
 """Tests for the Prefetcher class."""
 
+import threading
 import time
 import unittest
 
 from datarax.control.prefetcher import Prefetcher
+from tests.thread_check import threads_left
 
 
 class TestPrefetcher(unittest.TestCase):
@@ -75,20 +77,24 @@ class TestPrefetcher(unittest.TestCase):
         self.assertIn("Test error", str(ctx.exception))
 
     def test_early_termination(self):
-        """Test that prefetching stops cleanly when iterator is not fully consumed."""
+        """Closing an iterator consumed in part stops its producer thread.
+
+        Dropping the iterator does not: the producer thread's target is a method of the
+        iterator, so the running thread keeps it alive and its ``__del__`` never runs.
+        """
 
         def long_generator():
             yield from range(1000)
 
+        before = frozenset(threading.enumerate())
         prefetcher = Prefetcher(buffer_size=5)
         iterator = prefetcher.prefetch(long_generator())
 
-        # Only consume first 3 items
         result = [next(iterator) for _ in range(3)]
-        self.assertEqual(result, [0, 1, 2])
+        iterator.close()
 
-        # Iterator should be cleanly terminated when it goes out of scope
-        # (tested by not consuming remaining items)
+        self.assertEqual(result, [0, 1, 2])
+        self.assertEqual(threads_left(before, within=1.0), [])
 
     def test_partial_consumption_close_is_fast(self):
         """Explicit close() after partial consumption should return quickly."""

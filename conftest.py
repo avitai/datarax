@@ -1,10 +1,12 @@
-"""Root conftest: the substrax pytest plugin and the --all-suites flag.
+"""Root conftest: the substrax pytest plugin, the thread check and the --all-suites flag.
 
 The substrax plugin (``substrax.testing.pytest_plugin``) fails a test that changes jax's
 global configuration, runs ``@pytest.mark.x64`` tests with 64-bit types, skips
 ``@pytest.mark.devices`` and ``@pytest.mark.accelerator`` tests the visible devices cannot
-run, and provides the ``output_dir`` fixture. pytest reads ``pytest_plugins`` only from the
-top-level conftest, so it is registered here for tests/ and benchmarks/tests/ alike.
+run, and provides the ``output_dir`` fixture. The thread check (``tests.thread_check``)
+fails a test that leaves a thread it started running, so its work cannot run inside the tests
+after it. pytest reads ``pytest_plugins`` only from the top-level conftest, so both are
+registered here for tests/ and benchmarks/tests/ alike.
 
 By default, pytest only runs tests/ (configured in pyproject.toml testpaths).
 Use --all-suites to also collect benchmarks/tests/.
@@ -21,7 +23,7 @@ from pathlib import Path
 import pytest
 
 
-pytest_plugins = ["substrax.testing.pytest_plugin"]
+pytest_plugins = ["substrax.testing.pytest_plugin", "tests.thread_check"]
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
