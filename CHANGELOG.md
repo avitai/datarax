@@ -239,6 +239,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- protobuf leaves the base install; the extras that read TFDS (`data`, `tfds`, `benchmark`)
+  require `tensorflow-datasets>=4.9.10` and `protobuf>=6.31.1`, and `tfds` no longer caps
+  TensorFlow below 2.21. datarax's own code imports no protobuf, and the base cap
+  (`protobuf>=5.28.0,<6`) reached every project that installs datarax: a fresh
+  `datarax[data]` install resolved protobuf 5.29.6 with tensorflow-metadata 1.21.0, which is
+  generated for protobuf 6.31.1 and fails to import, and a project whose other dependencies need
+  protobuf 6 could not install datarax at all. TFDS 4.9.10 reads dataset info where protobuf 7
+  dropped `FieldDescriptor.label`; on protobuf 6 it reads it through the deprecated accessor,
+  which warns (`label() is deprecated`) until TFDS stops calling it. The decode stays on the
+  upb runtime.
 - `array-record>=0.8.4` (was `>=0.4`). Its `ArrayRecordDataSource` now opens a file's reader under
   its own lock and shares the readers between threads, so `ArrayRecordSourceModule` drops the lock
   it held around every read: threads reading one source read in parallel, and each file is still

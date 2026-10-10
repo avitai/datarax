@@ -36,7 +36,6 @@ dependencies = [
   # jax removed that option in 0.10, so older optax breaks flax's import outright.
   "optax>=0.2.8",
   "orbax-checkpoint>=0.11.33",
-  "protobuf>=5.28.0,<6", # TFDS 4.9.9 is warning-clean with TensorFlow 2.20 protobuf runtime
   "substrax>=0.1.22",
   "tomli-w>=1",
   "numpy>=2.1",
@@ -83,7 +82,8 @@ benchmark = [
   # Peer frameworks for comparative benchmarking (Section 14.2 of benchmark report)
   # Tier 1: JAX ecosystem (Grain already in base deps)
   "jax-dataloader>=0.1", # jax-dataloader — minimal JAX-native loader
-  "tensorflow-datasets>=4.9.8", # tf.data adapter; CIFAR-10 is read through TFDSEagerSource
+  "tensorflow-datasets>=4.9.10", # tf.data adapter; CIFAR-10 is read through TFDSEagerSource
+  "protobuf>=6.31.1", # tensorflow-metadata 1.21 is generated for 6.31.1; protobuf 5 fails its import
   # Tier 2: High-performance leaders
   "nvidia-dali-cuda120>=1.0; sys_platform == 'linux'", # NVIDIA DALI — GPU-native data loading + augmentation (Linux/CUDA only)
   "spdl>=0.1", # Meta SPDL — thread-based data loading
@@ -130,7 +130,10 @@ cuda12 = [
 data = [
   # Data loading and processing dependencies
   "importlib_resources>=5.0", # Backport required by grain/etils on some Python versions
-  "tensorflow-datasets>=4.9.8", # as_data_source(file_format=), read without TensorFlow
+  # as_data_source(file_format=), read without TensorFlow; 4.9.10 reads dataset info where
+  # protobuf 7 dropped FieldDescriptor.label
+  "tensorflow-datasets>=4.9.10",
+  "protobuf>=6.31.1", # tensorflow-metadata 1.21 is generated for 6.31.1; protobuf 5 fails its import
   "google-crc32c>=1.8", # TFRecord frame CRC32C checks of the TFDS stream, as tf.data makes them
   "datasets>=2.21", # For HuggingFace datasets (>=2.21 for pyarrow 15+ compat)
   "pyarrow>=21", # >=21 for pa.json_ (datasets 4+) and macOS-14 arm64 wheel stability
@@ -231,8 +234,9 @@ test = [
 # dataset prepared as ArrayRecord (TFDSEagerSource) needs only the data extra, and keeps
 # TensorFlow out of the process; a JAX-native package does not pull TensorFlow on a plain install.
 tfds = [
-  "tensorflow>=2.20.0,<2.21", # 2.21 requires protobuf 6 and trips TFDS descriptor warnings
-  "tensorflow-datasets>=4.9.8"
+  "tensorflow>=2.20.0",
+  "tensorflow-datasets>=4.9.10",
+  "protobuf>=6.31.1" # tensorflow-metadata 1.21 is generated for 6.31.1; protobuf 5 fails its import
 ]
 # benchmarks/export.py imports calibrax's W&B exporter, which needs wandb and says so.
 wandb = ["calibrax[wandb]>=0.1.14"]

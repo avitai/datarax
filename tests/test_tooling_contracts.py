@@ -57,27 +57,39 @@ def test_grain_dependency_declares_single_package_with_current_api() -> None:
     assert _dependency_names(base_dependencies).count("grain") == 1
 
 
-def test_tfds_dependency_set_is_warning_clean() -> None:
-    """TFDS tests should not rely on third-party deprecation filters."""
-    config = _pyproject()
-    base = {
-        Requirement(dependency).name: Requirement(dependency)
-        for dependency in config["project"]["dependencies"]
-    }
-    # tensorflow is deliberately not a base dependency: a JAX-native package should not
-    # pull TensorFlow on a plain install, so it lives in the tfds extra beside
-    # tensorflow-datasets. The ceiling is what this test exists to hold, and it moves with
-    # the declaration rather than staying pinned to where the declaration used to be.
-    tfds = {
-        Requirement(dependency).name: Requirement(dependency)
-        for dependency in config["project"]["optional-dependencies"]["tfds"]
-    }
+def _extra_requirements(config: dict, extra: str) -> dict[str, Requirement]:
+    """An optional-dependency group's requirements, by package name."""
+    requirements = (Requirement(d) for d in config["project"]["optional-dependencies"][extra])
+    return {requirement.name: requirement for requirement in requirements}
 
+
+_TFDS_EXTRAS = ("data", "tfds", "benchmark")
+"""The extras that read TFDS datasets, each declaring the TFDS and protobuf that read them."""
+
+
+def test_the_tfds_extras_declare_a_tfds_that_reads_on_the_protobuf_they_resolve() -> None:
+    """Every extra that reads TFDS holds TFDS and protobuf to versions that read together.
+
+    tensorflow-metadata 1.21 is generated for protobuf 6.31.1 and fails to import on protobuf 5
+    ("incompatible Protobuf Gencode/Runtime versions"), and TFDS before 4.9.10 reads
+    ``FieldDescriptor.label``, which protobuf 7 removed. protobuf and TensorFlow stay out of the
+    base install: datarax's own code imports neither, and a JAX-native package does not pull
+    TensorFlow on a plain install.
+    """
+    config = _pyproject()
+    base = {Requirement(d).name for d in config["project"]["dependencies"]}
+    assert "protobuf" not in base, "datarax imports no protobuf; only the TFDS extras need it"
     assert "tensorflow" not in base, "tensorflow must stay out of the base install"
-    assert tfds["tensorflow"].specifier.contains("2.20.0")
-    assert not tfds["tensorflow"].specifier.contains("2.21.0")
-    assert base["protobuf"].specifier.contains("5.29.6")
-    assert not base["protobuf"].specifier.contains("6.0.0")
+
+    for extra in _TFDS_EXTRAS:
+        declared = _extra_requirements(config, extra)
+        tfds, protobuf = declared["tensorflow-datasets"], declared["protobuf"]
+        assert tfds.specifier.contains("4.9.10") and not tfds.specifier.contains("4.9.9"), extra
+        assert protobuf.specifier.contains("6.31.1"), extra
+        assert not protobuf.specifier.contains("6.31.0"), extra
+
+    tensorflow = _extra_requirements(config, "tfds")["tensorflow"]
+    assert tensorflow.specifier.contains("2.20.0") and tensorflow.specifier.contains("2.21.0")
 
 
 def test_python_version_range_matches_backend_support() -> None:
