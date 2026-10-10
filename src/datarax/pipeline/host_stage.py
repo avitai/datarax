@@ -162,8 +162,7 @@ class _StreamIterator(grain.DatasetIterator):
         self._stream = StreamCursor(pass_index=cursor.epoch, arrived=cursor.arrived)
         self._epoch, self._position = cursor.epoch, cursor.position
         passes = None if cursor.end_epoch is None else max(0, cursor.end_epoch - cursor.epoch)
-        with config.settings.entered():
-            self._skip(cursor.position)
+        config.settings.run(self._skip, cursor.position)
         self._batches = stream_batches(
             self._pull, config.batch_size, drop_last=config.drop_last, num_epochs=passes
         )
@@ -247,8 +246,7 @@ class _StreamIterator(grain.DatasetIterator):
     def __next__(self) -> HostElement:
         stacked = self._config.chunk is not None
         chunk = self._config.chunk or 1
-        with self._config.settings.entered():
-            self._fill(chunk)
+        self._config.settings.run(self._fill, chunk)
         if not self._held:
             raise StopIteration
         parts, full = self._unit(chunk)
@@ -300,19 +298,16 @@ def _stream_unit(
     )
 
 
-def _checker(
-    source: DataSourceModule, batch_size: int, settings: JaxSettings
-) -> Callable[[Batch], None]:
+def _checker(source: DataSourceModule, batch_size: int) -> Callable[[Batch], None]:
     """A check of a stream's batches against the spec its source declares, as the device holds it.
 
     The spec is read once and refused if it declares a dtype JAX arrays cannot hold as declared.
-    Batches are checked under the run's settings on whichever thread reads them: a context
-    manager's setting is thread-local, and the read threads do not inherit it.
+    A batch is checked under the settings of the thread that reads it, which holds the run's: a
+    read thread runs each read through :meth:`~datarax.pipeline.host_workers.JaxSettings.run`.
 
     Args:
         source: The stream.
         batch_size: Records per batch.
-        settings: The run's JAX settings, in which the spec was read.
 
     Returns:
         A function refusing a batch whose structure, shapes or dtypes disagree with the spec.
@@ -321,10 +316,7 @@ def _checker(
     validate_device_dtypes(element_spec)
 
     def check(batch: Batch) -> None:
-        with settings.entered():
-            validate_batch(
-                batch.data, element_spec, batch_size=batch_size, as_the_device_holds=True
-            )
+        validate_batch(batch.data, element_spec, batch_size=batch_size, as_the_device_holds=True)
 
     return check
 
@@ -790,7 +782,7 @@ class HostStage:
     ) -> grain.IterDataset:
         """A stream's run as host elements: through its run dataset when it has one (TFDS)."""
         source: StreamingSourceBase = pipeline.source
-        check = _checker(source, pipeline.batch_size, settings)
+        check = _checker(source, pipeline.batch_size)
         plan: EpochPlan = pipeline.epoch_plan
         if plan.length is not None:
             units = RunUnits(run=self._run(plan), chunk=chunk)
@@ -983,10 +975,13 @@ class _RunElementsIterator(grain.DatasetIterator):
         self._ordinal = 0
 
     def __next__(self) -> HostElement:
+        return self._dataset._settings.run(self._next_unit)  # noqa: SLF001 - the run's settings
+
+    def _next_unit(self) -> HostElement:
+        """The next unit, decoded, checked and named, on a thread holding the run's settings."""
         units = self._dataset._units  # noqa: SLF001
         try:
-            with self._dataset._settings.entered():  # noqa: SLF001 - the run read on this thread
-                element = next(self._parent)  # Grain's single-parent accessor
+            element = next(self._parent)  # Grain's single-parent accessor
         except StopIteration:
             host_workers.check_all_arrived(self._ordinal, units.units())
             raise

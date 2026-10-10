@@ -4,7 +4,8 @@ A spawned worker and a new thread start without the JAX settings the training pr
 code or holds in a context manager: precision (``jax_enable_x64``) and
 ``jax_threefry_partitionable``, which changes the order a naming key gives.
 :class:`~datarax.pipeline.host_workers.JaxSettings` reads them where a run is opened, sets them
-in a worker and enters them on a read thread; a change of either opens a new run. The default
+in a worker and holds them on a read thread for each read, entering them only where the thread
+reads other values; a change of either opens a new run. The default
 impl is not carried: naming pins its own, so a change of it continues the run. The training process
 counts the units arriving from workers and refuses one out of turn or a run ending short.
 """
@@ -20,7 +21,7 @@ import jax
 import numpy as np
 import pytest
 from flax import nnx
-from substrax.testing import restored_jax_config
+from substrax.testing import by_package, counted_calls, restored_jax_config
 
 from datarax.pipeline import Pipeline
 from datarax.pipeline.host_workers import check_all_arrived, check_arrival, JaxSettings
@@ -66,18 +67,51 @@ class TestJaxSettings:
         assert dataclasses.replace(inside, **{name: getattr(outside, name)}) == outside
 
     @pytest.mark.parametrize("name", sorted(_OVERRIDES))
-    def test_entered_on_a_new_thread_restores_the_override_there(self, name: str) -> None:
+    def test_run_on_a_new_thread_restores_the_override_there(self, name: str) -> None:
         with _OVERRIDES[name]():
             settings = JaxSettings.current()
         # The control: a new thread reads the global value, not the consumer's override.
         assert _on_a_new_thread(JaxSettings.current) != settings
 
-        def entered() -> JaxSettings:
-            with settings.entered():
-                return JaxSettings.current()
-
-        assert _on_a_new_thread(entered) == settings
+        assert _on_a_new_thread(lambda: settings.run(JaxSettings.current)) == settings
         assert JaxSettings.current() != settings  # and leaves the caller's thread as it was
+
+    def test_run_passes_the_arguments_and_returns_the_result(self) -> None:
+        settings = JaxSettings.current()
+
+        assert settings.run(divmod, 7, 2) == (3, 1)
+        assert settings.run(int, "11", base=2) == 3
+
+    @pytest.mark.parametrize("name", sorted(_OVERRIDES))
+    def test_holds_is_whether_the_calling_thread_reads_the_settings(self, name: str) -> None:
+        settings = JaxSettings.current()
+        assert settings.holds()
+        with _OVERRIDES[name]():
+            assert not settings.holds()
+
+    @pytest.mark.parametrize("name", sorted(_OVERRIDES))
+    def test_run_enters_nothing_where_the_thread_already_holds_the_settings(
+        self, name: str
+    ) -> None:
+        """A read thread entering on every read ran ten JAX functions per batch it did not need."""
+        with _OVERRIDES[name]():
+            elsewhere = JaxSettings.current()
+        here = JaxSettings.current()
+        keys = by_package("jax")
+
+        def read() -> None:
+            """What a read thread runs; it calls no JAX itself."""
+
+        # The baseline: the block's own closing collection runs JAX's collector callback.
+        with counted_calls(keys) as plain:
+            read()
+        with counted_calls(keys) as held:
+            here.run(read)
+        with counted_calls(keys) as entered:  # the control: a value the thread does not read
+            elsewhere.run(read)
+
+        assert held["jax"] == plain["jax"]
+        assert entered["jax"] > plain["jax"]
 
     def test_apply_sets_every_setting_globally(self) -> None:
         settings = JaxSettings(x64=True, threefry_partitionable=False)

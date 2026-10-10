@@ -204,26 +204,40 @@ class IndexedRead:
         """
         batches = self.units.unit(ordinal)
         assert batches is not None  # noqa: S101 - Grain asks only for the run's units
-        first = self.units.first_batch(ordinal)
-        with self.settings.entered():
-            named = [self.names(first + k, *batch) for k, batch in enumerate(batches)]
-            indices = np.concatenate([indices for indices, _ in named])
-            epochs = np.concatenate([epochs for _, epochs in named])
-            values = from_words(indices)
-            contiguous = len(values) > 1 and bool(np.all(np.diff(values.astype(np.int64)) == 1))
-            batch, provenance = read_records(
-                self.source,
-                indices,
-                epochs=epochs,
-                contiguous=contiguous,
-                with_provenance=self.with_provenance,
-            )
+        batch, provenance = self.settings.run(
+            self._named_records, self.units.first_batch(ordinal), batches
+        )
         if self.units.is_chunk(ordinal):
             batch = batch_ops.as_chunk(batch, len(batches))
         if self.crossing:
             provenance = host_workers.crossing_provenance(provenance, ordinal)
         epoch, position = self.units.after(ordinal)
         return HostElement(batch, provenance, (epoch, position, 0), ordinal)
+
+    def _named_records(
+        self, first: int, batches: tuple[tuple[int, int, int], ...]
+    ) -> tuple[Batch, Provenance | None]:
+        """Name a unit's batches and read their records, on a thread holding the run's settings.
+
+        Args:
+            first: The unit's first batch, from the run's start.
+            batches: The unit's batches, as the run's schedule gives them.
+
+        Returns:
+            The unit's records as one batch, and their provenance when asked for.
+        """
+        named = [self.names(first + k, *batch) for k, batch in enumerate(batches)]
+        indices = np.concatenate([indices for indices, _ in named])
+        epochs = np.concatenate([epochs for _, epochs in named])
+        values = from_words(indices)
+        contiguous = len(values) > 1 and bool(np.all(np.diff(values.astype(np.int64)) == 1))
+        return read_records(
+            self.source,
+            indices,
+            epochs=epochs,
+            contiguous=contiguous,
+            with_provenance=self.with_provenance,
+        )
 
 
 class _BlockNames:

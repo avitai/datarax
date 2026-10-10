@@ -1,15 +1,15 @@
 """The host stage's Grain worker processes: their set-up, what crosses back, what they cost.
 
 Grain starts a worker by spawning it (``mp_prefetch``), so a worker inherits the environment but
-none of the JAX settings the training process made in code, and imports the training script's
-main module before any set-up runs. A read thread in the training process does not inherit a
-setting held in a context manager either. :class:`JaxSettings` holds what a run is read under
-(precision, and the threefry setting that changes the order a key gives), set in each worker and
-entered on each read thread. :class:`WorkerSetUp` runs first in every worker: it hides the GPU,
-starts JAX on the CPU platform only (a worker reads and names records on the host; it never
-places a batch) under the run's settings, refuses a worker whose JAX was already started by the
-main module, naming the guard that prevents it, and ends the worker when the training process
-dies (Grain leaves it running, google/grain#1423).
+none of the JAX settings the training process made in code, and imports the training script's main
+module before any set-up runs. A read thread in the training process does not inherit a setting
+held in a context manager either. :class:`JaxSettings` holds what a run is read under (precision,
+and the threefry setting that changes the order a key gives), set in each worker and held around
+each read on a read thread. :class:`WorkerSetUp` runs first in every worker: it hides the GPU,
+starts JAX on the CPU platform only (a worker reads and names records on the host; it never places
+a batch) under the run's settings, refuses a worker whose JAX was already started by the main
+module, naming the guard that prevents it, and ends the worker when the training process dies
+(Grain leaves it running, google/grain#1423).
 
 Grain's process queue loses an element it cannot pickle without raising in the training process
 (google/grain#1415), so a worker sends provenance as plain dicts (:func:`crossing_provenance`),
@@ -19,7 +19,6 @@ counts the units arriving (:func:`check_arrival`, :func:`check_all_arrived`).
 
 from __future__ import annotations
 
-import contextlib
 import dataclasses
 import io
 import multiprocessing
@@ -28,7 +27,7 @@ import platform
 import resource
 import signal
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from multiprocessing import connection
 from multiprocessing.reduction import ForkingPickler
 from pathlib import Path
@@ -84,8 +83,8 @@ class JaxSettings:
     A spawned worker starts without any setting the training process made in code, and a new
     thread reads the global value of a setting the consumer holds in a context manager. Read on
     the consumer's thread when a run opens (:meth:`current`), they are set in each worker
-    (:meth:`apply`) and entered around each read on a read thread (:meth:`entered`), so every
-    reader names and decodes as the consumer would. Static and hashable: part of a run's
+    (:meth:`apply`) and held around each read on a read thread (:meth:`run`), so every reader
+    names and decodes as the consumer would. Static and hashable: part of a run's
     identity, so a change of any opens a new run.
 
     ``jax_default_prng_impl`` is not among them: record naming wraps its order key as
@@ -121,15 +120,40 @@ class JaxSettings:
         jax.config.update("jax_enable_x64", self.x64)
         jax.config.update("jax_threefry_partitionable", self.threefry_partitionable)
 
-    @contextlib.contextmanager
-    def entered(self) -> Iterator[None]:
-        """Hold these settings on the calling thread (a read thread) while the block runs.
+    def holds(self) -> bool:
+        """Whether the calling thread reads these settings already.
 
-        Yields:
-            Nothing; the settings hold until the block ends.
+        ``.value`` is each setting's effective value on the calling thread, the thread's own
+        override or else the global one, read by JAX's configuration in C++.
+
+        Returns:
+            ``True`` when both settings read as these.
         """
+        return (
+            jax.enable_x64.value == self.x64
+            and jax.threefry_partitionable.value == self.threefry_partitionable
+        )
+
+    def run[**P, R](self, read: Callable[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
+        """Run ``read`` on the calling thread (a read thread) under these settings.
+
+        A read thread does not inherit a setting the consumer holds in a context manager, so the
+        settings are entered around ``read`` where the thread reads other values. Where it reads
+        these already, nothing is entered: entering a value the thread reads changes neither what
+        it reads nor JAX's compile-cache key, and each enter runs Python on every read.
+
+        Args:
+            read: What to run.
+            *args: Its positional arguments.
+            **kwargs: Its keyword arguments.
+
+        Returns:
+            What ``read`` returns.
+        """
+        if self.holds():
+            return read(*args, **kwargs)
         with jax.enable_x64(self.x64), jax.threefry_partitionable(self.threefry_partitionable):
-            yield
+            return read(*args, **kwargs)
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)

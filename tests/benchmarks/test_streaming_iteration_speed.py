@@ -84,6 +84,10 @@ _STREAM_PATH_PER_BATCH = {
     # The compiled DAG call and the write-back of the stages' state.
     "compile_dag.<locals>.apply": 1,
     "apply_writes": 1,
+    # The run's JAX settings on the read thread: checked once per read, entered only where the
+    # thread reads other values (a read thread does not inherit the consumer's).
+    "JaxSettings.run": 1,
+    "JaxSettings.holds": 1,
 }
 
 # Python functions a stream pass may start per batch in each library beyond the by-hand pass's,
@@ -91,14 +95,16 @@ _STREAM_PATH_PER_BATCH = {
 # - grain: the read thread's ThreadPrefetchDatasetIterator.__next__, with its timer and stats
 #   (14 functions);
 # - jax: the write-back's tree map and the placement's sharding checks, net of the by-hand
-#   step's state rebuild (13);
+#   step's state rebuild (8). It was 13 while the spec check entered ``jax.enable_x64`` around
+#   every batch (``State.__call__``, the context manager's ``__init__``, ``__enter__``,
+#   ``__exit__`` and the bool parser); the read now holds the run's settings instead;
 # - numpy: the cursor's np.sum over the batch's epochs (sum, _wrapreduction, _sum_dispatcher);
 # - other: grain's record_self_time context manager (4 contextlib frames) and its deep copy of
 #   the read iterator's state, {} (3), the HostElement named tuple's constructor (1) and the
 #   cast in _Served.__next__ (1);
 # - flax: none. Both passes split the DAG once and run a step that closes over its graph
 #   definition, so neither touches flax beyond the same per-batch state handling.
-_LIBRARY_ALLOWANCE = {"flax": 0, "grain": 14, "jax": 13, "numpy": 3, "other": 9}
+_LIBRARY_ALLOWANCE = {"flax": 0, "grain": 14, "jax": 8, "numpy": 3, "other": 9}
 
 # Starts whose number the process's history decides, not the code under test:
 # - grain's stats registry keys iterators by id(), so HashableWeakRef.__eq__ runs only when a new

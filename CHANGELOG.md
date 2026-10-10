@@ -49,9 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Worker processes start with `datarax.pipeline.host_workers.WorkerSetUp`: the GPU hidden, JAX on
   the CPU platform only, under the run's `JaxSettings` (`jax_enable_x64` and
   `jax_threefry_partitionable`, which changes the order a threefry key gives, read on the
-  consumer's thread, a context manager's override included, set in each worker and entered on
-  each read thread, so every reader names records as the consumer would; a change of either
-  opens a new run); a worker whose
+  consumer's thread, a context manager's override included, set in each worker and held around
+  each read on a read thread, entered only where the thread reads other values, so every reader
+  names records as the consumer would without a per-read cost where nothing differs; a change of
+  either opens a new run); a worker whose
   JAX the training script's main module already started is refused, naming the
   `if __name__ == "__main__":` guard; a worker ends when the training process dies, however it
   dies (a thread waiting on `multiprocessing.parent_process().sentinel`), where Grain leaves it
