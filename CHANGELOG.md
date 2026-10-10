@@ -658,6 +658,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Grain makes at its first multiprocess read. `test_early_termination` closes its iterator and
   asserts the producer thread stopped; dropping a partly consumed `Prefetcher` iterator leaves its
   producer running, since the thread's target is a method of the iterator.
+- CI's Python 3.13 legs run Python 3.13. `uv venv`, `uv sync` and `uv run` took their
+  interpreter from `.python-version` (3.12), not from the Python `setup-python` installed, so the
+  "Python 3.13" unit test shards, the macOS unit tests and the package build ran CPython 3.12
+  (`platform linux -- Python 3.12.15` in their logs). Each job with a Python version matrix
+  (`ci.yml` unit tests, `macos.yml` unit tests, `build-verification.yml`) sets `UV_PYTHON` to its
+  matrix version, which every uv command in the job follows, and runs
+  `scripts/require_python.py <version>`, which fails the leg whose interpreter is another
+  version. `uv venv --python` alone would not do: the next `uv sync` replaces that environment
+  with one satisfying `.python-version`. A contract test holds every such job to both.
 - Building a TFDS source, or calling `from_tfds`, no longer imports TFDS in the middle of a run.
   `datarax.sources.tfds_source` imports `tensorflow_datasets` at its top, and `from_tfds` moved
   there, exported lazily from `datarax.sources` like the TFDS sources. TFDS's first import enters
