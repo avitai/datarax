@@ -289,12 +289,13 @@ class TestWorkerFootprint:
 def test_a_tfds_stream_sends_its_workers_the_index_by_reference(tfds_fixture: TFDSFixture) -> None:
     """One shared copy of the offset index: a worker's read does not carry it."""
     config = TFDSStreamingConfig(name=FIXTURE, split="train", data_dir=str(tfds_fixture.tfrecord))
-    pipe = _pipeline(TFDSStreamingSource(config), resources(2), shuffle=True)
+    source = TFDSStreamingSource(config)
+    pipe = _pipeline(source, resources(2), shuffle=True)
     list(pipe.raw_batches())
     terms = pipe.host_plan.terms
     assert pipe.host_plan.path is HostReadPath.PROCESSES
     assert terms is not None
-    records = len(pipe.source)
+    records = len(source)
     logging.getLogger(__name__).info(
         "TFDS stream: %d records, offset index %d bytes held once on the host; a worker is sent "
         "%d bytes",
