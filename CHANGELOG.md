@@ -646,6 +646,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one until the cyclic collector runs) read as a change, and an id freed during the call could be
   reused by a new array. Every such check now holds the snapshot and asserts on the arrays made
   since it, through `tests.test_common.device_arrays.arrays_made_since`.
+- Work a test leaves running on another thread no longer runs inside the tests after it. A
+  pipeline dropped mid-epoch closes its run at once, but Grain's read pool finishes the reads it
+  had started (5 to 125 ms later), and each read names its records with a compiled program on the
+  CPU, so a later test's live-array check reported that batch's index words as an array it made.
+  After every test, `tests.thread_check` waits up to 2 s in all for the threads the test
+  started and fails the test if one is still running, naming it and what it runs. Two library
+  threads that live as long as the process are settled at session start instead: tqdm's
+  progress-bar monitor is turned off (`monitor_interval = 0`; a process-wide count of Python calls
+  included its wake every 10 s), and Grain's shared-memory release pool is made with the call
+  Grain makes at its first multiprocess read. `test_early_termination` closes its iterator and
+  asserts the producer thread stopped; dropping a partly consumed `Prefetcher` iterator leaves its
+  producer running, since the thread's target is a method of the iterator.
 - Building a TFDS source, or calling `from_tfds`, no longer imports TFDS in the middle of a run.
   `datarax.sources.tfds_source` imports `tensorflow_datasets` at its top, and `from_tfds` moved
   there, exported lazily from `datarax.sources` like the TFDS sources. TFDS's first import enters

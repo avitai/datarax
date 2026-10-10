@@ -52,6 +52,7 @@ from tests.test_common.streams import (
 )
 from tests.test_common.tfds_fixture import FIXTURE, IMAGE_SHAPE, TFDSFixture, TRAIN_RECORDS
 from tests.test_common.transfers import implicit_upload_raises
+from tests.thread_check import grain_thread_names
 
 
 pytestmark = pytest.mark.tfds
@@ -886,7 +887,7 @@ class TestThroughTheHostStage:
                 gc.collect()
         threads = []
         for _ in range(100):
-            threads = [t.name for t in threading.enumerate() if "grain" in t.name.lower()]
+            threads = grain_thread_names()
             if not threads:
                 break
             threading.Event().wait(0.05)

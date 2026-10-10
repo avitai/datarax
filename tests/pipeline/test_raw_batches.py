@@ -45,6 +45,7 @@ from tests.test_common.compiles import expect_first_call_compiles
 from tests.test_common.device_arrays import arrays_made_since
 from tests.test_common.streams import RecordStream
 from tests.test_common.transfers import implicit_upload_raises
+from tests.thread_check import grain_thread_names
 
 
 _N = 50
@@ -106,10 +107,6 @@ def _session_batches(pipe: Pipeline) -> list[Batch]:
 @nnx.jit
 def _user_step(pipeline: Pipeline) -> jax.Array:
     return jnp.sum(pipeline.step()["image"])
-
-
-def _grain_threads() -> list[str]:
-    return [t.name for t in threading.enumerate() if "grain" in t.name.lower()]
 
 
 class TestOrder:
@@ -691,7 +688,7 @@ class TestLifetime:
                 gc.collect()
         threads = []
         for _ in range(100):
-            threads = _grain_threads()
+            threads = grain_thread_names()
             if not threads:
                 break
             threading.Event().wait(0.05)
