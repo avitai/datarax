@@ -1,7 +1,8 @@
 """The configuration a pipeline's saved state is valid for, and its refusal of any other.
 
 ``Pipeline.get_state()`` records the configuration that produced it under ``"fingerprint"``:
-the batch rule, the length, the epochs, the key and the order. ``set_state`` refuses a state of
+the batch rule, the length, the epochs, the key, the order and the shard of records the source
+serves (``None`` for all of them). ``set_state`` refuses a state of
 another configuration naming the first field that differs, and one holding none. A checkpoint
 store may hand the state back with NumPy leaves, which read as plain values.
 """
@@ -34,7 +35,7 @@ def _pipeline(**options: Any) -> Pipeline:
     )
 
 
-def test_the_configuration_names_the_batch_rule_length_epochs_key_and_order() -> None:
+def test_the_configuration_names_the_batch_rule_length_epochs_key_order_and_shard() -> None:
     pipe = _pipeline()
     configuration = run_configuration(pipe)
     assert configuration == {
@@ -45,6 +46,7 @@ def test_the_configuration_names_the_batch_rule_length_epochs_key_and_order() ->
         "shuffled": True,
         "seed": configuration["seed"],
         "order": {"kind": "global"},
+        "shard": None,  # a source serving all its records
     }
     assert configuration["seed"] and all(isinstance(word, int) for word in configuration["seed"])
     assert configuration == pipe.get_state()["fingerprint"]
