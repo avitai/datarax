@@ -1653,8 +1653,8 @@ requires-dist = [
     { name = "soundfile", marker = "extra == 'data'", specifier = ">=0.12.1" },
     { name = "spdl", marker = "sys_platform == 'linux' and extra == 'test'", specifier = ">=0.1" },
     { name = "spdl", marker = "extra == 'benchmark'", specifier = ">=0.1" },
-    { name = "substrax", specifier = ">=0.1.20" },
-    { name = "substrax", extras = ["testing"], marker = "extra == 'test'", specifier = ">=0.1.20" },
+    { name = "substrax", specifier = ">=0.1.21" },
+    { name = "substrax", extras = ["testing"], marker = "extra == 'test'", specifier = ">=0.1.21" },
     { name = "tabulate", marker = "extra == 'benchmark'", specifier = ">=0.9" },
     { name = "tensorflow", marker = "extra == 'tfds'", specifier = ">=2.20.0,<2.21" },
     { name = "tensorflow-datasets", marker = "extra == 'benchmark'", specifier = ">=4.9.8" },
@@ -6855,7 +6855,7 @@ wheels = [
 
 [[package]]
 name = "substrax"
-version = "0.1.20"
+version = "0.1.21"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "etils", extra = ["epath"] },
@@ -6867,9 +6867,9 @@ dependencies = [
     { name = "orbax-checkpoint" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d1/5a/01fd48b1f2e35beb910cd9741b46ec0935db784274f827ecd2365068a3bd/substrax-0.1.20.tar.gz", hash = "sha256:60a2c4683879dc146838b1daac725bc3a4d3a52094e20f141ea9f4c7ea7a9926", size = 121443, upload-time = "2026-09-29T01:58:39.92Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d5/0b/e095d7ebf4804891354171549df9235d43e883e3f74eccad44c5f2c33001/substrax-0.1.21.tar.gz", hash = "sha256:94bb17afb727d1d825d002e8766b72d45a42f9210233ba93fb9c327ee7abab3e", size = 128237, upload-time = "2026-10-09T23:53:46.799Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/16/96/09718c8e71c1b822670c3a86e0a7483d63641564e59fb682449238ebf97b/substrax-0.1.20-py3-none-any.whl", hash = "sha256:fbff1fb84ed559d7200bda70af0c7041c7f181cd3916d31f2174177c5d6012c7", size = 149241, upload-time = "2026-09-29T01:58:37.857Z" },
+    { url = "https://files.pythonhosted.org/packages/2a/e6/d817c306c99eb04be234329e62c8f681735d38a0b2adb9ad79958d0e295b/substrax-0.1.21-py3-none-any.whl", hash = "sha256:1291d62284ae0c6f07c7ac71304fa69fa3cf0ec058175c99e9dcfbbf927c73f6", size = 157340, upload-time = "2026-10-09T23:53:44.938Z" },
 ]
 
 [package.optional-dependencies]
