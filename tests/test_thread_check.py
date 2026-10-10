@@ -108,8 +108,17 @@ def test_ends_its_thread_within_the_bound():
 """
 
 
-def _run_child(tmp_path: Path, selected: str) -> tuple[int, str]:
-    """Run one test of ``_CHILD_TESTS`` in a fresh pytest with the thread check."""
+def _run_child(tmp_path: Path, selected: str, *, without: str = "") -> tuple[int, str]:
+    """Run one test of ``_CHILD_TESTS`` in a fresh pytest with the thread check.
+
+    Args:
+        tmp_path: Where the child's test file goes.
+        selected: The test of ``_CHILD_TESTS`` to run.
+        without: A module the child cannot import, or ``""`` for none.
+
+    Returns:
+        The child's exit code and its output.
+    """
     (tmp_path / "test_child.py").write_text(_CHILD_TESTS)
     program = textwrap.dedent(
         f"""
@@ -117,6 +126,8 @@ def _run_child(tmp_path: Path, selected: str) -> tuple[int, str]:
         import pytest
 
         sys.path.insert(0, {str(_REPOSITORY)!r})
+        if {without!r}:
+            sys.modules[{without!r}] = None  # an environment without it
         sys.exit(pytest.main([
             {str(tmp_path / "test_child.py")!r} + "::" + {selected!r},
             "-p", "tests.thread_check", "-p", "no:randomly", "-p", "no:cacheprovider",
@@ -138,6 +149,13 @@ def test_a_test_that_leaves_a_thread_running_fails_naming_it(tmp_path: Path) -> 
 
 def test_a_test_whose_thread_ends_within_the_bound_passes(tmp_path: Path) -> None:
     code, output = _run_child(tmp_path, "test_ends_its_thread_within_the_bound")
+
+    assert code == 0, output
+
+
+def test_the_check_runs_where_tqdm_is_not_installed(tmp_path: Path) -> None:
+    """tqdm comes only with the data extras; a job without them still runs the check."""
+    code, output = _run_child(tmp_path, "test_ends_its_thread_within_the_bound", without="tqdm")
 
     assert code == 0, output
 

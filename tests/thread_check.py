@@ -15,7 +15,8 @@ first test rather than blame the first test that needs them:
 
 - tqdm's progress-bar monitor (one thread, waking every 10 seconds to retune bars) is turned off
   with tqdm's own switch, ``monitor_interval = 0``. It only adjusts how often a bar redraws, and
-  a process-wide count of Python calls would otherwise include its wakes.
+  a process-wide count of Python calls would otherwise include its wakes. tqdm comes only with
+  the data extras; where it is not installed no monitor can start and there is nothing to set.
 - Grain's pool that releases shared memory in the background is made with the call Grain makes
   at its first multiprocess read, ``SharedMemoryArray.enable_async_del(1)``. The first call fixes
   the pool for the process, so the pool is the one Grain makes either way.
@@ -34,7 +35,6 @@ import time
 from collections.abc import Collection, Iterator
 
 import pytest
-import tqdm
 
 
 BOUND = 2.0
@@ -48,7 +48,12 @@ def pytest_configure(config: pytest.Config) -> None:
         config: The pytest configuration (unused).
     """
     del config
-    tqdm.tqdm.monitor_interval = 0
+    try:
+        import tqdm  # noqa: PLC0415 - installed only with the data extras
+    except ModuleNotFoundError:
+        pass  # no tqdm, so no monitor thread to turn off
+    else:
+        tqdm.tqdm.monitor_interval = 0
     # Imported here, after tests/conftest.py set the JAX environment: Grain imports jax.
     from grain._src.python.ipc.shared_memory_array import SharedMemoryArray  # noqa: PLC0415
 
