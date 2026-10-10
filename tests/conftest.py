@@ -6,21 +6,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from absl import flags
-
-
-# absl refuses to read a flag until flags are parsed, and nothing under pytest ever parses
-# them: absl.app.run() does it in normal execution, and pytest does not call it. grain reads
-# its own flags at runtime — grain.DataLoader with worker_count > 0 reaches
-# --grain_enable_multiprocess_worker_profiling from a worker thread — so the suite must mark
-# them parsed itself rather than depend on some import happening to do it first.
-#
-# This surfaced on the jax 0.11.1 / flax 0.12.9 upgrade: the same test passed on jax 0.10.0 /
-# flax 0.12.7 and raised UnparsedFlagAccessError afterwards, with no change to grain (0.2.18
-# both sides) or absl-py (2.4.0 both sides). Which code path used to avoid the read is not
-# established; marking the flags parsed is correct either way, because an unparsed-flag read
-# is a latent failure that only luck was hiding.
-flags.FLAGS.mark_as_parsed()
 
 # Detect platform
 IS_MACOS = platform.system() == "Darwin"
@@ -62,7 +47,9 @@ import jax.numpy as jnp
 import pytest
 from substrax.testing import run_python
 
+from datarax.pipeline import host_workers
 from datarax.utils.console import emit
+from tests.test_common.host_plans import STILL_RESIDENT
 from tests.test_common.tfds_fixture import (
     COMMAND as TFDS_FIXTURE_COMMAND,
     DIRECTORY_VARIABLE as TFDS_FIXTURE_DIRECTORY_VARIABLE,
@@ -314,6 +301,23 @@ def sample_tabular_data() -> list[dict[str, Any]]:
 
 
 _TFDS_FIXTURE_PREPARE_SECONDS = 600.0
+
+
+@pytest.fixture
+def still_resident(monkeypatch: pytest.MonkeyPatch) -> int:
+    """Hold a host plan's ``M_main`` still, at :data:`~tests.test_common.host_plans.STILL_RESIDENT`.
+
+    The process's resident size moves between two plans, so a test reading with a chosen thread
+    count and read buffer (:func:`~tests.test_common.host_plans.reading_with`) pins it.
+
+    Args:
+        monkeypatch: Pins ``host_workers.resident_bytes`` for the test.
+
+    Returns:
+        The pinned resident size.
+    """
+    monkeypatch.setattr(host_workers, "resident_bytes", lambda: STILL_RESIDENT)
+    return STILL_RESIDENT
 
 
 @pytest.fixture(scope="session")

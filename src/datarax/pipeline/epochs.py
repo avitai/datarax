@@ -35,7 +35,7 @@ from datarax.core import batch_ops
 from datarax.core.data_source import DataSourceModule, Provenance
 from datarax.core.element_batch import Batch
 from datarax.core.index_words import is_word_start, split_constant, subtract, to_words
-from datarax.core.prng import host_device
+from datarax.core.prng import host_device, NAMING_PRNG_IMPL
 from datarax.pipeline.compiled import cached_program
 from datarax.pipeline.dag import Records
 
@@ -317,8 +317,8 @@ def batch_records(
     first from ``start``, the rest from their heads), and each row takes its own epoch's name: no
     conditional, one batched index computation, the same program for every batch, and index
     arrays of O(``size``) per epoch touched. Epoch ``e`` is ordered by
-    ``fold_in(wrap_key_data(key_base), e)``, or sequentially without a key. Traceable; the source
-    is read for its order only, never its records.
+    ``fold_in(wrap_key_data(key_base, impl=NAMING_PRNG_IMPL), e)``, or sequentially without a key.
+    Traceable; the source is read for its order only, never its records.
 
     Args:
         source: The indexed source.
@@ -338,7 +338,9 @@ def batch_records(
         key = (
             None
             if key_base is None
-            else jax.random.fold_in(jax.random.wrap_key_data(jnp.asarray(key_base)), epoch_of)
+            else jax.random.fold_in(
+                jax.random.wrap_key_data(jnp.asarray(key_base), impl=NAMING_PRNG_IMPL), epoch_of
+            )
         )
         return jnp.asarray(source.record_indices_at(first, size, key), jnp.uint32)
 
@@ -384,16 +386,17 @@ class HostNaming:
 
     The host stage names each batch's records here, before reading them: the start goes in as two
     uint32 words, so every position up to ``2**64 - 1`` is exact, and the program runs on the CPU
-    device (:func:`~datarax.core.prng.host_device`), off the accelerator's queue. It names one
-    batch (``naming(start, epoch, size, key)``) or a block of full batches in one call
-    (:meth:`block`): the same program vmapped over their starts, so each batch of a block is named
-    exactly as alone and the call's fixed cost is shared. The programs close over a stand-in of
-    the source holding its structure only (:func:`_structure`), never the source and never as an
-    argument, so none of its records is transferred and a cached program keeps no source alive;
-    an order reads lengths only. Every naming of a source structured alike under the same plan
-    shares the programs: the block compiles once, and one batch once per size (a run's short
-    final batch), whatever the pipeline, run, reset or restore. Every input is placed on the CPU
-    device and every output read back explicitly, so naming needs no implicit transfer.
+    device (:func:`~datarax.core.prng.host_device`), off the accelerator's queue. It names one batch
+    (``naming(start, epoch, size, key)``) or a block of full batches in one call (:meth:`block`):
+    the same program vmapped over their starts, so each batch of a block is named exactly as alone
+    (the key is a :data:`~datarax.core.prng.NAMING_PRNG_IMPL` key, exact under ``jax.vmap`` over
+    keys) and the call's fixed cost is shared. The programs close over a stand-in of the source
+    holding its structure only (:func:`_structure`), never the source and never as an argument, so
+    none of its records is transferred and a cached program keeps no source alive; an order reads
+    lengths only. Every naming of a source structured alike under the same plan shares the programs:
+    the block compiles once, and one batch once per size (a run's short final batch), whatever the
+    pipeline, run, reset or restore. Every input is placed on the CPU device and every output read
+    back explicitly, so naming needs no implicit transfer.
     """
 
     def __init__(self, source: DataSourceModule, plan: EpochPlan, *, shuffled: bool) -> None:

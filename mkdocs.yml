@@ -269,9 +269,6 @@ nav:
           - prefetcher: control/prefetcher.md
       - DAG: dag/index.md
       - Distributed: distributed/index.md
-      - Memory:
-          - Overview: memory/index.md
-          - shared_memory_manager: memory/shared_memory_manager.md
       - Monitoring:
           - Overview: monitoring/index.md
           - callbacks: monitoring/callbacks.md

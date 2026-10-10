@@ -21,10 +21,15 @@ from substrax.testing.compiles import compiled_programs
 from datarax.core.data_source import DataSourceModule
 from datarax.core.element_batch import Batch
 from datarax.core.prng import key_words
-from datarax.pipeline import host_stage, Pipeline
+from datarax.pipeline import Pipeline, run_units
 from datarax.pipeline.epochs import HostNaming, Run
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
+from tests.test_common.host_plans import reading_with
+
+
+pytestmark = pytest.mark.usefixtures("still_resident")
+"""Plans read with chosen threads and buffers (:func:`reading_with`): ``M_main`` held still."""
 
 
 def _memory(length: int) -> MemorySource:
@@ -49,7 +54,7 @@ def _pipeline(
     num_epochs: int | None = 3,
     threads: int = 1,
 ) -> Pipeline:
-    pipe = Pipeline(
+    return Pipeline(
         source=source,
         stages=[],
         batch_size=batch_size,
@@ -57,10 +62,10 @@ def _pipeline(
         shuffle=shuffle,
         drop_last=drop_last,
         num_epochs=num_epochs,
+        host_resources=None
+        if threads == 1
+        else reading_with(source, batch_size, threads=threads, read_buffer=threads),
     )
-    pipe.host_stage._read_threads = threads
-    pipe.host_stage._read_buffer = max(2, threads)
-    return pipe
 
 
 def _named(batch: Batch) -> tuple[bytes, bytes]:
@@ -85,7 +90,7 @@ def _alone(pipe: Pipeline, start: tuple[int, int] = (0, 0)) -> list[tuple[bytes,
 @pytest.fixture
 def small_blocks(monkeypatch: pytest.MonkeyPatch) -> int:
     """Blocks of 12 records, so short runs cross many blocks and resume mid-block."""
-    monkeypatch.setattr(host_stage, "_NAMING_BLOCK_RECORDS", 12, raising=False)
+    monkeypatch.setattr(run_units, "_NAMING_BLOCK_RECORDS", 12)
     return 12
 
 
