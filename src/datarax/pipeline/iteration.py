@@ -77,7 +77,7 @@ _HOST_COPIES: weakref.WeakKeyDictionary[Any, _HostCopies] = weakref.WeakKeyDicti
 _ITERATOR_STATE_VERSION = 2
 # Version 1 carried ``rng_counts`` in the per-operator layout; version 2 adds ``fingerprint``,
 # the configuration that produced the state, which ``set_state`` checks.
-_FINGERPRINT_FIELDS = ("batch_size", "length", "drop_last", "num_epochs", "shuffled")
+_FINGERPRINT_FIELDS = ("batch_size", "length", "drop_last", "num_epochs", "shuffled", "shard")
 
 
 def _session_step(graphdef: Any, body: StepBody, size: int) -> Callable[..., Any]:
@@ -222,6 +222,7 @@ class PipelineIterator:
         position: nnx.Variable[jax.Array],
         epoch: nnx.Variable[jax.Array],
         shuffled: bool,
+        shard: dict[str, int] | None,
     ) -> None:
         """Split the module once and prepare the compiled session step.
 
@@ -234,6 +235,9 @@ class PipelineIterator:
             epoch: The module's epoch counter.
             shuffled: Whether the pipeline serves records in a shuffled order, recorded in
                 the state's fingerprint.
+            shard: The shard of the records the source serves
+                (:func:`~datarax.core.data_source.shard_identity`), recorded in the state's
+                fingerprint.
         """
         graphdef, mutable_state, immutable_state = nnx.split(
             module, is_per_batch_state, ..., graph=True
@@ -260,6 +264,7 @@ class PipelineIterator:
         )
         self._plan = plan
         self._shuffled = shuffled
+        self._shard = shard
         # One host sync at session entry; the counters are then mirrored on the host by the
         # rule the step follows, so termination is pure Python arithmetic, preserving JAX's
         # asynchronous dispatch run-ahead.
@@ -357,10 +362,10 @@ class PipelineIterator:
         }
 
     def _fingerprint(self) -> dict[str, Any]:
-        """The configuration a state is only valid for: batch rule, length, epochs, order.
+        """The configuration a state is only valid for: batch rule, length, epochs, order, shard.
 
-        Every leaf is a number or a bool (``num_epochs`` may be ``None``), so the state
-        also fits a checkpoint template of arrays.
+        Every leaf is a number or a bool (``num_epochs`` and ``shard`` may be ``None``), so the
+        state also fits a checkpoint template of arrays.
         """
         return {
             "batch_size": self._plan.batch_size,
@@ -368,6 +373,7 @@ class PipelineIterator:
             "drop_last": self._plan.drop_last,
             "num_epochs": self._plan.num_epochs,
             "shuffled": self._shuffled,
+            "shard": self._shard,
         }
 
     def _upgraded_rng_counts(self, state: dict[str, Any]) -> list[int]:

@@ -103,7 +103,7 @@ The state is a small dictionary of plain values:
 | `epoch`, `position` | The epoch and the records served in it (`None` for a stream) |
 | `run_end_epoch` | The epoch the run ends at, so a resumed run ends where the uninterrupted one would |
 | `stream` | A stream's pass, the records taken in it, the records arrived and the passes left (`None` for an indexed source) |
-| `fingerprint` | The configuration the state is valid for: batch size, length, `drop_last`, `num_epochs`, whether it shuffles, the seed's words and the order |
+| `fingerprint` | The configuration the state is valid for: batch size, length, `drop_last`, `num_epochs`, whether it shuffles, the seed's words, the order and the shard of the records the source serves (`None` for all of them) |
 
 `set_state()` refuses a state whose fingerprint differs from the pipeline's,
 naming the field. No random stream advances while iterating: an operator keys

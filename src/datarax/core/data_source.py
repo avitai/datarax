@@ -40,6 +40,27 @@ def known_length(source: Any) -> int | None:
         return None
 
 
+def shard_identity(source: "DataSourceModule") -> dict[str, int] | None:
+    """The shard a source serves, as a resume state's fingerprint records it.
+
+    A shard's length counts its own records only, so two shards of one dataset, or shards of two
+    datasets differing by fewer records than the shard count, have equal lengths. The identity
+    therefore holds the shard's index and count and the records of the whole dataset
+    (``index_space()``).
+
+    Args:
+        source: The pipeline's source.
+
+    Returns:
+        ``{"index", "count", "records"}``, or ``None`` for a source serving all its records.
+    """
+    shard = source.shard
+    if shard is None:
+        return None
+    index, count = shard
+    return {"index": index, "count": count, "records": source.index_space()}
+
+
 def record_words(indices: ArrayLike) -> np.ndarray:
     """``indices`` as host record words, refusing anything that is not uint32 ``(n, 2)``.
 
@@ -246,6 +267,15 @@ class DataSourceModule(StructuralModule):
         forward with ``get_batch(batch_size)``, which the host stage calls in order. A subclass
         declares it with a property returning its kind.
         """
+
+    @property
+    def shard(self) -> tuple[int, int] | None:
+        """``(index, count)`` when the source serves one shard of its records, else ``None``.
+
+        Shard ``index`` of ``count`` serves its own part of the positions of the whole order, so
+        a pipeline's resume state names the shard it was saved on (:func:`shard_identity`).
+        """
+        return None
 
     def provenance(  # noqa: DOC502 - the checks it calls raise
         self, indices: ArrayLike

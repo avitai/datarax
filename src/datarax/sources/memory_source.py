@@ -140,6 +140,13 @@ class MemorySource(EagerSource):
         """
         return partition_length(self.length, self.config.num_workers, self.config.shard_id or 0)
 
+    @property
+    def shard(self) -> tuple[int, int] | None:
+        """``(shard_id, num_workers)`` when the records are split between workers, else ``None``."""
+        if self.config.num_workers == 1:
+            return None
+        return (self.config.shard_id or 0, self.config.num_workers)
+
     def __iter__(self) -> Iterator[PyTree]:
         """Iterate over this worker's records in order, each its array part; stateless.
 

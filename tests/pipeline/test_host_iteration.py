@@ -28,7 +28,7 @@ from substrax.testing.compiles import expect_compiles
 from datarax.checkpoint import IteratorCheckpoint
 from datarax.core import batch_ops
 from datarax.core.config import OperatorConfig, StructuralConfig
-from datarax.core.data_source import DataSourceModule, RecordIdentity
+from datarax.core.data_source import DataSourceModule, known_length, RecordIdentity
 from datarax.core.element_batch import Batch, Element
 from datarax.core.index_words import from_words
 from datarax.core.operator import OperatorModule, require_key
@@ -460,6 +460,76 @@ class TestState:
         change(state)
         with pytest.raises(ValueError, match=message):
             _pipeline(_memory()).set_state(state)
+
+
+def _shard(index: int, count: int, length: int = 10) -> MemorySource:
+    return MemorySource(MemorySourceConfig(shard_id=index, num_workers=count), _columns(length))
+
+
+class TestAShardsState:
+    """A state names the shard of the records it was saved on; another shard's is refused.
+
+    A worker's shard (``MemorySourceConfig(shard_id, num_workers)``) serves positions
+    ``[shard_id::num_workers]`` of the global order, so two shards of one dataset have the same
+    length and a state's position means other records on each.
+    """
+
+    def test_a_state_resumes_its_own_shard(self) -> None:
+        pipe = _pipeline(_shard(1, 2), batch_size=2, shuffle=False, num_epochs=1)
+        it = iter(pipe)
+        next(it)
+        state = pipe.get_state()
+        rest = [_rows(batch) for batch in it]
+
+        fresh = _pipeline(_shard(1, 2), batch_size=2, shuffle=False, num_epochs=1)
+        fresh.set_state(state)
+
+        assert [_rows(batch) for batch in fresh] == rest
+
+    @pytest.mark.parametrize(
+        ("restored", "length"),
+        [((1, 2), 10), ((0, 3), 15), ((0, 2), 9)],
+        ids=["another-shard", "another-shard-count", "another-dataset-of-equal-shard-length"],
+    )
+    def test_a_state_of_another_partition_is_refused_naming_it(
+        self, restored: tuple[int, int], length: int
+    ) -> None:
+        pipe = _pipeline(_shard(0, 2, length=10), batch_size=2, shuffle=False, num_epochs=1)
+        next(iter(pipe))
+        state = pipe.get_state()
+        other = _pipeline(
+            _shard(*restored, length=length), batch_size=2, shuffle=False, num_epochs=1
+        )
+        # the length cannot tell them apart
+        assert known_length(other.source) == known_length(pipe.source) == 5
+
+        with pytest.raises(ValueError, match="shard"):
+            other.set_state(state)
+
+    def test_a_state_saved_before_shards_were_named_resumes_only_a_whole_source(self) -> None:
+        """A version-3 state without ``shard`` was saved on a whole source or a shard unknown."""
+        whole = _pipeline(_memory(10), batch_size=2, shuffle=False, num_epochs=1)
+        next(iter(whole))
+        state = whole.get_state()
+        del state["fingerprint"]["shard"]
+
+        _pipeline(_memory(10), batch_size=2, shuffle=False, num_epochs=1).set_state(state)
+        with pytest.raises(ValueError, match="shard"):
+            _pipeline(_shard(0, 2, length=20), batch_size=2, shuffle=False, num_epochs=1).set_state(
+                state
+            )
+
+    def test_a_whole_source_s_state_is_refused_by_a_shard_and_back(self) -> None:
+        whole = _pipeline(_memory(10), batch_size=2, shuffle=False, num_epochs=1)
+        half = _pipeline(_shard(0, 2, length=20), batch_size=2, shuffle=False, num_epochs=1)
+        next(iter(whole))
+        next(iter(half))
+        assert known_length(whole.source) == known_length(half.source)
+
+        with pytest.raises(ValueError, match="shard"):
+            half.set_state(whole.get_state())
+        with pytest.raises(ValueError, match="shard"):
+            whole.set_state(half.get_state())
 
 
 class TestRun:

@@ -613,6 +613,7 @@ class TestStateFingerprint:
             "drop_last": False,
             "num_epochs": 1,
             "shuffled": False,
+            "shard": None,
         }
 
     def test_a_shuffling_pipeline_names_its_order(self):
