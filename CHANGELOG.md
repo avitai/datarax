@@ -512,7 +512,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `datarax.typing` the re-exports of `Element`, `Batch` and `Metadata` (import them from
   `datarax`) and the aliases `StateDict`, `MetadataDict`, `ElementTransform`, `BatchTransform`,
   `DataProcessor`, `StateProcessor`, `MetadataProcessor`, `ScanFn`, `CondFn`, `WhileBodyFn`.
-- Requires substrax 0.1.21. The version has one source, `pyproject.toml`; `datarax.__version__`
+- Requires substrax 0.1.22. The version has one source, `pyproject.toml`; `datarax.__version__`
   reads the installed package's metadata.
 - CI runs only what a change needs. A merge whose tree its pull request already tested, with every
   check of that pull request succeeded, stands the repeating jobs down through substrax's
