@@ -33,6 +33,7 @@ from datarax.core.spec import SpecMismatchError
 from datarax.pipeline.epochs import EpochPlan, stream_batches
 from datarax.pipeline.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig, StreamChunk, StreamingSourceBase
+from datarax.sources.eager_source import HostValue
 from tests.test_common.streams import RecordStream
 from tests.test_common.transfers import device_to_host_raises
 
@@ -577,3 +578,62 @@ def test_the_stream_s_reads_are_a_host_chunk_path() -> None:
     first = next(chunks)
     assert all(isinstance(leaf, np.ndarray) for leaf in jax.tree.leaves(first.columns))
     assert RecordIdentity.STREAM_IDS is _stream().record_identity
+
+
+class _ReadThrough(tuple):
+    """A batch's provenance that counts the times it is read through, record by record."""
+
+    reads: list[int]
+
+    def __new__(cls, records: Any, reads: list[int]) -> _ReadThrough:
+        counted = super().__new__(cls, records)
+        counted.reads = reads
+        return counted
+
+    def __iter__(self) -> Iterator[Any]:
+        self.reads.append(1)
+        return super().__iter__()
+
+
+class _ProvenanceCounted(RecordStream):
+    """A stream whose batches' provenance counts how often the pipeline reads through it."""
+
+    def __init__(self, columns: Mapping[str, np.ndarray], texts: list[str]) -> None:
+        super().__init__(columns, texts=texts, chunk=4)
+        self._reads = HostValue([])
+
+    @property
+    def reads(self) -> int:
+        return len(self._reads.value)
+
+    def read_from(self, *args: Any, **kwargs: Any) -> tuple[Batch, Any]:
+        batch, provenance = super().read_from(*args, **kwargs)
+        return batch, _ReadThrough(provenance, self._reads.value)
+
+
+@pytest.mark.parametrize("serve", ["iteration", "raw_batches"])
+def test_a_run_not_asked_for_provenance_reads_none_of_it(serve: str) -> None:
+    """Provenance is gathered for a served batch only when the caller asked for it."""
+    texts = [f"record {i}" for i in range(12)]
+    stream = _ProvenanceCounted(_columns(12), texts)
+    pipeline = _pipeline(stream, batch_size=4)
+
+    served = list(pipeline) if serve == "iteration" else list(pipeline.raw_batches())
+
+    assert len(served) == 3
+    assert stream.reads == 0
+
+
+def test_a_run_asked_for_provenance_serves_each_batch_s_records() -> None:
+    """The control: the counted provenance is read through, and served, when asked for."""
+    texts = [f"record {i}" for i in range(12)]
+    stream = _ProvenanceCounted(_columns(12), texts)
+    pipeline = _pipeline(stream, batch_size=4)
+
+    served = list(pipeline.raw_batches(with_provenance=True))
+
+    assert stream.reads >= len(served) == 3
+    for batch, provenance in served:
+        assert [record["text"] for record in provenance] == [
+            texts[i] for i in from_words(np.asarray(batch.indices))
+        ]
