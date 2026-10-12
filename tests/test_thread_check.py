@@ -22,7 +22,13 @@ from substrax.testing import run_python
 from tests.thread_check import grain_thread_names, threads_left
 
 
-_REPOSITORY = Path(__file__).resolve().parents[2]
+_REPOSITORY = Path(__file__).resolve().parents[1]
+
+
+def test_the_children_import_the_check_from_this_repository() -> None:
+    """A child puts the repository first on its path; its parent directory holds other clones."""
+    assert (_REPOSITORY / "tests" / "thread_check.py").is_file()
+    assert (_REPOSITORY / "pyproject.toml").read_text().count('name = "datarax"') == 1
 
 
 @pytest.fixture
