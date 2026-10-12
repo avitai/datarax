@@ -131,26 +131,33 @@ def test_full_test_collection_dependencies_are_in_test_extra() -> None:
     assert "matplotlib" in test_dependencies
 
 
-def test_importlinter_contract_exists_for_datarax_layers() -> None:
-    """Architecture checks should have a concrete Import Linter contract."""
-    content = IMPORTLINTER.read_text()
+def _top_level_modules() -> frozenset[str]:
+    """Every package and module directly under ``datarax``, by its dotted name."""
+    package = REPO_ROOT / "src" / "datarax"
+    packages = {path.parent.name for path in package.glob("*/__init__.py")}
+    modules = {path.stem for path in package.glob("*.py") if path.name != "__init__.py"}
+    return frozenset(f"datarax.{name}" for name in packages | modules)
 
-    assert "root_package = datarax" in content
-    assert "type = layers" in content
-    for layer in (
-        "datarax.cli",
-        "datarax.monitoring",
-        "datarax.pipeline",
-        "datarax.operators",
-        "datarax.sources",
-        "datarax.sharding",
-        "datarax.control",
-        "datarax.samplers",
-        "datarax.batching",
-        "datarax.core",
-        "datarax.utils",
-    ):
-        assert layer in content
+
+def _declared_layers(path: Path) -> frozenset[str]:
+    return frozenset().union(*_contract_layers(path, "layers"))
+
+
+def test_the_layers_contract_names_every_top_level_module_exactly() -> None:
+    """A package or module the contract leaves out may import any layer unchecked."""
+    assert "root_package = datarax" in IMPORTLINTER.read_text()
+    assert _declared_layers(IMPORTLINTER) == _top_level_modules()
+
+
+def test_positive_control_a_top_level_module_missing_from_the_layers_is_seen(
+    tmp_path: Path,
+) -> None:
+    declared = IMPORTLINTER.read_text()
+    missing = declared.replace("    datarax.samplers\n", "")
+    assert missing != declared, "the control removes nothing: samplers is not declared"
+    copy = tmp_path / ".importlinter"
+    copy.write_text(missing)
+    assert _declared_layers(copy) != _top_level_modules()
 
 
 _PIPELINE_INTERNAL_LAYERS = (
