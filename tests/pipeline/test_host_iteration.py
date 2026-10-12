@@ -408,7 +408,7 @@ class TestState:
         assert state["stream"]["records"] == 8
         resumed = build()
         resumed.set_state(state)
-        with caplog.at_level(logging.INFO, logger="datarax.pipeline.host_stage"):
+        with caplog.at_level(logging.INFO, logger="datarax.sources.stream_iterator"):
             next(iter(resumed))
         replays = [r.getMessage() for r in caplog.records if "replayed" in r.getMessage()]
         assert len(replays) == 1
@@ -420,7 +420,7 @@ class TestState:
         stream = RecordStream(_columns(10), kind=RecordIdentity.ARRIVAL, chunk=3)
         pipe = _pipeline(stream, num_epochs=2, shuffle=True)
         pipe.set_state(pipe.get_state())
-        with caplog.at_level(logging.INFO, logger="datarax.pipeline.host_stage"):
+        with caplog.at_level(logging.INFO, logger="datarax.sources.stream_iterator"):
             next(iter(pipe))
         assert not [r for r in caplog.records if "replayed" in r.getMessage()]
 

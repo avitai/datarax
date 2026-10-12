@@ -26,14 +26,26 @@ import numpy as np
 import pytest
 from flax import nnx
 
+from datarax.core.data_source import RecordIdentity
 from datarax.pipeline.pipeline import Pipeline
-from datarax.sources import TFDSEagerConfig, TFDSEagerSource
+from datarax.sources import (
+    TFDSEagerConfig,
+    TFDSEagerSource,
+    TFDSStreamingConfig,
+    TFDSStreamingSource,
+)
 from datarax.sources.array_record_source import ArrayRecordSourceConfig, ArrayRecordSourceModule
-from datarax.sources.hf_source import HFEagerConfig, HFEagerSource
+from datarax.sources.hf_source import (
+    HFEagerConfig,
+    HFEagerSource,
+    HFStreamingConfig,
+    HFStreamingSource,
+)
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
 from datarax.sources.streaming_disk_source import StreamingDiskSource, StreamingDiskSourceConfig
 from tests.test_common.holder_reads import HolderRecorder
+from tests.test_common.streams import RecordStream
 from tests.test_common.tfds_fixture import FIXTURE, TFDSFixture
 from tests.test_common.worker_reads import write_records
 
@@ -97,8 +109,8 @@ def _total(batch: Any) -> jax.Array:
     )
 
 
-def _iterate(source: Any) -> None:
-    pipeline = _pipeline(source, shuffle=True)
+def _iterate(source: Any, *, shuffle: bool = True) -> None:
+    pipeline = _pipeline(source, shuffle=shuffle)
     next(iter(pipeline))
     pipeline.close()
 
@@ -154,6 +166,42 @@ def test_iteration_reads_no_kind_equal_holder_in_a_program(
     assert _recorded(_iterate, source) == []
 
 
+def _record_stream(kind: RecordIdentity) -> Make:
+    def make(directory: Path, monkeypatch: pytest.MonkeyPatch) -> RecordStream:
+        columns = {"x": np.arange(_RECORDS * 3, dtype=np.float32).reshape(_RECORDS, 3)}
+        return RecordStream(columns, kind=kind, texts=[f"r{i}" for i in range(_RECORDS)])
+
+    return make
+
+
+def _hf_stream(directory: Path, monkeypatch: pytest.MonkeyPatch) -> HFStreamingSource:
+    table = datasets.Dataset.from_dict(
+        {"x": [[float(i)] * 3 for i in range(_RECORDS)], "id": [f"r{i}" for i in range(_RECORDS)]}
+    )
+    monkeypatch.setattr(
+        datasets, "load_dataset", lambda *args, **kwargs: table.to_iterable_dataset(num_shards=2)
+    )
+    return HFStreamingSource(HFStreamingConfig(name="local", split="train"))
+
+
+# Streams, read forward on the host; one without a length has no order to shuffle.
+_STREAMS: dict[str, tuple[Make, bool]] = {
+    "record stream named by ids": (_record_stream(RecordIdentity.STREAM_IDS), True),
+    "record stream named by arrival": (_record_stream(RecordIdentity.ARRIVAL), True),
+    "record stream in its own order": (_record_stream(RecordIdentity.STREAM_IDS), False),
+    "hf stream": (_hf_stream, False),
+}
+
+
+@pytest.mark.parametrize("kind", list(_STREAMS))
+def test_iterating_a_stream_reads_no_kind_equal_holder_in_a_program(
+    kind: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    make, shuffle = _STREAMS[kind]
+    source = make(tmp_path, monkeypatch)
+    assert _recorded(lambda s: _iterate(s, shuffle=shuffle), source) == []
+
+
 def _tfds(fixture: TFDSFixture) -> TFDSEagerSource:
     config = TFDSEagerConfig(name=FIXTURE, split="train", data_dir=str(fixture.array_record))
     return TFDSEagerSource(config)
@@ -170,6 +218,14 @@ def test_no_path_over_a_tfds_source_reads_a_kind_equal_holder(
         MixDataSourcesConfig(weights=(1.0, 1.0)), [_tfds(tfds_fixture), _tfds(tfds_fixture)]
     )
     assert _recorded(run, mix) == []
+
+
+@pytest.mark.tfds
+def test_iterating_a_tfds_stream_reads_no_kind_equal_holder_in_a_program(
+    tfds_fixture: TFDSFixture,
+) -> None:
+    config = TFDSStreamingConfig(name=FIXTURE, split="train", data_dir=str(tfds_fixture.tfrecord))
+    assert _recorded(_iterate, TFDSStreamingSource(config)) == []
 
 
 class _TakesProvenance(MemorySource):

@@ -81,7 +81,7 @@ def test_a_literal_in_a_docstring_or_comment_is_not_a_seed(tmp_path: Path) -> No
 
 
 def test_no_pass_key_holds_a_literal_seed() -> None:
-    """A stream pass's keys left the sources for ``datarax.core.prng``; the search follows them."""
+    """A stream pass's keys live in ``datarax.core.prng``, so the search covers that module."""
     assert _literal_seeds_in(_PASS_KEYS) == []
 
 
