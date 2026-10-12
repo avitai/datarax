@@ -125,9 +125,40 @@ class Cursor:
     arrived: int
     end_epoch: int | None
 
+    def stream_state(self) -> dict[str, Any]:
+        """The cursor as a stream iterator's state: the pass, records served, arrivals, passes left.
+
+        Returns:
+            The state :meth:`~datarax.sources.stream_iterator.StreamBatches.set_state` reads.
+        """
+        return {
+            "pass": self.epoch,
+            "records": self.position,
+            "arrived": self.arrived,
+            "passes_left": None if self.end_epoch is None else max(0, self.end_epoch - self.epoch),
+        }
+
+    @classmethod
+    def of_stream_state(cls, state: Mapping[str, Any]) -> Cursor:
+        """The cursor a stream iterator's state names (the inverse of :meth:`stream_state`).
+
+        Args:
+            state: The state, as :meth:`stream_state` writes it.
+
+        Returns:
+            The cursor.
+        """
+        left = state["passes_left"]
+        return cls(
+            epoch=int(state["pass"]),
+            position=int(state["records"]),
+            arrived=int(state["arrived"]),
+            end_epoch=None if left is None else int(state["pass"]) + int(left),
+        )
+
 
 class _Stream(grain.IterDataset):
-    """A stream's run read pass by pass at a position of the host stage's own, on one thread."""
+    """A stream's run, read through its iterator from the host stage's cursor, on one thread."""
 
     def __init__(self, source: StreamHostRead, cursor: Cursor, config: _StreamRead) -> None:
         super().__init__()
@@ -165,16 +196,7 @@ class _StreamIterator(grain.DatasetIterator):
             read_size=config.batch_size,
             drop_last=config.drop_last,
         )
-        self._batches.set_state(
-            {
-                "pass": cursor.epoch,
-                "records": cursor.position,
-                "arrived": cursor.arrived,
-                "passes_left": None
-                if cursor.end_epoch is None
-                else max(0, cursor.end_epoch - cursor.epoch),
-            }
-        )
+        self._batches.set_state(cursor.stream_state())
         self._held: list[tuple[Batch, Provenance, tuple[int, int, int]]] = []
         self._units = 0
 
@@ -184,6 +206,7 @@ class _StreamIterator(grain.DatasetIterator):
         except StopIteration:
             return None
         self._config.check(batch)
+        # Per batch: the three counts the cursor takes, read off the state with no cursor built.
         after = self._batches.get_state()
         return batch, provenance, (after["pass"], after["records"], after["arrived"])
 
@@ -794,14 +817,7 @@ class HostStage:
         indexed = kind is RecordIdentity.INDEXED
         stream = None
         if not indexed:
-            stream = {
-                "pass": cursor.epoch,
-                "records": cursor.position,
-                "arrived": cursor.arrived,
-                "passes_left": None
-                if cursor.end_epoch is None
-                else max(0, cursor.end_epoch - cursor.epoch),
-            }
+            stream = cursor.stream_state()
         return {
             "version": STATE_VERSION,
             "kind": kind.value,
@@ -852,14 +868,7 @@ class HostStage:
                 end_epoch=None if state["run_end_epoch"] is None else int(state["run_end_epoch"]),
             )
             return
-        stream = state["stream"]
-        left = stream["passes_left"]
-        self.cursor = Cursor(
-            epoch=int(stream["pass"]),
-            position=int(stream["records"]),
-            arrived=int(stream["arrived"]),
-            end_epoch=None if left is None else int(stream["pass"]) + int(left),
-        )
+        self.cursor = Cursor.of_stream_state(state["stream"])
 
     def reset(self, num_epochs: int | None) -> None:
         """Start a new run at the next epoch's (or pass's) start, closing the run open now.
