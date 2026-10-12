@@ -168,6 +168,21 @@ class TestTheEpochRule:
 
         assert streamed == indexed
 
+    @pytest.mark.parametrize("num_epochs", [1, 2])
+    def test_a_reset_starts_the_next_pass_as_for_an_indexed_source(self, num_epochs: int) -> None:
+        """A run ending in a short batch leaves the cursor in its last pass, as an epoch does."""
+
+        def after_reset(source: Any) -> list[list[int]]:
+            pipeline = _pipeline(source, num_epochs=num_epochs)
+            list(pipeline)
+            pipeline.reset()
+            return [epochs for _, epochs in _served(list(pipeline))]
+
+        indexed = after_reset(MemorySource(MemorySourceConfig(), _columns()))
+
+        assert after_reset(_stream()) == indexed
+        assert indexed[0][0] == num_epochs
+
     def test_the_pipeline_keeps_no_counter_for_a_stream(self) -> None:
         pipeline = _pipeline(_stream(), num_epochs=2)
 

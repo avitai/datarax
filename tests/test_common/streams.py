@@ -8,7 +8,7 @@ field as provenance.
 
 The checks below hold for every stream and are run on each (brief T11): the chunks a stream's
 passes yield, no Python value in a Variable, a graph definition that does not move as the stream is
-read, and a tree-mode split and merge that reads as the original.
+read, and a split and merge, in graph and tree mode, that reads as the original.
 """
 
 from __future__ import annotations
@@ -183,20 +183,21 @@ def graph_definitions_across_a_pass(stream: StreamingSourceBase, size: int) -> t
     return before, nnx.graphdef(stream)
 
 
-def batches_after_a_tree_round_trip(
-    make: Callable[[], StreamingSourceBase], size: int
+def batches_after_a_split_and_merge(
+    make: Callable[[], StreamingSourceBase], size: int, *, graph: bool
 ) -> tuple[list[np.ndarray], list[np.ndarray]]:
-    """The first batch of a stream split and merged in tree mode, and of the stream unsplit.
+    """The first batch of a stream split and merged, and of the stream unsplit.
 
     Args:
         make: Builds the stream.
         size: Records per batch.
+        graph: Whether to split in graph mode (``True``) or tree mode (``False``).
 
     Returns:
         The two first batches, each as its ids and its array leaves.
     """
     stream, original = make(), make()
-    graphdef, state = nnx.split(stream, graph=False)
+    graphdef, state = nnx.split(stream, graph=graph)
     merged = nnx.merge(graphdef, state)
 
     def leaves(batch: Any) -> list[np.ndarray]:

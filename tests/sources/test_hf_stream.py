@@ -23,7 +23,7 @@ from datarax.core.index_words import from_words
 from datarax.pipeline import Pipeline
 from datarax.sources import from_hf, HFEagerSource, HFStreamingConfig, HFStreamingSource
 from tests.test_common.streams import (
-    batches_after_a_tree_round_trip,
+    batches_after_a_split_and_merge,
     graph_definitions_across_a_pass,
     non_array_state_leaves,
     record_chunks,
@@ -201,10 +201,11 @@ class TestNnxHygiene:
         assert before == after
         assert hash(before) == hash(after)
 
-    def test_a_stream_split_and_merged_in_tree_mode_reads_as_the_original(
-        self, loads: list[dict[str, Any]]
+    @pytest.mark.parametrize("graph", [True, False], ids=["graph-mode", "tree-mode"])
+    def test_a_stream_split_and_merged_reads_as_the_original(
+        self, loads: list[dict[str, Any]], graph: bool
     ) -> None:
-        merged, original = batches_after_a_tree_round_trip(_stream, 5)
+        merged, original = batches_after_a_split_and_merge(_stream, 5, graph=graph)
 
         assert from_words(merged[0]).tolist() == list(range(5))
         for ours, theirs in zip(merged, original, strict=True):

@@ -10,9 +10,9 @@ iterator ends, its last batch possibly short, and with ``None`` it never ends.
 
 The iterator is the one place a stream's pass is counted. Its state
 (:meth:`StreamBatches.get_state`) is where it stands: the pass, the records of it served, the
-ordinals served and the passes left. An iterator set to that state serves exactly what the original
-would have: a pass resumed midway is read again from its start to the saved count, as it was first
-read, its records unnamed.
+ordinals served and the passes left. An iterator built with the same arguments and set to that
+state serves exactly what the original would have: a pass resumed midway is read again from its
+start to the saved count, as it was first read, its records unnamed.
 
 An error raised while a pass is read reaches the ``next`` that met it; the iterator then refuses to
 go on, naming the error, and a new iterator starts again. A pass's reader stopped midway is closed
@@ -229,16 +229,34 @@ class StreamBatches[T](Iterator[T]):
     def set_state(self, state: dict[str, Any]) -> None:
         """Stand where ``state`` says, as :meth:`get_state` wrote it; a pass midway is read again.
 
+        The state is where an iterator built with the same arguments stood: the batch size, key,
+        read size and ``drop_last`` are this iterator's, not the state's, so an iterator built
+        with others serves its own batches from that place.
+
         Args:
             state: The state to stand at.
+
+        Raises:
+            ValueError: If ``state`` lacks a field or holds a negative count; the iterator is
+                left as it was.
         """
+        try:
+            place = [int(state[name]) for name in ("pass", "records", "arrived")]
+            left = None if state["passes_left"] is None else int(state["passes_left"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(
+                "a stream iterator's state holds int pass, records and arrived, and passes_left "
+                f"(an int or None); got {state!r}"
+            ) from error
+        if min(*place, 0 if left is None else left) < 0:
+            raise ValueError(f"a stream iterator's state holds no negative count; got {state!r}")
+        pass_index, records, arrived = place
         self.close()
-        left = state["passes_left"]
-        self._cursor = StreamCursor(pass_index=int(state["pass"]), arrived=int(state["arrived"]))
-        self._records = self._replay = int(state["records"])
-        self._end = None if left is None else int(state["pass"]) + int(left)
+        self._cursor = StreamCursor(pass_index=pass_index, arrived=arrived)
+        self._records = self._replay = records
+        self._end = None if left is None else pass_index + left
         self._served = None
-        self._done = self._end is not None and self._cursor.pass_index >= self._end
+        self._done = self._end is not None and pass_index >= self._end
 
     def close(self) -> None:
         """Close the open pass's reader; the iterator ends."""
@@ -281,16 +299,23 @@ class StreamBatches[T](Iterator[T]):
         return cast(T, (batch, provenance) if self._with_provenance else batch)
 
     def _end_pass(self, parts: list[tuple[Batch, Provenance]]) -> None:
-        """Move past a pass's end: the stream ends, its tail is dropped, or the next pass starts."""
+        """Meet a pass's end: the stream ends, its tail is dropped, or the next pass starts.
+
+        A pass end that ends the run while a final batch is still to be served leaves the iterator
+        in that pass: the state after a batch is just past its last row, as an epoch's end leaves
+        an indexed source's cursor in that epoch.
+        """
         cursor = self._cursor
         cursor.close()
         empty = self._served == 0
-        cursor.pass_index += 1
-        self._records, self._served = 0, 0
         if self._drop_last:
             parts.clear()
-        if empty or (self._end is not None and cursor.pass_index >= self._end):
+        if empty or (self._end is not None and cursor.pass_index + 1 >= self._end):
             self._done = True
+            if parts:
+                return
+        cursor.pass_index += 1
+        self._records, self._served = 0, 0
 
     def _read_past(self, records: int) -> None:
         """Read ``records`` of the cursor's pass unnamed: a pass resumed midway, read again."""

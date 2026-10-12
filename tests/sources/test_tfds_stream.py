@@ -46,7 +46,7 @@ from datarax.sources import (
 from tests.jax_test_environment import forwarded_jax_environment
 from tests.test_common.identity import check_identity_reaches_the_stages, IdentitySpy
 from tests.test_common.streams import (
-    batches_after_a_tree_round_trip,
+    batches_after_a_split_and_merge,
     graph_definitions_across_a_pass,
     non_array_state_leaves,
 )
@@ -336,10 +336,13 @@ class TestNnxHygiene:
         assert before == after
         assert hash(before) == hash(after)
 
-    def test_a_stream_split_and_merged_in_tree_mode_reads_as_the_original(
-        self, tfds_fixture: TFDSFixture
+    @pytest.mark.parametrize("graph", [True, False], ids=["graph-mode", "tree-mode"])
+    def test_a_stream_split_and_merged_reads_as_the_original(
+        self, tfds_fixture: TFDSFixture, graph: bool
     ) -> None:
-        merged, original = batches_after_a_tree_round_trip(lambda: _stream(tfds_fixture), 6)
+        merged, original = batches_after_a_split_and_merge(
+            lambda: _stream(tfds_fixture), 6, graph=graph
+        )
 
         assert merged[0][:, 1].tolist() == list(range(6))
         for ours, theirs in zip(merged, original, strict=True):

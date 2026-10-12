@@ -27,7 +27,7 @@ from datarax.core.element_batch import Batch
 from datarax.core.index_words import from_words
 from datarax.sources import StreamChunk
 from tests.test_common.streams import (
-    batches_after_a_tree_round_trip,
+    batches_after_a_split_and_merge,
     graph_definitions_across_a_pass,
     non_array_state_leaves,
     RecordStream,
@@ -145,6 +145,35 @@ class TestTheStreamBatch:
         stream = _TextOnly({"x": np.zeros(3, np.float32)}, texts=["a", "b", "c"])
         with pytest.raises(ValueError, match="no numeric field"):
             next(stream.iter_batches(2))
+
+    def test_a_stream_naming_records_by_id_without_ids_is_refused(self) -> None:
+        class _NoIds(RecordStream):
+            def _open_pass(
+                self, pass_index: int, key: np.ndarray | None, read_size: int
+            ) -> Iterator[StreamChunk]:
+                for chunk in super()._open_pass(pass_index, key, read_size):
+                    yield chunk._replace(ids=None)
+
+        stream = _NoIds({"x": np.zeros(3, np.float32)}, kind=RecordIdentity.STREAM_IDS)
+        with pytest.raises(TypeError, match="carries the id"):
+            next(stream.iter_batches(2))
+
+    def test_an_empty_chunk_is_passed_over(self) -> None:
+        class _WithEmpty(RecordStream):
+            def _open_pass(
+                self, pass_index: int, key: np.ndarray | None, read_size: int
+            ) -> Iterator[StreamChunk]:
+                for chunk in super()._open_pass(pass_index, key, read_size):
+                    yield chunk._replace(
+                        columns={k: v[:0] for k, v in chunk.columns.items()},
+                        provenance=(),
+                        ids=None if chunk.ids is None else chunk.ids[:0],
+                    )
+                    yield chunk
+
+        assert _names(list(_WithEmpty({"x": np.arange(_N, dtype=np.float32)}).iter_batches(4))) == (
+            list(range(_N))
+        )
 
     def test_a_stream_is_built_from_the_public_base(self) -> None:
         import datarax.sources as sources  # noqa: PLC0415
@@ -293,6 +322,46 @@ class TestState:
 
         assert batches.get_state() == {"pass": 1, "records": 2, "arrived": 12, "passes_left": 2}
 
+    def test_after_a_run_s_short_final_batch_the_state_is_in_its_last_pass(self) -> None:
+        """The state after a batch is just past its last row: a run's last pass, not the next."""
+        batches = _stream(RecordIdentity.ARRIVAL).iter_batches(4)
+        list(batches)
+
+        assert batches.get_state() == {"pass": 0, "records": _N, "arrived": _N, "passes_left": 1}
+        ended = _stream(RecordIdentity.ARRIVAL).iter_batches(4)
+        ended.set_state(batches.get_state())
+        assert list(ended) == []
+
+    @pytest.mark.parametrize(
+        "state",
+        [
+            {"pass": 0, "records": 0, "arrived": 0},
+            {"pass": -1, "records": 0, "arrived": 0, "passes_left": 1},
+            {"pass": 0, "records": 0, "arrived": 0, "passes_left": -1},
+        ],
+        ids=["a-key-missing", "a-negative-pass", "negative-passes-left"],
+    )
+    def test_a_malformed_state_is_refused_and_the_iterator_reads_on(
+        self, state: dict[str, Any]
+    ) -> None:
+        batches = _stream().iter_batches(4)
+        next(batches)
+
+        with pytest.raises(ValueError, match="state"):
+            batches.set_state(state)
+
+        assert _names([next(batches)]) == [4, 5, 6, 7]
+
+    def test_a_state_past_its_pass_s_end_resumes_at_the_next_pass(self) -> None:
+        """A saved count the pass no longer holds is replayed to the pass's end, which is served."""
+        batches = _stream().iter_batches(4, num_passes=2)
+        batches.set_state({"pass": 0, "records": _N + 5, "arrived": 0, "passes_left": 2})
+
+        served = list(batches)
+
+        assert _names(served) == list(range(_N))
+        assert set(_epochs(served)) == {1}
+
     def test_a_stream_without_end_has_no_passes_left(self) -> None:
         batches = _stream().iter_batches(4, num_passes=None)
         next(batches)
@@ -352,8 +421,9 @@ class TestNnxHygiene:
         assert before == after
         assert hash(before) == hash(after)
 
-    def test_a_stream_split_and_merged_in_tree_mode_reads_as_the_original(self) -> None:
-        merged, original = batches_after_a_tree_round_trip(_stream, 4)
+    @pytest.mark.parametrize("graph", [True, False], ids=["graph-mode", "tree-mode"])
+    def test_a_stream_split_and_merged_reads_as_the_original(self, graph: bool) -> None:
+        merged, original = batches_after_a_split_and_merge(_stream, 4, graph=graph)
 
         assert from_words(merged[0]).tolist() == [0, 1, 2, 3]
         for ours, theirs in zip(merged, original, strict=True):

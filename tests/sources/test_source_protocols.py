@@ -11,6 +11,7 @@ its records by position, and refuses only a shuffled order, which needs a length
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import grain
 import jax
@@ -116,6 +117,21 @@ def test_the_indexed_read_is_the_one_taking_epochs_and_contiguous() -> None:
     assert isinstance(forward, IndexedHostRead)
     assert not has_indexed_host_read(forward)
     assert not has_indexed_host_read(_stream())
+
+
+class _AnyKeywords(DataSourceModule):
+    """An indexed source whose read takes its keywords as ``**kwargs``."""
+
+    @property
+    def record_identity(self) -> RecordIdentity:
+        return RecordIdentity.INDEXED
+
+    def get_batch(self, indices: Any, **kwargs: Any) -> Batch:
+        raise AssertionError("never read")
+
+
+def test_a_read_taking_any_keyword_takes_epochs_and_contiguous() -> None:
+    assert has_indexed_host_read(_AnyKeywords(_Config()))
 
 
 def test_only_a_stream_reading_its_run_as_one_dataset_offers_a_sliceable_run() -> None:
