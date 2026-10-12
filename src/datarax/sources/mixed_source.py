@@ -35,6 +35,7 @@ from datarax.core import batch_ops
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import (
     DataSourceModule,
+    has_indexed_host_read,
     HostRead,
     IndexedHostRead,
     known_length,
@@ -269,7 +270,7 @@ def _refuse_unmixable(position: int, source: DataSourceModule) -> None:
             f"child {position} ({type(source).__name__}) names its records as {kind.name}; a mix "
             "names each record by its stable position in its source, so every child is INDEXED"
         )
-    if not callable(getattr(source, "get_batch", None)):
+    if not has_indexed_host_read(source):
         raise TypeError(
             f"child {position} ({type(source).__name__}) has no host read, "
             "get_batch(indices, *, epochs, contiguous), which a mix reads its records with"

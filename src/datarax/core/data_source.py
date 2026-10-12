@@ -7,7 +7,8 @@ compatibility.
 
 import abc
 import enum
-from collections.abc import Mapping
+import inspect
+from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 from typing import Any, cast, Protocol, runtime_checkable
 
@@ -169,12 +170,15 @@ class HostRead(enum.Enum):
     one thread reads at the speed of one core, so worker processes read it."""
 
 
+@runtime_checkable
 class IndexedHostRead(Protocol):
     """The stateless host read of an ``INDEXED`` source, which the host stage reads it with.
 
     ``EagerSource`` (and so ``MemorySource``, ``TFDSEagerSource`` and ``HFEagerSource``),
     ``StreamingDiskSource`` and ``MixDataSourcesNode`` implement it. It is a protocol, not a base
-    method: a stream is read forward through ``iter_batches(batch_size, ...)``, another contract.
+    method, and a stream does not satisfy it: a stream is read forward through
+    :class:`StreamHostRead`'s ``iter_batches``. ``isinstance`` checks the member's name only;
+    :func:`has_indexed_host_read` also checks the read takes ``epochs`` and ``contiguous``.
     """
 
     def get_batch(
@@ -230,6 +234,67 @@ class BatchSchedule(Protocol):
 
     def unit(self, ordinal: int) -> tuple[tuple[int, int, int], ...] | None:
         """The batches of unit ``ordinal``, or ``None`` past the run's end."""
+        ...
+
+
+class ResumableBatches(Protocol):
+    """An iterator over a stream's batches that says where it stands and resumes there."""
+
+    def __iter__(self) -> Iterator[Any]:
+        """The iterator itself."""
+        ...
+
+    def __next__(self) -> Any:
+        """The next batch, or the batch and its provenance."""
+        ...
+
+    def get_state(self) -> dict[str, Any]:
+        """Where the iterator stands."""
+        ...
+
+    def set_state(self, state: dict[str, Any]) -> None:
+        """Stand where ``state`` says."""
+        ...
+
+    def close(self) -> None:
+        """Close what the iterator holds open."""
+        ...
+
+
+@runtime_checkable
+class StreamHostRead(Protocol):
+    """The forward host read of a ``STREAM_IDS`` or ``ARRIVAL`` source: one resumable iterator.
+
+    Every stream built on ``datarax.sources.StreamingSourceBase`` implements it; the pipeline's
+    host stage wraps the iterator it returns.
+    """
+
+    def iter_batches(  # noqa: PLR0913 - the read's batch rule, order and reads
+        self,
+        batch_size: int,
+        *,
+        num_passes: int | None = 1,
+        key: ArrayLike | None = None,
+        with_provenance: bool = False,
+        read_size: int | None = None,
+        drop_last: bool = False,
+    ) -> ResumableBatches:
+        """Read the stream's passes as host ``Batch``es through one resumable iterator."""
+        ...
+
+
+@runtime_checkable
+class SliceableStreamRun(Protocol):
+    """A stream that reads a whole run of its passes as one sliceable Grain dataset (TFDS).
+
+    The run's orders are computed without reading the records, so the dataset can be sliced
+    across Grain worker processes; the host stage reads such a stream's run through it.
+    """
+
+    def run_dataset(
+        self, schedule: BatchSchedule, key: np.ndarray | None, *, for_workers: bool = False
+    ) -> Any:
+        """The run's units as one Grain dataset, numbered from the run's start."""
         ...
 
 
@@ -489,6 +554,33 @@ class DataSourceModule(StructuralModule):
             f"{self.__class__.__name__} must implement element_spec(). "
             "Return a PyTree of jax.ShapeDtypeStruct describing one emitted element."
         )
+
+
+def has_indexed_host_read(source: DataSourceModule) -> bool:
+    """Whether ``source`` reads by index: a ``get_batch`` taking ``epochs`` and ``contiguous``.
+
+    The one test of an indexed host read, for the host stage and the mix: ``isinstance`` with
+    :class:`IndexedHostRead` sees the name only, and a forward ``get_batch(batch_size, ...)`` has
+    the name and neither keyword.
+
+    Args:
+        source: The source.
+
+    Returns:
+        Whether its ``get_batch`` is the indexed host read.
+    """
+    if not isinstance(source, IndexedHostRead):
+        return False
+    parameters = inspect.signature(source.get_batch).parameters.values()
+    if any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters):
+        return True
+    names = {
+        parameter.name
+        for parameter in parameters
+        if parameter.kind
+        in (inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    }
+    return {"epochs", "contiguous"} <= names
 
 
 def read_records(

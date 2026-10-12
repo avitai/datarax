@@ -171,6 +171,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `close()`, when it is collected, and at interpreter exit before module teardown (a backend
   reader left suspended until teardown hangs there, as HuggingFace's Parquet reader does). The
   pipeline's host stage wraps the same iterator, so a stream's pass is counted in one place.
+- The host reads are runtime-checkable protocols with distinct member names in
+  `datarax.core.data_source`: `IndexedHostRead` (`get_batch(indices, *, epochs, contiguous)`),
+  `StreamHostRead` (`iter_batches`, returning a `ResumableBatches`) and `SliceableStreamRun`
+  (`run_dataset`, a run read as one sliceable Grain dataset, which TFDS streams implement).
+  `has_indexed_host_read(source)` is the one test of an indexed read, the protocol plus its
+  `epochs` and `contiguous` keywords; the pipeline's host stage and `MixDataSourcesNode` dispatch
+  on these, so an indexed source declaring a forward `get_batch(batch_size)` is still refused, and
+  a stream without `iter_batches` is refused naming `StreamingSourceBase`.
 - `DataSourceModule.provenance(indices)` and `DataSourceModule.record_keys(batch)`: a source
   naming records stably (`INDEXED`, `STREAM_IDS`) serves each record's strings and objects by
   its index, one immutable mapping per index (empty for a record carrying nothing but arrays),
