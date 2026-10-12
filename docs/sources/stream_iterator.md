@@ -15,7 +15,7 @@ batches = stream.iter_batches(32, num_passes=2)
 first = next(batches)
 state = batches.get_state()  # {"pass", "records", "arrived", "passes_left"}
 
-resumed = stream.iter_batches(32, num_passes=2)
+resumed = stream.iter_batches(32, num_passes=2)  # built with the same arguments
 resumed.set_state(state)  # serves exactly what `batches` would have served next
 ```
 

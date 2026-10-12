@@ -162,8 +162,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pass's head, each row keeping its pass, unless `drop_last` skips them: the rule `EpochPlan`
   applies to an indexed source. `num_passes=None` never ends. A pass is read `read_size` records
   at a time, the pipeline's batch size. `get_state()` is where the iterator stands (`pass`,
-  `records`, `arrived`, `passes_left`) and `set_state()` serves exactly what the original would
-  have, a pass resumed midway read again to the saved count. An error raised while a pass is read
+  `records`, `arrived`, `passes_left`); an iterator built with the same arguments and set to it
+  with `set_state()` serves exactly what the original would have, a pass resumed midway read
+  again to the saved count. An error raised while a pass is read
   reaches the `next` that met it, and the iterator then refuses to go on, naming it; a new
   iterator starts again. The stream holds no position, so no Variable holds a Python value and
   the graph definition does not move as it is read. `element_spec()` is the first record's array
@@ -320,8 +321,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TFDSStreamingSource.pass_dataset(pass_index, key, batch_size)` take `key` as uint32 words on the
   host (`datarax.core.prng.key_words`), `pass_seed(key, pass_index)`, `pass_generator` and
   `key_integer` take the words, and `iter_batches(..., key=...)` reads a typed or raw key's words
-  once. A pass opens under `jax.transfer_guard("disallow")`. `_source_base.typed_key` is
-  removed.
+  once. The fold places its operands and reads its result back explicitly, so a pass opens
+  under a caller's `jax.transfer_guard("disallow")`. `_source_base.typed_key` is removed.
 - `datarax.sources._grain_bridge` is `datarax.sources._index_validation`, named for the one
   function it holds, `validate_index_batch`.
 - `MixDataSourcesNode` mixes on Grain's mix. Position `k` of an epoch belongs to the source
