@@ -2,10 +2,7 @@
 
 __all__: list[str]
 
-from ._source_base import (
-    StreamChunk as StreamChunk,
-    StreamingSourceBase as StreamingSourceBase,
-)
+from ._source_base import StreamingSourceBase as StreamingSourceBase
 from .array_record_source import (
     ArrayRecordSourceConfig as ArrayRecordSourceConfig,
     ArrayRecordSourceModule as ArrayRecordSourceModule,
@@ -27,6 +24,7 @@ from .mixed_source import (
     MixDataSourcesNode as MixDataSourcesNode,
 )
 from .source_ops import resolve_wrapped_indices as resolve_wrapped_indices
+from .stream_iterator import StreamChunk as StreamChunk
 from .streaming_disk_source import (
     StreamingDiskSource as StreamingDiskSource,
     StreamingDiskSourceConfig as StreamingDiskSourceConfig,

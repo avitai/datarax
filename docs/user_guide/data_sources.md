@@ -102,7 +102,7 @@ from flax import nnx
 train_source = HFStreamingSource(HFStreamingConfig(name="stanfordnlp/sst2", split="train"))
 
 # A stream's batches hold its numeric columns; its text travels beside each batch
-batch, provenance = train_source.get_batch(16, with_provenance=True)
+batch, provenance = next(train_source.iter_batches(16, with_provenance=True))
 print(batch["label"][:2], [record["sentence"] for record in provenance[:2]])
 
 # Or iterate a pipeline over the stream, shuffled from the pipeline's seed
@@ -203,7 +203,8 @@ Any other source subclasses `DataSourceModule` and declares what its record inde
    (a generator of `StreamChunk`s: host columns, provenance and ids, read `read_size` records
    at a time; `key` is the pipeline's key as uint32 words on the host, or `None` for the
    stream's own order, and a pass's order is drawn from `pass_seed(key, pass_index)`), and is
-   read forward by the host stage. An indexed source that
+   read forward through `iter_batches(batch_size, ...)`: one resumable iterator over its passes,
+   which the host stage wraps. An indexed source that
    partitions or mixes records also overrides `record_indices_at(start, size, key)` to return
    the stable index of the record at each position of the order the key selects (the
    sequential order when the key is `None`), uint32 `(size, 2)` with each 64-bit index as its

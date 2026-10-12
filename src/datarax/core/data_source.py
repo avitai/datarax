@@ -174,8 +174,7 @@ class IndexedHostRead(Protocol):
 
     ``EagerSource`` (and so ``MemorySource``, ``TFDSEagerSource`` and ``HFEagerSource``),
     ``StreamingDiskSource`` and ``MixDataSourcesNode`` implement it. It is a protocol, not a base
-    method: a stream's ``get_batch(batch_size, ...)`` pulls forward, a different contract under
-    the same name.
+    method: a stream is read forward through ``iter_batches(batch_size, ...)``, another contract.
     """
 
     def get_batch(
@@ -280,8 +279,8 @@ class DataSourceModule(StructuralModule):
 
         ``INDEXED`` sources implement ``record_indices_at``, the traced ``get_records`` that
         ``step()`` calls, and the host read ``get_batch(indices, *, epochs, contiguous)`` that the
-        pipeline's host stage calls; ``STREAM_IDS`` and ``ARRIVAL`` sources pull
-        forward with ``get_batch(batch_size)``, which the host stage calls in order. A subclass
+        pipeline's host stage calls; ``STREAM_IDS`` and ``ARRIVAL`` sources are read forward
+        through ``iter_batches(batch_size, ...)``, whose iterator the host stage wraps. A subclass
         declares it with a property returning its kind.
         """
 
@@ -424,8 +423,8 @@ class DataSourceModule(StructuralModule):
             )
         raise NotImplementedError(
             f"{type(self).__name__} does not implement get_records(indices), which an INDEXED "
-            "source serves its records with; a stream declares STREAM_IDS or ARRIVAL and "
-            "implements get_batch(batch_size)."
+            "source serves its records with; a stream declares STREAM_IDS or ARRIVAL and is "
+            "read through iter_batches(batch_size)."
         )
 
     def record_indices_at(

@@ -44,6 +44,7 @@ batch = source.get_batch(to_words(np.arange(32)))
 - [source_ops](source_ops.md) - The helpers a source is built from: wrapped index resolution, worker shares, key filters and the named-dataset repr
 - [tfds_source](tfds_source.md) - TensorFlow Datasets integration
 - [memory_source](memory_source.md) - In-memory data for testing
+- [stream_iterator](stream_iterator.md) - How a stream is read: one resumable iterator over its passes, `iter_batches`
 - [streaming_disk_source](streaming_disk_source.md) - A `.npy` array larger than RAM, read through a memory map
 - [array_record_source](array_record_source.md) - ArrayRecord format (Google)
 - [mixed_source](mixed_source.md) - Combine multiple data sources

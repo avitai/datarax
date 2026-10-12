@@ -133,7 +133,7 @@ def test_hf_streaming_source_element_spec_honors_key_filters(
     spec = source.element_spec()
 
     assert set(spec) == {"feature"}
-    assert set(source.get_batch(2).data) == {"feature"}
+    assert set(next(source.iter_batches(2)).data) == {"feature"}
 
 
 def test_hf_streaming_source_spec_is_what_the_device_holds_of_its_batches(monkeypatch) -> None:
@@ -148,5 +148,5 @@ def test_hf_streaming_source_spec_is_what_the_device_holds_of_its_batches(monkey
     batches = list(Pipeline(source=source, stages=[], batch_size=3, rngs=nnx.Rngs(0)))
 
     assert spec["score"] == jax.ShapeDtypeStruct((), jnp.float32)
-    assert source.get_batch(3)["score"].dtype == np.float64
+    assert next(source.iter_batches(3))["score"].dtype == np.float64
     assert [batch["score"].dtype for batch in batches] == [jnp.float32, jnp.float32]

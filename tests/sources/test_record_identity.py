@@ -136,14 +136,10 @@ def test_an_indexed_source_is_served_by_the_host_stage() -> None:
 
 
 @pytest.mark.parametrize("kind", [RecordIdentity.STREAM_IDS, RecordIdentity.ARRIVAL])
-def test_a_stream_is_served_by_the_host_stage_at_a_position_of_its_own(
-    kind: RecordIdentity,
-) -> None:
-    source = _stream(kind)
-    values, in_session = _served(source)
+def test_a_stream_is_served_by_the_host_stage(kind: RecordIdentity) -> None:
+    values, in_session = _served(_stream(kind))
     assert not in_session
     assert values == [float(i) for i in range(8)]
-    assert source.pass_index == 0  # the stream's own position is the standalone API's
 
 
 def test_a_session_of_a_stream_is_refused_naming_its_kind() -> None:

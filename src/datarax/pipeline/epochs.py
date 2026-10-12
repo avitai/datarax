@@ -1,7 +1,7 @@
 """How a pipeline's records divide into batches and epochs, and which records a batch holds.
 
-:class:`EpochPlan` is the rule for a source the pipeline indexes, :func:`stream_batches` the same
-rule over a stream's passes; this module is the one place the rule lives. :func:`batch_records`
+:class:`EpochPlan` is the rule for a source the pipeline indexes; a stream's iterator applies the
+same rule to its passes (:mod:`datarax.sources.stream_iterator`). :func:`batch_records`
 names the records a batch of an indexed source holds by that rule, each row by its own epoch's
 order; the compiled session traces it, and :class:`HostNaming` runs it on the CPU device for the
 host stage. No batch holds padding.
@@ -21,7 +21,7 @@ from __future__ import annotations
 import dataclasses
 import enum
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from typing import Any, cast, NamedTuple
 
 import jax
@@ -31,9 +31,7 @@ from flax import nnx
 from flax.nnx import graphlib
 from jax.typing import ArrayLike
 
-from datarax.core import batch_ops
-from datarax.core.data_source import DataSourceModule, Provenance
-from datarax.core.element_batch import Batch
+from datarax.core.data_source import DataSourceModule
 from datarax.core.index_words import is_word_start, split_constant, subtract, to_words
 from datarax.core.prng import host_device, NAMING_PRNG_IMPL
 from datarax.pipeline.compiled import cached_program
@@ -671,63 +669,3 @@ def _shape_only(leaf: Any) -> Any:
     if dtype is None or jnp.issubdtype(dtype, jax.dtypes.extended):
         return leaf
     return np.broadcast_to(np.zeros((), dtype), np.shape(leaf))
-
-
-def stream_batches(
-    pull: Callable[[int], tuple[Batch, Provenance]],
-    batch_size: int,
-    *,
-    drop_last: bool,
-    num_epochs: int | None,
-) -> Iterator[tuple[Batch, Provenance]]:
-    """The batches of a stream's passes, by the rule :class:`EpochPlan` applies to an index.
-
-    ``pull(n)`` returns up to ``n`` records of the stream's current pass as a ``Batch`` and their
-    provenance (one mapping per record, or none), empty at the pass's end, after which it serves
-    the next pass. Under ``drop_last`` a pass's records short of a full batch are skipped;
-    otherwise the batch is completed from the head of the next pass, each row keeping its own
-    epoch. After ``num_epochs`` passes the run ends, its last batch possibly short; with ``None``
-    it never ends. A run may start where an earlier one stopped: mid-pass, or at a pass's end it
-    has not yet read, which counts as a pass served, as an exhausted epoch does. A pass the run
-    read from its start to its end holding no record means the stream holds none, and ends the
-    run; whether a pass held records is known only for a pass the run saw begin, never from a
-    count over the run.
-
-    Args:
-        pull: Reads up to the given number of records of the current pass, with provenance.
-        batch_size: Records per batch.
-        drop_last: Whether a pass's records short of a full batch are skipped.
-        num_epochs: Passes served, or ``None`` for no end.
-
-    Yields:
-        Full batches with their records' provenance, and under ``drop_last=False`` the run's
-        short final batch.
-    """
-    pending: list[tuple[Batch, Provenance]] = []
-    held = passes = 0
-    served: int | None = None  # records of the current pass, unknown until a pass starts in view
-    while num_epochs is None or passes < num_epochs:
-        batch, provenance = pull(batch_size - held)
-        if batch.batch_size == 0:
-            passes += 1
-            if served == 0:  # a pass read whole held no record: the stream holds none
-                break
-            served = 0
-            if drop_last:
-                pending, held = [], 0
-            continue
-        pending.append((batch, provenance))
-        held += batch.batch_size
-        served = (served or 0) + batch.batch_size
-        if held == batch_size:
-            yield _joined(pending)
-            pending, held = [], 0
-    if pending and not drop_last:
-        yield _joined(pending)
-
-
-def _joined(parts: list[tuple[Batch, Provenance]]) -> tuple[Batch, Provenance]:
-    if len(parts) == 1:
-        return parts[0]
-    batch = batch_ops.concatenate([batch for batch, _ in parts])
-    return batch, tuple(record for _, provenance in parts for record in provenance)

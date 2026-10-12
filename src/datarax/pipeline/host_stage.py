@@ -12,8 +12,8 @@ Every source kind reads through one stage, which does nothing but read:
   (:class:`~datarax.core.data_source.IndexedHostRead`).
 - A stream with a run dataset (TFDS) reads the same units of its passes through that dataset: one
   Grain dataset for the run, numbered from the run's start, which Grain can slice across workers.
-- Any other stream (HuggingFace) is read pass by pass, at a position of the host stage's own, its
-  batches cut by :func:`~datarax.pipeline.epochs.stream_batches`.
+- Any other stream (HuggingFace) is read through its own iterator,
+  :meth:`~datarax.sources.StreamingSourceBase.iter_batches`, set to the host stage's cursor.
 
 How a run is read is its plan (:meth:`HostStage.plan`): without a RAM budget, an indexed source
 on one Grain read thread two units ahead and a stream on its one producer thread, as C5a-4 left
@@ -41,7 +41,6 @@ import dataclasses
 import inspect
 import logging
 import sys
-import time
 import weakref
 from collections.abc import Callable, Iterator, Mapping
 from types import MappingProxyType
@@ -65,7 +64,7 @@ from datarax.core.index_words import to_words
 from datarax.core.prng import key_words
 from datarax.core.spec import declared_spec, validate_batch, validate_device_dtypes
 from datarax.pipeline import host_workers, run_configuration as configuration
-from datarax.pipeline.epochs import EpochPlan, HostNaming, Run, stream_batches
+from datarax.pipeline.epochs import EpochPlan, HostNaming, Run
 from datarax.pipeline.host_workers import JaxSettings
 from datarax.pipeline.read_plan import (
     budget_plan,
@@ -80,7 +79,7 @@ from datarax.pipeline.read_plan import (
     spec_bytes,
 )
 from datarax.pipeline.run_units import HostElement, IndexedRead, RunUnits
-from datarax.sources._source_base import StreamCursor, StreamingSourceBase
+from datarax.sources._source_base import StreamingSourceBase
 
 
 logger = logging.getLogger(__name__)
@@ -153,75 +152,39 @@ class _StreamRead:
 
 
 class _StreamIterator(grain.DatasetIterator):
-    """Units of a stream's run, cut by :func:`stream_batches` from the host stage's position."""
+    """Units of a stream's run, read through the stream's own iterator from the stage's cursor."""
 
     def __init__(self, source: StreamingSourceBase, cursor: Cursor, config: _StreamRead) -> None:
         super().__init__()
-        self._source = source
         self._config = config
-        self._stream = StreamCursor(pass_index=cursor.epoch, arrived=cursor.arrived)
-        self._epoch, self._position = cursor.epoch, cursor.position
-        passes = None if cursor.end_epoch is None else max(0, cursor.end_epoch - cursor.epoch)
-        config.settings.run(self._skip, cursor.position)
-        self._batches = stream_batches(
-            self._pull, config.batch_size, drop_last=config.drop_last, num_epochs=passes
+        self._batches = source.iter_batches(
+            config.batch_size,
+            key=config.key,
+            with_provenance=True,
+            read_size=config.batch_size,
+            drop_last=config.drop_last,
+        )
+        self._batches.set_state(
+            {
+                "pass": cursor.epoch,
+                "records": cursor.position,
+                "arrived": cursor.arrived,
+                "passes_left": None
+                if cursor.end_epoch is None
+                else max(0, cursor.end_epoch - cursor.epoch),
+            }
         )
         self._held: list[tuple[Batch, Provenance, tuple[int, int, int]]] = []
-        self._ended = False
         self._units = 0
-        weakref.finalize(self, self._stream.close)
-
-    def _skip(self, records: int) -> None:
-        """Read past ``records`` of the cursor's pass without naming them (a resumed pass).
-
-        The stream has no position to seek to, so its pass is read again from the start to the
-        saved count, as it was first read; the replay's cost is logged at ``INFO``.
-        """
-        if not records:
-            return
-        started = time.perf_counter()
-        left = records
-        while left:
-            batch, _ = self._source.read_from(
-                self._stream, left, key=self._config.key, read_size=self._config.batch_size
-            )
-            if not batch.batch_size:
-                break
-            left -= batch.batch_size
-        self._stream.arrived -= records - left if self._named_by_arrival() else 0
-        logger.info(
-            "%s resumed mid-pass: replayed %d records of pass %d in %.3f s",
-            type(self._source).__name__,
-            records - left,
-            self._epoch,
-            time.perf_counter() - started,
-        )
-
-    def _named_by_arrival(self) -> bool:
-        return self._source.record_identity is RecordIdentity.ARRIVAL
-
-    def _pull(self, size: int) -> tuple[Batch, Provenance]:
-        batch, provenance = self._source.read_from(
-            self._stream, size, key=self._config.key, read_size=self._config.batch_size
-        )
-        if batch.batch_size:
-            self._config.check(batch)
-        return batch, provenance
 
     def _next_batch(self) -> tuple[Batch, Provenance, tuple[int, int, int]] | None:
-        if self._ended:
-            return None
         try:
             batch, provenance = next(self._batches)
         except StopIteration:
-            self._ended = True
             return None
-        epochs = np.asarray(batch.epochs)
-        last = int(epochs[-1])
-        rows = int(np.sum(epochs == last))
-        self._position = (self._position if last == self._epoch else 0) + rows
-        self._epoch = last
-        return batch, provenance, (self._epoch, self._position, self._stream.arrived)
+        self._config.check(batch)
+        after = self._batches.get_state()
+        return batch, provenance, (after["pass"], after["records"], after["arrived"])
 
     def _fill(self, chunk: int) -> None:
         """Hold up to ``chunk`` batches, stopping at the run's end or its short final batch."""
@@ -1209,7 +1172,7 @@ def _has_indexed_host_read(source: DataSourceModule) -> bool:
     """Whether ``source`` has a ``get_batch`` taking ``epochs`` and ``contiguous`` by keyword.
 
     The shape :class:`~datarax.core.data_source.IndexedHostRead` declares, as far as a run's
-    start can see it: a stream's forward ``get_batch(batch_size, ...)`` has neither keyword.
+    start can see it: a forward ``get_batch(batch_size, ...)`` has neither keyword.
     """
     get_batch = getattr(source, "get_batch", None)
     if not callable(get_batch):

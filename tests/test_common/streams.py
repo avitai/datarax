@@ -7,8 +7,8 @@ names records by their position (``STREAM_IDS``) or by arrival (``ARRIVAL``), an
 field as provenance.
 
 The checks below hold for every stream and are run on each (brief T11): the chunks a stream's
-passes yield, no Python value in a Variable, a graph definition that does not move as the stream
-advances, and a tree-mode split and merge that reads on from the same place.
+passes yield, no Python value in a Variable, a graph definition that does not move as the stream is
+read, and a tree-mode split and merge that reads as the original.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from datarax.core.data_source import RecordIdentity
 from datarax.core.host_values import HostValue
 from datarax.core.prng import pass_generator
 from datarax.sources import StreamChunk, StreamingSourceBase
-from datarax.sources._source_base import chunk_size
+from datarax.sources.stream_iterator import chunk_size
 
 
 # The provenance of a record without text: read-only, so every such record shares it.
@@ -137,6 +137,38 @@ def record_chunks(
     return seen
 
 
+def fail_a_stream_read(
+    monkeypatch: pytest.MonkeyPatch,
+    stream_type: type[StreamingSourceBase],
+    at: int,
+    error: BaseException,
+) -> None:
+    """Make the ``at``-th chunk ``stream_type``'s pass readers yield raise ``error`` instead, once.
+
+    The error is raised inside the pass reader, where a flaky file system or decode raises it, so
+    the stream's iterator meets it as it would a real one.
+
+    Args:
+        monkeypatch: Restores the stream type's ``_open_pass`` after the test.
+        stream_type: The stream class whose reads fail.
+        at: The chunk, counted across every pass opened from now on, that fails.
+        error: What it raises.
+    """
+    read = [0]
+    original = stream_type._open_pass  # noqa: SLF001 - the hook every stream implements
+
+    def flaky(
+        self: StreamingSourceBase, pass_index: int, key: np.ndarray | None, read_size: int
+    ) -> Iterator[StreamChunk]:
+        for chunk in original(self, pass_index, key, read_size):
+            read[0] += 1
+            if read[0] == at:
+                raise error
+            yield chunk
+
+    monkeypatch.setattr(stream_type, "_open_pass", flaky)
+
+
 def non_array_state_leaves(module: nnx.Module) -> list[type]:
     """The types of a module's NNX state leaves that are not arrays: none, for a source."""
     leaves = jax.tree.leaves(nnx.state(module))
@@ -144,33 +176,30 @@ def non_array_state_leaves(module: nnx.Module) -> list[type]:
 
 
 def graph_definitions_across_a_pass(stream: StreamingSourceBase, size: int) -> tuple[Any, Any]:
-    """The stream's graph definition before and after a keyed pull and a whole pass."""
+    """The stream's graph definition before and after a keyed pass read whole."""
     before = nnx.graphdef(stream)
-    stream.get_batch(size, key=jax.random.key(0))
-    while stream.get_batch(size).batch_size:
+    for _ in stream.iter_batches(size, key=jax.random.key(0)):
         pass
     return before, nnx.graphdef(stream)
 
 
-def second_pulls_after_a_tree_round_trip(
+def batches_after_a_tree_round_trip(
     make: Callable[[], StreamingSourceBase], size: int
 ) -> tuple[list[np.ndarray], list[np.ndarray]]:
-    """The second pull of a stream split and merged in tree mode after its first, and of a twin.
+    """The first batch of a stream split and merged in tree mode, and of the stream unsplit.
 
     Args:
         make: Builds the stream.
-        size: Records per pull.
+        size: Records per batch.
 
     Returns:
-        The two second pulls, each as its ids and its array leaves.
+        The two first batches, each as its ids and its array leaves.
     """
-    stream, twin = make(), make()
-    stream.get_batch(size)
-    twin.get_batch(size)
+    stream, original = make(), make()
     graphdef, state = nnx.split(stream, graph=False)
     merged = nnx.merge(graphdef, state)
 
     def leaves(batch: Any) -> list[np.ndarray]:
         return [np.asarray(batch.indices), *(np.asarray(x) for x in jax.tree.leaves(batch.data))]
 
-    return leaves(merged.get_batch(size)), leaves(twin.get_batch(size))
+    return leaves(next(merged.iter_batches(size))), leaves(next(original.iter_batches(size)))

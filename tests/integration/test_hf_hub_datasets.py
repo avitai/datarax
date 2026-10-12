@@ -57,7 +57,7 @@ def test_a_hub_dataset_streams_its_expected_fields(
 ) -> None:
     config = HFStreamingConfig(name=name, split="train", exclude_keys=excluded)
     try:
-        batch = HFStreamingSource(config).get_batch(RECORDS)
+        batch = next(HFStreamingSource(config).iter_batches(RECORDS))
     except Exception as error:  # noqa: BLE001 - classified: skip only an unreachable Hub
         if unreachable(error) or unreachable(error.__cause__ or error):
             pytest.skip(f"Hugging Face Hub unavailable: {error}")

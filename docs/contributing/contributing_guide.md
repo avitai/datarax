@@ -505,7 +505,7 @@ class NewDataSource(DataSourceModule):
         `indices` is uint32 (n, 2), each record's 64-bit index as its words (hi, lo).
         An INDEXED source implements it: the pipeline names a batch's records with
         record_indices_at and gathers them with get_records. A stream (STREAM_IDS or
-        ARRIVAL) implements get_batch(batch_size) instead.
+        ARRIVAL) builds on StreamingSourceBase and is read through iter_batches instead.
         """
         # Your implementation
 

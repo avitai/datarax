@@ -66,14 +66,12 @@ def _stream_passes(
     files = source.shard_files  # one split, so its files in name order are its files in order
     start = dict(zip(files, np.cumsum([0, *shard_sizes])[:-1].tolist(), strict=True))
     key = jax.random.key(seed)
-    passes = []
-    for _ in range(mixing.PASSES):
-        positions = []
-        while (batch := source.get_batch(256, key=key)).batch_size:
-            for shard, offset in np.asarray(batch.indices):
-                positions.append(start[files[int(shard)]] + int(offset))
-        passes.append(np.asarray(positions))
-    return passes
+    positions: list[list[int]] = [[] for _ in range(mixing.PASSES)]
+    for batch in source.iter_batches(256, num_passes=mixing.PASSES, key=key):
+        rows = zip(np.asarray(batch.indices), np.asarray(batch.epochs), strict=True)
+        for (shard, offset), pass_index in rows:
+            positions[int(pass_index)].append(start[files[int(shard)]] + int(offset))
+    return [np.asarray(served) for served in positions]
 
 
 @pytest.mark.parametrize("shards", _SHARDS)

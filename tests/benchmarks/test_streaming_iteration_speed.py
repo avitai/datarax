@@ -44,8 +44,8 @@ _BATCH_SIZE = 64
 _FEATURES = 32
 
 # The datarax functions a stream pass starts per batch, by qualified name, and how often: the
-# layers of the path in host_stage, the source and dag_call. Equality, so a new layer or a second
-# call of one names itself in the failure.
+# layers of the path in host_stage, the stream's iterator and dag_call. Equality, so a new layer
+# or a second call of one names itself in the failure.
 _STREAM_PATH_PER_BATCH = {
     # Serving and placement: the run's iterator, the placed-ahead buffer, one device_put.
     "_Served.__next__": 1,
@@ -53,27 +53,28 @@ _STREAM_PATH_PER_BATCH = {
     "_PlacedAheadIterator.__next__": 1,
     "_PlacedAheadIterator._fill": 1,
     "_place": 1,
-    # The read unit and the cursor, on the read thread.
+    # The read unit, on the read thread: the stream's iterator, then where it stands, once.
     "_StreamIterator.__next__": 1,
     "_StreamIterator._fill": 1,
     "_StreamIterator._next_batch": 1,
     "_StreamIterator._unit": 1,
     "_StreamIterator._unit.<locals>.<genexpr>": 1,
-    "_StreamIterator._pull": 1,
     "_StreamIterator.get_state": 1,
+    "StreamBatches.get_state": 1,
+    # The stream's read and its records' names: one chunk taken, sized once, named once.
+    "StreamBatches.__next__": 1,
+    "StreamBatches._pull": 1,
+    "StreamBatches._named": 1,
+    "_take": 1,
+    "_join": 1,
+    "_concatenated": 1,
     "chunk_size": 3,
-    # The source's read and its records' names.
-    "StreamingSourceBase._pull": 1,
-    "StreamingSourceBase.read_from": 1,
-    "StreamingSourceBase._named": 1,
     "to_words": 1,
     "from_arrays": 1,
-    "_join": 1,
-    "_joined": 1,
     "_namespace": 1,
     "_namespace.<locals>.<genexpr>": 1,
     "_record_axis": 1,
-    "Batch.batch_size": 6,
+    "Batch.batch_size": 2,
     # The spec check, once per batch.
     "_checker.<locals>.check": 1,
     "validate_batch": 1,
@@ -98,13 +99,13 @@ _STREAM_PATH_PER_BATCH = {
 #   step's state rebuild (8). It was 13 while the spec check entered ``jax.enable_x64`` around
 #   every batch (``State.__call__``, the context manager's ``__init__``, ``__enter__``,
 #   ``__exit__`` and the bool parser); the read now holds the run's settings instead;
-# - numpy: the cursor's np.sum over the batch's epochs (sum, _wrapreduction, _sum_dispatcher);
+# - numpy: none. The stream's iterator counts where it stands; nothing sums a batch's epochs;
 # - other: grain's record_self_time context manager (4 contextlib frames) and its deep copy of
 #   the read iterator's state, {} (3), the HostElement named tuple's constructor (1) and the
 #   cast in _Served.__next__ (1);
 # - flax: none. Both passes split the DAG once and run a step that closes over its graph
 #   definition, so neither touches flax beyond the same per-batch state handling.
-_LIBRARY_ALLOWANCE = {"flax": 0, "grain": 14, "jax": 8, "numpy": 3, "other": 9}
+_LIBRARY_ALLOWANCE = {"flax": 0, "grain": 14, "jax": 8, "numpy": 0, "other": 9}
 
 # Starts whose number the process's history decides, not the code under test:
 # - grain's stats registry keys iterators by id(), so HashableWeakRef.__eq__ runs only when a new
@@ -188,7 +189,7 @@ def _by_hand_pass(batches: int = _BATCHES) -> None:
     graphdef, state = nnx.split(_pipeline(source).dag)
     step = _step(graphdef)
     outputs = []
-    while (batch := source.get_batch(_BATCH_SIZE)).batch_size:
+    for batch in source.iter_batches(_BATCH_SIZE):
         output, state = step(state, jax.device_put(batch))
         outputs.append(output)
     jax.block_until_ready(outputs)
@@ -201,9 +202,7 @@ def _nnx_jit_pass() -> None:
     """The DAG through ``nnx.jit`` on every batch: the graph traversed per call."""
     source = _stream()
     pipeline = _pipeline(source)
-    outputs = []
-    while (batch := source.get_batch(_BATCH_SIZE)).batch_size:
-        outputs.append(_apply_per_batch(pipeline.dag, batch))
+    outputs = [_apply_per_batch(pipeline.dag, batch) for batch in source.iter_batches(_BATCH_SIZE)]
     jax.block_until_ready(outputs)
 
 

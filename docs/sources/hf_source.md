@@ -21,7 +21,7 @@
     - Text and other non-array columns are kept as each record's provenance, beside the batches, never refused
     - For datasets larger than your disk, use `HFStreamingSource` or `from_hf(streaming=True)` (streaming is not a field on `HFEagerConfig`)
     - Both are shuffled by their pipeline (`Pipeline(shuffle=True)`): the eager source by an O(1)-memory Feistel index shuffle, the stream by HuggingFace's buffer shuffle seeded from the pipeline's key, each pass in its own order
-    - The stream names records by their arrival and hands text out beside each batch (`get_batch(n, with_provenance=True)`); the eager source serves it by index (`provenance(indices)`)
+    - The stream names records by their arrival and hands text out beside each batch (`iter_batches(n, with_provenance=True)`); the eager source serves it by index (`provenance(indices)`)
     - `get_batch(indices)` reads the named records as a `Batch` with one host gather
 
 ## Installation

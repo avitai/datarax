@@ -31,10 +31,7 @@ HuggingFace ``datasets``.
 
 import lazy_loader
 
-from datarax.sources._source_base import (
-    StreamChunk as StreamChunk,
-    StreamingSourceBase as StreamingSourceBase,
-)
+from datarax.sources._source_base import StreamingSourceBase as StreamingSourceBase
 from datarax.sources.eager_source import EagerSource as EagerSource
 from datarax.sources.memory_source import (
     MemorySource as MemorySource,
@@ -45,6 +42,7 @@ from datarax.sources.mixed_source import (
     MixDataSourcesNode as MixDataSourcesNode,
 )
 from datarax.sources.source_ops import resolve_wrapped_indices as resolve_wrapped_indices
+from datarax.sources.stream_iterator import StreamChunk as StreamChunk
 from datarax.sources.streaming_disk_source import (
     StreamingDiskSource as StreamingDiskSource,
     StreamingDiskSourceConfig as StreamingDiskSourceConfig,
