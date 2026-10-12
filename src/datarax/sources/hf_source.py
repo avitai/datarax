@@ -34,11 +34,11 @@ except ImportError as error:
 
 from datarax.core.data_source import DataSourceModule, NO_PROVENANCE, RecordIdentity
 from datarax.core.host_values import HostValue
+from datarax.core.prng import key_integer
 from datarax.core.spec import JAX_ARRAY_KINDS
 from datarax.sources._config_base import SourceConfigBase, StreamingSourceConfigBase
 from datarax.sources._source_base import (
     DatasetSourceMixin,
-    key_integer,
     StreamChunk,
     StreamingSourceBase,
 )

@@ -173,3 +173,43 @@ def fold_on_host(words: np.ndarray, data: int) -> np.ndarray:
         jax.device_put(np.uint32(data % (1 << 32)), cpu),
     )
     return np.asarray(jax.device_get(folded), np.uint32)
+
+
+def pass_generator(key: np.ndarray, pass_index: int) -> np.random.Generator:
+    """The generator a stream draws pass ``pass_index``'s order from: keyed by the pass's key.
+
+    The pass's key is ``fold_in(key, pass_index)``, the key an indexed pipeline orders its epoch
+    ``pass_index`` by, so passes never share a key (Grain's ``seed + epoch`` collision cannot
+    arise). Its data keys NumPy's counter-based Philox generator.
+
+    Args:
+        key: The pipeline's key as its uint32 words on the host.
+        pass_index: The pass, from 0.
+
+    Returns:
+        The pass's generator.
+    """
+    return np.random.Generator(np.random.Philox(key=pass_seed(key, pass_index)))
+
+
+def pass_seed(key: np.ndarray, pass_index: int) -> int:
+    """Pass ``pass_index``'s key, ``fold_in(key, pass_index)``, as one integer.
+
+    The fold runs on the CPU device from the key's host words
+    (:func:`fold_on_host`): nothing is read back from an accelerator, and
+    nothing transfers implicitly.
+
+    Args:
+        key: The pipeline's key as its uint32 words on the host
+            (:func:`key_words`).
+        pass_index: The pass, from 0.
+
+    Returns:
+        The pass key's data as a non-negative integer.
+    """
+    return key_integer(fold_on_host(key, pass_index))
+
+
+def key_integer(words: np.ndarray) -> int:
+    """A key's uint32 words as one non-negative integer: a seed NumPy and HF generators take."""
+    return int.from_bytes(np.asarray(words, np.uint32).tobytes(), "little")
