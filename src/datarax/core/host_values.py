@@ -5,6 +5,10 @@ state, never a jit argument and never traced. Its equality decides whether two m
 graphdef, and with it a compiled program. ``HostValue`` and its subclasses compare equal by kind,
 because nothing a program runs reads what they hold. ``HostArray`` compares equal only to itself,
 because a compiled program's host callback reads its memory map.
+
+Equality reflects what compiled code reads: no program takes a kind-equal holder off a module,
+reads what it holds, or captures it in a host callback, and a holder a program must read compares
+by identity.
 """
 
 from __future__ import annotations

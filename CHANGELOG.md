@@ -239,6 +239,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `MixDataSourcesNode.get_records` checks that its children's records match by describing their
+  traced reads with `jax.eval_shape`, where it called `element_spec()` on every child. Its traced
+  read therefore reads no child's host values, opens no file and decodes no record while JAX
+  traces; a child that has no traced read (an ArrayRecord source) refuses at once.
 - The host holders live in `datarax.core.host_values`: `HostValue` and `HostProvenance` (from
   `datarax.sources.eager_source`) and `HostArray`, the memory-map holder of `StreamingDiskSource`
   (formerly the private `_HostArray`). The pipeline and every source import them from core, so

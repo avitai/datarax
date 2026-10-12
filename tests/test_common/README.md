@@ -21,6 +21,7 @@ In GitHub Actions workflows, this is handled by explicitly adding the project ro
 - `data_source_fixtures.py`: Test fixtures for data source components
 - `device_arrays.py`: `arrays_made_since`, the device arrays made since a held `jax.live_arrays()` snapshot
 - `dependency_utilities.py`: Helpers for optional-dependency detection and skipping
+- `holder_reads.py`: `HolderRecorder`, every kind-equal `HostValue` a program takes off a module, reads or captures in a host callback while JAX traces
 - `mock_operators.py`: Mock operator implementations for tests
 - `nnx_fixtures.py`: Fixtures for Flax NNX module tests
 - `tfds_fixture.py`: The offline TFDS dataset the `tfds` tests read (`python -m tests.test_common.tfds_fixture <dir>` prepares it, with TensorFlow; the `tfds_fixture` fixture in `tests/conftest.py` serves it)

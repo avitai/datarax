@@ -14,6 +14,14 @@ graphdef, and with it a compiled program:
 - `HostArray` compares equal only to itself, because a compiled program's host callback reads its
   memory map. It pickles as its path, so a worker process opens the file itself.
 
+The rule both follow is that a holder's equality reflects what compiled code reads. No program
+takes a kind-equal holder off a module, reads what it holds, or captures it in a host callback:
+a program that did would serve one source's values to every source sharing its graphdef, without
+compiling again and without an error. A holder a program must read compares equal only to itself,
+as `HostArray` does. A test records every kind-equal holder taken, read or captured while JAX
+traces, over every source and every traced path
+(`tests/pipeline/test_host_values_stay_out_of_programs.py`).
+
 ## See Also
 
 - [data_source](data_source.md) - The source contract

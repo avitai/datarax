@@ -13,6 +13,8 @@ from __future__ import annotations
 import inspect
 import math
 import sys
+from collections.abc import Sequence
+from pathlib import Path
 
 import grain
 import jax
@@ -27,10 +29,12 @@ from datarax.core.element_batch import PADDING_INDEX
 from datarax.core.index_words import from_words, MAX_RECORDS, to_words
 from datarax.core.prng import per_record_keys
 from datarax.pipeline import Pipeline
+from datarax.sources.array_record_source import ArrayRecordSourceConfig, ArrayRecordSourceModule
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
 from tests.test_common.mixing import grain_mix, grain_mix_indices, offsets_of, Sized, SizedConfig
 from tests.test_common.streams import non_array_state_leaves, RecordStream
+from tests.test_common.worker_reads import write_records
 
 
 def _mix(children: list[DataSourceModule], weights: tuple[float, ...]) -> MixDataSourcesNode:
@@ -126,6 +130,34 @@ class TestTheChildren:
         wide = MemorySource(MemorySourceConfig(), {"x": np.zeros((4, 3), np.float32)})
         with pytest.raises(ValueError, match=r"\['x'\].*\(\).*\(3,\)"):
             _mix([_memory(np.arange(4)), wide], (0.5, 0.5))
+
+    def test_children_with_different_fields_refuse_the_traced_read_naming_the_host_read(
+        self,
+    ) -> None:
+        both = MemorySource(
+            MemorySourceConfig(), {"x": np.zeros(4, np.float32), "y": np.ones(4, np.float32)}
+        )
+        mix = _mix([_memory(np.arange(4)), both], (0.5, 0.5))
+        with pytest.raises(TypeError, match=r"mix\.get_batch\(indices\)"):
+            mix.get_records(mix.record_indices_at(0, 2))
+
+    def test_the_traced_read_decodes_no_child_record(self, tmp_path: Path) -> None:
+        """Checking the children's fields while JAX traces reads no file and decodes nothing."""
+        decoded: list[int] = []
+
+        def decode(records: Sequence[bytes]) -> list[dict[str, np.ndarray]]:
+            decoded.append(len(records))
+            return [{"x": np.frombuffer(record, np.float32)[0]} for record in records]
+
+        paths = write_records(
+            tmp_path, "records", [np.float32(i).tobytes() for i in range(4)], shards=1
+        )
+        records = ArrayRecordSourceModule(ArrayRecordSourceConfig(), paths, decode=decode)
+        mix = _mix([_memory(np.arange(4)), records], (0.5, 0.5))
+        decoded.clear()
+        with pytest.raises(NotImplementedError):
+            jax.jit(mix.get_records)(mix.record_indices_at(0, 2))
+        assert decoded == []
 
     def test_a_mix_is_a_child_like_any_indexed_source(self) -> None:
         inner = _mix([_memory(np.arange(4)), _memory(100 + np.arange(4))], (0.5, 0.5))
