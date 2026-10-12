@@ -31,10 +31,10 @@ from datarax.core.data_source import (
     RecordIdentity,
 )
 from datarax.core.element_batch import Batch
+from datarax.core.host_values import HostValue
 from datarax.core.index_words import to_words
-from datarax.core.prng import fold_on_host, key_words
+from datarax.core.prng import key_words
 from datarax.core.spec import array_to_spec_strip_leading, device_spec
-from datarax.sources.eager_source import HostValue
 from datarax.sources.source_ops import format_source_repr
 
 
@@ -42,7 +42,7 @@ class DatasetSourceMixin:
     """What a source reading a named dataset reports: its name, split and info.
 
     A subclass sets ``dataset_name``, ``split_name`` and ``_dataset_info`` in its ``__init__``.
-    The info is held in a :class:`~datarax.sources.eager_source.HostValue`: a backend's info
+    The info is held in a :class:`~datarax.core.host_values.HostValue`: a backend's info
     object compares by identity (TFDS's ``DatasetInfo``), so held as an attribute it would make
     every source a graphdef of its own and every jitted step over a new source compile again.
     """
@@ -231,7 +231,7 @@ class StreamingSourceBase(DataSourceModule):
             key: The pipeline's key as its uint32 words on the host
                 (:func:`~datarax.core.prng.key_words`) when it shuffles, ``None`` for the
                 stream's own order. A pass's order is drawn from ``fold_in(key, pass_index)``
-                (:func:`pass_seed`), folded on the CPU device.
+                (:func:`~datarax.core.prng.pass_seed`), folded on the CPU device.
             read_size: Records the pass reads at a time (a backend's batched read or decode);
                 chunks may hold any number.
 
@@ -471,43 +471,3 @@ class StreamingSourceBase(DataSourceModule):
             if chunk_size(chunk):
                 return device_spec(jax.tree.map(array_to_spec_strip_leading, chunk.columns))
         raise ValueError(f"{type(self).__name__} holds no records, so it declares no spec")
-
-
-def pass_generator(key: np.ndarray, pass_index: int) -> np.random.Generator:
-    """The generator a stream draws pass ``pass_index``'s order from: keyed by the pass's key.
-
-    The pass's key is ``fold_in(key, pass_index)``, the key an indexed pipeline orders its epoch
-    ``pass_index`` by, so passes never share a key (Grain's ``seed + epoch`` collision cannot
-    arise). Its data keys NumPy's counter-based Philox generator.
-
-    Args:
-        key: The pipeline's key as its uint32 words on the host.
-        pass_index: The pass, from 0.
-
-    Returns:
-        The pass's generator.
-    """
-    return np.random.Generator(np.random.Philox(key=pass_seed(key, pass_index)))
-
-
-def pass_seed(key: np.ndarray, pass_index: int) -> int:
-    """Pass ``pass_index``'s key, ``fold_in(key, pass_index)``, as one integer.
-
-    The fold runs on the CPU device from the key's host words
-    (:func:`~datarax.core.prng.fold_on_host`): nothing is read back from an accelerator, and
-    nothing transfers implicitly.
-
-    Args:
-        key: The pipeline's key as its uint32 words on the host
-            (:func:`~datarax.core.prng.key_words`).
-        pass_index: The pass, from 0.
-
-    Returns:
-        The pass key's data as a non-negative integer.
-    """
-    return key_integer(fold_on_host(key, pass_index))
-
-
-def key_integer(words: np.ndarray) -> int:
-    """A key's uint32 words as one non-negative integer: a seed NumPy and HF generators take."""
-    return int.from_bytes(np.asarray(words, np.uint32).tobytes(), "little")

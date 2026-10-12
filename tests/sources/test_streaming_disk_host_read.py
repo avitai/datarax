@@ -20,14 +20,11 @@ from flax import nnx
 from substrax.testing.compiles import compiled_programs, expect_compiles
 
 from datarax.core.element_batch import Batch, PADDING_INDEX
+from datarax.core.host_values import HostArray
 from datarax.core.index_words import from_words, to_words
 from datarax.pipeline import Pipeline
 from datarax.sources import EagerSource
-from datarax.sources.streaming_disk_source import (
-    _HostArray,
-    StreamingDiskSource,
-    StreamingDiskSourceConfig,
-)
+from datarax.sources.streaming_disk_source import StreamingDiskSource, StreamingDiskSourceConfig
 from tests.test_common.compiles import expect_first_call_compiles
 from tests.test_common.device_arrays import arrays_made_since
 from tests.test_common.host_resources import live, mapped, open_descriptors, released
@@ -180,7 +177,7 @@ class TestNothingOfADroppedSourceIsKept:
         del pipe, source
 
         def holders() -> int:
-            return live(lambda item: type(item) is _HostArray and item.path == str(path))
+            return live(lambda item: type(item) is HostArray and item.path == str(path))
 
         assert released(
             lambda: holders() == 0 and not mapped([path]) and not open_descriptors([path])

@@ -27,13 +27,13 @@ from substrax.testing.gradients import check_input_gradients, check_parameter_gr
 from datarax.core.config import OperatorConfig
 from datarax.core.data_source import RecordIdentity
 from datarax.core.element_batch import Batch, Element
+from datarax.core.host_values import HostValue
 from datarax.core.index_words import from_words
 from datarax.core.operator import OperatorModule, require_key
 from datarax.core.spec import SpecMismatchError
 from datarax.pipeline.epochs import EpochPlan, stream_batches
 from datarax.pipeline.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig, StreamChunk, StreamingSourceBase
-from datarax.sources.eager_source import HostValue
 from tests.test_common.streams import RecordStream
 from tests.test_common.transfers import device_to_host_raises
 

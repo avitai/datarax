@@ -239,6 +239,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The host holders live in `datarax.core.host_values`: `HostValue` and `HostProvenance` (from
+  `datarax.sources.eager_source`) and `HostArray`, the memory-map holder of `StreamingDiskSource`
+  (formerly the private `_HostArray`). The pipeline and every source import them from core, so
+  the pipeline no longer imports a source module for them. Their equality is unchanged.
+- A stream pass's keys, `pass_generator`, `pass_seed` and `key_integer`, live in
+  `datarax.core.prng` beside the other key functions (from `datarax.sources._source_base`).
 - protobuf leaves the base install; the extras that read TFDS (`data`, `tfds`, `benchmark`)
   require `tensorflow-datasets>=4.9.10` and `protobuf>=6.31.1`, and `tfds` no longer caps
   TensorFlow below 2.21. datarax's own code imports no protobuf, and the base cap

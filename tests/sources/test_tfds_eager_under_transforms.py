@@ -25,11 +25,11 @@ from substrax.testing.gradients import check_input_gradients, check_parameter_gr
 
 from datarax.core.config import ElementOperatorConfig
 from datarax.core.element_batch import Batch, Element
+from datarax.core.host_values import HostProvenance
 from datarax.core.index_words import from_words, to_words
 from datarax.operators.element_operator import ElementOperator
 from datarax.pipeline.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig, TFDSEagerConfig, TFDSEagerSource
-from datarax.sources.eager_source import HostProvenance
 from tests.test_common.compiles import expect_first_call_compiles
 from tests.test_common.tfds_fixture import FIXTURE, TFDSFixture, TRAIN_RECORDS
 from tests.test_common.transfers import device_to_host_raises, implicit_upload_raises

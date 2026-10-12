@@ -67,15 +67,16 @@ from datarax.core.data_source import (
     RecordIdentity,
     refuse_padding,
 )
+from datarax.core.host_values import HostValue
+from datarax.core.prng import pass_generator
 from datarax.sources._config_base import SourceConfigBase, StreamingSourceConfigBase
 from datarax.sources._source_base import (
     DatasetSourceMixin,
-    pass_generator,
     StreamChunk,
     StreamingSourceBase,
 )
 from datarax.sources.array_record_source import ArrayRecordSourceConfig, ArrayRecordSourceModule
-from datarax.sources.eager_source import EagerSource, HostValue, parts_of_records
+from datarax.sources.eager_source import EagerSource, parts_of_records
 from datarax.sources.source_ops import filter_keys
 
 

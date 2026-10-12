@@ -13,9 +13,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from datarax.core.prng import key_words
-from datarax.sources._source_base import key_integer, pass_generator, pass_seed
+from datarax.core.prng import key_integer, key_words, pass_generator, pass_seed
 from tests.test_common.transfers import device_to_host_raises, implicit_upload_raises
+
+
+@pytest.mark.parametrize("function", [pass_generator, pass_seed, key_integer])
+def test_the_pass_keys_live_with_the_key_functions(function: object) -> None:
+    """A pass's key is derived beside every other key in datarax, in ``datarax.core.prng``."""
+    assert getattr(function, "__module__", None) == "datarax.core.prng"
 
 
 def _words(seed: int) -> np.ndarray:

@@ -230,6 +230,7 @@ nav:
           - config: core/config.md
           - cross_modal: core/cross_modal.md
           - data_source: core/data_source.md
+          - host_values: core/host_values.md
           - element_batch: core/element_batch.md
           - index_words: core/index_words.md
           - batch_ops: core/batch_ops.md
