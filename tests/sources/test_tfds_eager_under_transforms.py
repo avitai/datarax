@@ -267,7 +267,8 @@ class TestRecordIndicesUnderTransforms:
 def test_steady_steps_upload_no_records(tfds_fixture: TFDSFixture) -> None:
     """The int64 host label is not converted and uploaded again on every step."""
     assert implicit_upload_raises(), "the host-to-device guard does not fire here"
-    session = iter(_pipeline(_source(tfds_fixture)))
+    iterated = _pipeline(_source(tfds_fixture))
+    session = iter(iterated)
     pipeline = _pipeline(_source(tfds_fixture))
     step = nnx.jit(lambda p: p.step())
     for _ in range(2):
@@ -277,12 +278,14 @@ def test_steady_steps_upload_no_records(tfds_fixture: TFDSFixture) -> None:
         for _ in range(3):
             jax.block_until_ready(next(session).indices)
             jax.block_until_ready(step(pipeline).indices)
+    iterated.close()
 
 
 def test_steady_steps_read_nothing_back_to_the_host(tfds_fixture: TFDSFixture) -> None:
     if not device_to_host_raises():
         pytest.skip("the device-to-host guard does not fire on this backend (host memory)")
-    session = iter(_pipeline(_source(tfds_fixture)))
+    iterated = _pipeline(_source(tfds_fixture))
+    session = iter(iterated)
     pipeline = _pipeline(_source(tfds_fixture))
     step = nnx.jit(lambda p: p.step())
     jax.block_until_ready(next(session).indices)
@@ -291,3 +294,4 @@ def test_steady_steps_read_nothing_back_to_the_host(tfds_fixture: TFDSFixture) -
         for _ in range(3):
             jax.block_until_ready(next(session).indices)
             jax.block_until_ready(step(pipeline).indices)
+    iterated.close()
