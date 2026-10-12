@@ -6,6 +6,7 @@ name = Datarax layered architecture
 type = layers
 layers =
     datarax.cli
+    datarax.checkpoint
     datarax.monitoring
     datarax.pipeline
     datarax.operators
@@ -16,7 +17,9 @@ layers =
     datarax.samplers
     datarax.batching
     datarax.utils
+    datarax.config
     datarax.core
+    datarax.typing
 
 [importlinter:contract:pipeline-internal]
 name = Pipeline drives its iteration machinery, which knows nothing of Pipeline
