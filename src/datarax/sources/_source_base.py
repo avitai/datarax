@@ -31,10 +31,10 @@ from datarax.core.data_source import (
     RecordIdentity,
 )
 from datarax.core.element_batch import Batch
+from datarax.core.host_values import HostValue
 from datarax.core.index_words import to_words
 from datarax.core.prng import fold_on_host, key_words
 from datarax.core.spec import array_to_spec_strip_leading, device_spec
-from datarax.sources.eager_source import HostValue
 from datarax.sources.source_ops import format_source_repr
 
 
@@ -42,7 +42,7 @@ class DatasetSourceMixin:
     """What a source reading a named dataset reports: its name, split and info.
 
     A subclass sets ``dataset_name``, ``split_name`` and ``_dataset_info`` in its ``__init__``.
-    The info is held in a :class:`~datarax.sources.eager_source.HostValue`: a backend's info
+    The info is held in a :class:`~datarax.core.host_values.HostValue`: a backend's info
     object compares by identity (TFDS's ``DatasetInfo``), so held as an attribute it would make
     every source a graphdef of its own and every jitted step over a new source compile again.
     """

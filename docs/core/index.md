@@ -67,6 +67,7 @@ assert batch["image"].shape == (2, 32, 32, 3)
 - [module](module.md) - `DataraxModule` base class
 - [operator](operator.md) - `OperatorModule` for transformations
 - [data_source](data_source.md) - `DataSourceModule` for data loading
+- [host_values](host_values.md) - What sources and pipelines keep on the host, out of NNX state
 - [batcher](batcher.md) - `BatcherModule` for batch creation
 - [sampler](sampler.md) - `SamplerModule` for index sampling
 

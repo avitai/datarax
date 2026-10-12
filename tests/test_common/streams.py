@@ -25,9 +25,9 @@ from flax import nnx
 
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import RecordIdentity
+from datarax.core.host_values import HostValue
 from datarax.sources import StreamChunk, StreamingSourceBase
 from datarax.sources._source_base import chunk_size, pass_generator
-from datarax.sources.eager_source import HostValue
 
 
 # The provenance of a record without text: read-only, so every such record shares it.

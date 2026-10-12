@@ -37,52 +37,11 @@ from datarax.core.data_source import (
     RecordIdentity,
 )
 from datarax.core.element_batch import Batch, Element
+from datarax.core.host_values import HostProvenance
 from datarax.core.index_words import low_words, to_words
 from datarax.core.spec import array_to_spec_strip_leading, device_spec, JAX_ARRAY_KINDS
 from datarax.sources._index_validation import validate_index_batch
 from datarax.sources.source_ops import resolve_wrapped_indices
-
-
-class HostValue:
-    """A value a source keeps on the host, out of NNX state and out of every program.
-
-    As a plain object it is static to NNX: it is not module state, never a jit argument and never
-    traced. Holders of one kind compare equal whatever they hold, so two sources differing only in
-    such values share one graphdef and one compiled program; nothing traced reads them.
-
-    Attributes:
-        value: The value held.
-    """
-
-    __slots__ = ("value",)
-
-    def __init__(self, value: Any) -> None:
-        """Hold ``value``.
-
-        Args:
-            value: The value.
-        """
-        self.value = value
-
-    def __eq__(self, other: object) -> bool:
-        """Every holder of a kind is equal to every other: what it holds decides no program."""
-        return type(other) is type(self)
-
-    def __hash__(self) -> int:
-        """One hash per kind of holder, as ``__eq__`` requires."""
-        return hash(type(self))
-
-
-class HostProvenance(HostValue):
-    """The non-array part of a source's records, held on the host and out of NNX state.
-
-    Attributes:
-        value: One immutable mapping per record, aligned with the rows, or empty when the
-            records carry nothing but arrays.
-    """
-
-    __slots__ = ()
-    value: tuple[Mapping[str, Any], ...]
 
 
 def is_array_leaf(value: Any) -> bool:
@@ -551,8 +510,6 @@ class EagerSource(DataSourceModule):
 
 __all__ = [
     "EagerSource",
-    "HostProvenance",
-    "HostValue",
     "column_length",
     "is_array_leaf",
     "parts_of_records",

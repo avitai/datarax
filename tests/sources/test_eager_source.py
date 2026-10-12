@@ -23,6 +23,7 @@ from substrax.testing.compiles import expect_compiles
 
 from datarax.core.config import StructuralConfig
 from datarax.core.element_batch import Batch, Element, PADDING_INDEX
+from datarax.core.host_values import HostProvenance
 from datarax.core.index_words import from_words, to_words
 from datarax.sources import eager_source, EagerSource, MemorySource, MemorySourceConfig, source_ops
 from tests.test_common.device_arrays import arrays_made_since
@@ -352,7 +353,7 @@ class TestSourcesUnderTransforms:
         source = _memory([{"x": i, "name": f"r{i}"} for i in range(3)])
         _, state = nnx.split(source, graph=False)
         for leaf in jax.tree.leaves(state):
-            assert not isinstance(leaf, str | eager_source.HostProvenance)
+            assert not isinstance(leaf, str | HostProvenance)
 
     def test_sources_differing_only_in_provenance_share_one_graphdef_and_program(self) -> None:
         def source(prefix: str) -> MemorySource:

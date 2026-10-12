@@ -60,6 +60,7 @@ from datarax.core.data_source import (
 )
 from datarax.core.element_batch import Batch
 from datarax.core.host_resources import HostResources
+from datarax.core.host_values import HostValue
 from datarax.core.index_words import to_words
 from datarax.core.prng import key_words
 from datarax.core.spec import declared_spec, validate_batch, validate_device_dtypes
@@ -80,7 +81,6 @@ from datarax.pipeline.read_plan import (
 )
 from datarax.pipeline.run_units import HostElement, IndexedRead, RunUnits
 from datarax.sources._source_base import StreamCursor, StreamingSourceBase
-from datarax.sources.eager_source import HostValue
 
 
 logger = logging.getLogger(__name__)

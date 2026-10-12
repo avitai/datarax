@@ -25,7 +25,6 @@ gradients on data-derived computations exist but are zero (the documented
 
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -40,6 +39,7 @@ from jax.typing import ArrayLike
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Batch
+from datarax.core.host_values import HostArray
 from datarax.core.index_words import from_words
 from datarax.sources.eager_source import read_host_batch
 from datarax.typing import DataDict
@@ -64,45 +64,6 @@ class StreamingDiskSourceConfig(StructuralConfig):
             raise ValueError("StreamingDiskSourceConfig.path must be set.")
         if not self.feature_key:
             raise ValueError("StreamingDiskSourceConfig.feature_key must be non-empty.")
-
-
-class _HostArray:
-    """A memory map of an on-disk array, kept on the host and out of NNX state.
-
-    A memory map stored as ``nnx.data`` would become a traced input of every compiled step, and
-    the host callback would then close over a tracer. As a plain object it stays static and
-    compares equal only to itself. It pickles as its path, so a copy sent to a worker process
-    carries no rows, and it opens its map at first use, once, however many threads read it at
-    once.
-    """
-
-    __slots__ = ("_array", "_lock", "path")
-
-    def __init__(self, path: str, array: np.ndarray | None = None) -> None:
-        self.path = path
-        self._array = array
-        self._lock = threading.Lock()
-
-    @property
-    def array(self) -> np.ndarray:
-        """The memory map, opened read-only at first use."""
-        array = self._array
-        if array is None:
-            with self._lock:
-                if self._array is None:
-                    self._array = np.load(self.path, mmap_mode="r")
-                array = self._array
-        return array
-
-    def __getstate__(self) -> dict[str, str]:
-        """The path alone: a copy opens the file again where it is used."""
-        return {"path": self.path}
-
-    def __setstate__(self, state: dict[str, str]) -> None:
-        """Hold the path; the map opens at first use."""
-        self.path = state["path"]
-        self._array = None
-        self._lock = threading.Lock()
 
 
 class StreamingDiskSource(DataSourceModule):
@@ -142,7 +103,7 @@ class StreamingDiskSource(DataSourceModule):
             )
 
         # The memory-map stays on the host, outside NNX state; the rest is static metadata.
-        self._host = _HostArray(str(path), memmap)
+        self._host = HostArray(str(path), memmap)
         self._length = nnx.static(int(memmap.shape[0]))
         self._feature_key = nnx.static(config.feature_key)
         self._element_shape = nnx.static(tuple(int(d) for d in memmap.shape[1:]))
