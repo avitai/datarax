@@ -218,6 +218,16 @@ class _Layout:
     epoch_length: int
 
 
+def _alike(described: Any, reference: Any) -> bool:
+    """Whether two traced reads' outputs have one structure and each leaf's shape and dtype."""
+    if jax.tree.structure(described) != jax.tree.structure(reference):
+        return False
+    return all(
+        (leaf.shape, leaf.dtype) == (other.shape, other.dtype)
+        for leaf, other in zip(jax.tree.leaves(described), jax.tree.leaves(reference), strict=True)
+    )
+
+
 def _child_spec(position: int, source: DataSourceModule) -> Any:
     """A child's record spec, refusing a child that cannot describe its records.
 
@@ -916,12 +926,15 @@ class MixDataSourcesNode(DataSourceModule):
                 f"and this mix names {layout.space}; read its records on the host with "
                 "mix.get_batch(indices)"
             )
-        union = self.element_spec()
-        for position, spec in enumerate(self._child_specs()):
-            if spec_mismatches(union, spec):
+        # The children's traced reads, described without running them: what the gather below
+        # reads and nothing more, so no child's host values are read while JAX traces.
+        probe = jax.ShapeDtypeStruct((1, 2), jnp.uint32)
+        records = [jax.eval_shape(source.get_records, probe) for source in self._sources]
+        for position, described in enumerate(records):
+            if not _alike(described, records[0]):
                 raise TypeError(
                     "MixDataSourcesNode.get_records gathers records whose fields every child "
-                    f"holds alike; child {position} lacks fields of the mix's union, so read the "
+                    f"holds alike; child {position}'s records differ from child 0's, so read the "
                     "mix's records on the host with mix.get_batch(indices), which joins them as "
                     "the union of the children's fields"
                 )
