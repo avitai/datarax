@@ -321,12 +321,12 @@ class TestValidateBatch:
         )
 
         @nnx.jit
-        def fetch(src: MemorySource) -> dict[str, jax.Array]:
-            batch = src.get_records(src.record_indices_at(0, 4))
+        def fetch(src: MemorySource, columns: dict[str, jax.Array]) -> dict[str, jax.Array]:
+            batch = src.get_records(src.record_indices_at(0, 4), columns=columns)
             validate_batch(batch, src.element_spec(), batch_size=4)
             return batch
 
-        batch = fetch(source)
+        batch = fetch(source, source.device_columns())
         assert batch["x"].dtype == np.float32
         assert batch["y"].dtype == np.int32
 

@@ -90,14 +90,19 @@ def _tuned_steps() -> Pipeline:
     return pipeline
 
 
-def _loss(pipeline: Pipeline) -> jax.Array:
-    return jnp.sum(pipeline.step()["x"] ** 2)
+def _loss(pipeline: Pipeline, columns: list) -> jax.Array:
+    return jnp.sum(pipeline.step(columns=columns)["x"] ** 2)
 
 
 @nnx.jit
-def _train_step(pipeline: Pipeline) -> None:
-    grads = nnx.grad(_loss, argnums=nnx.DiffState(0, nnx.Param))(pipeline)
+def _jitted_train_step(pipeline: Pipeline, columns: list) -> None:
+    grads = nnx.grad(_loss, argnums=nnx.DiffState(0, nnx.Param))(pipeline, columns)
     _scale(pipeline).factor[...] -= 1e-4 * grads["dag"]["stages"]["stage_0"]["factor"][...]
+
+
+def _train_step(pipeline: Pipeline) -> None:
+    """One jitted gradient step, the source's columns passed in as an argument."""
+    _jitted_train_step(pipeline, pipeline.device_columns())
 
 
 def _save_and_restore_steps(tuned: Pipeline, tmp_path: Path) -> Pipeline:

@@ -251,6 +251,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** an in-memory source's columns (`MemorySource`, `TFDSEagerSource`,
+  `HFEagerSource`, any `EagerSource`) are host NumPy data held in a `HostColumns` holder, not NNX
+  state. A split or checkpoint of a pipeline carries no dataset-sized array, and sources that
+  differ only in their data share one graph definition and one compiled program. `step()`, a
+  session and `Pipeline.scan` pass the columns' device copy, uploaded once, to their compiled
+  program as an argument. A transform of the caller's own passes it the same way:
+  `Pipeline.device_columns()`, `MixDataSourcesNode.device_columns()` and
+  `EagerSource.device_columns()` give the device copies, and `Pipeline.step(columns=...)`,
+  `Pipeline.scan(..., columns=...)` and `get_records(indices, columns=...)` take them. A traced
+  call without them is refused with a `TypeError` naming them, where it used to trace the columns
+  as state; under a caller's `nnx.jit` a step no longer copies the dataset per call, and the
+  gradient with respect to the columns is taken through the argument. Assigning
+  `source.data` holds the new columns as NumPy, as construction does. A caller's own `nnx.jit`
+  cache, keyed by the graph definition, keeps the first pipeline's columns of a structure alive.
+
 - `MixDataSourcesNode.get_records` checks that its children's records match by describing their
   traced reads with `jax.eval_shape`, where it called `element_spec()` on every child. Its traced
   read therefore reads no child's host values, opens no file and decodes no record while JAX
@@ -724,6 +739,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Programs datarax compiles and caches for `step()`, sessions and `Pipeline.scan` no longer keep a
+  dropped pipeline's columns, provenance or host stage alive. They were keyed by, and closed over,
+  the graph definition of the first pipeline of each structure, which holds its host values; they
+  are now keyed and built over a stand-in whose host values are empty, built once per structure
+  (the host naming's stand-in, shared through `datarax.pipeline.compiled.stand_in`).
 - `Pipeline.scan` no longer changes the pipeline's graph definition. Its cache of compiled scan
   bodies was a dict held as a static attribute, so filling it changed the key every program
   cached for that structure was stored under: after a scan, a pipeline built the same way compiled

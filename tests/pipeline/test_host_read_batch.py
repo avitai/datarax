@@ -164,21 +164,23 @@ class TestNoPerBatchTransfer:
     def test_a_user_jitted_step_uploads_no_records_after_its_first_call(self, name: str) -> None:
         assert implicit_upload_raises(), "the host-to-device guard does not fire here"
         pipeline = _pipeline(_SOURCES[name]())
-        step = nnx.jit(lambda p: p.step())
-        jax.block_until_ready(step(pipeline).indices)
+        columns = pipeline.device_columns()
+        step = nnx.jit(lambda p, c: p.step(columns=c))
+        jax.block_until_ready(step(pipeline, columns).indices)
         with jax.transfer_guard_host_to_device("disallow"):
             for _ in range(3):
-                jax.block_until_ready(step(pipeline).indices)
+                jax.block_until_ready(step(pipeline, columns).indices)
 
     def test_neither_reads_back_to_the_host(self, name: str) -> None:
         if not device_to_host_raises():
             pytest.skip("the device-to-host guard does not fire on this backend (host memory)")
         pipeline = _pipeline(_SOURCES[name]())
+        columns = pipeline.device_columns()
         session = iter(_pipeline(_SOURCES[name]()))
-        step = nnx.jit(lambda p: p.step())
+        step = nnx.jit(lambda p, c: p.step(columns=c))
         jax.block_until_ready(next(session).indices)
-        jax.block_until_ready(step(pipeline).indices)
+        jax.block_until_ready(step(pipeline, columns).indices)
         with jax.transfer_guard_device_to_host("disallow"):
             for _ in range(3):
                 jax.block_until_ready(next(session).indices)
-                jax.block_until_ready(step(pipeline).indices)
+                jax.block_until_ready(step(pipeline, columns).indices)

@@ -284,11 +284,13 @@ def test_pipeline_epoch_gradient_flows_to_learnable_stage() -> None:
         rngs=nnx.Rngs(0),
     )
 
+    columns = pipeline.device_columns()
+
     def loss_fn(model: Pipeline) -> jax.Array:
         def body(carry, batch):
             return carry + jnp.sum(batch["x"]), None
 
-        final_carry, _ = model.scan(body, length=4, init_carry=jnp.float32(0.0))
+        final_carry, _ = model.scan(body, length=4, init_carry=jnp.float32(0.0), columns=columns)
         return final_carry
 
     grads = nnx.grad(loss_fn)(pipeline)

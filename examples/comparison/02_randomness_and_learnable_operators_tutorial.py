@@ -260,6 +260,10 @@ A stage with an `nnx.Param` is a trainable part of the pipeline. The loss below 
 whole epoch through `Pipeline.scan`, so `nnx.value_and_grad` differentiates through the
 stage, and `nnx.jit` compiles the step. `reset()` rewinds the pipeline before each epoch.
 
+The source's columns are host data, not NNX state, so the compiled step takes their device
+copy as an argument, the way it takes the learning rate: `pipeline.device_columns()` uploads
+them once, outside the step, and `scan(..., columns=...)` reads them inside it.
+
 A Grain transform runs as Python and NumPy code in the loader, outside any JAX trace, so
 `jax.grad` cannot reach a parameter inside it. With Grain, a learnable preprocessing step
 belongs in the model.
@@ -291,23 +295,27 @@ def build_training_pipeline(stage: nnx.Module, target: np.ndarray) -> Pipeline:
     return Pipeline(source=source, stages=[stage], batch_size=BATCH_SIZE, rngs=nnx.Rngs(0))
 
 
-def epoch_loss(pipeline: Pipeline) -> jax.Array:
+def epoch_loss(pipeline: Pipeline, columns: list) -> jax.Array:
     """Mean squared error between the stage output and the targets over one epoch."""
 
     def accumulate(total: jax.Array, batch: dict) -> tuple[jax.Array, None]:
         return total + jnp.mean((batch["image"] - batch["target"]) ** 2), None
 
-    total, _ = pipeline.scan(accumulate, length=NUM_BATCHES, init_carry=jnp.zeros(()))
+    total, _ = pipeline.scan(
+        accumulate, length=NUM_BATCHES, init_carry=jnp.zeros(()), columns=columns
+    )
     return total / NUM_BATCHES
 
 
 @nnx.jit
-def gradient_step(pipeline: Pipeline, learning_rate: jax.Array) -> jax.Array:
+def gradient_step(pipeline: Pipeline, columns: list, learning_rate: jax.Array) -> jax.Array:
     """One gradient-descent step on every ``nnx.Param`` in the pipeline.
 
     The learning rate is a traced array, so the compiled step is reused for any value.
     """
-    loss, grads = nnx.value_and_grad(epoch_loss, argnums=nnx.DiffState(0, nnx.Param))(pipeline)
+    loss, grads = nnx.value_and_grad(epoch_loss, argnums=nnx.DiffState(0, nnx.Param))(
+        pipeline, columns
+    )
     params = nnx.state(pipeline, nnx.Param)
     nnx.update(pipeline, jax.tree.map(lambda p, g: p - learning_rate * g, params, grads))
     return loss
@@ -316,10 +324,11 @@ def gradient_step(pipeline: Pipeline, learning_rate: jax.Array) -> jax.Array:
 def train(pipeline: Pipeline, learning_rate: float, epochs: int) -> list[float]:
     """Run ``epochs`` gradient steps, each over one epoch, and return the losses."""
     rate = jnp.float32(learning_rate)
+    columns = pipeline.device_columns()
     losses = []
     for _ in range(epochs):
         pipeline.reset()
-        losses.append(float(gradient_step(pipeline, rate)))
+        losses.append(float(gradient_step(pipeline, columns, rate)))
     return losses
 
 

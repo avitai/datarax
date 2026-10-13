@@ -323,9 +323,11 @@ def test_from_dag_gradient_flows_through_both_branches() -> None:
         # here `batch` is the result of the DAG. Sum it as the loss.
         return jnp.sum(batch["x"])
 
+    columns = pipeline.device_columns()
+
     def loss_fn(model: Pipeline) -> jax.Array:
-        # Manually drive: fetch + DAG forward, sum result.
-        pipe_batch = model.step()
+        # Manually drive: fetch + DAG forward, sum result. The columns enter as an argument.
+        pipe_batch = model.step(columns=columns)
         return jnp.sum(pipe_batch["x"])
 
     grads = nnx.grad(loss_fn)(pipeline)

@@ -211,14 +211,15 @@ class TestProvenanceStaysOutOfEveryTrace:
         assert nnx.graphdef(first) == nnx.graphdef(second)
 
         @nnx.jit
-        def read(source: MemorySource, indices: jax.Array) -> jax.Array:
-            return source.get_records(indices)["x"]
+        def read(source: MemorySource, indices: jax.Array, columns: Any) -> jax.Array:
+            return source.get_records(indices, columns=columns)["x"]
 
         words = jnp.asarray(_words([1, 4]))
         with expect_compiles(1):
-            read(first, words)
+            read(first, words, first.device_columns())
         with expect_compiles(0):
-            np.testing.assert_array_equal(np.asarray(read(second, words)), [1.0, 4.0])
+            served = read(second, words, second.device_columns())
+            np.testing.assert_array_equal(np.asarray(served), [1.0, 4.0])
 
 
 @pytest.mark.tfds

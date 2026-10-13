@@ -28,13 +28,12 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from flax import nnx
-from flax.nnx import graphlib
 from jax.typing import ArrayLike
 
 from datarax.core.data_source import DataSourceModule
 from datarax.core.index_words import is_word_start, split_constant, subtract, to_words
 from datarax.core.prng import host_device, NAMING_PRNG_IMPL
-from datarax.pipeline.compiled import cached_program
+from datarax.pipeline.compiled import cached_program, stand_in
 from datarax.pipeline.dag import Records
 
 
@@ -571,26 +570,16 @@ def _structure(source: DataSourceModule) -> tuple[Any, DataSourceModule]:
         The stand-in's graph definition, state structure and array shapes and dtypes, which two
         sources share exactly when their stand-ins name records alike, and the stand-in.
     """
-    graphdef, state = nnx.split(source)
-    stand_in = nnx.merge(graphdef, jax.tree.map(_shape_only, state))
-    for _, node in nnx.iter_graph(stand_in):
-        if isinstance(node, nnx.Module):
-            for name, value in list(vars(node).items()):
-                if _is_static(name, value) and not _is_description(value):
-                    setattr(node, name, _Released(type(value)))
-    graphdef, state = nnx.split(stand_in)
+    standing = stand_in(source, _released)
+    graphdef, state = nnx.split(standing)
     leaves, treedef = jax.tree.flatten(state)
     shapes = tuple((np.shape(leaf), str(getattr(leaf, "dtype", type(leaf)))) for leaf in leaves)
-    return (graphdef, treedef, shapes), stand_in
+    return (graphdef, treedef, shapes), standing
 
 
-def _is_static(name: str, value: Any) -> bool:
-    """Whether a module attribute is a static of its graph, not state, a node or NNX's own."""
-    if name.startswith(("_pytree__", "_object__")):
-        return False
-    return not isinstance(value, nnx.Variable | np.ndarray | jax.Array) and not graphlib.is_node(
-        value
-    )
+def _released(value: Any) -> _Released | None:
+    """A static's marker unless it describes the source (see :func:`_structure`), else ``None``."""
+    return None if _is_description(value) else _Released(type(value))
 
 
 _DESCRIPTIONS = (
@@ -661,11 +650,3 @@ class _Released:
             f"{name!r} of a {self.kind.__name__}, which holds a host resource: an order must read "
             "the source's configuration and lengths only (keep a length as a plain static)"
         )
-
-
-def _shape_only(leaf: Any) -> Any:
-    """An array as its shape and dtype, holding one element; a key array or a scalar as it is."""
-    dtype = getattr(leaf, "dtype", None)
-    if dtype is None or jnp.issubdtype(dtype, jax.dtypes.extended):
-        return leaf
-    return np.broadcast_to(np.zeros((), dtype), np.shape(leaf))

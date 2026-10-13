@@ -109,8 +109,13 @@ def _session_batches(pipe: Pipeline) -> list[Batch]:
 
 
 @nnx.jit
+def _jitted_step(pipeline: Pipeline, columns: list) -> jax.Array:
+    return jnp.sum(pipeline.step(columns=columns)["image"])
+
+
 def _user_step(pipeline: Pipeline) -> jax.Array:
-    return jnp.sum(pipeline.step()["image"])
+    """``step()`` in a caller's ``nnx.jit``, the source's columns passed in as an argument."""
+    return _jitted_step(pipeline, pipeline.device_columns())
 
 
 class TestOrder:

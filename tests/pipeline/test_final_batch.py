@@ -294,25 +294,30 @@ def _at_the_boundary() -> tuple[Pipeline, np.ndarray]:
 
 
 class TestTransformsAtTheBoundary:
-    """The crossing batch under the caller's transforms: the branch that runs, not only traces."""
+    """The crossing batch under the caller's transforms: the branch that runs, not only traces.
+
+    The transforms take the source's columns as an argument (``Pipeline.device_columns``).
+    """
 
     def test_a_jitted_gradient_reaches_the_model(self) -> None:
         pipeline, records = _at_the_boundary()
         model = _Model()
 
         @nnx.jit
-        def train_step(model: _Model, pipeline: Pipeline) -> jax.Array:
+        def train_step(model: _Model, pipeline: Pipeline, columns: list) -> jax.Array:
             def loss(model: _Model, pipeline: Pipeline) -> jax.Array:
-                return model.weight[...] * pipeline.step()["x"].sum()
+                return model.weight[...] * pipeline.step(columns=columns)["x"].sum()
 
             return nnx.grad(loss)(model, pipeline).weight[...]
 
-        assert float(train_step(model, pipeline)) == pytest.approx(2.0 * records.sum())
+        gradient = train_step(model, pipeline, pipeline.device_columns())
+        assert float(gradient) == pytest.approx(2.0 * records.sum())
         assert (int(pipeline._position[...]), int(pipeline._epoch[...])) == (2, 1)
 
     def test_the_gradient_reaches_the_stage(self) -> None:
         pipeline, records = _at_the_boundary()
-        grads = nnx.grad(lambda pipeline: pipeline.step()["x"].sum())(pipeline)
+        columns = pipeline.device_columns()
+        grads = nnx.grad(lambda pipeline: pipeline.step(columns=columns)["x"].sum())(pipeline)
         (factor,) = jax.tree.leaves(nnx.state(grads, nnx.Param))
         assert float(factor) == pytest.approx(records.sum())
 

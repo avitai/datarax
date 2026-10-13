@@ -265,6 +265,15 @@ Every record must hold the same numeric fields with the same shapes; a field who
 is refused, naming the field, so pad it to a fixed length (with its mask or length in `data`) or
 pack records with segment ids.
 
+The columns are host data, not NNX state: a split or a checkpoint of the pipeline carries none
+of them, and sources that differ only in their data share one graph definition and one compiled
+program. A compiled program takes the columns' device copy, uploaded once, as an argument.
+`step()`, `scan` and `session()` pass it themselves. A transform of your own passes it the same
+way: `columns = pipeline.device_columns()` (or `source.device_columns()`) outside the
+transform, then `pipeline.step(columns=columns)`, `pipeline.scan(..., columns=columns)` or
+`source.get_records(indices, columns=columns)` inside it. A traced read without them is
+refused, naming this.
+
 ```python
 import numpy as np
 from datarax.core.index_words import to_words

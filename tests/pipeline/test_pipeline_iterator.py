@@ -339,7 +339,9 @@ class TestStageState:
     def test_the_compiled_step_returns_only_the_state_it_writes(self):
         """Source payloads and RNG keys are never copied out of the step."""
         iterator = _session(_pipeline())
-        _, (per_batch, staged) = iterator._pure_step(iterator._state, iterator._immutable_state)
+        _, (per_batch, staged) = iterator._pure_step(
+            iterator._state, iterator._immutable_state, iterator._columns
+        )
         iterator.close()
 
         assert staged == {}

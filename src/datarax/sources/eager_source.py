@@ -16,6 +16,8 @@ serves the compiled pipeline path.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 from collections.abc import Iterator, Mapping, Sequence
 from types import MappingProxyType
 from typing import Any
@@ -24,6 +26,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from flax import nnx
+from jax.core import Tracer
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
@@ -37,7 +40,7 @@ from datarax.core.data_source import (
     RecordIdentity,
 )
 from datarax.core.element_batch import Batch, Element
-from datarax.core.host_values import HostProvenance
+from datarax.core.host_values import HostColumns, HostProvenance
 from datarax.core.index_words import low_words, to_words
 from datarax.core.spec import array_to_spec_strip_leading, device_spec, JAX_ARRAY_KINDS
 from datarax.sources._index_validation import validate_index_batch
@@ -307,6 +310,61 @@ def named_batch(data: PyTree, words: np.ndarray, epochs: ArrayLike) -> Batch:
     return batch_ops.from_arrays(data, indices=words, epochs=np.ascontiguousarray(epoch_of_each))
 
 
+def _agreed_length(columns: PyTree) -> int | None:
+    """The record count the columns agree on, or ``None`` when they disagree (refused at use)."""
+    try:
+        return column_length(columns)
+    except ValueError:
+        return None
+
+
+# The device copies of eager sources' columns that a datarax compiled step, or a caller passing
+# them, bound for the trace now running, by the source module's identity.
+_BOUND_COLUMNS: contextvars.ContextVar[Mapping[int, PyTree]] = contextvars.ContextVar(
+    "datarax_bound_columns", default=MappingProxyType({})
+)
+
+
+@contextlib.contextmanager
+def bind_columns(sources: Sequence[EagerSource], columns: Sequence[PyTree]) -> Iterator[None]:
+    """Bind each source's columns (device copies or tracers) for the reads made inside the block.
+
+    Args:
+        sources: The eager sources, as :func:`eager_sources` lists them.
+        columns: Their columns, in the same order.
+
+    Yields:
+        None: Control to the block.
+
+    Raises:
+        ValueError: If the counts differ.
+    """
+    if len(sources) != len(columns):
+        raise ValueError(
+            f"{len(columns)} column sets given for {len(sources)} in-memory sources; pass "
+            "what device_columns() returned, as it returned it"
+        )
+    token = _BOUND_COLUMNS.set(
+        MappingProxyType(
+            {**_BOUND_COLUMNS.get(), **{id(s): c for s, c in zip(sources, columns, strict=True)}}
+        )
+    )
+    try:
+        yield
+    finally:
+        _BOUND_COLUMNS.reset(token)
+
+
+def bound_columns(source: EagerSource) -> PyTree | None:
+    """The columns bound for ``source`` in the trace now running, or ``None``."""
+    return _BOUND_COLUMNS.get().get(id(source))
+
+
+def eager_sources(module: nnx.Module) -> list[EagerSource]:
+    """Every in-memory source in ``module``'s graph, in graph order."""
+    return [node for _, node in nnx.iter_graph(module, graph=True) if isinstance(node, EagerSource)]
+
+
 class EagerSource(DataSourceModule):
     """An indexed source over records held in host memory as NumPy columns and provenance.
 
@@ -317,7 +375,21 @@ class EagerSource(DataSourceModule):
     serves it owns the order and the position.
     """
 
-    data: PyTree
+    @property
+    def data(self) -> PyTree:
+        """The columns, NumPy arrays held on the host (see :class:`HostColumns`)."""
+        return self._columns.value
+
+    @data.setter
+    def data(self, columns: PyTree) -> None:
+        """Hold ``columns`` as host NumPy arrays; columns of unequal length are refused at use.
+
+        Args:
+            columns: A pytree of arrays with one row per record.
+        """
+        host = jax.tree.map(np.asarray, columns)
+        self._columns = HostColumns(host)
+        self._length = _agreed_length(host)
 
     @property
     def record_identity(self) -> RecordIdentity:
@@ -332,7 +404,7 @@ class EagerSource(DataSourceModule):
             name: Optional module name.
         """
         super().__init__(config, name=name)
-        self.data = nnx.data({})
+        self.data = {}
         self._provenance = HostProvenance(())
 
     def _store(self, columns: PyTree, provenance: Sequence[Mapping[str, Any]] = ()) -> None:
@@ -353,13 +425,17 @@ class EagerSource(DataSourceModule):
             raise ValueError(
                 f"provenance holds {len(provenance)} records but the columns hold {length}"
             )
-        self.data = nnx.data(host)
+        self.data = host
         self._provenance = HostProvenance(tuple(MappingProxyType(dict(p)) for p in provenance))
 
     @property
     def length(self) -> int:
-        """Records the columns hold now (see :func:`column_length`)."""
-        return column_length(self.data)
+        """Records the columns hold now (see :func:`column_length`).
+
+        Kept as a plain count beside the holder, so a stand-in of the source holding its
+        description only (the host naming's) still has it.
+        """
+        return column_length(self.data) if self._length is None else self._length
 
     def index_space(self) -> int:
         """Every stored row has an index, a worker's shard included: the data's record count."""
@@ -475,18 +551,54 @@ class EagerSource(DataSourceModule):
         """
         return resolve_wrapped_indices(start, size, self.length, key)
 
-    def get_records(self, indices: jax.Array) -> PyTree:
+    def device_columns(self) -> PyTree:
+        """The columns' device copy, for a caller's transform around :meth:`get_records`.
+
+        The columns are host data, not NNX state, so the transform takes them as an argument:
+        get them here, outside it, and pass them as ``get_records(indices, columns=...)``.
+
+        Returns:
+            The columns' structure, each leaf a JAX array.
+        """
+        return jax.device_put(self.data)
+
+    def get_records(self, indices: jax.Array, *, columns: PyTree | None = None) -> PyTree:
         """Gather the records at ``indices``; JIT-traceable, for the compiled pipeline path.
+
+        The columns are host data, never NNX state, so a traced read takes their device copy as an
+        argument: ``columns``, or the copy datarax's own compiled step bound. Called eagerly with
+        neither, it gathers from the host columns.
 
         Args:
             indices: uint32 ``(n, 2)`` record indices in ``[0, index_space())``, as
                 :meth:`record_indices_at` names them; concrete or traced.
+            columns: The columns' device copy, as :meth:`device_columns` returns it (or the
+                source's entry of ``pipeline.device_columns()``), passed into the caller's
+                transform.
 
         Returns:
             The columns' structure, each leaf a JAX array with leading dimension ``n``.
+
+        Raises:
+            TypeError: If ``indices`` are traced and no columns are given or bound.
         """
         rows = low_words(indices, self.length)
-        return jax.tree.map(lambda column: jnp.take(jnp.asarray(column), rows, axis=0), self.data)
+        if columns is None:
+            columns = bound_columns(self)
+        if columns is None:
+            if isinstance(rows, Tracer):
+                raise TypeError(
+                    f"{type(self).__name__}.get_records is traced, but its columns are host data "
+                    "and not NNX state, so the trace cannot read them: pass their device copy "
+                    "in as an argument: columns = source.device_columns() outside the transform "
+                    "and get_records(indices, columns=columns) inside it, or, for a pipeline, "
+                    "columns = pipeline.device_columns() and step(columns=columns) or "
+                    "scan(..., columns=columns)"
+                )
+            return jax.tree.map(
+                lambda column: jnp.asarray(np.take(column, rows, axis=0)), self.data
+            )
+        return jax.tree.map(lambda column: jnp.take(column, rows, axis=0), columns)
 
     def element_spec(self) -> Any:
         """The spec of one record as the device holds it, read from the columns' metadata.
