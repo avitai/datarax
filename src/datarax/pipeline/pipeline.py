@@ -85,6 +85,7 @@ from datarax.core.data_source import (
 )
 from datarax.core.element_batch import Batch
 from datarax.core.host_resources import HostResources
+from datarax.core.host_values import HostValue
 from datarax.core.prng import naming_key_data, NAMING_PRNG_IMPL
 from datarax.pipeline.dag import name_records, OperatorDag, Records
 from datarax.pipeline.dag_call import compile_dag
@@ -203,11 +204,11 @@ class Pipeline(nnx.Module):
         # Cache of compiled @nnx.scan bodies, keyed on the call signature.
         # The decorator must be applied to a stable function identity for
         # nnx.scan's JIT cache to hit on subsequent calls; rebuilding on
-        # every scan() call defeats the cache and forces re-tracing. The
-        # cache is a plain dict (not nnx.Variable) so it stays static
-        # under nnx.split/merge — it lives on the Python side of the
-        # module boundary.
-        self._scan_body_cache: dict[Any, Any] = {}
+        # every scan() call defeats the cache and forces re-tracing. It is
+        # host state in a kind-equal holder: static under nnx.split/merge,
+        # and filling it changes no graph definition, so the programs cached
+        # for this pipeline's structure keep their key.
+        self._scan_body_cache: HostValue = HostValue({})
         # Where host-stage iteration stands and the Grain iterator of its current run, held on
         # the host and out of NNX state, so the graph definition does not move as it advances.
         self._host = HostStageHolder(HostStage(end_epoch=num_epochs))
@@ -684,7 +685,7 @@ class Pipeline(nnx.Module):
         # caching matches JAX's standard JIT-cache contract; users who
         # rebind step_fn between calls correctly get a fresh trace.
         cache_key = (id(step_fn), length, n_modules, has_init_carry)
-        scan_body = self._scan_body_cache.get(cache_key)
+        scan_body = self._scan_body_cache.value.get(cache_key)
         if scan_body is None:
             scan_body = self._compile_scan_body(
                 step_fn=step_fn,
@@ -692,7 +693,7 @@ class Pipeline(nnx.Module):
                 n_modules=n_modules,
                 has_init_carry=has_init_carry,
             )
-            self._scan_body_cache[cache_key] = scan_body
+            self._scan_body_cache.value[cache_key] = scan_body
 
         steps = jnp.arange(length, dtype=jnp.int32)
         # The scan runs on a view sharing this pipeline's Variables with its host data staged

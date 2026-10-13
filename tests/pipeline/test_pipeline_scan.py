@@ -401,11 +401,11 @@ def test_scan_caches_compiled_body_across_calls_with_same_step_fn() -> None:
 
     pipeline.scan(step_fn, length=4)
     pipeline.reset()
-    cached_count = len(pipeline._scan_body_cache)
+    cached_count = len(pipeline._scan_body_cache.value)
     assert cached_count == 1
 
     pipeline.scan(step_fn, length=4)
-    assert len(pipeline._scan_body_cache) == cached_count, (
+    assert len(pipeline._scan_body_cache.value) == cached_count, (
         "calling scan with the same step_fn and length must hit the cache"
     )
 
@@ -428,7 +428,7 @@ def test_scan_cache_key_distinguishes_different_step_fns() -> None:
     pipeline.scan(step_a, length=4)
     pipeline.reset()
     pipeline.scan(step_b, length=4)
-    assert len(pipeline._scan_body_cache) == 2
+    assert len(pipeline._scan_body_cache.value) == 2
 
 
 def test_scan_cache_key_distinguishes_different_lengths() -> None:
@@ -446,7 +446,7 @@ def test_scan_cache_key_distinguishes_different_lengths() -> None:
     pipeline.scan(step_fn, length=2)
     pipeline.reset()
     pipeline.scan(step_fn, length=4)
-    assert len(pipeline._scan_body_cache) == 2
+    assert len(pipeline._scan_body_cache.value) == 2
 
 
 def test_scan_cached_call_produces_identical_results() -> None:
@@ -487,7 +487,36 @@ def test_scan_cache_separates_carry_and_no_carry_variants() -> None:
     pipeline.scan(step_no_carry, length=4)
     pipeline.reset()
     pipeline.scan(step_with_carry, length=4, init_carry=jnp.float32(0.0))
-    assert len(pipeline._scan_body_cache) == 2
+    assert len(pipeline._scan_body_cache.value) == 2
+
+
+def _scan_pipeline() -> Pipeline:
+    return Pipeline(source=_source(), stages=[_DoubleStage()], batch_size=4, rngs=nnx.Rngs(0))
+
+
+def _sum(batch: Batch) -> jax.Array:
+    return jnp.sum(batch["x"])
+
+
+def test_a_scan_leaves_the_pipeline_s_graph_definition_as_built() -> None:
+    """The compiled scans a pipeline keeps are host state: filling them changes no graphdef."""
+    scanned, fresh = _scan_pipeline(), _scan_pipeline()
+
+    scanned.scan(_sum, length=4)
+
+    assert nnx.graphdef(scanned) == nnx.graphdef(fresh)
+
+
+def test_a_step_compiled_before_a_scan_serves_a_pipeline_built_the_same_way() -> None:
+    """Programs are cached by graphdef, so a scan must not move the key a step was cached under."""
+    first = _scan_pipeline()
+    first.step()
+    first.scan(_sum, length=2)
+
+    with compiled_programs() as built:
+        _scan_pipeline().step()
+
+    assert built == []
 
 
 # ---------- F. Source data: staged once, never copied ----------

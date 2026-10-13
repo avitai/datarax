@@ -724,6 +724,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `Pipeline.scan` no longer changes the pipeline's graph definition. Its cache of compiled scan
+  bodies was a dict held as a static attribute, so filling it changed the key every program
+  cached for that structure was stored under: after a scan, a pipeline built the same way compiled
+  its step, session and scan again, and the cache kept each scanned pipeline's programs. The cache
+  is now a kind-equal host holder, so a scanned pipeline's graph definition equals a fresh one's.
 - A pipeline's state names the shard of the records its source serves, and a state saved on
   another shard is refused. A `MemorySource` split between workers
   (`MemorySourceConfig(shard_id=k, num_workers=n)`) serves positions `[k::n]`, so every shard has
