@@ -46,9 +46,9 @@ from datarax.sources import (
 from tests.jax_test_environment import forwarded_jax_environment
 from tests.test_common.identity import check_identity_reaches_the_stages, IdentitySpy
 from tests.test_common.streams import (
+    batches_after_a_split_and_merge,
     graph_definitions_across_a_pass,
     non_array_state_leaves,
-    second_pulls_after_a_tree_round_trip,
 )
 from tests.test_common.tfds_fixture import FIXTURE, IMAGE_SHAPE, TFDSFixture, TRAIN_RECORDS
 from tests.test_common.transfers import implicit_upload_raises
@@ -102,20 +102,27 @@ def _stream(fixture: TFDSFixture, split: str = "train", **kwargs: Any) -> TFDSSt
 
 
 def _pass(
-    source: TFDSStreamingSource, size: int = 6, key: jax.Array | None = None
+    source: TFDSStreamingSource, size: int = 6, key: jax.Array | None = None, num_passes: int = 1
 ) -> tuple[list[Batch], list[Any]]:
     batches, provenance = [], []
-    while True:
-        batch, sidecar = source.get_batch(size, key=key, with_provenance=True)
-        if not batch.batch_size:
-            return batches, provenance
+    for batch, sidecar in source.iter_batches(
+        size, num_passes=num_passes, key=key, with_provenance=True
+    ):
         batches.append(batch)
         provenance.extend(sidecar)
+    return batches, provenance
 
 
 def _tfds_ids(source: TFDSStreamingSource, batches: list[Batch]) -> list[str]:
     words = np.concatenate([np.asarray(b.indices) for b in batches])
     return [f"{source.shard_files[int(hi)]}__{int(lo)}" for hi, lo in words]
+
+
+def _ids_by_pass(source: TFDSStreamingSource, batches: list[Batch]) -> list[list[str]]:
+    """The tfds_ids each pass served, in order."""
+    epochs = np.concatenate([np.asarray(b.epochs) for b in batches])
+    ids = np.asarray(_tfds_ids(source, batches))
+    return [ids[epochs == p].tolist() for p in sorted(set(epochs.tolist()))]
 
 
 def _rows(
@@ -155,7 +162,7 @@ class TestNamesAndRecords:
     def test_a_record_is_a_host_batch_row_with_its_text_beside_it(
         self, tfds_fixture: TFDSFixture, oracle: list[list[Any]]
     ) -> None:
-        batch, provenance = _stream(tfds_fixture).get_batch(4, with_provenance=True)
+        batch, provenance = next(_stream(tfds_fixture).iter_batches(4, with_provenance=True))
 
         assert batch["image"].shape == (4, *IMAGE_SHAPE)
         assert batch["image"].dtype == np.uint8
@@ -174,8 +181,8 @@ class TestNamesAndRecords:
             _stream(tfds_fixture)  # refused when built, before any record is read
 
     def test_supervised_keys_and_key_filters(self, tfds_fixture: TFDSFixture) -> None:
-        supervised = _stream(tfds_fixture, as_supervised=True).get_batch(2)
-        included = _stream(tfds_fixture, include_keys={"label"}).get_batch(2)
+        supervised = next(_stream(tfds_fixture, as_supervised=True).iter_batches(2))
+        included = next(_stream(tfds_fixture, include_keys={"label"}).iter_batches(2))
 
         assert set(supervised.data) == {"image", "label"}
         assert set(included.data) == {"label"}
@@ -194,21 +201,24 @@ class TestTheOrder:
     ) -> None:
         source = _stream(tfds_fixture)
 
-        first, second = _pass(source)[0], _pass(source)[0]
+        batches, _ = _pass(source, num_passes=2)
 
-        words = np.concatenate([np.asarray(b.indices) for b in first])
-        assert _tfds_ids(source, first) == _tfds_ids(source, second)
+        first, second = _ids_by_pass(source, batches)
+        words = np.concatenate([np.asarray(b.indices) for b in batches])[:TRAIN_RECORDS]
+        assert first == second
         assert source.shard_files[int(words[0, 0])].endswith("train.tfrecord-00000-of-00001")
         assert len(set(words[:, 0].tolist())) == 1
         assert words[:, 1].tolist() == list(range(TRAIN_RECORDS))
-        assert [int(e) for b in second for e in b.epochs] == [1] * TRAIN_RECORDS
+        assert [int(e) for b in batches for e in b.epochs] == [0] * TRAIN_RECORDS + [
+            1
+        ] * TRAIN_RECORDS
 
     def test_the_key_orders_each_pass_reproducibly(self, tfds_fixture: TFDSFixture) -> None:
         key = jax.random.key(11)
 
         def passes(seed_key: jax.Array) -> list[list[str]]:
             source = _stream(tfds_fixture, shuffle_buffer_size=8)
-            return [_tfds_ids(source, _pass(source, key=seed_key)[0]) for _ in range(3)]
+            return _ids_by_pass(source, _pass(source, key=seed_key, num_passes=3)[0])
 
         orders = passes(key)
 
@@ -244,7 +254,7 @@ class TestProvenanceByIdentity:
 
     def test_record_keys_are_the_batch_s_indices(self, tfds_fixture: TFDSFixture) -> None:
         source = _stream(tfds_fixture)
-        batch = source.get_batch(3)
+        batch = next(source.iter_batches(3))
 
         np.testing.assert_array_equal(source.record_keys(batch), batch.indices)
 
@@ -301,15 +311,15 @@ def test_every_pass_decodes_in_the_pipeline_s_batch_size(
     served = [batch.batch_size for batch in pipeline]
 
     assert TRAIN_RECORDS % 6 != 0
-    # A pass's last records are completed from the next pass's head (stream_batches), so three
-    # passes of 20 records serve ten full batches; each is decoded once, after the declared
-    # spec's read of one record.
+    # A pass's last records are completed from the next pass's head (the stream's iterator), so
+    # three passes of 20 records serve ten full batches; each is decoded once, after the
+    # declared spec's read of one record.
     assert served == [6] * 10
     assert decoded == [1] + [6] * 10
 
 
 class TestNnxHygiene:
-    """The TFDS stream keeps its position and dataset objects out of NNX state (brief T11)."""
+    """The TFDS stream keeps its dataset objects out of NNX state (brief T11)."""
 
     def test_no_variable_holds_a_python_value(self, tfds_fixture: TFDSFixture) -> None:
         source = _stream(tfds_fixture)
@@ -318,7 +328,7 @@ class TestNnxHygiene:
 
         assert non_array_state_leaves(source) == []
 
-    def test_the_graph_definition_does_not_move_as_the_stream_advances(
+    def test_the_graph_definition_does_not_move_as_the_stream_is_read(
         self, tfds_fixture: TFDSFixture
     ) -> None:
         before, after = graph_definitions_across_a_pass(_stream(tfds_fixture), 6)
@@ -326,13 +336,16 @@ class TestNnxHygiene:
         assert before == after
         assert hash(before) == hash(after)
 
-    def test_a_tree_mode_split_and_merge_round_trip_keeps_reading(
-        self, tfds_fixture: TFDSFixture
+    @pytest.mark.parametrize("graph", [True, False], ids=["graph-mode", "tree-mode"])
+    def test_a_stream_split_and_merged_reads_as_the_original(
+        self, tfds_fixture: TFDSFixture, graph: bool
     ) -> None:
-        merged, twin = second_pulls_after_a_tree_round_trip(lambda: _stream(tfds_fixture), 6)
+        merged, original = batches_after_a_split_and_merge(
+            lambda: _stream(tfds_fixture), 6, graph=graph
+        )
 
-        assert merged[0][:, 1].tolist() == list(range(6, 12))
-        for ours, theirs in zip(merged, twin, strict=True):
+        assert merged[0][:, 1].tolist() == list(range(6))
+        for ours, theirs in zip(merged, original, strict=True):
             np.testing.assert_array_equal(ours, theirs)
 
 
@@ -384,13 +397,13 @@ class TestDamagedFrames:
         source = self._damaged(tfds_fixture, tmp_path, flip_a_length_bit)
 
         with pytest.raises(_DAMAGED, match=_TRAIN_SHARD + r".*record 2.*CRC"):
-            source.get_batch(4)
+            next(source.iter_batches(4))
 
     def test_a_file_cut_short_is_refused(self, tfds_fixture: TFDSFixture, tmp_path: Path) -> None:
         source = self._damaged(tfds_fixture, tmp_path, lambda data, _: bytes(data[:-10]))
 
         with pytest.raises(_DAMAGED, match=_TRAIN_SHARD + r".*record 19.*short"):
-            source.get_batch(4)
+            next(source.iter_batches(4))
 
 
 def _train_name(source: TFDSStreamingSource) -> str:
@@ -424,7 +437,7 @@ class TestTheCopyTheStreamReads:
 
         assert isinstance(eager, TFDSEagerSource)
         assert isinstance(stream, TFDSStreamingSource)
-        assert stream.get_batch(2).batch_size == 2
+        assert next(stream.iter_batches(2)).batch_size == 2
 
     def test_from_tfds_takes_no_eager_argument(self, tfds_fixture: TFDSFixture) -> None:
         with pytest.raises(TypeError):
@@ -448,11 +461,10 @@ from datarax.pipeline import Pipeline
 from datarax.sources import TFDSStreamingConfig, TFDSStreamingSource
 source = TFDSStreamingSource(TFDSStreamingConfig(name=NAME, split="train", data_dir=sys.argv[1]))
 seen["construct"] = "tensorflow" in sys.modules
-batch = source.get_batch(8, key=jax.random.key(0))
+batch = next(source.iter_batches(8, key=jax.random.key(0)))
 seen["read"] = "tensorflow" in sys.modules
 source.provenance(batch.indices)
 seen["provenance"] = "tensorflow" in sys.modules
-source.reset()
 served = sum(b.batch_size for b in Pipeline(source=source, stages=[], batch_size=4,
                                              rngs=nnx.Rngs(0), shuffle=True, num_epochs=2))
 seen["pipeline"] = "tensorflow" in sys.modules

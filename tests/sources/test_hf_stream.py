@@ -23,10 +23,10 @@ from datarax.core.index_words import from_words
 from datarax.pipeline import Pipeline
 from datarax.sources import from_hf, HFEagerSource, HFStreamingConfig, HFStreamingSource
 from tests.test_common.streams import (
+    batches_after_a_split_and_merge,
     graph_definitions_across_a_pass,
     non_array_state_leaves,
     record_chunks,
-    second_pulls_after_a_tree_round_trip,
 )
 
 
@@ -69,15 +69,13 @@ def _stream(**kwargs: Any) -> HFStreamingSource:
     return HFStreamingSource(HFStreamingConfig(name="local", split="train", **kwargs))
 
 
-def _pass(source: HFStreamingSource, size: int = 5, **kwargs: Any) -> list[Batch]:
-    batches = []
-    while (batch := source.get_batch(size, **kwargs)).batch_size:
-        batches.append(batch)
-    return batches
-
-
-def _labels(batches: list[Batch]) -> list[int]:
-    return [int(v) for b in batches for v in b["label"]]
+def _by_pass(batches: list[Batch]) -> list[list[int]]:
+    """The labels each pass served, in order."""
+    passes: dict[int, list[int]] = {}
+    for batch in batches:
+        for label, epoch in zip(np.asarray(batch["label"]), np.asarray(batch.epochs), strict=True):
+            passes.setdefault(int(epoch), []).append(int(label))
+    return [passes[p] for p in sorted(passes)]
 
 
 def _names(batches: list[Batch]) -> list[int]:
@@ -112,18 +110,17 @@ class TestArrivalNames:
     def test_ordinals_count_on_across_passes(self, loads: list[dict[str, Any]]) -> None:
         source = _stream()
 
-        first, second = _pass(source), _pass(source)
+        batches = list(source.iter_batches(5, num_passes=2))
 
         assert source.record_identity is RecordIdentity.ARRIVAL
-        assert _names(first) == list(range(_N))
-        assert _names(second) == list(range(_N, 2 * _N))
-        assert {int(e) for b in second for e in b.epochs} == {1}
+        assert _names(batches) == list(range(2 * _N))
+        assert [int(e) for b in batches for e in b.epochs] == [0] * _N + [1] * _N
 
     def test_lookups_by_record_are_refused_naming_the_kind(
         self, loads: list[dict[str, Any]]
     ) -> None:
         source = _stream()
-        batch = source.get_batch(3)
+        batch = next(source.iter_batches(3))
 
         with pytest.raises(TypeError, match="ARRIVAL"):
             source.provenance(batch.indices)
@@ -135,17 +132,16 @@ class TestTheOrder:
     def test_without_a_key_each_pass_is_the_dataset_s_order(
         self, loads: list[dict[str, Any]]
     ) -> None:
-        source = _stream()
+        batches = list(_stream().iter_batches(5, num_passes=2))
 
-        assert _labels(_pass(source)) == _labels(_pass(source)) == list(range(_N))
+        assert _by_pass(batches) == [list(range(_N))] * 2
 
     def test_the_pipeline_s_seed_orders_each_pass_reproducibly(
         self, loads: list[dict[str, Any]]
     ) -> None:
         def passes(seed: int) -> list[list[int]]:
             source = _stream(shuffle_buffer_size=6)
-            key = jax.random.key(seed)
-            return [_labels(_pass(source, key=key)) for _ in range(3)]
+            return _by_pass(list(source.iter_batches(5, num_passes=3, key=jax.random.key(seed))))
 
         orders = passes(0)
 
@@ -189,15 +185,15 @@ def test_every_pass_reads_in_the_pipeline_s_batch_size(
 
 
 class TestNnxHygiene:
-    """The HF stream keeps its position and dataset objects out of NNX state (brief T11)."""
+    """The HF stream keeps its dataset objects out of NNX state (brief T11)."""
 
     def test_no_variable_holds_a_python_value(self, loads: list[dict[str, Any]]) -> None:
         source = _stream()
-        _pass(source)
+        list(source.iter_batches(5))
 
         assert non_array_state_leaves(source) == []
 
-    def test_the_graph_definition_does_not_move_as_the_stream_advances(
+    def test_the_graph_definition_does_not_move_as_the_stream_is_read(
         self, loads: list[dict[str, Any]]
     ) -> None:
         before, after = graph_definitions_across_a_pass(_stream(), 5)
@@ -205,13 +201,14 @@ class TestNnxHygiene:
         assert before == after
         assert hash(before) == hash(after)
 
-    def test_a_tree_mode_split_and_merge_round_trip_keeps_reading(
-        self, loads: list[dict[str, Any]]
+    @pytest.mark.parametrize("graph", [True, False], ids=["graph-mode", "tree-mode"])
+    def test_a_stream_split_and_merged_reads_as_the_original(
+        self, loads: list[dict[str, Any]], graph: bool
     ) -> None:
-        merged, twin = second_pulls_after_a_tree_round_trip(_stream, 5)
+        merged, original = batches_after_a_split_and_merge(_stream, 5, graph=graph)
 
-        assert from_words(merged[0]).tolist() == list(range(5, 10))
-        for ours, theirs in zip(merged, twin, strict=True):
+        assert from_words(merged[0]).tolist() == list(range(5))
+        for ours, theirs in zip(merged, original, strict=True):
             np.testing.assert_array_equal(ours, theirs)
 
 
@@ -219,7 +216,7 @@ class TestTheRead:
     def test_arrays_keep_their_feature_dtype_and_text_travels_beside(
         self, loads: list[dict[str, Any]]
     ) -> None:
-        batch, provenance = _stream().get_batch(4, with_provenance=True)
+        batch, provenance = next(_stream().iter_batches(4, with_provenance=True))
 
         assert batch["pixels"].dtype == np.uint8
         assert batch["pixels"].shape == (4, 2, 2, 3)
@@ -229,7 +226,7 @@ class TestTheRead:
         assert all(isinstance(leaf, np.ndarray) for leaf in jax.tree.leaves(batch))
 
     def test_key_filters_select_the_columns(self, loads: list[dict[str, Any]]) -> None:
-        batch = _stream(include_keys={"label"}).get_batch(2)
+        batch = next(_stream(include_keys={"label"}).iter_batches(2))
 
         assert set(batch.data) == {"label"}
 
@@ -243,7 +240,7 @@ class TestTheRead:
 
 
 class TestTheOpenReaderIsClosed:
-    def test_a_pass_stopped_midway_closes_hugging_face_s_batched_reader(
+    def test_an_iterator_stopped_midway_closes_hugging_face_s_batched_reader(
         self, loads: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         closed: list[bool] = []
@@ -259,10 +256,10 @@ class TestTheOpenReaderIsClosed:
             return reader()
 
         monkeypatch.setattr(datasets.IterableDataset, "iter", watched)
-        source = _stream()
-        source.get_batch(2)
+        batches = _stream().iter_batches(2)
+        next(batches)
         assert closed == []
 
-        source.reset()
+        batches.close()
 
         assert closed == [True]

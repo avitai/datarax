@@ -41,7 +41,7 @@ from google.protobuf.internal import api_implementation
 array_record, tfrecord = sys.argv[1], sys.argv[2]
 eager = TFDSEagerSource(TFDSEagerConfig(name=NAME, split="train", data_dir=array_record))
 stream = TFDSStreamingSource(TFDSStreamingConfig(name=NAME, split="train", data_dir=tfrecord))
-streamed = stream.get_batch(4, key=jax.random.key(0)).batch_size
+streamed = next(stream.iter_batches(4, key=jax.random.key(0))).batch_size
 print(json.dumps({
     "datarax": datarax.__file__,
     "runtime": api_implementation.Type(),

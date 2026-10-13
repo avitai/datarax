@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import itertools
 import re
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Iterator, Mapping
 from typing import Any
 
 import jax
@@ -31,9 +31,9 @@ from datarax.core.host_values import HostValue
 from datarax.core.index_words import from_words
 from datarax.core.operator import OperatorModule, require_key
 from datarax.core.spec import SpecMismatchError
-from datarax.pipeline.epochs import EpochPlan, stream_batches
+from datarax.pipeline.epochs import EpochPlan
 from datarax.pipeline.pipeline import Pipeline
-from datarax.sources import MemorySource, MemorySourceConfig, StreamChunk, StreamingSourceBase
+from datarax.sources import MemorySource, MemorySourceConfig, StreamChunk
 from tests.test_common.streams import RecordStream
 from tests.test_common.transfers import device_to_host_raises
 
@@ -168,6 +168,21 @@ class TestTheEpochRule:
 
         assert streamed == indexed
 
+    @pytest.mark.parametrize("num_epochs", [1, 2])
+    def test_a_reset_starts_the_next_pass_as_for_an_indexed_source(self, num_epochs: int) -> None:
+        """A run ending in a short batch leaves the cursor in its last pass, as an epoch does."""
+
+        def after_reset(source: Any) -> list[list[int]]:
+            pipeline = _pipeline(source, num_epochs=num_epochs)
+            list(pipeline)
+            pipeline.reset()
+            return [epochs for _, epochs in _served(list(pipeline))]
+
+        indexed = after_reset(MemorySource(MemorySourceConfig(), _columns()))
+
+        assert after_reset(_stream()) == indexed
+        assert indexed[0][0] == num_epochs
+
     def test_the_pipeline_keeps_no_counter_for_a_stream(self) -> None:
         pipeline = _pipeline(_stream(), num_epochs=2)
 
@@ -176,18 +191,11 @@ class TestTheEpochRule:
         assert int(pipeline._position[...]) == 0
         assert int(pipeline._epoch[...]) == 0
 
-    def test_the_rule_takes_any_pull(self) -> None:
-        """Pulls of any size, empty at a pass's end: the rule needs nothing else."""
+    def test_the_rule_holds_whatever_size_the_stream_reads_in(self) -> None:
+        """Chunks of any size from the pass reader: the stream's iterator cuts the batches."""
         stream = _stream(chunk=7)
 
-        served = _served(
-            [
-                batch
-                for batch, _ in stream_batches(
-                    _with_provenance(stream), batch_size=4, drop_last=False, num_epochs=2
-                )
-            ]
-        )
+        served = _served(list(stream.iter_batches(4, num_passes=2)))
 
         assert [names for names, _ in served] == [
             [0, 1, 2, 3],
@@ -200,9 +208,7 @@ class TestTheEpochRule:
     def test_a_stream_holding_no_record_serves_nothing(self) -> None:
         empty = RecordStream({"x": np.zeros((0, 3), np.float32)})
 
-        assert (
-            list(stream_batches(_with_provenance(empty), 4, drop_last=False, num_epochs=None)) == []
-        )
+        assert list(empty.iter_batches(4, num_passes=None)) == []
 
     @pytest.mark.parametrize("num_epochs", [None, 1, 2])
     def test_a_run_starting_at_a_pass_s_unseen_end_serves_the_next_pass(
@@ -210,19 +216,15 @@ class TestTheEpochRule:
     ) -> None:
         """A run that did not see a pass start cannot read its empty end as an empty stream."""
         stream = RecordStream({"x": np.arange(8, dtype=np.float32)})
-        assert stream.get_batch(8).batch_size == 8  # the pass's records, not yet its end
+        run = stream.iter_batches(4, num_passes=num_epochs)
+        # Standing after the pass's 8 records, not yet at its end.
+        run.set_state({"pass": 0, "records": 8, "arrived": 0, "passes_left": num_epochs})
 
-        run = stream_batches(_with_provenance(stream), 4, drop_last=False, num_epochs=num_epochs)
-        served = _served([batch for batch, _ in itertools.islice(run, 2)])
+        served = _served(list(itertools.islice(run, 2)))
 
         # The pass whose end the run starts at counts as served, as an exhausted epoch does.
         expected = [] if num_epochs == 1 else [([0, 1, 2, 3], [1] * 4), ([4, 5, 6, 7], [1] * 4)]
         assert served == expected
-
-
-def _with_provenance(stream: StreamingSourceBase) -> Callable[[int], tuple[Batch, Any]]:
-    """A pull reading the stream's batches with their provenance, as ``stream_batches`` takes it."""
-    return lambda size: stream.get_batch(size, with_provenance=True)
 
 
 type _Loops = list[list[tuple[list[int], list[int]]]]
@@ -461,19 +463,11 @@ def test_stochastic_outputs_equal_the_dag_through_nnx_jit_on_the_same_batch() ->
     streamed = _pipeline(_stream(), [_JitteredScale()], num_epochs=2, shuffle=True)
     read_stream = _stream()
     reference = _pipeline(read_stream, [_JitteredScale()], num_epochs=2, shuffle=True)
-    reads = [
-        batch
-        for batch, _ in stream_batches(
-            lambda size: read_stream.get_batch(
-                size,
-                key=jax.random.wrap_key_data(reference._epoch_key_base[...]),
-                with_provenance=True,
-            ),
-            4,
-            drop_last=False,
-            num_epochs=2,
+    reads = list(
+        read_stream.iter_batches(
+            4, num_passes=2, key=jax.random.wrap_key_data(reference._epoch_key_base[...])
         )
-    ]
+    )
     apply = nnx.jit(lambda dag, batch: dag(batch))
 
     outputs = list(streamed)
@@ -516,8 +510,8 @@ def test_no_transfer_to_the_host_happens_inside_the_steps() -> None:
 
 @pytest.mark.parametrize("graph", [True, False], ids=["graph-mode", "tree-mode"])
 def test_the_dag_over_a_stream_read_batch_differentiates(graph: bool) -> None:
-    stream = _stream()
-    batch = stream.get_batch(4, key=jax.random.key(0))
+    batches = _stream().iter_batches(4, key=jax.random.key(0))
+    batch = next(batches)
     pipeline = _pipeline(_stream(), [_JitteredScale()])
     dag = pipeline.dag
 
@@ -541,7 +535,7 @@ def test_the_dag_over_a_stream_read_batch_differentiates(graph: bool) -> None:
     with expect_compiles(1):
         step(params, rest, batch)
     with expect_compiles(0):
-        step(params, rest, stream.get_batch(4, key=jax.random.key(0)))
+        step(params, rest, next(batches))
 
 
 # ---------------------------------------------------------------------------
@@ -573,7 +567,7 @@ def test_a_stage_changing_the_module_structure_is_refused() -> None:
 
 
 def test_the_stream_s_reads_are_a_host_chunk_path() -> None:
-    """The route reads through ``get_batch``: a stream yields ``StreamChunk``s on the host."""
+    """The route reads through ``iter_batches``: a stream yields ``StreamChunk``s on the host."""
     chunks: Iterator[StreamChunk] = _stream()._open_pass(0, None, 4)
     first = next(chunks)
     assert all(isinstance(leaf, np.ndarray) for leaf in jax.tree.leaves(first.columns))
@@ -606,9 +600,11 @@ class _ProvenanceCounted(RecordStream):
     def reads(self) -> int:
         return len(self._reads.value)
 
-    def read_from(self, *args: Any, **kwargs: Any) -> tuple[Batch, Any]:
-        batch, provenance = super().read_from(*args, **kwargs)
-        return batch, _ReadThrough(provenance, self._reads.value)
+    def _open_pass(
+        self, pass_index: int, key: np.ndarray | None, read_size: int
+    ) -> Iterator[StreamChunk]:
+        for chunk in super()._open_pass(pass_index, key, read_size):
+            yield chunk._replace(provenance=_ReadThrough(chunk.provenance, self._reads.value))
 
 
 @pytest.mark.parametrize("serve", ["iteration", "raw_batches"])

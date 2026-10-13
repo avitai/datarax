@@ -45,7 +45,7 @@ from datarax.sources.streaming_disk_source import StreamingDiskSource, Streaming
 from tests.test_common.compiles import expect_first_call_compiles
 from tests.test_common.device_arrays import arrays_made_since
 from tests.test_common.host_plans import reading_with
-from tests.test_common.streams import RecordStream
+from tests.test_common.streams import fail_a_stream_read, RecordStream
 from tests.test_common.transfers import implicit_upload_raises
 from tests.thread_check import grain_thread_names
 
@@ -370,12 +370,6 @@ class TestIdentity:
         served = list(_pipeline(stream, batch_size=4, num_epochs=2, shuffle=False).raw_batches())
         assert [n for b in served for n in _names(b)] == [*range(10), *range(10)]
 
-    def test_the_stream_s_own_position_is_not_moved(self) -> None:
-        stream = RecordStream(_columns(10), kind=RecordIdentity.STREAM_IDS)
-        list(_pipeline(stream, batch_size=4).raw_batches())
-        assert stream.pass_index == 0
-        assert _names(stream.get_batch(3)) == [0, 1, 2]
-
 
 class TestProvenance:
     def test_an_indexed_source_s_provenance_is_looked_up_by_index(self) -> None:
@@ -524,18 +518,19 @@ class TestAReadError:
             return _pipeline(stream, batch_size=4, shuffle=False, num_epochs=1)
 
         whole = [_names(b) for b in build().raw_batches()]
-        owner: Any = MemorySource if kind == "indexed" else RecordStream
-        name = "get_batch" if kind == "indexed" else "read_from"
-        original = getattr(owner, name)
-        reads: list[int] = []
+        if kind == "indexed":
+            original = MemorySource.get_batch
+            reads: list[int] = []
 
-        def flaky(self: Any, *args: Any, **kwargs: Any) -> Any:
-            reads.append(1)
-            if len(reads) == 4:
-                raise _ReadFailed("read 4 failed")
-            return original(self, *args, **kwargs)
+            def flaky(self: Any, *args: Any, **kwargs: Any) -> Any:
+                reads.append(1)
+                if len(reads) == 4:
+                    raise _ReadFailed("read 4 failed")
+                return original(self, *args, **kwargs)
 
-        monkeypatch.setattr(owner, name, flaky)
+            monkeypatch.setattr(MemorySource, "get_batch", flaky)
+        else:
+            fail_a_stream_read(monkeypatch, RecordStream, 4, _ReadFailed("read 4 failed"))
         pipe = build()
         batches = pipe.raw_batches()
         served: list[list[int]] = []

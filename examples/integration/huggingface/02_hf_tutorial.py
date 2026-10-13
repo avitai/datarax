@@ -184,7 +184,7 @@ try:
     print(f"Streaming length: {len(streaming_source)}")
 except NotImplementedError:
     print("Streaming length: unknown until the stream is read")
-first_batch = streaming_source.get_batch(1)
+first_batch = next(streaming_source.iter_batches(1))
 print(f"First streamed record's fields: {sorted(first_batch.data)}")
 
 # Eager (using a subset)

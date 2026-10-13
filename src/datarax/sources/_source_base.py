@@ -2,40 +2,29 @@
 
 A stream reads its records forward, one pass after another, in an order it applies itself. The
 :class:`StreamingSourceBase` owns everything but the reading: a subclass opens a pass
-(``_open_pass``), a generator of :class:`StreamChunk` (host columns, provenance and record ids),
-and the base turns pulls into host ``Batch``es named by the stream (``get_batch``). Where the stream
-is, which pass and how far into it, is kept on the host in a holder NNX leaves out of module state,
-so no Python value sits in a Variable and the module's graph definition never changes as the stream
-advances. ``clone()`` gives a stream a position of its own; ``nnx.split``/``nnx.merge`` keep one
-stream, the merged module reading on from the same place.
+(``_open_pass``), a generator of :class:`~datarax.sources.stream_iterator.StreamChunk` (host
+columns, provenance and record ids), and :meth:`StreamingSourceBase.iter_batches` reads the passes
+as host ``Batch``es named by the stream, through one resumable iterator
+(:class:`~datarax.sources.stream_iterator.StreamBatches`). The stream holds no position: where a
+read stands is its iterator's, so no Python value sits in a Variable and the module's graph
+definition never changes as the stream is read.
 """
 
 from __future__ import annotations
 
-import weakref
-from collections.abc import Generator, Iterator
-from dataclasses import dataclass, field
-from typing import Any, cast, Literal, NamedTuple, overload, Self
+from collections.abc import Iterator
+from typing import Any, Literal, overload
 
 import jax
 import numpy as np
 from jax.typing import ArrayLike
-from jaxtyping import PyTree
 
-from datarax.core import batch_ops
-from datarax.core.config import StructuralConfig
-from datarax.core.data_source import (
-    BatchSchedule,
-    DataSourceModule,
-    Provenance,
-    RecordIdentity,
-)
+from datarax.core.data_source import DataSourceModule, Provenance
 from datarax.core.element_batch import Batch
 from datarax.core.host_values import HostValue
-from datarax.core.index_words import to_words
-from datarax.core.prng import key_words
 from datarax.core.spec import array_to_spec_strip_leading, device_spec
 from datarax.sources.source_ops import format_source_repr
+from datarax.sources.stream_iterator import chunk_size, StreamBatches, StreamChunk
 
 
 class DatasetSourceMixin:
@@ -71,155 +60,20 @@ class DatasetSourceMixin:
         )
 
 
-class StreamChunk(NamedTuple):
-    """Records a stream read, in the order it serves them.
-
-    Attributes:
-        columns: The records' array parts as host NumPy columns, leading axis the records.
-        provenance: One mapping per record of its strings and objects.
-        ids: uint64 ``(n,)`` ids the stream reports (``(shard << 32) | offset`` for
-            ``STREAM_IDS``), or ``None`` for a stream naming records by arrival.
-    """
-
-    columns: PyTree
-    provenance: Provenance
-    ids: np.ndarray | None
-
-
-def chunk_size(chunk: StreamChunk) -> int:
-    """The number of records ``chunk`` holds."""
-    return len(chunk.provenance)
-
-
-def _join(chunks: list[StreamChunk]) -> StreamChunk:
-    if len(chunks) == 1:
-        return chunks[0]
-    columns = jax.tree.map(lambda *parts: np.concatenate(parts), *(c.columns for c in chunks))
-    provenance = tuple(record for c in chunks for record in c.provenance)
-    ids = (
-        None
-        if chunks[0].ids is None
-        else np.concatenate([c.ids for c in chunks if c.ids is not None])
-    )
-    return StreamChunk(columns, provenance, ids)
-
-
-def _split(chunk: StreamChunk, size: int) -> tuple[StreamChunk, StreamChunk]:
-    def part(rows: slice) -> StreamChunk:
-        return StreamChunk(
-            jax.tree.map(lambda column: column[rows], chunk.columns),
-            chunk.provenance[rows],
-            None if chunk.ids is None else chunk.ids[rows],
-        )
-
-    return part(slice(None, size)), part(slice(size, None))
-
-
-class _ReaderCloser:
-    """Closes a stream's open pass reader, holding it only weakly.
-
-    ``weakref.finalize`` keeps this object, never the reader, so it keeps no stream alive. It runs
-    when the stream's position is collected or, for a stream still alive, at interpreter exit,
-    before module teardown: a backend reader left suspended until teardown is finalized with its
-    modules half cleared, where HuggingFace's Parquet reader hangs.
-    """
-
-    __slots__ = ("reader",)
-
-    def __init__(self) -> None:
-        """Hold no reader."""
-        self.reader: weakref.ref[Iterator[StreamChunk]] | None = None
-
-    def __call__(self) -> None:
-        """Close the reader if it is still alive."""
-        reader = None if self.reader is None else self.reader()
-        self.reader = None
-        if isinstance(reader, Generator):
-            reader.close()
-
-
-@dataclass(slots=True, weakref_slot=True)
-class StreamCursor:
-    """Where a stream is: its pass, the open pass's reader, records read ahead, arrivals.
-
-    ``failure`` is the error that stopped the open pass's reader, kept until :meth:`reset`. The
-    cursor's finalizer closes a reader still open when the cursor is collected or at exit.
-    """
-
-    pass_index: int = 0
-    reader: Iterator[StreamChunk] | None = None
-    ahead: StreamChunk | None = None
-    arrived: int = 0
-    failure: BaseException | None = None
-    closer: _ReaderCloser = field(default_factory=_ReaderCloser)
-
-    def __post_init__(self) -> None:
-        """Close the reader this cursor holds when the cursor goes, never holding the cursor."""
-        weakref.finalize(self, self.closer)
-
-    def between_passes(self) -> StreamCursor:
-        """A cursor of its own at this one's place, which is between passes (no reader open)."""
-        return StreamCursor(pass_index=self.pass_index, arrived=self.arrived, failure=self.failure)
-
-    def open(self, reader: Iterator[StreamChunk]) -> None:
-        """Hold ``reader`` as the open pass's reader, closing any reader held before."""
-        self.close()
-        self.reader = reader
-        self.closer.reader = weakref.ref(reader)
-
-    def close(self) -> None:
-        """Close and drop the open pass's reader, if any."""
-        self.closer()
-        self.reader = None
-
-
-class StreamPosition(HostValue):
-    """A stream's position, held on the host and out of NNX state (see :class:`HostValue`)."""
-
-    __slots__ = ()
-    value: StreamCursor
-
-
-def empty_stream_batch() -> Batch:
-    """The batch a stream returns at the end of a pass: no rows."""
-    return Batch(
-        {},
-        states={},
-        indices=np.zeros((0, 2), np.uint32),
-        epochs=np.zeros((0,), np.int32),
-        draws=np.zeros((0,), np.int32),
-        batch_state={},
-    )
-
-
 class StreamingSourceBase(DataSourceModule):
     """The base of every stream: a source read forward, one pass after another.
 
     A subclass declares its kind (``STREAM_IDS`` or ``ARRIVAL``) and implements
     :meth:`_open_pass`, which reads one pass in its order. The base serves it:
 
-    - :meth:`get_batch` returns up to ``batch_size`` records of the current pass as a host
-      ``Batch``: NumPy columns, ``indices`` the stream's ids as two words (``STREAM_IDS``) or the
-      records' arrival ordinals, never reset (``ARRIVAL``), ``epochs`` the pass from 0, draws 0.
-      An empty ``Batch`` ends a pass; the next call starts the next one. Strings and objects
-      never enter a batch: ``with_provenance=True`` returns them beside it.
+    - :meth:`iter_batches` reads the passes as host ``Batch``es: NumPy columns, ``indices`` the
+      stream's ids as two words (``STREAM_IDS``) or the records' arrival ordinals (``ARRIVAL``),
+      ``epochs`` each row's pass, draws 0. Strings and objects never enter a batch:
+      ``with_provenance=True`` returns them beside it.
     - The order is the stream's to apply and the pipeline's to choose: the pipeline passes its key
       when it shuffles and ``None`` otherwise, and pass ``p`` is ordered by that key and ``p``.
     - :meth:`element_spec` is the array part of the first record, as the device holds it.
-
-    Where the stream is lives in a host holder outside NNX state, so a stream holds no Python
-    value in a Variable and its graph definition does not change as it advances.
     """
-
-    def __init__(self, config: StructuralConfig, *, name: str | None = None) -> None:
-        """Create a stream at the start of its first pass.
-
-        Args:
-            config: The source's configuration.
-            name: Optional module name.
-        """
-        super().__init__(config, name=name)
-        self._position = StreamPosition(StreamCursor())
 
     def _open_pass(
         self, pass_index: int, key: np.ndarray | None, read_size: int
@@ -243,223 +97,75 @@ class StreamingSourceBase(DataSourceModule):
         """
         raise NotImplementedError(f"{type(self).__name__} must implement _open_pass")
 
-    @property
-    def pass_index(self) -> int:
-        """The pass the stream is in, from 0."""
-        return self._position.value.pass_index
-
-    def reset(self) -> None:
-        """Start again at the first pass, closing the reader of a pass stopped midway.
-
-        Arrival ordinals keep counting, so none repeats.
-        """
-        cursor = self._position.value
-        cursor.close()
-        cursor.pass_index, cursor.ahead, cursor.failure = 0, None, None
-
-    def clone(self) -> Self:
-        """A new stream with this one's state and a position of its own.
-
-        The clone is where this stream is: in the same pass, its arrival ordinals counting on
-        from the same number. A pass's open reader cannot be copied, so a stream is cloned
-        between passes: before its first pull, after a pass's end, or after :meth:`reset`.
-        (``nnx.split`` then ``nnx.merge``, and ``nnx.clone`` of a module holding the stream,
-        carry its position by reference: they make one stream, not two.)
-
-        Returns:
-            The clone.
-
-        Raises:
-            ValueError: If the stream is in the middle of a pass.
-        """
-        cursor = self._position.value
-        if cursor.reader is not None:
-            raise ValueError(
-                f"{type(self).__name__} is in the middle of pass {cursor.pass_index}, whose "
-                "reader cannot be copied; clone a stream between passes (before its first pull, "
-                "after a pass's end, or after reset())"
-            )
-        twin = cast(Self, super().clone())
-        twin._position = StreamPosition(cursor.between_passes())  # noqa: SLF001 - its own class
-        return twin
-
     @overload
-    def get_batch(
+    def iter_batches(  # noqa: PLR0913 - the read's batch rule, order and reads
         self,
         batch_size: int,
         *,
+        num_passes: int | None = 1,
         key: ArrayLike | None = None,
         with_provenance: Literal[False] = False,
         read_size: int | None = None,
-    ) -> Batch: ...
+        drop_last: bool = False,
+    ) -> StreamBatches[Batch]: ...
 
     @overload
-    def get_batch(
+    def iter_batches(  # noqa: PLR0913 - the read's batch rule, order and reads
         self,
         batch_size: int,
         *,
+        num_passes: int | None = 1,
         key: ArrayLike | None = None,
         with_provenance: Literal[True],
         read_size: int | None = None,
-    ) -> tuple[Batch, Provenance]: ...
+        drop_last: bool = False,
+    ) -> StreamBatches[tuple[Batch, Provenance]]: ...
 
-    def get_batch(  # noqa: DOC503 - a reader's error is re-raised as it came
+    def iter_batches(  # noqa: PLR0913, DOC502 - the iterator refuses its arguments
         self,
         batch_size: int,
         *,
+        num_passes: int | None = 1,
         key: ArrayLike | None = None,
         with_provenance: bool = False,
         read_size: int | None = None,
-    ) -> Batch | tuple[Batch, Provenance]:
-        """Read up to ``batch_size`` records of the current pass as a host ``Batch``.
-
-        An error raised while the pass is read reaches this call; the pass cannot go on, and
-        every later call is refused, naming the error, until :meth:`reset`.
+        drop_last: bool = False,
+    ) -> StreamBatches[Any]:
+        """Read the stream's passes as host ``Batch``es, through one resumable iterator.
 
         Args:
-            batch_size: The most records to return.
-            key: The key the pass's order is drawn from (typed, raw or its host words; read
-                once, as host words, when a pass starts), or ``None`` for the stream's own
-                order.
-            with_provenance: Whether to return the records' provenance beside the batch.
-            read_size: Records a pass this call opens reads at a time, the pipeline's batch
-                size; ``None`` reads it ``batch_size`` at a time.
+            batch_size: Records per batch.
+            num_passes: Passes served, or ``None`` for no end.
+            key: The key each pass's order is drawn from (typed, raw or its host words), or
+                ``None`` for the stream's own order.
+            with_provenance: Whether each batch comes with its records' provenance, one mapping
+                per row.
+            read_size: Records a pass reads at a time (the pipeline's batch size); ``None`` reads
+                it ``batch_size`` at a time.
+            drop_last: Whether a pass's records short of a full batch are skipped; otherwise they
+                are completed from the next pass's head, each row keeping its pass.
 
         Returns:
-            The batch, empty at the end of a pass, and with ``with_provenance`` its records'
-            provenance, one mapping per row.
+            The iterator (:class:`~datarax.sources.stream_iterator.StreamBatches`), with
+            ``get_state``/``set_state`` and ``close``.
 
         Raises:
-            ValueError: If ``batch_size`` or ``read_size`` is not positive.
-            RuntimeError: If an error stopped the current pass's read.
+            ValueError: If ``batch_size``, ``read_size`` or ``num_passes`` is below one.
         """
-        read_size = batch_size if read_size is None else read_size
-        if min(batch_size, read_size) < 1:
-            raise ValueError(
-                f"batch_size and read_size must be at least 1; got {batch_size} and {read_size}"
-            )
-        batch, provenance = self.read_from(
-            self._position.value,
+        return StreamBatches(
+            self,
             batch_size,
-            key=None if key is None else key_words(key),
+            num_passes=num_passes,
+            key=key,
+            with_provenance=with_provenance,
             read_size=read_size,
-        )
-        return (batch, provenance) if with_provenance else batch
-
-    def read_from(  # noqa: DOC503 - a reader's error is re-raised as it came
-        self, cursor: StreamCursor, batch_size: int, *, key: np.ndarray | None, read_size: int
-    ) -> tuple[Batch, Provenance]:
-        """Read up to ``batch_size`` records of ``cursor``'s pass, advancing ``cursor``.
-
-        The read :meth:`get_batch` makes at the stream's own position, open to a caller keeping a
-        position of its own (the pipeline's host stage): a pass is opened at the cursor's pass when
-        none is open, the records are named by the stream (arrival ordinals from the cursor's
-        count), and the pass's end returns an empty batch and moves the cursor to the next pass.
-
-        Args:
-            cursor: Where the read stands; it advances.
-            batch_size: The most records to return.
-            key: The key's host words, read when a pass opens, or ``None`` for the stream's order.
-            read_size: Records a pass this call opens reads at a time.
-
-        Returns:
-            The batch, empty at the end of a pass, and its records' provenance.
-
-        Raises:
-            RuntimeError: If an error stopped the cursor's pass.
-        """
-        if cursor.failure is not None:
-            raise RuntimeError(
-                f"{type(self).__name__}'s pass {cursor.pass_index} stopped at an error and "
-                "cannot go on; reset() starts the first pass again"
-            ) from cursor.failure
-        reader = cursor.reader
-        if reader is None:
-            reader = self._open_pass(cursor.pass_index, key, read_size)
-            cursor.open(reader)
-        try:
-            chunk = self._pull(cursor, reader, batch_size)
-        except BaseException as error:
-            # Any error raised through the reader ends it (a generator raising is finished), so
-            # a later next() would read as the pass's end: keep the error and refuse instead.
-            cursor.close()
-            cursor.ahead, cursor.failure = None, error
-            raise
-        if chunk is None:
-            cursor.close()
-            cursor.pass_index += 1
-            return empty_stream_batch(), ()
-        return self._named(chunk, cursor), chunk.provenance
-
-    def run_dataset(
-        self, schedule: BatchSchedule, key: np.ndarray | None, *, for_workers: bool = False
-    ) -> Any:
-        """A run of this stream's passes as one sliceable Grain dataset, if the stream has one.
-
-        A stream whose passes' orders are computed without reading its records (TFDS) returns
-        a dataset serving the schedule's units, numbered from the run's start (each element's
-        last item is its unit's place in the run), which Grain can slice across workers. This
-        base has none, and the host stage reads it pass by pass.
-
-        Args:
-            schedule: The run's units, each a run of batches ``(start, pass, size)``.
-            key: The pipeline's key as host words, or ``None`` for the stream's own order.
-            for_workers: Whether worker processes read the run, so what every worker reads
-                alike is shared among them rather than sent to each.
-
-        Returns:
-            ``None``: the base reads no run as one dataset.
-        """
-        del schedule, key, for_workers
-        return None
-
-    @staticmethod
-    def _pull(cursor: StreamCursor, reader: Iterator[StreamChunk], size: int) -> StreamChunk | None:
-        """Up to ``size`` records of the open pass, keeping what is read past them for later."""
-        parts, held = ([cursor.ahead], chunk_size(cursor.ahead)) if cursor.ahead else ([], 0)
-        cursor.ahead = None
-        while held < size:
-            chunk = next(reader, None)
-            if chunk is None:
-                break
-            if chunk_size(chunk):
-                parts.append(chunk)
-                held += chunk_size(chunk)
-        if not parts:
-            return None
-        joined = _join(parts)
-        if held > size:
-            joined, cursor.ahead = _split(joined, size)
-        return joined
-
-    def _named(self, chunk: StreamChunk, cursor: StreamCursor) -> Batch:
-        """``chunk`` as a host ``Batch`` named by the stream: its ids or arrival ordinals."""
-        size = chunk_size(chunk)
-        if not jax.tree.leaves(chunk.columns):
-            raise ValueError(
-                f"{type(self).__name__} read records holding no numeric field, but a batch is "
-                "built from numeric fields; strings and objects are each record's provenance"
-            )
-        if self.record_identity is RecordIdentity.ARRIVAL:
-            ordinals = np.arange(cursor.arrived, cursor.arrived + size, dtype=np.uint64)
-            cursor.arrived += size
-            words = to_words(ordinals)
-        else:
-            if chunk.ids is None:
-                raise TypeError(
-                    f"{type(self).__name__} is a STREAM_IDS stream, so each record it reads "
-                    "carries the id it is named by"
-                )
-            words = to_words(chunk.ids)
-        return batch_ops.from_arrays(
-            chunk.columns, indices=words, epochs=np.full((size,), cursor.pass_index, np.int32)
+            drop_last=drop_last,
         )
 
     def element_spec(self) -> Any:
         """The spec of one record's array part as the device holds it, from the first record.
 
-        A fresh first pass in the stream's own order is opened and its first record read; the
-        stream's position is not touched.
+        A fresh first pass in the stream's own order is opened and its first record read.
 
         Returns:
             A pytree of ``jax.ShapeDtypeStruct``.

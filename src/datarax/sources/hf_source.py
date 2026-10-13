@@ -37,12 +37,9 @@ from datarax.core.host_values import HostValue
 from datarax.core.prng import key_integer
 from datarax.core.spec import JAX_ARRAY_KINDS
 from datarax.sources._config_base import SourceConfigBase, StreamingSourceConfigBase
-from datarax.sources._source_base import (
-    DatasetSourceMixin,
-    StreamChunk,
-    StreamingSourceBase,
-)
+from datarax.sources._source_base import DatasetSourceMixin, StreamingSourceBase
 from datarax.sources.eager_source import EagerSource, is_array_leaf, stack_records
+from datarax.sources.stream_iterator import StreamChunk
 
 
 # =============================================================================

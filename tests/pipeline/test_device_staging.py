@@ -33,7 +33,7 @@ from datarax.pipeline import Pipeline
 from datarax.pipeline.host_stage import default_device_buffer
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from tests.test_common.host_plans import reading_with
-from tests.test_common.streams import RecordStream
+from tests.test_common.streams import fail_a_stream_read, RecordStream
 from tests.test_common.transfers import implicit_upload_raises
 from tests.thread_check import grain_thread_names
 
@@ -234,10 +234,10 @@ def test_an_error_ends_the_run_at_the_batches_delivered(
             return put(value, *args, **kwargs)
 
         monkeypatch.setattr(jax, "device_put", flaky)
+    elif fails == "stream read":
+        fail_a_stream_read(monkeypatch, RecordStream, 4, _Failed("read 4 failed"))
     else:
-        owner: Any = MemorySource if fails == "read" else RecordStream
-        name = "get_batch" if fails == "read" else "read_from"
-        original = getattr(owner, name)
+        original = MemorySource.get_batch
 
         def flaky_read(self: Any, *args: Any, **kwargs: Any) -> Any:
             calls[0] += 1
@@ -245,7 +245,7 @@ def test_an_error_ends_the_run_at_the_batches_delivered(
                 raise _Failed("read 4 failed")
             return original(self, *args, **kwargs)
 
-        monkeypatch.setattr(owner, name, flaky_read)
+        monkeypatch.setattr(MemorySource, "get_batch", flaky_read)
     pipe = build()
     served: list[list[int]] = []
     with pytest.raises(_Failed):

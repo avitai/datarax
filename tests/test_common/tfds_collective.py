@@ -82,7 +82,7 @@ def _read(root: Path, *, stream: bool) -> Any:
         source = TFDSStreamingSource(
             TFDSStreamingConfig(name=FIXTURE, split="train", data_dir=str(root / "tfrecord"))
         )
-        return source.get_batch(RECORDS, key=jax.random.key(0))
+        return next(source.iter_batches(RECORDS, key=jax.random.key(0)))
     eager = TFDSEagerSource(
         TFDSEagerConfig(name=FIXTURE, split="train", data_dir=str(root / "array_record"))
     )
