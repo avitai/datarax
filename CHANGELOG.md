@@ -728,7 +728,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bodies was a dict held as a static attribute, so filling it changed the key every program
   cached for that structure was stored under: after a scan, a pipeline built the same way compiled
   its step, session and scan again, and the cache kept each scanned pipeline's programs. The cache
-  is now a kind-equal host holder, so a scanned pipeline's graph definition equals a fresh one's.
+  is now held outside the pipeline, keyed weakly by it, so a scanned pipeline's graph definition
+  equals a fresh one's, and a scan inside a transform of the caller's takes nothing off the
+  pipeline while JAX traces.
 - A pipeline's state names the shard of the records its source serves, and a state saved on
   another shard is refused. A `MemorySource` split between workers
   (`MemorySourceConfig(shard_id=k, num_workers=n)`) serves positions `[k::n]`, so every shard has

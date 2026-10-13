@@ -67,6 +67,7 @@ Public surface:
 
 from __future__ import annotations
 
+import weakref
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any, Literal, overload
 
@@ -85,7 +86,6 @@ from datarax.core.data_source import (
 )
 from datarax.core.element_batch import Batch
 from datarax.core.host_resources import HostResources
-from datarax.core.host_values import HostValue
 from datarax.core.prng import naming_key_data, NAMING_PRNG_IMPL
 from datarax.pipeline.dag import name_records, OperatorDag, Records
 from datarax.pipeline.dag_call import compile_dag
@@ -95,6 +95,17 @@ from datarax.pipeline.iteration import next_batch, PipelineIterator, staged_view
 from datarax.pipeline.read_plan import HostPlan
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.typing import DataDict
+
+
+# Compiled @nnx.scan bodies per pipeline, keyed by the call signature. The decorator must be
+# applied to a stable function identity for nnx.scan's jit cache to hit on later calls;
+# rebuilding it on every scan() call would trace again. The cache is host bookkeeping, held
+# outside the pipeline and keyed weakly by it: no split of the pipeline carries it, filling it
+# changes no graph definition, and no program takes it off the module while JAX traces. A
+# pipeline merged inside a transform is a new object, with its own entry for that trace.
+_SCAN_BODIES: weakref.WeakKeyDictionary[Pipeline, dict[tuple[Any, ...], Callable[..., Any]]] = (
+    weakref.WeakKeyDictionary()
+)
 
 
 class Pipeline(nnx.Module):
@@ -201,14 +212,6 @@ class Pipeline(nnx.Module):
         # iterator state (position, epoch, rng counts) reproduces every slice. It is a naming
         # key (NAMING_PRNG_IMPL), whatever impl the caller's streams draw with.
         self._epoch_key_base: nnx.Variable[jax.Array] = nnx.Variable(naming_key_data(rngs()))
-        # Cache of compiled @nnx.scan bodies, keyed on the call signature.
-        # The decorator must be applied to a stable function identity for
-        # nnx.scan's JIT cache to hit on subsequent calls; rebuilding on
-        # every scan() call defeats the cache and forces re-tracing. It is
-        # host state in a kind-equal holder: static under nnx.split/merge,
-        # and filling it changes no graph definition, so the programs cached
-        # for this pipeline's structure keep their key.
-        self._scan_body_cache: HostValue = HostValue({})
         # Where host-stage iteration stands and the Grain iterator of its current run, held on
         # the host and out of NNX state, so the graph definition does not move as it advances.
         self._host = HostStageHolder(HostStage(end_epoch=num_epochs))
@@ -685,7 +688,8 @@ class Pipeline(nnx.Module):
         # caching matches JAX's standard JIT-cache contract; users who
         # rebind step_fn between calls correctly get a fresh trace.
         cache_key = (id(step_fn), length, n_modules, has_init_carry)
-        scan_body = self._scan_body_cache.value.get(cache_key)
+        bodies = _SCAN_BODIES.setdefault(self, {})
+        scan_body = bodies.get(cache_key)
         if scan_body is None:
             scan_body = self._compile_scan_body(
                 step_fn=step_fn,
@@ -693,7 +697,7 @@ class Pipeline(nnx.Module):
                 n_modules=n_modules,
                 has_init_carry=has_init_carry,
             )
-            self._scan_body_cache.value[cache_key] = scan_body
+            bodies[cache_key] = scan_body
 
         steps = jnp.arange(length, dtype=jnp.int32)
         # The scan runs on a view sharing this pipeline's Variables with its host data staged

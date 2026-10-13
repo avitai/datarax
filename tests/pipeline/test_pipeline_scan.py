@@ -54,6 +54,7 @@ from substrax.testing.compiles import compiled_programs
 from datarax.core.element_batch import Batch
 from datarax.pipeline import Pipeline
 from datarax.pipeline.iteration import _host_copies
+from datarax.pipeline.pipeline import _SCAN_BODIES
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
 
@@ -401,11 +402,11 @@ def test_scan_caches_compiled_body_across_calls_with_same_step_fn() -> None:
 
     pipeline.scan(step_fn, length=4)
     pipeline.reset()
-    cached_count = len(pipeline._scan_body_cache.value)
+    cached_count = len(_SCAN_BODIES[pipeline])
     assert cached_count == 1
 
     pipeline.scan(step_fn, length=4)
-    assert len(pipeline._scan_body_cache.value) == cached_count, (
+    assert len(_SCAN_BODIES[pipeline]) == cached_count, (
         "calling scan with the same step_fn and length must hit the cache"
     )
 
@@ -428,7 +429,7 @@ def test_scan_cache_key_distinguishes_different_step_fns() -> None:
     pipeline.scan(step_a, length=4)
     pipeline.reset()
     pipeline.scan(step_b, length=4)
-    assert len(pipeline._scan_body_cache.value) == 2
+    assert len(_SCAN_BODIES[pipeline]) == 2
 
 
 def test_scan_cache_key_distinguishes_different_lengths() -> None:
@@ -446,7 +447,7 @@ def test_scan_cache_key_distinguishes_different_lengths() -> None:
     pipeline.scan(step_fn, length=2)
     pipeline.reset()
     pipeline.scan(step_fn, length=4)
-    assert len(pipeline._scan_body_cache.value) == 2
+    assert len(_SCAN_BODIES[pipeline]) == 2
 
 
 def test_scan_cached_call_produces_identical_results() -> None:
@@ -487,7 +488,7 @@ def test_scan_cache_separates_carry_and_no_carry_variants() -> None:
     pipeline.scan(step_no_carry, length=4)
     pipeline.reset()
     pipeline.scan(step_with_carry, length=4, init_carry=jnp.float32(0.0))
-    assert len(pipeline._scan_body_cache.value) == 2
+    assert len(_SCAN_BODIES[pipeline]) == 2
 
 
 def _scan_pipeline() -> Pipeline:
