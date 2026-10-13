@@ -64,12 +64,12 @@ class TestDataraxScanAdapterLifecycle:
         adapter = DataraxScanAdapter()
         adapter.setup(nlp1_small_config, small_token_data)
         adapter.warmup(num_batches=4)
-        cache_size_after_warmup = len(adapter._pipeline._scan_body_cache)
+        cache_size_after_warmup = len(adapter._pipeline._scan_body_cache.value)
         assert cache_size_after_warmup >= 1
 
         adapter.iterate(num_batches=4)
         # Same (step_fn, length) — cache should not grow.
-        assert len(adapter._pipeline._scan_body_cache) == cache_size_after_warmup
+        assert len(adapter._pipeline._scan_body_cache.value) == cache_size_after_warmup
         adapter.teardown()
 
 
