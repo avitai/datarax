@@ -13,6 +13,7 @@ from substrax.testing.compiles import expect_compiles
 
 from benchmarks.adapters.datarax_scan_adapter import DataraxScanAdapter
 from benchmarks.tests.test_adapters.conftest import assert_valid_iteration_result
+from datarax.pipeline.pipeline import _SCAN_BODIES
 
 
 class TestDataraxScanAdapterProperties:
@@ -64,12 +65,12 @@ class TestDataraxScanAdapterLifecycle:
         adapter = DataraxScanAdapter()
         adapter.setup(nlp1_small_config, small_token_data)
         adapter.warmup(num_batches=4)
-        cache_size_after_warmup = len(adapter._pipeline._scan_body_cache)
+        cache_size_after_warmup = len(_SCAN_BODIES[adapter._pipeline])
         assert cache_size_after_warmup >= 1
 
         adapter.iterate(num_batches=4)
         # Same (step_fn, length) — cache should not grow.
-        assert len(adapter._pipeline._scan_body_cache) == cache_size_after_warmup
+        assert len(_SCAN_BODIES[adapter._pipeline]) == cache_size_after_warmup
         adapter.teardown()
 
 

@@ -124,6 +124,9 @@ _TRACED_PATHS: dict[str, Callable[[Any], Any]] = {
     "nnx.jit, tree mode": lambda source: nnx.jit(lambda p: p.step(), graph=False)(
         _pipeline(source)
     ),
+    "scan in nnx.jit": lambda source: nnx.jit(lambda p: p.scan(_total, length=2))(
+        _pipeline(source)
+    ),
 }
 
 # Sources with a traced read (``get_records``).
