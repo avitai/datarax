@@ -154,9 +154,12 @@ class TestTheChildren:
         )
         records = ArrayRecordSourceModule(ArrayRecordSourceConfig(), paths, decode=decode)
         mix = _mix([_memory(np.arange(4)), records], (0.5, 0.5))
+        columns = mix.device_columns()
         decoded.clear()
         with pytest.raises(NotImplementedError):
-            jax.jit(mix.get_records)(mix.record_indices_at(0, 2))
+            jax.jit(lambda words, c: mix.get_records(words, columns=c))(
+                mix.record_indices_at(0, 2), columns
+            )
         assert decoded == []
 
     def test_a_mix_is_a_child_like_any_indexed_source(self) -> None:
@@ -414,9 +417,10 @@ class TestANestedMixKeepsItsIndexSpace:
         assert len(np.unique(indices)) == len(indices)
         inner_owned = indices < 23
         expected_third = 200.0 + (indices - 23)
+        traced = jax.jit(lambda words, columns: outer.get_records(words, columns=columns))
         for served in (
             np.asarray(outer.get_batch(np.asarray(names))["x"]),
-            np.asarray(jax.jit(outer.get_records)(names)["x"]),
+            np.asarray(traced(names, outer.device_columns())["x"]),
         ):
             assert (served[inner_owned] < 200).all()
             np.testing.assert_array_equal(served[~inner_owned], expected_third[~inner_owned])

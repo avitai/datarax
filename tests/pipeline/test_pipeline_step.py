@@ -218,7 +218,7 @@ class TestStructure:
         pipeline.step()
         next(iter(pipeline))
         pipeline.step()
-        step = _session_step(graphdef, type(pipeline)._next_batch, pipeline.batch_size)
+        step = _session_step(pipeline, graphdef, type(pipeline)._next_batch, pipeline.batch_size)
         assert step._cache_size() == 1
 
     def test_a_stage_adding_state_while_it_runs_is_refused(self) -> None:
@@ -273,22 +273,23 @@ class TestGraphMode:
 
 
 class TestTransforms:
-    """``step()`` inside the caller's transforms."""
+    """``step()`` inside the caller's transforms, which take the source's columns as an argument."""
 
     def test_inside_a_jitted_train_step_the_gradient_reaches_the_model(self) -> None:
         model, pipeline = _Model(), _pipeline(_Scale(2.0))
+        columns = pipeline.device_columns()
 
         @nnx.jit
-        def train_step(model: _Model, pipeline: Pipeline) -> jax.Array:
+        def train_step(model: _Model, pipeline: Pipeline, columns: list) -> jax.Array:
             def loss(model: _Model, pipeline: Pipeline) -> jax.Array:
-                return model.weight[...] * pipeline.step()["x"].sum()
+                return model.weight[...] * pipeline.step(columns=columns)["x"].sum()
 
             return nnx.grad(loss)(model, pipeline).weight[...]
 
         with jax.checking_leaks():
-            gradient = train_step(model, pipeline)
+            gradient = train_step(model, pipeline, columns)
         with compiled_programs() as compiled:
-            train_step(model, pipeline)
+            train_step(model, pipeline, columns)
         # First batch x = 1..8, scaled by 2.
         assert float(gradient) == pytest.approx(2.0 * sum(range(1, _BATCH + 1)))
         assert compiled == []
@@ -298,8 +299,9 @@ class TestTransforms:
         pipeline = _pipeline(_Scale(2.0))
         original = pipeline.stages[0]
         pipeline.dag.stages[pipeline.dag.order[0]] = _Shift()
+        columns = pipeline.device_columns()
 
-        grads = nnx.grad(lambda pipeline: pipeline.step()["x"].sum())(pipeline)
+        grads = nnx.grad(lambda pipeline: pipeline.step(columns=columns)["x"].sum())(pipeline)
 
         params = jax.tree.leaves(nnx.state(grads, nnx.Param))
         assert len(params) == 1
@@ -310,12 +312,12 @@ class TestTransforms:
     def test_under_nnx_scan(self) -> None:
         pipeline, reference = _pipeline(_Scale()), _pipeline(_Scale())
 
-        @nnx.scan(in_axes=(nnx.StateAxes({...: nnx.Carry}), 0), out_axes=0)
-        def sums(pipeline: Pipeline, index: jax.Array) -> jax.Array:
+        @nnx.scan(in_axes=(nnx.StateAxes({...: nnx.Carry}), None, 0), out_axes=0)
+        def sums(pipeline: Pipeline, columns: list, index: jax.Array) -> jax.Array:
             del index
-            return pipeline.step()["x"].sum()
+            return pipeline.step(columns=columns)["x"].sum()
 
-        scanned = np.asarray(sums(pipeline, jnp.arange(4)))
+        scanned = np.asarray(sums(pipeline, pipeline.device_columns(), jnp.arange(4)))
         expected = [float(reference.step()["x"].sum()) for _ in range(4)]
         np.testing.assert_allclose(scanned, expected)
         assert int(pipeline._position[...]) == 4 * _BATCH
@@ -333,14 +335,15 @@ class TestTransforms:
     def test_inside_a_functional_jax_jit_over_split_state(self) -> None:
         pipeline, reference = _pipeline(_Scale()), _pipeline(_Scale())
         graphdef, state = nnx.split(pipeline)
+        columns = pipeline.device_columns()
 
         @jax.jit
-        def fetch(state: nnx.State) -> tuple[jax.Array, nnx.State]:
+        def fetch(state: nnx.State, columns: list) -> tuple[jax.Array, nnx.State]:
             module = nnx.merge(graphdef, state)
-            return module.step()["x"].sum(), nnx.state(module)
+            return module.step(columns=columns)["x"].sum(), nnx.state(module)
 
-        first, state = fetch(state)
-        second, state = fetch(state)
+        first, state = fetch(state, columns)
+        second, state = fetch(state, columns)
         nnx.update(pipeline, state)
         assert float(first) == pytest.approx(float(reference.step()["x"].sum()))
         assert float(second) == pytest.approx(float(reference.step()["x"].sum()))
@@ -375,18 +378,19 @@ class TestShuffledAugmentingTrainStep:
 
     def test_one_compile_serves_three_epochs_of_the_steps_batches(self) -> None:
         model, pipeline, reference = _Model(), self._pipeline(), self._pipeline()
+        columns = pipeline.device_columns()
 
         @nnx.jit
-        def train_step(model: _Model, pipeline: Pipeline) -> jax.Array:
+        def train_step(model: _Model, pipeline: Pipeline, columns: list) -> jax.Array:
             def loss(model: _Model, pipeline: Pipeline) -> jax.Array:
-                return model.weight[...] * pipeline.step()["x"].sum()
+                return model.weight[...] * pipeline.step(columns=columns)["x"].sum()
 
             return nnx.grad(loss)(model, pipeline).weight[...]
 
         steps = 3 * _N // _BATCH
-        first = train_step(model, pipeline)
+        first = train_step(model, pipeline, columns)
         with compiled_programs() as compiled:
-            gradients = [first] + [train_step(model, pipeline) for _ in range(steps - 1)]
+            gradients = [first] + [train_step(model, pipeline, columns) for _ in range(steps - 1)]
         expected = [np.asarray(reference.step()["x"]).sum(dtype=np.float32) for _ in range(steps)]
         assert compiled == []
         # Two compiled programs may associate a float32 sum of 8 values differently.
@@ -402,17 +406,18 @@ class TestShuffledAugmentingTrainStep:
     def test_inside_a_functional_jax_jit_over_split_state(self) -> None:
         pipeline, reference = self._pipeline(), self._pipeline()
         graphdef, state = nnx.split(pipeline)
+        columns = pipeline.device_columns()
 
         @jax.jit
-        def fetch(state: nnx.State) -> tuple[jax.Array, nnx.State]:
+        def fetch(state: nnx.State, columns: list) -> tuple[jax.Array, nnx.State]:
             module = nnx.merge(graphdef, state)
-            return module.step()["x"], nnx.state(module)
+            return module.step(columns=columns)["x"], nnx.state(module)
 
-        served, state = fetch(state)
+        served, state = fetch(state, columns)
         batches = [served]
         with compiled_programs() as compiled:
             for _ in range(_N // _BATCH):  # into the second epoch
-                served, state = fetch(state)
+                served, state = fetch(state, columns)
                 batches.append(served)
         nnx.update(pipeline, state)
         assert compiled == []

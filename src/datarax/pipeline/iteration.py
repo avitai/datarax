@@ -29,6 +29,7 @@ The pattern, and the step running a DAG over one host batch, live in
 from __future__ import annotations
 
 import contextlib
+import functools
 import weakref
 from collections.abc import Callable, Iterator
 from typing import Any
@@ -37,10 +38,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from flax import nnx
+from jax.core import Tracer
 
 from datarax.core.element_batch import Batch
 from datarax.core.operator import OperatorModule
-from datarax.pipeline.compiled import cached_program
+from datarax.pipeline.compiled import cached_program, emptied, stand_in
 from datarax.pipeline.dag_call import (
     apply_writes,
     is_per_batch_state,
@@ -49,6 +51,12 @@ from datarax.pipeline.dag_call import (
     Writes,
 )
 from datarax.pipeline.epochs import EpochPlan
+from datarax.sources.eager_source import (
+    bind_columns,
+    bound_columns,
+    eager_sources,
+    EagerSource,
+)
 
 
 # The traceable body a session step runs on the merged module: one batch of the given number of
@@ -62,6 +70,16 @@ type StepBody = Callable[[Any, int], Batch]
 # Held OUTSIDE the modules: storing graphdefs as module attributes would embed them
 # into the next split's graphdef, making GraphDef.__eq__ recurse into itself.
 _SESSION_STEPS: list[tuple[Any, Callable[..., Any]]] = []
+
+# Where each in-memory source sits in a module, by the module's graphdef, so a step finds its
+# sources without walking the graph. Paths, not the sources: modules sharing a graphdef hold
+# different sources.
+_EAGER_PATHS: list[tuple[Any, tuple[tuple[Any, ...], ...]]] = []
+
+# Each structure's stand-in graph definition (:func:`program_graphdef`), found by equality with a
+# live one and stored as itself: built once per structure, and shared by the step programs, their
+# keys, the source paths' keys and the scan view.
+_PROGRAM_GRAPHDEFS: list[tuple[Any, Any]] = []
 
 # Device copies of each pipeline's host (NumPy) arrays, uploaded at first use and shared by
 # every path that stages the pipeline (``step()`` and iteration sessions). Keyed weakly by the
@@ -80,26 +98,145 @@ _ITERATOR_STATE_VERSION = 2
 _FINGERPRINT_FIELDS = ("batch_size", "length", "drop_last", "num_epochs", "shuffled", "shard")
 
 
-def _session_step(graphdef: Any, body: StepBody, size: int) -> Callable[..., Any]:
+def _is_traced(state: Any) -> bool:
+    """Whether a leaf of ``state`` is a tracer: the module runs inside a transform."""
+    return any(isinstance(leaf, Tracer) for leaf in jax.tree.leaves(state))
+
+
+def program_graphdef(module: nnx.Module, graphdef: Any) -> Any:
+    """``module``'s graph definition for a cached program to key and close over.
+
+    Read off a stand-in whose host values are empty (:func:`~datarax.pipeline.compiled.stand_in`,
+    :func:`~datarax.pipeline.compiled.emptied`): equal to ``graphdef``, since holders of one kind
+    compare equal, so it keys the same programs, while a program and a cache keep no columns,
+    provenance or host stage of ``module``. Built once per structure; inside a trace too, since
+    the stand-in reads no holder.
+
+    Args:
+        module: The module.
+        graphdef: Its graph definition, from any split of it.
+
+    Returns:
+        The stand-in's graph definition.
+    """
+    made = functools.cache(lambda: nnx.graphdef(stand_in(module, emptied), graph=True))
+    return cached_program(_PROGRAM_GRAPHDEFS, graphdef, made, stored_key=made)
+
+
+def _session_step(
+    module: nnx.Module, graphdef: Any, body: StepBody, size: int
+) -> Callable[..., Any]:
     """The compiled step running ``body`` once, for ``size`` records, on modules shaped so.
 
     Flax's functional hot-loop pattern: merge the state partitions into a module at
     trace time, run one batch, and return it with the state the step wrote. Graph
     traversal happens once per trace instead of once per batch, and structurally
-    identical modules running the same body at the same size share the step.
+    identical modules running the same body at the same size share the step. The step
+    takes each in-memory source's columns as its third argument, in the order
+    :func:`eager_sources` lists the sources.
+
+    Args:
+        module: The module ``graphdef`` was split from, read on a miss only.
+        graphdef: The module's graphdef, the cache key.
+        body: The traceable body to run.
+        size: The records the batch holds.
+
+    Returns:
+        The compiled step, taking the per-batch state, the rest of the state and the columns.
     """
 
-    def run(graph: Any) -> Batch:
-        return body(graph, size)
-
     def build() -> Callable[..., Any]:
+        program_def = program_graphdef(module, graphdef)
+
+        def run_on(columns: Any) -> Callable[[Any], Batch]:
+            def run(graph: Any) -> Batch:
+                with bind_columns(eager_sources(graph), columns):
+                    return body(graph, size)
+
+            return run
+
         @jax.jit
-        def session_step(mutable_state: Any, immutable_state: Any) -> tuple[Batch, Writes]:
-            return run_tracking_writes(graphdef, (mutable_state, immutable_state), run)
+        def session_step(
+            mutable_state: Any, immutable_state: Any, columns: Any
+        ) -> tuple[Batch, Writes]:
+            return run_tracking_writes(
+                program_def, (mutable_state, immutable_state), run_on(columns)
+            )
 
         return session_step
 
-    return cached_program(_SESSION_STEPS, (graphdef, body, size), build)
+    return cached_program(
+        _SESSION_STEPS,
+        (graphdef, body, size),
+        build,
+        stored_key=lambda: (program_graphdef(module, graphdef), body, size),
+    )
+
+
+def _path_node(module: Any, path: tuple[Any, ...]) -> Any:
+    """The node at ``path`` (as :func:`flax.nnx.iter_graph` names it) in ``module``'s graph."""
+    node = module
+    for key in path:
+        indexed = isinstance(node, (list, tuple, dict, nnx.List, nnx.Dict))
+        node = node[key] if indexed else getattr(node, key)
+    return node
+
+
+def located_eager_sources(module: nnx.Module, graphdef: Any) -> list[EagerSource]:
+    """``module``'s in-memory sources, found by paths cached per graphdef (no graph walk).
+
+    Args:
+        module: The module.
+        graphdef: Its graphdef.
+
+    Returns:
+        The sources, in the order :func:`eager_sources` lists them.
+    """
+    paths = cached_program(
+        _EAGER_PATHS,
+        graphdef,
+        lambda: tuple(
+            path
+            for path, node in nnx.iter_graph(module, graph=True)
+            if isinstance(node, EagerSource)
+        ),
+        stored_key=lambda: program_graphdef(module, graphdef),
+    )
+    return [_path_node(module, path) for path in paths]
+
+
+def source_columns(module: nnx.Module, sources: list[EagerSource], state: Any) -> list[Any]:
+    """Each source's columns for a compiled step: those bound for it, else the device copy.
+
+    The device copy is uploaded once per array and shared with :meth:`Pipeline.device_columns`.
+
+    Args:
+        module: The module holding the sources, owning the device copies.
+        sources: Its in-memory sources.
+        state: All the module state the step takes; a traced leaf shows it runs in a caller's
+            transform (``nnx.grad`` traces the parameters alone).
+
+    Returns:
+        The columns, one entry per source.
+
+    Raises:
+        TypeError: If a caller's transform traces the step and gave no columns: the columns
+            are not NNX state, so the transform cannot carry them.
+    """
+    columns = [bound_columns(source) for source in sources]
+    if all(column is not None for column in columns):
+        return columns
+    if _is_traced(state):
+        raise TypeError(
+            "A pipeline over an in-memory source is traced by a caller's transform, but the "
+            "source's columns are host data and not NNX state, so the transform cannot carry "
+            "them: take columns = pipeline.device_columns() outside the transform, pass it in "
+            "as an argument, and call step(columns=columns) or scan(..., columns=columns)"
+        )
+    return [
+        _on_device(module, source.data) if column is None else column
+        for source, column in zip(sources, columns, strict=True)
+    ]
 
 
 def _host_copies(module: nnx.Module) -> _HostCopies:
@@ -133,25 +270,33 @@ def _on_device(module: nnx.Module, state: Any) -> Any:
     return jax.tree.map(stage, state)
 
 
-def staged_view[M: nnx.Module](module: M) -> M:
+def staged_view[M: nnx.Module](module: M, columns: list[Any] | None) -> tuple[M, list[Any]]:
     """``module`` rebuilt around its live Variables, with its host arrays on the device.
 
     For a flax transform that takes the module as an argument (``nnx.scan``): given the live
     module, it would take the module's NumPy arrays as arguments and upload them on every call.
     The view shares every Variable object with the live module, so what the transform writes is
     written to the module, and a Variable the module shares with other arguments stays shared.
-    Only the arrays outside Variables (a source's records) are replaced, by the copies
-    :func:`_on_device` keeps. Only ``module``'s graph is traversed, so the cost does not grow
-    with the other arguments (a model).
+    Only the arrays outside Variables are replaced, by the copies :func:`_on_device` keeps.
+    The view is built on :func:`program_graphdef`, so it holds no host value: the transform takes
+    the columns as an argument, and its tracing caches, keyed by the view's graphdef, keep no
+    records, provenance or host stage alive. Only ``module``'s graph is traversed, once, so the
+    cost does not grow with the other arguments (a model).
 
     Args:
         module: The module to view (the pipeline).
+        columns: The in-memory sources' columns a caller's transform passed, or ``None``.
 
     Returns:
-        The view.
+        The view, and the columns the transform takes (see :func:`source_columns`).
     """
     graphdef, variables, data = nnx.split(module, nnx.Variable, ..., graph=True)
-    return nnx.merge(graphdef, variables, _on_device(module, data), copy=False)
+    if columns is None:
+        columns = source_columns(module, located_eager_sources(module, graphdef), variables)
+    view = nnx.merge(
+        program_graphdef(module, graphdef), variables, _on_device(module, data), copy=False
+    )
+    return view, columns
 
 
 def next_batch(module: nnx.Module, body: StepBody, size: int) -> Batch:
@@ -171,7 +316,11 @@ def next_batch(module: nnx.Module, body: StepBody, size: int) -> Batch:
         The body's output.
     """
     graphdef, per_batch, staged = nnx.split(module, is_per_batch_state, ..., graph=True)
-    batch, writes = _session_step(graphdef, body, size)(per_batch, _on_device(module, staged))
+    state = (per_batch, staged)
+    columns = source_columns(module, located_eager_sources(module, graphdef), state)
+    batch, writes = _session_step(module, graphdef, body, size)(
+        per_batch, _on_device(module, staged), columns
+    )
     apply_writes(writes, ((state_leaves(per_batch),), (state_leaves(staged),)))
     return batch
 
@@ -252,12 +401,15 @@ class PipelineIterator:
         # keeping them lets each yield sync the module in O(written leaves).
         self._live_variables = state_leaves(mutable_state)
         self._carried_variables = state_leaves(self._state)
+        self._module = module
         self._graphdef = graphdef
         self._body = body
         # The step every full batch runs, shared with ``step()``; a run's short final batch
         # looks its own up once.
-        self._pure_step = _session_step(graphdef, body, plan.batch_size)
+        state = (mutable_state, immutable_state)
+        self._pure_step = _session_step(module, graphdef, body, plan.batch_size)
         self._immutable_state = _on_device(module, immutable_state)
+        self._columns = source_columns(module, located_eager_sources(module, graphdef), state)
         self._receivers = (
             (self._live_variables, self._carried_variables),
             (state_leaves(immutable_state), state_leaves(self._immutable_state)),
@@ -306,9 +458,9 @@ class PipelineIterator:
         step = (
             self._pure_step
             if size == self._plan.batch_size
-            else _session_step(self._graphdef, self._body, size)
+            else _session_step(self._module, self._graphdef, self._body, size)
         )
-        batch, writes = step(self._state, self._immutable_state)
+        batch, writes = step(self._state, self._immutable_state, self._columns)
         # Sync the live module and the session copies at every yield boundary:
         # mid-loop checkpointing (nnx.state on the pipeline) must see the truth.
         apply_writes(writes, self._receivers)

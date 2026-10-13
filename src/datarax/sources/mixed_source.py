@@ -28,6 +28,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from flax import nnx, traverse_util
+from jax.core import Tracer
 from jax.typing import ArrayLike
 
 from datarax.config.registry import register_component
@@ -60,6 +61,7 @@ from datarax.core.index_words import (
 )
 from datarax.core.maybe import Maybe
 from datarax.core.spec import spec_mismatches, SpecMismatchError
+from datarax.sources.eager_source import bind_columns, bound_columns, eager_sources
 from datarax.sources.memory_source import MemorySource
 from datarax.typing import DataDict
 
@@ -900,7 +902,19 @@ class MixDataSourcesNode(DataSourceModule):
                 found[position] = record
         return tuple(found)
 
-    def get_records(self, indices: jax.Array) -> DataDict:
+    def device_columns(self) -> list[Any]:
+        """The device copies of the mix's in-memory sources' columns, for a caller's transform.
+
+        An in-memory source's columns are host data, not NNX state, so a transform the caller
+        writes around :meth:`get_records` takes them as an argument: get them here, outside it,
+        and pass them as ``get_records(indices, columns=...)``.
+
+        Returns:
+            One columns pytree per in-memory source under the mix, in graph order.
+        """
+        return [jax.device_put(source.data) for source in eager_sources(self)]
+
+    def get_records(self, indices: jax.Array, *, columns: list[Any] | None = None) -> DataDict:
         """Gather the mixed records at ``indices``, each from the source that owns it.
 
         A mixed index is a source's offset plus a record index within that source (see
@@ -909,8 +923,14 @@ class MixDataSourcesNode(DataSourceModule):
         gather addresses records with one int32 word, so a mix whose index space passes
         ``2**31 - 1`` is refused here, naming the host read.
 
+        The mix traces its children's reads, so each in-memory source under it reads its
+        columns' device copy: ``columns``, those datarax's own compiled step bound, or, for
+        concrete ``indices``, a copy made for the call.
+
         Args:
             indices: uint32 ``(n, 2)`` mixed record indices; concrete or traced.
+            columns: The in-memory sources' columns, as :meth:`device_columns` returns them,
+                passed into the caller's transform.
 
         Returns:
             Dict mapping each data key to a JAX array with leading dim ``len(indices)``.
@@ -927,6 +947,26 @@ class MixDataSourcesNode(DataSourceModule):
                 f"and this mix names {layout.space}; read its records on the host with "
                 "mix.get_batch(indices)"
             )
+        sources = eager_sources(self)
+        if columns is None:
+            columns = [bound_columns(source) for source in sources]
+            if not isinstance(indices, Tracer):
+                columns = [
+                    jax.device_put(source.data) if column is None else column
+                    for source, column in zip(sources, columns, strict=True)
+                ]
+            elif any(column is None for column in columns):
+                raise TypeError(
+                    "MixDataSourcesNode.get_records is traced, but the in-memory sources under "
+                    "it hold their columns as host data and not NNX state, so the trace cannot "
+                    "read them: take columns = mix.device_columns() outside the transform, pass "
+                    "it in as an argument, and call get_records(indices, columns=columns)"
+                )
+        with bind_columns(sources, columns):
+            return self._gather(indices, layout)
+
+    def _gather(self, indices: jax.Array, layout: _Layout) -> DataDict:
+        """The traced gather of :meth:`get_records`, its children's columns bound."""
         # The children's traced reads, described without running them: what the gather below
         # reads and nothing more, so no child's host values are read while JAX traces.
         probe = jax.ShapeDtypeStruct((1, 2), jnp.uint32)

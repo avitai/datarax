@@ -7,7 +7,7 @@ shape. Pick the integration tier that fits your needs:
 | Tier | API | When to use |
 |---|---|---|
 | **A — iterator** | `for batch in pipeline: ...` | Prototyping, eval, any loop where iterator overhead is not the bottleneck |
-| **B — single step** | `batch = pipeline.step()` | When you own your own JIT / scan / grad orchestration |
+| **B — single step** | `batch = pipeline.step()` | When you own your own JIT / scan / grad orchestration: pass `pipeline.device_columns()` into it and call `pipeline.step(columns=...)` inside |
 | **C — scan epoch** | `pipeline.scan(step_fn, modules=(...), length=...)` | Production training; entire epoch compiles to one XLA graph |
 
 Tier C delivers an order-of-magnitude speedup over the iterator path on

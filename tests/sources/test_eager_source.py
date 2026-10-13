@@ -362,8 +362,8 @@ class TestSourcesUnderTransforms:
         a, b = source("a"), source("b")
         assert _graphdef(a) == _graphdef(b)
         assert _graphdef(_memory()) == _graphdef(_memory())
-        gather = nnx.jit(lambda s, words: s.get_records(words)["x"])
+        gather = nnx.jit(lambda s, words, columns: s.get_records(words, columns=columns)["x"])
         words = jnp.asarray(_words([1, 3]))
         with expect_compiles(1):
-            jax.block_until_ready(gather(a, words))
-            jax.block_until_ready(gather(b, words))
+            jax.block_until_ready(gather(a, words, a.device_columns()))
+            jax.block_until_ready(gather(b, words, b.device_columns()))

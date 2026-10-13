@@ -449,11 +449,12 @@ class TestThePipelineUnderTransforms:
         self, shuffle: bool, drop_last: bool, length: int, batch: int
     ) -> None:
         pipe = _pipeline(shuffle=shuffle, drop_last=drop_last, length=length, batch=batch)
-        step = nnx.jit(lambda p: p.step())
+        columns = pipe.device_columns()
+        step = nnx.jit(lambda p, c: p.step(columns=c))
         with expect_compiles(1):
-            first = step(pipe)
+            first = step(pipe, columns)
         with expect_compiles(0):
-            rest = [step(pipe) for _ in range(3)]
+            rest = [step(pipe, columns) for _ in range(3)]
         reference = _pipeline(shuffle=shuffle, drop_last=drop_last, length=length, batch=batch)
         expected = [_named(reference.step()) for _ in range(4)]
         for got, want in zip([first, *rest], expected, strict=True):

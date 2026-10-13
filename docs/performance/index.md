@@ -96,31 +96,45 @@ for batch in pipeline:
     train_step(model, optimizer, batch)
 ```
 
-Measured on one RTX 4090 with a 1 GiB source served in shuffled order, batches of 256, and a
-linear model trained with SGD:
+Measured on one NVIDIA A100-SXM4-40GB with a 1 GiB source served in shuffled order, batches of
+256, and a linear model trained with SGD (ranges over three runs):
 
 | Pattern | Cost | Peak device memory | Use when |
 |---|---|---|---|
-| ``for batch in pipeline:`` + your ``nnx.jit`` step | 0.31-0.34 ms per train step (0.08 ms per batch for the data alone) | 1.05 GiB | Training and inference, in any framework that takes batches |
-| ``pipeline.scan(step_fn, modules=..., length=...)`` | 4.6 ms per 100 train steps | 1.03 GiB | Whole-epoch training fused into one XLA call, datarax running the loop |
-| ``pipeline.step()`` in a Python loop | 0.35 ms per batch | - | Single batches, debugging, interactive use |
-| ``pipeline.step()`` inside your default ``nnx.jit`` step | 3.4-3.6 ms per train step | 2-3 GiB | Avoid: see below |
+| ``for batch in pipeline:`` + your ``nnx.jit`` step | 1.40-1.45 ms per train step (0.70-0.72 ms per batch for the data alone) | 0.13 GiB | Training and inference, in any framework that takes batches |
+| ``pipeline.scan(step_fn, modules=..., length=...)`` | 11.5-11.9 ms per 100 train steps | 1.09 GiB | Whole-epoch training fused into one XLA call, datarax running the loop |
+| ``pipeline.step()`` in a Python loop | 0.75-0.76 ms per batch | 1.05 GiB | Single batches, debugging, interactive use |
+| ``pipeline.step(columns=...)`` inside your ``nnx.jit`` step | 1.19-1.21 ms per train step | 1.09 GiB | A train step of your own that draws its batch inside the step |
 
 ``for batch in pipeline`` reads each batch on host threads and places only that batch on the
 device as the loop takes it, so no dataset is uploaded; the pipeline's ``get_state()`` /
-``set_state()`` hold where iteration stands (see the checkpointing guide). ``scan`` uploads NumPy
-source data to the device once and reads device data in place, so it copies no dataset per batch.
+``set_state()`` hold where iteration stands (see the checkpointing guide). ``scan``, ``step()``
+and sessions upload an in-memory source's columns to the device once and read them in place, so
+they copy no dataset per batch, and the dataset stays on the device for the pipeline's lifetime.
 
-A pipeline passed into your own jitted step is an argument of that step, so the dataset goes
-with it into every call:
+An in-memory source's columns are host data, not NNX state, so a pipeline passed into your own
+jitted step carries none of them; the step takes their device copy as an argument, the way it
+takes a batch:
 
-- The default ``nnx.jit`` returns the pipeline's state, dataset included, from every call: each
-  step copies the dataset on the device (the 3.4 ms and 2-3 GiB above).
-- ``nnx.jit(..., graph=True, graph_updates=False)`` returns only what changed, so device data
-  stays in place (0.54 ms per train step), but NumPy data is an argument JAX transfers to the
-  device on every call (65 ms per train step).
-- ``nnx.cached_partial`` does not accept the arrays a source holds
-  ([google/flax#5109](https://github.com/google/flax/issues/5109)).
+```python
+columns = pipeline.device_columns()  # uploaded once, outside the step
+
+@nnx.jit
+def train_step(model, optimizer, pipeline, columns):
+    batch = pipeline.step(columns=columns)
+    loss, grads = nnx.value_and_grad(loss_fn)(model, batch)
+    optimizer.update(model, grads)
+    return loss
+```
+
+- The default ``nnx.jit`` costs 1.19-1.21 ms per train step above, with no dataset copied per call.
+- ``nnx.jit(..., graph=True, graph_updates=False)`` returns only the state the step changed:
+  1.05-1.06 ms per train step.
+- ``nnx.cached_partial(train_step, model, optimizer, pipeline)`` binds the module arguments once:
+  0.48 ms per train step, the fastest of the three. Call it with the columns.
+
+Called inside a transform without ``columns``, ``step()`` and ``scan`` raise a ``TypeError``
+naming ``device_columns()``.
 
 Flax plans to make tree mode the default for its transforms
 ([FLIP 5310](https://github.com/google/flax/blob/main/docs_nnx/flip/5310-tree-mode-nnx.md)).

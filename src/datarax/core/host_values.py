@@ -62,6 +62,22 @@ class HostProvenance(HostValue):
     value: tuple[Mapping[str, Any], ...]
 
 
+class HostColumns(HostValue):
+    """An in-memory source's columns, held on the host and out of NNX state.
+
+    Its records are never NNX state, so a split of a module holding the source carries no
+    dataset-sized leaf, and sources that differ only in their data share one graph definition
+    and one compiled program. Nothing a program runs reads the holder: a compiled program takes
+    the columns' device copy as an explicit argument.
+
+    Attributes:
+        value: The columns, NumPy arrays sharing a leading record axis.
+    """
+
+    __slots__ = ()
+    value: Any
+
+
 class HostArray:
     """A memory map of an on-disk array, kept on the host and out of NNX state.
 
@@ -107,4 +123,4 @@ class HostArray:
         self._lock = threading.Lock()
 
 
-__all__ = ["HostArray", "HostProvenance", "HostValue"]
+__all__ = ["HostArray", "HostColumns", "HostProvenance", "HostValue"]

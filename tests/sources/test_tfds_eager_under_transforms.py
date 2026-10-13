@@ -104,11 +104,12 @@ class TestTheCompiledPathsOverATFDSSource:
     ) -> None:
         pipe = _pipeline(_source(tfds_fixture))
         reference = _pipeline(_source(tfds_fixture))
-        step = nnx.jit(lambda p: p.step())
+        columns = pipe.device_columns()
+        step = nnx.jit(lambda p, c: p.step(columns=c))
         with expect_compiles(1):
-            first = step(pipe)
+            first = step(pipe, columns)
         with expect_compiles(0):
-            rest = [step(pipe) for _ in range(3)]
+            rest = [step(pipe, columns) for _ in range(3)]
         for got in (first, *rest):
             _same_batches(got, reference.step())
 
@@ -140,7 +141,8 @@ class TestTheCompiledPathsOverATFDSSource:
 
         def program(pipe: Pipeline) -> str:
             graphdef, state = nnx.split(pipe)
-            return jax.jit(lambda s: nnx.merge(graphdef, s).step().data).lower(state).as_text()
+            step = jax.jit(lambda s, c: nnx.merge(graphdef, s).step(columns=c).data)
+            return step.lower(state, pipe.device_columns()).as_text()
 
         assert program(_pipeline(source)) == program(_pipeline(memory))
 
@@ -168,11 +170,11 @@ class TestTheCompiledPathsOverATFDSSource:
         )
         assert first._provenance.value != second._provenance.value
         assert nnx.split(first, graph=False)[0] == nnx.split(second, graph=False)[0]
-        gather = nnx.jit(lambda s, words: s.get_records(words)["image"])
+        gather = nnx.jit(lambda s, words, c: s.get_records(words, columns=c)["image"])
         words = jnp.asarray(to_words(np.asarray([1, 3], np.uint64)))
         with expect_compiles(1):
-            jax.block_until_ready(gather(first, words))
-            jax.block_until_ready(gather(second, words))
+            jax.block_until_ready(gather(first, words, first.device_columns()))
+            jax.block_until_ready(gather(second, words, second.device_columns()))
 
 
 class _Train(nnx.Module):
@@ -270,14 +272,15 @@ def test_steady_steps_upload_no_records(tfds_fixture: TFDSFixture) -> None:
     iterated = _pipeline(_source(tfds_fixture))
     session = iter(iterated)
     pipeline = _pipeline(_source(tfds_fixture))
-    step = nnx.jit(lambda p: p.step())
+    columns = pipeline.device_columns()
+    step = nnx.jit(lambda p, c: p.step(columns=c))
     for _ in range(2):
         jax.block_until_ready(next(session).indices)
-        jax.block_until_ready(step(pipeline).indices)
+        jax.block_until_ready(step(pipeline, columns).indices)
     with jax.transfer_guard_host_to_device("disallow"):
         for _ in range(3):
             jax.block_until_ready(next(session).indices)
-            jax.block_until_ready(step(pipeline).indices)
+            jax.block_until_ready(step(pipeline, columns).indices)
     iterated.close()
 
 
@@ -287,11 +290,12 @@ def test_steady_steps_read_nothing_back_to_the_host(tfds_fixture: TFDSFixture) -
     iterated = _pipeline(_source(tfds_fixture))
     session = iter(iterated)
     pipeline = _pipeline(_source(tfds_fixture))
-    step = nnx.jit(lambda p: p.step())
+    columns = pipeline.device_columns()
+    step = nnx.jit(lambda p, c: p.step(columns=c))
     jax.block_until_ready(next(session).indices)
-    jax.block_until_ready(step(pipeline).indices)
+    jax.block_until_ready(step(pipeline, columns).indices)
     with jax.transfer_guard_device_to_host("disallow"):
         for _ in range(3):
             jax.block_until_ready(next(session).indices)
-            jax.block_until_ready(step(pipeline).indices)
+            jax.block_until_ready(step(pipeline, columns).indices)
     iterated.close()

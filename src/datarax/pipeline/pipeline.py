@@ -22,9 +22,10 @@ Three integration tiers (measured costs: ``docs/performance/index.md``):
   framework that takes batches; the recommended path.
 - **Tier B — ``Pipeline.step()``** — one batch, traceable, with live
   module state: single batches and debugging eagerly, and inside a
-  transform of your own. A pipeline passed into your own jitted step is
-  an argument of every call, so the default ``nnx.jit`` copies its
-  dataset per call; iterate instead (Tier A).
+  transform of your own. An in-memory source's columns are host data,
+  not NNX state, so your transform takes them as an argument:
+  ``columns = pipeline.device_columns()`` outside it, uploaded once, and
+  ``pipeline.step(columns=columns)`` inside it.
 - **Tier C — ``Pipeline.scan(step_fn, modules=(...), length=...)``** —
   the convenience wrapper. Pipeline lifts user-supplied ``nnx.Module``
   instances (typically a model and an ``nnx.Optimizer``) via
@@ -91,8 +92,14 @@ from datarax.pipeline.dag import name_records, OperatorDag, Records
 from datarax.pipeline.dag_call import compile_dag
 from datarax.pipeline.epochs import batch_records, EpochPlan
 from datarax.pipeline.host_stage import HostStage, HostStageHolder
-from datarax.pipeline.iteration import next_batch, PipelineIterator, staged_view
+from datarax.pipeline.iteration import (
+    next_batch,
+    PipelineIterator,
+    source_columns,
+    staged_view,
+)
 from datarax.pipeline.read_plan import HostPlan
+from datarax.sources.eager_source import bind_columns, eager_sources
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.typing import DataDict
 
@@ -582,7 +589,22 @@ class Pipeline(nnx.Module):
         """Close the host stage's run and its read threads; where iteration stands is kept."""
         self.host_stage.close()
 
-    def step(self) -> Batch:
+    def device_columns(self) -> list[Any]:
+        """The in-memory sources' columns on the device, for a caller's own transform.
+
+        An in-memory source's columns are host data, not NNX state, so a transform the caller
+        writes around :meth:`step` or :meth:`scan` takes them as an argument, the way it takes
+        a batch: get them here, outside the transform, pass them in, and hand them to
+        ``step(columns=...)`` or ``scan(..., columns=...)``. Each array is uploaded once and
+        shared with the copy the pipeline's own compiled steps read.
+
+        Returns:
+            One columns pytree per in-memory source, in graph order (empty for a pipeline over
+            no in-memory source).
+        """
+        return source_columns(self, eager_sources(self), None)
+
+    def step(self, columns: list[Any] | None = None) -> Batch:
         """Serve the next batch from the source through the DAG.
 
         Starts where the last batch ended, or at the next epoch when the current one cannot
@@ -598,10 +620,21 @@ class Pipeline(nnx.Module):
         program. A structural change made between calls (a new batch size, a replaced stage,
         ``train()``/``eval()``) is honored; a stage adding state while it runs is refused.
 
+        An in-memory source's columns are not NNX state, so inside the caller's transform they
+        arrive as an argument: ``columns``, from :meth:`device_columns`. Without them a traced
+        call is refused.
+
+        Args:
+            columns: The in-memory sources' columns, as :meth:`device_columns` returns them,
+                passed into the caller's transform. Not needed outside one.
+
         Returns:
             The sink output for the batch.
         """
-        return next_batch(self, type(self)._next_batch, self.batch_size)
+        if columns is None:
+            return next_batch(self, type(self)._next_batch, self.batch_size)
+        with bind_columns(eager_sources(self), columns):
+            return next_batch(self, type(self)._next_batch, self.batch_size)
 
     def _next_batch(self, size: int) -> Batch:
         """Serve ``size`` records from where the next batch starts, and advance past them.
@@ -643,6 +676,7 @@ class Pipeline(nnx.Module):
         length: int,
         modules: tuple[Any, ...] = (),
         init_carry: Any = None,
+        columns: list[Any] | None = None,
     ) -> Any:
         """Run ``length`` steps under ``nnx.scan``, lifting pipeline + modules state.
 
@@ -668,6 +702,8 @@ class Pipeline(nnx.Module):
                 lifted across iterations (e.g. ``(model, optimizer)``).
                 Empty tuple for body functions that need no extra modules.
             init_carry: Optional carry threaded through ``step_fn``.
+            columns: The in-memory sources' columns, from :meth:`device_columns`, when the
+                scan runs inside the caller's own transform (see :meth:`step`).
 
         Returns:
             Stacked outputs (``init_carry is None``) or
@@ -702,10 +738,10 @@ class Pipeline(nnx.Module):
         steps = jnp.arange(length, dtype=jnp.int32)
         # The scan runs on a view sharing this pipeline's Variables with its host data staged
         # once, as step() and iteration stage it, so no call uploads the records again.
-        view = staged_view(self)
+        view, columns = staged_view(self, columns)
         if has_init_carry:
-            return scan_body(view, *modules, init_carry, steps)
-        return scan_body(view, *modules, steps)
+            return scan_body(view, *modules, columns, init_carry, steps)
+        return scan_body(view, *modules, columns, steps)
 
     def _compile_scan_body(
         self,
@@ -729,26 +765,27 @@ class Pipeline(nnx.Module):
         del length  # captured by the steps array passed at call time
         state_axes = nnx.StateAxes({...: nnx.Carry})
 
+        # The in-memory sources' columns enter every iteration whole (``in_axes`` None).
         if not has_init_carry:
-            in_axes = (state_axes,) + (state_axes,) * n_modules + (0,)
+            in_axes = (state_axes,) + (state_axes,) * n_modules + (None, 0)
 
             @nnx.scan(in_axes=in_axes, out_axes=0, graph=True, graph_updates=True)
             def scan_body(*args: Any) -> Any:
-                pipeline, *user_modules_and_step = args
-                user_modules = user_modules_and_step[:-1]
-                batch = pipeline.step()
+                pipeline, *rest = args
+                user_modules = rest[:n_modules]
+                batch = pipeline.step(columns=rest[n_modules])
                 return step_fn(*user_modules, batch)
 
             return scan_body
 
-        in_axes = (state_axes,) + (state_axes,) * n_modules + (nnx.Carry, 0)
+        in_axes = (state_axes,) + (state_axes,) * n_modules + (None, nnx.Carry, 0)
 
         @nnx.scan(in_axes=in_axes, out_axes=(nnx.Carry, 0), graph=True, graph_updates=True)
         def scan_body_with_carry(*args: Any) -> tuple[Any, Any]:
             pipeline, *rest = args
             user_modules = rest[:n_modules]
-            carry = rest[n_modules]
-            batch = pipeline.step()
+            carry = rest[n_modules + 1]
+            batch = pipeline.step(columns=rest[n_modules])
             return step_fn(carry, *user_modules, batch)
 
         return scan_body_with_carry

@@ -27,6 +27,7 @@ import pytest
 from flax import nnx
 
 from datarax.core.data_source import RecordIdentity
+from datarax.pipeline import iteration
 from datarax.pipeline.pipeline import Pipeline
 from datarax.sources import (
     TFDSEagerConfig,
@@ -115,18 +116,28 @@ def _iterate(source: Any, *, shuffle: bool = True) -> None:
     pipeline.close()
 
 
+def _user_jit(source: Any, *, graph: bool) -> Any:
+    """``step()`` in the caller's ``nnx.jit``, taking the columns as an argument."""
+    pipeline = _pipeline(source)
+    step = nnx.jit(lambda p, columns: p.step(columns=columns), graph=graph)
+    return step(pipeline, pipeline.device_columns())
+
+
+def _user_scan(source: Any) -> Any:
+    """``Pipeline.scan`` in the caller's ``nnx.jit``, taking the columns as an argument."""
+    pipeline = _pipeline(source)
+    scan = nnx.jit(lambda p, columns: p.scan(_total, length=2, columns=columns))
+    return scan(pipeline, pipeline.device_columns())
+
+
 _TRACED_PATHS: dict[str, Callable[[Any], Any]] = {
     "step": lambda source: _pipeline(source).step(),
     "step, shuffled": lambda source: _pipeline(source, shuffle=True).step(),
     "session": lambda source: next(iter(_pipeline(source).session())),
     "scan": lambda source: _pipeline(source).scan(_total, length=2),
-    "nnx.jit, graph mode": lambda source: nnx.jit(lambda p: p.step())(_pipeline(source)),
-    "nnx.jit, tree mode": lambda source: nnx.jit(lambda p: p.step(), graph=False)(
-        _pipeline(source)
-    ),
-    "scan in nnx.jit": lambda source: nnx.jit(lambda p: p.scan(_total, length=2))(
-        _pipeline(source)
-    ),
+    "nnx.jit, graph mode": lambda source: _user_jit(source, graph=True),
+    "nnx.jit, tree mode": lambda source: _user_jit(source, graph=False),
+    "scan in nnx.jit": lambda source: _user_scan(source),
 }
 
 # Sources with a traced read (``get_records``).
@@ -158,6 +169,25 @@ def test_no_traced_path_reads_a_kind_equal_holder(
     kind: str, path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source = _TRACED_SOURCES[kind](tmp_path, monkeypatch)
+    assert _recorded(_TRACED_PATHS[path], source) == []
+
+
+_CALLER_PATHS = ("nnx.jit, graph mode", "nnx.jit, tree mode", "scan in nnx.jit")
+
+
+@pytest.mark.parametrize("path", _CALLER_PATHS)
+@pytest.mark.parametrize("kind", list(_TRACED_SOURCES))
+def test_a_first_step_inside_a_caller_s_transform_takes_no_holder(
+    kind: str, path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A miss of datarax's program caches inside the caller's trace builds its key from no holder.
+
+    The caches are emptied first, so the step program and its key are built while the caller's
+    transform traces, whatever ran earlier in the process.
+    """
+    source = _TRACED_SOURCES[kind](tmp_path, monkeypatch)
+    for cache in (iteration._SESSION_STEPS, iteration._EAGER_PATHS):
+        cache.clear()
     assert _recorded(_TRACED_PATHS[path], source) == []
 
 
@@ -234,27 +264,27 @@ def test_iterating_a_tfds_stream_reads_no_kind_equal_holder_in_a_program(
 class _TakesProvenance(MemorySource):
     """A source whose traced read takes its provenance holder off itself."""
 
-    def get_records(self, indices: jax.Array) -> Any:
+    def get_records(self, indices: jax.Array, *, columns: Any = None) -> Any:
         """Take the holder, then gather as a memory source does."""
         held = self._provenance
         del held
-        return super().get_records(indices)
+        return super().get_records(indices, columns=columns)
 
 
 class _ReadsProvenance(MemorySource):
     """A source whose traced read reads what its provenance holder holds."""
 
-    def get_records(self, indices: jax.Array) -> Any:
+    def get_records(self, indices: jax.Array, *, columns: Any = None) -> Any:
         """Read the holder, then gather as a memory source does."""
         rows = self._provenance.value
         del rows
-        return super().get_records(indices)
+        return super().get_records(indices, columns=columns)
 
 
 class _CapturesProvenance(MemorySource):
     """A source whose traced read captures its provenance holder in a host callback."""
 
-    def get_records(self, indices: jax.Array) -> Any:
+    def get_records(self, indices: jax.Array, *, columns: Any = None) -> Any:
         """Capture the holder in a debug callback, then gather as a memory source does."""
         held = self._provenance
 
@@ -262,20 +292,20 @@ class _CapturesProvenance(MemorySource):
             _ = held
 
         jax.debug.callback(keep)
-        return super().get_records(indices)
+        return super().get_records(indices, columns=columns)
 
 
 class _CapturesItself(MemorySource):
     """A source whose traced read captures itself, and with it its holder, in a host callback."""
 
-    def get_records(self, indices: jax.Array) -> Any:
+    def get_records(self, indices: jax.Array, *, columns: Any = None) -> Any:
         """Capture the source in a debug callback, then gather as a memory source does."""
 
         def keep() -> None:
             _ = self
 
         jax.debug.callback(keep)
-        return super().get_records(indices)
+        return super().get_records(indices, columns=columns)
 
 
 @pytest.mark.parametrize(

@@ -4,7 +4,9 @@ A compiled step names a batch's records with ``record_indices_at`` (a traced sta
 gathers them with ``get_records`` (traced words, addressed by the low word). Each source is
 checked under ``jit`` with a compile count, under ``vmap`` over a batch axis of index words,
 under ``lax.scan`` over batches, under ``grad`` (the gathered values carry the gradient back to
-the source's rows; the integer words carry none), and with no read back to the host. The wrapped
+the rows of the columns passed in; the integer words carry none), and with no read back to the
+host. Every source here holds its columns on the host, so each traced read takes their device
+copy as an argument, from ``source.device_columns()``. The wrapped
 and partitioned order, ``resolve_wrapped_indices``, is checked with a traced start for every
 worker layout and for lengths past ``2**31`` and ``2**32``.
 """
@@ -12,16 +14,15 @@ worker layout and for lengths past ``2**31`` and ``2**32``.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from flax import nnx
 from substrax.testing.compiles import expect_compiles
 
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule
 from datarax.core.index_words import from_words, to_words
 from datarax.sources.eager_source import EagerSource
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
@@ -59,7 +60,7 @@ def _mixed() -> MixDataSourcesNode:
     )
 
 
-_SOURCES: dict[str, Callable[[], DataSourceModule]] = {
+_SOURCES: dict[str, Callable[[], EagerSource | MixDataSourcesNode]] = {
     "memory": _memory,
     "memory-worker": lambda: _memory(workers=3, shard=1),
     "eager": lambda: _Eager(_values(23)),
@@ -78,11 +79,14 @@ def test_the_callback_check_finds_a_host_callback_in_a_loop() -> None:
     assert host_callbacks(jax.make_jaxpr(calls_back)(jnp.float32(1.0))) == ["pure_callback"]
 
 
-def _fetch(source: DataSourceModule) -> Callable[[jax.Array, jax.Array], dict[str, jax.Array]]:
+type _Fetch = Callable[[jax.Array, jax.Array, Any], dict[str, jax.Array]]
+
+
+def _fetch(source: Any) -> _Fetch:
     """The compiled step's two calls: name the records from a traced start, then gather them."""
 
-    def fetch(start: jax.Array, key: jax.Array) -> dict[str, jax.Array]:
-        return source.get_records(source.record_indices_at(start, _SIZE, key))
+    def fetch(start: jax.Array, key: jax.Array, columns: Any) -> dict[str, jax.Array]:
+        return source.get_records(source.record_indices_at(start, _SIZE, key), columns=columns)
 
     return fetch
 
@@ -97,12 +101,13 @@ class TestEverySource:
             for start, key in calls
         ]
         fetch = jax.jit(_fetch(source))
+        columns = source.device_columns()
         first = (jnp.int32(0), jax.random.key(0))
         traced = [(jnp.int32(start), key) for start, key in calls]
         with expect_compiles(1):
-            jax.block_until_ready(fetch(*first))
+            jax.block_until_ready(fetch(*first, columns))
         with expect_compiles(0):
-            served = [fetch(start, key)["x"] for start, key in traced]
+            served = [fetch(start, key, columns)["x"] for start, key in traced]
         for got, want in zip(served, expected, strict=True):
             np.testing.assert_array_equal(got, want)
 
@@ -113,14 +118,14 @@ class TestEverySource:
         the program itself is checked on every backend.
         """
         source = _SOURCES[name]()
-        start, key = jnp.int32(5), jax.random.key(1)
-        assert host_callbacks(jax.make_jaxpr(_fetch(source))(start, key)) == []
+        start, key, columns = jnp.int32(5), jax.random.key(1), source.device_columns()
+        assert host_callbacks(jax.make_jaxpr(_fetch(source))(start, key, columns)) == []
         fetch = jax.jit(_fetch(source))
-        jax.block_until_ready(fetch(start, key))
+        jax.block_until_ready(fetch(start, key, columns))
         if jax.default_backend() == "cpu":
             return
         with jax.transfer_guard_device_to_host("disallow"):
-            served = jax.block_until_ready(fetch(start, key)["x"])
+            served = jax.block_until_ready(fetch(start, key, columns)["x"])
             with pytest.raises(RuntimeError, match="[Dd]isallowed"):  # the guard is live
                 np.asarray(served)
 
@@ -130,7 +135,9 @@ class TestEverySource:
         words = jnp.stack([source.record_indices_at(7, _SIZE, key) for key in keys])
         assert words.shape == (4, _SIZE, 2)
         assert words.dtype == jnp.uint32
-        batched = jax.jit(jax.vmap(lambda row: source.get_records(row)["x"]))(words)
+        batched = jax.jit(
+            jax.vmap(lambda row, columns: source.get_records(row, columns=columns)["x"], (0, None))
+        )(words, source.device_columns())
         for row, expected in zip(words, batched, strict=True):
             np.testing.assert_array_equal(expected, source.get_records(row)["x"])
 
@@ -138,19 +145,20 @@ class TestEverySource:
         source = _SOURCES[name]()
         key = jax.random.key(4)
         starts = jnp.arange(0, 5 * _SIZE, _SIZE, dtype=jnp.int32)
+        columns = source.device_columns()
 
         @jax.jit
-        def scanned(starts: jax.Array) -> jax.Array:
+        def scanned(starts: jax.Array, columns: Any) -> jax.Array:
             def body(carry: None, start: jax.Array) -> tuple[None, jax.Array]:
-                return carry, _fetch(source)(start, key)["x"]
+                return carry, _fetch(source)(start, key, columns)["x"]
 
             return jax.lax.scan(body, None, starts)[1]
 
         shifted = starts + 1
         with expect_compiles(1):
-            served = jax.block_until_ready(scanned(starts))
+            served = jax.block_until_ready(scanned(starts, columns))
         with expect_compiles(0):
-            jax.block_until_ready(scanned(shifted))
+            jax.block_until_ready(scanned(shifted, columns))
         for step, start in enumerate(np.asarray(starts)):
             expected = source.get_records(source.record_indices_at(int(start), _SIZE, key))["x"]
             np.testing.assert_array_equal(served[step], expected)
@@ -158,19 +166,18 @@ class TestEverySource:
     def test_the_gradient_reaches_each_gathered_row_of_the_source(self, name: str) -> None:
         """Under a jitted ``grad`` the cotangent of each served row lands on that source row.
 
-        The words are computed inside the differentiated function from a traced start and key,
-        as a train step computes them; a row served twice receives both cotangents.
+        The gradient is taken with respect to the columns passed in. The words are computed
+        inside the differentiated function from a traced start and key, as a train step computes
+        them; a row served twice receives both cotangents.
         """
         source = _SOURCES[name]()
-        graphdef, variables, arrays = nnx.split(source, nnx.Variable, ...)
         weights = jax.random.normal(jax.random.key(5), (_SIZE, 3))
         key = jax.random.key(6)
 
-        def loss(arrays: nnx.State, start: jax.Array) -> jax.Array:
-            module = nnx.merge(graphdef, variables, arrays)
-            return jnp.sum(_fetch(module)(start, key)["x"] * weights)
+        def loss(columns: Any, start: jax.Array) -> jax.Array:
+            return jnp.sum(_fetch(source)(start, key, columns)["x"] * weights)
 
-        gradient = jax.jit(jax.grad(loss))(arrays, jnp.int32(3))
+        gradient = jax.jit(jax.grad(loss))(source.device_columns(), jnp.int32(3))
         named = from_words(source.record_indices_at(3, _SIZE, key)).astype(np.int64)
         leaves = [np.asarray(leaf) for leaf in jax.tree.leaves(gradient)]
         assert all(np.isfinite(leaf).all() for leaf in leaves)

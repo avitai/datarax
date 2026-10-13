@@ -166,19 +166,24 @@ class TestTransforms:
     def test_the_naming_and_gather_hold_no_host_callback(self) -> None:
         mix = _mix()
 
-        def fetch(start: jax.Array, key: jax.Array) -> dict[str, jax.Array]:
-            return mix.get_records(mix.record_indices_at(start, 6, key))
+        def fetch(start: jax.Array, key: jax.Array, columns: list) -> dict[str, jax.Array]:
+            return mix.get_records(mix.record_indices_at(start, 6, key), columns=columns)
 
-        jaxpr = jax.make_jaxpr(fetch)(jnp.int32(0), jax.random.key(0))
+        jaxpr = jax.make_jaxpr(fetch)(jnp.int32(0), jax.random.key(0), mix.device_columns())
         assert host_callbacks(jaxpr) == []
 
     def test_a_module_argument_traces_once_under_nnx_jit(self) -> None:
-        fetch = nnx.jit(lambda mix, start: mix.get_records(mix.record_indices_at(start, 6))["x"])
+        fetch = nnx.jit(
+            lambda mix, start, columns: mix.get_records(
+                mix.record_indices_at(start, 6), columns=columns
+            )["x"]
+        )
         mix, zero, four = _mix(), jnp.int32(0), jnp.int32(4)
+        columns = mix.device_columns()
         with expect_compiles(1):
-            jax.block_until_ready(fetch(mix, zero))
+            jax.block_until_ready(fetch(mix, zero, columns))
         with expect_compiles(0):
-            served = fetch(mix, four)
+            served = fetch(mix, four, columns)
         np.testing.assert_array_equal(
             served, np.asarray(mix.get_records(mix.record_indices_at(4, 6))["x"])
         )

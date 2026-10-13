@@ -14,7 +14,6 @@ from __future__ import annotations
 from typing import Any, cast
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 import pytest
 from flax import nnx
@@ -139,12 +138,11 @@ class TestTheHostRead:
         before = jax.live_arrays()
         batch = mix.get_batch(words)
         assert arrays_made_since(before) == []
-        # Control: the instrument sees a read that keeps device arrays (a child's own read over
-        # columns held on the device).
+        # Control: the instrument sees a read that keeps device arrays (a child's gather, which
+        # serves device arrays).
         child = cast(MemorySource, mix.sources[0])
-        child.data = {name: jnp.asarray(column) for name, column in child.data.items()}
         before = jax.live_arrays()
-        kept = child.get_batch(_words([3, 0]))
+        kept = child.get_records(jax.device_put(_words([3, 0])))
         assert arrays_made_since(before)
         del batch, kept
 
