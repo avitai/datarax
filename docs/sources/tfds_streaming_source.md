@@ -17,7 +17,7 @@ A pass is a Grain dataset of decoded batches, `source.pass_dataset(pass_index, k
 batch_size)`, where `key` is the pipeline's key as uint32 words on the host
 (`datarax.core.prng.key_words(key)`), or `None` for file order. It computes the pass's order over record ids, reads each record's payload at its
 offset in an index built once from the shard files' frame headers, checks each frame's CRCs as
-tf.data's TFRecord reader does (a damaged frame raises `datarax.sources._tfrecord.DamagedRecordError` naming its file and
+tf.data's TFRecord reader does (a damaged frame raises `datarax.sources.DamagedRecordError` naming its file and
 record), and decodes last. The shuffle buffer holds record ids, not records. It implements
 Grain's `set_slice`: each of k worker processes computes the same order and reads and decodes
 only its own batches (every k-th), so the order does not depend on k and the workers read the
@@ -29,3 +29,5 @@ Each record is named by its `tfds_id`, the shard file and the offset in it, so i
 looked up again by `source.provenance(batch.indices)`.
 
 ::: datarax.sources.tfds_streaming_source
+
+::: datarax.sources.DamagedRecordError

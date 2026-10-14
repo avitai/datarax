@@ -37,6 +37,7 @@ from datarax.pipeline.epochs import EpochPlan, Run
 from datarax.pipeline.run_units import RunUnits
 from datarax.sources import (
     _tfrecord,
+    DamagedRecordError,
     from_tfds,
     tfds_streaming_source,
     TFDSEagerConfig,
@@ -356,7 +357,7 @@ class TestNnxHygiene:
             np.testing.assert_array_equal(ours, theirs)
 
 
-_DAMAGED = _tfrecord.DamagedRecordError
+_DAMAGED = DamagedRecordError
 _TRAIN_SHARD = r"train\.tfrecord-00000-of-00001"
 
 

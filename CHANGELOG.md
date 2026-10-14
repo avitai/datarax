@@ -260,8 +260,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Three internal modules hold what both sources build on: `_tfrecord` (reading TFRecord shard files
     and their CRCs, `ShardIndex`, `DamagedRecordError`), `_stream_order` (a stream pass's record
     order) and `_tfds_prepared` (a split's prepared copy and the features a source keeps).
-  - `datarax.sources` exports the same names as before. An import by module path follows the name to
-    its new module.
+  - `datarax.sources` exports the same names as before, and `DamagedRecordError`, which a stream
+    read raises for a damaged TFRecord frame. An import by module path follows the name to its new
+    module.
   - An import-linter contract keeps the five modules acyclic.
 - **Breaking:** a row of a batch built without record identities (`batch_ops.from_arrays`,
   `from_stacked` over records without an index) is named `(2**31, row)` instead of `(0, row)`, and

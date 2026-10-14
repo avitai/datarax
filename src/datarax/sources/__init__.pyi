@@ -3,6 +3,7 @@
 __all__: list[str]
 
 from ._source_base import StreamingSourceBase as StreamingSourceBase
+from ._tfrecord import DamagedRecordError as DamagedRecordError
 from .array_record_source import (
     ArrayRecordSourceConfig as ArrayRecordSourceConfig,
     ArrayRecordSourceModule as ArrayRecordSourceModule,
