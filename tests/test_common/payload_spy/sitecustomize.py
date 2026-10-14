@@ -18,11 +18,11 @@ if _LOG:
 
     _PATH = Path(_LOG)
 
-    _read = tfds_streaming_source._payload  # noqa: SLF001 - the function the spy wraps
+    _read = tfds_streaming_source.payload  # noqa: SLF001 - the function the spy wraps
 
     def _logged(file, path, index, offset):  # noqa: ANN001, ANN202 - the wrapped signature
         with _PATH.open("a") as log:
             log.write(f"{Path(path).name} {offset}\n")
         return _read(file, path, index, offset)
 
-    tfds_streaming_source._payload = _logged  # noqa: SLF001
+    tfds_streaming_source.payload = _logged  # noqa: SLF001

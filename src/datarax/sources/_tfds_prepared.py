@@ -2,9 +2,9 @@
 
 Neither TFDS source prepares a dataset, because preparing imports TensorFlow: a copy that is not
 prepared, or not in the format a source reads, is refused with the error the source builds, naming
-the call that prepares it (:func:`_prepared_builder`, :func:`_prepare_call`). A record keeps its
-supervised features when ``as_supervised`` asks for them (:func:`_supervised_keys`), then those the
-key filters keep (:func:`_kept_features`).
+the call that prepares it (:func:`prepared_builder`, :func:`prepare_call`). A record keeps its
+supervised features when ``as_supervised`` asks for them (:func:`supervised_keys`), then those the
+key filters keep (:func:`kept_features`).
 
 This module imports ``tensorflow_datasets`` at its top, as both sources' modules do.
 ``datarax.sources`` exports the TFDS sources' names lazily, so ``import datarax.sources`` imports no
@@ -25,7 +25,7 @@ import tensorflow_datasets as tfds
 from datarax.sources.source_ops import filter_keys
 
 
-def _prepared_builder(  # noqa: DOC503 - the exception raised is the one ``refuse`` builds
+def prepared_builder(  # noqa: DOC503 - the exception raised is the one ``refuse`` builds
     name: str, data_dir: str | None, file_format: str, refuse: Callable[[str], Exception]
 ) -> Any:
     """The builder of ``name`` as prepared in ``data_dir`` in ``file_format``, reading no record.
@@ -55,18 +55,18 @@ def _prepared_builder(  # noqa: DOC503 - the exception raised is the one ``refus
     return builder
 
 
-def _prepare_call(name: str, data_dir: str | None, file_format: str) -> str:
+def prepare_call(name: str, data_dir: str | None, file_format: str) -> str:
     return (
         f"tfds.builder({name!r}, data_dir={data_dir!r}, file_format={file_format!r})"
         ".download_and_prepare()"
     )
 
 
-def _where(data_dir: str | None) -> str:
+def where(data_dir: str | None) -> str:
     return data_dir if data_dir is not None else "TFDS's default data directory"
 
 
-def _kept_features(
+def kept_features(
     record: dict[str, Any],
     keys: Sequence[str] | None,
     include_keys: AbstractSet[str] | None,
@@ -78,7 +78,7 @@ def _kept_features(
     return filter_keys(record, include_keys, exclude_keys)
 
 
-def _supervised_keys(info: Any, dataset: str) -> list[str]:
+def supervised_keys(info: Any, dataset: str) -> list[str]:
     """The features ``as_supervised`` keeps: those the dataset declares supervised.
 
     Args:
