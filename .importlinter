@@ -37,5 +37,24 @@ type = layers
 layers =
     datarax.sources.tfds_source
     datarax.sources.tfds_streaming_source
-    datarax.sources._stream_order | datarax.sources._tfds_prepared
+    datarax.sources._stream_order | datarax.sources._tfds_identity | datarax.sources._tfds_prepared
     datarax.sources._tfrecord
+
+[importlinter:contract:decoded-copy]
+name = The decoded copy's manifest over its files over its units over its layout
+type = layers
+containers =
+    datarax.sources.decoded_copy
+layers =
+    _manifest
+    _files
+    _units
+    _layout
+
+[importlinter:contract:disk-sources]
+name = The decoded copy reads back as a disk source; both share the provenance codec below them
+type = layers
+layers =
+    datarax.sources.decoded_copy
+    datarax.sources.streaming_disk_source
+    datarax.sources._disk_provenance

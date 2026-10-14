@@ -196,10 +196,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `datarax.sources.eager_source.read_host_batch(columns, length, indices, ...)`: the one host
   read of indexed sources whose records sit in host arrays (`EagerSource` and
   `StreamingDiskSource` use it).
-- `datarax.sources.tfds_source.open_prepared_split(name, split, data_dir)` opens a TFDS split
-  prepared as ArrayRecord through TFDS's random-access reader, reading no record and importing
-  no TensorFlow, and refuses a copy that is not prepared or is prepared in another format with a
-  `FileNotFoundError` naming the call that prepares it.
 - `datarax.sources.eager_source.parts_of_records(records)`, the one path from records to host
   columns and provenance (`MemorySource` and `TFDSEagerSource` use it), and `HostValue`, the
   holder of a host value NNX keeps out of module state and every program (`HostProvenance` is
@@ -249,14 +245,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   generates a variant's data at its configured size and `ScenarioVariant.with_dataset_size(n)`
   sets that size; every `data_generator` takes the number of records to generate.
 
+- **Decoded copies** (`datarax.sources.decoded_copy`): a source's records decoded once into one
+  `.npy` file per numeric field and their provenance in one ArrayRecord file of UTF-8 JSON
+  (`bytes` base64-encoded), beside a `manifest.json` written last. `open_decoded_copy(directory,
+  *, identity=None, verify=False)` (exported from `datarax.sources`) opens a finished copy as a
+  `StreamingDiskSource` on any filesystem, refusing a directory without a manifest (an
+  incomplete copy), another copy format (naming both), a column file missing or of another size,
+  an `identity` that differs (naming each field) and, with `verify=True`, a content digest (the
+  SHA-256 of the units' SHA-256s) its bytes no longer give. A copy is identified by what its source
+  declares, `source_identity()` (`datarax.core.data_source.SourceIdentified`), never by paths:
+  `ArrayRecordSourceModule` declares its files' base names and sizes, its record count and its
+  decode; TFDS's per-batch
+  decode adds the dataset, version, config, split, kept features, `features.json`'s SHA-256 and the
+  versions of the libraries that decode it (`datarax.sources._tfds_identity`, read with substrax's
+  `library_versions`), so a decoder upgrade invalidates a copy; a
+  `StreamingDiskSource` declares its columns and the copy it is. The writer's protocol, internal
+  to the package (`open_decoded_copy` is its one public name):
+  `ColumnLayout`, the one per-unit writer `write_unit` (a field unlike its column is refused, never
+  cast), `unit_digest`, `CopyLock` (an exclusive `fcntl.flock` on `<copy>/.lock`), `clear_copy`
+  (manifest first), `begin_copy` (every `.partial` created fresh and reserved with
+  `os.posix_fallocate`, a full disk refused naming the column, the bytes needed and free),
+  `finish_copy` (each file fsynced once and renamed, the manifest written last through a fsynced
+  temporary file) and `refuse_unsupported_filesystem` (networked and FUSE targets, by
+  `psutil.disk_partitions(all=True)`). A TFDS `Video` feature has no copy.
+- `from_tfds(..., in_memory=False, decoded_dir=...)` opens the split's decoded copy, checked
+  against the split it was written from; `decoded_dir` with an in-memory or streamed split is
+  refused.
+- `StreamingDiskSourceConfig(provenance=DiskProvenance(file, records), content_digest=...)`: a
+  column-set source serves its records' provenance by index from one ArrayRecord file, and
+  `StreamingDiskSource.source_identity()` declares its columns and the copy they are.
+  `DiskProvenance` is exported from `datarax.sources`.
+- `MemorySource.of_columns(columns, provenance=(), *, name=None)`: a source over host columns
+  already decoded (a build's), nested by field and with one provenance mapping per record, held
+  as given (not copied) as every eager source's columns are.
+- `ArrayRecordSourceModule.source_identity()`.
+
 ### Changed
 
 - **Breaking:** the TFDS sources' module is split by responsibility.
   - `datarax.sources.tfds_streaming_source` holds `TFDSStreamingConfig`, `TFDSStreamingSource` and
     `TFDSStreamDataset`, the Grain dataset `pass_dataset` and `run_dataset` return; what a run reads
     is the source's own (`_StreamRead`).
-  - `datarax.sources.tfds_source` keeps `TFDSEagerConfig`, `TFDSEagerSource`, `PreparedRecords`,
-    `open_prepared_split` and `from_tfds`.
+  - `datarax.sources.tfds_source` keeps `TFDSEagerConfig`, `TFDSEagerSource` and `from_tfds`.
   - Three internal modules hold what both sources build on: `_tfrecord` (reading TFRecord shard files
     and their CRCs, `ShardIndex`, `DamagedRecordError`), `_stream_order` (a stream pass's record
     order) and `_tfds_prepared` (a split's prepared copy and the features a source keeps).
@@ -338,6 +368,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `in_memory=False`; a numeric feature without a fixed shape is refused there too. `from_tfds`
   refuses `host_resources` for a source read per batch (`in_memory=False`, or a TFRecord copy),
   naming `Pipeline(host_resources=...)`.
+- `TFDSEagerSource` decodes its split through the per-batch reader of the same split and the one
+  per-unit writer (the decoded copy's `build_in_memory`), unit by unit, instead of one
+  whole-split read of TFDS's random-access reader; the columns and provenance are bit-identical.
 - The host stage's read options (threads and units read ahead) come only from its plan; tests and
   the benchmark adapter no longer set them. The adapter passes a scenario's `num_workers` and
   `extra["ram_budget_bytes"]` as `HostResources`; a scenario's `prefetch_size` no longer reaches

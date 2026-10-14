@@ -15,6 +15,10 @@ HDF5 dataset at the offset its file reports is another. A column's name is its f
   ``jax.experimental.io_callback`` for the compiled pipeline session, and wraps the rows in
   ``jax.lax.stop_gradient`` to mark them as constants: the callback is given integer indices,
   which are never differentiated, so ``jax.grad`` over parameters works with or without it.
+
+A source may also serve its records' provenance (their strings and objects) by index from one
+ArrayRecord file of encoded records (:class:`DiskProvenance`), as a decoded copy holds it
+(:mod:`datarax.sources.decoded_copy`), and declares what it reads (:meth:`source_identity`).
 """
 
 from __future__ import annotations
@@ -23,21 +27,31 @@ import dataclasses
 import math
 import os
 from collections import Counter
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import jax
 import numpy as np
+from array_record.python.array_record_data_source import ArrayRecordDataSource
 from flax import nnx
 from jax.experimental import io_callback
 from jax.typing import ArrayLike
 
 from datarax.core.config import StructuralConfig
-from datarax.core.data_source import DataSourceModule, RecordIdentity
+from datarax.core.data_source import (
+    DataSourceModule,
+    host_rows,
+    NO_PROVENANCE,
+    record_words,
+    RecordIdentity,
+)
 from datarax.core.element_batch import Batch
 from datarax.core.host_values import HostArray, HostArrays
 from datarax.core.index_words import from_words
 from datarax.core.spec import device_spec, JAX_ARRAY_KINDS
+from datarax.sources._disk_provenance import decode_provenance, DiskProvenance
 from datarax.sources._field_paths import LEVEL, nested
 from datarax.sources.eager_source import read_host_batch
 from datarax.typing import DataDict
@@ -130,9 +144,15 @@ class StreamingDiskSourceConfig(StructuralConfig):
 
     Attributes:
         columns: The source's columns, one row per record in each.
+        provenance: The records' provenance on disk, or ``None`` when they carry nothing but
+            arrays.
+        content_digest: The content digest of the decoded copy the columns are, or ``None`` for
+            columns that are no copy; part of the source's identity.
     """
 
     columns: tuple[DiskColumn, ...] = ()
+    provenance: DiskProvenance | None = None
+    content_digest: str | None = None
 
     def __post_init__(self) -> None:
         """Validate the config.
@@ -179,6 +199,41 @@ def _refuse_clashing_names(names: list[str]) -> None:
             )
 
 
+def _provenance_files(
+    provenance: DiskProvenance | None, length: int
+) -> ArrayRecordDataSource | None:
+    """The provenance file's reader, held on the host, checked to hold one record per record.
+
+    ArrayRecord's data source opens the file at its first read and pickles without an open
+    reader, so a copy sent to a worker process reopens it where it reads.
+
+    Args:
+        provenance: The provenance on disk, or ``None``.
+        length: The source's records.
+
+    Returns:
+        The reader, or ``None`` without provenance.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        ValueError: If it holds another number of records than ``length``.
+    """
+    if provenance is None:
+        return None
+    if not Path(provenance.file).is_file():
+        raise FileNotFoundError(
+            f"StreamingDiskSource: provenance file {provenance.file} is missing"
+        )
+    files = ArrayRecordDataSource([provenance.file])
+    held = len(files)
+    if held != length or provenance.records != length:
+        raise ValueError(
+            f"{provenance.file} holds {held} records' provenance ({provenance.records} declared), "
+            f"but the columns hold {length} records"
+        )
+    return files
+
+
 class StreamingDiskSource(DataSourceModule):
     """An indexed source over columns of arrays on disk, larger than RAM, read by memory maps.
 
@@ -208,8 +263,9 @@ class StreamingDiskSource(DataSourceModule):
             name: Optional module name.
 
         Raises:
-            FileNotFoundError: If a column's file does not exist.
-            ValueError: If a column's file is shorter than its offset plus its bytes.
+            FileNotFoundError: If a column's file, or the provenance file, does not exist.
+            ValueError: If a column's file is shorter than its offset plus its bytes, or the
+                provenance file holds another number of records than the columns.
         """
         super().__init__(config, rngs=rngs, name=name)
         for column in config.columns:
@@ -233,6 +289,7 @@ class StreamingDiskSource(DataSourceModule):
             )
         )
         self._length = nnx.static(config.columns[0].length)
+        self._provenance_files = _provenance_files(config.provenance, self._length)
 
     def __len__(self) -> int:
         """Total number of records on disk."""
@@ -258,6 +315,59 @@ class StreamingDiskSource(DataSourceModule):
                 for column, host in zip(self.config.columns, self._hosts.arrays, strict=True)
             }
         )
+
+    def provenance(  # noqa: DOC502 - record_words and host_rows raise
+        self, indices: ArrayLike
+    ) -> tuple[Mapping[str, Any], ...]:
+        """The provenance of the records ``indices`` names, read from the provenance file by index.
+
+        Args:
+            indices: uint32 ``(n, 2)`` record indices.
+
+        Returns:
+            Each named record's read-only mapping of strings and objects, in the order named; an
+            empty mapping for every record of a source without a provenance file.
+
+        Raises:
+            ValueError: If ``indices`` are not uint32 ``(n, 2)`` words.
+            IndexError: If an index is the padding index or outside the columns.
+        """
+        rows = host_rows(record_words(indices), self._length)
+        files = self._provenance_files
+        if files is None:
+            return (NO_PROVENANCE,) * len(rows)
+        return tuple(
+            MappingProxyType(decode_provenance(record))
+            for record in files.__getitems__([int(row) for row in rows])
+        )
+
+    def source_identity(self) -> dict[str, Any]:
+        """What the source reads, never where: its columns, and the copy it is, if one.
+
+        Returns:
+            ``{"source": ..., "decoder": {}}``: each column's field, dtype, shape, offset, file
+            base name and size, and the decoded copy's content digest when the columns are one;
+            nothing decodes, so no decoder library.
+        """
+        columns = [
+            {
+                "name": c.name,
+                "dtype": c.dtype,
+                "shape": list(c.shape),
+                "offset": c.offset,
+                "file": Path(c.file).name,
+                "bytes": Path(c.file).stat().st_size,
+            }
+            for c in self.config.columns
+        ]
+        return {
+            "source": {
+                "kind": "disk_columns",
+                "columns": columns,
+                "content": self.config.content_digest,
+            },
+            "decoder": {},
+        }
 
     def element_spec(self) -> Any:
         """One record's spec as the device holds it: each column's leading axis stripped.

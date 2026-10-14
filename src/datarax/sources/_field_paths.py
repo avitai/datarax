@@ -7,7 +7,7 @@ names a refusal prints and the columns a source holds on disk are all named this
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import jax
@@ -46,6 +46,21 @@ def field_names(tree: PyTree) -> list[str]:
     return [field_name(path) for path, _ in jax.tree_util.tree_flatten_with_path(tree)[0]]
 
 
+def by_field(tree: PyTree, *, is_leaf: Callable[[Any], bool] | None = None) -> dict[str, Any]:
+    """Every leaf of ``tree`` keyed by its field name; :func:`nested` inverts it.
+
+    Args:
+        tree: A record's pytree, or a JSON document's mappings.
+        is_leaf: What counts as one leaf, as ``jax.tree_util`` takes it; for a JSON document,
+            whatever is not a mapping, so a list is one value and an empty mapping no field.
+
+    Returns:
+        Each leaf, keyed by its field name.
+    """
+    flat = jax.tree_util.tree_flatten_with_path(tree, is_leaf=is_leaf)[0]
+    return {field_name(path): leaf for path, leaf in flat}
+
+
 def nested(leaves: Mapping[str, Any]) -> dict[str, Any]:
     """Leaves keyed by field name as nested mappings, one level per path step: naming inverted.
 
@@ -65,4 +80,4 @@ def nested(leaves: Mapping[str, Any]) -> dict[str, Any]:
     return tree
 
 
-__all__ = ["LEVEL", "field_name", "field_names", "nested"]
+__all__ = ["LEVEL", "by_field", "field_name", "field_names", "nested"]

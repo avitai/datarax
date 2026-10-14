@@ -21,8 +21,13 @@ architectural separation between **eager** and **streaming** sources:
 A stream read that meets a damaged TFRecord frame raises ``DamagedRecordError``, naming the file
 and the record.
 
+**Decoded copies**:
+    - open_decoded_copy(): a source's records decoded once into columns on disk
+      (``datarax.pipeline.materialize`` writes one), read through memory maps
+
 **Factory Functions**:
-    - from_tfds(): the eager source for a copy prepared as ArrayRecord, the stream for TFRecord
+    - from_tfds(): the eager source for a copy prepared as ArrayRecord, the stream for TFRecord,
+      or a split's decoded copy (``decoded_dir=``)
     - from_hf(): the eager source, or the stream with ``streaming=True``
 
 Every export is listed in ``__init__.pyi``, which type checkers read. The sources that need no
@@ -34,7 +39,9 @@ HuggingFace ``datasets``.
 
 import lazy_loader
 
+from datarax.sources._disk_provenance import DiskProvenance as DiskProvenance
 from datarax.sources._source_base import StreamingSourceBase as StreamingSourceBase
+from datarax.sources.decoded_copy import open_decoded_copy as open_decoded_copy
 from datarax.sources.eager_source import EagerSource as EagerSource
 from datarax.sources.memory_source import (
     MemorySource as MemorySource,

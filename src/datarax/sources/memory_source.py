@@ -4,12 +4,13 @@
 once, at construction (see :mod:`datarax.sources.eager_source`), and serves it through the
 eager-source base. A dict is a mapping of columns; a list is a list of records, whose numeric
 values are stacked into columns and whose strings and other objects become provenance; an array
-is one column.
+is one column. :meth:`MemorySource.of_columns` holds columns already decoded (a build's), nested
+by field and with their provenance, as they are.
 """
 
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Self
 
 import jax
 import numpy as np
@@ -67,6 +68,14 @@ class MemorySourceConfig(StructuralConfig):
 type _Parts = tuple[PyTree, tuple[dict[str, Any], ...]]
 
 
+@dataclass(frozen=True, slots=True)
+class _HeldColumns:
+    """Columns :meth:`MemorySource.of_columns` holds as given, and their provenance."""
+
+    columns: PyTree
+    provenance: tuple[Mapping[str, Any], ...]
+
+
 @register_component("source", "MemorySource")
 class MemorySource(EagerSource):
     """In-memory data source over a dict of arrays, a list of records or an array.
@@ -101,7 +110,7 @@ class MemorySource(EagerSource):
     def __init__(  # noqa: DOC503 - _parts raises the ValueError
         self,
         config: MemorySourceConfig,
-        data: Mapping[str, Any] | Sequence[Any] | np.ndarray | jax.Array,
+        data: Mapping[str, Any] | Sequence[Any] | np.ndarray | jax.Array | _HeldColumns,
         *,
         name: str | None = None,
     ) -> None:
@@ -111,7 +120,7 @@ class MemorySource(EagerSource):
             config: Configuration for the MemorySource
             data: A mapping of columns (all of one length), a sequence of records (each a
                 mapping of values, an ``Element`` or a single value), or an array whose leading
-                axis is the records.
+                axis is the records (or the columns :meth:`of_columns` holds).
             name: Optional name for the module (defaults to "MemorySource")
 
         Raises:
@@ -126,8 +135,41 @@ class MemorySource(EagerSource):
                 f"MemorySource expects a list, sequence, or dictionary, got string: {type(data)}"
             )
         self.prefetch_size = config.prefetch_size
+        if isinstance(data, _HeldColumns):
+            self._store(data.columns, data.provenance)
+            return
         columns, provenance = _parts(data)
         self._store(columns, provenance)
+
+    @classmethod
+    def of_columns(  # noqa: DOC502 - _store raises
+        cls,
+        columns: PyTree,
+        provenance: Sequence[Mapping[str, Any]] = (),
+        *,
+        name: str | None = None,
+    ) -> Self:
+        """A source over host columns already decoded, held as given, with their provenance.
+
+        A build's columns (``datarax.pipeline.materialize``'s RAM result) are nested by field,
+        which the constructor's mapping of columns refuses, and come with one provenance mapping
+        per record. They are held as every eager source holds its columns (a host holder, out of
+        NNX state; see :mod:`datarax.sources.eager_source`), not copied. Record ``r`` is row
+        ``r``.
+
+        Args:
+            columns: A pytree of host arrays (nested mappings by field), one row per record.
+            provenance: One mapping of strings and objects per record, or nothing.
+            name: Optional name for the module (defaults to "MemorySource").
+
+        Returns:
+            The source.
+
+        Raises:
+            ValueError: If the columns disagree on their record count, or the provenance is not
+                one mapping per record.
+        """
+        return cls(MemorySourceConfig(), _HeldColumns(columns, tuple(provenance)), name=name)
 
     def __len__(self) -> int:
         """Return the number of records this source serves.

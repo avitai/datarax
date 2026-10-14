@@ -2,7 +2,8 @@
 
 ``_tfrecord`` reads TFRecord shard files (frames, CRCs, the offset index) and ``_stream_order``
 computes a stream pass's record order; neither imports TensorFlow Datasets. ``_tfds_prepared``
-finds a split's prepared copy and the features both sources keep. ``tfds_streaming_source`` holds
+finds a split's prepared copy and the features both sources keep; ``_tfds_identity`` names what a
+split's per-batch decode is, as a decoded copy of it records. ``tfds_streaming_source`` holds
 the streaming source and ``tfds_source`` the eager one and ``from_tfds``. A name lives in exactly
 one of them, so a test that patches a name patches the one the code reads. The modules import in
 any order, which a cycle among them would break.
@@ -22,6 +23,7 @@ from substrax.testing import run_python
 
 from datarax.sources import (
     _stream_order,
+    _tfds_identity,
     _tfds_prepared,
     _tfrecord,
     tfds_source,
@@ -36,6 +38,7 @@ _MODULES = (
     "datarax.sources._tfrecord",
     "datarax.sources._stream_order",
     "datarax.sources._tfds_prepared",
+    "datarax.sources._tfds_identity",
     "datarax.sources.tfds_streaming_source",
     "datarax.sources.tfds_source",
 )
@@ -78,6 +81,11 @@ _HOMES: dict[ModuleType, tuple[str, ...]] = {
         "kept_features",
         "supervised_keys",
     ),
+    _tfds_identity: (
+        "SplitOrigin",
+        "split_identity",
+        "_decoder_versions",
+    ),
     tfds_streaming_source: (
         "TFDSStreamingConfig",
         "_Frame",
@@ -96,12 +104,11 @@ _HOMES: dict[ModuleType, tuple[str, ...]] = {
     tfds_source: (
         "_tfrecord_only",
         "TFDSEagerConfig",
-        "PreparedRecords",
         "_not_prepared",
         "_array_record_builder",
-        "open_prepared_split",
         "_ExampleDecoder",
         "_per_batch_split",
+        "_split_read",
         "TFDSEagerSource",
         "from_tfds",
     ),
@@ -163,8 +170,6 @@ _PUBLIC = {
     tfds_source: {
         "TFDSEagerConfig",
         "TFDSEagerSource",
-        "PreparedRecords",
-        "open_prepared_split",
         "from_tfds",
     },
     tfds_streaming_source: {"TFDSStreamingConfig", "TFDSStreamingSource", "TFDSStreamDataset"},
