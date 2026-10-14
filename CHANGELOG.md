@@ -264,6 +264,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     read raises for a damaged TFRecord frame. An import by module path follows the name to its new
     module.
   - An import-linter contract keeps the five modules acyclic.
+  - Without the `data` extra, importing a TFDS stream's names raises an `ImportError` naming
+    `google_crc32c` and the extra, as `hf_source` does for `datasets`.
 - **Breaking:** a row of a batch built without record identities (`batch_ops.from_arrays`,
   `from_stacked` over records without an index) is named `(2**31, row)` instead of `(0, row)`, and
   a source holds at most `2**63` records (`MAX_RECORDS`): a record's index has the top bit clear,

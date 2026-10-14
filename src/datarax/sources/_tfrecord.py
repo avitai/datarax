@@ -23,8 +23,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import google_crc32c
 import numpy as np
+
+
+try:
+    import google_crc32c
+except ImportError as error:
+    msg = 'datarax.sources._tfrecord needs google_crc32c: uv pip install "datarax[data]"'
+    raise ImportError(msg) from error
 
 
 LARGEST_OFFSET = 2**32 - 1
