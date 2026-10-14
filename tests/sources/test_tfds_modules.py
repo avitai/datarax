@@ -84,7 +84,7 @@ _HOMES: dict[ModuleType, tuple[str, ...]] = {
         "_not_streamable",
         "_features",
         "_KeptFeatures",
-        "StreamRead",
+        "_StreamRead",
         "_ordered_ids",
         "_decoded_batch",
         "_PassUnits",
@@ -157,6 +157,33 @@ def test_tfds_source_binds_another_module_s_name_only_to_use_it(
     if name in vars(tfds_source):
         assert name in _used_by_its_own_code(tfds_source)
         assert vars(tfds_source)[name] is vars(module)[name]
+
+
+_PUBLIC = {
+    tfds_source: {
+        "TFDSEagerConfig",
+        "TFDSEagerSource",
+        "PreparedRecords",
+        "open_prepared_split",
+        "from_tfds",
+    },
+    tfds_streaming_source: {"TFDSStreamingConfig", "TFDSStreamingSource", "TFDSStreamDataset"},
+}
+
+
+@pytest.mark.parametrize("module", list(_PUBLIC), ids=lambda m: m.__name__.rsplit(".", 1)[1])
+def test_a_public_module_defines_only_what_users_call_or_receive(module: ModuleType) -> None:
+    """Its public names are what users call or receive; what a stream's run reads is the source's.
+
+    ``TFDSStreamDataset`` is what ``pass_dataset`` and ``run_dataset`` return, Grain's slicing hook
+    included; its read (``_StreamRead``) and the shards' offset index stay internal.
+    """
+    defined = {
+        name
+        for name, value in vars(module).items()
+        if not name.startswith("_") and getattr(value, "__module__", None) == module.__name__
+    }
+    assert defined == _PUBLIC[module]
 
 
 _IMPORTS = """
